@@ -4,9 +4,10 @@ export function stripServerPrefix(name: string): string {
   return idx === -1 ? name : name.slice(idx + 2);
 }
 
-/** Format duration: <1000ms → "340ms", >=1000ms → "1.2s" */
+/** Format duration: <0.5ms → "<1ms", <1000ms → "340ms", >=1000ms → "1.2s" */
 export function formatDuration(ms: number): string {
   const rounded = Math.round(ms);
+  if (rounded === 0 && ms > 0) return "<1ms";
   if (rounded < 1000) return `${rounded}ms`;
   return `${(rounded / 1000).toFixed(1)}s`;
 }
