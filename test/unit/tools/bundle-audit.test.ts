@@ -34,10 +34,8 @@ import type { Runtime } from "../../../src/runtime/runtime.ts";
  * at construction that the resulting `InlineSource` doesn't expose a stop
  * hook for, so including it here leaks timers across tests. Its schemas
  * are exercised indirectly by the real tests in test/unit/bundles/
- * automations/. Closing this gap cleanly would mean giving `InlineSource`
- * an optional onStop callback that factories can wire through — worth
- * doing when the next bundle also grows construction-time side effects,
- * but out of scope for the bug this audit was added alongside.
+ * automations/. Tracked by #30 — closing this gap cleanly means giving
+ * `InlineSource` an optional onStop callback factories can wire through.
  */
 function makeRuntime(workDir: string): Runtime {
   return {

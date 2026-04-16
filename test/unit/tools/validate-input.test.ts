@@ -47,6 +47,20 @@ describe("validateToolInput", () => {
     expect(result.valid).toBe(true);
   });
 
+  // Regression: a schema whose only constraint is `additionalProperties: false`
+  // (or minProperties/patternProperties, etc.) must still be compiled and
+  // enforced. A previous allowlist heuristic only checked `properties`,
+  // `required`, and composition keywords — a soundness trap once this helper
+  // began running on every InlineSource call.
+  it("enforces additionalProperties: false even with no `properties`/`required`", () => {
+    const schema = { type: "object" as const, additionalProperties: false };
+    const ok = validateToolInput({}, schema);
+    expect(ok.valid).toBe(true);
+
+    const rejected = validateToolInput({ stray: 1 }, schema);
+    expect(rejected.valid).toBe(false);
+  });
+
   it("caches compiled validators for same schema reference", () => {
     // Call twice with the same schema object — second should use cache
     const r1 = validateToolInput({ name: "a" }, schema);
