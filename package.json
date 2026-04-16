@@ -55,7 +55,7 @@
     "eval": "bun test test/eval/",
     "smoke": "bun test test/smoke/",
     "check:cycles": "bun run scripts/check-cycles.ts",
-    "verify": "bun run lint && bun run check && bun run check:cycles && bun run test && bun run test:web && bun run smoke",
+    "verify": "bun run format:check && bun run lint && bun run check && bun run check:cycles && bun run test && bun run test:web && bun run smoke",
     "check": "bunx tsc --noEmit",
     "lint": "bunx @biomejs/biome check src/",
     "format": "bunx @biomejs/biome format --write src/ web/src/",
