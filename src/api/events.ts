@@ -98,6 +98,7 @@ export class SseEventManager implements EventSink {
       type === "bundle.crashed" ||
       type === "bundle.recovered" ||
       type === "bundle.dead" ||
+      type === "bundle.start_failed" ||
       type === "data.changed" ||
       type === "config.changed" ||
       type === "skill.created" ||

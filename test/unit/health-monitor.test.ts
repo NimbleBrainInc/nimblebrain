@@ -166,4 +166,50 @@ describe("HealthMonitor", () => {
     expect(sink.events).toHaveLength(0);
     expect(source.restartCalls).toBe(0);
   });
+
+  it("reports startFailures as dead in getStatus with no live source", () => {
+    const sink = makeEventCollector();
+    const monitor = new HealthMonitor([], sink, {
+      startFailures: [{ name: "broken-bundle", error: "ENOENT: missing binary" }],
+    });
+
+    const status = monitor.getStatus();
+    expect(status).toHaveLength(1);
+    expect(status[0]!.name).toBe("broken-bundle");
+    expect(status[0]!.state).toBe("dead");
+    expect(status[0]!.uptime).toBeNull();
+    expect(status[0]!.restartCount).toBe(0);
+    expect(status[0]!.error).toBe("ENOENT: missing binary");
+  });
+
+  it("merges startFailures with live source records", () => {
+    const source = makeMockSource("live-bundle");
+    const sink = makeEventCollector();
+    const monitor = new HealthMonitor([source], sink, {
+      startFailures: [{ name: "broken-bundle", error: "boom" }],
+    });
+
+    const status = monitor.getStatus();
+    expect(status.map((s) => s.name).sort()).toEqual(["broken-bundle", "live-bundle"]);
+    const broken = status.find((s) => s.name === "broken-bundle");
+    expect(broken!.state).toBe("dead");
+    const live = status.find((s) => s.name === "live-bundle");
+    expect(live!.state).toBe("healthy");
+  });
+
+  it("suppresses a startFailure when a source with the same name recovers", () => {
+    // Manage case: if a bundle started on a retry path (name reused), the
+    // live status should win — don't double-report.
+    const source = makeMockSource("flaky");
+    const sink = makeEventCollector();
+    const monitor = new HealthMonitor([source], sink, {
+      startFailures: [{ name: "flaky", error: "first attempt failed" }],
+    });
+
+    const status = monitor.getStatus();
+    expect(status).toHaveLength(1);
+    expect(status[0]!.name).toBe("flaky");
+    expect(status[0]!.state).toBe("healthy");
+    expect(status[0]!.error).toBeUndefined();
+  });
 });

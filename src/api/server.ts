@@ -53,7 +53,13 @@ export function startServer(options: ServerOptions): ServerHandle {
   const internalToken = runtime.getInternalToken();
 
   const mcpSources = runtime.mcpSources();
-  const healthMonitor = new HealthMonitor(mcpSources, runtime.getEventSink());
+  const startFailures = runtime.getStartFailures().map((f) => ({
+    name: f.serverName,
+    error: f.error,
+  }));
+  const healthMonitor = new HealthMonitor(mcpSources, runtime.getEventSink(), {
+    startFailures,
+  });
   healthMonitor.start();
 
   // SSE event manager — listens to runtime events and broadcasts to clients

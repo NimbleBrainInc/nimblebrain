@@ -91,6 +91,7 @@ describe("WorkspaceLogSink", () => {
       "bundle.crashed",
       "bundle.recovered",
       "bundle.dead",
+      "bundle.start_failed",
       "data.changed",
       "config.changed",
       "skill.created",
