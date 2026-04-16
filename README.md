@@ -140,6 +140,7 @@ All system tools are prefixed with `nb__` (the `nb` source name + `__` separator
 |-----------|---------|
 | `nb__status` | Platform status: overview, bundles, skills, or config (scope param) |
 | `nb__search` | Unified search: installed tools or mpak registry (scope param) |
+| `nb__read_resource` | Read a `skill://` / `ui://` resource from an installed app's MCP server |
 | `nb__set_model_config` | Update model provider and limits (admin only) |
 | `nb__set_preferences` | Set user preferences (name, timezone, theme) |
 | `nb__manage_app` | Install, uninstall, or configure an app |

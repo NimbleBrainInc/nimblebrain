@@ -26,6 +26,7 @@ import type { InlineToolDef } from "./inline-source.ts";
 import { InlineSource } from "./inline-source.ts";
 import { McpSource } from "./mcp-source.ts";
 import type { ToolRegistry } from "./registry.ts";
+import { isResourceReader } from "./types.ts";
 import { createManageUsersTool, type ManageUsersContext } from "./user-tools.ts";
 import {
   createManageWorkspacesTool,
@@ -214,6 +215,7 @@ export function createSystemTools(
         return { content: textContent(`Unknown action: ${action}`), isError: true };
       },
     },
+    createReadResourceTool(getRegistry),
     createStatusTool(getRegistry, getSkills, lifecycle, runtime),
   ];
 
@@ -262,6 +264,80 @@ export function createSystemTools(
 
 /** Core skills ship with the package under src/skills/core/. */
 const CORE_SKILL_MARKER = "/skills/core/";
+
+/** Maximum characters returned from a single read_resource call.
+ *  Matches the focused-app skill budget so a bundle-advertised `skill://` resource
+ *  fits into the LLM's context without blowing past it. */
+const READ_RESOURCE_MAX_CHARS = 12_000;
+
+/**
+ * Creates the nb__read_resource system tool.
+ *
+ * Iterates every source in the current workspace registry that exposes
+ * `readResource()` and returns the first one that resolves the URI. This
+ * lets the LLM actually consume the `skill://` or `ui://` URIs referenced in
+ * an app's `<app-instructions>` block — without this tool, bundles that
+ * advertise a resource in their `initialize.instructions` have no way for
+ * the agent to read it (#3).
+ */
+function createReadResourceTool(getRegistry: () => ToolRegistry): InlineToolDef {
+  return {
+    name: "read_resource",
+    description:
+      "Read a resource (e.g. skill://, ui://) advertised by an installed app's MCP server. Use this when an app's instructions tell you to load a specific resource — the content comes back as text in the tool result. Pass the full URI.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        uri: {
+          type: "string",
+          description:
+            "Resource URI to read (e.g. skill://solar5estrella/usage, ui://myapp/guide).",
+        },
+      },
+      required: ["uri"],
+    },
+    handler: async (input): Promise<ToolResult> => {
+      const uri = typeof input.uri === "string" ? input.uri.trim() : "";
+      if (!uri) {
+        return { content: textContent("uri is required"), isError: true };
+      }
+
+      const registry = getRegistry();
+      const errors: string[] = [];
+      for (const source of registry.getSources()) {
+        if (!isResourceReader(source)) continue;
+        try {
+          const data = await source.readResource(uri);
+          if (data == null) continue;
+          if (typeof data.text === "string") {
+            const full = data.text;
+            const truncated = full.length > READ_RESOURCE_MAX_CHARS;
+            const body = truncated
+              ? `${full.slice(0, READ_RESOURCE_MAX_CHARS)}\n\n[truncated — resource exceeds ${READ_RESOURCE_MAX_CHARS} chars]`
+              : full;
+            return { content: textContent(body), isError: false };
+          }
+          if (data.blob) {
+            return {
+              content: textContent(
+                `[binary resource, ${data.blob.length} bytes, mimeType=${data.mimeType ?? "unknown"}]`,
+              ),
+              isError: false,
+            };
+          }
+        } catch (err) {
+          errors.push(`${source.name}: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+
+      const detail = errors.length ? ` Errors: ${errors.join("; ")}` : "";
+      return {
+        content: textContent(`Resource "${uri}" not found in any installed app.${detail}`),
+        isError: true,
+      };
+    },
+  };
+}
 
 /**
  * Creates the unified nb__status tool that replaces bundle_status and skill_status.

@@ -65,6 +65,10 @@ export class McpSource implements ToolSource {
   private cachedTools: Tool[] | null = null;
   private dead = false;
   private startedAt: number | null = null;
+  /** Optional `instructions` string returned by the MCP server during
+   *  `initialize`. Captured after connect so callers (e.g. the system
+   *  prompt composer) can surface per-bundle guidance to the LLM. */
+  private _instructions: string | undefined;
 
   /**
    * `eventSink` is REQUIRED, not optional. Emitted events include
@@ -191,6 +195,12 @@ export class McpSource implements ToolSource {
 
     this.dead = false;
     this.startedAt = Date.now();
+
+    // Capture the server's initialize `instructions` field (may be undefined).
+    // The MCP SDK stores it internally; we expose it via getInstructions() so
+    // the system prompt composer can render it in the apps list.
+    const instructions = this.client.getInstructions();
+    this._instructions = typeof instructions === "string" ? instructions : undefined;
   }
 
   private async connectWithTimeout(timeoutMs: number): Promise<void> {
@@ -291,6 +301,13 @@ export class McpSource implements ToolSource {
     this.client = null;
     this.transport = null;
     this.cachedTools = null;
+    this._instructions = undefined;
+  }
+
+  /** Server `instructions` string from the MCP `initialize` response.
+   *  Undefined until start() completes; cleared by stop(). */
+  getInstructions(): string | undefined {
+    return this._instructions;
   }
 
   async tools(): Promise<Tool[]> {
