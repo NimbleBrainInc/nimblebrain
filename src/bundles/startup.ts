@@ -62,7 +62,10 @@ export async function startBundleSource(
 
     const mpakHome = process.env.MPAK_HOME ?? join(homedir(), ".mpak");
     const mpak = getMpak(mpakHome);
-    const server = await mpak.prepareServer({ name: ref.name }, { workspaceDir: bundleDataDir });
+    const server = await mpak.prepareServer(
+      ref.version ? { name: ref.name, version: ref.version } : { name: ref.name },
+      { workspaceDir: bundleDataDir },
+    );
 
     // Read cached manifest for UI + briefing metadata
     const cachedManifest = mpak.bundleCache.getBundleManifest(ref.name) as Record<

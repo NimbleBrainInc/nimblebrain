@@ -194,6 +194,7 @@ Create a `nimblebrain.json` in your working directory:
   "defaultModel": "claude-sonnet-4-5-20250929",
   "bundles": [
     { "name": "@scope/bundle-name" },
+    { "name": "@scope/bundle-name", "version": "0.2.0" },
     { "name": "@scope/bundle-name", "env": { "API_KEY": "..." }, "trustScore": 92,
       "ui": { "name": "My App", "icon": "✓", "primaryView": { "resourceUri": "ui://myapp/main" } } },
     { "path": "/local/path/to/bundle" }
@@ -551,6 +552,7 @@ Config file: `nimblebrain.json`. Validated at startup against `src/config/nimble
 | Field | Type | Description |
 |-------|------|-------------|
 | `name` | string | Bundle name from mpak registry |
+| `version` | string | Optional registry version to pin (e.g., `"0.2.0"`). Omit to resolve latest at startup. Required for reproducible deployments and rollback. Ignored with `path`/`url` |
 | `path` | string | Local filesystem path (resolved relative to config file) |
 | `env` | object | Environment variables passed to the bundle process |
 | `allowedEnv` | string[] | Host env vars this bundle may access |

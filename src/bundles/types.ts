@@ -60,6 +60,13 @@ export interface RemoteTransportConfig {
 export type BundleRef =
   | {
       name: string;
+      /**
+       * Pin to a specific registry version (e.g., "0.2.0"). When omitted, the
+       * mpak SDK resolves the latest published version at startup — which
+       * breaks reproducible deployments and rollback. Set this to lock the
+       * version in nimblebrain.json / workspace config.
+       */
+      version?: string;
       env?: Record<string, string>;
       allowedEnv?: string[];
       protected?: boolean;

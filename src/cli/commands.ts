@@ -12,6 +12,7 @@ const RELOAD_SENTINEL = join(homedir(), ".nimblebrain", ".reload");
 interface Config {
   bundles?: Array<{
     name?: string;
+    version?: string;
     path?: string;
     url?: string;
     serverName?: string;
