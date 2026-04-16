@@ -1,0 +1,11 @@
+{
+  "id": "ws_engineering",
+  "name": "Engineering",
+  "members": [
+    { "userId": "usr_default", "role": "admin" },
+    { "userId": "usr_alex01", "role": "member" }
+  ],
+  "bundles": [],
+  "createdAt": "2026-03-05T10:00:00.000Z",
+  "updatedAt": "2026-04-08T09:15:00.000Z"
+}

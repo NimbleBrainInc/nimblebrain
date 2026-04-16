@@ -1,0 +1,10 @@
+{
+  "id": "ws_personal",
+  "name": "Sarah's Workspace",
+  "members": [
+    { "userId": "usr_default", "role": "admin" }
+  ],
+  "bundles": [],
+  "createdAt": "2026-03-01T10:00:00.000Z",
+  "updatedAt": "2026-04-12T18:00:00.000Z"
+}
