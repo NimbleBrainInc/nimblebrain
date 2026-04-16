@@ -9,6 +9,10 @@ permissions:
   id-token: write
 
 jobs:
+  # Each step below runs a `bun run verify:*` subscript; package.json is the
+  # source of truth for what "verify" means. Do not inline individual check
+  # steps here — add them to the matching subscript so local `bun run verify`
+  # stays in parity. (Matches the ci.yml convention.)
   verify:
     name: Verify
     runs-on: ubuntu-latest
@@ -21,15 +25,10 @@ jobs:
         run: bun install
       - name: Install web dependencies
         run: cd web && bun install
-      - name: Lint & typecheck
-        run: |
-          bun run format:check
-          bun run lint
-          bun run check
-      - name: Unit tests
-        run: bun run test:unit
-      - name: Web tests
-        run: bun run test:web
+      - name: Verify (static)
+        run: bun run verify:static
+      - name: Verify (unit + web tests)
+        run: bun run verify:test-unit
       - name: Integration tests
         run: bun run test:integration
 
@@ -57,24 +56,28 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
 
+      # We deliberately do NOT tag `:latest`. ECR repositories have immutable
+      # tags enabled, so `latest` can't be reused across releases. Deploys pin
+      # to the version tag (or short sha) — see deployments/agent-platform/
+      # Makefile, which derives TAG from `git rev-parse --short HEAD`.
       - name: Build and push platform image
         run: |
           docker build --platform linux/amd64 \
             --build-arg BUILD_SHA=${{ steps.tags.outputs.sha }} \
             -t ${{ steps.ecr.outputs.registry }}/nimblebrain/agent-platform:${{ steps.tags.outputs.version }} \
             -t ${{ steps.ecr.outputs.registry }}/nimblebrain/agent-platform:${{ steps.tags.outputs.sha }} \
-            -t ${{ steps.ecr.outputs.registry }}/nimblebrain/agent-platform:latest \
             -f Dockerfile .
-          docker push --all-tags ${{ steps.ecr.outputs.registry }}/nimblebrain/agent-platform
+          docker push ${{ steps.ecr.outputs.registry }}/nimblebrain/agent-platform:${{ steps.tags.outputs.version }}
+          docker push ${{ steps.ecr.outputs.registry }}/nimblebrain/agent-platform:${{ steps.tags.outputs.sha }}
 
       - name: Build and push web image
         run: |
           docker build --platform linux/amd64 \
             -t ${{ steps.ecr.outputs.registry }}/nimblebrain/agent-web:${{ steps.tags.outputs.version }} \
             -t ${{ steps.ecr.outputs.registry }}/nimblebrain/agent-web:${{ steps.tags.outputs.sha }} \
-            -t ${{ steps.ecr.outputs.registry }}/nimblebrain/agent-web:latest \
             -f web/Dockerfile web/
-          docker push --all-tags ${{ steps.ecr.outputs.registry }}/nimblebrain/agent-web
+          docker push ${{ steps.ecr.outputs.registry }}/nimblebrain/agent-web:${{ steps.tags.outputs.version }}
+          docker push ${{ steps.ecr.outputs.registry }}/nimblebrain/agent-web:${{ steps.tags.outputs.sha }}
 
   github-release:
     name: GitHub Release
