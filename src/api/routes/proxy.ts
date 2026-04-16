@@ -3,6 +3,7 @@ import { log } from "../../cli/log.ts";
 import { WORKSPACE_ID_RE } from "../auth-middleware.ts";
 import { requireAuth } from "../middleware/auth.ts";
 import { errorLog } from "../middleware/error-log.ts";
+import { SKIP_DEFAULTS_HEADER } from "../middleware/security-headers.ts";
 import { type AppContext, type AppEnv, apiError } from "../types.ts";
 
 /**
@@ -172,6 +173,10 @@ export function proxyRoutes(ctx: AppContext) {
       // Same-origin embedding: the security-headers middleware respects this
       // when already set; cross-origin embedding stays denied.
       outHeaders.set("X-Frame-Options", "SAMEORIGIN");
+      // Opt out of default HSTS/CSP — iframed bundle dev-server content needs
+      // its own (typically permissive) policy. The middleware strips this
+      // header before egress.
+      outHeaders.set(SKIP_DEFAULTS_HEADER, "1");
       return new Response(upstream.body, {
         status: upstream.status,
         statusText: upstream.statusText,

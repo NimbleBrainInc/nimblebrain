@@ -333,6 +333,8 @@ Run `nb --help` or `nb <command> --help` for full usage. If you haven't run `bun
 | `NB_BUNDLE_START_CONCURRENCY` | Max bundle subprocesses spawned in parallel at boot (default: 4, set to 1 for sequential) |
 | `NB_TIMEZONE` | Default IANA timezone for time-aware features |
 | `NB_HOST_URL` | Public host URL for OAuth redirects |
+| `NB_HSTS` | `Strict-Transport-Security` value (default: `max-age=31536000; includeSubDomains`). Set to `""` to disable — e.g., when a reverse proxy already emits this header |
+| `NB_CSP` | `Content-Security-Policy` value (default: `default-src 'none'; frame-ancestors 'none'; base-uri 'none'`). Set to `""` to disable |
 
 **Identity & telemetry**
 
