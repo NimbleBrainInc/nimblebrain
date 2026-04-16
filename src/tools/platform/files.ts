@@ -202,11 +202,27 @@ interface WriteInput {
   description?: string;
 }
 
-function handleWrite(registryPath: string, filesDir: string, args: WriteInput): object {
+function handleWrite(
+  registryPath: string,
+  filesDir: string,
+  args: WriteInput,
+  maxFileSize: number,
+): object {
   ensureDir(filesDir);
 
   const id = generateId();
   const decoded = Buffer.from(args.base64_data, "base64");
+
+  // Defense-in-depth: enforce the configured per-file size limit at the point
+  // of write. The API body-limit middleware caps HTTP uploads, but
+  // agent-initiated tool calls reach this function without traversing that
+  // middleware — so the limit must hold here independently.
+  if (decoded.length > maxFileSize) {
+    throw new Error(
+      `File "${args.filename}" (${decoded.length} bytes) exceeds limit of ${maxFileSize} bytes`,
+    );
+  }
+
   const filePath = join(filesDir, `${id}_${args.filename}`);
 
   writeFileSync(filePath, decoded);
@@ -450,7 +466,10 @@ export function createFilesSource(runtime: Runtime): InlineSource {
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         try {
           const { filesDir, registryPath } = getFilePaths();
-          return ok(handleWrite(registryPath, filesDir, input as unknown as WriteInput));
+          const { maxFileSize } = runtime.getFilesConfig();
+          return ok(
+            handleWrite(registryPath, filesDir, input as unknown as WriteInput, maxFileSize),
+          );
         } catch (err) {
           return fail(err instanceof Error ? err.message : String(err));
         }
