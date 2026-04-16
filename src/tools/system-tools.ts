@@ -89,10 +89,11 @@ export function createSystemTools(
           },
           query: {
             type: "string",
-            description: "Search query (substring match on name + description)",
+            description:
+              "Search query (substring match on name + description). Optional — omit to list everything in scope.",
           },
         },
-        required: ["scope", "query"],
+        required: ["scope"],
       },
       handler: async (input): Promise<ToolResult> => {
         const scope = String(input.scope ?? "tools");

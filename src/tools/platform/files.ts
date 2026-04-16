@@ -1,10 +1,8 @@
 /**
- * Files InlineSource — migrated from the standalone @nimblebraininc/files MCP server
- * at src/bundles/files/src/server.ts.
+ * Files InlineSource — workspace file store backed by a JSONL registry and
+ * on-disk binary storage.
  *
- * Manages a workspace file store backed by a JSONL registry and on-disk binary storage.
- *
- * Tools (7): list, search, read, write, info, tag, delete
+ * Tools (7): list, search, read, create, info, tag, delete
  * Resources: files/browser (React SPA)
  * Placements: sidebar files link at priority 3
  */
@@ -194,7 +192,7 @@ function handleRead(registryPath: string, filesDir: string, args: { id: string }
   };
 }
 
-interface WriteInput {
+interface CreateInput {
   filename: string;
   base64_data: string;
   mime_type: string;
@@ -202,7 +200,7 @@ interface WriteInput {
   description?: string;
 }
 
-function handleWrite(registryPath: string, filesDir: string, args: WriteInput): object {
+function handleCreate(registryPath: string, filesDir: string, args: CreateInput): object {
   ensureDir(filesDir);
 
   const id = generateId();
@@ -292,14 +290,7 @@ function handleDelete(registryPath: string, filesDir: string, args: { id: string
 // Factory
 // ---------------------------------------------------------------------------
 
-/**
- * Create the "files" InlineSource — migrated from the standalone MCP server
- * at src/bundles/files/src/server.ts.
- *
- * Tools: list, search, read, write, info, tag, delete
- * Resources: files/browser (React SPA)
- * Placements: sidebar files link at priority 3
- */
+/** Create the "files" InlineSource. */
 export function createFilesSource(runtime: Runtime): InlineSource {
   /** Resolve workspace-scoped files directory and registry path per-request. */
   function getFilePaths(): { filesDir: string; registryPath: string } {
@@ -418,8 +409,8 @@ export function createFilesSource(runtime: Runtime): InlineSource {
       },
     },
     {
-      name: "write",
-      description: "Write a new file to the workspace. Provide base64-encoded data.",
+      name: "create",
+      description: "Create a new file in the workspace. Provide base64-encoded data.",
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -450,7 +441,7 @@ export function createFilesSource(runtime: Runtime): InlineSource {
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         try {
           const { filesDir, registryPath } = getFilePaths();
-          return ok(handleWrite(registryPath, filesDir, input as unknown as WriteInput));
+          return ok(handleCreate(registryPath, filesDir, input as unknown as CreateInput));
         } catch (err) {
           return fail(err instanceof Error ? err.message : String(err));
         }

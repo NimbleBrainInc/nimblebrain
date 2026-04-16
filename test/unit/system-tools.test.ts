@@ -248,8 +248,10 @@ describe("manage_skill tool", () => {
 			},
 		});
 		expect(result.isError).toBe(true);
-		expect(extractText(result.content)).toContain("Validation failed");
-		expect(extractText(result.content)).toContain("Priority");
+		// Schema-level validation at the InlineSource layer catches this before
+		// the handler runs (schema declares minimum: 11).
+		expect(extractText(result.content)).toContain("priority");
+		expect(extractText(result.content)).toContain(">= 11");
 	});
 
 	it("create with reserved name returns error", async () => {
@@ -716,7 +718,9 @@ describe("manage_skill — additional validation", () => {
 			},
 		});
 		expect(result.isError).toBe(true);
-		expect(extractText(result.content)).toContain("Validation failed");
+		// Schema declares maximum: 99 — caught at the InlineSource layer.
+		expect(extractText(result.content)).toContain("priority");
+		expect(extractText(result.content)).toContain("<= 99");
 	});
 
 	it("create with priority exactly 11 (minimum) succeeds", async () => {

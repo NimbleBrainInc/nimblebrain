@@ -2,6 +2,7 @@ import type { PlacementDeclaration } from "../bundles/types.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import type { ToolResult } from "../engine/types.ts";
 import type { Tool, ToolSource } from "./types.ts";
+import { validateToolInput } from "./validate-input.ts";
 
 export interface InlineToolDef {
   name: string;
@@ -12,8 +13,21 @@ export interface InlineToolDef {
   annotations?: Record<string, unknown>;
 }
 
+function errorResult(message: string): ToolResult {
+  return {
+    content: textContent(JSON.stringify({ error: message })),
+    isError: true,
+  };
+}
+
 /**
  * ToolSource for tools defined directly in code.
+ *
+ * Enforces the declared input contract before handlers run: every tool call
+ * is validated against its `inputSchema` so missing or wrongly-typed params
+ * never leak Node-internal errors (fs.readFile, Buffer.from, etc.) as tool
+ * results. Every in-process bundle inherits this guarantee.
+ *
  * start() and stop() are no-ops. Tools are returned with source prefix.
  * Optionally serves ui:// resources and declares UI placements.
  */
@@ -50,13 +64,16 @@ export class InlineSource implements ToolSource {
     const def = this.toolDefs.find((d) => d.name === toolName);
     if (!def) {
       const available = this.toolDefs.map((d) => d.name).join(", ");
-      return {
-        content: textContent(
-          `Unknown tool "${toolName}" in source "${this.name}". Available: ${available}`,
-        ),
-        isError: true,
-      };
+      return errorResult(
+        `Unknown tool "${toolName}" in source "${this.name}". Available: ${available}`,
+      );
     }
+
+    const validation = validateToolInput(input, def.inputSchema);
+    if (!validation.valid) {
+      return errorResult(`Invalid arguments for "${def.name}": ${validation.error}`);
+    }
+
     return def.handler(input);
   }
 
