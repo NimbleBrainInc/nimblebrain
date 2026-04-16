@@ -159,12 +159,18 @@ export function createSystemTools(
             type: "string",
             description: "Bundle name (e.g., @nimblebraininc/ipinfo)",
           },
+          version: {
+            type: "string",
+            description:
+              "Optional. Registry version to pin (e.g., '0.2.0'). Only used for install; ignored for uninstall and configure. Omit to install the latest published version.",
+          },
         },
         required: ["action", "name"],
       },
       handler: async (input): Promise<ToolResult> => {
         const action = String(input.action);
         const name = String(input.name);
+        const version = typeof input.version === "string" ? input.version : undefined;
         if (!lifecycle || !manageBundleCtx) {
           return {
             content: textContent("Bundle management requires lifecycle context"),
@@ -185,6 +191,7 @@ export function createSystemTools(
             lifecycle,
             getRegistry(),
             manageBundleCtx,
+            version,
           );
         }
         if (action === "uninstall") {
@@ -1032,9 +1039,12 @@ async function installBundleInWorkspaceViaCtx(
   lifecycle: BundleLifecycleManager,
   registry: ToolRegistry,
   ctx: ManageBundleContext,
+  version?: string,
 ): Promise<ToolResult> {
   try {
-    const bundleRef = { name } as import("../bundles/types.ts").BundleRef;
+    const bundleRef = (
+      version ? { name, version } : { name }
+    ) as import("../bundles/types.ts").BundleRef;
 
     // Spawn the bundle process with plain server name in workspace registry
     const entry = await installBundleInWorkspace(wsId, bundleRef, registry, ctx.configDir, {
@@ -1052,22 +1062,24 @@ async function installBundleInWorkspaceViaCtx(
       entry.dataDir,
     );
 
-    // Add bundle to workspace.json
+    // Add bundle to workspace.json (preserving pinned version if supplied).
     const ws = await ctx.workspaceStore.get(wsId);
     if (ws) {
       const already = ws.bundles.some((b) => "name" in b && b.name === name);
       if (!already) {
+        const entryToPersist = version ? { name, version } : { name };
         await ctx.workspaceStore.update(wsId, {
-          bundles: [...ws.bundles, { name }],
+          bundles: [...ws.bundles, entryToPersist],
         });
       }
     }
 
     const tools = await registry.availableTools();
     const count = tools.filter((t) => t.name.startsWith(`${entry.serverName}__`)).length;
+    const versionSuffix = version ? `@${version}` : "";
     return {
       content: textContent(
-        `Installed ${name} in workspace ${wsId}. ${count} tools now available from ${entry.serverName}.`,
+        `Installed ${name}${versionSuffix} in workspace ${wsId}. ${count} tools now available from ${entry.serverName}.`,
       ),
       isError: false,
     };

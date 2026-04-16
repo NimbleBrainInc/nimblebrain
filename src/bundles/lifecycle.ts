@@ -86,6 +86,7 @@ export class BundleLifecycleManager {
     name: string,
     registry: ToolRegistry,
     env?: Record<string, string>,
+    version?: string,
   ): Promise<BundleInstance> {
     const serverName = deriveServerName(name);
     validateServerName(serverName);
@@ -111,7 +112,9 @@ export class BundleLifecycleManager {
 
     const nbWorkDir = process.env.NB_WORK_DIR ?? join(homedir(), ".nimblebrain");
     const bundleDataDir = join(nbWorkDir, "data", deriveBundleDataDir(name));
-    const server = await mpak.prepareServer({ name }, { workspaceDir: bundleDataDir });
+    const server = await mpak.prepareServer(version ? { name, version } : { name }, {
+      workspaceDir: bundleDataDir,
+    });
 
     const source = new McpSource(serverName, {
       type: "stdio",
@@ -146,6 +149,7 @@ export class BundleLifecycleManager {
     // Step 7 — Atomic config write
     if (this.configPath) {
       const entry: Record<string, unknown> = { name };
+      if (version) entry.version = version;
       if (instance.trustScore != null) entry.trustScore = instance.trustScore;
       if (instance.ui) entry.ui = instance.ui;
       atomicConfigAdd(this.configPath, entry);

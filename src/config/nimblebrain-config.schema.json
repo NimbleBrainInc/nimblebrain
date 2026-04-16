@@ -88,6 +88,10 @@
             "type": "string",
             "description": "Bundle name from mpak registry (e.g., @nimblebraininc/echo)."
           },
+          "version": {
+            "type": "string",
+            "description": "Optional registry version to pin (e.g., '0.2.0'). When omitted, the latest published version is resolved at startup. Ignored for path-based and url-based bundles."
+          },
           "path": { "type": "string", "description": "Local filesystem path to bundle directory." },
           "url": { "type": "string", "description": "Remote MCP server URL." },
           "serverName": {

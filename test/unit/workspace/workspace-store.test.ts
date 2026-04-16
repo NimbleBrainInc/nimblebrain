@@ -242,4 +242,27 @@ describe("WorkspaceStore extended fields", () => {
     const loaded = await store.get(ws.id);
     expect(loaded!.skillDirs).toEqual(skillDirs);
   });
+
+  test("workspace with pinned bundle version round-trips through disk", async () => {
+    const ws = await store.create("Pin Team");
+    const bundles: Workspace["bundles"] = [
+      { name: "@nimblebraininc/echo", version: "0.3.1" },
+      { name: "@nimblebraininc/no-pin" },
+    ];
+
+    const updated = await store.update(ws.id, { bundles });
+    expect(updated).not.toBeNull();
+    expect(updated!.bundles).toEqual(bundles);
+
+    // Re-read to confirm persistence survives serialization.
+    const loaded = await store.get(ws.id);
+    expect(loaded!.bundles).toEqual(bundles);
+
+    // The unpinned entry must NOT be silently coerced to include a version.
+    const unpinned = loaded!.bundles.find(
+      (b): b is { name: string } => "name" in b && b.name === "@nimblebraininc/no-pin",
+    );
+    expect(unpinned).toBeDefined();
+    expect((unpinned as { version?: string }).version).toBeUndefined();
+  });
 });
