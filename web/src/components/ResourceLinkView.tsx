@@ -16,14 +16,13 @@ export interface ResourceLinkViewProps {
 }
 
 /**
- * Extract the opaque path used to fetch a resource_link URI via the platform's
- * `/v1/apps/{appName}/resources/{path}` route. The scheme and authority are
- * discarded (the app binds the URI space); only `{authority}/{path}` is kept.
+ * The full URI is passed through (URL-encoded) as the path segment so the
+ * server can resolve MCP resources that use custom schemes like
+ * `collateral://`. Legacy `ui://appName/path` URIs still work because the
+ * server falls back to the ui:// construction when no scheme is present.
  */
 function extractResourcePath(uri: string): string {
-  const match = uri.match(/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\/(.+)$/);
-  if (match) return match[1]!;
-  return uri.replace(/^[a-zA-Z][a-zA-Z0-9+.-]*:/, "");
+  return encodeURIComponent(uri);
 }
 
 function formatBytes(size: number): string {

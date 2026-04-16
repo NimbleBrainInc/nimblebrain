@@ -50,3 +50,4 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
 # Claude Code internal config (developer tooling, not part of OSS repo)
 .claude
+.environments/collateral-test/
