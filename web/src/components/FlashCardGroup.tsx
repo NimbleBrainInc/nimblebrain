@@ -245,12 +245,7 @@ interface GroupedFlashCardProps {
   uniqueNames: string[];
 }
 
-function GroupedFlashCard({
-  toolCalls,
-  visuals,
-  groupName,
-  uniqueNames,
-}: GroupedFlashCardProps) {
+function GroupedFlashCard({ toolCalls, visuals, groupName, uniqueNames }: GroupedFlashCardProps) {
   const [expanded, setExpanded] = useState(false);
 
   const anyRunning = visuals.some((v) => v.status === "running");
@@ -281,9 +276,7 @@ function GroupedFlashCard({
           <span className="text-[13px] text-muted-foreground truncate">
             {label}
             {errorCount > 0 && (
-              <span className="text-destructive ml-1.5 text-[11px]">
-                ({errorCount} failed)
-              </span>
+              <span className="text-destructive ml-1.5 text-[11px]">({errorCount} failed)</span>
             )}
           </span>
           {isMixed && (
@@ -307,12 +300,7 @@ function GroupedFlashCard({
       {expanded && (
         <div className="border-t border-border max-h-64 overflow-y-auto">
           {toolCalls.map((tc, i) => (
-            <GroupedRow
-              key={tc.id}
-              toolCall={tc}
-              visual={visuals[i]}
-              showName={isMixed}
-            />
+            <GroupedRow key={tc.id} toolCall={tc} visual={visuals[i]} showName={isMixed} />
           ))}
         </div>
       )}

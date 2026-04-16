@@ -40,10 +40,7 @@ export function partitionToolCalls(toolCalls: ToolCallDisplay[]): RenderUnit[] {
   while (i < n) {
     const currentName = stripServerPrefix(toolCalls[i].name);
     let runEnd = i + 1;
-    while (
-      runEnd < n &&
-      stripServerPrefix(toolCalls[runEnd].name) === currentName
-    ) {
+    while (runEnd < n && stripServerPrefix(toolCalls[runEnd].name) === currentName) {
       runEnd++;
     }
     const runLength = runEnd - i;
@@ -75,9 +72,7 @@ export function partitionToolCalls(toolCalls: ToolCallDisplay[]): RenderUnit[] {
       if (singleCount >= GROUP_THRESHOLD) {
         const groupCalls = units.slice(j, k).flatMap((u) => u.calls);
         const groupIdx = units.slice(j, k).flatMap((u) => u.indexes);
-        const names = [
-          ...new Set(groupCalls.map((c) => stripServerPrefix(c.name))),
-        ];
+        const names = [...new Set(groupCalls.map((c) => stripServerPrefix(c.name)))];
         coalesced.push({
           kind: "group",
           calls: groupCalls,
