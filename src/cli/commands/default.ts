@@ -104,48 +104,7 @@ async function runHeadless(
   let conversationId = resumeId;
   let hasError = false;
 
-  // Read all stdin input. Use event-based approach with idle timeout fallback.
-  // Bun may not fire 'end' on piped stdin after data events, so we detect EOF
-  // by idle timeout when stdin is not a TTY. A hard timeout prevents the process
-  // from spinning forever if neither 'end' nor idle timeout fires.
-  const fullInput = await new Promise<string>((resolve) => {
-    const chunks: string[] = [];
-    let idleTimer: ReturnType<typeof setTimeout> | null = null;
-    let hardTimer: ReturnType<typeof setTimeout> | null = null;
-    const IDLE_MS = 100; // If no data for 100ms after last chunk, assume EOF
-    const HARD_TIMEOUT_MS = 30_000; // Absolute cap — resolve with whatever we have
-
-    let finished = false;
-    const finish = () => {
-      if (finished) return;
-      finished = true;
-      if (idleTimer) clearTimeout(idleTimer);
-      if (hardTimer) clearTimeout(hardTimer);
-      process.stdin.removeAllListeners("data");
-      process.stdin.removeAllListeners("end");
-      resolve(chunks.join(""));
-    };
-
-    const resetIdle = () => {
-      if (idleTimer) clearTimeout(idleTimer);
-      idleTimer = setTimeout(finish, IDLE_MS);
-    };
-
-    hardTimer = setTimeout(() => {
-      log.info("[headless] stdin hard timeout reached, proceeding with buffered input");
-      finish();
-    }, HARD_TIMEOUT_MS);
-
-    process.stdin.setEncoding("utf-8");
-    process.stdin.on("data", (chunk: string) => {
-      chunks.push(chunk);
-      resetIdle();
-    });
-    process.stdin.on("end", finish);
-    process.stdin.resume();
-    // Start idle timer — handles case where stdin is already at EOF (no data, no end event)
-    resetIdle();
-  });
+  const fullInput = await Bun.stdin.text();
   const inputLines = fullInput.split("\n");
 
   for (const line of inputLines) {
