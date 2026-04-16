@@ -30,15 +30,15 @@ export class PlacementRegistry {
   }
 
   /**
-   * Remove placements for a server. If wsId is provided, only removes entries
-   * matching that workspace; otherwise only removes global entries (wsId
-   * undefined). Passing `"*"` removes every entry for the server across all
-   * workspaces — used for full-bundle uninstalls.
+   * Remove placements for (serverName, wsId). Both undefined match: passing
+   * no wsId removes only global entries, passing a wsId removes only that
+   * workspace's entries. Entries for other workspaces are untouched — this
+   * is what prevents a second workspace's install from wiping the first's
+   * nav.
    */
-  unregister(serverName: string, wsId?: string | "*"): void {
+  unregister(serverName: string, wsId?: string): void {
     this.entries = this.entries.filter((e) => {
       if (e.serverName !== serverName) return true;
-      if (wsId === "*") return false;
       return e.wsId !== wsId;
     });
   }

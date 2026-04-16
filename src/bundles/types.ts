@@ -179,8 +179,13 @@ export interface BundleInstance {
   protected: boolean;
   /** Whether this is an Upjack app or plain MCP server. */
   type: "upjack" | "plain";
-  /** Workspace ID this instance belongs to (undefined = global/protected). */
-  wsId?: string;
+  /**
+   * Workspace that owns this instance. Required — every bundle instance
+   * belongs to exactly one workspace. Global/platform sources are
+   * represented as InlineSource, not BundleInstance, so they never reach
+   * this type.
+   */
+  wsId: string;
   /** Absolute path to the entity data root (e.g., {wsDir}/data/{bundle}/apps/crm/data). Resolved at startup. */
   entityDataRoot?: string;
 }
