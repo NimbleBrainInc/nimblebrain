@@ -18,6 +18,12 @@ COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile --production --ignore-scripts
 
 COPY src/ src/
+
+# Build bundle UIs (dist/ is gitignored, must build in container)
+RUN for ui in src/bundles/*/ui; do \
+      [ -f "$ui/package.json" ] && (cd "$ui" && bun install && bun run build && rm -rf node_modules); \
+    done
+
 RUN chown -R nimblebrain:nimblebrain /app
 
 USER 1000

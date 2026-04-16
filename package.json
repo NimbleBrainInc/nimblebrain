@@ -47,6 +47,7 @@
     "dev:web": "cd web && bun run dev",
     "dev:tui": "bun run src/cli/index.ts -c .nimblebrain/nimblebrain.json",
     "start": "bun run src/cli/index.ts serve",
+    "build:bundles": "for ui in src/bundles/*/ui; do [ -f \"$ui/package.json\" ] && (cd \"$ui\" && bun install && bun run build); done",
     "test:unit": "bun test test/unit/",
     "test:integration": "bun test test/integration/",
     "test": "bun test test/unit/ test/integration/",
