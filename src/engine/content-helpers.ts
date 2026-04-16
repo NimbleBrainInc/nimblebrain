@@ -1,5 +1,37 @@
 import type { ContentBlock, TextContent } from "./types.ts";
 
+/** A resource_link content block surfaced from an MCP tool result. */
+export interface ResourceLinkInfo {
+  uri: string;
+  name?: string;
+  mimeType?: string;
+  description?: string;
+}
+
+/**
+ * Collect `resource_link` content blocks from a ContentBlock array.
+ *
+ * Per the MCP spec (2025-11-25), tools may return `resource_link` blocks that
+ * point to resources fetched separately via `resources/read`. We surface the
+ * bare metadata so UIs can render viewers without pulling the full payload
+ * through the agent loop.
+ */
+export function extractResourceLinks(blocks: ContentBlock[]): ResourceLinkInfo[] {
+  const links: ResourceLinkInfo[] = [];
+  for (const block of blocks) {
+    if ((block as { type?: string }).type !== "resource_link") continue;
+    const b = block as Record<string, unknown>;
+    const uri = typeof b.uri === "string" ? b.uri : undefined;
+    if (!uri) continue;
+    const link: ResourceLinkInfo = { uri };
+    if (typeof b.name === "string") link.name = b.name;
+    if (typeof b.mimeType === "string") link.mimeType = b.mimeType;
+    if (typeof b.description === "string") link.description = b.description;
+    links.push(link);
+  }
+  return links;
+}
+
 /** Wrap a plain string in a single TextContent block. */
 export function textContent(text: string): ContentBlock[] {
   return [{ type: "text" as const, text }];
