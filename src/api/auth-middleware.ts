@@ -168,18 +168,12 @@ export async function resolveWorkspace(
     throw new WorkspaceResolutionError("Invalid workspace ID format.", 400);
   }
 
-  // Validate membership
+  // Validate membership. Unauthorized access and non-existence are reported identically
+  // — same message, same status — so callers cannot probe for workspace existence.
   const workspace = await workspaceStore.get(workspaceId);
-  if (!workspace) {
-    throw new WorkspaceResolutionError(`Workspace "${workspaceId}" not found.`, 400);
-  }
-
-  const isMember = workspace.members.some((m) => m.userId === identity.id);
-  if (!isMember) {
-    throw new WorkspaceResolutionError(
-      `Access denied: not a member of workspace "${workspaceId}".`,
-      403,
-    );
+  const isMember = workspace?.members.some((m) => m.userId === identity.id) ?? false;
+  if (!workspace || !isMember) {
+    throw new WorkspaceResolutionError("Access denied to workspace.", 403);
   }
 
   return workspaceId;
