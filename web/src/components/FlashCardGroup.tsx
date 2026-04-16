@@ -1,11 +1,10 @@
 import { Check, ChevronDown, Copy } from "lucide-react";
-import { type MouseEvent, useCallback, useState } from "react";
+import { useCallback, useState } from "react";
 import type { ToolCallDisplay } from "../hooks/useChat";
 import type { VisualStatus } from "../hooks/useMinDisplayTime";
 import { useMinDisplayTime } from "../hooks/useMinDisplayTime";
 import { formatDuration, stripServerPrefix } from "../lib/format";
 import { partitionToolCalls } from "../lib/tool-grouping";
-import type { DisplayDetail } from "./ToolCallIndicator";
 
 /** Summarize tool input as a one-line preview (e.g., "query: SELECT * FROM...") */
 function summarizeInput(input: Record<string, unknown>): string | null {
@@ -54,6 +53,62 @@ function cardClass(status: "running" | "done" | "error"): string {
   return "flash-card";
 }
 
+// ─── Shared primitives ────────────────────────────────────────────
+
+/** Copy-to-clipboard state with a 1.5s "copied" flash. */
+function useCopyable(result: unknown): { copied: boolean; handleCopy: () => void } {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = useCallback(() => {
+    if (result == null) return;
+    navigator.clipboard.writeText(formatResult(result));
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  }, [result]);
+  return { copied, handleCopy };
+}
+
+/** Expandable result panel shared by both the standalone card and the grouped row. */
+function ToolResultPanel({ result, density }: { result: unknown; density: "card" | "row" }) {
+  const { copied, handleCopy } = useCopyable(result);
+  const containerClass =
+    density === "card" ? "border-t border-border" : "bg-muted/20 border-t border-border/60";
+  const headerPadding = density === "card" ? "px-3 py-1.5" : "px-3 py-1";
+  const preMaxH = density === "card" ? "max-h-48" : "max-h-40";
+  const preBg = density === "card" ? "bg-muted/30" : "";
+  const labelMuted = density === "card" ? "text-muted-foreground" : "text-muted-foreground/70";
+  const innerBorder = density === "card" ? "border-border" : "border-border/60";
+
+  return (
+    <div className={containerClass}>
+      <div className={`flex items-center justify-between ${headerPadding}`}>
+        <span className={`text-[10px] font-semibold ${labelMuted} uppercase tracking-wide`}>
+          Result
+        </span>
+        <button
+          type="button"
+          onClick={handleCopy}
+          className="text-[10px] text-primary hover:text-primary/80 transition-colors flex items-center gap-1"
+        >
+          {copied ? (
+            <>
+              <Check className="w-3 h-3" /> copied
+            </>
+          ) : (
+            <>
+              <Copy className="w-3 h-3" /> copy
+            </>
+          )}
+        </button>
+      </div>
+      <div className={`${preMaxH} w-0 min-w-full overflow-auto border-t ${innerBorder} ${preBg}`}>
+        <pre className="px-3 py-2 text-[11px] leading-relaxed font-mono text-muted-foreground whitespace-pre">
+          {formatResult(result)}
+        </pre>
+      </div>
+    </div>
+  );
+}
+
 // ─── Individual FlashCard ─────────────────────────────────────────
 
 interface FlashCardProps {
@@ -63,21 +118,7 @@ interface FlashCardProps {
 
 function FlashCard({ toolCall, visual }: FlashCardProps) {
   const [expanded, setExpanded] = useState(false);
-  const [copied, setCopied] = useState(false);
   const hasResult = toolCall.result != null;
-
-  const handleCopy = useCallback(
-    (e: MouseEvent) => {
-      e.stopPropagation();
-      if (toolCall.result != null) {
-        navigator.clipboard.writeText(formatResult(toolCall.result));
-        setCopied(true);
-        setTimeout(() => setCopied(false), 1500);
-      }
-    },
-    [toolCall.result],
-  );
-
   const inputPreview = toolCall.input ? summarizeInput(toolCall.input) : null;
 
   return (
@@ -85,6 +126,7 @@ function FlashCard({ toolCall, visual }: FlashCardProps) {
       <button
         type="button"
         onClick={() => hasResult && setExpanded((prev) => !prev)}
+        aria-expanded={hasResult ? expanded : undefined}
         className={`flex items-center gap-2 w-full text-left px-3 py-2 ${
           hasResult ? "cursor-pointer hover:bg-muted/50 transition-colors" : "cursor-default"
         }`}
@@ -112,35 +154,7 @@ function FlashCard({ toolCall, visual }: FlashCardProps) {
         )}
       </button>
 
-      {expanded && hasResult && (
-        <div className="border-t border-border">
-          <div className="flex items-center justify-between px-3 py-1.5">
-            <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">
-              Result
-            </span>
-            <button
-              type="button"
-              onClick={handleCopy}
-              className="text-[10px] text-primary hover:text-primary/80 transition-colors flex items-center gap-1"
-            >
-              {copied ? (
-                <>
-                  <Check className="w-3 h-3" /> copied
-                </>
-              ) : (
-                <>
-                  <Copy className="w-3 h-3" /> copy
-                </>
-              )}
-            </button>
-          </div>
-          <div className="border-t border-border bg-muted/30 max-h-48 w-0 min-w-full overflow-auto">
-            <pre className="px-3 py-2 text-[11px] leading-relaxed font-mono text-muted-foreground whitespace-pre">
-              {formatResult(toolCall.result)}
-            </pre>
-          </div>
-        </div>
-      )}
+      {expanded && hasResult && <ToolResultPanel result={toolCall.result} density="card" />}
     </div>
   );
 }
@@ -155,29 +169,17 @@ interface GroupedRowProps {
 
 function GroupedRow({ toolCall, visual, showName }: GroupedRowProps) {
   const [expanded, setExpanded] = useState(false);
-  const [copied, setCopied] = useState(false);
   const hasResult = toolCall.result != null;
   const inputPreview = toolCall.input ? summarizeInput(toolCall.input) : null;
   const label = inputPreview ?? toolCall.id;
   const name = stripServerPrefix(toolCall.name);
-
-  const handleCopy = useCallback(
-    (e: MouseEvent) => {
-      e.stopPropagation();
-      if (toolCall.result != null) {
-        navigator.clipboard.writeText(formatResult(toolCall.result));
-        setCopied(true);
-        setTimeout(() => setCopied(false), 1500);
-      }
-    },
-    [toolCall.result],
-  );
 
   return (
     <div className="border-t border-border/60 first:border-t-0">
       <button
         type="button"
         onClick={() => hasResult && setExpanded((prev) => !prev)}
+        aria-expanded={hasResult ? expanded : undefined}
         className={`flex items-center gap-2 w-full text-left px-3 py-1.5 ${
           hasResult ? "cursor-pointer hover:bg-muted/40 transition-colors" : "cursor-default"
         }`}
@@ -203,35 +205,7 @@ function GroupedRow({ toolCall, visual, showName }: GroupedRowProps) {
         )}
       </button>
 
-      {expanded && hasResult && (
-        <div className="bg-muted/20 border-t border-border/60">
-          <div className="flex items-center justify-between px-3 py-1">
-            <span className="text-[10px] font-semibold text-muted-foreground/70 uppercase tracking-wide">
-              Result
-            </span>
-            <button
-              type="button"
-              onClick={handleCopy}
-              className="text-[10px] text-primary hover:text-primary/80 transition-colors flex items-center gap-1"
-            >
-              {copied ? (
-                <>
-                  <Check className="w-3 h-3" /> copied
-                </>
-              ) : (
-                <>
-                  <Copy className="w-3 h-3" /> copy
-                </>
-              )}
-            </button>
-          </div>
-          <div className="max-h-40 w-0 min-w-full overflow-auto border-t border-border/60">
-            <pre className="px-3 py-2 text-[11px] leading-relaxed font-mono text-muted-foreground whitespace-pre">
-              {formatResult(toolCall.result)}
-            </pre>
-          </div>
-        </div>
-      )}
+      {expanded && hasResult && <ToolResultPanel result={toolCall.result} density="row" />}
     </div>
   );
 }
@@ -241,11 +215,13 @@ function GroupedRow({ toolCall, visual, showName }: GroupedRowProps) {
 interface GroupedFlashCardProps {
   toolCalls: ToolCallDisplay[];
   visuals: VisualStatus[];
-  groupName: string; // tool name if homogeneous, or "__mixed__"
-  uniqueNames: string[];
+  /** Stripped tool name (homogeneous) or null for a mixed group. */
+  name: string | null;
+  /** Only set for mixed groups — the distinct tool names to show as a subtitle. */
+  uniqueNames: string[] | null;
 }
 
-function GroupedFlashCard({ toolCalls, visuals, groupName, uniqueNames }: GroupedFlashCardProps) {
+function GroupedFlashCard({ toolCalls, visuals, name, uniqueNames }: GroupedFlashCardProps) {
   const [expanded, setExpanded] = useState(false);
 
   const anyRunning = visuals.some((v) => v.status === "running");
@@ -259,16 +235,15 @@ function GroupedFlashCard({ toolCalls, visuals, groupName, uniqueNames }: Groupe
       ? "error"
       : "done";
 
-  const isMixed = groupName === "__mixed__";
-  const label = isMixed
-    ? `${count} tool calls`
-    : `${count} ${groupName} call${count !== 1 ? "s" : ""}`;
+  const isMixed = name === null;
+  const label = isMixed ? `${count} tool calls` : `${count} ${name} call${count !== 1 ? "s" : ""}`;
 
   return (
     <div className={cardClass(aggregateStatus)}>
       <button
         type="button"
         onClick={() => setExpanded((prev) => !prev)}
+        aria-expanded={expanded}
         className="flex items-center gap-2 w-full text-left px-3 py-2 cursor-pointer hover:bg-muted/50 transition-colors"
       >
         <div className={dotClass(aggregateStatus)} />
@@ -279,7 +254,7 @@ function GroupedFlashCard({ toolCalls, visuals, groupName, uniqueNames }: Groupe
               <span className="text-destructive ml-1.5 text-[11px]">({errorCount} failed)</span>
             )}
           </span>
-          {isMixed && (
+          {isMixed && uniqueNames && (
             <span className="text-[11px] text-muted-foreground/50 truncate font-mono">
               {uniqueNames.join(", ")}
             </span>
@@ -312,13 +287,12 @@ function GroupedFlashCard({ toolCalls, visuals, groupName, uniqueNames }: Groupe
 
 interface FlashCardGroupProps {
   toolCalls: ToolCallDisplay[];
-  displayDetail: DisplayDetail;
 }
 
-export function FlashCardGroup({ toolCalls, displayDetail }: FlashCardGroupProps) {
+export function FlashCardGroup({ toolCalls }: FlashCardGroupProps) {
   const visualStatuses = useMinDisplayTime(toolCalls);
 
-  if (displayDetail === "quiet" || toolCalls.length === 0) return null;
+  if (toolCalls.length === 0) return null;
 
   const units = partitionToolCalls(toolCalls);
 
@@ -326,19 +300,25 @@ export function FlashCardGroup({ toolCalls, displayDetail }: FlashCardGroupProps
     <div className="flex flex-col gap-2 w-full min-w-0">
       {units.map((unit, idx) => {
         if (unit.kind === "single") {
-          const tc = unit.calls[0];
-          const visual = visualStatuses[unit.indexes[0]];
-          return <FlashCard key={tc.id} toolCall={tc} visual={visual} />;
+          return (
+            <FlashCard
+              key={unit.call.id}
+              toolCall={unit.call}
+              visual={visualStatuses[unit.index]}
+            />
+          );
         }
         const visuals = unit.indexes.map((i) => visualStatuses[i]);
+        const name = unit.kind === "homogeneous" ? unit.name : null;
+        const uniqueNames = unit.kind === "mixed" ? unit.uniqueNames : null;
         return (
           <GroupedFlashCard
             // biome-ignore lint/suspicious/noArrayIndexKey: units are positionally stable within a message block
             key={`group-${idx}-${unit.calls[0].id}`}
             toolCalls={unit.calls}
             visuals={visuals}
-            groupName={unit.groupName!}
-            uniqueNames={unit.uniqueNames ?? []}
+            name={name}
+            uniqueNames={uniqueNames}
           />
         );
       })}

@@ -3,16 +3,23 @@ import { stripServerPrefix } from "./format";
 
 export const GROUP_THRESHOLD = 3;
 
-export interface RenderUnit {
-  kind: "single" | "group";
-  calls: ToolCallDisplay[];
-  /** Indexes into the original toolCalls array (for visual-status lookup). */
-  indexes: number[];
-  /** Tool name for homogeneous groups, "__mixed__" for mixed groups. Unset for singles. */
-  groupName?: string;
-  /** Distinct tool names present in the group. Unset for singles. */
-  uniqueNames?: string[];
-}
+/** A contiguous slice of tool calls that renders as one unit in the chat. */
+export type RenderUnit =
+  | { kind: "single"; call: ToolCallDisplay; index: number }
+  | {
+      kind: "homogeneous";
+      calls: ToolCallDisplay[];
+      indexes: number[];
+      /** Stripped tool name, shared by every call in the group. */
+      name: string;
+    }
+  | {
+      kind: "mixed";
+      calls: ToolCallDisplay[];
+      indexes: number[];
+      /** Distinct stripped tool names present in the group, in first-seen order. */
+      uniqueNames: string[];
+    };
 
 /**
  * Partition a batch of tool calls into render units.
@@ -32,8 +39,8 @@ export interface RenderUnit {
 export function partitionToolCalls(toolCalls: ToolCallDisplay[]): RenderUnit[] {
   if (toolCalls.length === 0) return [];
 
-  // Pass 1: detect homogeneous runs.
-  const units: RenderUnit[] = [];
+  // Pass 1: detect homogeneous runs, emit singles for anything below threshold.
+  const pass1: RenderUnit[] = [];
   const n = toolCalls.length;
   let i = 0;
 
@@ -46,49 +53,44 @@ export function partitionToolCalls(toolCalls: ToolCallDisplay[]): RenderUnit[] {
     const runLength = runEnd - i;
 
     if (runLength >= GROUP_THRESHOLD) {
-      units.push({
-        kind: "group",
+      pass1.push({
+        kind: "homogeneous",
         calls: toolCalls.slice(i, runEnd),
         indexes: Array.from({ length: runLength }, (_, k) => i + k),
-        groupName: currentName,
-        uniqueNames: [currentName],
+        name: currentName,
       });
     } else {
       for (let k = i; k < runEnd; k++) {
-        units.push({ kind: "single", calls: [toolCalls[k]], indexes: [k] });
+        pass1.push({ kind: "single", call: toolCalls[k], index: k });
       }
     }
     i = runEnd;
   }
 
   // Pass 2: coalesce runs of singles into mixed groups.
-  const coalesced: RenderUnit[] = [];
+  const out: RenderUnit[] = [];
   let j = 0;
-  while (j < units.length) {
-    if (units[j].kind === "single") {
-      let k = j;
-      while (k < units.length && units[k].kind === "single") k++;
-      const singleCount = k - j;
-      if (singleCount >= GROUP_THRESHOLD) {
-        const groupCalls = units.slice(j, k).flatMap((u) => u.calls);
-        const groupIdx = units.slice(j, k).flatMap((u) => u.indexes);
-        const names = [...new Set(groupCalls.map((c) => stripServerPrefix(c.name)))];
-        coalesced.push({
-          kind: "group",
-          calls: groupCalls,
-          indexes: groupIdx,
-          groupName: "__mixed__",
-          uniqueNames: names,
-        });
-      } else {
-        for (let m = j; m < k; m++) coalesced.push(units[m]);
-      }
-      j = k;
-    } else {
-      coalesced.push(units[j]);
+  while (j < pass1.length) {
+    if (pass1[j].kind !== "single") {
+      out.push(pass1[j]);
       j++;
+      continue;
     }
+
+    let k = j;
+    while (k < pass1.length && pass1[k].kind === "single") k++;
+    const runSingles = pass1.slice(j, k) as Extract<RenderUnit, { kind: "single" }>[];
+
+    if (runSingles.length >= GROUP_THRESHOLD) {
+      const calls = runSingles.map((u) => u.call);
+      const indexes = runSingles.map((u) => u.index);
+      const uniqueNames = [...new Set(calls.map((c) => stripServerPrefix(c.name)))];
+      out.push({ kind: "mixed", calls, indexes, uniqueNames });
+    } else {
+      out.push(...runSingles);
+    }
+    j = k;
   }
 
-  return coalesced;
+  return out;
 }

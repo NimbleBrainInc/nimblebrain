@@ -319,10 +319,9 @@ export function MessageList({
                           return (
                             // biome-ignore lint/suspicious/noArrayIndexKey: blocks are append-only and don't reorder
                             <div key={blockIdx} className="flex flex-col gap-3">
-                              <FlashCardGroup
-                                toolCalls={block.toolCalls}
-                                displayDetail={displayDetail}
-                              />
+                              {displayDetail !== "quiet" && (
+                                <FlashCardGroup toolCalls={block.toolCalls} />
+                              )}
                               {blockWidgets.map((tc) => {
                                 const match = tc.resourceUri!.match(/^ui:\/\/[^/]+\/(.+)$/);
                                 const resourcePath = match ? match[1] : "primary";
