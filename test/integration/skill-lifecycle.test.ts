@@ -231,8 +231,10 @@ describe("skill lifecycle (end-to-end)", () => {
 			},
 		});
 		expect(createResult.isError).toBe(true);
-		expect(createResult.content).toContain("Validation failed");
-		expect(createResult.content).toContain("Priority");
+		// Schema-level validation at the InlineSource layer catches this before
+		// the handler runs (schema declares minimum: 11).
+		expect(createResult.content).toContain("priority");
+		expect(createResult.content).toContain(">= 11");
 
 		// Verify no file was created
 		const skillFilePath = join(workDir, "skills", "bad-priority.md");
