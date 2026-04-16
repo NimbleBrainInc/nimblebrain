@@ -1,7 +1,7 @@
 {
   "name": "nimblebrain",
   "version": "0.2.0",
-  "description": "Agent-native runtime for composable MCP orchestration, skill-driven prompt composition, and multi-agent delegation",
+  "description": "Self-hosted platform for MCP Apps and agent automations — tools, interactive UIs, scheduled runs, multi-agent delegation",
   "license": "Apache-2.0",
   "author": "NimbleBrain, Inc. <oss@nimblebrain.ai>",
   "repository": {

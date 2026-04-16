@@ -5,7 +5,9 @@
 [![Bun](https://img.shields.io/badge/runtime-Bun-f9f1e1?logo=bun)](https://bun.sh)
 [![MCP](https://img.shields.io/badge/protocol-MCP-8A2BE2)](https://modelcontextprotocol.io)
 
-A composable MCP orchestrator and agent runtime. Aggregates multiple MCP servers into a unified tool namespace, renders interactive [MCP Apps](https://modelcontextprotocol.io/extensions/apps/overview) with full [ext-apps](https://apps.extensions.modelcontextprotocol.io/api/) host support, and exposes the entire platform as an MCP server via Streamable HTTP. Ships as container images for portable self-hosted deployment.
+A self-hosted platform for [MCP Apps](https://modelcontextprotocol.io/extensions/apps/overview) and agent automations. Install an MCP bundle and you get more than tools — you get an interactive UI in the sidebar with live agent-UI data sync, and the ability to run the agent on demand or on a cron schedule. Full [ext-apps](https://apps.extensions.modelcontextprotocol.io/api/) host support on top of an agentic loop with skill-driven prompt composition and multi-agent delegation.
+
+Ships as container images. Also exposes itself as an MCP server via Streamable HTTP so external MCP clients can consume the aggregated toolset.
 
 ## Quick Start
 
@@ -182,7 +184,7 @@ Bundles are [MCPB](https://github.com/modelcontextprotocol/mcpb)-format MCP serv
 
 Local and named bundles spawn as subprocesses communicating via stdio (MCP JSON-RPC 2.0). Remote bundles connect over HTTP. All three types are aggregated into the same unified tool namespace by the `ToolRegistry`.
 
-The default bundle is `@nimblebraininc/bash` (shell access), which is directly surfaced in the tool list. All other bundle tools are accessed via `nb__execute_tool` proxy. Disable defaults with `noDefaultBundles: true`.
+No MCP bundles are installed by default. Platform capabilities (home, conversations, files, settings, usage, automations) are built in as inline tool sources (see `src/tools/platform/`). Install bundles explicitly via the mpak registry or a local path. Tool visibility follows the tiered surfacing rules described under [Tiered Tool Surfacing](#tiered-tool-surfacing).
 
 ## Configuration
 
@@ -281,11 +283,10 @@ import { Runtime } from "nimblebrain";
 
 const runtime = await Runtime.start({
   model: { provider: "anthropic" },
-  bundles: [{ name: "@nimblebraininc/bash" }],
   store: { type: "memory" },
 });
 
-const result = await runtime.chat({ message: "List files in the current directory" });
+const result = await runtime.chat({ message: "What can you help me with?" });
 console.log(result.response);
 
 await runtime.shutdown();
@@ -540,7 +541,7 @@ Placements with a `route` field get React Router routes in `App.tsx`. Routes fro
 
 ### Configuration Reference
 
-Config file: `nimblebrain.json`. Validated at startup against `src/config/nimblebrain.schema.json` (JSON Schema draft-07, AJV). Unknown keys warn, structural errors throw.
+Config file: `nimblebrain.json`. Validated at startup against `src/config/nimblebrain-config.schema.json` (JSON Schema draft-07, AJV). Unknown keys warn, structural errors throw.
 
 **Config resolution** (when no `--config` flag):
 1. `--workdir <dir>` → `<dir>/nimblebrain.json`
@@ -630,7 +631,7 @@ These are non-negotiable patterns. Violating them causes production bugs:
 | Max input tokens | 500,000 |
 | Max output tokens | 16,384 |
 | Max history messages | 40 |
-| Default bundles | `@nimblebraininc/bash` |
+| Default bundles | none (platform capabilities are built in) |
 | Work directory | `~/.nimblebrain` |
 | Conversation store (CLI) | JSONL in `~/.nimblebrain/conversations/` |
 | Conversation store (programmatic) | In-memory |

@@ -1,6 +1,6 @@
 # NimbleBrain
 
-Agent-native runtime on Bun. Agentic loop + MCP bundle management + skill-driven prompt composition + HTTP API + web client.
+Self-hosted platform for MCP Apps and agent automations, built on Bun. Agentic loop + MCP bundle management + interactive UI host + cron-scheduled automations + skill-driven prompt composition + HTTP API + web client.
 
 ## Build & Verify
 
@@ -92,7 +92,7 @@ web/               Vite + React + TypeScript SPA (separate package.json)
 | Max iterations | 10 (hard cap: 25) |
 | Max input tokens | 500,000 |
 | Max output tokens | 16,384 |
-| Default bundles | `@nimblebraininc/bash` |
+| Default bundles | none (platform capabilities are built in) |
 | Work directory | `~/.nimblebrain` |
 | API port | 27247 |
 | Web port | 27246 |
