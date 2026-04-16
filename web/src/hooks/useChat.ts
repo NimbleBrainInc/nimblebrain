@@ -61,6 +61,13 @@ export interface ToolCallDisplay {
   ok?: boolean;
   ms?: number;
   resourceUri?: string;
+  /** MCP `resource_link` blocks returned by the tool result, if any. */
+  resourceLinks?: Array<{
+    uri: string;
+    name?: string;
+    mimeType?: string;
+    description?: string;
+  }>;
   result?: ToolResultForUI;
   input?: Record<string, unknown>;
   appName?: string;
@@ -163,6 +170,10 @@ const updateTool =
           ok: evt.ok,
           ms: evt.ms,
           resourceUri: tc.resourceUri ?? evt.resourceUri,
+          resourceLinks:
+            evt.resourceLinks != null && evt.resourceLinks.length > 0
+              ? evt.resourceLinks
+              : tc.resourceLinks,
           result: evt.result != null ? (evt.result as ToolResultForUI) : tc.result,
         }
       : tc;
@@ -506,6 +517,7 @@ export function useChat(initialConversationId?: string, currentUserId?: string):
         if (m.metadata?.toolCalls && m.metadata.toolCalls.length > 0) {
           msg.toolCalls = m.metadata.toolCalls.map((tc) => {
             const separatorIdx = tc.name.indexOf("__");
+            const raw = tc as Record<string, unknown>;
             return {
               id: tc.id,
               name: tc.name,
@@ -513,7 +525,8 @@ export function useChat(initialConversationId?: string, currentUserId?: string):
               ok: tc.ok,
               ms: tc.ms,
               result: wrapStringResult(tc.output, !tc.ok),
-              resourceUri: (tc as Record<string, unknown>).resourceUri as string | undefined,
+              resourceUri: raw.resourceUri as string | undefined,
+              resourceLinks: raw.resourceLinks as ToolCallDisplay["resourceLinks"],
               appName: separatorIdx !== -1 ? tc.name.slice(0, separatorIdx) : undefined,
             };
           });

@@ -46,7 +46,13 @@ export function InlineAppView({ appName, resourceUri, toolResult }: InlineAppVie
 
       try {
         const path = resourceUri.replace(/^ui:\/\//, "");
-        const html = await getResources(appName, path);
+        const resource = await getResources(appName, path);
+        if (resource.kind !== "text") {
+          throw new Error(
+            `Expected HTML for inline app view, got ${resource.mimeType || "binary"} content`,
+          );
+        }
+        const html = resource.body;
 
         if (cancelled || !container) return;
 

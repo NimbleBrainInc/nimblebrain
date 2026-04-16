@@ -134,8 +134,45 @@ export class ApiClientError extends Error {
 // Resources & Tools
 // ---------------------------------------------------------------------------
 
-/** Fetch a ui:// resource from an app. Returns raw HTML string. */
-export async function getResources(appName: string, path: string): Promise<string> {
+/**
+ * Discriminated union returned by {@link getResources}.
+ * Text-ish content types (`text/*`, `application/json`, `application/*+xml`, etc.)
+ * are decoded as UTF-8 strings; everything else is returned as a raw Blob so
+ * binary payloads (PDFs, images) aren't corrupted by UTF-8 decoding.
+ */
+export type ResourceResponse =
+  | { kind: "text"; mimeType: string; body: string }
+  | { kind: "blob"; mimeType: string; body: Blob };
+
+/** Whether a MIME type should be UTF-8 decoded instead of kept as binary. */
+export function isTextMimeType(mt: string): boolean {
+  const lower = mt.toLowerCase();
+  if (lower.startsWith("text/")) return true;
+  if (lower === "application/json" || lower.startsWith("application/json;")) return true;
+  // application/xml, application/xhtml+xml, application/ld+json, image/svg+xml, etc.
+  if (lower.includes("+xml") || lower.includes("+json")) return true;
+  if (lower === "application/javascript" || lower === "application/xml") return true;
+  return false;
+}
+
+/**
+ * Convert a fetch Response into a {@link ResourceResponse} based on Content-Type.
+ * Extracted for testability; used by {@link getResources}.
+ */
+export async function parseResourceResponse(res: Response): Promise<ResourceResponse> {
+  const contentType = res.headers.get("Content-Type") ?? "application/octet-stream";
+  const mimeType = contentType.split(";")[0]!.trim() || "application/octet-stream";
+  if (isTextMimeType(mimeType)) {
+    return { kind: "text", mimeType, body: await res.text() };
+  }
+  return { kind: "blob", mimeType, body: await res.blob() };
+}
+
+/**
+ * Fetch a resource from an app. Returns text or blob depending on `Content-Type`.
+ * Callers that need HTML should use the `text` branch.
+ */
+export async function getResources(appName: string, path: string): Promise<ResourceResponse> {
   const res = await fetchWithRefresh(
     `${API_BASE}/v1/apps/${encodeURIComponent(appName)}/resources/${path}`,
     {
@@ -156,7 +193,7 @@ export async function getResources(appName: string, path: string): Promise<strin
     throw new ApiClientError(body.error, body.message, res.status);
   }
 
-  return res.text();
+  return parseResourceResponse(res);
 }
 
 /** Invoke a tool directly. */
