@@ -610,16 +610,18 @@ export class BundleLifecycleManager {
     serverName: string,
     bundleName: string,
     ref: BundleRef,
-    manifestMeta?: {
-      manifestName?: string;
-      version: string;
-      description?: string;
-      ui: BundleUiMeta | null;
-      briefing?: BriefingBlock | null;
-      type: "upjack" | "plain";
-      upjackNamespace?: string;
-    },
-    wsId?: string, // TODO: make required once all install paths are workspace-scoped
+    manifestMeta:
+      | {
+          manifestName?: string;
+          version: string;
+          description?: string;
+          ui: BundleUiMeta | null;
+          briefing?: BriefingBlock | null;
+          type: "upjack" | "plain";
+          upjackNamespace?: string;
+        }
+      | undefined,
+    wsId: string,
     dataDir?: string,
   ): void {
     // Resolve entity data root from dataDir + upjack namespace at seed time.
@@ -643,14 +645,9 @@ export class BundleLifecycleManager {
       briefing: manifestMeta?.briefing ?? null,
       protected: ref.protected ?? false,
       type: manifestMeta?.type ?? "plain",
-      ...(wsId !== undefined ? { wsId } : {}),
+      wsId,
       ...(entityDataRoot !== undefined ? { entityDataRoot } : {}),
     };
-    if (!wsId) {
-      throw new Error(
-        `seedInstance requires wsId for "${serverName}". Every bundle must be workspace-scoped.`,
-      );
-    }
     const key = `${serverName}|${wsId}`;
     this.instances.set(key, instance);
   }
