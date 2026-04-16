@@ -8,7 +8,9 @@ Self-hosted platform for MCP Apps and agent automations, built on Bun. Agentic l
 bun install                # Install dependencies
 bun run dev                # API (:27247) + Web (:27246) with watch/HMR
 bun run dev:api            # API only with auto-restart
-bun run verify             # Full CI parity: format:check → lint → typecheck → check:cycles → test → test:web → smoke
+bun run verify             # Full CI parity — runs every subscript below
+bun run verify:static      # format:check + lint + check + check:cycles
+bun run verify:test-unit   # test:unit + test:web
 
 bun run test               # Unit + integration tests (all)
 bun run test:unit          # Unit tests only (fast, ~10s)
@@ -22,7 +24,7 @@ cd web && bun install      # Web client dependencies (separate package.json)
 cd web && bun run build    # Web production build → web/dist/
 ```
 
-**Before opening a PR, run `bun run verify`.** It is the single command that must mirror CI (`.github/workflows/ci.yml`). If CI catches something `verify` didn't, the fix is to update `verify` — not to remember one more thing to run manually. Tool-level parity is the gate; discipline-level checklists are not.
+**Before opening a PR, run `bun run verify`.** It is the single command that mirrors CI, enforced by construction: `.github/workflows/ci.yml` invokes only `verify:*` subscripts (plus `test:integration` and `smoke`) — no inline check steps. To add or change a check, edit the matching subscript in `package.json`; CI picks it up automatically. If CI ever catches something `verify` didn't, the fix is to update the subscript, not the checklist. Tool-level parity is the gate; discipline-level rules are not.
 
 ## Conventions
 

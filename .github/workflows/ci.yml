@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main]
 
+# Each job runs a single `bun run verify:*` (or underlying) script. Do not
+# inline individual check steps here — package.json is the source of truth
+# for what "verify" means. If a job needs a new check, add it to the matching
+# verify subscript in package.json so local `bun run verify` stays in parity.
 jobs:
   lint-and-check:
     name: Lint & Typecheck
@@ -19,14 +23,8 @@ jobs:
         run: bun install
       - name: Install web dependencies
         run: cd web && bun install
-      - name: Format check
-        run: bun run format:check
-      - name: Lint
-        run: bun run lint
-      - name: Type check
-        run: bun run check
-      - name: Cycle check
-        run: bun run check:cycles
+      - name: Verify (static)
+        run: bun run verify:static
 
   test-unit:
     name: Unit Tests
@@ -40,10 +38,8 @@ jobs:
         run: bun install
       - name: Install web dependencies
         run: cd web && bun install
-      - name: Unit tests
-        run: bun run test:unit
-      - name: Web tests
-        run: bun run test:web
+      - name: Verify (unit + web tests)
+        run: bun run verify:test-unit
 
   test-integration:
     name: Integration Tests
