@@ -125,7 +125,7 @@ describe("resolveWorkspace", () => {
     expect(createdFor).toHaveLength(0);
   });
 
-  it("returns 403 when user is not a member of the specified workspace", async () => {
+  it("returns generic 403 when user is not a member of the specified workspace", async () => {
     const ws = await workspaceStore.create("Forbidden WS");
     // Don't add the identity as a member
     const identity = makeIdentity({ id: "usr_nonmember" });
@@ -139,11 +139,13 @@ describe("resolveWorkspace", () => {
       expect(err).toBeInstanceOf(WorkspaceResolutionError);
       const wsErr = err as WorkspaceResolutionError;
       expect(wsErr.statusCode).toBe(403);
-      expect(wsErr.message).toContain("Access denied");
+      expect(wsErr.message).toBe("Access denied to workspace.");
+      // Must not echo the workspace ID (information disclosure).
+      expect(wsErr.message).not.toContain(ws.id);
     }
   });
 
-  it("returns 400 when X-Workspace-Id references a non-existent workspace", async () => {
+  it("returns generic 403 when X-Workspace-Id references a non-existent workspace", async () => {
     const identity = makeIdentity({ id: "usr_badref" });
     const req = makeRequest({ "x-workspace-id": "ws_doesnotexist" });
 
@@ -153,8 +155,10 @@ describe("resolveWorkspace", () => {
     } catch (err) {
       expect(err).toBeInstanceOf(WorkspaceResolutionError);
       const wsErr = err as WorkspaceResolutionError;
-      expect(wsErr.statusCode).toBe(400);
-      expect(wsErr.message).toContain("not found");
+      // Same response as "not a member" so callers cannot probe for existence.
+      expect(wsErr.statusCode).toBe(403);
+      expect(wsErr.message).toBe("Access denied to workspace.");
+      expect(wsErr.message).not.toContain("ws_doesnotexist");
     }
   });
 
