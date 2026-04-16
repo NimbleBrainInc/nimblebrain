@@ -147,6 +147,7 @@ describe("BundleLifecycleManager — installRemote", () => {
 			mockServer.url,
 			"remote-echo",
 			registry,
+			"ws_test",
 		);
 
 		// Source registered in registry
@@ -186,6 +187,7 @@ describe("BundleLifecycleManager — installRemote", () => {
 			mockServer.url,
 			"remote-echo",
 			registry,
+			"ws_test",
 			{ type: "streamable-http" },
 			{ name: "Remote Echo", icon: "cloud" },
 			85,
@@ -211,9 +213,9 @@ describe("BundleLifecycleManager — installRemote", () => {
 		const sink = makeEventCollector();
 		const lifecycle = new BundleLifecycleManager(sink, configPath, true);
 
-		await lifecycle.installRemote(mockServer.url, "remote-echo", registry);
+		await lifecycle.installRemote(mockServer.url, "remote-echo", registry, "ws_test");
 		await registry.removeSource("remote-echo");
-		await lifecycle.installRemote(mockServer.url, "remote-echo", registry);
+		await lifecycle.installRemote(mockServer.url, "remote-echo", registry, "ws_test");
 
 		const config = JSON.parse(readFileSync(configPath, "utf-8"));
 		expect(config.bundles).toHaveLength(1);
@@ -240,6 +242,7 @@ describe("BundleLifecycleManager — remote connection failure", () => {
 				"http://127.0.0.1:1/mcp", // port 1 — connection refused
 				"bad-remote",
 				registry,
+				"ws_test",
 			);
 		} catch (e) {
 			error = e as Error;

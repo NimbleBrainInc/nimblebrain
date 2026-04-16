@@ -7,10 +7,17 @@ import type { PlacementDeclaration, PlacementEntry } from "../bundles/types.ts";
 export class PlacementRegistry {
   private entries: PlacementEntry[] = [];
 
-  /** Register placements from a bundle's manifest metadata. */
+  /**
+   * Register placements from a bundle's manifest metadata.
+   *
+   * Scoped to (serverName, wsId): the idempotent cleanup before insertion only
+   * removes entries for this server in this workspace. Omitting wsId means a
+   * global placement (platform/system sources) — scoped to entries whose wsId
+   * is also undefined. Without this scoping, re-seeding the same bundle in a
+   * second workspace would wipe out the first workspace's nav entries.
+   */
   register(serverName: string, placements: PlacementDeclaration[], wsId?: string): void {
-    // Remove any existing entries for this server first (idempotent)
-    this.unregister(serverName);
+    this.unregister(serverName, wsId);
 
     for (const p of placements) {
       this.entries.push({
@@ -22,9 +29,18 @@ export class PlacementRegistry {
     }
   }
 
-  /** Remove all placements for a server. */
-  unregister(serverName: string): void {
-    this.entries = this.entries.filter((e) => e.serverName !== serverName);
+  /**
+   * Remove placements for (serverName, wsId). Both undefined match: passing
+   * no wsId removes only global entries, passing a wsId removes only that
+   * workspace's entries. Entries for other workspaces are untouched — this
+   * is what prevents a second workspace's install from wiping the first's
+   * nav.
+   */
+  unregister(serverName: string, wsId?: string): void {
+    this.entries = this.entries.filter((e) => {
+      if (e.serverName !== serverName) return true;
+      return e.wsId !== wsId;
+    });
   }
 
   /**

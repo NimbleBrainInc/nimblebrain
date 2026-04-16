@@ -85,6 +85,7 @@ export class BundleLifecycleManager {
   async installNamed(
     name: string,
     registry: ToolRegistry,
+    wsId: string,
     env?: Record<string, string>,
   ): Promise<BundleInstance> {
     const serverName = deriveServerName(name);
@@ -104,13 +105,16 @@ export class BundleLifecycleManager {
     const isUpjack = manifest._meta?.["ai.nimblebrain/upjack"] != null;
 
     // Step 4 — Spawn MCP server
-    const instance = createInstance(serverName, name, manifest, isUpjack);
+    const instance = createInstance(serverName, name, manifest, isUpjack, wsId);
     instance.configKey = name; // config entry uses the mpak name
 
     this.transition(instance, "starting");
 
+    // Data dir is workspace-scoped: {workDir}/workspaces/{wsId}/data/{bundle}
+    // so two workspaces installing the same bundle keep their entity data
+    // isolated. Matches the layout seedInstance uses at startup.
     const nbWorkDir = process.env.NB_WORK_DIR ?? join(homedir(), ".nimblebrain");
-    const bundleDataDir = join(nbWorkDir, "data", deriveBundleDataDir(name));
+    const bundleDataDir = join(nbWorkDir, "workspaces", wsId, "data", deriveBundleDataDir(name));
     const server = await mpak.prepareServer({ name }, { workspaceDir: bundleDataDir });
 
     const source = new McpSource(serverName, {
@@ -141,7 +145,7 @@ export class BundleLifecycleManager {
     instance.briefing = extractBriefing(manifest);
 
     // Step 6b — Register placements in PlacementRegistry
-    this.registerPlacements(serverName, instance.ui, instance.bundleName);
+    this.registerPlacements(serverName, instance.ui, wsId);
 
     // Step 7 — Atomic config write
     if (this.configPath) {
@@ -151,7 +155,7 @@ export class BundleLifecycleManager {
       atomicConfigAdd(this.configPath, entry);
     }
 
-    this.instances.set(serverName, instance);
+    this.instances.set(`${serverName}|${wsId}`, instance);
 
     // Step 8a — Sync bundle-contributed automations (non-blocking)
     await this.syncBundleAutomations(manifest, name, registry);
@@ -180,6 +184,7 @@ export class BundleLifecycleManager {
   async installLocal(
     bundlePath: string,
     registry: ToolRegistry,
+    wsId: string,
     env?: Record<string, string>,
   ): Promise<BundleInstance> {
     const bundleDir = resolveLocalBundle(bundlePath);
@@ -198,7 +203,7 @@ export class BundleLifecycleManager {
     validateServerName(serverName);
     const isUpjack = manifest._meta?.["ai.nimblebrain/upjack"] != null;
     // Use manifest.name (scoped name) as bundleName, not the filesystem path
-    const instance = createInstance(serverName, manifest.name, manifest, isUpjack);
+    const instance = createInstance(serverName, manifest.name, manifest, isUpjack, wsId);
     instance.configKey = bundlePath; // config entry uses the filesystem path
 
     this.transition(instance, "starting");
@@ -213,7 +218,7 @@ export class BundleLifecycleManager {
     instance.briefing = extractBriefing(manifest);
 
     // Register placements in PlacementRegistry
-    this.registerPlacements(serverName, instance.ui, instance.bundleName);
+    this.registerPlacements(serverName, instance.ui, wsId);
 
     if (this.configPath) {
       const entry: Record<string, unknown> = { path: bundlePath };
@@ -221,7 +226,7 @@ export class BundleLifecycleManager {
       atomicConfigAdd(this.configPath, entry);
     }
 
-    this.instances.set(serverName, instance);
+    this.instances.set(`${serverName}|${wsId}`, instance);
 
     // Sync bundle-contributed automations (non-blocking)
     await this.syncBundleAutomations(manifest, manifest.name, registry);
@@ -249,6 +254,7 @@ export class BundleLifecycleManager {
     url: string,
     serverName: string,
     registry: ToolRegistry,
+    wsId: string,
     transportConfig?: RemoteTransportConfig,
     ui?: BundleUiMeta | null,
     trustScore?: number | null,
@@ -266,6 +272,7 @@ export class BundleLifecycleManager {
       briefing: null,
       protected: false,
       type: "plain",
+      wsId,
     };
 
     this.transition(instance, "starting");
@@ -285,7 +292,7 @@ export class BundleLifecycleManager {
     this.transition(instance, "running");
 
     // Register placements in PlacementRegistry
-    this.registerPlacements(serverName, instance.ui, instance.bundleName);
+    this.registerPlacements(serverName, instance.ui, wsId);
 
     // Atomic config write
     if (this.configPath) {
@@ -296,7 +303,7 @@ export class BundleLifecycleManager {
       atomicConfigAdd(this.configPath, entry);
     }
 
-    this.instances.set(serverName, instance);
+    this.instances.set(`${serverName}|${wsId}`, instance);
 
     // Emit event
     this.eventSink.emit({
@@ -328,15 +335,16 @@ export class BundleLifecycleManager {
    * 5. Emit bundle.uninstalled
    * 6. Data is NOT deleted
    */
-  async uninstall(nameOrPath: string, registry: ToolRegistry): Promise<void> {
-    // Resolve the server name: try direct derivation first, then look up by bundleName
+  async uninstall(nameOrPath: string, registry: ToolRegistry, wsId: string): Promise<void> {
+    // Resolve by (serverName, wsId) first; fall back to bundleName match within
+    // this workspace. Lookups are always workspace-scoped — uninstalling in one
+    // workspace must not affect another workspace's instance of the same bundle.
     let serverName = deriveServerName(nameOrPath);
-    let instance = this.instances.get(serverName);
+    let instance = this.instances.get(`${serverName}|${wsId}`);
     if (!instance) {
-      // Try finding by bundleName (handles local paths)
-      for (const [key, inst] of this.instances) {
-        if (inst.bundleName === nameOrPath) {
-          serverName = key;
+      for (const inst of this.instances.values()) {
+        if (inst.wsId === wsId && inst.bundleName === nameOrPath) {
+          serverName = inst.serverName;
           instance = inst;
           break;
         }
@@ -353,9 +361,9 @@ export class BundleLifecycleManager {
       await registry.removeSource(serverName);
     }
 
-    // Step 3b — Unregister placements
+    // Step 3b — Unregister placements for this workspace only
     if (this.placementRegistry) {
-      this.placementRegistry.unregister(serverName);
+      this.placementRegistry.unregister(serverName, wsId);
     }
 
     // Step 4 — Remove from config
@@ -371,13 +379,13 @@ export class BundleLifecycleManager {
     // Track state change before removing
     if (instance) {
       this.transition(instance, "stopped");
-      this.instances.delete(serverName);
+      this.instances.delete(`${serverName}|${wsId}`);
     }
 
     // Step 5 — Emit event (data NOT deleted — step 6)
     this.eventSink.emit({
       type: "bundle.uninstalled",
-      data: { serverName, bundleName: nameOrPath },
+      data: { serverName, bundleName: nameOrPath, wsId },
     });
   }
 
@@ -387,10 +395,10 @@ export class BundleLifecycleManager {
    * Start a stopped bundle (re-creates the MCP subprocess).
    * Dead bundles must be explicitly restarted with this method.
    */
-  async startBundle(serverName: string, registry: ToolRegistry): Promise<void> {
-    const instance = this.instances.get(serverName);
+  async startBundle(serverName: string, wsId: string, registry: ToolRegistry): Promise<void> {
+    const instance = this.instances.get(`${serverName}|${wsId}`);
     if (!instance) {
-      throw new Error(`No bundle instance found for "${serverName}"`);
+      throw new Error(`No bundle instance found for "${serverName}" in workspace "${wsId}"`);
     }
 
     if (instance.state === "running") return; // already running
@@ -411,10 +419,10 @@ export class BundleLifecycleManager {
   /**
    * Stop a running bundle (kills subprocess, keeps source registered).
    */
-  async stopBundle(serverName: string, registry: ToolRegistry): Promise<void> {
-    const instance = this.instances.get(serverName);
+  async stopBundle(serverName: string, wsId: string, registry: ToolRegistry): Promise<void> {
+    const instance = this.instances.get(`${serverName}|${wsId}`);
     if (!instance) {
-      throw new Error(`No bundle instance found for "${serverName}"`);
+      throw new Error(`No bundle instance found for "${serverName}" in workspace "${wsId}"`);
     }
 
     if (instance.state === "stopped" || instance.state === "dead") return;
@@ -441,13 +449,13 @@ export class BundleLifecycleManager {
    * Record a crash detected by HealthMonitor.
    * Emits bundle.crashed event and updates state.
    */
-  recordCrash(serverName: string): void {
-    const instance = this.instances.get(serverName);
+  recordCrash(serverName: string, wsId: string): void {
+    const instance = this.instances.get(`${serverName}|${wsId}`);
     if (!instance) return;
     this.transition(instance, "crashed");
     this.eventSink.emit({
       type: "bundle.crashed",
-      data: { serverName, bundleName: instance.bundleName },
+      data: { serverName, bundleName: instance.bundleName, wsId },
     });
   }
 
@@ -455,13 +463,13 @@ export class BundleLifecycleManager {
    * Record a successful recovery by HealthMonitor.
    * Emits bundle.recovered event and updates state.
    */
-  recordRecovery(serverName: string): void {
-    const instance = this.instances.get(serverName);
+  recordRecovery(serverName: string, wsId: string): void {
+    const instance = this.instances.get(`${serverName}|${wsId}`);
     if (!instance) return;
     this.transition(instance, "running");
     this.eventSink.emit({
       type: "bundle.recovered",
-      data: { serverName, bundleName: instance.bundleName },
+      data: { serverName, bundleName: instance.bundleName, wsId },
     });
   }
 
@@ -469,13 +477,13 @@ export class BundleLifecycleManager {
    * Record that a bundle has exhausted restart attempts.
    * Emits bundle.dead event and updates state.
    */
-  recordDead(serverName: string): void {
-    const instance = this.instances.get(serverName);
+  recordDead(serverName: string, wsId: string): void {
+    const instance = this.instances.get(`${serverName}|${wsId}`);
     if (!instance) return;
     this.transition(instance, "dead");
     this.eventSink.emit({
       type: "bundle.dead",
-      data: { serverName, bundleName: instance.bundleName },
+      data: { serverName, bundleName: instance.bundleName, wsId },
     });
   }
 
@@ -589,16 +597,14 @@ export class BundleLifecycleManager {
 
   /**
    * Register placements from a bundle's UI metadata in the PlacementRegistry.
+   * Scoped to `wsId` so two workspaces installing the same bundle get separate
+   * nav entries and uninstalling one doesn't wipe the other's.
    */
-  private registerPlacements(
-    serverName: string,
-    ui: BundleUiMeta | null,
-    _bundleName?: string,
-  ): void {
+  private registerPlacements(serverName: string, ui: BundleUiMeta | null, wsId: string): void {
     if (!this.placementRegistry || !ui) return;
 
     if (ui.placements && ui.placements.length > 0) {
-      this.placementRegistry.register(serverName, ui.placements);
+      this.placementRegistry.register(serverName, ui.placements, wsId);
     }
   }
 
@@ -684,6 +690,7 @@ function createInstance(
   bundleName: string,
   manifest: BundleManifest,
   isUpjack: boolean,
+  wsId: string,
 ): BundleInstance {
   return {
     serverName,
@@ -696,6 +703,7 @@ function createInstance(
     briefing: null,
     protected: false,
     type: isUpjack ? "upjack" : "plain",
+    wsId,
   };
 }
 

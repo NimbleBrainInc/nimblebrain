@@ -877,14 +877,19 @@ export class Runtime {
 
   /**
    * Get bundle instances visible in a specific workspace.
-   * Filters the global instance list to only those whose serverName
-   * is registered in the workspace's ToolRegistry.
+   *
+   * `inst.wsId === wsId` is the authoritative scope — every BundleInstance
+   * carries a required workspace. `visible.has(serverName)` is a
+   * belt-and-suspenders check against orphaned lifecycle records whose
+   * source has been removed from the registry.
    */
   getBundleInstancesForWorkspace(wsId: string): BundleInstance[] {
     const wsRegistry = this._workspaceRegistries.get(wsId);
     if (!wsRegistry) return [];
     const visible = new Set(wsRegistry.sourceNames());
-    return this.lifecycle.getInstances().filter((inst) => visible.has(inst.serverName));
+    return this.lifecycle
+      .getInstances()
+      .filter((inst) => inst.wsId === wsId && visible.has(inst.serverName));
   }
 
   /** Get the lifecycle manager (for health monitor integration). */

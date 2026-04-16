@@ -149,7 +149,7 @@ describe("Install/uninstall → /v1/shell placement updates", () => {
 
 		// Install via lifecycle (direct API since POST /v1/apps/install needs mpak for named)
 		const devRegistry = runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID);
-		const instance = await runtime.getLifecycle().installLocal(bundleDir, devRegistry);
+		const instance = await runtime.getLifecycle().installLocal(bundleDir, devRegistry, TEST_WORKSPACE_ID);
 		const serverName = instance.serverName;
 
 		try {
@@ -168,7 +168,7 @@ describe("Install/uninstall → /v1/shell placement updates", () => {
 			expect(slots).toContain("main");
 
 			// Uninstall
-			await runtime.getLifecycle().uninstall(serverName, devRegistry);
+			await runtime.getLifecycle().uninstall(serverName, devRegistry, TEST_WORKSPACE_ID);
 
 			// GET /v1/shell should no longer have tasks placements
 			const shellRes2 = await fetch(`${baseUrl}/v1/shell`);
@@ -181,7 +181,7 @@ describe("Install/uninstall → /v1/shell placement updates", () => {
 		} catch (err) {
 			// Clean up on failure
 			try {
-				await runtime.getLifecycle().uninstall(serverName, devRegistry);
+				await runtime.getLifecycle().uninstall(serverName, devRegistry, TEST_WORKSPACE_ID);
 			} catch {}
 			throw err;
 		}
@@ -200,7 +200,7 @@ describe("Bundle with placements → /v1/shell", () => {
 			],
 		});
 		const devRegistry = runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID);
-		const instance = await runtime.getLifecycle().installLocal(bundleDir, devRegistry);
+		const instance = await runtime.getLifecycle().installLocal(bundleDir, devRegistry, TEST_WORKSPACE_ID);
 		const serverName = instance.serverName;
 
 		try {
@@ -215,10 +215,10 @@ describe("Bundle with placements → /v1/shell", () => {
 			expect(entries[0].resourceUri).toBe("ui://placedapp/main");
 			expect(entries[0].label).toBe("placedapp App");
 
-			await runtime.getLifecycle().uninstall(serverName, devRegistry);
+			await runtime.getLifecycle().uninstall(serverName, devRegistry, TEST_WORKSPACE_ID);
 		} catch (err) {
 			try {
-				await runtime.getLifecycle().uninstall(serverName, devRegistry);
+				await runtime.getLifecycle().uninstall(serverName, devRegistry, TEST_WORKSPACE_ID);
 			} catch {}
 			throw err;
 		}

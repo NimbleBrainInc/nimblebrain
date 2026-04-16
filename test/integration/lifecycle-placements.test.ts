@@ -132,7 +132,7 @@ describe("BundleLifecycleManager — placement registration on install", () => {
 		const lifecycle = new BundleLifecycleManager(sink, undefined);
 		lifecycle.setPlacementRegistry(pr);
 
-		const instance = await lifecycle.installLocal(bundleDir, registry);
+		const instance = await lifecycle.installLocal(bundleDir, registry, "ws_test");
 
 		// Placements extracted into UI meta
 		expect(instance.ui).not.toBeNull();
@@ -167,7 +167,7 @@ describe("BundleLifecycleManager — placement registration on install", () => {
 		const lifecycle = new BundleLifecycleManager(sink, undefined);
 		lifecycle.setPlacementRegistry(pr);
 
-		const instance = await lifecycle.installLocal(bundleDir, registry);
+		const instance = await lifecycle.installLocal(bundleDir, registry, "ws_test");
 
 		// primaryView is no longer extracted — only explicit placements are registered
 		expect(instance.ui!.placements).toBeUndefined();
@@ -192,7 +192,7 @@ describe("BundleLifecycleManager — placement registration on install", () => {
 		const lifecycle = new BundleLifecycleManager(sink, undefined);
 		lifecycle.setPlacementRegistry(pr);
 
-		const instance = await lifecycle.installLocal(bundleDir, registry);
+		const instance = await lifecycle.installLocal(bundleDir, registry, "ws_test");
 
 		// Explicit placements take precedence — no legacy "main" placement
 		const main = pr.forSlot("main");
@@ -230,13 +230,13 @@ describe("BundleLifecycleManager — placement unregistration on uninstall", () 
 		const lifecycle = new BundleLifecycleManager(sink, configPath);
 		lifecycle.setPlacementRegistry(pr);
 
-		const instance = await lifecycle.installLocal(bundleDir, registry);
+		const instance = await lifecycle.installLocal(bundleDir, registry, "ws_test");
 
 		// Verify placement exists
 		expect(pr.forSlot("sidebar.apps")).toHaveLength(1);
 
 		// Uninstall by server name
-		await lifecycle.uninstall(instance.serverName, registry);
+		await lifecycle.uninstall(instance.serverName, registry, "ws_test");
 
 		// Placement gone
 		expect(pr.forSlot("sidebar.apps")).toHaveLength(0);

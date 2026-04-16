@@ -7,15 +7,24 @@
  * 3. Concurrent requests don't contaminate each other's workspace context
  * 4. Workspace middleware rejects authenticated requests without workspace
  * 5. SSE events are scoped to workspace
+ * 6. Bundle instances do not leak across workspaces when two workspaces
+ *    install the same bundle (the briefing/nav leak class)
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import type {
+  BriefingBlock,
+  BundleRef,
+  BundleUiMeta,
+} from "../../../src/bundles/types.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
 import { createTestAuthAdapter } from "../../helpers/test-auth-adapter.ts";
 import { startServer } from "../../../src/api/server.ts";
 import type { ServerHandle } from "../../../src/api/server.ts";
 import { SseEventManager } from "../../../src/api/events.ts";
+import type { ToolResult } from "../../../src/engine/types.ts";
+import type { Tool, ToolSource } from "../../../src/tools/types.ts";
 
 // ── Test setup: authenticated server ────────────────────────────
 
@@ -244,5 +253,111 @@ describe("V5: SSE events scoped by workspace", () => {
       readerWs.cancel();
       manager.stop();
     });
+  });
+});
+
+// ── V6: Cross-workspace bundle instance isolation ───────────────
+//
+// Pins Runtime.getBundleInstancesForWorkspace against the class of leak
+// where two workspaces install the same bundle and the filter returns
+// cross-workspace instances because it only matched on serverName. Each
+// instance carries its own entityDataRoot, so a leak in this method
+// surfaces another workspace's entity data (contacts, tasks, etc.) to
+// the caller's briefing/apps list.
+
+function makeFakeSource(name: string): ToolSource {
+  const tools: Tool[] = [
+    {
+      name: `${name}__ping`,
+      description: "ping",
+      inputSchema: { type: "object" as const },
+      source: `test:${name}`,
+    },
+  ];
+  return {
+    name,
+    start: async () => {},
+    stop: async () => {},
+    tools: async () => tools,
+    execute: async (toolName: string): Promise<ToolResult> => ({
+      content: [{ type: "text", text: `${name}/${toolName}` }],
+    }),
+  };
+}
+
+describe("V6: getBundleInstancesForWorkspace — two workspaces, same bundle", () => {
+  it("returns only the caller's instance; each carries its own entityDataRoot", async () => {
+    const wsStore = runtime.getWorkspaceStore();
+    const wsA = await wsStore.create("Isolation A", `iso_a_${Date.now()}`);
+    const wsB = await wsStore.create("Isolation B", `iso_b_${Date.now()}`);
+    await runtime.ensureWorkspaceRegistry(wsA.id);
+    await runtime.ensureWorkspaceRegistry(wsB.id);
+
+    const serverName = `leakcheck_${Date.now()}`;
+    const ref: BundleRef = { name: `@test/${serverName}` };
+    const meta = {
+      manifestName: `@test/${serverName}`,
+      version: "1.0.0",
+      ui: { name: "Leak Check", icon: "bug" } as BundleUiMeta,
+      briefing: null as BriefingBlock | null,
+      type: "upjack" as const,
+      upjackNamespace: "apps/leakcheck",
+    };
+
+    const lifecycle = runtime.getLifecycle();
+    const dataDirA = `/tmp/${wsA.id}/data`;
+    const dataDirB = `/tmp/${wsB.id}/data`;
+    lifecycle.seedInstance(serverName, ref.name, ref, meta, wsA.id, dataDirA);
+    lifecycle.seedInstance(serverName, ref.name, ref, meta, wsB.id, dataDirB);
+
+    // Register a source with the same serverName in each workspace registry.
+    // This is the visibility condition that the pre-fix filter used alone —
+    // both workspaces satisfy it, yet the new filter must still scope by wsId.
+    runtime.getRegistryForWorkspace(wsA.id).addSource(makeFakeSource(serverName));
+    runtime.getRegistryForWorkspace(wsB.id).addSource(makeFakeSource(serverName));
+
+    const fromA = runtime.getBundleInstancesForWorkspace(wsA.id);
+    const fromB = runtime.getBundleInstancesForWorkspace(wsB.id);
+
+    expect(fromA).toHaveLength(1);
+    expect(fromB).toHaveLength(1);
+    const instA = fromA[0]!;
+    const instB = fromB[0]!;
+
+    expect(instA.wsId).toBe(wsA.id);
+    expect(instB.wsId).toBe(wsB.id);
+
+    expect(instA.entityDataRoot).toBe(`${dataDirA}/apps/leakcheck/data`);
+    expect(instB.entityDataRoot).toBe(`${dataDirB}/apps/leakcheck/data`);
+
+    // Distinct data roots — a leak would make one equal to the other.
+    expect(instA.entityDataRoot).not.toBe(instB.entityDataRoot);
+
+    // Unscoped snapshot still holds both (confirms the bug was reachable
+    // from a serverName-only filter over lifecycle.getInstances()).
+    const allWithServer = lifecycle
+      .getInstances()
+      .filter((i) => i.serverName === serverName);
+    expect(allWithServer).toHaveLength(2);
+  });
+
+  it("returns nothing for a workspace that has the bundle in its lifecycle but not its registry", async () => {
+    const wsStore = runtime.getWorkspaceStore();
+    const ws = await wsStore.create("Orphan", `orphan_${Date.now()}`);
+    await runtime.ensureWorkspaceRegistry(ws.id);
+
+    const serverName = `orphan_${Date.now()}`;
+    const ref: BundleRef = { name: `@test/${serverName}` };
+    const meta = {
+      manifestName: `@test/${serverName}`,
+      version: "1.0.0",
+      ui: null,
+      briefing: null as BriefingBlock | null,
+      type: "plain" as const,
+    };
+    runtime.getLifecycle().seedInstance(serverName, ref.name, ref, meta, ws.id, `/tmp/${ws.id}/data`);
+    // Deliberately do NOT add the source to the registry.
+
+    expect(runtime.getBundleInstancesForWorkspace(ws.id)).toHaveLength(0);
   });
 });
