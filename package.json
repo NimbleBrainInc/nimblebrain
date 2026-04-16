@@ -1,6 +1,6 @@
 {
   "name": "nimblebrain",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Self-hosted platform for MCP Apps and agent automations — tools, interactive UIs, scheduled runs, multi-agent delegation",
   "license": "Apache-2.0",
   "author": "NimbleBrain, Inc. <oss@nimblebrain.ai>",
