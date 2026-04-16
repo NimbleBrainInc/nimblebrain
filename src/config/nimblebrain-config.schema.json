@@ -1,0 +1,342 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.nimblebrain.ai/v1/nimblebrain-config.schema.json",
+  "title": "NimbleBrain Configuration",
+  "description": "Configuration file for the NimbleBrain agent runtime (nimblebrain.json).",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "JSON Schema reference URI. Should be \"https://schemas.nimblebrain.ai/v1/nimblebrain-config.schema.json\"."
+    },
+    "version": {
+      "type": "string",
+      "description": "Config file version. Current: \"1\".",
+      "enum": ["1"]
+    },
+    "model": {
+      "description": "Model provider configuration.",
+      "type": "object",
+      "required": ["provider"],
+      "properties": {
+        "provider": {
+          "type": "string",
+          "enum": ["anthropic", "openai", "google"],
+          "description": "Model provider."
+        },
+        "apiKey": {
+          "type": "string",
+          "description": "Anthropic API key. Falls back to ANTHROPIC_API_KEY env var."
+        }
+      },
+      "additionalProperties": false
+    },
+    "providers": {
+      "description": "Configured model providers.",
+      "type": "object",
+      "properties": {
+        "anthropic": {
+          "type": "object",
+          "properties": {
+            "apiKey": { "type": "string" },
+            "promptCaching": { "type": "boolean", "default": true },
+            "models": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Allowlist of model IDs. Omit to allow all."
+            }
+          },
+          "additionalProperties": false
+        },
+        "openai": {
+          "type": "object",
+          "properties": {
+            "apiKey": { "type": "string" },
+            "baseURL": { "type": "string" },
+            "organization": { "type": "string" },
+            "models": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Allowlist of model IDs. Omit to allow all."
+            }
+          },
+          "additionalProperties": false
+        },
+        "google": {
+          "type": "object",
+          "properties": {
+            "apiKey": { "type": "string" },
+            "models": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Allowlist of model IDs. Omit to allow all."
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "bundles": {
+      "description": "Bundle configurations. Each entry specifies a bundle by name (mpak registry), local path, or remote URL.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Bundle name from mpak registry (e.g., @nimblebraininc/echo)."
+          },
+          "path": { "type": "string", "description": "Local filesystem path to bundle directory." },
+          "url": { "type": "string", "description": "Remote MCP server URL." },
+          "serverName": {
+            "type": "string",
+            "description": "Override server name for remote bundles."
+          },
+          "env": {
+            "type": "object",
+            "additionalProperties": { "type": "string" },
+            "description": "Environment variables passed to the bundle process."
+          },
+          "allowedEnv": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Host env vars this bundle may access."
+          },
+          "protected": {
+            "type": "boolean",
+            "description": "Prevents uninstall via nb__manage_app."
+          },
+          "trustScore": { "type": ["number", "null"], "description": "MTF trust score (0-100)." },
+          "transport": {
+            "type": "object",
+            "description": "Remote transport configuration.",
+            "properties": {
+              "type": { "type": "string", "enum": ["streamable-http", "sse"] },
+              "auth": {
+                "type": "object",
+                "properties": {
+                  "type": { "type": "string", "enum": ["bearer", "header", "none"] },
+                  "token": { "type": "string" },
+                  "name": { "type": "string" },
+                  "value": { "type": "string" }
+                },
+                "required": ["type"]
+              },
+              "headers": { "type": "object", "additionalProperties": { "type": "string" } },
+              "reconnection": {
+                "type": "object",
+                "properties": {
+                  "maxReconnectionDelay": { "type": "number" },
+                  "initialReconnectionDelay": { "type": "number" },
+                  "maxRetries": { "type": "number" }
+                }
+              },
+              "sessionId": { "type": "string" }
+            }
+          },
+          "ui": {
+            "type": ["object", "null"],
+            "description": "UI metadata extracted from manifest."
+          }
+        }
+      }
+    },
+    "allowInsecureRemotes": {
+      "type": "boolean",
+      "default": false,
+      "description": "Allow HTTP (non-TLS) remote bundle connections. Dev only."
+    },
+    "store": {
+      "description": "Conversation storage backend.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["type", "dir"],
+          "properties": {
+            "type": { "const": "jsonl" },
+            "dir": { "type": "string", "description": "Directory for JSONL conversation files." }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type"],
+          "properties": {
+            "type": { "const": "memory" }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "models": {
+      "type": "object",
+      "description": "Role-based model slots.",
+      "properties": {
+        "default": { "type": "string", "description": "Primary model for chat." },
+        "fast": { "type": "string", "description": "Cheap/fast model for auxiliary tasks." },
+        "reasoning": { "type": "string", "description": "Most capable model for complex analysis." }
+      },
+      "additionalProperties": false
+    },
+    "defaultModel": {
+      "description": "Default model ID (e.g., \"claude-sonnet-4-5-20250929\"). Deprecated — use models.default instead.",
+      "type": "string"
+    },
+    "maxIterations": {
+      "description": "Max agentic iterations per request. Capped at 50. Default: 25.",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 50
+    },
+    "maxInputTokens": {
+      "description": "Max input tokens per request. Default: 500000.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "maxHistoryMessages": {
+      "description": "Max conversation messages to include in context. Keeps the first message (initial user request) plus the most recent N messages. Tool call/result pairs count as one unit. Default: 40.",
+      "type": "integer",
+      "minimum": 2
+    },
+    "maxOutputTokens": {
+      "description": "Max output tokens per LLM call. Default: 16384.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "maxToolResultSize": {
+      "description": "Max chars for a single tool result. Results exceeding this are replaced with an error. 0 disables. Default: 1000000.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "logging": {
+      "description": "Structured logging configuration.",
+      "type": "object",
+      "properties": {
+        "dir": {
+          "type": "string",
+          "description": "Log directory. Default: workDir + \"/logs\"."
+        },
+        "disabled": {
+          "type": "boolean",
+          "description": "Disable structured logging entirely. Default: false."
+        },
+        "level": {
+          "type": "string",
+          "enum": ["normal", "debug"],
+          "default": "normal",
+          "description": "Logging verbosity level. 'debug' persists verbose fields (system prompt, tool inputs/outputs, full message history) to conversation files. Default: normal."
+        },
+        "retentionDays": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Auto-delete log files older than N days on startup. Default: no cleanup."
+        }
+      },
+      "additionalProperties": false
+    },
+    "http": {
+      "description": "HTTP server config. Omit for programmatic-only use.",
+      "type": "object",
+      "properties": {
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "description": "Port number for the HTTP server. Default: 27247."
+        },
+        "host": {
+          "type": "string",
+          "description": "Host to bind to. Default: \"127.0.0.1\"."
+        }
+      },
+      "additionalProperties": false
+    },
+    "workDir": {
+      "description": "Working directory for all runtime state. Defaults to ~/.nimblebrain.",
+      "type": "string"
+    },
+    "telemetry": {
+      "description": "Anonymous usage telemetry. Disable with telemetry.enabled: false, NB_TELEMETRY_DISABLED=1, or DO_NOT_TRACK=1.",
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable anonymous telemetry. Default: true.",
+          "default": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "features": {
+      "description": "Feature flags to enable/disable capabilities. All default to true. Set to false to disable.",
+      "type": "object",
+      "properties": {
+        "bundleManagement": {
+          "type": "boolean",
+          "description": "Enable app install/uninstall/configure via nb__manage_app. Default: true.",
+          "default": true
+        },
+        "skillManagement": {
+          "type": "boolean",
+          "description": "Enable skill create/update/delete via nb__manage_skill. Default: true.",
+          "default": true
+        },
+        "delegation": {
+          "type": "boolean",
+          "description": "Enable multi-agent delegation via nb__delegate. Default: true.",
+          "default": true
+        },
+        "toolDiscovery": {
+          "type": "boolean",
+          "description": "Enable tool search via nb__search scope=tools. Default: true.",
+          "default": true
+        },
+        "bundleDiscovery": {
+          "type": "boolean",
+          "description": "Enable registry search via nb__search scope=registry. Default: true.",
+          "default": true
+        },
+        "mcpServer": {
+          "type": "boolean",
+          "description": "Enable MCP server endpoint. Default: true.",
+          "default": true
+        },
+        "fileContext": {
+          "type": "boolean",
+          "description": "Enable file context (workspace files, chat attachments). Default: true.",
+          "default": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "files": {
+      "description": "File context configuration for workspace file uploads.",
+      "type": "object",
+      "properties": {
+        "maxFileSize": {
+          "type": "number",
+          "description": "Maximum individual file size in bytes. Default: 26214400 (25 MB).",
+          "default": 26214400
+        },
+        "maxTotalSize": {
+          "type": "number",
+          "description": "Maximum total file size per message in bytes. Default: 104857600 (100 MB).",
+          "default": 104857600
+        },
+        "maxFilesPerMessage": {
+          "type": "number",
+          "description": "Maximum number of files per chat message. Default: 10.",
+          "default": 10
+        },
+        "maxExtractedTextSize": {
+          "type": "number",
+          "description": "Maximum extracted text size per file in bytes. Default: 204800 (200 KB).",
+          "default": 204800
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

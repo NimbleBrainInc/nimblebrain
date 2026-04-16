@@ -1,0 +1,34 @@
+services:
+  platform:
+    image: nimblebrain/platform:latest
+    build: .
+    restart: unless-stopped
+    volumes:
+      - workspace:/data
+      - ./skills:/app/skills:ro
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - GOOGLE_GENERATIVE_AI_API_KEY=${GOOGLE_GENERATIVE_AI_API_KEY:-}
+    networks:
+      - internal
+
+  web:
+    image: nimblebrain/web:latest
+    build: web/
+    restart: unless-stopped
+    ports:
+      - "27246:8080"
+    environment:
+      - PLATFORM_URL=http://platform:27247
+    depends_on:
+      platform:
+        condition: service_healthy
+    networks:
+      - internal
+
+volumes:
+  workspace:
+
+networks:
+  internal:

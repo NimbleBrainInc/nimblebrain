@@ -1,0 +1,12 @@
+.git
+.gitignore
+.github
+.env*
+.nimblebrain
+.DS_Store
+node_modules
+web/
+test/
+docs/
+*.md
+!package.json

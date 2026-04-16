@@ -1,0 +1,12 @@
+{
+  "name": "@nimblebraininc/files",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "bun build src/server.ts --outdir dist/ --target bun"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.27.1"
+  }
+}

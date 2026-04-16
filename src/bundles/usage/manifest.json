@@ -1,0 +1,15 @@
+{
+  "manifest_version": "0.4",
+  "name": "@nimblebraininc/usage",
+  "version": "0.1.0",
+  "description": "Token usage analytics and cost reporting from structured logs",
+  "author": { "name": "NimbleBrain Inc", "email": "hello@nimblebrain.ai" },
+  "server": {
+    "type": "node",
+    "entry_point": "src/server.ts",
+    "mcp_config": {
+      "command": "bun",
+      "args": ["${__dirname}/src/server.ts"]
+    }
+  }
+}

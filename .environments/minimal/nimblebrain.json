@@ -1,0 +1,11 @@
+{
+  "$schema": "https://schemas.nimblebrain.ai/v1/nimblebrain-config.schema.json",
+  "version": "1",
+  "bundles": [],
+  "workDir": ".environments/minimal",
+  "models": {
+    "default": "anthropic:claude-sonnet-4-6",
+    "fast": "anthropic:claude-haiku-4-5-20251001",
+    "reasoning": "anthropic:claude-opus-4-6"
+  }
+}

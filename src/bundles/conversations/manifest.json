@@ -1,0 +1,43 @@
+{
+  "manifest_version": "0.4",
+  "name": "@nimblebraininc/conversations",
+  "version": "0.1.0",
+  "description": "Browse, search, and recall past NimbleBrain conversations",
+  "author": {
+    "name": "NimbleBrain Inc",
+    "email": "hello@nimblebrain.ai"
+  },
+  "server": {
+    "type": "node",
+    "entry_point": "src/server.ts",
+    "mcp_config": {
+      "command": "bun",
+      "args": ["${__dirname}/src/server.ts"]
+    }
+  },
+  "user_config": {
+    "conversations_dir": {
+      "type": "string",
+      "title": "Conversations Directory",
+      "description": "Path to JSONL conversation files",
+      "required": false
+    }
+  },
+  "_meta": {
+    "ai.nimblebrain/host": {
+      "host_version": "1.0",
+      "name": "Conversations",
+      "icon": "message-square-text",
+      "placements": [
+        {
+          "slot": "sidebar",
+          "resourceUri": "ui://conversations/browser",
+          "route": "@nimblebraininc/conversations",
+          "label": "Conversations",
+          "icon": "message-square-text",
+          "priority": 1
+        }
+      ]
+    }
+  }
+}

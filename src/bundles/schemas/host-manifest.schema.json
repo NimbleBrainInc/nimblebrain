@@ -1,0 +1,195 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "NimbleBrain Host Manifest Extension",
+  "description": "Schema for _meta[\"ai.nimblebrain/host\"] in MCPB manifests.",
+  "type": "object",
+  "required": ["host_version"],
+  "additionalProperties": false,
+  "properties": {
+    "host_version": {
+      "const": "1.0",
+      "description": "Host manifest schema version."
+    },
+    "name": {
+      "type": "string",
+      "description": "Display name shown in the sidebar and app list."
+    },
+    "icon": {
+      "type": "string",
+      "description": "Lucide icon name in kebab-case (e.g., \"database\", \"message-square\")."
+    },
+    "category": {
+      "type": "string",
+      "enum": [
+        "sales",
+        "marketing",
+        "operations",
+        "research",
+        "finance",
+        "hr",
+        "engineering",
+        "support",
+        "custom"
+      ],
+      "description": "App category for grouping and briefing prioritization."
+    },
+    "placements": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/PlacementDeclaration" },
+      "description": "Shell layout placement declarations."
+    },
+    "primaryView": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["resourceUri"],
+      "properties": {
+        "resourceUri": {
+          "type": "string",
+          "description": "ui:// URI for the main view."
+        }
+      },
+      "description": "Primary view resource URI."
+    },
+    "settings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "label", "icon", "resourceUri"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique section ID across all bundles."
+        },
+        "label": {
+          "type": "string",
+          "description": "Tab label in the settings UI."
+        },
+        "icon": {
+          "type": "string",
+          "description": "Lucide icon name for the settings tab."
+        },
+        "resourceUri": {
+          "type": "string",
+          "description": "ui:// URI that renders the settings section HTML."
+        }
+      },
+      "description": "Settings section contributed by this bundle."
+    },
+    "briefing": {
+      "$ref": "#/$defs/BriefingBlock"
+    }
+  },
+  "$defs": {
+    "PlacementDeclaration": {
+      "type": "object",
+      "required": ["slot", "resourceUri"],
+      "additionalProperties": false,
+      "properties": {
+        "slot": {
+          "type": "string",
+          "description": "Shell slot to fill (e.g., \"sidebar\", \"sidebar.apps\", \"sidebar.bottom\", \"main\")."
+        },
+        "resourceUri": {
+          "type": "string",
+          "description": "ui:// resource URI served by this MCP server."
+        },
+        "priority": {
+          "type": "number",
+          "description": "Sort order within the slot. Lower values appear first. Default: 100."
+        },
+        "label": {
+          "type": "string",
+          "description": "Human-readable label for sidebar items and tabs."
+        },
+        "icon": {
+          "type": "string",
+          "description": "Lucide icon name (kebab-case)."
+        },
+        "route": {
+          "type": "string",
+          "description": "Route path. Registers as /app/<path>."
+        },
+        "size": {
+          "type": "string",
+          "enum": ["compact", "full", "auto"],
+          "description": "Size hint for the slot renderer."
+        }
+      }
+    },
+    "BriefingBlock": {
+      "type": "object",
+      "description": "Briefing declaration — how this app contributes to the daily briefing.",
+      "additionalProperties": false,
+      "required": ["facets"],
+      "properties": {
+        "priority": {
+          "type": "string",
+          "enum": ["high", "medium", "low"],
+          "description": "Relative priority for ordering this app's facets in the briefing."
+        },
+        "facets": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/BriefingFacet" },
+          "description": "Summary dimensions this app contributes to the briefing."
+        }
+      }
+    },
+    "BriefingFacet": {
+      "type": "object",
+      "description": "A single briefing facet — one dimension of summary data.",
+      "required": ["name", "label", "type"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Unique facet identifier (kebab-case)."
+        },
+        "label": {
+          "type": "string",
+          "description": "Human-readable label for the briefing section."
+        },
+        "type": {
+          "type": "string",
+          "enum": ["attention", "upcoming", "activity", "delta", "kpi"],
+          "description": "Facet type: attention (needs action), upcoming (coming soon), activity (happened), delta (state change), kpi (headline number)."
+        },
+        "entity": {
+          "type": "string",
+          "description": "Upjack entity name to query (resolved from upjack manifest)."
+        },
+        "resource": {
+          "type": "string",
+          "description": "briefing:// URI — app computes its own summary via MCP resource read."
+        },
+        "tool": {
+          "type": "string",
+          "description": "MCP tool name to call at briefing time (e.g., 'newsapi__search_news')."
+        },
+        "tool_input": {
+          "type": "object",
+          "description": "Arguments to pass when calling the tool (e.g., { \"query\": \"AI\", \"page_size\": 5 })."
+        },
+        "query": {
+          "type": "object",
+          "description": "MongoDB-style query filter over entity data (parsed by sift.js). Supports $eq, $ne, $gt, $gte, $lt, $lte, $in, $exists. String values like \"${today}\" are resolved at runtime."
+        },
+        "metric": {
+          "type": "string",
+          "enum": ["count", "sum", "list"],
+          "description": "Aggregation type: count entities, sum a field, or list entities."
+        },
+        "field": {
+          "type": "string",
+          "description": "Field to aggregate (for metric: sum)."
+        },
+        "highlight": {
+          "type": "string",
+          "description": "JPath condition for what changed (for delta facets)."
+        },
+        "description": {
+          "type": "string",
+          "description": "Human-readable fallback description of what this facet shows."
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,43 @@
+{
+  "manifest_version": "0.4",
+  "name": "@nimblebraininc/home",
+  "version": "0.1.0",
+  "description": "Workspace dashboard with activity briefings and raw activity data",
+  "author": {
+    "name": "NimbleBrain Inc",
+    "email": "hello@nimblebrain.ai"
+  },
+  "server": {
+    "type": "node",
+    "entry_point": "src/server.ts",
+    "mcp_config": {
+      "command": "bun",
+      "args": ["${__dirname}/src/server.ts"]
+    }
+  },
+  "user_config": {
+    "ANTHROPIC_API_KEY": {
+      "type": "string",
+      "title": "Anthropic API Key",
+      "description": "API key for briefing generation (uses Claude)",
+      "required": false
+    }
+  },
+  "_meta": {
+    "ai.nimblebrain/host": {
+      "host_version": "1.0",
+      "name": "Home",
+      "icon": "house",
+      "placements": [
+        {
+          "slot": "sidebar",
+          "resourceUri": "ui://home/dashboard",
+          "route": "/",
+          "label": "Home",
+          "icon": "house",
+          "priority": 0
+        }
+      ]
+    }
+  }
+}

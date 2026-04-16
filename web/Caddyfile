@@ -1,0 +1,10 @@
+:8080 {
+    handle /v1/* {
+        reverse_proxy {$PLATFORM_URL}
+    }
+    handle {
+        root * /srv
+        try_files {path} /index.html
+        file_server
+    }
+}

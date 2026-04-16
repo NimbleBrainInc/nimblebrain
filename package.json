@@ -1,0 +1,101 @@
+{
+  "name": "nimblebrain",
+  "version": "0.1.0",
+  "description": "Agent-native runtime for composable MCP orchestration, skill-driven prompt composition, and multi-agent delegation",
+  "license": "Apache-2.0",
+  "author": "NimbleBrain, Inc. <oss@nimblebrain.ai>",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/NimbleBrainInc/nimblebrain.git"
+  },
+  "homepage": "https://github.com/NimbleBrainInc/nimblebrain",
+  "keywords": [
+    "mcp",
+    "agent",
+    "runtime",
+    "orchestration",
+    "model-context-protocol",
+    "ai",
+    "llm",
+    "multi-agent",
+    "bun"
+  ],
+  "engines": {
+    "bun": ">=1.2.0"
+  },
+  "type": "module",
+  "files": [
+    "src/",
+    "nimblebrain.json",
+    "README.md",
+    "LICENSE",
+    "CONTRIBUTING.md",
+    "CHANGELOG.md"
+  ],
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "bin": {
+    "nb": "./src/cli/index.ts"
+  },
+  "scripts": {
+    "dev": "bun run src/cli/index.ts dev",
+    "dev:empty": "NB_API_PORT=27249 NB_WEB_PORT=27248 bun run src/cli/index.ts dev --port 27249 --config .environments/empty/nimblebrain.json",
+    "dev:minimal": "NB_API_PORT=27251 NB_WEB_PORT=27250 bun run src/cli/index.ts dev --port 27251 --config .environments/minimal/nimblebrain.json",
+    "dev:api": "bun --watch src/cli/index.ts serve -c .nimblebrain/nimblebrain.json",
+    "dev:web": "cd web && bun run dev",
+    "dev:tui": "bun run src/cli/index.ts -c .nimblebrain/nimblebrain.json",
+    "start": "bun run src/cli/index.ts serve",
+    "test:unit": "bun test test/unit/",
+    "test:integration": "bun test test/integration/",
+    "test": "bun test test/unit/ test/integration/",
+    "test:web": "cd web && bun test",
+    "eval": "bun test test/eval/",
+    "smoke": "bun test test/smoke/",
+    "check:cycles": "bun run scripts/check-cycles.ts",
+    "verify": "bun run lint && bun run check && bun run check:cycles && bun run test && bun run test:web && bun run smoke",
+    "check": "bunx tsc --noEmit",
+    "lint": "bunx @biomejs/biome check src/",
+    "format": "bunx @biomejs/biome format --write src/ web/src/",
+    "format:check": "bunx @biomejs/biome format src/ web/src/",
+    "postinstall": "bun run scripts/fetch-schema.ts",
+    "sync-models": "bun run src/model/sync-models.ts"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.10",
+    "@types/bun": "latest",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "^3.0.64",
+    "@ai-sdk/google": "^3.0.53",
+    "@ai-sdk/openai": "^3.0.48",
+    "@modelcontextprotocol/ext-apps": "^1.3.1",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@nimblebrain/mpak-sdk": "0.2.1",
+    "@nimblebrain/synapse": "^0.4.0",
+    "@workos-inc/node": "^8.12.1",
+    "ai": "^6.0.138",
+    "ajv": "^8.18.0",
+    "ajv-formats": "^3.0.1",
+    "commander": "^14.0.3",
+    "croner": "^10.0.1",
+    "gray-matter": "^4.0.3",
+    "hono": "^4.12.14",
+    "ink": "^6.8.0",
+    "mammoth": "^1.12.0",
+    "posthog-node": "^5.28.5",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "sift": "^17.1.3",
+    "unpdf": "^1.6.0",
+    "xlsx": "^0.18.5"
+  },
+  "overrides": {
+    "@hono/node-server": ">=1.19.13"
+  }
+}
