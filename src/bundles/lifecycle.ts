@@ -114,13 +114,7 @@ export class BundleLifecycleManager {
     // so two workspaces installing the same bundle keep their entity data
     // isolated. Matches the layout seedInstance uses at startup.
     const nbWorkDir = process.env.NB_WORK_DIR ?? join(homedir(), ".nimblebrain");
-    const bundleDataDir = join(
-      nbWorkDir,
-      "workspaces",
-      wsId,
-      "data",
-      deriveBundleDataDir(name),
-    );
+    const bundleDataDir = join(nbWorkDir, "workspaces", wsId, "data", deriveBundleDataDir(name));
     const server = await mpak.prepareServer({ name }, { workspaceDir: bundleDataDir });
 
     const source = new McpSource(serverName, {
@@ -606,11 +600,7 @@ export class BundleLifecycleManager {
    * Scoped to `wsId` so two workspaces installing the same bundle get separate
    * nav entries and uninstalling one doesn't wipe the other's.
    */
-  private registerPlacements(
-    serverName: string,
-    ui: BundleUiMeta | null,
-    wsId: string,
-  ): void {
+  private registerPlacements(serverName: string, ui: BundleUiMeta | null, wsId: string): void {
     if (!this.placementRegistry || !ui) return;
 
     if (ui.placements && ui.placements.length > 0) {
