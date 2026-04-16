@@ -8,12 +8,23 @@ export interface BundleHealth {
   state: BundleState;
   uptime: number | null;
   restartCount: number;
+  /** Populated for bundles that never came up (dead-on-arrival). */
+  error?: string;
 }
 
 interface BundleRecord {
   source: McpSource;
   state: BundleState;
   restartCount: number;
+}
+
+/** Dead-on-arrival record for a bundle whose startup threw — the process is
+ *  not running, so no McpSource exists to monitor. Kept here so `/v1/health`
+ *  can still report it as `dead` (operators would otherwise see the bundle
+ *  simply vanish from health output). */
+export interface StartFailureRecord {
+  name: string;
+  error: string;
 }
 
 const MAX_RESTARTS = 5;
@@ -23,6 +34,8 @@ const DEFAULT_CHECK_INTERVAL_MS = 30_000;
 export interface HealthMonitorOptions {
   checkIntervalMs?: number;
   baseDelayMs?: number;
+  /** Bundles that threw at startup and should be reported as `dead`. */
+  startFailures?: StartFailureRecord[];
 }
 
 /**
@@ -31,6 +44,7 @@ export interface HealthMonitorOptions {
  */
 export class HealthMonitor {
   private records: BundleRecord[];
+  private startFailures: StartFailureRecord[];
   private timer: ReturnType<typeof setInterval> | null = null;
   private checkIntervalMs: number;
   private baseDelayMs: number;
@@ -47,6 +61,7 @@ export class HealthMonitor {
       state: "healthy" as BundleState,
       restartCount: 0,
     }));
+    this.startFailures = opts.startFailures ?? [];
   }
 
   /** Start the periodic health check loop. */
@@ -69,14 +84,28 @@ export class HealthMonitor {
     await Promise.all(tasks);
   }
 
-  /** Get per-bundle health info. */
+  /** Get per-bundle health info. Merges live records with dead-on-arrival
+   *  start failures so operators see every bundle the system tried to run. */
   getStatus(): BundleHealth[] {
-    return this.records.map((r) => ({
+    const live: BundleHealth[] = this.records.map((r) => ({
       name: r.source.name,
       state: r.state,
       uptime: r.source.uptime(),
       restartCount: r.restartCount,
     }));
+    // A start failure is suppressed if the same server later came up. We
+    // compare by name so the live record (which has real uptime) wins.
+    const liveNames = new Set(live.map((r) => r.name));
+    const dead: BundleHealth[] = this.startFailures
+      .filter((f) => !liveNames.has(f.name))
+      .map((f) => ({
+        name: f.name,
+        state: "dead" as BundleState,
+        uptime: null,
+        restartCount: 0,
+        error: f.error,
+      }));
+    return [...live, ...dead];
   }
 
   private async checkOne(record: BundleRecord): Promise<void> {

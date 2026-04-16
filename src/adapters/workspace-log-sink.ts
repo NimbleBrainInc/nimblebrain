@@ -9,6 +9,7 @@ const WORKSPACE_EVENTS = new Set<EngineEventType>([
   "bundle.crashed",
   "bundle.recovered",
   "bundle.dead",
+  "bundle.start_failed",
   "data.changed",
   "config.changed",
   "skill.created",

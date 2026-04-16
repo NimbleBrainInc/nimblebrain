@@ -174,6 +174,8 @@ export class Runtime {
   _systemSource: import("../tools/types.ts").ToolSource | null;
   /** Platform sources (home, conversations, files, etc.) — retained for JIT workspace registration. */
   private _platformSources: import("../tools/types.ts").ToolSource[] = [];
+  /** Bundles that threw during startup. Surfaced via /v1/health so operators can see dead bundles instead of silent absence. */
+  _startFailures: import("./workspace-runtime.ts").BundleStartFailure[] = [];
   /** Getter for current workspace ID (set per-request). */
   private _currentWorkspaceId: (() => string | null) | null = null;
   private _manageConversationCtx:
@@ -454,13 +456,18 @@ export class Runtime {
 
     // Phase 3: Start workspace bundles with per-workspace registries
     const configDir = config.configPath ? dirname(config.configPath) : undefined;
-    const { registries: workspaceRegistries, entries: workspaceBundleEntries } =
-      await startWorkspaceBundles(workspaceStore, platformSources, systemTools, configDir, {
-        workDir: resolveWorkDir(config),
-        allowInsecureRemotes: config.allowInsecureRemotes,
-      });
+    const {
+      registries: workspaceRegistries,
+      entries: workspaceBundleEntries,
+      startFailures,
+    } = await startWorkspaceBundles(workspaceStore, platformSources, systemTools, configDir, {
+      workDir: resolveWorkDir(config),
+      allowInsecureRemotes: config.allowInsecureRemotes,
+      eventSink: events,
+    });
     rt._workspaceRegistries = workspaceRegistries;
     rt._platformSources = platformSources;
+    rt._startFailures = startFailures;
 
     // Seed lifecycle instances for workspace bundles (user-installed only)
     for (const entry of workspaceBundleEntries) {
@@ -868,6 +875,12 @@ export class Runtime {
       }
     }
     return sources;
+  }
+
+  /** Bundles that failed to start at boot. Used by HealthMonitor to report
+   *  dead bundles that never became McpSources. */
+  getStartFailures(): import("./workspace-runtime.ts").BundleStartFailure[] {
+    return this._startFailures;
   }
 
   /** Get all tracked bundle instances (unfiltered — use getBundleInstancesForWorkspace for scoped access). */

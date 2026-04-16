@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { deriveServerName, resolveBundleDataDir } from "../bundles/paths.ts";
 import { startBundleSource } from "../bundles/startup.ts";
 import type { BundleRef, LocalBundleMeta } from "../bundles/types.ts";
+import type { EventSink } from "../engine/types.ts";
 import { ToolRegistry } from "../tools/registry.ts";
 import type { ToolSource } from "../tools/types.ts";
 import type { Workspace } from "../workspace/types.ts";
@@ -31,6 +32,15 @@ export interface ProcessInventoryEntry {
   serverName: string;
   /** Manifest metadata captured during startup (if available). */
   meta?: LocalBundleMeta | null;
+}
+
+/** A bundle whose startup threw — the process is not running, but we record it
+ *  for operator visibility (workspace log, SSE, /v1/health). */
+export interface BundleStartFailure {
+  wsId: string;
+  serverName: string;
+  bundleName: string;
+  error: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -141,8 +151,18 @@ export async function startWorkspaceBundles(
   opts?: {
     allowInsecureRemotes?: boolean;
     workDir?: string;
+    /**
+     * Optional event sink. When provided, bundle start failures emit a
+     * `bundle.start_failed` event (workspace log + SSE). Callers that invoke
+     * this before the runtime's sink is wired (e.g. some tests) may omit it.
+     */
+    eventSink?: EventSink;
   },
-): Promise<{ registries: Map<string, ToolRegistry>; entries: ProcessInventoryEntry[] }> {
+): Promise<{
+  registries: Map<string, ToolRegistry>;
+  entries: ProcessInventoryEntry[];
+  startFailures: BundleStartFailure[];
+}> {
   const workDir = opts?.workDir ?? join(process.env.NB_WORK_DIR ?? "", ".nimblebrain");
   const workspaces = await workspaceStore.list();
   const inventory = buildProcessInventory(workspaces, workDir);
@@ -164,6 +184,7 @@ export async function startWorkspaceBundles(
 
   const registries = new Map<string, ToolRegistry>();
   const resultEntries: ProcessInventoryEntry[] = [];
+  const startFailures: BundleStartFailure[] = [];
 
   for (const [wsId, wsEntries] of byWorkspace) {
     const wsRegistry = createWorkspaceRegistry(platformSources, systemSource);
@@ -179,16 +200,33 @@ export async function startWorkspaceBundles(
         resultEntries.push({ ...entry, serverName: result.sourceName, meta: result.meta });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
+        const bundleName = bundleNameFromRef(entry.bundle);
+        // Keep stderr logging for Docker/k8s operators tailing container logs.
         process.stderr.write(
           `[workspace-runtime] Failed to start ${entry.serverName} in ${wsId}: ${msg}\n`,
         );
+        const failure: BundleStartFailure = {
+          wsId,
+          serverName: entry.serverName,
+          bundleName,
+          error: msg,
+        };
+        startFailures.push(failure);
+        // Surface to the workspace log and to SSE clients. Same failure data
+        // is handed back to the caller so HealthMonitor can report it via
+        // /v1/health (bundle never became an McpSource, so the monitor has
+        // no other way to know it exists).
+        opts?.eventSink?.emit({
+          type: "bundle.start_failed",
+          data: { ...failure },
+        });
       }
     }
 
     registries.set(wsId, wsRegistry);
   }
 
-  return { registries, entries: resultEntries };
+  return { registries, entries: resultEntries, startFailures };
 }
 
 // ---------------------------------------------------------------------------

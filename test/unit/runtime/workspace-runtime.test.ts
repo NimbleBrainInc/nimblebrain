@@ -1,11 +1,16 @@
 import { describe, expect, it } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BundleRef } from "../../../src/bundles/types.ts";
-import type { Workspace } from "../../../src/workspace/types.ts";
+import type { EngineEvent, EventSink } from "../../../src/engine/types.ts";
 import {
   buildProcessInventory,
   type ProcessInventoryEntry,
+  startWorkspaceBundles,
 } from "../../../src/runtime/workspace-runtime.ts";
+import { WorkspaceStore } from "../../../src/workspace/workspace-store.ts";
+import type { Workspace } from "../../../src/workspace/types.ts";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -152,5 +157,79 @@ describe("buildProcessInventory", () => {
     const dataDirs = entries.map((e) => e.dataDir);
     const uniqueDirs = new Set(dataDirs);
     expect(uniqueDirs.size).toBe(dataDirs.length);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// startWorkspaceBundles — failure surfacing (issue #7)
+// ---------------------------------------------------------------------------
+
+describe("startWorkspaceBundles — bundle.start_failed surfacing", () => {
+  it("emits bundle.start_failed and returns failures when a local bundle path is missing", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "nb-start-fail-"));
+    try {
+      const store = new WorkspaceStore(tmp);
+      const ws = await store.create("Broken");
+      // Point at a path that does not exist — startBundleSource will throw
+      // "Local bundle not found" inside the try block.
+      await store.update(ws.id, {
+        bundles: [{ path: "/this/path/does/not/exist/__nb_test__" }],
+      });
+
+      const collected: EngineEvent[] = [];
+      const sink: EventSink = { emit: (e) => collected.push(e) };
+
+      // Swallow the "Failed to start" stderr write that the function also does
+      // — the important behavior is the event + return value.
+      const origWrite = process.stderr.write.bind(process.stderr);
+      process.stderr.write = (() => true) as typeof process.stderr.write;
+      try {
+        const result = await startWorkspaceBundles(store, [], null, undefined, {
+          workDir: tmp,
+          eventSink: sink,
+        });
+
+        // The failed bundle is not in resultEntries, but is in startFailures.
+        expect(result.entries.some((e) => e.wsId === ws.id)).toBe(false);
+        expect(result.startFailures).toHaveLength(1);
+        expect(result.startFailures[0]!.wsId).toBe(ws.id);
+        expect(result.startFailures[0]!.error).toContain("Local bundle not found");
+
+        // The registry was still created so the workspace is usable for
+        // platform tools — existing "startup continues on failure" behavior.
+        expect(result.registries.has(ws.id)).toBe(true);
+
+        // An event was emitted with the same details.
+        const failedEvents = collected.filter((e) => e.type === "bundle.start_failed");
+        expect(failedEvents).toHaveLength(1);
+        expect(failedEvents[0]!.data.wsId).toBe(ws.id);
+        expect(failedEvents[0]!.data.error).toContain("Local bundle not found");
+      } finally {
+        process.stderr.write = origWrite;
+      }
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("no failures emitted and no event when all bundles start cleanly (empty workspace)", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "nb-start-ok-"));
+    try {
+      const store = new WorkspaceStore(tmp);
+      await store.create("Empty");
+
+      const collected: EngineEvent[] = [];
+      const sink: EventSink = { emit: (e) => collected.push(e) };
+
+      const result = await startWorkspaceBundles(store, [], null, undefined, {
+        workDir: tmp,
+        eventSink: sink,
+      });
+
+      expect(result.startFailures).toEqual([]);
+      expect(collected.filter((e) => e.type === "bundle.start_failed")).toHaveLength(0);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
   });
 });
