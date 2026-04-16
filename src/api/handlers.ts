@@ -306,6 +306,74 @@ export async function handleResourceProxy(
   });
 }
 
+/**
+ * Handle POST /v1/resources/read — MCP resources/read proxy.
+ *
+ * Body: { server, uri }
+ * Returns: MCP ReadResourceResult — { contents: [{ uri, mimeType?, text?, blob? }] }.
+ * Binary payloads are returned as base64-encoded `blob` strings per spec.
+ */
+export async function handleReadResource(
+  request: Request,
+  runtime: Runtime,
+  options?: { workspaceId?: string },
+): Promise<Response> {
+  const body = await parseJsonBody(request);
+  if (body instanceof Response) return body;
+
+  const { server, uri } = body as { server?: string; uri?: string };
+  if (!server || typeof server !== "string") {
+    return apiError(400, "bad_request", "'server' is required");
+  }
+  if (!uri || typeof uri !== "string") {
+    return apiError(400, "bad_request", "'uri' is required");
+  }
+
+  const workspaceId = options?.workspaceId;
+  if (!workspaceId) {
+    return apiError(400, "bad_request", "Workspace ID required");
+  }
+
+  // Workspace scoping — reject servers not in the active workspace.
+  const wsRegistry = await runtime.ensureWorkspaceRegistry(workspaceId);
+  if (!wsRegistry.hasSource(server)) {
+    return apiError(
+      403,
+      "workspace_access_denied",
+      `Server "${server}" is not available in this workspace`,
+      { server },
+    );
+  }
+
+  const resource = await runtime.readAppResource(server, uri, workspaceId);
+  if (resource === null) {
+    return apiError(404, "resource_not_found", `Resource "${uri}" not found`, {
+      server,
+      uri,
+    });
+  }
+
+  const entry: Record<string, unknown> = { uri };
+  if (resource.mimeType) entry.mimeType = resource.mimeType;
+  if (resource.blob) {
+    entry.blob = bytesToBase64(resource.blob);
+  } else {
+    entry.text = resource.text ?? "";
+  }
+
+  return json({ contents: [entry] });
+}
+
+/** Base64-encode a Uint8Array without blowing the call stack on large buffers. */
+export function bytesToBase64(bytes: Uint8Array): string {
+  const CHUNK = 0x8000;
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(binary);
+}
+
 /** Handle POST /v1/tools/call — direct tool invocation. */
 export async function handleToolCall(
   request: Request,
