@@ -1,6 +1,6 @@
 {
   "name": "nimblebrain",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Agent-native runtime for composable MCP orchestration, skill-driven prompt composition, and multi-agent delegation",
   "license": "Apache-2.0",
   "author": "NimbleBrain, Inc. <oss@nimblebrain.ai>",
@@ -42,6 +42,7 @@
     "dev": "bun run src/cli/index.ts dev",
     "dev:empty": "NB_API_PORT=27249 NB_WEB_PORT=27248 bun run src/cli/index.ts dev --port 27249 --config .environments/empty/nimblebrain.json",
     "dev:minimal": "NB_API_PORT=27251 NB_WEB_PORT=27250 bun run src/cli/index.ts dev --port 27251 --config .environments/minimal/nimblebrain.json",
+    "dev:docs-demo": "NB_DEV_DISPLAY_NAME='Sarah Chen' NB_DEV_EMAIL='sarah@acme.co' NB_API_PORT=27253 NB_WEB_PORT=27252 bun run src/cli/index.ts dev --port 27253 --config .environments/docs-demo/nimblebrain.json",
     "dev:api": "bun --watch src/cli/index.ts serve -c .nimblebrain/nimblebrain.json",
     "dev:web": "cd web && bun run dev",
     "dev:tui": "bun run src/cli/index.ts -c .nimblebrain/nimblebrain.json",

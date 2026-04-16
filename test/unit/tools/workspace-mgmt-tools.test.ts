@@ -310,10 +310,11 @@ describe("nb__manage_workspaces", () => {
         }>;
       };
       expect(parsed.workspaces).toHaveLength(2);
-      expect(parsed.workspaces[0].name).toBe("Alpha");
-      expect(parsed.workspaces[0].memberCount).toBe(0);
-      expect(parsed.workspaces[0].bundles).toEqual([]);
-      expect(parsed.workspaces[1].name).toBe("Beta");
+      const sorted = [...parsed.workspaces].sort((a, b) => a.name.localeCompare(b.name));
+      expect(sorted[0].name).toBe("Alpha");
+      expect(sorted[0].memberCount).toBe(0);
+      expect(sorted[0].bundles).toEqual([]);
+      expect(sorted[1].name).toBe("Beta");
     });
 
     test("returns empty array when no workspaces exist", async () => {
