@@ -28,10 +28,16 @@ import type { Runtime } from "../../../src/runtime/runtime.ts";
 
 /**
  * Minimal runtime stub sufficient for every synchronous / lazy platform
- * factory. Automations is excluded from this audit because its factory
- * starts a scheduler at construction with no externally-accessible stop
- * hook; its schemas are already exercised by tests in test/unit/bundles/
- * automations/.
+ * factory.
+ *
+ * Coverage gap: automations is excluded. Its factory starts a `Scheduler`
+ * at construction that the resulting `InlineSource` doesn't expose a stop
+ * hook for, so including it here leaks timers across tests. Its schemas
+ * are exercised indirectly by the real tests in test/unit/bundles/
+ * automations/. Closing this gap cleanly would mean giving `InlineSource`
+ * an optional onStop callback that factories can wire through — worth
+ * doing when the next bundle also grows construction-time side effects,
+ * but out of scope for the bug this audit was added alongside.
  */
 function makeRuntime(workDir: string): Runtime {
   return {

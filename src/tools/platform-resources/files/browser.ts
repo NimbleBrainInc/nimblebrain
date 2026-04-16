@@ -976,7 +976,7 @@ export const FILES_BROWSER_HTML = `<!DOCTYPE html>
             var chain = Promise.resolve();
             files.forEach(function(f) {
               chain = chain.then(function() {
-                return callTool("write", {
+                return callTool("create", {
                   filename: f.filename,
                   base64_data: f.base64Data,
                   mime_type: f.mimeType || "application/octet-stream",
