@@ -15,15 +15,22 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "bun:test";
 
-import type { PlacementEntry } from "../../src/bundles/types.ts";
+import { BundleLifecycleManager } from "../../src/bundles/lifecycle.ts";
+import type {
+  BriefingBlock,
+  BundleRef,
+  BundleUiMeta,
+  PlacementEntry,
+} from "../../src/bundles/types.ts";
 import { DevIdentityProvider } from "../../src/identity/providers/dev.ts";
 import { UserStore } from "../../src/identity/user.ts";
+import { PlacementRegistry } from "../../src/runtime/placement-registry.ts";
 import { filterPlacementsForWorkspace } from "../../src/runtime/workspace-access.ts";
 import { ToolRegistry, SharedSourceRef } from "../../src/tools/registry.ts";
 import type { Workspace } from "../../src/workspace/types.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 import type { ToolSource, Tool } from "../../src/tools/types.ts";
-import type { ToolResult } from "../../src/engine/types.ts";
+import type { EngineEvent, EventSink, ToolResult } from "../../src/engine/types.ts";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -258,5 +265,81 @@ describe("Workspace security: DevIdentityProvider populates workspace bundles", 
 
     const defaultWs = workspaces[0]!;
     expect(defaultWs.bundles).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Cross-workspace data leak regressions (bayze incident, 2026-04)
+// ---------------------------------------------------------------------------
+
+describe("Workspace security: same bundle installed in two workspaces", () => {
+  const placements = [
+    { slot: "sidebar.apps", resourceUri: "ui://crm/nav", priority: 30 },
+    { slot: "main", resourceUri: "ui://crm/board", route: "crm" },
+  ];
+
+  test("PlacementRegistry: re-registering for a second workspace does not wipe the first", () => {
+    const pr = new PlacementRegistry();
+    pr.register("crm", placements, "ws_eng");
+    pr.register("crm", placements, "ws_mkt");
+
+    const entries = pr.all();
+    const eng = entries.filter((e) => e.wsId === "ws_eng");
+    const mkt = entries.filter((e) => e.wsId === "ws_mkt");
+    expect(eng).toHaveLength(2);
+    expect(mkt).toHaveLength(2);
+  });
+
+  test("PlacementRegistry: unregister is scoped to the given workspace", () => {
+    const pr = new PlacementRegistry();
+    pr.register("crm", placements, "ws_eng");
+    pr.register("crm", placements, "ws_mkt");
+
+    pr.unregister("crm", "ws_eng");
+
+    const entries = pr.all();
+    expect(entries.filter((e) => e.wsId === "ws_eng")).toHaveLength(0);
+    expect(entries.filter((e) => e.wsId === "ws_mkt")).toHaveLength(2);
+  });
+
+  test("PlacementRegistry: re-registering a global source does not wipe workspace entries", () => {
+    const pr = new PlacementRegistry();
+    pr.register("crm", placements, "ws_eng");
+    pr.register("platform", [placements[0]]); // global, no wsId
+    pr.register("platform", [placements[0]]); // re-register global
+
+    expect(pr.all().filter((e) => e.wsId === "ws_eng")).toHaveLength(2);
+  });
+
+  test("BundleLifecycleManager: seeding the same bundle in two workspaces keeps them distinct", () => {
+    const events: EngineEvent[] = [];
+    const sink: EventSink = { emit: (e) => events.push(e) };
+    const lifecycle = new BundleLifecycleManager(sink, undefined);
+
+    const ref: BundleRef = { name: "@nimblebraininc/crm" };
+    const meta = {
+      manifestName: "@nimblebraininc/crm",
+      version: "1.0.0",
+      ui: { name: "CRM", icon: "cards" } as BundleUiMeta,
+      briefing: null as BriefingBlock | null,
+      type: "upjack" as const,
+      upjackNamespace: "apps/crm",
+    };
+
+    lifecycle.seedInstance("crm", "@nimblebraininc/crm", ref, meta, "ws_eng", "/data/ws_eng/data/crm");
+    lifecycle.seedInstance("crm", "@nimblebraininc/crm", ref, meta, "ws_mkt", "/data/ws_mkt/data/crm");
+
+    const eng = lifecycle.getInstance("crm", "ws_eng");
+    const mkt = lifecycle.getInstance("crm", "ws_mkt");
+
+    expect(eng?.wsId).toBe("ws_eng");
+    expect(mkt?.wsId).toBe("ws_mkt");
+    expect(eng?.entityDataRoot).toContain("ws_eng");
+    expect(mkt?.entityDataRoot).toContain("ws_mkt");
+    // Distinct objects — one workspace's data root must not be the other's
+    expect(eng?.entityDataRoot).not.toBe(mkt?.entityDataRoot);
+    // The unscoped snapshot exposes both — the bug was that a serverName-only
+    // filter would return both when asked for one workspace's instances.
+    expect(lifecycle.getInstances()).toHaveLength(2);
   });
 });

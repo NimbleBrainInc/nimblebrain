@@ -877,14 +877,23 @@ export class Runtime {
 
   /**
    * Get bundle instances visible in a specific workspace.
-   * Filters the global instance list to only those whose serverName
-   * is registered in the workspace's ToolRegistry.
+   *
+   * The lifecycle map is keyed by `${serverName}|${wsId}` so each (serverName,
+   * wsId) pair is a distinct instance with its own entityDataRoot. Filtering
+   * by serverName alone would return instances from every workspace that
+   * installed the same bundle — a cross-workspace data leak. The `wsId` match
+   * is the authoritative scope check; `visible.has(serverName)` keeps
+   * stopped/orphaned instances out of workspace-facing views.
    */
   getBundleInstancesForWorkspace(wsId: string): BundleInstance[] {
     const wsRegistry = this._workspaceRegistries.get(wsId);
     if (!wsRegistry) return [];
     const visible = new Set(wsRegistry.sourceNames());
-    return this.lifecycle.getInstances().filter((inst) => visible.has(inst.serverName));
+    return this.lifecycle
+      .getInstances()
+      .filter(
+        (inst) => visible.has(inst.serverName) && (inst.wsId === wsId || inst.wsId === undefined),
+      );
   }
 
   /** Get the lifecycle manager (for health monitor integration). */

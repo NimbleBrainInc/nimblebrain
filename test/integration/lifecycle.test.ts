@@ -111,7 +111,7 @@ describe("BundleLifecycleManager — install local bundle", () => {
 		const sink = makeEventCollector();
 		const lifecycle = new BundleLifecycleManager(sink, configPath);
 
-		const instance = await lifecycle.installLocal(bundleDir, registry);
+		const instance = await lifecycle.installLocal(bundleDir, registry, "ws_test");
 
 		// Source registered in registry
 		expect(registry.hasSource(instance.serverName)).toBe(true);
@@ -144,7 +144,7 @@ describe("BundleLifecycleManager — install local bundle", () => {
 		const sink = makeEventCollector();
 		const lifecycle = new BundleLifecycleManager(sink, configPath);
 
-		const instance = await lifecycle.installLocal(bundleDir, registry);
+		const instance = await lifecycle.installLocal(bundleDir, registry, "ws_test");
 
 		// UI metadata extracted from manifest
 		expect(instance.ui).not.toBeNull();
@@ -174,7 +174,7 @@ describe("BundleLifecycleManager — install local bundle", () => {
 		const sink = makeEventCollector();
 		const lifecycle = new BundleLifecycleManager(sink, configPath);
 
-		const instance = await lifecycle.installLocal(bundleDir, registry);
+		const instance = await lifecycle.installLocal(bundleDir, registry, "ws_test");
 
 		expect(instance.type).toBe("upjack");
 
@@ -201,14 +201,14 @@ describe("BundleLifecycleManager — uninstall", () => {
 		const sink = makeEventCollector();
 		const lifecycle = new BundleLifecycleManager(sink, configPath);
 
-		const instance = await lifecycle.installLocal(bundleDir, registry);
+		const instance = await lifecycle.installLocal(bundleDir, registry, "ws_test");
 		const serverName = instance.serverName;
 
 		// Verify installed
 		expect(registry.hasSource(serverName)).toBe(true);
 
 		// Now uninstall by server name (same as API: DELETE /v1/apps/:name)
-		await lifecycle.uninstall(serverName, registry);
+		await lifecycle.uninstall(serverName, registry, "ws_test");
 
 		// Source removed
 		expect(registry.hasSource(serverName)).toBe(false);
@@ -233,7 +233,7 @@ describe("BundleLifecycleManager — uninstall", () => {
 		const sink = makeEventCollector();
 		const lifecycle = new BundleLifecycleManager(sink, configPath);
 
-		const instance = await lifecycle.installLocal(bundleDir, registry);
+		const instance = await lifecycle.installLocal(bundleDir, registry, "ws_test");
 
 		// Mark as protected
 		instance.protected = true;
@@ -241,7 +241,7 @@ describe("BundleLifecycleManager — uninstall", () => {
 		// Attempt uninstall should throw
 		let error: Error | null = null;
 		try {
-			await lifecycle.uninstall(instance.serverName, registry);
+			await lifecycle.uninstall(instance.serverName, registry, "ws_test");
 		} catch (e) {
 			error = e as Error;
 		}
@@ -272,8 +272,8 @@ describe("BundleLifecycleManager — uninstall", () => {
 		const sink = makeEventCollector();
 		const lifecycle = new BundleLifecycleManager(sink, configPath);
 
-		await lifecycle.installLocal(bundleDir, registry);
-		await lifecycle.uninstall(bundleDir, registry);
+		await lifecycle.installLocal(bundleDir, registry, "ws_test");
+		await lifecycle.uninstall(bundleDir, registry, "ws_test");
 
 		// Data directory should still exist
 		expect(existsSync(dataDir)).toBe(true);
@@ -294,10 +294,10 @@ describe("BundleLifecycleManager — start and stop", () => {
 		const sink = makeEventCollector();
 		const lifecycle = new BundleLifecycleManager(sink, undefined);
 
-		const instance = await lifecycle.installLocal(bundleDir, registry);
+		const instance = await lifecycle.installLocal(bundleDir, registry, "ws_test");
 		expect(instance.state).toBe("running");
 
-		await lifecycle.stopBundle(instance.serverName, registry);
+		await lifecycle.stopBundle(instance.serverName, "ws_test", registry);
 		expect(instance.state).toBe("stopped");
 
 		await registry.removeSource(instance.serverName);
@@ -309,11 +309,11 @@ describe("BundleLifecycleManager — start and stop", () => {
 		const sink = makeEventCollector();
 		const lifecycle = new BundleLifecycleManager(sink, undefined);
 
-		const instance = await lifecycle.installLocal(bundleDir, registry);
-		await lifecycle.stopBundle(instance.serverName, registry);
+		const instance = await lifecycle.installLocal(bundleDir, registry, "ws_test");
+		await lifecycle.stopBundle(instance.serverName, "ws_test", registry);
 		expect(instance.state).toBe("stopped");
 
-		await lifecycle.startBundle(instance.serverName, registry);
+		await lifecycle.startBundle(instance.serverName, "ws_test", registry);
 		expect(instance.state).toBe("running");
 
 		await registry.removeSource(instance.serverName);
@@ -333,10 +333,10 @@ describe("BundleLifecycleManager — state transitions", () => {
 		const sink = makeEventCollector();
 		const lifecycle = new BundleLifecycleManager(sink, undefined);
 
-		const instance = await lifecycle.installLocal(bundleDir, registry);
+		const instance = await lifecycle.installLocal(bundleDir, registry, "ws_test");
 		expect(instance.state).toBe("running");
 
-		lifecycle.recordCrash(instance.serverName);
+		lifecycle.recordCrash(instance.serverName, "ws_test");
 		expect(instance.state).toBe("crashed");
 		expect(eventTypes(sink)).toContain("bundle.crashed");
 
@@ -349,10 +349,10 @@ describe("BundleLifecycleManager — state transitions", () => {
 		const sink = makeEventCollector();
 		const lifecycle = new BundleLifecycleManager(sink, undefined);
 
-		const instance = await lifecycle.installLocal(bundleDir, registry);
-		lifecycle.recordCrash(instance.serverName);
+		const instance = await lifecycle.installLocal(bundleDir, registry, "ws_test");
+		lifecycle.recordCrash(instance.serverName, "ws_test");
 
-		lifecycle.recordRecovery(instance.serverName);
+		lifecycle.recordRecovery(instance.serverName, "ws_test");
 		expect(instance.state).toBe("running");
 		expect(eventTypes(sink)).toContain("bundle.recovered");
 
@@ -365,10 +365,10 @@ describe("BundleLifecycleManager — state transitions", () => {
 		const sink = makeEventCollector();
 		const lifecycle = new BundleLifecycleManager(sink, undefined);
 
-		const instance = await lifecycle.installLocal(bundleDir, registry);
-		lifecycle.recordCrash(instance.serverName);
+		const instance = await lifecycle.installLocal(bundleDir, registry, "ws_test");
+		lifecycle.recordCrash(instance.serverName, "ws_test");
 
-		lifecycle.recordDead(instance.serverName);
+		lifecycle.recordDead(instance.serverName, "ws_test");
 		expect(instance.state).toBe("dead");
 		expect(eventTypes(sink)).toContain("bundle.dead");
 
@@ -381,12 +381,12 @@ describe("BundleLifecycleManager — state transitions", () => {
 		const sink = makeEventCollector();
 		const lifecycle = new BundleLifecycleManager(sink, undefined);
 
-		const instance = await lifecycle.installLocal(bundleDir, registry);
-		lifecycle.recordDead(instance.serverName);
+		const instance = await lifecycle.installLocal(bundleDir, registry, "ws_test");
+		lifecycle.recordDead(instance.serverName, "ws_test");
 		expect(instance.state).toBe("dead");
 
 		// Explicit startBundle should bring it back
-		await lifecycle.startBundle(instance.serverName, registry);
+		await lifecycle.startBundle(instance.serverName, "ws_test", registry);
 		expect(instance.state).toBe("running");
 
 		await registry.removeSource(instance.serverName);
@@ -409,7 +409,7 @@ describe("BundleLifecycleManager — atomic config writes", () => {
 		const sink = makeEventCollector();
 		const lifecycle = new BundleLifecycleManager(sink, configPath);
 
-		await lifecycle.installLocal(bundleDir, registry);
+		await lifecycle.installLocal(bundleDir, registry, "ws_test");
 
 		// Read config — should be valid JSON with the bundle entry
 		const raw = readFileSync(configPath, "utf-8");
@@ -434,7 +434,7 @@ describe("BundleLifecycleManager — atomic config writes", () => {
 		const sink = makeEventCollector();
 		const lifecycle = new BundleLifecycleManager(sink, configPath);
 
-		await lifecycle.installLocal(bundleDir, registry);
+		await lifecycle.installLocal(bundleDir, registry, "ws_test");
 
 		// Read config after first install
 		let config = JSON.parse(readFileSync(configPath, "utf-8"));
@@ -444,7 +444,7 @@ describe("BundleLifecycleManager — atomic config writes", () => {
 		await registry.removeSource("echo");
 
 		// Second install (same path)
-		await lifecycle.installLocal(bundleDir, registry);
+		await lifecycle.installLocal(bundleDir, registry, "ws_test");
 
 		// Should still be 1 entry (atomicConfigAdd deduplicates)
 		config = JSON.parse(readFileSync(configPath, "utf-8"));
@@ -573,7 +573,7 @@ describe("BundleLifecycleManager — error resilience", () => {
 
 		let error: Error | null = null;
 		try {
-			await lifecycle.installLocal(bundleDir, registry);
+			await lifecycle.installLocal(bundleDir, registry, "ws_test");
 		} catch (e) {
 			error = e as Error;
 		}
@@ -594,7 +594,7 @@ describe("BundleLifecycleManager — error resilience", () => {
 
 		let error: Error | null = null;
 		try {
-			await lifecycle.installLocal(bundleDir, registry);
+			await lifecycle.installLocal(bundleDir, registry, "ws_test");
 		} catch (e) {
 			error = e as Error;
 		}
@@ -608,7 +608,7 @@ describe("BundleLifecycleManager — error resilience", () => {
 		const lifecycle = new BundleLifecycleManager(sink, undefined);
 
 		// Should not throw — lenient behavior for idempotent uninstall
-		await lifecycle.uninstall("completely-nonexistent-server", registry);
+		await lifecycle.uninstall("completely-nonexistent-server", registry, "ws_test");
 
 		// But should still emit uninstalled event (even if nothing was installed)
 		// OR be a full no-op — verify whichever is the actual behavior
@@ -627,7 +627,7 @@ describe("BundleLifecycleManager — error resilience", () => {
 		const lifecycle = new BundleLifecycleManager(sink, undefined);
 
 		// Should not throw — graceful no-op for unknown server
-		expect(() => lifecycle.recordCrash("unknown-server")).not.toThrow();
+		expect(() => lifecycle.recordCrash("unknown-server", "ws_test")).not.toThrow();
 	});
 
 	it("state machine rejects invalid transitions", async () => {
@@ -636,14 +636,14 @@ describe("BundleLifecycleManager — error resilience", () => {
 		const sink = makeEventCollector();
 		const lifecycle = new BundleLifecycleManager(sink, undefined);
 
-		const instance = await lifecycle.installLocal(bundleDir, registry);
+		const instance = await lifecycle.installLocal(bundleDir, registry, "ws_test");
 
 		// running → recordRecovery should be a no-op (can't recover if not crashed)
-		lifecycle.recordRecovery(instance.serverName);
+		lifecycle.recordRecovery(instance.serverName, "ws_test");
 		expect(instance.state).toBe("running"); // Should remain running
 
 		// running → recordDead should transition (crash + dead)
-		lifecycle.recordDead(instance.serverName);
+		lifecycle.recordDead(instance.serverName, "ws_test");
 		expect(instance.state).toBe("dead");
 
 		await registry.removeSource(instance.serverName);
@@ -677,7 +677,7 @@ describe("BundleLifecycleManager — error resilience", () => {
 		}));
 
 		try {
-			await lifecycle.installLocal(brokenDir, registry);
+			await lifecycle.installLocal(brokenDir, registry, "ws_test");
 		} catch {
 			// Expected to fail
 		}
