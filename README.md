@@ -257,6 +257,8 @@ Run `nb --help` or `nb <command> --help` for full usage. If you haven't run `bun
 | `ALLOWED_ORIGINS` | Comma-separated allowed CORS origins (for cookie-based auth) |
 | `MCP_MAX_SESSIONS` | Max concurrent MCP sessions (default: 100) |
 | `MCP_SESSION_TTL_MS` | MCP session inactivity TTL in ms (default: 1800000) |
+| `NB_HSTS` | `Strict-Transport-Security` value (default: `max-age=31536000; includeSubDomains`). Set to `""` to disable — e.g., when a reverse proxy already emits this header |
+| `NB_CSP` | `Content-Security-Policy` value (default: `default-src 'none'; frame-ancestors 'none'; base-uri 'none'`). Set to `""` to disable |
 
 ## Headless / Pipe Mode
 
