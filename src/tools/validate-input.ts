@@ -11,15 +11,22 @@ export type ValidationResult =
 
 /**
  * Validate tool input against its declared JSON Schema.
- * Returns valid for empty/missing schemas (tools that accept anything).
- * Compiled validators are cached per schema object reference.
+ *
+ * Every non-empty schema is compiled and run — we don't try to guess which
+ * keywords matter. A previous keyword-allowlist heuristic would silently
+ * skip schemas that only declared `additionalProperties: false`,
+ * `minProperties`, etc.; a soundness trap now that this helper runs on
+ * every InlineSource call. Compilation is cheap and cached per schema
+ * reference, so always running is essentially free.
+ *
+ * Truly empty schemas (`{}`) still early-return valid — AJV would accept
+ * anything anyway, and it saves a round-trip.
  */
 export function validateToolInput(
   input: Record<string, unknown>,
   schema: Record<string, unknown>,
 ): ValidationResult {
-  // Skip validation for schemas with no meaningful constraints
-  if (!schema.properties && !schema.required && !schema.allOf && !schema.oneOf && !schema.anyOf) {
+  if (Object.keys(schema).length === 0) {
     return { valid: true };
   }
 
