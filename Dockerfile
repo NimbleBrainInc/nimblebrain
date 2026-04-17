@@ -6,8 +6,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && curl -fsSL https://bun.sh/install | BUN_INSTALL=/usr bash \
     && rm -rf /var/lib/apt/lists/*
 
-# mpak CLI
-RUN npm install -g @nimblebrain/mpak
+# mpak CLI — pin the version so `npm install -g` can't silently resolve to a
+# broken transitive set, and so Docker's layer cache invalidates when we bump.
+# Unpinned `install latest` combined with layer caching made it unclear which
+# version actually landed in a built image. Bump the pin to upgrade.
+RUN npm install -g @nimblebrain/mpak@0.4.1
 
 # Non-root user (UID 1000 matches K8s securityContext)
 RUN useradd -m -u 1000 nimblebrain
