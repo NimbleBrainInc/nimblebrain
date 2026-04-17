@@ -188,20 +188,72 @@ No MCP bundles are installed by default. Platform capabilities (home, conversati
 
 ## Configuration
 
-Create a `nimblebrain.json` in your working directory:
+NimbleBrain splits configuration across two files:
+
+- **`nimblebrain.json`** — instance-level settings (models, HTTP, logging, limits, feature flags). One file per deployment.
+- **`workspace.json`** — per-workspace settings (bundles, skill directories, named agent profiles, optional model + identity overrides). One file per workspace under `<workDir>/workspaces/<ws-id>/`.
+
+This split is the workspace isolation boundary: two workspaces in the same deployment can install different bundles and agents without touching the instance config. See [Workspace Isolation](#workspace-isolation) below.
+
+### `nimblebrain.json` (instance config)
+
+Create a `nimblebrain.json` in your working directory. A minimal file:
 
 ```json
 {
-  "model": { "provider": "anthropic" },
-  "defaultModel": "claude-sonnet-4-5-20250929",
+  "$schema": "https://schemas.nimblebrain.ai/v1/nimblebrain-config.schema.json",
+  "version": "1"
+}
+```
+
+A fully specified example:
+
+```json
+{
+  "$schema": "https://schemas.nimblebrain.ai/v1/nimblebrain-config.schema.json",
+  "version": "1",
+  "models": {
+    "default":   "anthropic:claude-sonnet-4-6",
+    "fast":      "anthropic:claude-haiku-4-5-20251001",
+    "reasoning": "anthropic:claude-opus-4-6"
+  },
+  "providers": {
+    "anthropic": { "apiKey": "sk-ant-..." },
+    "openai":    { "apiKey": "sk-..." }
+  },
+  "http":      { "port": 27247, "host": "127.0.0.1" },
+  "logging":   { "dir": "~/.nimblebrain/logs", "level": "normal", "retentionDays": 30 },
+  "store":     { "type": "jsonl", "dir": "~/.nimblebrain/conversations" },
+  "telemetry": { "enabled": true },
+  "files":     { "maxFileSize": 26214400, "maxFilesPerMessage": 10 },
+  "features":  { "bundleManagement": true, "mcpServer": true },
+  "maxIterations": 25,
+  "maxInputTokens": 500000,
+  "maxOutputTokens": 16384,
+  "workDir": "~/.nimblebrain"
+}
+```
+
+**Model slots.** `models` takes three named slots — `default` (chat / general), `fast` (title generation, briefings, skill matching), and `reasoning` (complex analysis). Each is a `provider:model-id` string. `providers` supplies per-provider API keys when you want to mix providers across slots. The older single-`model` / `defaultModel` shape is still accepted for backward compatibility but is deprecated.
+
+**Feature flags.** All default to `true`. Disable a flag to remove the capability entirely — the tool is unregistered, not visible to the LLM, and `POST /v1/tools/call` returns 403. See [Feature Flags](#feature-flags) for the full set.
+
+**Deprecated fields.** `identity` and `contextFile` are ignored with a warning — use a skill with `type: "context"` instead.
+
+### `workspace.json` (per-workspace config)
+
+Each workspace has its own config at `<workDir>/workspaces/<ws-id>/workspace.json`. In dev mode (no `instance.json`), the runtime uses a single `_dev` workspace.
+
+```json
+{
+  "id": "ws_product",
+  "name": "Product",
+  "members": [{ "userId": "usr_default", "role": "admin" }],
   "bundles": [
-    { "name": "@scope/bundle-name" },
-    { "name": "@scope/bundle-name", "env": { "API_KEY": "..." }, "trustScore": 92,
-      "ui": { "name": "My App", "icon": "✓", "primaryView": { "resourceUri": "ui://myapp/main" } } },
-    { "path": "/local/path/to/bundle" }
+    { "name": "@nimblebraininc/ipinfo" },
+    { "path": "../mcp-servers/hello" }
   ],
-  "skillDirs": ["/path/to/skills"],
-  "http": { "port": 27247, "host": "127.0.0.1" },
+  "skillDirs": ["./skills"],
   "agents": {
     "researcher": {
       "description": "Research agent",
@@ -210,14 +262,18 @@ Create a `nimblebrain.json` in your working directory:
       "maxIterations": 8
     }
   },
-  "features": { ... },
-  "maxIterations": 10,
-  "maxOutputTokens": 16384,
-  "workDir": "~/.nimblebrain"
+  "models": { "default": "anthropic:claude-opus-4-6" },
+  "identity": { "name": "Acme Copilot" }
 }
 ```
 
-Feature flags control which system capabilities are enabled. All default to `true`. See [Feature Flags](#feature-flags) for the full list.
+`bundles`, `skillDirs`, `agents`, and optional `models` / `identity` overrides live here, not in `nimblebrain.json`. Entries placed at the top level of `nimblebrain.json` are silently stripped on load — the runtime treats them as configuration errors rather than falling back to a global scope.
+
+### Workspace Isolation
+
+Bundles, tool registries, and conversation data are scoped to a workspace. Every tool handler resolves its workspace via `runtime.requireWorkspaceId()` before touching data. In dev mode this returns `"_dev"`; behind auth it resolves from the request's session or API key.
+
+Two workspaces that install the same bundle spawn independent subprocesses with data directories under `<workDir>/workspaces/<wsId>/data/<bundle>/`, so their entity data never crosses. Sidebar placements, briefing facets, and the app list are filtered per workspace.
 
 ### CLI Commands
 
@@ -252,13 +308,36 @@ Run `nb --help` or `nb <command> --help` for full usage. If you haven't run `bun
 
 ### Environment Variables
 
+**Model providers**
+
 | Variable | Purpose |
 |----------|---------|
-| `ANTHROPIC_API_KEY` | Anthropic API key (required unless set in config) |
-| `NB_WORK_DIR` | Override working directory (takes precedence over config, not `--workdir`) |
+| `ANTHROPIC_API_KEY` | Anthropic API key (required unless set via `providers.anthropic.apiKey`) |
+| `OPENAI_API_KEY` | OpenAI API key (when using `openai:*` model slots) |
+| `GOOGLE_GENERATIVE_AI_API_KEY` | Google Gemini API key (when using `google:*` model slots) |
+
+**Runtime**
+
+| Variable | Purpose |
+|----------|---------|
+| `NB_WORK_DIR` | Override working directory (takes precedence over config and `--workdir`) |
 | `ALLOWED_ORIGINS` | Comma-separated allowed CORS origins (for cookie-based auth) |
 | `MCP_MAX_SESSIONS` | Max concurrent MCP sessions (default: 100) |
 | `MCP_SESSION_TTL_MS` | MCP session inactivity TTL in ms (default: 1800000) |
+| `NB_CHAT_RATE_LIMIT` | Chat requests per minute per user (default: 20) |
+| `NB_TOOL_RATE_LIMIT` | Tool calls per minute per user (default: 60) |
+| `NB_TIMEZONE` | Default IANA timezone for time-aware features |
+| `NB_HOST_URL` | Public host URL for OAuth redirects |
+
+**Identity & telemetry**
+
+| Variable | Purpose |
+|----------|---------|
+| `WORKOS_API_KEY` | WorkOS API key (when `auth.adapter: "workos"` in `instance.json`) |
+| `NB_INTERNAL_TOKEN` | Shared secret for service-to-service calls (never forwarded to bundles) |
+| `TURNSTILE_SECRET_KEY` | Cloudflare Turnstile secret (CAPTCHA on auth endpoints) |
+| `POSTHOG_API_KEY` | PostHog key for anonymous product telemetry |
+| `NB_TELEMETRY_DISABLED` | Set to `1` to disable telemetry (also `DO_NOT_TRACK=1`) |
 
 ## Headless / Pipe Mode
 
@@ -541,20 +620,28 @@ Placements with a `route` field get React Router routes in `App.tsx`. Routes fro
 
 ### Configuration Reference
 
-Config file: `nimblebrain.json`. Validated at startup against `src/config/nimblebrain-config.schema.json` (JSON Schema draft-07, AJV). Unknown keys warn, structural errors throw.
+**Files:**
+- `nimblebrain.json` — instance config. Validated at startup against `src/config/nimblebrain-config.schema.json` (JSON Schema draft-07, AJV). Unknown keys warn; structural errors throw. Workspace-owned fields (`bundles`, `skillDirs`, `agents`, `preferences`, `home`, `noDefaultBundles`) are silently stripped on load. `identity` and `contextFile` are deprecated with a warning.
+- `<workDir>/workspaces/<wsId>/workspace.json` — per-workspace config. Owns `bundles`, `skillDirs`, `agents`, and optional `models` / `identity` overrides.
+- `<workDir>/instance.json` — auth configuration (OIDC or WorkOS adapter). Absence signals dev mode.
 
-**Config resolution** (when no `--config` flag):
+**Config resolution** for `nimblebrain.json` (when no `--config` flag):
 1. `--workdir <dir>` → `<dir>/nimblebrain.json`
 2. Otherwise → `./nimblebrain.json` (CWD)
 
-#### Bundle Config Fields
+`NB_WORK_DIR` overrides `workDir` from either the config file or `--workdir`.
+
+#### Bundle Entry Fields (in `workspace.json`)
+
+Each entry in `workspace.json → bundles[]` accepts:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `name` | string | Bundle name from mpak registry |
-| `path` | string | Local filesystem path (resolved relative to config file) |
+| `name` | string | Bundle name from the mpak registry |
+| `path` | string | Local filesystem path (resolved relative to the config file) |
+| `url` | string | Remote MCP server URL (HTTPS; HTTP blocked unless `allowInsecureRemotes`) |
 | `env` | object | Environment variables passed to the bundle process |
-| `allowedEnv` | string[] | Host env vars this bundle may access |
+| `allowedEnv` | string[] | Host env vars this bundle may read |
 | `protected` | boolean | Prevents uninstall via `nb__manage_app` |
 | `trustScore` | number\|null | MTF trust score (0-100) |
 | `ui` | object\|null | UI metadata: `{ name, icon, primaryView? }` |
@@ -626,13 +713,18 @@ These are non-negotiable patterns. Violating them causes production bugs:
 
 | Setting | Value |
 |---------|-------|
-| Model | `claude-sonnet-4-5-20250929` |
-| Max iterations | 10 (hard cap: 25) |
+| `models.default` | `anthropic:claude-sonnet-4-6` |
+| `models.fast` | `anthropic:claude-haiku-4-5-20251001` |
+| `models.reasoning` | `anthropic:claude-opus-4-6` |
+| Max iterations | 25 (hard cap: 50) |
 | Max input tokens | 500,000 |
 | Max output tokens | 16,384 |
 | Max history messages | 40 |
+| Max tool result size | 1,000,000 chars (0 disables) |
 | Default bundles | none (platform capabilities are built in) |
 | Work directory | `~/.nimblebrain` |
+| HTTP port | 27247 |
+| HTTP host | `127.0.0.1` |
 | Conversation store (CLI) | JSONL in `~/.nimblebrain/conversations/` |
 | Conversation store (programmatic) | In-memory |
 
