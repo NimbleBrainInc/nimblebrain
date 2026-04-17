@@ -307,6 +307,16 @@
           "type": "boolean",
           "description": "Enable file context (workspace files, chat attachments). Default: true.",
           "default": true
+        },
+        "userManagement": {
+          "type": "boolean",
+          "description": "Enable user create/delete via nb__manage_users (admin only). Default: true.",
+          "default": true
+        },
+        "workspaceManagement": {
+          "type": "boolean",
+          "description": "Enable workspace CRUD and member management via nb__manage_workspaces (admin only). Default: true.",
+          "default": true
         }
       },
       "additionalProperties": false

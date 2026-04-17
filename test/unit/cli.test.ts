@@ -85,6 +85,53 @@ describe("loadConfig", () => {
     }
   });
 
+  it("loads features from config file", () => {
+    const configPath = writeTestConfig("features.json", {
+      features: {
+        delegation: false,
+        mcpServer: false,
+        workspaceManagement: false,
+      },
+    });
+
+    const config = loadConfig({ config: configPath });
+    expect(config.features).toEqual({
+      delegation: false,
+      mcpServer: false,
+      workspaceManagement: false,
+    });
+  });
+
+  it("loads maxHistoryMessages from config file", () => {
+    const configPath = writeTestConfig("history.json", { maxHistoryMessages: 120 });
+    const config = loadConfig({ config: configPath });
+    expect(config.maxHistoryMessages).toBe(120);
+  });
+
+  it("loads maxToolResultSize from config file", () => {
+    const configPath = writeTestConfig("tool-result.json", { maxToolResultSize: 250000 });
+    const config = loadConfig({ config: configPath });
+    expect(config.maxToolResultSize).toBe(250000);
+  });
+
+  it("loads files config from config file", () => {
+    const configPath = writeTestConfig("files-config.json", {
+      files: {
+        maxFileSize: 1024,
+        maxTotalSize: 4096,
+        maxFilesPerMessage: 3,
+        maxExtractedTextSize: 8192,
+      },
+    });
+    const config = loadConfig({ config: configPath });
+    expect(config.files).toEqual({
+      maxFileSize: 1024,
+      maxTotalSize: 4096,
+      maxFilesPerMessage: 3,
+      maxExtractedTextSize: 8192,
+    });
+  });
+
   it("CLI flags override file config", () => {
     const configPath = writeTestConfig("override.json", {
       defaultModel: "claude-sonnet-4-5-20250929",
