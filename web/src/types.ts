@@ -42,6 +42,13 @@ export interface ToolCallRecord {
   output: string;
   ok: boolean;
   ms: number;
+  resourceUri?: string;
+  resourceLinks?: Array<{
+    uri: string;
+    name?: string;
+    mimeType?: string;
+    description?: string;
+  }>;
 }
 
 /** Context identifying the app/server the user is interacting with. */
@@ -169,6 +176,13 @@ export interface ToolStartEvent {
   input?: Record<string, unknown>;
 }
 
+export interface ResourceLinkInfo {
+  uri: string;
+  name?: string;
+  mimeType?: string;
+  description?: string;
+}
+
 export interface ToolDoneEvent {
   runId: string;
   name: string;
@@ -176,6 +190,8 @@ export interface ToolDoneEvent {
   ok: boolean;
   ms: number;
   resourceUri?: string;
+  /** MCP `resource_link` blocks surfaced by the tool result, if any. */
+  resourceLinks?: ResourceLinkInfo[];
   result?: {
     content: Array<{ type: string; text?: string; [key: string]: unknown }>;
     structuredContent?: Record<string, unknown>;

@@ -6,6 +6,7 @@ import { participantColor } from "../lib/participant-colors";
 import { FileAttachment } from "./FileAttachment";
 import { FlashCardGroup } from "./FlashCardGroup";
 import { InlineAppView } from "./InlineAppView";
+import { ResourceLinkView } from "./ResourceLinkView";
 import type { DisplayDetail } from "./ToolCallIndicator";
 
 function formatTokens(count: number): string {
@@ -316,6 +317,13 @@ export function MessageList({
                           const blockWidgets = block.toolCalls.filter(
                             (tc) => tc.resourceUri && tc.status === "done" && tc.appName,
                           );
+                          const resourceLinkCalls = block.toolCalls.filter(
+                            (tc) =>
+                              tc.status === "done" &&
+                              tc.appName &&
+                              tc.resourceLinks &&
+                              tc.resourceLinks.length > 0,
+                          );
                           return (
                             // biome-ignore lint/suspicious/noArrayIndexKey: blocks are append-only and don't reorder
                             <div key={blockIdx} className="flex flex-col gap-3">
@@ -334,6 +342,18 @@ export function MessageList({
                                   />
                                 );
                               })}
+                              {resourceLinkCalls.flatMap((tc) =>
+                                tc.resourceLinks!.map((link) => (
+                                  <ResourceLinkView
+                                    key={`${tc.id}:${link.uri}`}
+                                    appName={tc.appName!}
+                                    uri={link.uri}
+                                    name={link.name}
+                                    mimeType={link.mimeType}
+                                    description={link.description}
+                                  />
+                                )),
+                              )}
                             </div>
                           );
                         }

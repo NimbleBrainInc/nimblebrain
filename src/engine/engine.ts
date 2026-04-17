@@ -9,7 +9,12 @@ import type {
 import { MAX_ITERATIONS, MAX_TOOL_RESULT_CHARS } from "../limits.ts";
 import { callModel, type StreamResult } from "../model/stream.ts";
 import { validateToolInput } from "../tools/validate-input.ts";
-import { estimateContentSize, extractTextForModel, textContent } from "./content-helpers.ts";
+import {
+  estimateContentSize,
+  extractResourceLinks,
+  extractTextForModel,
+  textContent,
+} from "./content-helpers.ts";
 import { withRetry } from "./retry.ts";
 import { ActiveTaskTracker, getImmediateResponse, type McpTask, pollTask } from "./tasks.ts";
 import type {
@@ -436,6 +441,11 @@ export class AgentEngine {
             // text output is always needed for conversation history reconstruction.
             const outputText = extractTextForModel(finalResult.content);
 
+            // Per-call resource_link blocks (MCP 2025-11-25). Distinct from the
+            // static `resourceUri` tool annotation used for inline UI binding —
+            // resource_link points at a file/resource the client should fetch.
+            const resourceLinks = extractResourceLinks(finalResult.content);
+
             this.events.emit({
               type: "tool.done",
               data: {
@@ -447,10 +457,11 @@ export class AgentEngine {
                 resourceUri,
                 output: outputText,
                 result: resourceUri ? finalResult : undefined,
+                ...(resourceLinks.length > 0 ? { resourceLinks } : {}),
               },
             });
 
-            return { toolCall, result: finalResult, ms, resourceUri };
+            return { toolCall, result: finalResult, ms, resourceUri, resourceLinks };
           }),
         );
 
@@ -460,7 +471,13 @@ export class AgentEngine {
         // The full result is still available to the inline UI via tool.done event.
         const toolResultParts: LanguageModelV3ToolResultPart[] = [];
 
-        for (const { toolCall, result, ms, resourceUri: uri } of toolResults) {
+        for (const {
+          toolCall,
+          result,
+          ms,
+          resourceUri: uri,
+          resourceLinks: links,
+        } of toolResults) {
           let llmText = extractTextForModel(result.content);
 
           if (uri && llmText.length > MAX_TOOL_RESULT_CHARS) {
@@ -490,6 +507,7 @@ export class AgentEngine {
             ok: !result.isError,
             ms,
             ...(uri ? { resourceUri: uri } : {}),
+            ...(links && links.length > 0 ? { resourceLinks: links } : {}),
           });
 
           toolResultParts.push({

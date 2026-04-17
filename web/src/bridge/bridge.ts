@@ -5,7 +5,7 @@
 // Routes iframe messages to platform APIs and forwards events back to iframes.
 //
 // Spec-compliant methods:
-//   tools/call, ui/initialize, ui/notifications/initialized,
+//   tools/call, resources/read, ui/initialize, ui/notifications/initialized,
 //   ui/notifications/tool-result, ui/notifications/tool-input,
 //   ui/notifications/host-context-changed, ui/notifications/size-changed,
 //   ui/open-link, ui/message, ui/update-model-context
@@ -16,7 +16,7 @@
 //   synapse/request-file
 // ---------------------------------------------------------------------------
 
-import { callTool } from "../api/client";
+import { callTool, readResource } from "../api/client";
 import { getHostThemeMode, getThemeTokens } from "./theme";
 import type {
   BridgeCallbacks,
@@ -48,6 +48,14 @@ interface WidgetStateEntry {
 
 const appStateStore = new Map<string, AppStateEntry>();
 const widgetStateStore = new Map<string, WidgetStateEntry>();
+
+/**
+ * Internal bundle names allowed to cross-call other sources by setting
+ * `params.server` on tools/call or resources/read. External iframe apps
+ * are strictly scoped to their own server. Defined once at module scope so
+ * both message-type cases share the same trust list.
+ */
+const INTERNAL_APPS = new Set(["nb", "settings", "home", "usage"]);
 
 /** Get the latest app state pushed via ui/update-model-context. */
 export function getAppState(appName: string): AppStateEntry | undefined {
@@ -193,9 +201,10 @@ export function createBridge(
       case "tools/call": {
         const { id, params } = msg;
 
-        // Security: tool calls are scoped to appName by default.
-        // Internal bundles can specify params.server to call other sources.
-        const INTERNAL_APPS = new Set(["nb", "settings", "home", "usage"]);
+        // Security: tool/resource calls are scoped to appName by default.
+        // Internal bundles can specify params.server to cross-call other
+        // sources. INTERNAL_APPS is defined once at module scope so both
+        // tools/call and resources/read share the same trust list.
         const server = INTERNAL_APPS.has(appName) && params.server ? params.server : appName;
         callTool(server, params.name, params.arguments)
           .then((result) => {
@@ -232,6 +241,32 @@ export function createBridge(
               error: { code: -32000, message: errorMsg },
             };
             postToIframe(errorResponse);
+          });
+        break;
+      }
+
+      // -----------------------------------------------------------------
+      // Spec: resources/read — standard MCP resource reads
+      // Returns ReadResourceResult: { contents: [{ uri, mimeType?, text?, blob? }] }
+      // -----------------------------------------------------------------
+      case "resources/read": {
+        const { id, params } = msg;
+        // Same trust list as tools/call. The URI itself is passed through
+        // verbatim to the server — SSRF safety lives in the bundle, not
+        // the host, because only URIs the bundle advertises via
+        // resources/list will resolve anyway.
+        const server = INTERNAL_APPS.has(appName) && params.server ? params.server : appName;
+        readResource(server, params.uri)
+          .then((result) => {
+            postToIframe({ jsonrpc: "2.0", id, result });
+          })
+          .catch((err: unknown) => {
+            const errorMsg = err instanceof Error ? err.message : "Resource read failed";
+            postToIframe({
+              jsonrpc: "2.0",
+              id,
+              error: { code: -32000, message: errorMsg },
+            });
           });
         break;
       }

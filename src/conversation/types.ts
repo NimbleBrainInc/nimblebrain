@@ -138,6 +138,12 @@ export type StoredMessage = LanguageModelV3Message & {
       ok: boolean;
       ms: number;
       resourceUri?: string;
+      resourceLinks?: Array<{
+        uri: string;
+        name?: string;
+        mimeType?: string;
+        description?: string;
+      }>;
     }>;
     inputTokens?: number;
     outputTokens?: number;

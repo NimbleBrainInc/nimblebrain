@@ -178,4 +178,15 @@ export interface ToolCallRecord {
   ok: boolean;
   ms: number;
   resourceUri?: string;
+  /**
+   * MCP `resource_link` content blocks surfaced by the tool result.
+   * Distinct from `resourceUri`: this is a per-call, spec-defined pointer
+   * to resources the client should fetch via `resources/read`.
+   */
+  resourceLinks?: Array<{
+    uri: string;
+    name?: string;
+    mimeType?: string;
+    description?: string;
+  }>;
 }

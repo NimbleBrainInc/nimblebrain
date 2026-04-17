@@ -170,6 +170,132 @@ describe("AgentEngine", () => {
     expect(toolDone!.data["result"]).toEqual({ content: textContent("rendered"), isError: false });
   });
 
+  it("surfaces resource_link blocks on tool.done and in the result record", async () => {
+    let callCount = 0;
+    const model = createMockModel(() => {
+      callCount++;
+      if (callCount === 1) {
+        return {
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call_export",
+              toolName: "collateral__export_pdf",
+              input: JSON.stringify({}),
+            },
+          ],
+          inputTokens: 10,
+          outputTokens: 5,
+        };
+      }
+      return {
+        content: [{ type: "text", text: "Done." }],
+        inputTokens: 20,
+        outputTokens: 5,
+      };
+    });
+
+    const toolSchemas: ToolSchema[] = [
+      { name: "collateral__export_pdf", description: "Export PDF", inputSchema: {} },
+    ];
+
+    const tools = {
+      schemas: toolSchemas,
+      handler: (): ToolResult => ({
+        content: [
+          { type: "text", text: "Exported 10-page PDF (1.1MB)." },
+          {
+            type: "resource_link",
+            uri: "collateral://exports/exp_abc123.pdf",
+            name: "Document export",
+            mimeType: "application/pdf",
+          },
+        ] as ToolResult["content"],
+        isError: false,
+      }),
+    };
+
+    const events: EngineEvent[] = [];
+    const sink: EventSink = { emit: (e) => events.push(e) };
+
+    const engine = new AgentEngine(
+      model,
+      new StaticToolRouter(tools.schemas, tools.handler),
+      sink,
+    );
+
+    const result = await engine.run(
+      defaultConfig,
+      "",
+      [{ role: "user", content: [{ type: "text", text: "Export" }] }],
+      tools.schemas,
+    );
+
+    const toolDone = events.find((e) => e.type === "tool.done");
+    expect(toolDone).toBeDefined();
+    expect(toolDone!.data["resourceLinks"]).toEqual([
+      {
+        uri: "collateral://exports/exp_abc123.pdf",
+        name: "Document export",
+        mimeType: "application/pdf",
+      },
+    ]);
+    // resourceUri is separate (no UI annotation) — stays undefined.
+    expect(toolDone!.data["resourceUri"]).toBeUndefined();
+
+    expect(result.toolCalls).toHaveLength(1);
+    expect(result.toolCalls[0]!.resourceLinks).toEqual([
+      {
+        uri: "collateral://exports/exp_abc123.pdf",
+        name: "Document export",
+        mimeType: "application/pdf",
+      },
+    ]);
+  });
+
+  it("omits resourceLinks from tool.done when the tool returns none", async () => {
+    let callCount = 0;
+    const model = createMockModel(() => {
+      callCount++;
+      if (callCount === 1) {
+        return {
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call_plain",
+              toolName: "test__plain",
+              input: JSON.stringify({}),
+            },
+          ],
+          inputTokens: 10,
+          outputTokens: 5,
+        };
+      }
+      return { content: [{ type: "text", text: "ok" }], inputTokens: 5, outputTokens: 5 };
+    });
+
+    const toolSchemas: ToolSchema[] = [
+      { name: "test__plain", description: "No link", inputSchema: {} },
+    ];
+
+    const events: EngineEvent[] = [];
+    const sink: EventSink = { emit: (e) => events.push(e) };
+
+    const engine = new AgentEngine(
+      model,
+      new StaticToolRouter(toolSchemas, () => ({ content: textContent("plain"), isError: false })),
+      sink,
+    );
+
+    await engine.run(defaultConfig, "", [
+      { role: "user", content: [{ type: "text", text: "go" }] },
+    ], toolSchemas);
+
+    const toolDone = events.find((e) => e.type === "tool.done");
+    expect(toolDone).toBeDefined();
+    expect(toolDone!.data["resourceLinks"]).toBeUndefined();
+  });
+
   it("stops at max_iterations", async () => {
     const model = createMockModel(() => ({
       content: [

@@ -1356,8 +1356,10 @@ export class Runtime {
     const source = registry.getSources().find((s) => s.name === appName);
     if (!source || !isResourceReader(source)) return null;
 
-    // Try the exact URI first (ui://path as registered by the server),
-    // then namespaced fallback (ui://appName/path) for backwards compat
+    if (resourcePath.includes("://")) {
+      return source.readResource(resourcePath);
+    }
+
     const exactUri = `ui://${resourcePath}`;
     const namespacedUri = `ui://${appName}/${resourcePath}`;
 

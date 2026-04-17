@@ -134,7 +134,11 @@ export class ApiClientError extends Error {
 // Resources & Tools
 // ---------------------------------------------------------------------------
 
-/** Fetch a ui:// resource from an app. Returns raw HTML string. */
+/**
+ * Fetch an app's ui:// resource as HTML/text. Used by the iframe mounting
+ * path (SlotRenderer, InlineAppView) to load app views into sandboxed frames.
+ * For binary artifacts (PDFs, images, etc.), use {@link readResource}.
+ */
 export async function getResources(appName: string, path: string): Promise<string> {
   const res = await fetchWithRefresh(
     `${API_BASE}/v1/apps/${encodeURIComponent(appName)}/resources/${path}`,
@@ -168,6 +172,29 @@ export async function callTool(
   return request<ToolCallResult>("/v1/tools/call", {
     method: "POST",
     body: JSON.stringify({ server, tool, arguments: args }),
+  });
+}
+
+/**
+ * MCP ReadResourceResult entry. Exactly one of `text` or `blob` is populated;
+ * `blob` is a base64-encoded string per spec.
+ */
+export interface ReadResourceContent {
+  uri: string;
+  mimeType?: string;
+  text?: string;
+  blob?: string;
+}
+
+export interface ReadResourceResult {
+  contents: ReadResourceContent[];
+}
+
+/** Read an MCP resource via POST /v1/resources/read. */
+export async function readResource(server: string, uri: string): Promise<ReadResourceResult> {
+  return request<ReadResourceResult>("/v1/resources/read", {
+    method: "POST",
+    body: JSON.stringify({ server, uri }),
   });
 }
 
