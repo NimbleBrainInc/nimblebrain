@@ -208,6 +208,29 @@ export async function callTool(
   });
 }
 
+/**
+ * MCP ReadResourceResult entry. Exactly one of `text` or `blob` is populated;
+ * `blob` is a base64-encoded string per spec.
+ */
+export interface ReadResourceContent {
+  uri: string;
+  mimeType?: string;
+  text?: string;
+  blob?: string;
+}
+
+export interface ReadResourceResult {
+  contents: ReadResourceContent[];
+}
+
+/** Read an MCP resource via POST /v1/resources/read. */
+export async function readResource(server: string, uri: string): Promise<ReadResourceResult> {
+  return request<ReadResourceResult>("/v1/resources/read", {
+    method: "POST",
+    body: JSON.stringify({ server, uri }),
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Chat
 // ---------------------------------------------------------------------------

@@ -164,6 +164,7 @@ export interface UiKeydownMessage {
 /** Union of all App -> Host messages. */
 export type AppToHostMessage =
   | ToolsCallMessage
+  | ResourcesReadMessage
   | UiMessageMessage
   | UiOpenLinkMessage
   | UiSizeChangedMessage
@@ -199,6 +200,42 @@ export interface UiInitializeMessage {
     };
     apiBase?: string;
     appName?: string;
+  };
+}
+
+/** Spec: App requests the host to read an MCP resource. */
+export interface ResourcesReadMessage {
+  jsonrpc: "2.0";
+  method: "resources/read";
+  id: string;
+  params: {
+    uri: string;
+    /** Internal-only: route the read to a different server (allowed for internal bundles). */
+    server?: string;
+  };
+}
+
+/** Spec: Result of a resources/read request — returns ReadResourceResult per MCP spec. */
+export interface UiResourceResultResponse {
+  jsonrpc: "2.0";
+  id: string;
+  result: {
+    contents: Array<{
+      uri: string;
+      mimeType?: string;
+      text?: string;
+      blob?: string;
+    }>;
+  };
+}
+
+/** Error response for a failed resources/read request. */
+export interface UiResourceResultError {
+  jsonrpc: "2.0";
+  id: string;
+  error: {
+    code: number;
+    message: string;
   };
 }
 
@@ -307,6 +344,8 @@ export type HostToAppMessage =
   | UiToolResultResponse
   | UiToolResultError
   | UiToolResultMessage
+  | UiResourceResultResponse
+  | UiResourceResultError
   | UiDataChangedMessage
   | UiStateLoadedMessage
   | ExtAppsInitializeResponse

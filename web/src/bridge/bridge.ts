@@ -5,7 +5,7 @@
 // Routes iframe messages to platform APIs and forwards events back to iframes.
 //
 // Spec-compliant methods:
-//   tools/call, ui/initialize, ui/notifications/initialized,
+//   tools/call, resources/read, ui/initialize, ui/notifications/initialized,
 //   ui/notifications/tool-result, ui/notifications/tool-input,
 //   ui/notifications/host-context-changed, ui/notifications/size-changed,
 //   ui/open-link, ui/message, ui/update-model-context
@@ -16,7 +16,7 @@
 //   synapse/request-file
 // ---------------------------------------------------------------------------
 
-import { callTool } from "../api/client";
+import { callTool, readResource } from "../api/client";
 import { getHostThemeMode, getThemeTokens } from "./theme";
 import type {
   BridgeCallbacks,
@@ -232,6 +232,29 @@ export function createBridge(
               error: { code: -32000, message: errorMsg },
             };
             postToIframe(errorResponse);
+          });
+        break;
+      }
+
+      // -----------------------------------------------------------------
+      // Spec: resources/read — standard MCP resource reads
+      // Returns ReadResourceResult: { contents: [{ uri, mimeType?, text?, blob? }] }
+      // -----------------------------------------------------------------
+      case "resources/read": {
+        const { id, params } = msg;
+        const INTERNAL_APPS = new Set(["nb", "settings", "home", "usage"]);
+        const server = INTERNAL_APPS.has(appName) && params.server ? params.server : appName;
+        readResource(server, params.uri)
+          .then((result) => {
+            postToIframe({ jsonrpc: "2.0", id, result });
+          })
+          .catch((err: unknown) => {
+            const errorMsg = err instanceof Error ? err.message : "Resource read failed";
+            postToIframe({
+              jsonrpc: "2.0",
+              id,
+              error: { code: -32000, message: errorMsg },
+            });
           });
         break;
       }
