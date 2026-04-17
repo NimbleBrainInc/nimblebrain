@@ -7,7 +7,12 @@ const POSTHOG_KEY = import.meta.env.VITE_POSTHOG_KEY ?? "";
 let initialized = false;
 
 export function initTelemetry(installId?: string): void {
-  if (!installId || !POSTHOG_KEY) return;
+  if (initialized || !installId || !POSTHOG_KEY) return;
+
+  // Flip the guard before posthog.init to prevent concurrent callers
+  // (e.g. React StrictMode double-invoking effects) from racing into a
+  // second init, which PostHog logs as "already initialized".
+  initialized = true;
 
   posthog.init(POSTHOG_KEY, {
     api_host: "https://us.i.posthog.com",
@@ -19,7 +24,6 @@ export function initTelemetry(installId?: string): void {
   });
 
   posthog.register({ installId });
-  initialized = true;
 }
 
 export function captureEvent(name: string, properties?: Record<string, unknown>): void {
