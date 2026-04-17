@@ -142,9 +142,14 @@ export function ResourceLinkView({
     return (
       <div className="w-full my-2 rounded-lg border border-border bg-card overflow-hidden">
         {header}
+        {/* sandbox="allow-scripts" lets the browser's PDF viewer run its
+            internal scripts in a null origin, so a malicious PDF can't reach
+            this document's cookies, storage, or same-origin resources. We
+            deliberately omit allow-same-origin. */}
         <iframe
           src={objectUrl}
           title={displayName}
+          sandbox="allow-scripts"
           className="w-full"
           style={{ height: 600, border: 0, display: "block" }}
         />

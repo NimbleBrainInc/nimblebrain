@@ -364,8 +364,15 @@ export async function handleReadResource(
   return json({ contents: [entry] });
 }
 
-/** Base64-encode a Uint8Array without blowing the call stack on large buffers. */
+/**
+ * Base64-encode a Uint8Array. Prefers Bun/Node's native Buffer (single C++
+ * call, significantly faster on large binaries than the chunked btoa path).
+ * Falls back to a stack-safe btoa loop for runtimes without Buffer.
+ */
 export function bytesToBase64(bytes: Uint8Array): string {
+  if (typeof Buffer !== "undefined") {
+    return Buffer.from(bytes).toString("base64");
+  }
   const CHUNK = 0x8000;
   let binary = "";
   for (let i = 0; i < bytes.length; i += CHUNK) {

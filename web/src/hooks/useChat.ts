@@ -9,6 +9,7 @@ import type {
   ChatStreamEventType,
   LlmDoneEvent,
   Message,
+  ResourceLinkInfo,
   StreamErrorEvent,
   TextDeltaEvent,
   ToolDoneEvent,
@@ -485,6 +486,8 @@ export function useChat(initialConversationId?: string, currentUserId?: string):
                 output: string;
                 ok: boolean;
                 ms: number;
+                resourceUri?: string;
+                resourceLinks?: ResourceLinkInfo[];
               }>;
             };
           }
@@ -517,7 +520,6 @@ export function useChat(initialConversationId?: string, currentUserId?: string):
         if (m.metadata?.toolCalls && m.metadata.toolCalls.length > 0) {
           msg.toolCalls = m.metadata.toolCalls.map((tc) => {
             const separatorIdx = tc.name.indexOf("__");
-            const raw = tc as Record<string, unknown>;
             return {
               id: tc.id,
               name: tc.name,
@@ -525,8 +527,8 @@ export function useChat(initialConversationId?: string, currentUserId?: string):
               ok: tc.ok,
               ms: tc.ms,
               result: wrapStringResult(tc.output, !tc.ok),
-              resourceUri: raw.resourceUri as string | undefined,
-              resourceLinks: raw.resourceLinks as ToolCallDisplay["resourceLinks"],
+              resourceUri: tc.resourceUri,
+              resourceLinks: tc.resourceLinks,
               appName: separatorIdx !== -1 ? tc.name.slice(0, separatorIdx) : undefined,
             };
           });
