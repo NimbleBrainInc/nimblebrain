@@ -118,9 +118,13 @@ export function loadConfig(flags: CliFlags = {}): RuntimeConfig {
     maxIterations: fileConfig.maxIterations,
     maxInputTokens: fileConfig.maxInputTokens,
     maxOutputTokens: fileConfig.maxOutputTokens,
+    maxHistoryMessages: fileConfig.maxHistoryMessages,
+    maxToolResultSize: fileConfig.maxToolResultSize,
     events: fileConfig.events,
     logging: fileConfig.logging as RuntimeConfig["logging"],
     http: fileConfig.http as RuntimeConfig["http"],
+    features: fileConfig.features as RuntimeConfig["features"],
+    files: fileConfig.files as RuntimeConfig["files"],
     // Pass config path for bundle install/uninstall persistence
     configPath,
     workDir:
