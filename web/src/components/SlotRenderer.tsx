@@ -63,15 +63,8 @@ export function SlotRenderer({
         try {
           // Pass the full path after ui:// (e.g., "ui://crm/main" -> "crm/main")
           const resourcePath = entry.resourceUri.replace(/^ui:\/\//, "");
-          const resource = await getResources(entry.serverName, resourcePath);
+          const html = await getResources(entry.serverName, resourcePath);
           if (cancelled) break;
-          if (resource.kind !== "text") {
-            console.warn(
-              `[SlotRenderer] expected HTML for ${entry.resourceUri}, got ${resource.mimeType}`,
-            );
-            continue;
-          }
-          const html = resource.body;
 
           const iframe = createAppIframe(html, entry.serverName, {
             themeMode: modeRef.current,

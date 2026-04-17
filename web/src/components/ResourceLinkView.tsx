@@ -1,34 +1,38 @@
 import { Download, FileText, Loader2 } from "lucide-react";
 import { useEffect, useState } from "react";
-import { ApiClientError, getResources, type ResourceResponse } from "../api/client";
+import { ApiClientError, readResource, type ReadResourceContent } from "../api/client";
 
 export interface ResourceLinkViewProps {
   /** URI from the resource_link content block (e.g., `collateral://exports/exp_abc.pdf`). */
   uri: string;
-  /** App/server that emitted the link — used as the `{appName}` in the resources route. */
+  /** Server/app that owns the resource — forwarded to POST /v1/resources/read. */
   appName: string;
   /** Optional display name from the resource_link block. */
   name?: string;
-  /** Declared MIME type from the resource_link block. Falls back to the response's Content-Type. */
+  /** Declared MIME type from the resource_link block. Falls back to the resource's own mimeType. */
   mimeType?: string;
   /** Optional description surfaced to the user. */
   description?: string;
-}
-
-/**
- * The full URI is passed through (URL-encoded) as the path segment so the
- * server can resolve MCP resources that use custom schemes like
- * `collateral://`. Legacy `ui://appName/path` URIs still work because the
- * server falls back to the ui:// construction when no scheme is present.
- */
-function extractResourcePath(uri: string): string {
-  return encodeURIComponent(uri);
 }
 
 function formatBytes(size: number): string {
   if (size < 1024) return `${size} B`;
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/** Decode a base64 string to a Uint8Array in chunks (stack-safe for large blobs). */
+function base64ToBytes(b64: string): Uint8Array {
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+function defaultFilename(uri: string, name?: string): string {
+  if (name) return name;
+  const tail = uri.split("/").pop();
+  return tail && tail.length > 0 ? tail : "download";
 }
 
 export function ResourceLinkView({
@@ -38,8 +42,9 @@ export function ResourceLinkView({
   mimeType,
   description,
 }: ResourceLinkViewProps) {
-  const [resource, setResource] = useState<ResourceResponse | null>(null);
+  const [content, setContent] = useState<ReadResourceContent | null>(null);
   const [objectUrl, setObjectUrl] = useState<string | null>(null);
+  const [byteSize, setByteSize] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -49,19 +54,25 @@ export function ResourceLinkView({
 
     setLoading(true);
     setError(null);
-    setResource(null);
+    setContent(null);
     setObjectUrl(null);
-
-    const path = extractResourcePath(uri);
+    setByteSize(null);
 
     (async () => {
       try {
-        const res = await getResources(appName, path);
+        const result = await readResource(appName, uri);
         if (cancelled) return;
-        setResource(res);
-        if (res.kind === "blob") {
-          createdUrl = URL.createObjectURL(res.body);
+        const first = result.contents[0];
+        if (!first) throw new Error("No content returned");
+        setContent(first);
+        if (first.blob !== undefined) {
+          const bytes = base64ToBytes(first.blob);
+          const blob = new Blob([bytes.buffer as ArrayBuffer], {
+            type: first.mimeType ?? mimeType ?? "application/octet-stream",
+          });
+          createdUrl = URL.createObjectURL(blob);
           setObjectUrl(createdUrl);
+          setByteSize(bytes.byteLength);
         }
       } catch (err) {
         if (cancelled) return;
@@ -81,10 +92,10 @@ export function ResourceLinkView({
       cancelled = true;
       if (createdUrl) URL.revokeObjectURL(createdUrl);
     };
-  }, [uri, appName]);
+  }, [uri, appName, mimeType]);
 
   const displayName = name ?? uri;
-  const resolvedMime = resource?.mimeType ?? mimeType ?? "application/octet-stream";
+  const resolvedMime = content?.mimeType ?? mimeType ?? "application/octet-stream";
 
   if (loading) {
     return (
@@ -95,7 +106,7 @@ export function ResourceLinkView({
     );
   }
 
-  if (error || !resource) {
+  if (error || !content) {
     return (
       <div className="w-full my-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
         Failed to load {displayName}: {error ?? "unknown error"}
@@ -108,16 +119,16 @@ export function ResourceLinkView({
       <div className="flex items-center gap-2 min-w-0">
         <FileText className="w-3.5 h-3.5 shrink-0 text-muted-foreground" />
         <span className="truncate font-medium">{displayName}</span>
-        {resource.kind === "blob" && (
+        {byteSize !== null && (
           <span className="text-muted-foreground tabular-nums shrink-0">
-            {formatBytes(resource.body.size)}
+            {formatBytes(byteSize)}
           </span>
         )}
       </div>
       {objectUrl && (
         <a
           href={objectUrl}
-          download={name ?? extractResourcePath(uri).split("/").pop() ?? "download"}
+          download={defaultFilename(uri, name)}
           className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground"
           aria-label={`Download ${displayName}`}
         >
@@ -160,12 +171,12 @@ export function ResourceLinkView({
     );
   }
 
-  if (resource.kind === "text") {
+  if (content.text !== undefined) {
     return (
       <div className="w-full my-2 rounded-lg border border-border bg-card overflow-hidden">
         {header}
         <pre className="p-3 text-xs overflow-x-auto whitespace-pre-wrap break-words max-h-96">
-          {resource.body}
+          {content.text}
         </pre>
         {description && (
           <div className="px-3 py-2 text-xs text-muted-foreground border-t border-border">
@@ -183,7 +194,7 @@ export function ResourceLinkView({
         {objectUrl ? (
           <a
             href={objectUrl}
-            download={name ?? extractResourcePath(uri).split("/").pop() ?? "download"}
+            download={defaultFilename(uri, name)}
             className="inline-flex items-center gap-2 text-primary hover:underline"
           >
             <Download className="w-4 h-4" />
