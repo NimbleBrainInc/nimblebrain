@@ -1,11 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { extractText } from "../../src/engine/content-helpers.ts";
-import { mkdtempSync, existsSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, existsSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { BundleLifecycleManager } from "../../src/bundles/lifecycle.ts";
 import { createSystemTools } from "../../src/tools/system-tools.ts";
-import type { GetSkillsFn } from "../../src/tools/system-tools.ts";
+import type {
+	GetSkillsFn,
+	ManageBundleContext,
+} from "../../src/tools/system-tools.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
 import { InlineSource } from "../../src/tools/inline-source.ts";
 import type { Skill } from "../../src/skills/types.ts";
@@ -14,7 +18,9 @@ import {
 	NoopConfirmationGate,
 } from "../../src/config/privilege.ts";
 import type { ConfirmationGate } from "../../src/config/privilege.ts";
+import { getWorkspaceCredentials } from "../../src/config/workspace-credentials.ts";
 import { readSkill } from "../../src/skills/writer.ts";
+import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 
 const noopSink = new NoopEventSink();
 
@@ -830,5 +836,228 @@ describe("manage_skill — additional validation", () => {
 
 		// File should still exist
 		expect(existsSync(join(skillDir, "keep-me.md"))).toBe(true);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// manage_app configure — credential resolution via workspace store
+// ---------------------------------------------------------------------------
+
+describe("manage_app configure — workspace-scoped credentials", () => {
+	let workDir: string;
+	let mpakHome: string;
+	const wsId = "ws-configure-test";
+	const bundleName = "@testscope/configurable";
+
+	/**
+	 * Write a fake manifest for `bundleName` into `{mpakHome}/cache/{slug}/`
+	 * so `getMpak().bundleCache.getBundleManifest(name)` returns it without
+	 * hitting the network. The cache dir layout is:
+	 *   `<cacheHome>/<scope>-<name>/manifest.json`
+	 * matching `MpakBundleCache.getBundleCacheDirName()`.
+	 */
+	function writeFakeBundle(opts: {
+		userConfig?: Record<string, unknown>;
+	}): void {
+		const safeName = bundleName.replace("@", "").replace("/", "-");
+		const cacheDir = join(mpakHome, "cache", safeName);
+		mkdirSync(cacheDir, { recursive: true });
+
+		const manifest: Record<string, unknown> = {
+			manifest_version: "0.4",
+			name: bundleName,
+			version: "1.0.0",
+			description: "Configurable test bundle",
+			author: { name: "Test" },
+			server: {
+				type: "node",
+				entry_point: "server.js",
+				mcp_config: {
+					command: "node",
+					args: ["${__dirname}/server.js"],
+				},
+			},
+		};
+		if (opts.userConfig) manifest.user_config = opts.userConfig;
+		writeFileSync(join(cacheDir, "manifest.json"), JSON.stringify(manifest, null, 2));
+	}
+
+	/** Create a bundle ctx + system tools wired for `manage_app configure`. */
+	function buildTools(gate: ConfirmationGate | undefined) {
+		const registry = new ToolRegistry();
+		const sink = new NoopEventSink();
+		const lifecycle = new BundleLifecycleManager(sink, undefined, false, mpakHome);
+		const store = new WorkspaceStore(workDir);
+		const ctx: ManageBundleContext = {
+			getWorkspaceId: () => wsId,
+			workspaceStore: store,
+			workDir,
+			configDir: undefined,
+			eventSink: sink,
+		};
+		const tools = createSystemTools(
+			() => registry,
+			undefined,
+			gate,
+			lifecycle,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			sink,
+			undefined,
+			undefined,
+			mpakHome,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			ctx,
+		);
+		return { tools, registry, sink };
+	}
+
+	beforeEach(() => {
+		workDir = mkdtempSync(join(tmpdir(), "nb-configure-test-"));
+		mpakHome = mkdtempSync(join(tmpdir(), "nb-configure-mpak-"));
+	});
+
+	afterEach(() => {
+		rmSync(workDir, { recursive: true, force: true });
+		rmSync(mpakHome, { recursive: true, force: true });
+	});
+
+	it("non-interactive gate with user_config returns error suggesting `nb config set ... -w <wsId>`", async () => {
+		writeFakeBundle({
+			userConfig: {
+				api_key: { type: "string", title: "API Key", required: true, sensitive: true },
+			},
+		});
+
+		const gate: ConfirmationGate = {
+			supportsInteraction: false,
+			confirm: async () => true,
+			promptConfigValue: async () => null,
+		};
+		const { tools } = buildTools(gate);
+
+		const result = await tools.execute("manage_app", {
+			action: "configure",
+			name: bundleName,
+		});
+
+		expect(result.isError).toBe(true);
+		const text = extractText(result.content);
+		expect(text).toContain("Cannot configure interactively in server mode");
+		expect(text).toContain(`nb config set ${bundleName} api_key=<value> -w ${wsId}`);
+	});
+
+	it("bundle with no user_config reports nothing to configure (interactive)", async () => {
+		writeFakeBundle({});
+
+		const gate: ConfirmationGate = {
+			supportsInteraction: true,
+			confirm: async () => true,
+			promptConfigValue: async () => null,
+		};
+		const { tools } = buildTools(gate);
+
+		const result = await tools.execute("manage_app", {
+			action: "configure",
+			name: bundleName,
+		});
+
+		expect(result.isError).toBe(false);
+		expect(extractText(result.content)).toContain("has no configurable credentials");
+	});
+
+	it("bundle with no user_config reports nothing to configure (non-interactive)", async () => {
+		writeFakeBundle({});
+
+		const gate: ConfirmationGate = {
+			supportsInteraction: false,
+			confirm: async () => true,
+			promptConfigValue: async () => null,
+		};
+		const { tools } = buildTools(gate);
+
+		const result = await tools.execute("manage_app", {
+			action: "configure",
+			name: bundleName,
+		});
+
+		expect(result.isError).toBe(false);
+		expect(extractText(result.content)).toContain("has no configurable credentials");
+	});
+
+	it("interactive gate: prompted values are saved to the workspace credential store", async () => {
+		writeFakeBundle({
+			userConfig: {
+				api_key: { type: "string", title: "API Key", required: true, sensitive: true },
+			},
+		});
+
+		const promptCalls: string[] = [];
+		const gate: ConfirmationGate = {
+			supportsInteraction: true,
+			confirm: async () => true,
+			promptConfigValue: async (field) => {
+				promptCalls.push(field.key);
+				return "sk-prompted-value";
+			},
+		};
+		const { tools } = buildTools(gate);
+
+		// The restart via startBundleSource will fail (no real bundle zip), but
+		// credentials are persisted BEFORE restart — that's the behavior we're
+		// asserting. The tool result ends up isError=true for that reason, but
+		// the workspace credential store must contain the prompted value.
+		await tools.execute("manage_app", {
+			action: "configure",
+			name: bundleName,
+		});
+
+		expect(promptCalls).toEqual(["api_key"]);
+
+		const creds = await getWorkspaceCredentials(wsId, bundleName, workDir);
+		expect(creds).not.toBeNull();
+		expect(creds?.api_key).toBe("sk-prompted-value");
+	});
+
+	it("forcePrompt: re-prompts even when a value already exists in the workspace store", async () => {
+		writeFakeBundle({
+			userConfig: {
+				api_key: { type: "string", title: "API Key", required: true, sensitive: true },
+			},
+		});
+
+		// Seed an existing credential via the workspace store writer.
+		const { saveWorkspaceCredential } = await import(
+			"../../src/config/workspace-credentials.ts"
+		);
+		await saveWorkspaceCredential(wsId, bundleName, "api_key", "sk-old-value", workDir);
+
+		const promptCalls: string[] = [];
+		const gate: ConfirmationGate = {
+			supportsInteraction: true,
+			confirm: async () => true,
+			promptConfigValue: async (field) => {
+				promptCalls.push(field.key);
+				return "sk-new-value";
+			},
+		};
+		const { tools } = buildTools(gate);
+
+		await tools.execute("manage_app", {
+			action: "configure",
+			name: bundleName,
+		});
+
+		// forcePrompt means the gate is called even though a stored value
+		// already exists — that's the whole point of `configure`.
+		expect(promptCalls).toEqual(["api_key"]);
+
+		const creds = await getWorkspaceCredentials(wsId, bundleName, workDir);
+		expect(creds?.api_key).toBe("sk-new-value");
 	});
 });
