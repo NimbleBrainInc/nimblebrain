@@ -1,7 +1,6 @@
-import { join } from "node:path";
 import type { BundleLifecycleManager } from "../bundles/lifecycle.ts";
 import { getMpak } from "../bundles/mpak.ts";
-import { deriveBundleDataDir, deriveServerName } from "../bundles/paths.ts";
+import { deriveServerName } from "../bundles/paths.ts";
 import { startBundleSource } from "../bundles/startup.ts";
 import type { BundleManifest } from "../bundles/types.ts";
 import {
@@ -998,18 +997,21 @@ async function configureBundle(
     });
 
     // Restart the bundle via the shared primitive — same construction path
-    // as boot-time / agent install. After task 005 wires `resolveUserConfig`
-    // into `startBundleSource`, the restart will read the values we just
-    // persisted above. If this function diverges from `startBundleSource`
-    // the rest of the app silently breaks (e.g. sink plumbing, PYTHONPATH,
-    // data-dir layout). Delegate instead.
+    // as boot-time / agent install. `startBundleSource` reads the values we
+    // just persisted above from the workspace credential store. If this
+    // function diverges from that primitive the rest of the app silently
+    // breaks (sink plumbing, PYTHONPATH, data-dir layout, user_config
+    // resolution). Delegate instead: pass `wsId`+`workDir` and let
+    // `startBundleSource` derive the workspace-scoped data dir itself —
+    // never compute it here, or it drifts from the install-time layout
+    // and Upjack entity state disappears across restarts.
     const serverName = deriveServerName(name);
     if (registry.hasSource(serverName)) {
       await registry.removeSource(serverName);
     }
-    const bundleDataDir = join(workDir, "data", deriveBundleDataDir(name));
     const result = await startBundleSource({ name }, registry, eventSink, undefined, {
-      dataDir: bundleDataDir,
+      wsId,
+      workDir,
     });
 
     const tools = await registry.availableTools();

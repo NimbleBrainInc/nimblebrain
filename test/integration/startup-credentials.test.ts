@@ -284,7 +284,7 @@ describe("startBundleSource — credential resolution", () => {
           { workDir: layout.workDir },
         );
 
-        await expect(call).rejects.toThrow(/wsId.*required/i);
+        await expect(call).rejects.toThrow(/workspace ID is required/i);
       } finally {
         restoreEnv();
       }

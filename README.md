@@ -283,7 +283,7 @@ nb serve                    HTTP API server (production)
 nb dev                      Dev mode: API with file watching + web HMR
 nb bundle list|add|remove|search   Manage bundles
 nb skill list|info          Inspect skills
-nb config set|get|clear     Configure bundle settings
+nb config set|get|clear     Configure per-bundle credentials (requires `-w <wsId>`)
 nb status                   Workspace status
 nb reload                   Hot-reload bundles and config
 nb telemetry on|off|status|reset   Manage anonymous telemetry

@@ -228,6 +228,13 @@ export async function clearAllWorkspaceCredentials(
  * was taken on GitHub. The brand — and therefore the env var convention — is
  * `nimblebrain`. Stripping the suffix keeps the env var name aligned with the
  * public brand instead of a GitHub artifact.
+ *
+ * Collision caveat: the rule applies to ALL scopes, not just `nimblebraininc`.
+ * A future scope like `@fooinc` would collide with `@foo` under this mapping.
+ * Acceptable today because the NimbleBrain-published bundle ecosystem doesn't
+ * have scopes ending in `inc` other than ours; if that ever changes we
+ * should either promote this to an explicit alias map or warn at resolve
+ * time when a collision is detected.
  */
 function normalizeScope(scope: string): string {
   return scope.replace(/inc$/i, "");

@@ -11,7 +11,12 @@ import { extractBundleMeta } from "./defaults.ts";
 import { filterEnvForBundle } from "./env-filter.ts";
 import { validateManifest } from "./manifest.ts";
 import { getMpak } from "./mpak.ts";
-import { deriveBundleDataDir, deriveServerName, validateServerName } from "./paths.ts";
+import {
+  deriveBundleDataDir,
+  deriveServerName,
+  resolveBundleDataDir,
+  validateServerName,
+} from "./paths.ts";
 import { resolveLocalBundle } from "./resolve.ts";
 import type {
   BundleManifest,
@@ -97,8 +102,27 @@ export async function startBundleSource(
     const serverName = deriveServerName(ref.name);
     validateServerName(serverName);
     const sourceName = serverName;
-    const nbWorkDir = opts?.workDir ?? process.env.NB_WORK_DIR ?? join(homedir(), ".nimblebrain");
-    const bundleDataDir = opts?.dataDir ?? join(nbWorkDir, "data", deriveBundleDataDir(ref.name));
+
+    // Named bundles are workspace-scoped. The caller must supply `wsId`;
+    // without it we have no workspace to resolve credentials against and
+    // no way to pick a consistent data dir. This throw is the end of the
+    // named-bundle path — the platform has a bug if a caller reaches here
+    // without a workspace context.
+    if (!opts?.wsId) {
+      throw new Error(
+        `Cannot start ${ref.name}: a workspace ID is required (platform bug — please report).`,
+      );
+    }
+
+    const nbWorkDir = opts.workDir ?? process.env.NB_WORK_DIR ?? join(homedir(), ".nimblebrain");
+    // Data dir derives from wsId + workDir. Callers only pass `opts.dataDir`
+    // to override for test fixtures. This is the single source of truth for
+    // the layout — lifecycle.installNamed, workspace-ops, and workspace-
+    // runtime all produce paths matching this derivation, so there is no
+    // drift class between "where a bundle gets installed" and "where it
+    // spawns when restarted."
+    const bundleDataDir =
+      opts.dataDir ?? resolveBundleDataDir(join(nbWorkDir, "workspaces", opts.wsId), ref.name);
 
     const mpakHome = process.env.MPAK_HOME ?? join(homedir(), ".mpak");
     const mpak = getMpak(mpakHome);
@@ -119,12 +143,6 @@ export async function startBundleSource(
     // process env (tier 2), and manifest defaults (tier 3). This is how named
     // bundles get their credentials at startup — `BundleRef.env` layers on top
     // afterwards for non-sensitive overrides, unchanged.
-    if (!opts?.wsId) {
-      throw new Error(
-        `startBundleSource: "wsId" is required when starting a named bundle (${ref.name}). ` +
-          `Credential resolution is workspace-scoped.`,
-      );
-    }
     const userConfig = await resolveUserConfig({
       bundleName: ref.name,
       userConfigSchema: cachedManifest?.user_config,
