@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { log } from "../cli/log.ts";
+import { resolveUserConfig, type UserConfigFieldDef } from "../config/workspace-credentials.ts";
 import type { EventSink } from "../engine/types.ts";
 import { McpSource } from "../tools/mcp-source.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
@@ -38,6 +39,19 @@ export async function startBundleSource(
     allowInsecureRemotes?: boolean;
     internalEnv?: InternalBundleEnv;
     dataDir?: string;
+    /**
+     * Workspace id for credential resolution. Required for named bundles — the
+     * named-bundle path resolves `user_config` via `resolveUserConfig` which is
+     * workspace-scoped by design. Unused for URL and local-path bundles, which
+     * don't go through `prepareServer` for `user_config`.
+     */
+    wsId?: string;
+    /**
+     * Work directory for credential resolution. Defaults to `NB_WORK_DIR` or
+     * `~/.nimblebrain` — the same default the named-bundle branch already uses
+     * for `bundleDataDir`.
+     */
+    workDir?: string;
   },
 ): Promise<StartBundleResult> {
   if ("url" in ref) {
@@ -83,19 +97,45 @@ export async function startBundleSource(
     const serverName = deriveServerName(ref.name);
     validateServerName(serverName);
     const sourceName = serverName;
-    const nbWorkDir = process.env.NB_WORK_DIR ?? join(homedir(), ".nimblebrain");
+    const nbWorkDir = opts?.workDir ?? process.env.NB_WORK_DIR ?? join(homedir(), ".nimblebrain");
     const bundleDataDir = opts?.dataDir ?? join(nbWorkDir, "data", deriveBundleDataDir(ref.name));
 
     const mpakHome = process.env.MPAK_HOME ?? join(homedir(), ".mpak");
     const mpak = getMpak(mpakHome);
-    const server = await mpak.prepareServer({ name: ref.name }, { workspaceDir: bundleDataDir });
 
-    // Read cached manifest for UI + briefing metadata + return to caller
-    const cachedManifest = mpak.bundleCache.getBundleManifest(ref.name) as BundleManifest | null;
+    // Read cached manifest up-front so we can discover the user_config schema
+    // and resolve credentials BEFORE prepareServer validates them. The mpak
+    // cache is populated during install (see BundleLifecycleManager.installNamed
+    // or mpak install), so we expect the manifest to be present here.
+    const cachedManifest = mpak.bundleCache.getBundleManifest(ref.name) as
+      | (BundleManifest & { user_config?: Record<string, UserConfigFieldDef> })
+      | null;
     if (cachedManifest) {
       meta = extractBundleMeta(cachedManifest as unknown as Record<string, unknown>);
       manifest = cachedManifest;
     }
+
+    // Resolve user_config values from the workspace credential store (tier 1),
+    // process env (tier 2), and manifest defaults (tier 3). This is how named
+    // bundles get their credentials at startup — `BundleRef.env` layers on top
+    // afterwards for non-sensitive overrides, unchanged.
+    if (!opts?.wsId) {
+      throw new Error(
+        `startBundleSource: "wsId" is required when starting a named bundle (${ref.name}). ` +
+          `Credential resolution is workspace-scoped.`,
+      );
+    }
+    const userConfig = await resolveUserConfig({
+      bundleName: ref.name,
+      userConfigSchema: cachedManifest?.user_config,
+      wsId: opts.wsId,
+      workDir: nbWorkDir,
+    });
+
+    const server = await mpak.prepareServer(
+      { name: ref.name },
+      { workspaceDir: bundleDataDir, userConfig },
+    );
 
     source = new McpSource(
       sourceName,

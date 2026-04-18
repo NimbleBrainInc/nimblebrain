@@ -102,7 +102,7 @@ export class BundleLifecycleManager {
       registry,
       this.eventSink,
       this.configPath ? dirname(this.configPath) : undefined,
-      { dataDir: bundleDataDir },
+      { dataDir: bundleDataDir, wsId, workDir: nbWorkDir },
     );
     if (!manifest) {
       // Named bundles always have a manifest — startBundleSource reads it

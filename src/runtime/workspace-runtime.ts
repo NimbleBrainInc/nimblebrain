@@ -178,6 +178,11 @@ export async function startWorkspaceBundles(
         const result = await startBundleSource(entry.bundle, wsRegistry, eventSink, configDir, {
           allowInsecureRemotes: opts?.allowInsecureRemotes,
           dataDir: entry.dataDir,
+          // Thread workspace id + work dir so the named-bundle path can
+          // resolve `user_config` from the workspace credential store before
+          // prepareServer validates it.
+          wsId: entry.wsId,
+          workDir,
         });
         // Use the actual source name from the registry (may differ from path-derived name)
         resultEntries.push({ ...entry, serverName: result.sourceName, meta: result.meta });
@@ -232,6 +237,11 @@ export async function installBundleInWorkspace(
   const result = await startBundleSource(bundleRef, registry, eventSink, configDir, {
     allowInsecureRemotes: opts?.allowInsecureRemotes,
     dataDir,
+    // Thread workspace id + work dir so the named-bundle path can resolve
+    // `user_config` from the workspace credential store before prepareServer
+    // validates it.
+    wsId,
+    workDir,
   });
 
   return {

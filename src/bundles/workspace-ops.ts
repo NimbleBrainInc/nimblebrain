@@ -70,6 +70,11 @@ export async function installBundleInWorkspace(
   const result = await startBundleSource(bundleRef, registry, eventSink, configDir, {
     allowInsecureRemotes: opts?.allowInsecureRemotes,
     dataDir,
+    // Thread workspace id + work dir so the named-bundle path can resolve
+    // `user_config` from the workspace credential store before prepareServer
+    // validates it.
+    wsId,
+    workDir,
   });
 
   return {
