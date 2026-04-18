@@ -118,7 +118,7 @@ export class WorkspaceStore {
     };
 
     const wsDir = join(this.workspacesDir, id);
-    mkdirSync(wsDir, { recursive: true });
+    mkdirSync(wsDir, { recursive: true, mode: 0o700 });
     await this.atomicWrite(this.wsPath(id), workspace);
     await scaffoldWorkspace(wsDir);
 
@@ -212,7 +212,10 @@ export class WorkspaceStore {
 
   private async atomicWrite(filePath: string, data: Workspace): Promise<void> {
     const tmpPath = `${filePath}.tmp.${uniqueTmpSuffix()}`;
-    await writeFile(tmpPath, `${JSON.stringify(data, null, 2)}\n`, "utf-8");
+    await writeFile(tmpPath, `${JSON.stringify(data, null, 2)}\n`, {
+      encoding: "utf-8",
+      mode: 0o600,
+    });
     await rename(tmpPath, filePath);
   }
 }
