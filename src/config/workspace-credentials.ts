@@ -1,5 +1,6 @@
 import { chmod, mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { WORKSPACE_ID_RE } from "../workspace/workspace-store.ts";
 
 /**
  * Workspace-scoped credential store.
@@ -10,13 +11,18 @@ import { join } from "node:path";
  * File format is plain JSON key-value — no metadata envelope:
  *   { "api_key": "sk-...", "workspace_id": "ws-..." }
  *
- * This is tier 1 of the 4-tier credential resolution hierarchy described in
- * `.tasks/credential-resolution/SPEC_REFERENCE.md`. This module implements the
- * file-level CRUD only. The tier resolver lives in `resolveUserConfig` (task 003).
+ * This is the tier-1 primitive for NimbleBrain's workspace-scoped credential
+ * resolution. This module implements the file-level CRUD only; the tier
+ * resolver layered on top is `resolveUserConfig` in the same module.
  *
- * Security: files are written with `0o600`, the `credentials/` directory is
- * created with `0o700`, and writes are atomic (temp file + rename). Credential
- * values are never logged; only keys appear in diagnostics.
+ * Security posture:
+ *   - Files are written with `0o600`, the `credentials/` directory is created
+ *     with `0o700`, and writes are atomic (temp file + rename).
+ *   - `wsId` is validated against `WORKSPACE_ID_RE` on every call because the
+ *     path derived from it is a filesystem path — a caller passing `../evil`
+ *     would otherwise escape the workspace tree. We don't trust the call site.
+ *   - Credential values are never logged; only keys and paths appear in
+ *     diagnostics.
  */
 
 // ── Path helpers ──────────────────────────────────────────────────
@@ -27,11 +33,37 @@ import { join } from "node:path";
  *   `@nimblebraininc/newsapi` → `nimblebraininc-newsapi`
  *   `newsapi`                 → `newsapi`
  *
- * Strips a leading `@` and replaces `/` with `-`. Scope is preserved so
- * same-named bundles from different scopes don't collide.
+ * Strips a leading `@` and replaces path separators with `-`. Scope is
+ * preserved so same-named bundles from different scopes don't collide.
+ * Defensively handles `..` segments, null bytes, and Windows-style
+ * separators so no possible bundleName can escape the credentials directory
+ * or produce a shell-hostile filename. The result is matched against
+ * `SLUG_RE` and throws on any characters that survive — better to fail
+ * loudly than to silently write to an unexpected path.
  */
+const SLUG_RE = /^[A-Za-z0-9._-]+$/;
 export function bundleSlug(bundleName: string): string {
-  return bundleName.replace(/^@/, "").replace(/\//g, "-");
+  if (typeof bundleName !== "string" || bundleName.length === 0) {
+    throw new Error(`[workspace-credentials] invalid bundle name: must be a non-empty string`);
+  }
+  // Normalize: strip leading @, collapse separators to `-`.
+  const slug = bundleName.replace(/^@/, "").replace(/[/\\]/g, "-");
+  if (!SLUG_RE.test(slug) || slug === "." || slug === "..") {
+    throw new Error(
+      `[workspace-credentials] invalid bundle name "${bundleName}": ` +
+        `must contain only alphanumerics, dot, underscore, hyphen, and one optional @scope/ prefix`,
+    );
+  }
+  return slug;
+}
+
+/** Assert `wsId` matches the shape enforced by `WorkspaceStore`. */
+function assertValidWsId(wsId: string): void {
+  if (typeof wsId !== "string" || !WORKSPACE_ID_RE.test(wsId)) {
+    throw new Error(
+      `[workspace-credentials] invalid wsId: "${wsId}". Must match /^ws_[a-z0-9_]{1,64}$/i.`,
+    );
+  }
 }
 
 /** Absolute path to the credentials directory for a workspace. */
@@ -41,10 +73,11 @@ function credentialsDir(wsId: string, workDir: string): string {
 
 /** Absolute path to the credential file for a bundle in a workspace. */
 export function credentialPath(wsId: string, bundleName: string, workDir: string): string {
+  assertValidWsId(wsId);
   return join(credentialsDir(wsId, workDir), `${bundleSlug(bundleName)}.json`);
 }
 
-// ── Atomic write helper ───────────────────────────────────────────
+// ── Atomic write + per-file lock helpers ─────────────────────────
 
 let tmpCounter = 0;
 function uniqueTmpSuffix(): string {
@@ -52,9 +85,43 @@ function uniqueTmpSuffix(): string {
 }
 
 /**
+ * In-process serialization for read-modify-write operations on the same
+ * credential file. Two concurrent `saveWorkspaceCredential` or
+ * `clearWorkspaceCredential` calls with different keys on the same
+ * `{wsId, bundleName}` would otherwise both read the old state and the
+ * second write would overwrite the first — silently losing a key. Atomic
+ * rename guarantees "no partial file observable," not "no lost updates."
+ *
+ * The fix is a promise chain per file path: each operation waits for the
+ * previous one on the same file to settle, then runs, then extends the
+ * chain. Since NimbleBrain runs as a single process, in-process serialization
+ * is sufficient — we don't need flock / O_EXCL semantics across processes.
+ */
+const fileLocks = new Map<string, Promise<unknown>>();
+
+async function withFileLock<T>(path: string, fn: () => Promise<T>): Promise<T> {
+  const previous = fileLocks.get(path) ?? Promise.resolve();
+  // A prior failure on the same path must not poison subsequent operations —
+  // hence the `.catch(() => {})` rather than letting a rejection propagate
+  // into the new chain link.
+  const current = previous.catch(() => {}).then(fn);
+  fileLocks.set(path, current);
+  try {
+    return await current;
+  } finally {
+    // Clean up only if nobody chained onto us — otherwise the next caller
+    // still needs to see our promise as the tail.
+    if (fileLocks.get(path) === current) {
+      fileLocks.delete(path);
+    }
+  }
+}
+
+/**
  * Write `content` to `path` atomically with the requested mode.
  * Writes to `{path}.tmp.{timestamp}.{counter}` then renames into place so
- * readers never observe a partial file.
+ * readers never observe a partial file. This function alone is not
+ * sufficient for read-modify-write callers — see `withFileLock` above.
  */
 async function atomicWriteFile(path: string, content: string, mode: number): Promise<void> {
   const tmpPath = `${path}.tmp.${uniqueTmpSuffix()}`;
@@ -67,17 +134,34 @@ async function atomicWriteFile(path: string, content: string, mode: number): Pro
 /**
  * Ensure the `credentials/` directory for a workspace exists with `0o700`.
  * Also enforces the mode if the directory already exists.
+ *
+ * Parent directory invariant: this primitive assumes `workspaces/{wsId}/`
+ * already exists with `0o700`. In production that holds because
+ * `WorkspaceStore.create` runs first and creates it explicitly. If a test
+ * writes a credential without first creating the workspace, the intermediate
+ * directory will get umask-default mode (typically `0o755`) — the leaf stays
+ * `0o700` because we `chmod` it below, but the parent doesn't. Keep this
+ * coupling in mind if the call order ever changes.
  */
 async function ensureCredentialsDir(wsId: string, workDir: string): Promise<string> {
   const dir = credentialsDir(wsId, workDir);
   await mkdir(dir, { recursive: true, mode: 0o700 });
   // `mkdir({ mode })` only applies to newly created directories; harden the
   // final leaf regardless (cheap no-op when already correct).
-  await chmod(dir, 0o700).catch(() => {
-    // If chmod fails (e.g. not the owner), leave the directory alone — the
-    // store itself will still refuse to write to a world-readable file via
-    // the atomic write's explicit mode, and the read path warns.
-  });
+  try {
+    await chmod(dir, 0o700);
+  } catch (err) {
+    // Don't abort — the file write still applies `0o600` explicitly, so a
+    // writable file under a permissive directory leaks the *fact* of which
+    // bundles have credentials (directory listing), but not the contents.
+    // Surface a warning so an operator can investigate ownership/mode.
+    console.warn(
+      `[workspace-credentials] chmod 0700 failed on ${dir}: ${
+        err instanceof Error ? err.message : String(err)
+      }. Credential file contents remain protected via 0600, but the ` +
+        `directory listing may be readable. Check ownership.`,
+    );
+  }
   return dir;
 }
 
@@ -89,6 +173,13 @@ async function ensureCredentialsDir(wsId: string, workDir: string): Promise<stri
  * Returns `null` if the file does not exist (not an error — missing creds are
  * normal; the caller falls through to the next tier). If the file exists but
  * has a mode other than `0o600`, a warning is written to stderr.
+ *
+ * The permission check is advisory: we've already read the file by the time
+ * we stat it, so refusing on a mode mismatch wouldn't prevent credential
+ * disclosure to *us*. The check exists to nudge operators toward fixing the
+ * permissions before the file leaks via backup/sync/other readers. Refusing
+ * would also cause hard failures on legitimate upgrades where an older file
+ * predates the explicit-chmod write path.
  */
 export async function getWorkspaceCredentials(
   wsId: string,
@@ -105,8 +196,8 @@ export async function getWorkspaceCredentials(
     throw err;
   }
 
-  // Permission check. The file existed, so we expect 0o600. Only the 9 mode
-  // bits are relevant — higher bits (setuid/setgid/sticky) and file-type bits
+  // Advisory permission check — see function docblock. Only the 9 mode bits
+  // are relevant; higher bits (setuid/setgid/sticky) and file-type bits
   // would never be set on our files.
   try {
     const st = await stat(filePath);
@@ -153,6 +244,10 @@ export async function getWorkspaceCredentials(
  * Merges with any existing values in the file — other keys are preserved.
  * Parent directories are created as needed (`credentials/` with `0o700`) and
  * the credential file is written with `0o600` via an atomic temp + rename.
+ *
+ * The read-modify-write sequence is serialized per-file via `withFileLock`
+ * so two concurrent saves on the same `{wsId, bundleName}` can't silently
+ * drop either update's key.
  */
 export async function saveWorkspaceCredential(
   wsId: string,
@@ -161,13 +256,13 @@ export async function saveWorkspaceCredential(
   value: string,
   workDir: string,
 ): Promise<void> {
-  await ensureCredentialsDir(wsId, workDir);
   const filePath = credentialPath(wsId, bundleName, workDir);
-
-  const existing = (await getWorkspaceCredentials(wsId, bundleName, workDir)) ?? {};
-  const merged: Record<string, string> = { ...existing, [key]: value };
-
-  await atomicWriteFile(filePath, `${JSON.stringify(merged, null, 2)}\n`, 0o600);
+  await withFileLock(filePath, async () => {
+    await ensureCredentialsDir(wsId, workDir);
+    const existing = (await getWorkspaceCredentials(wsId, bundleName, workDir)) ?? {};
+    const merged: Record<string, string> = { ...existing, [key]: value };
+    await atomicWriteFile(filePath, `${JSON.stringify(merged, null, 2)}\n`, 0o600);
+  });
 }
 
 /**
@@ -175,6 +270,10 @@ export async function saveWorkspaceCredential(
  *
  * Returns `true` if the key was present (and was removed), `false` otherwise.
  * If removing the key leaves the file empty, the file is deleted.
+ *
+ * Read-modify-write is serialized per-file (same lock as `saveWorkspaceCredential`)
+ * to prevent a concurrent save from being lost when this function rewrites
+ * the trimmed map.
  */
 export async function clearWorkspaceCredential(
   wsId: string,
@@ -182,26 +281,33 @@ export async function clearWorkspaceCredential(
   key: string,
   workDir: string,
 ): Promise<boolean> {
-  const existing = await getWorkspaceCredentials(wsId, bundleName, workDir);
-  if (!existing || !(key in existing)) return false;
-
-  const { [key]: _removed, ...rest } = existing;
   const filePath = credentialPath(wsId, bundleName, workDir);
+  return withFileLock(filePath, async () => {
+    const existing = await getWorkspaceCredentials(wsId, bundleName, workDir);
+    if (!existing || !(key in existing)) return false;
 
-  if (Object.keys(rest).length === 0) {
-    await unlink(filePath).catch((err: NodeJS.ErrnoException) => {
-      if (err.code !== "ENOENT") throw err;
-    });
+    const { [key]: _removed, ...rest } = existing;
+
+    if (Object.keys(rest).length === 0) {
+      await unlink(filePath).catch((err: NodeJS.ErrnoException) => {
+        if (err.code !== "ENOENT") throw err;
+      });
+      return true;
+    }
+
+    await atomicWriteFile(filePath, `${JSON.stringify(rest, null, 2)}\n`, 0o600);
     return true;
-  }
-
-  await atomicWriteFile(filePath, `${JSON.stringify(rest, null, 2)}\n`, 0o600);
-  return true;
+  });
 }
 
 /**
  * Remove the entire credential file for `bundleName` in workspace `wsId`.
  * Returns `true` if the file existed (and was removed), `false` otherwise.
+ *
+ * Serialized against concurrent save/clear operations on the same file so
+ * an in-flight write can't race with the unlink (unlink-after-rename on
+ * the same path would otherwise non-deterministically either remove the
+ * new file or fail with ENOENT).
  */
 export async function clearAllWorkspaceCredentials(
   wsId: string,
@@ -209,11 +315,13 @@ export async function clearAllWorkspaceCredentials(
   workDir: string,
 ): Promise<boolean> {
   const filePath = credentialPath(wsId, bundleName, workDir);
-  try {
-    await unlink(filePath);
-    return true;
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
-    throw err;
-  }
+  return withFileLock(filePath, async () => {
+    try {
+      await unlink(filePath);
+      return true;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
+      throw err;
+    }
+  });
 }
