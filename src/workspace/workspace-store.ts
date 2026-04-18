@@ -29,8 +29,16 @@ export class MemberConflictError extends Error {
 
 // ── Workspace ID validation ────────────────────────────────────────
 
-/** Valid workspace ID: ws_ prefix followed by 1-64 alphanumeric/underscore chars. */
-const WORKSPACE_ID_RE = /^ws_[a-z0-9_]{1,64}$/i;
+/**
+ * Valid workspace ID: ws_ prefix followed by 1-64 alphanumeric/underscore chars.
+ *
+ * Exported because credential-store primitives (src/config/workspace-credentials)
+ * write to filesystem paths derived from `wsId`. Those primitives must validate
+ * against this same regex to defend against path-traversal (e.g., `../evil`)
+ * even when the call site looks trusted. Keep in lockstep with the scaffold
+ * assumptions in `WORKSPACE_DIRS` and the path layout in `WorkspaceStore`.
+ */
+export const WORKSPACE_ID_RE = /^ws_[a-z0-9_]{1,64}$/i;
 
 // ── Slugification ──────────────────────────────────────────────────
 
