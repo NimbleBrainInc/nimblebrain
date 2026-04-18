@@ -299,6 +299,19 @@
   font-family: var(--font-mono);
 }
 
+/* Tighten streamdown's default block rhythm for chat prose.
+   Default `space-y-4` (16px) between paragraphs/lists + `py-1` on every
+   list item is tuned for generic markdown rendering (long-form docs),
+   which feels heavy in conversational turns where paragraphs are short
+   and adjacent. Line-height already carries the bulk of the separation. */
+.presence-assistant-message > .space-y-4 > * + * {
+  margin-top: 0.75rem; /* 12px — down from 16px */
+}
+.presence-assistant-message [data-streamdown="list-item"] {
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
 /* Message entrance animation */
 .presence-message-enter {
   animation: presence-fade-in 0.5s ease-out;
@@ -343,29 +356,15 @@
    CHAT UX — Margin Notes + Ambient Breathing
    ============================================ */
 
-/* Thinking/Working sweep indicator — replaces spinner */
-.thinking-sweep {
-  position: relative;
-  overflow: hidden;
-  height: 2px;
-  width: 64px;
-  background: var(--muted);
-  border-radius: 1px;
+/* Inline "Thinking" placeholder for the brief pause between user send and
+   first assistant output. Tool spinners live on the accordion, not here. */
+.presence-thinking {
+  animation: thinking-pulse 1.4s ease-in-out infinite;
 }
 
-.thinking-sweep::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  width: 50%;
-  background: var(--processing);
-  border-radius: 1px;
-  animation: sweep 1.5s ease-in-out infinite;
-}
-
-@keyframes sweep {
-  0% { left: -50%; }
-  100% { left: 100%; }
+@keyframes thinking-pulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
 }
 
 /* Breathing input glow — ambient state cue during thinking/working */
@@ -384,66 +383,248 @@
   background-color: color-mix(in oklch, var(--background), var(--processing-light) 15%);
 }
 
-/* Status dots — reused inside flash cards */
-.flash-dot {
+/* ───────────────────────────────────────────────────────────────────────
+ * Tool accordion — inline tool-call display
+ *
+ * Structure:
+ *   .tool-accordion                 wrapper (sets tone via data-tone)
+ *     .tool-accordion__head         clickable verb-phrase headline
+ *     .tool-accordion__body         revealed on expand
+ *       .tool-accordion__row        per-call row (multi-call mode)
+ *       .tool-accordion__section    Input / Result / Error subsection
+ *         .tool-accordion__kv       key-value table for Input fields
+ *         .tool-accordion__pre      long values / result text
+ * ─────────────────────────────────────────────────────────────────────── */
+
+.tool-accordion {
+  width: 100%;
+  font-size: 13px;
+  color: var(--muted-foreground);
+}
+
+.tool-accordion__head {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+  background: none;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  transition: color 150ms;
+}
+.tool-accordion__head:hover { color: var(--foreground); }
+
+.tool-accordion__verb {
+  font-weight: 500;
+  color: inherit;
+}
+.tool-accordion[data-tone="error"] .tool-accordion__verb { color: var(--warm); }
+.tool-accordion[data-tone="error"] .tool-accordion__head:hover .tool-accordion__verb { color: var(--warm-hover); }
+.tool-accordion[data-tone="running"] .tool-accordion__verb { color: var(--processing); }
+
+.tool-accordion__subject {
+  color: var(--foreground);
+  opacity: 0.75;
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-accordion__count,
+.tool-accordion__ms {
+  color: var(--muted-foreground);
+  opacity: 0.7;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.tool-accordion__chev {
+  color: var(--muted-foreground);
+  opacity: 0.6;
+  transition: transform 180ms ease;
+  flex-shrink: 0;
+}
+.tool-accordion[data-expanded="true"] > .tool-accordion__head .tool-accordion__chev {
+  transform: rotate(90deg);
+}
+
+.tool-accordion__icon { flex-shrink: 0; }
+.tool-accordion__icon--ok {
   width: 6px;
   height: 6px;
   border-radius: 50%;
   background: var(--success);
+  display: inline-block;
+}
+.tool-accordion__icon--error { color: var(--warm); }
+.tool-accordion__icon--running {
+  color: var(--processing);
+  animation: spin 1s linear infinite;
+}
+
+/* Body reveal */
+.tool-accordion__body {
+  margin-top: 8px;
+  max-width: 100%;
+  animation: tool-accordion-reveal 180ms ease-out;
+}
+@keyframes tool-accordion-reveal {
+  from { opacity: 0; transform: translateY(-2px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* Per-call row (multi-call mode) */
+.tool-accordion__row + .tool-accordion__row {
+  border-top: 1px solid var(--border);
+}
+.tool-accordion__row-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  background: none;
+  border: 0;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  transition: color 150ms, background-color 150ms;
+}
+.tool-accordion__row-head:hover { color: var(--foreground); background: var(--secondary); }
+.tool-accordion__row-head:disabled { cursor: default; }
+.tool-accordion__row-head:disabled:hover { background: transparent; color: var(--muted-foreground); }
+
+.tool-accordion__row-name {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 11.5px;
+  color: var(--foreground);
   flex-shrink: 0;
 }
-
-.flash-dot--running {
-  background: var(--processing);
-  animation: breathing-dot 1.5s ease-in-out infinite;
+.tool-accordion__row-summary {
+  flex: 1;
+  min-width: 0;
+  color: var(--muted-foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11.5px;
+}
+.tool-accordion__row-ms {
+  color: var(--muted-foreground);
+  opacity: 0.6;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+.tool-accordion__row[data-open="true"] .tool-accordion__chev {
+  transform: rotate(90deg);
 }
 
-.flash-dot--error {
-  background: var(--destructive);
+.tool-accordion__row-body {
+  padding: 2px 10px 10px 28px;
 }
 
-@keyframes breathing-dot {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
+/* Sections (Input / Result / Error) */
+.tool-accordion__section {
+  margin-top: 8px;
+}
+.tool-accordion__section:first-child { margin-top: 0; }
+
+.tool-accordion__section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 2px 4px;
+}
+.tool-accordion__section-label {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+  opacity: 0.7;
+  font-weight: 600;
 }
 
-/* Flash card — inline tool call display */
-.flash-card {
+.tool-accordion__copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  background: none;
+  border: 0;
+  color: var(--primary);
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background-color 120ms;
+}
+.tool-accordion__copy:hover { background: var(--info-light); }
+
+/* Key/value table */
+.tool-accordion__kv {
+  margin: 0;
   border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--card);
+  border-radius: 6px;
+  background: var(--muted);
   overflow: hidden;
-  width: 100%;
-  max-width: 100%;
-  transition: border-color 200ms, background-color 200ms;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 11.5px;
 }
-
-.flash-card--running {
-  border-color: var(--processing);
-  background: var(--processing-light);
-  position: relative;
+.tool-accordion__kv-row {
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  gap: 10px;
+  padding: 4px 10px;
+  border-top: 1px solid var(--border);
+}
+.tool-accordion__kv-row:first-child { border-top: 0; }
+.tool-accordion__kv-row[data-kind="long"] { grid-template-columns: 1fr; gap: 4px; }
+.tool-accordion__kv-k {
+  color: var(--foreground);
+  font-weight: 500;
   overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tool-accordion__kv-v {
+  margin: 0;
+  color: var(--muted-foreground);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.tool-accordion__kv-row[data-kind="short"] .tool-accordion__kv-v {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.flash-card--running::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  height: 100%;
-  width: 30%;
-  background: linear-gradient(90deg, transparent, rgba(124, 58, 237, 0.1), transparent);
-  animation: card-sweep 2s ease-in-out infinite;
-  pointer-events: none;
+/* Pre blocks (long values, result text, error text) */
+.tool-accordion__pre {
+  margin: 0;
+  padding: 6px 10px;
+  background: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--muted-foreground);
+  overflow-x: auto;
+  max-height: 240px;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
-
-@keyframes card-sweep {
-  0% { transform: translateX(-100%); }
-  100% { transform: translateX(400%); }
-}
-
-.flash-card--error {
-  border-left: 3px solid var(--destructive);
+.tool-accordion__pre--error {
+  background: var(--warm-light);
+  border-color: var(--warm);
+  color: var(--warm-hover);
 }
 
 /* Workspace selector dropdown entrance */

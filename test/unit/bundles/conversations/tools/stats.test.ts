@@ -72,7 +72,7 @@ describe("handleStats", () => {
 		expect(result.totalInputTokens).toBe(0);
 		expect(result.totalOutputTokens).toBe(0);
 		expect(result.byModel).toEqual({});
-		expect(result.bySkill).toEqual({});
+		// bySkill was removed — skill tracking isn't persisted in the event log.
 		expect(result.topTools).toEqual([]);
 	});
 
@@ -183,55 +183,6 @@ describe("handleStats", () => {
 
 		// Two conversations, not three messages
 		expect(result.byModel["model-a"]!.conversations).toBe(2);
-	});
-
-	test("aggregates bySkill with conversation count and tool calls", async () => {
-		const now = new Date().toISOString();
-		writeConv({
-			id: "conv_s1",
-			createdAt: now,
-			totalInputTokens: 100,
-			totalOutputTokens: 50,
-			messages: [
-				{ role: "user", content: "Hi", timestamp: now },
-				{
-					role: "assistant",
-					content: "Hello",
-					timestamp: now,
-					metadata: {
-						model: "model-a",
-						skill: "code-review",
-						toolCalls: [
-							{ id: "tc1", name: "read_file", input: {}, output: "ok", ok: true, ms: 10 },
-							{ id: "tc2", name: "write_file", input: {}, output: "ok", ok: true, ms: 20 },
-						],
-					},
-				},
-				{ role: "user", content: "More", timestamp: now },
-				{
-					role: "assistant",
-					content: "Done",
-					timestamp: now,
-					metadata: {
-						model: "model-a",
-						skill: "code-review",
-						toolCalls: [
-							{ id: "tc3", name: "read_file", input: {}, output: "ok", ok: true, ms: 5 },
-						],
-					},
-				},
-			],
-		});
-
-		const index = new ConversationIndex();
-		await index.build(TMP_DIR);
-
-		const result = await handleStats({ period: "all" }, index);
-
-		expect(result.bySkill["code-review"]).toEqual({
-			conversations: 1,
-			toolCalls: 3,
-		});
 	});
 
 	test("topTools sorted descending by callCount", async () => {

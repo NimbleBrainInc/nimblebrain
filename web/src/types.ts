@@ -26,14 +26,6 @@ export interface ToolCallResult {
   isError: boolean;
 }
 
-/** A single message in a conversation history. */
-export interface Message {
-  role: "user" | "assistant";
-  content: string;
-  timestamp: string;
-  userId?: string;
-}
-
 /** Tool call record in a chat result. */
 export interface ToolCallRecord {
   id: string;

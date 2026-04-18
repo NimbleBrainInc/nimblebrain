@@ -3,11 +3,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Streamdown } from "streamdown";
 import type { ChatMessage, StreamingState } from "../hooks/useChat";
 import { participantColor } from "../lib/participant-colors";
+import type { DisplayDetail } from "../lib/tool-display";
 import { FileAttachment } from "./FileAttachment";
-import { FlashCardGroup } from "./FlashCardGroup";
 import { InlineAppView } from "./InlineAppView";
 import { ResourceLinkView } from "./ResourceLinkView";
-import type { DisplayDetail } from "./ToolCallIndicator";
+import { ToolAccordion } from "./ToolAccordion";
 
 function formatTokens(count: number): string {
   if (count >= 1000) return `${(count / 1000).toFixed(1)}k`;
@@ -222,15 +222,21 @@ export function MessageList({
           isStreaming ? "chat-ambient-warm" : ""
         }`}
       >
-        <div className={`py-6 flex flex-col gap-6 ${compact ? "px-4" : "px-8 max-w-4xl mx-auto"}`}>
+        <div className={`py-6 flex flex-col gap-10 ${compact ? "px-4" : "px-8 max-w-4xl mx-auto"}`}>
           {messages.map((msg, idx) => {
-            // Skip empty assistant placeholder while thinking (the thinking indicator handles this state)
+            // Assistant placeholder with nothing to show yet — bridge the gap
+            // between user send and first output with an inline "Thinking".
+            // Tool spinners live on the accordion; this is only for the pre-
+            // first-output pause.
             const isEmptyAssistant =
               msg.role === "assistant" &&
               !msg.content &&
               (!msg.toolCalls || msg.toolCalls.length === 0);
-            if (isEmptyAssistant && (streamingState === "thinking" || streamingState === "working"))
-              return null;
+            const showThinkingPlaceholder =
+              isEmptyAssistant &&
+              isStreaming &&
+              idx === messages.length - 1 &&
+              (streamingState === "thinking" || streamingState === "working");
 
             const contextMatch = msg.role === "user" ? msg.content.match(APP_CONTEXT_RE) : null;
             const contextPrefix = contextMatch ? contextMatch[0].trim() : null;
@@ -293,6 +299,11 @@ export function MessageList({
                   </div>
                 ) : (
                   <div className="break-words min-w-0 overflow-hidden flex flex-col gap-3">
+                    {showThinkingPlaceholder && (
+                      <span className="text-xs font-mono text-muted-foreground/60 presence-thinking">
+                        Thinking
+                      </span>
+                    )}
                     {/* Render content blocks in temporal order */}
                     {msg.blocks ? (
                       msg.blocks.map((block, blockIdx) => {
@@ -327,9 +338,10 @@ export function MessageList({
                           return (
                             // biome-ignore lint/suspicious/noArrayIndexKey: blocks are append-only and don't reorder
                             <div key={blockIdx} className="flex flex-col gap-3">
-                              {displayDetail !== "quiet" && (
-                                <FlashCardGroup toolCalls={block.toolCalls} />
-                              )}
+                              <ToolAccordion
+                                calls={block.toolCalls}
+                                displayDetail={displayDetail}
+                              />
                               {blockWidgets.map((tc) => {
                                 const match = tc.resourceUri!.match(/^ui:\/\/[^/]+\/(.+)$/);
                                 const resourcePath = match ? match[1] : "primary";
@@ -391,8 +403,16 @@ export function MessageList({
                     {/* Inline app views are rendered within their tool block above */}
                   </div>
                 )}
+                {/* Hover chrome — copy button + timestamp + token count.
+                    Absolutely positioned so it overlays into the existing
+                    gap between messages instead of reserving dead vertical
+                    space. Aligned to the same edge as the message bubble.
+                    `whitespace-nowrap` keeps the row single-line regardless
+                    of how narrow the parent bubble gets (short messages
+                    otherwise force text to wrap since the absolute child
+                    inherits the parent's shrink-to-fit width). */}
                 <div
-                  className={`flex items-center ${msg.role === "user" ? "justify-end" : "justify-start"} gap-2 mt-3 opacity-0 group-hover:opacity-100 metadata-hover transition-opacity duration-200`}
+                  className={`absolute top-full ${msg.role === "user" ? "right-0" : "left-0"} mt-1 flex items-center gap-2 whitespace-nowrap opacity-0 group-hover:opacity-100 metadata-hover transition-opacity duration-200`}
                 >
                   <CopyButton content={displayContent} />
                   {showTimestamp && msg.timestamp && (
@@ -415,42 +435,6 @@ export function MessageList({
               </div>
             );
           })}
-          {/* State indicator — shown whenever the agent is active */}
-          {isStreaming &&
-            (() => {
-              const lastMsg = messages[messages.length - 1];
-              const iter = lastMsg?.iteration;
-              const toolCalls = lastMsg?.toolCalls ?? [];
-              const runningTool = toolCalls.find((tc) => tc.status === "running");
-              const completedCount = toolCalls.filter((tc) => tc.status === "done").length;
-
-              // Build a context-aware label
-              let label: string;
-              if (runningTool) {
-                const shortName = runningTool.name.includes("__")
-                  ? runningTool.name.split("__").pop()!
-                  : runningTool.name;
-                label = shortName;
-              } else if (streamingState === "thinking" && completedCount === 0) {
-                label = "Thinking...";
-              } else if (streamingState === "thinking" || streamingState === "streaming") {
-                label = iter && iter.n > 1 ? "Composing response..." : "Thinking...";
-              } else {
-                label = "Processing...";
-              }
-
-              return (
-                <div className="flex items-center gap-3 text-muted-foreground presence-message-enter">
-                  <div className="thinking-sweep" />
-                  <span className="text-xs font-mono">{label}</span>
-                  {iter && (
-                    <span className="text-[10px] font-mono text-muted-foreground/50 tabular-nums">
-                      step {iter.n} · {formatTokens(iter.inputTokens)} tokens
-                    </span>
-                  )}
-                </div>
-              );
-            })()}
           {/* Spacer: ensures any message can scroll to the top of the viewport */}
           <div className="min-h-[60vh] shrink-0" />
           <div ref={bottomRef} />

@@ -18,11 +18,6 @@ interface ModelStats {
   conversations: number;
 }
 
-interface SkillStats {
-  conversations: number;
-  toolCalls: number;
-}
-
 interface ToolEntry {
   name: string;
   callCount: number;
@@ -34,7 +29,6 @@ interface StatsResult {
   totalInputTokens: number;
   totalOutputTokens: number;
   byModel: Record<string, ModelStats>;
-  bySkill: Record<string, SkillStats>;
   topTools: ToolEntry[];
 }
 
@@ -77,7 +71,6 @@ export async function handleStats(
   let totalInputTokens = 0;
   let totalOutputTokens = 0;
   const byModel: Record<string, ModelStats> = {};
-  const bySkill: Record<string, SkillStats> = {};
   const toolCounts: Record<string, number> = {};
 
   for (const entry of listResult.conversations) {
@@ -88,37 +81,26 @@ export async function handleStats(
     totalInputTokens += conv.meta.totalInputTokens;
     totalOutputTokens += conv.meta.totalOutputTokens;
 
-    // Track which models and skills appeared in this conversation
+    // Track which models appeared in this conversation
     const modelsInConv = new Set<string>();
-    const skillsInConv = new Set<string>();
 
     for (const msg of conv.messages) {
-      if (msg.role !== "assistant" || !msg.metadata) continue;
+      if (msg.role !== "assistant") continue;
 
-      const meta = msg.metadata;
-
-      // Model breakdown
-      if (meta.model) {
-        modelsInConv.add(meta.model);
-        if (!byModel[meta.model]) {
-          byModel[meta.model] = { inputTokens: 0, outputTokens: 0, conversations: 0 };
+      // Model breakdown (from aggregated turn-level usage)
+      if (msg.usage?.model) {
+        const model = msg.usage.model;
+        modelsInConv.add(model);
+        if (!byModel[model]) {
+          byModel[model] = { inputTokens: 0, outputTokens: 0, conversations: 0 };
         }
-        byModel[meta.model]!.inputTokens += meta.inputTokens ?? 0;
-        byModel[meta.model]!.outputTokens += meta.outputTokens ?? 0;
+        byModel[model]!.inputTokens += msg.usage.inputTokens;
+        byModel[model]!.outputTokens += msg.usage.outputTokens;
       }
 
-      // Skill breakdown
-      if (meta.skill) {
-        skillsInConv.add(meta.skill);
-        if (!bySkill[meta.skill]) {
-          bySkill[meta.skill] = { conversations: 0, toolCalls: 0 };
-        }
-        bySkill[meta.skill]!.toolCalls += meta.toolCalls?.length ?? 0;
-      }
-
-      // Tool usage
-      if (meta.toolCalls) {
-        for (const tc of meta.toolCalls) {
+      // Tool usage (turn-level flat list)
+      if (msg.toolCalls) {
+        for (const tc of msg.toolCalls) {
           toolCounts[tc.name] = (toolCounts[tc.name] ?? 0) + 1;
         }
       }
@@ -127,11 +109,6 @@ export async function handleStats(
     // Increment conversation counts per model (once per conversation)
     for (const model of modelsInConv) {
       byModel[model]!.conversations += 1;
-    }
-
-    // Increment conversation counts per skill (once per conversation)
-    for (const skill of skillsInConv) {
-      bySkill[skill]!.conversations += 1;
     }
   }
 
@@ -146,7 +123,6 @@ export async function handleStats(
     totalInputTokens,
     totalOutputTokens,
     byModel,
-    bySkill,
     topTools,
   };
 }

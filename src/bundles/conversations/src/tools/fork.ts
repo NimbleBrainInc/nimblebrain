@@ -41,17 +41,18 @@ export async function handleFork(input: ForkInput, index: ConversationIndex): Pr
   // Recalculate token counts from copied assistant messages
   let totalInputTokens = 0;
   let totalOutputTokens = 0;
-  let totalCostUsd = 0;
   let lastModel: string | null = null;
 
   for (const msg of messagesToCopy) {
-    if (msg.role === "assistant" && msg.metadata) {
-      totalInputTokens += msg.metadata.inputTokens ?? 0;
-      totalOutputTokens += msg.metadata.outputTokens ?? 0;
-      totalCostUsd += msg.metadata.costUsd ?? 0;
-      lastModel = msg.metadata.model ?? lastModel;
+    if (msg.role === "assistant" && msg.usage) {
+      totalInputTokens += msg.usage.inputTokens;
+      totalOutputTokens += msg.usage.outputTokens;
+      lastModel = msg.usage.model || lastModel;
     }
   }
+  // Cost isn't tracked on DisplayMessage (it's a derived metric); forked
+  // conversations start with totalCostUsd=0 until usage is queried live.
+  const totalCostUsd = 0;
 
   // Set updatedAt to last copied message's timestamp (or now if no messages)
   const updatedAt =
