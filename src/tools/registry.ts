@@ -22,8 +22,12 @@ export class SharedSourceRef implements ToolSource {
   tools(): Promise<Tool[]> {
     return this.inner.tools();
   }
-  execute(toolName: string, input: Record<string, unknown>): Promise<ToolResult> {
-    return this.inner.execute(toolName, input);
+  execute(
+    toolName: string,
+    input: Record<string, unknown>,
+    signal?: AbortSignal,
+  ): Promise<ToolResult> {
+    return this.inner.execute(toolName, input, signal);
   }
 }
 
@@ -65,7 +69,7 @@ export class ToolRegistry implements ToolRouter {
     return all;
   }
 
-  async execute(call: ToolCall): Promise<ToolResult> {
+  async execute(call: ToolCall, signal?: AbortSignal): Promise<ToolResult> {
     const sepIndex = call.name.indexOf("__");
     if (sepIndex === -1) {
       // Auto-search for matching tools to help the LLM recover
@@ -96,7 +100,7 @@ export class ToolRegistry implements ToolRouter {
       };
     }
 
-    return source.execute(localName, call.input);
+    return source.execute(localName, call.input, signal);
   }
 
   /** Search all tools by keyword (substring match on name + description). */

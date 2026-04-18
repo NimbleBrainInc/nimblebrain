@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { log } from "../cli/log.ts";
+import type { EventSink } from "../engine/types.ts";
 import { McpSource } from "../tools/mcp-source.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
 import type { ToolSource } from "../tools/types.ts";
@@ -11,7 +12,13 @@ import { validateManifest } from "./manifest.ts";
 import { getMpak } from "./mpak.ts";
 import { deriveBundleDataDir, deriveServerName, validateServerName } from "./paths.ts";
 import { resolveLocalBundle } from "./resolve.ts";
-import type { BundleRef, InternalBundleEnv, LocalBundleMeta, StartBundleResult } from "./types.ts";
+import type {
+  BundleManifest,
+  BundleRef,
+  InternalBundleEnv,
+  LocalBundleMeta,
+  StartBundleResult,
+} from "./types.ts";
 import { validateBundleUrl } from "./url-validator.ts";
 
 /** Create and start a McpSource for a BundleRef, then add to registry.
@@ -19,8 +26,19 @@ import { validateBundleUrl } from "./url-validator.ts";
 export async function startBundleSource(
   ref: BundleRef,
   registry: ToolRegistry,
+  // Required. The runtime event sink is threaded into the McpSource so
+  // task-augmented tool calls can emit `tool.progress` events that reach the
+  // SSE broadcast path; the browser side of Synapse `useDataSync` depends on
+  // it. Callers without a real sink (rare) must pass `new NoopEventSink()`
+  // explicitly — the absence used to be silently valid, which broke live
+  // updates across the entire platform.
+  eventSink: EventSink,
   configDir?: string,
-  opts?: { allowInsecureRemotes?: boolean; internalEnv?: InternalBundleEnv; dataDir?: string },
+  opts?: {
+    allowInsecureRemotes?: boolean;
+    internalEnv?: InternalBundleEnv;
+    dataDir?: string;
+  },
 ): Promise<StartBundleResult> {
   if ("url" in ref) {
     const serverName = ref.serverName ?? deriveServerName(ref.url);
@@ -29,11 +47,15 @@ export async function startBundleSource(
     // SSRF protection: validate URL before connecting
     validateBundleUrl(new URL(ref.url), { allowInsecure: opts?.allowInsecureRemotes });
     log.info(`[bundles] Starting remote bundle ${ref.url} as ${sourceName}...`);
-    const source = new McpSource(sourceName, {
-      type: "remote",
-      url: new URL(ref.url),
-      transportConfig: ref.transport,
-    });
+    const source = new McpSource(
+      sourceName,
+      {
+        type: "remote",
+        url: new URL(ref.url),
+        transportConfig: ref.transport,
+      },
+      eventSink,
+    );
     await source.start();
     const tools = await source.tools();
     registry.addSource(source);
@@ -46,6 +68,9 @@ export async function startBundleSource(
         type: "plain" as const,
       },
       sourceName,
+      // Remote bundles have no local manifest — the platform reads tools
+      // over the wire instead.
+      manifest: null,
     };
   }
   const label = "name" in ref ? ref.name : ref.path;
@@ -53,6 +78,7 @@ export async function startBundleSource(
 
   let source: ToolSource;
   let meta: LocalBundleMeta | null = null;
+  let manifest: BundleManifest | null = null;
   if ("name" in ref) {
     const serverName = deriveServerName(ref.name);
     validateServerName(serverName);
@@ -64,42 +90,45 @@ export async function startBundleSource(
     const mpak = getMpak(mpakHome);
     const server = await mpak.prepareServer({ name: ref.name }, { workspaceDir: bundleDataDir });
 
-    // Read cached manifest for UI + briefing metadata
-    const cachedManifest = mpak.bundleCache.getBundleManifest(ref.name) as Record<
-      string,
-      unknown
-    > | null;
+    // Read cached manifest for UI + briefing metadata + return to caller
+    const cachedManifest = mpak.bundleCache.getBundleManifest(ref.name) as BundleManifest | null;
     if (cachedManifest) {
-      meta = extractBundleMeta(cachedManifest);
+      meta = extractBundleMeta(cachedManifest as unknown as Record<string, unknown>);
+      manifest = cachedManifest;
     }
 
-    source = new McpSource(sourceName, {
-      type: "stdio",
-      spawn: {
-        command: server.command,
-        args: server.args,
-        env: {
-          ...server.env,
-          ...filterEnvForBundle(process.env as Record<string, string>, undefined, ref.allowedEnv),
-          ...(ref.env ?? {}),
-          MPAK_WORKSPACE: bundleDataDir,
-          UPJACK_ROOT: bundleDataDir,
+    source = new McpSource(
+      sourceName,
+      {
+        type: "stdio",
+        spawn: {
+          command: server.command,
+          args: server.args,
+          env: {
+            ...server.env,
+            ...filterEnvForBundle(process.env as Record<string, string>, undefined, ref.allowedEnv),
+            ...(ref.env ?? {}),
+            MPAK_WORKSPACE: bundleDataDir,
+            UPJACK_ROOT: bundleDataDir,
+          },
+          cwd: server.cwd,
         },
-        cwd: server.cwd,
       },
-    });
+      eventSink,
+    );
   } else {
     const internalEnv = ref.protected && opts?.internalEnv ? opts.internalEnv : undefined;
-    const result = buildLocalSource(ref, configDir, internalEnv, opts?.dataDir);
+    const result = buildLocalSource(ref, configDir, internalEnv, opts?.dataDir, eventSink);
     source = result.source;
     meta = result.meta;
+    manifest = result.manifest;
   }
 
   await source.start();
   const tools = await source.tools();
   registry.addSource(source);
   log.info(`[bundles] ✓ ${source.name} ready (${tools.length} tools)`);
-  return { meta, sourceName: source.name };
+  return { meta, sourceName: source.name, manifest };
 }
 
 /** Build an McpSource from a local bundle path + manifest, extracting UI metadata.
@@ -111,10 +140,11 @@ function buildLocalSource(
     env?: Record<string, string>;
     allowedEnv?: string[];
   },
-  configDir?: string,
-  internalEnv?: InternalBundleEnv,
-  dataDirOverride?: string,
-): { source: McpSource; meta: LocalBundleMeta } {
+  configDir: string | undefined,
+  internalEnv: InternalBundleEnv | undefined,
+  dataDirOverride: string | undefined,
+  eventSink: EventSink,
+): { source: McpSource; meta: LocalBundleMeta; manifest: BundleManifest } {
   const bundleDir = resolveLocalBundle(ref.path, configDir);
   if (!bundleDir) {
     log.warn(`[bundles] Local bundle not found: ${ref.path} (skipping)`);
@@ -175,18 +205,23 @@ function buildLocalSource(
   }
 
   const sourceName = serverName;
-  const source = new McpSource(sourceName, {
-    type: "stdio",
-    spawn: {
-      command,
-      args,
-      env: spawnEnv,
-      cwd: resolve(bundleDir),
+  const source = new McpSource(
+    sourceName,
+    {
+      type: "stdio",
+      spawn: {
+        command,
+        args,
+        env: spawnEnv,
+        cwd: resolve(bundleDir),
+      },
     },
-  });
+    eventSink,
+  );
 
   return {
     source,
     meta: extractBundleMeta(manifest as unknown as Record<string, unknown>),
+    manifest,
   };
 }

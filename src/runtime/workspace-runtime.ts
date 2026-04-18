@@ -137,6 +137,10 @@ export async function startWorkspaceBundles(
   workspaceStore: WorkspaceStore,
   platformSources: ToolSource[],
   systemSource: ToolSource | null,
+  // Required. Propagated to every McpSource so task-augmented tool calls
+  // can emit `tool.progress` events that reach the SSE broadcast layer.
+  // Pass `new NoopEventSink()` only if intentionally discarding events.
+  eventSink: import("../engine/types.ts").EventSink,
   configDir: string | undefined,
   opts?: {
     allowInsecureRemotes?: boolean;
@@ -171,7 +175,7 @@ export async function startWorkspaceBundles(
     // Start workspace-specific bundles and add to the workspace registry
     for (const entry of wsEntries) {
       try {
-        const result = await startBundleSource(entry.bundle, wsRegistry, configDir, {
+        const result = await startBundleSource(entry.bundle, wsRegistry, eventSink, configDir, {
           allowInsecureRemotes: opts?.allowInsecureRemotes,
           dataDir: entry.dataDir,
         });
@@ -205,6 +209,9 @@ export async function installBundleInWorkspace(
   wsId: string,
   bundleRef: BundleRef,
   registry: ToolRegistry,
+  // Required. Threaded into the new McpSource so task-augmented tools'
+  // progress events reach the SSE broadcast layer (Synapse useDataSync).
+  eventSink: import("../engine/types.ts").EventSink,
   configDir: string | undefined,
   opts?: {
     allowInsecureRemotes?: boolean;
@@ -222,7 +229,7 @@ export async function installBundleInWorkspace(
     throw new Error(`Bundle "${serverName}" is already running in workspace "${wsId}"`);
   }
 
-  const result = await startBundleSource(bundleRef, registry, configDir, {
+  const result = await startBundleSource(bundleRef, registry, eventSink, configDir, {
     allowInsecureRemotes: opts?.allowInsecureRemotes,
     dataDir,
   });

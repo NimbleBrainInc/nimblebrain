@@ -55,7 +55,11 @@ export class UpjackSource implements ToolSource {
     return this.manifest.entities.flatMap((e) => this.crudTools(e));
   }
 
-  async execute(toolName: string, input: Record<string, unknown>): Promise<ToolResult> {
+  async execute(
+    toolName: string,
+    input: Record<string, unknown>,
+    _signal?: AbortSignal,
+  ): Promise<ToolResult> {
     const sep = toolName.indexOf("_");
     if (sep === -1) return fail(`Invalid tool name: ${toolName}`);
     const action = toolName.slice(0, sep);

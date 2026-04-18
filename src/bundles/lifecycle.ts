@@ -1,16 +1,14 @@
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import { extractText } from "../engine/content-helpers.ts";
 import type { EventSink } from "../engine/types.ts";
 import type { PlacementRegistry } from "../runtime/placement-registry.ts";
 import { McpSource } from "../tools/mcp-source.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
-import { filterEnvForBundle } from "./env-filter.ts";
-import { validateManifest } from "./manifest.ts";
 import { getMpak } from "./mpak.ts";
-import { deriveBundleDataDir, deriveServerName, validateServerName } from "./paths.ts";
-import { resolveLocalBundle } from "./resolve.ts";
+import { deriveBundleDataDir, deriveServerName } from "./paths.ts";
+import { startBundleSource } from "./startup.ts";
 import type {
   BriefingBlock,
   BundleInstance,
@@ -21,7 +19,6 @@ import type {
   HostManifestMeta,
   RemoteTransportConfig,
 } from "./types.ts";
-import { validateBundleUrl } from "./url-validator.ts";
 
 // ---------------------------------------------------------------------------
 // BundleLifecycleManager — owns the state of all installed bundles and
@@ -88,66 +85,41 @@ export class BundleLifecycleManager {
     wsId: string,
     env?: Record<string, string>,
   ): Promise<BundleInstance> {
-    const serverName = deriveServerName(name);
-    validateServerName(serverName);
-
-    // Step 1 — Download/cache via SDK
+    // Pre-load so the manifest is in the mpak cache before startBundleSource
+    // reads it. (startBundleSource itself only calls prepareServer; it
+    // assumes the manifest is already cached.)
     const mpak = getMpak(this.mpakHome);
     await mpak.bundleCache.loadBundle(name);
 
-    // Step 2 — Read manifest from SDK cache
-    const manifest = mpak.bundleCache.getBundleManifest(name) as BundleManifest | null;
+    // Workspace-scoped data dir keeps two workspaces installing the same
+    // bundle from stomping on each other's entity data. Matches the
+    // seedInstance layout used at platform boot.
+    const nbWorkDir = process.env.NB_WORK_DIR ?? join(homedir(), ".nimblebrain");
+    const bundleDataDir = join(nbWorkDir, "workspaces", wsId, "data", deriveBundleDataDir(name));
+
+    const { sourceName, manifest } = await startBundleSource(
+      { name, env },
+      registry,
+      this.eventSink,
+      this.configPath ? dirname(this.configPath) : undefined,
+      { dataDir: bundleDataDir },
+    );
     if (!manifest) {
+      // Named bundles always have a manifest — startBundleSource reads it
+      // from the mpak cache. Null here is a precondition violation.
       throw new Error(`No manifest found for ${name} after install`);
     }
 
-    // Step 3 — Detect Upjack
     const isUpjack = manifest._meta?.["ai.nimblebrain/upjack"] != null;
-
-    // Step 4 — Spawn MCP server
-    const instance = createInstance(serverName, name, manifest, isUpjack, wsId);
-    instance.configKey = name; // config entry uses the mpak name
-
-    this.transition(instance, "starting");
-
-    // Data dir is workspace-scoped: {workDir}/workspaces/{wsId}/data/{bundle}
-    // so two workspaces installing the same bundle keep their entity data
-    // isolated. Matches the layout seedInstance uses at startup.
-    const nbWorkDir = process.env.NB_WORK_DIR ?? join(homedir(), ".nimblebrain");
-    const bundleDataDir = join(nbWorkDir, "workspaces", wsId, "data", deriveBundleDataDir(name));
-    const server = await mpak.prepareServer({ name }, { workspaceDir: bundleDataDir });
-
-    const source = new McpSource(serverName, {
-      type: "stdio",
-      spawn: {
-        command: server.command,
-        args: server.args,
-        env: {
-          ...server.env,
-          ...filterEnvForBundle(process.env as Record<string, string>),
-          ...(env ?? {}),
-          MPAK_WORKSPACE: bundleDataDir,
-          UPJACK_ROOT: bundleDataDir,
-        },
-        cwd: server.cwd,
-      },
-    });
-    await source.start();
-    registry.addSource(source);
-
+    const instance = createInstance(sourceName, name, manifest, isUpjack, wsId);
+    instance.configKey = name;
     this.transition(instance, "running");
 
-    // Step 5 — Record trust score
     instance.trustScore = await fetchTrustScore(name, this.mpakHome);
-
-    // Step 6 — Read UI + briefing metadata
     instance.ui = extractUiMeta(manifest);
     instance.briefing = extractBriefing(manifest);
+    this.registerPlacements(sourceName, instance.ui, wsId);
 
-    // Step 6b — Register placements in PlacementRegistry
-    this.registerPlacements(serverName, instance.ui, wsId);
-
-    // Step 7 — Atomic config write
     if (this.configPath) {
       const entry: Record<string, unknown> = { name };
       if (instance.trustScore != null) entry.trustScore = instance.trustScore;
@@ -155,16 +127,13 @@ export class BundleLifecycleManager {
       atomicConfigAdd(this.configPath, entry);
     }
 
-    this.instances.set(`${serverName}|${wsId}`, instance);
-
-    // Step 8a — Sync bundle-contributed automations (non-blocking)
+    this.instances.set(`${sourceName}|${wsId}`, instance);
     await this.syncBundleAutomations(manifest, name, registry);
 
-    // Step 8 — Emit event
     this.eventSink.emit({
       type: "bundle.installed",
       data: {
-        serverName,
+        serverName: sourceName,
         bundleName: name,
         version: instance.version,
         type: instance.type,
@@ -187,38 +156,28 @@ export class BundleLifecycleManager {
     wsId: string,
     env?: Record<string, string>,
   ): Promise<BundleInstance> {
-    const bundleDir = resolveLocalBundle(bundlePath);
-    if (!bundleDir) {
-      throw new Error(`Local bundle not found: ${bundlePath}`);
+    const { sourceName, manifest } = await startBundleSource(
+      { path: bundlePath, env },
+      registry,
+      this.eventSink,
+      this.configPath ? dirname(this.configPath) : undefined,
+    );
+    if (!manifest) {
+      // Local bundles always have a manifest.json on disk; startBundleSource
+      // reads and validates it before spawning. Null is a precondition
+      // violation.
+      throw new Error(`No manifest read for local bundle at ${bundlePath}`);
     }
 
-    const manifestPath = join(bundleDir, "manifest.json");
-    const raw = JSON.parse(readFileSync(manifestPath, "utf-8"));
-    const result = validateManifest(raw);
-    if (!result.valid || !result.manifest) {
-      throw new Error(`Invalid manifest in ${bundlePath}:\n${result.errors.join("\n")}`);
-    }
-    const manifest = result.manifest;
-    const serverName = deriveServerName(manifest.name);
-    validateServerName(serverName);
     const isUpjack = manifest._meta?.["ai.nimblebrain/upjack"] != null;
-    // Use manifest.name (scoped name) as bundleName, not the filesystem path
-    const instance = createInstance(serverName, manifest.name, manifest, isUpjack, wsId);
+    // Use manifest.name (scoped name) as bundleName, not the filesystem path.
+    const instance = createInstance(sourceName, manifest.name, manifest, isUpjack, wsId);
     instance.configKey = bundlePath; // config entry uses the filesystem path
-
-    this.transition(instance, "starting");
-
-    const source = buildLocalMcpSource(bundleDir, manifest, env);
-    await source.start();
-    registry.addSource(source);
-
     this.transition(instance, "running");
 
     instance.ui = extractUiMeta(manifest);
     instance.briefing = extractBriefing(manifest);
-
-    // Register placements in PlacementRegistry
-    this.registerPlacements(serverName, instance.ui, wsId);
+    this.registerPlacements(sourceName, instance.ui, wsId);
 
     if (this.configPath) {
       const entry: Record<string, unknown> = { path: bundlePath };
@@ -226,15 +185,13 @@ export class BundleLifecycleManager {
       atomicConfigAdd(this.configPath, entry);
     }
 
-    this.instances.set(`${serverName}|${wsId}`, instance);
-
-    // Sync bundle-contributed automations (non-blocking)
+    this.instances.set(`${sourceName}|${wsId}`, instance);
     await this.syncBundleAutomations(manifest, manifest.name, registry);
 
     this.eventSink.emit({
       type: "bundle.installed",
       data: {
-        serverName,
+        serverName: sourceName,
         bundleName: bundlePath,
         version: instance.version,
         type: instance.type,
@@ -259,14 +216,19 @@ export class BundleLifecycleManager {
     ui?: BundleUiMeta | null,
     trustScore?: number | null,
   ): Promise<BundleInstance> {
-    // SSRF protection: validate URL before connecting
-    validateBundleUrl(new URL(url), { allowInsecure: this.allowInsecureRemotes });
+    const { sourceName, meta } = await startBundleSource(
+      { url, serverName, transport: transportConfig, ui: ui ?? null },
+      registry,
+      this.eventSink,
+      this.configPath ? dirname(this.configPath) : undefined,
+      { allowInsecureRemotes: this.allowInsecureRemotes },
+    );
 
     const instance: BundleInstance = {
-      serverName,
+      serverName: sourceName,
       bundleName: url,
-      version: "remote",
-      state: "starting",
+      version: meta?.version ?? "remote",
+      state: "running",
       trustScore: trustScore ?? null,
       ui: ui ?? null,
       briefing: null,
@@ -274,42 +236,27 @@ export class BundleLifecycleManager {
       type: "plain",
       wsId,
     };
-
-    this.transition(instance, "starting");
-
-    const source = new McpSource(serverName, {
-      type: "remote",
-      url: new URL(url),
-      transportConfig,
-    });
-    await source.start();
-    registry.addSource(source);
-
-    // Discover tools to populate tool count in version string
-    const tools = await source.tools();
-    instance.version = `remote (${tools.length} tools)`;
-
     this.transition(instance, "running");
 
     // Register placements in PlacementRegistry
-    this.registerPlacements(serverName, instance.ui, wsId);
+    this.registerPlacements(sourceName, instance.ui, wsId);
 
     // Atomic config write
     if (this.configPath) {
-      const entry: Record<string, unknown> = { url, serverName };
+      const entry: Record<string, unknown> = { url, serverName: sourceName };
       if (transportConfig) entry.transport = transportConfig;
       if (ui) entry.ui = ui;
       if (trustScore != null) entry.trustScore = trustScore;
       atomicConfigAdd(this.configPath, entry);
     }
 
-    this.instances.set(`${serverName}|${wsId}`, instance);
+    this.instances.set(`${sourceName}|${wsId}`, instance);
 
     // Emit event
     this.eventSink.emit({
       type: "bundle.installed",
       data: {
-        serverName,
+        serverName: sourceName,
         bundleName: url,
         version: instance.version,
         type: instance.type,
@@ -737,56 +684,6 @@ async function fetchTrustScore(name: string, mpakHome: string): Promise<number |
   } catch {
     return null;
   }
-}
-
-/** Build an McpSource from a local bundle path + manifest (direct spawn, no SDK).
- *  Local bundles are unpacked directories — the SDK's prepareServer({ local }) expects
- *  .mcpb archives, so we handle local paths directly. */
-function buildLocalMcpSource(
-  bundleDir: string,
-  manifest: BundleManifest,
-  extraEnv?: Record<string, string>,
-  allowedEnv?: string[],
-): McpSource {
-  const serverName = deriveServerName(manifest.name);
-  const mcpConfig = manifest.server.mcp_config;
-
-  let command = mcpConfig.command;
-  const args = (mcpConfig.args ?? []).map((arg) =>
-    arg.replace(/\$\{__dirname\}/g, resolve(bundleDir)),
-  );
-
-  const spawnEnv: Record<string, string> = {
-    ...filterEnvForBundle(process.env as Record<string, string>, mcpConfig.env, allowedEnv),
-    ...(extraEnv ?? {}),
-  };
-
-  if (manifest.server.type === "python") {
-    if (command === "python") {
-      const check = Bun.spawnSync(["which", "python"]);
-      if (check.exitCode !== 0) command = "python3";
-    }
-    const resolvedDir = resolve(bundleDir);
-    const pathParts: string[] = [];
-    const depsDir = join(resolvedDir, "deps");
-    if (existsSync(depsDir)) pathParts.push(depsDir);
-    const srcDir = join(resolvedDir, "src");
-    if (existsSync(srcDir)) pathParts.push(srcDir);
-    if (pathParts.length > 0) {
-      const existing = spawnEnv.PYTHONPATH;
-      spawnEnv.PYTHONPATH = existing ? `${pathParts.join(":")}:${existing}` : pathParts.join(":");
-    }
-  }
-
-  return new McpSource(serverName, {
-    type: "stdio",
-    spawn: {
-      command,
-      args,
-      env: spawnEnv,
-      cwd: resolve(bundleDir),
-    },
-  });
 }
 
 // ---------------------------------------------------------------------------

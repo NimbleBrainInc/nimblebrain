@@ -79,14 +79,14 @@ class FilteredToolRouter implements ToolRouter {
     return all.filter((t) => this.allowedNames.has(t.name));
   }
 
-  async execute(call: ToolCall): Promise<ToolResult> {
+  async execute(call: ToolCall, signal?: AbortSignal): Promise<ToolResult> {
     if (!this.allowedNames.has(call.name)) {
       return {
         content: textContent(`Tool "${call.name}" is not available to this sub-agent.`),
         isError: true,
       };
     }
-    return this.inner.execute(call);
+    return this.inner.execute(call, signal);
   }
 }
 

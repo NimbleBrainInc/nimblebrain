@@ -11,7 +11,7 @@ export class StaticToolRouter implements ToolRouter {
     return this.tools;
   }
 
-  async execute(call: ToolCall): Promise<ToolResult> {
+  async execute(call: ToolCall, _signal?: AbortSignal): Promise<ToolResult> {
     return this.handler(call);
   }
 }

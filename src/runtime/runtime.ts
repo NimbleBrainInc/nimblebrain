@@ -52,7 +52,7 @@ import { TelemetryManager } from "../telemetry/manager.ts";
 import { PostHogEventSink } from "../telemetry/posthog-sink.ts";
 import type { DelegateContext } from "../tools/delegate.ts";
 import { McpSource } from "../tools/mcp-source.ts";
-import { ToolRegistry } from "../tools/registry.ts";
+import type { ToolRegistry } from "../tools/registry.ts";
 import { createSystemTools } from "../tools/system-tools.ts";
 import { isResourceReader, type ResourceData, type ResourceReader } from "../tools/types.ts";
 import { WorkspaceStore } from "../workspace/workspace-store.ts";
@@ -387,6 +387,10 @@ export class Runtime {
       workDir: resolveWorkDir(config),
       configDir: config.configPath ? dirname(config.configPath) : undefined,
       allowInsecureRemotes: config.allowInsecureRemotes,
+      // The runtime sink flows into every McpSource spawned by manage_app
+      // install/configure. Keeps chat-initiated bundle installs on the same
+      // live-update pipeline as boot-time bundle startup.
+      eventSink: events,
     };
 
     // Create Runtime with empty workspace registries first — needed by system tools
@@ -455,7 +459,7 @@ export class Runtime {
     // Phase 3: Start workspace bundles with per-workspace registries
     const configDir = config.configPath ? dirname(config.configPath) : undefined;
     const { registries: workspaceRegistries, entries: workspaceBundleEntries } =
-      await startWorkspaceBundles(workspaceStore, platformSources, systemTools, configDir, {
+      await startWorkspaceBundles(workspaceStore, platformSources, systemTools, events, configDir, {
         workDir: resolveWorkDir(config),
         allowInsecureRemotes: config.allowInsecureRemotes,
       });

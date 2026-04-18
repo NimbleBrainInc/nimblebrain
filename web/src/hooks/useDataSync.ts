@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef } from "react";
 import type { UiDataChangedMessage } from "../bridge/types";
+import { debug } from "../lib/debug";
 import type { DataChangedEvent } from "../types";
 
 /** A single change record buffered before dispatch. */
@@ -33,6 +34,13 @@ export function useDataSync(): (event: DataChangedEvent) => void {
     if (buffer.size === 0) return;
 
     const iframes = document.querySelectorAll<HTMLIFrameElement>("iframe[data-app]");
+    // Answers: "are the iframes I expect actually in the DOM with the right
+    // data-app?" — the most common cause of UIs that don't update. Gated on
+    // `localStorage.nb_debug=sync` (see web/src/lib/debug.ts).
+    debug("sync", `flush ${buffer.size} buffer entries, ${iframes.length} iframes`, {
+      bufferKeys: [...buffer.keys()],
+      iframeApps: Array.from(iframes).map((f) => f.dataset.app),
+    });
 
     for (const iframe of iframes) {
       const appName = iframe.dataset.app;
@@ -52,6 +60,7 @@ export function useDataSync(): (event: DataChangedEvent) => void {
             tool: change.tool,
           },
         };
+        debug("sync", `→ iframe[data-app="${appName}"] ${change.server}/${change.tool}`);
         iframe.contentWindow?.postMessage(message, "*");
       }
     }
@@ -73,6 +82,10 @@ export function useDataSync(): (event: DataChangedEvent) => void {
   // Stable callback for receiving data.changed events
   const onDataChanged = useCallback(
     (event: DataChangedEvent) => {
+      // Confirms the SSE connection is delivering `data.changed` events to
+      // the browser. If this never fires, the break is upstream (server sink
+      // wrap not installed, SSE connection closed, etc.).
+      debug("sync", `SSE data.changed server=${event.server} tool=${event.tool}`);
       const change: DataChange = {
         source: "agent",
         server: event.server,
