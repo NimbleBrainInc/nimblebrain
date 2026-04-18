@@ -6,7 +6,13 @@ export type { ContentBlock, TextContent };
 /** Port 2: Tool routing abstraction. */
 export interface ToolRouter {
   availableTools(): Promise<ToolSchema[]>;
-  execute(call: ToolCall): Promise<ToolResult>;
+  /**
+   * Execute a tool call. The optional `signal` propagates run-scoped
+   * cancellation from the engine down to the tool implementation. For
+   * task-augmented MCP tools it becomes `tasks/cancel`; for inline tools
+   * it's an `AbortSignal` forwarded on the request.
+   */
+  execute(call: ToolCall, signal?: AbortSignal): Promise<ToolResult>;
 }
 
 export interface ToolSchema {
@@ -27,23 +33,6 @@ export interface ToolResult {
   content: ContentBlock[];
   structuredContent?: Record<string, unknown>;
   isError: boolean;
-  /**
-   * When an MCP server returns a CreateTaskResult instead of an immediate
-   * result, the raw task metadata is attached here. The engine detects this
-   * and starts the polling loop. See PRODUCT_SPEC.md §13.
-   */
-  _taskResult?: {
-    task: {
-      taskId: string;
-      status: string;
-      ttl: number | null;
-      createdAt: string;
-      lastUpdatedAt: string;
-      pollInterval?: number;
-      statusMessage?: string;
-    };
-    _meta?: Record<string, unknown>;
-  };
 }
 
 /** Port 3: Observability event sink. */
@@ -58,7 +47,6 @@ export type EngineEventType =
   | "tool.start"
   | "tool.done"
   | "tool.progress"
-  | "task.input_required"
   | "llm.done"
   | "run.done"
   | "run.error"
@@ -109,23 +97,14 @@ export interface EngineConfig {
   hooks?: EngineHooks;
   /**
    * AbortSignal for run cancellation.
-   * When aborted, active MCP tasks receive tasks/cancel. See §13.
+   *
+   * Propagated down through `ToolRouter.execute(call, signal)` to the
+   * underlying tool source. For task-augmented MCP tools this becomes
+   * `tasks/cancel` on the server; for inline tools the SDK aborts the
+   * in-flight RPC. Long-running tools MUST honor this signal — see the
+   * "Long-Running Tools (MCP Tasks)" section in CLAUDE.md for the contract.
    */
   signal?: AbortSignal;
-  /**
-   * Resolver for MCP task clients.
-   * Given a tool call ID, returns a TaskClient if the source supports
-   * task-augmented execution, or undefined for sync-only sources.
-   * The engine uses this to poll tasks and send cancellations.
-   */
-  taskClientResolver?: TaskClientResolver;
-  /**
-   * Maximum time in milliseconds to wait for a single task poll to complete.
-   * If pollTask() does not resolve within this window the engine returns an
-   * isError result and continues the agentic loop — it does NOT hang or throw.
-   * Defaults to 120_000 (2 minutes).
-   */
-  taskTimeoutMs?: number;
   /**
    * Maximum char size of a single tool result's ContentBlock[].
    * Results exceeding this are replaced with an isError summary before
@@ -133,31 +112,6 @@ export interface EngineConfig {
    * Set to 0 to disable. Defaults to 1_000_000 (1M chars).
    */
   maxToolResultSize?: number;
-}
-
-/** Resolves a TaskClient for a given tool call, or undefined if unavailable. */
-export type TaskClientResolver = (toolName: string) => TaskClientPort | undefined;
-
-/**
- * Minimal interface for MCP task operations needed by the engine.
- * Decoupled from the concrete MCP Client for testability.
- */
-export interface TaskClientPort {
-  getTask(taskId: string): Promise<{
-    taskId: string;
-    status: string;
-    ttl: number | null;
-    createdAt: string;
-    lastUpdatedAt: string;
-    pollInterval?: number;
-    statusMessage?: string;
-  }>;
-  getTaskResult(taskId: string): Promise<{
-    content?: Array<{ type: string; text?: string; [key: string]: unknown }>;
-    isError?: boolean;
-    _meta?: Record<string, unknown>;
-  }>;
-  cancelTask(taskId: string): Promise<unknown>;
 }
 
 /** Result returned from a single engine run. */

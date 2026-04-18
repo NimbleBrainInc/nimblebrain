@@ -47,6 +47,9 @@ export async function installBundleInWorkspace(
   wsId: string,
   bundleRef: BundleRef,
   registry: ToolRegistry,
+  // Required — threaded into the new McpSource so task-augmented tools'
+  // progress events reach SSE. See mcp-source.ts for the full rationale.
+  eventSink: import("../engine/types.ts").EventSink,
   configDir: string | undefined,
   opts?: {
     allowInsecureRemotes?: boolean;
@@ -64,7 +67,7 @@ export async function installBundleInWorkspace(
     throw new Error(`Bundle "${serverName}" is already running in workspace "${wsId}"`);
   }
 
-  const result = await startBundleSource(bundleRef, registry, configDir, {
+  const result = await startBundleSource(bundleRef, registry, eventSink, configDir, {
     allowInsecureRemotes: opts?.allowInsecureRemotes,
     dataDir,
   });

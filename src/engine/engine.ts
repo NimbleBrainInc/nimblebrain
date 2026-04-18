@@ -16,7 +16,6 @@ import {
   textContent,
 } from "./content-helpers.ts";
 import { withRetry } from "./retry.ts";
-import { ActiveTaskTracker, getImmediateResponse, type McpTask, pollTask } from "./tasks.ts";
 import type {
   EngineConfig,
   EngineResult,
@@ -134,15 +133,6 @@ export class AgentEngine {
     for (const t of allRouterTools) {
       if (t.annotations) toolAnnotations.set(t.name, t.annotations);
     }
-
-    // Task tracker for cancellation on abort (§13)
-    const taskTracker = new ActiveTaskTracker();
-
-    // Wire abort signal to cancel all active tasks
-    const onAbort = () => {
-      void taskTracker.cancelAll();
-    };
-    config.signal?.addEventListener("abort", onAbort, { once: true });
 
     // Translate ToolSchema[] to LanguageModelV3FunctionTool[] for the model call
     const modelTools: LanguageModelV3FunctionTool[] = tools.map((t) => ({
@@ -345,7 +335,10 @@ export class AgentEngine {
 
             if (!result) {
               try {
-                result = await this.tools.execute(gatedCall);
+                // Forward the run's AbortSignal so task-augmented MCP tools
+                // propagate cancellation via tasks/cancel and inline tools
+                // abort their in-flight RPC.
+                result = await this.tools.execute(gatedCall, config.signal);
               } catch (err) {
                 result = {
                   content: textContent(err instanceof Error ? err.message : String(err)),
@@ -367,67 +360,6 @@ export class AgentEngine {
                   isError: true,
                 };
               }
-            }
-
-            // §13: If the result carries _taskResult, poll the task
-            if (result._taskResult) {
-              const taskClient = config.taskClientResolver?.(gatedCall.name);
-              if (taskClient) {
-                const taskMeta = result._taskResult;
-                const task: McpTask = {
-                  taskId: taskMeta.task.taskId,
-                  status: taskMeta.task.status as McpTask["status"],
-                  ttl: taskMeta.task.ttl,
-                  createdAt: taskMeta.task.createdAt,
-                  lastUpdatedAt: taskMeta.task.lastUpdatedAt,
-                  pollInterval: taskMeta.task.pollInterval,
-                  statusMessage: taskMeta.task.statusMessage,
-                };
-
-                // Check for immediate response (model context while polling)
-                const immediateResponse = getImmediateResponse({
-                  task,
-                  _meta: taskMeta._meta,
-                });
-                if (immediateResponse) {
-                  // Use immediate response as the content seen by the model
-                  // while we continue polling in the background
-                  result = { content: textContent(immediateResponse), isError: false };
-                }
-
-                // Register and poll
-                const controller = taskTracker.register(task.taskId, taskClient);
-                const outerSignal = config.signal;
-                const onOuterAbort = () => controller.abort();
-                outerSignal?.addEventListener("abort", onOuterAbort, { once: true });
-
-                const taskTimeoutMs = config.taskTimeoutMs ?? 120_000;
-
-                try {
-                  result = await Promise.race([
-                    pollTask(taskClient, task, {
-                      runId,
-                      toolCallId: gatedCall.id,
-                      events: this.events,
-                      signal: controller.signal,
-                    }),
-                    new Promise<ToolResult>((resolve) =>
-                      setTimeout(
-                        () =>
-                          resolve({
-                            content: textContent(`Task timed out after ${taskTimeoutMs}ms`),
-                            isError: true,
-                          }),
-                        taskTimeoutMs,
-                      ),
-                    ),
-                  ]);
-                } finally {
-                  taskTracker.unregister(task.taskId);
-                  outerSignal?.removeEventListener("abort", onOuterAbort);
-                }
-              }
-              // If no taskClient available, fall through with the placeholder result
             }
 
             const ms = performance.now() - start;
@@ -526,8 +458,6 @@ export class AgentEngine {
         iteration++;
       }
     } catch (err) {
-      // Cancel any active tasks on error
-      await taskTracker.cancelAll();
       const errorMessage = err instanceof Error ? err.message : String(err);
       this.events.emit({
         type: "run.error",
@@ -538,8 +468,6 @@ export class AgentEngine {
         },
       });
       throw err;
-    } finally {
-      config.signal?.removeEventListener("abort", onAbort);
     }
 
     const stopReason = iteration >= maxIter ? "max_iterations" : "complete";

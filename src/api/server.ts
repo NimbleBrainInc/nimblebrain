@@ -1,5 +1,6 @@
 type BunServer = ReturnType<typeof Bun.serve>;
 
+import { log } from "../cli/log.ts";
 import type { IdentityProvider } from "../identity/provider.ts";
 import { DevIdentityProvider } from "../identity/providers/dev.ts";
 import type { Runtime } from "../runtime/runtime.ts";
@@ -81,19 +82,58 @@ export function startServer(options: ServerOptions): ServerHandle {
   const runtimeSink = runtime.getEventSink();
   const originalEmit = runtimeSink.emit.bind(runtimeSink);
   runtimeSink.emit = (event) => {
+    // Trace every progress/completion event that reaches the runtime sink.
+    // Answers "is the event source actually firing into the SSE wrap?" —
+    // the first thing to check when a bundle's UI isn't updating live.
+    // Run with `NB_DEBUG=sse` to enable.
+    if ((event.type === "tool.progress" || event.type === "tool.done") && log.debugEnabled("sse")) {
+      log.debug("sse", `sink got ${event.type} data=${JSON.stringify(event.data).slice(0, 160)}`);
+    }
     originalEmit(event);
     sseManager.emit(event);
-    if (event.type === "tool.done" && event.data.ok === true) {
-      const toolName = event.data.name as string | undefined;
+
+    // Broadcast `data.changed` so bundle iframes (Synapse useDataSync) know to
+    // refresh. We broadcast in two situations:
+    //
+    //   (1) tool.done (ok)      — the call completed; any entity writes have
+    //                             landed and downstream views should refresh.
+    //   (2) tool.progress       — the call is long-running (task-augmented)
+    //                             and the server has emitted a status update.
+    //                             Long-running tools typically write entity
+    //                             state on each phase, so the UI needs to see
+    //                             the work-in-progress, not only the final
+    //                             result. Without this, a `useDataSync`-driven
+    //                             view stays stale for the full task duration.
+    //
+    // System tools (`nb__*`) are filtered out of both paths — they don't
+    // modify app data, and broadcasting data.changed for them would make
+    // iframes re-fetch during every streaming chunk (flicker + tool-call
+    // amplification).
+    const progressOrDone =
+      (event.type === "tool.done" && event.data.ok === true) || event.type === "tool.progress";
+    if (progressOrDone) {
+      const toolName =
+        (event.data.name as string | undefined) ??
+        // tool.progress uses `source`+`tool` (McpSource emits them separately)
+        // while tool.done uses a single qualified `name`. Handle both shapes.
+        ((): string | undefined => {
+          const src = event.data.source as string | undefined;
+          const tool = event.data.tool as string | undefined;
+          return src && tool ? `${src}__${tool}` : undefined;
+        })();
       if (toolName) {
         const sepIndex = toolName.indexOf("__");
         const server = sepIndex !== -1 ? toolName.slice(0, sepIndex) : toolName;
         const tool = sepIndex !== -1 ? toolName.slice(sepIndex + 2) : toolName;
-        // Only emit data.changed for bundle (MCP server) tools, not system
-        // nb__* tools. System tools don't modify app data, and broadcasting
-        // data.changed for them causes iframes to needlessly re-fetch,
-        // creating flicker and repeated tool calls during streaming.
         if (server !== "nb") {
+          // Confirms `data.changed` is actually being broadcast, and to how
+          // many clients. If this fires but the browser never sees the
+          // event, the break is in the SSE connection or the
+          // parent `useDataSync` forwarder — not here.
+          log.debug(
+            "sse",
+            `broadcast data.changed from=${event.type} server=${server} tool=${tool} clients=${sseManager.clientCount}`,
+          );
           sseManager.broadcast("data.changed", {
             server,
             tool,

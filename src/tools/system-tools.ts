@@ -1,9 +1,9 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { filterEnvForBundle } from "../bundles/env-filter.ts";
 import type { BundleLifecycleManager } from "../bundles/lifecycle.ts";
 import { getMpak } from "../bundles/mpak.ts";
 import { deriveBundleDataDir, deriveServerName } from "../bundles/paths.ts";
+import { startBundleSource } from "../bundles/startup.ts";
 import type { BundleManifest } from "../bundles/types.ts";
 import {
   installBundleInWorkspace,
@@ -42,6 +42,11 @@ export interface ManageBundleContext {
   workDir: string;
   configDir: string | undefined;
   allowInsecureRemotes?: boolean;
+  // Required — threaded into any McpSource spawned by this context so
+  // task-augmented tool progress reaches the SSE broadcast path. The
+  // manage_app install/configure flow spawns bundles the same way the
+  // platform does at boot; both paths need the live runtime sink.
+  eventSink: EventSink;
 }
 
 /** Callback that returns the current loaded skills from the runtime. */
@@ -198,7 +203,13 @@ export function createSystemTools(
           );
         }
         if (action === "configure") {
-          return await configureBundle(name, getRegistry(), gate, mpakHome);
+          return await configureBundle(
+            name,
+            getRegistry(),
+            manageBundleCtx.eventSink,
+            gate,
+            mpakHome,
+          );
         }
         return { content: textContent(`Unknown action: ${action}`), isError: true };
       },
@@ -926,6 +937,11 @@ function formatUptime(ms: number): string {
 async function configureBundle(
   name: string,
   registry: ToolRegistry,
+  // Required — passed to the restarted McpSource so its task-augmented tool
+  // progress events reach SSE broadcasts (Synapse useDataSync). Without it,
+  // re-configuring a bundle's credentials silently breaks live updates for
+  // that bundle until the next full platform restart.
+  eventSink: EventSink,
   confirmGate?: ConfirmationGate,
   mpakHome?: string,
 ): Promise<ToolResult> {
@@ -979,36 +995,26 @@ async function configureBundle(
     // Force re-prompt — always ask even if values already stored
     const resolvedEnv = await resolveCredentials(name, userConfig, manifestEnv, confirmGate, true);
 
-    // Restart the bundle with new credentials
+    // Restart the bundle with new credentials via the shared primitive —
+    // same construction path as boot-time / agent install. If this function
+    // diverges from `startBundleSource` the rest of the app silently breaks
+    // (e.g. sink plumbing, PYTHONPATH, data-dir layout). Delegate instead.
     const serverName = deriveServerName(name);
     if (registry.hasSource(serverName)) {
       await registry.removeSource(serverName);
     }
-
     const nbWorkDir = process.env.NB_WORK_DIR ?? join(homedir(), ".nimblebrain");
     const bundleDataDir = join(nbWorkDir, "data", deriveBundleDataDir(name));
-    const preparedServer = await mpak.prepareServer({ name }, { workspaceDir: bundleDataDir });
-
-    const source = new McpSource(serverName, {
-      type: "stdio",
-      spawn: {
-        command: preparedServer.command,
-        args: preparedServer.args,
-        env: {
-          ...preparedServer.env,
-          ...filterEnvForBundle(process.env as Record<string, string>),
-          ...resolvedEnv,
-          MPAK_WORKSPACE: bundleDataDir,
-          UPJACK_ROOT: bundleDataDir,
-        },
-        cwd: preparedServer.cwd,
-      },
-    });
-    await source.start();
-    registry.addSource(source);
+    const result = await startBundleSource(
+      { name, env: resolvedEnv },
+      registry,
+      eventSink,
+      undefined,
+      { dataDir: bundleDataDir },
+    );
 
     const tools = await registry.availableTools();
-    const count = tools.filter((t) => t.name.startsWith(`${serverName}__`)).length;
+    const count = tools.filter((t) => t.name.startsWith(`${result.sourceName}__`)).length;
     return {
       content: textContent(`Configured and restarted ${name}. ${count} tools available.`),
       isError: false,
@@ -1038,10 +1044,17 @@ async function installBundleInWorkspaceViaCtx(
     const bundleRef = { name } as import("../bundles/types.ts").BundleRef;
 
     // Spawn the bundle process with plain server name in workspace registry
-    const entry = await installBundleInWorkspace(wsId, bundleRef, registry, ctx.configDir, {
-      allowInsecureRemotes: ctx.allowInsecureRemotes,
-      workDir: ctx.workDir,
-    });
+    const entry = await installBundleInWorkspace(
+      wsId,
+      bundleRef,
+      registry,
+      ctx.eventSink,
+      ctx.configDir,
+      {
+        allowInsecureRemotes: ctx.allowInsecureRemotes,
+        workDir: ctx.workDir,
+      },
+    );
 
     // Seed lifecycle instance so it can be tracked/queried
     lifecycle.seedInstance(

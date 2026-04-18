@@ -108,6 +108,105 @@ web/               Vite + React + TypeScript SPA (separate package.json)
 
 All tool handlers that access data must be workspace-scoped. Use `runtime.requireWorkspaceId()` (never `getCurrentWorkspaceId()`). In dev mode it returns `"_dev"` — no special-case logic needed.
 
+## Debug Logging
+
+Hot-path diagnostics are gated behind namespace flags so they're available when you need them without editing source. Use for tracing across the runtime ↔ SSE ↔ browser ↔ iframe chain.
+
+### Server (`NB_DEBUG` environment variable)
+
+```bash
+NB_DEBUG=*         bun run dev    # everything
+NB_DEBUG=mcp       bun run dev    # MCP source lifecycle + dispatch
+NB_DEBUG=sse,mcp   bun run dev    # SSE event flow + MCP
+```
+
+Namespaces (`src/cli/log.ts`):
+
+| Namespace | Emits | Answers |
+|---|---|---|
+| `mcp` | McpSource construction (including whether `eventSink` was plumbed); per-call dispatch showing `taskSupport` / `path=task-augmented\|inline` / sink presence / cached tool count | "Why is my tool going inline?" "Is my new construction site forwarding the sink?" |
+| `sse` | Every `tool.progress` / `tool.done` entering the runtime sink wrap; every `data.changed` broadcast with client count | "Are progress events reaching the SSE layer?" "Are broadcasts happening, to how many clients?" |
+
+Add a namespace by calling `log.debug("ns", "message")` (from `src/cli/log.ts`). Keep this table and the `log.ts` doc comment in sync.
+
+### Browser (`localStorage.nb_debug`)
+
+```js
+localStorage.setItem("nb_debug", "*")        // everything
+localStorage.setItem("nb_debug", "sync")     // just the data.changed fan-out
+localStorage.removeItem("nb_debug")          // off
+```
+
+Reload after setting. Namespaces (`web/src/lib/debug.ts`):
+
+| Namespace | Emits | Answers |
+|---|---|---|
+| `sync` | Every SSE `data.changed` arrival; parent-side flush with buffer + iframe app names; each `postMessage` forward to a matching iframe | "Is the browser receiving broadcasts?" "Is the iframe I expect actually mounted with the right `data-app`?" |
+
+Namespaces are shared convention between server and browser: `NB_DEBUG=sync` plus `localStorage.nb_debug=sync` together trace the entire data.changed flow.
+
+## Long-Running Tools (MCP Tasks)
+
+Any MCP tool whose work exceeds the stock MCP request timeout (~60 s) must be written as a **task-augmented tool**. The engine implements the client side of the MCP draft 2025-11-25 `tasks` utility end-to-end; bundle authors only have to opt in.
+
+### Authoring a long-running tool
+
+Declare the tool with `execution.taskSupport` on its `tools/list` entry. FastMCP (Python) makes this one line:
+
+```python
+from fastmcp.server.tasks import TaskConfig
+
+@mcp.tool(task=TaskConfig(mode="optional"))
+async def start_research(query: str, ctx: Context) -> dict:
+    run = app.create_entity("research_run", {...})
+    try:
+        # phased work; ctx.report_progress(...) on each phase
+        # app.update_entity(...) on each phase for live UI
+        return {"run_id": run["id"], "report": report}
+    except asyncio.CancelledError:
+        app.update_entity("research_run", run["id"], {"run_status": "cancelled", ...})
+        raise
+```
+
+- `mode="optional"` lets the tool run inline or as a task (client decides). Use this.
+- `mode="required"` rejects non-augmented calls with JSON-RPC `-32601` — only use if you're certain every client supports tasks.
+- `mode="forbidden"` (the implicit default) never runs as a task. Use for fast tools.
+
+### What the engine does automatically
+
+1. On `initialize`, advertises `capabilities.tasks.{requests.tools.call, cancel, list}` so servers know the client supports the task flow. (`src/tools/mcp-source.ts`)
+2. When calling a tool whose `execution.taskSupport` is `"optional"` or `"required"`, dispatches through the SDK's streaming API: `client.experimental.tasks.callToolStream(...)`. (`src/tools/mcp-source.ts::callToolAsTask`)
+3. Consumes the response stream — `taskCreated` → `taskStatus`* → terminal `result | error` — and emits `tool.progress` events on every `taskStatus` so the chat UI renders live.
+4. Run-scoped `AbortSignal` is threaded through `ToolRouter.execute(call, signal)` → `ToolSource.execute(..., signal)` → RequestOptions on the stream. An abort becomes `tasks/cancel` automatically via the SDK.
+5. Inline tool calls (taskSupport omitted / forbidden) use the regular `client.callTool(...)` path and the same signal.
+6. Crash-retry semantics: **inline calls** restart the subprocess and retry on transport error. **Task-augmented calls do not retry** — task state lives server-side; retrying would create a confusing duplicate. Surfacing the error lets the agent decide whether to initiate a new run.
+
+The spec-compliant task flow does NOT use the 60 s MCP request timeout — `tools/call` returns in milliseconds with a `CreateTaskResult`, and the SDK handles polling internally.
+
+Default TTL attached to outbound task-augmented requests is one hour (`DEFAULT_TASK_TTL_MS` in `src/tools/mcp-source.ts`). Servers may clamp it lower.
+
+### Dual-channel contract (engine + entity)
+
+The task channel is how the **agent** awaits the result. Apps that have UIs should also update a **persistent entity** on each phase transition (via the bundle's state store, typically Upjack). This gives the UI a live view that survives:
+- The LLM losing interest mid-run
+- The client disconnecting
+- The agent process being bounced
+
+Both channels are sources of truth for different consumers. They must be kept in lockstep by the worker:
+
+```
+ctx.report_progress(...)  ─► notifications/tasks/status  ─► engine ─► chat UI
+app.update_entity(...)    ─► filesystem                   ─► Synapse UI (useDataSync)
+```
+
+### Startup reaper pattern
+
+Long-running entities can get orphaned if the bundle subprocess dies mid-run. The canonical fix is a startup sweep that marks any entity stuck in `working` as `failed` with a clear reason. See `synapse-apps/synapse-research/src/mcp_research/server.py::_reap_orphaned_runs()` for the reference implementation.
+
+### Reference bundle
+
+`synapse-apps/synapse-research` is the first consumer of this pattern. Its `tests/test_spec_compliance.py` exercises every MUST from the spec against an in-process FastMCP client and is a good template for new task-aware bundles.
+
 ## Prompt Security
 
 `sanitizeLineField()` and XML containment tags in `compose.ts` are prompt injection mitigations. Do not remove without reviewing `test/unit/prompt-injection.test.ts`. The `DELEGATE_PREAMBLE` in `delegate.ts` prevents task-as-system-prompt injection.

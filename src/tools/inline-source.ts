@@ -60,7 +60,11 @@ export class InlineSource implements ToolSource {
     }));
   }
 
-  async execute(toolName: string, input: Record<string, unknown>): Promise<ToolResult> {
+  async execute(
+    toolName: string,
+    input: Record<string, unknown>,
+    _signal?: AbortSignal,
+  ): Promise<ToolResult> {
     const def = this.toolDefs.find((d) => d.name === toolName);
     if (!def) {
       const available = this.toolDefs.map((d) => d.name).join(", ");

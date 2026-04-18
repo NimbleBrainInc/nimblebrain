@@ -215,6 +215,14 @@ export interface StartBundleResult {
   meta: LocalBundleMeta | null;
   /** The actual source name registered in the ToolRegistry. */
   sourceName: string;
+  /**
+   * Raw bundle manifest, populated when one was read during startup
+   * (local-path and named-registry bundles). Null for remote bundles, where
+   * the platform discovers tools over the wire and has no local manifest.
+   * Lifecycle callers use this instead of re-reading the manifest, so there
+   * is one source of truth for bundle metadata per startup.
+   */
+  manifest: BundleManifest | null;
 }
 
 /** App info returned by GET /v1/apps. */

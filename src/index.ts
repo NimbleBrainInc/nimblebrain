@@ -49,25 +49,13 @@ export type {
   EngineHooks,
   EngineResult,
   EventSink,
-  McpCreateTaskResult,
-  McpTask,
-  PollTaskOptions,
-  TaskClientPort,
-  TaskClientResolver,
   ToolCall,
   ToolCallRecord,
   ToolResult,
   ToolRouter,
   ToolSchema,
 } from "./engine/index.ts";
-export {
-  ActiveTaskTracker,
-  AgentEngine,
-  getImmediateResponse,
-  isCreateTaskResult,
-  isTerminalStatus,
-  pollTask,
-} from "./engine/index.ts";
+export { AgentEngine } from "./engine/index.ts";
 export type { CatalogModel, ModelCapabilities, ModelCost, ModelLimits } from "./model/catalog.ts";
 export {
   getAvailableModels,

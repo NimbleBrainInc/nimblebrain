@@ -13,6 +13,7 @@ import { BundleLifecycleManager } from "../../src/bundles/lifecycle.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
 import { deriveServerName } from "../../src/bundles/paths.ts";
 import { startBundleSource } from "../../src/bundles/startup.ts";
+import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import type { BundleRef } from "../../src/bundles/types.ts";
 
 const testDir = join(tmpdir(), `nimblebrain-remote-lifecycle-${Date.now()}`);
@@ -279,7 +280,7 @@ describe("startBundleSource — remote url entries", () => {
 			serverName: "startup-remote",
 		};
 
-		const meta = await startBundleSource(ref, registry, undefined, { allowInsecureRemotes: true });
+		const meta = await startBundleSource(ref, registry, new NoopEventSink(), undefined, { allowInsecureRemotes: true });
 
 		expect(meta).not.toBeNull();
 		expect(meta.meta).not.toBeNull();
@@ -300,7 +301,7 @@ describe("startBundleSource — remote url entries", () => {
 			url: mockServer.url,
 		};
 
-		const meta = await startBundleSource(ref, registry, undefined, { allowInsecureRemotes: true });
+		const meta = await startBundleSource(ref, registry, new NoopEventSink(), undefined, { allowInsecureRemotes: true });
 		expect(meta).not.toBeNull();
 
 		// deriveServerName on a URL will produce something like "mcp"
@@ -319,7 +320,7 @@ describe("startBundleSource — remote url entries", () => {
 
 		// startBundleSource throws — but callers use allSettled
 		const results = await Promise.allSettled([
-			startBundleSource(ref, registry, undefined, { allowInsecureRemotes: true }),
+			startBundleSource(ref, registry, new NoopEventSink(), undefined, { allowInsecureRemotes: true }),
 		]);
 
 		expect(results[0]!.status).toBe("rejected");
@@ -337,7 +338,7 @@ describe("startBundleSource — remote url entries", () => {
 		];
 
 		const results = await Promise.allSettled(
-			refs.map((ref) => startBundleSource(ref, registry, undefined, { allowInsecureRemotes: true })),
+			refs.map((ref) => startBundleSource(ref, registry, new NoopEventSink(), undefined, { allowInsecureRemotes: true })),
 		);
 
 		// First two fail, third succeeds
