@@ -2,7 +2,7 @@
  * Handler for conversations__stats tool.
  *
  * Aggregates token usage analytics across conversations for a time period.
- * Reads full JSONL files to extract per-message model, skill, and tool data.
+ * Reads full JSONL files to extract per-message model and tool data.
  */
 
 import type { ConversationIndex } from "../index-cache.ts";

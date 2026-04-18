@@ -3,7 +3,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ConversationIndex } from "../../../../../src/bundles/conversations/src/index-cache.ts";
 import { handleExport } from "../../../../../src/bundles/conversations/src/tools/export.ts";
-import type { StoredMessage } from "../../../../../src/bundles/conversations/src/jsonl-reader.ts";
+import type { DisplayMessage } from "../../../../../src/bundles/conversations/src/jsonl-reader.ts";
 
 const TMP_DIR = join(import.meta.dir, ".tmp-export");
 
@@ -233,7 +233,7 @@ describe("handleExport — json", () => {
 			content: string;
 		};
 
-		const parsed = JSON.parse(result.content) as StoredMessage[];
+		const parsed = JSON.parse(result.content) as DisplayMessage[];
 		expect(Array.isArray(parsed)).toBe(true);
 		expect(parsed).toHaveLength(4);
 		expect(parsed[0]!.role).toBe("user");

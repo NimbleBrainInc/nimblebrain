@@ -46,10 +46,14 @@ export const ToolAccordion = memo(function ToolAccordion({
 
   if (displayDetail === "quiet" || batch.items.length === 0) return null;
 
-  const isSingle = batch.items.length === 1;
+  // Narrow via element lookup rather than length comparison so this stays
+  // safe under noUncheckedIndexedAccess — the length check alone doesn't
+  // prove items[0] is defined in stricter tsconfig modes.
+  const firstItem = batch.items[0];
+  const isSingle = batch.items.length === 1 && firstItem != null;
   // Promote the subject of a single-call batch next to the verb — turns
   // "Researching" into "Researching · Acme Corp" so the head reads like prose.
-  const headSubject = isSingle ? batch.items[0].headSubject : null;
+  const headSubject = isSingle ? firstItem.headSubject : null;
 
   return (
     <div className="tool-accordion" data-tone={batch.tone} data-expanded={expanded}>
@@ -72,7 +76,7 @@ export const ToolAccordion = memo(function ToolAccordion({
       {expanded && (
         <div className="tool-accordion__body">
           {isSingle ? (
-            <ToolDetail item={batch.items[0]} />
+            <ToolDetail item={firstItem} />
           ) : (
             batch.items.map((item) => <ToolRow key={item.id} item={item} />)
           )}
