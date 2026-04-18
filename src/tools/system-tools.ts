@@ -1114,8 +1114,10 @@ async function uninstallBundleFromWorkspaceViaCtx(
       throw new Error(`Cannot uninstall "${serverName}": bundle is protected`);
     }
 
-    // Stop process and deregister from tool registry
-    await uninstallBundleFromWorkspace(wsId, name, registry);
+    // Stop process and deregister from tool registry. Thread workDir so
+    // the workspace credential file for this bundle is cleaned up as part
+    // of uninstall (best-effort inside uninstallBundleFromWorkspace).
+    await uninstallBundleFromWorkspace(wsId, name, registry, { workDir: ctx.workDir });
 
     // Remove lifecycle instance tracking
     if (instance) {
