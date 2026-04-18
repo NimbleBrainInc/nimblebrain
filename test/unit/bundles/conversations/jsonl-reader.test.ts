@@ -149,6 +149,282 @@ describe("readConversation", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Event-sourced format — the DisplayMessage reducer path
+// ---------------------------------------------------------------------------
+
+describe("readConversation (event format)", () => {
+	function eventMeta(id = "conv_evt001") {
+		return {
+			id,
+			createdAt: "2025-06-01T00:00:00.000Z",
+			updatedAt: "2025-06-01T00:00:00.000Z",
+			title: null,
+			totalInputTokens: 0,
+			totalOutputTokens: 0,
+			totalCostUsd: 0,
+			lastModel: null,
+			format: "events",
+		};
+	}
+
+	test("emits one assistant DisplayMessage per run — merging iterations", async () => {
+		// A single run with 3 iterations: text → tool-call → final text. The old
+		// per-iteration reducer emitted 3 messages; the display reducer must emit 1.
+		const runId = "run_a";
+		const lines = [
+			JSON.stringify(eventMeta()),
+			JSON.stringify({ ts: "2025-06-01T00:00:00.000Z", type: "user.message", content: [{ type: "text", text: "hi" }] }),
+			JSON.stringify({ ts: "2025-06-01T00:00:01.000Z", type: "run.start", runId }),
+			JSON.stringify({
+				ts: "2025-06-01T00:00:02.000Z",
+				type: "llm.response",
+				runId,
+				model: "m1",
+				content: [{ type: "text", text: "I'll look it up." }],
+				inputTokens: 10,
+				outputTokens: 5,
+				cacheReadTokens: 0,
+				llmMs: 100,
+			}),
+			JSON.stringify({
+				ts: "2025-06-01T00:00:03.000Z",
+				type: "llm.response",
+				runId,
+				model: "m1",
+				content: [
+					{ type: "tool-call", toolCallId: "t1", toolName: "search", input: { q: "foo" } },
+				],
+				inputTokens: 15,
+				outputTokens: 8,
+				cacheReadTokens: 0,
+				llmMs: 120,
+			}),
+			JSON.stringify({
+				ts: "2025-06-01T00:00:04.000Z",
+				type: "tool.done",
+				runId,
+				id: "t1",
+				name: "search",
+				ok: true,
+				ms: 42,
+				output: "found 3 items",
+			}),
+			JSON.stringify({
+				ts: "2025-06-01T00:00:05.000Z",
+				type: "llm.response",
+				runId,
+				model: "m1",
+				content: [{ type: "text", text: "Here's what I found." }],
+				inputTokens: 30,
+				outputTokens: 7,
+				cacheReadTokens: 0,
+				llmMs: 80,
+			}),
+			JSON.stringify({ ts: "2025-06-01T00:00:06.000Z", type: "run.done", runId, stopReason: "complete" }),
+		];
+		const path = writeTmpFile("conv_evt001.jsonl", lines);
+
+		const result = await readConversation(path);
+		expect(result).not.toBeNull();
+
+		// Two messages: one user, one assistant — not one user + three assistants.
+		expect(result!.messages).toHaveLength(2);
+		const assistant = result!.messages[1]!;
+		expect(assistant.role).toBe("assistant");
+
+		// Blocks in event-order: text, tool, text.
+		expect(assistant.blocks).toHaveLength(3);
+		expect(assistant.blocks[0]).toEqual({ type: "text", text: "I'll look it up." });
+		expect(assistant.blocks[1]!.type).toBe("tool");
+		expect(assistant.blocks[2]).toEqual({ type: "text", text: "Here's what I found." });
+
+		// Aggregated usage across all llm.responses in the run.
+		expect(assistant.usage).toEqual({
+			inputTokens: 55,
+			outputTokens: 20,
+			model: "m1",
+			llmMs: 300,
+		});
+
+		// Flat toolCalls — one entry, fully hydrated.
+		expect(assistant.toolCalls).toHaveLength(1);
+		const tc = assistant.toolCalls![0]!;
+		expect(tc.id).toBe("t1");
+		expect(tc.name).toBe("search");
+		expect(tc.status).toBe("done");
+		expect(tc.ok).toBe(true);
+		expect(tc.result.content[0]).toEqual({ type: "text", text: "found 3 items" });
+		expect(tc.result.isError).toBe(false);
+
+		// Timestamp = run.done ts (end of the turn).
+		expect(assistant.timestamp).toBe("2025-06-01T00:00:06.000Z");
+	});
+
+	test("sets status='error' and isError=true for a failed tool call", async () => {
+		const runId = "run_b";
+		const lines = [
+			JSON.stringify(eventMeta("conv_evt_err")),
+			JSON.stringify({ ts: "2025-06-01T00:00:00.000Z", type: "run.start", runId }),
+			JSON.stringify({
+				ts: "2025-06-01T00:00:01.000Z",
+				type: "llm.response",
+				runId,
+				model: "m1",
+				content: [
+					{ type: "tool-call", toolCallId: "t2", toolName: "patch_source", input: {} },
+				],
+				inputTokens: 5,
+				outputTokens: 2,
+				cacheReadTokens: 0,
+				llmMs: 50,
+			}),
+			JSON.stringify({
+				ts: "2025-06-01T00:00:02.000Z",
+				type: "tool.done",
+				runId,
+				id: "t2",
+				name: "patch_source",
+				ok: false,
+				ms: 12,
+				output: "text not found",
+			}),
+			JSON.stringify({ ts: "2025-06-01T00:00:03.000Z", type: "run.done", runId, stopReason: "complete" }),
+		];
+		const path = writeTmpFile("conv_evt_err.jsonl", lines);
+
+		const result = await readConversation(path);
+		expect(result).not.toBeNull();
+		const tc = result!.messages[0]!.toolCalls![0]!;
+		expect(tc.status).toBe("error");
+		expect(tc.ok).toBe(false);
+		expect(tc.result.isError).toBe(true);
+	});
+
+	test("derives appName from 'server__tool' prefix", async () => {
+		const runId = "run_c";
+		const lines = [
+			JSON.stringify(eventMeta("conv_evt_app")),
+			JSON.stringify({ ts: "2025-06-01T00:00:00.000Z", type: "run.start", runId }),
+			JSON.stringify({
+				ts: "2025-06-01T00:00:01.000Z",
+				type: "llm.response",
+				runId,
+				model: "m1",
+				content: [
+					{
+						type: "tool-call",
+						toolCallId: "t3",
+						toolName: "synapse-collateral__patch_source",
+						input: {},
+					},
+				],
+				inputTokens: 1,
+				outputTokens: 1,
+				cacheReadTokens: 0,
+				llmMs: 1,
+			}),
+			JSON.stringify({
+				ts: "2025-06-01T00:00:02.000Z",
+				type: "tool.done",
+				runId,
+				id: "t3",
+				name: "synapse-collateral__patch_source",
+				ok: true,
+				ms: 5,
+				output: "ok",
+			}),
+			JSON.stringify({ ts: "2025-06-01T00:00:03.000Z", type: "run.done", runId, stopReason: "complete" }),
+		];
+		const path = writeTmpFile("conv_evt_app.jsonl", lines);
+
+		const result = await readConversation(path);
+		const tc = result!.messages[0]!.toolCalls![0]!;
+		expect(tc.appName).toBe("synapse-collateral");
+	});
+
+	test("propagates non-'complete' stopReason to the DisplayMessage", async () => {
+		const runId = "run_d";
+		const lines = [
+			JSON.stringify(eventMeta("conv_evt_stop")),
+			JSON.stringify({ ts: "2025-06-01T00:00:00.000Z", type: "run.start", runId }),
+			JSON.stringify({
+				ts: "2025-06-01T00:00:01.000Z",
+				type: "llm.response",
+				runId,
+				model: "m1",
+				content: [{ type: "text", text: "partial" }],
+				inputTokens: 1,
+				outputTokens: 1,
+				cacheReadTokens: 0,
+				llmMs: 1,
+			}),
+			JSON.stringify({
+				ts: "2025-06-01T00:00:02.000Z",
+				type: "run.done",
+				runId,
+				stopReason: "max_iterations",
+			}),
+		];
+		const path = writeTmpFile("conv_evt_stop.jsonl", lines);
+
+		const result = await readConversation(path);
+		expect(result!.messages[0]!.stopReason).toBe("max_iterations");
+	});
+
+	test("run.error is treated as a stopReason terminator", async () => {
+		const runId = "run_e";
+		const lines = [
+			JSON.stringify(eventMeta("conv_evt_runerr")),
+			JSON.stringify({ ts: "2025-06-01T00:00:00.000Z", type: "run.start", runId }),
+			JSON.stringify({
+				ts: "2025-06-01T00:00:01.000Z",
+				type: "llm.response",
+				runId,
+				model: "m1",
+				content: [{ type: "text", text: "before failure" }],
+				inputTokens: 1,
+				outputTokens: 1,
+				cacheReadTokens: 0,
+				llmMs: 1,
+			}),
+			JSON.stringify({
+				ts: "2025-06-01T00:00:02.000Z",
+				type: "run.error",
+				runId,
+				error: "boom",
+			}),
+		];
+		const path = writeTmpFile("conv_evt_runerr.jsonl", lines);
+
+		const result = await readConversation(path);
+		expect(result!.messages[0]!.stopReason).toBe("error");
+	});
+
+	test("does not confuse 'type:text' inside blocks with event lines (format detection)", async () => {
+		// A legacy-format file whose messages contain blocks-like structures.
+		// The format detector must not misfire on "type":"text" substring.
+		const meta = {
+			id: "conv_ambig",
+			createdAt: "2025-01-01T00:00:00.000Z",
+		};
+		const msg = {
+			role: "user",
+			content: "just text",
+			timestamp: "2025-01-01T00:00:01.000Z",
+			// Contains "type":"text" as substring, but this is a message, not an event.
+			blocks: [{ type: "text", text: "just text" }],
+		};
+		const path = writeTmpFile("conv_ambig.jsonl", [JSON.stringify(meta), JSON.stringify(msg)]);
+
+		const result = await readConversation(path);
+		expect(result).not.toBeNull();
+		// Should be parsed via the legacy path, not the event reducer.
+		expect(result!.messages).toHaveLength(1);
+		expect(result!.messages[0]!.content).toBe("just text");
+	});
+});
+
+// ---------------------------------------------------------------------------
 // readConversationHeader
 // ---------------------------------------------------------------------------
 

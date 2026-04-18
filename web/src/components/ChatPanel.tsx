@@ -5,7 +5,7 @@ import type { ChatMessage } from "../hooks/useChat";
 import { KeyboardShortcutsModal } from "./KeyboardShortcutsModal";
 import { MessageInput } from "./MessageInput";
 import { MessageList } from "./MessageList";
-import type { DisplayDetail } from "./ToolCallIndicator";
+import type { DisplayDetail } from "../lib/tool-display";
 
 export interface ChatPanelProps {
   messages: ChatMessage[];

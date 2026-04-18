@@ -128,7 +128,7 @@ describe("conversations__get", () => {
 		);
 	});
 
-	it("includes message metadata (skill, toolCalls) when present in JSONL", async () => {
+	it("surfaces tool calls and usage as top-level DisplayMessage fields", async () => {
 		const ts = "2025-01-15T10:00:00.000Z";
 		writeConversation(dir, "conv-meta", {
 			messages: [
@@ -142,7 +142,6 @@ describe("conversations__get", () => {
 					content: "Done!",
 					timestamp: ts,
 					metadata: {
-						skill: "code-review",
 						toolCalls: [
 							{
 								id: "tc-1",
@@ -157,7 +156,6 @@ describe("conversations__get", () => {
 						outputTokens: 80,
 						model: "claude-sonnet-4-5-20250929",
 						llmMs: 1200,
-						iterations: 2,
 					},
 				},
 			],
@@ -168,14 +166,13 @@ describe("conversations__get", () => {
 			messages: Array<{
 				role: string;
 				content: string;
-				metadata?: {
-					skill?: string;
-					toolCalls?: Array<{ id: string; name: string; ok: boolean }>;
-					inputTokens?: number;
-					outputTokens?: number;
-					model?: string;
-					llmMs?: number;
-					iterations?: number;
+				blocks?: Array<{ type: string }>;
+				toolCalls?: Array<{ id: string; name: string; ok: boolean }>;
+				usage?: {
+					inputTokens: number;
+					outputTokens: number;
+					model: string;
+					llmMs: number;
 				};
 			}>;
 		};
@@ -183,15 +180,13 @@ describe("conversations__get", () => {
 		expect(result.messages).toHaveLength(2);
 
 		const assistantMsg = result.messages[1]!;
-		expect(assistantMsg.metadata).toBeDefined();
-		expect(assistantMsg.metadata!.skill).toBe("code-review");
-		expect(assistantMsg.metadata!.toolCalls).toHaveLength(1);
-		expect(assistantMsg.metadata!.toolCalls![0]!.name).toBe("read_file");
-		expect(assistantMsg.metadata!.toolCalls![0]!.ok).toBe(true);
-		expect(assistantMsg.metadata!.inputTokens).toBe(150);
-		expect(assistantMsg.metadata!.outputTokens).toBe(80);
-		expect(assistantMsg.metadata!.model).toBe("claude-sonnet-4-5-20250929");
-		expect(assistantMsg.metadata!.llmMs).toBe(1200);
-		expect(assistantMsg.metadata!.iterations).toBe(2);
+		expect(assistantMsg.toolCalls).toHaveLength(1);
+		expect(assistantMsg.toolCalls![0]!.name).toBe("read_file");
+		expect(assistantMsg.toolCalls![0]!.ok).toBe(true);
+		expect(assistantMsg.usage).toBeDefined();
+		expect(assistantMsg.usage!.inputTokens).toBe(150);
+		expect(assistantMsg.usage!.outputTokens).toBe(80);
+		expect(assistantMsg.usage!.model).toBe("claude-sonnet-4-5-20250929");
+		expect(assistantMsg.usage!.llmMs).toBe(1200);
 	});
 });

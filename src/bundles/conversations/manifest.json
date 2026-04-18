@@ -1,7 +1,7 @@
 {
   "manifest_version": "0.4",
   "name": "@nimblebraininc/conversations",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Browse, search, and recall past NimbleBrain conversations",
   "author": {
     "name": "NimbleBrain Inc",

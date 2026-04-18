@@ -5,7 +5,7 @@
  */
 
 import type { ConversationIndex } from "../index-cache.ts";
-import { readConversation, type StoredMessage } from "../jsonl-reader.ts";
+import { type DisplayMessage, readConversation } from "../jsonl-reader.ts";
 
 export interface ExportInput {
   id: string;
@@ -24,8 +24,16 @@ function summarizeInput(input: Record<string, unknown>): string {
   return truncate(json, 100);
 }
 
+/** Pull the first text block out of an MCP tool result, or "" if none. */
+function extractResultText(result: { content: Array<{ type: string; text?: string }> }): string {
+  for (const block of result.content) {
+    if (block.type === "text" && typeof block.text === "string") return block.text;
+  }
+  return "";
+}
+
 /** Render a single message as markdown. */
-function renderMessage(msg: StoredMessage): string {
+function renderMessage(msg: DisplayMessage): string {
   const heading = msg.role === "user" ? "## User" : "## Assistant";
   const parts: string[] = [heading, ""];
 
@@ -34,12 +42,12 @@ function renderMessage(msg: StoredMessage): string {
   }
 
   // Render tool calls as blockquotes
-  if (msg.metadata?.toolCalls && msg.metadata.toolCalls.length > 0) {
-    for (const tc of msg.metadata.toolCalls) {
+  if (msg.toolCalls && msg.toolCalls.length > 0) {
+    for (const tc of msg.toolCalls) {
       parts.push("");
       parts.push(`> **Tool call:** ${tc.name}`);
       parts.push(`> Input: ${summarizeInput(tc.input)}`);
-      parts.push(`> Result: ${truncate(tc.output, 200)}`);
+      parts.push(`> Result: ${truncate(extractResultText(tc.result), 200)}`);
     }
   }
 
@@ -53,7 +61,7 @@ function exportMarkdown(
   messageCount: number,
   inputTokens: number,
   outputTokens: number,
-  messages: StoredMessage[],
+  messages: DisplayMessage[],
 ): string {
   const lines: string[] = [];
 

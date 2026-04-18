@@ -1,14 +1,19 @@
 /**
  * Read-only JSONL parser for NimbleBrain conversation files.
  *
- * Types are defined locally — no imports from the runtime codebase.
+ * Produces display-shaped messages (one per turn, with ordered blocks) —
+ * the canonical view for any UI consumer of conversations. The LLM-replay
+ * view is a separate projection in src/conversation/event-reconstructor.ts.
+ *
+ * Types are intentionally self-contained — no imports from the runtime
+ * codebase — because this bundle is deployable independently.
  */
 
 import { readdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 
 // ---------------------------------------------------------------------------
-// Types (mirror src/conversation/types.ts — kept independent)
+// Public types — the display projection of a conversation
 // ---------------------------------------------------------------------------
 
 export interface ConversationMeta {
@@ -25,40 +30,91 @@ export interface ConversationMeta {
   participants?: string[];
 }
 
-export interface StoredMessage {
+/**
+ * A single chat turn as it should be rendered. One per `user.message` event
+ * and one per `run.start`→`run.done` span — never split per iteration.
+ */
+export interface DisplayMessage {
   role: "user" | "assistant";
+  /** Aggregated text across all text blocks (convenient for copy/title). */
   content: string;
+  /** Ordered content blocks — the primary structure for rendering. */
+  blocks: DisplayBlock[];
   timestamp: string;
   userId?: string;
-  metadata?: {
-    skill?: string | null;
-    toolCalls?: Array<{
-      id: string;
-      name: string;
-      input: Record<string, unknown>;
-      output: string;
-      ok: boolean;
-      ms: number;
-    }>;
-    inputTokens?: number;
-    outputTokens?: number;
-    cacheReadTokens?: number;
-    costUsd?: number;
-    model?: string;
-    llmMs?: number;
-    iterations?: number;
-  };
+  /** All tool calls flattened out of blocks — derived, for consumers that scan them. */
+  toolCalls?: DisplayToolCall[];
+  /** Aggregate LLM usage for the whole turn; undefined for user messages. */
+  usage?: DisplayUsage;
+  files?: DisplayFile[];
+  /** Non-"complete" run terminations bubble up here ("max_iterations", "error"). */
+  stopReason?: string;
+}
+
+export type DisplayBlock =
+  | { type: "text"; text: string }
+  | { type: "tool"; toolCalls: DisplayToolCall[] };
+
+export interface DisplayToolCall {
+  id: string;
+  /** Full tool name (may include "server__tool" prefix). */
+  name: string;
+  /** Server prefix from the name (before "__"), if any — convenience for routing. */
+  appName?: string;
+  /** Terminal status — tool calls from history are never mid-flight. */
+  status: "done" | "error";
+  ok: boolean;
+  ms: number;
+  input: Record<string, unknown>;
+  /**
+   * MCP tool-result envelope — identical shape to what streaming emits, so the
+   * UI consumes one type regardless of source. `content[0].text` is the tool's
+   * text output; `isError` mirrors `!ok`.
+   */
+  result: DisplayToolResult;
+  resourceUri?: string;
+  resourceLinks?: DisplayResourceLink[];
+}
+
+export interface DisplayToolResult {
+  content: Array<{ type: string; text?: string; [key: string]: unknown }>;
+  structuredContent?: Record<string, unknown>;
+  isError: boolean;
+}
+
+export interface DisplayResourceLink {
+  uri: string;
+  name?: string;
+  mimeType?: string;
+  description?: string;
+}
+
+export interface DisplayUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens?: number;
+  /** Model of the last LLM call in the run (runs can switch models mid-turn). */
+  model: string;
+  llmMs: number;
+}
+
+export interface DisplayFile {
+  id: string;
+  filename: string;
+  mimeType: string;
+  size: number;
+  extracted: boolean;
 }
 
 export interface ConversationFile {
   meta: ConversationMeta;
-  messages: StoredMessage[];
+  messages: DisplayMessage[];
   messageCount: number;
   preview: string;
 }
 
 // ---------------------------------------------------------------------------
-// Event types (mirror src/conversation/types.ts — kept independent)
+// Internal event types — mirror src/conversation/types.ts, kept local
 // ---------------------------------------------------------------------------
 
 interface ContentPart {
@@ -74,6 +130,7 @@ interface UserMessageEvent {
   type: "user.message";
   content: ContentPart[];
   userId?: string;
+  files?: DisplayFile[];
 }
 
 interface RunStartEvent {
@@ -94,6 +151,15 @@ interface LlmResponseEvent {
   llmMs: number;
 }
 
+interface ToolStartEvent {
+  ts: string;
+  type: "tool.start";
+  runId: string;
+  id: string;
+  name: string;
+  input?: unknown;
+}
+
 interface ToolDoneEvent {
   ts: string;
   type: "tool.done";
@@ -103,43 +169,61 @@ interface ToolDoneEvent {
   ok: boolean;
   ms: number;
   output?: string;
+  resourceUri?: string;
+  resourceLinks?: DisplayResourceLink[];
 }
 
 interface RunDoneEvent {
   ts: string;
-  type: "run.done" | "run.error";
+  type: "run.done";
   runId: string;
+  stopReason?: string;
 }
 
-function isUserMessage(evt: { type: string }): evt is UserMessageEvent {
-  return evt.type === "user.message";
+interface RunErrorEvent {
+  ts: string;
+  type: "run.error";
+  runId: string;
+  error?: string;
 }
-function isRunStart(evt: { type: string }): evt is RunStartEvent {
-  return evt.type === "run.start";
+
+type KnownEvent =
+  | UserMessageEvent
+  | RunStartEvent
+  | LlmResponseEvent
+  | ToolStartEvent
+  | ToolDoneEvent
+  | RunDoneEvent
+  | RunErrorEvent;
+
+function isUserMessage(e: { type: string }): e is UserMessageEvent {
+  return e.type === "user.message";
 }
-function isLlmResponse(evt: { type: string }): evt is LlmResponseEvent {
-  return evt.type === "llm.response";
+function isRunStart(e: { type: string }): e is RunStartEvent {
+  return e.type === "run.start";
 }
-function isToolDone(evt: { type: string }): evt is ToolDoneEvent {
-  return evt.type === "tool.done";
+function isLlmResponse(e: { type: string }): e is LlmResponseEvent {
+  return e.type === "llm.response";
 }
-function isRunEnd(evt: { type: string }): evt is RunDoneEvent {
-  return evt.type === "run.done" || evt.type === "run.error";
+function isToolStart(e: { type: string }): e is ToolStartEvent {
+  return e.type === "tool.start";
+}
+function isToolDone(e: { type: string }): e is ToolDoneEvent {
+  return e.type === "tool.done";
+}
+function isRunDone(e: { type: string }): e is RunDoneEvent {
+  return e.type === "run.done";
+}
+function isRunError(e: { type: string }): e is RunErrorEvent {
+  return e.type === "run.error";
 }
 
 // ---------------------------------------------------------------------------
-// Internal helpers
+// Metadata parsing
 // ---------------------------------------------------------------------------
 
-/**
- * Parse the metadata line (line 1) with backward-compat defaults.
- * Matches the defaulting behavior of JsonlConversationStore.load().
- */
 function parseMeta(raw: Record<string, unknown>): ConversationMeta | null {
-  if (typeof raw.id !== "string" || typeof raw.createdAt !== "string") {
-    return null;
-  }
-
+  if (typeof raw.id !== "string" || typeof raw.createdAt !== "string") return null;
   return {
     id: raw.id,
     createdAt: raw.createdAt,
@@ -155,7 +239,6 @@ function parseMeta(raw: Record<string, unknown>): ConversationMeta | null {
   };
 }
 
-/** Derived usage metrics from event lines. */
 interface DerivedMetrics {
   totalInputTokens: number;
   totalOutputTokens: number;
@@ -163,10 +246,6 @@ interface DerivedMetrics {
   lastEventTs: string | null;
 }
 
-/**
- * Scan event lines for llm.response events and derive usage metrics.
- * Returns non-zero values only if llm.response events are found.
- */
 function deriveMetricsFromLines(lines: string[]): DerivedMetrics {
   let totalInputTokens = 0;
   let totalOutputTokens = 0;
@@ -174,7 +253,7 @@ function deriveMetricsFromLines(lines: string[]): DerivedMetrics {
   let lastEventTs: string | null = null;
 
   for (const line of lines) {
-    const evt = parseEvent(line);
+    const evt = parseEventLine(line);
     if (!evt) continue;
     lastEventTs = evt.ts;
     if (isLlmResponse(evt)) {
@@ -187,41 +266,15 @@ function deriveMetricsFromLines(lines: string[]): DerivedMetrics {
   return { totalInputTokens, totalOutputTokens, lastModel, lastEventTs };
 }
 
-/** Parse legacy StoredMessage lines (non-event format). */
-function parseMessages(lines: string[]): {
-  messages: StoredMessage[];
-  messageCount: number;
-  preview: string;
-} {
-  const messages: StoredMessage[] = [];
-  let preview = "";
-  for (const line of lines) {
-    try {
-      const msg = JSON.parse(line) as StoredMessage;
-      messages.push(msg);
-      if (!preview && msg.role === "user") {
-        preview = typeof msg.content === "string" ? msg.content : "";
-      }
-    } catch {
-      // Skip malformed lines
-    }
-  }
-  return { messages, messageCount: messages.length, preview };
-}
-
-/** Apply derived metrics to metadata, overriding line-1 values when events are present. */
 function applyDerivedMetrics(meta: ConversationMeta, metrics: DerivedMetrics): void {
   if (metrics.totalInputTokens > 0 || metrics.totalOutputTokens > 0) {
     meta.totalInputTokens = metrics.totalInputTokens;
     meta.totalOutputTokens = metrics.totalOutputTokens;
     meta.lastModel = metrics.lastModel;
   }
-  if (metrics.lastEventTs) {
-    meta.updatedAt = metrics.lastEventTs;
-  }
+  if (metrics.lastEventTs) meta.updatedAt = metrics.lastEventTs;
 }
 
-/** Scan event lines for metadata.title events and apply the last one to meta. */
 function deriveTitleFromEvents(meta: ConversationMeta, eventLines: string[]): void {
   for (const line of eventLines) {
     try {
@@ -230,121 +283,100 @@ function deriveTitleFromEvents(meta: ConversationMeta, eventLines: string[]): vo
         meta.title = parsed.title;
       }
     } catch {
-      // Skip malformed lines
+      // skip malformed
     }
   }
 }
 
-/** Extract plain text from a content parts array. */
-function extractText(content: ContentPart[]): string {
-  return content
-    .filter((p) => p.type === "text" && p.text)
-    .map((p) => p.text!)
-    .join("");
+/**
+ * Cheap heuristic: is this line an event (not a stored message)?
+ *
+ * Event lines have `"ts":"…"` and one of a fixed set of `"type":"…"` strings.
+ * Using the type prefix alone is too loose — `"type":"text"` appears inside
+ * DisplayMessage blocks too, which tripped this before.
+ */
+function looksLikeEventLine(line: string): boolean {
+  if (!line.includes('"ts":"')) return false;
+  return (
+    line.includes('"type":"user.message"') ||
+    line.includes('"type":"run.start"') ||
+    line.includes('"type":"run.done"') ||
+    line.includes('"type":"llm.response"') ||
+    line.includes('"type":"tool.start"') ||
+    line.includes('"type":"tool.done"') ||
+    line.includes('"type":"metadata.')
+  );
 }
 
-/** Parse a JSON line into an event object. Use type guards for narrowing. */
-function parseEvent(line: string): { ts: string; type: string } | null {
+function parseEventLine(line: string): (KnownEvent & { ts: string; type: string }) | null {
   try {
     const parsed = JSON.parse(line) as { ts?: string; type?: string };
     if (!parsed.ts || !parsed.type) return null;
-    return parsed as { ts: string; type: string };
+    return parsed as KnownEvent & { ts: string; type: string };
   } catch {
     return null;
   }
 }
 
+function extractText(content: ContentPart[] | undefined): string {
+  if (!content) return "";
+  return content
+    .filter((p) => p.type === "text" && p.text)
+    .map((p) => p.text as string)
+    .join("");
+}
+
+// ---------------------------------------------------------------------------
+// Event-sourced reducer — produces DisplayMessage[]
+// ---------------------------------------------------------------------------
+
 /**
- * Reconstruct StoredMessage[] from event-sourced JSONL lines.
+ * Walk events in chronological order and project them into the display shape.
  *
- * Walks events in order:
- * - user.message → user StoredMessage (with userId)
- * - run.start..run.done span → collect llm.response + tool.done events
- * - llm.response → assistant StoredMessage (with metadata and tool calls)
+ * Rules:
+ * - Each `user.message` event emits one user DisplayMessage.
+ * - Each `run.start`→`run.done`/`run.error` span emits one assistant DisplayMessage.
+ *   Within that span, llm.response events are walked in order; their text and
+ *   tool-call content becomes blocks in timeline order. Usage is summed across
+ *   all llm.responses in the run.
+ * - Incomplete runs (no run.done) still emit what's been seen so far, for
+ *   resilient display of truncated logs.
  */
 function reconstructFromEvents(lines: string[]): {
-  messages: StoredMessage[];
+  messages: DisplayMessage[];
   messageCount: number;
   preview: string;
 } {
-  const messages: StoredMessage[] = [];
+  const messages: DisplayMessage[] = [];
   let preview = "";
 
-  const events = lines.map(parseEvent).filter((e): e is { ts: string; type: string } => e !== null);
+  const events = lines
+    .map(parseEventLine)
+    .filter((e): e is KnownEvent & { ts: string; type: string } => e !== null);
 
   for (let i = 0; i < events.length; ) {
     const evt = events[i]!;
 
     if (isUserMessage(evt)) {
       const text = extractText(evt.content);
-      messages.push({
+      const msg: DisplayMessage = {
         role: "user",
         content: text,
+        blocks: text ? [{ type: "text", text }] : [],
         timestamp: evt.ts,
         ...(evt.userId ? { userId: evt.userId } : {}),
-      });
+        ...(evt.files && evt.files.length > 0 ? { files: evt.files } : {}),
+      };
+      messages.push(msg);
       if (!preview) preview = text;
       i++;
       continue;
     }
 
     if (isRunStart(evt)) {
-      const runId = evt.runId;
-      i++;
-
-      const toolDones = new Map<string, ToolDoneEvent>();
-      const llmResponses: LlmResponseEvent[] = [];
-
-      while (i < events.length) {
-        const inner = events[i]!;
-        if (isRunEnd(inner) && inner.runId === runId) {
-          i++;
-          break;
-        }
-        if (isLlmResponse(inner) && inner.runId === runId) {
-          llmResponses.push(inner);
-        } else if (isToolDone(inner) && inner.runId === runId) {
-          toolDones.set(inner.id, inner);
-        }
-        i++;
-      }
-
-      for (const llm of llmResponses) {
-        const textParts = llm.content.filter((c) => c.type === "text");
-        const toolCallParts = llm.content.filter((c) => c.type === "tool-call");
-
-        const metadata: StoredMessage["metadata"] = {
-          inputTokens: llm.inputTokens,
-          outputTokens: llm.outputTokens,
-          cacheReadTokens: llm.cacheReadTokens,
-          model: llm.model,
-          llmMs: llm.llmMs,
-          iterations: llmResponses.length,
-        };
-
-        if (toolCallParts.length > 0) {
-          metadata.toolCalls = toolCallParts.map((tc) => {
-            const done = toolDones.get(tc.toolCallId ?? "");
-            return {
-              id: tc.toolCallId ?? "",
-              name: tc.toolName ?? "",
-              input: (tc.input ?? {}) as Record<string, unknown>,
-              output: done?.output ?? "",
-              ok: done?.ok ?? true,
-              ms: done?.ms ?? 0,
-            };
-          });
-        }
-
-        const text = textParts.map((t) => t.text ?? "").join("");
-        messages.push({
-          role: "assistant",
-          content: text,
-          timestamp: llm.ts,
-          metadata,
-        });
-      }
-
+      const [runMsg, nextIndex] = collectRun(events, i, evt.runId);
+      if (runMsg) messages.push(runMsg);
+      i = nextIndex;
       continue;
     }
 
@@ -354,11 +386,281 @@ function reconstructFromEvents(lines: string[]): {
   return { messages, messageCount: messages.length, preview };
 }
 
+/**
+ * Collect events belonging to a single run (from run.start at index `start`
+ * through run.done or run.error) and build one assistant DisplayMessage.
+ *
+ * Returns the built message and the index at which outer iteration resumes.
+ * Incomplete runs (no run.done) still produce a best-effort message.
+ */
+function collectRun(
+  events: KnownEvent[],
+  start: number,
+  runId: string,
+): [DisplayMessage | null, number] {
+  const toolDones = new Map<string, ToolDoneEvent>();
+  const toolInputs = new Map<string, unknown>();
+  const llmResponses: LlmResponseEvent[] = [];
+
+  let endTs = events[start]?.ts ?? "";
+  let stopReason: string | undefined;
+
+  let i = start + 1;
+  while (i < events.length) {
+    const inner = events[i]!;
+    if (isRunDone(inner) && inner.runId === runId) {
+      endTs = inner.ts;
+      stopReason = inner.stopReason;
+      i++;
+      break;
+    }
+    if (isRunError(inner) && inner.runId === runId) {
+      endTs = inner.ts;
+      stopReason = "error";
+      i++;
+      break;
+    }
+    if (isLlmResponse(inner) && inner.runId === runId) {
+      llmResponses.push(inner);
+    } else if (isToolStart(inner) && inner.runId === runId) {
+      if (inner.input !== undefined) toolInputs.set(inner.id, inner.input);
+    } else if (isToolDone(inner) && inner.runId === runId) {
+      toolDones.set(inner.id, inner);
+    }
+    i++;
+  }
+
+  if (llmResponses.length === 0) return [null, i];
+
+  const blocks: DisplayBlock[] = [];
+  const flatToolCalls: DisplayToolCall[] = [];
+
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let cacheReadTokens = 0;
+  let hasCacheReads = false;
+  let llmMs = 0;
+  let model = "";
+
+  for (const llm of llmResponses) {
+    // Text content — one text block per llm.response that has any text.
+    const text = extractText(llm.content);
+    if (text) blocks.push({ type: "text", text });
+
+    // Tool-call content — one tool block per llm.response that has tool-calls.
+    const toolCallParts = llm.content.filter((c) => c.type === "tool-call");
+    if (toolCallParts.length > 0) {
+      const tools = toolCallParts.map((tc): DisplayToolCall => {
+        const toolCallId = tc.toolCallId ?? "";
+        const done = toolDones.get(toolCallId);
+        const inputFromStart = toolInputs.get(toolCallId);
+        const input = parseToolInput(inputFromStart ?? tc.input);
+        const ok = done?.ok ?? true;
+        const name = tc.toolName ?? "";
+        return {
+          id: toolCallId,
+          name,
+          ...(extractAppName(name) ? { appName: extractAppName(name)! } : {}),
+          status: ok ? "done" : "error",
+          ok,
+          ms: done?.ms ?? 0,
+          input,
+          result: wrapOutputAsResult(done?.output ?? "", !ok),
+          ...(done?.resourceUri ? { resourceUri: done.resourceUri } : {}),
+          ...(done?.resourceLinks && done.resourceLinks.length > 0
+            ? { resourceLinks: done.resourceLinks }
+            : {}),
+        };
+      });
+      blocks.push({ type: "tool", toolCalls: tools });
+      flatToolCalls.push(...tools);
+    }
+
+    // Usage — aggregate across all llm.responses in the run.
+    inputTokens += llm.inputTokens;
+    outputTokens += llm.outputTokens;
+    if (typeof llm.cacheReadTokens === "number" && llm.cacheReadTokens > 0) {
+      hasCacheReads = true;
+      cacheReadTokens += llm.cacheReadTokens;
+    }
+    llmMs += llm.llmMs;
+    model = llm.model;
+  }
+
+  const contentText = blocks
+    .filter((b): b is { type: "text"; text: string } => b.type === "text")
+    .map((b) => b.text)
+    .join("");
+
+  const usage: DisplayUsage = {
+    inputTokens,
+    outputTokens,
+    ...(hasCacheReads ? { cacheReadTokens } : {}),
+    model,
+    llmMs,
+  };
+
+  const msg: DisplayMessage = {
+    role: "assistant",
+    content: contentText,
+    blocks,
+    timestamp: endTs,
+    ...(flatToolCalls.length > 0 ? { toolCalls: flatToolCalls } : {}),
+    usage,
+    ...(stopReason && stopReason !== "complete" ? { stopReason } : {}),
+  };
+  return [msg, i];
+}
+
+/** "server__tool" → "server"; undefined if no "__" separator. */
+function extractAppName(name: string): string | undefined {
+  const idx = name.indexOf("__");
+  return idx === -1 ? undefined : name.slice(0, idx);
+}
+
+/** Wrap a plain text output string as an MCP-shaped tool result envelope. */
+function wrapOutputAsResult(text: string, isError: boolean): DisplayToolResult {
+  return {
+    content: text ? [{ type: "text", text }] : [],
+    isError,
+  };
+}
+
+/** Tool inputs may be JSON strings in the event log — parse defensively. */
+function parseToolInput(input: unknown): Record<string, unknown> {
+  if (typeof input === "string") {
+    try {
+      return JSON.parse(input) as Record<string, unknown>;
+    } catch {
+      return {};
+    }
+  }
+  if (input && typeof input === "object") return input as Record<string, unknown>;
+  return {};
+}
+
+// ---------------------------------------------------------------------------
+// Legacy (non-event) message-line format → DisplayMessage
+// ---------------------------------------------------------------------------
+
+/**
+ * Legacy (pre-event) JSONL files stored one JSON-serialized message per line.
+ * This path also handles files written by `fork`, which writes DisplayMessage
+ * shape directly. Accepts both shapes:
+ *
+ *   - Old StoredMessage: tool calls and usage live under `metadata.*`.
+ *   - New DisplayMessage: `blocks`, `toolCalls`, `usage` are top-level.
+ *
+ * Detection is structural — top-level fields override `metadata` when present.
+ */
+function parseLegacyMessages(lines: string[]): {
+  messages: DisplayMessage[];
+  messageCount: number;
+  preview: string;
+} {
+  const messages: DisplayMessage[] = [];
+  let preview = "";
+
+  for (const line of lines) {
+    try {
+      const raw = JSON.parse(line) as Record<string, unknown>;
+      const msg = legacyLineToDisplay(raw);
+      if (!msg) continue;
+      messages.push(msg);
+      if (!preview && msg.role === "user" && msg.content) preview = msg.content;
+    } catch {
+      // skip malformed
+    }
+  }
+
+  return { messages, messageCount: messages.length, preview };
+}
+
+function legacyLineToDisplay(raw: Record<string, unknown>): DisplayMessage | null {
+  const role = raw.role;
+  if (role !== "user" && role !== "assistant") return null;
+  const timestamp = typeof raw.timestamp === "string" ? raw.timestamp : "";
+  if (!timestamp) return null;
+  const content = typeof raw.content === "string" ? raw.content : "";
+
+  const metadata = (raw.metadata ?? {}) as Record<string, unknown>;
+  const rawToolCalls = (raw.toolCalls ?? metadata.toolCalls) as
+    | Array<Record<string, unknown>>
+    | undefined;
+  const hydratedTools = rawToolCalls?.map(hydrateLegacyToolCall) ?? [];
+
+  const topBlocks = raw.blocks as DisplayBlock[] | undefined;
+  const blocks =
+    topBlocks && topBlocks.length > 0
+      ? topBlocks
+      : buildLegacyBlocks(content, hydratedTools.length > 0 ? hydratedTools : undefined);
+  const usage = (raw.usage as DisplayUsage | undefined) ?? buildLegacyUsageFromMetadata(metadata);
+
+  return {
+    role,
+    content,
+    blocks,
+    timestamp,
+    ...(typeof raw.userId === "string" ? { userId: raw.userId } : {}),
+    ...(hydratedTools.length > 0 ? { toolCalls: hydratedTools } : {}),
+    ...(usage ? { usage } : {}),
+  };
+}
+
+/**
+ * Legacy stored tool calls lack `status`, `result`, and `appName`. Derive them
+ * on read so every DisplayToolCall the reader emits has the full shape,
+ * regardless of file age or writer.
+ */
+function hydrateLegacyToolCall(raw: Record<string, unknown>): DisplayToolCall {
+  const name = typeof raw.name === "string" ? raw.name : "";
+  const ok = typeof raw.ok === "boolean" ? raw.ok : true;
+  const output = typeof raw.output === "string" ? raw.output : "";
+  const result = (raw.result as DisplayToolResult | undefined) ?? wrapOutputAsResult(output, !ok);
+  const app = extractAppName(name);
+  return {
+    id: typeof raw.id === "string" ? raw.id : "",
+    name,
+    ...(app ? { appName: app } : {}),
+    status: ok ? "done" : "error",
+    ok,
+    ms: typeof raw.ms === "number" ? raw.ms : 0,
+    input: (raw.input ?? {}) as Record<string, unknown>,
+    result,
+    ...(typeof raw.resourceUri === "string" ? { resourceUri: raw.resourceUri } : {}),
+    ...(Array.isArray(raw.resourceLinks)
+      ? { resourceLinks: raw.resourceLinks as DisplayResourceLink[] }
+      : {}),
+  };
+}
+
+function buildLegacyBlocks(content: string, tools: DisplayToolCall[] | undefined): DisplayBlock[] {
+  const out: DisplayBlock[] = [];
+  if (content) out.push({ type: "text", text: content });
+  if (tools && tools.length > 0) out.push({ type: "tool", toolCalls: tools });
+  return out;
+}
+
+function buildLegacyUsageFromMetadata(metadata: Record<string, unknown>): DisplayUsage | undefined {
+  const inputTokens = metadata.inputTokens;
+  const outputTokens = metadata.outputTokens;
+  if (inputTokens == null && outputTokens == null) return undefined;
+  return {
+    inputTokens: typeof inputTokens === "number" ? inputTokens : 0,
+    outputTokens: typeof outputTokens === "number" ? outputTokens : 0,
+    ...(typeof metadata.cacheReadTokens === "number"
+      ? { cacheReadTokens: metadata.cacheReadTokens }
+      : {}),
+    model: typeof metadata.model === "string" ? metadata.model : "unknown",
+    llmMs: typeof metadata.llmMs === "number" ? metadata.llmMs : 0,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
-/** Read and parse a single JSONL file. Returns null if file doesn't exist or is empty. */
+/** Read and parse a single JSONL file. Returns null if missing or empty. */
 export async function readConversation(filePath: string): Promise<ConversationFile | null> {
   let content: string;
   try {
@@ -380,19 +682,20 @@ export async function readConversation(filePath: string): Promise<ConversationFi
   const meta = parseMeta(raw);
   if (!meta) return null;
 
-  const eventLines = lines.slice(1);
-  const isEventFormat = raw.format === "events" || eventLines.some((l) => l.includes('"type":"'));
+  const dataLines = lines.slice(1);
+  const isEventFormat = raw.format === "events" || dataLines.some(looksLikeEventLine);
+
   const { messages, messageCount, preview } = isEventFormat
-    ? reconstructFromEvents(eventLines)
-    : parseMessages(eventLines);
-  applyDerivedMetrics(meta, deriveMetricsFromLines(eventLines));
-  // Derive title from metadata.title events (title in line 1 is null at creation)
-  deriveTitleFromEvents(meta, eventLines);
+    ? reconstructFromEvents(dataLines)
+    : parseLegacyMessages(dataLines);
+
+  applyDerivedMetrics(meta, deriveMetricsFromLines(dataLines));
+  deriveTitleFromEvents(meta, dataLines);
 
   return { meta, messages, messageCount, preview };
 }
 
-/** Read only the metadata (line 1) + preview from a JSONL file. Fast — doesn't parse all messages fully. */
+/** Fast header read — metadata + preview + count, no message reconstruction. */
 export async function readConversationHeader(
   filePath: string,
 ): Promise<{ meta: ConversationMeta; preview: string; messageCount: number } | null> {
@@ -416,33 +719,31 @@ export async function readConversationHeader(
   const meta = parseMeta(raw);
   if (!meta) return null;
 
-  // Scan event lines for count, preview, title, and derived metrics
-  const eventLines = lines.slice(1);
+  const dataLines = lines.slice(1);
   let preview = "";
   let messageCount = 0;
-  for (const line of eventLines) {
+  for (const line of dataLines) {
     try {
       const parsed = JSON.parse(line) as Record<string, unknown>;
       messageCount++;
-      // Event-sourced format: extract preview from user.message events
       if (!preview && parsed.type === "user.message" && Array.isArray(parsed.content)) {
         preview = extractText(parsed.content as ContentPart[]);
       }
-      // Legacy format: extract preview from StoredMessage lines
       if (!preview && parsed.role === "user" && typeof parsed.content === "string") {
         preview = parsed.content;
       }
     } catch {
-      // Skip malformed lines
+      // skip malformed
     }
   }
-  deriveTitleFromEvents(meta, eventLines);
-  applyDerivedMetrics(meta, deriveMetricsFromLines(eventLines));
+
+  deriveTitleFromEvents(meta, dataLines);
+  applyDerivedMetrics(meta, deriveMetricsFromLines(dataLines));
 
   return { meta, preview, messageCount };
 }
 
-/** List all .jsonl files in a directory. Returns absolute paths. */
+/** List all .jsonl files in a directory. Absolute paths. */
 export function listConversationFiles(dir: string): string[] {
   try {
     return readdirSync(dir)

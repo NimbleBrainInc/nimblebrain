@@ -155,7 +155,7 @@ const TOOLS = [
   {
     name: "stats",
     description:
-      "Token usage analytics. Returns total tokens, breakdown by model and skill, and top tools used.",
+      "Token usage analytics. Returns total tokens, breakdown by model, and top tools used.",
     inputSchema: {
       type: "object" as const,
       properties: {

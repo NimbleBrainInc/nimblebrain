@@ -41,17 +41,26 @@ export async function handleFork(input: ForkInput, index: ConversationIndex): Pr
   // Recalculate token counts from copied assistant messages
   let totalInputTokens = 0;
   let totalOutputTokens = 0;
-  let totalCostUsd = 0;
   let lastModel: string | null = null;
 
   for (const msg of messagesToCopy) {
-    if (msg.role === "assistant" && msg.metadata) {
-      totalInputTokens += msg.metadata.inputTokens ?? 0;
-      totalOutputTokens += msg.metadata.outputTokens ?? 0;
-      totalCostUsd += msg.metadata.costUsd ?? 0;
-      lastModel = msg.metadata.model ?? lastModel;
+    if (msg.role === "assistant" && msg.usage) {
+      totalInputTokens += msg.usage.inputTokens;
+      totalOutputTokens += msg.usage.outputTokens;
+      lastModel = msg.usage.model || lastModel;
     }
   }
+  // KNOWN REGRESSION from StoredMessage era:
+  // The old shape persisted `costUsd` per assistant message (computed by
+  // the runtime at write-time using its own price table). DisplayMessage
+  // intentionally doesn't carry cost — the bundle is decoupled from the
+  // runtime's pricing logic, and `totalCostUsd` on the parent conversation
+  // file is an aggregate across all messages, not per-message.
+  //
+  // Rather than duplicate a price table inside the bundle, forks start at
+  // totalCostUsd=0; it can be recomputed live from (inputTokens, outputTokens,
+  // model) by any consumer that owns pricing. Documented in CHANGELOG.
+  const totalCostUsd = 0;
 
   // Set updatedAt to last copied message's timestamp (or now if no messages)
   const updatedAt =

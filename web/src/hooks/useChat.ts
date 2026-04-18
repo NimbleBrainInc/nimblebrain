@@ -8,25 +8,11 @@ import type {
   ChatStreamEventMap,
   ChatStreamEventType,
   LlmDoneEvent,
-  Message,
-  ResourceLinkInfo,
   StreamErrorEvent,
   TextDeltaEvent,
   ToolDoneEvent,
   ToolStartEvent,
 } from "../types";
-
-/** Extract text from content that may be a string or an array of content parts. */
-function normalizeContent(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) {
-    return content
-      .filter((p: { type: string }) => p.type === "text")
-      .map((p: { text: string }) => p.text)
-      .join("");
-  }
-  return "";
-}
 
 /**
  * Trigger a browser download for a PDF resource served by an app.
@@ -455,7 +441,7 @@ export function useChat(initialConversationId?: string, currentUserId?: string):
           .join("\n");
         throw new Error(errText || "Failed to load conversation");
       }
-      // Prefer structuredContent; fall back to parsing first text block
+      // Prefer structuredContent; fall back to parsing first text block.
       let raw: unknown = res.structuredContent;
       if (!raw && res.content?.[0]?.text) {
         try {
@@ -464,6 +450,9 @@ export function useChat(initialConversationId?: string, currentUserId?: string):
           raw = {};
         }
       }
+      // The API already returns DisplayMessage[] in the exact shape ChatMessage
+      // expects — one message per turn, blocks in iteration order, tool calls
+      // hydrated with status+result. No reshaping needed here.
       const data = raw as {
         metadata: {
           id: string;
@@ -471,28 +460,7 @@ export function useChat(initialConversationId?: string, currentUserId?: string):
           visibility?: "private" | "shared";
           participants?: string[];
         };
-        messages: Array<
-          Message & {
-            metadata?: {
-              inputTokens?: number;
-              outputTokens?: number;
-              cacheReadTokens?: number;
-              model?: string;
-              llmMs?: number;
-              toolCalls?: Array<{
-                id: string;
-                name: string;
-                input: Record<string, unknown>;
-                output: string;
-                ok: boolean;
-                ms: number;
-                resourceUri?: string;
-                resourceLinks?: ResourceLinkInfo[];
-              }>;
-            };
-          }
-        >;
-        totalMessages: number;
+        messages: ChatMessage[];
       };
       setConversationId(data.metadata.id);
       setConversationMeta({
@@ -500,49 +468,7 @@ export function useChat(initialConversationId?: string, currentUserId?: string):
         visibility: data.metadata.visibility,
         participants: data.metadata.participants,
       });
-      const loaded: ChatMessage[] = data.messages.map((m) => {
-        const content = normalizeContent(m.content);
-        const msg: ChatMessage = {
-          role: m.role,
-          content,
-          timestamp: m.timestamp,
-          ...(m.userId ? { userId: m.userId } : {}),
-        };
-        if (m.metadata?.inputTokens != null) {
-          msg.usage = {
-            inputTokens: m.metadata.inputTokens,
-            outputTokens: m.metadata.outputTokens ?? 0,
-            cacheReadTokens: m.metadata.cacheReadTokens,
-            model: m.metadata.model ?? "unknown",
-            llmMs: m.metadata.llmMs ?? 0,
-          };
-        }
-        if (m.metadata?.toolCalls && m.metadata.toolCalls.length > 0) {
-          msg.toolCalls = m.metadata.toolCalls.map((tc) => {
-            const separatorIdx = tc.name.indexOf("__");
-            return {
-              id: tc.id,
-              name: tc.name,
-              status: tc.ok ? ("done" as const) : ("error" as const),
-              ok: tc.ok,
-              ms: tc.ms,
-              result: wrapStringResult(tc.output, !tc.ok),
-              resourceUri: tc.resourceUri,
-              resourceLinks: tc.resourceLinks,
-              appName: separatorIdx !== -1 ? tc.name.slice(0, separatorIdx) : undefined,
-            };
-          });
-          // Reconstruct blocks: tools then text (we don't store block order)
-          msg.blocks = [
-            { type: "tool", toolCalls: msg.toolCalls! },
-            ...(content ? [{ type: "text" as const, text: content }] : []),
-          ];
-        } else if (content) {
-          msg.blocks = [{ type: "text", text: content }];
-        }
-        return msg;
-      });
-      setMessages(loaded);
+      setMessages(data.messages);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to load conversation";
       setError(msg);
