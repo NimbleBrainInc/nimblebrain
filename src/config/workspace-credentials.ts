@@ -378,6 +378,10 @@ export async function resolveUserConfig(
       }
 
       // Tier 3: manifest default.
+      // MCPB manifests restrict user_config types to primitives (string, number,
+      // boolean, directory, file), so String() is safe. An object/array default
+      // would stringify to "[object Object]" or a comma-joined form — if that
+      // ever happens it reflects a malformed manifest upstream, not a bug here.
       if (value === undefined && field.default !== undefined && field.default !== null) {
         value = String(field.default);
       }

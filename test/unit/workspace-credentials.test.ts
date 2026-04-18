@@ -780,4 +780,86 @@ describe("resolveUserConfig", () => {
       env.restore();
     }
   });
+
+  // ── Empty-string semantics ─────────────────────────────────────
+  //
+  // Empty strings in the workspace store or process env are treated as
+  // "absent" and fall through to the next tier. Almost always reflects
+  // an accidentally-cleared credential, so falling through is friendlier
+  // than propagating `""` as a real value. Note this is intentionally
+  // opposite to how the mpak SDK's userConfig override treats empties
+  // (where `""` is a deliberate choice by the caller). Keep these tests
+  // locked in — a future refactor shouldn't quietly flip the semantics.
+
+  test("empty string in workspace store falls through to process env", async () => {
+    const envKey = envVarName(BUNDLE, "api_key");
+    const env = withEnv([envKey]);
+    try {
+      env.set(envKey, "from-env");
+      await saveWorkspaceCredential(WS_A, BUNDLE, "api_key", "", workDir);
+
+      const result = await resolveUserConfig({
+        bundleName: BUNDLE,
+        userConfigSchema: SCHEMA,
+        wsId: WS_A,
+        workDir,
+      });
+      expect(result).toEqual({ api_key: "from-env" });
+    } finally {
+      env.restore();
+    }
+  });
+
+  test("empty string in process env falls through to manifest default", async () => {
+    const envKey = envVarName(BUNDLE, "api_key");
+    const env = withEnv([envKey]);
+    try {
+      env.set(envKey, "");
+      const schema: Record<string, UserConfigFieldDef> = {
+        api_key: { type: "string", default: "from-default", required: true },
+      };
+
+      const result = await resolveUserConfig({
+        bundleName: BUNDLE,
+        userConfigSchema: schema,
+        wsId: WS_A,
+        workDir,
+      });
+      expect(result).toEqual({ api_key: "from-default" });
+    } finally {
+      env.restore();
+    }
+  });
+
+  // ── forcePrompt + null response ────────────────────────────────
+
+  test("forcePrompt + gate returns null for required field throws actionable error", async () => {
+    // forcePrompt skips tiers 1-3 even if values exist; if the gate then
+    // refuses to provide a value for a required field, we should still
+    // throw the same "Missing required" error as the non-interactive path.
+    await saveWorkspaceCredential(WS_A, BUNDLE, "api_key", "stored", workDir);
+    const gate = mockGate({ responses: {} }); // returns null for unknown keys
+
+    let thrown: Error | undefined;
+    try {
+      await resolveUserConfig({
+        bundleName: BUNDLE,
+        userConfigSchema: SCHEMA,
+        wsId: WS_A,
+        workDir,
+        gate,
+        forcePrompt: true,
+      });
+    } catch (err) {
+      thrown = err as Error;
+    }
+
+    expect(thrown).toBeDefined();
+    expect(thrown?.message).toMatch(/api_key|API key/i);
+    expect(thrown?.message).toMatch(/nb config set/);
+    expect(thrown?.message).toContain(WS_A);
+    // Stored value must not leak into the error message.
+    expect(thrown?.message).not.toContain("stored");
+    expect(gate.calls).toHaveLength(1);
+  });
 });
