@@ -2,6 +2,9 @@
     handle /v1/* {
         reverse_proxy {$PLATFORM_URL}
     }
+    handle /mcp* {
+        reverse_proxy {$PLATFORM_URL}
+    }
     handle {
         root * /srv
         try_files {path} /index.html
