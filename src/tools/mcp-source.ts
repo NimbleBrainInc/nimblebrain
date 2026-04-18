@@ -82,7 +82,7 @@ export class McpSource implements ToolSource {
       // Remote: watch for transport close — mark source as dead
       this.transport.onclose = () => {
         this.dead = true;
-        this.eventSink?.emit({
+        this.eventSink.emit({
           type: "run.error",
           data: { source: this.name, event: "source.crashed", error: "Remote transport closed" },
         });
@@ -216,15 +216,14 @@ export class McpSource implements ToolSource {
     const tool = this.findTool(toolName);
     const taskSupport = tool?.execution?.taskSupport;
     const isTaskAugmented = taskSupport === "optional" || taskSupport === "required";
-    // Answers: "why is this tool call going inline vs task-augmented?",
-    // "is the tool cache populated?", and "is the eventSink live for this
-    // source?". Covers the whole dispatch decision in one line.
+    // Answers: "why is this tool call going inline vs task-augmented?" and
+    // "is the tool cache populated?". Covers the whole dispatch decision in
+    // one line. (eventSink is required at construction, so always present.)
     log.debug(
       "mcp",
       `execute source=${this.name} tool=${toolName}` +
         ` taskSupport=${taskSupport ?? "undefined"}` +
         ` path=${isTaskAugmented ? "task-augmented" : "inline"}` +
-        ` sink=${this.eventSink ? "YES" : "NO"}` +
         ` cachedTools=${this.cachedTools ? this.cachedTools.length : "null"}`,
     );
 
@@ -233,8 +232,32 @@ export class McpSource implements ToolSource {
         ? await this.callToolAsTask(toolName, input, signal)
         : await this.callToolInline(toolName, input, signal);
     } catch (err) {
+      // Cancellation isn't a crash — the source is healthy, the client just
+      // asked to stop. Emit a terminal tool.progress for task-augmented
+      // calls so UIs watching the progress stream transition out of
+      // "working", then surface the error to the agent without marking
+      // the source dead or triggering restart.
+      const wasAborted = signal?.aborted === true;
+      if (wasAborted) {
+        if (isTaskAugmented) {
+          this.eventSink.emit({
+            type: "tool.progress",
+            data: {
+              source: this.name,
+              tool: toolName,
+              status: "cancelled",
+              message: "Cancelled by client",
+            },
+          });
+        }
+        return {
+          content: textContent("Task cancelled"),
+          isError: true,
+        };
+      }
+
       this.dead = true;
-      this.eventSink?.emit({
+      this.eventSink.emit({
         type: "run.error",
         data: { source: this.name, event: "source.crashed", error: String(err) },
       });
@@ -375,7 +398,7 @@ export class McpSource implements ToolSource {
       switch (message.type) {
         case "taskCreated":
           taskId = message.task.taskId;
-          this.eventSink?.emit({
+          this.eventSink.emit({
             type: "tool.progress",
             data: {
               source: this.name,
@@ -388,7 +411,7 @@ export class McpSource implements ToolSource {
           break;
 
         case "taskStatus":
-          this.eventSink?.emit({
+          this.eventSink.emit({
             type: "tool.progress",
             data: {
               source: this.name,
@@ -401,15 +424,11 @@ export class McpSource implements ToolSource {
           break;
 
         case "result": {
-          const raw = message.result as {
-            content?: unknown;
-            structuredContent?: Record<string, unknown>;
-            isError?: boolean;
-          };
+          const { content, structuredContent, isError } = message.result;
           return {
-            content: Array.isArray(raw.content) ? (raw.content as ContentBlock[]) : [],
-            structuredContent: raw.structuredContent,
-            isError: Boolean(raw.isError),
+            content: Array.isArray(content) ? (content as ContentBlock[]) : [],
+            structuredContent: structuredContent as Record<string, unknown> | undefined,
+            isError: Boolean(isError),
           };
         }
 
@@ -438,13 +457,13 @@ export class McpSource implements ToolSource {
       await this.start();
       this.cachedTools = null;
       this.dead = false;
-      this.eventSink?.emit({
+      this.eventSink.emit({
         type: "run.error",
         data: { source: this.name, event: "source.restarted" },
       });
       return true;
     } catch (err) {
-      this.eventSink?.emit({
+      this.eventSink.emit({
         type: "run.error",
         data: { source: this.name, event: "source.restart_failed", error: String(err) },
       });

@@ -1,4 +1,5 @@
 import { describe, it, expect, mock } from "bun:test";
+import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
 import type { McpTransportMode } from "../../src/tools/mcp-source.ts";
 import type { EventSink } from "../../src/engine/types.ts";
@@ -9,7 +10,7 @@ describe("McpSource transport mode", () => {
       type: "stdio",
       spawn: { command: "echo", args: [], env: {} },
     };
-    const source = new McpSource("test-stdio", mode);
+    const source = new McpSource("test-stdio", mode, new NoopEventSink());
     expect(source.isRemote()).toBe(false);
   });
 
@@ -18,7 +19,7 @@ describe("McpSource transport mode", () => {
       type: "remote",
       url: new URL("http://localhost:8080/mcp"),
     };
-    const source = new McpSource("test-remote", mode);
+    const source = new McpSource("test-remote", mode, new NoopEventSink());
     expect(source.isRemote()).toBe(true);
   });
 
@@ -31,7 +32,7 @@ describe("McpSource transport mode", () => {
         auth: { type: "bearer", token: "secret" },
       },
     };
-    const source = new McpSource("test-remote-sse", mode);
+    const source = new McpSource("test-remote-sse", mode, new NoopEventSink());
     expect(source.isRemote()).toBe(true);
   });
 

@@ -120,11 +120,13 @@ NB_DEBUG=mcp       bun run dev    # MCP source lifecycle + dispatch
 NB_DEBUG=sse,mcp   bun run dev    # SSE event flow + MCP
 ```
 
+`NB_DEBUG` is read once at process start. Changing it mid-session (e.g. `export NB_DEBUG=...` in the running shell) has no effect — restart the process for the new namespaces to take hold.
+
 Namespaces (`src/cli/log.ts`):
 
 | Namespace | Emits | Answers |
 |---|---|---|
-| `mcp` | McpSource construction (including whether `eventSink` was plumbed); per-call dispatch showing `taskSupport` / `path=task-augmented\|inline` / sink presence / cached tool count | "Why is my tool going inline?" "Is my new construction site forwarding the sink?" |
+| `mcp` | McpSource construction; per-call dispatch showing `taskSupport` / `path=task-augmented\|inline` / cached tool count | "Why is my tool going inline vs task-augmented?" "Is my tool cache populated?" |
 | `sse` | Every `tool.progress` / `tool.done` entering the runtime sink wrap; every `data.changed` broadcast with client count | "Are progress events reaching the SSE layer?" "Are broadcasts happening, to how many clients?" |
 
 Add a namespace by calling `log.debug("ns", "message")` (from `src/cli/log.ts`). Keep this table and the `log.ts` doc comment in sync.
