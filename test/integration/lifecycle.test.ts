@@ -5,6 +5,10 @@ import { tmpdir } from "node:os";
 import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
 import { BundleLifecycleManager } from "../../src/bundles/lifecycle.ts";
 import type { BundleInstance } from "../../src/bundles/types.ts";
+import {
+	getWorkspaceCredentials,
+	saveWorkspaceCredential,
+} from "../../src/config/workspace-credentials.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
 
 const testDir = join(tmpdir(), `nimblebrain-lifecycle-${Date.now()}`);
@@ -278,6 +282,80 @@ describe("BundleLifecycleManager — uninstall", () => {
 		// Data directory should still exist
 		expect(existsSync(dataDir)).toBe(true);
 		expect(existsSync(join(dataDir, "records.json"))).toBe(true);
+	}, 15_000);
+
+	it("removes the workspace credential file on uninstall (data dir preserved)", async () => {
+		const bundleDir = createEchoBundleOnDisk(join(testDir, "echo-creds-cleanup"));
+		const configPath = join(testDir, "nimblebrain-creds.json");
+		writeFileSync(configPath, JSON.stringify({ bundles: [] }, null, 2));
+
+		// Lifecycle uninstall reads workDir from NB_WORK_DIR when clearing creds.
+		// Point it at our temp dir so the test is hermetic.
+		const workDir = join(testDir, "workdir");
+		mkdirSync(workDir, { recursive: true });
+		const originalWorkDir = process.env.NB_WORK_DIR;
+		process.env.NB_WORK_DIR = workDir;
+
+		try {
+			const registry = new ToolRegistry();
+			const sink = makeEventCollector();
+			const lifecycle = new BundleLifecycleManager(sink, configPath);
+
+			const instance = await lifecycle.installLocal(bundleDir, registry, "ws_test");
+
+			// Seed credential file for this bundle, and another bundle in the
+			// same workspace that must NOT be touched by the uninstall.
+			await saveWorkspaceCredential("ws_test", instance.bundleName, "api_key", "sk-target", workDir);
+			await saveWorkspaceCredential("ws_test", "@acme/other", "api_key", "sk-other", workDir);
+
+			// Pre-condition: both credential files exist.
+			expect(await getWorkspaceCredentials("ws_test", instance.bundleName, workDir)).toEqual({
+				api_key: "sk-target",
+			});
+			expect(await getWorkspaceCredentials("ws_test", "@acme/other", workDir)).toEqual({
+				api_key: "sk-other",
+			});
+
+			// Uninstall by serverName — the same path the HTTP API uses.
+			await lifecycle.uninstall(instance.serverName, registry, "ws_test");
+
+			// Target bundle's credentials are gone.
+			expect(await getWorkspaceCredentials("ws_test", instance.bundleName, workDir)).toBeNull();
+			// Sibling bundle's credentials are untouched.
+			expect(await getWorkspaceCredentials("ws_test", "@acme/other", workDir)).toEqual({
+				api_key: "sk-other",
+			});
+		} finally {
+			if (originalWorkDir === undefined) delete process.env.NB_WORK_DIR;
+			else process.env.NB_WORK_DIR = originalWorkDir;
+		}
+	}, 15_000);
+
+	it("uninstall succeeds when no credential file exists for the bundle", async () => {
+		const bundleDir = createEchoBundleOnDisk(join(testDir, "echo-no-creds"));
+		const configPath = join(testDir, "nimblebrain-no-creds.json");
+		writeFileSync(configPath, JSON.stringify({ bundles: [] }, null, 2));
+
+		const workDir = join(testDir, "workdir-nocreds");
+		mkdirSync(workDir, { recursive: true });
+		const originalWorkDir = process.env.NB_WORK_DIR;
+		process.env.NB_WORK_DIR = workDir;
+
+		try {
+			const registry = new ToolRegistry();
+			const sink = makeEventCollector();
+			const lifecycle = new BundleLifecycleManager(sink, configPath);
+
+			const instance = await lifecycle.installLocal(bundleDir, registry, "ws_test");
+
+			// No credentials saved. Uninstall must not throw.
+			await lifecycle.uninstall(instance.serverName, registry, "ws_test");
+
+			expect(eventTypes(sink)).toContain("bundle.uninstalled");
+		} finally {
+			if (originalWorkDir === undefined) delete process.env.NB_WORK_DIR;
+			else process.env.NB_WORK_DIR = originalWorkDir;
+		}
 	}, 15_000);
 });
 
