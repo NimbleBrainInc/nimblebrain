@@ -1,13 +1,35 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import {
+  clearWorkspaceCredential,
+  getWorkspaceCredentials,
+  saveWorkspaceCredential,
+} from "../config/workspace-credentials.ts";
 import { loadCoreSkills, loadSkillDir, partitionSkills } from "../skills/loader.ts";
 import type { Skill } from "../skills/types.ts";
 import { TelemetryManager } from "../telemetry/manager.ts";
+import { WorkspaceStore } from "../workspace/workspace-store.ts";
 
 const DEFAULT_CONFIG_FILE = "nimblebrain.json";
-const MPAK_CONFIG_PATH = join(homedir(), ".mpak", "config.json");
 const RELOAD_SENTINEL = join(homedir(), ".nimblebrain", ".reload");
+
+function resolveCliWorkDir(workDir?: string): string {
+  return workDir ?? process.env.NB_WORK_DIR ?? join(homedir(), ".nimblebrain");
+}
+
+async function requireWorkspace(wsId: string, resolvedWorkDir: string): Promise<boolean> {
+  const store = new WorkspaceStore(resolvedWorkDir);
+  const ws = await store.get(wsId);
+  if (!ws) {
+    console.error(
+      `Workspace '${wsId}' does not exist. Run 'nb workspace list' to see available workspaces.`,
+    );
+    process.exitCode = 1;
+    return false;
+  }
+  return true;
+}
 
 interface Config {
   bundles?: Array<{
@@ -194,65 +216,59 @@ export function reload(): void {
   console.log("Reload signal sent. Running runtime will pick up changes.");
 }
 
-/** nb config set @scope/name key=value */
-export function configSet(bundleName: string, keyValue: string): void {
+/** nb config set @scope/name key=value -w <wsId> */
+export async function configSet(
+  bundleName: string,
+  keyValue: string,
+  wsId: string,
+  workDir?: string,
+): Promise<void> {
   const [key, value] = keyValue.split("=", 2);
   if (!key || value === undefined) {
-    console.error("Usage: nb config set @scope/name key=value");
+    console.error("Usage: nb config set @scope/name key=value -w <wsId>");
+    process.exitCode = 1;
     return;
   }
 
-  let mpakConfig: Record<string, unknown> = {};
-  if (existsSync(MPAK_CONFIG_PATH)) {
-    mpakConfig = JSON.parse(readFileSync(MPAK_CONFIG_PATH, "utf-8"));
-  }
-  const packages = (mpakConfig.packages ?? {}) as Record<string, Record<string, string>>;
-  if (!packages[bundleName]) packages[bundleName] = {};
-  packages[bundleName]![key] = value;
-  mpakConfig.packages = packages;
+  const resolvedWorkDir = resolveCliWorkDir(workDir);
+  if (!(await requireWorkspace(wsId, resolvedWorkDir))) return;
 
-  const dir = join(homedir(), ".mpak");
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  writeFileSync(MPAK_CONFIG_PATH, `${JSON.stringify(mpakConfig, null, 2)}\n`, { mode: 0o600 });
-  console.log(`Saved ${key} for ${bundleName}`);
+  await saveWorkspaceCredential(wsId, bundleName, key, value, resolvedWorkDir);
+  console.log(`Saved ${key} for ${bundleName} in workspace ${wsId}`);
 }
 
-/** nb config get @scope/name */
-export function configGet(bundleName: string): void {
-  if (!existsSync(MPAK_CONFIG_PATH)) {
-    console.log("No config found.");
+/** nb config get @scope/name -w <wsId> */
+export async function configGet(bundleName: string, wsId: string, workDir?: string): Promise<void> {
+  const resolvedWorkDir = resolveCliWorkDir(workDir);
+  if (!(await requireWorkspace(wsId, resolvedWorkDir))) return;
+
+  const creds = await getWorkspaceCredentials(wsId, bundleName, resolvedWorkDir);
+  if (!creds || Object.keys(creds).length === 0) {
+    console.log(`No config for ${bundleName} in workspace ${wsId}`);
     return;
   }
-  const mpakConfig = JSON.parse(readFileSync(MPAK_CONFIG_PATH, "utf-8"));
-  const packages = mpakConfig.packages ?? {};
-  const bundle = packages[bundleName];
-  if (!bundle) {
-    console.log(`No config for ${bundleName}`);
-    return;
-  }
-  for (const [key, value] of Object.entries(bundle as Record<string, string>)) {
+  for (const [key, value] of Object.entries(creds)) {
     const masked = value.length > 4 ? `${value.slice(0, 2)}****` : "****";
     console.log(`${key}: ${masked}`);
   }
 }
 
-/** nb config clear @scope/name key */
-export function configClear(bundleName: string, key: string): void {
-  if (!existsSync(MPAK_CONFIG_PATH)) {
-    console.log("No config found.");
+/** nb config clear @scope/name key -w <wsId> */
+export async function configClear(
+  bundleName: string,
+  key: string,
+  wsId: string,
+  workDir?: string,
+): Promise<void> {
+  const resolvedWorkDir = resolveCliWorkDir(workDir);
+  if (!(await requireWorkspace(wsId, resolvedWorkDir))) return;
+
+  const removed = await clearWorkspaceCredential(wsId, bundleName, key, resolvedWorkDir);
+  if (!removed) {
+    console.log(`No config key '${key}' for ${bundleName} in workspace ${wsId}`);
     return;
   }
-  const mpakConfig = JSON.parse(readFileSync(MPAK_CONFIG_PATH, "utf-8"));
-  const packages = mpakConfig.packages ?? {};
-  if (packages[bundleName]) {
-    delete packages[bundleName][key];
-    if (Object.keys(packages[bundleName]).length === 0) {
-      delete packages[bundleName];
-    }
-  }
-  mpakConfig.packages = packages;
-  writeFileSync(MPAK_CONFIG_PATH, `${JSON.stringify(mpakConfig, null, 2)}\n`, { mode: 0o600 });
-  console.log(`Cleared ${key} for ${bundleName}`);
+  console.log(`Cleared ${key} for ${bundleName} in workspace ${wsId}`);
 }
 
 /** nb telemetry on */
