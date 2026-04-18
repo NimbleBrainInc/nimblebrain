@@ -846,7 +846,10 @@ describe("manage_skill — additional validation", () => {
 describe("manage_app configure — workspace-scoped credentials", () => {
 	let workDir: string;
 	let mpakHome: string;
-	const wsId = "ws-configure-test";
+	// WORKSPACE_ID_RE requires ws_ prefix + [a-z0-9_] chars. Hyphens are invalid
+	// per the regex enforced by WorkspaceStore and now also by the credential
+	// store's input validation (PR #40 QA fixup).
+	const wsId = "ws_configure_test";
 	const bundleName = "@testscope/configurable";
 
 	/**
