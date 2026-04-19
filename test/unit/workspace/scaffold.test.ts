@@ -69,4 +69,24 @@ describe("scaffoldWorkspace", () => {
       expect(existsSync(testFile)).toBe(true);
     }
   });
+
+  test("credentials directory is created with 0o700 permissions", async () => {
+    await scaffoldWorkspace(wsPath);
+
+    const credDir = join(wsPath, "credentials");
+    const mode = statSync(credDir).mode & 0o777;
+    expect(mode).toBe(0o700);
+  });
+
+  test("non-credential directories inherit the default umask mode", async () => {
+    await scaffoldWorkspace(wsPath);
+
+    // data/ holds non-secret bundle state; we do not force a restrictive mode.
+    // Compute what mkdir-with-no-mode would produce under the current umask
+    // and compare. This keeps the test stable across umask-0o022 dev boxes
+    // and umask-0o077 hardened CI runners.
+    const defaultMkdirMode = 0o777 & ~process.umask();
+    const dataMode = statSync(join(wsPath, "data")).mode & 0o777;
+    expect(dataMode).toBe(defaultMkdirMode);
+  });
 });

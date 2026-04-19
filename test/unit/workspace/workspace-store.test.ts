@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -241,5 +241,31 @@ describe("WorkspaceStore extended fields", () => {
 
     const loaded = await store.get(ws.id);
     expect(loaded!.skillDirs).toEqual(skillDirs);
+  });
+});
+
+// ── File permissions ──────────────────────────────────────────────
+
+describe("WorkspaceStore file permissions", () => {
+  test("create produces a workspace directory with mode 0o700", async () => {
+    const ws = await store.create("Secure Team");
+    const wsDir = join(workDir, "workspaces", ws.id);
+    const mode = statSync(wsDir).mode & 0o777;
+    expect(mode).toBe(0o700);
+  });
+
+  test("atomicWrite produces a workspace.json file with mode 0o600", async () => {
+    const ws = await store.create("Secure File");
+    const filePath = join(workDir, "workspaces", ws.id, "workspace.json");
+    const mode = statSync(filePath).mode & 0o777;
+    expect(mode).toBe(0o600);
+  });
+
+  test("update rewrites workspace.json preserving 0o600", async () => {
+    const ws = await store.create("Rewrite");
+    await store.update(ws.id, { name: "Rewrite 2" });
+    const filePath = join(workDir, "workspaces", ws.id, "workspace.json");
+    const mode = statSync(filePath).mode & 0o777;
+    expect(mode).toBe(0o600);
   });
 });

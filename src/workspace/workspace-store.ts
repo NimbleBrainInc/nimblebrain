@@ -29,8 +29,16 @@ export class MemberConflictError extends Error {
 
 // ── Workspace ID validation ────────────────────────────────────────
 
-/** Valid workspace ID: ws_ prefix followed by 1-64 alphanumeric/underscore chars. */
-const WORKSPACE_ID_RE = /^ws_[a-z0-9_]{1,64}$/i;
+/**
+ * Valid workspace ID: ws_ prefix followed by 1-64 alphanumeric/underscore chars.
+ *
+ * Exported because credential-store primitives (src/config/workspace-credentials)
+ * write to filesystem paths derived from `wsId`. Those primitives must validate
+ * against this same regex to defend against path-traversal (e.g., `../evil`)
+ * even when the call site looks trusted. Keep in lockstep with the scaffold
+ * assumptions in `WORKSPACE_DIRS` and the path layout in `WorkspaceStore`.
+ */
+export const WORKSPACE_ID_RE = /^ws_[a-z0-9_]{1,64}$/i;
 
 // ── Slugification ──────────────────────────────────────────────────
 
@@ -118,7 +126,7 @@ export class WorkspaceStore {
     };
 
     const wsDir = join(this.workspacesDir, id);
-    mkdirSync(wsDir, { recursive: true });
+    mkdirSync(wsDir, { recursive: true, mode: 0o700 });
     await this.atomicWrite(this.wsPath(id), workspace);
     await scaffoldWorkspace(wsDir);
 
@@ -212,7 +220,10 @@ export class WorkspaceStore {
 
   private async atomicWrite(filePath: string, data: Workspace): Promise<void> {
     const tmpPath = `${filePath}.tmp.${uniqueTmpSuffix()}`;
-    await writeFile(tmpPath, `${JSON.stringify(data, null, 2)}\n`, "utf-8");
+    await writeFile(tmpPath, `${JSON.stringify(data, null, 2)}\n`, {
+      encoding: "utf-8",
+      mode: 0o600,
+    });
     await rename(tmpPath, filePath);
   }
 }
