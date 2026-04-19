@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { clearAllWorkspaceCredentials } from "../config/workspace-credentials.ts";
 import { extractText } from "../engine/content-helpers.ts";
 import type { EventSink } from "../engine/types.ts";
 import type { PlacementRegistry } from "../runtime/placement-registry.ts";
@@ -102,7 +103,7 @@ export class BundleLifecycleManager {
       registry,
       this.eventSink,
       this.configPath ? dirname(this.configPath) : undefined,
-      { dataDir: bundleDataDir },
+      { dataDir: bundleDataDir, wsId, workDir: nbWorkDir },
     );
     if (!manifest) {
       // Named bundles always have a manifest — startBundleSource reads it
@@ -327,6 +328,21 @@ export class BundleLifecycleManager {
     if (instance) {
       this.transition(instance, "stopped");
       this.instances.delete(`${serverName}|${wsId}`);
+    }
+
+    // Step 4c — Clean up workspace-scoped credentials (best-effort).
+    // Credentials are config, not data — they should not persist across
+    // uninstalls. Data directories are preserved (step 6).
+    if (instance) {
+      const workDir = process.env.NB_WORK_DIR ?? join(homedir(), ".nimblebrain");
+      try {
+        await clearAllWorkspaceCredentials(instance.wsId, instance.bundleName, workDir);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        process.stderr.write(
+          `[lifecycle] Failed to clear credentials for ${instance.bundleName} in ${instance.wsId}: ${msg}\n`,
+        );
+      }
     }
 
     // Step 5 — Emit event (data NOT deleted — step 6)

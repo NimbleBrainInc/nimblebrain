@@ -4,7 +4,9 @@
  * These are consumed by system tools for hot bundle management within workspaces.
  */
 
+import { homedir } from "node:os";
 import { join } from "node:path";
+import { clearAllWorkspaceCredentials } from "../config/workspace-credentials.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
 import { deriveServerName, resolveBundleDataDir } from "./paths.ts";
 import { startBundleSource } from "./startup.ts";
@@ -70,6 +72,11 @@ export async function installBundleInWorkspace(
   const result = await startBundleSource(bundleRef, registry, eventSink, configDir, {
     allowInsecureRemotes: opts?.allowInsecureRemotes,
     dataDir,
+    // Thread workspace id + work dir so the named-bundle path can resolve
+    // `user_config` from the workspace credential store before prepareServer
+    // validates it.
+    wsId,
+    workDir,
   });
 
   return {
@@ -85,11 +92,15 @@ export async function installBundleInWorkspace(
  * Uninstall a bundle from a specific workspace (hot — stops process and deregisters).
  *
  * Looks up the plain server name, stops the MCP source, and removes it from the registry.
+ * Also clears the workspace-scoped credential file for the bundle (best-effort —
+ * failures are logged but do not fail the uninstall). Data directories are
+ * intentionally preserved.
  */
 export async function uninstallBundleFromWorkspace(
   wsId: string,
   bundleName: string,
   registry: ToolRegistry,
+  opts?: { workDir?: string },
 ): Promise<void> {
   const serverName = deriveServerName(bundleName);
 
@@ -98,4 +109,16 @@ export async function uninstallBundleFromWorkspace(
   }
 
   await registry.removeSource(serverName);
+
+  // Best-effort credential cleanup — don't fail uninstall if it errors.
+  // Credentials are config, not data: they should not persist across uninstalls.
+  const workDir = opts?.workDir ?? process.env.NB_WORK_DIR ?? join(homedir(), ".nimblebrain");
+  try {
+    await clearAllWorkspaceCredentials(wsId, bundleName, workDir);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    process.stderr.write(
+      `[workspace-ops] Failed to clear credentials for ${bundleName} in ${wsId}: ${msg}\n`,
+    );
+  }
 }

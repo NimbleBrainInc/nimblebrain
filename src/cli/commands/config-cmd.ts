@@ -9,28 +9,31 @@ export function createConfigCommand(): Command {
 
   cmd
     .command("set")
-    .description("Set a config value")
+    .description("Set a config value for a bundle in a workspace")
     .argument("<bundle>", "bundle name (e.g., @scope/name)")
     .argument("<key-value>", "key=value pair")
-    .action((bundle: string, keyValue: string) => {
-      configSet(bundle, keyValue);
+    .requiredOption("-w, --workspace <wsId>", "workspace id (required)")
+    .action(async (bundle: string, keyValue: string, opts: { workspace: string }) => {
+      await configSet(bundle, keyValue, opts.workspace);
     });
 
   cmd
     .command("get")
-    .description("Get config value(s)")
+    .description("Get config value(s) for a bundle in a workspace")
     .argument("<bundle>", "bundle name")
-    .action((bundle: string) => {
-      configGet(bundle);
+    .requiredOption("-w, --workspace <wsId>", "workspace id (required)")
+    .action(async (bundle: string, opts: { workspace: string }) => {
+      await configGet(bundle, opts.workspace);
     });
 
   cmd
     .command("clear")
-    .description("Remove a config value")
+    .description("Remove a config value for a bundle in a workspace")
     .argument("<bundle>", "bundle name")
     .argument("<key>", "config key to remove")
-    .action((bundle: string, key: string) => {
-      configClear(bundle, key);
+    .requiredOption("-w, --workspace <wsId>", "workspace id (required)")
+    .action(async (bundle: string, key: string, opts: { workspace: string }) => {
+      await configClear(bundle, key, opts.workspace);
     });
 
   return cmd;

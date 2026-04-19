@@ -1,17 +1,15 @@
-import { homedir } from "node:os";
-import { join } from "node:path";
 import type { BundleLifecycleManager } from "../bundles/lifecycle.ts";
 import { getMpak } from "../bundles/mpak.ts";
-import { deriveBundleDataDir, deriveServerName } from "../bundles/paths.ts";
+import { deriveServerName } from "../bundles/paths.ts";
 import { startBundleSource } from "../bundles/startup.ts";
 import type { BundleManifest } from "../bundles/types.ts";
 import {
   installBundleInWorkspace,
   uninstallBundleFromWorkspace,
 } from "../bundles/workspace-ops.ts";
-import { resolveCredentials } from "../config/credentials.ts";
 import { isToolEnabled, type ResolvedFeatures } from "../config/features.ts";
 import type { ConfirmationGate } from "../config/privilege.ts";
+import { resolveUserConfig, type UserConfigFieldDef } from "../config/workspace-credentials.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import type { EventSink, ToolResult } from "../engine/types.ts";
 import type { Runtime } from "../runtime/runtime.ts";
@@ -207,6 +205,8 @@ export function createSystemTools(
             name,
             getRegistry(),
             manageBundleCtx.eventSink,
+            wsId,
+            manageBundleCtx.workDir,
             gate,
             mpakHome,
           );
@@ -942,34 +942,29 @@ async function configureBundle(
   // re-configuring a bundle's credentials silently breaks live updates for
   // that bundle until the next full platform restart.
   eventSink: EventSink,
+  // Workspace id + work directory — required because credentials are stored
+  // per-workspace (`{workDir}/workspaces/{wsId}/credentials/{bundle}.json`),
+  // not globally in `~/.mpak/config.json`. Threaded from the manage_app handler.
+  wsId: string,
+  workDir: string,
   confirmGate?: ConfirmationGate,
   mpakHome?: string,
 ): Promise<ToolResult> {
   try {
     const mpak = getMpak(mpakHome!);
     const manifest = mpak.bundleCache.getBundleManifest(name) as Record<string, unknown> | null;
-    const userConfig = manifest?.user_config as
-      | Record<
-          string,
-          {
-            type: string;
-            title?: string;
-            description?: string;
-            sensitive?: boolean;
-            required?: boolean;
-          }
-        >
-      | undefined;
+    const userConfig = manifest?.user_config as Record<string, UserConfigFieldDef> | undefined;
 
     if (!confirmGate?.supportsInteraction) {
-      // Non-interactive (HTTP server mode): show exact config commands
+      // Non-interactive (HTTP server mode): show exact config commands.
+      // Credentials are workspace-scoped, so include `-w <wsId>` in the hint.
       if (!userConfig || Object.keys(userConfig).length === 0) {
         return { content: textContent(`${name} has no configurable credentials.`), isError: false };
       }
       const fields = Object.entries(userConfig)
         .map(
           ([key, cfg]) =>
-            `  nb config set ${name} ${key}=<value>  # ${cfg.title ?? cfg.description ?? key}`,
+            `  nb config set ${name} ${key}=<value> -w ${wsId}  # ${cfg.title ?? cfg.description ?? key}`,
         )
         .join("\n");
       return {
@@ -987,31 +982,37 @@ async function configureBundle(
       };
     }
 
-    const server = manifest?.server as
-      | { mcp_config?: { env?: Record<string, string> } }
-      | undefined;
-    const manifestEnv = server?.mcp_config?.env ?? {};
+    // Resolve via the 3-tier workspace-scoped resolver. `forcePrompt: true`
+    // re-prompts for every field so users can update existing credentials.
+    // Prompted values are persisted to the workspace credential store at
+    // `{workDir}/workspaces/{wsId}/credentials/{bundle-slug}.json` — no
+    // round-trip through `~/.mpak/config.json`.
+    await resolveUserConfig({
+      bundleName: name,
+      userConfigSchema: userConfig,
+      wsId,
+      workDir,
+      gate: confirmGate,
+      forcePrompt: true,
+    });
 
-    // Force re-prompt — always ask even if values already stored
-    const resolvedEnv = await resolveCredentials(name, userConfig, manifestEnv, confirmGate, true);
-
-    // Restart the bundle with new credentials via the shared primitive —
-    // same construction path as boot-time / agent install. If this function
-    // diverges from `startBundleSource` the rest of the app silently breaks
-    // (e.g. sink plumbing, PYTHONPATH, data-dir layout). Delegate instead.
+    // Restart the bundle via the shared primitive — same construction path
+    // as boot-time / agent install. `startBundleSource` reads the values we
+    // just persisted above from the workspace credential store. If this
+    // function diverges from that primitive the rest of the app silently
+    // breaks (sink plumbing, PYTHONPATH, data-dir layout, user_config
+    // resolution). Delegate instead: pass `wsId`+`workDir` and let
+    // `startBundleSource` derive the workspace-scoped data dir itself —
+    // never compute it here, or it drifts from the install-time layout
+    // and Upjack entity state disappears across restarts.
     const serverName = deriveServerName(name);
     if (registry.hasSource(serverName)) {
       await registry.removeSource(serverName);
     }
-    const nbWorkDir = process.env.NB_WORK_DIR ?? join(homedir(), ".nimblebrain");
-    const bundleDataDir = join(nbWorkDir, "data", deriveBundleDataDir(name));
-    const result = await startBundleSource(
-      { name, env: resolvedEnv },
-      registry,
-      eventSink,
-      undefined,
-      { dataDir: bundleDataDir },
-    );
+    const result = await startBundleSource({ name }, registry, eventSink, undefined, {
+      wsId,
+      workDir,
+    });
 
     const tools = await registry.availableTools();
     const count = tools.filter((t) => t.name.startsWith(`${result.sourceName}__`)).length;
@@ -1115,8 +1116,10 @@ async function uninstallBundleFromWorkspaceViaCtx(
       throw new Error(`Cannot uninstall "${serverName}": bundle is protected`);
     }
 
-    // Stop process and deregister from tool registry
-    await uninstallBundleFromWorkspace(wsId, name, registry);
+    // Stop process and deregister from tool registry. Thread workDir so
+    // the workspace credential file for this bundle is cleaned up as part
+    // of uninstall (best-effort inside uninstallBundleFromWorkspace).
+    await uninstallBundleFromWorkspace(wsId, name, registry, { workDir: ctx.workDir });
 
     // Remove lifecycle instance tracking
     if (instance) {
