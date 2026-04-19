@@ -1,6 +1,7 @@
 import { chmod, mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { WORKSPACE_ID_RE } from "../workspace/workspace-store.ts";
+import type { ConfirmationGate } from "./privilege.ts";
 
 /**
  * Workspace-scoped credential store.
@@ -324,4 +325,209 @@ export async function clearAllWorkspaceCredentials(
       throw err;
     }
   });
+}
+
+// ── Tier resolver ─────────────────────────────────────────────────
+
+/**
+ * Strip a trailing `inc` (case-insensitive) from a scope segment.
+ *
+ * Rationale: the GitHub org `nimblebraininc` exists only because `nimblebrain`
+ * was taken on GitHub. The brand — and therefore the env var convention — is
+ * `nimblebrain`. Stripping the suffix keeps the env var name aligned with the
+ * public brand instead of a GitHub artifact.
+ */
+function normalizeScope(scope: string): string {
+  return scope.replace(/inc$/i, "");
+}
+
+/**
+ * Compute the process environment variable name for a bundle field.
+ *
+ * Convention: `NB_CONFIG_{SCOPE}_{NAME}_{FIELD}` — uppercase, with hyphens
+ * replaced by underscores. The scope segment is included to prevent collisions
+ * between same-named bundles from different scopes.
+ *
+ * Scope normalization: a trailing `inc` on the scope is stripped (see
+ * `normalizeScope`). If the scope collapses to an empty string (e.g. a bare
+ * `@inc/foo`), the env var falls back to the unscoped form.
+ *
+ * Examples:
+ *   `@nimblebraininc/newsapi` + `api_key` → `NB_CONFIG_NIMBLEBRAIN_NEWSAPI_API_KEY`
+ *   `@foo/bar`                + `field`   → `NB_CONFIG_FOO_BAR_FIELD`
+ *   `bundleName`              + `field`   → `NB_CONFIG_BUNDLENAME_FIELD`
+ *   `my-bundle`               + `api-key` → `NB_CONFIG_MY_BUNDLE_API_KEY`
+ */
+export function envVarName(bundleName: string, fieldName: string): string {
+  const normalize = (s: string): string => s.replace(/-/g, "_").toUpperCase();
+
+  // Strip leading `@` and split into [scope, name] if scoped.
+  const stripped = bundleName.replace(/^@/, "");
+  const slashIdx = stripped.indexOf("/");
+
+  const fieldPart = normalize(fieldName);
+
+  if (slashIdx === -1) {
+    // Unscoped: NB_CONFIG_{NAME}_{FIELD}
+    return `NB_CONFIG_${normalize(stripped)}_${fieldPart}`;
+  }
+
+  const rawScope = stripped.slice(0, slashIdx);
+  const name = stripped.slice(slashIdx + 1);
+  const scope = normalizeScope(rawScope);
+
+  // Edge case: scope normalizes to empty (e.g. bare `inc`) — fall back to
+  // unscoped form rather than emitting a double-underscore.
+  if (scope === "") {
+    return `NB_CONFIG_${normalize(name)}_${fieldPart}`;
+  }
+
+  return `NB_CONFIG_${normalize(scope)}_${normalize(name)}_${fieldPart}`;
+}
+
+/** Field descriptor from a bundle's `user_config` manifest section. */
+export interface UserConfigFieldDef {
+  type: string;
+  title?: string;
+  description?: string;
+  sensitive?: boolean;
+  required?: boolean;
+  default?: unknown;
+}
+
+/** Options for `resolveUserConfig`. */
+export interface ResolveUserConfigOpts {
+  /** The bundle's canonical name (e.g. `@nimblebraininc/newsapi`). */
+  bundleName: string;
+  /**
+   * The bundle manifest's `user_config` schema, keyed by field name.
+   * `null` or `undefined` means the bundle requires no user config — the
+   * resolver returns `{}` immediately.
+   */
+  userConfigSchema: Record<string, UserConfigFieldDef> | null | undefined;
+  /** Workspace id. Required — everything is workspace-scoped. */
+  wsId: string;
+  /** Root work directory (e.g. `~/.nimblebrain`). */
+  workDir: string;
+  /** Interactive gate used to prompt for missing values (TUI-only). */
+  gate?: ConfirmationGate;
+  /**
+   * If `true`, prompt for every field even when a stored value exists.
+   * No effect when `gate?.supportsInteraction` is false.
+   */
+  forcePrompt?: boolean;
+}
+
+/**
+ * Resolve all `user_config` field values for a bundle in a workspace.
+ *
+ * Resolution hierarchy (first match wins, per field):
+ *   1. Workspace credential store — `getWorkspaceCredentials(wsId, bundleName, workDir)`
+ *   2. Process environment        — `process.env[envVarName(bundleName, field)]`
+ *   3. Manifest default           — `field.default`
+ *
+ * `~/.mpak/config.json` is intentionally NOT consulted. NimbleBrain neither
+ * reads nor writes the global mpak config; users with values there must re-set
+ * them via `nb config set -w <wsId>`.
+ *
+ * If a field is still missing after all tiers:
+ *   - If `gate?.supportsInteraction` is true, prompt via
+ *     `gate.promptConfigValue(...)`. A returned value is persisted to the
+ *     workspace credential store (tier 1) and included in the result.
+ *   - Else if `field.required !== false` (required or unspecified), throw a
+ *     descriptive error with a copy-pastable `nb config set -w <wsId>` hint.
+ *   - Otherwise (optional), the field is silently omitted from the result.
+ *
+ * When `forcePrompt` is true AND the gate supports interaction, the resolver
+ * skips steps 1–3 entirely and prompts for every field. This is how
+ * `nb config set` re-prompts are implemented.
+ *
+ * `null`/`undefined`/empty `userConfigSchema` short-circuits to `{}`.
+ *
+ * The returned map contains only resolved values as strings — callers pass it
+ * directly to the mpak SDK's `prepareServer({ userConfig })` option.
+ */
+export async function resolveUserConfig(
+  opts: ResolveUserConfigOpts,
+): Promise<Record<string, string>> {
+  const { bundleName, userConfigSchema, wsId, workDir, gate, forcePrompt } = opts;
+
+  if (!userConfigSchema) return {};
+  const fieldNames = Object.keys(userConfigSchema);
+  if (fieldNames.length === 0) return {};
+
+  // Tier 1 is read once per bundle (it's a single file).
+  const stored = (await getWorkspaceCredentials(wsId, bundleName, workDir)) ?? {};
+
+  const interactive = gate?.supportsInteraction === true;
+  const resolved: Record<string, string> = {};
+
+  for (const key of fieldNames) {
+    const field = userConfigSchema[key];
+    if (!field) continue;
+
+    let value: string | undefined;
+
+    if (forcePrompt && interactive) {
+      // Skip tiers 1–3; go straight to prompt.
+    } else {
+      // Tier 1: workspace credential store.
+      const storedValue = stored[key];
+      if (typeof storedValue === "string" && storedValue.length > 0) {
+        value = storedValue;
+      }
+
+      // Tier 2: process environment.
+      if (value === undefined) {
+        const envValue = process.env[envVarName(bundleName, key)];
+        if (typeof envValue === "string" && envValue.length > 0) {
+          value = envValue;
+        }
+      }
+
+      // Tier 3: manifest default.
+      // MCPB manifests restrict user_config types to primitives (string, number,
+      // boolean, directory, file), so String() is safe. An object/array default
+      // would stringify to "[object Object]" or a comma-joined form — if that
+      // ever happens it reflects a malformed manifest upstream, not a bug here.
+      if (value === undefined && field.default !== undefined && field.default !== null) {
+        value = String(field.default);
+      }
+    }
+
+    if (value !== undefined) {
+      resolved[key] = value;
+      continue;
+    }
+
+    // Still missing. Try interactive prompt if available.
+    if (interactive && gate) {
+      const prompted = await gate.promptConfigValue({
+        key,
+        title: field.title,
+        description: field.description,
+        sensitive: field.sensitive,
+        required: field.required,
+      });
+      if (typeof prompted === "string" && prompted.length > 0) {
+        await saveWorkspaceCredential(wsId, bundleName, key, prompted, workDir);
+        resolved[key] = prompted;
+        continue;
+      }
+    }
+
+    // No value, no prompt (or prompt returned nothing).
+    const isRequired = field.required !== false;
+    if (isRequired) {
+      const label = field.title ?? key;
+      // Never include values or defaults in the error — only field names.
+      throw new Error(
+        `Missing required config "${label}" for ${bundleName}.\n` +
+          `Run: nb config set ${bundleName} ${key}=<value> -w ${wsId}`,
+      );
+    }
+    // Optional field with no value — skip.
+  }
+
+  return resolved;
 }
