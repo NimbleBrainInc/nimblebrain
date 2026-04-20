@@ -103,7 +103,7 @@ describe("streamingState state machine", () => {
 		expect(result.current.streamingState).toBe("working");
 	});
 
-	it("transitions working → streaming on tool.done", async () => {
+	it("transitions working → analyzing on last tool.done", async () => {
 		const { result } = renderHook(() => useStreamingState(), { wrapper });
 
 		act(() => {
@@ -122,7 +122,75 @@ describe("streamingState state machine", () => {
 		act(() => {
 			capturedCallback?.("tool.done", { id: "t1", name: "search", ok: true, ms: 100 });
 		});
+		// No in-flight tools remain → model is inferring on the result.
+		expect(result.current.streamingState).toBe("analyzing");
+	});
+
+	it("holds working while parallel tools are still in flight, then analyzing", async () => {
+		const { result } = renderHook(() => useStreamingState(), { wrapper });
+
+		act(() => {
+			result.current.sendMessage("hello");
+		});
+		await act(async () => {});
+
+		act(() => {
+			capturedCallback?.("tool.start", { id: "a", name: "search" });
+			capturedCallback?.("tool.start", { id: "b", name: "fetch" });
+		});
+		expect(result.current.streamingState).toBe("working");
+
+		// First of two completes — the other is still running, so stay `working`.
+		act(() => {
+			capturedCallback?.("tool.done", { id: "a", name: "search", ok: true, ms: 10 });
+		});
+		expect(result.current.streamingState).toBe("working");
+
+		// Last one lands → flip to `analyzing`.
+		act(() => {
+			capturedCallback?.("tool.done", { id: "b", name: "fetch", ok: false, ms: 725 });
+		});
+		expect(result.current.streamingState).toBe("analyzing");
+	});
+
+	it("transitions analyzing → streaming on the next text.delta", async () => {
+		const { result } = renderHook(() => useStreamingState(), { wrapper });
+
+		act(() => {
+			result.current.sendMessage("hello");
+		});
+		await act(async () => {});
+
+		act(() => {
+			capturedCallback?.("tool.start", { id: "t1", name: "search" });
+			capturedCallback?.("tool.done", { id: "t1", name: "search", ok: true, ms: 10 });
+		});
+		expect(result.current.streamingState).toBe("analyzing");
+
+		act(() => {
+			capturedCallback?.("text.delta", { text: "Based on that…" });
+		});
 		expect(result.current.streamingState).toBe("streaming");
+	});
+
+	it("transitions analyzing → working when the model calls another tool", async () => {
+		const { result } = renderHook(() => useStreamingState(), { wrapper });
+
+		act(() => {
+			result.current.sendMessage("hello");
+		});
+		await act(async () => {});
+
+		act(() => {
+			capturedCallback?.("tool.start", { id: "t1", name: "search" });
+			capturedCallback?.("tool.done", { id: "t1", name: "search", ok: true, ms: 10 });
+		});
+		expect(result.current.streamingState).toBe("analyzing");
+
+		act(() => {
+			capturedCallback?.("tool.start", { id: "t2", name: "fetch" });
+		});
+		expect(result.current.streamingState).toBe("working");
 	});
 
 	it("transitions to null on done event", async () => {
@@ -191,7 +259,7 @@ describe("streamingState state machine", () => {
 		expect(result.current.streamingState).toBeNull();
 	});
 
-	it("full cycle: thinking → streaming → working → streaming → null", async () => {
+	it("full cycle: thinking → streaming → working → analyzing → streaming → null", async () => {
 		const { result } = renderHook(() => useStreamingState(), { wrapper });
 
 		act(() => {
@@ -213,7 +281,7 @@ describe("streamingState state machine", () => {
 		act(() => {
 			capturedCallback?.("tool.done", { id: "t1", name: "lookup", ok: true, ms: 50 });
 		});
-		expect(result.current.streamingState).toBe("streaming");
+		expect(result.current.streamingState).toBe("analyzing");
 
 		act(() => {
 			capturedCallback?.("text.delta", { text: "here you go" });

@@ -31,8 +31,18 @@ function triggerResourceDownload(serverName: string): void {
   setTimeout(() => document.body.removeChild(anchor), 100);
 }
 
-/** Streaming state machine: null → thinking → streaming ↔ working → null. */
-export type StreamingState = null | "thinking" | "streaming" | "working";
+/**
+ * Streaming state machine:
+ *
+ *   null → thinking → streaming ↔ working → analyzing → streaming → null
+ *                                                    ↘ working (next tool.start)
+ *
+ * `analyzing` fills the gap between the last tool.done (all tools finished)
+ * and the next text.delta / tool.start, when the model is inferring on tool
+ * results but the UI would otherwise look frozen. Any `tool.start` can
+ * re-enter `working` from a non-terminal state.
+ */
+export type StreamingState = null | "thinking" | "streaming" | "working" | "analyzing";
 
 /** Typed tool result shape forwarded through the bridge. */
 export interface ToolResultForUI {
@@ -306,7 +316,6 @@ export function useChat(initialConversationId?: string, currentUserId?: string):
             }
             case "tool.done": {
               const evt = data as ToolDoneEvent;
-              setStreamingState("streaming");
               const updater = updateTool(evt);
               // Update flat ref
               toolCallsRef.current = toolCallsRef.current.map(updater);
@@ -316,6 +325,11 @@ export function useChat(initialConversationId?: string, currentUserId?: string):
                   block.toolCalls = block.toolCalls.map(updater);
                 }
               }
+              // Hold `working` while other parallel tools are still running;
+              // only flip to `analyzing` when the last tool in the batch lands,
+              // so the indicator reflects "model is inferring on results."
+              const anyRunning = toolCallsRef.current.some((tc) => tc.status === "running");
+              setStreamingState(anyRunning ? "working" : "analyzing");
               flushToMessage();
 
               // Auto-download: when agent calls export_pdf, trigger browser download
@@ -546,7 +560,6 @@ export function useChat(initialConversationId?: string, currentUserId?: string):
         }
         case "tool.done": {
           const evt = data as ToolDoneEvent;
-          setStreamingState("streaming");
           const updater = updateTool(evt);
           toolCallsRef.current = toolCallsRef.current.map(updater);
           for (const block of blocksRef.current) {
@@ -554,6 +567,8 @@ export function useChat(initialConversationId?: string, currentUserId?: string):
               block.toolCalls = block.toolCalls.map(updater);
             }
           }
+          const anyRunning = toolCallsRef.current.some((tc) => tc.status === "running");
+          setStreamingState(anyRunning ? "working" : "analyzing");
           flushToMessage();
           break;
         }
