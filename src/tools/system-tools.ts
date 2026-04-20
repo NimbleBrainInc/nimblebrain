@@ -9,7 +9,7 @@ import {
 } from "../bundles/workspace-ops.ts";
 import { isToolEnabled, type ResolvedFeatures } from "../config/features.ts";
 import type { ConfirmationGate } from "../config/privilege.ts";
-import { resolveUserConfig, type UserConfigFieldDef } from "../config/workspace-credentials.ts";
+import { resolveUserConfig } from "../config/workspace-credentials.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import type { EventSink, ToolResult } from "../engine/types.ts";
 import type { Runtime } from "../runtime/runtime.ts";
@@ -952,8 +952,8 @@ async function configureBundle(
 ): Promise<ToolResult> {
   try {
     const mpak = getMpak(mpakHome!);
-    const manifest = mpak.bundleCache.getBundleManifest(name) as Record<string, unknown> | null;
-    const userConfig = manifest?.user_config as Record<string, UserConfigFieldDef> | undefined;
+    const manifest = mpak.bundleCache.getBundleManifest(name) as BundleManifest | null;
+    const userConfig = manifest?.user_config;
 
     if (!confirmGate?.supportsInteraction) {
       // Non-interactive (HTTP server mode): show exact config commands.

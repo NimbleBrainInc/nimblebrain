@@ -135,9 +135,7 @@ export async function startBundleSource(
     // and resolve credentials BEFORE prepareServer validates them. The mpak
     // cache is populated during install (see BundleLifecycleManager.installNamed
     // or mpak install), so we expect the manifest to be present here.
-    const cachedManifest = mpak.bundleCache.getBundleManifest(ref.name) as
-      | (BundleManifest & { user_config?: Record<string, UserConfigFieldDef> })
-      | null;
+    const cachedManifest = mpak.bundleCache.getBundleManifest(ref.name) as BundleManifest | null;
     if (cachedManifest) {
       meta = extractBundleMeta(cachedManifest as unknown as Record<string, unknown>);
       manifest = cachedManifest;
@@ -246,11 +244,9 @@ function buildLocalSource(
   // calls the SDK's `gatherUserConfig` (env-alias tier) + `substituteEnvVars`.
   // Local-path bundles don't go through prepareServer, so without this the
   // literal string `${user_config.foo}` would end up as a subprocess env value.
-  const userConfigSchema = (manifest as { user_config?: Record<string, UserConfigFieldDef> })
-    .user_config;
   const resolvedMcpEnv = substituteUserConfigFromEnv(
     mcpConfig.env ?? {},
-    userConfigSchema,
+    manifest.user_config,
     process.env as Record<string, string>,
   );
 
