@@ -18,7 +18,7 @@ afterEach(async () => {
 
 describe("FileStore", () => {
   test("saveFile creates a file on disk with correct naming", async () => {
-    const store = createFileStore(workDir);
+    const store = createFileStore(join(workDir, "files"));
     const data = Buffer.from("hello world");
     const result = await store.saveFile(data, "test.txt", "text/plain");
 
@@ -29,7 +29,7 @@ describe("FileStore", () => {
   });
 
   test("readFile returns the same bytes written", async () => {
-    const store = createFileStore(workDir);
+    const store = createFileStore(join(workDir, "files"));
     const original = Buffer.from("binary content \x00\xff");
     const saved = await store.saveFile(original, "data.bin", "application/octet-stream");
 
@@ -55,26 +55,26 @@ describe("FileStore", () => {
   });
 
   test("resolveFilePath returns correct path for valid ID", async () => {
-    const store = createFileStore(workDir);
+    const store = createFileStore(join(workDir, "files"));
     const saved = await store.saveFile(Buffer.from("x"), "doc.pdf", "application/pdf");
     const resolved = await store.resolveFilePath(saved.id);
     expect(resolved).toBe(saved.path);
   });
 
   test("resolveFilePath throws for IDs that would escape the files directory", async () => {
-    const store = createFileStore(workDir);
+    const store = createFileStore(join(workDir, "files"));
     await store.ensureFilesDir();
     expect(store.resolveFilePath("../../etc/passwd")).rejects.toThrow();
   });
 
   test("resolveFilePath throws for non-existent IDs", async () => {
-    const store = createFileStore(workDir);
+    const store = createFileStore(join(workDir, "files"));
     await store.ensureFilesDir();
     expect(store.resolveFilePath("fl_nonexistent")).rejects.toThrow("File not found");
   });
 
   test("appendRegistry creates registry.jsonl if missing", async () => {
-    const store = createFileStore(workDir);
+    const store = createFileStore(join(workDir, "files"));
     const entry: FileEntry = {
       id: "fl_test_001",
       filename: "hello.txt",
@@ -98,7 +98,7 @@ describe("FileStore", () => {
   });
 
   test("readRegistry returns entries, excludes tombstoned entries", async () => {
-    const store = createFileStore(workDir);
+    const store = createFileStore(join(workDir, "files"));
 
     const entry1: FileEntry = {
       id: "fl_a",
@@ -133,9 +133,34 @@ describe("FileStore", () => {
   });
 
   test("readRegistry returns empty array when no registry exists", async () => {
-    const store = createFileStore(workDir);
+    const store = createFileStore(join(workDir, "files"));
     const entries = await store.readRegistry();
     expect(entries).toEqual([]);
+  });
+
+  test("appendTombstone refuses to create a stub for an unknown id", async () => {
+    const store = createFileStore(join(workDir, "files"));
+    await store.ensureFilesDir();
+    expect(store.appendTombstone("fl_nonexistent")).rejects.toThrow("File not found");
+  });
+
+  test("deleteFile is a no-op for an unknown id — no zombie registry entry", async () => {
+    const store = createFileStore(join(workDir, "files"));
+    await store.ensureFilesDir();
+    await store.deleteFile("fl_nonexistent");
+    const entries = await store.readRegistry();
+    expect(entries).toEqual([]);
+  });
+
+  test("readFile throws File not found when the registry has no entry", async () => {
+    const store = createFileStore(join(workDir, "files"));
+    const orphanId = `fl_${"a".repeat(24)}`;
+    await store.ensureFilesDir();
+    // Drop a stray disk file matching the id prefix, but don't register it.
+    // Pre-fix, readFile silently returned it with an octet-stream mimeType.
+    const filePath = join(workDir, "files", `${orphanId}_stray.bin`);
+    await (await import("node:fs/promises")).writeFile(filePath, "stray");
+    expect(store.readFile(orphanId)).rejects.toThrow(`File not found: ${orphanId}`);
   });
 });
 

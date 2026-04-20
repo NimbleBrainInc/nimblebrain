@@ -38,7 +38,7 @@ function makeFile(
 
 describe("Integration: upload text file → ingest → verify extracted content", () => {
   test("text file is ingested, extracted, and registered", async () => {
-    const store = createFileStore(workDir);
+    const store = createFileStore(join(workDir, "files"));
     const textContent = "The quick brown fox jumps over the lazy dog.";
     const files = [makeFile(textContent, "notes.txt", "text/plain")];
 
@@ -71,7 +71,7 @@ describe("Integration: upload text file → ingest → verify extracted content"
 
 describe("Integration: upload PNG image → ingest → verify image content part", () => {
   test("image file produces image content part with correct mimeType", async () => {
-    const store = createFileStore(workDir);
+    const store = createFileStore(join(workDir, "files"));
     // Minimal PNG header bytes
     const pngHeader = Buffer.from([
       0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
@@ -102,7 +102,7 @@ describe("Integration: upload PNG image → ingest → verify image content part
 
 describe("Integration: backward compat — no files → empty result", () => {
   test("empty files array returns empty contentParts, fileRefs, and no errors", async () => {
-    const store = createFileStore(workDir);
+    const store = createFileStore(join(workDir, "files"));
 
     const result = await ingestFiles([], "conv_int_3", store, DEFAULT_CONFIG);
 
@@ -114,7 +114,7 @@ describe("Integration: backward compat — no files → empty result", () => {
 
 describe("Integration: FileStore save → registry → read round-trip", () => {
   test("file saved via FileStore can be read back with matching bytes", async () => {
-    const store = createFileStore(workDir);
+    const store = createFileStore(join(workDir, "files"));
     const original = Buffer.from("binary payload \x00\x01\x02\xff");
 
     // Save the file
@@ -180,7 +180,7 @@ describe("Integration: files bundle write → read round-trip (filesystem)", () 
     await appendFile(registryPath, JSON.stringify(entry) + "\n");
 
     // Read back via FileStore to verify interoperability
-    const store = createFileStore(workDir);
+    const store = createFileStore(join(workDir, "files"));
     const registry = await store.readRegistry();
     expect(registry).toHaveLength(1);
     expect(registry[0].id).toBe(fileId);
@@ -193,7 +193,7 @@ describe("Integration: files bundle write → read round-trip (filesystem)", () 
 
 describe("Integration: files bundle search by filename", () => {
   test("filtering registry by filename substring finds correct matches", async () => {
-    const store = createFileStore(workDir);
+    const store = createFileStore(join(workDir, "files"));
 
     const entries: FileEntry[] = [
       {
@@ -248,7 +248,7 @@ describe("Integration: files bundle search by filename", () => {
 
 describe("Integration: files bundle delete (tombstone)", () => {
   test("tombstoned file is excluded from registry read", async () => {
-    const store = createFileStore(workDir);
+    const store = createFileStore(join(workDir, "files"));
 
     const entry: FileEntry = {
       id: "fl_to_delete",
@@ -279,7 +279,7 @@ describe("Integration: files bundle delete (tombstone)", () => {
 
 describe("Integration: validation — reject oversized file", () => {
   test("file exceeding maxFileSize is rejected with error", async () => {
-    const store = createFileStore(workDir);
+    const store = createFileStore(join(workDir, "files"));
     const config: FileConfig = { ...DEFAULT_CONFIG, maxFileSize: 16 };
 
     const files = [
@@ -297,7 +297,7 @@ describe("Integration: validation — reject oversized file", () => {
 
 describe("Integration: validation — reject disallowed MIME type", () => {
   test("application/x-executable is rejected with error", async () => {
-    const store = createFileStore(workDir);
+    const store = createFileStore(join(workDir, "files"));
     const files = [
       makeFile("#!/bin/bash\nrm -rf /", "malicious.exe", "application/x-executable"),
     ];

@@ -23,6 +23,6 @@ export function toolRoutes(ctx: AppContext) {
     .get("/v1/shell", (c) => handleShell(ctx.runtime, c.var.workspaceId))
     .get("/v1/files/:fileId", (c) => {
       const fileId = decodeURIComponent(c.req.param("fileId"));
-      return handleFileServe(fileId, ctx.runtime, ctx.features);
+      return handleFileServe(fileId, ctx.runtime, ctx.features, c.var.workspaceId);
     });
 }

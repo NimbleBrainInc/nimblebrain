@@ -37,7 +37,7 @@ function makeFile(
 
 describe("ingestFiles", () => {
   test("text file produces extracted text content part", async () => {
-    const store = createFileStore(workDir);
+    const store = createFileStore(join(workDir, "files"));
     const files = [makeFile("hello world", "test.txt", "text/plain")];
     const result = await ingestFiles(files, "conv_1", store, DEFAULT_CONFIG);
 
@@ -53,7 +53,7 @@ describe("ingestFiles", () => {
   });
 
   test("image file produces image content part + metadata notice", async () => {
-    const store = createFileStore(workDir);
+    const store = createFileStore(join(workDir, "files"));
     const pngHeader = Buffer.from([
       0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
     ]);
@@ -74,7 +74,7 @@ describe("ingestFiles", () => {
   });
 
   test("binary file (zip) produces metadata-only notice", async () => {
-    const store = createFileStore(workDir);
+    const store = createFileStore(join(workDir, "files"));
     const files = [makeFile("fake zip data", "archive.zip", "application/zip")];
     const result = await ingestFiles(files, "conv_1", store, DEFAULT_CONFIG);
 
@@ -92,7 +92,7 @@ describe("ingestFiles", () => {
   });
 
   test("rejects when file count exceeds limit", async () => {
-    const store = createFileStore(workDir);
+    const store = createFileStore(join(workDir, "files"));
     const config: FileConfig = { ...DEFAULT_CONFIG, maxFilesPerMessage: 2 };
     const files = [
       makeFile("a", "a.txt", "text/plain"),
@@ -107,7 +107,7 @@ describe("ingestFiles", () => {
   });
 
   test("rejects when individual file exceeds size limit", async () => {
-    const store = createFileStore(workDir);
+    const store = createFileStore(join(workDir, "files"));
     const config: FileConfig = { ...DEFAULT_CONFIG, maxFileSize: 10 };
     const files = [makeFile("this is longer than 10 bytes", "big.txt", "text/plain")];
     const result = await ingestFiles(files, "conv_1", store, config);
@@ -118,7 +118,7 @@ describe("ingestFiles", () => {
   });
 
   test("rejects when total size exceeds limit", async () => {
-    const store = createFileStore(workDir);
+    const store = createFileStore(join(workDir, "files"));
     const config: FileConfig = { ...DEFAULT_CONFIG, maxTotalSize: 10 };
     const files = [makeFile("this is longer than 10 bytes", "big.txt", "text/plain")];
     const result = await ingestFiles(files, "conv_1", store, config);
@@ -129,7 +129,7 @@ describe("ingestFiles", () => {
   });
 
   test("rejects disallowed MIME type", async () => {
-    const store = createFileStore(workDir);
+    const store = createFileStore(join(workDir, "files"));
     const files = [makeFile("#!/bin/bash", "evil.sh", "application/x-executable")];
     const result = await ingestFiles(files, "conv_1", store, DEFAULT_CONFIG);
 
@@ -139,7 +139,7 @@ describe("ingestFiles", () => {
   });
 
   test("multiple files produce correctly ordered content parts", async () => {
-    const store = createFileStore(workDir);
+    const store = createFileStore(join(workDir, "files"));
     const files = [
       makeFile("csv data", "data.csv", "text/csv"),
       makeFile("zip content", "archive.zip", "application/zip"),
@@ -152,7 +152,7 @@ describe("ingestFiles", () => {
   });
 
   test("each ingested file gets a registry entry with source chat", async () => {
-    const store = createFileStore(workDir);
+    const store = createFileStore(join(workDir, "files"));
     const files = [makeFile("hello", "test.txt", "text/plain")];
     await ingestFiles(files, "conv_42", store, DEFAULT_CONFIG);
 
@@ -164,7 +164,7 @@ describe("ingestFiles", () => {
   });
 
   test("extraction failure for one file does not block others", async () => {
-    const store = createFileStore(workDir);
+    const store = createFileStore(join(workDir, "files"));
     // A PDF with invalid content will fail extraction but should still be stored
     const files = [
       makeFile("not a real pdf", "broken.pdf", "application/pdf"),
@@ -181,7 +181,7 @@ describe("ingestFiles", () => {
   });
 
   test("JSON file is extractable", async () => {
-    const store = createFileStore(workDir);
+    const store = createFileStore(join(workDir, "files"));
     const files = [
       makeFile('{"key": "value"}', "config.json", "application/json"),
     ];
