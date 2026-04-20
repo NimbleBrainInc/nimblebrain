@@ -1,3 +1,5 @@
+import type { UserConfigFieldDef } from "../config/workspace-credentials.ts";
+
 /**
  * Declaration of a UI placement in the shell layout.
  *
@@ -112,6 +114,10 @@ export interface BundleManifest {
     entry_point?: string;
     mcp_config: McpConfig;
   };
+  /** Per-bundle credential schema. Fields are resolved at startup against the
+   *  workspace credential store and `mcp_config.env` env aliases — see
+   *  `resolveUserConfig` and `substituteUserConfigFromEnv` in `startup.ts`. */
+  user_config?: Record<string, UserConfigFieldDef>;
   _meta?: Record<string, unknown>;
 }
 

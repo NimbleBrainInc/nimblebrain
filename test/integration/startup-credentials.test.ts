@@ -298,3 +298,301 @@ describe("startBundleSource — credential resolution", () => {
     10_000,
   );
 });
+
+// ---------------------------------------------------------------------------
+// Local-path bundle branch
+// ---------------------------------------------------------------------------
+//
+// The local-path branch of `startBundleSource` (`buildLocalSource`) does NOT
+// go through `mpak.prepareServer`, so it historically passed `mcp_config.env`
+// through with `${user_config.*}` placeholders unreplaced — the literal string
+// ended up as a subprocess env value. `substituteUserConfigFromEnv` fixes that
+// by replicating the SDK's env-alias tier for this branch. This suite pins
+// the fix.
+
+const LOCAL_BUNDLE_NAME = "@nbtest/local-creds-bundle";
+const LOCAL_BUNDLE_SLUG = "local-creds-bundle";
+
+function seedLocalBundle(root: string): string {
+  const bundleDir = join(root, "bundle");
+  mkdirSync(bundleDir, { recursive: true });
+
+  const nodeModulesPath = join(import.meta.dir, "../..", "node_modules");
+  const serverCode = `
+const { Server } = require("${nodeModulesPath}/@modelcontextprotocol/sdk/dist/cjs/server/index.js");
+const { StdioServerTransport } = require("${nodeModulesPath}/@modelcontextprotocol/sdk/dist/cjs/server/stdio.js");
+const { ListToolsRequestSchema, CallToolRequestSchema } = require("${nodeModulesPath}/@modelcontextprotocol/sdk/dist/cjs/types.js");
+
+async function main() {
+  const server = new Server(
+    { name: "local-creds-bundle", version: "0.1.0" },
+    { capabilities: { tools: {} } },
+  );
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    tools: [
+      {
+        name: "get_key",
+        description: "Return the value of NBTEST_API_KEY from the process env",
+        inputSchema: { type: "object", properties: {} },
+      },
+    ],
+  }));
+  server.setRequestHandler(CallToolRequestSchema, async () => ({
+    content: [
+      { type: "text", text: String(process.env.NBTEST_API_KEY ?? "<unset>") },
+    ],
+  }));
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+}
+main();
+`;
+  writeFileSync(join(bundleDir, "server.cjs"), serverCode);
+
+  const manifest = {
+    manifest_version: "0.3",
+    name: LOCAL_BUNDLE_NAME,
+    version: "0.1.0",
+    description: "Local-path bundle for substitution parity tests",
+    author: { name: "nbtest" },
+    user_config: {
+      api_key: {
+        type: "string",
+        title: "API key",
+        description: "Test credential used to verify user_config substitution on the local-path branch",
+        sensitive: true,
+        required: true,
+      },
+    },
+    server: {
+      type: "node",
+      entry_point: "server.cjs",
+      mcp_config: {
+        command: "node",
+        args: ["${__dirname}/server.cjs"],
+        env: {
+          NBTEST_API_KEY: "${user_config.api_key}",
+        },
+      },
+    },
+  };
+  writeFileSync(join(bundleDir, "manifest.json"), JSON.stringify(manifest, null, 2));
+
+  return bundleDir;
+}
+
+describe("startBundleSource — local-path credential resolution", () => {
+  let bundleDir: string;
+  let prevEnvVal: string | undefined;
+
+  beforeEach(() => {
+    const dir = join(rootDir, `local-case-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    bundleDir = seedLocalBundle(dir);
+    prevEnvVal = process.env[BUNDLE_ENV_VAR];
+    delete process.env[BUNDLE_ENV_VAR];
+  });
+
+  function restoreEnv(): void {
+    if (prevEnvVal === undefined) delete process.env[BUNDLE_ENV_VAR];
+    else process.env[BUNDLE_ENV_VAR] = prevEnvVal;
+  }
+
+  test(
+    "host env var declared in mcp_config.env substitutes into the spawn env",
+    async () => {
+      try {
+        // The manifest declares `"NBTEST_API_KEY": "${user_config.api_key}"`.
+        // With this host export present, the substitution should yield the real
+        // value in the bundle subprocess — not the literal placeholder string.
+        process.env[BUNDLE_ENV_VAR] = "sk-local-789";
+
+        const registry = new ToolRegistry();
+        const result = await startBundleSource(
+          { path: bundleDir },
+          registry,
+          new NoopEventSink(),
+        );
+        expect(result.sourceName).toBe(LOCAL_BUNDLE_SLUG);
+
+        const callResult = await registry.execute({
+          id: "local-creds-env",
+          name: `${LOCAL_BUNDLE_SLUG}__get_key`,
+          input: {},
+        });
+        const firstText = callResult.content.find((c) => c.type === "text");
+        const text = firstText && "text" in firstText ? firstText.text : "";
+
+        expect(text).toBe("sk-local-789");
+        // The regression we're guarding against — never let the literal
+        // placeholder reach the subprocess again.
+        expect(text).not.toContain("${user_config");
+
+        await registry.removeSource(result.sourceName);
+      } finally {
+        restoreEnv();
+      }
+    },
+    20_000,
+  );
+
+  test(
+    "missing host env var leaves placeholder collapsed to empty string (not literal)",
+    async () => {
+      try {
+        // No NBTEST_API_KEY in process.env. Placeholder should resolve to "",
+        // not `${user_config.api_key}`. The bundle will fail its own downstream
+        // checks, but the failure mode must be "empty credential", not
+        // "credential is literally the placeholder template".
+        const registry = new ToolRegistry();
+        const result = await startBundleSource(
+          { path: bundleDir },
+          registry,
+          new NoopEventSink(),
+        );
+
+        const callResult = await registry.execute({
+          id: "local-creds-empty",
+          name: `${LOCAL_BUNDLE_SLUG}__get_key`,
+          input: {},
+        });
+        const firstText = callResult.content.find((c) => c.type === "text");
+        const text = firstText && "text" in firstText ? firstText.text : "";
+
+        expect(text).toBe("");
+        expect(text).not.toContain("${user_config");
+
+        await registry.removeSource(result.sourceName);
+      } finally {
+        restoreEnv();
+      }
+    },
+    20_000,
+  );
+
+  test(
+    "explicit empty-string host env is treated the same as missing",
+    async () => {
+      try {
+        // Some deploys set env vars to "" to explicitly clear a value. The
+        // resolver must not leak empty strings through as "real values" —
+        // otherwise a later refactor to `v !== undefined` only would silently
+        // ship "" to the subprocess where prior to this test we'd ship "" only
+        // when the var was genuinely unset. Pin both cases to the same result.
+        process.env[BUNDLE_ENV_VAR] = "";
+
+        const registry = new ToolRegistry();
+        const result = await startBundleSource(
+          { path: bundleDir },
+          registry,
+          new NoopEventSink(),
+        );
+
+        const callResult = await registry.execute({
+          id: "local-creds-empty-string",
+          name: `${LOCAL_BUNDLE_SLUG}__get_key`,
+          input: {},
+        });
+        const firstText = callResult.content.find((c) => c.type === "text");
+        const text = firstText && "text" in firstText ? firstText.text : "";
+
+        expect(text).toBe("");
+        expect(text).not.toContain("${user_config");
+
+        await registry.removeSource(result.sourceName);
+      } finally {
+        restoreEnv();
+      }
+    },
+    20_000,
+  );
+
+  test(
+    "placeholder referencing an undeclared user_config field collapses to empty string",
+    async () => {
+      try {
+        // Author-error case: mcp_config.env references `${user_config.*}` but
+        // the user_config schema doesn't declare the field. The substitution
+        // must still collapse the placeholder to "" so a literal
+        // `${user_config.*}` never reaches the subprocess — the regex runs
+        // unconditionally even when no declared field matches.
+        const misconfiguredDir = join(
+          rootDir,
+          `local-undeclared-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+          "bundle",
+        );
+        mkdirSync(misconfiguredDir, { recursive: true });
+
+        // Reuse the same server code, but give this bundle a manifest that
+        // references `${user_config.mystery}` without declaring `mystery`.
+        const nodeModulesPath = join(import.meta.dir, "../..", "node_modules");
+        writeFileSync(
+          join(misconfiguredDir, "server.cjs"),
+          `
+const { Server } = require("${nodeModulesPath}/@modelcontextprotocol/sdk/dist/cjs/server/index.js");
+const { StdioServerTransport } = require("${nodeModulesPath}/@modelcontextprotocol/sdk/dist/cjs/server/stdio.js");
+const { ListToolsRequestSchema, CallToolRequestSchema } = require("${nodeModulesPath}/@modelcontextprotocol/sdk/dist/cjs/types.js");
+async function main() {
+  const server = new Server(
+    { name: "undeclared-bundle", version: "0.1.0" },
+    { capabilities: { tools: {} } },
+  );
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    tools: [{ name: "get_key", description: "echo NBTEST_API_KEY", inputSchema: { type: "object", properties: {} } }],
+  }));
+  server.setRequestHandler(CallToolRequestSchema, async () => ({
+    content: [{ type: "text", text: String(process.env.NBTEST_API_KEY ?? "<unset>") }],
+  }));
+  await server.connect(new StdioServerTransport());
+}
+main();
+`,
+        );
+        writeFileSync(
+          join(misconfiguredDir, "manifest.json"),
+          JSON.stringify({
+            manifest_version: "0.3",
+            name: "@nbtest/undeclared-bundle",
+            version: "0.1.0",
+            description: "Manifest references user_config.mystery without declaring it",
+            author: { name: "nbtest" },
+            // No user_config block at all — placeholder references a phantom field.
+            server: {
+              type: "node",
+              entry_point: "server.cjs",
+              mcp_config: {
+                command: "node",
+                args: ["${__dirname}/server.cjs"],
+                env: {
+                  NBTEST_API_KEY: "${user_config.mystery}",
+                },
+              },
+            },
+          }),
+        );
+
+        const registry = new ToolRegistry();
+        const result = await startBundleSource(
+          { path: misconfiguredDir },
+          registry,
+          new NoopEventSink(),
+        );
+
+        const callResult = await registry.execute({
+          id: "local-creds-undeclared",
+          name: "undeclared-bundle__get_key",
+          input: {},
+        });
+        const firstText = callResult.content.find((c) => c.type === "text");
+        const text = firstText && "text" in firstText ? firstText.text : "";
+
+        expect(text).toBe("");
+        expect(text).not.toContain("${user_config");
+
+        await registry.removeSource(result.sourceName);
+      } finally {
+        restoreEnv();
+      }
+    },
+    20_000,
+  );
+});

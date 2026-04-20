@@ -135,9 +135,7 @@ export async function startBundleSource(
     // and resolve credentials BEFORE prepareServer validates them. The mpak
     // cache is populated during install (see BundleLifecycleManager.installNamed
     // or mpak install), so we expect the manifest to be present here.
-    const cachedManifest = mpak.bundleCache.getBundleManifest(ref.name) as
-      | (BundleManifest & { user_config?: Record<string, UserConfigFieldDef> })
-      | null;
+    const cachedManifest = mpak.bundleCache.getBundleManifest(ref.name) as BundleManifest | null;
     if (cachedManifest) {
       meta = extractBundleMeta(cachedManifest as unknown as Record<string, unknown>);
       manifest = cachedManifest;
@@ -241,8 +239,19 @@ function buildLocalSource(
     arg.replace(/\$\{__dirname\}/g, resolve(bundleDir)),
   );
 
+  // Resolve user_config placeholders in mcp_config.env against process.env.
+  // The named-bundle branch gets this for free from `mpak.prepareServer` which
+  // calls the SDK's `gatherUserConfig` (env-alias tier) + `substituteEnvVars`.
+  // Local-path bundles don't go through prepareServer, so without this the
+  // literal string `${user_config.foo}` would end up as a subprocess env value.
+  const resolvedMcpEnv = substituteUserConfigFromEnv(
+    mcpConfig.env ?? {},
+    manifest.user_config,
+    process.env as Record<string, string>,
+  );
+
   const spawnEnv: Record<string, string> = {
-    ...filterEnvForBundle(process.env as Record<string, string>, mcpConfig.env, ref.allowedEnv),
+    ...filterEnvForBundle(process.env as Record<string, string>, resolvedMcpEnv, ref.allowedEnv),
     ...(ref.env ?? {}),
   };
 
@@ -297,4 +306,63 @@ function buildLocalSource(
     meta: extractBundleMeta(manifest as unknown as Record<string, unknown>),
     manifest,
   };
+}
+
+/**
+ * Substitute `${user_config.<field>}` placeholders in a bundle's
+ * `mcp_config.env` using values reverse-looked-up from `processEnv`.
+ *
+ * Mirrors the env-alias tier of the mpak SDK's private `gatherUserConfig` +
+ * `substituteEnvVars` (see mpak-sdk@0.5.0). The named-bundle branch of
+ * `startBundleSource` gets this by calling `mpak.prepareServer`; the local-path
+ * branch (`buildLocalSource`) bypasses the SDK, so we replicate the tier here.
+ *
+ * The reverse-lookup is intentionally narrow: for each declared `user_config`
+ * field, we scan `mcp_config.env` for entries whose value references that
+ * field via `${user_config.<field>}`, then try the first such env-var name in
+ * `processEnv`. A bundle declaring `"ANTHROPIC_API_KEY": "${user_config.anthropic_api_key}"`
+ * is satisfied by a host `ANTHROPIC_API_KEY` export.
+ *
+ * Unresolved placeholders collapse to an empty string — matching the SDK's
+ * substitution behavior when a field has no value. Required-field validation
+ * is NOT performed here; the bundle subprocess surfaces the concrete error
+ * (e.g. Anthropic's 401) which is more actionable than a generic host error.
+ */
+function substituteUserConfigFromEnv(
+  mcpConfigEnv: Record<string, string>,
+  userConfigSchema: Record<string, UserConfigFieldDef> | undefined,
+  processEnv: Record<string, string>,
+): Record<string, string> {
+  // Values lookup is gated on having a schema — there's nothing to reverse-lookup
+  // without declared fields. An empty map still passes through the regex collapse
+  // below so an undeclared `${user_config.foo}` placeholder gets substituted to ""
+  // rather than leaking through as a literal string (the bug class this function
+  // exists to prevent).
+  const values: Record<string, string> = {};
+  if (userConfigSchema) {
+    for (const fieldKey of Object.keys(userConfigSchema)) {
+      const placeholder = `\${user_config.${fieldKey}}`;
+      for (const [envVarName, envVarValue] of Object.entries(mcpConfigEnv)) {
+        if (envVarValue.includes(placeholder)) {
+          const v = processEnv[envVarName];
+          if (v !== undefined && v !== "") {
+            values[fieldKey] = v;
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  // Regex collapse runs unconditionally so no path produces a literal
+  // `${user_config.*}` in the spawn env — undeclared or unresolved fields
+  // become empty strings.
+  const substituted: Record<string, string> = {};
+  for (const [k, v] of Object.entries(mcpConfigEnv)) {
+    substituted[k] = v.replace(
+      /\$\{user_config\.(\w+)\}/g,
+      (_match, fieldKey: string) => values[fieldKey] ?? "",
+    );
+  }
+  return substituted;
 }

@@ -7,12 +7,22 @@
 - **Rename `files__write` → `files__create`.** The tool always generates a new id per call and never updates, so `create` matches both its semantics and how the model naturally calls it. External clients hand-coded against `files__write` must switch. In-process UI clients updated.
 - **`nb__search.query` is now optional.** The schema previously declared `required: ["query"]` but the handler already defaulted to an empty string. Additive/relaxing — existing callers unaffected; new callers may omit `query` to list everything in scope.
 - **Removed engine-level MCP tasks layer from public exports.** The following names are no longer exported from `src/index.ts`: `ActiveTaskTracker`, `pollTask`, `getImmediateResponse`, `isCreateTaskResult`, `isTerminalStatus`, and types `McpTask`, `McpCreateTaskResult`, `PollTaskOptions`, `TaskClientPort`, `TaskClientResolver`. The task lifecycle is now owned end-to-end by `McpSource.callToolAsTask` via the MCP SDK's experimental task streaming API — external consumers that imported these names should migrate to invoking tasks via `ToolRouter.execute(call, signal)` and observing the `tool.progress` event stream.
+- **`nb config set|get|clear` require `--workspace`/`-w <wsId>`.** Credentials are workspace-scoped, stored at `{workDir}/workspaces/{wsId}/credentials/{bundle-slug}.json`. Values previously written to `~/.mpak/config.json` are no longer read — re-set them with `-w <wsId>`.
+
+### Added
+
+- **Workspace-scoped credentials with host env-alias resolution.** Per-bundle credentials live in per-workspace files (mode `0o600`). Resolution order per field: workspace store → bundle's `mcp_config.env` alias → manifest default. A bundle that maps `"ANTHROPIC_API_KEY": "${user_config.anthropic_api_key}"` is now satisfied by a host `export ANTHROPIC_API_KEY=...`, no renaming. Missing-credential errors name the exact `nb config set` and `export` lines the bundle accepts.
 
 ### Fixed
 
 - **`features`, `maxHistoryMessages`, `maxToolResultSize`, and `files` are now loaded from `nimblebrain.json`.** These fields were accepted by the JSON schema and declared on `RuntimeConfig`, but `cli/config.ts` silently dropped them — so setting `features.mcpServer: false` or `maxHistoryMessages: 100` in a config file had no effect unless passed programmatically to `Runtime.start()`.
 - Config schema now lists `userManagement` and `workspaceManagement` under `features` (previously only in code; setting them produced a spurious "unknown key" warning).
 - `InlineSource.execute()` now validates input against the tool's declared `inputSchema` before dispatching. Closes the bug class where malformed tool calls via `/mcp` leaked Node-internal errors (`fs.readFile(undefined)`, `Buffer.from(undefined)`) as tool results.
+- **Local-path bundles now substitute `${user_config.*}` placeholders in `mcp_config.env`.** Previously passed through as literal strings to the subprocess, visible via `ps ewww <pid>`. Local bundles now resolve each field against the reverse-lookup env alias before spawn. Workspace-credential-store resolution for local bundles remains a follow-up.
+
+### Changed
+
+- Bump `@nimblebrain/mpak-sdk` from `0.2.1` → `0.5.0`. Brings `prepareServer({ userConfig })`, `mcp_config.env` reverse-lookup resolver, and `envAliases` on `MpakConfigError.missingFields`.
 
 ### Removed
 
