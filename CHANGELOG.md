@@ -23,6 +23,7 @@
 ### Changed
 
 - Bump `@nimblebrain/mpak-sdk` from `0.2.1` → `0.5.0`. Brings `prepareServer({ userConfig })`, `mcp_config.env` reverse-lookup resolver, and `envAliases` on `MpakConfigError.missingFields`.
+- **Sort equal-priority sidebar placements alphabetically by label.** Previously, placements with the same `priority` rendered in registration order, so three apps at the default priority (100) appeared in whatever order their bundles happened to start. The shell now tie-breaks by display label (case-insensitive, falling back to `route`), giving a deterministic, user-predictable order.
 
 ### Removed
 

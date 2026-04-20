@@ -47,7 +47,12 @@ export function useShell(_token: string, workspaceId?: string, initialShell?: Sh
       if (!shell) return [];
       return shell.placements
         .filter((p) => p.slot === slot || p.slot.startsWith(`${slot}.`))
-        .sort((a, b) => a.priority - b.priority);
+        .sort((a, b) => {
+          if (a.priority !== b.priority) return a.priority - b.priority;
+          const aLabel = a.label ?? a.route ?? "";
+          const bLabel = b.label ?? b.route ?? "";
+          return aLabel.localeCompare(bLabel, undefined, { sensitivity: "base" });
+        });
     },
     [shell],
   );
