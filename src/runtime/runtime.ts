@@ -182,7 +182,18 @@ export class Runtime {
     | null = null;
   private skillResourceCache = new Map<string, { content: string; fetchedAt: number }>();
   private static readonly SKILL_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
-  /** Conversation IDs with an in-flight chat() call. Prevents concurrent runs on the same conversation. */
+  /**
+   * Conversation IDs with an in-flight chat() call. Prevents concurrent runs on
+   * the same conversation.
+   *
+   * Scope: single-process / single-pod. Correct today because each tenant runs
+   * with `platform.replicas: 1` — all chat traffic for a conversation lands on
+   * the same Runtime instance. If a tenant is ever scaled to multiple replicas,
+   * this lock stops being authoritative (concurrent requests can land on
+   * different pods) and this invariant needs to move to a shared store. The
+   * conversation JSONL on the shared PVC has the same single-writer assumption,
+   * so the two would need to be addressed together.
+   */
   private readonly activeConversations = new Set<string>();
 
   private constructor(

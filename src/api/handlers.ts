@@ -76,21 +76,7 @@ export async function handleChatStream(
     return runInProgressResponse(parsed.conversationId);
   }
 
-  // Broadcast user.message to other participants (only for existing conversations)
   const convId = parsed.conversationId;
-  if (convId && conversationEventManager && identity) {
-    conversationEventManager.broadcastToConversation(
-      convId,
-      "user.message",
-      {
-        userId: identity.id,
-        displayName: identity.displayName,
-        content: parsed.message,
-        timestamp: new Date().toISOString(),
-      },
-      identity.id,
-    );
-  }
 
   const sink = new CallbackEventSink();
   let markClosed: () => void;
@@ -112,6 +98,29 @@ export async function handleChatStream(
         controller.close();
       };
 
+      // Defer the cross-participant user.message broadcast until the engine
+      // confirms the run actually started (first chat.start). If the call
+      // rejects with RunInProgressError, no broadcast fires and other
+      // participants never see a phantom message with no assistant reply.
+      let userMessageBroadcast = false;
+      const broadcastUserMessageOnce = () => {
+        if (userMessageBroadcast) return;
+        userMessageBroadcast = true;
+        if (convId && conversationEventManager && identity) {
+          conversationEventManager.broadcastToConversation(
+            convId,
+            "user.message",
+            {
+              userId: identity.id,
+              displayName: identity.displayName,
+              content: parsed.message,
+              timestamp: new Date().toISOString(),
+            },
+            identity.id,
+          );
+        }
+      };
+
       const unsubscribe = sink.subscribe((event: EngineEvent) => {
         if (
           event.type === "chat.start" ||
@@ -121,6 +130,9 @@ export async function handleChatStream(
           event.type === "llm.done" ||
           event.type === "data.changed"
         ) {
+          if (event.type === "chat.start") {
+            broadcastUserMessageOnce();
+          }
           send(event.type, event.data);
           // Broadcast to other participants watching this conversation
           if (convId && conversationEventManager && identity) {
