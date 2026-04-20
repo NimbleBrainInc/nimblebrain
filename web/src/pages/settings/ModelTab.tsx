@@ -141,7 +141,7 @@ export function ModelTab() {
   }
 
   return (
-    <div className="max-w-xl">
+    <div className="max-w-xl mx-auto">
       <Card>
         <CardHeader>
           <CardTitle>Model Configuration</CardTitle>

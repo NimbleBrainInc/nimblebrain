@@ -179,9 +179,10 @@ export function UsageTab() {
 
   const { tokens, cost } = report.totals;
   const totalTokens = tokens.input + tokens.output + tokens.cacheRead;
+  const hasActivity = report.totals.llmCalls > 0;
 
   return (
-    <div className="max-w-3xl space-y-6">
+    <div className="max-w-5xl mx-auto space-y-6">
       {/* Period selector */}
       <div className="max-w-xs">
         <select
@@ -272,7 +273,7 @@ export function UsageTab() {
       </div>
 
       {/* Daily cost chart */}
-      {report.breakdown.length > 0 && (
+      {hasActivity && (
         <Card>
           <CardHeader>
             <CardTitle>Daily Cost</CardTitle>
@@ -322,7 +323,7 @@ export function UsageTab() {
           <CardTitle>Daily Breakdown</CardTitle>
         </CardHeader>
         <CardContent>
-          {report.breakdown.length === 0 ? (
+          {!hasActivity ? (
             <p className="text-sm text-muted-foreground">No usage data for this period.</p>
           ) : (
             <Table>

@@ -178,7 +178,7 @@ export function CostChart({ data }: CostChartProps) {
         <div
           className="absolute bg-popover border border-border rounded-md shadow-md px-3 py-2 text-xs pointer-events-none z-10"
           style={{
-            left: `${paddingLeft + gap + hoveredIndex * (barWidth + gap) + barWidth / 2}px`,
+            left: `${((paddingLeft + gap + hoveredIndex * (barWidth + gap) + barWidth / 2) / width) * 100}%`,
             top: 0,
             transform: "translate(-50%, 0)",
             minWidth: 140,
