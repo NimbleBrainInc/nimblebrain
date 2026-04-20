@@ -22,5 +22,8 @@ export function formatSendError(err: unknown): string {
     }
     return err.message;
   }
+  if (err instanceof ApiClientError && err.code === "run_in_progress") {
+    return "The assistant is still working on your previous message. Wait for it to finish, then try again.";
+  }
   return err instanceof Error ? err.message : "An unexpected error occurred";
 }

@@ -56,6 +56,7 @@ import type { ToolRegistry } from "../tools/registry.ts";
 import { createSystemTools } from "../tools/system-tools.ts";
 import { isResourceReader, type ResourceData, type ResourceReader } from "../tools/types.ts";
 import { WorkspaceStore } from "../workspace/workspace-store.ts";
+import { RunInProgressError } from "./errors.ts";
 import { PlacementRegistry } from "./placement-registry.ts";
 import {
   getRequestContext,
@@ -181,6 +182,8 @@ export class Runtime {
     | null = null;
   private skillResourceCache = new Map<string, { content: string; fetchedAt: number }>();
   private static readonly SKILL_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+  /** Conversation IDs with an in-flight chat() call. Prevents concurrent runs on the same conversation. */
+  private readonly activeConversations = new Set<string>();
 
   private constructor(
     _engine: AgentEngine,
@@ -481,8 +484,26 @@ export class Runtime {
     return rt;
   }
 
+  /** True if a chat() is currently in flight on this conversation. */
+  isConversationActive(conversationId: string): boolean {
+    return this.activeConversations.has(conversationId);
+  }
+
   /** Process a chat message. Optional per-request EventSink for SSE streaming. */
   async chat(request: ChatRequest, requestSink?: EventSink): Promise<ChatResult> {
+    const lockedConvId = request.conversationId;
+    if (lockedConvId && this.activeConversations.has(lockedConvId)) {
+      throw new RunInProgressError(lockedConvId);
+    }
+    if (lockedConvId) this.activeConversations.add(lockedConvId);
+    try {
+      return await this._chatInner(request, requestSink);
+    } finally {
+      if (lockedConvId) this.activeConversations.delete(lockedConvId);
+    }
+  }
+
+  private async _chatInner(request: ChatRequest, requestSink?: EventSink): Promise<ChatResult> {
     if (!request.workspaceId) {
       throw new Error("workspaceId is required. Every chat request must be workspace-scoped.");
     }

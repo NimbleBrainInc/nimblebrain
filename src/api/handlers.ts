@@ -7,6 +7,7 @@ import type { EngineEvent, EventSink } from "../engine/types.ts";
 import { ingestFiles, type UploadedFile } from "../files/ingest.ts";
 import { createFileStore } from "../files/store.ts";
 import type { IdentityProvider, UserIdentity } from "../identity/provider.ts";
+import { RunInProgressError } from "../runtime/errors.ts";
 import { type RequestContext, runWithRequestContext } from "../runtime/request-context.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import type { ChatRequest } from "../runtime/types.ts";
@@ -32,11 +33,31 @@ export async function handleChat(
   const parsed = await parseChatBody(request, runtime, features, identity, workspaceId);
   if (parsed instanceof Response) return parsed;
 
-  const result = await runtime.chat(parsed);
-  return json({
-    ...result,
-    ...(parsed.workspaceId ? { workspaceId: parsed.workspaceId } : {}),
-  });
+  if (parsed.conversationId && runtime.isConversationActive(parsed.conversationId)) {
+    return runInProgressResponse(parsed.conversationId);
+  }
+
+  try {
+    const result = await runtime.chat(parsed);
+    return json({
+      ...result,
+      ...(parsed.workspaceId ? { workspaceId: parsed.workspaceId } : {}),
+    });
+  } catch (err) {
+    if (err instanceof RunInProgressError) {
+      return runInProgressResponse(err.conversationId);
+    }
+    throw err;
+  }
+}
+
+function runInProgressResponse(conversationId: string): Response {
+  return apiError(
+    409,
+    "run_in_progress",
+    "This conversation already has an active response. Wait for it to finish before sending another message.",
+    { conversationId },
+  );
 }
 
 /** Handle POST /v1/chat/stream — SSE streaming chat request. */
@@ -50,6 +71,10 @@ export async function handleChatStream(
 ): Promise<Response> {
   const parsed = await parseChatBody(request, runtime, features, identity, workspaceId);
   if (parsed instanceof Response) return parsed;
+
+  if (parsed.conversationId && runtime.isConversationActive(parsed.conversationId)) {
+    return runInProgressResponse(parsed.conversationId);
+  }
 
   // Broadcast user.message to other participants (only for existing conversations)
   const convId = parsed.conversationId;
@@ -139,6 +164,14 @@ export async function handleChatStream(
           finish();
         })
         .catch((err) => {
+          if (err instanceof RunInProgressError) {
+            send("error", {
+              error: "run_in_progress",
+              message: "This conversation already has an active response.",
+            });
+            finish();
+            return;
+          }
           console.error("[routes] handleChatStream failed:", err);
           const raw = err instanceof Error ? err.message : String(err);
           const friendly = friendlyError(raw);

@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from "react";
-import { callTool, streamChat, streamChatMultipart } from "../api/client";
+import { ApiClientError, callTool, streamChat, streamChatMultipart } from "../api/client";
 import { formatSendError } from "../api/format-error";
 import { captureEvent } from "../telemetry";
 import type {
@@ -408,6 +408,11 @@ export function useChat(initialConversationId?: string, currentUserId?: string):
           has_app_context: !!appContext,
         });
       } catch (err) {
+        if (err instanceof ApiClientError && err.code === "run_in_progress") {
+          // Server rejected because a previous run is still in flight.
+          // Drop the optimistic user+assistant placeholders so the user can retry.
+          setMessages((prev) => prev.slice(0, -2));
+        }
         const msg = formatSendError(err);
         setError(msg);
       } finally {
