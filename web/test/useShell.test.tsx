@@ -181,4 +181,34 @@ describe("useShell", () => {
     expect(sidebarItems[1].route).toBe("/a");
     expect(sidebarItems[2].route).toBe("/b");
   });
+
+  it("forSlot sorts equal-priority placements alphabetically by label", () => {
+    const shell = {
+      placements: [
+        { slot: "sidebar.apps", route: "/todo", priority: 100, label: "To-Do Board" },
+        { slot: "sidebar.apps", route: "/crm", priority: 100, label: "CRM" },
+        { slot: "sidebar.apps", route: "/collateral", priority: 100, label: "Collateral" },
+      ],
+      chatEndpoint: "/v1/chat",
+      eventsEndpoint: "/v1/events",
+    };
+
+    const { result } = renderHook(() => useShell("tok", "ws-1", shell));
+
+    const items = result.current.forSlot("sidebar");
+    expect(items.map((p) => p.label)).toEqual(["Collateral", "CRM", "To-Do Board"]);
+  });
+
+  it("forSlot falls back to route when label is missing for tie-break", () => {
+    const shell = makeShell([
+      { slot: "sidebar.apps", route: "/zebra", priority: 100 },
+      { slot: "sidebar.apps", route: "/apple", priority: 100 },
+      { slot: "sidebar.apps", route: "/mango", priority: 100 },
+    ]);
+
+    const { result } = renderHook(() => useShell("tok", "ws-1", shell));
+
+    const items = result.current.forSlot("sidebar");
+    expect(items.map((p) => p.route)).toEqual(["/apple", "/mango", "/zebra"]);
+  });
 });
