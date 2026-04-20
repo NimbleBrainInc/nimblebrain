@@ -468,4 +468,131 @@ describe("startBundleSource — local-path credential resolution", () => {
     },
     20_000,
   );
+
+  test(
+    "explicit empty-string host env is treated the same as missing",
+    async () => {
+      try {
+        // Some deploys set env vars to "" to explicitly clear a value. The
+        // resolver must not leak empty strings through as "real values" —
+        // otherwise a later refactor to `v !== undefined` only would silently
+        // ship "" to the subprocess where prior to this test we'd ship "" only
+        // when the var was genuinely unset. Pin both cases to the same result.
+        process.env[BUNDLE_ENV_VAR] = "";
+
+        const registry = new ToolRegistry();
+        const result = await startBundleSource(
+          { path: bundleDir },
+          registry,
+          new NoopEventSink(),
+        );
+
+        const callResult = await registry.execute({
+          id: "local-creds-empty-string",
+          name: `${LOCAL_BUNDLE_SLUG}__get_key`,
+          input: {},
+        });
+        const firstText = callResult.content.find((c) => c.type === "text");
+        const text = firstText && "text" in firstText ? firstText.text : "";
+
+        expect(text).toBe("");
+        expect(text).not.toContain("${user_config");
+
+        await registry.removeSource(result.sourceName);
+      } finally {
+        restoreEnv();
+      }
+    },
+    20_000,
+  );
+
+  test(
+    "placeholder referencing an undeclared user_config field collapses to empty string",
+    async () => {
+      try {
+        // Author-error case: mcp_config.env references `${user_config.*}` but
+        // the user_config schema doesn't declare the field. The substitution
+        // must still collapse the placeholder to "" so a literal
+        // `${user_config.*}` never reaches the subprocess — the regex runs
+        // unconditionally even when no declared field matches.
+        const misconfiguredDir = join(
+          rootDir,
+          `local-undeclared-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+          "bundle",
+        );
+        mkdirSync(misconfiguredDir, { recursive: true });
+
+        // Reuse the same server code, but give this bundle a manifest that
+        // references `${user_config.mystery}` without declaring `mystery`.
+        const nodeModulesPath = join(import.meta.dir, "../..", "node_modules");
+        writeFileSync(
+          join(misconfiguredDir, "server.cjs"),
+          `
+const { Server } = require("${nodeModulesPath}/@modelcontextprotocol/sdk/dist/cjs/server/index.js");
+const { StdioServerTransport } = require("${nodeModulesPath}/@modelcontextprotocol/sdk/dist/cjs/server/stdio.js");
+const { ListToolsRequestSchema, CallToolRequestSchema } = require("${nodeModulesPath}/@modelcontextprotocol/sdk/dist/cjs/types.js");
+async function main() {
+  const server = new Server(
+    { name: "undeclared-bundle", version: "0.1.0" },
+    { capabilities: { tools: {} } },
+  );
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    tools: [{ name: "get_key", description: "echo NBTEST_API_KEY", inputSchema: { type: "object", properties: {} } }],
+  }));
+  server.setRequestHandler(CallToolRequestSchema, async () => ({
+    content: [{ type: "text", text: String(process.env.NBTEST_API_KEY ?? "<unset>") }],
+  }));
+  await server.connect(new StdioServerTransport());
+}
+main();
+`,
+        );
+        writeFileSync(
+          join(misconfiguredDir, "manifest.json"),
+          JSON.stringify({
+            manifest_version: "0.3",
+            name: "@nbtest/undeclared-bundle",
+            version: "0.1.0",
+            description: "Manifest references user_config.mystery without declaring it",
+            author: { name: "nbtest" },
+            // No user_config block at all — placeholder references a phantom field.
+            server: {
+              type: "node",
+              entry_point: "server.cjs",
+              mcp_config: {
+                command: "node",
+                args: ["${__dirname}/server.cjs"],
+                env: {
+                  NBTEST_API_KEY: "${user_config.mystery}",
+                },
+              },
+            },
+          }),
+        );
+
+        const registry = new ToolRegistry();
+        const result = await startBundleSource(
+          { path: misconfiguredDir },
+          registry,
+          new NoopEventSink(),
+        );
+
+        const callResult = await registry.execute({
+          id: "local-creds-undeclared",
+          name: "undeclared-bundle__get_key",
+          input: {},
+        });
+        const firstText = callResult.content.find((c) => c.type === "text");
+        const text = firstText && "text" in firstText ? firstText.text : "";
+
+        expect(text).toBe("");
+        expect(text).not.toContain("${user_config");
+
+        await registry.removeSource(result.sourceName);
+      } finally {
+        restoreEnv();
+      }
+    },
+    20_000,
+  );
 });

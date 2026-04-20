@@ -337,24 +337,30 @@ function substituteUserConfigFromEnv(
   userConfigSchema: Record<string, UserConfigFieldDef> | undefined,
   processEnv: Record<string, string>,
 ): Record<string, string> {
-  if (!userConfigSchema || Object.keys(userConfigSchema).length === 0) {
-    return { ...mcpConfigEnv };
-  }
-
+  // Values lookup is gated on having a schema — there's nothing to reverse-lookup
+  // without declared fields. An empty map still passes through the regex collapse
+  // below so an undeclared `${user_config.foo}` placeholder gets substituted to ""
+  // rather than leaking through as a literal string (the bug class this function
+  // exists to prevent).
   const values: Record<string, string> = {};
-  for (const fieldKey of Object.keys(userConfigSchema)) {
-    const placeholder = `\${user_config.${fieldKey}}`;
-    for (const [envVarName, envVarValue] of Object.entries(mcpConfigEnv)) {
-      if (envVarValue.includes(placeholder)) {
-        const v = processEnv[envVarName];
-        if (v !== undefined && v !== "") {
-          values[fieldKey] = v;
-          break;
+  if (userConfigSchema) {
+    for (const fieldKey of Object.keys(userConfigSchema)) {
+      const placeholder = `\${user_config.${fieldKey}}`;
+      for (const [envVarName, envVarValue] of Object.entries(mcpConfigEnv)) {
+        if (envVarValue.includes(placeholder)) {
+          const v = processEnv[envVarName];
+          if (v !== undefined && v !== "") {
+            values[fieldKey] = v;
+            break;
+          }
         }
       }
     }
   }
 
+  // Regex collapse runs unconditionally so no path produces a literal
+  // `${user_config.*}` in the spawn env — undeclared or unresolved fields
+  // become empty strings.
   const substituted: Record<string, string> = {};
   for (const [k, v] of Object.entries(mcpConfigEnv)) {
     substituted[k] = v.replace(
