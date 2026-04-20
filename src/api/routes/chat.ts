@@ -9,6 +9,9 @@ import type { AppContext, AppEnv } from "../types.ts";
 
 export function chatRoutes(ctx: AppContext) {
   const rl = requestRateLimit(ctx.chatLimiter);
+  // maxTotalSize is snapshot at route construction. Today filesConfig is
+  // built once from startup config + defaults and never mutated; if that
+  // invariant changes, make this limit lazy.
   const chatBodyLimit = bodyLimit(1_048_576, {
     multipart: ctx.runtime.getFilesConfig().maxTotalSize,
   });

@@ -17,6 +17,12 @@ export interface BodyLimitOptions {
  * Returns 413 Payload Too Large if Content-Length exceeds the applicable
  * limit. JSON payloads are bounded by `maxBytes`; multipart uploads use
  * `opts.multipart` when provided, otherwise they fall back to `maxBytes`.
+ *
+ * This is advisory: requests without `Content-Length` (e.g. chunked
+ * transfer encoding) or with malformed headers pass through untouched.
+ * The ingest pipeline in `src/files/ingest.ts` enforces per-file,
+ * total-size, and MIME rules authoritatively — middleware only stops
+ * oversized uploads before we buffer them.
  */
 export function bodyLimit(maxBytes: number, opts: BodyLimitOptions = {}) {
   return createMiddleware(async (c, next) => {

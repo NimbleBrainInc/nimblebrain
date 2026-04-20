@@ -60,6 +60,26 @@ describe("bodyLimit middleware", () => {
     expect(body.ok).toBe(true);
   });
 
+  test("passes through malformed Content-Length rather than crashing or 413ing", async () => {
+    const app = createTestApp(1024);
+    const res = await app.request("/test", {
+      method: "POST",
+      headers: { "Content-Length": "abc", "Content-Type": "application/json" },
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+  });
+
+  test("passes through negative Content-Length rather than 413ing", async () => {
+    const app = createTestApp(1024);
+    const res = await app.request("/test", {
+      method: "POST",
+      headers: { "Content-Length": "-1", "Content-Type": "application/json" },
+    });
+    expect(res.status).toBe(200);
+  });
+
   test("allows GET requests regardless of Content-Length", async () => {
     const app = createTestApp(1024);
     const res = await app.request("/test", {
