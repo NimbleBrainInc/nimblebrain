@@ -1,10 +1,17 @@
 /**
- * SSE keepalive helper.
+ * SSE keepalive helper for request-scoped streams.
  *
  * Emits `: ping\n\n` comment frames on an SSE stream's controller at a
  * fixed interval so AWS ALB (and anything else enforcing TCP idle
  * timeouts) doesn't drop long-running streams during silent engine
  * periods. SSE comment lines are ignored by the client per spec.
+ *
+ * Not to be confused with `SseEventManager`/`ConversationEventManager`'s
+ * `heartbeat` broadcast: those emit a named `heartbeat` SSE *event* at
+ * 30s to every subscriber on a shared workspace/conversation channel.
+ * This helper emits comment frames at 20s on a single request-scoped
+ * stream (currently only `/v1/chat/stream`). Same word, different
+ * paradigm.
  */
 
 const encoder = new TextEncoder();

@@ -53,13 +53,13 @@ describe("startSseHeartbeat", () => {
     const heartbeat = startSseHeartbeat(controller, 10);
     await sleep(25);
     heartbeat.stop();
-    const before = (await read()).match(/: ping\n\n/g)?.length ?? 0;
-    await sleep(40); // No further pings should arrive.
+    // Drain anything enqueued before stop(), then verify no more arrive.
+    const drainedBeforeStop = (await read()).match(/: ping\n\n/g)?.length ?? 0;
+    expect(drainedBeforeStop).toBeGreaterThanOrEqual(1);
+    await sleep(40);
     controller.close();
-    const after = ((await read()).match(/: ping\n\n/g)?.length ?? 0) + before;
-    // Reader was drained in `before`; `after` counts ADDITIONAL pings only.
-    // Anything remaining is still just `before`. `after - before` must be 0.
-    expect(after - before).toBe(0);
+    const drainedAfterStop = (await read()).match(/: ping\n\n/g)?.length ?? 0;
+    expect(drainedAfterStop).toBe(0);
   });
 
   test("stop() is idempotent", async () => {

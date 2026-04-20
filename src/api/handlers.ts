@@ -17,7 +17,7 @@ import { InlineSource } from "../tools/inline-source.ts";
 import { validateToolInput } from "../tools/validate-input.ts";
 import type { ConversationEventManager } from "./conversation-events.ts";
 import type { SseEventManager } from "./events.ts";
-import { type SseHeartbeat, startSseHeartbeat } from "./sse-heartbeat.ts";
+import { startSseHeartbeat } from "./sse-heartbeat.ts";
 import { apiError } from "./types.ts";
 
 const pkgPath = resolve(import.meta.dirname ?? __dirname, "../../package.json");
@@ -29,7 +29,7 @@ const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as { version: string };
  * `deployments/agent-platform/*`) while staying quiet enough to be
  * invisible to the user.
  */
-export const HEARTBEAT_INTERVAL_MS = 20_000;
+const HEARTBEAT_INTERVAL_MS = 20_000;
 
 /** Handle POST /v1/chat — synchronous chat request. */
 export async function handleChat(
@@ -89,11 +89,14 @@ export async function handleChatStream(
 
   const sink = new CallbackEventSink();
   let markClosed: () => void;
-  let heartbeat: SseHeartbeat = { stop: () => {} };
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
       const encoder = new TextEncoder();
       let closed = false;
+      // Keep the TCP connection alive during slow tool calls (Typst
+      // compile, MCP task-augmented research) — ALB idle-timeout kills
+      // silent streams. Must be created before `markClosed` captures it.
+      const heartbeat = startSseHeartbeat(controller, HEARTBEAT_INTERVAL_MS);
       markClosed = () => {
         closed = true;
         heartbeat.stop();
@@ -102,10 +105,6 @@ export async function handleChatStream(
         if (closed) return;
         controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
       };
-      // Keep the TCP connection alive during slow tool calls (Typst
-      // compile, MCP task-augmented research) — ALB idle-timeout kills
-      // silent streams.
-      heartbeat = startSseHeartbeat(controller, HEARTBEAT_INTERVAL_MS);
       const finish = () => {
         if (closed) return;
         closed = true;
