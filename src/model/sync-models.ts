@@ -99,7 +99,9 @@ async function main() {
 
     const models: Record<string, CatalogModel> = {};
 
-    for (const [modelId, raw] of Object.entries(provider.models)) {
+    // Sort by model ID for stable, review-friendly diffs across sync runs.
+    const entries = Object.entries(provider.models).sort(([a], [b]) => a.localeCompare(b));
+    for (const [modelId, raw] of entries) {
       // Skip models with no cost data (embeddings, etc. without pricing)
       if (!raw.cost?.input && !raw.cost?.output) continue;
 
