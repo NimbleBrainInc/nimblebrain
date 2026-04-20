@@ -164,7 +164,10 @@ export async function startBundleSource(
         { workspaceDir: bundleDataDir, userConfig },
       );
     } catch (err) {
-      throw friendlyMpakConfigError(err, opts.wsId);
+      // Pass the manifest so the error message names the specific env
+      // var(s) the user can export — the onboarding UX depends on
+      // users not needing to open the manifest to find that out.
+      throw friendlyMpakConfigError(err, opts.wsId, cachedManifest);
     }
 
     source = new McpSource(

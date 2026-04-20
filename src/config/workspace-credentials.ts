@@ -440,14 +440,58 @@ export async function resolveUserConfig(
 }
 
 /**
+ * Minimal manifest shape used by `friendlyMpakConfigError` to suggest the
+ * specific env var(s) a user can export to satisfy each missing field.
+ * Kept narrow on purpose — callers hand in the cached manifest they
+ * already have in scope; we only need `server.mcp_config.env`.
+ */
+export interface EnvAliasSource {
+  server?: { mcp_config?: { env?: Record<string, unknown> } };
+}
+
+/**
+ * Given a manifest and a user_config field name, list the host env var
+ * names that would satisfy it via the SDK's reverse-lookup tier.
+ *
+ * Mirrors the SDK's `buildEnvAliasMap` logic (same regex, same "whole
+ * template substitution only" constraint) so the hint in our error
+ * message matches what the SDK would actually honor.
+ */
+function envAliasesForField(
+  manifest: EnvAliasSource | null | undefined,
+  fieldName: string,
+): string[] {
+  const entries = manifest?.server?.mcp_config?.env;
+  if (!entries) return [];
+  // Keep in sync with `[^}]+` in mpak-sdk — see mpak/pull/83.
+  const wholeSubstitution = /^\$\{user_config\.([^}]+)\}$/;
+  const aliases: string[] = [];
+  for (const [envVar, template] of Object.entries(entries)) {
+    if (typeof template !== "string") continue;
+    const match = wholeSubstitution.exec(template);
+    if (match?.[1] === fieldName) aliases.push(envVar);
+  }
+  return aliases;
+}
+
+/**
  * Translate an `MpakConfigError` from the mpak SDK into NimbleBrain's
  * copy-pastable `nb config set -w <wsId>` hint. Callers use this at every
  * site that calls `mpak.prepareServer` after host-side credential resolution.
  *
+ * When a `manifest` is provided, the message additionally names the
+ * specific env var(s) each missing field can be satisfied by (via the
+ * SDK's reverse-lookup tier), so users don't have to inspect the
+ * manifest to find them. When omitted, falls back to a generic hint.
+ *
  * Returns the input error unchanged when it is not a credential-missing
  * error, so `catch` blocks can forward non-credential failures untouched.
  */
-export function friendlyMpakConfigError(err: unknown, wsId: string): Error {
+export function friendlyMpakConfigError(
+  err: unknown,
+  wsId: string,
+  manifest?: EnvAliasSource | null,
+): Error {
   if (!(err instanceof MpakConfigError)) {
     return err instanceof Error ? err : new Error(String(err));
   }
@@ -456,15 +500,24 @@ export function friendlyMpakConfigError(err: unknown, wsId: string): Error {
   const fields = err.missingFields;
   if (fields.length === 0) return new Error(err.message);
 
-  const hints = fields
-    .map((f) => `  nb config set ${bundle} ${f.key}=<value> -w ${wsId}`)
-    .join("\n");
+  // Per-field hint: one `nb config set` line plus, when we can find
+  // them, the specific env vars the bundle declared as aliases. This is
+  // almost always the onboarding-error path; naming the concrete env
+  // var ("export ANTHROPIC_API_KEY") beats pointing at a file format
+  // they haven't read.
+  const hintLines: string[] = [];
+  for (const f of fields) {
+    hintLines.push(`  nb config set ${bundle} ${f.key}=<value> -w ${wsId}`);
+    const aliases = envAliasesForField(manifest, f.key);
+    for (const envVar of aliases) {
+      hintLines.push(`  export ${envVar}=<value>  # satisfies "${f.key}"`);
+    }
+  }
+
   // MpakConfigError types `title` as required string, but an empty value
   // is useless for user-facing output — fall back to the raw key.
   const labels = fields.map((f) => `"${f.title?.length ? f.title : f.key}"`).join(", ");
   return new Error(
-    `Missing required config ${labels} for ${bundle}.\n` +
-      `Run one of:\n${hints}\n` +
-      `Or export the env var declared in the bundle's mcp_config.env.`,
+    `Missing required config ${labels} for ${bundle}.\nRun one of:\n${hintLines.join("\n")}`,
   );
 }
