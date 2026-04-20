@@ -52,6 +52,9 @@ export const ToolAccordion = memo(function ToolAccordion({
   const [expanded, setExpanded] = useState(false);
   const toggle = useCallback(() => setExpanded((v) => !v), []);
 
+  // `quiet` hides the whole accordion — including the pending footer. That's
+  // intentional; in quiet mode the composer's "Analyzing..." label is the only
+  // post-tool signal, which matches how quiet mode suppresses tool surfaces.
   if (displayDetail === "quiet" || batch.items.length === 0) return null;
 
   // Narrow via element lookup rather than length comparison so this stays

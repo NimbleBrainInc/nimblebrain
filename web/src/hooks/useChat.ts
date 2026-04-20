@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from "react";
-import { ApiClientError, callTool, streamChat, streamChatMultipart } from "../api/client";
+import { callTool, streamChat, streamChatMultipart } from "../api/client";
 import { captureEvent } from "../telemetry";
 import type {
   AppContext,
@@ -418,17 +418,8 @@ export function useChat(initialConversationId?: string, currentUserId?: string):
           has_app_context: !!appContext,
         });
       } catch (err) {
-        if (err instanceof ApiClientError && err.code === "run_in_progress") {
-          // Server rejected because a previous run is still in flight.
-          // Drop the optimistic user+assistant placeholders so the user can retry.
-          setMessages((prev) => prev.slice(0, -2));
-          setError(
-            "The assistant is still working on your previous message. Wait for it to finish, then try again.",
-          );
-        } else {
-          const msg = err instanceof Error ? err.message : "An unexpected error occurred";
-          setError(msg);
-        }
+        const msg = err instanceof Error ? err.message : "An unexpected error occurred";
+        setError(msg);
       } finally {
         setIsStreaming(false);
         setStreamingState(null);
