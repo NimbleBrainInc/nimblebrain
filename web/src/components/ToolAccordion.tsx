@@ -94,8 +94,13 @@ export const ToolAccordion = memo(function ToolAccordion({
         </div>
       )}
 
-      {pending && (
-        <div className="tool-accordion__pending" aria-live="polite">
+      {/* Hold the footer back until the head has actually resolved to done/error.
+          `useMinDisplayTime` keeps very fast tools visually in the running state
+          for 600ms to prevent flashing; showing "Analyzing" during that window
+          would put two spinners with conflicting copy on screen simultaneously
+          (head: "Researching · Acme", footer: "Analyzing"). */}
+      {pending && visualStatuses.every((vs) => vs.status !== "running") && (
+        <div className="tool-accordion__pending" role="status" aria-live="polite">
           <Loader2
             className="tool-accordion__icon tool-accordion__icon--running"
             style={{ width: 12, height: 12 }}

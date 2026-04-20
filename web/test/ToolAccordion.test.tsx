@@ -13,6 +13,10 @@ function doneCall(id: string, name = "search"): ToolCallDisplay {
 	};
 }
 
+function runningCall(id: string, name = "search"): ToolCallDisplay {
+	return { id, name, status: "running" };
+}
+
 function hasPendingFooter(html: string): boolean {
 	return html.includes("tool-accordion__pending");
 }
@@ -39,5 +43,16 @@ describe("ToolAccordion pending footer", () => {
 		);
 		// In quiet mode the whole accordion is suppressed; the composer carries the signal.
 		expect(container.innerHTML).toBe("");
+	});
+
+	// Regression guard for the useMinDisplayTime overlap: while any call is
+	// still visually running (either actually running or inside the 600ms
+	// smoothing window), the pending footer must stay hidden to avoid two
+	// spinners with conflicting copy on screen simultaneously.
+	it("suppresses the Analyzing row while any call is visually running", () => {
+		const { container } = render(
+			<ToolAccordion calls={[runningCall("t1")]} displayDetail="balanced" pending={true} />,
+		);
+		expect(hasPendingFooter(container.innerHTML)).toBe(false);
 	});
 });

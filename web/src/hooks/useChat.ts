@@ -32,11 +32,14 @@ function triggerResourceDownload(serverName: string): void {
 
 /**
  * Streaming state machine:
+ *
  *   null → thinking → streaming ↔ working → analyzing → streaming → null
+ *                                                    ↘ working (next tool.start)
  *
  * `analyzing` fills the gap between the last tool.done (all tools finished)
  * and the next text.delta / tool.start, when the model is inferring on tool
- * results but the UI would otherwise look frozen.
+ * results but the UI would otherwise look frozen. Any `tool.start` can
+ * re-enter `working` from a non-terminal state.
  */
 export type StreamingState = null | "thinking" | "streaming" | "working" | "analyzing";
 
