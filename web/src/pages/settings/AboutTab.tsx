@@ -85,7 +85,7 @@ export function AboutTab() {
   }, [fetchApps]);
 
   return (
-    <div className="flex flex-col gap-6 max-w-2xl">
+    <div className="flex flex-col gap-6 max-w-3xl mx-auto">
       {/* Platform info */}
       <Card>
         <CardHeader>

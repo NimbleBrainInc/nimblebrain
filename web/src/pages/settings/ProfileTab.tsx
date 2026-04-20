@@ -101,7 +101,7 @@ export function ProfileTab() {
   const { activeWorkspace } = useWorkspaceContext();
 
   return (
-    <div className="max-w-xl space-y-6">
+    <div className="max-w-xl mx-auto space-y-6">
       <Card>
         <CardHeader>
           <CardTitle>Profile</CardTitle>

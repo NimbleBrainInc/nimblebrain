@@ -318,5 +318,29 @@ export async function aggregateUsage(
     }))
     .sort((a, b) => a.key.localeCompare(b.key));
 
+  // For day grouping over a bounded period, zero-fill missing days so the
+  // chart and table show the full window rather than only days with activity.
+  // Skipped for `all` — the range can span years and noise outweighs signal.
+  if (groupBy === "day" && period !== "all") {
+    const byKey = new Map(breakdown.map((e) => [e.key, e]));
+    const filled: BreakdownEntry[] = [];
+    const cursor = new Date(`${range.from}T00:00:00Z`);
+    const end = new Date(`${range.to}T00:00:00Z`);
+    while (cursor <= end) {
+      const key = cursor.toISOString().slice(0, 10);
+      filled.push(
+        byKey.get(key) ?? {
+          key,
+          tokens: createTokenBreakdown(),
+          cost: createCostBreakdown(),
+          llmCalls: 0,
+          conversations: 0,
+        },
+      );
+      cursor.setUTCDate(cursor.getUTCDate() + 1);
+    }
+    return { period: range, totals, models, breakdown: filled };
+  }
+
   return { period: range, totals, models, breakdown };
 }
