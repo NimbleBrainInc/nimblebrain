@@ -274,7 +274,7 @@ export function UsageTab() {
 
       {/* Daily cost chart */}
       {hasActivity && (
-        <Card>
+        <Card className="overflow-visible">
           <CardHeader>
             <CardTitle>Daily Cost</CardTitle>
           </CardHeader>

@@ -109,7 +109,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       error: "unknown",
       message: res.statusText,
     }));
-    throw new ApiClientError(body.error, body.message, res.status);
+    throw new ApiClientError(body.error, body.message, res.status, body.details);
   }
 
   return res.json() as Promise<T>;
@@ -124,6 +124,7 @@ export class ApiClientError extends Error {
     public readonly code: string,
     message: string,
     public readonly status: number,
+    public readonly details?: Record<string, unknown>,
   ) {
     super(message);
     this.name = "ApiClientError";
@@ -157,7 +158,7 @@ export async function getResources(appName: string, path: string): Promise<strin
       error: "unknown",
       message: res.statusText,
     }));
-    throw new ApiClientError(body.error, body.message, res.status);
+    throw new ApiClientError(body.error, body.message, res.status, body.details);
   }
 
   return res.text();
@@ -266,7 +267,7 @@ export async function streamChat(req: ChatRequest, onEvent: ChatStreamCallback):
       error: "unknown",
       message: res.statusText,
     }));
-    throw new ApiClientError(body.error, body.message, res.status);
+    throw new ApiClientError(body.error, body.message, res.status, body.details);
   }
 
   await consumeSSEStream(res, onEvent);
@@ -316,7 +317,7 @@ export async function streamChatMultipart(
       error: "unknown",
       message: res.statusText,
     }));
-    throw new ApiClientError(body.error, body.message, res.status);
+    throw new ApiClientError(body.error, body.message, res.status, body.details);
   }
 
   await consumeSSEStream(res, onEvent);

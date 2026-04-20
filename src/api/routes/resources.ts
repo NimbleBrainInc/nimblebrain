@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { handleReadResource, handleResourceProxy } from "../handlers.ts";
 import { requireAuth } from "../middleware/auth.ts";
+import { bodyLimit } from "../middleware/body-limit.ts";
 import { errorLog } from "../middleware/error-log.ts";
 import { requireWorkspace } from "../middleware/workspace.ts";
 import type { AppContext, AppEnv } from "../types.ts";
@@ -10,7 +11,7 @@ export function resourceRoutes(ctx: AppContext) {
     .use("*", requireAuth(ctx.authOptions))
     .use("*", requireWorkspace(ctx.workspaceStore))
     .use("*", errorLog(ctx))
-    .post("/v1/resources/read", (c) =>
+    .post("/v1/resources/read", bodyLimit(1_048_576), (c) =>
       handleReadResource(c.req.raw, ctx.runtime, { workspaceId: c.var.workspaceId }),
     )
     .get("/v1/apps/:name/resources/*", (c) => {

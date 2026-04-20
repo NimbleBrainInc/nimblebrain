@@ -452,6 +452,32 @@
   transform: rotate(90deg);
 }
 
+/* Post-tool "Analyzing" indicator — renders below the accordion head when
+   all tools in the block have finished and the model is inferring on the
+   results. Fills the gap between tool.done and the next text.delta so the
+   UI doesn't appear frozen. */
+.tool-accordion__pending {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  padding: 2px 0;
+  font-size: 13px;
+  color: var(--processing);
+  animation: tool-accordion-reveal 180ms ease-out;
+}
+.tool-accordion__pending span::after {
+  content: "…";
+  display: inline-block;
+  animation: tool-accordion-ellipsis 1.4s steps(4, end) infinite;
+  overflow: hidden;
+  vertical-align: bottom;
+  width: 0;
+}
+@keyframes tool-accordion-ellipsis {
+  to { width: 1em; }
+}
+
 .tool-accordion__icon { flex-shrink: 0; }
 .tool-accordion__icon--ok {
   width: 6px;

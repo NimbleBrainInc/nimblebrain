@@ -1,6 +1,5 @@
 import { Hono } from "hono";
 import { WorkspaceResolutionError } from "./auth-middleware.ts";
-import { bodyLimit } from "./middleware/body-limit.ts";
 import { corsMiddleware } from "./middleware/cors.ts";
 import { securityHeaders } from "./middleware/security-headers.ts";
 import { authRoutes } from "./routes/auth.ts";
@@ -25,7 +24,6 @@ export function createApp(
   // Global CORS middleware
   app.use("*", corsMiddleware(authConfigured, allowedOrigins));
   app.use("*", securityHeaders());
-  app.use("*", bodyLimit(1_048_576)); // 1MB body size limit
 
   // Route groups — well-known endpoints first (unauthenticated, no body limit needed)
   app.route("/", wellKnownRoutes(ctx));

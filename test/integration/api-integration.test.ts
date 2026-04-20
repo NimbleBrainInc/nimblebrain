@@ -282,7 +282,7 @@ describe("integration: windowing under load", () => {
 
 	});
 
-	it("concurrent requests on a long conversation do not crash", async () => {
+	it("concurrent requests on a long conversation are rejected cleanly", async () => {
 		// Create a conversation with some history
 		const firstRes = await fetch(`${baseUrl}/v1/chat`, {
 			method: "POST",
@@ -304,7 +304,8 @@ describe("integration: windowing under load", () => {
 			});
 		}
 
-		// Now send 5 concurrent requests on the same conversation
+		// Fire 5 concurrent requests on the same conversation. Only one may run;
+		// the rest must fail with 409 run_in_progress rather than corrupting state.
 		const concurrentResults = await Promise.all(
 			Array.from({ length: 5 }, (_, i) =>
 				fetch(`${baseUrl}/v1/chat`, {
@@ -314,14 +315,20 @@ describe("integration: windowing under load", () => {
 						message: `Concurrent on long conv ${i}`,
 						conversationId: convId,
 					}),
-				}).then((r) => r.json()),
+				}).then(async (r) => ({ status: r.status, body: await r.json() })),
 			),
 		);
 
-		// All should succeed without crashing — concurrent requests may race, so only verify structure
-		for (let i = 0; i < 5; i++) {
-			expect(typeof concurrentResults[i].response).toBe("string");
-			expect(concurrentResults[i].conversationId).toBe(convId);
+		const ok = concurrentResults.filter((r) => r.status === 200);
+		const rejected = concurrentResults.filter((r) => r.status === 409);
+		expect(ok.length + rejected.length).toBe(5);
+		expect(ok.length).toBeGreaterThanOrEqual(1);
+		for (const r of ok) {
+			expect(typeof r.body.response).toBe("string");
+			expect(r.body.conversationId).toBe(convId);
+		}
+		for (const r of rejected) {
+			expect(r.body.error).toBe("run_in_progress");
 		}
 	});
 });

@@ -6,10 +6,12 @@ import {
   handleOidcRefresh,
 } from "../handlers.ts";
 import { requireAuth } from "../middleware/auth.ts";
+import { bodyLimit } from "../middleware/body-limit.ts";
 import { type AppContext, type AuthEnv, apiError } from "../types.ts";
 
 export function authRoutes(ctx: AppContext) {
   const app = new Hono();
+  const limit = bodyLimit(1_048_576);
 
   // --- Unauthenticated ---
   app.get("/v1/auth/authorize", (_c) => {
@@ -22,7 +24,7 @@ export function authRoutes(ctx: AppContext) {
     return handleOidcCallback(c.req.raw, ctx.provider, ctx.isLocalhost, ctx.appOrigin);
   });
 
-  app.post("/v1/auth/refresh", (c) => {
+  app.post("/v1/auth/refresh", limit, (c) => {
     if (!ctx.provider) return apiError(400, "not_configured", "Auth provider not configured");
     return handleOidcRefresh(c.req.raw, ctx.provider, ctx.isLocalhost);
   });
@@ -30,7 +32,7 @@ export function authRoutes(ctx: AppContext) {
   // --- Authenticated ---
   const authed = new Hono<AuthEnv>();
   authed.use("*", requireAuth(ctx.authOptions));
-  authed.post("/v1/auth/logout", (_c) => handleLogout());
+  authed.post("/v1/auth/logout", limit, (_c) => handleLogout());
 
   app.route("/", authed);
 

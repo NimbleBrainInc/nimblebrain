@@ -28,11 +28,19 @@ import { describeBatch } from "../lib/tool-display";
 interface ToolAccordionProps {
   calls: ToolCallDisplay[];
   displayDetail: DisplayDetail;
+  /**
+   * True when this block's tools have all finished and the model is now
+   * inferring on the results (streamingState === "analyzing"). Renders an
+   * "Analyzing…" footer so the UI doesn't appear frozen between tool.done
+   * and the next text.delta / tool.start.
+   */
+  pending?: boolean;
 }
 
 export const ToolAccordion = memo(function ToolAccordion({
   calls,
   displayDetail,
+  pending = false,
 }: ToolAccordionProps) {
   // Visual statuses smooth the running→done transition so quick tools don't flash.
   const visualStatuses = useMinDisplayTime(calls);
@@ -44,6 +52,9 @@ export const ToolAccordion = memo(function ToolAccordion({
   const [expanded, setExpanded] = useState(false);
   const toggle = useCallback(() => setExpanded((v) => !v), []);
 
+  // `quiet` hides the whole accordion — including the pending footer. That's
+  // intentional; in quiet mode the composer's "Analyzing..." label is the only
+  // post-tool signal, which matches how quiet mode suppresses tool surfaces.
   if (displayDetail === "quiet" || batch.items.length === 0) return null;
 
   // Narrow via element lookup rather than length comparison so this stays
@@ -80,6 +91,21 @@ export const ToolAccordion = memo(function ToolAccordion({
           ) : (
             batch.items.map((item) => <ToolRow key={item.id} item={item} />)
           )}
+        </div>
+      )}
+
+      {/* Hold the footer back until the head has actually resolved to done/error.
+          `useMinDisplayTime` keeps very fast tools visually in the running state
+          for 600ms to prevent flashing; showing "Analyzing" during that window
+          would put two spinners with conflicting copy on screen simultaneously
+          (head: "Researching · Acme", footer: "Analyzing"). */}
+      {pending && visualStatuses.every((vs) => vs.status !== "running") && (
+        <div className="tool-accordion__pending" role="status" aria-live="polite">
+          <Loader2
+            className="tool-accordion__icon tool-accordion__icon--running"
+            style={{ width: 12, height: 12 }}
+          />
+          <span>Analyzing</span>
         </div>
       )}
     </div>
