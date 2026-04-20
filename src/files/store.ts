@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { appendFile, mkdir, readdir, readFile, unlink, writeFile } from "node:fs/promises";
-import { basename, join, resolve } from "node:path";
+import { basename, join, relative, resolve } from "node:path";
 import type { FileEntry } from "./types.ts";
 
 /** Sanitize a filename: strip path separators, null bytes, and control chars (0x00-0x1F). */
@@ -83,22 +83,28 @@ export function createFileStore(filesDir: string): FileStore {
       throw new Error(`File not found: ${id}`);
     }
     const resolved = resolve(filesDir, match);
-    if (!resolved.startsWith(resolve(filesDir))) {
+    // Defence against a constructed `id` that contains path segments — in
+    // practice `match` always comes from `readdir(filesDir)` so can't
+    // traverse, but a `startsWith` guard would false-positive on sibling
+    // dirs sharing a prefix (e.g. `/ws/files` vs `/ws/filesX`). `relative`
+    // + `..` gives a clean invariant.
+    const rel = relative(resolve(filesDir), resolved);
+    if (rel.startsWith("..") || rel.startsWith("/")) {
       throw new Error("Path traversal detected");
     }
     return resolved;
   }
 
   async function readFileById(id: string): Promise<ReadFileResult> {
+    const entry = await findEntry(id);
+    if (!entry) {
+      throw new Error(`File not found: ${id}`);
+    }
     const filePath = await resolveFilePath(id);
     const data = Buffer.from(await readFile(filePath));
     const diskName = basename(filePath);
     const filename = diskName.slice(id.length + 1);
-
-    const entry = await findEntry(id);
-    const mimeType = entry?.mimeType ?? "application/octet-stream";
-
-    return { data, filename, mimeType, size: data.length };
+    return { data, filename, mimeType: entry.mimeType, size: data.length };
   }
 
   async function appendRegistry(entry: FileEntry): Promise<void> {
@@ -150,28 +156,24 @@ export function createFileStore(filesDir: string): FileStore {
     return found;
   }
 
+  /**
+   * Append a tombstone marking `id` deleted. Requires the entry to exist;
+   * callers must pre-check via `findEntry`. Refuses to create stub
+   * tombstones for unknown ids (no `filename: ""` zombies in the
+   * registry).
+   */
   async function appendTombstone(id: string): Promise<void> {
     const existing = await findEntry(id);
-    const tombstone: FileEntry = existing
-      ? { ...existing, deleted: true, deletedAt: new Date().toISOString() }
-      : {
-          id,
-          filename: "",
-          mimeType: "",
-          size: 0,
-          tags: [],
-          source: "manual",
-          conversationId: null,
-          createdAt: new Date().toISOString(),
-          description: null,
-          deleted: true,
-          deletedAt: new Date().toISOString(),
-        };
-    await appendRegistry(tombstone);
+    if (!existing) {
+      throw new Error(`File not found: ${id}`);
+    }
+    await appendRegistry({ ...existing, deleted: true, deletedAt: new Date().toISOString() });
   }
 
   async function deleteFile(id: string): Promise<void> {
-    await appendTombstone(id);
+    const existing = await findEntry(id);
+    if (!existing) return; // No-op on missing — idempotent delete.
+    await appendRegistry({ ...existing, deleted: true, deletedAt: new Date().toISOString() });
     try {
       const path = await resolveFilePath(id);
       await unlink(path);

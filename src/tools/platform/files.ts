@@ -93,16 +93,14 @@ async function handleSearch(store: FileStore, args: SearchInput): Promise<object
 }
 
 async function handleRead(store: FileStore, args: { id: string }): Promise<object> {
-  const entry = await store.findEntry(args.id);
-  if (!entry) {
-    throw new Error(`File not found: ${args.id}`);
-  }
+  // `readFile` throws `File not found` if the registry entry is missing, so
+  // a separate `findEntry` pre-check would just re-scan the registry.
   const read = await store.readFile(args.id);
   return {
     base64Data: read.data.toString("base64"),
-    filename: entry.filename,
-    mimeType: entry.mimeType,
-    size: entry.size,
+    filename: read.filename,
+    mimeType: read.mimeType,
+    size: read.size,
   };
 }
 
@@ -115,6 +113,11 @@ interface CreateInput {
 }
 
 async function handleCreate(store: FileStore, args: CreateInput): Promise<object> {
+  // TODO: apply the same MIME allowlist as chat-multipart ingest
+  // (`ALLOWED_MIMES` in `src/files/ingest.ts`). The tool currently accepts
+  // any `mime_type` the LLM supplies; the chat path rejects anything
+  // outside the allowlist. Changing the tool contract is fenced out of the
+  // store-unification PR that introduced this comment — track separately.
   const decoded = Buffer.from(args.base64_data, "base64");
   const saved = await store.saveFile(decoded, args.filename, args.mime_type);
   const entry: FileEntry = {

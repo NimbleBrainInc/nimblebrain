@@ -137,6 +137,31 @@ describe("FileStore", () => {
     const entries = await store.readRegistry();
     expect(entries).toEqual([]);
   });
+
+  test("appendTombstone refuses to create a stub for an unknown id", async () => {
+    const store = createFileStore(join(workDir, "files"));
+    await store.ensureFilesDir();
+    expect(store.appendTombstone("fl_nonexistent")).rejects.toThrow("File not found");
+  });
+
+  test("deleteFile is a no-op for an unknown id — no zombie registry entry", async () => {
+    const store = createFileStore(join(workDir, "files"));
+    await store.ensureFilesDir();
+    await store.deleteFile("fl_nonexistent");
+    const entries = await store.readRegistry();
+    expect(entries).toEqual([]);
+  });
+
+  test("readFile throws File not found when the registry has no entry", async () => {
+    const store = createFileStore(join(workDir, "files"));
+    const orphanId = `fl_${"a".repeat(24)}`;
+    await store.ensureFilesDir();
+    // Drop a stray disk file matching the id prefix, but don't register it.
+    // Pre-fix, readFile silently returned it with an octet-stream mimeType.
+    const filePath = join(workDir, "files", `${orphanId}_stray.bin`);
+    await (await import("node:fs/promises")).writeFile(filePath, "stray");
+    expect(store.readFile(orphanId)).rejects.toThrow(`File not found: ${orphanId}`);
+  });
 });
 
 describe("sanitizeFilename", () => {
