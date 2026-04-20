@@ -1,5 +1,6 @@
 import { chmod, mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { MpakConfigError } from "@nimblebrain/mpak-sdk";
 import { WORKSPACE_ID_RE } from "../workspace/workspace-store.ts";
 import type { ConfirmationGate } from "./privilege.ts";
 
@@ -329,69 +330,6 @@ export async function clearAllWorkspaceCredentials(
 
 // ── Tier resolver ─────────────────────────────────────────────────
 
-/**
- * Strip a trailing `inc` (case-insensitive) from a scope segment.
- *
- * Rationale: the GitHub org `nimblebraininc` exists only because `nimblebrain`
- * was taken on GitHub. The brand — and therefore the env var convention — is
- * `nimblebrain`. Stripping the suffix keeps the env var name aligned with the
- * public brand instead of a GitHub artifact.
- *
- * Collision caveat: the rule applies to ALL scopes, not just `nimblebraininc`.
- * A future scope like `@fooinc` would collide with `@foo` under this mapping.
- * Acceptable today because the NimbleBrain-published bundle ecosystem doesn't
- * have scopes ending in `inc` other than ours; if that ever changes we
- * should either promote this to an explicit alias map or warn at resolve
- * time when a collision is detected.
- */
-function normalizeScope(scope: string): string {
-  return scope.replace(/inc$/i, "");
-}
-
-/**
- * Compute the process environment variable name for a bundle field.
- *
- * Convention: `NB_CONFIG_{SCOPE}_{NAME}_{FIELD}` — uppercase, with hyphens
- * replaced by underscores. The scope segment is included to prevent collisions
- * between same-named bundles from different scopes.
- *
- * Scope normalization: a trailing `inc` on the scope is stripped (see
- * `normalizeScope`). If the scope collapses to an empty string (e.g. a bare
- * `@inc/foo`), the env var falls back to the unscoped form.
- *
- * Examples:
- *   `@nimblebraininc/newsapi` + `api_key` → `NB_CONFIG_NIMBLEBRAIN_NEWSAPI_API_KEY`
- *   `@foo/bar`                + `field`   → `NB_CONFIG_FOO_BAR_FIELD`
- *   `bundleName`              + `field`   → `NB_CONFIG_BUNDLENAME_FIELD`
- *   `my-bundle`               + `api-key` → `NB_CONFIG_MY_BUNDLE_API_KEY`
- */
-export function envVarName(bundleName: string, fieldName: string): string {
-  const normalize = (s: string): string => s.replace(/-/g, "_").toUpperCase();
-
-  // Strip leading `@` and split into [scope, name] if scoped.
-  const stripped = bundleName.replace(/^@/, "");
-  const slashIdx = stripped.indexOf("/");
-
-  const fieldPart = normalize(fieldName);
-
-  if (slashIdx === -1) {
-    // Unscoped: NB_CONFIG_{NAME}_{FIELD}
-    return `NB_CONFIG_${normalize(stripped)}_${fieldPart}`;
-  }
-
-  const rawScope = stripped.slice(0, slashIdx);
-  const name = stripped.slice(slashIdx + 1);
-  const scope = normalizeScope(rawScope);
-
-  // Edge case: scope normalizes to empty (e.g. bare `inc`) — fall back to
-  // unscoped form rather than emitting a double-underscore.
-  if (scope === "") {
-    return `NB_CONFIG_${normalize(name)}_${fieldPart}`;
-  }
-
-  return `NB_CONFIG_${normalize(scope)}_${normalize(name)}_${fieldPart}`;
-}
-
 /** Field descriptor from a bundle's `user_config` manifest section. */
 export interface UserConfigFieldDef {
   type: string;
@@ -416,43 +354,43 @@ export interface ResolveUserConfigOpts {
   wsId: string;
   /** Root work directory (e.g. `~/.nimblebrain`). */
   workDir: string;
-  /** Interactive gate used to prompt for missing values (TUI-only). */
+  /** Interactive gate used to prompt for values (TUI `configure` flow only). */
   gate?: ConfirmationGate;
   /**
-   * If `true`, prompt for every field even when a stored value exists.
+   * If `true`, prompt for every field via the gate and persist responses to
+   * the workspace store. Used by the `nb__manage_app configure` TUI action.
    * No effect when `gate?.supportsInteraction` is false.
    */
   forcePrompt?: boolean;
 }
 
 /**
- * Resolve all `user_config` field values for a bundle in a workspace.
+ * Resolve `user_config` field values for a bundle from the workspace
+ * credential store.
  *
- * Resolution hierarchy (first match wins, per field):
- *   1. Workspace credential store — `getWorkspaceCredentials(wsId, bundleName, workDir)`
- *   2. Process environment        — `process.env[envVarName(bundleName, field)]`
- *   3. Manifest default           — `field.default`
+ * This is the host-side half of a two-stage resolution. It returns a
+ * **partial** map of whatever it found (or prompted for); the mpak SDK
+ * then tries its own tiers — manifest-declared `mcp_config.env` aliases
+ * and manifest defaults — and throws `MpakConfigError` if anything
+ * required is still unresolved. Callers catch that at the SDK boundary
+ * and translate to a `nb config set -w <wsId>` hint.
  *
- * `~/.mpak/config.json` is intentionally NOT consulted. NimbleBrain neither
- * reads nor writes the global mpak config; users with values there must re-set
- * them via `nb config set -w <wsId>`.
+ * Behavior:
  *
- * If a field is still missing after all tiers:
- *   - If `gate?.supportsInteraction` is true, prompt via
- *     `gate.promptConfigValue(...)`. A returned value is persisted to the
- *     workspace credential store (tier 1) and included in the result.
- *   - Else if `field.required !== false` (required or unspecified), throw a
- *     descriptive error with a copy-pastable `nb config set -w <wsId>` hint.
- *   - Otherwise (optional), the field is silently omitted from the result.
+ *   - Default mode: read each field from `getWorkspaceCredentials`.
+ *     Include any non-empty string values in the result. Absent/empty
+ *     values fall through silently — the SDK decides whether that's an
+ *     error based on `required` and its own tiers.
  *
- * When `forcePrompt` is true AND the gate supports interaction, the resolver
- * skips steps 1–3 entirely and prompts for every field. This is how
- * `nb config set` re-prompts are implemented.
+ *   - `forcePrompt` + interactive gate: used by the TUI configure flow.
+ *     Prompt every field via `gate.promptConfigValue`. Persist each
+ *     returned value to the workspace store. Skipped responses are
+ *     omitted — the SDK's missing-required check fires if appropriate.
  *
  * `null`/`undefined`/empty `userConfigSchema` short-circuits to `{}`.
  *
- * The returned map contains only resolved values as strings — callers pass it
- * directly to the mpak SDK's `prepareServer({ userConfig })` option.
+ * `~/.mpak/config.json` is intentionally not consulted here or anywhere
+ * else in NimbleBrain — the workspace store is our persistence surface.
  */
 export async function resolveUserConfig(
   opts: ResolveUserConfigOpts,
@@ -463,52 +401,16 @@ export async function resolveUserConfig(
   const fieldNames = Object.keys(userConfigSchema);
   if (fieldNames.length === 0) return {};
 
-  // Tier 1 is read once per bundle (it's a single file).
-  const stored = (await getWorkspaceCredentials(wsId, bundleName, workDir)) ?? {};
-
   const interactive = gate?.supportsInteraction === true;
-  const resolved: Record<string, string> = {};
 
-  for (const key of fieldNames) {
-    const field = userConfigSchema[key];
-    if (!field) continue;
-
-    let value: string | undefined;
-
-    if (forcePrompt && interactive) {
-      // Skip tiers 1–3; go straight to prompt.
-    } else {
-      // Tier 1: workspace credential store.
-      const storedValue = stored[key];
-      if (typeof storedValue === "string" && storedValue.length > 0) {
-        value = storedValue;
-      }
-
-      // Tier 2: process environment.
-      if (value === undefined) {
-        const envValue = process.env[envVarName(bundleName, key)];
-        if (typeof envValue === "string" && envValue.length > 0) {
-          value = envValue;
-        }
-      }
-
-      // Tier 3: manifest default.
-      // MCPB manifests restrict user_config types to primitives (string, number,
-      // boolean, directory, file), so String() is safe. An object/array default
-      // would stringify to "[object Object]" or a comma-joined form — if that
-      // ever happens it reflects a malformed manifest upstream, not a bug here.
-      if (value === undefined && field.default !== undefined && field.default !== null) {
-        value = String(field.default);
-      }
-    }
-
-    if (value !== undefined) {
-      resolved[key] = value;
-      continue;
-    }
-
-    // Still missing. Try interactive prompt if available.
-    if (interactive && gate) {
+  // TUI configure flow: prompt every field, persist, return whatever the
+  // user provided. Skipped prompts don't get persisted and don't end up in
+  // the result — the SDK's required-field check catches that downstream.
+  if (forcePrompt && interactive && gate) {
+    const resolved: Record<string, string> = {};
+    for (const key of fieldNames) {
+      const field = userConfigSchema[key];
+      if (!field) continue;
       const prompted = await gate.promptConfigValue({
         key,
         title: field.title,
@@ -519,22 +421,61 @@ export async function resolveUserConfig(
       if (typeof prompted === "string" && prompted.length > 0) {
         await saveWorkspaceCredential(wsId, bundleName, key, prompted, workDir);
         resolved[key] = prompted;
-        continue;
       }
     }
-
-    // No value, no prompt (or prompt returned nothing).
-    const isRequired = field.required !== false;
-    if (isRequired) {
-      const label = field.title ?? key;
-      // Never include values or defaults in the error — only field names.
-      throw new Error(
-        `Missing required config "${label}" for ${bundleName}.\n` +
-          `Run: nb config set ${bundleName} ${key}=<value> -w ${wsId}`,
-      );
-    }
-    // Optional field with no value — skip.
+    return resolved;
   }
 
+  // Default: read workspace store, return non-empty string values. The SDK
+  // handles mcp_config.env aliases, manifest defaults, and required-field
+  // validation from here. See `mpak-sdk`'s `gatherUserConfig` for the rest
+  // of the resolution chain.
+  const stored = (await getWorkspaceCredentials(wsId, bundleName, workDir)) ?? {};
+  const resolved: Record<string, string> = {};
+  for (const key of fieldNames) {
+    const v = stored[key];
+    if (typeof v === "string" && v.length > 0) resolved[key] = v;
+  }
   return resolved;
+}
+
+/**
+ * Translate an `MpakConfigError` from the mpak SDK into NimbleBrain's
+ * copy-pastable `nb config set -w <wsId>` hint. Callers use this at every
+ * site that calls `mpak.prepareServer` after host-side credential resolution.
+ *
+ * Each missing field's message includes the specific env var(s) the
+ * bundle declared as satisfying it in `mcp_config.env` — read directly
+ * from `MpakConfigError.missingFields[i].envAliases` (0.5.0+). Users
+ * see the actual export line they can run, not a pointer at a file they
+ * may not know how to inspect.
+ *
+ * Returns the input error unchanged when it is not a credential-missing
+ * error, so `catch` blocks can forward non-credential failures untouched.
+ */
+export function friendlyMpakConfigError(err: unknown, wsId: string): Error {
+  if (!(err instanceof MpakConfigError)) {
+    return err instanceof Error ? err : new Error(String(err));
+  }
+  const bundle = err.packageName;
+  const fields = err.missingFields;
+  if (fields.length === 0) return new Error(err.message);
+
+  // Per-field hint: one `nb config set` line, plus one `export VAR=...`
+  // line per declared env alias. The alias list is derived by the SDK
+  // and attached to each missing field — we don't re-derive it.
+  const hintLines: string[] = [];
+  for (const f of fields) {
+    hintLines.push(`  nb config set ${bundle} ${f.key}=<value> -w ${wsId}`);
+    for (const envVar of f.envAliases) {
+      hintLines.push(`  export ${envVar}=<value>  # satisfies "${f.key}"`);
+    }
+  }
+
+  // MpakConfigError types `title` as required string, but an empty value
+  // is useless for user-facing output — fall back to the raw key.
+  const labels = fields.map((f) => `"${f.title?.length ? f.title : f.key}"`).join(", ");
+  return new Error(
+    `Missing required config ${labels} for ${bundle}.\nRun one of:\n${hintLines.join("\n")}`,
+  );
 }

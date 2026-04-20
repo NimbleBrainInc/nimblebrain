@@ -1,19 +1,22 @@
 /**
  * Integration tests for the credential-resolution wiring in the bundle
- * startup path. Covers task 005 — `resolveUserConfig` must run BEFORE
- * `mpak.prepareServer()` validates `user_config`.
+ * startup path. `startBundleSource` reads the workspace credential store
+ * and hands whatever it finds to `mpak.prepareServer({ userConfig })`;
+ * the SDK then tries the bundle's declared `mcp_config.env` aliases
+ * and manifest defaults before throwing `MpakConfigError`. The host
+ * translates that to a `nb config set -w <wsId>` hint.
  *
- * These tests seed the mpak bundle cache on disk with a hand-authored manifest
- * that declares a `user_config` field. `startBundleSource` is then invoked
- * against a named bundle and we assert on the outcome:
+ * These tests seed the mpak bundle cache on disk with a hand-authored
+ * manifest and exercise three paths:
  *
- *   - Happy path: credentials in the workspace credential store → bundle starts.
- *   - Env path:   credentials in the `NB_CONFIG_*` env var → bundle starts.
- *   - Failure:    no credentials anywhere → throws with an actionable hint.
+ *   - Store path:  credentials in the workspace credential store → bundle starts.
+ *   - Env path:    credentials in the env var declared by the bundle's
+ *                  own mcp_config.env mapping → bundle starts.
+ *   - Failure:     no credentials anywhere → throws a friendly
+ *                  MpakConfigError with the nb config set hint.
  *
- * The bundle itself is a minimal CommonJS MCP server that exposes a single tool
- * and reads the credential from its process env (mirroring how a real bundle's
- * `mcp_config.env` substitutes `${user_config.*}`).
+ * The bundle itself is a minimal CommonJS MCP server that exposes a single
+ * tool and echoes the credential env var the manifest declares.
  */
 
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
@@ -22,7 +25,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { startBundleSource } from "../../src/bundles/startup.ts";
-import { envVarName, saveWorkspaceCredential } from "../../src/config/workspace-credentials.ts";
+import { saveWorkspaceCredential } from "../../src/config/workspace-credentials.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
 
 const BUNDLE_NAME = "@nbtest/creds-bundle";
@@ -153,19 +156,18 @@ describe("startBundleSource — credential resolution", () => {
     prevMpakHome = process.env.MPAK_HOME;
     process.env.MPAK_HOME = layout.mpakHome;
 
-    // Clear any leaking env override from a previous test.
-    const name = envVarName(BUNDLE_NAME, "api_key");
-    prevEnvVal = process.env[name];
-    delete process.env[name];
+    // Clear any leaked copy of the bundle-declared env var from a prior
+    // test — the SDK's reverse-lookup tier reads this at resolve time.
+    prevEnvVal = process.env[BUNDLE_ENV_VAR];
+    delete process.env[BUNDLE_ENV_VAR];
   });
 
   // Restore env after each test so one case can't contaminate the next.
   function restoreEnv(): void {
     if (prevMpakHome === undefined) delete process.env.MPAK_HOME;
     else process.env.MPAK_HOME = prevMpakHome;
-    const name = envVarName(BUNDLE_NAME, "api_key");
-    if (prevEnvVal === undefined) delete process.env[name];
-    else process.env[name] = prevEnvVal;
+    if (prevEnvVal === undefined) delete process.env[BUNDLE_ENV_VAR];
+    else process.env[BUNDLE_ENV_VAR] = prevEnvVal;
   }
 
   test(
@@ -209,11 +211,15 @@ describe("startBundleSource — credential resolution", () => {
   );
 
   test(
-    "env path — NB_CONFIG_* env var satisfies user_config, bundle starts",
+    "env path — bundle-declared env var (mcp_config.env) satisfies user_config",
     async () => {
       try {
-        const envName = envVarName(BUNDLE_NAME, "api_key");
-        process.env[envName] = "sk-env-456";
+        // The bundle's manifest declares
+        //   `"NBTEST_API_KEY": "${user_config.api_key}"`
+        // which the SDK reads in reverse: if the host has NBTEST_API_KEY
+        // set, the api_key field is satisfied. No NB_CONFIG_* prefix, no
+        // host convention — just the bundle's own mapping.
+        process.env[BUNDLE_ENV_VAR] = "sk-env-456";
 
         const registry = new ToolRegistry();
         const result = await startBundleSource(

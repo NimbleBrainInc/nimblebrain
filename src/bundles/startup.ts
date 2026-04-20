@@ -2,7 +2,11 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { log } from "../cli/log.ts";
-import { resolveUserConfig, type UserConfigFieldDef } from "../config/workspace-credentials.ts";
+import {
+  friendlyMpakConfigError,
+  resolveUserConfig,
+  type UserConfigFieldDef,
+} from "../config/workspace-credentials.ts";
 import type { EventSink } from "../engine/types.ts";
 import { McpSource } from "../tools/mcp-source.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
@@ -139,10 +143,13 @@ export async function startBundleSource(
       manifest = cachedManifest;
     }
 
-    // Resolve user_config values from the workspace credential store (tier 1),
-    // process env (tier 2), and manifest defaults (tier 3). This is how named
-    // bundles get their credentials at startup — `BundleRef.env` layers on top
-    // afterwards for non-sensitive overrides, unchanged.
+    // Read host-side credentials from the workspace credential store. The
+    // mpak SDK does the rest of the resolution chain: manifest-declared
+    // mcp_config.env aliases (so a bundle with
+    // `"NEWSAPI_API_KEY": "${user_config.api_key}"` is satisfied by a host
+    // NEWSAPI_API_KEY export) and manifest defaults. Any still-missing
+    // required field surfaces as MpakConfigError, which we translate to
+    // the familiar `nb config set -w <wsId>` hint.
     const userConfig = await resolveUserConfig({
       bundleName: ref.name,
       userConfigSchema: cachedManifest?.user_config,
@@ -150,10 +157,18 @@ export async function startBundleSource(
       workDir: nbWorkDir,
     });
 
-    const server = await mpak.prepareServer(
-      { name: ref.name },
-      { workspaceDir: bundleDataDir, userConfig },
-    );
+    let server: Awaited<ReturnType<typeof mpak.prepareServer>>;
+    try {
+      server = await mpak.prepareServer(
+        { name: ref.name },
+        { workspaceDir: bundleDataDir, userConfig },
+      );
+    } catch (err) {
+      // MpakConfigError (0.5.0+) carries envAliases per missing field,
+      // so friendlyMpakConfigError can name `export ANTHROPIC_API_KEY`
+      // hints without us threading the manifest through.
+      throw friendlyMpakConfigError(err, opts.wsId);
+    }
 
     source = new McpSource(
       sourceName,
