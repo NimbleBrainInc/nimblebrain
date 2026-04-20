@@ -80,6 +80,15 @@ export function CostChart({ data }: CostChartProps) {
     { key: "input", field: "input" },
   ];
 
+  // Tooltip anchor: center normally, but snap to the closer edge near the
+  // chart boundaries so the popover never spills past the card (the parent
+  // card uses overflow-visible so the tooltip isn't clipped).
+  const tooltipCenterPct =
+    hoveredIndex !== null
+      ? ((paddingLeft + gap + hoveredIndex * (barWidth + gap) + barWidth / 2) / width) * 100
+      : 0;
+  const tooltipTranslateX = tooltipCenterPct < 15 ? "0%" : tooltipCenterPct > 85 ? "-100%" : "-50%";
+
   return (
     <div className="relative">
       <svg
@@ -176,11 +185,11 @@ export function CostChart({ data }: CostChartProps) {
       {/* Tooltip */}
       {hoveredIndex !== null && data[hoveredIndex] && (
         <div
-          className="absolute bg-popover border border-border rounded-md shadow-md px-3 py-2 text-xs pointer-events-none z-10"
+          className="absolute bg-popover border border-border rounded-md shadow-md px-3 py-2 text-xs pointer-events-none z-20"
           style={{
-            left: `${((paddingLeft + gap + hoveredIndex * (barWidth + gap) + barWidth / 2) / width) * 100}%`,
+            left: `${tooltipCenterPct}%`,
             top: 0,
-            transform: "translate(-50%, 0)",
+            transform: `translate(${tooltipTranslateX}, 0)`,
             minWidth: 140,
           }}
         >
