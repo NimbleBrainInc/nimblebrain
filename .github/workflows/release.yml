@@ -58,8 +58,7 @@ jobs:
 
       # We deliberately do NOT tag `:latest`. ECR repositories have immutable
       # tags enabled, so `latest` can't be reused across releases. Deploys pin
-      # to the version tag (or short sha) — see deployments/agent-platform/
-      # Makefile, which derives TAG from `git rev-parse --short HEAD`.
+      # to the version tag or short sha.
       - name: Build and push platform image
         run: |
           docker build --platform linux/amd64 \
