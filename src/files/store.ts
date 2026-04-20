@@ -1,5 +1,5 @@
-import { randomUUID } from "node:crypto";
-import { appendFile, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
+import { appendFile, mkdir, readdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import type { FileEntry } from "./types.ts";
 
@@ -15,9 +15,9 @@ export function sanitizeFilename(name: string): string {
   );
 }
 
-/** Generate a file ID with fl_ prefix. */
+/** Generate a file ID with fl_ prefix. 24 hex chars (~96 bits random). */
 function generateFileId(): string {
-  return `fl_${Date.now().toString(36)}_${randomUUID().slice(0, 8)}`;
+  return `fl_${randomBytes(12).toString("hex")}`;
 }
 
 export interface SaveFileResult {
@@ -39,12 +39,22 @@ export interface FileStore {
   resolveFilePath(id: string): Promise<string>;
   appendRegistry(entry: FileEntry): Promise<void>;
   readRegistry(): Promise<FileEntry[]>;
+  findEntry(id: string): Promise<FileEntry | null>;
   appendTombstone(id: string): Promise<void>;
+  deleteFile(id: string): Promise<void>;
   ensureFilesDir(): Promise<void>;
 }
 
-export function createFileStore(workDir: string): FileStore {
-  const filesDir = join(workDir, "files");
+/**
+ * Create a workspace-scoped file store.
+ *
+ * `filesDir` must be a resolved, workspace-scoped path — typically
+ * `join(runtime.getWorkspaceScopedDir(wsId), "files")`. Passing a
+ * tenant-global path (e.g. `runtime.getWorkDir()`) mixes files across
+ * workspaces and is the bug that motivated unifying this store; callers
+ * must resolve the workspace-scoped path themselves.
+ */
+export function createFileStore(filesDir: string): FileStore {
   const registryPath = join(filesDir, "registry.jsonl");
 
   async function ensureFilesDir(): Promise<void> {
@@ -82,13 +92,10 @@ export function createFileStore(workDir: string): FileStore {
   async function readFileById(id: string): Promise<ReadFileResult> {
     const filePath = await resolveFilePath(id);
     const data = Buffer.from(await readFile(filePath));
-    // Extract filename from disk name: strip the id_ prefix
     const diskName = basename(filePath);
     const filename = diskName.slice(id.length + 1);
 
-    // Look up mimeType from registry
-    const registry = await readRegistryRaw();
-    const entry = registry.find((e) => e.id === id && !e.deleted);
+    const entry = await findEntry(id);
     const mimeType = entry?.mimeType ?? "application/octet-stream";
 
     return { data, filename, mimeType, size: data.length };
@@ -110,32 +117,67 @@ export function createFileStore(workDir: string): FileStore {
     for (const line of content.split("\n")) {
       const trimmed = line.trim();
       if (!trimmed) continue;
-      entries.push(JSON.parse(trimmed) as FileEntry);
+      try {
+        entries.push(JSON.parse(trimmed) as FileEntry);
+      } catch {
+        // Skip malformed lines rather than refusing to read the whole registry.
+      }
     }
     return entries;
   }
 
+  /**
+   * Resolve the registry to the latest state per ID (last-write-wins).
+   * Filters out tombstoned entries. Supports both "tag" updates (re-append
+   * with new fields) and "delete" (append entry with `deleted: true`).
+   */
   async function readRegistry(): Promise<FileEntry[]> {
-    const all = await readRegistryRaw();
-    const tombstoned = new Set(all.filter((e) => e.deleted).map((e) => e.id));
-    return all.filter((e) => !e.deleted && !tombstoned.has(e.id));
+    const raw = await readRegistryRaw();
+    const latest = new Map<string, FileEntry>();
+    for (const entry of raw) {
+      latest.set(entry.id, entry);
+    }
+    return Array.from(latest.values()).filter((e) => !e.deleted);
+  }
+
+  async function findEntry(id: string): Promise<FileEntry | null> {
+    const raw = await readRegistryRaw();
+    let found: FileEntry | null = null;
+    for (const entry of raw) {
+      if (entry.id === id) found = entry;
+    }
+    if (!found || found.deleted) return null;
+    return found;
   }
 
   async function appendTombstone(id: string): Promise<void> {
-    const tombstone: FileEntry = {
-      id,
-      filename: "",
-      mimeType: "",
-      size: 0,
-      tags: [],
-      source: "manual",
-      conversationId: null,
-      createdAt: new Date().toISOString(),
-      description: null,
-      deleted: true,
-      deletedAt: new Date().toISOString(),
-    };
+    const existing = await findEntry(id);
+    const tombstone: FileEntry = existing
+      ? { ...existing, deleted: true, deletedAt: new Date().toISOString() }
+      : {
+          id,
+          filename: "",
+          mimeType: "",
+          size: 0,
+          tags: [],
+          source: "manual",
+          conversationId: null,
+          createdAt: new Date().toISOString(),
+          description: null,
+          deleted: true,
+          deletedAt: new Date().toISOString(),
+        };
     await appendRegistry(tombstone);
+  }
+
+  async function deleteFile(id: string): Promise<void> {
+    await appendTombstone(id);
+    try {
+      const path = await resolveFilePath(id);
+      await unlink(path);
+    } catch {
+      // File already gone from disk — tombstone still recorded.
+    }
   }
 
   return {
@@ -144,7 +186,9 @@ export function createFileStore(workDir: string): FileStore {
     resolveFilePath,
     appendRegistry,
     readRegistry,
+    findEntry,
     appendTombstone,
+    deleteFile,
     ensureFilesDir,
   };
 }

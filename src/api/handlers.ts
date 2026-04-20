@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { CallbackEventSink } from "../adapters/callback-events.ts";
 import { log } from "../cli/log.ts";
 import { isToolEnabled, isToolVisibleToRole, type ResolvedFeatures } from "../config/features.ts";
@@ -905,14 +905,21 @@ export function sanitizeFilename(name: string): string {
   return name.replace(/["\r\n\x00-\x1f]/g, "_");
 }
 
-/** Regex for valid file IDs: fl_<base36>_<8hex> */
-const FILE_ID_RE = /^fl_[a-z0-9]+_[a-f0-9]{8}$/;
+/**
+ * Regex for valid file IDs.
+ *  - New scheme: `fl_<24 hex chars>` (randomBytes(12).hex).
+ *  - Legacy scheme: `fl_<base36 timestamp>_<8 hex>` from the pre-unification
+ *    chat ingest path; kept accepted so historical file links keep working
+ *    while aliases.ts (migration) remaps them.
+ */
+const FILE_ID_RE = /^fl_(?:[a-f0-9]{24}|[a-z0-9]+_[a-f0-9]{8})$/;
 
 /** Handle GET /v1/files/:fileId — serve a stored file. */
 export async function handleFileServe(
   fileId: string,
   runtime: Runtime,
   features: ResolvedFeatures,
+  workspaceId: string,
 ): Promise<Response> {
   if (!features.fileContext) {
     return apiError(404, "not_found", "Not found");
@@ -922,7 +929,7 @@ export async function handleFileServe(
     return apiError(400, "bad_request", "Invalid file ID format");
   }
 
-  const store = createFileStore(runtime.getWorkDir());
+  const store = createFileStore(join(runtime.getWorkspaceScopedDir(workspaceId), "files"));
   try {
     const file = await store.readFile(fileId);
     const safeName = sanitizeFilename(file.filename);
@@ -1080,8 +1087,9 @@ async function parseMultipartChatBody(
     };
   }
 
-  // Ingest files: validate, store, extract text, build content parts
-  const store = createFileStore(runtime.getWorkDir());
+  // Ingest files: validate, store, extract text, build content parts.
+  // Files MUST be workspace-scoped so the files__* tools can find them.
+  const store = createFileStore(join(runtime.getWorkspaceScopedDir(workspaceId), "files"));
   const filesConfig = runtime.getFilesConfig();
   // Use conversationId if provided, otherwise a placeholder (will be replaced by runtime.chat)
   const convId = (typeof conversationId === "string" && conversationId) || "pending";
