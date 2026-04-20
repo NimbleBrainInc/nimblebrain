@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from "react";
-import { callTool, streamChat, streamChatMultipart } from "../api/client";
+import { ApiClientError, callTool, streamChat, streamChatMultipart } from "../api/client";
 import { captureEvent } from "../telemetry";
 import type {
   AppContext,
@@ -28,6 +28,25 @@ function triggerResourceDownload(serverName: string): void {
   document.body.appendChild(anchor);
   anchor.click();
   setTimeout(() => document.body.removeChild(anchor), 100);
+}
+
+function humanBytes(n: number): string {
+  if (!Number.isFinite(n) || n < 0) return `${n} B`;
+  if (n < 1024) return `${n} B`;
+  if (n < 1_048_576) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1_048_576).toFixed(1)} MB`;
+}
+
+function formatSendError(err: unknown): string {
+  if (err instanceof ApiClientError && err.code === "payload_too_large") {
+    const limit = typeof err.details?.limit === "number" ? err.details.limit : undefined;
+    const received = typeof err.details?.received === "number" ? err.details.received : undefined;
+    if (limit !== undefined && received !== undefined) {
+      return `Upload is ${humanBytes(received)} — limit is ${humanBytes(limit)}.`;
+    }
+    return err.message;
+  }
+  return err instanceof Error ? err.message : "An unexpected error occurred";
 }
 
 /** Streaming state machine: null → thinking → streaming ↔ working → null. */
@@ -407,7 +426,7 @@ export function useChat(initialConversationId?: string, currentUserId?: string):
           has_app_context: !!appContext,
         });
       } catch (err) {
-        const msg = err instanceof Error ? err.message : "An unexpected error occurred";
+        const msg = formatSendError(err);
         setError(msg);
       } finally {
         setIsStreaming(false);
