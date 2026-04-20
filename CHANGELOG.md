@@ -15,6 +15,7 @@
 
 ### Fixed
 
+- **Context-doc uploads >1 MB no longer 413.** The HTTP body-size cap was a single global `bodyLimit(1_048_576)` — orders of magnitude below the `files.maxTotalSize` and `files.maxFileSize` the ingest pipeline already enforces — so any file >1 MB was rejected at the middleware before reaching ingest. Body-limit is now per-route: JSON endpoints stay at 1 MB, `/v1/chat/stream` multipart uploads defer to `runtime.getFilesConfig().maxTotalSize` (default 100 MB, per-file 25 MB still enforced authoritatively by `ingestFiles()`). 413 responses now include structured `{ limit, received, contentType }` so the web client shows "Upload is N MB — limit is M MB" instead of a generic toast.
 - **`features`, `maxHistoryMessages`, `maxToolResultSize`, and `files` are now loaded from `nimblebrain.json`.** These fields were accepted by the JSON schema and declared on `RuntimeConfig`, but `cli/config.ts` silently dropped them — so setting `features.mcpServer: false` or `maxHistoryMessages: 100` in a config file had no effect unless passed programmatically to `Runtime.start()`.
 - Config schema now lists `userManagement` and `workspaceManagement` under `features` (previously only in code; setting them produced a spurious "unknown key" warning).
 - `InlineSource.execute()` now validates input against the tool's declared `inputSchema` before dispatching. Closes the bug class where malformed tool calls via `/mcp` leaked Node-internal errors (`fs.readFile(undefined)`, `Buffer.from(undefined)`) as tool results.

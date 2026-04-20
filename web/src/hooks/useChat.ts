@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 import { callTool, streamChat, streamChatMultipart } from "../api/client";
+import { formatSendError } from "../api/format-error";
 import { captureEvent } from "../telemetry";
 import type {
   AppContext,
@@ -407,7 +408,7 @@ export function useChat(initialConversationId?: string, currentUserId?: string):
           has_app_context: !!appContext,
         });
       } catch (err) {
-        const msg = err instanceof Error ? err.message : "An unexpected error occurred";
+        const msg = formatSendError(err);
         setError(msg);
       } finally {
         setIsStreaming(false);

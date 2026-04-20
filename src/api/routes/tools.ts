@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { handleFileServe, handleShell, handleToolCall } from "../handlers.ts";
 import { requireAuth } from "../middleware/auth.ts";
+import { bodyLimit } from "../middleware/body-limit.ts";
 import { errorLog } from "../middleware/error-log.ts";
 import { requestRateLimit } from "../middleware/rate-limit.ts";
 import { requireWorkspace } from "../middleware/workspace.ts";
@@ -11,7 +12,7 @@ export function toolRoutes(ctx: AppContext) {
     .use("*", requireAuth(ctx.authOptions))
     .use("*", requireWorkspace(ctx.workspaceStore))
     .use("*", errorLog(ctx))
-    .post("/v1/tools/call", requestRateLimit(ctx.toolCallLimiter), (c) =>
+    .post("/v1/tools/call", bodyLimit(1_048_576), requestRateLimit(ctx.toolCallLimiter), (c) =>
       handleToolCall(c.req.raw, ctx.runtime, ctx.features, {
         sseManager: ctx.sseManager,
         eventSink: ctx.eventSink,

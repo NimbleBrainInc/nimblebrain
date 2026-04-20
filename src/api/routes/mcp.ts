@@ -9,6 +9,7 @@ import {
   WorkspaceResolutionError,
 } from "../auth-middleware.ts";
 import { handleMcpRequest, type McpWorkspaceContext } from "../mcp-server.ts";
+import { bodyLimit } from "../middleware/body-limit.ts";
 import { type AppContext, type AuthEnv, apiError } from "../types.ts";
 
 /**
@@ -69,7 +70,7 @@ export function mcpRoutes(ctx: AppContext) {
   const app = new Hono<AuthEnv>();
   app.use("*", requireMcpAuth(ctx.authOptions, ctx));
 
-  app.all("/mcp", async (c) => {
+  app.all("/mcp", bodyLimit(1_048_576), async (c) => {
     const features = ctx.runtime.getFeatures();
     if (!features.mcpServer) {
       return apiError(404, "not_found", "Not found");
