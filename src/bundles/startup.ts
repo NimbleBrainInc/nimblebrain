@@ -164,10 +164,10 @@ export async function startBundleSource(
         { workspaceDir: bundleDataDir, userConfig },
       );
     } catch (err) {
-      // Pass the manifest so the error message names the specific env
-      // var(s) the user can export — the onboarding UX depends on
-      // users not needing to open the manifest to find that out.
-      throw friendlyMpakConfigError(err, opts.wsId, cachedManifest);
+      // MpakConfigError (0.5.0+) carries envAliases per missing field,
+      // so friendlyMpakConfigError can name `export ANTHROPIC_API_KEY`
+      // hints without us threading the manifest through.
+      throw friendlyMpakConfigError(err, opts.wsId);
     }
 
     source = new McpSource(

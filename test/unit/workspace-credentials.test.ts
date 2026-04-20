@@ -673,10 +673,12 @@ describe("resolveUserConfig — forcePrompt (TUI configure flow)", () => {
 });
 
 describe("friendlyMpakConfigError", () => {
-  test("translates MpakConfigError into nb config set hints (no manifest → generic)", () => {
+  test("translates MpakConfigError into nb config set hints", () => {
+    // No envAliases declared on these fields → only the `nb config set`
+    // lines appear, no `export` suggestions.
     const mpakError = new MpakConfigError("@scope/bundle", [
-      { key: "api_key", title: "API Key", sensitive: true },
-      { key: "workspace_id", title: "Workspace ID", sensitive: false },
+      { key: "api_key", title: "API Key", sensitive: true, envAliases: [] },
+      { key: "workspace_id", title: "Workspace ID", sensitive: false, envAliases: [] },
     ]);
 
     const translated = friendlyMpakConfigError(mpakError, WS_A);
@@ -690,79 +692,60 @@ describe("friendlyMpakConfigError", () => {
     expect(translated.message).toContain(
       `nb config set @scope/bundle workspace_id=<value> -w ${WS_A}`,
     );
-    // With no manifest, nothing suggests an export.
     expect(translated.message).not.toContain("export ");
   });
 
-  test("names concrete env vars when a manifest is provided", () => {
+  test("names concrete env vars when the SDK attaches envAliases", () => {
     // A bundle that maps api_key to both ANTHROPIC_API_KEY and CLAUDE_API_KEY
-    // should surface both options. The user's onboarding question ("what do
-    // I export?") should be answered right in the error message.
+    // surfaces both options. The user's onboarding question ("what do I
+    // export?") is answered right in the error message. The SDK already
+    // derived and attached this list — we don't re-derive from the manifest.
     const mpakError = new MpakConfigError("@scope/bundle", [
-      { key: "api_key", title: "API Key", sensitive: true },
-    ]);
-    const manifest = {
-      server: {
-        mcp_config: {
-          env: {
-            ANTHROPIC_API_KEY: "${user_config.api_key}",
-            CLAUDE_API_KEY: "${user_config.api_key}",
-            LOG_LEVEL: "info", // literal, not a substitution — must be ignored
-            PREFIXED: "prefix-${user_config.api_key}", // not whole-value — must be ignored
-          },
-        },
+      {
+        key: "api_key",
+        title: "API Key",
+        sensitive: true,
+        envAliases: ["ANTHROPIC_API_KEY", "CLAUDE_API_KEY"],
       },
-    };
+    ]);
 
-    const translated = friendlyMpakConfigError(mpakError, WS_A, manifest);
+    const translated = friendlyMpakConfigError(mpakError, WS_A);
     expect(translated.message).toContain(
       `nb config set @scope/bundle api_key=<value> -w ${WS_A}`,
     );
     expect(translated.message).toContain('export ANTHROPIC_API_KEY=<value>');
     expect(translated.message).toContain('export CLAUDE_API_KEY=<value>');
-    // Literals and partial substitutions must not be suggested as aliases
-    // — they would not actually satisfy the field via the SDK's reverse tier.
-    expect(translated.message).not.toContain("LOG_LEVEL");
-    expect(translated.message).not.toContain("PREFIXED");
   });
 
-  test("manifest provided but field has no env alias → only the nb config set line appears", () => {
+  test("mixed fields: some with aliases, some without", () => {
     const mpakError = new MpakConfigError("@scope/bundle", [
-      { key: "secret_only", title: "Secret Only", sensitive: true },
-    ]);
-    const manifest = {
-      // Declared mapping for a DIFFERENT field — should not be suggested
-      // for `secret_only`.
-      server: {
-        mcp_config: { env: { OTHER_KEY: "${user_config.other_field}" } },
+      {
+        key: "api_key",
+        title: "API Key",
+        sensitive: true,
+        envAliases: ["ANTHROPIC_API_KEY"],
       },
-    };
-    const translated = friendlyMpakConfigError(mpakError, WS_A, manifest);
+      {
+        key: "secret_only",
+        title: "Secret Only",
+        sensitive: true,
+        envAliases: [],
+      },
+    ]);
+
+    const translated = friendlyMpakConfigError(mpakError, WS_A);
+    // api_key has an export hint.
+    expect(translated.message).toContain('export ANTHROPIC_API_KEY=<value>  # satisfies "api_key"');
+    // secret_only gets only its nb config set line.
     expect(translated.message).toContain(
       `nb config set @scope/bundle secret_only=<value> -w ${WS_A}`,
     );
-    expect(translated.message).not.toContain("export ");
-    expect(translated.message).not.toContain("OTHER_KEY");
-  });
-
-  test("null/undefined manifest behaves as no manifest", () => {
-    const mpakError = new MpakConfigError("@scope/bundle", [
-      { key: "api_key", title: "API Key", sensitive: true },
-    ]);
-    const withNull = friendlyMpakConfigError(mpakError, WS_A, null);
-    const withUndef = friendlyMpakConfigError(mpakError, WS_A, undefined);
-    const withoutArg = friendlyMpakConfigError(mpakError, WS_A);
-    // All three should produce the same output — degenerate cases don't
-    // diverge.
-    expect(withNull.message).toBe(withoutArg.message);
-    expect(withUndef.message).toBe(withoutArg.message);
+    expect(translated.message).not.toContain('satisfies "secret_only"');
   });
 
   test("uses field.key when title is empty", () => {
-    // MpakConfigError's `title` is required in the type but can be an empty
-    // string — make sure we fall through to the raw key in that case.
     const mpakError = new MpakConfigError("@scope/bundle", [
-      { key: "raw_key", title: "", sensitive: false },
+      { key: "raw_key", title: "", sensitive: false, envAliases: [] },
     ]);
     const translated = friendlyMpakConfigError(mpakError, WS_A);
     expect(translated.message).toContain('"raw_key"');
@@ -775,13 +758,10 @@ describe("friendlyMpakConfigError", () => {
   });
 
   test("passes through duck-typed look-alikes (only real MpakConfigError translates)", () => {
-    // Before switching to instanceof we accepted any object with the right
-    // shape. Now only real SDK errors translate — a look-alike is treated
-    // as a plain error and forwarded verbatim.
     const fakeError = Object.assign(new Error("I'm not really one"), {
       code: "CONFIG_MISSING",
       packageName: "@fake/bundle",
-      missingFields: [{ key: "x", title: "X", sensitive: false }],
+      missingFields: [{ key: "x", title: "X", sensitive: false, envAliases: [] }],
     });
     const translated = friendlyMpakConfigError(fakeError, WS_A);
     expect(translated).toBe(fakeError);
@@ -796,8 +776,6 @@ describe("friendlyMpakConfigError", () => {
   test("MpakConfigError with empty missingFields falls back to the original message", () => {
     const mpakError = new MpakConfigError("@scope/bundle", []);
     const translated = friendlyMpakConfigError(mpakError, WS_A);
-    // The SDK's message format is what the caller sees when there's nothing
-    // specific to surface.
     expect(translated.message).toBe(mpakError.message);
   });
 });
