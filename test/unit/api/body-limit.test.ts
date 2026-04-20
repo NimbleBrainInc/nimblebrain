@@ -126,4 +126,41 @@ describe("bodyLimit middleware", () => {
     });
     expect(res.status).toBe(200);
   });
+
+  // Regression guard: bodyLimit must stay scoped to the route it's attached
+  // to. Mounting it via `.use("*")` on a sub-app that is itself mounted at
+  // `/` makes it leak across sibling sub-apps — that's how the multipart
+  // limit on /v1/chat/stream was silently shadowed by the 1MB JSON limit
+  // on another sub-app in an earlier iteration of this fix.
+  test("per-handler bodyLimit does not leak across sibling sub-apps", async () => {
+    const parent = new Hono();
+
+    const jsonRouter = new Hono();
+    jsonRouter.post("/json", bodyLimit(1024), (c) => c.json({ where: "json" }));
+
+    const multipartRouter = new Hono();
+    multipartRouter.post("/multipart", bodyLimit(1024, { multipart: 8 * 1024 }), (c) =>
+      c.json({ where: "multipart" }),
+    );
+
+    parent.route("/", jsonRouter);
+    parent.route("/", multipartRouter);
+
+    const bigMultipart = await parent.request("/multipart", {
+      method: "POST",
+      headers: {
+        "Content-Length": "4096",
+        "Content-Type": "multipart/form-data; boundary=abc",
+      },
+    });
+    expect(bigMultipart.status).toBe(200);
+
+    const oversizedJson = await parent.request("/json", {
+      method: "POST",
+      headers: { "Content-Length": "4096", "Content-Type": "application/json" },
+    });
+    expect(oversizedJson.status).toBe(413);
+    const body = await oversizedJson.json();
+    expect(body.details?.limit).toBe(1024);
+  });
 });
