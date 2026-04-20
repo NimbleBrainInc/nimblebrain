@@ -1,5 +1,6 @@
 import { chmod, mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { MpakConfigError } from "@nimblebrain/mpak-sdk";
 import { WORKSPACE_ID_RE } from "../workspace/workspace-store.ts";
 import type { ConfirmationGate } from "./privilege.ts";
 
@@ -447,29 +448,20 @@ export async function resolveUserConfig(
  * error, so `catch` blocks can forward non-credential failures untouched.
  */
 export function friendlyMpakConfigError(err: unknown, wsId: string): Error {
-  // Duck-typed check so we don't force a hard dependency on the SDK's
-  // exported class here — the shape is stable (bundleName + missingFields).
-  if (
-    !err ||
-    typeof err !== "object" ||
-    !("code" in err) ||
-    (err as { code: unknown }).code !== "CONFIG_MISSING"
-  ) {
+  if (!(err instanceof MpakConfigError)) {
     return err instanceof Error ? err : new Error(String(err));
   }
-  const e = err as unknown as {
-    message?: string;
-    packageName?: string;
-    missingFields?: Array<{ key: string; title?: string }>;
-  };
-  const bundle = e.packageName ?? "<bundle>";
-  const fields = e.missingFields ?? [];
-  if (fields.length === 0) return new Error(e.message ?? String(err));
+  // `err` is narrowed to MpakConfigError — no duck-typing needed.
+  const bundle = err.packageName;
+  const fields = err.missingFields;
+  if (fields.length === 0) return new Error(err.message);
 
   const hints = fields
     .map((f) => `  nb config set ${bundle} ${f.key}=<value> -w ${wsId}`)
     .join("\n");
-  const labels = fields.map((f) => `"${f.title ?? f.key}"`).join(", ");
+  // MpakConfigError types `title` as required string, but an empty value
+  // is useless for user-facing output — fall back to the raw key.
+  const labels = fields.map((f) => `"${f.title?.length ? f.title : f.key}"`).join(", ");
   return new Error(
     `Missing required config ${labels} for ${bundle}.\n` +
       `Run one of:\n${hints}\n` +

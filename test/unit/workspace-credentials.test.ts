@@ -2,6 +2,7 @@ import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { MpakConfigError } from "@nimblebrain/mpak-sdk";
 import type { ConfigField, ConfirmationGate } from "../../src/config/privilege.ts";
 import {
   bundleSlug,
@@ -672,19 +673,11 @@ describe("resolveUserConfig — forcePrompt (TUI configure flow)", () => {
 });
 
 describe("friendlyMpakConfigError", () => {
-  test("translates MpakConfigError-shaped objects into nb config set hints", () => {
-    // Duck-typed shape — matches what the mpak SDK throws.
-    const mpakError = Object.assign(
-      new Error("Missing required config for @scope/bundle: API Key"),
-      {
-        code: "CONFIG_MISSING",
-        packageName: "@scope/bundle",
-        missingFields: [
-          { key: "api_key", title: "API Key", sensitive: true },
-          { key: "workspace_id", title: "Workspace ID", sensitive: false },
-        ],
-      },
-    );
+  test("translates MpakConfigError into nb config set hints", () => {
+    const mpakError = new MpakConfigError("@scope/bundle", [
+      { key: "api_key", title: "API Key", sensitive: true },
+      { key: "workspace_id", title: "Workspace ID", sensitive: false },
+    ]);
 
     const translated = friendlyMpakConfigError(mpakError, WS_A);
     expect(translated).toBeInstanceOf(Error);
@@ -702,21 +695,33 @@ describe("friendlyMpakConfigError", () => {
     expect(translated.message).toContain("mcp_config.env");
   });
 
-  test("uses field.key when title is missing", () => {
-    const mpakError = Object.assign(new Error("..."), {
-      code: "CONFIG_MISSING",
-      packageName: "@scope/bundle",
-      missingFields: [{ key: "raw_key", sensitive: false }],
-    });
-
+  test("uses field.key when title is empty", () => {
+    // MpakConfigError's `title` is required in the type but can be an empty
+    // string — make sure we fall through to the raw key in that case.
+    const mpakError = new MpakConfigError("@scope/bundle", [
+      { key: "raw_key", title: "", sensitive: false },
+    ]);
     const translated = friendlyMpakConfigError(mpakError, WS_A);
     expect(translated.message).toContain('"raw_key"');
   });
 
-  test("passes through non-CONFIG_MISSING errors unchanged", () => {
+  test("passes through non-MpakConfigError Error instances unchanged", () => {
     const other = new Error("something else broke");
     const translated = friendlyMpakConfigError(other, WS_A);
     expect(translated).toBe(other);
+  });
+
+  test("passes through duck-typed look-alikes (only real MpakConfigError translates)", () => {
+    // Before switching to instanceof we accepted any object with the right
+    // shape. Now only real SDK errors translate — a look-alike is treated
+    // as a plain error and forwarded verbatim.
+    const fakeError = Object.assign(new Error("I'm not really one"), {
+      code: "CONFIG_MISSING",
+      packageName: "@fake/bundle",
+      missingFields: [{ key: "x", title: "X", sensitive: false }],
+    });
+    const translated = friendlyMpakConfigError(fakeError, WS_A);
+    expect(translated).toBe(fakeError);
   });
 
   test("wraps non-Error thrown values", () => {
@@ -725,13 +730,11 @@ describe("friendlyMpakConfigError", () => {
     expect(translated.message).toBe("string thrown");
   });
 
-  test("CONFIG_MISSING with empty missingFields falls back to the original message", () => {
-    const mpakError = Object.assign(new Error("raw mpak msg"), {
-      code: "CONFIG_MISSING",
-      packageName: "@scope/bundle",
-      missingFields: [],
-    });
+  test("MpakConfigError with empty missingFields falls back to the original message", () => {
+    const mpakError = new MpakConfigError("@scope/bundle", []);
     const translated = friendlyMpakConfigError(mpakError, WS_A);
-    expect(translated.message).toBe("raw mpak msg");
+    // The SDK's message format is what the caller sees when there's nothing
+    // specific to surface.
+    expect(translated.message).toBe(mpakError.message);
   });
 });
