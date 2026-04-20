@@ -341,6 +341,11 @@ export function MessageList({
                               <ToolAccordion
                                 calls={block.toolCalls}
                                 displayDetail={displayDetail}
+                                pending={
+                                  streamingState === "analyzing" &&
+                                  idx === messages.length - 1 &&
+                                  blockIdx === msg.blocks!.length - 1
+                                }
                               />
                               {blockWidgets.map((tc) => {
                                 const match = tc.resourceUri!.match(/^ui:\/\/[^/]+\/(.+)$/);

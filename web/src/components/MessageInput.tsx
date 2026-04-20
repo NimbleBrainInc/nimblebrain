@@ -147,7 +147,8 @@ export function MessageInput({
     [addFiles],
   );
 
-  const isActive = streamingState === "thinking" || streamingState === "working";
+  const isActive =
+    streamingState === "thinking" || streamingState === "working" || streamingState === "analyzing";
   const canSend = (text.trim() || attachedFiles.length > 0) && !disabled;
 
   return (
@@ -233,7 +234,11 @@ export function MessageInput({
       <div className="flex items-center justify-center gap-3 mt-2 text-[10px] text-muted-foreground">
         {isActive && (
           <span className="text-processing font-mono font-medium">
-            {streamingState === "working" ? "Working..." : "Thinking..."}
+            {streamingState === "working"
+              ? "Working..."
+              : streamingState === "analyzing"
+                ? "Analyzing..."
+                : "Thinking..."}
           </span>
         )}
         {onNewConversation && (

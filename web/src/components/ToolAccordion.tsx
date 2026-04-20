@@ -28,11 +28,19 @@ import { describeBatch } from "../lib/tool-display";
 interface ToolAccordionProps {
   calls: ToolCallDisplay[];
   displayDetail: DisplayDetail;
+  /**
+   * True when this block's tools have all finished and the model is now
+   * inferring on the results (streamingState === "analyzing"). Renders an
+   * "Analyzing…" footer so the UI doesn't appear frozen between tool.done
+   * and the next text.delta / tool.start.
+   */
+  pending?: boolean;
 }
 
 export const ToolAccordion = memo(function ToolAccordion({
   calls,
   displayDetail,
+  pending = false,
 }: ToolAccordionProps) {
   // Visual statuses smooth the running→done transition so quick tools don't flash.
   const visualStatuses = useMinDisplayTime(calls);
@@ -80,6 +88,16 @@ export const ToolAccordion = memo(function ToolAccordion({
           ) : (
             batch.items.map((item) => <ToolRow key={item.id} item={item} />)
           )}
+        </div>
+      )}
+
+      {pending && (
+        <div className="tool-accordion__pending" aria-live="polite">
+          <Loader2
+            className="tool-accordion__icon tool-accordion__icon--running"
+            style={{ width: 12, height: 12 }}
+          />
+          <span>Analyzing</span>
         </div>
       )}
     </div>
