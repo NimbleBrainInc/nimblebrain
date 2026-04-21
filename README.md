@@ -326,6 +326,7 @@ Run `nb --help` or `nb <command> --help` for full usage. If you haven't run `bun
 | `MCP_SESSION_TTL_MS` | MCP session inactivity TTL in ms (default: 1800000) |
 | `NB_CHAT_RATE_LIMIT` | Chat requests per minute per user (default: 20) |
 | `NB_TOOL_RATE_LIMIT` | Tool calls per minute per user (default: 60) |
+| `NB_BUNDLE_START_CONCURRENCY` | Max bundle subprocesses spawned in parallel at boot (default: 4, set to 1 for sequential) |
 | `NB_TIMEZONE` | Default IANA timezone for time-aware features |
 | `NB_HOST_URL` | Public host URL for OAuth redirects |
 

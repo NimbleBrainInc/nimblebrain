@@ -169,37 +169,83 @@ export async function startWorkspaceBundles(
   }
 
   const registries = new Map<string, ToolRegistry>();
-  const resultEntries: ProcessInventoryEntry[] = [];
-
-  for (const [wsId, wsEntries] of byWorkspace) {
-    const wsRegistry = createWorkspaceRegistry(platformSources, systemSource);
-
-    // Start workspace-specific bundles and add to the workspace registry
-    for (const entry of wsEntries) {
-      try {
-        const result = await startBundleSource(entry.bundle, wsRegistry, eventSink, configDir, {
-          allowInsecureRemotes: opts?.allowInsecureRemotes,
-          dataDir: entry.dataDir,
-          // Thread workspace id + work dir so the named-bundle path can
-          // resolve `user_config` from the workspace credential store before
-          // prepareServer validates it.
-          wsId: entry.wsId,
-          workDir,
-        });
-        // Use the actual source name from the registry (may differ from path-derived name)
-        resultEntries.push({ ...entry, serverName: result.sourceName, meta: result.meta });
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        process.stderr.write(
-          `[workspace-runtime] Failed to start ${entry.serverName} in ${wsId}: ${msg}\n`,
-        );
-      }
-    }
-
-    registries.set(wsId, wsRegistry);
+  for (const wsId of byWorkspace.keys()) {
+    registries.set(wsId, createWorkspaceRegistry(platformSources, systemSource));
   }
 
-  return { registries, entries: resultEntries };
+  // Flatten (wsId, entry) pairs and start them through a bounded worker pool.
+  // Sequential startup bottlenecked on Python interpreter cold-start for each
+  // bundle subprocess; concurrent fan-out lets k8s/CPU overlap them. Capped to
+  // keep peak memory/CPU bounded regardless of installed-bundle count — a pod
+  // with many bundles won't OOM-kill itself on boot.
+  const flat = Array.from(byWorkspace.entries()).flatMap(([wsId, wsEntries]) =>
+    wsEntries.map((entry) => ({ wsId, entry })),
+  );
+  const resultEntries: ProcessInventoryEntry[] = new Array(flat.length);
+
+  await mapWithConcurrency(flat, resolveBundleStartConcurrency(), async ({ wsId, entry }, idx) => {
+    const wsRegistry = registries.get(wsId);
+    if (!wsRegistry) return; // unreachable: registries is keyed by every wsId in byWorkspace
+    try {
+      const result = await startBundleSource(entry.bundle, wsRegistry, eventSink, configDir, {
+        allowInsecureRemotes: opts?.allowInsecureRemotes,
+        dataDir: entry.dataDir,
+        // Thread workspace id + work dir so the named-bundle path can
+        // resolve `user_config` from the workspace credential store before
+        // prepareServer validates it.
+        wsId: entry.wsId,
+        workDir,
+      });
+      // Use the actual source name from the registry (may differ from path-derived name)
+      resultEntries[idx] = { ...entry, serverName: result.sourceName, meta: result.meta };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      process.stderr.write(
+        `[workspace-runtime] Failed to start ${entry.serverName} in ${wsId}: ${msg}\n`,
+      );
+    }
+  });
+
+  return { registries, entries: resultEntries.filter((e): e is ProcessInventoryEntry => !!e) };
+}
+
+/**
+ * Max bundles to start in parallel during `startWorkspaceBundles`. Override with
+ * `NB_BUNDLE_START_CONCURRENCY`. Default 4 keeps peak memory/CPU bounded on a
+ * 2-CPU/4Gi pod while capturing most of the serial→parallel win. Set to 1 for
+ * legacy sequential behavior.
+ */
+export function resolveBundleStartConcurrency(): number {
+  const raw = process.env.NB_BUNDLE_START_CONCURRENCY;
+  if (raw === undefined || raw === "") return 4;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n >= 1 ? n : 4;
+}
+
+/**
+ * Run `worker` over `items` with at most `concurrency` in flight. Preserves
+ * per-item index so callers can write results into a pre-sized array without
+ * worrying about completion order. Errors thrown by `worker` propagate — this
+ * helper does not swallow them; the caller is responsible for per-item
+ * try/catch when continue-on-failure is desired.
+ */
+async function mapWithConcurrency<T>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T, index: number) => Promise<void>,
+): Promise<void> {
+  if (items.length === 0) return;
+  const limit = Math.max(1, Math.min(concurrency, items.length));
+  let cursor = 0;
+  const runners = Array.from({ length: limit }, async () => {
+    while (true) {
+      const idx = cursor++;
+      if (idx >= items.length) return;
+      const item = items[idx] as T;
+      await worker(item, idx);
+    }
+  });
+  await Promise.all(runners);
 }
 
 // ---------------------------------------------------------------------------

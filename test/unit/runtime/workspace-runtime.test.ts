@@ -1,10 +1,11 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { join } from "node:path";
 import type { BundleRef } from "../../../src/bundles/types.ts";
 import type { Workspace } from "../../../src/workspace/types.ts";
 import {
   buildProcessInventory,
   type ProcessInventoryEntry,
+  resolveBundleStartConcurrency,
 } from "../../../src/runtime/workspace-runtime.ts";
 
 // ---------------------------------------------------------------------------
@@ -152,5 +153,50 @@ describe("buildProcessInventory", () => {
     const dataDirs = entries.map((e) => e.dataDir);
     const uniqueDirs = new Set(dataDirs);
     expect(uniqueDirs.size).toBe(dataDirs.length);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// resolveBundleStartConcurrency
+// ---------------------------------------------------------------------------
+
+describe("resolveBundleStartConcurrency", () => {
+  const original = process.env.NB_BUNDLE_START_CONCURRENCY;
+
+  beforeEach(() => {
+    delete process.env.NB_BUNDLE_START_CONCURRENCY;
+  });
+
+  afterEach(() => {
+    if (original === undefined) delete process.env.NB_BUNDLE_START_CONCURRENCY;
+    else process.env.NB_BUNDLE_START_CONCURRENCY = original;
+  });
+
+  it("defaults to 4 when unset", () => {
+    expect(resolveBundleStartConcurrency()).toBe(4);
+  });
+
+  it("defaults to 4 for empty string", () => {
+    process.env.NB_BUNDLE_START_CONCURRENCY = "";
+    expect(resolveBundleStartConcurrency()).toBe(4);
+  });
+
+  it("honors a valid positive integer", () => {
+    process.env.NB_BUNDLE_START_CONCURRENCY = "8";
+    expect(resolveBundleStartConcurrency()).toBe(8);
+  });
+
+  it("accepts 1 as the legacy sequential value", () => {
+    process.env.NB_BUNDLE_START_CONCURRENCY = "1";
+    expect(resolveBundleStartConcurrency()).toBe(1);
+  });
+
+  it("falls back to default on zero, negatives, or garbage", () => {
+    process.env.NB_BUNDLE_START_CONCURRENCY = "0";
+    expect(resolveBundleStartConcurrency()).toBe(4);
+    process.env.NB_BUNDLE_START_CONCURRENCY = "-2";
+    expect(resolveBundleStartConcurrency()).toBe(4);
+    process.env.NB_BUNDLE_START_CONCURRENCY = "abc";
+    expect(resolveBundleStartConcurrency()).toBe(4);
   });
 });
