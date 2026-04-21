@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { deriveServerName, resolveBundleDataDir } from "../bundles/paths.ts";
 import { startBundleSource } from "../bundles/startup.ts";
 import type { BundleRef, LocalBundleMeta } from "../bundles/types.ts";
+import { log } from "../cli/log.ts";
 import { clearAllWorkspaceCredentials } from "../config/workspace-credentials.ts";
 import { ToolRegistry } from "../tools/registry.ts";
 import type { ToolSource } from "../tools/types.ts";
@@ -178,12 +179,21 @@ export async function startWorkspaceBundles(
   // bundle subprocess; concurrent fan-out lets k8s/CPU overlap them. Capped to
   // keep peak memory/CPU bounded regardless of installed-bundle count — a pod
   // with many bundles won't OOM-kill itself on boot.
+  //
+  // Note: if a workspace ever declares two bundles that resolve to the same
+  // serverName, the loser still fails with "already registered" (per-entry
+  // try/catch keeps siblings unaffected), but *which one loses* is now
+  // completion-ordered rather than declaration-ordered. Workspace definitions
+  // shouldn't contain duplicates — this is a note for future incident triage,
+  // not a fix target.
   const flat = Array.from(byWorkspace.entries()).flatMap(([wsId, wsEntries]) =>
     wsEntries.map((entry) => ({ wsId, entry })),
   );
   const resultEntries: ProcessInventoryEntry[] = new Array(flat.length);
+  const concurrency = resolveBundleStartConcurrency();
+  const startMs = Date.now();
 
-  await mapWithConcurrency(flat, resolveBundleStartConcurrency(), async ({ wsId, entry }, idx) => {
+  await mapWithConcurrency(flat, concurrency, async ({ wsId, entry }, idx) => {
     const wsRegistry = registries.get(wsId);
     if (!wsRegistry) return; // unreachable: registries is keyed by every wsId in byWorkspace
     try {
@@ -206,7 +216,14 @@ export async function startWorkspaceBundles(
     }
   });
 
-  return { registries, entries: resultEntries.filter((e): e is ProcessInventoryEntry => !!e) };
+  const finalEntries = resultEntries.filter((e): e is ProcessInventoryEntry => !!e);
+  if (flat.length > 0) {
+    const elapsedMs = Date.now() - startMs;
+    log.info(
+      `[workspace-runtime] Started ${finalEntries.length}/${flat.length} bundles in ${elapsedMs}ms (concurrency=${concurrency})`,
+    );
+  }
+  return { registries, entries: finalEntries };
 }
 
 /**
@@ -228,8 +245,12 @@ export function resolveBundleStartConcurrency(): number {
  * worrying about completion order. Errors thrown by `worker` propagate — this
  * helper does not swallow them; the caller is responsible for per-item
  * try/catch when continue-on-failure is desired.
+ *
+ * Exported so it can be tested directly. Scope intentionally narrow — this is
+ * not a general-purpose `p-limit` replacement; it's shaped for bounded fan-out
+ * over a fixed list.
  */
-async function mapWithConcurrency<T>(
+export async function mapWithConcurrency<T>(
   items: T[],
   concurrency: number,
   worker: (item: T, index: number) => Promise<void>,
