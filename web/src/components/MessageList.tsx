@@ -298,7 +298,7 @@ export function MessageList({
                     <span className="presence-user-message italic">{displayContent}</span>
                   </div>
                 ) : (
-                  <div className="break-words min-w-0 overflow-hidden flex flex-col gap-3">
+                  <div className="w-full break-words min-w-0 overflow-hidden flex flex-col gap-3">
                     {showThinkingPlaceholder && (
                       <span className="text-xs font-mono text-muted-foreground/60 presence-thinking">
                         Thinking
