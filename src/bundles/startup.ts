@@ -135,6 +135,7 @@ export async function startBundleSource(
         version: `remote (${tools.length} tools)`,
         ui: ref.ui ?? null,
         briefing: null,
+        httpProxy: null,
         type: "plain" as const,
       },
       sourceName,
@@ -314,6 +315,19 @@ function buildLocalSource(
     dataDirOverride ?? join(nbWorkDir, "data", deriveBundleDataDir(manifest.name));
   spawnEnv.MPAK_WORKSPACE = bundleDataDir;
   spawnEnv.UPJACK_ROOT = bundleDataDir;
+
+  // If the bundle declares an http-proxy, tell it the public path prefix so it
+  // can configure its upstream server (e.g., `astro --base`) to match. Format:
+  //   /v1/apps/<serverName>/<mount>
+  const httpProxyMeta = (manifest._meta as Record<string, unknown> | undefined)?.[
+    "ai.nimblebrain/http-proxy"
+  ] as { mount?: string } | undefined;
+  if (httpProxyMeta?.mount) {
+    const mount = String(httpProxyMeta.mount).replace(/^\/+|\/+$/g, "");
+    if (mount && !/\//.test(mount)) {
+      spawnEnv.NB_PROXY_PREFIX = `/v1/apps/${serverName}/${mount}`;
+    }
+  }
 
   // Python bundles: resolve "python" -> "python3" if needed, build PYTHONPATH
   if (manifest.server.type === "python") {

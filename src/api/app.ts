@@ -10,6 +10,7 @@ import { eventRoutes } from "./routes/events.ts";
 import { healthRoutes } from "./routes/health.ts";
 import { mcpRoutes } from "./routes/mcp.ts";
 import { mcpAuthRoutes } from "./routes/mcp-auth.ts";
+import { proxyRoutes } from "./routes/proxy.ts";
 import { resourceRoutes } from "./routes/resources.ts";
 import { toolRoutes } from "./routes/tools.ts";
 import { wellKnownRoutes } from "./routes/well-known.ts";
@@ -46,6 +47,9 @@ export function createApp(
   app.route("/", chatRoutes(ctx));
   app.route("/", toolRoutes(ctx));
   app.route("/", resourceRoutes(ctx));
+  // Proxy routes registered AFTER resource routes so `/v1/apps/:bundle/resources/*`
+  // (resource reads) wins against `/v1/apps/:bundle/:mount/*` (http proxy).
+  app.route("/", proxyRoutes(ctx));
   app.route("/", eventRoutes(ctx));
   app.route("/", conversationEventRoutes(ctx));
 

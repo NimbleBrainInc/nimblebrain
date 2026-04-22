@@ -27,4 +27,10 @@ export interface Workspace {
   models?: Partial<ModelSlots>;
   /** Optional markdown identity override for this workspace's agent persona. */
   identity?: string;
+  /**
+   * Allow bundles in this workspace to expose HTTP proxy routes (declared via
+   * `_meta["ai.nimblebrain/http-proxy"]` in their manifests). Default true.
+   * Set false to block all proxy routes in security-sensitive workspaces.
+   */
+  allowHttpProxy?: boolean;
 }
