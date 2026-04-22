@@ -119,7 +119,7 @@ export interface UiDownloadFileMessage {
   method: "synapse/download-file";
   id?: string;
   params: {
-    data: string;
+    data: Blob;
     filename: string;
     mimeType: string;
   };
