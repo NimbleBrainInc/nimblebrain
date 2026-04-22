@@ -545,12 +545,8 @@ async function pickFiles(accept: string, maxSize: number, multiple: boolean): Pr
 }
 
 /** Trigger a browser file download via a temporary anchor tag. */
-function triggerDownload(data: string, filename: string, mimeType: string): void {
-  const bytes = new Uint8Array(data.length);
-  for (let i = 0; i < data.length; i++) {
-    bytes[i] = data.charCodeAt(i);
-  }
-  const blob = new Blob([bytes], { type: mimeType });
+function triggerDownload(data: Blob, filename: string, mimeType: string): void {
+  const blob = data.type === mimeType ? data : new Blob([data], { type: mimeType });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
