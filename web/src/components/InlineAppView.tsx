@@ -1,6 +1,6 @@
 import { Loader2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { getResources } from "../api/client";
+import { getResources, uiPathFromUri } from "../api/client";
 import type { BridgeHandle } from "../bridge/bridge";
 import { createBridge } from "../bridge/bridge";
 import { createAppIframe } from "../bridge/iframe";
@@ -45,7 +45,7 @@ export function InlineAppView({ appName, resourceUri, toolResult }: InlineAppVie
       setError(null);
 
       try {
-        const path = resourceUri.replace(/^ui:\/\//, "");
+        const path = uiPathFromUri(resourceUri);
         const { html, metaUi } = await getResources(appName, path);
 
         if (cancelled || !container) return;

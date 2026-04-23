@@ -28,10 +28,53 @@ export interface CreateIframeOptions {
   baseUriDomains?: string[];
   /** Feature permissions the app requests (camera, clipboard, etc.) — maps to iframe `allow`. */
   permissions?: McpUiResourcePermissions;
+  /**
+   * Whether to honor server-declared `_meta.ui.permissions` (camera, microphone,
+   * geolocation). Defaults to `false` — servers cannot unilaterally grant
+   * themselves device access. The host opts in after some form of consent
+   * (per-workspace admin approval, per-bundle config, user prompt), staged for
+   * the consent-UI follow-up in `nimblebrain-ops/research/INTERACTIVE_OAUTH_UI.md`.
+   *
+   * `clipboard-write` is always on — it's needed for copy/cut UX and is
+   * gesture-gated by the browser; not a device-access permission.
+   */
+  honorServerPermissions?: boolean;
   /** App wants a visible border/background around its frame. */
   prefersBorder?: boolean;
   /** Theme mode override. Defaults to the host page's current mode. */
   themeMode?: ThemeMode;
+}
+
+/**
+ * Validate a server-declared CSP domain entry. Rejects anything that could
+ * inject into a CSP directive (semicolons split directives, spaces separate
+ * source lists, quotes escape `<meta content="...">`, bare `*` / `'...'`
+ * CSP keywords relax the policy). Domains must be `scheme://host[:port][path]`
+ * URLs over http/https/ws/wss. Wildcard subdomains (`https://*.example.com`)
+ * are allowed.
+ */
+const CSP_DOMAIN_PATTERN = /^(https?|wss?):\/\/[A-Za-z0-9.\-_~:@%?&=/*+]+$/;
+export function isValidCspDomain(value: string): boolean {
+  if (typeof value !== "string" || value.length === 0) return false;
+  if (value === "*" || value.startsWith("'")) return false;
+  if (/[\s"';]/.test(value)) return false;
+  return CSP_DOMAIN_PATTERN.test(value);
+}
+
+function filterDomains(list: string[] | undefined): string[] | undefined {
+  if (!list || list.length === 0) return undefined;
+  const ok: string[] = [];
+  for (const entry of list) {
+    if (isValidCspDomain(entry)) {
+      ok.push(entry);
+    } else {
+      // Loud rejection — silent drops mask bundle misconfiguration.
+      console.warn(
+        `[iframe-csp] dropping invalid server-declared domain: ${JSON.stringify(entry)}`,
+      );
+    }
+  }
+  return ok.length > 0 ? ok : undefined;
 }
 
 /**
@@ -40,27 +83,35 @@ export interface CreateIframeOptions {
  * Defaults mirror the ext-apps spec's "secure by default" posture — no
  * network, no nested frames, no base URI override. Server-declared
  * `_meta.ui.csp.*` fields (passed via `CreateIframeOptions`) relax these for
- * the specific origins the app needs. `blob:` is preserved on `frame-src` for
- * inline content rendering (e.g., PDF preview of tool output).
+ * the specific origins the app needs — after validation; invalid entries
+ * are dropped with a warning so a compromised or misconfigured bundle can't
+ * inject additional directives via metacharacters in its declarations.
+ * `blob:` is preserved on `frame-src` for inline content rendering (e.g.,
+ * PDF preview of tool output).
  */
 export function buildCSP(options?: CreateIframeOptions): string {
+  // Validate every server-declared entry before it touches a directive. A
+  // compromised bundle declaring
+  // `connectDomains: ["https://x; script-src *"]` would otherwise inject a
+  // second directive that relaxes script-src; `filterDomains` rejects it.
+  const connectDomains = filterDomains(options?.connectDomains);
+  const resourceDomains = filterDomains(options?.resourceDomains);
+  const frameDomains = filterDomains(options?.frameDomains);
+  const baseUriDomains = filterDomains(options?.baseUriDomains);
+
   const joinOrNone = (list?: string[]): string =>
     list && list.length > 0 ? list.join(" ") : "'none'";
 
-  const connectSrc = joinOrNone(options?.connectDomains);
+  const connectSrc = joinOrNone(connectDomains);
   const frameSrc =
-    options?.frameDomains && options.frameDomains.length > 0
-      ? `blob: ${options.frameDomains.join(" ")}`
-      : "blob:";
-  const baseUri = joinOrNone(options?.baseUriDomains);
+    frameDomains && frameDomains.length > 0 ? `blob: ${frameDomains.join(" ")}` : "blob:";
+  const baseUri = joinOrNone(baseUriDomains);
 
   // Resource-src merges across script/style/img/font. Base is `'self' 'unsafe-inline'`
   // for script/style (srcdoc iframes need inline to work at all) plus `data: blob:` for
   // images/fonts; declared resourceDomains are appended.
   const resourceExtras =
-    options?.resourceDomains && options.resourceDomains.length > 0
-      ? ` ${options.resourceDomains.join(" ")}`
-      : "";
+    resourceDomains && resourceDomains.length > 0 ? ` ${resourceDomains.join(" ")}` : "";
 
   return [
     "default-src 'none'",
@@ -76,17 +127,30 @@ export function buildCSP(options?: CreateIframeOptions): string {
 }
 
 /**
- * Map ext-apps permissions to the iframe `allow` attribute value. Only
- * emits features the app requested — the browser's default-deny posture
- * handles omitted features.
+ * Map ext-apps permissions to the iframe `allow` attribute value.
+ *
+ * Server-declared camera/microphone/geolocation are IGNORED by default — a
+ * remote MCP server should not be able to unilaterally grant itself device
+ * access. This matches the trust posture already applied to `clipboard-read`
+ * (explicitly disallowed because it's a gesture-less exfiltration vector).
+ *
+ * The host can opt in via `CreateIframeOptions.honorServerPermissions`.
+ * The production path for that opt-in is a per-bundle workspace-config flag
+ * or a user consent prompt — staged for the consent-UI follow-up.
+ *
+ * `clipboard-write` stays always-on: needed for copy/cut UX and gesture-gated
+ * by the browser.
  */
-function buildAllowAttr(permissions?: McpUiResourcePermissions): string {
+function buildAllowAttr(
+  permissions: McpUiResourcePermissions | undefined,
+  honorServerPermissions: boolean,
+): string {
   const features: string[] = ["clipboard-write"];
-  if (permissions?.camera) features.push("camera");
-  if (permissions?.microphone) features.push("microphone");
-  if (permissions?.geolocation) features.push("geolocation");
-  // clipboardWrite is already in features by default; a server-requested
-  // permission doesn't need special handling beyond that.
+  if (honorServerPermissions && permissions) {
+    if (permissions.camera) features.push("camera");
+    if (permissions.microphone) features.push("microphone");
+    if (permissions.geolocation) features.push("geolocation");
+  }
   return features.join("; ");
 }
 
@@ -161,12 +225,12 @@ export function createAppIframe(
     "allow-popups-to-escape-sandbox",
   );
 
-  // Permissions Policy: clipboard-write is always on (copy/cut inside the
-  // iframe). clipboard-read is intentionally omitted — it would let apps
-  // read the clipboard without user gesture, a data-exfiltration risk for
-  // untrusted apps. Additional features come from the server-declared
-  // `_meta.ui.permissions` (camera/microphone/geolocation) and are opt-in.
-  iframe.allow = buildAllowAttr(options?.permissions);
+  // Permissions Policy: clipboard-write always on (gesture-gated by browser).
+  // Server-declared device permissions (camera/microphone/geolocation) are
+  // off unless the host explicitly opts in via
+  // `options.honorServerPermissions` — a remote MCP server doesn't get to
+  // grant itself device access.
+  iframe.allow = buildAllowAttr(options?.permissions, options?.honorServerPermissions ?? false);
 
   // Inject theme CSS variables into the HTML
   const themeMode = options?.themeMode ?? getHostThemeMode();

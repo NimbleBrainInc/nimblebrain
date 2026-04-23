@@ -462,10 +462,16 @@ export function createBridge(
     },
 
     setHostContext(context: Record<string, unknown>): void {
+      // Filter spec-allowed theme keys centrally so every caller
+      // (SlotRenderer's theme toggle, future ones) can't bypass the
+      // ext-apps strict-Zod contract. Sending `--nb-*` or out-of-spec
+      // tokens to a strict client like Reboot tears down the connection
+      // on every host-context-changed notification.
+      const filtered = filterHostContextForSpec(context);
       const msg: ExtAppsHostContextChangedNotification = {
         jsonrpc: "2.0",
         method: "ui/notifications/host-context-changed",
-        params: context,
+        params: filtered,
       };
       postToIframe(msg);
     },
@@ -490,6 +496,29 @@ export function createBridge(
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Filter `ui/notifications/host-context-changed` params so only spec-valid
+ * theme variable keys cross the wire. Strict ext-apps SDK clients (Reboot's
+ * React runtime validates via Zod) reject unknown keys on
+ * `hostContext.styles.variables`; sending `--nb-*` or out-of-spec tokens
+ * tears down the connection. Centralized here so callers can't skip it.
+ *
+ * Only the `styles.variables` branch is filtered — other host-context
+ * fields (theme mode, future additions) pass through unchanged.
+ */
+function filterHostContextForSpec(ctx: Record<string, unknown>): Record<string, unknown> {
+  const styles = ctx.styles as { variables?: Record<string, string> } | undefined;
+  if (!styles?.variables) return ctx;
+  const mode = (ctx.theme as "light" | "dark" | undefined) ?? getHostThemeMode();
+  return {
+    ...ctx,
+    styles: {
+      ...styles,
+      variables: getSpecThemeTokens(mode),
+    },
+  };
+}
 
 /** Open native file picker, read selected file(s), and return base64-encoded results. */
 async function pickFiles(accept: string, maxSize: number, multiple: boolean): Promise<unknown> {

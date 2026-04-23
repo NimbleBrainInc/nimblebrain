@@ -14,6 +14,7 @@ import type { ChatRequest } from "../runtime/types.ts";
 import { filterPlacementsForWorkspace } from "../runtime/workspace-access.ts";
 import type { HealthMonitor } from "../tools/health-monitor.ts";
 import { InlineSource } from "../tools/inline-source.ts";
+import type { ResourceData } from "../tools/types.ts";
 import { validateToolInput } from "../tools/validate-input.ts";
 import type { ConversationEventManager } from "./conversation-events.ts";
 import type { SseEventManager } from "./events.ts";
@@ -360,13 +361,30 @@ export async function handleResourceProxy(
 
   // Emit a JSON envelope mirroring the MCP `ReadResourceResult` shape so
   // clients see the protocol directly and can consume `_meta` (e.g. ext-apps
-  // `_meta.ui.csp`) without a translation layer. Binary payloads come back
-  // as base64-encoded `blob` strings per spec. Mirrors the shape returned by
-  // `handleReadResource` (POST /v1/resources/read) — same endpoint, same
-  // shape.
-  const entry: Record<string, unknown> = {
-    uri: `ui://${resolvedPath}`,
-  };
+  // `_meta.ui.csp`) without a translation layer. Same shape as
+  // `handleReadResource` (POST /v1/resources/read).
+  return json({ contents: [buildResourceEnvelopeEntry(`ui://${resolvedPath}`, resource)] });
+}
+
+/**
+ * Build a single `contents[]` entry in the MCP `ReadResourceResult`
+ * envelope shape. Shared between `handleResourceProxy` (GET /v1/apps/:name/
+ * resources/:path) and `handleReadResource` (POST /v1/resources/read) so
+ * both emit a byte-identical envelope — this is the exact drift that adding
+ * `_meta` without a shared helper would create.
+ *
+ * Exactly one of `text` or `blob` is populated (blob wins when the resource
+ * is binary); `blob` values are base64-encoded per spec. `_meta` is included
+ * only when the source declared one.
+ *
+ * Exported for direct unit-test coverage — see
+ * `test/unit/resource-envelope.test.ts`.
+ */
+export function buildResourceEnvelopeEntry(
+  uri: string,
+  resource: ResourceData,
+): Record<string, unknown> {
+  const entry: Record<string, unknown> = { uri };
   if (resource.mimeType) entry.mimeType = resource.mimeType;
   if (resource.blob) {
     entry.blob = bytesToBase64(resource.blob);
@@ -374,8 +392,7 @@ export async function handleResourceProxy(
     entry.text = resource.text ?? "";
   }
   if (resource.meta) entry._meta = resource.meta;
-
-  return json({ contents: [entry] });
+  return entry;
 }
 
 /**
@@ -425,16 +442,7 @@ export async function handleReadResource(
     });
   }
 
-  const entry: Record<string, unknown> = { uri };
-  if (resource.mimeType) entry.mimeType = resource.mimeType;
-  if (resource.blob) {
-    entry.blob = bytesToBase64(resource.blob);
-  } else {
-    entry.text = resource.text ?? "";
-  }
-  if (resource.meta) entry._meta = resource.meta;
-
-  return json({ contents: [entry] });
+  return json({ contents: [buildResourceEnvelopeEntry(uri, resource)] });
 }
 
 /**

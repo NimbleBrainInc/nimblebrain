@@ -620,10 +620,19 @@ function isExecutionMeta(
 
 /**
  * Merge result-level and content-level `_meta` from an MCP `ReadResourceResult`.
- * Content-level takes precedence on key overlap — the ext-apps spec attaches
- * ui metadata at the content level, and a resource's view of its own metadata
- * should win over a container-level hint. Returns undefined when both are empty
- * so consumers can skip metadata-handling cleanly.
+ *
+ * Shallow top-level spread: any top-level key present on `contentMeta`
+ * **replaces** the same key from `resultMeta` wholesale (no per-field deep
+ * merge). Example: given `resultMeta = { ui: { a: 1 } }` and
+ * `contentMeta = { ui: { b: 2 } }`, the result is `{ ui: { b: 2 } }`, not
+ * `{ ui: { a: 1, b: 2 } }`.
+ *
+ * The ext-apps spec attaches ui metadata at the content level, so
+ * content-wins is the right precedence when both sides declare `ui` — a
+ * resource's view of its own capabilities should replace any container-level
+ * hint, not mix with it. Keys that exist on one side only pass through
+ * unchanged. Returns undefined when both sides are empty so consumers can
+ * skip metadata handling cleanly.
  */
 function mergeResourceMeta(
   resultMeta: Record<string, unknown> | undefined,

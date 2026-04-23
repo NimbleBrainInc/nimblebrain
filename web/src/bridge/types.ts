@@ -272,7 +272,10 @@ export interface UiToolResultMessage {
 /** Spec: Host responds to ui/initialize request (ext-apps handshake). */
 export interface ExtAppsInitializeResponse {
   jsonrpc: "2.0";
-  id: string;
+  // JSON-RPC 2.0 allows request IDs to be strings or numbers; ext-apps SDK
+  // clients (Reboot via @reboot-dev/reboot-react) use numeric IDs starting
+  // at 0, so the response echoes whichever shape the request used.
+  id: string | number;
   result: {
     protocolVersion: string;
     hostInfo: { name: string; version: string };

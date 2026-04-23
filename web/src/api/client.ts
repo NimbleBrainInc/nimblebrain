@@ -137,6 +137,16 @@ export class ApiClientError extends Error {
 // ---------------------------------------------------------------------------
 
 /**
+ * Strip the `ui://` scheme prefix from a resource URI, returning the path
+ * that `/v1/apps/:name/resources/*` expects. Single source of truth for
+ * the transform — consumers rendering iframes from `resourceUri` call this
+ * rather than redoing the regex locally.
+ */
+export function uiPathFromUri(uri: string): string {
+  return uri.replace(/^ui:\/\//, "");
+}
+
+/**
  * Fetch an app's ui:// resource. Used by the iframe mounting path
  * (SlotRenderer, InlineAppView) to load app views into sandboxed frames.
  *

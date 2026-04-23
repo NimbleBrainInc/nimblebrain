@@ -303,6 +303,35 @@ describe("Bridge — ext-apps dual protocol", () => {
     handle.destroy();
   });
 
+  it("accepts ui/initialize with numeric edge-case IDs (negative, MAX_SAFE_INTEGER)", () => {
+    // All JS numbers are valid JSON-RPC ids per spec; pick two uncommon ones
+    // to catch any accidental coercion-via-truthiness or integer-overflow
+    // checks sneaking into the handler.
+    const { iframe, posted } = makeFakeIframe();
+    const handle = createBridge(iframe, "test-app");
+
+    for (const id of [-1, Number.MAX_SAFE_INTEGER]) {
+      simulatePostMessage(iframe, {
+        jsonrpc: "2.0",
+        id,
+        method: "ui/initialize",
+        params: {
+          protocolVersion: "2026-01-26",
+          clientInfo: { name: "T", version: "1" },
+          capabilities: {},
+        },
+      });
+    }
+
+    const responses = posted.filter(
+      (m: unknown) => "result" in (m as Record<string, unknown>),
+    ) as Record<string, unknown>[];
+    expect(responses.some((r) => r.id === -1)).toBe(true);
+    expect(responses.some((r) => r.id === Number.MAX_SAFE_INTEGER)).toBe(true);
+
+    handle.destroy();
+  });
+
   it("ui/initialize response filters hostContext.styles.variables to spec-allowed keys only", () => {
     // Strict ext-apps SDK clients (Reboot's `@reboot-dev/reboot-react` uses
     // Zod to validate the response) reject unknown variable keys. Our theme
@@ -338,6 +367,45 @@ describe("Bridge — ext-apps dual protocol", () => {
     // And we should still be sending the core spec-allowed ones
     expect(keys).toContain("--color-background-primary");
     expect(keys).toContain("--font-sans");
+
+    handle.destroy();
+  });
+
+  it("setHostContext filters hostContext.styles.variables centrally (all callers)", () => {
+    // Regression guard for the theme-toggle path: SlotRenderer was calling
+    // setHostContext with unfiltered tokens (--nb-* keys included), tearing
+    // down strict Zod-validating clients on every theme toggle. The filter
+    // now lives INSIDE bridge.setHostContext so callers can't bypass.
+    const { iframe, posted } = makeFakeIframe();
+    const handle = createBridge(iframe, "test-app");
+
+    // Pass unfiltered tokens that include an NB extension and an out-of-spec key.
+    handle.setHostContext({
+      theme: "light",
+      styles: {
+        variables: {
+          "--color-background-primary": "#fff",
+          "--nb-color-danger": "#dc2626",
+          "--color-text-accent": "#0055FF",
+        },
+      },
+    });
+
+    const notification = posted.find(
+      (m: unknown) =>
+        (m as Record<string, unknown>).method === "ui/notifications/host-context-changed",
+    ) as Record<string, unknown> | undefined;
+    expect(notification).toBeDefined();
+    const params = notification!.params as {
+      styles: { variables: Record<string, string> };
+    };
+    const keys = Object.keys(params.styles.variables);
+    // `--nb-*` and `--color-text-accent` must not cross the wire
+    expect(keys.some((k) => k.startsWith("--nb-"))).toBe(false);
+    expect(keys).not.toContain("--color-text-accent");
+    expect(keys).not.toContain("--font-text-base-size");
+    // Spec-allowed keys are present
+    expect(keys).toContain("--color-background-primary");
 
     handle.destroy();
   });

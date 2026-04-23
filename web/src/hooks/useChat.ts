@@ -16,22 +16,6 @@ import type {
 } from "../types";
 
 /**
- * Trigger a browser download for a PDF resource served by an app.
- * Used when the agent calls export_pdf — fetches the compiled PDF
- * from the resource endpoint and triggers a save dialog.
- */
-function triggerResourceDownload(serverName: string): void {
-  const url = `${import.meta.env.VITE_API_BASE ?? ""}/v1/apps/${encodeURIComponent(serverName)}/resources/${encodeURIComponent(serverName)}/preview.pdf`;
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = "document.pdf";
-  anchor.style.display = "none";
-  document.body.appendChild(anchor);
-  anchor.click();
-  setTimeout(() => document.body.removeChild(anchor), 100);
-}
-
-/**
  * Streaming state machine:
  *
  *   null → thinking → streaming ↔ working → analyzing → streaming → null
@@ -337,12 +321,6 @@ export function useChat(initialConversationId?: string, currentUserId?: string):
               const anyRunning = toolCallsRef.current.some((tc) => tc.status === "running");
               setStreamingState(anyRunning ? "working" : "analyzing");
               flushToMessage();
-
-              // Auto-download: when agent calls export_pdf, trigger browser download
-              if (evt.ok && evt.name.endsWith("__export_pdf")) {
-                const serverName = evt.name.split("__")[0]!;
-                triggerResourceDownload(serverName);
-              }
               break;
             }
             case "llm.done": {
