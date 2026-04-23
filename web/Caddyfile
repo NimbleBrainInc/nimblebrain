@@ -5,6 +5,9 @@
     handle /mcp* {
         reverse_proxy {$PLATFORM_URL}
     }
+    handle /.well-known/* {
+        reverse_proxy {$PLATFORM_URL}
+    }
     handle {
         root * /srv
         try_files {path} /index.html
