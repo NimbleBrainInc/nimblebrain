@@ -280,7 +280,7 @@ describe("startBundleSource — remote url entries", () => {
 			serverName: "startup-remote",
 		};
 
-		const meta = await startBundleSource(ref, registry, new NoopEventSink(), undefined, { allowInsecureRemotes: true });
+		const meta = await startBundleSource(ref, registry, new NoopEventSink(), undefined, { allowInsecureRemotes: true, wsId: "ws_test" });
 
 		expect(meta).not.toBeNull();
 		expect(meta.meta).not.toBeNull();
@@ -301,7 +301,7 @@ describe("startBundleSource — remote url entries", () => {
 			url: mockServer.url,
 		};
 
-		const meta = await startBundleSource(ref, registry, new NoopEventSink(), undefined, { allowInsecureRemotes: true });
+		const meta = await startBundleSource(ref, registry, new NoopEventSink(), undefined, { allowInsecureRemotes: true, wsId: "ws_test" });
 		expect(meta).not.toBeNull();
 
 		// deriveServerName on a URL will produce something like "mcp"
@@ -320,7 +320,7 @@ describe("startBundleSource — remote url entries", () => {
 
 		// startBundleSource throws — but callers use allSettled
 		const results = await Promise.allSettled([
-			startBundleSource(ref, registry, new NoopEventSink(), undefined, { allowInsecureRemotes: true }),
+			startBundleSource(ref, registry, new NoopEventSink(), undefined, { allowInsecureRemotes: true, wsId: "ws_test" }),
 		]);
 
 		expect(results[0]!.status).toBe("rejected");
@@ -338,7 +338,7 @@ describe("startBundleSource — remote url entries", () => {
 		];
 
 		const results = await Promise.allSettled(
-			refs.map((ref) => startBundleSource(ref, registry, new NoopEventSink(), undefined, { allowInsecureRemotes: true })),
+			refs.map((ref) => startBundleSource(ref, registry, new NoopEventSink(), undefined, { allowInsecureRemotes: true, wsId: "ws_test" })),
 		);
 
 		// First two fail, third succeeds

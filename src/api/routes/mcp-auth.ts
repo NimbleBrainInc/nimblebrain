@@ -28,6 +28,14 @@ export function mcpAuthRoutes(_ctx: AppContext) {
   const app = new Hono();
 
   app.get("/v1/mcp-auth/callback", (c) => {
+    // Belt-and-suspenders: an intermediate proxy caching the success page
+    // (with `?code=...` in the URL) in a shared cache space is a classic
+    // OAuth footgun. Codes are single-use so the real boundary is the
+    // flow registry, but explicitly marking the response non-cacheable
+    // kills the class entirely.
+    c.header("Cache-Control", "no-store");
+    c.header("Pragma", "no-cache");
+
     const code = c.req.query("code");
     const state = c.req.query("state");
     const error = c.req.query("error");

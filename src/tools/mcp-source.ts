@@ -1,7 +1,6 @@
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import type { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { RemoteTransportConfig } from "../bundles/types.ts";
 import { log } from "../cli/log.ts";
@@ -26,6 +25,16 @@ export interface McpSpawnConfig {
   env: Record<string, string>;
   cwd?: string;
 }
+
+/**
+ * Narrow shape for a transport that can complete an OAuth authorization
+ * code exchange. Both streamable-HTTP and SSE transports in the MCP SDK
+ * expose this method when an `authProvider` is attached; a bare cast to
+ * one concrete class would lie about which transport shapes are valid.
+ */
+type AuthFinishableTransport = Transport & {
+  finishAuth?: (authorizationCode: string) => Promise<void>;
+};
 
 /** Discriminated union for how McpSource connects to its MCP server. */
 export type McpTransportMode =
@@ -137,7 +146,11 @@ export class McpSource implements ToolSource {
       // UnauthorizedError, the provider's pending flow was either resolved
       // in-process (headless, e.g. Reboot Anonymous) or rejected with a
       // clear error (interactive, which we don't support yet). Await the
-      // flow, finish auth on the transport, and try exactly once more.
+      // flow, finish auth on the EXISTING transport (so tokens land via
+      // authProvider.saveTokens), then tear down the transport+client and
+      // rebuild for the retry — `StreamableHTTPClientTransport` rejects a
+      // second `start()` on the same instance (matching the SDK's own
+      // `simpleOAuthClient` example pattern of new-transport-per-attempt).
       if (
         err instanceof UnauthorizedError &&
         this.mode.type === "remote" &&
@@ -146,16 +159,24 @@ export class McpSource implements ToolSource {
       ) {
         try {
           const code = await this.mode.authProvider.awaitPendingFlow();
-          const streamableTransport = this.transport as StreamableHTTPClientTransport;
-          if (typeof streamableTransport.finishAuth !== "function") {
+          const authable = this.transport as AuthFinishableTransport;
+          if (typeof authable.finishAuth !== "function") {
             throw new Error(
               `[mcp-source] transport does not support finishAuth (got ${this.transport.constructor.name})`,
             );
           }
-          await streamableTransport.finishAuth(code);
-          log.debug("mcp", `[oauth] ${this.name}: finishAuth ok, retrying connect`);
+          await authable.finishAuth(code);
+          log.debug("mcp", `[oauth] ${this.name}: finishAuth ok, recreating transport for retry`);
+
+          // Drop the first-attempt transport+client. Both are single-use
+          // after a failed start; the SDK tracks internal state
+          // (AbortController on the transport, handshake promise on the
+          // client) that a second connect would trip over.
+          await this.cleanupOnStartFailure();
+          this.rebuildRemoteTransport();
+          this.client = this.buildClient();
+
           await this.connectWithTimeout(CONNECT_TIMEOUT);
-          this.dead = false;
           this.startedAt = Date.now();
           return;
         } catch (retryErr) {
@@ -176,13 +197,22 @@ export class McpSource implements ToolSource {
     if (!this.client || !this.transport) {
       throw new Error("[mcp-source] connectWithTimeout called before init");
     }
-    const timeout = new Promise<never>((_, reject) =>
-      setTimeout(
+    // Capture and clear the timer on BOTH success and failure; without this,
+    // every successful connect leaks a 15–30s setTimeout that keeps the
+    // event loop awake. Under the OAuth retry path this would fire twice
+    // per successful start().
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(
         () => reject(new Error(`MCP connect timeout after ${timeoutMs / 1000}s for ${this.name}`)),
         timeoutMs,
-      ),
-    );
-    await Promise.race([this.client.connect(this.transport), timeout]);
+      );
+    });
+    try {
+      await Promise.race([this.client.connect(this.transport), timeout]);
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
   }
 
   private async cleanupOnStartFailure(): Promise<void> {
@@ -193,6 +223,46 @@ export class McpSource implements ToolSource {
     }
     this.client = null;
     this.transport = null;
+  }
+
+  /**
+   * Rebuild a fresh remote transport after an OAuth 401 → retry. Uses the
+   * same config as the original transport (URL, auth headers, provider) so
+   * the retry sees exactly the same surface with a clean internal state.
+   * Caller must have cleaned up the previous transport via
+   * `cleanupOnStartFailure()` first.
+   */
+  private rebuildRemoteTransport(): void {
+    if (this.mode.type !== "remote") {
+      throw new Error("[mcp-source] rebuildRemoteTransport called on non-remote mode");
+    }
+    this.transport = createRemoteTransport(
+      this.mode.url,
+      this.mode.transportConfig,
+      this.mode.authProvider,
+    );
+    this.transport.onclose = () => {
+      this.dead = true;
+      this.eventSink.emit({
+        type: "run.error",
+        data: { source: this.name, event: "source.crashed", error: "Remote transport closed" },
+      });
+    };
+  }
+
+  private buildClient(): Client {
+    return new Client(
+      { name: "nimblebrain", version: "0.1.0" },
+      {
+        capabilities: {
+          tasks: {
+            requests: { tools: { call: {} } },
+            cancel: {},
+            list: {},
+          },
+        },
+      },
+    );
   }
 
   /** Check if the transport is still connected. */

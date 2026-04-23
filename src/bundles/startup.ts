@@ -74,22 +74,45 @@ export async function startBundleSource(
 
     // Attach an OAuthClientProvider when no static auth is configured. The
     // provider is workspace-scoped: tokens and DCR credentials live under
-    // <workDir>/workspaces/<wsId>/credentials/mcp-oauth/<serverName>/. Named
-    // bundles already require `wsId`; URL bundles historically did not —
-    // fall back to `ws_default` only if wsId is missing, which preserves
-    // behavior for any callers that haven't threaded workspace context.
+    // <workDir>/workspaces/<wsId>/credentials/mcp-oauth/<serverName>/.
+    //
+    // `wsId` is REQUIRED here — not defaulted — to match the named-bundle
+    // branch's behavior at the credential boundary. A silent `ws_default`
+    // fallback would cause cross-tenant credential leakage: URL bundles
+    // installed from different workspaces would share OAuth tokens under
+    // the same default id. Callers must thread workspace context through
+    // `installRemote` / `startBundleSource`.
     let authProvider: WorkspaceOAuthProvider | undefined;
     const hasStaticAuth = ref.transport?.auth && ref.transport.auth.type !== "none";
     if (!hasStaticAuth) {
-      const wsId = opts?.wsId ?? "ws_default";
-      const workDir = opts?.workDir ?? process.env.NB_WORK_DIR ?? join(homedir(), ".nimblebrain");
-      const apiBase = process.env.NB_API_URL ?? "http://localhost:27247";
-      const callbackUrl = `${apiBase.replace(/\/+$/, "")}/v1/mcp-auth/callback`;
+      if (!opts?.wsId) {
+        throw new Error(
+          `[bundles] URL bundle "${sourceName}" without static auth requires opts.wsId — ` +
+            "OAuth credentials are workspace-scoped and silent defaults would cross tenants. " +
+            "Thread wsId through installRemote() or the caller that invoked startBundleSource().",
+        );
+      }
+      const workDir = opts.workDir ?? process.env.NB_WORK_DIR ?? join(homedir(), ".nimblebrain");
+      const apiBase = process.env.NB_API_URL;
+      // Startup warning when a URL-ref bundle is being wired but NB_API_URL
+      // isn't set. Default is only safe for local dev — in prod (NB behind a
+      // proxy), the OAuth provider would hand the authorization server a
+      // redirect_uri pointing at the pod's localhost, which the user's
+      // browser can't reach. One-time log per process is enough.
+      if (!apiBase) {
+        log.warn(
+          `[bundles] NB_API_URL not set; OAuth callback defaults to http://localhost:27247. ` +
+            "In production (NB behind a proxy / on a different host from the user's browser), " +
+            "set NB_API_URL to the platform's externally reachable URL.",
+        );
+      }
+      const callbackUrl = `${(apiBase ?? "http://localhost:27247").replace(/\/+$/, "")}/v1/mcp-auth/callback`;
       authProvider = new WorkspaceOAuthProvider({
-        wsId,
+        wsId: opts.wsId,
         serverName,
         workDir,
         callbackUrl,
+        allowInsecureRemotes: opts.allowInsecureRemotes === true,
       });
     }
 

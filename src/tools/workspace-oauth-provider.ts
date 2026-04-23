@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
-import { chmod, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js";
 import type {
@@ -9,6 +9,7 @@ import type {
   OAuthClientMetadata,
   OAuthTokens,
 } from "@modelcontextprotocol/sdk/shared/auth.js";
+import { validateBundleUrl } from "../bundles/url-validator.ts";
 import { log } from "../cli/log.ts";
 
 /**
@@ -35,6 +36,28 @@ export interface WorkspaceOAuthProviderOptions {
   workDir: string;
   /** Absolute callback URL — must match the /v1/mcp-auth/callback route. */
   callbackUrl: string;
+  /**
+   * Whether loopback / RFC1918 / cloud-metadata hosts are acceptable targets
+   * for the authorize chain. Mirrors the platform-level `allowInsecureRemotes`
+   * flag; when `false` (production default), every hop of the authorize
+   * redirect chain is passed through `validateBundleUrl` to block SSRF
+   * against internal infrastructure (AWS IMDS, RFC1918 admin panels,
+   * NimbleBrain's own loopback ports).
+   */
+  allowInsecureRemotes?: boolean;
+}
+
+/**
+ * Normalize a callback URL to a `{origin, pathname}` canonical form so the
+ * self-match check tolerates trivial differences a strict `===` would miss:
+ * trailing slash on pathname, explicit default port vs implicit, hostname
+ * case. The pathname is stripped of trailing `/` and compared case-sensitively
+ * (paths are case-sensitive); the origin is lowercased.
+ */
+function canonicalEndpoint(u: URL): string {
+  const origin = u.origin.toLowerCase();
+  const path = u.pathname.replace(/\/+$/, "") || "/";
+  return `${origin}${path}`;
 }
 
 interface Deferred<T> {
@@ -79,6 +102,9 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
   private readonly serverName: string;
   private readonly dir: string;
   private readonly callbackUrl: string;
+  /** Canonical form of `callbackUrl` for self-match comparison. */
+  private readonly canonicalCallback: string;
+  private readonly allowInsecureRemotes: boolean;
   /** Cached DCR result + tokens to avoid redundant disk reads within a flow. */
   private cachedClientInfo: OAuthClientInformationFull | null = null;
   private cachedTokens: OAuthTokens | null = null;
@@ -94,6 +120,8 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     this.wsId = opts.wsId;
     this.serverName = opts.serverName;
     this.callbackUrl = opts.callbackUrl;
+    this.canonicalCallback = canonicalEndpoint(new URL(opts.callbackUrl));
+    this.allowInsecureRemotes = opts.allowInsecureRemotes === true;
     this.dir = join(
       opts.workDir,
       "workspaces",
@@ -190,6 +218,24 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     let current = url;
     try {
       for (let hop = 0; hop < MAX_HOPS; hop++) {
+        // SSRF defense: validate EVERY hop (including the initial URL the
+        // server handed us), not just the configured bundle URL. The
+        // authorize URL and every Location header are attacker-controlled —
+        // a compromised remote MCP server could otherwise use our fetch()
+        // as an internal-network probe tool (AWS IMDS, RFC1918 admin
+        // panels, loopback services). Wrap with our marker prefix so the
+        // outer catch rethrows instead of silently falling through to the
+        // "interactive not supported" message.
+        try {
+          validateBundleUrl(current, { allowInsecure: this.allowInsecureRemotes });
+        } catch (err) {
+          throw new Error(
+            `[workspace-oauth-provider] SSRF block on ${current.toString()}: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        }
+
         const res = await fetch(current.toString(), { redirect: "manual" });
         if (res.status < 300 || res.status >= 400) {
           // Non-redirect response — provider sent us a login page (200) or
@@ -199,8 +245,7 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
         const location = res.headers.get("location");
         if (!location) break;
         const next = new URL(location, current);
-        const nextPath = `${next.origin}${next.pathname}`;
-        if (nextPath === this.callbackUrl) {
+        if (canonicalEndpoint(next) === this.canonicalCallback) {
           const code = next.searchParams.get("code");
           const errParam = next.searchParams.get("error");
           if (code) {
@@ -223,10 +268,12 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
         current = next;
       }
     } catch (probeErr) {
-      // Rethrow our own explicit error; swallow anything else (network
-      // failure, invalid URL, etc.) and fall through to the interactive
-      // branch below.
+      // Rethrow our own explicit errors (authz server error, SSRF block)
+      // so callers see the real cause instead of the generic
+      // "interactive not supported" message. Swallow network failures and
+      // fall through to the interactive branch below.
       if (probeErr instanceof Error && probeErr.message.includes("[workspace-oauth-provider]")) {
+        d.reject(probeErr);
         throw probeErr;
       }
       log.debug("mcp", `[oauth] ${this.serverName} redirect probe failed: ${String(probeErr)}`);
@@ -317,7 +364,6 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     const content = JSON.stringify(value, null, 2);
     await writeFile(tmp, content, { encoding: "utf-8", mode: 0o600 });
     await chmod(tmp, 0o600);
-    const { rename } = await import("node:fs/promises");
     await rename(tmp, path);
   }
 
