@@ -1,4 +1,4 @@
-import { AlertCircle, Check, ChevronDown, Copy, Zap } from "lucide-react";
+import { AlertCircle, Check, ChevronDown, Copy, RotateCcw, Zap } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Streamdown } from "streamdown";
 import type { ChatMessage, StreamingState } from "../hooks/useChat";
@@ -82,6 +82,8 @@ interface MessageListProps {
   currentUserId?: string;
   /** Map of userId → display name for participant labels. */
   participantMap?: Map<string, string>;
+  /** Called when the user clicks "Try again" on an errored message. */
+  onRetry?: () => void;
 }
 
 const BOTTOM_THRESHOLD = 50;
@@ -179,6 +181,7 @@ export function MessageList({
   compact = false,
   currentUserId,
   participantMap,
+  onRetry,
 }: MessageListProps) {
   const { scrollRef, bottomRef, isAtBottom, scrollToBottom } = useSmartScroll(messages);
 
@@ -403,6 +406,35 @@ export function MessageList({
                             ? "I reached my step limit for this turn. Send another message and I'll pick up where I left off."
                             : `Run ended: ${msg.stopReason}`}
                         </span>
+                      </div>
+                    )}
+                    {/* Inline error notice */}
+                    {msg.error && (
+                      <div className="px-3 py-2.5 rounded-md bg-destructive/8 border border-destructive/20 text-sm">
+                        <div className="flex items-center gap-2">
+                          <AlertCircle className="w-4 h-4 shrink-0 text-destructive" />
+                          <span className="flex-1 text-foreground">
+                            Something went wrong. You can try again or continue the conversation.
+                          </span>
+                        {onRetry && (
+                          <button
+                            type="button"
+                            onClick={onRetry}
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-md border border-border bg-card hover:bg-muted text-foreground transition-colors shrink-0"
+                          >
+                            <RotateCcw className="w-3 h-3" />
+                            Try again
+                          </button>
+                        )}
+                        </div>
+                        <details className="mt-1.5 ml-6">
+                          <summary className="text-xs text-muted-foreground cursor-pointer select-none hover:text-foreground transition-colors">
+                            Details
+                          </summary>
+                          <p className="text-xs text-muted-foreground mt-1 font-mono break-all">
+                            {msg.error}
+                          </p>
+                        </details>
                       </div>
                     )}
                     {/* Inline app views are rendered within their tool block above */}

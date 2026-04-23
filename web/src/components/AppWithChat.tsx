@@ -321,6 +321,7 @@ export function AppWithChat({ placement, onNavigate }: AppWithChatProps) {
           onFullscreen={handleFullscreen}
           onBack={isMobile ? handleBack : undefined}
           isFullscreen={isFullscreen}
+          onRetry={chat.retryLastMessage}
         />
       </div>
     </div>

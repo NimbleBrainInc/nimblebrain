@@ -59,6 +59,16 @@ export function ChatProvider({
 }: ChatProviderProps) {
   const chat = useChat(initialConversationId, currentUserId);
 
+  // Dev helper: window.__nb.simulateError("some error message")
+  useEffect(() => {
+    const w = window as unknown as Record<string, Record<string, unknown>>;
+    if (!w.__nb) w.__nb = {};
+    w.__nb.simulateError = chat.simulateError;
+    return () => {
+      if (w.__nb) delete w.__nb.simulateError;
+    };
+  }, [chat.simulateError]);
+
   // -- Config state (stable) --
   const [selectedModel, setSelectedModelState] = useState<string | null>(() =>
     localStorage.getItem("nb:selectedModel"),
