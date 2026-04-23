@@ -48,7 +48,7 @@ afterAll(() => {
  * orgMemberships controls which users have org access.
  */
 function createMockProvider(orgMemberships: Map<string, string>) {
-  const provider = new WorkosIdentityProvider(MOCK_CONFIG, userStore);
+  const provider = new WorkosIdentityProvider(MOCK_CONFIG, userStore, workspaceStore);
 
   // Mock the WorkOS SDK methods on the provider's private workos instance
   const workos = (provider as unknown as { workos: Record<string, unknown> }).workos;
@@ -177,6 +177,15 @@ describe("WorkOS provisioning security", () => {
     expect(profile).not.toBeNull();
     expect(profile!.email).toBe("authorized@test.com");
     expect(profile!.orgRole).toBe("admin");
+  });
+
+  it("creates a workspace for authorized users at the identity boundary", async () => {
+    // Workspace should have been created by the "allows exchangeCode" test.
+    // The invariant "authenticated user has ≥1 workspace" must hold immediately
+    // after auth-code exchange — no tool call required.
+    const workspaces = await workspaceStore.getWorkspacesForUser("user_authorized");
+    expect(workspaces.length).toBeGreaterThanOrEqual(1);
+    expect(workspaces[0]!.members.some((m) => m.userId === "user_authorized")).toBe(true);
   });
 
   it("does not create duplicate profile on subsequent login", async () => {

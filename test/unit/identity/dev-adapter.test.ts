@@ -4,14 +4,17 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test, spyOn } from "bun:test";
 import { DevIdentityProvider } from "../../../src/identity/providers/dev.ts";
 import { UserStore } from "../../../src/identity/user.ts";
+import { WorkspaceStore } from "../../../src/workspace/workspace-store.ts";
 
 let workDir: string;
 let userStore: UserStore;
+let workspaceStore: WorkspaceStore;
 let warnSpy: ReturnType<typeof spyOn>;
 
 beforeEach(async () => {
   workDir = await mkdtemp(join(tmpdir(), "nb-dev-adapter-test-"));
   userStore = new UserStore(workDir);
+  workspaceStore = new WorkspaceStore(workDir);
   warnSpy = spyOn(console, "warn").mockImplementation(() => {});
 });
 
@@ -125,6 +128,30 @@ describe("DevIdentityProvider", () => {
       // Still only one user
       const users = await userStore.list();
       expect(users).toHaveLength(1);
+    });
+
+    test("creates a workspace for the default user when workspaceStore is wired", async () => {
+      const adapter = new DevIdentityProvider(workDir, userStore, workspaceStore);
+
+      // Invariant: workspace exists by the time verifyRequest resolves.
+      expect((await workspaceStore.list()).length).toBe(0);
+      await adapter.verifyRequest(dummyRequest());
+
+      const workspaces = await workspaceStore.getWorkspacesForUser("usr_default");
+      expect(workspaces).toHaveLength(1);
+      expect(workspaces[0]!.members).toEqual([{ userId: "usr_default", role: "admin" }]);
+    });
+
+    test("workspace provisioning is idempotent across restarts", async () => {
+      const adapter1 = new DevIdentityProvider(workDir, userStore, workspaceStore);
+      await adapter1.verifyRequest(dummyRequest());
+      const firstList = await workspaceStore.list();
+
+      const adapter2 = new DevIdentityProvider(workDir, userStore, workspaceStore);
+      await adapter2.verifyRequest(dummyRequest());
+      const secondList = await workspaceStore.list();
+
+      expect(secondList).toHaveLength(firstList.length);
     });
   });
 

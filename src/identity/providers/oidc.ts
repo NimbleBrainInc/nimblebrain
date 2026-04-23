@@ -1,3 +1,5 @@
+import { ensureUserWorkspace } from "../../workspace/provisioning.ts";
+import type { WorkspaceStore } from "../../workspace/workspace-store.ts";
 import type { OidcAuth } from "../instance.ts";
 import type {
   CreateUserInput,
@@ -140,6 +142,7 @@ export class OidcIdentityProvider implements IdentityProvider {
   private allowedDomains: string[];
   private jwksUri: string | undefined;
   private userStore: UserStore;
+  private workspaceStore: WorkspaceStore | null;
 
   private jwksCache: CachedJwks | null = null;
   private discoveryCache: OidcDiscovery | null = null;
@@ -150,12 +153,13 @@ export class OidcIdentityProvider implements IdentityProvider {
   /** Overridable clock for testing. */
   now: () => number = () => Date.now();
 
-  constructor(config: OidcAuth, userStore: UserStore) {
+  constructor(config: OidcAuth, userStore: UserStore, workspaceStore?: WorkspaceStore) {
     this.issuer = config.issuer.replace(/\/+$/, "");
     this.clientId = config.clientId;
     this.allowedDomains = config.allowedDomains.map((d) => d.toLowerCase());
     this.jwksUri = config.jwksUri;
     this.userStore = userStore;
+    this.workspaceStore = workspaceStore ?? null;
   }
 
   async verifyRequest(req: Request): Promise<UserIdentity | null> {
@@ -186,12 +190,23 @@ export class OidcIdentityProvider implements IdentityProvider {
       user = await this.userStore.getByEmail(email);
     }
 
+    const firstLogin = !user;
     if (!user) {
       user = await this.userStore.create({
         id: deterministicId,
         email,
         displayName: buildDisplayName(payload),
         orgRole: "member",
+      });
+    }
+
+    // Ensure the user has at least one workspace on first login.
+    // Establishes the invariant "authenticated user has ≥1 workspace" at the
+    // identity boundary so request resolvers can treat it as a hard requirement.
+    if (firstLogin && this.workspaceStore) {
+      await ensureUserWorkspace(this.workspaceStore, {
+        id: user.id,
+        displayName: user.displayName,
       });
     }
 

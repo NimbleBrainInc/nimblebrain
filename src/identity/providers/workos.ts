@@ -1,4 +1,6 @@
 import { GeneratePortalLinkIntent, WorkOS } from "@workos-inc/node";
+import { ensureUserWorkspace } from "../../workspace/provisioning.ts";
+import type { WorkspaceStore } from "../../workspace/workspace-store.ts";
 import type { WorkosAuth } from "../instance.ts";
 import type {
   CreateUserInput,
@@ -119,6 +121,7 @@ export class WorkosIdentityProvider implements IdentityProvider {
   private organizationId: string | undefined;
   private authkitDomain: string | undefined;
   private userStore: UserStore | null;
+  private workspaceStore: WorkspaceStore | null;
 
   private jwksCache: CachedJwks | null = null;
   private authkitJwksCache: CachedJwks | null = null;
@@ -129,7 +132,7 @@ export class WorkosIdentityProvider implements IdentityProvider {
   fetcher: typeof globalThis.fetch = globalThis.fetch.bind(globalThis);
   now: () => number = () => Date.now();
 
-  constructor(config: WorkosAuth, userStore?: UserStore) {
+  constructor(config: WorkosAuth, userStore?: UserStore, workspaceStore?: WorkspaceStore) {
     const apiKey = process.env.WORKOS_API_KEY ?? config.apiKey ?? "";
     this.workos = new WorkOS(apiKey, { clientId: config.clientId });
     this.clientId = config.clientId;
@@ -137,6 +140,7 @@ export class WorkosIdentityProvider implements IdentityProvider {
     this.organizationId = config.organizationId;
     this.authkitDomain = config.authkitDomain;
     this.userStore = userStore ?? null;
+    this.workspaceStore = workspaceStore ?? null;
   }
 
   // ── IdentityProvider interface ──────────────────────────────────
@@ -473,8 +477,15 @@ export class WorkosIdentityProvider implements IdentityProvider {
       );
     }
 
-    // Sync local profile (workspace provisioning is handled by resolveWorkspace in auth-middleware)
+    // Sync local profile
     await this.syncLocalProfile(workosUser.id, { email: workosUser.email, displayName, orgRole });
+
+    // Ensure the user has at least one workspace. Establishes the invariant
+    // "authenticated user has ≥1 workspace" at the identity boundary so
+    // request resolvers can treat it as a hard requirement.
+    if (this.workspaceStore) {
+      await ensureUserWorkspace(this.workspaceStore, { id: workosUser.id, displayName });
+    }
   }
 
   /** The AuthKit domain, if configured. Used by well-known route handlers. */

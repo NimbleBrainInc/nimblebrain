@@ -69,6 +69,7 @@ afterAll(() => {
 
 let workDir: string;
 let userStore: UserStore;
+let workspaceStore: WorkspaceStore;
 let adapter: OidcIdentityProvider;
 const CLIENT_ID = "my-client-id";
 const ALLOWED_DOMAINS = ["example.com", "corp.io"];
@@ -76,7 +77,12 @@ const ALLOWED_DOMAINS = ["example.com", "corp.io"];
 beforeEach(async () => {
   workDir = await mkdtemp(join(tmpdir(), "nb-oidc-test-"));
   userStore = new UserStore(workDir);
-  adapter = new OidcIdentityProvider({ adapter: "oidc", issuer, clientId: CLIENT_ID, allowedDomains: ALLOWED_DOMAINS }, userStore);
+  workspaceStore = new WorkspaceStore(workDir);
+  adapter = new OidcIdentityProvider(
+    { adapter: "oidc", issuer, clientId: CLIENT_ID, allowedDomains: ALLOWED_DOMAINS },
+    userStore,
+    workspaceStore,
+  );
 });
 
 afterEach(async () => {
@@ -161,6 +167,31 @@ describe("OidcIdentityProvider", () => {
       expect(identity!.orgRole).toBe("member");
       expect(identity!.displayName).toBe("Nobody Test");
       expect(identity!.id).toMatch(/^usr_oidc_[0-9a-f]{12}$/);
+    });
+
+    test("first-login auto-provisions a workspace at the identity boundary", async () => {
+      // Invariant: every authenticated user has ≥1 workspace by the time
+      // verifyRequest resolves. No tool call required.
+      const token = await buildJwt({ email: "carol@example.com", sub: "oidc-sub-carol", name: "Carol" });
+      const identity = await adapter.verifyRequest(bearerRequest(token));
+      expect(identity).not.toBeNull();
+
+      const workspaces = await workspaceStore.getWorkspacesForUser(identity!.id);
+      expect(workspaces).toHaveLength(1);
+      expect(workspaces[0]!.members).toEqual([{ userId: identity!.id, role: "admin" }]);
+    });
+
+    test("repeat logins do not create duplicate workspaces", async () => {
+      const token = await buildJwt({ email: "dave@example.com", sub: "oidc-sub-dave", name: "Dave" });
+
+      await adapter.verifyRequest(bearerRequest(token));
+      const firstList = await workspaceStore.list();
+
+      await adapter.verifyRequest(bearerRequest(token));
+      await adapter.verifyRequest(bearerRequest(token));
+      const finalList = await workspaceStore.list();
+
+      expect(finalList).toHaveLength(firstList.length);
     });
 
     test("expired JWT returns null", async () => {

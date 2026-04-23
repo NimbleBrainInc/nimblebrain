@@ -148,7 +148,11 @@ export function startServer(options: ServerOptions): ServerHandle {
   let effectiveProvider: IdentityProvider | null = optProvider ?? runtime.getIdentityProvider();
   if (!effectiveProvider) {
     const workDir = runtime.getWorkDir();
-    effectiveProvider = new DevIdentityProvider(workDir, runtime.getUserStore());
+    effectiveProvider = new DevIdentityProvider(
+      workDir,
+      runtime.getUserStore(),
+      runtime.getWorkspaceStore(),
+    );
   }
   const authMode = resolveAuthMode(effectiveProvider);
   const authConfigured = authMode.type !== "dev";

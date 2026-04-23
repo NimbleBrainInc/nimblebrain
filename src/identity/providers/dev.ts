@@ -1,6 +1,8 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { ensureUserWorkspace } from "../../workspace/provisioning.ts";
+import type { WorkspaceStore } from "../../workspace/workspace-store.ts";
 import type {
   CreateUserInput,
   CreateUserResult,
@@ -24,8 +26,7 @@ export const DEV_IDENTITY: UserIdentity = {
 
 /**
  * Identity provider for dev mode — always returns a default user identity.
- * Creates the default user profile on first access if missing.
- * Workspace provisioning is handled by resolveWorkspace() in auth-middleware.
+ * Creates the default user profile and workspace on first access if missing.
  */
 export class DevIdentityProvider implements IdentityProvider {
   readonly capabilities: ProviderCapabilities = {
@@ -36,12 +37,15 @@ export class DevIdentityProvider implements IdentityProvider {
 
   private initialized = false;
   private usersDir: string;
+  private workspaceStore: WorkspaceStore | null;
 
   constructor(
     workDir: string,
     private userStore: UserStore,
+    workspaceStore?: WorkspaceStore,
   ) {
     this.usersDir = join(workDir, "users");
+    this.workspaceStore = workspaceStore ?? null;
     console.warn("Running in dev mode — no authentication configured");
   }
 
@@ -90,6 +94,16 @@ export class DevIdentityProvider implements IdentityProvider {
         mkdirSync(userDir, { recursive: true });
       }
       await writeFile(join(userDir, "profile.json"), `${JSON.stringify(user, null, 2)}\n`, "utf-8");
+    }
+
+    // Ensure the dev user has at least one workspace. Establishes the
+    // invariant "authenticated user has ≥1 workspace" at the identity
+    // boundary. Idempotent — no-op after first call.
+    if (this.workspaceStore) {
+      await ensureUserWorkspace(this.workspaceStore, {
+        id: DEV_IDENTITY.id,
+        displayName: DEV_IDENTITY.displayName,
+      });
     }
 
     this.initialized = true;
