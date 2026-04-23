@@ -11,7 +11,6 @@ import { RunInProgressError } from "../runtime/errors.ts";
 import { type RequestContext, runWithRequestContext } from "../runtime/request-context.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import type { ChatRequest } from "../runtime/types.ts";
-import { filterPlacementsForWorkspace } from "../runtime/workspace-access.ts";
 import type { HealthMonitor } from "../tools/health-monitor.ts";
 import { InlineSource } from "../tools/inline-source.ts";
 import { validateToolInput } from "../tools/validate-input.ts";
@@ -656,10 +655,8 @@ export async function handleBootstrap(
       ? preferred
       : userWorkspaces[0]!.id;
 
-  // 3. Shell placements filtered by active workspace (unconditional — the
-  // invariant above guarantees we have a workspace).
-  const workspace = allWorkspaces.find((ws) => ws.id === activeWorkspace)!;
-  const placements = filterPlacementsForWorkspace(runtime.getPlacementRegistry().all(), workspace);
+  // 3. Shell placements for the active workspace (ambient + scoped, merged).
+  const placements = runtime.getPlacementRegistry().forWorkspace(activeWorkspace);
 
   // 4. Config
   const models = runtime.getModelSlots();
@@ -701,19 +698,15 @@ export async function handleBootstrap(
   });
 }
 
-/** Handle GET /v1/shell — placement registry for web client bootstrap. */
-export async function handleShell(runtime: Runtime, workspaceId?: string): Promise<Response> {
-  let placements = runtime.getPlacementRegistry().all();
-
-  if (workspaceId) {
-    const workspace = await runtime.getWorkspaceStore().get(workspaceId);
-    if (workspace) {
-      placements = filterPlacementsForWorkspace(placements, workspace);
-    }
-  }
-
+/**
+ * Handle GET /v1/shell — placement registry for web client bootstrap.
+ *
+ * workspaceId comes from requireWorkspace middleware; by the time this
+ * handler runs, it's resolved and membership-checked.
+ */
+export async function handleShell(runtime: Runtime, workspaceId: string): Promise<Response> {
   return json({
-    placements,
+    placements: runtime.getPlacementRegistry().forWorkspace(workspaceId),
     chatEndpoint: "/v1/chat/stream",
     eventsEndpoint: "/v1/events",
   });

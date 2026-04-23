@@ -16,16 +16,10 @@ import { join } from "node:path";
 import { afterEach, describe, expect, test } from "bun:test";
 
 import { BundleLifecycleManager } from "../../src/bundles/lifecycle.ts";
-import type {
-  BriefingBlock,
-  BundleRef,
-  BundleUiMeta,
-  PlacementEntry,
-} from "../../src/bundles/types.ts";
+import type { BriefingBlock, BundleRef, BundleUiMeta } from "../../src/bundles/types.ts";
 import { DevIdentityProvider } from "../../src/identity/providers/dev.ts";
 import { UserStore } from "../../src/identity/user.ts";
 import { PlacementRegistry } from "../../src/runtime/placement-registry.ts";
-import { filterPlacementsForWorkspace } from "../../src/runtime/workspace-access.ts";
 import { ToolRegistry, SharedSourceRef } from "../../src/tools/registry.ts";
 import type { Workspace } from "../../src/workspace/types.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
@@ -73,16 +67,6 @@ function makeSource(name: string, toolNames: string[]): ToolSource {
   };
 }
 
-function placement(serverName: string, slot = "sidebar", wsId?: string): PlacementEntry {
-  return {
-    serverName,
-    slot,
-    resourceUri: `ui://${serverName}/main`,
-    priority: 100,
-    ...(wsId ? { wsId } : {}),
-  };
-}
-
 // ---------------------------------------------------------------------------
 // Shared test fixtures
 // ---------------------------------------------------------------------------
@@ -126,12 +110,25 @@ function buildMktRegistry(): ToolRegistry {
   return reg;
 }
 
-// All placements (protected have no wsId, workspace bundles have wsId)
-const allPlacements: PlacementEntry[] = [
-  ...protectedSources.map((s) => placement(s.name)),
-  placement("crm", "sidebar.apps", "ws_eng"),
-  placement("dropbox", "sidebar.apps", "ws_mkt"),
-];
+// A registry populated via the production API: ambient (no wsId) for
+// platform sources, scoped (wsId set) for workspace-installed bundles.
+function buildRegistry(): PlacementRegistry {
+  const reg = new PlacementRegistry();
+  for (const src of protectedSources) {
+    reg.register(src.name, [{ slot: "sidebar", resourceUri: `ui://${src.name}/main` }]);
+  }
+  reg.register(
+    "crm",
+    [{ slot: "sidebar.apps", resourceUri: "ui://crm/main" }],
+    "ws_eng",
+  );
+  reg.register(
+    "dropbox",
+    [{ slot: "sidebar.apps", resourceUri: "ui://dropbox/main" }],
+    "ws_mkt",
+  );
+  return reg;
+}
 
 // ---------------------------------------------------------------------------
 // Per-workspace registry isolation
@@ -173,15 +170,16 @@ describe("Workspace security: per-workspace registry isolation", () => {
 });
 
 // ---------------------------------------------------------------------------
-// filterPlacementsForWorkspace — shell returns correct placements
+// PlacementRegistry.forWorkspace — shell returns correct placements
 // ---------------------------------------------------------------------------
 
-describe("Workspace security: filterPlacementsForWorkspace", () => {
-  test("ws_eng gets CRM placement + all protected, no Dropbox", () => {
-    const result = filterPlacementsForWorkspace(allPlacements, wsEng);
-    const names = result.map((p) => p.serverName);
+describe("Workspace security: PlacementRegistry.forWorkspace", () => {
+  test("ws_eng gets CRM placement + all ambient, no Dropbox", () => {
+    const names = buildRegistry()
+      .forWorkspace("ws_eng")
+      .map((p) => p.serverName);
 
-    // Protected placements present (no wsId)
+    // Ambient placements present (no wsId)
     expect(names).toContain("conversations");
     expect(names).toContain("home");
     expect(names).toContain("files");
@@ -194,9 +192,10 @@ describe("Workspace security: filterPlacementsForWorkspace", () => {
     expect(names).not.toContain("dropbox");
   });
 
-  test("ws_mkt gets Dropbox placement + all protected, no CRM", () => {
-    const result = filterPlacementsForWorkspace(allPlacements, wsMkt);
-    const names = result.map((p) => p.serverName);
+  test("ws_mkt gets Dropbox placement + all ambient, no CRM", () => {
+    const names = buildRegistry()
+      .forWorkspace("ws_mkt")
+      .map((p) => p.serverName);
 
     expect(names).toContain("conversations");
     expect(names).toContain("home");
@@ -206,19 +205,16 @@ describe("Workspace security: filterPlacementsForWorkspace", () => {
     expect(names).not.toContain("crm");
   });
 
-  test("ws_eng placement count = protected count + workspace bundle count", () => {
-    const result = filterPlacementsForWorkspace(allPlacements, wsEng);
-    expect(result).toHaveLength(5);
+  test("ws_eng placement count = ambient count + workspace bundle count", () => {
+    expect(buildRegistry().forWorkspace("ws_eng")).toHaveLength(5);
   });
 
-  test("ws_mkt placement count = protected count + workspace bundle count", () => {
-    const result = filterPlacementsForWorkspace(allPlacements, wsMkt);
-    expect(result).toHaveLength(5);
+  test("ws_mkt placement count = ambient count + workspace bundle count", () => {
+    expect(buildRegistry().forWorkspace("ws_mkt")).toHaveLength(5);
   });
 
-  test("empty workspace only gets protected placements", () => {
-    const wsEmpty = makeWorkspace("ws_empty", "Empty", []);
-    const result = filterPlacementsForWorkspace(allPlacements, wsEmpty);
+  test("workspace with no installed bundles only gets ambient placements", () => {
+    const result = buildRegistry().forWorkspace("ws_empty");
     const names = result.map((p) => p.serverName);
     expect(names).toEqual(
       expect.arrayContaining(["conversations", "home", "files", "settings"]),
@@ -283,9 +279,8 @@ describe("Workspace security: same bundle installed in two workspaces", () => {
     pr.register("crm", placements, "ws_eng");
     pr.register("crm", placements, "ws_mkt");
 
-    const entries = pr.all();
-    const eng = entries.filter((e) => e.wsId === "ws_eng");
-    const mkt = entries.filter((e) => e.wsId === "ws_mkt");
+    const eng = pr.forWorkspace("ws_eng").filter((e) => e.wsId === "ws_eng");
+    const mkt = pr.forWorkspace("ws_mkt").filter((e) => e.wsId === "ws_mkt");
     expect(eng).toHaveLength(2);
     expect(mkt).toHaveLength(2);
   });
@@ -297,18 +292,17 @@ describe("Workspace security: same bundle installed in two workspaces", () => {
 
     pr.unregister("crm", "ws_eng");
 
-    const entries = pr.all();
-    expect(entries.filter((e) => e.wsId === "ws_eng")).toHaveLength(0);
-    expect(entries.filter((e) => e.wsId === "ws_mkt")).toHaveLength(2);
+    expect(pr.forWorkspace("ws_eng").filter((e) => e.wsId === "ws_eng")).toHaveLength(0);
+    expect(pr.forWorkspace("ws_mkt").filter((e) => e.wsId === "ws_mkt")).toHaveLength(2);
   });
 
-  test("PlacementRegistry: re-registering a global source does not wipe workspace entries", () => {
+  test("PlacementRegistry: re-registering an ambient source does not wipe workspace entries", () => {
     const pr = new PlacementRegistry();
     pr.register("crm", placements, "ws_eng");
-    pr.register("platform", [placements[0]]); // global, no wsId
-    pr.register("platform", [placements[0]]); // re-register global
+    pr.register("platform", [placements[0]]); // ambient, no wsId
+    pr.register("platform", [placements[0]]); // re-register ambient
 
-    expect(pr.all().filter((e) => e.wsId === "ws_eng")).toHaveLength(2);
+    expect(pr.forWorkspace("ws_eng").filter((e) => e.wsId === "ws_eng")).toHaveLength(2);
   });
 
   test("BundleLifecycleManager: seeding the same bundle in two workspaces keeps them distinct", () => {
