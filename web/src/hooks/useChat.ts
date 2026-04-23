@@ -449,9 +449,13 @@ export function useChat(initialConversationId?: string, currentUserId?: string):
             conversation_id: conversationId ?? null,
             has_app_context: !!appContext,
           });
+          // Banner only — nothing in this turn to mark inline
+          setError(formatSendError(err));
+          return;
         }
         const msg = formatSendError(err);
-        // Stamp on the last assistant message if one exists
+        // Stamp on the last assistant message if one exists;
+        // only fall back to banner when there's no message to attach to.
         setMessages((prev) => {
           const last = prev[prev.length - 1];
           if (last?.role === "assistant") {
@@ -459,9 +463,10 @@ export function useChat(initialConversationId?: string, currentUserId?: string):
             updated[updated.length - 1] = { ...last, error: msg };
             return updated;
           }
+          // No assistant message — fall back to banner
+          setError(msg);
           return prev;
         });
-        setError(msg);
       } finally {
         setIsStreaming(false);
         setStreamingState(null);
@@ -696,8 +701,14 @@ export function useChat(initialConversationId?: string, currentUserId?: string):
   }, []);
 
   // Effect: once isStreaming is false and there's a pending retry, fire it.
-  // This ensures React has flushed the state updates from retryLastMessage
-  // before sendMessage checks the isStreaming guard.
+  // We can't call sendMessage synchronously from retryLastMessage because
+  // sendMessage is memoized with isStreaming in its dep list — the closure
+  // still sees isStreaming=true until React re-renders with the new state.
+  // This effect fires after React flushes the state updates, at which point
+  // sendMessage has been recreated with isStreaming=false.
+  // NOTE: this depends on sendMessage's identity changing when isStreaming
+  // changes (via flushToMessage in its dep list). Do not memoize
+  // flushToMessage without verifying this still fires.
   useEffect(() => {
     if (!isStreaming && retryRef.current) {
       const text = retryRef.current;

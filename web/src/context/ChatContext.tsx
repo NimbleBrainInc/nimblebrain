@@ -61,11 +61,14 @@ export function ChatProvider({
 
   // Dev helper: window.__nb.simulateError("some error message")
   useEffect(() => {
-    const w = window as unknown as Record<string, Record<string, unknown>>;
-    if (!w.__nb) w.__nb = {};
-    w.__nb.simulateError = chat.simulateError;
+    if (!import.meta.env.DEV) return;
+    if (!window.__nb) window.__nb = {};
+    window.__nb.simulateError = chat.simulateError;
     return () => {
-      if (w.__nb) delete w.__nb.simulateError;
+      if (window.__nb) {
+        delete window.__nb.simulateError;
+        if (Object.keys(window.__nb).length === 0) delete window.__nb;
+      }
     };
   }, [chat.simulateError]);
 

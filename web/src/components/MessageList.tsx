@@ -416,16 +416,16 @@ export function MessageList({
                           <span className="flex-1 text-foreground">
                             Something went wrong. You can try again or continue the conversation.
                           </span>
-                        {onRetry && (
-                          <button
-                            type="button"
-                            onClick={onRetry}
-                            className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-md border border-border bg-card hover:bg-muted text-foreground transition-colors shrink-0"
-                          >
-                            <RotateCcw className="w-3 h-3" />
-                            Try again
-                          </button>
-                        )}
+                          {onRetry && (
+                            <button
+                              type="button"
+                              onClick={onRetry}
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-md border border-border bg-card hover:bg-muted text-foreground transition-colors shrink-0"
+                            >
+                              <RotateCcw className="w-3 h-3" />
+                              Try again
+                            </button>
+                          )}
                         </div>
                         <details className="mt-1.5 ml-6">
                           <summary className="text-xs text-muted-foreground cursor-pointer select-none hover:text-foreground transition-colors">
