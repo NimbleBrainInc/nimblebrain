@@ -63,11 +63,17 @@ export function SlotRenderer({
         try {
           // Pass the full path after ui:// (e.g., "ui://crm/main" -> "crm/main")
           const resourcePath = entry.resourceUri.replace(/^ui:\/\//, "");
-          const html = await getResources(entry.serverName, resourcePath);
+          const { html, metaUi } = await getResources(entry.serverName, resourcePath);
           if (cancelled) break;
 
           const iframe = createAppIframe(html, entry.serverName, {
             themeMode: modeRef.current,
+            connectDomains: metaUi?.csp?.connectDomains,
+            resourceDomains: metaUi?.csp?.resourceDomains,
+            frameDomains: metaUi?.csp?.frameDomains,
+            baseUriDomains: metaUi?.csp?.baseUriDomains,
+            permissions: metaUi?.permissions,
+            prefersBorder: metaUi?.prefersBorder,
           });
           iframe.style.width = "100%";
           iframe.style.height = "100%";

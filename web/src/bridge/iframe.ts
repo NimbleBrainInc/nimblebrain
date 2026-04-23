@@ -4,15 +4,32 @@
 // Creates sandboxed iframes for MCP Apps with CSP injection per SS10.3.
 // Theme CSS variables (ext-apps spec tokens + NB extension tokens) are
 // injected alongside CSP so they are available at parse time in every iframe.
+//
+// CSP / permissions are derived from the resource's `_meta.ui.*` (ext-apps
+// `io.modelcontextprotocol/ui` extension): servers declare their UI's needs,
+// callers pass them through `CreateIframeOptions`, and this module honors
+// them. Absence of metadata falls back to the restrictive spec-defaults so
+// apps that don't opt in stay locked down.
 // ---------------------------------------------------------------------------
 
+import type { McpUiResourcePermissions } from "@modelcontextprotocol/ext-apps";
 import type { ThemeMode } from "./theme.ts";
 import { buildThemeStyleBlock, getHostThemeMode } from "./theme.ts";
 
 /** Options for iframe creation. */
 export interface CreateIframeOptions {
-  /** Allowed external connect-src domains from the bundle manifest. */
+  /** Origins for network requests — CSP `connect-src`. */
   connectDomains?: string[];
+  /** Origins for static resources — CSP `script-src`/`style-src`/`img-src`/`font-src`. */
+  resourceDomains?: string[];
+  /** Origins for nested iframes — CSP `frame-src`. */
+  frameDomains?: string[];
+  /** Allowed `<base>` URIs — CSP `base-uri`. */
+  baseUriDomains?: string[];
+  /** Feature permissions the app requests (camera, clipboard, etc.) — maps to iframe `allow`. */
+  permissions?: McpUiResourcePermissions;
+  /** App wants a visible border/background around its frame. */
+  prefersBorder?: boolean;
   /** Theme mode override. Defaults to the host page's current mode. */
   themeMode?: ThemeMode;
 }
@@ -20,34 +37,57 @@ export interface CreateIframeOptions {
 /**
  * Build the CSP policy string per SS10.3.
  *
- * - default-src 'none'
- * - script-src 'self' 'unsafe-inline'
- * - style-src 'self' 'unsafe-inline'
- * - img-src 'self' data: blob:
- * - font-src 'self' data:
- * - connect-src {allowed_domains} or 'none'
- * - frame-src 'self' (allows same-origin resources like PDF previews)
- * - object-src 'none'
- * - base-uri 'none'
+ * Defaults mirror the ext-apps spec's "secure by default" posture — no
+ * network, no nested frames, no base URI override. Server-declared
+ * `_meta.ui.csp.*` fields (passed via `CreateIframeOptions`) relax these for
+ * the specific origins the app needs. `blob:` is preserved on `frame-src` for
+ * inline content rendering (e.g., PDF preview of tool output).
  */
-export function buildCSP(connectDomains?: string[]): string {
-  const connectSrc =
-    connectDomains && connectDomains.length > 0 ? connectDomains.join(" ") : "'none'";
+export function buildCSP(options?: CreateIframeOptions): string {
+  const joinOrNone = (list?: string[]): string =>
+    list && list.length > 0 ? list.join(" ") : "'none'";
 
-  // Allow blob: URLs for inline content rendering (e.g., PDF preview from tool data).
-  const frameSrc = "blob:";
+  const connectSrc = joinOrNone(options?.connectDomains);
+  const frameSrc =
+    options?.frameDomains && options.frameDomains.length > 0
+      ? `blob: ${options.frameDomains.join(" ")}`
+      : "blob:";
+  const baseUri = joinOrNone(options?.baseUriDomains);
+
+  // Resource-src merges across script/style/img/font. Base is `'self' 'unsafe-inline'`
+  // for script/style (srcdoc iframes need inline to work at all) plus `data: blob:` for
+  // images/fonts; declared resourceDomains are appended.
+  const resourceExtras =
+    options?.resourceDomains && options.resourceDomains.length > 0
+      ? ` ${options.resourceDomains.join(" ")}`
+      : "";
 
   return [
     "default-src 'none'",
-    "script-src 'self' 'unsafe-inline'",
-    "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data: blob: https:",
-    "font-src 'self' data:",
+    `script-src 'self' 'unsafe-inline'${resourceExtras}`,
+    `style-src 'self' 'unsafe-inline'${resourceExtras}`,
+    `img-src 'self' data: blob: https:${resourceExtras}`,
+    `font-src 'self' data:${resourceExtras}`,
     `connect-src ${connectSrc}`,
     `frame-src ${frameSrc}`,
     "object-src 'none'",
-    "base-uri 'none'",
+    `base-uri ${baseUri}`,
   ].join("; ");
+}
+
+/**
+ * Map ext-apps permissions to the iframe `allow` attribute value. Only
+ * emits features the app requested — the browser's default-deny posture
+ * handles omitted features.
+ */
+function buildAllowAttr(permissions?: McpUiResourcePermissions): string {
+  const features: string[] = ["clipboard-write"];
+  if (permissions?.camera) features.push("camera");
+  if (permissions?.microphone) features.push("microphone");
+  if (permissions?.geolocation) features.push("geolocation");
+  // clipboardWrite is already in features by default; a server-requested
+  // permission doesn't need special handling beyond that.
+  return features.join("; ");
 }
 
 /**
@@ -121,18 +161,20 @@ export function createAppIframe(
     "allow-popups-to-escape-sandbox",
   );
 
-  // Permissions Policy: allow clipboard write (copy/cut) inside the iframe.
-  // clipboard-read is intentionally omitted — it would let apps read the
-  // clipboard programmatically without user gesture, which is a data
-  // exfiltration risk for untrusted MCP apps.
-  iframe.allow = "clipboard-write";
+  // Permissions Policy: clipboard-write is always on (copy/cut inside the
+  // iframe). clipboard-read is intentionally omitted — it would let apps
+  // read the clipboard without user gesture, a data-exfiltration risk for
+  // untrusted apps. Additional features come from the server-declared
+  // `_meta.ui.permissions` (camera/microphone/geolocation) and are opt-in.
+  iframe.allow = buildAllowAttr(options?.permissions);
 
   // Inject theme CSS variables into the HTML
   const themeMode = options?.themeMode ?? getHostThemeMode();
   const themedHtml = injectThemeStyles(html, themeMode);
 
-  // Inject CSP into the HTML
-  const csp = buildCSP(options?.connectDomains);
+  // Inject CSP derived from server-declared `_meta.ui.csp` (or strict
+  // defaults when the app doesn't opt in).
+  const csp = buildCSP(options);
   const securedHtml = injectCSP(themedHtml, csp);
 
   // Use srcdoc (not src URL) per spec
@@ -141,8 +183,21 @@ export function createAppIframe(
   // Track app name for event routing
   iframe.dataset.app = appName;
 
-  // Remove default iframe border
-  iframe.style.border = "none";
+  // Default to no border; server can request a visible one via
+  // `_meta.ui.prefersBorder`. The background-color pairs with the border
+  // because a bare border on a transparent frame looks half-finished.
+  if (options?.prefersBorder) {
+    iframe.style.border = "1px solid var(--nb-border, rgba(0, 0, 0, 0.12))";
+    iframe.style.background = "var(--nb-surface, #ffffff)";
+  } else {
+    iframe.style.border = "none";
+  }
+
+  // TODO sandbox-proxy: `_meta.ui.domain` requests a dedicated sandbox
+  // origin so the app runs in a real origin rather than the `null` origin
+  // of srcdoc. Requires the double-iframe pattern — outer at host origin,
+  // inner at a dedicated sandbox host. Deferred to the sandbox-proxy work
+  // documented in `nimblebrain-ops/research/SANDBOX_PROXY_ARCHITECTURE.md`.
 
   return iframe;
 }

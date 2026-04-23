@@ -272,6 +272,76 @@ describe("Bridge — ext-apps dual protocol", () => {
     handle.destroy();
   });
 
+  it("responds to ui/initialize when id is a number (ext-apps SDK / Reboot client default)", () => {
+    // `@modelcontextprotocol/ext-apps` client (which Reboot's React app uses via
+    // `@reboot-dev/reboot-react`) sends request IDs as numbers starting at 0.
+    // JSON-RPC 2.0 allows both strings and numbers — a prior string-only check
+    // left Reboot iframes stuck at "Connecting to MCP host..." forever.
+    const { iframe, posted } = makeFakeIframe();
+    const handle = createBridge(iframe, "test-app");
+
+    simulatePostMessage(iframe, {
+      jsonrpc: "2.0",
+      id: 0,
+      method: "ui/initialize",
+      params: {
+        protocolVersion: "2026-01-26",
+        clientInfo: { name: "TestApp", version: "1.0.0" },
+        capabilities: {},
+      },
+    });
+
+    const response = posted.find(
+      (m: unknown) =>
+        (m as Record<string, unknown>).id === 0 && "result" in (m as Record<string, unknown>),
+    ) as Record<string, unknown> | undefined;
+    expect(response).toBeDefined();
+    expect(response!.jsonrpc).toBe("2.0");
+    const result = response!.result as Record<string, unknown>;
+    expect(result.protocolVersion).toBe("2026-01-26");
+
+    handle.destroy();
+  });
+
+  it("ui/initialize response filters hostContext.styles.variables to spec-allowed keys only", () => {
+    // Strict ext-apps SDK clients (Reboot's `@reboot-dev/reboot-react` uses
+    // Zod to validate the response) reject unknown variable keys. Our theme
+    // map contains NB extensions (`--nb-*`) and a couple of out-of-spec
+    // legacy keys (`--color-text-accent`, `--font-text-base-*`); those must
+    // not appear on the wire.
+    const { iframe, posted } = makeFakeIframe();
+    const handle = createBridge(iframe, "test-app");
+
+    simulatePostMessage(iframe, {
+      jsonrpc: "2.0",
+      id: 7,
+      method: "ui/initialize",
+      params: {
+        protocolVersion: "2026-01-26",
+        clientInfo: { name: "T", version: "1" },
+        capabilities: {},
+      },
+    });
+
+    const response = posted.find(
+      (m: unknown) =>
+        (m as Record<string, unknown>).id === 7 && "result" in (m as Record<string, unknown>),
+    ) as Record<string, unknown> | undefined;
+    const hostContext = (response!.result as Record<string, unknown>).hostContext as {
+      styles: { variables: Record<string, string> };
+    };
+    const keys = Object.keys(hostContext.styles.variables);
+    expect(keys.some((k) => k.startsWith("--nb-"))).toBe(false);
+    expect(keys).not.toContain("--color-text-accent");
+    expect(keys).not.toContain("--font-text-base-size");
+    expect(keys).not.toContain("--font-text-base-line-height");
+    // And we should still be sending the core spec-allowed ones
+    expect(keys).toContain("--color-background-primary");
+    expect(keys).toContain("--font-sans");
+
+    handle.destroy();
+  });
+
   it("accepts ui/notifications/initialized without error", () => {
     const { iframe } = makeFakeIframe();
     const handle = createBridge(iframe, "test-app");

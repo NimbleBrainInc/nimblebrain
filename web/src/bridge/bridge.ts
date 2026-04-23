@@ -17,7 +17,7 @@
 // ---------------------------------------------------------------------------
 
 import { callTool, readResource } from "../api/client";
-import { getHostThemeMode, getThemeTokens } from "./theme";
+import { getHostThemeMode, getSpecThemeTokens, getThemeTokens } from "./theme";
 import type {
   BridgeCallbacks,
   ExtAppsHostContextChangedNotification,
@@ -145,9 +145,21 @@ export function createBridge(
     if (!msg || typeof msg !== "object") return;
 
     // --- ext-apps protocol: ui/initialize REQUEST (has id + method) ---
-    if (msg.method === "ui/initialize" && typeof msg.id === "string") {
+    // JSON-RPC 2.0 (and the ext-apps spec by extension) allows request IDs to
+    // be strings OR numbers. Clients built on `@modelcontextprotocol/ext-apps`
+    // (including `@reboot-dev/reboot-react`) send numeric IDs starting at 0.
+    // An earlier string-only check here silently dropped those handshakes,
+    // leaving the iframe stuck at "Connecting to MCP host...".
+    if (
+      msg.method === "ui/initialize" &&
+      (typeof msg.id === "string" || typeof msg.id === "number")
+    ) {
       const extMode = getHostThemeMode();
-      const extTokens = getThemeTokens(extMode);
+      // Filter to spec-valid keys only. Strict ext-apps SDK clients (Reboot's
+      // React runtime validates via Zod) reject unknown keys on this field.
+      // NB extensions and out-of-spec tokens still flow through the iframe's
+      // injected `<style>` block — they just don't cross the protocol.
+      const extTokens = getSpecThemeTokens(extMode);
       const response: ExtAppsInitializeResponse = {
         jsonrpc: "2.0",
         id: msg.id,

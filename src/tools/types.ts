@@ -54,6 +54,17 @@ export interface ResourceData {
   text?: string;
   blob?: Uint8Array;
   mimeType?: string;
+  /**
+   * Per-content `_meta` from the MCP resource. Passed through to host-side
+   * consumers so spec-defined fields like `_meta.ui.csp`, `_meta.ui.permissions`,
+   * `_meta.ui.prefersBorder`, and `_meta.ui.domain` (ext-apps `io.modelcontextprotocol/ui`
+   * extension) reach the iframe bridge and actually apply.
+   *
+   * Shape is intentionally open (`Record<string, unknown>`) because the MCP spec
+   * defines `_meta` as a free-form namespace; consumers typecheck specific
+   * fields at their point of use.
+   */
+  meta?: Record<string, unknown>;
 }
 
 /** A ToolSource that can also read MCP resources. */

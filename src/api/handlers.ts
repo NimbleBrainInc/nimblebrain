@@ -323,8 +323,16 @@ export async function handleResourceProxy(
     }
 
     const html = source.readResource(resolvedPath);
-    if (html) {
-      return new Response(html, { headers: { "Content-Type": "text/html" } });
+    if (html !== null) {
+      return json({
+        contents: [
+          {
+            uri: `ui://${resolvedPath}`,
+            mimeType: "text/html",
+            text: html,
+          },
+        ],
+      });
     }
     return apiError(404, "resource_not_found", `Resource "ui://${resourcePath}" not found`, {
       resource: `ui://${resourcePath}`,
@@ -350,20 +358,24 @@ export async function handleResourceProxy(
     });
   }
 
-  // Binary resource (PDF, image, etc.)
+  // Emit a JSON envelope mirroring the MCP `ReadResourceResult` shape so
+  // clients see the protocol directly and can consume `_meta` (e.g. ext-apps
+  // `_meta.ui.csp`) without a translation layer. Binary payloads come back
+  // as base64-encoded `blob` strings per spec. Mirrors the shape returned by
+  // `handleReadResource` (POST /v1/resources/read) — same endpoint, same
+  // shape.
+  const entry: Record<string, unknown> = {
+    uri: `ui://${resolvedPath}`,
+  };
+  if (resource.mimeType) entry.mimeType = resource.mimeType;
   if (resource.blob) {
-    return new Response(resource.blob.buffer as ArrayBuffer, {
-      headers: {
-        "Content-Type": resource.mimeType || "application/octet-stream",
-        "Content-Disposition": "inline",
-      },
-    });
+    entry.blob = bytesToBase64(resource.blob);
+  } else {
+    entry.text = resource.text ?? "";
   }
+  if (resource.meta) entry._meta = resource.meta;
 
-  // Text resource (HTML, JSON, etc.)
-  return new Response(resource.text ?? "", {
-    headers: { "Content-Type": resource.mimeType || "text/html" },
-  });
+  return json({ contents: [entry] });
 }
 
 /**
@@ -420,6 +432,7 @@ export async function handleReadResource(
   } else {
     entry.text = resource.text ?? "";
   }
+  if (resource.meta) entry._meta = resource.meta;
 
   return json({ contents: [entry] });
 }

@@ -1,3 +1,4 @@
+import type { McpUiResourceMeta } from "@modelcontextprotocol/ext-apps";
 import type {
   ApiError,
   BootstrapResponse,
@@ -136,11 +137,21 @@ export class ApiClientError extends Error {
 // ---------------------------------------------------------------------------
 
 /**
- * Fetch an app's ui:// resource as HTML/text. Used by the iframe mounting
- * path (SlotRenderer, InlineAppView) to load app views into sandboxed frames.
+ * Fetch an app's ui:// resource. Used by the iframe mounting path
+ * (SlotRenderer, InlineAppView) to load app views into sandboxed frames.
+ *
+ * Returns the HTML text plus any `_meta.ui.*` the server attached (ext-apps
+ * extension — CSP domain allowlists, permissions, layout hints). The endpoint
+ * returns a JSON envelope mirroring the MCP `ReadResourceResult` shape so
+ * callers see the protocol directly; callers that only want the HTML
+ * destructure `{ html }` and ignore `metaUi`.
+ *
  * For binary artifacts (PDFs, images, etc.), use {@link readResource}.
  */
-export async function getResources(appName: string, path: string): Promise<string> {
+export async function getResources(
+  appName: string,
+  path: string,
+): Promise<{ html: string; metaUi?: McpUiResourceMeta }> {
   const res = await fetchWithRefresh(
     `${API_BASE}/v1/apps/${encodeURIComponent(appName)}/resources/${path}`,
     {
@@ -161,7 +172,17 @@ export async function getResources(appName: string, path: string): Promise<strin
     throw new ApiClientError(body.error, body.message, res.status, body.details);
   }
 
-  return res.text();
+  const envelope = (await res.json()) as {
+    contents?: Array<{ text?: string; _meta?: { ui?: McpUiResourceMeta } }>;
+  };
+  const entry = envelope.contents?.[0];
+  if (!entry) {
+    throw new ApiClientError("invalid_response", "resource response missing `contents[0]`", 500);
+  }
+  return {
+    html: entry.text ?? "",
+    metaUi: entry._meta?.ui,
+  };
 }
 
 /** Invoke a tool directly. */
