@@ -1,5 +1,7 @@
+import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import type { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { RemoteTransportConfig } from "../bundles/types.ts";
 import { log } from "../cli/log.ts";
@@ -7,6 +9,7 @@ import { textContent } from "../engine/content-helpers.ts";
 import type { ContentBlock, EventSink, ToolResult } from "../engine/types.ts";
 import { createRemoteTransport } from "./remote-transport.ts";
 import type { ResourceData, Tool, ToolSource } from "./types.ts";
+import type { WorkspaceOAuthProvider } from "./workspace-oauth-provider.ts";
 
 /**
  * Default time-to-live (ms) sent with task-augmented `tools/call` requests.
@@ -27,7 +30,20 @@ export interface McpSpawnConfig {
 /** Discriminated union for how McpSource connects to its MCP server. */
 export type McpTransportMode =
   | { type: "stdio"; spawn: McpSpawnConfig }
-  | { type: "remote"; url: URL; transportConfig?: RemoteTransportConfig };
+  | {
+      type: "remote";
+      url: URL;
+      transportConfig?: RemoteTransportConfig;
+      /**
+       * Optional OAuth provider for the MCP SDK. When set and no static
+       * `transportConfig.auth` is present, `createRemoteTransport` attaches
+       * it to the client transport. If the server returns 401 on connect,
+       * `start()` catches `UnauthorizedError`, awaits the provider's pending
+       * flow for an authorization code, calls `transport.finishAuth`, and
+       * retries `connect()` exactly once.
+       */
+      authProvider?: WorkspaceOAuthProvider;
+    };
 
 /**
  * ToolSource wrapping a single MCP server (stdio subprocess or remote HTTP/SSE).
@@ -77,7 +93,11 @@ export class McpSource implements ToolSource {
         stderr: "pipe",
       });
     } else {
-      this.transport = createRemoteTransport(this.mode.url, this.mode.transportConfig);
+      this.transport = createRemoteTransport(
+        this.mode.url,
+        this.mode.transportConfig,
+        this.mode.authProvider,
+      );
 
       // Remote: watch for transport close — mark source as dead
       this.transport.onclose = () => {
@@ -109,32 +129,70 @@ export class McpSource implements ToolSource {
 
     // Timeout MCP handshake — remote gets shorter timeout (15s vs 30s)
     const CONNECT_TIMEOUT = this.mode.type === "remote" ? 15_000 : 30_000;
-    const timeout = new Promise<never>((_, reject) =>
-      setTimeout(
-        () =>
-          reject(
-            new Error(`MCP connect timeout after ${CONNECT_TIMEOUT / 1000}s for ${this.name}`),
-          ),
-        CONNECT_TIMEOUT,
-      ),
-    );
 
     try {
-      await Promise.race([this.client.connect(this.transport), timeout]);
+      await this.connectWithTimeout(CONNECT_TIMEOUT);
     } catch (err) {
-      // Clean up on failure
-      try {
-        if (this.transport) await this.transport.close();
-      } catch (cleanupErr) {
-        console.error("[mcp-source] transport cleanup failed:", cleanupErr);
+      // One-shot OAuth retry: if we have an authProvider and the SDK threw
+      // UnauthorizedError, the provider's pending flow was either resolved
+      // in-process (headless, e.g. Reboot Anonymous) or rejected with a
+      // clear error (interactive, which we don't support yet). Await the
+      // flow, finish auth on the transport, and try exactly once more.
+      if (
+        err instanceof UnauthorizedError &&
+        this.mode.type === "remote" &&
+        this.mode.authProvider &&
+        this.transport
+      ) {
+        try {
+          const code = await this.mode.authProvider.awaitPendingFlow();
+          const streamableTransport = this.transport as StreamableHTTPClientTransport;
+          if (typeof streamableTransport.finishAuth !== "function") {
+            throw new Error(
+              `[mcp-source] transport does not support finishAuth (got ${this.transport.constructor.name})`,
+            );
+          }
+          await streamableTransport.finishAuth(code);
+          log.debug("mcp", `[oauth] ${this.name}: finishAuth ok, retrying connect`);
+          await this.connectWithTimeout(CONNECT_TIMEOUT);
+          this.dead = false;
+          this.startedAt = Date.now();
+          return;
+        } catch (retryErr) {
+          await this.cleanupOnStartFailure();
+          throw retryErr;
+        }
       }
-      this.client = null;
-      this.transport = null;
+
+      await this.cleanupOnStartFailure();
       throw err;
     }
 
     this.dead = false;
     this.startedAt = Date.now();
+  }
+
+  private async connectWithTimeout(timeoutMs: number): Promise<void> {
+    if (!this.client || !this.transport) {
+      throw new Error("[mcp-source] connectWithTimeout called before init");
+    }
+    const timeout = new Promise<never>((_, reject) =>
+      setTimeout(
+        () => reject(new Error(`MCP connect timeout after ${timeoutMs / 1000}s for ${this.name}`)),
+        timeoutMs,
+      ),
+    );
+    await Promise.race([this.client.connect(this.transport), timeout]);
+  }
+
+  private async cleanupOnStartFailure(): Promise<void> {
+    try {
+      if (this.transport) await this.transport.close();
+    } catch (cleanupErr) {
+      console.error("[mcp-source] transport cleanup failed:", cleanupErr);
+    }
+    this.client = null;
+    this.transport = null;
   }
 
   /** Check if the transport is still connected. */

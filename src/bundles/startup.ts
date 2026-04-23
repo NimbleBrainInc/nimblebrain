@@ -11,6 +11,7 @@ import type { EventSink } from "../engine/types.ts";
 import { McpSource } from "../tools/mcp-source.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
 import type { ToolSource } from "../tools/types.ts";
+import { WorkspaceOAuthProvider } from "../tools/workspace-oauth-provider.ts";
 import { extractBundleMeta } from "./defaults.ts";
 import { filterEnvForBundle } from "./env-filter.ts";
 import { validateManifest } from "./manifest.ts";
@@ -70,12 +71,35 @@ export async function startBundleSource(
     // SSRF protection: validate URL before connecting
     validateBundleUrl(new URL(ref.url), { allowInsecure: opts?.allowInsecureRemotes });
     log.info(`[bundles] Starting remote bundle ${ref.url} as ${sourceName}...`);
+
+    // Attach an OAuthClientProvider when no static auth is configured. The
+    // provider is workspace-scoped: tokens and DCR credentials live under
+    // <workDir>/workspaces/<wsId>/credentials/mcp-oauth/<serverName>/. Named
+    // bundles already require `wsId`; URL bundles historically did not —
+    // fall back to `ws_default` only if wsId is missing, which preserves
+    // behavior for any callers that haven't threaded workspace context.
+    let authProvider: WorkspaceOAuthProvider | undefined;
+    const hasStaticAuth = ref.transport?.auth && ref.transport.auth.type !== "none";
+    if (!hasStaticAuth) {
+      const wsId = opts?.wsId ?? "ws_default";
+      const workDir = opts?.workDir ?? process.env.NB_WORK_DIR ?? join(homedir(), ".nimblebrain");
+      const apiBase = process.env.NB_API_URL ?? "http://localhost:27247";
+      const callbackUrl = `${apiBase.replace(/\/+$/, "")}/v1/mcp-auth/callback`;
+      authProvider = new WorkspaceOAuthProvider({
+        wsId,
+        serverName,
+        workDir,
+        callbackUrl,
+      });
+    }
+
     const source = new McpSource(
       sourceName,
       {
         type: "remote",
         url: new URL(ref.url),
         transportConfig: ref.transport,
+        authProvider,
       },
       eventSink,
     );

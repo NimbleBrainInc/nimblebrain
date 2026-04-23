@@ -9,6 +9,7 @@ import { conversationEventRoutes } from "./routes/conversation-events.ts";
 import { eventRoutes } from "./routes/events.ts";
 import { healthRoutes } from "./routes/health.ts";
 import { mcpRoutes } from "./routes/mcp.ts";
+import { mcpAuthRoutes } from "./routes/mcp-auth.ts";
 import { resourceRoutes } from "./routes/resources.ts";
 import { toolRoutes } from "./routes/tools.ts";
 import { wellKnownRoutes } from "./routes/well-known.ts";
@@ -29,6 +30,11 @@ export function createApp(
   app.route("/", wellKnownRoutes(ctx));
   app.route("/", healthRoutes(ctx));
   app.route("/", authRoutes(ctx));
+  // Outbound-OAuth callback for remote MCP servers. Unauthenticated by
+  // design — state param guards against unsolicited codes. Must be
+  // reachable before any authenticated middleware; ordering alongside
+  // authRoutes keeps that invariant obvious.
+  app.route("/", mcpAuthRoutes(ctx));
 
   // MCP routes BEFORE other authenticated routes — prevents other sub-app
   // wildcard middleware from intercepting /mcp requests. Hono runs use("*")
