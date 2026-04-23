@@ -179,13 +179,14 @@ describe("WorkOS provisioning security", () => {
     expect(profile!.orgRole).toBe("admin");
   });
 
-  it("creates a workspace for authorized users at the identity boundary", async () => {
-    // Workspace should have been created by the "allows exchangeCode" test.
-    // The invariant "authenticated user has ≥1 workspace" must hold immediately
-    // after auth-code exchange — no tool call required.
+  it("does not create a workspace in exchangeCode (provisioning is on verifyRequest)", async () => {
+    // Workspace provisioning moved from exchangeCode to every verifyRequest so
+    // the invariant is self-healing and covers the AuthKit/MCP-OAuth path
+    // (which never routes through exchangeCode). Asserted by the AuthKit test
+    // in workos-authkit.test.ts and the OIDC self-heal test in
+    // test/integration/identity/oidc-adapter.test.ts.
     const workspaces = await workspaceStore.getWorkspacesForUser("user_authorized");
-    expect(workspaces.length).toBeGreaterThanOrEqual(1);
-    expect(workspaces[0]!.members.some((m) => m.userId === "user_authorized")).toBe(true);
+    expect(workspaces).toHaveLength(0);
   });
 
   it("does not create duplicate profile on subsequent login", async () => {

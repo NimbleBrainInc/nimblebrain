@@ -18,18 +18,25 @@ export interface ProvisioningIdentity {
  * Ensure the user has at least one workspace. Idempotent.
  *
  * Invariant for the system: every authenticated user has ≥1 workspace.
- * This function establishes that invariant at the identity boundary —
- * call from each identity provider's first-login hook. Downstream code
- * (request resolvers, data handlers) may then treat the invariant as a
- * hard requirement.
+ * Providers call this on every successful verifyRequest so the invariant
+ * is self-healing — any state drift (admin deletion, partial failure,
+ * users migrated from a prior build) is corrected on next login instead
+ * of causing a permanent 500.
  *
  * Behavior:
  * - User already a member of ≥1 workspace → return the first, no writes.
  * - User has no memberships → create a private workspace, add as admin.
  * - Concurrent first-login race (two calls for the same identity in flight)
- *   → resolved without creating duplicates: the loser catches the conflict,
- *   re-reads, and returns the winner's workspace (adding membership only if
- *   the winning workspace lacks it, which would indicate manual interference).
+ *   → resolved without creating duplicates. One race winner completes both
+ *   create and addMember; losers either see the committed workspace via
+ *   getWorkspacesForUser, or catch WorkspaceConflictError / MemberConflictError
+ *   and re-read. No same-user race produces more than one workspace.
+ *
+ * Concurrency note: WorkspaceStore.create is read-then-write without a
+ * filesystem lock, so `create` only detects conflicts where the first
+ * writer already committed. This helper's safety comes from (a) slugs
+ * being derived from the full user ID — different users cannot collide —
+ * and (b) same-user races converging on the same addMember target.
  */
 export async function ensureUserWorkspace(
   store: WorkspaceStore,
@@ -62,10 +69,11 @@ export async function ensureUserWorkspace(
 }
 
 /**
- * A create() collision on our deterministic slug means another call is
- * mid-flight (or completed) for the same identity. Recover by re-reading
- * and ensuring membership — never by creating a second workspace with a
- * different slug. Two workspaces per user from a race is the exact bug
+ * A create() collision on our deterministic slug means another concurrent
+ * call is mid-flight for the same identity — with full (untruncated) user
+ * IDs as slugs, no two different users can collide here. Recover by
+ * re-reading and ensuring membership. Never create a second workspace with
+ * a different slug: two workspaces per user from a race is the exact bug
  * the old timestamp-suffix fallback introduced.
  */
 async function reconcileConflict(
@@ -75,8 +83,10 @@ async function reconcileConflict(
 ): Promise<Workspace> {
   const existing = await store.get(wsId);
   if (!existing) {
-    // Conflict thrown but workspace missing on re-read — the other call
-    // must have failed after creation. Retry membership on a fresh create.
+    // WorkspaceConflictError fires only when store.get() returned non-null
+    // inside create() — so reaching here means the workspace existed at
+    // throw time and was deleted before our re-read (concurrent delete,
+    // rare). Recreate it.
     const ws = await store.create(
       identity.displayName ? `${identity.displayName}'s Workspace` : "Workspace",
       deriveSlug(identity.id),
@@ -97,12 +107,17 @@ async function reconcileConflict(
   }
 }
 
-/** Derive a workspace slug from a user ID. Matches the historical rule
- *  in the old resolveWorkspace auto-provision branch for backwards
- *  compatibility with any already-derived workspace IDs. */
+/**
+ * Derive a workspace slug from a user ID.
+ *
+ * Uses the full (prefix-stripped) user ID with NO truncation. The old
+ * `.slice(0, 16)` inherited from resolveWorkspace left only ~7 hex chars
+ * of entropy for OIDC IDs (`usr_oidc_<12 hex>` → `usr_oidc_<7 hex>`),
+ * producing a birthday collision at ~16K users. On collision, the
+ * reconcile path would silently add two unrelated users as admins of
+ * the same workspace — a security bug. WORKSPACE_ID_RE permits 64 chars
+ * so there is no reason to truncate.
+ */
 function deriveSlug(userId: string): string {
-  return userId
-    .replace(/^user_/, "")
-    .toLowerCase()
-    .slice(0, 16);
+  return userId.replace(/^user_/, "").toLowerCase();
 }

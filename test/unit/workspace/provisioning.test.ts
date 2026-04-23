@@ -83,15 +83,23 @@ describe("ensureUserWorkspace", () => {
     expect(ws.members).toEqual([{ userId: "user_alice", role: "member" }]);
   });
 
-  test("recovers when the derived slug is taken by a workspace the user isn't in", async () => {
-    // Pre-create ws_alice without Alice as a member (e.g., an admin created it manually).
-    await store.create("Alice's Workspace", "alice");
+  test("different OIDC-style user IDs whose SHA-256 prefixes share hex produce different workspaces", async () => {
+    // Regression guard for the slug-truncation collision: before the fix,
+    // deriveSlug truncated to 16 chars, leaving only ~7 hex of entropy for
+    // usr_oidc_<12-hex> IDs. Two users whose hex prefixes shared the first
+    // 7 chars ended up sharing the same workspace. The fix drops truncation
+    // so the full ID disambiguates.
+    const a = await ensureUserWorkspace(store, {
+      id: "usr_oidc_abcdef0011aa",
+      displayName: "A",
+    });
+    const b = await ensureUserWorkspace(store, {
+      id: "usr_oidc_abcdef0022bb",
+      displayName: "B",
+    });
 
-    const ws = await ensureUserWorkspace(store, { id: "user_alice", displayName: "Alice" });
-
-    expect(ws.id).toBe("ws_alice");
-    // Alice was added to the existing workspace, not a second one.
-    expect((await store.list()).length).toBe(1);
-    expect(ws.members).toEqual([{ userId: "user_alice", role: "admin" }]);
+    expect(a.id).not.toBe(b.id);
+    expect(a.members.map((m) => m.userId)).toEqual(["usr_oidc_abcdef0011aa"]);
+    expect(b.members.map((m) => m.userId)).toEqual(["usr_oidc_abcdef0022bb"]);
   });
 });

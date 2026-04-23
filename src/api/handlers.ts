@@ -645,14 +645,16 @@ export async function handleBootstrap(
     );
   }
 
-  // 2. Resolve active workspace — permissive: honor X-Preferred-Workspace
-  // hint when it matches a membership, otherwise pick the first. Bootstrap
-  // is the one place the server defaults, because it's the only place a
-  // client can legitimately not yet know a wsId.
-  const preferred = req.headers.get("X-Preferred-Workspace");
+  // 2. Resolve active workspace — permissive: honor X-Workspace-Id when it
+  // matches a membership, otherwise pick the first. Bootstrap is the one
+  // place the server defaults, because it's the only place a client can
+  // legitimately not yet know a wsId. On data endpoints the same header is
+  // authoritative (unknown wsId → 400); bootstrap is the discovery surface
+  // so the contract is weaker here by design.
+  const requested = req.headers.get("X-Workspace-Id");
   const activeWorkspace: string =
-    preferred && userWorkspaces.some((ws) => ws.id === preferred)
-      ? preferred
+    requested && userWorkspaces.some((ws) => ws.id === requested)
+      ? requested
       : userWorkspaces[0]!.id;
 
   // 3. Shell placements for the active workspace (ambient + scoped, merged).

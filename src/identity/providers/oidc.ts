@@ -190,7 +190,6 @@ export class OidcIdentityProvider implements IdentityProvider {
       user = await this.userStore.getByEmail(email);
     }
 
-    const firstLogin = !user;
     if (!user) {
       user = await this.userStore.create({
         id: deterministicId,
@@ -200,15 +199,17 @@ export class OidcIdentityProvider implements IdentityProvider {
       });
     }
 
-    // Ensure the user has at least one workspace on first login.
-    // Establishes the invariant "authenticated user has ≥1 workspace" at the
-    // identity boundary so request resolvers can treat it as a hard requirement.
-    if (firstLogin) {
-      await ensureUserWorkspace(this.workspaceStore, {
-        id: user.id,
-        displayName: user.displayName,
-      });
-    }
+    // Enforce the invariant "authenticated user has ≥1 workspace" on every
+    // successful auth, not only first login. Idempotent: happy path is one
+    // filesystem read and no writes. Running on every request makes the
+    // invariant self-healing for any state where the user exists but their
+    // workspace doesn't — admin deletion, partial failure, migrations from
+    // a prior build, cross-provider drift. A first-login-only gate leaves
+    // those users stuck at 500 forever with no client-side recovery path.
+    await ensureUserWorkspace(this.workspaceStore, {
+      id: user.id,
+      displayName: user.displayName,
+    });
 
     return toIdentity(user);
   }

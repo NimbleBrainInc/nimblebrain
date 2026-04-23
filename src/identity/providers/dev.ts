@@ -50,7 +50,14 @@ export class DevIdentityProvider implements IdentityProvider {
   }
 
   async verifyRequest(_req: Request): Promise<UserIdentity | null> {
-    await this.ensureDefaults();
+    await this.ensureUserProfile();
+    // Run on every request (idempotent) so the "authenticated user has
+    // ≥1 workspace" invariant self-heals if the dev workspace is deleted
+    // out from under the process.
+    await ensureUserWorkspace(this.workspaceStore, {
+      id: DEV_IDENTITY.id,
+      displayName: DEV_IDENTITY.displayName,
+    });
     return DEV_IDENTITY;
   }
 
@@ -73,7 +80,13 @@ export class DevIdentityProvider implements IdentityProvider {
 
   // ── Private ───────────────────────────────────────────────────
 
-  private async ensureDefaults(): Promise<void> {
+  /**
+   * Seed the dev user profile on first call. Profile creation doesn't need
+   * to repeat per request — user identity for dev mode is fixed — so the
+   * `initialized` gate stays here. Workspace provisioning is handled by
+   * verifyRequest directly so it self-heals.
+   */
+  private async ensureUserProfile(): Promise<void> {
     if (this.initialized) return;
 
     const existingUser = await this.userStore.get(DEV_IDENTITY.id);
@@ -95,14 +108,6 @@ export class DevIdentityProvider implements IdentityProvider {
       }
       await writeFile(join(userDir, "profile.json"), `${JSON.stringify(user, null, 2)}\n`, "utf-8");
     }
-
-    // Ensure the dev user has at least one workspace. Establishes the
-    // invariant "authenticated user has ≥1 workspace" at the identity
-    // boundary. Idempotent — no-op after first call.
-    await ensureUserWorkspace(this.workspaceStore, {
-      id: DEV_IDENTITY.id,
-      displayName: DEV_IDENTITY.displayName,
-    });
 
     this.initialized = true;
   }

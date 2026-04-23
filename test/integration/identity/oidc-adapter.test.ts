@@ -194,6 +194,31 @@ describe("OidcIdentityProvider", () => {
       expect(finalList).toHaveLength(firstList.length);
     });
 
+    test("self-heals a user whose workspace was deleted after first login", async () => {
+      // Reproduces the "existing-user-without-workspace" state a naive
+      // first-login-only provisioning hook would never recover from:
+      // the User profile exists (so !user is false, no "first login"),
+      // but their workspace is gone.
+      const token = await buildJwt({ email: "erin@example.com", sub: "oidc-sub-erin", name: "Erin" });
+
+      // First login provisions user + workspace.
+      const first = await adapter.verifyRequest(bearerRequest(token));
+      const wsBefore = await workspaceStore.getWorkspacesForUser(first!.id);
+      expect(wsBefore).toHaveLength(1);
+
+      // Simulate admin deletion (or disk cleanup / migration drop).
+      await workspaceStore.delete(wsBefore[0]!.id);
+      expect(await workspaceStore.getWorkspacesForUser(first!.id)).toHaveLength(0);
+
+      // Next auth must re-establish the invariant — not leave the user
+      // stuck at a 500 on bootstrap.
+      const second = await adapter.verifyRequest(bearerRequest(token));
+      expect(second).not.toBeNull();
+      const wsAfter = await workspaceStore.getWorkspacesForUser(second!.id);
+      expect(wsAfter).toHaveLength(1);
+      expect(wsAfter[0]!.members).toEqual([{ userId: second!.id, role: "admin" }]);
+    });
+
     test("expired JWT returns null", async () => {
       await userStore.create({ email: "alice@example.com", displayName: "Alice" });
 

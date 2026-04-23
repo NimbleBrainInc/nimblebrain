@@ -94,7 +94,10 @@ beforeAll(async () => {
 
 // ── Provider factory ─────────────────────────────────────────────
 
-function createProvider(configOverrides?: Partial<WorkosAuth>) {
+function createProvider(configOverrides?: Partial<WorkosAuth>): {
+  provider: WorkosIdentityProvider;
+  workspaceStore: WorkspaceStore;
+} {
   const config = { ...BASE_CONFIG, ...configOverrides };
   const workspaceStore = new WorkspaceStore(mkdtempSync(join(tmpdir(), "workos-authkit-")));
   const provider = new WorkosIdentityProvider(config, undefined, workspaceStore);
@@ -170,7 +173,7 @@ function createProvider(configOverrides?: Partial<WorkosAuth>) {
     return new Response("Not Found", { status: 404 });
   };
 
-  return provider;
+  return { provider, workspaceStore };
 }
 
 function makeRequest(token: string): Request {
@@ -187,12 +190,12 @@ function makeRequest(token: string): Request {
 
 describe("getAuthkitDomain", () => {
   it("returns configured domain", () => {
-    const provider = createProvider();
+    const { provider } = createProvider();
     expect(provider.getAuthkitDomain()).toBe("testapp");
   });
 
   it("returns undefined when not configured", () => {
-    const provider = createProvider({ authkitDomain: undefined });
+    const { provider } = createProvider({ authkitDomain: undefined });
     expect(provider.getAuthkitDomain()).toBeUndefined();
   });
 });
@@ -201,7 +204,7 @@ describe("getAuthkitDomain", () => {
 
 describe("verifyRequest with AuthKit JWT", () => {
   it("verifies valid AuthKit JWT with correct issuer", async () => {
-    const provider = createProvider();
+    const { provider } = createProvider();
     const nowSec = Math.floor(Date.now() / 1000);
     const token = await createJwt(
       {
@@ -220,8 +223,36 @@ describe("verifyRequest with AuthKit JWT", () => {
     expect(identity!.email).toBe("user_authkit_1@test.com");
   });
 
+  it("provisions a workspace on successful AuthKit auth (MCP OAuth path)", async () => {
+    // AuthKit tokens never route through exchangeCode (that's the browser
+    // auth-code flow). verifyRequest is the only place the invariant
+    // "authenticated user has ≥1 workspace" can be established for this
+    // path — so workspace provisioning must live there.
+    const { provider, workspaceStore } = createProvider();
+    const nowSec = Math.floor(Date.now() / 1000);
+    const token = await createJwt(
+      {
+        sub: "user_authkit_mcp",
+        iss: "https://testapp.authkit.app",
+        exp: nowSec + 3600,
+        iat: nowSec,
+      },
+      authkitKey.privateKey,
+      authkitKey.kid,
+    );
+
+    const identity = await provider.verifyRequest(makeRequest(token));
+    expect(identity).not.toBeNull();
+
+    const workspaces = await workspaceStore.getWorkspacesForUser(identity!.id);
+    expect(workspaces).toHaveLength(1);
+    expect(workspaces[0]!.members).toEqual([
+      { userId: identity!.id, role: "admin" },
+    ]);
+  });
+
   it("rejects expired AuthKit JWT", async () => {
-    const provider = createProvider();
+    const { provider } = createProvider();
     const nowSec = Math.floor(Date.now() / 1000);
     const token = await createJwt(
       {
@@ -239,7 +270,7 @@ describe("verifyRequest with AuthKit JWT", () => {
   });
 
   it("rejects JWT with wrong issuer (not matching authkitDomain)", async () => {
-    const provider = createProvider();
+    const { provider } = createProvider();
     const nowSec = Math.floor(Date.now() / 1000);
 
     // Sign with authkit key but use wrong issuer — should not match AuthKit path
@@ -261,7 +292,7 @@ describe("verifyRequest with AuthKit JWT", () => {
   });
 
   it("falls through to WorkOS path when no authkitDomain is configured", async () => {
-    const provider = createProvider({ authkitDomain: undefined });
+    const { provider } = createProvider({ authkitDomain: undefined });
     const nowSec = Math.floor(Date.now() / 1000);
 
     // Use a token signed with workos key with a WorkOS-style issuer (no iss check in WorkOS path)
@@ -283,7 +314,7 @@ describe("verifyRequest with AuthKit JWT", () => {
   });
 
   it("rejects JWT signed with wrong key against AuthKit JWKS", async () => {
-    const provider = createProvider();
+    const { provider } = createProvider();
     const nowSec = Math.floor(Date.now() / 1000);
 
     // Sign with workos key but claim AuthKit issuer
@@ -303,7 +334,7 @@ describe("verifyRequest with AuthKit JWT", () => {
   });
 
   it("uses now() override for expiration check", async () => {
-    const provider = createProvider();
+    const { provider } = createProvider();
 
     // Set time to the future so the token appears expired
     const realNow = Date.now();
