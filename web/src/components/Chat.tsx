@@ -14,6 +14,7 @@ export function Chat() {
     sendMessage,
     newConversation,
     loadConversation,
+    retryLastMessage,
   } = useChatContext();
 
   useEffect(() => {
@@ -48,6 +49,7 @@ export function Chat() {
       sendMessage={handleSendMessage}
       newConversation={handleNewConversation}
       compact={false}
+      onRetry={retryLastMessage}
     />
   );
 }

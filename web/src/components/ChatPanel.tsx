@@ -19,6 +19,8 @@ export interface ChatPanelProps {
   onBack?: () => void;
   isFullscreen?: boolean;
   displayDetail?: DisplayDetail;
+  /** Called when the user clicks "Try again" on an errored message. */
+  onRetry?: () => void;
 }
 
 export interface ChatPanelRef {
@@ -38,6 +40,7 @@ export const ChatPanel = forwardRef<ChatPanelRef, ChatPanelProps>(function ChatP
     onBack,
     isFullscreen = false,
     displayDetail: displayDetailProp,
+    onRetry,
   },
   ref,
 ) {
@@ -215,6 +218,7 @@ export const ChatPanel = forwardRef<ChatPanelRef, ChatPanelProps>(function ChatP
         compact={compact}
         currentUserId={currentUserId}
         participantMap={participantMap}
+        onRetry={onRetry}
       />
 
       <div ref={inputWrapperRef} className={compact ? "px-4" : "max-w-4xl w-full mx-auto px-8"}>

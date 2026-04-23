@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiClientError, callTool, streamChat, streamChatMultipart } from "../api/client";
 import { formatSendError } from "../api/format-error";
 import { captureEvent } from "../telemetry";
@@ -103,6 +103,8 @@ export interface ChatMessage {
   userId?: string;
   files?: MessageFileAttachment[];
   stopReason?: string;
+  /** Set when the engine errors mid-stream — renders inline on the message. */
+  error?: string;
   usage?: {
     inputTokens: number;
     outputTokens: number;
@@ -138,6 +140,10 @@ export interface UseChatReturn {
   injectRemoteUserMessage: (userId: string, displayName: string, content: string) => void;
   /** Process a streaming event from a remote participant's assistant response. */
   processRemoteStreamEvent: (type: string, data: unknown) => void;
+  /** Retry the last failed message (removes errored pair and re-sends). */
+  retryLastMessage: () => void;
+  /** Inject a synthetic error for demoing the error UX (dev only). */
+  simulateError: (message: string) => void;
 }
 
 /** Deep-copy blocks for immutable state updates. */
@@ -407,7 +413,19 @@ export function useChat(initialConversationId?: string, currentUserId?: string):
             case "error": {
               const evt = data as StreamErrorEvent;
               setStreamingState(null);
-              setError(evt.message);
+              // Stamp the error on the last assistant message so it renders
+              // inline — not as a disconnected banner at the top.
+              setMessages((prev) => {
+                const updated = [...prev];
+                const last = updated[updated.length - 1];
+                if (last?.role === "assistant") {
+                  updated[updated.length - 1] = { ...last, error: evt.message };
+                } else {
+                  // No assistant message to attach to — fall back to banner
+                  setError(evt.message);
+                }
+                return updated;
+              });
               break;
             }
           }
@@ -431,9 +449,24 @@ export function useChat(initialConversationId?: string, currentUserId?: string):
             conversation_id: conversationId ?? null,
             has_app_context: !!appContext,
           });
+          // Banner only — nothing in this turn to mark inline
+          setError(formatSendError(err));
+          return;
         }
         const msg = formatSendError(err);
-        setError(msg);
+        // Stamp on the last assistant message if one exists;
+        // only fall back to banner when there's no message to attach to.
+        setMessages((prev) => {
+          const last = prev[prev.length - 1];
+          if (last?.role === "assistant") {
+            const updated = [...prev];
+            updated[updated.length - 1] = { ...last, error: msg };
+            return updated;
+          }
+          // No assistant message — fall back to banner
+          setError(msg);
+          return prev;
+        });
       } finally {
         setIsStreaming(false);
         setStreamingState(null);
@@ -647,6 +680,60 @@ export function useChat(initialConversationId?: string, currentUserId?: string):
     [flushToMessage],
   );
 
+  // Pending retry text — set by retryLastMessage, consumed by an effect
+  const retryRef = useRef<string | null>(null);
+
+  const retryLastMessage = useCallback(() => {
+    // Find the last user message, stash its text, remove the failed pair
+    setMessages((prev) => {
+      for (let i = prev.length - 1; i >= 0; i--) {
+        if (prev[i].role === "user") {
+          retryRef.current = prev[i].content;
+          return prev.slice(0, i);
+        }
+      }
+      return prev;
+    });
+    // Clear error + streaming state so sendMessage's guard passes
+    setError(null);
+    setIsStreaming(false);
+    setStreamingState(null);
+  }, []);
+
+  // Effect: once isStreaming is false and there's a pending retry, fire it.
+  // We can't call sendMessage synchronously from retryLastMessage because
+  // sendMessage is memoized with isStreaming in its dep list — the closure
+  // still sees isStreaming=true until React re-renders with the new state.
+  // This effect fires after React flushes the state updates, at which point
+  // sendMessage has been recreated with isStreaming=false.
+  // NOTE: this depends on sendMessage's identity changing when isStreaming
+  // changes (via flushToMessage in its dep list). Do not memoize
+  // flushToMessage without verifying this still fires.
+  useEffect(() => {
+    if (!isStreaming && retryRef.current) {
+      const text = retryRef.current;
+      retryRef.current = null;
+      sendMessage(text);
+    }
+  }, [isStreaming, sendMessage]);
+
+  const simulateError = useCallback((message: string) => {
+    setMessages((prev) => {
+      if (prev.length === 0) return prev;
+      const updated = [...prev];
+      const last = updated[updated.length - 1];
+      if (last?.role === "assistant") {
+        updated[updated.length - 1] = { ...last, error: message };
+      } else {
+        // Append a synthetic assistant message with the error
+        updated.push({ role: "assistant", content: "", error: message });
+      }
+      return updated;
+    });
+    setStreamingState(null);
+    setIsStreaming(false);
+  }, []);
+
   return {
     messages,
     isStreaming,
@@ -659,5 +746,7 @@ export function useChat(initialConversationId?: string, currentUserId?: string):
     loadConversation,
     injectRemoteUserMessage,
     processRemoteStreamEvent,
+    retryLastMessage,
+    simulateError,
   };
 }
