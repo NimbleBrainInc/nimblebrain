@@ -9,9 +9,13 @@
  * - getAuthkitDomain() behavior
  */
 
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, beforeAll } from "bun:test";
 import { WorkosIdentityProvider } from "../../../src/identity/providers/workos.ts";
 import type { WorkosAuth } from "../../../src/identity/instance.ts";
+import { WorkspaceStore } from "../../../src/workspace/workspace-store.ts";
 
 // ── Key generation helpers ──────────────────────────────────────
 
@@ -92,7 +96,8 @@ beforeAll(async () => {
 
 function createProvider(configOverrides?: Partial<WorkosAuth>) {
   const config = { ...BASE_CONFIG, ...configOverrides };
-  const provider = new WorkosIdentityProvider(config);
+  const workspaceStore = new WorkspaceStore(mkdtempSync(join(tmpdir(), "workos-authkit-")));
+  const provider = new WorkosIdentityProvider(config, undefined, workspaceStore);
 
   // Mock the WorkOS SDK to handle resolveUser internals
   const workos = (provider as unknown as { workos: Record<string, unknown> }).workos;

@@ -121,7 +121,7 @@ export class WorkosIdentityProvider implements IdentityProvider {
   private organizationId: string | undefined;
   private authkitDomain: string | undefined;
   private userStore: UserStore | null;
-  private workspaceStore: WorkspaceStore | null;
+  private workspaceStore: WorkspaceStore;
 
   private jwksCache: CachedJwks | null = null;
   private authkitJwksCache: CachedJwks | null = null;
@@ -132,7 +132,18 @@ export class WorkosIdentityProvider implements IdentityProvider {
   fetcher: typeof globalThis.fetch = globalThis.fetch.bind(globalThis);
   now: () => number = () => Date.now();
 
-  constructor(config: WorkosAuth, userStore?: UserStore, workspaceStore?: WorkspaceStore) {
+  /**
+   * userStore is optional because WorkOS itself is the source of truth for
+   * users (managedUsers: true); the local profile is a cache for preferences.
+   * workspaceStore is required: Phase 1 establishes the "authenticated user
+   * has ≥1 workspace" invariant at the identity boundary, and that requires
+   * a place to create workspaces.
+   */
+  constructor(
+    config: WorkosAuth,
+    userStore: UserStore | undefined,
+    workspaceStore: WorkspaceStore,
+  ) {
     const apiKey = process.env.WORKOS_API_KEY ?? config.apiKey ?? "";
     this.workos = new WorkOS(apiKey, { clientId: config.clientId });
     this.clientId = config.clientId;
@@ -140,7 +151,7 @@ export class WorkosIdentityProvider implements IdentityProvider {
     this.organizationId = config.organizationId;
     this.authkitDomain = config.authkitDomain;
     this.userStore = userStore ?? null;
-    this.workspaceStore = workspaceStore ?? null;
+    this.workspaceStore = workspaceStore;
   }
 
   // ── IdentityProvider interface ──────────────────────────────────
@@ -483,9 +494,7 @@ export class WorkosIdentityProvider implements IdentityProvider {
     // Ensure the user has at least one workspace. Establishes the invariant
     // "authenticated user has ≥1 workspace" at the identity boundary so
     // request resolvers can treat it as a hard requirement.
-    if (this.workspaceStore) {
-      await ensureUserWorkspace(this.workspaceStore, { id: workosUser.id, displayName });
-    }
+    await ensureUserWorkspace(this.workspaceStore, { id: workosUser.id, displayName });
   }
 
   /** The AuthKit domain, if configured. Used by well-known route handlers. */

@@ -8,9 +8,13 @@
  * - Fail-closed behavior is preserved when no cache exists
  */
 
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "bun:test";
 import type { WorkosAuth } from "../../../src/identity/instance.ts";
 import { WorkosIdentityProvider } from "../../../src/identity/providers/workos.ts";
+import { WorkspaceStore } from "../../../src/workspace/workspace-store.ts";
 
 // ── Key generation helpers (shared with workos-authkit.test.ts) ──
 
@@ -93,7 +97,8 @@ function jwksResponseBody() {
 }
 
 function createProvider() {
-  const provider = new WorkosIdentityProvider(CONFIG);
+  const workspaceStore = new WorkspaceStore(mkdtempSync(join(tmpdir(), "workos-stale-")));
+  const provider = new WorkosIdentityProvider(CONFIG, undefined, workspaceStore);
 
   const workos = (provider as unknown as { workos: Record<string, unknown> }).workos;
   workos.userManagement = {

@@ -37,15 +37,15 @@ export class DevIdentityProvider implements IdentityProvider {
 
   private initialized = false;
   private usersDir: string;
-  private workspaceStore: WorkspaceStore | null;
+  private workspaceStore: WorkspaceStore;
 
   constructor(
     workDir: string,
     private userStore: UserStore,
-    workspaceStore?: WorkspaceStore,
+    workspaceStore: WorkspaceStore,
   ) {
     this.usersDir = join(workDir, "users");
-    this.workspaceStore = workspaceStore ?? null;
+    this.workspaceStore = workspaceStore;
     console.warn("Running in dev mode — no authentication configured");
   }
 
@@ -99,12 +99,10 @@ export class DevIdentityProvider implements IdentityProvider {
     // Ensure the dev user has at least one workspace. Establishes the
     // invariant "authenticated user has ≥1 workspace" at the identity
     // boundary. Idempotent — no-op after first call.
-    if (this.workspaceStore) {
-      await ensureUserWorkspace(this.workspaceStore, {
-        id: DEV_IDENTITY.id,
-        displayName: DEV_IDENTITY.displayName,
-      });
-    }
+    await ensureUserWorkspace(this.workspaceStore, {
+      id: DEV_IDENTITY.id,
+      displayName: DEV_IDENTITY.displayName,
+    });
 
     this.initialized = true;
   }

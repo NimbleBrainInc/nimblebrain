@@ -369,7 +369,7 @@ describe("Dev mode", () => {
     const originalWarn = console.warn;
     console.warn = () => {};
 
-    const adapter = new DevIdentityProvider(workDir, userStore);
+    const adapter = new DevIdentityProvider(workDir, userStore, wsStore);
 
     // verifyRequest returns default identity
     const req = new Request("http://localhost/v1/chat");

@@ -165,7 +165,7 @@ describe("OIDC integration: full flow", () => {
     // Create stores and adapter via factory
     const userStore = new UserStore(workDir);
     const wsStore = new WorkspaceStore(workDir);
-    const adapter = createIdentityProvider(config, userStore);
+    const adapter = createIdentityProvider(config, userStore, new WorkspaceStore(workDir));
     expect(adapter).not.toBeNull();
     expect(adapter).toBeInstanceOf(OidcIdentityProvider);
 
@@ -187,7 +187,7 @@ describe("OIDC integration: full flow", () => {
 
   test("second login returns same user (no duplicate)", async () => {
     const userStore = new UserStore(workDir);
-    const adapter = new OidcIdentityProvider({ adapter: "oidc", issuer, clientId: CLIENT_ID, allowedDomains: ALLOWED_DOMAINS }, userStore);
+    const adapter = new OidcIdentityProvider({ adapter: "oidc", issuer, clientId: CLIENT_ID, allowedDomains: ALLOWED_DOMAINS }, userStore, new WorkspaceStore(workDir));
 
     const sub = "repeat-integ-sub";
     const token1 = await buildJwt({ email: "bob@acme.com", sub, name: "Bob" });
@@ -216,7 +216,7 @@ describe("OIDC integration: full flow", () => {
 
     // OidcIdentityProvider no longer auto-adds to workspaces — that is handled
     // by the runtime layer. Verify the user is provisioned and can be manually added.
-    const adapter = new OidcIdentityProvider({ adapter: "oidc", issuer, clientId: CLIENT_ID, allowedDomains: ALLOWED_DOMAINS }, userStore);
+    const adapter = new OidcIdentityProvider({ adapter: "oidc", issuer, clientId: CLIENT_ID, allowedDomains: ALLOWED_DOMAINS }, userStore, new WorkspaceStore(workDir));
     const token = await buildJwt({ email: "carol@acme.com", sub: "carol-sub", name: "Carol" });
     const identity = await adapter.verifyRequest(bearerRequest(token));
     expect(identity).not.toBeNull();
@@ -236,7 +236,7 @@ describe("OIDC integration: full flow", () => {
 describe("OIDC integration: domain rejection", () => {
   test("valid JWT with wrong domain is rejected and no user is created", async () => {
     const userStore = new UserStore(workDir);
-    const adapter = new OidcIdentityProvider({ adapter: "oidc", issuer, clientId: CLIENT_ID, allowedDomains: ALLOWED_DOMAINS }, userStore);
+    const adapter = new OidcIdentityProvider({ adapter: "oidc", issuer, clientId: CLIENT_ID, allowedDomains: ALLOWED_DOMAINS }, userStore, new WorkspaceStore(workDir));
 
     // JWT is cryptographically valid but email domain is not in allowedDomains
     const token = await buildJwt({ email: "eve@evil.com", sub: "evil-sub", name: "Eve" });
@@ -260,7 +260,7 @@ describe("OIDC integration: domain rejection", () => {
 
     const config = await loadInstanceConfig(workDir);
     const userStore = new UserStore(workDir);
-    const adapter = createIdentityProvider(config, userStore);
+    const adapter = createIdentityProvider(config, userStore, new WorkspaceStore(workDir));
     expect(adapter).not.toBeNull();
 
     // acme.com is not in allowedDomains for this config
@@ -289,20 +289,20 @@ describe("OIDC integration: factory wiring", () => {
 
     const config = await loadInstanceConfig(workDir);
     const userStore = new UserStore(workDir);
-    const adapter = createIdentityProvider(config, userStore);
+    const adapter = createIdentityProvider(config, userStore, new WorkspaceStore(workDir));
 
     expect(adapter).toBeInstanceOf(OidcIdentityProvider);
   });
 
   test("null config (dev mode) returns null adapter", () => {
     const userStore = new UserStore(workDir);
-    const adapter = createIdentityProvider(null, userStore);
+    const adapter = createIdentityProvider(null, userStore, new WorkspaceStore(workDir));
     expect(adapter).toBeNull();
   });
 
   test("admin-created user is found by OIDC login without duplication", async () => {
     const userStore = new UserStore(workDir);
-    const adapter = new OidcIdentityProvider({ adapter: "oidc", issuer, clientId: CLIENT_ID, allowedDomains: ALLOWED_DOMAINS }, userStore);
+    const adapter = new OidcIdentityProvider({ adapter: "oidc", issuer, clientId: CLIENT_ID, allowedDomains: ALLOWED_DOMAINS }, userStore, new WorkspaceStore(workDir));
 
     // Admin pre-creates user with admin role
     const adminUser = await userStore.create({

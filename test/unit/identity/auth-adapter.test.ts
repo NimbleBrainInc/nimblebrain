@@ -8,13 +8,16 @@ import { OidcIdentityProvider } from "../../../src/identity/providers/oidc.ts";
 import type { InstanceConfig } from "../../../src/identity/instance.ts";
 import type { User } from "../../../src/identity/user.ts";
 import { UserStore } from "../../../src/identity/user.ts";
+import { WorkspaceStore } from "../../../src/workspace/workspace-store.ts";
 
 let workDir: string;
 let userStore: UserStore;
+let workspaceStore: WorkspaceStore;
 
 beforeEach(async () => {
   workDir = await mkdtemp(join(tmpdir(), "nb-auth-adapter-test-"));
   userStore = new UserStore(workDir);
+  workspaceStore = new WorkspaceStore(workDir);
 });
 
 afterEach(async () => {
@@ -23,13 +26,13 @@ afterEach(async () => {
 
 describe("createIdentityProvider", () => {
   test("returns null when config is null (dev mode)", () => {
-    const result = createIdentityProvider(null, userStore);
+    const result = createIdentityProvider(null, userStore, workspaceStore);
     expect(result).toBeNull();
   });
 
   test("throws descriptive error for unknown adapter type", () => {
     const config = { auth: { adapter: "foobar" } } as unknown as InstanceConfig;
-    expect(() => createIdentityProvider(config, userStore)).toThrow('Unknown identity provider: "foobar"');
+    expect(() => createIdentityProvider(config, userStore, workspaceStore)).toThrow('Unknown identity provider: "foobar"');
   });
 
   test("creates OidcIdentityProvider for oidc config", () => {
@@ -41,7 +44,7 @@ describe("createIdentityProvider", () => {
         allowedDomains: ["example.com"],
       },
     };
-    const adapter = createIdentityProvider(config, userStore);
+    const adapter = createIdentityProvider(config, userStore, workspaceStore);
     expect(adapter).not.toBeNull();
     expect(adapter).toBeInstanceOf(OidcIdentityProvider);
   });
@@ -54,7 +57,7 @@ describe("createIdentityProvider", () => {
         redirectUri: "http://localhost:3000/v1/auth/callback",
       },
     };
-    const provider = createIdentityProvider(config, userStore);
+    const provider = createIdentityProvider(config, userStore, workspaceStore);
     expect(provider).not.toBeNull();
     expect(provider!.capabilities.authCodeFlow).toBe(true);
     expect(provider!.capabilities.managedUsers).toBe(true);
@@ -64,7 +67,7 @@ describe("createIdentityProvider", () => {
     const config = {
       auth: { adapter: "nosuch" },
     } as unknown as InstanceConfig;
-    expect(() => createIdentityProvider(config, userStore)).toThrow('Unknown identity provider: "nosuch"');
+    expect(() => createIdentityProvider(config, userStore, workspaceStore)).toThrow('Unknown identity provider: "nosuch"');
   });
 });
 

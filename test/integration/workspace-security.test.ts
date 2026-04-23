@@ -245,12 +245,14 @@ describe("Workspace security: DevIdentityProvider populates workspace bundles", 
     const originalWarn = console.warn;
     console.warn = () => {};
 
-    // DevIdentityProvider no longer creates workspaces — the runtime does.
-    // Simulate what the runtime does: create the workspace.
-    const adapter = new DevIdentityProvider(workDir, userStore);
+    // DevIdentityProvider now provisions a workspace at first verifyRequest
+    // (Phase 1 of workspace-lifecycle-refactor). The runtime code path is
+    // simulated here — we construct the provider then call verifyRequest.
+    const adapter = new DevIdentityProvider(workDir, userStore, wsStore);
     await adapter.verifyRequest(new Request("http://localhost/v1/chat"));
 
-    // Runtime creates the workspace during startup
+    // Explicitly create the named test workspace (distinct from the auto-
+    // provisioned ws_default that the adapter creates for usr_default).
     const ws = await wsStore.create("Test Workspace", "test");
     await wsStore.addMember(ws.id, "usr_default", "owner");
 

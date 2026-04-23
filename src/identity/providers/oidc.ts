@@ -142,7 +142,7 @@ export class OidcIdentityProvider implements IdentityProvider {
   private allowedDomains: string[];
   private jwksUri: string | undefined;
   private userStore: UserStore;
-  private workspaceStore: WorkspaceStore | null;
+  private workspaceStore: WorkspaceStore;
 
   private jwksCache: CachedJwks | null = null;
   private discoveryCache: OidcDiscovery | null = null;
@@ -153,13 +153,13 @@ export class OidcIdentityProvider implements IdentityProvider {
   /** Overridable clock for testing. */
   now: () => number = () => Date.now();
 
-  constructor(config: OidcAuth, userStore: UserStore, workspaceStore?: WorkspaceStore) {
+  constructor(config: OidcAuth, userStore: UserStore, workspaceStore: WorkspaceStore) {
     this.issuer = config.issuer.replace(/\/+$/, "");
     this.clientId = config.clientId;
     this.allowedDomains = config.allowedDomains.map((d) => d.toLowerCase());
     this.jwksUri = config.jwksUri;
     this.userStore = userStore;
-    this.workspaceStore = workspaceStore ?? null;
+    this.workspaceStore = workspaceStore;
   }
 
   async verifyRequest(req: Request): Promise<UserIdentity | null> {
@@ -203,7 +203,7 @@ export class OidcIdentityProvider implements IdentityProvider {
     // Ensure the user has at least one workspace on first login.
     // Establishes the invariant "authenticated user has ≥1 workspace" at the
     // identity boundary so request resolvers can treat it as a hard requirement.
-    if (firstLogin && this.workspaceStore) {
+    if (firstLogin) {
       await ensureUserWorkspace(this.workspaceStore, {
         id: user.id,
         displayName: user.displayName,

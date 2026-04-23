@@ -450,10 +450,15 @@ describe("OidcIdentityProvider", () => {
       const token1 = await buildJwt({ email: "det1@example.com", sub, name: "Det" });
       const id1 = await adapter.verifyRequest(bearerRequest(token1));
 
-      // Create a fresh adapter + store to prove determinism
+      // Create a fresh adapter + stores to prove determinism
       const workDir2 = await mkdtemp(join(tmpdir(), "nb-oidc-det-"));
       const userStore2 = new UserStore(workDir2);
-      const adapter2 = new OidcIdentityProvider({ adapter: "oidc", issuer, clientId: CLIENT_ID, allowedDomains: ALLOWED_DOMAINS }, userStore2);
+      const workspaceStore2 = new WorkspaceStore(workDir2);
+      const adapter2 = new OidcIdentityProvider(
+        { adapter: "oidc", issuer, clientId: CLIENT_ID, allowedDomains: ALLOWED_DOMAINS },
+        userStore2,
+        workspaceStore2,
+      );
 
       const token2 = await buildJwt({ email: "det2@example.com", sub, name: "Det" });
       const id2 = await adapter2.verifyRequest(bearerRequest(token2));
