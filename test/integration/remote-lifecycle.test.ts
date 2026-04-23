@@ -327,6 +327,50 @@ describe("startBundleSource — remote url entries", () => {
 		expect(registry.hasSource("bad-remote")).toBe(false);
 	}, 20_000);
 
+	it("url bundle without static auth + missing wsId throws (no silent ws_default fallback)", async () => {
+		// Credential-boundary guard: URL bundles that will open an OAuth flow
+		// must be workspace-scoped. A silent `?? "ws_default"` fallback would
+		// pool OAuth tokens across workspaces, so startBundleSource hard-errors
+		// instead. If someone refactors and weakens the check to a default,
+		// this test fails — which is the whole point.
+		const registry = new ToolRegistry();
+		const ref: BundleRef = {
+			url: mockServer.url,
+			serverName: "no-ws",
+			// no transport.auth — triggers OAuth provider path
+		};
+
+		await expect(
+			startBundleSource(ref, registry, new NoopEventSink(), undefined, {
+				allowInsecureRemotes: true,
+				// wsId intentionally omitted
+			}),
+		).rejects.toThrow(/requires opts\.wsId/);
+		expect(registry.hasSource("no-ws")).toBe(false);
+	}, 15_000);
+
+	it("url bundle WITH static auth starts without wsId (no OAuth provider needed)", async () => {
+		// Complement to the above: when static auth is present, no OAuth
+		// provider is constructed, so missing wsId is not a credential-
+		// boundary concern. Confirms the wsId requirement is scoped exactly
+		// to the path that would otherwise leak credentials.
+		const registry = new ToolRegistry();
+		const ref: BundleRef = {
+			url: mockServer.url,
+			serverName: "static-auth",
+			transport: { type: "streamable-http", auth: { type: "bearer", token: "t" } },
+		};
+
+		const meta = await startBundleSource(ref, registry, new NoopEventSink(), undefined, {
+			allowInsecureRemotes: true,
+			// wsId intentionally omitted — allowed here
+		});
+		expect(meta).not.toBeNull();
+		expect(registry.hasSource("static-auth")).toBe(true);
+
+		await registry.removeSource("static-auth");
+	}, 15_000);
+
 	it("handles mix of name, path, and url entries via allSettled", async () => {
 		const registry = new ToolRegistry();
 
