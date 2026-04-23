@@ -107,15 +107,13 @@ export class WorkspaceResolutionError extends Error {
  *
  * Pure selection — does NOT create, default-pick, or auto-provision.
  * Provisioning is an identity-layer concern (see ensureUserWorkspace
- * wired into each provider's first-login hook). Defaulting to "the
- * user's only workspace" was a footgun: a client that "just worked"
- * one day would 400 the next when the user was added to a second
- * workspace. Honest contract: the caller must name the workspace.
- *
- * Resolution order:
- * 1. Explicit `X-Workspace-Id` header
- * 2. Conversation's workspaceId (chat paths — tied to stored state,
- *    unambiguous, set by the client on conversation creation)
+ * wired into each provider's verifyRequest). Defaulting to "the user's
+ * only workspace" was a footgun: a client that "just worked" one day
+ * would 400 the next when the user was added to a second workspace.
+ * Honest contract: the caller names the workspace via X-Workspace-Id
+ * on every data-path request. Bootstrap is the only place the server
+ * is allowed to pick a default, and it does that in its own handler
+ * (not through this resolver).
  *
  * Returns the resolved workspace ID.
  * Throws WorkspaceResolutionError (400 or 403) on failure.
@@ -124,23 +122,9 @@ export async function resolveWorkspace(
   req: Request,
   identity: UserIdentity,
   workspaceStore: WorkspaceStore,
-  conversationWorkspaceId?: string,
 ): Promise<string> {
-  const headerWsId = req.headers.get("x-workspace-id");
-
-  let workspaceId: string | undefined;
-
-  // 1. Explicit header
-  if (headerWsId) {
-    workspaceId = headerWsId;
-  }
-  // 2. Conversation's workspace (chat paths only)
-  else if (conversationWorkspaceId) {
-    workspaceId = conversationWorkspaceId;
-  }
-  // 3. No addressing — reject. Server does not pick defaults on data
-  //    endpoints; that's bootstrap's job.
-  else {
+  const workspaceId = req.headers.get("x-workspace-id");
+  if (!workspaceId) {
     throw new WorkspaceResolutionError(
       "Workspace required. Set the X-Workspace-Id header. " +
         "The workspace ID is available from GET /v1/bootstrap or Settings → Profile → MCP Connection.",

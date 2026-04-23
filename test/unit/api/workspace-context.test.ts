@@ -62,21 +62,6 @@ describe("resolveWorkspace", () => {
     expect(resolved).toBe(ws.id);
   });
 
-  it("resolves from conversation's workspaceId when no header", async () => {
-    const ws = await workspaceStore.create("Conversation WS");
-    const identity = makeIdentity({ id: "usr_convuser" });
-    await workspaceStore.addMember(ws.id, identity.id, "member");
-
-    // Create a second workspace so auto-resolve wouldn't work
-    const ws2 = await workspaceStore.create("Other WS");
-    await workspaceStore.addMember(ws2.id, identity.id, "member");
-
-    const req = makeRequest();
-    const resolved = await resolveWorkspace(req, identity, workspaceStore, ws.id);
-
-    expect(resolved).toBe(ws.id);
-  });
-
   it("rejects single-workspace users without an explicit header (honest contract)", async () => {
     // Silent single-workspace resolution was a footgun: a client that worked
     // with one workspace would break as soon as the user joined a second.
@@ -173,18 +158,6 @@ describe("resolveWorkspace", () => {
     }
   });
 
-  it("header takes precedence over conversation workspaceId", async () => {
-    const identity = makeIdentity({ id: "usr_precedence" });
-    const wsHeader = await workspaceStore.create("Header WS");
-    const wsConv = await workspaceStore.create("Conv WS 2");
-    await workspaceStore.addMember(wsHeader.id, identity.id, "admin");
-    await workspaceStore.addMember(wsConv.id, identity.id, "member");
-
-    const req = makeRequest({ "x-workspace-id": wsHeader.id });
-    const resolved = await resolveWorkspace(req, identity, workspaceStore, wsConv.id);
-
-    expect(resolved).toBe(wsHeader.id);
-  });
 });
 
 describe("ChatRequest/ChatResult workspaceId", () => {
