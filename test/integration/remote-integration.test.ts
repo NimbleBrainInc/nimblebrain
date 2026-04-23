@@ -244,7 +244,7 @@ describe.skip("Remote integration: POST /v1/apps/install with url", () => {
 	it("installs a remote bundle via API and returns correct response", async () => {
 		const res = await fetch(`${baseUrl}/v1/apps/install`, {
 			method: "POST",
-			headers: { "Content-Type": "application/json" },
+			headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
 			body: JSON.stringify({
 				url: mockServer.url,
 				serverName: "api-remote",
@@ -264,7 +264,7 @@ describe.skip("Remote integration: POST /v1/apps/install with url", () => {
 	it("installs a remote bundle with transport config via API", async () => {
 		const res = await fetch(`${baseUrl}/v1/apps/install`, {
 			method: "POST",
-			headers: { "Content-Type": "application/json" },
+			headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
 			body: JSON.stringify({
 				url: mockServer.url,
 				serverName: "api-remote-transport",
@@ -282,7 +282,7 @@ describe.skip("Remote integration: POST /v1/apps/install with url", () => {
 		// Install first
 		const installRes = await fetch(`${baseUrl}/v1/apps/install`, {
 			method: "POST",
-			headers: { "Content-Type": "application/json" },
+			headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
 			body: JSON.stringify({
 				url: mockServer.url,
 				serverName: "api-listed",
@@ -305,7 +305,7 @@ describe.skip("Remote integration: POST /v1/apps/install with url", () => {
 	it("derives serverName from url when not provided", async () => {
 		const res = await fetch(`${baseUrl}/v1/apps/install`, {
 			method: "POST",
-			headers: { "Content-Type": "application/json" },
+			headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
 			body: JSON.stringify({ url: mockServer.url }),
 		});
 
@@ -320,7 +320,7 @@ describe.skip("Remote integration: POST /v1/apps/install with url", () => {
 	it("returns error for unreachable remote URL", async () => {
 		const res = await fetch(`${baseUrl}/v1/apps/install`, {
 			method: "POST",
-			headers: { "Content-Type": "application/json" },
+			headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
 			body: JSON.stringify({
 				url: "http://127.0.0.1:1/mcp",
 				serverName: "unreachable",

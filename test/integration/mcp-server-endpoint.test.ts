@@ -185,6 +185,8 @@ describe("MCP Server Auth", () => {
 			workDir: authTestDir,
 		});
 
+		await provisionTestWorkspace(authRuntime);
+
 		authHandle = startServer({
 			runtime: authRuntime,
 			port: 0,
@@ -222,7 +224,10 @@ describe("MCP Server Auth", () => {
 			new URL(`${authUrl}/mcp`),
 			{
 				requestInit: {
-					headers: { Authorization: `Bearer ${TEST_API_KEY}` },
+					headers: {
+						Authorization: `Bearer ${TEST_API_KEY}`,
+						"x-workspace-id": TEST_WORKSPACE_ID,
+					},
 				},
 			},
 		);

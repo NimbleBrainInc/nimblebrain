@@ -415,7 +415,8 @@ describe("Workspace resolution", () => {
     if (workDir) rmSync(workDir, { recursive: true, force: true });
   });
 
-  test("resolves single workspace automatically", async () => {
+  test("rejects single-workspace user without X-Workspace-Id header", async () => {
+    // Strict resolver: addressing must be explicit on data-path requests.
     workDir = makeTmpDir();
 
     const userStore = new UserStore(workDir);
@@ -428,8 +429,7 @@ describe("Workspace resolution", () => {
     const req = new Request("http://localhost/v1/chat");
     const identity = { id: user.id, email: user.email, displayName: user.displayName, orgRole: user.orgRole };
 
-    const wsId = await resolveWorkspace(req, identity, wsStore);
-    expect(wsId).toBe(ws.id);
+    expect(resolveWorkspace(req, identity, wsStore)).rejects.toThrow(WorkspaceResolutionError);
   });
 
   test("throws when user belongs to multiple workspaces without header", async () => {

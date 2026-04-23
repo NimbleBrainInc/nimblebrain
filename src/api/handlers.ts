@@ -634,25 +634,32 @@ export async function handleBootstrap(
     ws.members.some((m) => m.userId === identity.id),
   );
 
-  // 2. Resolve active workspace
-  const preferred = req.headers.get("X-Preferred-Workspace");
-  let activeWorkspace: string | undefined;
-  if (preferred && userWorkspaces.some((ws) => ws.id === preferred)) {
-    activeWorkspace = preferred;
-  } else if (userWorkspaces.length === 1) {
-    activeWorkspace = userWorkspaces[0]!.id;
-  } else if (userWorkspaces.length > 0) {
-    activeWorkspace = userWorkspaces[0]!.id;
+  // Invariant (Phase 1): authenticated users have at least one workspace.
+  // Provisioning runs at the identity boundary (provider.provisionUser →
+  // ensureUserWorkspace). If we hit zero here, something upstream is broken
+  // and we want to know loudly, not silently leak every workspace's apps.
+  if (userWorkspaces.length === 0) {
+    return apiError(
+      500,
+      "workspace_invariant_violation",
+      "Authenticated user has no workspace. Provisioning should have run at login.",
+    );
   }
 
-  // 3. Shell placements filtered by active workspace
-  let placements = runtime.getPlacementRegistry().all();
-  if (activeWorkspace) {
-    const workspace = allWorkspaces.find((ws) => ws.id === activeWorkspace);
-    if (workspace) {
-      placements = filterPlacementsForWorkspace(placements, workspace);
-    }
-  }
+  // 2. Resolve active workspace — permissive: honor X-Preferred-Workspace
+  // hint when it matches a membership, otherwise pick the first. Bootstrap
+  // is the one place the server defaults, because it's the only place a
+  // client can legitimately not yet know a wsId.
+  const preferred = req.headers.get("X-Preferred-Workspace");
+  const activeWorkspace: string =
+    preferred && userWorkspaces.some((ws) => ws.id === preferred)
+      ? preferred
+      : userWorkspaces[0]!.id;
+
+  // 3. Shell placements filtered by active workspace (unconditional — the
+  // invariant above guarantees we have a workspace).
+  const workspace = allWorkspaces.find((ws) => ws.id === activeWorkspace)!;
+  const placements = filterPlacementsForWorkspace(runtime.getPlacementRegistry().all(), workspace);
 
   // 4. Config
   const models = runtime.getModelSlots();
@@ -676,7 +683,7 @@ export async function handleBootstrap(
       memberCount: ws.members.length,
       bundleCount: ws.bundles.length,
     })),
-    activeWorkspace: activeWorkspace ?? null,
+    activeWorkspace,
     shell: {
       placements,
       chatEndpoint: "/v1/chat/stream",

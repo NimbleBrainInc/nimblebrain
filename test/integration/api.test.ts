@@ -39,7 +39,7 @@ describe("POST /v1/chat", () => {
 	it("returns valid ChatResult", async () => {
 		const res = await fetch(`${baseUrl}/v1/chat`, {
 			method: "POST",
-			headers: { "Content-Type": "application/json" },
+			headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
 			body: JSON.stringify({ message: "Hello there", workspaceId: TEST_WORKSPACE_ID }),
 		});
 
@@ -55,7 +55,7 @@ describe("POST /v1/chat", () => {
 	it("returns 400 for invalid JSON body", async () => {
 		const res = await fetch(`${baseUrl}/v1/chat`, {
 			method: "POST",
-			headers: { "Content-Type": "application/json" },
+			headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
 			body: "not json",
 		});
 
@@ -68,7 +68,7 @@ describe("POST /v1/chat", () => {
 	it("returns 400 when message is missing", async () => {
 		const res = await fetch(`${baseUrl}/v1/chat`, {
 			method: "POST",
-			headers: { "Content-Type": "application/json" },
+			headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
 			body: JSON.stringify({ conversationId: "abc", workspaceId: TEST_WORKSPACE_ID }),
 		});
 
@@ -83,7 +83,7 @@ describe("POST /v1/chat/stream", () => {
 	it("delivers SSE events ending with done", async () => {
 		const res = await fetch(`${baseUrl}/v1/chat/stream`, {
 			method: "POST",
-			headers: { "Content-Type": "application/json" },
+			headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
 			body: JSON.stringify({ message: "Stream me", workspaceId: TEST_WORKSPACE_ID }),
 		});
 
@@ -107,7 +107,7 @@ describe("POST /v1/chat/stream", () => {
 	it("includes text.delta events", async () => {
 		const res = await fetch(`${baseUrl}/v1/chat/stream`, {
 			method: "POST",
-			headers: { "Content-Type": "application/json" },
+			headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
 			body: JSON.stringify({ message: "Delta test", workspaceId: TEST_WORKSPACE_ID }),
 		});
 
@@ -122,7 +122,7 @@ describe("POST /v1/chat/stream", () => {
 	it("done event includes usage object with all TurnUsage fields", async () => {
 		const res = await fetch(`${baseUrl}/v1/chat/stream`, {
 			method: "POST",
-			headers: { "Content-Type": "application/json" },
+			headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
 			body: JSON.stringify({ message: "Usage test", workspaceId: TEST_WORKSPACE_ID }),
 		});
 
@@ -156,7 +156,7 @@ describe("POST /v1/chat/stream", () => {
 	it("done event preserves existing fields alongside usage (backward compat)", async () => {
 		const res = await fetch(`${baseUrl}/v1/chat/stream`, {
 			method: "POST",
-			headers: { "Content-Type": "application/json" },
+			headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
 			body: JSON.stringify({ message: "Compat test", workspaceId: TEST_WORKSPACE_ID }),
 		});
 
@@ -203,7 +203,7 @@ describe("concurrent requests", () => {
 			messages.map((message) =>
 				fetch(`${baseUrl}/v1/chat`, {
 					method: "POST",
-					headers: { "Content-Type": "application/json" },
+					headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
 					body: JSON.stringify({ message, workspaceId: TEST_WORKSPACE_ID }),
 				}).then((res) => res.json()),
 			),
@@ -223,7 +223,12 @@ describe("concurrent requests", () => {
 
 describe("unknown routes", () => {
 	it("returns 404 for unknown route", async () => {
-		const res = await fetch(`${baseUrl}/v1/nonexistent`);
+		// Supply a valid workspace header so requireWorkspace middleware doesn't
+		// short-circuit with 400 on sub-Honos using "*" — we're testing the
+		// 404 handler, not workspace resolution.
+		const res = await fetch(`${baseUrl}/v1/nonexistent`, {
+			headers: { "X-Workspace-Id": TEST_WORKSPACE_ID },
+		});
 
 		expect(res.status).toBe(404);
 		const body = await res.json();
@@ -268,7 +273,7 @@ describe("Bearer token authentication", () => {
 		// The main server (dev mode) should accept all requests
 		const res = await fetch(`${baseUrl}/v1/chat`, {
 			method: "POST",
-			headers: { "Content-Type": "application/json" },
+			headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
 			body: JSON.stringify({ message: "no auth needed", workspaceId: TEST_WORKSPACE_ID }),
 		});
 		expect(res.status).toBe(200);
@@ -280,6 +285,7 @@ describe("Bearer token authentication", () => {
 			headers: {
 				"Content-Type": "application/json",
 				Authorization: `Bearer ${TEST_API_KEY}`,
+				"X-Workspace-Id": TEST_WORKSPACE_ID,
 			},
 			body: JSON.stringify({ message: "authed", workspaceId: TEST_WORKSPACE_ID }),
 		});
@@ -289,7 +295,7 @@ describe("Bearer token authentication", () => {
 	it("returns 401 when Authorization header is missing", async () => {
 		const res = await fetch(`${authUrl}/v1/chat`, {
 			method: "POST",
-			headers: { "Content-Type": "application/json" },
+			headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
 			body: JSON.stringify({ message: "no header", workspaceId: TEST_WORKSPACE_ID }),
 		});
 		expect(res.status).toBe(401);
@@ -338,7 +344,7 @@ describe("POST /v1/tools/call", () => {
 	it("returns 400 when server or tool missing", async () => {
 		const res = await fetch(`${baseUrl}/v1/tools/call`, {
 			method: "POST",
-			headers: { "Content-Type": "application/json" },
+			headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
 			body: JSON.stringify({}),
 		});
 
@@ -350,7 +356,7 @@ describe("POST /v1/tools/call", () => {
 	it("returns 404 for unknown server", async () => {
 		const res = await fetch(`${baseUrl}/v1/tools/call`, {
 			method: "POST",
-			headers: { "Content-Type": "application/json" },
+			headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
 			body: JSON.stringify({
 				server: "nonexistent",
 				tool: "some_tool",
@@ -383,6 +389,7 @@ describe("GET /v1/events", () => {
 
 		const res = await fetch(`${baseUrl}/v1/events`, {
 			signal: controller.signal,
+			headers: { "X-Workspace-Id": TEST_WORKSPACE_ID },
 		});
 
 		expect(res.status).toBe(200);
@@ -550,7 +557,7 @@ describe("auth enforcement on new endpoints", () => {
 	it("POST /v1/tools/call returns 401 without Bearer token", async () => {
 		const res = await fetch(`${authUrl2}/v1/tools/call`, {
 			method: "POST",
-			headers: { "Content-Type": "application/json" },
+			headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
 			body: JSON.stringify({ server: "test", tool: "tool", arguments: {} }),
 		});
 		expect(res.status).toBe(401);

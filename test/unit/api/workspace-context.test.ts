@@ -77,18 +77,28 @@ describe("resolveWorkspace", () => {
     expect(resolved).toBe(ws.id);
   });
 
-  it("auto-resolves when user has exactly one workspace", async () => {
+  it("rejects single-workspace users without an explicit header (honest contract)", async () => {
+    // Silent single-workspace resolution was a footgun: a client that worked
+    // with one workspace would break as soon as the user joined a second.
+    // The resolver now requires explicit addressing on every data-path request.
     const identity = makeIdentity({ id: "usr_singlews" });
     const ws = await workspaceStore.create("Single WS");
     await workspaceStore.addMember(ws.id, identity.id, "member");
 
     const req = makeRequest();
-    const resolved = await resolveWorkspace(req, identity, workspaceStore);
 
-    expect(resolved).toBe(ws.id);
+    try {
+      await resolveWorkspace(req, identity, workspaceStore);
+      expect.unreachable("should have thrown");
+    } catch (err) {
+      expect(err).toBeInstanceOf(WorkspaceResolutionError);
+      const wsErr = err as WorkspaceResolutionError;
+      expect(wsErr.statusCode).toBe(400);
+      expect(wsErr.message).toContain("X-Workspace-Id");
+    }
   });
 
-  it("returns 400 when user has multiple workspaces and no header", async () => {
+  it("rejects multi-workspace users without an explicit header", async () => {
     const identity = makeIdentity({ id: "usr_multiws" });
     const ws1 = await workspaceStore.create("Multi WS 1");
     const ws2 = await workspaceStore.create("Multi WS 2");
@@ -104,21 +114,30 @@ describe("resolveWorkspace", () => {
       expect(err).toBeInstanceOf(WorkspaceResolutionError);
       const wsErr = err as WorkspaceResolutionError;
       expect(wsErr.statusCode).toBe(400);
-      expect(wsErr.message).toContain("Multiple workspaces");
+      expect(wsErr.message).toContain("X-Workspace-Id");
     }
   });
 
-  it("auto-provisions workspace when user has none", async () => {
+  it("does not auto-provision — rejects users with no workspace", async () => {
+    // Provisioning happens at the identity boundary (provider.provisionUser),
+    // not here. If a request arrives with an authenticated user but no
+    // workspace, that's an upstream invariant violation, not something the
+    // resolver should paper over by creating state on the data path.
     const identity = makeIdentity({ id: "usr_nows", displayName: "Test User" });
     const req = makeRequest();
 
-    const wsId = await resolveWorkspace(req, identity, workspaceStore);
+    try {
+      await resolveWorkspace(req, identity, workspaceStore);
+      expect.unreachable("should have thrown");
+    } catch (err) {
+      expect(err).toBeInstanceOf(WorkspaceResolutionError);
+      const wsErr = err as WorkspaceResolutionError;
+      expect(wsErr.statusCode).toBe(400);
+    }
 
-    // Should have auto-created a workspace and returned its ID
-    expect(wsId).toMatch(/^ws_/);
-    const ws = await workspaceStore.get(wsId);
-    expect(ws).toBeTruthy();
-    expect(ws!.members.some((m) => m.userId === "usr_nows")).toBe(true);
+    // No workspace was silently created for this user.
+    const createdFor = await workspaceStore.getWorkspacesForUser("usr_nows");
+    expect(createdFor).toHaveLength(0);
   });
 
   it("returns 403 when user is not a member of the specified workspace", async () => {

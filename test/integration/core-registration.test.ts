@@ -79,6 +79,7 @@ describe("GET /v1/apps/nb/resources/:path", () => {
 	it("returns HTML for conversations", async () => {
 		const res = await fetch(
 			`${baseUrl}/v1/apps/nb/resources/conversations`,
+			{ headers: { "X-Workspace-Id": TEST_WORKSPACE_ID } },
 		);
 		expect(res.status).toBe(200);
 		expect(res.headers.get("Content-Type")).toBe("text/html");
@@ -90,6 +91,7 @@ describe("GET /v1/apps/nb/resources/:path", () => {
 	it("returns HTML for usage-dashboard", async () => {
 		const res = await fetch(
 			`${baseUrl}/v1/apps/nb/resources/usage-dashboard`,
+			{ headers: { "X-Workspace-Id": TEST_WORKSPACE_ID } },
 		);
 		expect(res.status).toBe(200);
 		expect(res.headers.get("Content-Type")).toBe("text/html");
@@ -111,6 +113,7 @@ describe("GET /v1/apps/nb/resources/:path", () => {
 		for (const name of resources) {
 			const res = await fetch(
 				`${baseUrl}/v1/apps/nb/resources/${name}`,
+				{ headers: { "X-Workspace-Id": TEST_WORKSPACE_ID } },
 			);
 			expect(res.status).toBe(200);
 			expect(res.headers.get("Content-Type")).toBe("text/html");
@@ -122,6 +125,7 @@ describe("GET /v1/apps/nb/resources/:path", () => {
 	it("returns 404 for unknown core resource", async () => {
 		const res = await fetch(
 			`${baseUrl}/v1/apps/nb/resources/unknown`,
+			{ headers: { "X-Workspace-Id": TEST_WORKSPACE_ID } },
 		);
 		expect(res.status).toBe(404);
 		const body = await res.json();
@@ -137,7 +141,7 @@ describe("POST /v1/tools/call with server=nb", () => {
 	it("calls nb__list_apps and returns data", async () => {
 		const res = await fetch(`${baseUrl}/v1/tools/call`, {
 			method: "POST",
-			headers: { "Content-Type": "application/json" },
+			headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
 			body: JSON.stringify({
 				server: "nb",
 				tool: "list_apps",
@@ -153,7 +157,7 @@ describe("POST /v1/tools/call with server=nb", () => {
 	it("returns 404 for unknown tool on nb server", async () => {
 		const res = await fetch(`${baseUrl}/v1/tools/call`, {
 			method: "POST",
-			headers: { "Content-Type": "application/json" },
+			headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
 			body: JSON.stringify({
 				server: "nb",
 				tool: "nonexistent_tool",

@@ -61,7 +61,7 @@ describe("chat rate limiting", () => {
 		for (let i = 0; i < 3; i++) {
 			const res = await fetch(`${baseUrl}/v1/chat`, {
 				method: "POST",
-				headers: { "Content-Type": "application/json" },
+				headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
 				body: JSON.stringify({ message: `msg ${i}`, workspaceId: TEST_WORKSPACE_ID }),
 			});
 			expect(res.status).toBe(200);
@@ -70,7 +70,7 @@ describe("chat rate limiting", () => {
 		// Next request should be rate-limited
 		const res = await fetch(`${baseUrl}/v1/chat`, {
 			method: "POST",
-			headers: { "Content-Type": "application/json" },
+			headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
 			body: JSON.stringify({ message: "over limit", workspaceId: TEST_WORKSPACE_ID }),
 		});
 
@@ -95,14 +95,14 @@ describe("tool-call rate limiting", () => {
 		for (let i = 0; i < 3; i++) {
 			await fetch(`${baseUrl}/v1/tools/call`, {
 				method: "POST",
-				headers: { "Content-Type": "application/json" },
+				headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
 				body: JSON.stringify({ server: "x", tool: "y", arguments: {} }),
 			});
 		}
 
 		const res = await fetch(`${baseUrl}/v1/tools/call`, {
 			method: "POST",
-			headers: { "Content-Type": "application/json" },
+			headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
 			body: JSON.stringify({ server: "x", tool: "y", arguments: {} }),
 		});
 
@@ -113,7 +113,9 @@ describe("tool-call rate limiting", () => {
 
 	it("does not rate-limit shell or file endpoints when tools/call is exhausted", async () => {
 		// tools/call is exhausted, but /v1/shell should still work
-		const shellRes = await fetch(`${baseUrl}/v1/shell`);
+		const shellRes = await fetch(`${baseUrl}/v1/shell`, {
+			headers: { "X-Workspace-Id": TEST_WORKSPACE_ID },
+		});
 		expect(shellRes.status).toBe(200);
 	});
 });

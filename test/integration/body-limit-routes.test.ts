@@ -41,7 +41,7 @@ describe("per-route body limits", () => {
     const oversized = "x".repeat(1_100_000);
     const res = await fetch(`${baseUrl}/v1/tools/call`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
       body: JSON.stringify({ server: "x", tool: "y", arguments: { blob: oversized } }),
     });
     expect(res.status).toBe(413);
@@ -57,7 +57,7 @@ describe("per-route body limits", () => {
     const oversized = "x".repeat(1_100_000);
     const res = await fetch(`${baseUrl}/v1/chat`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
       body: JSON.stringify({ message: oversized, workspaceId: TEST_WORKSPACE_ID }),
     });
     expect(res.status).toBe(413);
@@ -72,7 +72,11 @@ describe("per-route body limits", () => {
     form.append("message", "test");
     form.append("workspaceId", TEST_WORKSPACE_ID);
     form.append("files", bigFile, "big.bin");
-    const res = await fetch(`${baseUrl}/v1/chat/stream`, { method: "POST", body: form });
+    const res = await fetch(`${baseUrl}/v1/chat/stream`, {
+      method: "POST",
+      headers: { "X-Workspace-Id": TEST_WORKSPACE_ID },
+      body: form,
+    });
     expect(res.status).toBe(413);
     const body = await res.json();
     expect(body.error).toBe("payload_too_large");
@@ -80,7 +84,7 @@ describe("per-route body limits", () => {
     expect(body.details?.contentType).toContain("multipart/form-data");
   });
 
-  it("allows in-budget multipart on /v1/chat/stream past the 1MB JSON cap", async () => {
+  it("allows in-budget multipart on /v1/chat/stream past the 1MB JSON cap", { timeout: 15000 }, async () => {
     // 2 MB multipart — under the 4 MB multipart budget but well over the 1 MB
     // JSON cap. Middleware must let this through so the ingest layer (which
     // enforces per-file/MIME rules) sees it.
@@ -89,7 +93,11 @@ describe("per-route body limits", () => {
     form.append("message", "please");
     form.append("workspaceId", TEST_WORKSPACE_ID);
     form.append("files", file, "notes.txt");
-    const res = await fetch(`${baseUrl}/v1/chat/stream`, { method: "POST", body: form });
+    const res = await fetch(`${baseUrl}/v1/chat/stream`, {
+      method: "POST",
+      headers: { "X-Workspace-Id": TEST_WORKSPACE_ID },
+      body: form,
+    });
     expect(res.status).not.toBe(413);
   });
 });

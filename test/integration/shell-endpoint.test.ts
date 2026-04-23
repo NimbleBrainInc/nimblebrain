@@ -38,8 +38,10 @@ afterAll(async () => {
 });
 
 describe("GET /v1/shell", () => {
+	const wsHeaders = { "X-Workspace-Id": TEST_WORKSPACE_ID };
+
 	it("returns 200 with placements array", async () => {
-		const res = await fetch(`${baseUrl}/v1/shell`);
+		const res = await fetch(`${baseUrl}/v1/shell`, { headers: wsHeaders });
 
 		expect(res.status).toBe(200);
 		expect(res.headers.get("Content-Type")).toContain("application/json");
@@ -49,7 +51,7 @@ describe("GET /v1/shell", () => {
 	});
 
 	it("placements include core entries", async () => {
-		const res = await fetch(`${baseUrl}/v1/shell`);
+		const res = await fetch(`${baseUrl}/v1/shell`, { headers: wsHeaders });
 		const body = await res.json();
 
 		// With noDefaultBundles and no installed bundles, the placement registry
@@ -59,7 +61,7 @@ describe("GET /v1/shell", () => {
 	});
 
 	it("response includes chatEndpoint and eventsEndpoint", async () => {
-		const res = await fetch(`${baseUrl}/v1/shell`);
+		const res = await fetch(`${baseUrl}/v1/shell`, { headers: wsHeaders });
 		const body = await res.json();
 
 		expect(body.chatEndpoint).toBe("/v1/chat/stream");
@@ -106,7 +108,10 @@ describe("GET /v1/shell auth", () => {
 
 	it("returns 200 with valid Bearer token", async () => {
 		const res = await fetch(`${authUrl}/v1/shell`, {
-			headers: { Authorization: `Bearer ${TEST_API_KEY}` },
+			headers: {
+				Authorization: `Bearer ${TEST_API_KEY}`,
+				"X-Workspace-Id": TEST_WORKSPACE_ID,
+			},
 		});
 		expect(res.status).toBe(200);
 		const body = await res.json();
