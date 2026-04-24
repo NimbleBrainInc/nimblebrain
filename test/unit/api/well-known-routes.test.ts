@@ -68,6 +68,19 @@ describe("GET /.well-known/oauth-protected-resource", () => {
     const body = await res.json();
     expect(body.error).toBe("MCP OAuth not configured");
   });
+
+  it("honors X-Forwarded-Proto when behind a TLS-terminating proxy", async () => {
+    const app = createApp("myapp");
+    // Simulates ALB → pod: pod sees HTTP, but ALB sets X-Forwarded-Proto: https.
+    const res = await app.request(
+      "http://hq.example.com/.well-known/oauth-protected-resource",
+      { headers: { "X-Forwarded-Proto": "https" } },
+    );
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.resource).toBe("https://hq.example.com");
+  });
 });
 
 // ── Authorization Server Metadata proxy ──────────────────────────

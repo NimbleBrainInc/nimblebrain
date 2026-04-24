@@ -21,7 +21,12 @@ import { type AppContext, type AuthEnv, apiError } from "../types.ts";
  */
 function mcpWwwAuthenticate(req: Request): string {
   const url = new URL(req.url);
-  const origin = `${url.protocol}//${url.host}`;
+  // Honor X-Forwarded-Proto from the ALB (which rewrites it based on the
+  // actual client→ALB connection). Host comes from the Host header via
+  // url.host; we deliberately do NOT honor X-Forwarded-Host.
+  const proto =
+    req.headers.get("x-forwarded-proto")?.split(",")[0]?.trim() ?? url.protocol.replace(/:$/, "");
+  const origin = `${proto}://${url.host}`;
   return [
     'Bearer error="unauthorized"',
     'error_description="Authorization required"',
