@@ -1,16 +1,26 @@
+{
+	# Trust X-Forwarded-* headers from the ALB / private-VPC upstream.
+	# Without this, Caddy overwrites X-Forwarded-Proto with its own
+	# listener scheme (http on :8080), hiding the real https from the
+	# upstream agent and breaking MCP OAuth resource-URL validation.
+	servers {
+		trusted_proxies static private_ranges
+	}
+}
+
 :8080 {
-    handle /v1/* {
-        reverse_proxy {$PLATFORM_URL}
-    }
-    handle /mcp* {
-        reverse_proxy {$PLATFORM_URL}
-    }
-    handle /.well-known/* {
-        reverse_proxy {$PLATFORM_URL}
-    }
-    handle {
-        root * /srv
-        try_files {path} /index.html
-        file_server
-    }
+	handle /v1/* {
+		reverse_proxy {$PLATFORM_URL}
+	}
+	handle /mcp* {
+		reverse_proxy {$PLATFORM_URL}
+	}
+	handle /.well-known/* {
+		reverse_proxy {$PLATFORM_URL}
+	}
+	handle {
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
 }
