@@ -14,6 +14,8 @@ const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as {
   version: string;
   dependencies: Record<string, string>;
 };
+// Prefer the build-time-injected git tag; fall back to package.json for local dev.
+const VERSION = process.env.NB_VERSION || pkg.version;
 
 import { ActivityCollector } from "../services/activity-collector.ts";
 import { BriefingCache } from "../services/briefing-cache.ts";
@@ -114,10 +116,10 @@ export function createCoreToolDefs(runtime: Runtime): InlineToolDef[] {
       },
       handler: async (): Promise<ToolResult> => {
         return {
-          content: textContent(`${pkg.name} v${pkg.version}`),
+          content: textContent(`${pkg.name} v${VERSION}`),
           structuredContent: {
             name: pkg.name,
-            version: pkg.version,
+            version: VERSION,
             dependencies: pkg.dependencies,
           },
           isError: false,
@@ -481,10 +483,10 @@ export function createCoreToolDefs(runtime: Runtime): InlineToolDef[] {
         const tm = runtime.getTelemetryManager();
         return {
           content: textContent(
-            `Workspace v${pkg.version}, telemetry ${tm.isEnabled() ? "enabled" : "disabled"}.`,
+            `Workspace v${VERSION}, telemetry ${tm.isEnabled() ? "enabled" : "disabled"}.`,
           ),
           structuredContent: {
-            version: pkg.version,
+            version: VERSION,
             telemetryEnabled: tm.isEnabled(),
             installId: tm.getAnonymousId(),
           },

@@ -59,8 +59,12 @@ jobs:
         run: |
           VERSION=${GITHUB_REF_NAME}
           SHA=$(git rev-parse --short HEAD)
+          # Strip the leading `v` for injection into the running binary
+          # (package.json-style versions have no `v` prefix).
+          PKG_VERSION=${VERSION#v}
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "pkg_version=$PKG_VERSION" >> "$GITHUB_OUTPUT"
 
       # ECR tags deliberately exclude `:latest` — repositories have immutable
       # tags enabled, so `latest` can't be reused across releases. Deploys pin
@@ -70,6 +74,7 @@ jobs:
         run: |
           docker build --platform linux/amd64 \
             --build-arg BUILD_SHA=${{ steps.tags.outputs.sha }} \
+            --build-arg VERSION=${{ steps.tags.outputs.pkg_version }} \
             -t ${{ steps.ecr.outputs.registry }}/nimblebrain/agent-platform:${{ steps.tags.outputs.version }} \
             -t ${{ steps.ecr.outputs.registry }}/nimblebrain/agent-platform:${{ steps.tags.outputs.sha }} \
             -t ghcr.io/nimblebraininc/nimblebrain:${{ steps.tags.outputs.version }} \

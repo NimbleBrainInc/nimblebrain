@@ -23,6 +23,8 @@ const mcpPkgPath = resolve(import.meta.dirname ?? __dirname, "../../package.json
 const mcpPkg = JSON.parse(readFileSync(mcpPkgPath, "utf-8")) as {
   version: string;
 };
+// Prefer the build-time-injected git tag; fall back to package.json for local dev.
+const MCP_SERVER_VERSION = process.env.NB_VERSION || mcpPkg.version;
 
 /* ── Session limits (configurable via env) ── */
 const MAX_MCP_SESSIONS = parseInt(process.env.MCP_MAX_SESSIONS ?? "100", 10);
@@ -93,7 +95,7 @@ function createServer(
   const activeRegistry = workspaceCtx?.registry ?? registry; // registry is always workspace-scoped now
 
   const server = new Server(
-    { name: "nimblebrain", version: mcpPkg.version },
+    { name: "nimblebrain", version: MCP_SERVER_VERSION },
     { capabilities: { tools: {} } },
   );
 
