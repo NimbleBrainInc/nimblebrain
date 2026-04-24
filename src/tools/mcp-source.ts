@@ -427,6 +427,11 @@ export class McpSource implements ToolSource {
   /**
    * Read a resource from the MCP server (e.g. ui:// resources).
    * Returns structured resource data, or null if not found.
+   *
+   * Preserves `_meta` from both the per-content entry and the result-level
+   * metadata. Per-content takes precedence on key overlap — the ext-apps
+   * spec attaches ui metadata at the content level, so that's the load-bearing
+   * source for iframe CSP / permissions / layout hints.
    */
   async readResource(uri: string): Promise<ResourceData | null> {
     if (!this.client) return null;
@@ -434,16 +439,20 @@ export class McpSource implements ToolSource {
       const result = await this.client.readResource({ uri });
       if (!result.contents || result.contents.length === 0) return null;
       const first = result.contents[0]!;
+      const meta = mergeResourceMeta(
+        (result as { _meta?: Record<string, unknown> })._meta,
+        (first as { _meta?: Record<string, unknown> })._meta,
+      );
       if ("text" in first && typeof first.text === "string") {
-        return { text: first.text, mimeType: first.mimeType };
+        return { text: first.text, mimeType: first.mimeType, meta };
       }
       if ("blob" in first && typeof first.blob === "string") {
         const raw = atob(first.blob);
         const bytes = new Uint8Array(raw.length);
         for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
-        return { blob: bytes, mimeType: first.mimeType };
+        return { blob: bytes, mimeType: first.mimeType, meta };
       }
-      return { text: JSON.stringify(first) };
+      return { text: JSON.stringify(first), meta };
     } catch {
       // Resource not found is expected (e.g., skill:// on servers that don't have one)
       return null;
@@ -607,4 +616,28 @@ function isExecutionMeta(
   if (value === null || typeof value !== "object") return false;
   const ts = (value as { taskSupport?: unknown }).taskSupport;
   return ts === undefined || ts === "optional" || ts === "required" || ts === "forbidden";
+}
+
+/**
+ * Merge result-level and content-level `_meta` from an MCP `ReadResourceResult`.
+ *
+ * Shallow top-level spread: any top-level key present on `contentMeta`
+ * **replaces** the same key from `resultMeta` wholesale (no per-field deep
+ * merge). Example: given `resultMeta = { ui: { a: 1 } }` and
+ * `contentMeta = { ui: { b: 2 } }`, the result is `{ ui: { b: 2 } }`, not
+ * `{ ui: { a: 1, b: 2 } }`.
+ *
+ * The ext-apps spec attaches ui metadata at the content level, so
+ * content-wins is the right precedence when both sides declare `ui` — a
+ * resource's view of its own capabilities should replace any container-level
+ * hint, not mix with it. Keys that exist on one side only pass through
+ * unchanged. Returns undefined when both sides are empty so consumers can
+ * skip metadata handling cleanly.
+ */
+function mergeResourceMeta(
+  resultMeta: Record<string, unknown> | undefined,
+  contentMeta: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  if (!resultMeta && !contentMeta) return undefined;
+  return { ...(resultMeta ?? {}), ...(contentMeta ?? {}) };
 }

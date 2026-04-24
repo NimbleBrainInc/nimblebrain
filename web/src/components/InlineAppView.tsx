@@ -1,6 +1,6 @@
 import { Loader2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { getResources } from "../api/client";
+import { getResources, uiPathFromUri } from "../api/client";
 import type { BridgeHandle } from "../bridge/bridge";
 import { createBridge } from "../bridge/bridge";
 import { createAppIframe } from "../bridge/iframe";
@@ -45,8 +45,8 @@ export function InlineAppView({ appName, resourceUri, toolResult }: InlineAppVie
       setError(null);
 
       try {
-        const path = resourceUri.replace(/^ui:\/\//, "");
-        const html = await getResources(appName, path);
+        const path = uiPathFromUri(resourceUri);
+        const { html, metaUi } = await getResources(appName, path);
 
         if (cancelled || !container) return;
 
@@ -57,7 +57,14 @@ export function InlineAppView({ appName, resourceUri, toolResult }: InlineAppVie
           ? html.replace(headPattern, (m) => `${m}\n${INLINE_SIZING_CSS}`)
           : `${INLINE_SIZING_CSS}\n${html}`;
 
-        const iframe = createAppIframe(sizedHtml, appName);
+        const iframe = createAppIframe(sizedHtml, appName, {
+          connectDomains: metaUi?.csp?.connectDomains,
+          resourceDomains: metaUi?.csp?.resourceDomains,
+          frameDomains: metaUi?.csp?.frameDomains,
+          baseUriDomains: metaUi?.csp?.baseUriDomains,
+          permissions: metaUi?.permissions,
+          prefersBorder: metaUi?.prefersBorder,
+        });
         iframe.style.width = "100%";
         iframe.style.height = `${DEFAULT_HEIGHT}px`;
         iframe.style.display = "block";

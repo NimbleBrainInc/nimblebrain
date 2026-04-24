@@ -72,7 +72,7 @@ describe("injectThemeStyles + injectCSP don't clobber each other", () => {
   });
 
   test("CSP first, then theme — both present", () => {
-    const csp = buildCSP(["https://example.com"]);
+    const csp = buildCSP({ connectDomains: ["https://example.com"] });
     const withCsp = injectCSP(FULL_HTML, csp);
     const result = injectThemeStyles(withCsp, "light");
 

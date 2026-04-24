@@ -351,13 +351,18 @@ export function MessageList({
                                 }
                               />
                               {blockWidgets.map((tc) => {
-                                const match = tc.resourceUri!.match(/^ui:\/\/[^/]+\/(.+)$/);
-                                const resourcePath = match ? match[1] : "primary";
+                                // Pass the full ui:// URI through — InlineAppView strips the
+                                // scheme and forwards everything after as the resource path.
+                                // The legacy regex `/^ui:\/\/[^/]+\/(.+)$/` dropped the first
+                                // segment on the assumption it was a namespace prefix, which
+                                // breaks two-segment URIs like `ui://<state>/<method>` where
+                                // the first segment is load-bearing (Reboot's convention for
+                                // state-scoped UI methods).
                                 return (
                                   <InlineAppView
                                     key={tc.id}
                                     appName={tc.appName!}
-                                    resourceUri={resourcePath}
+                                    resourceUri={tc.resourceUri!}
                                     toolResult={{ tool: tc.name, result: tc.result }}
                                   />
                                 );

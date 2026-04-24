@@ -13,6 +13,7 @@ import type { Runtime } from "../runtime/runtime.ts";
 import type { ChatRequest } from "../runtime/types.ts";
 import type { HealthMonitor } from "../tools/health-monitor.ts";
 import { InlineSource } from "../tools/inline-source.ts";
+import type { ResourceData } from "../tools/types.ts";
 import { validateToolInput } from "../tools/validate-input.ts";
 import type { ConversationEventManager } from "./conversation-events.ts";
 import type { SseEventManager } from "./events.ts";
@@ -322,8 +323,16 @@ export async function handleResourceProxy(
     }
 
     const html = source.readResource(resolvedPath);
-    if (html) {
-      return new Response(html, { headers: { "Content-Type": "text/html" } });
+    if (html !== null) {
+      return json({
+        contents: [
+          {
+            uri: `ui://${resolvedPath}`,
+            mimeType: "text/html",
+            text: html,
+          },
+        ],
+      });
     }
     return apiError(404, "resource_not_found", `Resource "ui://${resourcePath}" not found`, {
       resource: `ui://${resourcePath}`,
@@ -349,20 +358,40 @@ export async function handleResourceProxy(
     });
   }
 
-  // Binary resource (PDF, image, etc.)
-  if (resource.blob) {
-    return new Response(resource.blob.buffer as ArrayBuffer, {
-      headers: {
-        "Content-Type": resource.mimeType || "application/octet-stream",
-        "Content-Disposition": "inline",
-      },
-    });
-  }
+  // Emit a JSON envelope mirroring the MCP `ReadResourceResult` shape so
+  // clients see the protocol directly and can consume `_meta` (e.g. ext-apps
+  // `_meta.ui.csp`) without a translation layer. Same shape as
+  // `handleReadResource` (POST /v1/resources/read).
+  return json({ contents: [buildResourceEnvelopeEntry(`ui://${resolvedPath}`, resource)] });
+}
 
-  // Text resource (HTML, JSON, etc.)
-  return new Response(resource.text ?? "", {
-    headers: { "Content-Type": resource.mimeType || "text/html" },
-  });
+/**
+ * Build a single `contents[]` entry in the MCP `ReadResourceResult`
+ * envelope shape. Shared between `handleResourceProxy` (GET /v1/apps/:name/
+ * resources/:path) and `handleReadResource` (POST /v1/resources/read) so
+ * both emit a byte-identical envelope — this is the exact drift that adding
+ * `_meta` without a shared helper would create.
+ *
+ * Exactly one of `text` or `blob` is populated (blob wins when the resource
+ * is binary); `blob` values are base64-encoded per spec. `_meta` is included
+ * only when the source declared one.
+ *
+ * Exported for direct unit-test coverage — see
+ * `test/unit/resource-envelope.test.ts`.
+ */
+export function buildResourceEnvelopeEntry(
+  uri: string,
+  resource: ResourceData,
+): Record<string, unknown> {
+  const entry: Record<string, unknown> = { uri };
+  if (resource.mimeType) entry.mimeType = resource.mimeType;
+  if (resource.blob) {
+    entry.blob = bytesToBase64(resource.blob);
+  } else {
+    entry.text = resource.text ?? "";
+  }
+  if (resource.meta) entry._meta = resource.meta;
+  return entry;
 }
 
 /**
@@ -412,15 +441,7 @@ export async function handleReadResource(
     });
   }
 
-  const entry: Record<string, unknown> = { uri };
-  if (resource.mimeType) entry.mimeType = resource.mimeType;
-  if (resource.blob) {
-    entry.blob = bytesToBase64(resource.blob);
-  } else {
-    entry.text = resource.text ?? "";
-  }
-
-  return json({ contents: [entry] });
+  return json({ contents: [buildResourceEnvelopeEntry(uri, resource)] });
 }
 
 /**

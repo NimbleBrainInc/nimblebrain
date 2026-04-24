@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { getResources } from "../api/client";
+import { getResources, uiPathFromUri } from "../api/client";
 import type { BridgeHandle } from "../bridge/bridge";
 import { createBridge } from "../bridge/bridge";
 import { createAppIframe } from "../bridge/iframe";
@@ -62,12 +62,18 @@ export function SlotRenderer({
         if (cancelled) break;
         try {
           // Pass the full path after ui:// (e.g., "ui://crm/main" -> "crm/main")
-          const resourcePath = entry.resourceUri.replace(/^ui:\/\//, "");
-          const html = await getResources(entry.serverName, resourcePath);
+          const resourcePath = uiPathFromUri(entry.resourceUri);
+          const { html, metaUi } = await getResources(entry.serverName, resourcePath);
           if (cancelled) break;
 
           const iframe = createAppIframe(html, entry.serverName, {
             themeMode: modeRef.current,
+            connectDomains: metaUi?.csp?.connectDomains,
+            resourceDomains: metaUi?.csp?.resourceDomains,
+            frameDomains: metaUi?.csp?.frameDomains,
+            baseUriDomains: metaUi?.csp?.baseUriDomains,
+            permissions: metaUi?.permissions,
+            prefersBorder: metaUi?.prefersBorder,
           });
           iframe.style.width = "100%";
           iframe.style.height = "100%";

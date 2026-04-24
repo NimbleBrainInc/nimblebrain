@@ -75,15 +75,26 @@ describe("nb-core registration in Runtime", () => {
 // 2. Resource serving via GET /v1/apps/nb/resources/:path
 // =============================================================================
 
+// The endpoint returns an MCP `ReadResourceResult`-shaped envelope so the
+// per-content `_meta` (including ext-apps `_meta.ui.*`) reaches the client
+// unchanged. Previously it returned raw HTML with `Content-Type: text/html`;
+// that contract was widened when `_meta.ui` plumbing shipped.
 describe("GET /v1/apps/nb/resources/:path", () => {
+	function extractHtml(envelope: unknown): string {
+		const contents = (envelope as { contents?: Array<{ text?: string }> })
+			.contents;
+		return contents?.[0]?.text ?? "";
+	}
+
 	it("returns HTML for conversations", async () => {
 		const res = await fetch(
 			`${baseUrl}/v1/apps/nb/resources/conversations`,
 			{ headers: { "X-Workspace-Id": TEST_WORKSPACE_ID } },
 		);
 		expect(res.status).toBe(200);
-		expect(res.headers.get("Content-Type")).toBe("text/html");
-		const html = await res.text();
+		expect(res.headers.get("Content-Type")).toMatch(/application\/json/);
+		const envelope = await res.json();
+		const html = extractHtml(envelope);
 		expect(html).toContain("<!DOCTYPE html>");
 		expect(html).toContain("postMessage");
 	});
@@ -94,8 +105,9 @@ describe("GET /v1/apps/nb/resources/:path", () => {
 			{ headers: { "X-Workspace-Id": TEST_WORKSPACE_ID } },
 		);
 		expect(res.status).toBe(200);
-		expect(res.headers.get("Content-Type")).toBe("text/html");
-		const html = await res.text();
+		expect(res.headers.get("Content-Type")).toMatch(/application\/json/);
+		const envelope = await res.json();
+		const html = extractHtml(envelope);
 		expect(html).toContain("<!DOCTYPE html>");
 		expect(html).toContain("Usage");
 	});
@@ -116,8 +128,9 @@ describe("GET /v1/apps/nb/resources/:path", () => {
 				{ headers: { "X-Workspace-Id": TEST_WORKSPACE_ID } },
 			);
 			expect(res.status).toBe(200);
-			expect(res.headers.get("Content-Type")).toBe("text/html");
-			const html = await res.text();
+			expect(res.headers.get("Content-Type")).toMatch(/application\/json/);
+			const envelope = await res.json();
+			const html = extractHtml(envelope);
 			expect(html).toContain("<!DOCTYPE html>");
 		}
 	});

@@ -17,7 +17,7 @@
 // ---------------------------------------------------------------------------
 
 import { callTool, readResource } from "../api/client";
-import { getHostThemeMode, getThemeTokens } from "./theme";
+import { getHostThemeMode, getSpecThemeTokens, getThemeTokens } from "./theme";
 import type {
   BridgeCallbacks,
   ExtAppsHostContextChangedNotification,
@@ -145,9 +145,21 @@ export function createBridge(
     if (!msg || typeof msg !== "object") return;
 
     // --- ext-apps protocol: ui/initialize REQUEST (has id + method) ---
-    if (msg.method === "ui/initialize" && typeof msg.id === "string") {
+    // JSON-RPC 2.0 (and the ext-apps spec by extension) allows request IDs to
+    // be strings OR numbers. Clients built on `@modelcontextprotocol/ext-apps`
+    // (including `@reboot-dev/reboot-react`) send numeric IDs starting at 0.
+    // An earlier string-only check here silently dropped those handshakes,
+    // leaving the iframe stuck at "Connecting to MCP host...".
+    if (
+      msg.method === "ui/initialize" &&
+      (typeof msg.id === "string" || typeof msg.id === "number")
+    ) {
       const extMode = getHostThemeMode();
-      const extTokens = getThemeTokens(extMode);
+      // Filter to spec-valid keys only. Strict ext-apps SDK clients (Reboot's
+      // React runtime validates via Zod) reject unknown keys on this field.
+      // NB extensions and out-of-spec tokens still flow through the iframe's
+      // injected `<style>` block — they just don't cross the protocol.
+      const extTokens = getSpecThemeTokens(extMode);
       const response: ExtAppsInitializeResponse = {
         jsonrpc: "2.0",
         id: msg.id,
@@ -450,10 +462,16 @@ export function createBridge(
     },
 
     setHostContext(context: Record<string, unknown>): void {
+      // Filter spec-allowed theme keys centrally so every caller
+      // (SlotRenderer's theme toggle, future ones) can't bypass the
+      // ext-apps strict-Zod contract. Sending `--nb-*` or out-of-spec
+      // tokens to a strict client like Reboot tears down the connection
+      // on every host-context-changed notification.
+      const filtered = filterHostContextForSpec(context);
       const msg: ExtAppsHostContextChangedNotification = {
         jsonrpc: "2.0",
         method: "ui/notifications/host-context-changed",
-        params: context,
+        params: filtered,
       };
       postToIframe(msg);
     },
@@ -478,6 +496,29 @@ export function createBridge(
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Filter `ui/notifications/host-context-changed` params so only spec-valid
+ * theme variable keys cross the wire. Strict ext-apps SDK clients (Reboot's
+ * React runtime validates via Zod) reject unknown keys on
+ * `hostContext.styles.variables`; sending `--nb-*` or out-of-spec tokens
+ * tears down the connection. Centralized here so callers can't skip it.
+ *
+ * Only the `styles.variables` branch is filtered — other host-context
+ * fields (theme mode, future additions) pass through unchanged.
+ */
+function filterHostContextForSpec(ctx: Record<string, unknown>): Record<string, unknown> {
+  const styles = ctx.styles as { variables?: Record<string, string> } | undefined;
+  if (!styles?.variables) return ctx;
+  const mode = (ctx.theme as "light" | "dark" | undefined) ?? getHostThemeMode();
+  return {
+    ...ctx,
+    styles: {
+      ...styles,
+      variables: getSpecThemeTokens(mode),
+    },
+  };
+}
 
 /** Open native file picker, read selected file(s), and return base64-encoded results. */
 async function pickFiles(accept: string, maxSize: number, multiple: boolean): Promise<unknown> {

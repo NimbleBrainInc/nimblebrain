@@ -13,7 +13,9 @@ describe("buildCSP", () => {
   });
 
   test("includes connect domains when provided", () => {
-    const csp = buildCSP(["https://api.example.com", "https://cdn.example.com"]);
+    const csp = buildCSP({
+      connectDomains: ["https://api.example.com", "https://cdn.example.com"],
+    });
     expect(csp).toContain("connect-src https://api.example.com https://cdn.example.com");
   });
 
@@ -23,7 +25,7 @@ describe("buildCSP", () => {
   });
 
   test("returns connect-src 'none' for empty domains array", () => {
-    const csp = buildCSP([]);
+    const csp = buildCSP({ connectDomains: [] });
     expect(csp).toContain("connect-src 'none'");
   });
 });
