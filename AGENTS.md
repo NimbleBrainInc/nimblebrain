@@ -235,6 +235,10 @@ Do not edit these manually:
 - `src/bundles/schemas/*.schema.json` — vendored MCPB JSON Schemas (v0.3, v0.4)
 - `src/config/nimblebrain-config.schema.json` — generated at build time
 
+## Releasing
+
+See [RELEASING.md](./RELEASING.md) for the prescriptive release runbook. When the user asks to cut a release, follow that document literally — it covers tagging conventions (semver with `v` prefix, hyphen = pre-release), the step-by-step procedure, the verification checklist, and rollback. Releases are cut by pushing an annotated git tag matching `v*`; `.github/workflows/release.yml` does the rest. Do not bump `package.json` per release.
+
 ## Full Architecture
 
 See `README.md` for complete architecture documentation, API reference, configuration, deployment, and CLI details.
