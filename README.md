@@ -7,7 +7,7 @@
 
 A self-hosted platform for [MCP Apps](https://modelcontextprotocol.io/extensions/apps/overview) and agent automations. Install an MCP bundle and you get more than tools — you get an interactive UI in the sidebar with live agent-UI data sync, and the ability to run the agent on demand or on a cron schedule. Full [ext-apps](https://apps.extensions.modelcontextprotocol.io/api/) host support on top of an agentic loop with skill-driven prompt composition and multi-agent delegation.
 
-Ships as container images. Also exposes itself as an MCP server via Streamable HTTP so external MCP clients can consume the aggregated toolset.
+Ships as container images on GHCR (`ghcr.io/nimblebraininc/nimblebrain`, `ghcr.io/nimblebraininc/nimblebrain-web`). Also exposes itself as an MCP server via Streamable HTTP so external MCP clients can consume the aggregated toolset.
 
 ## Quick Start
 
@@ -17,12 +17,15 @@ Ships as container images. Also exposes itself as an MCP server via Streamable H
 # Prerequisites: Docker
 export ANTHROPIC_API_KEY=sk-ant-...
 
-docker compose up --build
+docker compose up
+# Pulls ghcr.io/nimblebraininc/nimblebrain + nimblebrain-web
 # Web UI:  http://localhost:27246
 # API:     http://localhost:27246/v1/health
 ```
 
 Open `http://localhost:27246` in your browser. Auth is configured via `instance.json` (see Configuration).
+
+To build from source instead of pulling (e.g. when developing against local changes), run `docker compose up --build`.
 
 ### Option 2: Local development
 
@@ -498,12 +501,16 @@ src/
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
 export ALLOWED_ORIGINS=http://localhost:27246  # for cookie-based auth
-docker compose up --build
+docker compose up
 # Platform: internal only (API), Web: localhost:27246 (UI)
 ```
 
-- Runtime container: Bun + Python 3.13 + Node 22 + mpak
-- Web container: Caddy serving the SPA, proxying `/v1/*` to the platform
+Images are published to GHCR on every release:
+
+- `ghcr.io/nimblebraininc/nimblebrain` — runtime (Bun + Python 3.13 + Node 22 + mpak)
+- `ghcr.io/nimblebraininc/nimblebrain-web` — Caddy serving the SPA, proxying `/v1/*` to the platform
+
+Each release is tagged with the version (`v1.2.3`), the short git SHA, and `latest`. Pin to a version tag in production. Pass `--build` to `docker compose` to build from source instead.
 
 See `Dockerfile`, `web/Dockerfile`, and `docker-compose.yml` for full config.
 

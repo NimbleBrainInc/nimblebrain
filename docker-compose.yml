@@ -1,6 +1,6 @@
 services:
   platform:
-    image: nimblebrain/platform:latest
+    image: ghcr.io/nimblebraininc/nimblebrain:latest
     build: .
     restart: unless-stopped
     volumes:
@@ -14,7 +14,7 @@ services:
       - internal
 
   web:
-    image: nimblebrain/web:latest
+    image: ghcr.io/nimblebraininc/nimblebrain-web:latest
     build: web/
     restart: unless-stopped
     ports:
