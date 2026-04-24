@@ -37,6 +37,7 @@ cd web && bun run build    # Web production build → web/dist/
 - **No classes for data** — plain interfaces + factory functions preferred.
 - **Tool results:** Return typed data in `structuredContent`, use `content` only for human-readable summary.
 - **Errors:** Tool errors are caught per-call and returned as `isError: true` results. Engine errors surface via `run.error` event.
+- **Documentation:** User- and operator-facing docs live at [docs.nimblebrain.ai](https://docs.nimblebrain.ai). Do NOT add new docs to this repo. `README.md`, `CHANGELOG.md`, `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`, and `AGENTS.md`/`CLAUDE.md` are the standard OSS files that stay here; anything else that describes how to configure, deploy, or use NimbleBrain belongs on the docs site. Cross-link from this `README.md` into the docs site instead of duplicating content.
 
 ## Testing
 
