@@ -593,7 +593,9 @@ Bundles can be installed per-workspace (tracked via `BundleInstance.wsId`). Each
 
 **CORS:** Dynamic. Dev mode: `Access-Control-Allow-Origin: *`. With auth: only `ALLOWED_ORIGINS` env var origins, with credentials support.
 
-**MCP endpoint (`/mcp`):** Streamable HTTP for external MCP clients. 100 concurrent sessions (env: `MCP_MAX_SESSIONS`), 30-minute TTL (env: `MCP_SESSION_TTL_MS`). Disabled when `features.mcpServer` is `false`. When `authkitDomain` is configured, returns `WWW-Authenticate` header on 401 for automatic OAuth discovery by MCP clients. See [`docs/mcp-oauth.md`](docs/mcp-oauth.md) for setup instructions.
+**MCP endpoint (`/mcp`):** Streamable HTTP for external MCP clients. 100 concurrent sessions (env: `MCP_MAX_SESSIONS`), 30-minute TTL (env: `MCP_SESSION_TTL_MS`). Disabled when `features.mcpServer` is `false`. When `authkitDomain` is configured, returns `WWW-Authenticate` header on 401 for automatic OAuth discovery by MCP clients. Full setup guide: [MCP Endpoint](https://docs.nimblebrain.ai/api/mcp-endpoint/) and [Connecting External Clients](https://docs.nimblebrain.ai/guide/mcp-connect/) on docs.nimblebrain.ai.
+
+**Deploying behind a TLS-terminating proxy:** OAuth discovery advertises its `resource` URL from `X-Forwarded-Proto`, falling back to the request scheme. Upstream proxies (AWS ALB, nginx, Cloudflare, etc.) must set that header to the client-facing scheme (`https`) for MCP OAuth to work. The bundled `nimblebrain-web` Caddy container already honors it via `trusted_proxies static private_ranges`; if you front it with an additional proxy, ensure that proxy also propagates `X-Forwarded-Proto`. Without this, `/.well-known/oauth-protected-resource` returns `resource: http://...` and modern MCP clients reject the response. See [MCP OAuth behind a reverse proxy](https://docs.nimblebrain.ai/deploy/security/#mcp-oauth-behind-a-reverse-proxy) for ALB / nginx / Caddy snippets.
 
 **MCP OAuth discovery endpoints:**
 - `GET /.well-known/oauth-protected-resource` — RFC 9728 Protected Resource Metadata
