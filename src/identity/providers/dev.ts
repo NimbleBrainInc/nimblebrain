@@ -1,6 +1,8 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { ensureUserWorkspace } from "../../workspace/provisioning.ts";
+import type { WorkspaceStore } from "../../workspace/workspace-store.ts";
 import type {
   CreateUserInput,
   CreateUserResult,
@@ -24,8 +26,7 @@ export const DEV_IDENTITY: UserIdentity = {
 
 /**
  * Identity provider for dev mode — always returns a default user identity.
- * Creates the default user profile on first access if missing.
- * Workspace provisioning is handled by resolveWorkspace() in auth-middleware.
+ * Creates the default user profile and workspace on first access if missing.
  */
 export class DevIdentityProvider implements IdentityProvider {
   readonly capabilities: ProviderCapabilities = {
@@ -36,17 +37,27 @@ export class DevIdentityProvider implements IdentityProvider {
 
   private initialized = false;
   private usersDir: string;
+  private workspaceStore: WorkspaceStore;
 
   constructor(
     workDir: string,
     private userStore: UserStore,
+    workspaceStore: WorkspaceStore,
   ) {
     this.usersDir = join(workDir, "users");
+    this.workspaceStore = workspaceStore;
     console.warn("Running in dev mode — no authentication configured");
   }
 
   async verifyRequest(_req: Request): Promise<UserIdentity | null> {
-    await this.ensureDefaults();
+    await this.ensureUserProfile();
+    // Run on every request (idempotent) so the "authenticated user has
+    // ≥1 workspace" invariant self-heals if the dev workspace is deleted
+    // out from under the process.
+    await ensureUserWorkspace(this.workspaceStore, {
+      id: DEV_IDENTITY.id,
+      displayName: DEV_IDENTITY.displayName,
+    });
     return DEV_IDENTITY;
   }
 
@@ -69,7 +80,13 @@ export class DevIdentityProvider implements IdentityProvider {
 
   // ── Private ───────────────────────────────────────────────────
 
-  private async ensureDefaults(): Promise<void> {
+  /**
+   * Seed the dev user profile on first call. Profile creation doesn't need
+   * to repeat per request — user identity for dev mode is fixed — so the
+   * `initialized` gate stays here. Workspace provisioning is handled by
+   * verifyRequest directly so it self-heals.
+   */
+  private async ensureUserProfile(): Promise<void> {
     if (this.initialized) return;
 
     const existingUser = await this.userStore.get(DEV_IDENTITY.id);

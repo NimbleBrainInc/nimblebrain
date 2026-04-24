@@ -354,10 +354,16 @@ export async function getShell(): Promise<ShellData> {
   return request<ShellData>("/v1/shell");
 }
 
-/** Fetch the bootstrap payload (user, workspaces, shell, config) in one call. */
-export async function getBootstrap(preferredWorkspace?: string): Promise<BootstrapResponse> {
+/**
+ * Fetch the bootstrap payload (user, workspaces, shell, config) in one call.
+ * `workspaceId` is the client's remembered last-active workspace — sent as
+ * a soft hint to the server (unified under X-Workspace-Id). Bootstrap
+ * honors it if still valid, silently falls back to the first membership
+ * otherwise. Data endpoints treat the same header as authoritative.
+ */
+export async function getBootstrap(workspaceId?: string): Promise<BootstrapResponse> {
   const extra: Record<string, string> = {};
-  if (preferredWorkspace) extra["X-Preferred-Workspace"] = preferredWorkspace;
+  if (workspaceId) extra["X-Workspace-Id"] = workspaceId;
   return request<BootstrapResponse>("/v1/bootstrap", { headers: extra });
 }
 
@@ -384,11 +390,14 @@ export async function logout(): Promise<void> {
 /**
  * Try to bootstrap (unauthenticated-safe). Returns bootstrap data if
  * authenticated, null if 401 or network error. Used as the single auth check.
+ *
+ * `workspaceId` is the client's remembered last-active workspace — see
+ * {@link getBootstrap} for the server-side contract.
  */
-export async function tryBootstrap(preferredWorkspace?: string): Promise<BootstrapResponse | null> {
+export async function tryBootstrap(workspaceId?: string): Promise<BootstrapResponse | null> {
   try {
     const extra: Record<string, string> = {};
-    if (preferredWorkspace) extra["X-Preferred-Workspace"] = preferredWorkspace;
+    if (workspaceId) extra["X-Workspace-Id"] = workspaceId;
     const res = await fetch(`${API_BASE}/v1/bootstrap`, {
       credentials: "include",
       headers: {

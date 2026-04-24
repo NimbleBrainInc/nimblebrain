@@ -105,10 +105,15 @@ export class WorkspaceResolutionError extends Error {
 /**
  * Resolve the workspace for a request.
  *
- * Resolution order:
- * 1. Explicit `X-Workspace-Id` header
- * 2. Conversation's workspaceId (if conversationId is provided and conversation exists)
- * 3. Default — user's single workspace (if they belong to exactly one)
+ * Pure selection — does NOT create, default-pick, or auto-provision.
+ * Provisioning is an identity-layer concern (see ensureUserWorkspace
+ * wired into each provider's verifyRequest). Defaulting to "the user's
+ * only workspace" was a footgun: a client that "just worked" one day
+ * would 400 the next when the user was added to a second workspace.
+ * Honest contract: the caller names the workspace via X-Workspace-Id
+ * on every data-path request. Bootstrap is the only place the server
+ * is allowed to pick a default, and it does that in its own handler
+ * (not through this resolver).
  *
  * Returns the resolved workspace ID.
  * Throws WorkspaceResolutionError (400 or 403) on failure.
@@ -117,54 +122,18 @@ export async function resolveWorkspace(
   req: Request,
   identity: UserIdentity,
   workspaceStore: WorkspaceStore,
-  conversationWorkspaceId?: string,
 ): Promise<string> {
-  const headerWsId = req.headers.get("x-workspace-id");
-
-  let workspaceId: string | undefined;
-
-  // 1. Explicit header
-  if (headerWsId) {
-    workspaceId = headerWsId;
-  }
-  // 2. Conversation's workspace
-  else if (conversationWorkspaceId) {
-    workspaceId = conversationWorkspaceId;
-  }
-  // 3. Default — single workspace
-  else {
-    const userWorkspaces = await workspaceStore.getWorkspacesForUser(identity.id);
-    if (userWorkspaces.length === 1) {
-      workspaceId = userWorkspaces[0]!.id;
-    } else if (userWorkspaces.length === 0) {
-      // Auto-provision a workspace when the user has none.
-      // This handles: first login, manual deletion, or disk cleanup.
-      const slug = identity.id
-        .replace(/^user_/, "")
-        .toLowerCase()
-        .slice(0, 16);
-      const name = identity.displayName ? `${identity.displayName}'s Workspace` : "Workspace";
-      try {
-        const ws = await workspaceStore.create(name, slug);
-        await workspaceStore.addMember(ws.id, identity.id, "admin");
-        workspaceId = ws.id;
-      } catch {
-        // Slug collision — try with timestamp suffix
-        const fallbackSlug = `ws-${Date.now().toString(36)}`;
-        const ws = await workspaceStore.create(name, fallbackSlug);
-        await workspaceStore.addMember(ws.id, identity.id, "admin");
-        workspaceId = ws.id;
-      }
-    } else {
-      throw new WorkspaceResolutionError(
-        "Multiple workspaces available. Set X-Workspace-Id header to specify which workspace to use.",
-        400,
-      );
-    }
+  const workspaceId = req.headers.get("x-workspace-id");
+  if (!workspaceId) {
+    throw new WorkspaceResolutionError(
+      "Workspace required. Set the X-Workspace-Id header. " +
+        "The workspace ID is available from GET /v1/bootstrap or Settings → Profile → MCP Connection.",
+      400,
+    );
   }
 
   // Validate workspace ID format (prevents path traversal)
-  if (workspaceId && !WORKSPACE_ID_RE.test(workspaceId)) {
+  if (!WORKSPACE_ID_RE.test(workspaceId)) {
     throw new WorkspaceResolutionError("Invalid workspace ID format.", 400);
   }
 

@@ -1,4 +1,6 @@
 import { GeneratePortalLinkIntent, WorkOS } from "@workos-inc/node";
+import { ensureUserWorkspace } from "../../workspace/provisioning.ts";
+import type { WorkspaceStore } from "../../workspace/workspace-store.ts";
 import type { WorkosAuth } from "../instance.ts";
 import type {
   CreateUserInput,
@@ -119,6 +121,7 @@ export class WorkosIdentityProvider implements IdentityProvider {
   private organizationId: string | undefined;
   private authkitDomain: string | undefined;
   private userStore: UserStore | null;
+  private workspaceStore: WorkspaceStore;
 
   private jwksCache: CachedJwks | null = null;
   private authkitJwksCache: CachedJwks | null = null;
@@ -129,7 +132,18 @@ export class WorkosIdentityProvider implements IdentityProvider {
   fetcher: typeof globalThis.fetch = globalThis.fetch.bind(globalThis);
   now: () => number = () => Date.now();
 
-  constructor(config: WorkosAuth, userStore?: UserStore) {
+  /**
+   * userStore is optional because WorkOS itself is the source of truth for
+   * users (managedUsers: true); the local profile is a cache for preferences.
+   * workspaceStore is required: Phase 1 establishes the "authenticated user
+   * has ≥1 workspace" invariant at the identity boundary, and that requires
+   * a place to create workspaces.
+   */
+  constructor(
+    config: WorkosAuth,
+    userStore: UserStore | undefined,
+    workspaceStore: WorkspaceStore,
+  ) {
     const apiKey = process.env.WORKOS_API_KEY ?? config.apiKey ?? "";
     this.workos = new WorkOS(apiKey, { clientId: config.clientId });
     this.clientId = config.clientId;
@@ -137,6 +151,7 @@ export class WorkosIdentityProvider implements IdentityProvider {
     this.organizationId = config.organizationId;
     this.authkitDomain = config.authkitDomain;
     this.userStore = userStore ?? null;
+    this.workspaceStore = workspaceStore;
   }
 
   // ── IdentityProvider interface ──────────────────────────────────
@@ -167,6 +182,8 @@ export class WorkosIdentityProvider implements IdentityProvider {
     // Route verification based on issuer: AuthKit MCP OAuth vs WorkOS User Management
     const authkitIssuer = this.authkitDomain ? `https://${this.authkitDomain}.authkit.app` : null;
 
+    let identity: UserIdentity | null = null;
+
     if (authkitIssuer && payload.iss === authkitIssuer) {
       // AuthKit-issued JWT (from MCP OAuth flow) — verify against AuthKit JWKS
       const keys = await this.getAuthkitJwks();
@@ -181,22 +198,35 @@ export class WorkosIdentityProvider implements IdentityProvider {
         return null;
       }
 
-      return this.resolveUser(payload.sub);
+      identity = await this.resolveUser(payload.sub);
+    } else {
+      // WorkOS User Management JWT (from session cookie / existing flow)
+      // Validate org_id matches configured organization
+      if (this.organizationId && payload.org_id !== this.organizationId) return null;
+
+      // Verify signature against WorkOS JWKS
+      const keys = await this.getJwks();
+      if (!keys) return null;
+
+      const verified = await this.verifySignature(header, signatureInput, signature, keys);
+      if (!verified) return null;
+
+      // Resolve user from WorkOS
+      identity = await this.resolveUser(payload.sub);
     }
 
-    // WorkOS User Management JWT (from session cookie / existing flow)
-    // Validate org_id matches configured organization
-    if (this.organizationId && payload.org_id !== this.organizationId) return null;
-
-    // Verify signature against WorkOS JWKS
-    const keys = await this.getJwks();
-    if (!keys) return null;
-
-    const verified = await this.verifySignature(header, signatureInput, signature, keys);
-    if (!verified) return null;
-
-    // Resolve user from WorkOS
-    return this.resolveUser(payload.sub);
+    // Enforce the invariant "authenticated user has ≥1 workspace" on every
+    // successful auth — covers the AuthKit/MCP-OAuth path (which never hits
+    // exchangeCode) and self-heals any user whose workspace was lost to
+    // admin deletion, partial failure, or migration. Idempotent; the happy
+    // path is one filesystem read.
+    if (identity) {
+      await ensureUserWorkspace(this.workspaceStore, {
+        id: identity.id,
+        displayName: identity.displayName,
+      });
+    }
+    return identity;
   }
 
   async exchangeCode(code: string, codeVerifier?: string): Promise<TokenResult> {
@@ -450,11 +480,10 @@ export class WorkosIdentityProvider implements IdentityProvider {
   /**
    * Provision a user on first login via auth code flow.
    *
-   * 1. Sync local profile from WorkOS (create or update)
-   * 2. If user has no workspaces, create a private workspace for them
-   *
-   * On subsequent logins this is a no-op — profile sync is handled by
-   * resolveUser() on every request, and the workspace already exists.
+   * Syncs the local profile from WorkOS. Workspace provisioning happens on
+   * every verifyRequest (see verifyRequest above) so the invariant is
+   * self-healing for any path — this includes AuthKit/MCP-OAuth which does
+   * not route through exchangeCode.
    */
   private async provisionUser(workosUser: {
     id: string;
@@ -473,7 +502,7 @@ export class WorkosIdentityProvider implements IdentityProvider {
       );
     }
 
-    // Sync local profile (workspace provisioning is handled by resolveWorkspace in auth-middleware)
+    // Sync local profile
     await this.syncLocalProfile(workosUser.id, { email: workosUser.email, displayName, orgRole });
   }
 

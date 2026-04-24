@@ -128,7 +128,7 @@ main();
 async function createMcpClient(): Promise<Client> {
 	const transport = new StreamableHTTPClientTransport(
 		new URL(`${baseUrl}/mcp`),
-		{ requestInit: { headers: {} } },
+		{ requestInit: { headers: { "x-workspace-id": TEST_WORKSPACE_ID } } },
 	);
 	const client = new Client({ name: "integ-test", version: "1.0.0" });
 	await client.connect(transport);
@@ -154,7 +154,7 @@ describe("Install/uninstall → /v1/shell placement updates", () => {
 
 		try {
 			// GET /v1/shell should now include the tasks placements
-			const shellRes = await fetch(`${baseUrl}/v1/shell`);
+			const shellRes = await fetch(`${baseUrl}/v1/shell`, { headers: { "X-Workspace-Id": TEST_WORKSPACE_ID } });
 			expect(shellRes.status).toBe(200);
 			const shell = await shellRes.json();
 
@@ -171,7 +171,7 @@ describe("Install/uninstall → /v1/shell placement updates", () => {
 			await runtime.getLifecycle().uninstall(serverName, devRegistry, TEST_WORKSPACE_ID);
 
 			// GET /v1/shell should no longer have tasks placements
-			const shellRes2 = await fetch(`${baseUrl}/v1/shell`);
+			const shellRes2 = await fetch(`${baseUrl}/v1/shell`, { headers: { "X-Workspace-Id": TEST_WORKSPACE_ID } });
 			const shell2 = await shellRes2.json();
 
 			const tasksAfter = shell2.placements.filter(
@@ -204,7 +204,7 @@ describe("Bundle with placements → /v1/shell", () => {
 		const serverName = instance.serverName;
 
 		try {
-			const res = await fetch(`${baseUrl}/v1/shell`);
+			const res = await fetch(`${baseUrl}/v1/shell`, { headers: { "X-Workspace-Id": TEST_WORKSPACE_ID } });
 			const body = await res.json();
 
 			const entries = body.placements.filter(
@@ -290,7 +290,7 @@ describe("POST /v1/tools/call — all core tools via Bridge proxy", () => {
 	it("list_apps returns array", async () => {
 		const res = await fetch(`${baseUrl}/v1/tools/call`, {
 			method: "POST",
-			headers: { "Content-Type": "application/json" },
+			headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
 			body: JSON.stringify({ server: "nb", tool: "list_apps", arguments: {} }),
 		});
 		expect(res.status).toBe(200);

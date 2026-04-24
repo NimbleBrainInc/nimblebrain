@@ -69,6 +69,7 @@ afterAll(() => {
 
 let workDir: string;
 let userStore: UserStore;
+let workspaceStore: WorkspaceStore;
 let adapter: OidcIdentityProvider;
 const CLIENT_ID = "my-client-id";
 const ALLOWED_DOMAINS = ["example.com", "corp.io"];
@@ -76,7 +77,12 @@ const ALLOWED_DOMAINS = ["example.com", "corp.io"];
 beforeEach(async () => {
   workDir = await mkdtemp(join(tmpdir(), "nb-oidc-test-"));
   userStore = new UserStore(workDir);
-  adapter = new OidcIdentityProvider({ adapter: "oidc", issuer, clientId: CLIENT_ID, allowedDomains: ALLOWED_DOMAINS }, userStore);
+  workspaceStore = new WorkspaceStore(workDir);
+  adapter = new OidcIdentityProvider(
+    { adapter: "oidc", issuer, clientId: CLIENT_ID, allowedDomains: ALLOWED_DOMAINS },
+    userStore,
+    workspaceStore,
+  );
 });
 
 afterEach(async () => {
@@ -161,6 +167,56 @@ describe("OidcIdentityProvider", () => {
       expect(identity!.orgRole).toBe("member");
       expect(identity!.displayName).toBe("Nobody Test");
       expect(identity!.id).toMatch(/^usr_oidc_[0-9a-f]{12}$/);
+    });
+
+    test("first-login auto-provisions a workspace at the identity boundary", async () => {
+      // Invariant: every authenticated user has ≥1 workspace by the time
+      // verifyRequest resolves. No tool call required.
+      const token = await buildJwt({ email: "carol@example.com", sub: "oidc-sub-carol", name: "Carol" });
+      const identity = await adapter.verifyRequest(bearerRequest(token));
+      expect(identity).not.toBeNull();
+
+      const workspaces = await workspaceStore.getWorkspacesForUser(identity!.id);
+      expect(workspaces).toHaveLength(1);
+      expect(workspaces[0]!.members).toEqual([{ userId: identity!.id, role: "admin" }]);
+    });
+
+    test("repeat logins do not create duplicate workspaces", async () => {
+      const token = await buildJwt({ email: "dave@example.com", sub: "oidc-sub-dave", name: "Dave" });
+
+      await adapter.verifyRequest(bearerRequest(token));
+      const firstList = await workspaceStore.list();
+
+      await adapter.verifyRequest(bearerRequest(token));
+      await adapter.verifyRequest(bearerRequest(token));
+      const finalList = await workspaceStore.list();
+
+      expect(finalList).toHaveLength(firstList.length);
+    });
+
+    test("self-heals a user whose workspace was deleted after first login", async () => {
+      // Reproduces the "existing-user-without-workspace" state a naive
+      // first-login-only provisioning hook would never recover from:
+      // the User profile exists (so !user is false, no "first login"),
+      // but their workspace is gone.
+      const token = await buildJwt({ email: "erin@example.com", sub: "oidc-sub-erin", name: "Erin" });
+
+      // First login provisions user + workspace.
+      const first = await adapter.verifyRequest(bearerRequest(token));
+      const wsBefore = await workspaceStore.getWorkspacesForUser(first!.id);
+      expect(wsBefore).toHaveLength(1);
+
+      // Simulate admin deletion (or disk cleanup / migration drop).
+      await workspaceStore.delete(wsBefore[0]!.id);
+      expect(await workspaceStore.getWorkspacesForUser(first!.id)).toHaveLength(0);
+
+      // Next auth must re-establish the invariant — not leave the user
+      // stuck at a 500 on bootstrap.
+      const second = await adapter.verifyRequest(bearerRequest(token));
+      expect(second).not.toBeNull();
+      const wsAfter = await workspaceStore.getWorkspacesForUser(second!.id);
+      expect(wsAfter).toHaveLength(1);
+      expect(wsAfter[0]!.members).toEqual([{ userId: second!.id, role: "admin" }]);
     });
 
     test("expired JWT returns null", async () => {
@@ -419,10 +475,15 @@ describe("OidcIdentityProvider", () => {
       const token1 = await buildJwt({ email: "det1@example.com", sub, name: "Det" });
       const id1 = await adapter.verifyRequest(bearerRequest(token1));
 
-      // Create a fresh adapter + store to prove determinism
+      // Create a fresh adapter + stores to prove determinism
       const workDir2 = await mkdtemp(join(tmpdir(), "nb-oidc-det-"));
       const userStore2 = new UserStore(workDir2);
-      const adapter2 = new OidcIdentityProvider({ adapter: "oidc", issuer, clientId: CLIENT_ID, allowedDomains: ALLOWED_DOMAINS }, userStore2);
+      const workspaceStore2 = new WorkspaceStore(workDir2);
+      const adapter2 = new OidcIdentityProvider(
+        { adapter: "oidc", issuer, clientId: CLIENT_ID, allowedDomains: ALLOWED_DOMAINS },
+        userStore2,
+        workspaceStore2,
+      );
 
       const token2 = await buildJwt({ email: "det2@example.com", sub, name: "Det" });
       const id2 = await adapter2.verifyRequest(bearerRequest(token2));

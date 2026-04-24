@@ -3,7 +3,7 @@ import { createMiddleware } from "hono/factory";
 const STATIC_CORS_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
   "Access-Control-Allow-Headers":
-    "Content-Type, Authorization, Mcp-Session-Id, Last-Event-ID, Mcp-Protocol-Version, X-Workspace-Id, X-Preferred-Workspace",
+    "Content-Type, Authorization, Mcp-Session-Id, Last-Event-ID, Mcp-Protocol-Version, X-Workspace-Id",
   "Access-Control-Expose-Headers": "Mcp-Session-Id, Mcp-Protocol-Version",
 };
 

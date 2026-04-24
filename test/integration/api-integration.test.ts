@@ -49,6 +49,7 @@ function authHeaders(apiKey: string): Record<string, string> {
 	return {
 		"Content-Type": "application/json",
 		Authorization: `Bearer ${apiKey}`,
+		"X-Workspace-Id": TEST_WORKSPACE_ID,
 	};
 }
 
@@ -57,13 +58,18 @@ describe("integration: full flow with auth", () => {
 	let runtime: Runtime;
 	let handle: ServerHandle;
 	let baseUrl: string;
+	const workDir = join(tmpdir(), `nimblebrain-api-integration-full-${Date.now()}`);
 
 	beforeAll(async () => {
+		mkdirSync(workDir, { recursive: true });
 		runtime = await Runtime.start({
 			model: { provider: "custom", adapter: createEchoModel() },
 			noDefaultBundles: true,
 			logging: { disabled: true },
+			workDir,
 		});
+
+		await provisionTestWorkspace(runtime);
 
 		handle = startServer({
 			runtime,
@@ -76,6 +82,7 @@ describe("integration: full flow with auth", () => {
 	afterAll(async () => {
 		handle.stop(true);
 		await runtime.shutdown();
+		rmSync(workDir, { recursive: true, force: true });
 	});
 
 	it("full lifecycle: auth → chat → stream → history → health → shutdown", async () => {
@@ -88,7 +95,7 @@ describe("integration: full flow with auth", () => {
 		// 2. Chat without auth is rejected
 		const noAuthRes = await fetch(`${baseUrl}/v1/chat`, {
 			method: "POST",
-			headers: { "Content-Type": "application/json" },
+			headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
 			body: JSON.stringify({ message: "should fail" }),
 		});
 		expect(noAuthRes.status).toBe(401);
@@ -143,13 +150,18 @@ describe("integration: concurrent authenticated load", () => {
 	let runtime: Runtime;
 	let handle: ServerHandle;
 	let baseUrl: string;
+	const workDir = join(tmpdir(), `nimblebrain-api-integration-concurrent-${Date.now()}`);
 
 	beforeAll(async () => {
+		mkdirSync(workDir, { recursive: true });
 		runtime = await Runtime.start({
 			model: { provider: "custom", adapter: createEchoModel() },
 			noDefaultBundles: true,
 			logging: { disabled: true },
+			workDir,
 		});
+
+		await provisionTestWorkspace(runtime);
 
 		handle = startServer({
 			runtime,
@@ -162,6 +174,7 @@ describe("integration: concurrent authenticated load", () => {
 	afterAll(async () => {
 		handle.stop(true);
 		await runtime.shutdown();
+		rmSync(workDir, { recursive: true, force: true });
 	});
 
 	it("10 concurrent authenticated chat requests produce correct independent results", async () => {
@@ -253,7 +266,7 @@ describe("integration: windowing under load", () => {
 		// Send first message and capture conversation ID
 		const firstRes = await fetch(`${baseUrl}/v1/chat`, {
 			method: "POST",
-			headers: { "Content-Type": "application/json" },
+			headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
 			body: JSON.stringify({
 				message: "Start of a long conversation with padding text ".repeat(3),
 			}),
@@ -266,7 +279,7 @@ describe("integration: windowing under load", () => {
 		for (let i = 1; i < 50; i++) {
 			const res = await fetch(`${baseUrl}/v1/chat`, {
 				method: "POST",
-				headers: { "Content-Type": "application/json" },
+				headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
 				body: JSON.stringify({
 					message: `Message ${i} with some padding content to use tokens`,
 					conversationId: convId,
@@ -286,7 +299,7 @@ describe("integration: windowing under load", () => {
 		// Create a conversation with some history
 		const firstRes = await fetch(`${baseUrl}/v1/chat`, {
 			method: "POST",
-			headers: { "Content-Type": "application/json" },
+			headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
 			body: JSON.stringify({ message: "Seed message for concurrent windowing test" }),
 		});
 		const firstBody = await firstRes.json();
@@ -296,7 +309,7 @@ describe("integration: windowing under load", () => {
 		for (let i = 0; i < 10; i++) {
 			await fetch(`${baseUrl}/v1/chat`, {
 				method: "POST",
-				headers: { "Content-Type": "application/json" },
+				headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
 				body: JSON.stringify({
 					message: `Building history message ${i} with extra padding text`,
 					conversationId: convId,
@@ -310,7 +323,7 @@ describe("integration: windowing under load", () => {
 			Array.from({ length: 5 }, (_, i) =>
 				fetch(`${baseUrl}/v1/chat`, {
 					method: "POST",
-					headers: { "Content-Type": "application/json" },
+					headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
 					body: JSON.stringify({
 						message: `Concurrent on long conv ${i}`,
 						conversationId: convId,
@@ -338,13 +351,18 @@ describe("integration: auth boundary", () => {
 	let runtime: Runtime;
 	let handle: ServerHandle;
 	let baseUrl: string;
+	const workDir = join(tmpdir(), `nimblebrain-api-integration-boundary-${Date.now()}`);
 
 	beforeAll(async () => {
+		mkdirSync(workDir, { recursive: true });
 		runtime = await Runtime.start({
 			model: { provider: "custom", adapter: createEchoModel() },
 			noDefaultBundles: true,
 			logging: { disabled: true },
+			workDir,
 		});
+
+		await provisionTestWorkspace(runtime);
 
 		handle = startServer({
 			runtime,
@@ -357,6 +375,7 @@ describe("integration: auth boundary", () => {
 	afterAll(async () => {
 		handle.stop(true);
 		await runtime.shutdown();
+		rmSync(workDir, { recursive: true, force: true });
 	});
 
 	it("health endpoints are always open, all other endpoints require auth", async () => {
@@ -367,7 +386,7 @@ describe("integration: auth boundary", () => {
 		// Chat requires auth
 		const chatNoAuth = await fetch(`${baseUrl}/v1/chat`, {
 			method: "POST",
-			headers: { "Content-Type": "application/json" },
+			headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
 			body: JSON.stringify({ message: "no auth" }),
 		});
 		expect(chatNoAuth.status).toBe(401);
@@ -375,7 +394,7 @@ describe("integration: auth boundary", () => {
 		// Stream requires auth
 		const streamNoAuth = await fetch(`${baseUrl}/v1/chat/stream`, {
 			method: "POST",
-			headers: { "Content-Type": "application/json" },
+			headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
 			body: JSON.stringify({ message: "no auth" }),
 		});
 		expect(streamNoAuth.status).toBe(401);
@@ -472,7 +491,7 @@ describe("E2E: install app -> tool call via API", () => {
 	it("app tools are callable via POST /v1/tools/call and return correct data", async () => {
 		const res = await fetch(`${baseUrl}/v1/tools/call`, {
 			method: "POST",
-			headers: { "Content-Type": "application/json" },
+			headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
 			body: JSON.stringify({
 				server: "tasks",
 				tool: "create_task",
@@ -545,7 +564,7 @@ describe("E2E: tool call via API -> SSE data.changed event", () => {
 	it("POST /v1/tools/call returns correct result for registered tool", async () => {
 		const toolRes = await fetch(`${baseUrl}/v1/tools/call`, {
 			method: "POST",
-			headers: { "Content-Type": "application/json" },
+			headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
 			body: JSON.stringify({
 				server: "notes",
 				tool: "save_note",
@@ -630,7 +649,7 @@ describe("E2E: multi-step conversation -> history -> conversations list consiste
 		for (const msg of messages) {
 			const res = await fetch(`${baseUrl}/v1/chat`, {
 				method: "POST",
-				headers: { "Content-Type": "application/json" },
+				headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
 				body: JSON.stringify({
 					message: msg,
 					...(convId ? { conversationId: convId } : {}),
@@ -648,7 +667,7 @@ describe("E2E: multi-step conversation -> history -> conversations list consiste
 	it("streaming chat produces SSE text.delta and done events with valid schemas", async () => {
 		const res = await fetch(`${baseUrl}/v1/chat/stream`, {
 			method: "POST",
-			headers: { "Content-Type": "application/json" },
+			headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
 			body: JSON.stringify({ message: "Stream schema test" }),
 		});
 

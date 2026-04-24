@@ -48,7 +48,7 @@ afterAll(() => {
  * orgMemberships controls which users have org access.
  */
 function createMockProvider(orgMemberships: Map<string, string>) {
-  const provider = new WorkosIdentityProvider(MOCK_CONFIG, userStore);
+  const provider = new WorkosIdentityProvider(MOCK_CONFIG, userStore, workspaceStore);
 
   // Mock the WorkOS SDK methods on the provider's private workos instance
   const workos = (provider as unknown as { workos: Record<string, unknown> }).workos;
@@ -177,6 +177,16 @@ describe("WorkOS provisioning security", () => {
     expect(profile).not.toBeNull();
     expect(profile!.email).toBe("authorized@test.com");
     expect(profile!.orgRole).toBe("admin");
+  });
+
+  it("does not create a workspace in exchangeCode (provisioning is on verifyRequest)", async () => {
+    // Workspace provisioning moved from exchangeCode to every verifyRequest so
+    // the invariant is self-healing and covers the AuthKit/MCP-OAuth path
+    // (which never routes through exchangeCode). Asserted by the AuthKit test
+    // in workos-authkit.test.ts and the OIDC self-heal test in
+    // test/integration/identity/oidc-adapter.test.ts.
+    const workspaces = await workspaceStore.getWorkspacesForUser("user_authorized");
+    expect(workspaces).toHaveLength(0);
   });
 
   it("does not create duplicate profile on subsequent login", async () => {

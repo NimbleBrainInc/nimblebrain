@@ -103,6 +103,7 @@ describe("internal auth token - server integration", () => {
 			headers: {
 				"Content-Type": "application/json",
 				Authorization: `Bearer ${handle.internalToken}`,
+				"X-Workspace-Id": TEST_WORKSPACE_ID,
 			},
 			body: JSON.stringify({ message: "Hello from bundle", workspaceId: TEST_WORKSPACE_ID }),
 		});
@@ -118,6 +119,7 @@ describe("internal auth token - server integration", () => {
 			headers: {
 				"Content-Type": "application/json",
 				Authorization: `Bearer ${handle.internalToken}`,
+				"X-Workspace-Id": TEST_WORKSPACE_ID,
 			},
 			body: JSON.stringify({ message: "Stream from bundle", workspaceId: TEST_WORKSPACE_ID }),
 		});
@@ -132,6 +134,7 @@ describe("internal auth token - server integration", () => {
 			headers: {
 				"Content-Type": "application/json",
 				Authorization: `Bearer ${handle.internalToken}`,
+				"X-Workspace-Id": TEST_WORKSPACE_ID,
 			},
 			body: JSON.stringify({ name: "nb__get_config", input: {} }),
 		});
@@ -144,6 +147,7 @@ describe("internal auth token - server integration", () => {
 			method: "GET",
 			headers: {
 				Authorization: `Bearer ${handle.internalToken}`,
+				"X-Workspace-Id": TEST_WORKSPACE_ID,
 			},
 		});
 
@@ -156,6 +160,7 @@ describe("internal auth token - server integration", () => {
 			headers: {
 				"Content-Type": "application/json",
 				Authorization: "Bearer wrong-token-value",
+				"X-Workspace-Id": TEST_WORKSPACE_ID,
 			},
 			body: JSON.stringify({ message: "Should fail", workspaceId: TEST_WORKSPACE_ID }),
 		});

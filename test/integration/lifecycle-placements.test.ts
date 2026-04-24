@@ -139,12 +139,13 @@ describe("BundleLifecycleManager — placement registration on install", () => {
 		expect(instance.ui!.placements).toHaveLength(2);
 
 		// Placements registered in PlacementRegistry
-		const sidebarApps = pr.forSlot("sidebar.apps");
+		const wsPlacements = pr.forWorkspace("ws_test");
+		const sidebarApps = wsPlacements.filter((e) => e.slot === "sidebar.apps");
 		expect(sidebarApps).toHaveLength(1);
 		expect(sidebarApps[0].resourceUri).toBe("ui://echo/nav");
 		expect(sidebarApps[0].serverName).toBe("echo");
 
-		const main = pr.forSlot("main");
+		const main = wsPlacements.filter((e) => e.slot === "main");
 		expect(main).toHaveLength(1);
 		expect(main[0].route).toBe("echo"); // explicit placements keep their declared route
 
@@ -171,7 +172,7 @@ describe("BundleLifecycleManager — placement registration on install", () => {
 
 		// primaryView is no longer extracted — only explicit placements are registered
 		expect(instance.ui!.placements).toBeUndefined();
-		const main = pr.forSlot("main");
+		const main = pr.forWorkspace("ws_test").filter((e) => e.slot === "main");
 		expect(main).toHaveLength(0);
 
 		await registry.removeSource(instance.serverName);
@@ -195,10 +196,11 @@ describe("BundleLifecycleManager — placement registration on install", () => {
 		const instance = await lifecycle.installLocal(bundleDir, registry, "ws_test");
 
 		// Explicit placements take precedence — no legacy "main" placement
-		const main = pr.forSlot("main");
+		const wsPlacements = pr.forWorkspace("ws_test");
+		const main = wsPlacements.filter((e) => e.slot === "main");
 		expect(main).toHaveLength(0);
 
-		const toolbar = pr.forSlot("toolbar.right");
+		const toolbar = wsPlacements.filter((e) => e.slot === "toolbar.right");
 		expect(toolbar).toHaveLength(1);
 		expect(toolbar[0].resourceUri).toBe("ui://echo/toolbar");
 
@@ -233,14 +235,13 @@ describe("BundleLifecycleManager — placement unregistration on uninstall", () 
 		const instance = await lifecycle.installLocal(bundleDir, registry, "ws_test");
 
 		// Verify placement exists
-		expect(pr.forSlot("sidebar.apps")).toHaveLength(1);
+		expect(pr.forWorkspace("ws_test").filter((e) => e.slot === "sidebar.apps")).toHaveLength(1);
 
 		// Uninstall by server name
 		await lifecycle.uninstall(instance.serverName, registry, "ws_test");
 
 		// Placement gone
-		expect(pr.forSlot("sidebar.apps")).toHaveLength(0);
-		expect(pr.all()).toHaveLength(0);
+		expect(pr.forWorkspace("ws_test")).toHaveLength(0);
 	}, 15_000);
 });
 
@@ -260,7 +261,8 @@ describe("nb-core placements via PlacementRegistry", () => {
 		];
 		pr.register("nb", NB_CORE_PLACEMENTS);
 
-		const all = pr.all();
+		// Ambient entries show up for any workspace the user is in.
+		const all = pr.forWorkspace("ws_any");
 		expect(all).toHaveLength(3);
 
 		// All belong to core
@@ -269,11 +271,11 @@ describe("nb-core placements via PlacementRegistry", () => {
 		}
 
 		// Verify main placements
-		const main = pr.forSlot("main");
+		const main = all.filter((e) => e.slot === "main");
 		expect(main).toHaveLength(2);
 
 		// Verify sidebar.bottom (settings)
-		const bottom = pr.forSlot("sidebar.bottom");
+		const bottom = all.filter((e) => e.slot === "sidebar.bottom");
 		expect(bottom).toHaveLength(1);
 		expect(bottom[0].label).toBe("Settings");
 	});
@@ -284,18 +286,22 @@ describe("nb-core placements via PlacementRegistry", () => {
 		pr.register("nb", [
 			{ slot: "sidebar.apps", resourceUri: "ui://core/app-nav", priority: 20 },
 		]);
-		pr.register("tasks", [
-			{ slot: "sidebar.apps", resourceUri: "ui://tasks/nav", priority: 30 },
-			{ slot: "main", resourceUri: "ui://tasks/board", route: "tasks" },
-		]);
+		pr.register(
+			"tasks",
+			[
+				{ slot: "sidebar.apps", resourceUri: "ui://tasks/nav", priority: 30 },
+				{ slot: "main", resourceUri: "ui://tasks/board", route: "tasks" },
+			],
+			"ws_test",
+		);
 
-		const sidebarApps = pr.forSlot("sidebar.apps");
+		const wsEntries = pr.forWorkspace("ws_test");
+		const sidebarApps = wsEntries.filter((e) => e.slot === "sidebar.apps");
 		expect(sidebarApps).toHaveLength(2);
 		expect(sidebarApps[0].serverName).toBe("nb"); // priority 20
 		expect(sidebarApps[1].serverName).toBe("tasks"); // priority 30
 
-		const all = pr.all();
-		expect(all).toHaveLength(3);
+		expect(wsEntries).toHaveLength(3);
 	});
 });
 

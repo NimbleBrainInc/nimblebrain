@@ -47,7 +47,11 @@ async function uploadChatFile(content: string, filename: string, mimeType: strin
   const file = new File([bytes], filename, { type: mimeType });
   form.append("files", file);
 
-  const res = await fetch(`${baseUrl}/v1/chat/stream`, { method: "POST", body: form });
+  const res = await fetch(`${baseUrl}/v1/chat/stream`, {
+    method: "POST",
+    headers: { "X-Workspace-Id": TEST_WORKSPACE_ID },
+    body: form,
+  });
   if (res.status !== 200) {
     const errBody = await res.text();
     throw new Error(`chat/stream returned ${res.status}: ${errBody}`);

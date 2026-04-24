@@ -11,7 +11,6 @@ import { RunInProgressError } from "../runtime/errors.ts";
 import { type RequestContext, runWithRequestContext } from "../runtime/request-context.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import type { ChatRequest } from "../runtime/types.ts";
-import { filterPlacementsForWorkspace } from "../runtime/workspace-access.ts";
 import type { HealthMonitor } from "../tools/health-monitor.ts";
 import { InlineSource } from "../tools/inline-source.ts";
 import { validateToolInput } from "../tools/validate-input.ts";
@@ -634,25 +633,32 @@ export async function handleBootstrap(
     ws.members.some((m) => m.userId === identity.id),
   );
 
-  // 2. Resolve active workspace
-  const preferred = req.headers.get("X-Preferred-Workspace");
-  let activeWorkspace: string | undefined;
-  if (preferred && userWorkspaces.some((ws) => ws.id === preferred)) {
-    activeWorkspace = preferred;
-  } else if (userWorkspaces.length === 1) {
-    activeWorkspace = userWorkspaces[0]!.id;
-  } else if (userWorkspaces.length > 0) {
-    activeWorkspace = userWorkspaces[0]!.id;
+  // Invariant (Phase 1): authenticated users have at least one workspace.
+  // Provisioning runs at the identity boundary (provider.provisionUser →
+  // ensureUserWorkspace). If we hit zero here, something upstream is broken
+  // and we want to know loudly, not silently leak every workspace's apps.
+  if (userWorkspaces.length === 0) {
+    return apiError(
+      500,
+      "workspace_invariant_violation",
+      "Authenticated user has no workspace. Provisioning should have run at login.",
+    );
   }
 
-  // 3. Shell placements filtered by active workspace
-  let placements = runtime.getPlacementRegistry().all();
-  if (activeWorkspace) {
-    const workspace = allWorkspaces.find((ws) => ws.id === activeWorkspace);
-    if (workspace) {
-      placements = filterPlacementsForWorkspace(placements, workspace);
-    }
-  }
+  // 2. Resolve active workspace — permissive: honor X-Workspace-Id when it
+  // matches a membership, otherwise pick the first. Bootstrap is the one
+  // place the server defaults, because it's the only place a client can
+  // legitimately not yet know a wsId. On data endpoints the same header is
+  // authoritative (unknown wsId → 400); bootstrap is the discovery surface
+  // so the contract is weaker here by design.
+  const requested = req.headers.get("X-Workspace-Id");
+  const activeWorkspace: string =
+    requested && userWorkspaces.some((ws) => ws.id === requested)
+      ? requested
+      : userWorkspaces[0]!.id;
+
+  // 3. Shell placements for the active workspace (ambient + scoped, merged).
+  const placements = runtime.getPlacementRegistry().forWorkspace(activeWorkspace);
 
   // 4. Config
   const models = runtime.getModelSlots();
@@ -676,7 +682,7 @@ export async function handleBootstrap(
       memberCount: ws.members.length,
       bundleCount: ws.bundles.length,
     })),
-    activeWorkspace: activeWorkspace ?? null,
+    activeWorkspace,
     shell: {
       placements,
       chatEndpoint: "/v1/chat/stream",
@@ -694,19 +700,15 @@ export async function handleBootstrap(
   });
 }
 
-/** Handle GET /v1/shell — placement registry for web client bootstrap. */
-export async function handleShell(runtime: Runtime, workspaceId?: string): Promise<Response> {
-  let placements = runtime.getPlacementRegistry().all();
-
-  if (workspaceId) {
-    const workspace = await runtime.getWorkspaceStore().get(workspaceId);
-    if (workspace) {
-      placements = filterPlacementsForWorkspace(placements, workspace);
-    }
-  }
-
+/**
+ * Handle GET /v1/shell — placement registry for web client bootstrap.
+ *
+ * workspaceId comes from requireWorkspace middleware; by the time this
+ * handler runs, it's resolved and membership-checked.
+ */
+export async function handleShell(runtime: Runtime, workspaceId: string): Promise<Response> {
   return json({
-    placements,
+    placements: runtime.getPlacementRegistry().forWorkspace(workspaceId),
     chatEndpoint: "/v1/chat/stream",
     eventsEndpoint: "/v1/events",
   });

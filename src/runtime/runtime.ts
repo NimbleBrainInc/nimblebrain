@@ -256,7 +256,7 @@ export class Runtime {
     const instanceConfig = await loadInstanceConfig(workDir);
     const userStore = new UserStore(workDir);
     const workspaceStore = new WorkspaceStore(workDir);
-    const identityProvider = createIdentityProvider(instanceConfig, userStore);
+    const identityProvider = createIdentityProvider(instanceConfig, userStore, workspaceStore);
 
     const { events: baseEvents, eventStore } = buildEventSink(config);
 

@@ -1,3 +1,4 @@
+import type { WorkspaceStore } from "../workspace/workspace-store.ts";
 import type { InstanceConfig } from "./instance.ts";
 import { OidcIdentityProvider } from "./providers/oidc.ts";
 import { WorkosIdentityProvider } from "./providers/workos.ts";
@@ -107,6 +108,7 @@ export interface IdentityProvider {
 export function createIdentityProvider(
   config: InstanceConfig | null,
   userStore: UserStore,
+  workspaceStore: WorkspaceStore,
 ): IdentityProvider | null {
   if (config === null) return null;
 
@@ -114,9 +116,9 @@ export function createIdentityProvider(
 
   switch (adapter) {
     case "oidc":
-      return new OidcIdentityProvider(config.auth, userStore);
+      return new OidcIdentityProvider(config.auth, userStore, workspaceStore);
     case "workos":
-      return new WorkosIdentityProvider(config.auth, userStore);
+      return new WorkosIdentityProvider(config.auth, userStore, workspaceStore);
     default:
       throw new Error(`Unknown identity provider: "${adapter as string}"`);
   }

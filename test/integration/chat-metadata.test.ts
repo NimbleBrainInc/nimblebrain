@@ -10,11 +10,15 @@
  */
 
 import { describe, expect, test, afterAll, beforeAll } from "bun:test";
+import { mkdirSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { createTestAuthAdapter } from "../helpers/test-auth-adapter.ts";
 import { startServer } from "../../src/api/server.ts";
 import type { ServerHandle } from "../../src/api/server.ts";
+import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
 
 // ---------------------------------------------------------------------------
 // Setup: Runtime + HTTP server with echo model
@@ -24,13 +28,18 @@ const API_KEY = "chat-metadata-test-key-1234";
 let runtime: Runtime;
 let handle: ServerHandle;
 let baseUrl: string;
+const workDir = join(tmpdir(), `nimblebrain-chat-metadata-${Date.now()}`);
 
 beforeAll(async () => {
+	mkdirSync(workDir, { recursive: true });
 	runtime = await Runtime.start({
 		model: { provider: "custom", adapter: createEchoModel() },
 		noDefaultBundles: true,
 		logging: { disabled: true },
+		workDir,
 	});
+
+	await provisionTestWorkspace(runtime);
 
 	handle = startServer({
 		runtime,
@@ -43,12 +52,14 @@ beforeAll(async () => {
 afterAll(async () => {
 	handle?.stop(true);
 	await runtime?.shutdown();
+	rmSync(workDir, { recursive: true, force: true });
 });
 
 function authHeaders(): Record<string, string> {
 	return {
 		"Content-Type": "application/json",
 		Authorization: `Bearer ${API_KEY}`,
+		"X-Workspace-Id": TEST_WORKSPACE_ID,
 	};
 }
 
