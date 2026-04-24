@@ -22,6 +22,10 @@ import { apiError } from "./types.ts";
 
 const pkgPath = resolve(import.meta.dirname ?? __dirname, "../../package.json");
 const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as { version: string };
+// Release builds inject the git tag via NB_VERSION (see Dockerfile). Local
+// dev / non-release builds fall back to package.json, which is pinned to a
+// dev marker (e.g. "0.4.0-dev") and intentionally not bumped per release.
+const VERSION = process.env.NB_VERSION || pkg.version;
 
 /**
  * Interval between SSE comment heartbeats on /v1/chat/stream. Chosen to sit
@@ -271,7 +275,7 @@ export function handleHealth(healthMonitor: HealthMonitor | null): Response {
   const bundleHealth = healthMonitor?.getStatus() ?? [];
   return json({
     status: "ok",
-    version: pkg.version,
+    version: VERSION,
     buildSha: process.env.NB_BUILD_SHA || null,
     bundles: bundleHealth.map((b) => ({ name: b.name, state: b.state })),
   });
@@ -716,7 +720,7 @@ export async function handleBootstrap(
       maxInputTokens,
       maxOutputTokens,
     },
-    version: pkg.version,
+    version: VERSION,
     buildSha: process.env.NB_BUILD_SHA || null,
   });
 }
