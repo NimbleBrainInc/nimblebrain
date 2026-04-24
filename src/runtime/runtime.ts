@@ -68,7 +68,7 @@ import type { ChatRequest, ChatResult, ModelSlots, RuntimeConfig, TurnUsage } fr
 import { createWorkspaceRegistry, startWorkspaceBundles } from "./workspace-runtime.ts";
 
 const DEFAULT_WORK_DIR = join(homedir(), ".nimblebrain");
-const DEFAULT_MODEL = "claude-sonnet-4-5-20250929";
+const DEFAULT_MODEL = "claude-sonnet-4-6";
 
 import {
   DEFAULT_MAX_INPUT_TOKENS,
