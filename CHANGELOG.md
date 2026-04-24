@@ -2,37 +2,42 @@
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-04-24
+
+### Highlights
+
+- **MCP OAuth for external clients** — Claude Code, Claude Desktop, Cursor, and any RFC 9728/8414-compliant client can connect to `/mcp` via WorkOS AuthKit. Works behind TLS-terminating proxies ([docs](https://docs.nimblebrain.ai/guide/mcp-connect/)).
+- **Workspace-scoped credentials** — per-bundle files (`0o600`), 3-tier resolver (workspace store → `mcp_config.env` alias → manifest default).
+- **OAuth client for remote MCP sources** — NimbleBrain can now consume third-party MCP servers that require user identity.
+- **Tool-call UX** — parallel calls collapse into a single accordion, engine errors render inline, `resource_link` blocks render PDFs and binaries, 20s SSE heartbeat keeps long streams alive.
+
 ### Breaking
 
-- **`GET /v1/apps/:name/resources/:path` now returns a JSON envelope instead of raw HTML/binary.** The response body is an MCP `ReadResourceResult` shape — `{ contents: [{ uri, mimeType?, text?, blob?, _meta? }] }` with `Content-Type: application/json`; binary payloads come back as base64-encoded `blob` strings. Matches the shape of `POST /v1/resources/read`. Previously returned `Content-Type: text/html` with a string body or `application/octet-stream` with a binary body. In-process web client updated; the (dead) `triggerResourceDownload` auto-download path that assumed binary response has been removed in the same change — user-visible PDF downloads continue to work via `ResourceLinkView` which uses the POST path and was unaffected.
-- **Rename `files__write` → `files__create`.** The tool always generates a new id per call and never updates, so `create` matches both its semantics and how the model naturally calls it. External clients hand-coded against `files__write` must switch. In-process UI clients updated.
-- **`nb__search.query` is now optional.** The schema previously declared `required: ["query"]` but the handler already defaulted to an empty string. Additive/relaxing — existing callers unaffected; new callers may omit `query` to list everything in scope.
-- **Removed engine-level MCP tasks layer from public exports.** The following names are no longer exported from `src/index.ts`: `ActiveTaskTracker`, `pollTask`, `getImmediateResponse`, `isCreateTaskResult`, `isTerminalStatus`, and types `McpTask`, `McpCreateTaskResult`, `PollTaskOptions`, `TaskClientPort`, `TaskClientResolver`. The task lifecycle is now owned end-to-end by `McpSource.callToolAsTask` via the MCP SDK's experimental task streaming API — external consumers that imported these names should migrate to invoking tasks via `ToolRouter.execute(call, signal)` and observing the `tool.progress` event stream.
-- **`nb config set|get|clear` require `--workspace`/`-w <wsId>`.** Credentials are workspace-scoped, stored at `{workDir}/workspaces/{wsId}/credentials/{bundle-slug}.json`. Values previously written to `~/.mpak/config.json` are no longer read — re-set them with `-w <wsId>`.
+- `files__write` → `files__create`. Hand-coded external callers must update.
+- `GET /v1/apps/:name/resources/:path` now returns a JSON envelope matching `POST /v1/resources/read`. Binary payloads come back as base64 in `blob`.
+- `nb config set|get|clear` require `--workspace`/`-w <wsId>`.
+- Engine-level MCP task exports removed (`ActiveTaskTracker`, `pollTask`, `isCreateTaskResult`, `McpTask`, et al). Drive tasks via `ToolRouter.execute(call, signal)` + `tool.progress` events.
 
 ### Added
 
-- **Workspace-scoped credentials with host env-alias resolution.** Per-bundle credentials live in per-workspace files (mode `0o600`). Resolution order per field: workspace store → bundle's `mcp_config.env` alias → manifest default. A bundle that maps `"ANTHROPIC_API_KEY": "${user_config.anthropic_api_key}"` is now satisfied by a host `export ANTHROPIC_API_KEY=...`, no renaming. Missing-credential errors name the exact `nb config set` and `export` lines the bundle accepts.
+- `POST /v1/resources/read`.
+- Docker images on GHCR (`ghcr.io/nimblebraininc/nimblebrain{,-web}`) alongside ECR.
+- Claude Opus 4.7 in the model catalog.
 
 ### Fixed
 
-- **MCP OAuth discovery works behind TLS-terminating proxies.** `/.well-known/oauth-protected-resource` and the `WWW-Authenticate: resource_metadata=...` URL returned from `/mcp` now honor `X-Forwarded-Proto`, so `resource` is advertised as `https://` instead of the pod's internal `http://`. Modern MCP clients validate `resource` against the URL they connected to and previously rejected the response with *"Protected resource ... does not match expected ..."*. Only `X-Forwarded-Proto` is trusted; `X-Forwarded-Host` is deliberately ignored (the Host header from `req.url.host` is used instead). See [MCP OAuth behind a reverse proxy](https://docs.nimblebrain.ai/deploy/security/#mcp-oauth-behind-a-reverse-proxy) for proxy-specific guidance.
-- **Bundled `nimblebrain-web` Caddy container now preserves `X-Forwarded-Proto` from upstream load balancers.** Caddy previously rewrote the header to its own listener scheme (`http` on `:8080`), clobbering `https` set by an ALB/nginx upstream and defeating the fix above. Added a global `servers { trusted_proxies static private_ranges }` block so forwarded headers from RFC 1918 sources (the ALB's pod-targeted IPs, in practice) are honored instead of overwritten.
-- **Chat-uploaded files are visible to `files__*` tools and the Files sidebar.** The chat multipart ingest path wrote uploads to a tenant-global `<workDir>/files/` directory while `files__*` tools only read from the workspace-scoped `<workDir>/workspaces/<wsId>/files/`. Any file uploaded via chat was invisible to `files__list` / `files__read` / `GET /v1/files`. Fixed by unifying the two divergent stores under a single workspace-scoped `FileStore` (`src/files/store.ts`). Chat uploads now carry `source="chat"`; tool-created files carry `source="agent"`. Same ID scheme (`fl_<24 hex>`) for both; `FILE_ID_RE` still accepts the legacy `fl_<base36>_<8 hex>` form so pre-existing file links keep working. **Operator action required after upgrade:** files sitting in `<workDir>/files/` from the pre-fix path are not automatically moved. Run `bun run scripts/migrate-tenant-files.ts [workDir]` to copy them into the workspace that owns their conversation. Non-destructive and idempotent — source is preserved until a future cleanup step.
-- **Context-doc uploads >1 MB no longer 413.** The HTTP body-size cap was a single global `bodyLimit(1_048_576)` — orders of magnitude below the `files.maxTotalSize` and `files.maxFileSize` the ingest pipeline already enforces — so any file >1 MB was rejected at the middleware before reaching ingest. Body-limit is now per-route: JSON endpoints stay at 1 MB, `/v1/chat/stream` multipart uploads defer to `runtime.getFilesConfig().maxTotalSize` (default 100 MB, per-file 25 MB still enforced authoritatively by `ingestFiles()`). 413 responses now include structured `{ limit, received, contentType }` so the web client shows "Upload is N MB — limit is M MB" instead of a generic toast.
-- **`features`, `maxHistoryMessages`, `maxToolResultSize`, and `files` are now loaded from `nimblebrain.json`.** These fields were accepted by the JSON schema and declared on `RuntimeConfig`, but `cli/config.ts` silently dropped them — so setting `features.mcpServer: false` or `maxHistoryMessages: 100` in a config file had no effect unless passed programmatically to `Runtime.start()`.
-- Config schema now lists `userManagement` and `workspaceManagement` under `features` (previously only in code; setting them produced a spurious "unknown key" warning).
-- `InlineSource.execute()` now validates input against the tool's declared `inputSchema` before dispatching. Closes the bug class where malformed tool calls via `/mcp` leaked Node-internal errors (`fs.readFile(undefined)`, `Buffer.from(undefined)`) as tool results.
-- **Local-path bundles now substitute `${user_config.*}` placeholders in `mcp_config.env`.** Previously passed through as literal strings to the subprocess, visible via `ps ewww <pid>`. Local bundles now resolve each field against the reverse-lookup env alias before spawn. Workspace-credential-store resolution for local bundles remains a follow-up.
-
-### Changed
-
-- Bump `@nimblebrain/mpak-sdk` from `0.2.1` → `0.5.0`. Brings `prepareServer({ userConfig })`, `mcp_config.env` reverse-lookup resolver, and `envAliases` on `MpakConfigError.missingFields`.
-- **Sort equal-priority sidebar placements alphabetically by label.** Previously, placements with the same `priority` rendered in registration order, so three apps at the default priority (100) appeared in whatever order their bundles happened to start. The shell now tie-breaks by display label (case-insensitive, falling back to `route`), giving a deterministic, user-predictable order.
+- **Chat uploads are now visible to `files__*` tools.** Operator action: run `bun run scripts/migrate-tenant-files.ts [workDir]` to migrate pre-existing uploads.
+- Context-doc uploads >1 MB no longer 413.
+- MCP OAuth resource URL honors `X-Forwarded-Proto` behind ALB/nginx/Caddy ([docs](https://docs.nimblebrain.ai/deploy/security/#mcp-oauth-behind-a-reverse-proxy)).
+- Concurrent chat runs on the same conversation return `409` instead of racing.
+- Workspace bundles start concurrently at boot (faster startup on busy instances).
+- `InlineSource.execute()` validates input against `inputSchema` — malformed `/mcp` calls no longer leak Node internals.
+- Many smaller UI and streaming-reliability fixes.
 
 ### Removed
 
-- Legacy standalone files MCP server at `src/bundles/files/` — dead code superseded by the inline source months ago.
+- `NB_CONFIG_*` env-naming convention — replaced by SDK-declared env aliases.
+- Legacy standalone files MCP server (superseded by the inline source).
 
 ## [0.3.0] - 2026-04-16
 

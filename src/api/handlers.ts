@@ -23,8 +23,9 @@ import { apiError } from "./types.ts";
 const pkgPath = resolve(import.meta.dirname ?? __dirname, "../../package.json");
 const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as { version: string };
 // Release builds inject the git tag via NB_VERSION (see Dockerfile). Local
-// dev / non-release builds fall back to package.json, which is pinned to a
-// dev marker (e.g. "0.4.0-dev") and intentionally not bumped per release.
+// dev / non-release builds fall back to package.json, which is pinned to
+// the sentinel "0.0.0-dev" and intentionally never bumped — the git tag
+// is the sole source of truth for released versions (see RELEASING.md §1).
 const VERSION = process.env.NB_VERSION || pkg.version;
 
 /**

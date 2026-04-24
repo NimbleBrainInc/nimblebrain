@@ -38,6 +38,7 @@ cd web && bun run build    # Web production build → web/dist/
 - **Tool results:** Return typed data in `structuredContent`, use `content` only for human-readable summary.
 - **Errors:** Tool errors are caught per-call and returned as `isError: true` results. Engine errors surface via `run.error` event.
 - **Documentation:** User- and operator-facing docs live at [docs.nimblebrain.ai](https://docs.nimblebrain.ai). Do NOT add new docs to this repo. `README.md`, `CHANGELOG.md`, `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`, and `AGENTS.md`/`CLAUDE.md` are the standard OSS files that stay here; anything else that describes how to configure, deploy, or use NimbleBrain belongs on the docs site. Cross-link from this `README.md` into the docs site instead of duplicating content.
+- **CHANGELOG entries must be terse and scannable.** Target ~250–350 words per release (not per entry). Structure: short `### Highlights` with 3–5 one-sentence bullets, then `### Breaking` / `### Added` / `### Changed` / `### Fixed` / `### Removed`. One line per bullet; link to docs or the PR for depth instead of explaining implementation inline. Include migration-required operator actions (e.g. "run `scripts/migrate-tenant-files.ts`") in Fixed/Breaking. Cut internal refactors, release-pipeline polish, CI tweaks, and per-PR credit noise — they belong in `git log`, not the CHANGELOG. If a bullet needs more than one sentence to explain *what* changed and *why a reader cares*, either (a) link out or (b) rethink whether the reader needs this entry at all.
 
 ## Testing
 
