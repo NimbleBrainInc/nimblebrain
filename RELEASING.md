@@ -21,6 +21,8 @@ v0.4.0-beta.1 → v0.4.0-beta.2 → v0.4.0-rc.1 → v0.4.0
 
 If a release is botched, bump to the next number rather than re-tagging — §6.
 
+**`package.json` is a sentinel — do not bump.** It is pinned to `"version": "0.0.0-dev"` and stays there forever. Released artifacts get the real version injected at build time from the git tag (Dockerfile `VERSION` build arg → `NB_VERSION` env). Local dev builds without `NB_VERSION` fall through to `pkg.version` and self-report `0.0.0-dev`, which is intentionally clearly-not-a-release. Bumping this field per release would re-introduce the drift bug PR #73 fixed.
+
 ## 2. Prerequisites
 
 Before cutting a release, verify:
