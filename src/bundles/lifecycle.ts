@@ -217,12 +217,19 @@ export class BundleLifecycleManager {
     ui?: BundleUiMeta | null,
     trustScore?: number | null,
   ): Promise<BundleInstance> {
+    // Thread wsId + workDir through to startBundleSource so the URL-bundle
+    // branch can key OAuth credentials by (wsId, serverName) instead of
+    // falling back to `ws_default`. Without this, a URL bundle installed
+    // via `installRemote` from any workspace would share OAuth tokens across
+    // workspaces under the default id — silent cross-tenant credential
+    // leakage.
+    const nbWorkDir = process.env.NB_WORK_DIR ?? join(homedir(), ".nimblebrain");
     const { sourceName, meta } = await startBundleSource(
       { url, serverName, transport: transportConfig, ui: ui ?? null },
       registry,
       this.eventSink,
       this.configPath ? dirname(this.configPath) : undefined,
-      { allowInsecureRemotes: this.allowInsecureRemotes },
+      { allowInsecureRemotes: this.allowInsecureRemotes, wsId, workDir: nbWorkDir },
     );
 
     const instance: BundleInstance = {
