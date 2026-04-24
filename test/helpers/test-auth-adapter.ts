@@ -27,7 +27,7 @@ export const TEST_IDENTITY: UserIdentity = {
 };
 
 export class TestAuthAdapter implements IdentityProvider {
-  private initialized = false;
+  private initPromise?: Promise<void>;
 
   readonly capabilities: ProviderCapabilities = {
     authCodeFlow: false,
@@ -73,8 +73,19 @@ export class TestAuthAdapter implements IdentityProvider {
     return false;
   }
 
-  private async ensureDefaults(): Promise<void> {
-    if (this.initialized || !this.userStore || !this.workspaceStore) return;
+  private ensureDefaults(): Promise<void> {
+    // Single-flight: concurrent requests share one in-flight promise so we
+    // don't double-provision the user/workspace. Without this, parallel
+    // authenticated requests all race past the init check and multiple
+    // addMember() calls collide on MemberConflictError.
+    if (!this.initPromise) {
+      this.initPromise = this.doEnsureDefaults();
+    }
+    return this.initPromise;
+  }
+
+  private async doEnsureDefaults(): Promise<void> {
+    if (!this.userStore || !this.workspaceStore) return;
 
     const existingUser = await this.userStore.get(TEST_IDENTITY.id);
     if (!existingUser) {
@@ -108,8 +119,6 @@ export class TestAuthAdapter implements IdentityProvider {
         await this.workspaceStore.addMember(ws.id, TEST_IDENTITY.id, "admin");
       }
     }
-
-    this.initialized = true;
   }
 }
 
