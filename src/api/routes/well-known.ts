@@ -77,8 +77,24 @@ function getAuthkitDomain(ctx: AppContext): string | null {
   return null;
 }
 
-/** Derive the resource origin from the incoming request URL. */
+/**
+ * Derive the resource origin from the incoming request.
+ *
+ * Honors `X-Forwarded-Proto` so the advertised resource matches the
+ * public scheme used by the client, not the internal HTTP connection
+ * seen by the pod behind a TLS-terminating proxy (ALB, Caddy, etc.).
+ * Without this, `resource` is `http://` and OAuth resource validation
+ * fails in clients that connect via `https://`.
+ *
+ * Host comes from `req.url.host` (the Host header), which ALB/Caddy
+ * forward verbatim from the client. We deliberately do NOT honor
+ * `X-Forwarded-Host`: AWS ALB rewrites `X-Forwarded-Proto` based on
+ * the actual client connection, but nothing similarly sanitizes
+ * `X-Forwarded-Host` in our proxy chain, and we don't need it.
+ */
 function deriveResourceOrigin(req: Request): string {
   const url = new URL(req.url);
-  return `${url.protocol}//${url.host}`;
+  const proto =
+    req.headers.get("x-forwarded-proto")?.split(",")[0]?.trim() ?? url.protocol.replace(/:$/, "");
+  return `${proto}://${url.host}`;
 }

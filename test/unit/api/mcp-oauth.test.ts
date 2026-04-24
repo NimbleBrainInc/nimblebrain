@@ -99,6 +99,27 @@ describe("MCP OAuth WWW-Authenticate header", () => {
     );
   });
 
+  it("honors X-Forwarded-Proto when behind a TLS-terminating proxy", async () => {
+    const app = createApp({ authkitDomain: "myapp" });
+    // Simulates ALB → pod: pod sees HTTP, but ALB sets X-Forwarded-Proto: https
+    // The Host header stays as the public host (ALB forwards it verbatim).
+    const res = await app.request("http://hq.example.com/mcp", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Forwarded-Proto": "https",
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", method: "initialize", id: 1 }),
+    });
+
+    expect(res.status).toBe(401);
+
+    const wwwAuth = res.headers.get("WWW-Authenticate");
+    expect(wwwAuth).toContain(
+      'resource_metadata="https://hq.example.com/.well-known/oauth-protected-resource"',
+    );
+  });
+
   it("does not include WWW-Authenticate when AuthKit is not configured", async () => {
     const app = createApp({});
     const res = await app.request("/mcp", {
