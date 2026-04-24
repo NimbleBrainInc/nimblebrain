@@ -10,6 +10,14 @@ ENV VITE_TURNSTILE_SITE_KEY=$VITE_TURNSTILE_SITE_KEY
 RUN npm run build
 
 FROM caddy:2-alpine
+
+LABEL org.opencontainers.image.title="NimbleBrain Web"
+LABEL org.opencontainers.image.description="Web UI for the NimbleBrain self-hosted platform (Caddy + React SPA)"
+LABEL org.opencontainers.image.source="https://github.com/NimbleBrainInc/nimblebrain"
+LABEL org.opencontainers.image.url="https://nimblebrain.ai"
+LABEL org.opencontainers.image.vendor="NimbleBrain"
+LABEL org.opencontainers.image.licenses="Apache-2.0"
+
 COPY --from=build /app/dist /srv
 COPY Caddyfile /etc/caddy/Caddyfile
 

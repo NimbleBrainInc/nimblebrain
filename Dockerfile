@@ -1,5 +1,12 @@
 FROM python:3.13-slim AS base
 
+LABEL org.opencontainers.image.title="NimbleBrain"
+LABEL org.opencontainers.image.description="Self-hosted platform for MCP Apps and agent automations"
+LABEL org.opencontainers.image.source="https://github.com/NimbleBrainInc/nimblebrain"
+LABEL org.opencontainers.image.url="https://nimblebrain.ai"
+LABEL org.opencontainers.image.vendor="NimbleBrain"
+LABEL org.opencontainers.image.licenses="Apache-2.0"
+
 # Bun runtime
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl unzip nodejs npm \
