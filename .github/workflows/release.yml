@@ -64,8 +64,8 @@ jobs:
 
       # ECR tags deliberately exclude `:latest` — repositories have immutable
       # tags enabled, so `latest` can't be reused across releases. Deploys pin
-      # to the version tag or short sha. GHCR is public and follows the
-      # standard convention of moving `:latest` forward on each release.
+      # to the version tag or short sha. GHCR gets `:latest` too, but only
+      # for stable releases (see the gated steps below).
       - name: Build and push platform image
         run: |
           docker build --platform linux/amd64 \
@@ -74,13 +74,11 @@ jobs:
             -t ${{ steps.ecr.outputs.registry }}/nimblebrain/agent-platform:${{ steps.tags.outputs.sha }} \
             -t ghcr.io/nimblebraininc/nimblebrain:${{ steps.tags.outputs.version }} \
             -t ghcr.io/nimblebraininc/nimblebrain:${{ steps.tags.outputs.sha }} \
-            -t ghcr.io/nimblebraininc/nimblebrain:latest \
             -f Dockerfile .
           docker push ${{ steps.ecr.outputs.registry }}/nimblebrain/agent-platform:${{ steps.tags.outputs.version }}
           docker push ${{ steps.ecr.outputs.registry }}/nimblebrain/agent-platform:${{ steps.tags.outputs.sha }}
           docker push ghcr.io/nimblebraininc/nimblebrain:${{ steps.tags.outputs.version }}
           docker push ghcr.io/nimblebraininc/nimblebrain:${{ steps.tags.outputs.sha }}
-          docker push ghcr.io/nimblebraininc/nimblebrain:latest
 
       - name: Build and push web image
         run: |
@@ -89,12 +87,27 @@ jobs:
             -t ${{ steps.ecr.outputs.registry }}/nimblebrain/agent-web:${{ steps.tags.outputs.sha }} \
             -t ghcr.io/nimblebraininc/nimblebrain-web:${{ steps.tags.outputs.version }} \
             -t ghcr.io/nimblebraininc/nimblebrain-web:${{ steps.tags.outputs.sha }} \
-            -t ghcr.io/nimblebraininc/nimblebrain-web:latest \
             -f web/Dockerfile web/
           docker push ${{ steps.ecr.outputs.registry }}/nimblebrain/agent-web:${{ steps.tags.outputs.version }}
           docker push ${{ steps.ecr.outputs.registry }}/nimblebrain/agent-web:${{ steps.tags.outputs.sha }}
           docker push ghcr.io/nimblebraininc/nimblebrain-web:${{ steps.tags.outputs.version }}
           docker push ghcr.io/nimblebraininc/nimblebrain-web:${{ steps.tags.outputs.sha }}
+
+      # Stable-release-only. SemVer pre-release tags always contain a hyphen
+      # (v0.4.0-beta.1, v1.0.0-rc.1); GA tags don't. Gating on the hyphen
+      # keeps `:latest` pointing at the most recent GA release.
+      - name: Promote platform image to :latest (stable releases only)
+        if: ${{ !contains(github.ref_name, '-') }}
+        run: |
+          docker tag ghcr.io/nimblebraininc/nimblebrain:${{ steps.tags.outputs.version }} \
+                     ghcr.io/nimblebraininc/nimblebrain:latest
+          docker push ghcr.io/nimblebraininc/nimblebrain:latest
+
+      - name: Promote web image to :latest (stable releases only)
+        if: ${{ !contains(github.ref_name, '-') }}
+        run: |
+          docker tag ghcr.io/nimblebraininc/nimblebrain-web:${{ steps.tags.outputs.version }} \
+                     ghcr.io/nimblebraininc/nimblebrain-web:latest
           docker push ghcr.io/nimblebraininc/nimblebrain-web:latest
 
   github-release:
@@ -109,3 +122,4 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
