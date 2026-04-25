@@ -2,8 +2,8 @@ import { useEffect, useRef } from "react";
 import { getResources, uiPathFromUri } from "../api/client";
 import type { BridgeHandle } from "../bridge/bridge";
 import { createBridge } from "../bridge/bridge";
+import { buildHostContext, buildHostExtensions } from "../bridge/host-extensions";
 import { createAppIframe } from "../bridge/iframe";
-import { getThemeTokens } from "../bridge/theme";
 import type { UiChatContext } from "../bridge/types";
 import { useTheme } from "../context/ThemeContext";
 import { useWorkspaceContext } from "../context/WorkspaceContext";
@@ -137,32 +137,4 @@ export function SlotRenderer({
   if (filtered.length === 0) return null;
 
   return <div ref={containerRef} className={`w-full h-full ${className ?? ""}`} />;
-}
-
-// ---------------------------------------------------------------------------
-// Host-context builders
-//
-// `buildHostExtensions` populates non-spec keys for the handshake response
-// (theme/styles are bridged separately). `buildHostContext` builds the full
-// payload for `host-context-changed` notifications. Keep them in lockstep —
-// any new extension goes in both, since iframes get exactly one of these
-// shapes per bridge lifecycle (handshake) plus N updates (notifications).
-// ---------------------------------------------------------------------------
-
-function buildHostExtensions(
-  workspace: { id: string; name: string } | null,
-): Record<string, unknown> {
-  return workspace ? { workspace: { id: workspace.id, name: workspace.name } } : {};
-}
-
-function buildHostContext(
-  mode: "light" | "dark",
-  workspace: { id: string; name: string } | null,
-): Record<string, unknown> {
-  const tokens = getThemeTokens(mode);
-  return {
-    ...buildHostExtensions(workspace),
-    theme: mode,
-    styles: { variables: tokens },
-  };
 }

@@ -538,3 +538,131 @@ describe("Bridge — unknown message types", () => {
     handle.destroy();
   });
 });
+
+// ---------------------------------------------------------------------------
+// ui/initialize hostContext extensions
+// ---------------------------------------------------------------------------
+
+describe("Bridge — ui/initialize hostContext extensions", () => {
+  /** Find the response posted in reply to a `ui/initialize` request. */
+  function findInitResponse(posted: unknown[]) {
+    return posted.find(
+      (m) =>
+        m &&
+        typeof m === "object" &&
+        (m as Record<string, unknown>).id === "init-1" &&
+        typeof (m as Record<string, unknown>).result === "object",
+    ) as { result: { hostContext: Record<string, unknown> } } | undefined;
+  }
+
+  it("merges getHostExtensions() into hostContext alongside spec fields", () => {
+    const { iframe, posted } = makeFakeIframe();
+    const handle = createBridge(iframe, "test-app", {
+      getHostExtensions: () => ({ workspace: { id: "ws_a", name: "Alpha" } }),
+    });
+
+    simulatePostMessage(iframe, {
+      jsonrpc: "2.0",
+      id: "init-1",
+      method: "ui/initialize",
+      params: { protocolVersion: "2026-01-26", appInfo: { name: "x", version: "1" } },
+    });
+
+    const response = findInitResponse(posted);
+    expect(response?.result.hostContext).toMatchObject({
+      workspace: { id: "ws_a", name: "Alpha" },
+      theme: expect.anything(),
+      styles: expect.anything(),
+    });
+    handle.destroy();
+  });
+
+  it("invokes getHostExtensions() exactly once per ui/initialize", () => {
+    const { iframe } = makeFakeIframe();
+    let calls = 0;
+    const handle = createBridge(iframe, "test-app", {
+      getHostExtensions: () => {
+        calls++;
+        return { workspace: { id: "ws_a", name: "Alpha" } };
+      },
+    });
+
+    simulatePostMessage(iframe, {
+      jsonrpc: "2.0",
+      id: "init-1",
+      method: "ui/initialize",
+      params: { protocolVersion: "2026-01-26", appInfo: { name: "x", version: "1" } },
+    });
+
+    expect(calls).toBe(1);
+    handle.destroy();
+  });
+
+  it("spec fields (theme, styles) win over same-named extension keys", () => {
+    const { iframe, posted } = makeFakeIframe();
+    const handle = createBridge(iframe, "test-app", {
+      getHostExtensions: () => ({
+        // Adversarial caller tries to override a spec field — bridge must ignore.
+        theme: "WRONG",
+        styles: { variables: { "--evil": "true" } },
+        workspace: { id: "ws_a", name: "Alpha" },
+      }),
+    });
+
+    simulatePostMessage(iframe, {
+      jsonrpc: "2.0",
+      id: "init-1",
+      method: "ui/initialize",
+      params: { protocolVersion: "2026-01-26", appInfo: { name: "x", version: "1" } },
+    });
+
+    const response = findInitResponse(posted);
+    const ctx = response?.result.hostContext as Record<string, unknown>;
+    expect(ctx.theme).not.toBe("WRONG");
+    expect((ctx.styles as Record<string, unknown>).variables).not.toMatchObject({ "--evil": "true" });
+    expect(ctx.workspace).toEqual({ id: "ws_a", name: "Alpha" });
+    handle.destroy();
+  });
+
+  it("missing getHostExtensions yields a hostContext with no extensions", () => {
+    const { iframe, posted } = makeFakeIframe();
+    const handle = createBridge(iframe, "test-app");
+
+    simulatePostMessage(iframe, {
+      jsonrpc: "2.0",
+      id: "init-1",
+      method: "ui/initialize",
+      params: { protocolVersion: "2026-01-26", appInfo: { name: "x", version: "1" } },
+    });
+
+    const response = findInitResponse(posted);
+    const ctx = response?.result.hostContext as Record<string, unknown>;
+    expect(ctx).toMatchObject({ theme: expect.anything(), styles: expect.anything() });
+    expect(ctx.workspace).toBeUndefined();
+    handle.destroy();
+  });
+
+  it("a throwing getHostExtensions does not drop the ui/initialize response", () => {
+    const { iframe, posted } = makeFakeIframe();
+    const handle = createBridge(iframe, "test-app", {
+      getHostExtensions: () => {
+        throw new Error("boom");
+      },
+    });
+
+    simulatePostMessage(iframe, {
+      jsonrpc: "2.0",
+      id: "init-1",
+      method: "ui/initialize",
+      params: { protocolVersion: "2026-01-26", appInfo: { name: "x", version: "1" } },
+    });
+
+    const response = findInitResponse(posted);
+    expect(response).toBeDefined();
+    const ctx = response?.result.hostContext as Record<string, unknown>;
+    // Spec fields still present; extensions silently dropped on throw.
+    expect(ctx).toMatchObject({ theme: expect.anything(), styles: expect.anything() });
+    expect(ctx.workspace).toBeUndefined();
+    handle.destroy();
+  });
+});

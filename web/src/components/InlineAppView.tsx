@@ -3,7 +3,9 @@ import { useEffect, useRef, useState } from "react";
 import { getResources, uiPathFromUri } from "../api/client";
 import type { BridgeHandle } from "../bridge/bridge";
 import { createBridge } from "../bridge/bridge";
+import { buildHostExtensions } from "../bridge/host-extensions";
 import { createAppIframe } from "../bridge/iframe";
+import { useWorkspaceContext } from "../context/WorkspaceContext";
 
 import type { ToolResultForUI } from "../hooks/useChat";
 
@@ -31,6 +33,14 @@ export function InlineAppView({ appName, resourceUri, toolResult }: InlineAppVie
   // re-renders with a new object reference (e.g., during streaming text deltas).
   const toolResultRef = useRef(toolResult);
   toolResultRef.current = toolResult;
+  // Mirror SlotRenderer: publish workspace into hostContext so apps mounted
+  // here see the same `useHostContext().workspace` value as in placements.
+  // Inline previews don't push host-context-changed (they're scoped to a
+  // single tool result, no workspace switching mid-life), so the handshake
+  // is the only delivery point.
+  const { activeWorkspace } = useWorkspaceContext();
+  const workspaceRef = useRef(activeWorkspace);
+  workspaceRef.current = activeWorkspace;
 
   const [height, setHeight] = useState(DEFAULT_HEIGHT);
   const [loading, setLoading] = useState(true);
@@ -88,6 +98,7 @@ export function InlineAppView({ appName, resourceUri, toolResult }: InlineAppVie
               bridge.sendToolResult(tr.result);
             }
           },
+          getHostExtensions: () => buildHostExtensions(workspaceRef.current),
         });
         bridgeRef.current = bridge;
 
