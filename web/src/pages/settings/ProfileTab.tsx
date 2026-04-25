@@ -45,6 +45,7 @@ export function ProfileTab() {
   const session = useSession();
   const user = session?.user;
   const { applyPreference } = useTheme();
+  const { activeWorkspace } = useWorkspaceContext();
 
   const [displayName, setDisplayName] = useState(user?.displayName ?? "");
   const [timezone, setTimezone] = useState("");
@@ -97,8 +98,6 @@ export function ProfileTab() {
   if (loading) {
     return <div className="text-muted-foreground text-sm">Loading profile...</div>;
   }
-
-  const { activeWorkspace } = useWorkspaceContext();
 
   return (
     <div className="max-w-xl mx-auto space-y-6">
