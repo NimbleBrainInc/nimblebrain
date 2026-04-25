@@ -15,6 +15,28 @@ const API_URL = "https://models.dev/api.json";
 const SUPPORTED_PROVIDERS = ["anthropic", "openai", "google"];
 const OUTPUT_PATH = join(dirname(new URL(import.meta.url).pathname), "catalog-data.json");
 
+// Models the upstream API hasn't flagged yet but we know are scheduled for shutdown.
+// Format: "<provider>:<modelId>". Remove an entry once models.dev catches up.
+const MANUAL_DEPRECATIONS = new Set<string>([
+  // OpenAI shutdown 2026-07-23
+  "openai:gpt-5-chat-latest",
+  "openai:gpt-5-codex",
+  "openai:gpt-5.1-chat-latest",
+  "openai:gpt-5.1-codex",
+  "openai:gpt-5.1-codex-max",
+  "openai:gpt-5.1-codex-mini",
+  "openai:gpt-5.2-codex",
+  "openai:o3-deep-research",
+  "openai:o4-mini-deep-research",
+  // OpenAI shutdown 2026-10-23
+  "openai:gpt-4-turbo",
+  "openai:gpt-4.1-nano",
+  "openai:gpt-4o-2024-05-13",
+  "openai:o1-pro",
+  "openai:o3-mini",
+  "openai:o4-mini",
+]);
+
 interface RawModel {
   id: string;
   name: string;
@@ -131,7 +153,9 @@ async function main() {
         },
         ...(raw.knowledge ? { knowledgeCutoff: raw.knowledge } : {}),
         ...(raw.release_date ? { releaseDate: raw.release_date } : {}),
-        ...(raw.status === "deprecated" ? { deprecated: true } : {}),
+        ...(raw.status === "deprecated" || MANUAL_DEPRECATIONS.has(`${providerId}:${modelId}`)
+          ? { deprecated: true }
+          : {}),
       };
     }
 
