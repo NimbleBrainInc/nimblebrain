@@ -160,6 +160,10 @@ export function createBridge(
       // NB extensions and out-of-spec tokens still flow through the iframe's
       // injected `<style>` block — they just don't cross the protocol.
       const extTokens = getSpecThemeTokens(extMode);
+      // Spec-standardized fields (theme, styles) take precedence over any
+      // same-named keys returned by `getHostExtensions()`, so callers can
+      // safely return arbitrary extension keys without colliding.
+      const extensions = callbacks?.getHostExtensions?.() ?? {};
       const response: ExtAppsInitializeResponse = {
         jsonrpc: "2.0",
         id: msg.id,
@@ -172,6 +176,7 @@ export function createBridge(
             logging: {},
           },
           hostContext: {
+            ...extensions,
             theme: extMode,
             styles: {
               variables: extTokens,

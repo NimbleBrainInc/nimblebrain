@@ -1,4 +1,9 @@
-import { SynapseProvider, useDataSync, useSynapse } from "@nimblebrain/synapse/react";
+import {
+  SynapseProvider,
+  useDataSync,
+  useHostContext,
+  useSynapse,
+} from "@nimblebrain/synapse/react";
 import { useCallback, useEffect, useState } from "react";
 
 /* ---------- types ---------- */
@@ -175,6 +180,11 @@ function SectionGroup({
 
 function Dashboard() {
   const synapse = useSynapse();
+  // The host publishes the active workspace as `hostContext.workspace` on
+  // every workspace switch. Keying the briefing fetch on `workspace.id`
+  // refetches the (workspace-scoped) briefing without remounting this iframe.
+  const { workspace } = useHostContext<{ workspace?: { id: string } }>();
+  const workspaceId = workspace?.id;
   const [briefing, setBriefing] = useState<BriefingOutput | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -202,10 +212,14 @@ function Dashboard() {
     }
   }, []);
 
-  // Load once on mount
+  // Reload on mount and whenever the active workspace changes. The host
+  // bridge sends `host-context-changed` with the new workspace id; the
+  // SDK exposes it via `useHostContext`. `loadBriefing` is stable so it
+  // isn't a dep — `workspaceId` is the only meaningful trigger.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: workspaceId is the refetch trigger; loadBriefing is stable
   useEffect(() => {
     loadBriefing();
-  }, [loadBriefing]);
+  }, [workspaceId]);
 
   // Show refresh banner on data changes
   useDataSync(() => {
