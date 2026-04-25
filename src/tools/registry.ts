@@ -1,6 +1,29 @@
 import { textContent } from "../engine/content-helpers.ts";
 import type { ToolCall, ToolResult, ToolRouter, ToolSchema } from "../engine/types.ts";
+import type { McpSource } from "./mcp-source.ts";
 import type { Tool, ToolSource } from "./types.ts";
+
+/**
+ * Structural check for "looks like an McpSource task-aware surface".
+ *
+ * The `/mcp` task handlers (Task 002) need a source that exposes the
+ * per-phase task methods so they can route `tasks/get`, `tasks/result`,
+ * and `tasks/cancel` back to the originating McpSource. We probe by shape
+ * rather than `instanceof` to stay friendly to `SharedSourceRef`-wrapped
+ * sources and to test doubles.
+ */
+export function isTaskAwareSource(
+  source: ToolSource,
+): source is ToolSource &
+  Pick<McpSource, "startToolAsTask" | "awaitToolTaskResult" | "getTaskStatus" | "cancelTask"> {
+  const s = source as Partial<McpSource>;
+  return (
+    typeof s.startToolAsTask === "function" &&
+    typeof s.awaitToolTaskResult === "function" &&
+    typeof s.getTaskStatus === "function" &&
+    typeof s.cancelTask === "function"
+  );
+}
 
 /**
  * Non-stoppable reference wrapper for shared ToolSource objects.
@@ -28,6 +51,10 @@ export class SharedSourceRef implements ToolSource {
     signal?: AbortSignal,
   ): Promise<ToolResult> {
     return this.inner.execute(toolName, input, signal);
+  }
+  /** Unwrap to the underlying source — used by task-aware dispatch. */
+  unwrap(): ToolSource {
+    return this.inner;
   }
 }
 
@@ -131,5 +158,26 @@ export class ToolRegistry implements ToolRouter {
   /** Get all registered sources. */
   getSources(): ToolSource[] {
     return [...this.sources.values()];
+  }
+
+  /**
+   * Look up the task-aware (McpSource-shaped) source by name, unwrapping
+   * `SharedSourceRef` if necessary.
+   *
+   * Returns `null` if the name doesn't resolve to a source, or if the
+   * underlying source doesn't implement the split task API. Used by the
+   * `/mcp` endpoint (Task 002) to route `tasks/{get,result,cancel}` back
+   * to the originating McpSource.
+   */
+  findTaskAwareSource(
+    name: string,
+  ):
+    | (ToolSource &
+        Pick<McpSource, "startToolAsTask" | "awaitToolTaskResult" | "getTaskStatus" | "cancelTask">)
+    | null {
+    const source = this.sources.get(name);
+    if (!source) return null;
+    const unwrapped = source instanceof SharedSourceRef ? source.unwrap() : source;
+    return isTaskAwareSource(unwrapped) ? unwrapped : null;
   }
 }

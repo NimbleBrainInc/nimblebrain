@@ -39,6 +39,11 @@ export function setActiveWorkspaceId(id: string | null): void {
   activeWorkspaceId = id;
 }
 
+/** Get the active workspace ID (for modules that build their own headers). */
+export function getActiveWorkspaceId(): string | null {
+  return activeWorkspaceId;
+}
+
 /** Register a callback invoked on 401 responses. */
 export function setOnAuthError(callback: (() => void) | null): void {
   onAuthError = callback;
@@ -442,3 +447,9 @@ export async function tryBootstrap(workspaceId?: string): Promise<BootstrapRespo
     return null;
   }
 }
+
+// ---------------------------------------------------------------------------
+// MCP bridge client (Task 008 will consume this)
+// ---------------------------------------------------------------------------
+
+export { getMcpBridgeClient, resetMcpBridgeClient } from "../mcp-bridge-client";

@@ -29,13 +29,22 @@ function formatRelativeTime(iso: string): string {
   return `${days}d ago`;
 }
 
-function CopyButton({ content }: { content: string }) {
-  const [copied, setCopied] = useState(false);
+type CopyState = "idle" | "copied" | "failed";
 
-  const handleCopy = useCallback(() => {
-    navigator.clipboard.writeText(content);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
+function CopyButton({ content }: { content: string }) {
+  const [state, setState] = useState<CopyState>("idle");
+
+  const handleCopy = useCallback(async () => {
+    try {
+      if (!navigator.clipboard?.writeText) {
+        throw new Error("Clipboard API not available");
+      }
+      await navigator.clipboard.writeText(content);
+      setState("copied");
+    } catch {
+      setState("failed");
+    }
+    setTimeout(() => setState("idle"), 1500);
   }, [content]);
 
   return (
@@ -43,9 +52,16 @@ function CopyButton({ content }: { content: string }) {
       type="button"
       onClick={handleCopy}
       className="p-1 text-muted-foreground hover:text-foreground rounded transition-all"
-      aria-label="Copy message"
+      aria-label={state === "failed" ? "Copy failed" : "Copy message"}
+      title={state === "failed" ? "Copy failed" : undefined}
     >
-      {copied ? <Check className="w-3.5 h-3.5 text-success" /> : <Copy className="w-3.5 h-3.5" />}
+      {state === "copied" ? (
+        <Check className="w-3.5 h-3.5 text-success" />
+      ) : state === "failed" ? (
+        <AlertCircle className="w-3.5 h-3.5 text-destructive" />
+      ) : (
+        <Copy className="w-3.5 h-3.5" />
+      )}
     </button>
   );
 }
