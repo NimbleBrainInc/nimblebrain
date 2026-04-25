@@ -9,12 +9,19 @@
 //
 // The bootstrap handler is expected to forward relevant flags into this
 // module via `setBridgeUseMcp()` at startup; until that wiring lands the
-// flags stay at their server-side defaults (opt-in features default to
-// false). Callers MUST read the getters at call time — never cache the
-// result — so the flag can be toggled live without a page reload.
+// flags stay at the defaults set here. Callers MUST read the getters at
+// call time — never cache the result — so the flag can be toggled live
+// without a page reload.
+//
+// `bridgeUseMcp` defaults to `true` because the iframe bridge's MCP
+// transport carries the task-aware tool surface (`callToolAsTask`,
+// `tasks/{get,result,cancel}`, `notifications/tasks/status`); shipping
+// this off-by-default would mean any task-augmented widget (e.g.
+// synapse-research) is dead-on-arrival until a follow-up flip-the-flag
+// PR lands. Rollback path if needed: set this to `false` and redeploy.
 // ---------------------------------------------------------------------------
 
-let bridgeUseMcp = false;
+let bridgeUseMcp = true;
 
 /**
  * Returns the current value of the `bridgeUseMcp` flag.
