@@ -68,24 +68,19 @@ mock.module("@modelcontextprotocol/sdk/client/streamableHttp.js", () => ({
 }));
 
 // ---------------------------------------------------------------------------
-// Mock the auth getters from api/client.ts so the test can verify the
-// mcp-bridge-client reads them per-request rather than caching at
-// construction.
+// Use the REAL api/client module (no mock.module) so we don't pollute the
+// global module registry — Bun's mock.module is process-global, and a
+// mock in one test file silently bleeds into others. We control auth
+// state via the real setters.
+//
+// The lifecycle wiring (auth setters fire `resetMcpBridgeClient` on real
+// change) is tested separately in `api-client-lifecycle.test.ts`. We
+// neutralize it here in `beforeEach` so each test starts with a known
+// cache state, then re-enable it via the real registration where needed.
 // ---------------------------------------------------------------------------
 
-let tokenValue: string | null = "initial-token";
-let workspaceValue: string | null = "ws-initial";
-
-const getAuthToken = mock(() => tokenValue);
-const getActiveWorkspaceId = mock(() => workspaceValue);
-
-mock.module("../api/client", () => ({
-  getAuthToken: () => getAuthToken(),
-  getActiveWorkspaceId: () => getActiveWorkspaceId(),
-}));
-
-// Importing AFTER the mocks so the module picks up the fakes.
-const { getMcpBridgeClient, resetMcpBridgeClient } = await import("../mcp-bridge-client");
+import { setActiveWorkspaceId, setAuthLifecycleHandler, setAuthToken } from "../api/client";
+import { getMcpBridgeClient, resetMcpBridgeClient } from "../mcp-bridge-client";
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -101,18 +96,23 @@ function resetCounters(): void {
   lastTransportUrl = null;
   lastTransportOptions = null;
   lastClientCapabilities = null;
-  getAuthToken.mockClear();
-  getActiveWorkspaceId.mockClear();
 }
 
 beforeEach(() => {
   resetCounters();
-  tokenValue = "initial-token";
-  workspaceValue = "ws-initial";
+  // Neutralize the auth lifecycle wiring so our setAuthToken/Workspace
+  // calls below don't tear down the cached client mid-test. Tests that
+  // need the wiring re-engage it explicitly.
+  setAuthLifecycleHandler(null);
+  setAuthToken("initial-token");
+  setActiveWorkspaceId("ws-initial");
 });
 
 afterEach(() => {
   resetMcpBridgeClient();
+  setAuthLifecycleHandler(null);
+  setAuthToken(null);
+  setActiveWorkspaceId(null);
 });
 
 describe("getMcpBridgeClient", () => {
@@ -232,8 +232,8 @@ describe("per-request header generation", () => {
       // Rotate both before the second request. The module MUST read fresh
       // values; if it had cached headers at construction, the old values
       // would leak through.
-      tokenValue = "rotated-token";
-      workspaceValue = "ws-rotated";
+      setAuthToken("rotated-token");
+      setActiveWorkspaceId("ws-rotated");
 
       await customFetch("https://example.test/mcp", { method: "POST" });
     } finally {
@@ -246,15 +246,11 @@ describe("per-request header generation", () => {
 
     expect(calls[1]?.headers.authorization).toBe("Bearer rotated-token");
     expect(calls[1]?.headers["x-workspace-id"]).toBe("ws-rotated");
-
-    // The getters were called per-request, proving we don't cache.
-    expect(getAuthToken.mock.calls.length).toBeGreaterThanOrEqual(2);
-    expect(getActiveWorkspaceId.mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 
   test("cookie-mode token ('__cookie__') omits Authorization header but still sends X-Workspace-Id", async () => {
-    tokenValue = "__cookie__";
-    workspaceValue = "ws-cookie";
+    setAuthToken("__cookie__");
+    setActiveWorkspaceId("ws-cookie");
 
     await getMcpBridgeClient();
     const customFetch = lastTransportOptions?.fetch;
@@ -278,8 +274,8 @@ describe("per-request header generation", () => {
   });
 
   test("omits both headers when unauthenticated", async () => {
-    tokenValue = null;
-    workspaceValue = null;
+    setAuthToken(null);
+    setActiveWorkspaceId(null);
 
     await getMcpBridgeClient();
     const customFetch = lastTransportOptions?.fetch;

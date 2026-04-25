@@ -14,7 +14,7 @@
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { getActiveWorkspaceId, getAuthToken } from "./api/client";
+import { getActiveWorkspaceId, getAuthToken, setAuthLifecycleHandler } from "./api/client";
 
 // ---------------------------------------------------------------------------
 // Module-level singleton
@@ -63,8 +63,12 @@ export function getMcpBridgeClient(): Promise<Client> {
 /**
  * Close the MCP bridge transport and clear the singleton.
  *
- * Call on logout or active-workspace change — the new workspace needs its
- * own `X-Workspace-Id`-bound session. Safe to call when no client exists.
+ * Wired into `api/client.ts`'s auth/workspace setters via the lifecycle
+ * handler below — every `setAuthToken(...)` and `setActiveWorkspaceId(...)`
+ * call drops the cached transport because the platform's `Mcp-Session-Id`
+ * is workspace- and identity-bound at init. Without this, switching
+ * workspaces would silently keep dispatching iframe tool calls against
+ * the previous tenant's session. Safe to call when no client exists.
  */
 export function resetMcpBridgeClient(): void {
   const current = pending;
@@ -80,6 +84,11 @@ export function resetMcpBridgeClient(): void {
       // Swallow close errors — the client is going away regardless.
     });
 }
+
+// Register at module load — the side effect runs the first time anything
+// in the bridge dependency graph imports this file (which is exactly when
+// we'd want lifecycle resets to start firing).
+setAuthLifecycleHandler(resetMcpBridgeClient);
 
 // ---------------------------------------------------------------------------
 // Internals

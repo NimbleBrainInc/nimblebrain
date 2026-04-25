@@ -29,14 +29,32 @@ export function getAuthToken(): string | null {
   return authToken;
 }
 
+/**
+ * Hook fired whenever the auth token or active workspace changes — used by
+ * stateful clients that hold a session bound to one of those values. The
+ * MCP bridge client (`mcp-bridge-client.ts`) registers here at module load
+ * so its cached transport (workspace-bound `Mcp-Session-Id`) gets dropped
+ * on workspace switch / logout instead of silently servicing the wrong
+ * tenant. Stateless callers (REST helpers, `fetchWithRefresh`) read the
+ * current token / workspace ID per-request and need no hook.
+ */
+let onAuthLifecycleChange: (() => void) | null = null;
+export function setAuthLifecycleHandler(handler: (() => void) | null): void {
+  onAuthLifecycleChange = handler;
+}
+
 /** Set the bearer token used for all authenticated requests. */
 export function setAuthToken(token: string | null): void {
+  if (authToken === token) return;
   authToken = token;
+  onAuthLifecycleChange?.();
 }
 
 /** Set the active workspace ID included as X-Workspace-Id header. */
 export function setActiveWorkspaceId(id: string | null): void {
+  if (activeWorkspaceId === id) return;
   activeWorkspaceId = id;
+  onAuthLifecycleChange?.();
 }
 
 /** Get the active workspace ID (for modules that build their own headers). */
@@ -447,9 +465,3 @@ export async function tryBootstrap(workspaceId?: string): Promise<BootstrapRespo
     return null;
   }
 }
-
-// ---------------------------------------------------------------------------
-// MCP bridge client (Task 008 will consume this)
-// ---------------------------------------------------------------------------
-
-export { getMcpBridgeClient, resetMcpBridgeClient } from "../mcp-bridge-client";
