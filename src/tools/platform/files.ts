@@ -1,6 +1,7 @@
 /**
- * Files InlineSource — workspace file store backed by a JSONL registry and
- * on-disk binary storage.
+ * Files platform source — in-process MCP server backing the workspace file
+ * store. Files are persisted via a JSONL registry and on-disk binary
+ * storage.
  *
  * Both this tool source and the chat multipart ingest path
  * (`src/api/handlers.ts::handleChat` / `handleChatStream`) share a single
@@ -9,7 +10,7 @@
  * module only defines the tool schemas and adapts calls into the store.
  *
  * Tools (7): list, search, read, create, info, tag, delete
- * Resources: files/browser (React SPA)
+ * Resources: ui://files/browser (React SPA)
  * Placements: sidebar files link at priority 3
  */
 

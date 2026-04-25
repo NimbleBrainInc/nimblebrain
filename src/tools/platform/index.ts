@@ -36,10 +36,9 @@ export async function createPlatformSources(
     createUsageSource(runtime, eventSink),
   ];
 
-  // start() is a no-op for any factories not yet migrated off the old
-  // InlineSource path; for in-process MCP sources it builds the server +
-  // transport pair and runs `initialize`. Either way, sources are ready
-  // when this returns.
+  // start() builds the in-process MCP server + InMemoryTransport pair and
+  // runs `initialize`, so the source is ready to serve tools and resources
+  // as soon as this returns.
   for (const src of sources) {
     await src.start();
   }

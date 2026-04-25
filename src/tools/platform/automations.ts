@@ -187,10 +187,18 @@ export async function createAutomationsSource(
   // so workspace teardown — and `Runtime.shutdown()` — also stops the timer
   // loop. (McpSource never crashes for in-process sources, but explicit
   // teardown is still required for clean process exit in tests.)
+  //
+  // try/finally so the in-process MCP transport always closes, even if
+  // `scheduler.stop()` ever grows a code path that throws. Today scheduler
+  // stop is just a `clearInterval` and is benign; the asymmetry between
+  // "scheduler error" and "leaked transport" is the reason for the guard.
   const originalStop = source.stop.bind(source);
   source.stop = async () => {
-    scheduler.stop();
-    await originalStop();
+    try {
+      scheduler.stop();
+    } finally {
+      await originalStop();
+    }
   };
 
   return source;

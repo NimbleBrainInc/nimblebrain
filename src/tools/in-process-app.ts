@@ -11,6 +11,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import type { PlacementDeclaration } from "../bundles/types.ts";
 import type { EventSink, ToolResult } from "../engine/types.ts";
+import { bytesToBase64 } from "../util/base64.ts";
 import { McpSource } from "./mcp-source.ts";
 import { validateToolInput } from "./validate-input.ts";
 
@@ -55,10 +56,9 @@ export interface DefineInProcessAppOptions {
   version: string;
   tools: InProcessTool[];
   /**
-   * Resources keyed by full URI (e.g. `ui://settings/panel`). Use full URIs
-   * here even though pre-migration the InlineSource map dropped the scheme:
-   * the MCP `readResource` request carries the full URI, so the server-side
-   * key must match the protocol's identity.
+   * Resources keyed by full URI (e.g. `ui://settings/panel`). Required to
+   * match the protocol identity — the MCP `readResource` request carries
+   * the full URI, so the server-side lookup key must match exactly.
    */
   resources?: Map<string, InProcessResource>;
   /** UI placements declared by this source. Surfaced via `McpSource.getPlacements()`. */
@@ -128,9 +128,9 @@ export function defineInProcessApp(
         }));
 
         // tools/call — JSON-Schema validate, then dispatch to the handler.
-        // Validation is preserved here (was previously enforced at the
-        // InlineSource boundary) so missing/malformed input never reaches a
-        // handler and surfaces a Node-internal error as a tool result.
+        // Validation runs at this boundary so missing/malformed input never
+        // reaches a handler and surfaces a Node-internal error as a tool
+        // result.
         //
         // Unknown-tool errors are returned as a structured `isError: true`
         // result rather than thrown as `MethodNotFound`. Throwing would
@@ -230,18 +230,6 @@ export function defineInProcessApp(
     },
     eventSink,
   );
-}
-
-function bytesToBase64(bytes: Uint8Array): string {
-  if (typeof Buffer !== "undefined") {
-    return Buffer.from(bytes).toString("base64");
-  }
-  const CHUNK = 0x8000;
-  let binary = "";
-  for (let i = 0; i < bytes.length; i += CHUNK) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
-  }
-  return btoa(binary);
 }
 
 /**

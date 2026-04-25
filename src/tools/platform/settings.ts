@@ -44,7 +44,7 @@ const coreSectionRenderers: Record<string, () => string> = {
 // ---------------------------------------------------------------------------
 
 /**
- * Create the settings InlineSource.
+ * Create the settings platform source (in-process MCP server).
  *
  * Provides manifest, section, config, and identity tools plus the settings
  * panel HTML resource and a sidebar.bottom placement.

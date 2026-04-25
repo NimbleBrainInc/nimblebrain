@@ -14,6 +14,7 @@ import type { ChatRequest } from "../runtime/types.ts";
 import type { HealthMonitor } from "../tools/health-monitor.ts";
 import type { ResourceData } from "../tools/types.ts";
 import { validateToolInput } from "../tools/validate-input.ts";
+import { bytesToBase64 } from "../util/base64.ts";
 import type { ConversationEventManager } from "./conversation-events.ts";
 import type { SseEventManager } from "./events.ts";
 import { startSseHeartbeat } from "./sse-heartbeat.ts";
@@ -455,23 +456,6 @@ export async function handleReadResource(
   }
 
   return json({ contents: [buildResourceEnvelopeEntry(uri, resource)] });
-}
-
-/**
- * Base64-encode a Uint8Array. Prefers Bun/Node's native Buffer (single C++
- * call, significantly faster on large binaries than the chunked btoa path).
- * Falls back to a stack-safe btoa loop for runtimes without Buffer.
- */
-export function bytesToBase64(bytes: Uint8Array): string {
-  if (typeof Buffer !== "undefined") {
-    return Buffer.from(bytes).toString("base64");
-  }
-  const CHUNK = 0x8000;
-  let binary = "";
-  for (let i = 0; i < bytes.length; i += CHUNK) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
-  }
-  return btoa(binary);
 }
 
 /** Handle POST /v1/tools/call — direct tool invocation. */

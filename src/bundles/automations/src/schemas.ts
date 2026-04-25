@@ -1,6 +1,7 @@
 /**
  * Shared tool schema definitions for automations.
- * Used by both the standalone MCP server (server.ts) and the InlineSource (automations.ts).
+ * Used by both the standalone MCP server (server.ts) and the in-process
+ * platform source (src/tools/platform/automations.ts).
  */
 
 export interface ToolSchema {
