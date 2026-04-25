@@ -210,14 +210,23 @@ function Section({
   );
 }
 
+type CopyState = "idle" | "copied" | "failed";
+
 function CopyButton({ content }: { content: string }) {
-  const [copied, setCopied] = useState(false);
+  const [state, setState] = useState<CopyState>("idle");
   const onClick = useCallback(
-    (e: React.MouseEvent) => {
+    async (e: React.MouseEvent) => {
       e.stopPropagation();
-      navigator.clipboard.writeText(content);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1500);
+      try {
+        if (!navigator.clipboard?.writeText) {
+          throw new Error("Clipboard API not available");
+        }
+        await navigator.clipboard.writeText(content);
+        setState("copied");
+      } catch {
+        setState("failed");
+      }
+      window.setTimeout(() => setState("idle"), 1500);
     },
     [content],
   );
@@ -226,11 +235,15 @@ function CopyButton({ content }: { content: string }) {
       type="button"
       onClick={onClick}
       className="tool-accordion__copy"
-      aria-label="Copy to clipboard"
+      aria-label={state === "failed" ? "Copy failed" : "Copy to clipboard"}
     >
-      {copied ? (
+      {state === "copied" ? (
         <>
           <Check style={{ width: 11, height: 11 }} /> copied
+        </>
+      ) : state === "failed" ? (
+        <>
+          <AlertCircle style={{ width: 11, height: 11 }} /> failed
         </>
       ) : (
         <>
