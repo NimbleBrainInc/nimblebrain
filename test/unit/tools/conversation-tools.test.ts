@@ -8,7 +8,7 @@ import type { UserIdentity } from "../../../src/identity/provider.ts";
 import { WorkspaceStore } from "../../../src/workspace/workspace-store.ts";
 import type { ManageConversationContext } from "../../../src/tools/conversation-tools.ts";
 import { createManageConversationTool } from "../../../src/tools/conversation-tools.ts";
-import type { InlineToolDef } from "../../../src/tools/inline-source.ts";
+import type { InProcessTool } from "../../../src/tools/in-process-app.ts";
 
 // ── Helpers ───────────────────────────────────────────────────────
 
@@ -26,7 +26,7 @@ function parseResult(result: { content: Array<{ type: string; text: string }>; s
 let workDir: string;
 let conversationStore: ConversationStore;
 let workspaceStore: WorkspaceStore;
-let tool: InlineToolDef;
+let tool: InProcessTool;
 let currentIdentity: UserIdentity | null;
 
 const ownerIdentity: UserIdentity = {

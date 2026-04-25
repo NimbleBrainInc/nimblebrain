@@ -15,11 +15,12 @@
 
 import { join } from "node:path";
 import { textContent } from "../../engine/content-helpers.ts";
-import type { ToolResult } from "../../engine/types.ts";
+import type { EventSink, ToolResult } from "../../engine/types.ts";
 import { createFileStore, type FileStore } from "../../files/store.ts";
 import type { FileEntry } from "../../files/types.ts";
 import type { Runtime } from "../../runtime/runtime.ts";
-import { InlineSource, type InlineToolDef } from "../inline-source.ts";
+import { defineInProcessApp, type InProcessTool } from "../in-process-app.ts";
+import type { McpSource } from "../mcp-source.ts";
 import { FILES_BROWSER_HTML } from "../platform-resources/files/browser.ts";
 
 // ---------------------------------------------------------------------------
@@ -181,8 +182,8 @@ async function handleDelete(store: FileStore, args: { id: string }): Promise<obj
 // Factory
 // ---------------------------------------------------------------------------
 
-/** Create the "files" InlineSource. */
-export function createFilesSource(runtime: Runtime): InlineSource {
+/** Create the "files" platform source — in-process MCP server. */
+export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSource {
   function getStore(): FileStore {
     return createFileStore(join(runtime.getWorkspaceScopedDir(), "files"));
   }
@@ -195,7 +196,7 @@ export function createFilesSource(runtime: Runtime): InlineSource {
     return { content: textContent(JSON.stringify({ error: message })), isError: true };
   }
 
-  const tools: InlineToolDef[] = [
+  const tools: InProcessTool[] = [
     {
       name: "list",
       description:
@@ -406,19 +407,25 @@ export function createFilesSource(runtime: Runtime): InlineSource {
     },
   ];
 
-  const resources = new Map([["files/browser", FILES_BROWSER_HTML]]);
+  const resources = new Map([["ui://files/browser", FILES_BROWSER_HTML]]);
 
-  return new InlineSource("files", tools, {
-    resources,
-    placements: [
-      {
-        slot: "sidebar",
-        resourceUri: "ui://files/browser",
-        route: "@nimblebraininc/files",
-        label: "Files",
-        icon: "folder",
-        priority: 3,
-      },
-    ],
-  });
+  return defineInProcessApp(
+    {
+      name: "files",
+      version: "1.0.0",
+      tools,
+      resources,
+      placements: [
+        {
+          slot: "sidebar",
+          resourceUri: "ui://files/browser",
+          route: "@nimblebraininc/files",
+          label: "Files",
+          icon: "folder",
+          priority: 3,
+        },
+      ],
+    },
+    eventSink,
+  );
 }

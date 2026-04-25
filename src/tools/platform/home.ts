@@ -1,21 +1,23 @@
 import { join } from "node:path";
 import { ActivityCollector } from "../../bundles/home/src/services/activity-collector.ts";
 import { textContent } from "../../engine/content-helpers.ts";
+import type { EventSink } from "../../engine/types.ts";
 import type { Runtime } from "../../runtime/runtime.ts";
-import type { InlineToolDef } from "../inline-source.ts";
-import { InlineSource } from "../inline-source.ts";
+import { defineInProcessApp, type InProcessTool } from "../in-process-app.ts";
+import type { McpSource } from "../mcp-source.ts";
 import { DASHBOARD_HTML } from "../platform-resources/home/dashboard.ts";
 
 /**
- * Create the "home" InlineSource — migrated from the standalone MCP server
- * at src/bundles/home/src/server.ts.
+ * Create the "home" platform source — an in-process MCP server.
+ * Migrated from the former standalone MCP server at
+ * src/bundles/home/src/server.ts.
  *
  * Tools: activity
- * Resources: home/dashboard (React SPA)
+ * Resources: ui://home/dashboard (React SPA)
  * Placements: sidebar home link at priority 0
  */
-export function createHomeSource(runtime: Runtime): InlineSource {
-  const tools: InlineToolDef[] = [
+export function createHomeSource(runtime: Runtime, eventSink: EventSink): McpSource {
+  const tools: InProcessTool[] = [
     {
       name: "activity",
       description:
@@ -82,19 +84,25 @@ export function createHomeSource(runtime: Runtime): InlineSource {
     },
   ];
 
-  const resources = new Map([["home/dashboard", DASHBOARD_HTML]]);
+  const resources = new Map([["ui://home/dashboard", DASHBOARD_HTML]]);
 
-  return new InlineSource("home", tools, {
-    resources,
-    placements: [
-      {
-        slot: "sidebar",
-        resourceUri: "ui://home/dashboard",
-        route: "/",
-        label: "Home",
-        icon: "house",
-        priority: 0,
-      },
-    ],
-  });
+  return defineInProcessApp(
+    {
+      name: "home",
+      version: "1.0.0",
+      tools,
+      resources,
+      placements: [
+        {
+          slot: "sidebar",
+          resourceUri: "ui://home/dashboard",
+          route: "/",
+          label: "Home",
+          icon: "house",
+          priority: 0,
+        },
+      ],
+    },
+    eventSink,
+  );
 }

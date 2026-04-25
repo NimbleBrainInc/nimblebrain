@@ -100,8 +100,11 @@ export function buildProcessInventory(
  * Create a ToolRegistry for a workspace with platform sources and the system source.
  *
  * Both boot-time startup and JIT workspace provisioning use this function to
- * ensure consistent registry contents. All sources are InlineSources with no-op
- * stop(), so they are added directly (no SharedSourceRef wrapper needed).
+ * ensure consistent registry contents. Platform and system sources are added
+ * directly (no SharedSourceRef wrapper) — `McpSource.stop()` is idempotent
+ * (after the first call client/transport/server are nulled and subsequent
+ * calls early-return), so the only place this matters is `Runtime.shutdown()`,
+ * which already wants the source closed exactly once.
  */
 export function createWorkspaceRegistry(
   platformSources: ToolSource[],
@@ -130,9 +133,9 @@ export function createWorkspaceRegistry(
  * Reads workspaces from the store, builds the process inventory,
  * and spawns one bundle process per entry. Each workspace gets its own
  * ToolRegistry containing:
- * - Platform InlineSources directly (conversations, files, home, etc.)
- * - System source directly (InlineSource with no-op stop)
- * - Workspace-specific bundle sources (real stop)
+ * - Platform sources (in-process MCP — conversations, files, home, etc.)
+ * - System source (`nb`, in-process MCP)
+ * - Workspace-specific bundle sources (subprocess or remote MCP)
  *
  * Returns a Map<wsId, ToolRegistry> plus the inventory entries for lifecycle seeding.
  */

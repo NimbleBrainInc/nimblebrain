@@ -10,7 +10,7 @@ import {
   handleShareConversation,
   handleUnshareConversation,
 } from "./conversation-tools.ts";
-import type { InlineToolDef } from "./inline-source.ts";
+import type { InProcessTool } from "./in-process-app.ts";
 
 // ── Types ─────────────────────────────────────────────────────────
 
@@ -46,7 +46,7 @@ function permissionDenied(): ToolResult {
 
 // ── Tool factory ──────────────────────────────────────────────────
 
-export function createManageWorkspacesTool(ctx: ManageWorkspacesContext): InlineToolDef {
+export function createManageWorkspacesTool(ctx: ManageWorkspacesContext): InProcessTool {
   return {
     name: "manage_workspaces",
     description:
@@ -419,7 +419,7 @@ function memberPermissionDenied(): ToolResult {
 }
 
 /** @deprecated Member management is now handled by manage_workspaces. Kept for test coverage of handler logic. */
-export function createManageMembersTool(ctx: ManageMembersContext): InlineToolDef {
+export function createManageMembersTool(ctx: ManageMembersContext): InProcessTool {
   return {
     name: "manage_members",
     description:

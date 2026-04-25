@@ -4,7 +4,7 @@ import { textContent } from "../engine/content-helpers.ts";
 import type { ToolResult } from "../engine/types.ts";
 import type { UserIdentity } from "../identity/provider.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
-import type { InlineToolDef } from "./inline-source.ts";
+import type { InProcessTool } from "./in-process-app.ts";
 
 // ── Types ─────────────────────────────────────────────────────────
 
@@ -58,7 +58,7 @@ export async function canManageConversation(
 
 // ── Tool factory ──────────────────────────────────────────────────
 
-export function createManageConversationTool(ctx: ManageConversationContext): InlineToolDef {
+export function createManageConversationTool(ctx: ManageConversationContext): InProcessTool {
   return {
     name: "manage_conversation",
     description:

@@ -66,13 +66,3 @@ export interface ResourceData {
    */
   meta?: Record<string, unknown>;
 }
-
-/** A ToolSource that can also read MCP resources. */
-export interface ResourceReader {
-  readResource(uri: string): Promise<ResourceData | null>;
-}
-
-/** Type guard: does a ToolSource support readResource? */
-export function isResourceReader(source: unknown): source is ToolSource & ResourceReader {
-  return source != null && typeof (source as Record<string, unknown>).readResource === "function";
-}

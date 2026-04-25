@@ -6,7 +6,6 @@ import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test"
 import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
 import { BundleLifecycleManager } from "../../src/bundles/lifecycle.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
-import { InlineSource } from "../../src/tools/inline-source.ts";
 import type { ManageBundleContext } from "../../src/tools/system-tools.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 import { extractText } from "../../src/engine/content-helpers.ts";

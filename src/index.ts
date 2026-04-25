@@ -80,6 +80,6 @@ export { filterTools, Runtime, surfaceTools } from "./runtime/index.ts";
 export type { Skill, SkillManifest, SkillMetadata } from "./skills/index.ts";
 // Skills
 export { loadSkillDir, parseSkillContent, parseSkillFile, SkillMatcher } from "./skills/index.ts";
-export type { InlineToolDef, Tool, ToolSource } from "./tools/index.ts";
+export type { InProcessTool, Tool, ToolSource } from "./tools/index.ts";
 // Tools
-export { InlineSource, McpSource, ToolRegistry } from "./tools/index.ts";
+export { defineInProcessApp, McpSource, ToolRegistry } from "./tools/index.ts";

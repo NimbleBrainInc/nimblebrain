@@ -5,7 +5,7 @@ import { createMockModel } from "../helpers/mock-model.ts";
 import { StaticToolRouter } from "../../src/adapters/static-router.ts";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
-import { InlineSource } from "../../src/tools/inline-source.ts";
+import { makeInProcessSource } from "../helpers/in-process-source.ts";
 import { createDelegateTool } from "../../src/tools/delegate.ts";
 import type { DelegateContext } from "../../src/tools/delegate.ts";
 import { textContent, extractText } from "../../src/engine/content-helpers.ts";
@@ -245,7 +245,7 @@ describe("nb__delegate", () => {
 		const registry = new ToolRegistry();
 		registryToClean = registry;
 		registry.addSource(
-			new InlineSource("search", [
+			await makeInProcessSource("search", [
 				{
 					name: "web",
 					description: "Web search",
@@ -261,7 +261,7 @@ describe("nb__delegate", () => {
 			]),
 		);
 		registry.addSource(
-			new InlineSource("writer", [
+			await makeInProcessSource("writer", [
 				{
 					name: "draft",
 					description: "Draft content",
@@ -304,7 +304,7 @@ describe("nb__delegate", () => {
 		const registry = new ToolRegistry();
 		registryToClean = registry;
 		registry.addSource(
-			new InlineSource("alpha", [
+			await makeInProcessSource("alpha", [
 				{
 					name: "one",
 					description: "Alpha one",
@@ -314,7 +314,7 @@ describe("nb__delegate", () => {
 			]),
 		);
 		registry.addSource(
-			new InlineSource("beta", [
+			await makeInProcessSource("beta", [
 				{
 					name: "two",
 					description: "Beta two",
@@ -458,7 +458,7 @@ describe("nb__delegate", () => {
 		};
 
 		const delegateTool = createDelegateTool(delegateCtx);
-		const delegateSource = new InlineSource("nb", [delegateTool]);
+		const delegateSource = await makeInProcessSource("nb", [delegateTool]);
 		registry.addSource(delegateSource);
 
 		const engine = new AgentEngine(parentModel, registry, new NoopEventSink());
@@ -610,7 +610,7 @@ describe("nb__delegate", () => {
 		const registry = new ToolRegistry();
 		registryToClean = registry;
 		registry.addSource(
-			new InlineSource("a", [
+			await makeInProcessSource("a", [
 				{
 					name: "tool1",
 					description: "Tool 1",
@@ -620,7 +620,7 @@ describe("nb__delegate", () => {
 			]),
 		);
 		registry.addSource(
-			new InlineSource("b", [
+			await makeInProcessSource("b", [
 				{
 					name: "tool2",
 					description: "Tool 2",
@@ -656,7 +656,7 @@ describe("nb__delegate", () => {
 		const registry = new ToolRegistry();
 		registryToClean = registry;
 		registry.addSource(
-			new InlineSource("x", [
+			await makeInProcessSource("x", [
 				{
 					name: "one",
 					description: "X one",
@@ -783,7 +783,7 @@ describe("nb__delegate", () => {
 
 		let forbiddenCalled = false;
 		registry.addSource(
-			new InlineSource("allowed", [
+			await makeInProcessSource("allowed", [
 				{
 					name: "safe",
 					description: "Allowed tool",
@@ -793,7 +793,7 @@ describe("nb__delegate", () => {
 			]),
 		);
 		registry.addSource(
-			new InlineSource("forbidden", [
+			await makeInProcessSource("forbidden", [
 				{
 					name: "dangerous",
 					description: "Should not be callable by child",

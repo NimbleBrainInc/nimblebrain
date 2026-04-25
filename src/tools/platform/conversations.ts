@@ -8,20 +8,25 @@ import { handleSearch, type SearchInput } from "../../bundles/conversations/src/
 import { handleStats, type StatsInput } from "../../bundles/conversations/src/tools/stats.ts";
 import { handleUpdate, type UpdateInput } from "../../bundles/conversations/src/tools/update.ts";
 import { textContent } from "../../engine/content-helpers.ts";
+import type { EventSink } from "../../engine/types.ts";
 import type { Runtime } from "../../runtime/runtime.ts";
-import type { InlineToolDef } from "../inline-source.ts";
-import { InlineSource } from "../inline-source.ts";
+import { defineInProcessApp, type InProcessTool } from "../in-process-app.ts";
+import type { McpSource } from "../mcp-source.ts";
 import { BROWSER_HTML } from "../platform-resources/conversations/browser.ts";
 
 /**
- * Create the "conversations" InlineSource — migrated from the standalone MCP server
- * at src/bundles/conversations/src/server.ts.
+ * Create the "conversations" platform source — an in-process MCP server.
+ * Migrated from the former standalone MCP server at
+ * src/bundles/conversations/src/server.ts.
  *
  * Tools: list, get, search, update, fork, stats, export
- * Resources: conversations/browser (HTML SPA)
+ * Resources: ui://conversations/browser (HTML SPA)
  * Placements: sidebar conversations link at priority 1
  */
-export async function createConversationsSource(runtime: Runtime): Promise<InlineSource> {
+export async function createConversationsSource(
+  runtime: Runtime,
+  eventSink: EventSink,
+): Promise<McpSource> {
   // Per-workspace ConversationIndex cache — lazy-built on first access.
   // Each workspace gets its own index pointing at its own conversations directory.
   const indexCache = new Map<string, ConversationIndex>();
@@ -64,7 +69,7 @@ export async function createConversationsSource(runtime: Runtime): Promise<Inlin
     };
   }
 
-  const tools: InlineToolDef[] = [
+  const tools: InProcessTool[] = [
     {
       name: "list",
       description:
@@ -240,19 +245,25 @@ export async function createConversationsSource(runtime: Runtime): Promise<Inlin
     },
   ];
 
-  const resources = new Map([["conversations/browser", BROWSER_HTML]]);
+  const resources = new Map([["ui://conversations/browser", BROWSER_HTML]]);
 
-  return new InlineSource("conversations", tools, {
-    resources,
-    placements: [
-      {
-        slot: "sidebar",
-        resourceUri: "ui://conversations/browser",
-        route: "@nimblebraininc/conversations",
-        label: "Conversations",
-        icon: "message-square-text",
-        priority: 1,
-      },
-    ],
-  });
+  return defineInProcessApp(
+    {
+      name: "conversations",
+      version: "1.0.0",
+      tools,
+      resources,
+      placements: [
+        {
+          slot: "sidebar",
+          resourceUri: "ui://conversations/browser",
+          route: "@nimblebraininc/conversations",
+          label: "Conversations",
+          icon: "message-square-text",
+          priority: 1,
+        },
+      ],
+    },
+    eventSink,
+  );
 }

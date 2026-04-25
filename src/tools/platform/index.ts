@@ -1,5 +1,6 @@
+import type { EventSink } from "../../engine/types.ts";
 import type { Runtime } from "../../runtime/runtime.ts";
-import type { InlineSource } from "../inline-source.ts";
+import type { ToolSource } from "../types.ts";
 import { createAutomationsSource } from "./automations.ts";
 import { createConversationsSource } from "./conversations.ts";
 import { createFilesSource } from "./files.ts";
@@ -8,23 +9,40 @@ import { createSettingsSource } from "./settings.ts";
 import { createUsageSource } from "./usage.ts";
 
 /**
- * Create all platform capability sources.
+ * Create all platform capability sources, started and ready to register.
  *
- * Each platform capability (conversations, files, automations, home, settings, usage)
- * becomes an InlineSource with tools and UI resources served in-process.
- * These replace the former MCP server processes for built-in bundles.
+ * Each platform capability (conversations, files, automations, home, settings,
+ * usage) is an in-process MCP server (`defineInProcessApp`) that talks to the
+ * runtime through the same MCP transport as external bundles — just over an
+ * `InMemoryTransport` instead of stdio/HTTP. They have tools, resources,
+ * placements, and (in the future) any other MCP capability the SDK adds.
  *
- * Returns an array of InlineSources to be registered in workspace registries.
+ * Sources are returned already-started: `McpSource.start()` is what wires
+ * the in-memory transport pair and runs the MCP `initialize` handshake, so
+ * the source isn't usable until that's done. Callers shouldn't have to
+ * remember to start them — the factory hands back a ready object.
  */
-export async function createPlatformSources(runtime: Runtime): Promise<InlineSource[]> {
-  // Sources will be added here as each bundle is migrated.
+export async function createPlatformSources(
+  runtime: Runtime,
+  eventSink: EventSink,
+): Promise<ToolSource[]> {
   // Order doesn't matter — placements control UI ordering.
-  return [
-    createHomeSource(runtime),
-    await createConversationsSource(runtime),
-    createFilesSource(runtime),
-    await createAutomationsSource(runtime),
-    createSettingsSource(runtime),
-    createUsageSource(runtime),
+  const sources: ToolSource[] = [
+    createHomeSource(runtime, eventSink),
+    await createConversationsSource(runtime, eventSink),
+    createFilesSource(runtime, eventSink),
+    await createAutomationsSource(runtime, eventSink),
+    createSettingsSource(runtime, eventSink),
+    createUsageSource(runtime, eventSink),
   ];
+
+  // start() is a no-op for any factories not yet migrated off the old
+  // InlineSource path; for in-process MCP sources it builds the server +
+  // transport pair and runs `initialize`. Either way, sources are ready
+  // when this returns.
+  for (const src of sources) {
+    await src.start();
+  }
+
+  return sources;
 }

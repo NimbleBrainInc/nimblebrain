@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { UserIdentity } from "../../../src/identity/provider.ts";
 import type { User } from "../../../src/identity/user.ts";
 import { UserStore } from "../../../src/identity/user.ts";
-import type { InlineToolDef } from "../../../src/tools/inline-source.ts";
+import type { InProcessTool } from "../../../src/tools/in-process-app.ts";
 import {
   createManageMembersTool,
   type ManageMembersContext,
@@ -28,7 +28,7 @@ function parseResult(result: { content: Array<{ type: string; text: string }>; s
 let workDir: string;
 let wsStore: WorkspaceStore;
 let userStore: UserStore;
-let tool: InlineToolDef;
+let tool: InProcessTool;
 let currentIdentity: UserIdentity | null;
 
 // Pre-created users for tests

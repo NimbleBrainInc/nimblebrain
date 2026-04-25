@@ -7,7 +7,7 @@ import { UserStore } from "../../../src/identity/user.ts";
 import type { User } from "../../../src/identity/user.ts";
 import type { ManageUsersContext } from "../../../src/tools/user-tools.ts";
 import { createManageUsersTool } from "../../../src/tools/user-tools.ts";
-import type { InlineToolDef } from "../../../src/tools/inline-source.ts";
+import type { InProcessTool } from "../../../src/tools/in-process-app.ts";
 
 // ── Helpers ───────────────────────────────────────────────────────
 
@@ -25,7 +25,7 @@ function parseResult(result: { content: Array<{ type: string; text: string }>; s
 let workDir: string;
 let userStore: UserStore;
 let provider: IdentityProvider;
-let tool: InlineToolDef;
+let tool: InProcessTool;
 let currentIdentity: UserIdentity | null;
 
 /** Simple mock provider that delegates to UserStore. */

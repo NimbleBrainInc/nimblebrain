@@ -1,15 +1,18 @@
 /**
- * Settings InlineSource — migrated from the @nimblebraininc/settings MCP bundle.
+ * Settings platform source — in-process MCP server.
+ * Migrated from the former @nimblebraininc/settings MCP bundle.
  *
  * Provides 4 read-only tools (manifest, section, config, identity),
- * the settings panel HTML resource, and a sidebar.bottom placement.
+ * the settings panel HTML resource (`ui://settings/panel`), and a
+ * sidebar.bottom placement.
  */
 
 import { join } from "node:path";
 import { textContent } from "../../engine/content-helpers.ts";
-import type { ToolResult } from "../../engine/types.ts";
+import type { EventSink, ToolResult } from "../../engine/types.ts";
 import type { Runtime } from "../../runtime/runtime.ts";
-import { InlineSource, type InlineToolDef } from "../inline-source.ts";
+import { defineInProcessApp, type InProcessTool } from "../in-process-app.ts";
+import type { McpSource } from "../mcp-source.ts";
 import { SETTINGS_PANEL_HTML } from "../platform-resources/settings/panel.ts";
 import { getIdentityStatus } from "./helpers/identity-status.ts";
 import { getRuntimeConfig } from "./helpers/runtime-config.ts";
@@ -46,14 +49,14 @@ const coreSectionRenderers: Record<string, () => string> = {
  * Provides manifest, section, config, and identity tools plus the settings
  * panel HTML resource and a sidebar.bottom placement.
  */
-export function createSettingsSource(runtime: Runtime): InlineSource {
+export function createSettingsSource(runtime: Runtime, eventSink: EventSink): McpSource {
   const workDir = runtime.getWorkDir();
   const configPath = join(workDir, "nimblebrain.json");
   const skillsDir = join(workDir, "skills");
   // Core skills are shipped with the package
   const coreSkillsDir = join(import.meta.dirname ?? __dirname, "../../skills/core");
 
-  const tools: InlineToolDef[] = [
+  const tools: InProcessTool[] = [
     {
       name: "manifest",
       description:
@@ -152,19 +155,25 @@ export function createSettingsSource(runtime: Runtime): InlineSource {
     },
   ];
 
-  const resources = new Map([["settings/panel", SETTINGS_PANEL_HTML]]);
+  const resources = new Map([["ui://settings/panel", SETTINGS_PANEL_HTML]]);
 
-  return new InlineSource("settings", tools, {
-    resources,
-    placements: [
-      {
-        slot: "sidebar.bottom",
-        route: "settings",
-        label: "Settings",
-        icon: "settings",
-        priority: 90,
-        resourceUri: "",
-      },
-    ],
-  });
+  return defineInProcessApp(
+    {
+      name: "settings",
+      version: "1.0.0",
+      tools,
+      resources,
+      placements: [
+        {
+          slot: "sidebar.bottom",
+          route: "settings",
+          label: "Settings",
+          icon: "settings",
+          priority: 90,
+          resourceUri: "",
+        },
+      ],
+    },
+    eventSink,
+  );
 }

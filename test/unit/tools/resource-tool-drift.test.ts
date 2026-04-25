@@ -24,7 +24,8 @@ import { USAGE_DASHBOARD_HTML } from "../../../src/tools/platform-resources/usag
 import { createFilesSource } from "../../../src/tools/platform/files.ts";
 import { createSettingsSource } from "../../../src/tools/platform/settings.ts";
 import { createUsageSource } from "../../../src/tools/platform/usage.ts";
-import type { InlineSource } from "../../../src/tools/inline-source.ts";
+import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
+import type { McpSource } from "../../../src/tools/mcp-source.ts";
 import type { Runtime } from "../../../src/runtime/runtime.ts";
 
 function makeRuntime(workDir: string): Runtime {
@@ -53,10 +54,10 @@ function extractCallToolNames(html: string): string[] {
  */
 async function assertAdvertised(
   name: string,
-  defaultSource: InlineSource,
-  sourcesByPrefix: Record<string, InlineSource>,
+  defaultSource: McpSource,
+  sourcesByPrefix: Record<string, McpSource>,
 ): Promise<void> {
-  let sourceToCheck: InlineSource;
+  let sourceToCheck: McpSource;
   let expectedLocalName: string;
   if (name.includes("__")) {
     const [prefix, local] = name.split("__", 2);
@@ -80,11 +81,16 @@ describe("Resource client / source contract — tool names match", () => {
   test("files/browser.ts calls only tools advertised by files source", async () => {
     const dir = mkdtempSync(join(tmpdir(), "nb-drift-files-"));
     try {
-      const filesSource = createFilesSource(makeRuntime(dir));
-      const names = extractCallToolNames(FILES_BROWSER_HTML);
-      expect(names.length).toBeGreaterThan(0);
-      for (const name of names) {
-        await assertAdvertised(name, filesSource, { files: filesSource });
+      const filesSource = createFilesSource(makeRuntime(dir), new NoopEventSink());
+      await filesSource.start();
+      try {
+        const names = extractCallToolNames(FILES_BROWSER_HTML);
+        expect(names.length).toBeGreaterThan(0);
+        for (const name of names) {
+          await assertAdvertised(name, filesSource, { files: filesSource });
+        }
+      } finally {
+        await filesSource.stop();
       }
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -94,11 +100,16 @@ describe("Resource client / source contract — tool names match", () => {
   test("settings/panel.ts calls only tools advertised by settings source", async () => {
     const dir = mkdtempSync(join(tmpdir(), "nb-drift-settings-"));
     try {
-      const settingsSource = createSettingsSource(makeRuntime(dir));
-      const names = extractCallToolNames(SETTINGS_PANEL_HTML);
-      expect(names.length).toBeGreaterThan(0);
-      for (const name of names) {
-        await assertAdvertised(name, settingsSource, { settings: settingsSource });
+      const settingsSource = createSettingsSource(makeRuntime(dir), new NoopEventSink());
+      await settingsSource.start();
+      try {
+        const names = extractCallToolNames(SETTINGS_PANEL_HTML);
+        expect(names.length).toBeGreaterThan(0);
+        for (const name of names) {
+          await assertAdvertised(name, settingsSource, { settings: settingsSource });
+        }
+      } finally {
+        await settingsSource.stop();
       }
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -108,11 +119,16 @@ describe("Resource client / source contract — tool names match", () => {
   test("usage/dashboard.ts calls only tools advertised by usage source", async () => {
     const dir = mkdtempSync(join(tmpdir(), "nb-drift-usage-"));
     try {
-      const usageSource = createUsageSource(makeRuntime(dir));
-      const names = extractCallToolNames(USAGE_DASHBOARD_HTML);
-      expect(names.length).toBeGreaterThan(0);
-      for (const name of names) {
-        await assertAdvertised(name, usageSource, { usage: usageSource });
+      const usageSource = createUsageSource(makeRuntime(dir), new NoopEventSink());
+      await usageSource.start();
+      try {
+        const names = extractCallToolNames(USAGE_DASHBOARD_HTML);
+        expect(names.length).toBeGreaterThan(0);
+        for (const name of names) {
+          await assertAdvertised(name, usageSource, { usage: usageSource });
+        }
+      } finally {
+        await usageSource.stop();
       }
     } finally {
       rmSync(dir, { recursive: true, force: true });
