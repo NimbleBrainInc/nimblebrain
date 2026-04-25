@@ -235,7 +235,7 @@ function CopyButton({ content }: { content: string }) {
       type="button"
       onClick={onClick}
       className="tool-accordion__copy"
-      aria-label="Copy to clipboard"
+      aria-label={state === "failed" ? "Copy failed" : "Copy to clipboard"}
     >
       {state === "copied" ? (
         <>
