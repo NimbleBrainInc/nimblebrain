@@ -14,13 +14,6 @@ export interface FeatureFlags {
   fileContext?: boolean;
   userManagement?: boolean;
   workspaceManagement?: boolean;
-  /**
-   * Route the web iframe bridge through the platform's `/mcp` MCP streamable
-   * HTTP endpoint (via the MCP SDK client) instead of the REST helpers in
-   * `web/src/api/client.ts`. Opt-in while the transport swap rolls out.
-   * Defaults to false.
-   */
-  bridgeUseMcp?: boolean;
 }
 
 /** Resolved feature flags — all required booleans (no optionals). */
@@ -36,8 +29,6 @@ const DEFAULTS: ResolvedFeatures = {
   fileContext: true,
   userManagement: true,
   workspaceManagement: true,
-  // Opt-in: stays off until Task 008 wires the bridge.ts transport swap.
-  bridgeUseMcp: false,
 };
 
 /** Resolve partial feature flags to a complete set. Missing keys default to true. */
@@ -53,7 +44,6 @@ export function resolveFeatures(config?: FeatureFlags): ResolvedFeatures {
     fileContext: config.fileContext ?? true,
     userManagement: config.userManagement ?? true,
     workspaceManagement: config.workspaceManagement ?? true,
-    bridgeUseMcp: config.bridgeUseMcp ?? false,
   };
 }
 

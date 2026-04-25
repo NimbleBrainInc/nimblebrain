@@ -788,14 +788,20 @@ export class McpSource implements ToolSource {
       else externalSignal.addEventListener("abort", () => abortController.abort(), { once: true });
     }
 
+    // Pass `task: { ttl }` via *options*, NOT inside `params`. The SDK's
+    // `Protocol.request` stamps `params.task = options.task` AFTER reading
+    // the caller's params, so any ttl we set in `params.task` here is
+    // overridden by the SDK's `optionsWithTask.task` (which auto-fills `{}`
+    // for tools advertising `taskSupport`). Putting it in options threads
+    // through correctly. See `@modelcontextprotocol/sdk` `protocol.js:654`
+    // and `experimental/tasks/client.js:67`.
     const stream = client.experimental.tasks.callToolStream(
+      { name: toolName, arguments: args },
+      undefined,
       {
-        name: toolName,
-        arguments: args,
+        signal: abortController.signal,
         task: { ttl: opts.ttlMs ?? DEFAULT_TASK_TTL_MS },
       },
-      undefined,
-      { signal: abortController.signal },
     );
 
     // Race the stream's first message against a hard ceiling. The SDK

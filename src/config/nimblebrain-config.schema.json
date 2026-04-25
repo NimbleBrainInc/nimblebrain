@@ -317,11 +317,6 @@
           "type": "boolean",
           "description": "Enable workspace CRUD and member management via nb__manage_workspaces (admin only). Default: true.",
           "default": true
-        },
-        "bridgeUseMcp": {
-          "type": "boolean",
-          "description": "Route the iframe bridge through the platform's /mcp streamable HTTP endpoint (via the MCP SDK client) instead of the REST tools/call and resources/read helpers. Opt-in while the transport swap rolls out. Default: false.",
-          "default": false
         }
       },
       "additionalProperties": false

@@ -1,22 +1,24 @@
 // ---------------------------------------------------------------------------
-// Bridge transport tests — Task 008 (feature-flagged REST ↔ MCP swap)
+// Bridge transport tests
 //
-// These tests exercise the behavioral contract from `008-bridge-swap-transport.md`:
+// The bridge always forwards `tools/call` and `resources/read` through the
+// MCP SDK bridge client. These tests verify:
 //
-//   - Flag off  → `tools/call` and `resources/read` run through the legacy
-//                 REST helpers in `web/src/api/client.ts` (zero regression).
-//   - Flag on   → both branches forward through the MCP SDK bridge client.
-//   - `INTERNAL_APPS` trust-list authz precedes transport selection and is
-//     enforced on BOTH paths identically.
-//   - Task-augmented `tools/call` (`params.task` present) routes through the
-//     SDK's generic request path and the `CreateTaskResult` flows back to
-//     the iframe verbatim — within the fast-path budget the spec requires.
+//   - `tools/call` and `resources/read` route through the MCP client
+//     (`callTool` / `readResource`), with the wire name qualified by the
+//     calling app's server.
+//   - `INTERNAL_APPS` trust-list authz: external apps cannot cross-call
+//     another server via `params.server`; internal apps (e.g. `nb`) can.
+//   - Task-augmented `tools/call` (`params.task` present) routes through
+//     the SDK's generic `request()` path so `CreateTaskResult` flows back
+//     to the iframe verbatim within the fast-path budget.
+//   - Errors (transport failures, `isError: true` results, thrown
+//     `readResource`) translate to JSON-RPC error envelopes.
 //
-// Strategy: mock the three injected dependencies (REST client, MCP client,
-// feature flag) and watch which side got called per message. We simulate
-// postMessage by dispatching a MessageEvent directly at the window with
-// `source` set to the iframe's contentWindow, because happy-dom wires
-// postMessage through the same mechanism.
+// Strategy: mock the MCP client so we can inspect call shape, argument
+// forwarding, and error propagation. Inbound iframe traffic is simulated
+// by dispatching a MessageEvent with `source` set to the iframe's
+// contentWindow stub — happy-dom wires postMessage through the same path.
 // ---------------------------------------------------------------------------
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
@@ -25,20 +27,6 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 // Mocks — each dependency is replaced with an observable stub so tests can
 // inspect call shape, argument forwarding, and error propagation.
 // ---------------------------------------------------------------------------
-
-// api/client (REST transport)
-const restCallTool = mock(async (_server: string, _tool: string, _args?: unknown) => ({
-  content: [{ type: "text", text: "rest-ok" }],
-  structuredContent: { via: "rest" },
-}));
-const restReadResource = mock(async (_server: string, _uri: string) => ({
-  contents: [{ uri: "ui://demo", text: "rest-bytes" }],
-}));
-
-mock.module("../../api/client", () => ({
-  callTool: restCallTool,
-  readResource: restReadResource,
-}));
 
 // mcp-bridge-client (SDK transport)
 //
@@ -98,15 +86,6 @@ mock.module("../../mcp-bridge-client", () => ({
   },
   resetMcpBridgeClient: () => {
     /* noop */
-  },
-}));
-
-// features — toggled per test
-let bridgeUseMcpFlag = false;
-mock.module("../../features", () => ({
-  getBridgeUseMcp: () => bridgeUseMcpFlag,
-  setBridgeUseMcp: (v: boolean) => {
-    bridgeUseMcpFlag = v;
   },
 }));
 
@@ -186,11 +165,8 @@ function makeTestIframe(): TestIframe {
 // ---------------------------------------------------------------------------
 
 beforeEach(() => {
-  bridgeUseMcpFlag = false;
   getClientShouldReject = null;
   getClientCalls.count = 0;
-  restCallTool.mockClear();
-  restReadResource.mockClear();
   mcpCallTool.mockClear();
   mcpReadResource.mockClear();
   mcpRequest.mockClear();
@@ -235,30 +211,8 @@ function mount(appName: string): TestIframe {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("tools/call — transport selection", () => {
-  test("flag off routes to REST /v1/tools/call (regression guard)", async () => {
-    bridgeUseMcpFlag = false;
-    const frame = mount("synapse-research");
-
-    frame.send({
-      jsonrpc: "2.0",
-      id: "1",
-      method: "tools/call",
-      params: { name: "start_research", arguments: { query: "hi" } },
-    });
-
-    const reply = (await frame.waitFor((m) => (m as { id?: string })?.id === "1")) as {
-      result: { content: unknown[]; structuredContent?: unknown };
-    };
-    expect(reply.result.structuredContent).toEqual({ via: "rest" });
-    expect(restCallTool).toHaveBeenCalledTimes(1);
-    expect(mcpCallTool).not.toHaveBeenCalled();
-    expect(mcpRequest).not.toHaveBeenCalled();
-    expect(getClientCalls.count).toBe(0);
-  });
-
-  test("flag on routes to MCP client callTool, NOT REST", async () => {
-    bridgeUseMcpFlag = true;
+describe("tools/call — MCP transport", () => {
+  test("routes tools/call through the MCP client", async () => {
     const frame = mount("synapse-research");
 
     frame.send({
@@ -273,7 +227,6 @@ describe("tools/call — transport selection", () => {
     };
     expect(reply.result.structuredContent).toEqual({ via: "mcp" });
     expect(mcpCallTool).toHaveBeenCalledTimes(1);
-    expect(restCallTool).not.toHaveBeenCalled();
 
     // The wire name is qualified with the app's own server per REST-parity.
     const [callParams] = mcpCallTool.mock.calls[0] ?? [];
@@ -283,33 +236,7 @@ describe("tools/call — transport selection", () => {
     });
   });
 
-  test("flag toggled between calls takes effect without remount (read per call)", async () => {
-    bridgeUseMcpFlag = false;
-    const frame = mount("synapse-research");
-
-    frame.send({
-      jsonrpc: "2.0",
-      id: "a",
-      method: "tools/call",
-      params: { name: "t", arguments: {} },
-    });
-    await frame.waitFor((m) => (m as { id?: string })?.id === "a");
-
-    bridgeUseMcpFlag = true;
-    frame.send({
-      jsonrpc: "2.0",
-      id: "b",
-      method: "tools/call",
-      params: { name: "t", arguments: {} },
-    });
-    await frame.waitFor((m) => (m as { id?: string })?.id === "b");
-
-    expect(restCallTool).toHaveBeenCalledTimes(1);
-    expect(mcpCallTool).toHaveBeenCalledTimes(1);
-  });
-
   test("task-augmented call returns CreateTaskResult to the iframe (<1s)", async () => {
-    bridgeUseMcpFlag = true;
     const frame = mount("synapse-research");
 
     const t0 = Date.now();
@@ -346,7 +273,6 @@ describe("tools/call — transport selection", () => {
   });
 
   test("MCP client connection failure surfaces as JSON-RPC error (not silent)", async () => {
-    bridgeUseMcpFlag = true;
     getClientShouldReject = new Error("connect refused");
     const frame = mount("synapse-research");
 
@@ -364,8 +290,7 @@ describe("tools/call — transport selection", () => {
     expect(reply.error?.message).toContain("connect refused");
   });
 
-  test("tool result with isError translates to JSON-RPC error on the MCP path", async () => {
-    bridgeUseMcpFlag = true;
+  test("tool result with isError translates to JSON-RPC error", async () => {
     mcpBehavior.callTool = async () => ({
       isError: true,
       content: [{ type: "text", text: "boom" }],
@@ -386,27 +311,8 @@ describe("tools/call — transport selection", () => {
   });
 });
 
-describe("tools/call — INTERNAL_APPS authz precedes transport", () => {
-  test("external app with params.server is locked to its own server on REST path", async () => {
-    bridgeUseMcpFlag = false;
-    const frame = mount("synapse-research"); // not in INTERNAL_APPS
-
-    frame.send({
-      jsonrpc: "2.0",
-      id: "a1",
-      method: "tools/call",
-      params: { name: "t", arguments: {}, server: "nb" }, // attempted cross-call
-    });
-    await frame.waitFor((m) => (m as { id?: string })?.id === "a1");
-
-    // REST helper was called, but with the app's own server (not "nb").
-    expect(restCallTool).toHaveBeenCalledTimes(1);
-    const args = restCallTool.mock.calls[0] ?? [];
-    expect(args[0]).toBe("synapse-research");
-  });
-
-  test("external app with params.server is locked to its own server on MCP path", async () => {
-    bridgeUseMcpFlag = true;
+describe("tools/call — INTERNAL_APPS authz", () => {
+  test("external app with params.server is locked to its own server", async () => {
     const frame = mount("synapse-research");
 
     frame.send({
@@ -418,31 +324,13 @@ describe("tools/call — INTERNAL_APPS authz precedes transport", () => {
     await frame.waitFor((m) => (m as { id?: string })?.id === "a2");
 
     // MCP client received a name qualified with the app's server,
-    // NOT "nb" — the authz rule is enforced identically on both paths.
+    // NOT "nb" — the authz rule rejects the cross-call attempt.
     expect(mcpCallTool).toHaveBeenCalledTimes(1);
     const [callParams] = mcpCallTool.mock.calls[0] ?? [];
     expect((callParams as { name: string }).name).toBe("synapse-research__t");
   });
 
-  test("internal app with params.server is allowed to cross-call on REST path", async () => {
-    bridgeUseMcpFlag = false;
-    const frame = mount("nb"); // IS in INTERNAL_APPS
-
-    frame.send({
-      jsonrpc: "2.0",
-      id: "a3",
-      method: "tools/call",
-      params: { name: "briefing", arguments: {}, server: "home" },
-    });
-    await frame.waitFor((m) => (m as { id?: string })?.id === "a3");
-
-    expect(restCallTool).toHaveBeenCalledTimes(1);
-    const args = restCallTool.mock.calls[0] ?? [];
-    expect(args[0]).toBe("home");
-  });
-
-  test("internal app with params.server is allowed to cross-call on MCP path", async () => {
-    bridgeUseMcpFlag = true;
+  test("internal app with params.server is allowed to cross-call", async () => {
     const frame = mount("nb");
 
     frame.send({
@@ -459,28 +347,8 @@ describe("tools/call — INTERNAL_APPS authz precedes transport", () => {
   });
 });
 
-describe("resources/read — transport selection", () => {
-  test("flag off routes to REST /v1/resources/read", async () => {
-    bridgeUseMcpFlag = false;
-    const frame = mount("synapse-research");
-
-    frame.send({
-      jsonrpc: "2.0",
-      id: "r1",
-      method: "resources/read",
-      params: { uri: "ui://demo" },
-    });
-
-    const reply = (await frame.waitFor((m) => (m as { id?: string })?.id === "r1")) as {
-      result: { contents: unknown[] };
-    };
-    expect(reply.result.contents).toEqual([{ uri: "ui://demo", text: "rest-bytes" }]);
-    expect(restReadResource).toHaveBeenCalledTimes(1);
-    expect(mcpReadResource).not.toHaveBeenCalled();
-  });
-
-  test("flag on routes to MCP client readResource, NOT REST", async () => {
-    bridgeUseMcpFlag = true;
+describe("resources/read — MCP transport", () => {
+  test("routes resources/read through the MCP client", async () => {
     const frame = mount("synapse-research");
 
     frame.send({
@@ -495,51 +363,9 @@ describe("resources/read — transport selection", () => {
     };
     expect(reply.result.contents).toEqual([{ uri: "ui://demo", text: "mcp-bytes" }]);
     expect(mcpReadResource).toHaveBeenCalledTimes(1);
-    expect(restReadResource).not.toHaveBeenCalled();
-  });
-
-  test("ui:// URI returns the same payload via both paths (diff)", async () => {
-    // Force both paths to return the same canonical contents so the diff
-    // is meaningful: this guards against accidental shape divergence at
-    // the bridge boundary, e.g. unwrapping `contents` or stripping fields.
-    const canonical = {
-      contents: [{ uri: "ui://demo/main.html", mimeType: "text/html", text: "<h1>hi</h1>" }],
-    };
-    restReadResource.mockImplementation(async () => canonical);
-    mcpBehavior.readResource = async () => canonical;
-
-    bridgeUseMcpFlag = false;
-    let frame = mount("synapse-research");
-    frame.send({
-      jsonrpc: "2.0",
-      id: "d1",
-      method: "resources/read",
-      params: { uri: "ui://demo/main.html" },
-    });
-    const restReply = (await frame.waitFor((m) => (m as { id?: string })?.id === "d1")) as {
-      result: unknown;
-    };
-    activeBridge?.destroy();
-    activeFrame?.cleanup();
-
-    bridgeUseMcpFlag = true;
-    frame = mount("synapse-research");
-    activeFrame = frame;
-    frame.send({
-      jsonrpc: "2.0",
-      id: "d2",
-      method: "resources/read",
-      params: { uri: "ui://demo/main.html" },
-    });
-    const mcpReply = (await frame.waitFor((m) => (m as { id?: string })?.id === "d2")) as {
-      result: unknown;
-    };
-
-    expect(restReply.result).toEqual(mcpReply.result);
   });
 
   test("MCP readResource error forwards as JSON-RPC -32000", async () => {
-    bridgeUseMcpFlag = true;
     mcpBehavior.readResource = async () => {
       throw new Error("resource not found");
     };
@@ -557,40 +383,5 @@ describe("resources/read — transport selection", () => {
     };
     expect(reply.error?.code).toBe(-32000);
     expect(reply.error?.message).toContain("resource not found");
-  });
-});
-
-describe("resources/read — INTERNAL_APPS authz precedes transport", () => {
-  test("external app with params.server is rejected (scoped to own server) — REST", async () => {
-    bridgeUseMcpFlag = false;
-    const frame = mount("synapse-research");
-
-    frame.send({
-      jsonrpc: "2.0",
-      id: "s1",
-      method: "resources/read",
-      params: { uri: "ui://x", server: "nb" },
-    });
-    await frame.waitFor((m) => (m as { id?: string })?.id === "s1");
-
-    expect(restReadResource).toHaveBeenCalledTimes(1);
-    // Server arg is the app's own name, not "nb".
-    expect(restReadResource.mock.calls[0]?.[0]).toBe("synapse-research");
-  });
-
-  test("internal app with params.server is allowed to cross-call — REST", async () => {
-    bridgeUseMcpFlag = false;
-    const frame = mount("nb");
-
-    frame.send({
-      jsonrpc: "2.0",
-      id: "s2",
-      method: "resources/read",
-      params: { uri: "ui://home/view", server: "home" },
-    });
-    await frame.waitFor((m) => (m as { id?: string })?.id === "s2");
-
-    expect(restReadResource).toHaveBeenCalledTimes(1);
-    expect(restReadResource.mock.calls[0]?.[0]).toBe("home");
   });
 });

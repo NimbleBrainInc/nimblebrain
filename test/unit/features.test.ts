@@ -20,14 +20,6 @@ describe("resolveFeatures", () => {
 		expect(features.toolDiscovery).toBe(true);
 	});
 
-	it("defaults bridgeUseMcp to false (opt-in)", () => {
-		expect(resolveFeatures().bridgeUseMcp).toBe(false);
-		expect(resolveFeatures({}).bridgeUseMcp).toBe(false);
-	});
-
-	it("honors bridgeUseMcp when explicitly enabled", () => {
-		expect(resolveFeatures({ bridgeUseMcp: true }).bridgeUseMcp).toBe(true);
-	});
 });
 
 describe("isToolEnabled", () => {

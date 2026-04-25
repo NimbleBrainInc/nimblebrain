@@ -1,11 +1,11 @@
 // ---------------------------------------------------------------------------
-// Bridge tasks-surface tests — Task 009
+// Bridge tasks-surface tests
 //
-// Behavioral contract from `009-bridge-tasks-surface.md`:
+// The bridge always advertises `hostCapabilities.tasks` and forwards the
+// `tasks/*` surface through the MCP bridge client. These tests verify:
 //
-//   - `ui/initialize` advertises `hostCapabilities.tasks` IFF
-//     `features.bridgeUseMcp === true`; otherwise the key is omitted and
-//     the iframe SDK's capability check refuses `callToolAsTask`.
+//   - `ui/initialize` always advertises `hostCapabilities.tasks` so the
+//     iframe SDK's capability check permits `callToolAsTask`.
 //   - `tasks/get` / `tasks/result` / `tasks/cancel` are forwarded through
 //     the MCP bridge client. Errors translate to JSON-RPC envelopes
 //     (`-32602` for invalid/not-found, `-32603` internal, etc.).
@@ -24,21 +24,6 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 // ---------------------------------------------------------------------------
 // Mocks
 // ---------------------------------------------------------------------------
-
-// api/client (REST) — not exercised here but imported by bridge.ts.
-mock.module("../../api/client", () => ({
-  callTool: mock(async () => ({ content: [], structuredContent: {} })),
-  readResource: mock(async () => ({ contents: [] })),
-}));
-
-// features — toggled per test. Default: off.
-let bridgeUseMcpFlag = false;
-mock.module("../../features", () => ({
-  getBridgeUseMcp: () => bridgeUseMcpFlag,
-  setBridgeUseMcp: (v: boolean) => {
-    bridgeUseMcpFlag = v;
-  },
-}));
 
 // mcp-bridge-client
 //
@@ -205,7 +190,6 @@ async function waitForSubscription(): Promise<void> {
 // ---------------------------------------------------------------------------
 
 beforeEach(() => {
-  bridgeUseMcpFlag = false;
   getClientShouldReject = null;
   mcpBehavior = defaultBehavior;
   mcpRequest.mockClear();
@@ -232,12 +216,11 @@ function mount(appName: string): TestIframe {
 }
 
 // ---------------------------------------------------------------------------
-// ui/initialize — capability advertisement gating
+// ui/initialize — capability advertisement
 // ---------------------------------------------------------------------------
 
-describe("ui/initialize — tasks capability gating", () => {
-  test("flag on → hostCapabilities.tasks is advertised", async () => {
-    bridgeUseMcpFlag = true;
+describe("ui/initialize — tasks capability", () => {
+  test("hostCapabilities.tasks is advertised", async () => {
     const frame = mount("synapse-research");
 
     frame.send({
@@ -261,29 +244,6 @@ describe("ui/initialize — tasks capability gating", () => {
     // Existing capabilities preserved.
     expect(reply.result.hostCapabilities.openLinks).toEqual({});
   });
-
-  test("flag off → hostCapabilities.tasks is omitted", async () => {
-    bridgeUseMcpFlag = false;
-    const frame = mount("synapse-research");
-
-    frame.send({
-      jsonrpc: "2.0",
-      id: "init-2",
-      method: "ui/initialize",
-      params: {
-        protocolVersion: "2026-01-26",
-        clientInfo: { name: "iframe", version: "1.0.0" },
-        capabilities: {},
-      },
-    });
-
-    const reply = (await frame.waitFor((m) => (m as { id?: string })?.id === "init-2")) as {
-      result: { hostCapabilities: Record<string, unknown> };
-    };
-    expect("tasks" in reply.result.hostCapabilities).toBe(false);
-    // Existing capabilities still advertised.
-    expect(reply.result.hostCapabilities.openLinks).toEqual({});
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -292,7 +252,6 @@ describe("ui/initialize — tasks capability gating", () => {
 
 describe("tasks/* forwarding — iframe → MCP client", () => {
   test("tasks/get forwards taskId and returns GetTaskResult", async () => {
-    bridgeUseMcpFlag = true;
     const frame = mount("synapse-research");
 
     frame.send({
@@ -314,7 +273,6 @@ describe("tasks/* forwarding — iframe → MCP client", () => {
   });
 
   test("tasks/result forwards taskId and returns CallToolResult payload", async () => {
-    bridgeUseMcpFlag = true;
     const frame = mount("synapse-research");
 
     frame.send({
@@ -344,7 +302,6 @@ describe("tasks/* forwarding — iframe → MCP client", () => {
   });
 
   test("tasks/cancel forwards taskId and returns cancelled Task", async () => {
-    bridgeUseMcpFlag = true;
     const frame = mount("synapse-research");
 
     frame.send({
@@ -364,7 +321,6 @@ describe("tasks/* forwarding — iframe → MCP client", () => {
 
 describe("tasks/* error translation", () => {
   test("server -32602 (invalid taskId) preserved on the wire", async () => {
-    bridgeUseMcpFlag = true;
     mcpBehavior = {
       request: async () => {
         const err = new Error("task not found") as Error & { code?: number };
@@ -389,7 +345,6 @@ describe("tasks/* error translation", () => {
   });
 
   test("unknown/internal error surfaces as -32603", async () => {
-    bridgeUseMcpFlag = true;
     mcpBehavior = {
       request: async () => {
         throw new Error("connection dropped");
@@ -418,7 +373,6 @@ describe("tasks/* error translation", () => {
 
 describe("notifications/tasks/status — forwarding + teardown", () => {
   test("bridge subscribes once at creation", async () => {
-    bridgeUseMcpFlag = true;
     mount("synapse-research");
 
     await waitForSubscription();
@@ -430,7 +384,6 @@ describe("notifications/tasks/status — forwarding + teardown", () => {
   });
 
   test("emitted notification is forwarded to the iframe verbatim (preserves _meta)", async () => {
-    bridgeUseMcpFlag = true;
     const frame = mount("synapse-research");
     await waitForSubscription();
 
@@ -461,7 +414,6 @@ describe("notifications/tasks/status — forwarding + teardown", () => {
   });
 
   test("destroy() unsubscribes — post-destroy emissions do not reach iframe", async () => {
-    bridgeUseMcpFlag = true;
     const frame = mount("synapse-research");
     await waitForSubscription();
 
@@ -497,8 +449,6 @@ describe("notifications/tasks/status — forwarding + teardown", () => {
   });
 
   test("each bridge instance handles its own forwarding (multi-iframe isolation)", async () => {
-    bridgeUseMcpFlag = true;
-
     const frame1 = makeTestIframe();
     const bridge1 = createBridge(frame1.iframe, "app-one");
     await waitForSubscription();

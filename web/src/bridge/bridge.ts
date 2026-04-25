@@ -32,8 +32,6 @@ import {
   GetTaskResultSchema,
   TaskStatusNotificationSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { callTool, readResource } from "../api/client";
-import { getBridgeUseMcp } from "../features";
 import { getMcpBridgeClient } from "../mcp-bridge-client";
 import { getHostThemeMode, getSpecThemeTokens, getThemeTokens } from "./theme";
 import type {
@@ -197,21 +195,15 @@ export function createBridge(
       } catch (err) {
         console.error("getHostExtensions threw — proceeding with no extensions:", err);
       }
-      // Gate the `tasks` capability on the MCP-transport flag. The iframe
-      // SDK refuses `callToolAsTask` unless the host advertises
-      // `tasks.requests.tools.call`, so when the flag is off we omit the
-      // key entirely and leave the legacy REST-only behavior in place.
-      const hostCapabilities: Record<string, unknown> = {
+      const hostCapabilities = {
         openLinks: {},
         serverTools: {},
         logging: {},
-      };
-      if (getBridgeUseMcp()) {
-        hostCapabilities.tasks = {
+        tasks: {
           cancel: {},
           requests: { tools: { call: {} } },
-        };
-      }
+        },
+      };
       const response: ExtAppsInitializeResponse = {
         jsonrpc: "2.0",
         id: msg.id,
@@ -262,67 +254,22 @@ export function createBridge(
       case "tools/call": {
         const { id, params } = msg;
 
-        // --- Authz (transport-independent) ---------------------------------
-        //
-        // Security: tool/resource calls are scoped to appName by default.
-        // Internal bundles can specify params.server to cross-call other
-        // sources. INTERNAL_APPS is defined once at module scope so both
-        // tools/call and resources/read share the same trust list. This
-        // check MUST run BEFORE the transport selection — the `/mcp`
-        // endpoint is workspace-scoped and doesn't know about the
-        // "internal app" concept, so this authz stays in the bridge.
+        // Security: tool calls are scoped to appName by default. Internal
+        // bundles (`INTERNAL_APPS`) can specify `params.server` to
+        // cross-call other sources. The `/mcp` endpoint is workspace-
+        // scoped but doesn't know about the "internal app" concept, so
+        // this authz check stays in the bridge.
         const server = INTERNAL_APPS.has(appName) && params.server ? params.server : appName;
 
-        // --- Transport selection (read flag per call, not at bridge init) --
-        if (getBridgeUseMcp()) {
-          callToolViaMcp(server, params, id).then(postToIframe, (err: unknown) => {
-            const errorMsg = err instanceof Error ? err.message : "Tool call failed";
-            const errorResponse: UiToolResultError = {
-              jsonrpc: "2.0",
-              id,
-              error: { code: -32000, message: errorMsg },
-            };
-            postToIframe(errorResponse);
-          });
-          break;
-        }
-
-        callTool(server, params.name, params.arguments)
-          .then((result) => {
-            if (result.isError) {
-              const errorText =
-                result.content
-                  ?.map((b) => b.text ?? "")
-                  .filter(Boolean)
-                  .join("\n") || "Tool error";
-              const errorResponse: UiToolResultError = {
-                jsonrpc: "2.0",
-                id,
-                error: { code: -32000, message: errorText },
-              };
-              postToIframe(errorResponse);
-              return;
-            }
-            // Forward the full CallToolResult per MCP spec
-            const response: UiToolResultResponse = {
-              jsonrpc: "2.0",
-              id,
-              result: {
-                content: result.content,
-                structuredContent: result.structuredContent,
-              },
-            };
-            postToIframe(response);
-          })
-          .catch((err: unknown) => {
-            const errorMsg = err instanceof Error ? err.message : "Tool call failed";
-            const errorResponse: UiToolResultError = {
-              jsonrpc: "2.0",
-              id,
-              error: { code: -32000, message: errorMsg },
-            };
-            postToIframe(errorResponse);
-          });
+        callToolViaMcp(server, params, id).then(postToIframe, (err: unknown) => {
+          const errorMsg = err instanceof Error ? err.message : "Tool call failed";
+          const errorResponse: UiToolResultError = {
+            jsonrpc: "2.0",
+            id,
+            error: { code: -32000, message: errorMsg },
+          };
+          postToIframe(errorResponse);
+        });
         break;
       }
 
@@ -332,30 +279,13 @@ export function createBridge(
       // -----------------------------------------------------------------
       case "resources/read": {
         const { id, params } = msg;
-        // Same trust list as tools/call. The URI itself is passed through
+        // Same trust list as tools/call. The URI itself passes through
         // verbatim to the server — SSRF safety lives in the bundle, not
         // the host, because only URIs the bundle advertises via
-        // resources/list will resolve anyway. Authz runs BEFORE transport
-        // selection, same rule as tools/call.
+        // resources/list will resolve anyway.
         const server = INTERNAL_APPS.has(appName) && params.server ? params.server : appName;
 
-        if (getBridgeUseMcp()) {
-          readResourceViaMcp(server, params.uri)
-            .then((result) => {
-              postToIframe({ jsonrpc: "2.0", id, result });
-            })
-            .catch((err: unknown) => {
-              const errorMsg = err instanceof Error ? err.message : "Resource read failed";
-              postToIframe({
-                jsonrpc: "2.0",
-                id,
-                error: { code: -32000, message: errorMsg },
-              });
-            });
-          break;
-        }
-
-        readResource(server, params.uri)
+        readResourceViaMcp(server, params.uri)
           .then((result) => {
             postToIframe({ jsonrpc: "2.0", id, result });
           })
@@ -570,12 +500,6 @@ export function createBridge(
   // removes this bridge's handler so post-destroy notifications do not
   // reach the iframe.
   //
-  // Gated on `features.bridgeUseMcp`: when the flag is off we never
-  // advertise the tasks capability, iframes won't issue tasks/* calls,
-  // and there's no MCP client to subscribe against. Skipping the
-  // subscription here also keeps the legacy REST-only tests cache-clean
-  // (`getMcpBridgeClient()` is never invoked when the flag is off).
-  //
   // Notes:
   //   - `_meta` is preserved (per spec, status notifications don't
   //     require related-task meta, but we never strip what's there).
@@ -592,9 +516,7 @@ export function createBridge(
   // `tasks/get`.
   // ---------------------------------------------------------------------
   let notificationTeardown: (() => void) | null = null;
-  if (getBridgeUseMcp()) {
-    void subscribeTaskStatus();
-  }
+  void subscribeTaskStatus();
 
   async function subscribeTaskStatus(): Promise<void> {
     try {
@@ -689,12 +611,12 @@ export function createBridge(
 
 // ---------------------------------------------------------------------------
 // MCP transport helpers — wire `tools/call` / `resources/read` through the
-// platform's `/mcp` endpoint when `features.bridgeUseMcp` is on.
+// platform's `/mcp` streamable HTTP endpoint via the MCP SDK `Client`.
 //
 // Rules:
 //   - All JSON-RPC dispatch goes through the SDK `Client` (no hand-crafted
 //     method strings or wire payloads).
-//   - Response shape forwarded to the iframe MUST match the existing REST
+//   - Response shape forwarded to the iframe MUST match the spec'd MCP
 //     path: `{ content, structuredContent }` for tools (non-task),
 //     `{ contents }` for resources. For task-augmented calls the full
 //     CreateTaskResult is preserved as-is (see §Non-Negotiable Rule 4:
@@ -736,11 +658,11 @@ async function callToolViaMcp(
 ): Promise<UiToolResultResponse | UiToolResultError | Record<string, unknown>> {
   const client = await getMcpBridgeClient();
 
-  // The `/mcp` endpoint advertises tool names as `<source>__<tool>`. The
-  // legacy REST path accepted `(server, tool)` split; recombine here so
-  // the wire payload matches what `mcp-server.ts::CallToolRequestSchema`
-  // expects. If the iframe already passed a fully-qualified name, leave
-  // it alone.
+  // The `/mcp` endpoint advertises tool names as `<source>__<tool>`, so
+  // the wire `tools/call` must use the qualified form (see
+  // `mcp-server.ts::CallToolRequestSchema`). Iframes that already pass a
+  // qualified name flow through unchanged; bare names get prefixed with
+  // the resolved `server` (post-INTERNAL_APPS authz).
   const wireName = params.name.includes("__") ? params.name : `${server}__${params.name}`;
 
   if (params.task) {
@@ -803,10 +725,10 @@ async function callToolViaMcp(
 async function readResourceViaMcp(server: string, uri: string): Promise<{ contents: unknown[] }> {
   const client = await getMcpBridgeClient();
 
-  // `/mcp` resource URIs are expected to be fully qualified as authored
-  // by the bundle. `server` is used here only as part of the authz trust
-  // decision at the call site; the URI passed to the SDK is the same
-  // string the iframe sent, matching the legacy REST behavior.
+  // Per spec, `resources/read` carries only the URI — the resource is
+  // namespaced by the bundle that authored it, not by request params.
+  // `server` is consumed by the INTERNAL_APPS authz at the call site
+  // (cross-call permission); it doesn't appear on the wire here.
   void server;
   const result = await client.readResource({ uri });
   return { contents: result.contents as unknown[] };
