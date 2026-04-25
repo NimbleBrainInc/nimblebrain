@@ -1064,3 +1064,177 @@ describe("manage_app configure — workspace-scoped credentials", () => {
 		expect(creds?.api_key).toBe("sk-new-value");
 	});
 });
+
+// ---------------------------------------------------------------------------
+// nb__read_resource (#3)
+// ---------------------------------------------------------------------------
+
+describe("nb__read_resource system tool", () => {
+	/** Build a ToolSource that also implements ResourceReader, for testing. */
+	function makeResourceReaderSource(
+		name: string,
+		resources: Record<string, string | { text?: string; blob?: Uint8Array; mimeType?: string } | (() => never)>,
+	) {
+		return {
+			name,
+			async start() {},
+			async stop() {},
+			async tools() {
+				return [];
+			},
+			async execute() {
+				return { content: "noop", isError: false };
+			},
+			async readResource(uri: string) {
+				const entry = resources[uri];
+				if (entry === undefined) return null;
+				if (typeof entry === "function") {
+					entry();
+				}
+				if (typeof entry === "string") {
+					return { text: entry };
+				}
+				return entry as { text?: string; blob?: Uint8Array; mimeType?: string };
+			},
+		};
+	}
+
+	it("returns the resource text from the first source that resolves the URI", async () => {
+		const registry = new ToolRegistry();
+		registry.addSource(makeResourceReaderSource("app-one", {
+			"skill://app-one/usage": "Step 1: call the thing. Step 2: win.",
+		}));
+		registry.addSource(makeResourceReaderSource("app-two", {
+			"skill://app-two/usage": "other content",
+		}));
+
+		const systemTools = createSystemTools(() => registry);
+		const result = await systemTools.execute("read_resource", {
+			uri: "skill://app-one/usage",
+		});
+
+		expect(result.isError).toBe(false);
+		expect(extractText(result.content)).toContain("Step 1: call the thing");
+	});
+
+	it("falls through to a later source when earlier sources do not have the URI", async () => {
+		// Lock the iteration-order contract: when the first source returns null,
+		// the handler must keep searching and resolve from a later source.
+		const registry = new ToolRegistry();
+		registry.addSource(makeResourceReaderSource("first", {
+			// no entry for the queried URI — readResource returns null
+			"skill://other/thing": "unrelated",
+		}));
+		registry.addSource(makeResourceReaderSource("second", {
+			"skill://target/usage": "found in second source",
+		}));
+
+		const systemTools = createSystemTools(() => registry);
+		const result = await systemTools.execute("read_resource", {
+			uri: "skill://target/usage",
+		});
+
+		expect(result.isError).toBe(false);
+		expect(extractText(result.content)).toContain("found in second source");
+	});
+
+	it("returns a binary marker when a source resolves the URI as a blob", async () => {
+		const registry = new ToolRegistry();
+		registry.addSource(makeResourceReaderSource("bin", {
+			"ui://bin/icon": { blob: new Uint8Array([1, 2, 3, 4]), mimeType: "image/png" },
+		}));
+
+		const systemTools = createSystemTools(() => registry);
+		const result = await systemTools.execute("read_resource", {
+			uri: "ui://bin/icon",
+		});
+
+		expect(result.isError).toBe(false);
+		const text = extractText(result.content);
+		expect(text).toContain("[binary resource");
+		expect(text).toContain("4 bytes");
+		expect(text).toContain("image/png");
+	});
+
+	it("returns isError when the URI is not found in any source", async () => {
+		const registry = new ToolRegistry();
+		registry.addSource(makeResourceReaderSource("app-one", {
+			"skill://app-one/usage": "content",
+		}));
+		const systemTools = createSystemTools(() => registry);
+
+		const result = await systemTools.execute("read_resource", {
+			uri: "skill://nowhere/missing",
+		});
+
+		expect(result.isError).toBe(true);
+		expect(extractText(result.content)).toContain("not found");
+	});
+
+	it("returns isError when uri is missing or empty", async () => {
+		const registry = new ToolRegistry();
+		const systemTools = createSystemTools(() => registry);
+
+		// Missing `uri` is rejected upstream by InlineSource's schema validation;
+		// we only assert it surfaces as a tool error.
+		const missing = await systemTools.execute("read_resource", {});
+		expect(missing.isError).toBe(true);
+
+		// Whitespace-only passes schema validation but is rejected by the handler.
+		const empty = await systemTools.execute("read_resource", { uri: "   " });
+		expect(empty.isError).toBe(true);
+		expect(extractText(empty.content)).toContain("uri is required");
+	});
+
+	it("truncates resource content larger than the budget", async () => {
+		const registry = new ToolRegistry();
+		const huge = "x".repeat(20_000);
+		registry.addSource(makeResourceReaderSource("big", {
+			"skill://big/huge": huge,
+		}));
+
+		const systemTools = createSystemTools(() => registry);
+		const result = await systemTools.execute("read_resource", {
+			uri: "skill://big/huge",
+		});
+
+		expect(result.isError).toBe(false);
+		const text = extractText(result.content);
+		expect(text).toContain("[truncated");
+		// Body is capped at the budget + truncation marker; must be under input size.
+		expect(text.length).toBeLessThan(huge.length);
+	});
+
+	it("skips sources that throw and reports the aggregated error when nothing resolves", async () => {
+		const registry = new ToolRegistry();
+		registry.addSource(makeResourceReaderSource("broken", {
+			"skill://any/thing": () => {
+				throw new Error("boom");
+			},
+		}));
+		const systemTools = createSystemTools(() => registry);
+
+		const result = await systemTools.execute("read_resource", {
+			uri: "skill://any/thing",
+		});
+
+		expect(result.isError).toBe(true);
+		const text = extractText(result.content);
+		expect(text).toContain("not found");
+		expect(text).toContain("broken: boom");
+	});
+
+	it("ignores sources that do not implement readResource", async () => {
+		// The default InlineSource used elsewhere in the file does NOT implement
+		// readResource — guard against a regression that would iterate it.
+		const registry = makeRegistry();
+		const systemTools = createSystemTools(() => registry);
+
+		const result = await systemTools.execute("read_resource", {
+			uri: "skill://anywhere/usage",
+		});
+
+		expect(result.isError).toBe(true);
+		expect(extractText(result.content)).toContain("not found");
+	});
+});

@@ -123,6 +123,11 @@ export class ToolRegistry implements ToolRouter {
     return this.sources.has(name);
   }
 
+  /** Look up a single source by name. Returns undefined when absent. */
+  getSource(name: string): ToolSource | undefined {
+    return this.sources.get(name);
+  }
+
   /** Get all registered sources. */
   getSources(): ToolSource[] {
     return [...this.sources.values()];

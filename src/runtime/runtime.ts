@@ -1002,6 +1002,7 @@ export class Runtime {
   /** Build apps list from in-memory lifecycle instances for system prompt injection (§7.3). */
   private async buildAppsList(workspaceId: string): Promise<PromptAppInfo[]> {
     const instances = this.getBundleInstancesForWorkspace(workspaceId);
+    const registry = this._workspaceRegistries.get(workspaceId);
 
     const apps: PromptAppInfo[] = [];
     for (const instance of instances) {
@@ -1011,9 +1012,20 @@ export class Runtime {
         ui = { name: instance.ui.name };
       }
 
+      // Surface the MCP server's `initialize.instructions` (when set) so the
+      // LLM sees per-bundle guidance — typically a pointer to `skill://`
+      // resources that explain correct tool usage. Without this hint the
+      // agent cannot discover that such resources exist.
+      let instructions: string | undefined;
+      const source = registry?.getSource(instance.serverName);
+      if (source instanceof McpSource) {
+        instructions = source.getInstructions();
+      }
+
       apps.push({
         name: instance.serverName,
         description: instance.description,
+        instructions,
         trustScore,
         ui,
       });

@@ -143,4 +143,13 @@ describe("ToolRegistry", () => {
     expect(registry.hasSource("alpha")).toBe(true);
     expect(registry.hasSource("beta")).toBe(false);
   });
+
+  it("getSource returns the registered source by name, undefined otherwise", () => {
+    const registry = new ToolRegistry();
+    const alpha = new InlineSource("alpha", []);
+    registry.addSource(alpha);
+
+    expect(registry.getSource("alpha")).toBe(alpha);
+    expect(registry.getSource("beta")).toBeUndefined();
+  });
 });

@@ -27,6 +27,12 @@ IMPORTANT: Only use tools that are provided to you via the tools parameter. Neve
 export interface PromptAppInfo {
   name: string;
   description?: string;
+  /**
+   * Optional per-bundle guidance from the MCP server's `initialize.instructions`
+   * field. Rendered inside `<app-instructions>` containment tags so the model
+   * treats the content as data, not a nested system prompt.
+   */
+  instructions?: string;
   trustScore: number;
   ui: { name: string } | null;
 }
@@ -156,6 +162,13 @@ function formatAppsSection(apps: PromptAppInfo[], hasProxiedTools?: boolean): st
     lines.push(`- ${app.name} (${uiLabel})${trustLabel}`);
     if (app.description) {
       lines.push(`  <app-description>${app.description}</app-description>`);
+    }
+    if (app.instructions) {
+      // Neutralize any attempt by the bundle author to close the containment
+      // tag early and inject a forged system section. We do NOT strip
+      // arbitrary XML, only the specific tag we use for containment.
+      const safe = app.instructions.replaceAll("</app-instructions>", "&lt;/app-instructions>");
+      lines.push(`  <app-instructions>\n${safe}\n  </app-instructions>`);
     }
   }
   lines.push(
