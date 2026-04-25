@@ -381,4 +381,15 @@ export interface BridgeCallbacks {
   onAction?: (action: string, params: Record<string, unknown>) => void;
   /** Called when the iframe confirms handshake complete. */
   onInitialized?: () => void;
+  /**
+   * Provide NimbleBrain-specific extensions to merge into the ext-apps
+   * `hostContext` at handshake time (e.g. `{ workspace: { id, name } }`).
+   * Called once per `ui/initialize` request, so it can read live state at
+   * the moment the iframe finishes loading.
+   *
+   * The bridge stays workspace-agnostic; the caller owns what extensions to
+   * publish. Spec-standardized fields (`theme`, `styles`) are always set by
+   * the bridge and override any same-named keys returned here.
+   */
+  getHostExtensions?: () => Record<string, unknown>;
 }

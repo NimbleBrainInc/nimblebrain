@@ -160,6 +160,25 @@ export function createBridge(
       // NB extensions and out-of-spec tokens still flow through the iframe's
       // injected `<style>` block — they just don't cross the protocol.
       const extTokens = getSpecThemeTokens(extMode);
+      // Spec-standardized fields (theme, styles) take precedence over any
+      // same-named keys returned by `getHostExtensions()`, so callers can
+      // safely return arbitrary extension keys without colliding.
+      //
+      // Top-level extension keys (e.g. `workspace`) are spec-allowed: the
+      // ext-apps `McpUiHostContextSchema` is `.passthrough()`, so strict
+      // SDK clients (Reboot/Zod) preserve unknown keys at the hostContext
+      // root. The strict-key concern documented above applies only to
+      // `hostContext.styles.variables`, which is a typed enum of CSS
+      // custom properties — extensions there would tear down the connection.
+      //
+      // Wrapped in try/catch: a throwing callback would otherwise drop the
+      // entire `ui/initialize` response and hang the iframe at "Connecting…".
+      let extensions: Record<string, unknown> = {};
+      try {
+        extensions = callbacks?.getHostExtensions?.() ?? {};
+      } catch (err) {
+        console.error("getHostExtensions threw — proceeding with no extensions:", err);
+      }
       const response: ExtAppsInitializeResponse = {
         jsonrpc: "2.0",
         id: msg.id,
@@ -172,6 +191,7 @@ export function createBridge(
             logging: {},
           },
           hostContext: {
+            ...extensions,
             theme: extMode,
             styles: {
               variables: extTokens,

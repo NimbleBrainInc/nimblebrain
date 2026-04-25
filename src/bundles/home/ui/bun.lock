@@ -5,7 +5,7 @@
     "": {
       "name": "@nimblebraininc/home-ui",
       "dependencies": {
-        "@nimblebrain/synapse": "^0.4.0",
+        "@nimblebrain/synapse": "^0.6.0",
         "react": "^19.0.0",
         "react-dom": "^19.0.0",
       },
@@ -126,7 +126,7 @@
 
     "@modelcontextprotocol/sdk": ["@modelcontextprotocol/sdk@1.29.0", "", { "dependencies": { "@hono/node-server": "^1.19.9", "ajv": "^8.17.1", "ajv-formats": "^3.0.1", "content-type": "^1.0.5", "cors": "^2.8.5", "cross-spawn": "^7.0.5", "eventsource": "^3.0.2", "eventsource-parser": "^3.0.0", "express": "^5.2.1", "express-rate-limit": "^8.2.1", "hono": "^4.11.4", "jose": "^6.1.3", "json-schema-typed": "^8.0.2", "pkce-challenge": "^5.0.0", "raw-body": "^3.0.0", "zod": "^3.25 || ^4.0", "zod-to-json-schema": "^3.25.1" }, "peerDependencies": { "@cfworker/json-schema": "^4.1.1", "zod": "^3.25 || ^4.0" }, "optionalPeers": ["@cfworker/json-schema"] }, "sha512-zo37mZA9hJWpULgkRpowewez1y6ML5GsXJPY8FI0tBBCd77HEvza4jDqRKOXgHNn867PVGCyTdzqpz0izu5ZjQ=="],
 
-    "@nimblebrain/synapse": ["@nimblebrain/synapse@0.4.0", "", { "peerDependencies": { "@modelcontextprotocol/ext-apps": "^1.3.1", "react": "^18.0.0 || ^19.0.0" }, "bin": { "synapse": "dist/codegen/cli.js" } }, "sha512-7VLuwPhAgp7n7Ok9IVRs/qtK64KTl7RAPMWR2IGmiyjXW/552vwuMrAgDkksuPrIiZECalXSx08Zaks/+SRsxg=="],
+    "@nimblebrain/synapse": ["@nimblebrain/synapse@0.6.0", "", { "peerDependencies": { "@modelcontextprotocol/ext-apps": "^1.3.1", "react": "^18.0.0 || ^19.0.0" }, "optionalPeers": ["react"], "bin": { "synapse": "dist/codegen/cli.js" } }, "sha512-r5jVc63+c9Y7GsNK7QwOzHhZ1pkPwCzBeVG8X/lPQ8oquMD8WFeYNPLwo7WT6P6giZ3s55GolHib3Xj5Rgm3xA=="],
 
     "@rolldown/pluginutils": ["@rolldown/pluginutils@1.0.0-beta.27", "", {}, "sha512-+d0F4MKMCbeVUJwG96uQ4SgAznZNSq93I3V+9NHA4OpvqG8mRCpGdKmK8l/dl02h2CCDHwW2FqilnTyDcAnqjA=="],
 

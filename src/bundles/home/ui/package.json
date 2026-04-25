@@ -8,7 +8,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@nimblebrain/synapse": "^0.4.0",
+    "@nimblebrain/synapse": "^0.6.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },

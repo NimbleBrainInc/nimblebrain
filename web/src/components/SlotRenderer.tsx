@@ -2,10 +2,11 @@ import { useEffect, useRef } from "react";
 import { getResources, uiPathFromUri } from "../api/client";
 import type { BridgeHandle } from "../bridge/bridge";
 import { createBridge } from "../bridge/bridge";
+import { buildHostContext, buildHostExtensions } from "../bridge/host-extensions";
 import { createAppIframe } from "../bridge/iframe";
-import { getThemeTokens } from "../bridge/theme";
 import type { UiChatContext } from "../bridge/types";
 import { useTheme } from "../context/ThemeContext";
+import { useWorkspaceContext } from "../context/WorkspaceContext";
 import type { PlacementEntry } from "../types";
 
 interface SlotRendererProps {
@@ -29,9 +30,16 @@ export function SlotRenderer({
   const containerRef = useRef<HTMLDivElement>(null);
   const bridgesRef = useRef<BridgeHandle[]>([]);
   const { mode } = useTheme();
+  const { activeWorkspace } = useWorkspaceContext();
   // Keep mode in a ref so the async renderPlacements() reads the latest value
   const modeRef = useRef(mode);
   modeRef.current = mode;
+  // Refs let `getHostExtensions` read the live workspace at handshake time
+  // (which happens after the iframe loads, possibly several effect cycles
+  // after createBridge). Without the ref, the closure would capture a stale
+  // workspace from the render that mounted the iframe.
+  const workspaceRef = useRef(activeWorkspace);
+  workspaceRef.current = activeWorkspace;
 
   // Keep callbacks in refs so the iframe-mounting effect doesn't re-run
   // when callback identity changes (e.g. during chat streaming).
@@ -91,6 +99,7 @@ export function SlotRenderer({
             onChat: (...args) => onChatRef.current?.(...args),
             onNavigate: (...args) => onNavigateRef.current?.(...args),
             onPromptAction: (...args) => onPromptActionRef.current?.(...args),
+            getHostExtensions: () => buildHostExtensions(workspaceRef.current),
           });
           bridges.push(bridge);
         } catch (err) {
@@ -114,14 +123,16 @@ export function SlotRenderer({
     // biome-ignore lint/correctness/useExhaustiveDependencies: callbacks accessed via refs
   }, [placementKey]);
 
-  // Separate effect: propagate theme changes to all mounted iframes.
-  // Only depends on `mode` so theme toggles do NOT re-mount iframes.
+  // Propagate host-context changes (theme + workspace) to mounted iframes
+  // via the ext-apps `host-context-changed` notification. Iframes stay
+  // mounted; apps that observe `useHostContext()` (or `useTheme()`) re-render
+  // and refetch workspace-scoped data without losing local state.
   useEffect(() => {
-    const tokens = getThemeTokens(mode);
+    const ctx = buildHostContext(mode, activeWorkspace);
     for (const bridge of bridgesRef.current) {
-      bridge.setHostContext({ theme: mode, styles: { variables: tokens } });
+      bridge.setHostContext(ctx);
     }
-  }, [mode]);
+  }, [mode, activeWorkspace]);
 
   if (filtered.length === 0) return null;
 
