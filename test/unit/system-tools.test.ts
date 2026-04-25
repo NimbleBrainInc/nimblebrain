@@ -1175,12 +1175,15 @@ describe("nb__read_resource system tool", () => {
 		const registry = new ToolRegistry();
 		const systemTools = createSystemTools(() => registry);
 
+		// Missing `uri` is rejected upstream by InlineSource's schema validation;
+		// we only assert it surfaces as a tool error.
 		const missing = await systemTools.execute("read_resource", {});
 		expect(missing.isError).toBe(true);
-		expect(extractText(missing.content)).toContain("uri is required");
 
+		// Whitespace-only passes schema validation but is rejected by the handler.
 		const empty = await systemTools.execute("read_resource", { uri: "   " });
 		expect(empty.isError).toBe(true);
+		expect(extractText(empty.content)).toContain("uri is required");
 	});
 
 	it("truncates resource content larger than the budget", async () => {

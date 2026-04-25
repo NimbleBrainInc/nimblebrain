@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- `nb__read_resource` system tool — the agent can now load `skill://` / `ui://` resources advertised by an installed bundle's MCP server ([#3](https://github.com/NimbleBrainInc/nimblebrain/pull/25)).
+
+### Changed
+
+- Apps list in the system prompt now surfaces each bundle's `initialize.instructions` inside `<app-instructions>` containment tags, so per-bundle guidance reaches the LLM.
+
 ## [0.4.0] - 2026-04-24
 
 ### Highlights
