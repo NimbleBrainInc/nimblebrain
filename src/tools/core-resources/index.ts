@@ -42,22 +42,15 @@ const resources: Record<string, () => string> = {
 };
 
 /**
- * Get an HTML resource by path name.
- * Returns the HTML string or null if the resource does not exist.
- */
-export function getCoreResource(path: string): string | null {
-  const factory = resources[path];
-  return factory ? factory() : null;
-}
-
-/**
- * Build a Map of all core resources for use with InlineSource.
- * Keys are resource paths, values are rendered HTML strings.
+ * Build a Map of all core resources for use with the `nb` in-process MCP
+ * source. Keys are full `ui://nb/<path>` URIs — the form servers and
+ * clients both use over the protocol — so lookups via
+ * `client.readResource({ uri })` hit directly without a mapping layer.
  */
 export function buildCoreResourceMap(): Map<string, string> {
   const map = new Map<string, string>();
   for (const [path, factory] of Object.entries(resources)) {
-    map.set(path, factory());
+    map.set(`ui://nb/${path}`, factory());
   }
   return map;
 }

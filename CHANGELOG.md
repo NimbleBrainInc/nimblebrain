@@ -2,13 +2,26 @@
 
 ## [Unreleased]
 
+### Highlights
+
+- **Platform sources unified on MCP.** Every tool/resource provider — built-in platform capabilities and user-installed bundles alike — is now an MCP server. Built-ins run in-process over `InMemoryTransport`; bundles continue to run as subprocess or remote MCP. One contract, one shape, one set of capabilities.
+
 ### Added
 
 - `nb__read_resource` system tool — the agent can now load `skill://` / `ui://` resources advertised by an installed bundle's MCP server ([#3](https://github.com/NimbleBrainInc/nimblebrain/pull/25)).
+- `defineInProcessApp` helper for building in-process MCP sources from JSON Schema tool defs and a resource map — same authoring ergonomic as the former `InlineSource`, with the full MCP capability surface (resources, instructions, tasks, future capabilities).
 
 ### Changed
 
 - Apps list in the system prompt now surfaces each bundle's `initialize.instructions` inside `<app-instructions>` containment tags, so per-bundle guidance reaches the LLM.
+
+### Fixed
+
+- `nb__read_resource` and `POST /v1/resources/read` resolve `ui://` resources published by platform built-ins (settings, home, automations, conversations, files, usage, nb). Previously the structural type guard couldn't distinguish two divergent `readResource` shapes and silently skipped any platform source ([#90](https://github.com/NimbleBrainInc/nimblebrain/issues/90)).
+
+### Removed
+
+- `InlineSource`, `ResourceReader`, `isResourceReader`. External callers should switch to `defineInProcessApp` (returns an `McpSource`); `InlineToolDef` becomes `InProcessTool` with the same shape.
 
 ## [0.4.0] - 2026-04-24
 

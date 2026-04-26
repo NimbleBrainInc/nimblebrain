@@ -1,9 +1,9 @@
 import type { BundleRef, BundleUiMeta, HostManifestMeta, LocalBundleMeta } from "./types.ts";
 
 /**
- * Bundles included by default as MCP processes.
+ * Bundles included by default as MCP subprocesses.
  * Platform capabilities (conversations, files, home, settings, usage, automations)
- * are now inline InlineSources — see src/tools/platform/.
+ * are in-process MCP servers — see src/tools/platform/.
  */
 export const DEFAULT_BUNDLES: BundleRef[] = [];
 

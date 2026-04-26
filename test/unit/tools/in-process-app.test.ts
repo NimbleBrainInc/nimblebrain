@@ -1,21 +1,26 @@
 /**
- * InlineSource contract tests.
+ * `defineInProcessApp` contract tests.
  *
- * InlineSource is the base layer every in-process bundle (files, conversations,
- * automations, home, settings, usage, nb) is built on. These tests verify the
- * guarantees the source enforces for its handlers, so the same class of bug
- * can't recur in one bundle after another:
+ * `defineInProcessApp` is the base layer every in-process platform source
+ * (files, conversations, automations, home, settings, usage, nb) is built
+ * on. These tests verify the guarantees the helper enforces for its
+ * handlers, so the same class of bug can't recur in one source after
+ * another:
  *
- *  - The declared `inputSchema` is enforced before handlers run — missing or
- *    wrongly-typed params never reach fs/Buffer/etc. as Node-internal errors.
- *  - Unknown tool names return a structured error that lists the real ones.
+ *  - The declared `inputSchema` is enforced before handlers run — missing
+ *    or wrongly-typed params never reach fs/Buffer/etc. as Node-internal
+ *    errors.
+ *  - Unknown tool names return a structured `isError: true` result that
+ *    lists the real ones, rather than crashing the in-process server.
  *  - Tools with permissive schemas still pass through.
  */
 
-import { describe, expect, test } from "bun:test";
-import { InlineSource, type InlineToolDef } from "../../../src/tools/inline-source.ts";
+import { afterEach, describe, expect, test } from "bun:test";
+import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
 import { textContent } from "../../../src/engine/content-helpers.ts";
 import type { ToolResult } from "../../../src/engine/types.ts";
+import { defineInProcessApp, type InProcessTool } from "../../../src/tools/in-process-app.ts";
+import type { McpSource } from "../../../src/tools/mcp-source.ts";
 
 // ── Helpers ────────────────────────────────────────────────────────
 
@@ -38,7 +43,7 @@ function makeSpy(returnValue: ToolResult = okResult({ ok: true })) {
   return { handler, calls };
 }
 
-function createDef(handler: InlineToolDef["handler"]): InlineToolDef {
+function createDef(handler: InProcessTool["handler"]): InProcessTool {
   return {
     name: "create",
     description: "Create a thing.",
@@ -55,12 +60,27 @@ function createDef(handler: InlineToolDef["handler"]): InlineToolDef {
   };
 }
 
+async function buildSource(name: string, tools: InProcessTool[]): Promise<McpSource> {
+  const source = defineInProcessApp(
+    { name, version: "1.0.0", tools },
+    new NoopEventSink(),
+  );
+  await source.start();
+  return source;
+}
+
 // ── Schema validation ─────────────────────────────────────────────
 
-describe("InlineSource — schema validation", () => {
+describe("defineInProcessApp — schema validation", () => {
+  let source: McpSource | undefined;
+  afterEach(async () => {
+    if (source) await source.stop();
+    source = undefined;
+  });
+
   test("blocks handler when a required field is missing", async () => {
     const { handler, calls } = makeSpy();
-    const source = new InlineSource("test", [createDef(handler)]);
+    source = await buildSource("test", [createDef(handler)]);
 
     const result = await source.execute("create", {});
 
@@ -76,7 +96,7 @@ describe("InlineSource — schema validation", () => {
 
   test("blocks handler when a field has the wrong type", async () => {
     const { handler, calls } = makeSpy();
-    const source = new InlineSource("test", [createDef(handler)]);
+    source = await buildSource("test", [createDef(handler)]);
 
     const result = await source.execute("create", {
       filename: "x.txt",
@@ -93,7 +113,7 @@ describe("InlineSource — schema validation", () => {
 
   test("passes through to the handler when input satisfies the schema", async () => {
     const { handler, calls } = makeSpy(okResult({ id: "fl_abc" }));
-    const source = new InlineSource("test", [createDef(handler)]);
+    source = await buildSource("test", [createDef(handler)]);
 
     const result = await source.execute("create", {
       filename: "x.txt",
@@ -107,7 +127,7 @@ describe("InlineSource — schema validation", () => {
 
   test("skips validation for tools with no declared constraints", async () => {
     const { handler, calls } = makeSpy(okResult({ files: [], total: 0 }));
-    const source = new InlineSource("test", [
+    source = await buildSource("test", [
       {
         name: "list",
         description: "List things.",
@@ -126,10 +146,16 @@ describe("InlineSource — schema validation", () => {
 
 // ── Unknown tool ──────────────────────────────────────────────────
 
-describe("InlineSource — unknown tool", () => {
+describe("defineInProcessApp — unknown tool", () => {
+  let source: McpSource | undefined;
+  afterEach(async () => {
+    if (source) await source.stop();
+    source = undefined;
+  });
+
   test("returns structured error listing available tools", async () => {
     const { handler } = makeSpy();
-    const source = new InlineSource("files", [
+    source = await buildSource("files", [
       createDef(handler),
       {
         name: "read",

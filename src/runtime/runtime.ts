@@ -54,7 +54,7 @@ import type { DelegateContext } from "../tools/delegate.ts";
 import { McpSource } from "../tools/mcp-source.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
 import { createSystemTools } from "../tools/system-tools.ts";
-import { isResourceReader, type ResourceData, type ResourceReader } from "../tools/types.ts";
+import type { ResourceData } from "../tools/types.ts";
 import { WorkspaceStore } from "../workspace/workspace-store.ts";
 import { RunInProgressError } from "./errors.ts";
 import { PlacementRegistry } from "./placement-registry.ts";
@@ -171,7 +171,7 @@ export class Runtime {
   /** Per-workspace ToolRegistry instances — each workspace gets its own scoped registry. */
   private _workspaceRegistries: Map<string, ToolRegistry>;
   // Protected sources are captured in start() and passed to startWorkspaceBundles directly.
-  /** The system InlineSource ("nb") — shared across workspace registries. */
+  /** The system source ("nb") — shared across workspace registries. */
   _systemSource: import("../tools/types.ts").ToolSource | null;
   /** Platform sources (home, conversations, files, etc.) — retained for JIT workspace registration. */
   private _platformSources: import("../tools/types.ts").ToolSource[] = [];
@@ -436,8 +436,10 @@ export class Runtime {
     rt._getWorkspaceId = getWorkspaceId;
     rt._manageConversationCtx = manageConversationCtx;
 
-    // Register combined nb InlineSource — core + system tools in a single source
-    const systemTools = createSystemTools(
+    // Register the `nb` system source. Built as an in-process MCP server
+    // — `createSystemTools` returns it already-started so it's ready to
+    // serve tools and resources to every workspace registry.
+    const systemTools = await createSystemTools(
       () => rt.getRegistryForCurrentWorkspace(),
       config.configPath,
       gate,
@@ -458,13 +460,18 @@ export class Runtime {
     );
     rt._systemSource = systemTools;
 
-    // Phase 2: Create platform capability sources (inline, no MCP processes)
+    // Phase 2: Create platform capability sources. Each is an in-process
+    // MCP server reachable through `InMemoryTransport` — no subprocess.
+    // `createPlatformSources` returns sources already started.
     const { createPlatformSources } = await import("../tools/platform/index.ts");
-    const platformSources = await createPlatformSources(rt);
+    const platformSources = await createPlatformSources(rt, events);
 
-    // Register platform source placements
+    // Register placements declared by platform sources. The helper isolates
+    // the duck-type — `getPlacements()` is on `McpSource` (carrying the
+    // declarations from `defineInProcessApp`) but isn't on the `ToolSource`
+    // interface itself.
     for (const src of platformSources) {
-      const placements = (src as import("../tools/inline-source.ts").InlineSource).getPlacements();
+      const placements = readSourcePlacements(src);
       if (placements.length > 0) {
         placementRegistry.register(src.name, placements);
       }
@@ -617,7 +624,7 @@ export class Runtime {
           const skillResource = await this.getAppSkillResource(request.appContext.serverName);
           const referenceUri = `skill://${request.appContext.serverName}/reference`;
           const hasReference = skillResource
-            ? isResourceReader(source) && (await this.hasResource(source, referenceUri))
+            ? source instanceof McpSource && (await this.hasResource(source, referenceUri))
             : false;
           const bundleInstance = this.lifecycle?.getInstance(request.appContext.serverName, wsId);
           focusedApp = {
@@ -966,12 +973,10 @@ export class Runtime {
       source = reg.getSources().find((s) => s.name === serverName);
       if (source) break;
     }
-    if (!source || !("readResource" in source)) return null;
+    if (!(source instanceof McpSource)) return null;
 
     try {
-      const resource = isResourceReader(source)
-        ? await source.readResource(`skill://${serverName}/usage`)
-        : null;
+      const resource = await source.readResource(`skill://${serverName}/usage`);
       const content = resource?.text ?? null;
       if (content) {
         // Token budget: cap at ~3000 tokens (~12000 chars)
@@ -990,7 +995,7 @@ export class Runtime {
   }
 
   /** Check if an MCP source exposes a specific resource URI. */
-  private async hasResource(source: ResourceReader, uri: string): Promise<boolean> {
+  private async hasResource(source: McpSource, uri: string): Promise<boolean> {
     try {
       const data = await source.readResource(uri);
       return data !== null;
@@ -1392,17 +1397,23 @@ export class Runtime {
     return this.getStore(wsId).list(options);
   }
 
-  /** Read a ui:// resource from an app's MCP server (workspace-scoped). */
+  /**
+   * Read a `ui://` resource from an app (workspace-scoped).
+   *
+   * Resolves an app — platform built-ins (in-process MCP) and user-installed
+   * bundles (subprocess/remote MCP) — strictly through the workspace registry.
+   * The lifecycle store tracks user-installed bundles only; platform sources
+   * never appear there, so registry membership is the single authoritative
+   * "is this app available to this workspace?" check.
+   */
   async readAppResource(
     appName: string,
     resourcePath: string,
     wsId: string,
   ): Promise<ResourceData | null> {
-    const instance = this.lifecycle.getInstance(appName, wsId);
-    if (!instance) return null;
     const registry = this.getRegistryForWorkspace(wsId);
     const source = registry.getSources().find((s) => s.name === appName);
-    if (!source || !isResourceReader(source)) return null;
+    if (!(source instanceof McpSource)) return null;
 
     if (resourcePath.includes("://")) {
       return source.readResource(resourcePath);
@@ -1429,6 +1440,22 @@ export class Runtime {
 }
 
 // --- Factory helpers (keep Runtime.start() readable) ---
+
+/**
+ * Best-effort placement extraction for any ToolSource. `McpSource`
+ * exposes `getPlacements()` (returning declarations from
+ * `defineInProcessApp`); sources that don't declare any — including
+ * external bundles, whose placements come from their manifest, not the
+ * source — return `[]`.
+ */
+function readSourcePlacements(
+  src: import("../tools/types.ts").ToolSource,
+): import("../bundles/types.ts").PlacementDeclaration[] {
+  const fn = (src as { getPlacements?: () => unknown }).getPlacements;
+  if (typeof fn !== "function") return [];
+  const out = fn.call(src);
+  return Array.isArray(out) ? (out as import("../bundles/types.ts").PlacementDeclaration[]) : [];
+}
 
 function resolveModel(config: RuntimeConfig): (modelString: string) => LanguageModelV3 {
   // New multi-provider config takes precedence

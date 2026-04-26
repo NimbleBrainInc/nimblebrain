@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { createCoreToolDefs } from "../../src/tools/core-source.ts";
-import { InlineSource } from "../../src/tools/inline-source.ts";
+import { makeInProcessSource } from "../helpers/in-process-source.ts";
 import { extractText } from "../../src/engine/content-helpers.ts";
 
 const testDir = join(tmpdir(), `nimblebrain-get-config-${Date.now()}`);
@@ -30,7 +30,7 @@ describe("get_config tool", () => {
 	it("returns all expected fields", async () => {
 		const runtime = await makeRuntime();
 		try {
-			const source = new InlineSource("nb", createCoreToolDefs(runtime));
+			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
 			const result = await source.execute("get_config", {});
 			expect(result.isError).toBe(false);
 			const config = result.structuredContent as Record<string, unknown>;
@@ -52,7 +52,7 @@ describe("get_config tool", () => {
 	it("returns correct default model from config", async () => {
 		const runtime = await makeRuntime({ defaultModel: "anthropic:claude-sonnet-4-6" });
 		try {
-			const source = new InlineSource("nb", createCoreToolDefs(runtime));
+			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
 			const result = await source.execute("get_config", {});
 			const config = result.structuredContent as Record<string, unknown>;
 			expect(config.defaultModel).toBe("anthropic:claude-sonnet-4-6");
@@ -66,7 +66,7 @@ describe("get_config tool", () => {
 			providers: { anthropic: {}, openai: {} },
 		});
 		try {
-			const source = new InlineSource("nb", createCoreToolDefs(runtime));
+			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
 			const result = await source.execute("get_config", {});
 			const config = result.structuredContent as Record<string, unknown>;
 			expect(config.configuredProviders).toContain("anthropic");
@@ -80,7 +80,7 @@ describe("get_config tool", () => {
 	it("defaults to anthropic when no providers configured", async () => {
 		const runtime = await makeRuntime();
 		try {
-			const source = new InlineSource("nb", createCoreToolDefs(runtime));
+			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
 			const result = await source.execute("get_config", {});
 			const config = result.structuredContent as Record<string, unknown>;
 			expect(config.configuredProviders).toContain("anthropic");
@@ -107,7 +107,7 @@ describe("get_config tool", () => {
 			configPath,
 		});
 		try {
-			const source = new InlineSource("nb", createCoreToolDefs(runtime));
+			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
 
 			const setResult = await source.execute("set_model_config", { defaultModel: "openai:gpt-4o" });
 			expect(setResult.isError).toBe(false);
@@ -136,7 +136,7 @@ describe("get_config tool", () => {
 			configPath,
 		});
 		try {
-			const source = new InlineSource("nb", createCoreToolDefs(runtime));
+			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
 			const result = await source.execute("set_model_config", { defaultModel: "openai:gpt-4o" });
 			expect(result.isError).toBe(true);
 			expect(extractText(result.content)).toContain("Invalid model");

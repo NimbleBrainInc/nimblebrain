@@ -22,24 +22,29 @@ import {
   saveDefinitions,
 } from "../../bundles/automations/src/store.ts";
 import { textContent } from "../../engine/content-helpers.ts";
+import type { EventSink } from "../../engine/types.ts";
 import { getRequestContext } from "../../runtime/request-context.ts";
 import type { Runtime } from "../../runtime/runtime.ts";
-import type { InlineToolDef } from "../inline-source.ts";
-import { InlineSource } from "../inline-source.ts";
+import { defineInProcessApp, type InProcessTool } from "../in-process-app.ts";
+import type { McpSource } from "../mcp-source.ts";
 import { AUTOMATIONS_PANEL_HTML } from "../platform-resources/automations/panel.ts";
 
 /**
- * Create the "automations" InlineSource — migrated from the standalone MCP server
- * at src/bundles/automations/src/server.ts.
+ * Create the "automations" platform source — an in-process MCP server.
+ * Migrated from the former standalone MCP server at
+ * src/bundles/automations/src/server.ts.
  *
  * Tools: create, update, delete, list, status, runs, run
- * Resources: automations/panel (React SPA)
+ * Resources: ui://automations/panel (React SPA)
  * Placements: sidebar automations link at priority 3
  *
  * Delegates to the existing store, scheduler, and executor modules.
  * The scheduler is started on creation and stopped via source.stop().
  */
-export async function createAutomationsSource(runtime: Runtime): Promise<InlineSource> {
+export async function createAutomationsSource(
+  runtime: Runtime,
+  eventSink: EventSink,
+): Promise<McpSource> {
   const initialWorkDir = runtime.getWorkDir();
   const initialStoreDir = join(initialWorkDir, "automations");
   const defaultTimezone = process.env.NB_TIMEZONE ?? "Pacific/Honolulu";
@@ -129,7 +134,7 @@ export async function createAutomationsSource(runtime: Runtime): Promise<InlineS
     };
   }
 
-  const tools: InlineToolDef[] = TOOL_SCHEMAS.map((schema) => ({
+  const tools: InProcessTool[] = TOOL_SCHEMAS.map((schema) => ({
     ...schema,
     handler: withErrorHandling((input) => {
       const ctx = getToolContext();
@@ -156,27 +161,44 @@ export async function createAutomationsSource(runtime: Runtime): Promise<InlineS
     }),
   }));
 
-  const resources = new Map([["automations/panel", AUTOMATIONS_PANEL_HTML]]);
+  const resources = new Map([["ui://automations/panel", AUTOMATIONS_PANEL_HTML]]);
 
-  const source = new InlineSource("automations", tools, {
-    resources,
-    placements: [
-      {
-        slot: "sidebar",
-        resourceUri: "ui://automations/panel",
-        route: "@nimblebraininc/automations",
-        label: "Automations",
-        icon: "clock",
-        priority: 3,
-      },
-    ],
-  });
+  const source = defineInProcessApp(
+    {
+      name: "automations",
+      version: "1.0.0",
+      tools,
+      resources,
+      placements: [
+        {
+          slot: "sidebar",
+          resourceUri: "ui://automations/panel",
+          route: "@nimblebraininc/automations",
+          label: "Automations",
+          icon: "clock",
+          priority: 3,
+        },
+      ],
+    },
+    eventSink,
+  );
 
-  // Override stop() to clean up the scheduler when the source is shut down
+  // The scheduler is owned by this factory, not the MCP server. Wrap stop()
+  // so workspace teardown — and `Runtime.shutdown()` — also stops the timer
+  // loop. (McpSource never crashes for in-process sources, but explicit
+  // teardown is still required for clean process exit in tests.)
+  //
+  // try/finally so the in-process MCP transport always closes, even if
+  // `scheduler.stop()` ever grows a code path that throws. Today scheduler
+  // stop is just a `clearInterval` and is benign; the asymmetry between
+  // "scheduler error" and "leaked transport" is the reason for the guard.
   const originalStop = source.stop.bind(source);
   source.stop = async () => {
-    scheduler.stop();
-    await originalStop();
+    try {
+      scheduler.stop();
+    } finally {
+      await originalStop();
+    }
   };
 
   return source;

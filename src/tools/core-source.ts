@@ -6,7 +6,7 @@ import { textContent } from "../engine/content-helpers.ts";
 import type { ToolResult } from "../engine/types.ts";
 import { getAvailableModels, isModelAllowed } from "../model/catalog.ts";
 import type { Runtime } from "../runtime/runtime.ts";
-import type { InlineToolDef } from "./inline-source.ts";
+import type { InProcessTool } from "./in-process-app.ts";
 
 const pkgPath = resolve(import.meta.dirname ?? __dirname, "../../package.json");
 const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as {
@@ -26,10 +26,11 @@ import type { BriefingOutput } from "../services/home-types.ts";
 /**
  * Factory that creates core platform management tool definitions.
  * Each tool is a thin wrapper delegating to Runtime methods.
- * Returns raw InlineToolDef[] — caller is responsible for wrapping in an InlineSource.
+ * Returns raw InProcessTool[] — caller (the `nb` system source factory)
+ * passes them to `defineInProcessApp` to build the in-process MCP server.
  */
-export function createCoreToolDefs(runtime: Runtime): InlineToolDef[] {
-  const toolDefs: InlineToolDef[] = [
+export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
+  const toolDefs: InProcessTool[] = [
     {
       name: "list_apps",
       description: "List installed apps/bundles with status, tool count, and trust scores.",
@@ -587,7 +588,7 @@ export function createCoreToolDefs(runtime: Runtime): InlineToolDef[] {
             };
           }
         },
-      } satisfies InlineToolDef;
+      } satisfies InProcessTool;
     })(),
   ];
 

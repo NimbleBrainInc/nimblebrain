@@ -7,7 +7,7 @@ import { createEchoModel } from "../helpers/echo-model.ts";
 import { createTestAuthAdapter } from "../helpers/test-auth-adapter.ts";
 import { startServer } from "../../src/api/server.ts";
 import type { ServerHandle } from "../../src/api/server.ts";
-import { InlineSource } from "../../src/tools/inline-source.ts";
+import { makeInProcessSource } from "../helpers/in-process-source.ts";
 import { textContent, extractText } from "../../src/engine/content-helpers.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
 
@@ -440,7 +440,7 @@ describe("E2E: install app -> tool call via API", () => {
 		await provisionTestWorkspace(runtime);
 
 		// Register an InlineSource to simulate an installed app with tools
-		const taskSource = new InlineSource("tasks", [
+		const taskSource = await makeInProcessSource("tasks", [
 			{
 				name: "create_task",
 				description: "Create a new task",
@@ -531,7 +531,7 @@ describe("E2E: tool call via API -> SSE data.changed event", () => {
 		await provisionTestWorkspace(runtime);
 
 		// Register a tool source so we can make a tool call
-		const notesSource = new InlineSource("notes", [
+		const notesSource = await makeInProcessSource("notes", [
 			{
 				name: "save_note",
 				description: "Save a note",

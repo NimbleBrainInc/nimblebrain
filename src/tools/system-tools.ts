@@ -1,3 +1,4 @@
+import { NoopEventSink } from "../adapters/noop-events.ts";
 import type { BundleLifecycleManager } from "../bundles/lifecycle.ts";
 import { getMpak } from "../bundles/mpak.ts";
 import { deriveServerName } from "../bundles/paths.ts";
@@ -22,11 +23,9 @@ import { buildCoreResourceMap } from "./core-resources/index.ts";
 import { createCoreToolDefs } from "./core-source.ts";
 import type { DelegateContext } from "./delegate.ts";
 import { createDelegateTool } from "./delegate.ts";
-import type { InlineToolDef } from "./inline-source.ts";
-import { InlineSource } from "./inline-source.ts";
+import { defineInProcessApp, type InProcessTool } from "./in-process-app.ts";
 import { McpSource } from "./mcp-source.ts";
 import type { ToolRegistry } from "./registry.ts";
-import { isResourceReader } from "./types.ts";
 import { createManageUsersTool, type ManageUsersContext } from "./user-tools.ts";
 import {
   createManageWorkspacesTool,
@@ -52,11 +51,15 @@ export interface ManageBundleContext {
 export type GetSkillsFn = () => { context: Skill[]; matchable: Skill[] };
 
 /**
- * Factory that creates system tools as an InlineSource("nb").
+ * Factory that creates the `nb` system source as an in-process MCP server.
  * Merges core platform tools (list_apps, get_config, etc.) with system tools
  * (search, manage_app, delegate, etc.) into a single "nb" source.
+ *
+ * Returns a started, ready-to-use source. Async because the underlying
+ * `McpSource.start()` runs the SDK initialize handshake over the linked
+ * `InMemoryTransport` pair before the source can serve tool calls.
  */
-export function createSystemTools(
+export async function createSystemTools(
   getRegistry: () => ToolRegistry,
   _configPath?: string,
   gate?: ConfirmationGate,
@@ -74,11 +77,11 @@ export function createSystemTools(
   manageMembersCtx?: ManageMembersContext,
   manageConversationCtx?: ManageConversationContext,
   manageBundleCtx?: ManageBundleContext,
-): InlineSource {
+): Promise<McpSource> {
   // Core tools (always available, not feature-gated)
-  const coreToolDefs: InlineToolDef[] = runtime ? createCoreToolDefs(runtime) : [];
+  const coreToolDefs: InProcessTool[] = runtime ? createCoreToolDefs(runtime) : [];
 
-  const systemToolDefs: InlineToolDef[] = [
+  const systemToolDefs: InProcessTool[] = [
     {
       name: "search",
       description:
@@ -253,9 +256,17 @@ export function createSystemTools(
     ? systemToolDefs.filter((t) => isToolEnabled(t.name, features))
     : systemToolDefs;
 
-  return new InlineSource("nb", [...coreToolDefs, ...filteredSystemDefs], {
-    resources: buildCoreResourceMap(),
-  });
+  const source = defineInProcessApp(
+    {
+      name: "nb",
+      version: "1.0.0",
+      tools: [...coreToolDefs, ...filteredSystemDefs],
+      resources: buildCoreResourceMap(),
+    },
+    eventSink ?? new NoopEventSink(),
+  );
+  await source.start();
+  return source;
 }
 
 // ---------------------------------------------------------------------------
@@ -273,14 +284,14 @@ const READ_RESOURCE_MAX_CHARS = 12_000;
 /**
  * Creates the nb__read_resource system tool.
  *
- * Iterates every source in the current workspace registry that exposes
- * `readResource()` and returns the first one that resolves the URI. This
- * lets the LLM actually consume the `skill://` or `ui://` URIs referenced in
- * an app's `<app-instructions>` block — without this tool, bundles that
- * advertise a resource in their `initialize.instructions` have no way for
- * the agent to read it (#3).
+ * Walks every `McpSource` in the current workspace registry and returns the
+ * first one that resolves the URI. This lets the LLM consume `skill://` and
+ * `ui://` URIs referenced in an app's `<app-instructions>` block. After the
+ * platform unified on MCP-everywhere (issue #90), every source is an
+ * `McpSource` with a uniform `readResource(uri): Promise<ResourceData|null>`
+ * — no shape divergence, no type-guard duck-typing.
  */
-function createReadResourceTool(getRegistry: () => ToolRegistry): InlineToolDef {
+function createReadResourceTool(getRegistry: () => ToolRegistry): InProcessTool {
   return {
     name: "read_resource",
     description:
@@ -305,7 +316,7 @@ function createReadResourceTool(getRegistry: () => ToolRegistry): InlineToolDef 
       const registry = getRegistry();
       const errors: string[] = [];
       for (const source of registry.getSources()) {
-        if (!isResourceReader(source)) continue;
+        if (!(source instanceof McpSource)) continue;
         try {
           const data = await source.readResource(uri);
           if (data == null) continue;
@@ -348,7 +359,7 @@ function createStatusTool(
   getSkills?: GetSkillsFn,
   lifecycle?: BundleLifecycleManager,
   runtime?: Runtime,
-): InlineToolDef {
+): InProcessTool {
   return {
     name: "status",
     description:
@@ -640,7 +651,7 @@ function createManageSkillTool(
   gate?: ConfirmationGate,
   reloadSkills?: () => Promise<void>,
   eventSink?: EventSink,
-): InlineToolDef {
+): InProcessTool {
   return {
     name: "manage_skill",
     description:

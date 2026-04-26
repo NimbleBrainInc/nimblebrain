@@ -6,7 +6,7 @@ import { Runtime } from "../../src/runtime/runtime.ts";
 import { runWithRequestContext } from "../../src/runtime/request-context.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { createCoreToolDefs } from "../../src/tools/core-source.ts";
-import { InlineSource } from "../../src/tools/inline-source.ts";
+import { makeInProcessSource } from "../helpers/in-process-source.ts";
 import { extractText } from "../../src/engine/content-helpers.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
 
@@ -31,7 +31,7 @@ describe("Core Source", () => {
 	it("tools() returns 8 tools with nb__ prefix", async () => {
 		const runtime = await makeRuntime();
 		try {
-			const source = new InlineSource("nb", createCoreToolDefs(runtime));
+			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
 			const tools = await source.tools();
 			expect(tools).toHaveLength(8);
 			for (const tool of tools) {
@@ -56,7 +56,7 @@ describe("Core Source", () => {
 	it("all tools have non-empty descriptions and valid inputSchemas", async () => {
 		const runtime = await makeRuntime();
 		try {
-			const source = new InlineSource("nb", createCoreToolDefs(runtime));
+			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
 			const tools = await source.tools();
 			for (const tool of tools) {
 				expect(tool.description.length).toBeGreaterThan(0);
@@ -75,7 +75,7 @@ describe("Core Source", () => {
 		const runtime = await makeRuntime();
 		try {
 			await provisionTestWorkspace(runtime);
-			const source = new InlineSource("nb", createCoreToolDefs(runtime));
+			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
 			const result = await runWithRequestContext(
 				{ identity: null, workspaceId: TEST_WORKSPACE_ID, workspaceAgents: null, workspaceModelOverride: null },
 				() => source.execute("list_apps", {}),
@@ -92,7 +92,7 @@ describe("Core Source", () => {
 	it("execute returns error for unknown tool name", async () => {
 		const runtime = await makeRuntime();
 		try {
-			const source = new InlineSource("nb", createCoreToolDefs(runtime));
+			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
 			const result = await source.execute("nonexistent_tool", {});
 			expect(result.isError).toBe(true);
 			expect(extractText(result.content)).toContain("Unknown tool");
@@ -115,7 +115,7 @@ describe("Core Source", () => {
 			logging: { disabled: true },
 		});
 		try {
-			const source = new InlineSource("nb", createCoreToolDefs(runtime));
+			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
 			const result = await source.execute("set_model_config", {
 				defaultModel: "claude-haiku-4-5-20251001",
 			});
@@ -147,7 +147,7 @@ describe("Core Source", () => {
 			logging: { disabled: true },
 		});
 		try {
-			const source = new InlineSource("nb", createCoreToolDefs(runtime));
+			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
 			const result = await source.execute("set_model_config", {
 				defaultModel: "unconfigured-provider:some-model",
 			});
@@ -172,7 +172,7 @@ describe("Core Source", () => {
 			logging: { disabled: true },
 		});
 		try {
-			const source = new InlineSource("nb", createCoreToolDefs(runtime));
+			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
 			const result = await source.execute("set_model_config", {
 				maxIterations: 60,
 			});
@@ -197,7 +197,7 @@ describe("Core Source", () => {
 			logging: { disabled: true },
 		});
 		try {
-			const source = new InlineSource("nb", createCoreToolDefs(runtime));
+			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
 			await source.execute("set_model_config", {
 				maxOutputTokens: 8192,
 			});
@@ -217,7 +217,7 @@ describe("Core Source", () => {
 	it("nb__set_model_config without configPath returns error", async () => {
 		const runtime = await makeRuntime();
 		try {
-			const source = new InlineSource("nb", createCoreToolDefs(runtime));
+			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
 			const result = await source.execute("set_model_config", {
 				maxIterations: 5,
 			});

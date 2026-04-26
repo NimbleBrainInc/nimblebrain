@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { UserIdentity } from "../../../src/identity/provider.ts";
-import type { InlineToolDef } from "../../../src/tools/inline-source.ts";
+import type { InProcessTool } from "../../../src/tools/in-process-app.ts";
 import {
   createManageWorkspacesTool,
   type ManageWorkspacesContext,
@@ -26,7 +26,7 @@ function parseResult(result: { content: Array<{ type: string; text: string }>; s
 
 let workDir: string;
 let store: WorkspaceStore;
-let tool: InlineToolDef;
+let tool: InProcessTool;
 let currentIdentity: UserIdentity | null;
 
 function makeCtx(): ManageWorkspacesContext {

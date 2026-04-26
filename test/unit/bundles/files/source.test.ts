@@ -11,10 +11,11 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { NoopEventSink } from "../../../../src/adapters/noop-events.ts";
 import { createFilesSource } from "../../../../src/tools/platform/files.ts";
 import type { ToolResult } from "../../../../src/engine/types.ts";
 import type { Runtime } from "../../../../src/runtime/runtime.ts";
-import type { InlineSource } from "../../../../src/tools/inline-source.ts";
+import type { McpSource } from "../../../../src/tools/mcp-source.ts";
 
 function parseFirst(result: ToolResult): unknown {
   const first = result.content[0];
@@ -29,14 +30,16 @@ function makeRuntime(workDir: string): Runtime {
 }
 
 let workDir: string;
-let source: InlineSource;
+let source: McpSource;
 
-beforeEach(() => {
+beforeEach(async () => {
   workDir = mkdtempSync(join(tmpdir(), "nb-files-test-"));
-  source = createFilesSource(makeRuntime(workDir));
+  source = createFilesSource(makeRuntime(workDir), new NoopEventSink());
+  await source.start();
 });
 
-afterEach(() => {
+afterEach(async () => {
+  await source.stop();
   rmSync(workDir, { recursive: true, force: true });
 });
 

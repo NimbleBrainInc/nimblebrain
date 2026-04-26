@@ -14,6 +14,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import sift from "sift";
 import type { BriefingBlock, BriefingFacet, BundleInstance } from "../bundles/types.ts";
+import { McpSource } from "../tools/mcp-source.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
 import type { ToolSource } from "../tools/types.ts";
 
@@ -218,27 +219,17 @@ async function resolveResourceFacet(
   registry: ToolRegistry,
   serverName: string,
 ): Promise<string> {
-  // Find the source by name
   const source = registry.getSources().find((s: ToolSource) => s.name === serverName);
   if (!source) {
     return `Server ${serverName} not found`;
   }
-
-  // readResource is only available on McpSource — check if the method exists
-  if (!("readResource" in source)) {
+  if (!(source instanceof McpSource)) {
     return `Server ${serverName} does not support resource reads`;
   }
 
-  const result = await (source as { readResource: (uri: string) => Promise<unknown> }).readResource(
-    facet.resource!,
-  );
+  const result = await source.readResource(facet.resource!);
   if (!result) return `Resource ${facet.resource} returned empty`;
-
-  // Extract text content
-  if (typeof result === "string") return result;
-  if (typeof result === "object" && result !== null && "text" in result) {
-    return (result as { text: string }).text;
-  }
+  if (typeof result.text === "string") return result.text;
   return JSON.stringify(result);
 }
 

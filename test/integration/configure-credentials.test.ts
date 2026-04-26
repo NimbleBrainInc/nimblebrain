@@ -134,7 +134,7 @@ describe("manage_app configure — end-to-end", () => {
     else process.env.MPAK_HOME = prevMpakHome;
   }
 
-  function buildTools(gate: ConfirmationGate) {
+  async function buildTools(gate: ConfirmationGate) {
     const registry = new ToolRegistry();
     const sink = new NoopEventSink();
     const lifecycle = new BundleLifecycleManager(sink, undefined, false, layout.mpakHome);
@@ -146,7 +146,7 @@ describe("manage_app configure — end-to-end", () => {
       configDir: undefined,
       eventSink: sink,
     };
-    const tools = createSystemTools(
+    const tools = await createSystemTools(
       () => registry,
       undefined,
       gate,
@@ -177,7 +177,7 @@ describe("manage_app configure — end-to-end", () => {
           confirm: async () => true,
           promptConfigValue: async () => "sk-configured-abc",
         };
-        const { tools, registry } = buildTools(gate);
+        const { tools, registry } = await buildTools(gate);
 
         const result = await tools.execute("manage_app", {
           action: "configure",

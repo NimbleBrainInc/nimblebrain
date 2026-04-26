@@ -4,7 +4,6 @@ import { createEchoModel } from "../helpers/echo-model.ts";
 import { StaticToolRouter } from "../../src/adapters/static-router.ts";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
-import { InlineSource } from "../../src/tools/inline-source.ts";
 import { createDelegateTool } from "../../src/tools/delegate.ts";
 import type { DelegateContext } from "../../src/tools/delegate.ts";
 import { textContent } from "../../src/engine/content-helpers.ts";

@@ -13,7 +13,7 @@ import type {
 import { DEFAULT_CHILD_ITERATIONS, MAX_CHILD_ITERATIONS } from "../limits.ts";
 import { filterTools } from "../runtime/tools.ts";
 import type { AgentProfile } from "../runtime/types.ts";
-import type { InlineToolDef } from "./inline-source.ts";
+import type { InProcessTool } from "./in-process-app.ts";
 
 /** Fixed system prompt for delegate calls without a named agent profile. */
 const DELEGATE_PREAMBLE =
@@ -91,10 +91,10 @@ class FilteredToolRouter implements ToolRouter {
 }
 
 /**
- * Creates the nb__delegate InlineToolDef.
+ * Creates the nb__delegate InProcessTool.
  * Spawns a child AgentEngine.run() with scoped config when called.
  */
-export function createDelegateTool(ctx: DelegateContext): InlineToolDef {
+export function createDelegateTool(ctx: DelegateContext): InProcessTool {
   return {
     name: "delegate",
     description:

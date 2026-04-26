@@ -1,8 +1,9 @@
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import type { RemoteTransportConfig } from "../bundles/types.ts";
+import type { PlacementDeclaration, RemoteTransportConfig } from "../bundles/types.ts";
 import { log } from "../cli/log.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import type { ContentBlock, EventSink, ToolResult } from "../engine/types.ts";
@@ -52,6 +53,33 @@ export type McpTransportMode =
        * retries `connect()` exactly once.
        */
       authProvider?: WorkspaceOAuthProvider;
+    }
+  | {
+      type: "inProcess";
+      /**
+       * Factory that creates a fresh in-process MCP server and a linked
+       * client-side transport on each call. Invoked by `start()`; called
+       * again on `restart()`.
+       *
+       * Why a factory instead of a pre-built pair: an `InMemoryTransport`
+       * pair is single-use after close, and `Server.connect()` claims
+       * ownership of one side. To support clean restart, each `start()`
+       * needs a fresh pair (and a freshly-connected `Server`). The factory
+       * is the obvious encapsulation — the helper that builds platform
+       * sources (`defineInProcessApp`) lives next door and produces this
+       * factory directly.
+       */
+      createServer: () => Promise<{ server: Server; clientTransport: Transport }>;
+      /**
+       * UI placements declared by this source. Read by the runtime via
+       * `getPlacements()` and registered in the platform `PlacementRegistry`.
+       *
+       * Carried on the mode (rather than passed separately) because it's
+       * static configuration tied to the source's identity — the source
+       * either declares placements or it doesn't, and the value never
+       * changes across restarts.
+       */
+      placements?: PlacementDeclaration[];
     };
 
 /**
@@ -69,6 +97,14 @@ export class McpSource implements ToolSource {
    *  `initialize`. Captured after connect so callers (e.g. the system
    *  prompt composer) can surface per-bundle guidance to the LLM. */
   private _instructions: string | undefined;
+  /**
+   * For `inProcess` mode only — the linked-pair MCP server that this source
+   * speaks to. Owned by McpSource (constructed in `start()` via
+   * `mode.createServer`, closed in `stop()`) so platform sources participate
+   * in the same start/stop/restart lifecycle as subprocess and remote
+   * sources without their authors having to wire it themselves.
+   */
+  private inProcessServer: Server | null = null;
 
   /**
    * `eventSink` is REQUIRED, not optional. Emitted events include
@@ -105,7 +141,7 @@ export class McpSource implements ToolSource {
         cwd: this.mode.spawn.cwd,
         stderr: "pipe",
       });
-    } else {
+    } else if (this.mode.type === "remote") {
       this.transport = createRemoteTransport(
         this.mode.url,
         this.mode.transportConfig,
@@ -118,6 +154,27 @@ export class McpSource implements ToolSource {
         this.eventSink.emit({
           type: "run.error",
           data: { source: this.name, event: "source.crashed", error: "Remote transport closed" },
+        });
+      };
+    } else {
+      // In-process: the factory builds a fresh InMemoryTransport pair and an
+      // already-connected Server on each call, so restart is a clean slate.
+      // We hold the Server so `stop()` can close it explicitly — without that
+      // the pair-side close still works, but the Server's internal handler
+      // tables hang on until GC.
+      const { server, clientTransport } = await this.mode.createServer();
+      this.inProcessServer = server;
+      this.transport = clientTransport;
+
+      this.transport.onclose = () => {
+        this.dead = true;
+        this.eventSink.emit({
+          type: "run.error",
+          data: {
+            source: this.name,
+            event: "source.crashed",
+            error: "In-process transport closed",
+          },
         });
       };
     }
@@ -228,11 +285,13 @@ export class McpSource implements ToolSource {
   private async cleanupOnStartFailure(): Promise<void> {
     try {
       if (this.transport) await this.transport.close();
+      if (this.inProcessServer) await this.inProcessServer.close();
     } catch (cleanupErr) {
       console.error("[mcp-source] transport cleanup failed:", cleanupErr);
     }
     this.client = null;
     this.transport = null;
+    this.inProcessServer = null;
   }
 
   /**
@@ -295,11 +354,17 @@ export class McpSource implements ToolSource {
     try {
       if (this.client) await this.client.close();
       if (this.transport) await this.transport.close();
+      // In-process: also close the linked Server so its handler tables and
+      // any task-related state are released. Closing the client side of the
+      // pair propagates close to the server side, but `server.close()` is
+      // the explicit, supported teardown.
+      if (this.inProcessServer) await this.inProcessServer.close();
     } catch (err) {
       console.error("[mcp-source] stop failed:", err);
     }
     this.client = null;
     this.transport = null;
+    this.inProcessServer = null;
     this.cachedTools = null;
     this._instructions = undefined;
   }
@@ -308,6 +373,22 @@ export class McpSource implements ToolSource {
    *  Undefined until start() completes; cleared by stop(). */
   getInstructions(): string | undefined {
     return this._instructions;
+  }
+
+  /**
+   * UI placements declared by this source. Populated for `inProcess` mode
+   * (platform built-ins); `[]` for stdio/remote sources, whose placements
+   * come from the bundle manifest and are tracked separately by the
+   * bundle lifecycle.
+   *
+   * Read by the runtime at start time to register placements in the
+   * platform `PlacementRegistry`. Static — doesn't change across restarts.
+   */
+  getPlacements(): PlacementDeclaration[] {
+    if (this.mode.type === "inProcess") {
+      return this.mode.placements ?? [];
+    }
+    return [];
   }
 
   async tools(): Promise<Tool[]> {

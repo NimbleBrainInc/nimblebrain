@@ -1,7 +1,8 @@
 import { describe, expect, it } from "bun:test";
-import { bytesToBase64, handleReadResource } from "../../../src/api/handlers.ts";
+import { handleReadResource } from "../../../src/api/handlers.ts";
 import type { Runtime } from "../../../src/runtime/runtime.ts";
 import type { ResourceData } from "../../../src/tools/types.ts";
+import { bytesToBase64 } from "../../../src/util/base64.ts";
 
 interface StubOptions {
   sources?: string[];

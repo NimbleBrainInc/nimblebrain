@@ -2,7 +2,8 @@
  * Automation executors: run an automation's prompt through the chat engine.
  *
  * Two implementations:
- * - executeDirect: calls runtime.chat() in-process (used by InlineSource)
+ * - executeDirect: calls runtime.chat() in-process (used by the platform's
+ *   in-process automations source)
  * - executeHttp:   calls POST /v1/chat over HTTP (used by standalone MCP server)
  *
  * No retry logic — the scheduler handles backoff.
@@ -98,7 +99,7 @@ function mapResultToRun(
 }
 
 // ---------------------------------------------------------------------------
-// Direct executor (in-process, for InlineSource)
+// Direct executor (in-process, for the platform automations source)
 // ---------------------------------------------------------------------------
 
 /**

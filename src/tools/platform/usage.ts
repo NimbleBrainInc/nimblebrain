@@ -9,13 +9,14 @@
 import { join } from "node:path";
 import { aggregateUsage } from "../../conversation/usage-aggregator.ts";
 import { textContent } from "../../engine/content-helpers.ts";
+import type { EventSink } from "../../engine/types.ts";
 import type { Runtime } from "../../runtime/runtime.ts";
-import type { InlineToolDef } from "../inline-source.ts";
-import { InlineSource } from "../inline-source.ts";
+import { defineInProcessApp, type InProcessTool } from "../in-process-app.ts";
+import type { McpSource } from "../mcp-source.ts";
 import { USAGE_DASHBOARD_HTML } from "../platform-resources/usage/dashboard.ts";
 
-export function createUsageSource(runtime: Runtime): InlineSource {
-  const tools: InlineToolDef[] = [
+export function createUsageSource(runtime: Runtime, eventSink: EventSink): McpSource {
+  const tools: InProcessTool[] = [
     {
       name: "report",
       description: "Get aggregated usage data (tokens, cost, tool calls) from structured logs.",
@@ -66,7 +67,15 @@ export function createUsageSource(runtime: Runtime): InlineSource {
     },
   ];
 
-  const resources = new Map([["usage/dashboard", USAGE_DASHBOARD_HTML]]);
+  const resources = new Map([["ui://usage/dashboard", USAGE_DASHBOARD_HTML]]);
 
-  return new InlineSource("usage", tools, { resources });
+  return defineInProcessApp(
+    {
+      name: "usage",
+      version: "1.0.0",
+      tools,
+      resources,
+    },
+    eventSink,
+  );
 }

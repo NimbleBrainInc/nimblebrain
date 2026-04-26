@@ -12,9 +12,9 @@ import { type RequestContext, runWithRequestContext } from "../runtime/request-c
 import type { Runtime } from "../runtime/runtime.ts";
 import type { ChatRequest } from "../runtime/types.ts";
 import type { HealthMonitor } from "../tools/health-monitor.ts";
-import { InlineSource } from "../tools/inline-source.ts";
 import type { ResourceData } from "../tools/types.ts";
 import { validateToolInput } from "../tools/validate-input.ts";
+import { bytesToBase64 } from "../util/base64.ts";
 import type { ConversationEventManager } from "./conversation-events.ts";
 import type { SseEventManager } from "./events.ts";
 import { startSseHeartbeat } from "./sse-heartbeat.ts";
@@ -310,50 +310,19 @@ export async function handleResourceProxy(
     return Response.redirect(`${devUrl}${target}`, 302);
   }
 
-  // Check if this is an InlineSource (platform capabilities + nb core).
-  // InlineSources serve ui:// resources directly from in-process HTML strings.
+  // Both platform built-ins and user-installed bundles are now MCP servers
+  // (in-process or subprocess); both go through the same `readAppResource`
+  // path. The only branch is for "primary" → resourceUri resolution, which
+  // platform sources expose via the source's mode metadata while external
+  // bundles expose via their `instance.ui.placements`.
   if (!workspaceId) throw new Error("Workspace ID required");
-  const registry = await runtime.ensureWorkspaceRegistry(workspaceId);
-  const source = registry.getSources().find((s) => s.name === appName);
 
-  if (source instanceof InlineSource) {
-    // Resolve "primary" to the source's first placement resourceUri
-    let resolvedPath = resourcePath;
-    if (resourcePath === "primary") {
-      const placements = source.getPlacements();
-      const primaryUri = placements.find((p) => p.resourceUri)?.resourceUri;
-      if (primaryUri) {
-        resolvedPath = primaryUri.replace(/^ui:\/\//, "");
-      }
-    }
-
-    const html = source.readResource(resolvedPath);
-    if (html !== null) {
-      return json({
-        contents: [
-          {
-            uri: `ui://${resolvedPath}`,
-            mimeType: "text/html",
-            text: html,
-          },
-        ],
-      });
-    }
-    return apiError(404, "resource_not_found", `Resource "ui://${resourcePath}" not found`, {
-      resource: `ui://${resourcePath}`,
-    });
-  }
-
-  // MCP-based apps (user-installed workspace bundles)
-  const instance = runtime.getLifecycle().getInstance(appName, workspaceId);
-  if (!instance) {
-    return apiError(404, "not_found", `App "${appName}" not found`);
-  }
-
-  // "primary" is a virtual path that resolves to the first placement's resourceUri
   let resolvedPath = resourcePath;
-  if (resourcePath === "primary" && instance.ui?.placements?.[0]?.resourceUri) {
-    resolvedPath = instance.ui.placements[0].resourceUri.replace(/^ui:\/\//, "");
+  if (resourcePath === "primary") {
+    const primaryUri = await resolvePrimaryResourceUri(runtime, appName, workspaceId);
+    if (primaryUri) {
+      resolvedPath = primaryUri.replace(/^ui:\/\//, "");
+    }
   }
 
   const resource = await runtime.readAppResource(appName, resolvedPath, workspaceId);
@@ -368,6 +337,46 @@ export async function handleResourceProxy(
   // `_meta.ui.csp`) without a translation layer. Same shape as
   // `handleReadResource` (POST /v1/resources/read).
   return json({ contents: [buildResourceEnvelopeEntry(`ui://${resolvedPath}`, resource)] });
+}
+
+/**
+ * Resolve "primary" — the virtual path used by the iframe shell when it
+ * doesn't yet know the source's resourceUri — to the first declared
+ * placement's `resourceUri`.
+ *
+ * Two sources of truth depending on the app's lineage:
+ *
+ *   - User-installed bundles publish placements via their manifest, which
+ *     the bundle lifecycle exposes on `BundleInstance.ui.placements`.
+ *   - Platform built-ins are in-process MCP sources whose placements live
+ *     on the McpSource (`getPlacements()`); they have no lifecycle entry.
+ *
+ * Returns `null` when no placement with a `resourceUri` is found — the
+ * caller falls back to using the literal path "primary".
+ */
+async function resolvePrimaryResourceUri(
+  runtime: Runtime,
+  appName: string,
+  workspaceId: string,
+): Promise<string | null> {
+  const instance = runtime.getLifecycle().getInstance(appName, workspaceId);
+  const fromInstance = instance?.ui?.placements?.find((p) => p.resourceUri)?.resourceUri;
+  if (fromInstance) return fromInstance;
+
+  const registry = await runtime.ensureWorkspaceRegistry(workspaceId);
+  const source = registry.getSources().find((s) => s.name === appName);
+  if (!source) return null;
+  const fn = (source as { getPlacements?: () => unknown }).getPlacements;
+  if (typeof fn !== "function") return null;
+  const placements = fn.call(source);
+  if (!Array.isArray(placements)) return null;
+  const found = placements.find(
+    (p) =>
+      p &&
+      typeof p === "object" &&
+      typeof (p as { resourceUri?: unknown }).resourceUri === "string",
+  ) as { resourceUri?: string } | undefined;
+  return found?.resourceUri ?? null;
 }
 
 /**
@@ -447,23 +456,6 @@ export async function handleReadResource(
   }
 
   return json({ contents: [buildResourceEnvelopeEntry(uri, resource)] });
-}
-
-/**
- * Base64-encode a Uint8Array. Prefers Bun/Node's native Buffer (single C++
- * call, significantly faster on large binaries than the chunked btoa path).
- * Falls back to a stack-safe btoa loop for runtimes without Buffer.
- */
-export function bytesToBase64(bytes: Uint8Array): string {
-  if (typeof Buffer !== "undefined") {
-    return Buffer.from(bytes).toString("base64");
-  }
-  const CHUNK = 0x8000;
-  let binary = "";
-  for (let i = 0; i < bytes.length; i += CHUNK) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
-  }
-  return btoa(binary);
 }
 
 /** Handle POST /v1/tools/call — direct tool invocation. */

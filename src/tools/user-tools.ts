@@ -2,7 +2,7 @@ import { textContent } from "../engine/content-helpers.ts";
 import type { ToolResult } from "../engine/types.ts";
 import type { CreateUserResult, IdentityProvider, UserIdentity } from "../identity/provider.ts";
 import type { UserStore } from "../identity/user.ts";
-import type { InlineToolDef } from "./inline-source.ts";
+import type { InProcessTool } from "./in-process-app.ts";
 
 // ── Types ─────────────────────────────────────────────────────────
 
@@ -30,7 +30,7 @@ function permissionDenied(): ToolResult {
 
 // ── Tool factory ──────────────────────────────────────────────────
 
-export function createManageUsersTool(ctx: ManageUsersContext): InlineToolDef {
+export function createManageUsersTool(ctx: ManageUsersContext): InProcessTool {
   return {
     name: "manage_users",
     description:

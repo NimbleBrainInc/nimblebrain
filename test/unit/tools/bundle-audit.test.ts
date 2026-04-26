@@ -22,7 +22,8 @@ import { createHomeSource } from "../../../src/tools/platform/home.ts";
 import { createSettingsSource } from "../../../src/tools/platform/settings.ts";
 import { createUsageSource } from "../../../src/tools/platform/usage.ts";
 import { createConversationsSource } from "../../../src/tools/platform/conversations.ts";
-import type { InlineSource } from "../../../src/tools/inline-source.ts";
+import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
+import type { McpSource } from "../../../src/tools/mcp-source.ts";
 import { validateToolInput } from "../../../src/tools/validate-input.ts";
 import type { Runtime } from "../../../src/runtime/runtime.ts";
 
@@ -49,13 +50,18 @@ function makeRuntime(workDir: string): Runtime {
   } as unknown as Runtime;
 }
 
-async function auditSource(source: InlineSource): Promise<void> {
-  const tools = await source.tools();
-  expect(tools.length).toBeGreaterThan(0);
-  for (const tool of tools) {
-    // If AJV can't compile the schema, this throws synchronously.
-    // The return value (valid/invalid against {}) is irrelevant here.
-    expect(() => validateToolInput({}, tool.inputSchema)).not.toThrow();
+async function auditSource(source: McpSource): Promise<void> {
+  await source.start();
+  try {
+    const tools = await source.tools();
+    expect(tools.length).toBeGreaterThan(0);
+    for (const tool of tools) {
+      // If AJV can't compile the schema, this throws synchronously.
+      // The return value (valid/invalid against {}) is irrelevant here.
+      expect(() => validateToolInput({}, tool.inputSchema)).not.toThrow();
+    }
+  } finally {
+    await source.stop();
   }
 }
 
@@ -63,7 +69,7 @@ describe("Bundle audit — every inline bundle has compilable schemas", () => {
   test("files", async () => {
     const dir = mkdtempSync(join(tmpdir(), "nb-audit-files-"));
     try {
-      await auditSource(createFilesSource(makeRuntime(dir)));
+      await auditSource(createFilesSource(makeRuntime(dir), new NoopEventSink()));
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -72,7 +78,7 @@ describe("Bundle audit — every inline bundle has compilable schemas", () => {
   test("home", async () => {
     const dir = mkdtempSync(join(tmpdir(), "nb-audit-home-"));
     try {
-      await auditSource(createHomeSource(makeRuntime(dir)));
+      await auditSource(createHomeSource(makeRuntime(dir), new NoopEventSink()));
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -81,7 +87,7 @@ describe("Bundle audit — every inline bundle has compilable schemas", () => {
   test("settings", async () => {
     const dir = mkdtempSync(join(tmpdir(), "nb-audit-settings-"));
     try {
-      await auditSource(createSettingsSource(makeRuntime(dir)));
+      await auditSource(createSettingsSource(makeRuntime(dir), new NoopEventSink()));
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -90,7 +96,7 @@ describe("Bundle audit — every inline bundle has compilable schemas", () => {
   test("usage", async () => {
     const dir = mkdtempSync(join(tmpdir(), "nb-audit-usage-"));
     try {
-      await auditSource(createUsageSource(makeRuntime(dir)));
+      await auditSource(createUsageSource(makeRuntime(dir), new NoopEventSink()));
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -101,7 +107,7 @@ describe("Bundle audit — every inline bundle has compilable schemas", () => {
     // tool call, so simple construction is side-effect-free.
     const dir = mkdtempSync(join(tmpdir(), "nb-audit-conv-"));
     try {
-      await auditSource(await createConversationsSource(makeRuntime(dir)));
+      await auditSource(await createConversationsSource(makeRuntime(dir), new NoopEventSink()));
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

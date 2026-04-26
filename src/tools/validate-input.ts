@@ -16,8 +16,8 @@ export type ValidationResult =
  * keywords matter. A previous keyword-allowlist heuristic would silently
  * skip schemas that only declared `additionalProperties: false`,
  * `minProperties`, etc.; a soundness trap now that this helper runs on
- * every InlineSource call. Compilation is cheap and cached per schema
- * reference, so always running is essentially free.
+ * every `defineInProcessApp` tool call. Compilation is cheap and cached
+ * per schema reference, so always running is essentially free.
  *
  * Truly empty schemas (`{}`) still early-return valid — AJV would accept
  * anything anyway, and it saves a round-trip.

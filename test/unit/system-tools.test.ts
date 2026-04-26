@@ -11,7 +11,8 @@ import type {
 	ManageBundleContext,
 } from "../../src/tools/system-tools.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
-import { InlineSource } from "../../src/tools/inline-source.ts";
+import { textContent } from "../../src/engine/content-helpers.ts";
+import { makeInProcessSource } from "../helpers/in-process-source.ts";
 import type { Skill } from "../../src/skills/types.ts";
 import {
 	createPrivilegeHook,
@@ -24,9 +25,9 @@ import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 
 const noopSink = new NoopEventSink();
 
-function makeRegistry(): ToolRegistry {
+async function makeRegistry(): Promise<ToolRegistry> {
 	const registry = new ToolRegistry();
-	const source = new InlineSource("test", [
+	const source = await makeInProcessSource("test", [
 		{
 			name: "greet",
 			description: "Say hello to someone",
@@ -35,7 +36,7 @@ function makeRegistry(): ToolRegistry {
 				properties: { name: { type: "string" } },
 			},
 			handler: async (input) => ({
-				content: `Hello ${input.name}!`,
+				content: textContent(`Hello ${input.name}!`),
 				isError: false,
 			}),
 		},
@@ -47,7 +48,7 @@ function makeRegistry(): ToolRegistry {
 				properties: { name: { type: "string" } },
 			},
 			handler: async (input) => ({
-				content: `Goodbye ${input.name}!`,
+				content: textContent(`Goodbye ${input.name}!`),
 				isError: false,
 			}),
 		},
@@ -58,8 +59,8 @@ function makeRegistry(): ToolRegistry {
 
 describe("System Tools", () => {
 	it("search with scope=tools returns matching tools by substring", async () => {
-		const registry = makeRegistry();
-		const systemTools = createSystemTools(() => registry);
+		const registry = await makeRegistry();
+		const systemTools = await createSystemTools(() => registry);
 		const result = await systemTools.execute("search", {
 			scope: "tools",
 			query: "hello",
@@ -69,8 +70,8 @@ describe("System Tools", () => {
 	});
 
 	it("search with scope=tools and empty query returns all tools grouped", async () => {
-		const registry = makeRegistry();
-		const systemTools = createSystemTools(() => registry);
+		const registry = await makeRegistry();
+		const systemTools = await createSystemTools(() => registry);
 		const result = await systemTools.execute("search", { scope: "tools", query: "" });
 		expect(result.isError).toBe(false);
 		expect(extractText(result.content)).toContain("test");
@@ -78,8 +79,8 @@ describe("System Tools", () => {
 	});
 
 	it("search with scope=tools returns no-match message", async () => {
-		const registry = makeRegistry();
-		const systemTools = createSystemTools(() => registry);
+		const registry = await makeRegistry();
+		const systemTools = await createSystemTools(() => registry);
 		const result = await systemTools.execute("search", {
 			scope: "tools",
 			query: "nonexistent",
@@ -89,8 +90,8 @@ describe("System Tools", () => {
 	});
 
 	it("search with scope=registry searches mpak registry", async () => {
-		const registry = makeRegistry();
-		const systemTools = createSystemTools(() => registry);
+		const registry = await makeRegistry();
+		const systemTools = await createSystemTools(() => registry);
 		const result = await systemTools.execute("search", {
 			scope: "registry",
 			query: "ipinfo",
@@ -101,8 +102,8 @@ describe("System Tools", () => {
 	}, 15_000);
 
 	it("manage_app install requires lifecycle context", async () => {
-		const registry = makeRegistry();
-		const systemTools = createSystemTools(() => registry);
+		const registry = await makeRegistry();
+		const systemTools = await createSystemTools(() => registry);
 		const result = await systemTools.execute("manage_app", {
 			action: "install",
 			name: "@test/nonexistent-bundle-xyz",
@@ -112,8 +113,8 @@ describe("System Tools", () => {
 	}, 15_000);
 
 	it("manage_app uninstall requires lifecycle context", async () => {
-		const registry = makeRegistry();
-		const systemTools = createSystemTools(() => registry);
+		const registry = await makeRegistry();
+		const systemTools = await createSystemTools(() => registry);
 		const result = await systemTools.execute("manage_app", {
 			action: "uninstall",
 			name: "nonexistent",
@@ -123,8 +124,8 @@ describe("System Tools", () => {
 	});
 
 	it("tools() returns prefixed tool names", async () => {
-		const registry = makeRegistry();
-		const systemTools = createSystemTools(() => registry);
+		const registry = await makeRegistry();
+		const systemTools = await createSystemTools(() => registry);
 		const tools = await systemTools.tools();
 		const names = tools.map((t) => t.name);
 		expect(names).toContain("nb__search");
@@ -204,9 +205,9 @@ describe("manage_skill tool", () => {
 		rmSync(skillDir, { recursive: true, force: true });
 	});
 
-	function makeSource(gate?: ConfirmationGate) {
-		const registry = makeRegistry();
-		return createSystemTools(
+	async function makeSource(gate?: ConfirmationGate): Promise<import("../../src/tools/mcp-source.ts").McpSource> {
+		const registry = await makeRegistry();
+		return await createSystemTools(
 			() => registry,
 			undefined,
 			gate,
@@ -218,7 +219,7 @@ describe("manage_skill tool", () => {
 	}
 
 	it("create writes a skill file and reloads", async () => {
-		const source = makeSource(approveGate);
+		const source = await makeSource(approveGate);
 		const result = await source.execute("manage_skill", {
 			action: "create",
 			name: "my-helper",
@@ -243,7 +244,7 @@ describe("manage_skill tool", () => {
 	});
 
 	it("create with priority 5 returns validation error", async () => {
-		const source = makeSource(approveGate);
+		const source = await makeSource(approveGate);
 		const result = await source.execute("manage_skill", {
 			action: "create",
 			name: "bad-priority",
@@ -261,7 +262,7 @@ describe("manage_skill tool", () => {
 	});
 
 	it("create with reserved name returns error", async () => {
-		const source = makeSource(approveGate);
+		const source = await makeSource(approveGate);
 		const result = await source.execute("manage_skill", {
 			action: "create",
 			name: "soul",
@@ -272,7 +273,7 @@ describe("manage_skill tool", () => {
 	});
 
 	it("create without name returns error", async () => {
-		const source = makeSource(approveGate);
+		const source = await makeSource(approveGate);
 		const result = await source.execute("manage_skill", {
 			action: "create",
 			skill: { description: "No name" },
@@ -282,7 +283,7 @@ describe("manage_skill tool", () => {
 	});
 
 	it("create denied by gate returns error", async () => {
-		const source = makeSource(denyGate);
+		const source = await makeSource(denyGate);
 		const result = await source.execute("manage_skill", {
 			action: "create",
 			name: "denied-skill",
@@ -294,7 +295,7 @@ describe("manage_skill tool", () => {
 
 	it("edit with partial update preserves unchanged fields", async () => {
 		// First create a skill
-		const source = makeSource(approveGate);
+		const source = await makeSource(approveGate);
 		await source.execute("manage_skill", {
 			action: "create",
 			name: "editable",
@@ -324,7 +325,7 @@ describe("manage_skill tool", () => {
 	});
 
 	it("edit on non-existent skill returns error", async () => {
-		const source = makeSource(approveGate);
+		const source = await makeSource(approveGate);
 		const result = await source.execute("manage_skill", {
 			action: "edit",
 			name: "ghost",
@@ -335,7 +336,7 @@ describe("manage_skill tool", () => {
 	});
 
 	it("delete removes file and reloads", async () => {
-		const source = makeSource(approveGate);
+		const source = await makeSource(approveGate);
 		await source.execute("manage_skill", {
 			action: "create",
 			name: "to-delete",
@@ -354,7 +355,7 @@ describe("manage_skill tool", () => {
 	});
 
 	it("delete on non-existent skill returns error", async () => {
-		const source = makeSource(approveGate);
+		const source = await makeSource(approveGate);
 		const result = await source.execute("manage_skill", {
 			action: "delete",
 			name: "ghost",
@@ -364,7 +365,7 @@ describe("manage_skill tool", () => {
 	});
 
 	it("list returns all user skills", async () => {
-		const source = makeSource(approveGate);
+		const source = await makeSource(approveGate);
 		await source.execute("manage_skill", {
 			action: "create",
 			name: "skill-a",
@@ -386,7 +387,7 @@ describe("manage_skill tool", () => {
 	});
 
 	it("list returns empty message when no skills", async () => {
-		const source = makeSource(approveGate);
+		const source = await makeSource(approveGate);
 		const result = await source.execute("manage_skill", {
 			action: "list",
 		});
@@ -395,7 +396,7 @@ describe("manage_skill tool", () => {
 	});
 
 	it("show returns full skill content", async () => {
-		const source = makeSource(approveGate);
+		const source = await makeSource(approveGate);
 		await source.execute("manage_skill", {
 			action: "create",
 			name: "showable",
@@ -419,7 +420,7 @@ describe("manage_skill tool", () => {
 	});
 
 	it("show on non-existent skill returns error", async () => {
-		const source = makeSource(approveGate);
+		const source = await makeSource(approveGate);
 		const result = await source.execute("manage_skill", {
 			action: "show",
 			name: "ghost",
@@ -429,7 +430,7 @@ describe("manage_skill tool", () => {
 	});
 
 	it("tool is registered as nb__manage_skill", async () => {
-		const source = makeSource();
+		const source = await makeSource();
 		const tools = await source.tools();
 		const names = tools.map((t) => t.name);
 		expect(names).toContain("nb__manage_skill");
@@ -461,14 +462,14 @@ describe("status tool — scope: skills", () => {
 		sourcePath: "/home/.nimblebrain/skills/compliance.md",
 	};
 
-	function makeStatusSource(
+	async function makeStatusSource(
 		skills: { context: Skill[]; matchable: Skill[] },
 		lifecycleMock?: { getInstance: (name: string, wsId: string) => unknown },
 	) {
-		const registry = makeRegistry();
+		const registry = await makeRegistry();
 		const getSkills = () => skills;
 		const runtimeMock = { requireWorkspaceId: () => "ws_test" } as unknown as import("../../src/runtime/runtime.ts").Runtime;
-		return createSystemTools(
+		return await createSystemTools(
 			() => registry,
 			undefined,
 			undefined,
@@ -484,7 +485,7 @@ describe("status tool — scope: skills", () => {
 	}
 
 	it("shows core skills as immutable", async () => {
-		const source = makeStatusSource({ context: [coreSkill], matchable: [] });
+		const source = await makeStatusSource({ context: [coreSkill], matchable: [] });
 		const result = await source.execute("status", { scope: "skills" });
 		expect(result.isError).toBe(false);
 		expect(extractText(result.content)).toContain("Core Skills");
@@ -493,7 +494,7 @@ describe("status tool — scope: skills", () => {
 	});
 
 	it("shows user context skills with priority", async () => {
-		const source = makeStatusSource({ context: [coreSkill, userContextSkill], matchable: [] });
+		const source = await makeStatusSource({ context: [coreSkill, userContextSkill], matchable: [] });
 		const result = await source.execute("status", { scope: "skills" });
 		expect(result.isError).toBe(false);
 		expect(extractText(result.content)).toContain("User Context");
@@ -502,7 +503,7 @@ describe("status tool — scope: skills", () => {
 	});
 
 	it("shows matchable skills with triggers", async () => {
-		const source = makeStatusSource({ context: [], matchable: [matchableSkill] });
+		const source = await makeStatusSource({ context: [], matchable: [matchableSkill] });
 		const result = await source.execute("status", { scope: "skills" });
 		expect(result.isError).toBe(false);
 		expect(extractText(result.content)).toContain("Matchable");
@@ -511,7 +512,7 @@ describe("status tool — scope: skills", () => {
 	});
 
 	it("returns detailed info for specific skill", async () => {
-		const source = makeStatusSource({ context: [coreSkill], matchable: [matchableSkill] });
+		const source = await makeStatusSource({ context: [coreSkill], matchable: [matchableSkill] });
 		const result = await source.execute("status", { scope: "skills", name: "compliance" });
 		expect(result.isError).toBe(false);
 		expect(extractText(result.content)).toContain("compliance");
@@ -519,21 +520,21 @@ describe("status tool — scope: skills", () => {
 	});
 
 	it("returns error for non-existent skill", async () => {
-		const source = makeStatusSource({ context: [coreSkill], matchable: [] });
+		const source = await makeStatusSource({ context: [coreSkill], matchable: [] });
 		const result = await source.execute("status", { scope: "skills", name: "nonexistent" });
 		expect(result.isError).toBe(true);
 	});
 
 	it("shows dependency as installed when bundle exists", async () => {
 		const lifecycle = { getInstance: (name: string, _wsId: string) => name === "policy-search" ? { status: "running" } : null };
-		const source = makeStatusSource({ context: [], matchable: [matchableSkill] }, lifecycle);
+		const source = await makeStatusSource({ context: [], matchable: [matchableSkill] }, lifecycle);
 		const result = await source.execute("status", { scope: "skills" });
 		expect(extractText(result.content)).toContain("@acme/policy-search (installed)");
 	});
 
 	it("shows dependency as missing when bundle not installed", async () => {
 		const lifecycle = { getInstance: () => null };
-		const source = makeStatusSource({ context: [], matchable: [matchableSkill] }, lifecycle);
+		const source = await makeStatusSource({ context: [], matchable: [matchableSkill] }, lifecycle);
 		const result = await source.execute("status", { scope: "skills" });
 		expect(extractText(result.content)).toContain("@acme/policy-search (missing)");
 	});
@@ -545,13 +546,13 @@ describe("status tool — scope: skills", () => {
 
 describe("search — feature flag gating", () => {
 	it("scope=tools returns error when toolDiscovery is disabled", async () => {
-		const registry = makeRegistry();
+		const registry = await makeRegistry();
 		const features = {
 			bundleManagement: true, skillManagement: true, delegation: true,
 			toolDiscovery: false, bundleDiscovery: true,
 			mcpServer: true, fileContext: true, userManagement: true, workspaceManagement: true,
 		};
-		const systemTools = createSystemTools(
+		const systemTools = await createSystemTools(
 			() => registry,
 			undefined, undefined, undefined, undefined, undefined, undefined,
 			undefined, undefined, features,
@@ -562,13 +563,13 @@ describe("search — feature flag gating", () => {
 	});
 
 	it("scope=registry returns error when bundleDiscovery is disabled", async () => {
-		const registry = makeRegistry();
+		const registry = await makeRegistry();
 		const features = {
 			bundleManagement: true, skillManagement: true, delegation: true,
 			toolDiscovery: true, bundleDiscovery: false,
 			mcpServer: true, fileContext: true, userManagement: true, workspaceManagement: true,
 		};
-		const systemTools = createSystemTools(
+		const systemTools = await createSystemTools(
 			() => registry,
 			undefined, undefined, undefined, undefined, undefined, undefined,
 			undefined, undefined, features,
@@ -579,13 +580,13 @@ describe("search — feature flag gating", () => {
 	});
 
 	it("scope=tools works when toolDiscovery is enabled", async () => {
-		const registry = makeRegistry();
+		const registry = await makeRegistry();
 		const features = {
 			bundleManagement: true, skillManagement: true, delegation: true,
 			toolDiscovery: true, bundleDiscovery: false,
 			mcpServer: true, fileContext: true, userManagement: true, workspaceManagement: true,
 		};
-		const systemTools = createSystemTools(
+		const systemTools = await createSystemTools(
 			() => registry,
 			undefined, undefined, undefined, undefined, undefined, undefined,
 			undefined, undefined, features,
@@ -601,7 +602,7 @@ describe("search — feature flag gating", () => {
 
 describe("status tool — scope: overview", () => {
 	it("returns model, apps, and skills info", async () => {
-		const registry = makeRegistry();
+		const registry = await makeRegistry();
 		const getSkills: GetSkillsFn = () => ({
 			context: [{
 				manifest: { name: "soul", description: "Identity", version: "1.0.0", type: "context", priority: 0 },
@@ -610,7 +611,7 @@ describe("status tool — scope: overview", () => {
 			}],
 			matchable: [],
 		});
-		const systemTools = createSystemTools(
+		const systemTools = await createSystemTools(
 			() => registry,
 			undefined, undefined, undefined, undefined, undefined, undefined,
 			getSkills,
@@ -625,8 +626,8 @@ describe("status tool — scope: overview", () => {
 
 describe("status tool — scope: config", () => {
 	it("returns error-free response without runtime", async () => {
-		const registry = makeRegistry();
-		const systemTools = createSystemTools(() => registry);
+		const registry = await makeRegistry();
+		const systemTools = await createSystemTools(() => registry);
 		const result = await systemTools.execute("status", { scope: "config" });
 		expect(result.isError).toBe(false);
 		// Without runtime, returns "not available"
@@ -640,8 +641,8 @@ describe("status tool — scope: config", () => {
 
 describe("System Tools — input validation", () => {
 	it("manage_app with unknown action returns error", async () => {
-		const registry = makeRegistry();
-		const systemTools = createSystemTools(() => registry);
+		const registry = await makeRegistry();
+		const systemTools = await createSystemTools(() => registry);
 		const result = await systemTools.execute("manage_app", {
 			action: "explode",
 			name: "test",
@@ -653,8 +654,8 @@ describe("System Tools — input validation", () => {
 	});
 
 	it("manage_app install without name returns error", async () => {
-		const registry = makeRegistry();
-		const systemTools = createSystemTools(() => registry);
+		const registry = await makeRegistry();
+		const systemTools = await createSystemTools(() => registry);
 		const result = await systemTools.execute("manage_app", {
 			action: "install",
 		});
@@ -664,8 +665,8 @@ describe("System Tools — input validation", () => {
 	});
 
 	it("manage_app uninstall without name returns error", async () => {
-		const registry = makeRegistry();
-		const systemTools = createSystemTools(() => registry);
+		const registry = await makeRegistry();
+		const systemTools = await createSystemTools(() => registry);
 		const result = await systemTools.execute("manage_app", {
 			action: "uninstall",
 		});
@@ -673,8 +674,8 @@ describe("System Tools — input validation", () => {
 	});
 
 	it("search with missing query defaults gracefully", async () => {
-		const registry = makeRegistry();
-		const systemTools = createSystemTools(() => registry);
+		const registry = await makeRegistry();
+		const systemTools = await createSystemTools(() => registry);
 		// Omit query entirely but provide scope
 		const result = await systemTools.execute("search", { scope: "tools" });
 		expect(result.isError).toBe(false);
@@ -699,9 +700,9 @@ describe("manage_skill — additional validation", () => {
 		rmSync(skillDir, { recursive: true, force: true });
 	});
 
-	function makeSource(gate?: ConfirmationGate) {
-		const registry = makeRegistry();
-		return createSystemTools(
+	async function makeSource(gate?: ConfirmationGate): Promise<import("../../src/tools/mcp-source.ts").McpSource> {
+		const registry = await makeRegistry();
+		return await createSystemTools(
 			() => registry,
 			undefined,
 			gate,
@@ -713,7 +714,7 @@ describe("manage_skill — additional validation", () => {
 	}
 
 	it("create with priority 100 (above max) returns validation error", async () => {
-		const source = makeSource(approveGate);
+		const source = await makeSource(approveGate);
 		const result = await source.execute("manage_skill", {
 			action: "create",
 			name: "high-priority",
@@ -730,7 +731,7 @@ describe("manage_skill — additional validation", () => {
 	});
 
 	it("create with priority exactly 11 (minimum) succeeds", async () => {
-		const source = makeSource(approveGate);
+		const source = await makeSource(approveGate);
 		const result = await source.execute("manage_skill", {
 			action: "create",
 			name: "min-priority",
@@ -747,7 +748,7 @@ describe("manage_skill — additional validation", () => {
 	});
 
 	it("create with priority exactly 99 (maximum) succeeds", async () => {
-		const source = makeSource(approveGate);
+		const source = await makeSource(approveGate);
 		const result = await source.execute("manage_skill", {
 			action: "create",
 			name: "max-priority",
@@ -764,7 +765,7 @@ describe("manage_skill — additional validation", () => {
 	});
 
 	it("create with empty body still succeeds", async () => {
-		const source = makeSource(approveGate);
+		const source = await makeSource(approveGate);
 		const result = await source.execute("manage_skill", {
 			action: "create",
 			name: "empty-body",
@@ -777,7 +778,7 @@ describe("manage_skill — additional validation", () => {
 	});
 
 	it("unknown action on manage_skill returns error", async () => {
-		const source = makeSource(approveGate);
+		const source = await makeSource(approveGate);
 		const result = await source.execute("manage_skill", {
 			action: "purge",
 			name: "test",
@@ -786,7 +787,7 @@ describe("manage_skill — additional validation", () => {
 	});
 
 	it("edit with invalid priority rejects without modifying file", async () => {
-		const source = makeSource(approveGate);
+		const source = await makeSource(approveGate);
 		// Create a valid skill first
 		await source.execute("manage_skill", {
 			action: "create",
@@ -819,7 +820,7 @@ describe("manage_skill — additional validation", () => {
 			confirm: async () => false,
 			promptConfigValue: async () => null,
 		};
-		const source = makeSource(approveGate);
+		const source = await makeSource(approveGate);
 		await source.execute("manage_skill", {
 			action: "create",
 			name: "keep-me",
@@ -827,7 +828,7 @@ describe("manage_skill — additional validation", () => {
 		});
 
 		// Now try to delete with deny gate
-		const denySource = makeSource(denyGate);
+		const denySource = await makeSource(denyGate);
 		const result = await denySource.execute("manage_skill", {
 			action: "delete",
 			name: "keep-me",
@@ -886,7 +887,7 @@ describe("manage_app configure — workspace-scoped credentials", () => {
 	}
 
 	/** Create a bundle ctx + system tools wired for `manage_app configure`. */
-	function buildTools(gate: ConfirmationGate | undefined) {
+	async function buildTools(gate: ConfirmationGate | undefined) {
 		const registry = new ToolRegistry();
 		const sink = new NoopEventSink();
 		const lifecycle = new BundleLifecycleManager(sink, undefined, false, mpakHome);
@@ -898,7 +899,7 @@ describe("manage_app configure — workspace-scoped credentials", () => {
 			configDir: undefined,
 			eventSink: sink,
 		};
-		const tools = createSystemTools(
+		const tools = await createSystemTools(
 			() => registry,
 			undefined,
 			gate,
@@ -942,7 +943,7 @@ describe("manage_app configure — workspace-scoped credentials", () => {
 			confirm: async () => true,
 			promptConfigValue: async () => null,
 		};
-		const { tools } = buildTools(gate);
+		const { tools } = await buildTools(gate);
 
 		const result = await tools.execute("manage_app", {
 			action: "configure",
@@ -963,7 +964,7 @@ describe("manage_app configure — workspace-scoped credentials", () => {
 			confirm: async () => true,
 			promptConfigValue: async () => null,
 		};
-		const { tools } = buildTools(gate);
+		const { tools } = await buildTools(gate);
 
 		const result = await tools.execute("manage_app", {
 			action: "configure",
@@ -982,7 +983,7 @@ describe("manage_app configure — workspace-scoped credentials", () => {
 			confirm: async () => true,
 			promptConfigValue: async () => null,
 		};
-		const { tools } = buildTools(gate);
+		const { tools } = await buildTools(gate);
 
 		const result = await tools.execute("manage_app", {
 			action: "configure",
@@ -1009,7 +1010,7 @@ describe("manage_app configure — workspace-scoped credentials", () => {
 				return "sk-prompted-value";
 			},
 		};
-		const { tools } = buildTools(gate);
+		const { tools } = await buildTools(gate);
 
 		// The restart via startBundleSource will fail (no real bundle zip), but
 		// credentials are persisted BEFORE restart — that's the behavior we're
@@ -1049,7 +1050,7 @@ describe("manage_app configure — workspace-scoped credentials", () => {
 				return "sk-new-value";
 			},
 		};
-		const { tools } = buildTools(gate);
+		const { tools } = await buildTools(gate);
 
 		await tools.execute("manage_app", {
 			action: "configure",
@@ -1070,45 +1071,39 @@ describe("manage_app configure — workspace-scoped credentials", () => {
 // ---------------------------------------------------------------------------
 
 describe("nb__read_resource system tool", () => {
-	/** Build a ToolSource that also implements ResourceReader, for testing. */
-	function makeResourceReaderSource(
+	/**
+	 * Build a real in-process MCP source publishing the given URI→resource map.
+	 * Replaces the pre-#90 mock that returned ad-hoc shapes — every reader is now
+	 * a real `McpSource` so the test exercises the same code path production does.
+	 */
+	async function buildSource(
 		name: string,
-		resources: Record<string, string | { text?: string; blob?: Uint8Array; mimeType?: string } | (() => never)>,
-	) {
-		return {
-			name,
-			async start() {},
-			async stop() {},
-			async tools() {
-				return [];
-			},
-			async execute() {
-				return { content: "noop", isError: false };
-			},
-			async readResource(uri: string) {
-				const entry = resources[uri];
-				if (entry === undefined) return null;
-				if (typeof entry === "function") {
-					entry();
-				}
-				if (typeof entry === "string") {
-					return { text: entry };
-				}
-				return entry as { text?: string; blob?: Uint8Array; mimeType?: string };
-			},
-		};
+		resources: Record<string, string | { text?: string; blob?: Uint8Array; mimeType?: string }>,
+	): Promise<import("../../src/tools/mcp-source.ts").McpSource> {
+		const map = new Map<string, string | { text?: string; blob?: Uint8Array; mimeType?: string }>(
+			Object.entries(resources),
+		);
+		const { defineInProcessApp } = await import("../../src/tools/in-process-app.ts");
+		const source = defineInProcessApp(
+			{ name, version: "1.0.0", tools: [], resources: map },
+			noopSink,
+		);
+		await source.start();
+		return source;
 	}
 
 	it("returns the resource text from the first source that resolves the URI", async () => {
 		const registry = new ToolRegistry();
-		registry.addSource(makeResourceReaderSource("app-one", {
-			"skill://app-one/usage": "Step 1: call the thing. Step 2: win.",
-		}));
-		registry.addSource(makeResourceReaderSource("app-two", {
-			"skill://app-two/usage": "other content",
-		}));
+		registry.addSource(
+			await buildSource("app-one", {
+				"skill://app-one/usage": "Step 1: call the thing. Step 2: win.",
+			}),
+		);
+		registry.addSource(
+			await buildSource("app-two", { "skill://app-two/usage": "other content" }),
+		);
 
-		const systemTools = createSystemTools(() => registry);
+		const systemTools = await createSystemTools(() => registry);
 		const result = await systemTools.execute("read_resource", {
 			uri: "skill://app-one/usage",
 		});
@@ -1118,18 +1113,15 @@ describe("nb__read_resource system tool", () => {
 	});
 
 	it("falls through to a later source when earlier sources do not have the URI", async () => {
-		// Lock the iteration-order contract: when the first source returns null,
-		// the handler must keep searching and resolve from a later source.
 		const registry = new ToolRegistry();
-		registry.addSource(makeResourceReaderSource("first", {
-			// no entry for the queried URI — readResource returns null
-			"skill://other/thing": "unrelated",
-		}));
-		registry.addSource(makeResourceReaderSource("second", {
-			"skill://target/usage": "found in second source",
-		}));
+		registry.addSource(
+			await buildSource("first", { "skill://other/thing": "unrelated" }),
+		);
+		registry.addSource(
+			await buildSource("second", { "skill://target/usage": "found in second source" }),
+		);
 
-		const systemTools = createSystemTools(() => registry);
+		const systemTools = await createSystemTools(() => registry);
 		const result = await systemTools.execute("read_resource", {
 			uri: "skill://target/usage",
 		});
@@ -1140,11 +1132,13 @@ describe("nb__read_resource system tool", () => {
 
 	it("returns a binary marker when a source resolves the URI as a blob", async () => {
 		const registry = new ToolRegistry();
-		registry.addSource(makeResourceReaderSource("bin", {
-			"ui://bin/icon": { blob: new Uint8Array([1, 2, 3, 4]), mimeType: "image/png" },
-		}));
+		registry.addSource(
+			await buildSource("bin", {
+				"ui://bin/icon": { blob: new Uint8Array([1, 2, 3, 4]), mimeType: "image/png" },
+			}),
+		);
 
-		const systemTools = createSystemTools(() => registry);
+		const systemTools = await createSystemTools(() => registry);
 		const result = await systemTools.execute("read_resource", {
 			uri: "ui://bin/icon",
 		});
@@ -1158,10 +1152,10 @@ describe("nb__read_resource system tool", () => {
 
 	it("returns isError when the URI is not found in any source", async () => {
 		const registry = new ToolRegistry();
-		registry.addSource(makeResourceReaderSource("app-one", {
-			"skill://app-one/usage": "content",
-		}));
-		const systemTools = createSystemTools(() => registry);
+		registry.addSource(
+			await buildSource("app-one", { "skill://app-one/usage": "content" }),
+		);
+		const systemTools = await createSystemTools(() => registry);
 
 		const result = await systemTools.execute("read_resource", {
 			uri: "skill://nowhere/missing",
@@ -1173,10 +1167,8 @@ describe("nb__read_resource system tool", () => {
 
 	it("returns isError when uri is missing or empty", async () => {
 		const registry = new ToolRegistry();
-		const systemTools = createSystemTools(() => registry);
+		const systemTools = await createSystemTools(() => registry);
 
-		// Missing `uri` is rejected upstream by InlineSource's schema validation;
-		// we only assert it surfaces as a tool error.
 		const missing = await systemTools.execute("read_resource", {});
 		expect(missing.isError).toBe(true);
 
@@ -1189,11 +1181,9 @@ describe("nb__read_resource system tool", () => {
 	it("truncates resource content larger than the budget", async () => {
 		const registry = new ToolRegistry();
 		const huge = "x".repeat(20_000);
-		registry.addSource(makeResourceReaderSource("big", {
-			"skill://big/huge": huge,
-		}));
+		registry.addSource(await buildSource("big", { "skill://big/huge": { text: huge } }));
 
-		const systemTools = createSystemTools(() => registry);
+		const systemTools = await createSystemTools(() => registry);
 		const result = await systemTools.execute("read_resource", {
 			uri: "skill://big/huge",
 		});
@@ -1201,40 +1191,26 @@ describe("nb__read_resource system tool", () => {
 		expect(result.isError).toBe(false);
 		const text = extractText(result.content);
 		expect(text).toContain("[truncated");
-		// Body is capped at the budget + truncation marker; must be under input size.
 		expect(text.length).toBeLessThan(huge.length);
 	});
 
-	it("skips sources that throw and reports the aggregated error when nothing resolves", async () => {
+	// Regression: issue #90. Pre-fix, `nb__read_resource` could not resolve
+	// `ui://` URIs published by an InlineSource because the structural type
+	// guard accepted both `string` and `ResourceData` shapes and the read
+	// loop assumed the latter. After unification on in-process MCP, every
+	// source publishes via the protocol and `data.text` is reliable.
+	it("resolves ui:// resources published by an in-process platform-style source (#90)", async () => {
 		const registry = new ToolRegistry();
-		registry.addSource(makeResourceReaderSource("broken", {
-			"skill://any/thing": () => {
-				throw new Error("boom");
-			},
-		}));
-		const systemTools = createSystemTools(() => registry);
+		registry.addSource(
+			await buildSource("settings", { "ui://settings/panel": "<html>panel</html>" }),
+		);
 
+		const systemTools = await createSystemTools(() => registry);
 		const result = await systemTools.execute("read_resource", {
-			uri: "skill://any/thing",
+			uri: "ui://settings/panel",
 		});
 
-		expect(result.isError).toBe(true);
-		const text = extractText(result.content);
-		expect(text).toContain("not found");
-		expect(text).toContain("broken: boom");
-	});
-
-	it("ignores sources that do not implement readResource", async () => {
-		// The default InlineSource used elsewhere in the file does NOT implement
-		// readResource — guard against a regression that would iterate it.
-		const registry = makeRegistry();
-		const systemTools = createSystemTools(() => registry);
-
-		const result = await systemTools.execute("read_resource", {
-			uri: "skill://anywhere/usage",
-		});
-
-		expect(result.isError).toBe(true);
-		expect(extractText(result.content)).toContain("not found");
+		expect(result.isError).toBe(false);
+		expect(extractText(result.content)).toContain("<html>panel</html>");
 	});
 });
