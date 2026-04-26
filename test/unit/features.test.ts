@@ -19,6 +19,7 @@ describe("resolveFeatures", () => {
 		expect(features.skillManagement).toBe(true);
 		expect(features.toolDiscovery).toBe(true);
 	});
+
 });
 
 describe("isToolEnabled", () => {

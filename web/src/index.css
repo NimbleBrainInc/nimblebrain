@@ -297,6 +297,25 @@
 /* Streamdown inherits the serif font for body text but uses mono for code */
 .presence-assistant-message [data-streamdown="code-block"] {
   font-family: var(--font-mono);
+  position: relative;
+}
+
+/* Streamdown ships its code-block copy/download buttons inside a
+   `position: sticky` + `pointer-events-none` wrapper. In layouts with
+   nested scroll containers (chat scroll inside the panel), hit-testing
+   on the wrapper fails and the buttons render but ignore clicks.
+   See https://github.com/vercel/streamdown/issues/494. Pin the action
+   bar with `position: absolute` so clicks land on the buttons. The
+   trade-off is that actions no longer stay visible when scrolling past
+   long blocks — acceptable for chat prose. */
+.presence-assistant-message [data-streamdown="code-block"]
+  > div:has(> [data-streamdown="code-block-actions"]) {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  margin-top: 0;
+  z-index: 1;
+  pointer-events: auto;
 }
 
 /* Tighten streamdown's default block rhythm for chat prose.

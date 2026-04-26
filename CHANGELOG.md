@@ -5,15 +5,21 @@
 ### Highlights
 
 - **Platform sources unified on MCP.** Every tool/resource provider — built-in platform capabilities and user-installed bundles alike — is now an MCP server. Built-ins run in-process over `InMemoryTransport`; bundles continue to run as subprocess or remote MCP. One contract, one shape, one set of capabilities.
+- **Task-aware iframe tools** — widgets can now `callToolAsTask` for long-running tools (research runs, batch imports). The `/mcp` endpoint speaks the MCP 2025-11-25 tasks utility, and the iframe bridge always routes `tools/call` and `resources/read` through `/mcp` (legacy REST branches in the bridge are gone). The `/v1/tools/call` and `/v1/resources/read` REST endpoints stay for the web shell.
 
 ### Added
 
 - `nb__read_resource` system tool — the agent can now load `skill://` / `ui://` resources advertised by an installed bundle's MCP server ([#3](https://github.com/NimbleBrainInc/nimblebrain/pull/25)).
 - `defineInProcessApp` helper for building in-process MCP sources from JSON Schema tool defs and a resource map — same authoring ergonomic as the former `InlineSource`, with the full MCP capability surface (resources, instructions, tasks, future capabilities).
+- `/mcp` advertises `tasks` and `resources` capabilities; tool-level `taskSupport` negotiation enforces JSON-RPC `-32601` for required-without-task and forbidden-with-task.
+- `McpTaskStore` (in-memory, keyed by `${workspaceId}:${identityId}:${taskId}`) routes `tasks/{get,result,cancel}` to the originating engine handle with workspace-scoped authz; cross-tenant lookups return not-found.
+- `McpSource` per-phase task methods (`startToolAsTask`, `awaitToolTaskResult`, `getTaskStatus`, `cancelTask`) with owner-context enforcement and TTL sweeper.
 
 ### Changed
 
 - Apps list in the system prompt now surfaces each bundle's `initialize.instructions` inside `<app-instructions>` containment tags, so per-bundle guidance reaches the LLM.
+- Iframe bridge uses the MCP transport (`StreamableHTTPClientTransport` against `/mcp`) for `tools/call` and `resources/read`. `INTERNAL_APPS` authz still precedes transport selection. Bridge advertises `hostCapabilities.tasks` to iframes and forwards `notifications/tasks/status` on a per-bridge subscription.
+- Inline (non-task) `tools/call` handler on `/mcp` now preserves `structuredContent` (was dropping it).
 
 ### Fixed
 
@@ -22,6 +28,7 @@
 ### Removed
 
 - `InlineSource`, `ResourceReader`, `isResourceReader`. External callers should switch to `defineInProcessApp` (returns an `McpSource`); `InlineToolDef` becomes `InProcessTool` with the same shape.
+- `bridgeUseMcp` feature flag and its scaffolding (`web/src/features.ts`, `getBridgeUseMcp` / `setBridgeUseMcp`, the schema entry, the resolver field). The MCP transport is the only path; legacy REST branches in the bridge are deleted.
 
 ## [0.4.0] - 2026-04-24
 

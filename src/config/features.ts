@@ -1,6 +1,8 @@
 /**
  * Feature flags for controlling which capabilities are available.
- * All flags default to true for backward compatibility.
+ * Most flags default to true for backward compatibility.
+ *
+ * Opt-in flags (default false) are documented inline.
  */
 export interface FeatureFlags {
   bundleManagement?: boolean;

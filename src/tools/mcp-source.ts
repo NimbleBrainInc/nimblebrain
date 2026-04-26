@@ -3,12 +3,20 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import type { CallToolResult, CreateTaskResult, Task } from "@modelcontextprotocol/sdk/types.js";
 import type { PlacementDeclaration, RemoteTransportConfig } from "../bundles/types.ts";
 import { log } from "../cli/log.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import type { ContentBlock, EventSink, ToolResult } from "../engine/types.ts";
 import { createRemoteTransport } from "./remote-transport.ts";
-import type { ResourceData, Tool, ToolSource } from "./types.ts";
+import {
+  type ResourceData,
+  TaskAlreadyTerminalError,
+  TaskNotFoundError,
+  type TaskOwnerContext,
+  type Tool,
+  type ToolSource,
+} from "./types.ts";
 import type { WorkspaceOAuthProvider } from "./workspace-oauth-provider.ts";
 
 /**
@@ -17,6 +25,25 @@ import type { WorkspaceOAuthProvider } from "./workspace-oauth-provider.ts";
  * Override globally via `McpSource` constructor or per-bundle in the future.
  */
 const DEFAULT_TASK_TTL_MS = 60 * 60 * 1000;
+
+/**
+ * Grace window after a task's declared TTL before the sweeper purges the
+ * handle. Callers that fetch the terminal result a little late still get it;
+ * anything beyond this is gone.
+ */
+const TASK_HANDLE_GRACE_MS = 60 * 1000;
+
+/** Sweeper cadence (ms). Mirrors the `/mcp` session sweeper. */
+const TASK_SWEEPER_INTERVAL_MS = 60_000;
+
+/**
+ * Hard ceiling on how long we wait between `startToolAsTask` call and the
+ * stream yielding `taskCreated`. Guards against a server that accepts a
+ * task-augmented `tools/call` then never acknowledges it — the 60s MCP
+ * default request timeout would already have fired by then, so this is
+ * more of a safety net than a driver.
+ */
+const TASK_CREATED_TIMEOUT_MS = 60_000;
 
 export type { ResourceData } from "./types.ts";
 
@@ -83,6 +110,64 @@ export type McpTransportMode =
     };
 
 /**
+ * Internal bookkeeping for an in-flight or recently-terminal task.
+ *
+ * Lifecycle:
+ *   1. `startToolAsTask` creates the handle, drives the stream to the
+ *      `taskCreated` message, stamps `ownerContext`, fires the background
+ *      drainer, and returns the `CreateTaskResult`.
+ *   2. The drainer updates `latestTask` on every `taskStatus`, resolves
+ *      `terminalDeferred` on `result`/`error`, and marks the handle terminal.
+ *   3. `awaitToolTaskResult` awaits `terminalDeferred`.
+ *   4. `cancelTask` calls `abortController.abort()` — the SDK translates that
+ *      into a `tasks/cancel` dispatch; the drainer observes the terminal
+ *      `error` message and resolves the handle.
+ *   5. After `lastUpdatedAt + ttl + grace`, the sweeper deletes the entry.
+ */
+interface TaskHandle {
+  taskId: string;
+  toolName: string;
+  ownerContext: TaskOwnerContext;
+  /** Most recent `Task` payload we've observed from the stream. */
+  latestTask: Task;
+  /** Populated once the stream emits a terminal message. */
+  terminal?: { result: CallToolResult } | { error: Error };
+  /** Resolves / rejects with the terminal CallToolResult. */
+  terminalDeferred: Deferred<CallToolResult>;
+  /** Drives `tasks/cancel` on the upstream. */
+  abortController: AbortController;
+  /**
+   * Set when cancellation came from a call to `cancelTask(...)` (as opposed
+   * to a generic external AbortSignal passed at start time). Used by the
+   * drainer to decide whether to reject the terminal deferred (cancelTask
+   * explicitly rejects pending `awaitToolTaskResult` callers per task 001
+   * acceptance criteria) or resolve it with `isError: true` (generic
+   * stream-level errors stay on the resolve path so the agent-loop wrapper
+   * returns the same ToolResult shape as before the split).
+   */
+  cancelRequested: boolean;
+  /** When we'll allow the sweeper to purge the handle (ms since epoch). */
+  expiresAt: number;
+}
+
+/** Tiny Promise helper — we need both sides of the promise here. */
+interface Deferred<T> {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+  reject: (reason: unknown) => void;
+}
+
+function deferred<T>(): Deferred<T> {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+/**
  * ToolSource wrapping a single MCP server (stdio subprocess or remote HTTP/SSE).
  * Lazy tool loading: first tools() call triggers listTools(), then caches.
  * Crash recovery: on execute failure, attempts one restart + retry.
@@ -105,6 +190,14 @@ export class McpSource implements ToolSource {
    * sources without their authors having to wire it themselves.
    */
   private inProcessServer: Server | null = null;
+  /**
+   * Per-source task handle map. Keyed by server-assigned taskId. Shared
+   * between `startToolAsTask`, `awaitToolTaskResult`, `getTaskStatus`,
+   * `cancelTask`, and the background drainers they spawn.
+   */
+  private taskHandles = new Map<string, TaskHandle>();
+  /** Sweeper interval. Kept so `stop()` can cancel it. */
+  private sweeperInterval: ReturnType<typeof setInterval> | null = null;
 
   /**
    * `eventSink` is REQUIRED, not optional. Emitted events include
@@ -258,6 +351,8 @@ export class McpSource implements ToolSource {
     // the system prompt composer can render it in the apps list.
     const instructions = this.client.getInstructions();
     this._instructions = typeof instructions === "string" ? instructions : undefined;
+
+    this.startTaskSweeper();
   }
 
   private async connectWithTimeout(timeoutMs: number): Promise<void> {
@@ -351,6 +446,25 @@ export class McpSource implements ToolSource {
   }
 
   async stop(): Promise<void> {
+    // Abort any in-flight streams so their drainers unblock and the handle
+    // map can be cleared without leaking outstanding `awaitToolTaskResult`
+    // callers. Each drainer will reject its terminalDeferred, which is
+    // exactly the semantic we want on shutdown.
+    this.stopTaskSweeper();
+    for (const handle of this.taskHandles.values()) {
+      try {
+        handle.abortController.abort();
+      } catch {
+        // ignore
+      }
+      if (!handle.terminal) {
+        const err = new Error(`Task ${handle.taskId} aborted: source stopped`);
+        handle.terminal = { error: err };
+        handle.terminalDeferred.reject(err);
+      }
+    }
+    this.taskHandles.clear();
+
     try {
       if (this.client) await this.client.close();
       if (this.transport) await this.transport.close();
@@ -591,19 +705,13 @@ export class McpSource implements ToolSource {
   }
 
   /**
-   * Task-augmented tool invocation, backed by the SDK's experimental task
-   * streaming API (`client.experimental.tasks.callToolStream`).
+   * Thin wrapper that preserves the pre-split agent-loop contract:
+   * start the task, await its terminal result, return a single `ToolResult`.
    *
-   * The stream yields a well-defined sequence of response messages:
-   *   1. `taskCreated` — server acknowledged and assigned a taskId
-   *   2. `taskStatus` (0+) — status transitions while the task runs
-   *   3. terminal: `result` (success) or `error` (failure)
-   *
-   * This is the spec-compliant path for long-running work — `tools/call`
-   * returns the CreateTaskResult in <1s, the SDK polls `tasks/get` on the
-   * server-provided interval, and delivers the final CallToolResult via
-   * `tasks/result` when the task reaches a terminal state. The 60s MCP
-   * request timeout does NOT apply because no single request blocks.
+   * Behaviour is intentionally identical to the previous monolithic
+   * implementation — the per-phase methods are used directly by the
+   * `/mcp` endpoint (Task 002) where the two halves run in different
+   * JSON-RPC requests.
    *
    * Cancellation: forwarding the engine's run-scoped AbortSignal causes the
    * SDK to send `tasks/cancel` to the server. The server's worker receives
@@ -615,75 +723,469 @@ export class McpSource implements ToolSource {
     args: Record<string, unknown>,
     signal?: AbortSignal,
   ): Promise<ToolResult> {
+    const start = await this.startToolAsTask(toolName, args, {
+      // Agent-loop default owner context. The /mcp entry path will pass a
+      // workspace-scoped one; inside the agent, all sources are already
+      // workspace-scoped at registry-selection time, so an agent-loop
+      // pseudo-context is fine.
+      ownerContext: { workspaceId: `__agent__:${this.name}` },
+      signal,
+    });
+
+    // No taskId means the server couldn't create one (or upstream protocol
+    // violation surfaced as an error). `awaitToolTaskResult` will reject
+    // with a descriptive error, which the outer `execute()` catch maps to
+    // a tool ToolResult.
+    const callToolResult = await this.awaitToolTaskResult(start.task.taskId, {
+      ownerContext: { workspaceId: `__agent__:${this.name}` },
+    });
+
+    return {
+      content: Array.isArray(callToolResult.content)
+        ? (callToolResult.content as ContentBlock[])
+        : [],
+      structuredContent: callToolResult.structuredContent as Record<string, unknown> | undefined,
+      isError: Boolean(callToolResult.isError),
+    };
+  }
+
+  /**
+   * Phase 1 of the split task API: open the SDK task stream, drain it up to
+   * (and including) the `taskCreated` message, stamp a `TaskHandle`, and
+   * spawn a background drainer that accumulates subsequent `taskStatus`
+   * messages and resolves on the terminal `result`/`error`.
+   *
+   * Returns the initial `CreateTaskResult` synchronously so callers can
+   * forward it to their own task-augmented client (the `/mcp` endpoint) in
+   * sub-second time.
+   *
+   * The `ownerContext` is stamped into the handle and MUST match on every
+   * subsequent `getTaskStatus` / `awaitToolTaskResult` / `cancelTask`.
+   *
+   * The optional `signal` is chained into the handle's internal abort
+   * controller — aborting from outside cancels the upstream stream, which
+   * the SDK translates into `tasks/cancel`.
+   *
+   * Rejects with a descriptive error if:
+   *   - the stream terminates before yielding `taskCreated`,
+   *   - the first non-`taskCreated` message is a terminal `error`,
+   *   - the stream hangs for longer than `TASK_CREATED_TIMEOUT_MS`.
+   */
+  async startToolAsTask(
+    toolName: string,
+    args: Record<string, unknown>,
+    opts: { ownerContext: TaskOwnerContext; signal?: AbortSignal; ttlMs?: number },
+  ): Promise<CreateTaskResult> {
     const client = this.client;
-    if (!client) return { content: [], isError: true };
-
-    const stream = client.experimental.tasks.callToolStream(
-      {
-        name: toolName,
-        arguments: args,
-        task: { ttl: DEFAULT_TASK_TTL_MS },
-      },
-      undefined,
-      signal ? { signal } : undefined,
-    );
-
-    let taskId: string | undefined;
-    for await (const message of stream) {
-      switch (message.type) {
-        case "taskCreated":
-          taskId = message.task.taskId;
-          this.eventSink.emit({
-            type: "tool.progress",
-            data: {
-              source: this.name,
-              tool: toolName,
-              taskId,
-              status: message.task.status,
-              message: message.task.statusMessage,
-            },
-          });
-          break;
-
-        case "taskStatus":
-          this.eventSink.emit({
-            type: "tool.progress",
-            data: {
-              source: this.name,
-              tool: toolName,
-              taskId: message.task.taskId,
-              status: message.task.status,
-              message: message.task.statusMessage,
-            },
-          });
-          break;
-
-        case "result": {
-          const { content, structuredContent, isError } = message.result;
-          return {
-            content: Array.isArray(content) ? (content as ContentBlock[]) : [],
-            structuredContent: structuredContent as Record<string, unknown> | undefined,
-            isError: Boolean(isError),
-          };
-        }
-
-        case "error":
-          return {
-            content: textContent(
-              message.error?.message ?? `Task ${taskId ?? "?"} failed without detail`,
-            ),
-            isError: true,
-          };
-      }
+    if (!client || this.dead) {
+      throw new Error(`McpSource "${this.name}" not started`);
     }
 
-    // The SDK's contract is that the stream always terminates with result or
-    // error; reaching here indicates a protocol violation upstream. Treat as
-    // an error so the agent loop can continue.
-    return {
-      content: textContent(`Task ${taskId ?? "?"} stream ended without a terminal message`),
-      isError: true,
+    const abortController = new AbortController();
+    const externalSignal = opts.signal;
+    if (externalSignal) {
+      if (externalSignal.aborted) abortController.abort();
+      else externalSignal.addEventListener("abort", () => abortController.abort(), { once: true });
+    }
+
+    // Pass `task: { ttl }` via *options*, NOT inside `params`. The SDK's
+    // `Protocol.request` stamps `params.task = options.task` AFTER reading
+    // the caller's params, so any ttl we set in `params.task` here is
+    // overridden by the SDK's `optionsWithTask.task` (which auto-fills `{}`
+    // for tools advertising `taskSupport`). Putting it in options threads
+    // through correctly. See `@modelcontextprotocol/sdk` `protocol.js:654`
+    // and `experimental/tasks/client.js:67`.
+    const stream = client.experimental.tasks.callToolStream(
+      { name: toolName, arguments: args },
+      undefined,
+      {
+        signal: abortController.signal,
+        task: { ttl: opts.ttlMs ?? DEFAULT_TASK_TTL_MS },
+      },
+    );
+
+    // Race the stream's first message against a hard ceiling. The SDK
+    // normally responds to `tools/call` in milliseconds; anything that
+    // stalls for a full minute before producing `taskCreated` is a broken
+    // server and we shouldn't block the caller indefinitely.
+    const first = await raceWithTimeout(
+      stream.next(),
+      TASK_CREATED_TIMEOUT_MS,
+      `Timed out waiting for taskCreated from ${this.name}:${toolName}`,
+    );
+    if (first.done) {
+      throw new Error(`Stream from ${this.name}:${toolName} ended before yielding taskCreated`);
+    }
+    const firstMsg = first.value as { type: string; task?: Task; error?: { message?: string } };
+    if (firstMsg.type === "error") {
+      throw new Error(
+        firstMsg.error?.message ?? `Task creation failed for ${this.name}:${toolName}`,
+      );
+    }
+    if (firstMsg.type !== "taskCreated" || !firstMsg.task) {
+      throw new Error(
+        `Protocol violation: first stream message from ${this.name}:${toolName} was ${firstMsg.type}, expected taskCreated`,
+      );
+    }
+
+    const task = firstMsg.task;
+    const taskId = task.taskId;
+
+    const handle: TaskHandle = {
+      taskId,
+      toolName,
+      ownerContext: { ...opts.ownerContext },
+      latestTask: task,
+      abortController,
+      terminalDeferred: deferred<CallToolResult>(),
+      cancelRequested: false,
+      expiresAt: computeExpiry(task),
     };
+    // Attach a no-op catch to the terminal promise so drainer-side
+    // rejections (cancellation, transport crash, sweep) don't surface as
+    // unhandled rejections when no caller is currently awaiting. Callers
+    // that DO await get the rejection normally.
+    handle.terminalDeferred.promise.catch(() => {});
+    this.taskHandles.set(taskId, handle);
+
+    // Emit the initial progress event inline so callers see `taskCreated`
+    // before `startToolAsTask` returns.
+    this.eventSink.emit({
+      type: "tool.progress",
+      data: {
+        source: this.name,
+        tool: toolName,
+        taskId,
+        status: task.status,
+        message: task.statusMessage,
+      },
+    });
+
+    // Drain the rest of the stream in the background. Errors here resolve
+    // via `terminalDeferred.reject` — there's no outer `await` to catch them.
+    void this.drainTaskStream(handle, stream, toolName);
+
+    // CreateTaskResult per MCP spec 2025-11-25 wraps the Task in a `task`
+    // field. The SDK's stream doesn't surface the outer envelope directly
+    // (it hands us the parsed inner Task), but the JSON-RPC contract the
+    // `/mcp` handler needs to re-emit is `{ task: Task }`.
+    return { task };
+  }
+
+  /**
+   * Phase 2 of the split task API: block until the handle terminates, then
+   * return the final `CallToolResult` (or throw on failure/cancellation).
+   *
+   * Owner-context mismatch → `TaskNotFoundError` (we deliberately do not
+   * distinguish "wrong owner" from "no such task" to avoid leaking
+   * existence).
+   */
+  async awaitToolTaskResult(
+    taskId: string,
+    opts: { ownerContext: TaskOwnerContext },
+  ): Promise<CallToolResult> {
+    const handle = this.lookupHandle(taskId, opts.ownerContext);
+    return handle.terminalDeferred.promise;
+  }
+
+  /**
+   * Non-blocking peek at a task's current status.
+   *
+   * Returns the cached `Task` if the stream has yielded at least one update;
+   * otherwise falls back to `tasks/get` on the upstream server.
+   */
+  async getTaskStatus(taskId: string, opts: { ownerContext: TaskOwnerContext }): Promise<Task> {
+    const handle = this.lookupHandle(taskId, opts.ownerContext);
+    // If the handle has a terminal status cached, return that — it's the
+    // authoritative final state. Otherwise return the latest streamed Task.
+    if (handle.terminal || isTerminalStatus(handle.latestTask.status)) {
+      return handle.latestTask;
+    }
+    // For still-working tasks, prefer live upstream if possible so callers
+    // get fresh `pollInterval` / `statusMessage` without having to wait for
+    // the next `taskStatus` message.
+    const client = this.client;
+    if (client) {
+      try {
+        const upstream = await client.experimental.tasks.getTask(taskId);
+        handle.latestTask = upstream;
+        handle.expiresAt = computeExpiry(upstream);
+        return upstream;
+      } catch {
+        // Fall through to cached — the upstream call can fail if the
+        // server forgot about the task (TTL expiry) or the connection
+        // flapped. We still have our last-known state.
+      }
+    }
+    return handle.latestTask;
+  }
+
+  /**
+   * Phase 4 of the split task API: transition a running task to `cancelled`.
+   *
+   * Cancelling a task that is already in a terminal state is a protocol
+   * error per MCP spec 2025-11-25 — the `/mcp` layer maps that to JSON-RPC
+   * `-32602`. We surface the condition as `TaskAlreadyTerminalError` so the
+   * caller can do the mapping with structured information.
+   */
+  async cancelTask(taskId: string, opts: { ownerContext: TaskOwnerContext }): Promise<Task> {
+    const handle = this.lookupHandle(taskId, opts.ownerContext);
+    if (handle.terminal || isTerminalStatus(handle.latestTask.status)) {
+      throw new TaskAlreadyTerminalError(taskId, handle.latestTask.status);
+    }
+
+    // Aborting the controller kicks the SDK into sending `tasks/cancel`
+    // and tearing down the stream iterator. The drainer observes the
+    // thrown error (or subsequent stream-level error) and, because we set
+    // `cancelRequested`, rejects the terminal deferred — any in-flight
+    // `awaitToolTaskResult` caller will see that rejection. We wait for
+    // the drainer to settle so the caller gets an up-to-date Task.
+    handle.cancelRequested = true;
+    handle.abortController.abort();
+
+    // The drainer will settle the terminalDeferred; we also want to wait
+    // for the latestTask.status to flip to `cancelled`. The cleanest
+    // observable signal is the terminalDeferred — it settles via the
+    // drainer regardless of success or failure. Swallow rejection because
+    // the contract of cancelTask is to return the final Task, not the
+    // CallToolResult.
+    try {
+      await handle.terminalDeferred.promise;
+    } catch {
+      // ignore — we're about to return the status regardless
+    }
+    // Normalize the status to `cancelled` if the drainer exited via an
+    // abort error but didn't update the status explicitly.
+    if (!isTerminalStatus(handle.latestTask.status)) {
+      handle.latestTask = {
+        ...handle.latestTask,
+        status: "cancelled",
+        lastUpdatedAt: new Date().toISOString(),
+      };
+    }
+    return handle.latestTask;
+  }
+
+  /**
+   * Internal task handle lookup.
+   *
+   * Returns the handle if (a) it exists and (b) the caller's
+   * `TaskOwnerContext` matches the one stamped at `startToolAsTask` time.
+   * Any mismatch — including a missing entry, a different workspace, a
+   * different identity, or a different originApp — throws
+   * `TaskNotFoundError`. The error intentionally does NOT distinguish
+   * "wrong owner" from "no such task".
+   */
+  private lookupHandle(taskId: string, context: TaskOwnerContext): TaskHandle {
+    const handle = this.taskHandles.get(taskId);
+    if (!handle) throw new TaskNotFoundError(taskId);
+    if (!ownerMatches(handle.ownerContext, context)) {
+      throw new TaskNotFoundError(taskId);
+    }
+    return handle;
+  }
+
+  /**
+   * Background drainer for the SDK task stream. Runs per-task from
+   * `startToolAsTask` until the stream terminates.
+   *
+   * Responsibilities:
+   *   - Emit `tool.progress` for every `taskStatus` so the chat UI renders live.
+   *   - Refresh `handle.latestTask` on every `taskStatus`.
+   *   - Resolve `handle.terminalDeferred` on `result`, reject on `error`.
+   *   - On thrown errors (transport crash, abort), reject + stamp a
+   *     `failed` / `cancelled` Task so `getTaskStatus` returns something
+   *     sensible post-mortem.
+   */
+  private async drainTaskStream(
+    handle: TaskHandle,
+    stream: AsyncGenerator<unknown, void, void>,
+    toolName: string,
+  ): Promise<void> {
+    try {
+      for await (const raw of stream) {
+        const message = raw as {
+          type: string;
+          task?: Task;
+          result?: CallToolResult;
+          error?: { message?: string };
+        };
+        switch (message.type) {
+          case "taskStatus": {
+            if (!message.task) break;
+            handle.latestTask = message.task;
+            handle.expiresAt = computeExpiry(message.task);
+            this.eventSink.emit({
+              type: "tool.progress",
+              data: {
+                source: this.name,
+                tool: toolName,
+                taskId: handle.taskId,
+                status: message.task.status,
+                message: message.task.statusMessage,
+              },
+            });
+            break;
+          }
+          case "taskCreated":
+            // `startToolAsTask` already consumed the first taskCreated.
+            // A second one would be a protocol oddity; ignore gracefully.
+            break;
+          case "result": {
+            if (!message.result) break;
+            handle.terminal = { result: message.result };
+            handle.latestTask = {
+              ...handle.latestTask,
+              status: "completed",
+              lastUpdatedAt: new Date().toISOString(),
+            };
+            handle.expiresAt = Date.now() + TASK_HANDLE_GRACE_MS;
+            handle.terminalDeferred.resolve(message.result);
+            return;
+          }
+          case "error": {
+            // Two sub-cases here:
+            //   1. A caller invoked `cancelTask(...)` → per task 001
+            //      acceptance criteria, in-flight `awaitToolTaskResult`
+            //      callers must be rejected with a descriptive error.
+            //   2. Clean stream-level `error` from the server (task failed
+            //      without cancellation) → resolve with `isError: true` so
+            //      the agent-loop wrapper preserves its historical return
+            //      shape. Rejection is reserved for transport crashes /
+            //      protocol violations so `execute()`'s catch branch makes
+            //      the right restart decision.
+            const errMessage = message.error?.message ?? `Task ${handle.taskId} failed`;
+            if (handle.cancelRequested) {
+              const err = new Error(`Task ${handle.taskId} cancelled: ${errMessage}`);
+              handle.terminal = { error: err };
+              handle.latestTask = {
+                ...handle.latestTask,
+                status: "cancelled",
+                statusMessage: errMessage,
+                lastUpdatedAt: new Date().toISOString(),
+              };
+              handle.expiresAt = Date.now() + TASK_HANDLE_GRACE_MS;
+              handle.terminalDeferred.reject(err);
+              return;
+            }
+            const isAborted = handle.abortController.signal.aborted;
+            const callToolResult: CallToolResult = {
+              content: [{ type: "text", text: errMessage }],
+              isError: true,
+            };
+            handle.terminal = { result: callToolResult };
+            handle.latestTask = {
+              ...handle.latestTask,
+              status: isAborted ? "cancelled" : "failed",
+              statusMessage: errMessage,
+              lastUpdatedAt: new Date().toISOString(),
+            };
+            handle.expiresAt = Date.now() + TASK_HANDLE_GRACE_MS;
+            handle.terminalDeferred.resolve(callToolResult);
+            return;
+          }
+        }
+      }
+      // Stream ended without a terminal message — protocol violation.
+      const err = new Error(`Task ${handle.taskId} stream ended without a terminal message`);
+      handle.terminal = { error: err };
+      handle.latestTask = {
+        ...handle.latestTask,
+        status: "failed",
+        statusMessage: err.message,
+        lastUpdatedAt: new Date().toISOString(),
+      };
+      handle.expiresAt = Date.now() + TASK_HANDLE_GRACE_MS;
+      handle.terminalDeferred.reject(err);
+    } catch (err) {
+      // Transport crash or abort. The outer `execute()` catch handles
+      // surfacing this to the agent loop; here we just make sure the
+      // handle is in a defensible state for post-mortem inspection.
+      const wasAborted = handle.abortController.signal.aborted;
+      const finalStatus = wasAborted ? "cancelled" : "failed";
+      handle.terminal = { error: err instanceof Error ? err : new Error(String(err)) };
+      handle.latestTask = {
+        ...handle.latestTask,
+        status: finalStatus,
+        statusMessage: err instanceof Error ? err.message : String(err),
+        lastUpdatedAt: new Date().toISOString(),
+      };
+      handle.expiresAt = Date.now() + TASK_HANDLE_GRACE_MS;
+      handle.terminalDeferred.reject(err instanceof Error ? err : new Error(String(err)));
+    }
+  }
+
+  private startTaskSweeper(): void {
+    if (this.sweeperInterval) return;
+    this.sweeperInterval = setInterval(() => this.sweepExpiredTasks(), TASK_SWEEPER_INTERVAL_MS);
+    // Don't pin the process alive just for the sweeper.
+    if (this.sweeperInterval && typeof this.sweeperInterval === "object") {
+      const unref = (this.sweeperInterval as { unref?: () => void }).unref;
+      if (typeof unref === "function") unref.call(this.sweeperInterval);
+    }
+  }
+
+  private stopTaskSweeper(): void {
+    if (this.sweeperInterval) {
+      clearInterval(this.sweeperInterval);
+      this.sweeperInterval = null;
+    }
+  }
+
+  /**
+   * Purge task handles whose expiry has passed.
+   *
+   * Still-running tasks get an expiry derived from `lastUpdatedAt + ttl +
+   * grace` — the drainer refreshes this on every `taskStatus` so healthy
+   * tasks won't be swept. Terminal tasks get `now + grace`, which gives
+   * late-arriving `awaitToolTaskResult` callers a small window to fetch
+   * the result before the entry is collected.
+   *
+   * Exposed via `sweepExpiredTasksForTesting` so tests can force-advance
+   * the sweeper without juggling fake timers.
+   */
+  private sweepExpiredTasks(): void {
+    const now = Date.now();
+    for (const [taskId, handle] of this.taskHandles) {
+      if (handle.expiresAt <= now) {
+        // Safety net: ensure the terminalDeferred is settled before we
+        // delete the entry. Otherwise a dangling `awaitToolTaskResult`
+        // caller would hang forever. The `.catch(() => {})` attached at
+        // handle creation guarantees no unhandled rejection if nobody is
+        // currently awaiting — callers that DO await still see the error.
+        if (!handle.terminal) {
+          try {
+            handle.abortController.abort();
+          } catch {
+            // ignore
+          }
+          const err = new Error(`Task ${taskId} swept after ttl`);
+          handle.terminal = { error: err };
+          handle.terminalDeferred.reject(err);
+        }
+        this.taskHandles.delete(taskId);
+      }
+    }
+  }
+
+  /**
+   * Test-only escape hatch — calls the sweeper immediately and returns the
+   * number of remaining handles. Public so tests can exercise TTL-based
+   * purge without juggling fake timers or mocking `setInterval`.
+   *
+   * Production code MUST NOT call this.
+   */
+  _sweepExpiredTasksForTesting(): number {
+    this.sweepExpiredTasks();
+    return this.taskHandles.size;
+  }
+
+  /**
+   * Test-only introspection — returns the number of live task handles.
+   * Production code MUST NOT call this.
+   */
+  _taskHandleCountForTesting(): number {
+    return this.taskHandles.size;
   }
 
   private async tryRestart(): Promise<boolean> {
@@ -738,4 +1240,57 @@ function mergeResourceMeta(
 ): Record<string, unknown> | undefined {
   if (!resultMeta && !contentMeta) return undefined;
   return { ...(resultMeta ?? {}), ...(contentMeta ?? {}) };
+}
+
+/**
+ * Task statuses considered terminal per MCP spec 2025-11-25. `working` and
+ * `input_required` are the only non-terminal states.
+ */
+function isTerminalStatus(status: Task["status"]): boolean {
+  return status === "completed" || status === "failed" || status === "cancelled";
+}
+
+/** Do two `TaskOwnerContext` values refer to the same owner? */
+function ownerMatches(stamped: TaskOwnerContext, candidate: TaskOwnerContext): boolean {
+  if (stamped.workspaceId !== candidate.workspaceId) return false;
+  // If the stamp includes an identity, the candidate must match it exactly.
+  if (stamped.identityId !== undefined && stamped.identityId !== candidate.identityId) {
+    return false;
+  }
+  if (stamped.originApp !== undefined && stamped.originApp !== candidate.originApp) {
+    return false;
+  }
+  return true;
+}
+
+/** Compute a handle's expiry from the latest Task payload. */
+function computeExpiry(task: Task): number {
+  const ttl = typeof task.ttl === "number" && task.ttl > 0 ? task.ttl : DEFAULT_TASK_TTL_MS;
+  const lastUpdated = Date.parse(task.lastUpdatedAt);
+  const base = Number.isFinite(lastUpdated) ? lastUpdated : Date.now();
+  return base + ttl + TASK_HANDLE_GRACE_MS;
+}
+
+/**
+ * Race a promise against a timeout. Used to bound the wait for the SDK
+ * stream's first message — a server that accepts `tools/call` then never
+ * responds shouldn't hang the caller indefinitely.
+ */
+function raceWithTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), ms);
+    if (typeof (timer as { unref?: () => void }).unref === "function") {
+      (timer as { unref: () => void }).unref();
+    }
+    promise.then(
+      (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
 }

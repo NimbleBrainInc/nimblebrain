@@ -17,6 +17,13 @@ export default defineConfig({
         target: `http://localhost:${process.env.NB_API_PORT ?? 27247}`,
         changeOrigin: true,
       },
+      // Bridge's MCP transport (StreamableHTTPClientTransport) POSTs to
+      // `/mcp` against the page origin. Without this proxy the dev server
+      // 404s and the SDK surfaces a generic "Error POSTing to endpoint".
+      "/mcp": {
+        target: `http://localhost:${process.env.NB_API_PORT ?? 27247}`,
+        changeOrigin: true,
+      },
     },
   },
 });

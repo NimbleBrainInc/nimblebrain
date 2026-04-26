@@ -66,3 +66,56 @@ export interface ResourceData {
    */
   meta?: Record<string, unknown>;
 }
+
+/**
+ * Authorization context bound to a task at creation time.
+ *
+ * Every per-task operation (`getTaskStatus`, `awaitToolTaskResult`,
+ * `cancelTask`) checks the caller-supplied `TaskOwnerContext` against the one
+ * stamped at `startToolAsTask` time. A mismatch surfaces as a
+ * `TaskNotFoundError` — we deliberately do NOT distinguish "wrong owner" from
+ * "no such task" to avoid leaking task-existence to unauthorized callers.
+ *
+ * Required: `workspaceId`. Optional: `identityId` (user) and `originApp`
+ * (the app / iframe that initiated the call). When set on the stamped context,
+ * subsequent lookups MUST supply matching values.
+ */
+export interface TaskOwnerContext {
+  workspaceId: string;
+  identityId?: string;
+  originApp?: string;
+}
+
+/**
+ * Error thrown by the task lookup surface when a task isn't found OR the
+ * caller's `TaskOwnerContext` doesn't match the one stamped at creation.
+ *
+ * Unified on purpose: we don't want to leak task existence to callers who
+ * don't own the task. The `/mcp` layer maps this to JSON-RPC `-32602` per
+ * MCP tasks spec (draft 2025-11-25).
+ */
+export class TaskNotFoundError extends Error {
+  readonly taskId: string;
+  constructor(taskId: string) {
+    super(`task not found: ${taskId}`);
+    this.name = "TaskNotFoundError";
+    this.taskId = taskId;
+  }
+}
+
+/**
+ * Error thrown when a caller tries to cancel a task that has already reached
+ * a terminal state (`completed` / `failed` / `cancelled`).
+ *
+ * The `/mcp` layer maps this to JSON-RPC `-32602` per MCP tasks spec.
+ */
+export class TaskAlreadyTerminalError extends Error {
+  readonly taskId: string;
+  readonly status: string;
+  constructor(taskId: string, status: string) {
+    super(`task ${taskId} is already terminal (${status})`);
+    this.name = "TaskAlreadyTerminalError";
+    this.taskId = taskId;
+    this.status = status;
+  }
+}
