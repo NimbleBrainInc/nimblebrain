@@ -1,9 +1,24 @@
 export {
   loadBuiltinSkills,
+  loadCoreSkills,
+  loadScopedSkills,
   loadSkillDir,
+  mergeScopedSkills,
   parseSkillContent,
   parseSkillFile,
   partitionSkills,
+  readSkillMtime,
 } from "./loader.ts";
 export { SkillMatcher } from "./matcher.ts";
-export type { Skill, SkillManifest, SkillMetadata } from "./types.ts";
+export type { LoadedBy, SelectedSkill, SelectInput } from "./select.ts";
+export { selectLayer3Skills, toolMatches } from "./select.ts";
+export type {
+  Skill,
+  SkillLoadingStrategy,
+  SkillManifest,
+  SkillMetadata,
+  SkillOverride,
+  SkillScope,
+  SkillStatus,
+  SkillType,
+} from "./types.ts";

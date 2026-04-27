@@ -17,6 +17,8 @@ import {
 } from "./event-reconstructor.ts";
 import { ConversationIndex, canAccess } from "./index-cache.ts";
 import {
+  type ContextAssembledEvent,
+  type ContextAssembledSource,
   type Conversation,
   type ConversationAccessContext,
   type ConversationEvent,
@@ -29,6 +31,8 @@ import {
   type RunDoneEvent,
   type RunErrorEvent,
   type RunStartEvent,
+  type SkillsLoadedEntry,
+  type SkillsLoadedEvent,
   type StoredMessage,
   type ToolDoneEvent,
   type ToolStartEvent,
@@ -66,6 +70,8 @@ const CONVERSATION_EVENT_TYPES = new Set([
   "tool.progress",
   "run.done",
   "run.error",
+  "skills.loaded",
+  "context.assembled",
 ]);
 
 // ---------------------------------------------------------------------------
@@ -288,6 +294,26 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
     await writeFile(tmpPath, lines.map((l) => `${l}\n`).join(""));
     await rename(tmpPath, path);
     this.index.invalidate();
+  }
+
+  /**
+   * Read raw conversation events for a single conversation. Returns []
+   * for missing files or legacy (message-format) conversations. Phase 2
+   * read tools (`skills__active_for`, `skills__loading_log`) consume this.
+   */
+  async readEvents(id: string): Promise<ConversationEvent[]> {
+    const path = this.path(id);
+    if (!existsSync(path)) return [];
+    const content = await readFile(path, "utf-8");
+    const lines = content.split("\n").filter(Boolean);
+    if (lines.length < 2) return [];
+    if (!this.detectFormat(lines)) return [];
+    return safeParseLines<ConversationEvent>(lines.slice(1));
+  }
+
+  /** Directory holding the per-conversation JSONLs. */
+  getDir(): string {
+    return this.dir;
   }
 
   async history(conversation: Conversation, limit?: number): Promise<StoredMessage[]> {
@@ -572,6 +598,40 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
           runId,
           error: (d.error as string) ?? "Unknown error",
           errorType: (d.type as string) ?? "Error",
+        };
+        return e;
+      }
+
+      case "skills.loaded": {
+        const skills = Array.isArray(d.skills)
+          ? (d.skills as SkillsLoadedEntry[])
+          : ([] as SkillsLoadedEntry[]);
+        const e: SkillsLoadedEvent = {
+          ts,
+          type: "skills.loaded",
+          runId,
+          skills,
+          totalTokens: (d.totalTokens as number) ?? 0,
+        };
+        return e;
+      }
+
+      case "context.assembled": {
+        const sources = Array.isArray(d.sources)
+          ? (d.sources as ContextAssembledSource[])
+          : ([] as ContextAssembledSource[]);
+        const excluded = Array.isArray(d.excluded)
+          ? (d.excluded as ContextAssembledSource[])
+          : ([] as ContextAssembledSource[]);
+        const e: ContextAssembledEvent = {
+          ts,
+          type: "context.assembled",
+          runId,
+          sources,
+          excluded,
+          totalTokens: (d.totalTokens as number) ?? 0,
+          ...(typeof d.modelMaxContext === "number" ? { modelMaxContext: d.modelMaxContext } : {}),
+          ...(typeof d.headroomTokens === "number" ? { headroomTokens: d.headroomTokens } : {}),
         };
         return e;
       }

@@ -237,6 +237,37 @@ export class AgentEngine {
       },
     });
 
+    // Emit run-scope telemetry the runtime pre-computed (Phase 2: skills.loaded
+    // and context.assembled). Tied to the same `runId` as `run.start` so the
+    // conversation log records what the prompt looked like for this turn.
+    if (config.runMetadata?.skillsLoaded) {
+      this.events.emit({
+        type: "skills.loaded",
+        data: {
+          runId,
+          skills: config.runMetadata.skillsLoaded.skills,
+          totalTokens: config.runMetadata.skillsLoaded.totalTokens,
+        },
+      });
+    }
+    if (config.runMetadata?.contextAssembled) {
+      this.events.emit({
+        type: "context.assembled",
+        data: {
+          runId,
+          sources: config.runMetadata.contextAssembled.sources,
+          excluded: config.runMetadata.contextAssembled.excluded,
+          totalTokens: config.runMetadata.contextAssembled.totalTokens,
+          ...(config.runMetadata.contextAssembled.modelMaxContext !== undefined
+            ? { modelMaxContext: config.runMetadata.contextAssembled.modelMaxContext }
+            : {}),
+          ...(config.runMetadata.contextAssembled.headroomTokens !== undefined
+            ? { headroomTokens: config.runMetadata.contextAssembled.headroomTokens }
+            : {}),
+        },
+      });
+    }
+
     const runStart = performance.now();
 
     // Tracks the most recent LLM call's finish reason so the run-level

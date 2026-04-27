@@ -57,6 +57,23 @@ export interface OverlayLayers {
   workspace?: string;
 }
 
+/**
+ * Layer 3 skill picked by `selectLayer3Skills` for the current turn.
+ *
+ * The compose layer renders the body inside a `<layer3-skill>` containment
+ * tag with a provenance heading naming the source path so a debug reader
+ * can attribute each block to its origin. Empty `body` skips the entry
+ * (no marker tag emitted).
+ */
+export interface Layer3SkillEntry {
+  name: string;
+  body: string;
+  scope: "platform" | "workspace" | "user" | "bundle";
+  sourcePath?: string;
+  loadedBy: "always" | "tool_affinity";
+  reason: string;
+}
+
 /** Descriptor for the app the user is currently viewing alongside the chat. */
 export interface FocusedAppInfo {
   name: string;
@@ -110,6 +127,7 @@ export function composeSystemPrompt(
   participants?: ParticipantInfo[],
   workspaceContext?: WorkspaceContext,
   overlays?: OverlayLayers,
+  layer3Skills?: Layer3SkillEntry[],
 ): string {
   const layers: string[] = [];
 
@@ -161,6 +179,16 @@ export function composeSystemPrompt(
   }
   if (overlays?.workspace && overlays.workspace.trim().length > 0) {
     layers.push(formatScopeOverlay("Workspace Instructions", overlays.workspace));
+  }
+
+  // Layer 1.9: Layer 3 skills (cross-bundle agent orchestration content).
+  // Each selected skill is injected with a provenance heading and contained
+  // in a `<layer3-skill>` block so a debug reader can attribute the body
+  // to the file it came from. Empty `layer3Skills` skips the entire section
+  // — no marker, no heading.
+  if (layer3Skills && layer3Skills.length > 0) {
+    const section = formatLayer3SkillsSection(layer3Skills);
+    if (section) layers.push(section);
   }
 
   // Layer 2: Installed apps section (§7.3)
@@ -320,6 +348,28 @@ function formatScopeOverlay(heading: string, body: string): string {
     heading === "Organization Instructions" ? "org-instructions" : "workspace-instructions";
   const safe = body.replaceAll(`</${tag}>`, `&lt;/${tag}>`);
   return `## ${heading}\n\n<${tag}>\n${safe}\n</${tag}>`;
+}
+
+/**
+ * Render the Layer 3 skills section. Each selected skill becomes a
+ * sub-section with a provenance line (name / scope / loaded-by reason),
+ * its body wrapped in `<layer3-skill>` containment. The wrap prevents a
+ * skill author from injecting a forged closing tag and breaking
+ * containment — same pattern as `<app-instructions>`.
+ */
+function formatLayer3SkillsSection(entries: Layer3SkillEntry[]): string | null {
+  const blocks: string[] = [];
+  for (const entry of entries) {
+    if (!entry.body || entry.body.trim().length === 0) continue;
+    const safeName = sanitizeLineField(entry.name);
+    const safeScope = sanitizeLineField(entry.scope);
+    const safeReason = sanitizeLineField(entry.reason);
+    const safeBody = entry.body.replaceAll("</layer3-skill>", "&lt;/layer3-skill>");
+    const provenance = `_${safeName}_ — scope: ${safeScope}; loaded: ${entry.loadedBy} (${safeReason})`;
+    blocks.push(`### ${safeName}\n\n${provenance}\n\n<layer3-skill>\n${safeBody}\n</layer3-skill>`);
+  }
+  if (blocks.length === 0) return null;
+  return `## Skills\n\n${blocks.join("\n\n")}`;
 }
 
 function formatWorkspaceContext(ws: WorkspaceContext): string {

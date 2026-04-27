@@ -40,6 +40,27 @@ function manifestToFrontmatter(manifest: SkillManifest): Record<string, unknown>
     fm["requires-bundles"] = manifest.requiresBundles;
   }
 
+  // ---- Phase 2 fields — emit only when populated -------------------------
+  if (manifest.scope) fm.scope = manifest.scope;
+  if (manifest.loadingStrategy) fm["loading-strategy"] = manifest.loadingStrategy;
+  if (manifest.appliesToTools && manifest.appliesToTools.length > 0) {
+    fm["applies-to-tools"] = manifest.appliesToTools;
+  }
+  // status is always populated by the loader (default "active"); only emit
+  // when it deviates from the default to keep round-trips minimal.
+  if (manifest.status && manifest.status !== "active") {
+    fm.status = manifest.status;
+  }
+  if (manifest.overrides && manifest.overrides.length > 0) {
+    fm.overrides = manifest.overrides.map((o) => {
+      const out: Record<string, unknown> = { reason: o.reason };
+      if (o.bundle) out.bundle = o.bundle;
+      if (o.skill) out.skill = o.skill;
+      return out;
+    });
+  }
+  if (manifest.derivedFrom) fm["derived-from"] = manifest.derivedFrom;
+
   if (manifest.metadata) {
     const meta: Record<string, unknown> = {};
     if (manifest.metadata.keywords.length > 0) meta.keywords = manifest.metadata.keywords;
@@ -136,6 +157,14 @@ export function updateSkill(
     if (partialManifest.requiresBundles !== undefined)
       merged.requiresBundles = partialManifest.requiresBundles;
     if (partialManifest.metadata !== undefined) merged.metadata = partialManifest.metadata;
+    if (partialManifest.scope !== undefined) merged.scope = partialManifest.scope;
+    if (partialManifest.loadingStrategy !== undefined)
+      merged.loadingStrategy = partialManifest.loadingStrategy;
+    if (partialManifest.appliesToTools !== undefined)
+      merged.appliesToTools = partialManifest.appliesToTools;
+    if (partialManifest.status !== undefined) merged.status = partialManifest.status;
+    if (partialManifest.overrides !== undefined) merged.overrides = partialManifest.overrides;
+    if (partialManifest.derivedFrom !== undefined) merged.derivedFrom = partialManifest.derivedFrom;
   }
 
   const body = newBody !== undefined ? newBody : existing.body;

@@ -51,6 +51,8 @@ export type EngineEventType =
   | "llm.done"
   | "run.done"
   | "run.error"
+  | "skills.loaded"
+  | "context.assembled"
   | "bundle.installed"
   | "bundle.uninstalled"
   | "bundle.crashed"
@@ -136,6 +138,36 @@ export interface EngineConfig {
    * Set to 0 to disable. Defaults to 1_000_000 (1M chars).
    */
   maxToolResultSize?: number;
+  /**
+   * Pre-computed run-scope telemetry the runtime hands to the engine so the
+   * engine can emit it tied to the same `runId` as `run.start`. The engine
+   * fires these immediately after `run.start` and before the first LLM call,
+   * so the conversation log records what the prompt looked like.
+   *
+   * Phase 2: `skills.loaded` and `context.assembled` payloads. Future phases
+   * may add more entries here without touching the engine signature.
+   */
+  runMetadata?: {
+    skillsLoaded?: {
+      skills: Array<{
+        id: string;
+        layer: 3;
+        scope: "platform" | "workspace" | "user" | "bundle";
+        version: string;
+        tokens: number;
+        loadedBy: "always" | "tool_affinity";
+        reason: string;
+      }>;
+      totalTokens: number;
+    };
+    contextAssembled?: {
+      sources: Array<Record<string, unknown>>;
+      excluded: Array<Record<string, unknown>>;
+      totalTokens: number;
+      modelMaxContext?: number;
+      headroomTokens?: number;
+    };
+  };
 }
 
 /**

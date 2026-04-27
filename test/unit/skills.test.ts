@@ -524,9 +524,10 @@ describe("SkillMatcher", () => {
 });
 
 describe("loadBuiltinSkills", () => {
-  it("returns empty (bootstrap moved to core)", () => {
+  it("loads vendored built-in skills (e.g., authoring-guide)", () => {
     const skills = loadBuiltinSkills();
-    expect(skills).toEqual([]);
+    const names = skills.map((s) => s.manifest.name).sort();
+    expect(names).toContain("authoring-guide");
   });
 });
 
