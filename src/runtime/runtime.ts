@@ -8,6 +8,7 @@ import { WorkspaceLogSink } from "../adapters/workspace-log-sink.ts";
 import { BundleLifecycleManager } from "../bundles/lifecycle.ts";
 import { deriveServerName } from "../bundles/paths.ts";
 import type { AppInfo, BundleInstance } from "../bundles/types.ts";
+import { log } from "../cli/log.ts";
 import { isToolVisibleToRole, type ResolvedFeatures, resolveFeatures } from "../config/features.ts";
 import { createPrivilegeHook, NoopConfirmationGate } from "../config/privilege.ts";
 import { generateTitle } from "../conversation/auto-title.ts";
@@ -37,6 +38,7 @@ import type { IdentityProvider, UserIdentity } from "../identity/provider.ts";
 import { createIdentityProvider } from "../identity/provider.ts";
 import { DEV_IDENTITY } from "../identity/providers/dev.ts";
 import { UserStore } from "../identity/user.ts";
+import { InstructionsStore } from "../instructions/index.ts";
 import { buildModelResolver } from "../model/registry.ts";
 import type { PromptAppInfo } from "../prompt/compose.ts";
 import { composeSystemPrompt } from "../prompt/compose.ts";
@@ -607,7 +609,11 @@ export class Runtime {
       }
     }
 
+    // `buildAppsList` populates each app's `customInstructions` from the
+    // bundle's `app://instructions` resource (when published);
+    // org and workspace overlays come from platform-owned storage.
     const apps = await this.buildAppsList(wsId);
+    const liveOverlays = await this.readPromptOverlays(wsId);
 
     // Workspace-scoped registry for this request
     const activeRegistry = this.getRegistryForWorkspace(wsId);
@@ -702,6 +708,7 @@ export class Runtime {
       proxied.length > 0,
       participants,
       workspaceContext,
+      liveOverlays,
     );
 
     const messages = await store.history(conversation);
@@ -1004,7 +1011,18 @@ export class Runtime {
     }
   }
 
-  /** Build apps list from in-memory lifecycle instances for system prompt injection (§7.3). */
+  /**
+   * Build apps list from in-memory lifecycle instances for system-prompt
+   * injection (§7.3).
+   *
+   * Each app's `customInstructions` overlay comes from the bundle itself —
+   * the platform reads `app://instructions` from the bundle's MCP
+   * server on every assembly. Bundles that don't publish that resource get
+   * no overlay (no UI surfaces, no behavior change). The platform's job is
+   * the convention: read the URI, wrap the body in `<app-custom-instructions>`
+   * containment in `formatAppsSection`. Bundles own storage, the agent tool
+   * to write, validation, and the editor UI.
+   */
   private async buildAppsList(workspaceId: string): Promise<PromptAppInfo[]> {
     const instances = this.getBundleInstancesForWorkspace(workspaceId);
     const registry = this._workspaceRegistries.get(workspaceId);
@@ -1022,15 +1040,55 @@ export class Runtime {
       // resources that explain correct tool usage. Without this hint the
       // agent cannot discover that such resources exist.
       let instructions: string | undefined;
+      let customInstructions: string | undefined;
       const source = registry?.getSource(instance.serverName);
       if (source instanceof McpSource) {
         instructions = source.getInstructions();
+        // Reserved platform convention: `app://instructions`. A bundle that
+        // supports user-set custom instructions publishes its current overlay
+        // body at this URI; the platform reads it on every assembly and
+        // renders it inside `<app-custom-instructions>` containment in
+        // `formatAppsSection`.
+        //
+        // Why `app://` over `<serverName>://instructions`: the serverName is
+        // platform-derived (e.g. `@nimblebraininc/synapse-collateral` →
+        // `synapse-collateral`), not something a bundle author intuitively
+        // knows. A fixed scheme means bundle authors just remember
+        // `app://instructions` and the platform's name-derivation rules are
+        // not part of the contract.
+        //
+        // Resource-not-found returns `null` from `readResource` (the SDK's
+        // normal not-found path); we treat any read error or empty body as
+        // "bundle does not support / has none". Plain MCP servers (no
+        // opt-in) end up here.
+        try {
+          const data = await source.readResource("app://instructions");
+          const body = data?.text;
+          const trimmedLen = typeof body === "string" ? body.trim().length : 0;
+          // Visible under NB_DEBUG=mcp — confirms the platform fetched
+          // app://instructions per active bundle and shows the resulting
+          // body length. "len=0" + "set=false" for bundles that don't
+          // publish; "set=true" + len=N for bundles that do.
+          log.debug(
+            "mcp",
+            `app-instructions source=${instance.serverName} fetched=${data !== null} len=${trimmedLen} set=${trimmedLen > 0}`,
+          );
+          if (typeof body === "string" && body.trim().length > 0) {
+            customInstructions = body;
+          }
+        } catch (err) {
+          log.debug(
+            "mcp",
+            `app-instructions source=${instance.serverName} error=${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
       }
 
       apps.push({
         name: instance.serverName,
         description: instance.description,
         instructions,
+        ...(customInstructions !== undefined ? { customInstructions } : {}),
         trustScore,
         ui,
       });
@@ -1041,6 +1099,34 @@ export class Runtime {
   /** Get the default event sink. */
   getEventSink(): EventSink {
     return this.defaultEvents;
+  }
+
+  /**
+   * Get a per-workdir `InstructionsStore` for the org / workspace overlays.
+   * Per-bundle instructions are NOT stored here — bundles own their storage
+   * and publish a `app://instructions` resource if and only if they
+   * support the convention. The store is stateless aside from the rooted
+   * workdir, so a fresh instance per call is fine.
+   */
+  getInstructionsStore(): InstructionsStore {
+    return new InstructionsStore(this.getWorkDir());
+  }
+
+  /**
+   * Read the org and workspace instruction overlays for a system-prompt
+   * assembly. Per-bundle overlays are NOT read here — they're populated on
+   * `PromptAppInfo.customInstructions` directly in `buildAppsList`.
+   *
+   * Reads happen on every call (no caching) per the locked decision: edits
+   * must apply mid-conversation.
+   */
+  private async readPromptOverlays(wsId: string): Promise<{ org: string; workspace: string }> {
+    const store = this.getInstructionsStore();
+    const [org, workspaceOverlay] = await Promise.all([
+      store.read({ scope: "org" }),
+      store.read({ scope: "workspace", wsId }),
+    ]);
+    return { org, workspace: workspaceOverlay };
   }
 
   /** Get the ToolRegistry for a specific workspace. Throws if workspace registry not found. */

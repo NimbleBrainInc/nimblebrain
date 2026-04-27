@@ -1213,4 +1213,18 @@ describe("nb__read_resource system tool", () => {
 		expect(result.isError).toBe(false);
 		expect(extractText(result.content)).toContain("<html>panel</html>");
 	});
+
+	// Description signals the supported URI schemes so the agent can discover
+	// the platform-published `instructions://` resources and bundle-published
+	// `<bundle>://...` resources without having to be told about each one.
+	it("description references instructions:// and bundle-scheme URIs alongside skill:// / ui://", async () => {
+		const registry = new ToolRegistry();
+		const systemTools = await createSystemTools(() => registry);
+		const tools = await systemTools.tools();
+		const readResource = tools.find((t) => t.name === "nb__read_resource");
+		expect(readResource).toBeDefined();
+		expect(readResource?.description).toContain("instructions://");
+		expect(readResource?.description).toContain("skill://");
+		expect(readResource?.description).toContain("ui://");
+	});
 });

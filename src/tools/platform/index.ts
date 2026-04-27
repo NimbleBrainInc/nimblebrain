@@ -5,6 +5,7 @@ import { createAutomationsSource } from "./automations.ts";
 import { createConversationsSource } from "./conversations.ts";
 import { createFilesSource } from "./files.ts";
 import { createHomeSource } from "./home.ts";
+import { createInstructionsSource } from "./instructions.ts";
 import { createSettingsSource } from "./settings.ts";
 import { createUsageSource } from "./usage.ts";
 
@@ -34,6 +35,7 @@ export async function createPlatformSources(
     await createAutomationsSource(runtime, eventSink),
     createSettingsSource(runtime, eventSink),
     createUsageSource(runtime, eventSink),
+    createInstructionsSource(runtime, eventSink),
   ];
 
   // start() builds the in-process MCP server + InMemoryTransport pair and

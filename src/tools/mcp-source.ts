@@ -490,6 +490,53 @@ export class McpSource implements ToolSource {
   }
 
   /**
+   * Best-effort `notifications/resources/list_changed` to connected clients.
+   *
+   * Emitted globally by the underlying MCP server — the SDK is responsible
+   * for routing to subscribers (clients that issued `resources/subscribe` are
+   * filtered server-side). Callers do not need to track per-subscriber state.
+   *
+   * Only meaningful for `inProcess` sources, where this `McpSource` owns the
+   * server end of the linked-pair transport. For `stdio` and `remote` modes,
+   * the source is a *client* of an external server and has nothing to emit
+   * on — call becomes a silent no-op.
+   *
+   * Drops silently between `stop()` and the next successful `start()` (the
+   * `inProcessServer` field is cleared in those windows). This matches the
+   * MCP semantic that resource notifications are advisory: a client that
+   * missed one re-fetches via `resources/list` or `resources/read`.
+   */
+  notifyResourceListChanged(): void {
+    const server = this.inProcessServer;
+    if (!server) return;
+    void server.notification({ method: "notifications/resources/list_changed" }).catch((err) => {
+      log.debug("mcp", `[${this.name}] notifyResourceListChanged failed: ${String(err)}`);
+    });
+  }
+
+  /**
+   * Best-effort `notifications/resources/updated` for a single resource URI.
+   *
+   * Emitted globally by the underlying MCP server; the SDK filters delivery
+   * to clients that previously sent `resources/subscribe` for this URI. We
+   * do not track subscriber lists here.
+   *
+   * No-op semantics match {@link notifyResourceListChanged}: only meaningful
+   * for `inProcess` sources, drops silently between `stop()` and the next
+   * `start()`. A client that missed the notification will see the new
+   * content the next time it reads the resource.
+   */
+  notifyResourceUpdated(uri: string): void {
+    const server = this.inProcessServer;
+    if (!server) return;
+    void server
+      .notification({ method: "notifications/resources/updated", params: { uri } })
+      .catch((err) => {
+        log.debug("mcp", `[${this.name}] notifyResourceUpdated(${uri}) failed: ${String(err)}`);
+      });
+  }
+
+  /**
    * UI placements declared by this source. Populated for `inProcess` mode
    * (platform built-ins); `[]` for stdio/remote sources, whose placements
    * come from the bundle manifest and are tracked separately by the

@@ -1,4 +1,4 @@
-import { Check, ChevronDown, Lock, LogOut, Settings, Users } from "lucide-react";
+import { Check, ChevronDown, Lock, Settings, Users } from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useWorkspaceContext } from "../context/WorkspaceContext";
@@ -7,7 +7,6 @@ import { toSlug } from "../lib/workspace-slug";
 
 interface WorkspaceSelectorProps {
   collapsed: boolean;
-  onLogout?: () => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -102,7 +101,6 @@ function WorkspaceAvatar({
 
 export const WorkspaceSelector = memo(function WorkspaceSelector({
   collapsed,
-  onLogout,
 }: WorkspaceSelectorProps) {
   const { workspaces, activeWorkspace, setActiveWorkspace, loading } = useWorkspaceContext();
   const navigate = useNavigate();
@@ -110,8 +108,9 @@ export const WorkspaceSelector = memo(function WorkspaceSelector({
   const containerRef = useRef<HTMLDivElement>(null);
 
   const canSwitch = workspaces.length > 1;
-  // Always allow opening the dropdown (for logout access), even with 1 workspace
-  const canOpen = canSwitch || !!onLogout;
+  // Always allow opening the dropdown — even with one workspace, the
+  // "Settings" link inside is useful.
+  const canOpen = true;
 
   useEffect(() => {
     if (!open) return;
@@ -216,36 +215,24 @@ export const WorkspaceSelector = memo(function WorkspaceSelector({
         </div>
       )}
 
-      {/* Settings + Logout */}
-      {onLogout && (
-        <>
-          {canSwitch && <div className="mx-2 border-t border-sidebar-border" />}
-          <div className="p-1">
-            <button
-              type="button"
-              onClick={() => {
-                setOpen(false);
-                navigate("/settings");
-              }}
-              className="flex items-center gap-2.5 w-full rounded-md px-2 py-2 text-sm text-left transition-all duration-150 text-sidebar-foreground hover:bg-sidebar-foreground/5"
-            >
-              <Settings className="w-4 h-4 text-sidebar-foreground/60" />
-              <span>Settings</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setOpen(false);
-                onLogout();
-              }}
-              className="flex items-center gap-2.5 w-full rounded-md px-2 py-2 text-sm text-left transition-all duration-150 text-sidebar-foreground hover:bg-sidebar-foreground/5"
-            >
-              <LogOut className="w-4 h-4 text-sidebar-foreground/60" />
-              <span>Log out</span>
-            </button>
-          </div>
-        </>
-      )}
+      {/* Settings link — keeps the workspace dropdown a one-stop shop for
+          "I'm in workspace X, take me to its settings." Sign out lives in
+          the UserMenu (bottom-left) since it's an identity action, not a
+          workspace one. */}
+      {canSwitch && <div className="mx-2 border-t border-sidebar-border" />}
+      <div className="p-1">
+        <button
+          type="button"
+          onClick={() => {
+            setOpen(false);
+            navigate("/settings");
+          }}
+          className="flex items-center gap-2.5 w-full rounded-md px-2 py-2 text-sm text-left transition-all duration-150 text-sidebar-foreground hover:bg-sidebar-foreground/5"
+        >
+          <Settings className="w-4 h-4 text-sidebar-foreground/60" />
+          <span>Settings</span>
+        </button>
+      </div>
     </div>
   );
 

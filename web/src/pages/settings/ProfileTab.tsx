@@ -1,4 +1,4 @@
-import { Check, Copy, Monitor, Moon, Sun } from "lucide-react";
+import { Monitor, Moon, Sun } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { callTool } from "../../api/client";
 import { Badge } from "../../components/ui/badge";
@@ -9,7 +9,6 @@ import { Label } from "../../components/ui/label";
 import { TimezoneSelect } from "../../components/ui/timezone-select";
 import { useSession } from "../../context/SessionContext";
 import { useTheme } from "../../context/ThemeContext";
-import { useWorkspaceContext } from "../../context/WorkspaceContext";
 import { cn } from "../../lib/utils";
 
 type Theme = "system" | "light" | "dark";
@@ -45,7 +44,6 @@ export function ProfileTab() {
   const session = useSession();
   const user = session?.user;
   const { applyPreference } = useTheme();
-  const { activeWorkspace } = useWorkspaceContext();
 
   const [displayName, setDisplayName] = useState(user?.displayName ?? "");
   const [timezone, setTimezone] = useState("");
@@ -190,47 +188,6 @@ export function ProfileTab() {
           </Button>
         </CardContent>
       </Card>
-
-      {/* MCP Connection — workspace ID for external client configuration */}
-      {activeWorkspace && <McpConnectionCard workspaceId={activeWorkspace.id} />}
     </div>
-  );
-}
-
-function McpConnectionCard({ workspaceId }: { workspaceId: string }) {
-  const [copied, setCopied] = useState(false);
-
-  const handleCopy = () => {
-    navigator.clipboard.writeText(workspaceId).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    });
-  };
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>MCP Connection</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        <div className="flex items-center justify-between">
-          <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">Workspace ID</Label>
-            <code className="block text-sm font-mono">{workspaceId}</code>
-          </div>
-          <Button variant="ghost" size="sm" onClick={handleCopy} className="h-8 w-8 p-0">
-            {copied ? (
-              <Check className="h-4 w-4 text-green-500" />
-            ) : (
-              <Copy className="h-4 w-4 text-muted-foreground" />
-            )}
-          </Button>
-        </div>
-        <p className="text-xs text-muted-foreground">
-          Use this ID as the <code className="text-[11px]">X-Workspace-Id</code> header when
-          connecting external MCP clients.
-        </p>
-      </CardContent>
-    </Card>
   );
 }

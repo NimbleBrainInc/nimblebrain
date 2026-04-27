@@ -448,7 +448,21 @@ export async function handleReadResource(
     );
   }
 
-  const resource = await runtime.readAppResource(server, uri, workspaceId);
+  // Wrap the source's read in a request-scoped context so the
+  // AsyncLocalStorage-backed `runtime.requireWorkspaceId()` is available
+  // to any callback-form resource (e.g. `instructions://workspace`'s
+  // `text: () => store.read({ wsId: runtime.requireWorkspaceId() })`).
+  // Without this wrapper, those callbacks throw and `McpSource.readResource`
+  // catches the exception, returning null → 404 to the caller.
+  const reqCtx: RequestContext = {
+    identity: null,
+    workspaceId,
+    workspaceAgents: null,
+    workspaceModelOverride: null,
+  };
+  const resource = await runWithRequestContext(reqCtx, () =>
+    runtime.readAppResource(server, uri, workspaceId),
+  );
   if (resource === null) {
     return apiError(404, "resource_not_found", `Resource "${uri}" not found`, {
       server,

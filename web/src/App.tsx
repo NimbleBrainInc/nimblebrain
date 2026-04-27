@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
+import {
+  BrowserRouter,
+  Navigate,
+  Route,
+  Routes,
+  useLocation,
+  useNavigate,
+  useParams,
+} from "react-router-dom";
 import type { ShellData } from "./api/client";
 import {
   callTool,
@@ -27,15 +35,19 @@ import { useDataSync } from "./hooks/useDataSync";
 import { useEvents } from "./hooks/useEvents";
 import { useShell } from "./hooks/useShell";
 import { toSlug } from "./lib/workspace-slug";
+import { RouteGuard } from "./components/RouteGuard";
+import { ProfilePage } from "./pages/ProfilePage";
 import { SettingsPage } from "./pages/SettingsPage";
+import { AboutTab } from "./pages/settings/AboutTab";
 import { ModelTab } from "./pages/settings/ModelTab";
-import { ProfileTab } from "./pages/settings/ProfileTab";
 import { SettingsAppPanel } from "./pages/settings/SettingsAppPanel";
 import { UsageTab } from "./pages/settings/UsageTab";
 import { UsersTab } from "./pages/settings/UsersTab";
+import { WorkspaceAppsTab } from "./pages/settings/WorkspaceAppsTab";
 import { WorkspaceDetailPage } from "./pages/settings/WorkspaceDetailPage";
+import { WorkspaceGeneralTab } from "./pages/settings/WorkspaceGeneralTab";
+import { WorkspaceMembersTab } from "./pages/settings/WorkspaceMembersTab";
 import { WorkspacesTab } from "./pages/settings/WorkspacesTab";
-import { AboutTab } from "./pages/settings/AboutTab";
 import { initTelemetry } from "./telemetry";
 import type { BootstrapResponse, PlacementEntry } from "./types";
 import "./index.css";
@@ -303,16 +315,75 @@ function AuthenticatedAppContent({
               ))}
             </Route>
 
-            {/* Settings routes — global, not workspace-scoped */}
+            {/* Profile — top-level, identity-bound, NOT under /settings.
+                Renders inside the main shell with no inner settings nav. */}
+            <Route path="/profile" element={<ProfilePage />} />
+
+            {/* Settings routes — workspace + org scopes only (Profile lives at /profile) */}
             <Route path="/settings" element={<SettingsPage />}>
-              <Route index element={<ProfileTab />} />
-              <Route path="model" element={<ModelTab />} />
-              <Route path="usage" element={<UsageTab />} />
-              <Route path="users" element={<UsersTab />} />
-              <Route path="workspaces" element={<WorkspacesTab />} />
-              <Route path="workspaces/:slug" element={<WorkspaceDetailPage />} />
+              <Route index element={<Navigate to="/settings/workspace/general" replace />} />
+
+              {/* This Workspace — the active workspace, scoped via header switcher */}
+              <Route path="workspace">
+                <Route index element={<Navigate to="/settings/workspace/general" replace />} />
+                <Route path="general" element={<WorkspaceGeneralTab />} />
+                <Route path="members" element={<WorkspaceMembersTab />} />
+                <Route path="usage" element={<UsageTab />} />
+                <Route path="apps" element={<WorkspaceAppsTab />} />
+                <Route path="apps/:serverName" element={<SettingsAppPanel />} />
+              </Route>
+
+              {/* Organization — admin/owner only */}
+              <Route path="org">
+                <Route index element={<Navigate to="/settings/org/workspaces" replace />} />
+                <Route
+                  path="model"
+                  element={
+                    <RouteGuard role="org_admin">
+                      <ModelTab />
+                    </RouteGuard>
+                  }
+                />
+                <Route
+                  path="workspaces"
+                  element={
+                    <RouteGuard role="org_admin">
+                      <WorkspacesTab />
+                    </RouteGuard>
+                  }
+                />
+                <Route
+                  path="workspaces/:slug"
+                  element={
+                    <RouteGuard role="org_admin">
+                      <WorkspaceDetailPage />
+                    </RouteGuard>
+                  }
+                />
+                <Route
+                  path="users"
+                  element={
+                    <RouteGuard role="org_admin">
+                      <UsersTab />
+                    </RouteGuard>
+                  }
+                />
+              </Route>
+
               <Route path="about" element={<AboutTab />} />
-              <Route path="apps/:serverName" element={<SettingsAppPanel />} />
+
+              {/* Backwards-compat redirects from pre-IA-refactor URLs.
+                  `replace` so Back button doesn't return to the old URL. */}
+              <Route path="profile" element={<Navigate to="/profile" replace />} />
+              <Route path="model" element={<Navigate to="/settings/org/model" replace />} />
+              <Route path="usage" element={<Navigate to="/settings/workspace/usage" replace />} />
+              <Route path="users" element={<Navigate to="/settings/org/users" replace />} />
+              <Route
+                path="workspaces"
+                element={<Navigate to="/settings/org/workspaces" replace />}
+              />
+              <Route path="workspaces/:slug" element={<RedirectWorkspaceSlug />} />
+              <Route path="apps/:serverName" element={<RedirectAppPanel />} />
             </Route>
           </Routes>
         </ErrorBoundary>
@@ -383,6 +454,25 @@ function ActionBridge({
   }, []); // Stable — all dependencies are refs
 
   return null;
+}
+
+/**
+ * Backwards-compat: `/settings/workspaces/:slug` (the pre-IA-refactor admin
+ * workspace-detail URL) → `/settings/org/workspaces/:slug`. Preserves the
+ * slug param. Anyone hitting this without org-admin role gets redirected
+ * by the inner RouteGuard, so no extra role check needed here.
+ */
+function RedirectWorkspaceSlug() {
+  const { slug } = useParams<{ slug: string }>();
+  return <Navigate to={`/settings/org/workspaces/${slug ?? ""}`} replace />;
+}
+
+/**
+ * Backwards-compat: `/settings/apps/:serverName` → `/settings/workspace/apps/:serverName`.
+ */
+function RedirectAppPanel() {
+  const { serverName } = useParams<{ serverName: string }>();
+  return <Navigate to={`/settings/workspace/apps/${serverName ?? ""}`} replace />;
 }
 
 /** Redirect "/" to "/w/<active-workspace-slug>/" */

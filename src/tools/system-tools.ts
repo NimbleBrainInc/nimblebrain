@@ -295,14 +295,14 @@ function createReadResourceTool(getRegistry: () => ToolRegistry): InProcessTool 
   return {
     name: "read_resource",
     description:
-      "Read a resource (e.g. skill://, ui://) advertised by an installed app's MCP server. Use this when an app's instructions tell you to load a specific resource — the content comes back as text in the tool result. Pass the full URI.",
+      "Read a resource published by an installed app or by the platform. Use this when an app's instructions tell you to load a specific resource, or when you need to inspect platform-published context (e.g. saved overlay instructions). Supported URI schemes include `skill://`, `ui://`, `instructions://`, and any bundle-published scheme matching the bundle's source name. Pass the full URI; the content comes back as text in the tool result.",
     inputSchema: {
       type: "object",
       properties: {
         uri: {
           type: "string",
           description:
-            "Resource URI to read (e.g. skill://solar5estrella/usage, ui://myapp/guide).",
+            "Resource URI to read (e.g. skill://solar5estrella/usage, ui://myapp/guide, instructions://workspace, <bundle>://instructions).",
         },
       },
       required: ["uri"],
