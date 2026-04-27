@@ -21,6 +21,7 @@ import {
 import { AppWithChat } from "./components/AppWithChat";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Login } from "./components/Login";
+import { RouteGuard } from "./components/RouteGuard";
 import { ShellLayout } from "./components/ShellLayout";
 import { WorkspaceRouteGuard } from "./components/WorkspaceRouteGuard";
 import { ChatProvider, useChatConfigContext, useChatContext } from "./context/ChatContext";
@@ -35,12 +36,12 @@ import { useDataSync } from "./hooks/useDataSync";
 import { useEvents } from "./hooks/useEvents";
 import { useShell } from "./hooks/useShell";
 import { toSlug } from "./lib/workspace-slug";
-import { RouteGuard } from "./components/RouteGuard";
 import { ProfilePage } from "./pages/ProfilePage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { AboutTab } from "./pages/settings/AboutTab";
 import { ModelTab } from "./pages/settings/ModelTab";
 import { SettingsAppPanel } from "./pages/settings/SettingsAppPanel";
+import { SkillsTab } from "./pages/settings/SkillsTab";
 import { UsageTab } from "./pages/settings/UsageTab";
 import { UsersTab } from "./pages/settings/UsersTab";
 import { WorkspaceAppsTab } from "./pages/settings/WorkspaceAppsTab";
@@ -331,6 +332,7 @@ function AuthenticatedAppContent({
                 <Route path="usage" element={<UsageTab />} />
                 <Route path="apps" element={<WorkspaceAppsTab />} />
                 <Route path="apps/:serverName" element={<SettingsAppPanel />} />
+                <Route path="skills" element={<SkillsTab />} />
               </Route>
 
               {/* Organization — admin/owner only */}

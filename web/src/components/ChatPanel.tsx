@@ -2,10 +2,11 @@ import { ArrowLeft, Check, Keyboard, Maximize2, Minimize2, RotateCcw, X } from "
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { useChatConfigContext, useChatContext } from "../context/ChatContext";
 import type { ChatMessage } from "../hooks/useChat";
+import type { DisplayDetail } from "../lib/tool-display";
 import { KeyboardShortcutsModal } from "./KeyboardShortcutsModal";
 import { MessageInput } from "./MessageInput";
 import { MessageList } from "./MessageList";
-import type { DisplayDetail } from "../lib/tool-display";
+import { SkillsPopover } from "./SkillsPopover";
 
 export interface ChatPanelProps {
   messages: ChatMessage[];
@@ -169,6 +170,7 @@ export const ChatPanel = forwardRef<ChatPanelRef, ChatPanelProps>(function ChatP
           >
             <RotateCcw style={{ width: 16, height: 16 }} />
           </button>
+          <SkillsPopover conversationId={conversationId} />
           <button
             onClick={() => setShowShortcuts(true)}
             type="button"

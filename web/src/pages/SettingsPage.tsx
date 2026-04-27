@@ -74,6 +74,13 @@ const PLATFORM_SECTIONS: PlatformSection[] = [
     end: true,
     minRole: "ws_member",
   },
+  {
+    id: "ws-skills",
+    label: "Skills",
+    to: "/settings/workspace/skills",
+    group: "workspace",
+    minRole: "ws_member",
+  },
 
   // Organization — admin-only.
   // Model lives here because `set_model_config` writes to the global
