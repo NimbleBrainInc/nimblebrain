@@ -253,6 +253,66 @@ export async function readResource(server: string, uri: string): Promise<ReadRes
   });
 }
 
+/**
+ * A workspace file as returned by the upload endpoint. Mirrors the
+ * server-side `FileEntry` (src/files/types.ts), narrowed to the fields
+ * the client cares about — no `tags`/`source`/`description` here yet
+ * because the picker flow doesn't set them and consumers don't read them.
+ * Add fields when a consumer needs them.
+ */
+export interface WorkspaceFile {
+  id: string;
+  filename: string;
+  mimeType: string;
+  size: number;
+}
+
+export interface UploadResourceResult {
+  files: WorkspaceFile[];
+  errors?: string[];
+}
+
+/**
+ * Upload one or more files to the workspace file store via multipart
+ * POST. Bytes go over the right pipe (HTTP multipart, streamed) instead
+ * of being base64-encoded into a tool-call argument.
+ */
+export async function uploadResource(files: File[]): Promise<UploadResourceResult> {
+  const formData = new FormData();
+  for (const file of files) {
+    formData.append("file", file, file.name);
+  }
+
+  // Build headers WITHOUT Content-Type — let the browser set the
+  // multipart boundary. Same pattern as `streamChatMultipart`.
+  const h: Record<string, string> = {};
+  if (authToken && authToken !== "__cookie__") {
+    h.Authorization = `Bearer ${authToken}`;
+  }
+  if (activeWorkspaceId) {
+    h["X-Workspace-Id"] = activeWorkspaceId;
+  }
+
+  const res = await fetchWithRefresh(`${API_BASE}/v1/resources`, {
+    method: "POST",
+    credentials: "include",
+    headers: h,
+    body: formData,
+  });
+
+  if (res.status === 401) {
+    throw new ApiClientError("unauthorized", "Unauthorized", 401);
+  }
+  if (!res.ok) {
+    const body: ApiError = await res.json().catch(() => ({
+      error: "unknown",
+      message: res.statusText,
+    }));
+    throw new ApiClientError(body.error, body.message, res.status, body.details);
+  }
+  return res.json() as Promise<UploadResourceResult>;
+}
+
 // ---------------------------------------------------------------------------
 // Chat
 // ---------------------------------------------------------------------------

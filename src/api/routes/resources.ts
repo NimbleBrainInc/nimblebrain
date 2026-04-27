@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { handleReadResource, handleResourceProxy } from "../handlers.ts";
+import { handleReadResource, handleResourceProxy, handleResourceUpload } from "../handlers.ts";
 import { requireAuth } from "../middleware/auth.ts";
 import { bodyLimit } from "../middleware/body-limit.ts";
 import { errorLog } from "../middleware/error-log.ts";
@@ -7,12 +7,22 @@ import { requireWorkspace } from "../middleware/workspace.ts";
 import type { AppContext, AppEnv } from "../types.ts";
 
 export function resourceRoutes(ctx: AppContext) {
+  // maxTotalSize is snapshot at route construction; mirrors chat routes
+  // (filesConfig is built once at startup and never mutated). Multipart
+  // override lets uploads use the file-config cap; the JSON cap stays
+  // small for resources/read.
+  const uploadLimit = bodyLimit(1_048_576, {
+    multipart: ctx.runtime.getFilesConfig().maxTotalSize,
+  });
   return new Hono<AppEnv>()
     .use("*", requireAuth(ctx.authOptions))
     .use("*", requireWorkspace(ctx.workspaceStore))
     .use("*", errorLog(ctx))
     .post("/v1/resources/read", bodyLimit(1_048_576), (c) =>
       handleReadResource(c.req.raw, ctx.runtime, { workspaceId: c.var.workspaceId }),
+    )
+    .post("/v1/resources", uploadLimit, (c) =>
+      handleResourceUpload(c.req.raw, ctx.runtime, ctx.features, c.var.workspaceId),
     )
     .get("/v1/apps/:name/resources/*", (c) => {
       const name = decodeURIComponent(c.req.param("name"));

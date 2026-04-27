@@ -4,8 +4,9 @@ import { CallbackEventSink } from "../adapters/callback-events.ts";
 import { log } from "../cli/log.ts";
 import { isToolEnabled, isToolVisibleToRole, type ResolvedFeatures } from "../config/features.ts";
 import type { EngineEvent, EventSink } from "../engine/types.ts";
-import { ingestFiles, type UploadedFile } from "../files/ingest.ts";
+import { ingestFiles, isAllowedMime, type UploadedFile } from "../files/ingest.ts";
 import { createFileStore } from "../files/store.ts";
+import type { FileEntry } from "../files/types.ts";
 import type { IdentityProvider, UserIdentity } from "../identity/provider.ts";
 import { RunInProgressError } from "../runtime/errors.ts";
 import { type RequestContext, runWithRequestContext } from "../runtime/request-context.ts";
@@ -1212,4 +1213,127 @@ function json(data: unknown, status = 200): Response {
     status,
     headers: { "Content-Type": "application/json" },
   });
+}
+
+/**
+ * Handle POST /v1/resources — multipart file upload to the workspace
+ * file store. Stores each uploaded file, registers it, returns the
+ * resulting FileEntry list. This is the byte-transport entry point used
+ * by the bridge's `synapse/request-file` flow so the iframe never has
+ * to base64-encode bytes into a tool-call argument.
+ *
+ * Workspace isolation comes from `workspaceId` (set by requireWorkspace
+ * from authenticated identity, never from request input) flowing into
+ * `getWorkspaceScopedDir` — bytes physically land under the workspace's
+ * own directory.
+ */
+export async function handleResourceUpload(
+  request: Request,
+  runtime: Runtime,
+  features: ResolvedFeatures,
+  workspaceId: string,
+): Promise<Response> {
+  if (!features.fileContext) {
+    return apiError(404, "not_found", "Not found");
+  }
+
+  let formData: Awaited<ReturnType<typeof request.formData>>;
+  try {
+    formData = await request.formData();
+  } catch {
+    return apiError(400, "bad_request", "Invalid multipart form data");
+  }
+
+  const uploads: UploadedFile[] = [];
+  for (const [_key, value] of formData.entries()) {
+    if (typeof value === "string") continue;
+    const entry = value as unknown as {
+      arrayBuffer(): Promise<ArrayBuffer>;
+      name?: string;
+      type?: string;
+    };
+    if (typeof entry.arrayBuffer !== "function") continue;
+    uploads.push({
+      data: Buffer.from(await entry.arrayBuffer()),
+      filename: entry.name || "unnamed",
+      mimeType: entry.type || "application/octet-stream",
+    });
+  }
+
+  if (uploads.length === 0) {
+    return apiError(400, "bad_request", "No files in request");
+  }
+
+  const config = runtime.getFilesConfig();
+  if (uploads.length > config.maxFilesPerMessage) {
+    return apiError(413, "payload_too_large", "Too many files", {
+      count: uploads.length,
+      limit: config.maxFilesPerMessage,
+    });
+  }
+  const totalSize = uploads.reduce((s, f) => s + f.data.length, 0);
+  if (totalSize > config.maxTotalSize) {
+    return apiError(413, "payload_too_large", "Total upload size exceeds limit", {
+      size: totalSize,
+      limit: config.maxTotalSize,
+    });
+  }
+
+  // Optional metadata applied to every uploaded file. The picker flow
+  // sends none of these today; they exist so future callers (agent
+  // tools, drag-drop with tag) don't need a follow-up tool call.
+  let tags: string[] = [];
+  const tagsRaw = formData.get("tags");
+  if (typeof tagsRaw === "string" && tagsRaw) {
+    try {
+      const parsed = JSON.parse(tagsRaw);
+      if (!Array.isArray(parsed) || !parsed.every((t) => typeof t === "string")) {
+        return apiError(400, "bad_request", "tags must be a JSON array of strings");
+      }
+      tags = parsed;
+    } catch {
+      return apiError(400, "bad_request", "tags must be a valid JSON array");
+    }
+  }
+  const descriptionRaw = formData.get("description");
+  const description = typeof descriptionRaw === "string" && descriptionRaw ? descriptionRaw : null;
+  const conversationIdRaw = formData.get("conversationId");
+  const conversationId =
+    typeof conversationIdRaw === "string" && conversationIdRaw ? conversationIdRaw : null;
+
+  const store = createFileStore(join(runtime.getWorkspaceScopedDir(workspaceId), "files"));
+  const entries: FileEntry[] = [];
+  const errors: string[] = [];
+
+  for (const file of uploads) {
+    if (file.data.length > config.maxFileSize) {
+      errors.push(
+        `File "${file.filename}" (${file.data.length} bytes) exceeds per-file limit of ${config.maxFileSize}`,
+      );
+      continue;
+    }
+    if (!isAllowedMime(file.mimeType)) {
+      errors.push(`File "${file.filename}" has disallowed type: ${file.mimeType}`);
+      continue;
+    }
+    const saved = await store.saveFile(file.data, file.filename, file.mimeType);
+    const entry: FileEntry = {
+      id: saved.id,
+      filename: file.filename,
+      mimeType: file.mimeType,
+      size: saved.size,
+      tags,
+      source: "app",
+      conversationId,
+      createdAt: new Date().toISOString(),
+      description,
+    };
+    await store.appendRegistry(entry);
+    entries.push(entry);
+  }
+
+  if (entries.length === 0) {
+    return apiError(400, "file_upload_error", "All uploads were rejected", { errors });
+  }
+  return json({ files: entries, ...(errors.length > 0 ? { errors } : {}) });
 }

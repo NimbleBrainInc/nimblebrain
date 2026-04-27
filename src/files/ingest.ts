@@ -53,8 +53,12 @@ const ALLOWED_MIMES = new Set([
   ...BINARY_TYPES,
 ]);
 
-function isAllowedMime(mimeType: string): boolean {
-  return ALLOWED_MIMES.has(mimeType);
+export function isAllowedMime(mimeType: string): boolean {
+  // Browsers (and Bun's Blob) attach parameters like `;charset=utf-8`
+  // to the Content-Type. Match the bare type so the allowlist behaves
+  // the same regardless of upload origin.
+  const bare = mimeType.split(";", 1)[0]?.trim().toLowerCase() ?? "";
+  return ALLOWED_MIMES.has(bare);
 }
 
 function isExtractable(mimeType: string): boolean {

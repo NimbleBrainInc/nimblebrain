@@ -32,6 +32,7 @@ import {
   GetTaskResultSchema,
   TaskStatusNotificationSchema,
 } from "@modelcontextprotocol/sdk/types.js";
+import { uploadResource } from "../api/client";
 import { getMcpBridgeClient } from "../mcp-bridge-client";
 import { getHostThemeMode, getSpecThemeTokens, getThemeTokens } from "./theme";
 import type {
@@ -836,6 +837,17 @@ function filterHostContextForSpec(ctx: Record<string, unknown>): Record<string, 
 }
 
 /** Open native file picker, read selected file(s), and return base64-encoded results. */
+/**
+ * Open the OS file picker, then upload the selected files to the
+ * workspace file store via `POST /v1/resources`. Returns the
+ * persisted `WorkspaceFile` entries — bytes never traverse the
+ * iframe-bridge boundary, so files of any size the server's
+ * `maxFileSize` allows work without base64 inflation or hitting the
+ * 1 MB tool-call JSON cap.
+ *
+ * `maxSize` is enforced client-side as a fast-fail; the server is
+ * still the source of truth (`getFilesConfig().maxFileSize`).
+ */
 async function pickFiles(accept: string, maxSize: number, multiple: boolean): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const input = document.createElement("input");
@@ -869,8 +881,8 @@ async function pickFiles(accept: string, maxSize: number, multiple: boolean): Pr
       }
 
       try {
-        const results = [];
-        for (const file of Array.from(files)) {
+        const selected = Array.from(files);
+        for (const file of selected) {
           if (file.size > maxSize) {
             reject(
               new Error(
@@ -879,18 +891,9 @@ async function pickFiles(accept: string, maxSize: number, multiple: boolean): Pr
             );
             return;
           }
-          const buffer = await file.arrayBuffer();
-          const base64 = btoa(
-            new Uint8Array(buffer).reduce((data, byte) => data + String.fromCharCode(byte), ""),
-          );
-          results.push({
-            filename: file.name,
-            mimeType: file.type || "application/octet-stream",
-            size: file.size,
-            base64Data: base64,
-          });
         }
-        resolve(multiple ? results : (results[0] ?? null));
+        const result = await uploadResource(selected);
+        resolve(multiple ? result.files : (result.files[0] ?? null));
       } catch (err) {
         reject(err);
       }
