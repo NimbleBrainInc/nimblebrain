@@ -359,13 +359,23 @@ async function handleDelete(
 async function handleList(ctx: ManageWorkspacesContext): Promise<ToolResult> {
   try {
     const workspaces = await ctx.workspaceStore.list();
-    const result = workspaces.map((ws) => ({
-      id: ws.id,
-      name: ws.name,
-      memberCount: ws.members.length,
-      bundles: ws.bundles,
-      createdAt: ws.createdAt,
-    }));
+    const identity = ctx.getIdentity();
+    const result = workspaces.map((ws) => {
+      const userRole = identity
+        ? ws.members.find((m) => m.userId === identity.id)?.role
+        : undefined;
+      return {
+        id: ws.id,
+        name: ws.name,
+        memberCount: ws.members.length,
+        bundles: ws.bundles,
+        createdAt: ws.createdAt,
+        // The requester's role within this workspace, when applicable. Lets the
+        // web client gate workspace-admin UI without an extra `list_members`
+        // round-trip per workspace.
+        ...(userRole ? { userRole } : {}),
+      };
+    });
     const data = { workspaces: result };
     return {
       content: textContent(`${result.length} workspace(s).`),

@@ -33,8 +33,28 @@ export interface PromptAppInfo {
    * treats the content as data, not a nested system prompt.
    */
   instructions?: string;
+  /**
+   * Optional workspace-admin overlay text for this bundle. Rendered inside a
+   * sibling `<app-custom-instructions>` tag using the same containment-escape
+   * pattern as `instructions`. The overlay text comes from the platform
+   * instructions store, NOT from the bundle author — it's the workspace's
+   * say over how the agent should behave when using this bundle.
+   */
+  customInstructions?: string;
   trustScore: number;
   ui: { name: string } | null;
+}
+
+/**
+ * Per-scope overlay text injected after the identity layer. Each scope
+ * is independent: an empty string (or undefined) skips the layer entirely,
+ * leaving no marker tag in the assembled prompt.
+ */
+export interface OverlayLayers {
+  /** Org-level overlay (Phase 3 — slot reserved; Phase 1 callers pass `""`). */
+  org?: string;
+  /** Workspace-level overlay (Phase 2 — slot reserved; Phase 1 callers pass `""`). */
+  workspace?: string;
 }
 
 /** Descriptor for the app the user is currently viewing alongside the chat. */
@@ -89,6 +109,7 @@ export function composeSystemPrompt(
   hasProxiedTools?: boolean,
   participants?: ParticipantInfo[],
   workspaceContext?: WorkspaceContext,
+  overlays?: OverlayLayers,
 ): string {
   const layers: string[] = [];
 
@@ -131,6 +152,17 @@ export function composeSystemPrompt(
     layers.push(formatWorkspaceContext(workspaceContext));
   }
 
+  // Layer 1.8: Org / workspace instruction overlays (slot-reserved in Phase 1).
+  // Empty / missing text omits the layer entirely — no marker tag in the
+  // assembled prompt. Each layer carries a provenance heading so the agent
+  // (and any debug reader) can attribute the content to its scope.
+  if (overlays?.org && overlays.org.trim().length > 0) {
+    layers.push(formatScopeOverlay("Organization Instructions", overlays.org));
+  }
+  if (overlays?.workspace && overlays.workspace.trim().length > 0) {
+    layers.push(formatScopeOverlay("Workspace Instructions", overlays.workspace));
+  }
+
   // Layer 2: Installed apps section (§7.3)
   if (apps && apps.length > 0) {
     layers.push(formatAppsSection(apps, hasProxiedTools));
@@ -169,6 +201,17 @@ function formatAppsSection(apps: PromptAppInfo[], hasProxiedTools?: boolean): st
       // arbitrary XML, only the specific tag we use for containment.
       const safe = app.instructions.replaceAll("</app-instructions>", "&lt;/app-instructions>");
       lines.push(`  <app-instructions>\n${safe}\n  </app-instructions>`);
+    }
+    if (app.customInstructions && app.customInstructions.trim().length > 0) {
+      // Mirror the `<app-instructions>` containment escape byte-for-byte —
+      // this is a prompt-injection mitigation. The overlay text comes from
+      // the workspace admin (via the platform instructions store), not from
+      // the bundle author, but the same containment guarantee applies.
+      const safe = app.customInstructions.replaceAll(
+        "</app-custom-instructions>",
+        "&lt;/app-custom-instructions>",
+      );
+      lines.push(`  <app-custom-instructions>\n${safe}\n  </app-custom-instructions>`);
     }
   }
   lines.push(
@@ -261,6 +304,22 @@ function formatParticipantsSection(participants: ParticipantInfo[]): string {
     lines.push(`- ${label}`);
   }
   return lines.join("\n");
+}
+
+/**
+ * Format a top-level instruction overlay (org- or workspace-scope).
+ *
+ * Each overlay sits in a containment tag whose name matches its scope, so
+ * a debug reader can attribute the body to its source. The escape pattern
+ * matches `<app-instructions>` — any literal closing tag inside the body
+ * is rewritten to `&lt;/...>` before wrapping, defending against prompt
+ * injection from a writer who tries to break out of containment.
+ */
+function formatScopeOverlay(heading: string, body: string): string {
+  const tag =
+    heading === "Organization Instructions" ? "org-instructions" : "workspace-instructions";
+  const safe = body.replaceAll(`</${tag}>`, `&lt;/${tag}>`);
+  return `## ${heading}\n\n<${tag}>\n${safe}\n</${tag}>`;
 }
 
 function formatWorkspaceContext(ws: WorkspaceContext): string {

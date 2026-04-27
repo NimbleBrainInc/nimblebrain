@@ -1,13 +1,16 @@
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import { memo } from "react";
 import { NavLink } from "react-router-dom";
 import { useSidebar } from "../context/SidebarContext";
 import { useWorkspaceContext } from "../context/WorkspaceContext";
 import { resolveIcon } from "../lib/icons";
+import { cn } from "../lib/utils";
 import { toSlug } from "../lib/workspace-slug";
 import type { PlacementEntry } from "../types";
 import { Logo } from "./Logo";
 import { MobileSidebarDrawer } from "./MobileSidebarDrawer";
 import { SidebarToggle } from "./SidebarToggle";
+import { UserMenu } from "./UserMenu";
 import { WorkspaceSelector } from "./WorkspaceSelector";
 
 /**
@@ -76,11 +79,15 @@ export const ShellLayout = memo(function ShellLayout({
       {/* Desktop / tablet sidebar */}
       {!isHidden && (
         <nav
-          className={`${isCollapsed ? "w-16" : "w-60"} shrink-0 h-dvh flex flex-col bg-sidebar text-sidebar-foreground border-r border-sidebar-border transition-[width] duration-200`}
+          className={cn(
+            // `relative` anchors the half-overflow edge toggle below.
+            "relative shrink-0 h-dvh flex flex-col bg-sidebar text-sidebar-foreground border-r border-sidebar-border transition-[width] duration-200",
+            isCollapsed ? "w-16" : "w-60",
+          )}
         >
           {/* Workspace identity */}
           <div className={`${isCollapsed ? "px-0 pt-3 pb-1" : "px-1 pt-3 pb-1"} shrink-0`}>
-            <WorkspaceSelector collapsed={isCollapsed} onLogout={onLogout} />
+            <WorkspaceSelector collapsed={isCollapsed} />
           </div>
 
           {/* Top zone — scrollable; key triggers fade-in on workspace switch */}
@@ -109,12 +116,23 @@ export const ShellLayout = memo(function ShellLayout({
             ))}
           </div>
 
-          {/* Bottom zone — sidebar toggle */}
-          <div
-            className={`shrink-0 border-t border-sidebar-border py-2 px-2 flex ${isCollapsed ? "justify-center" : "justify-end"}`}
-          >
-            <SidebarToggle />
+          {/* Bottom zone — identity only. The collapse toggle is rendered
+              as a half-overflow edge button (below) rather than competing
+              for space here; this keeps the bottom strip as a coherent
+              "this is YOU" anchor without a category-mismatched utility
+              control attached. */}
+          <div className="shrink-0 border-t border-sidebar-border py-2">
+            <UserMenu collapsed={isCollapsed} onLogout={onLogout} />
           </div>
+
+          {/*
+            Edge collapse toggle — anchored to the sidebar's right border,
+            half-overflowing. Always visible (rather than hover-only) so
+            it's reachable on touch and discoverable for first-time users.
+            Sits well below the workspace selector so it doesn't crowd
+            that zone, and well above the bottom UserMenu strip.
+          */}
+          <SidebarEdgeToggle isCollapsed={isCollapsed} />
         </nav>
       )}
 
@@ -135,13 +153,7 @@ export const ShellLayout = memo(function ShellLayout({
           <div className="flex flex-col h-full">
             {/* Mobile workspace identity */}
             <div className="px-1 pt-4 pb-1 shrink-0">
-              <WorkspaceSelector
-                collapsed={false}
-                onLogout={() => {
-                  setDrawerOpen(false);
-                  onLogout();
-                }}
-              />
+              <WorkspaceSelector collapsed={false} />
             </div>
             <div className="flex-1 overflow-y-auto py-1 sidebar-scroll">
               {/* Ungrouped core nav */}
@@ -157,8 +169,8 @@ export const ShellLayout = memo(function ShellLayout({
 
               {/* Grouped items */}
               {Object.entries(groups).map(([group, items]) => (
-                <div key={group} className="mt-4">
-                  <div className="px-4 py-1.5 text-[11px] font-semibold tracking-wider text-sidebar-foreground/40 uppercase">
+                <div key={group} className="mt-4 pt-3 border-t border-sidebar-border/60">
+                  <div className="px-4 pb-1 text-[11px] font-bold tracking-[0.08em] text-sidebar-foreground/70 uppercase">
                     {group}
                   </div>
                   {items.map((p) => (
@@ -173,19 +185,24 @@ export const ShellLayout = memo(function ShellLayout({
               ))}
             </div>
 
-            {/* Bottom pinned items */}
-            {sidebarBottom.length > 0 && (
-              <div className="shrink-0 border-t border-sidebar-border py-2">
-                {sidebarBottom.map((p) => (
-                  <MobileNavItem
-                    key={p.resourceUri}
-                    to={resolveRoute(p, wsSlug)}
-                    icon={p.icon}
-                    label={p.label ?? "Settings"}
-                  />
-                ))}
-              </div>
-            )}
+            {/* Bottom pinned items + identity */}
+            <div className="shrink-0 border-t border-sidebar-border py-2">
+              {sidebarBottom.map((p) => (
+                <MobileNavItem
+                  key={p.resourceUri}
+                  to={resolveRoute(p, wsSlug)}
+                  icon={p.icon}
+                  label={p.label ?? "Settings"}
+                />
+              ))}
+              <UserMenu
+                collapsed={false}
+                onLogout={() => {
+                  setDrawerOpen(false);
+                  onLogout();
+                }}
+              />
+            </div>
           </div>
         </MobileSidebarDrawer>
       )}
@@ -214,6 +231,47 @@ function NavIcon({ name }: { name: string }) {
   const Icon = resolveIcon(name);
   return <Icon className="shrink-0" style={{ width: 18, height: 18 }} />;
 }
+
+/**
+ * Edge-overflow collapse toggle.
+ *
+ * Anchored to the sidebar's right border, vertically centered;
+ * half-overflows so the click target lives in the seam between sidebar
+ * and main content. Doesn't occupy any in-sidebar real estate — sidebar
+ * nav, workspace selector, and UserMenu are all unaffected.
+ *
+ * Vertical center is the right anchor: the dense zones at top (workspace
+ * selector) and bottom (UserMenu) are claimed; centering reads as "this
+ * controls the whole sidebar" rather than belonging to either zone.
+ *
+ * Always visible (not hover-required) so it's reachable on touch and
+ * discoverable for first-time users.
+ */
+const SidebarEdgeToggle = memo(function SidebarEdgeToggle({
+  isCollapsed,
+}: {
+  isCollapsed: boolean;
+}) {
+  const { toggle } = useSidebar();
+  const Icon = isCollapsed ? ChevronRight : ChevronLeft;
+  return (
+    <button
+      type="button"
+      onClick={toggle}
+      aria-label={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+      title={`${isCollapsed ? "Expand sidebar" : "Collapse sidebar"} (⌘B)`}
+      className={cn(
+        "absolute top-1/2 -translate-y-1/2 -right-3 z-30 w-6 h-6 rounded-full",
+        "flex items-center justify-center",
+        "bg-sidebar border border-sidebar-border shadow-sm",
+        "text-sidebar-foreground/60 hover:text-sidebar-foreground hover:bg-sidebar-foreground/10",
+        "transition-colors",
+      )}
+    >
+      <Icon className="w-3.5 h-3.5" />
+    </button>
+  );
+});
 
 const NavItem = memo(function NavItem({
   to,
@@ -301,7 +359,7 @@ function GroupLabel({ children, collapsed }: { children: React.ReactNode; collap
     return <div className="mx-3 my-2 border-t border-sidebar-border" />;
   }
   return (
-    <div className="px-4 py-1.5 text-[11px] font-semibold tracking-wider text-sidebar-foreground/40 uppercase">
+    <div className="px-4 pb-1 text-[11px] font-bold tracking-[0.08em] text-sidebar-foreground/70 uppercase">
       {children}
     </div>
   );
@@ -319,7 +377,7 @@ const SidebarGroup = memo(function SidebarGroup({
   wsSlug?: string;
 }) {
   return (
-    <div className="mt-4">
+    <div className={cn("mt-4", !collapsed && "pt-3 border-t border-sidebar-border/60")}>
       <GroupLabel collapsed={collapsed}>{label}</GroupLabel>
       {items.map((p) => (
         <NavItem

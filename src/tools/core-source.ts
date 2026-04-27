@@ -166,6 +166,26 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
       },
       handler: async (input): Promise<ToolResult> => {
         try {
+          // Org-admin gate: `set_model_config` writes to the platform-wide
+          // `nimblebrain.json` (instance-level config). The settings UI hides
+          // this tool behind an org_admin RouteGuard, but the backend is the
+          // security boundary — the tool itself enforces the role so any
+          // caller (agent, external MCP client) can't bypass the UI gate.
+          // Dev mode (no identity provider) bypasses, matching the rest of
+          // the platform's dev-mode convention.
+          if (runtime.getIdentityProvider() !== null) {
+            const identity = runtime.getCurrentIdentity();
+            const ORG_ADMIN_ROLES = new Set(["admin", "owner"]);
+            if (!identity || !ORG_ADMIN_ROLES.has(identity.orgRole)) {
+              return {
+                content: textContent(
+                  "Only org admins or owners can change model configuration. The model config affects every workspace.",
+                ),
+                isError: true,
+              };
+            }
+          }
+
           const configPath = runtime.getConfigPath();
           if (!configPath) {
             return {

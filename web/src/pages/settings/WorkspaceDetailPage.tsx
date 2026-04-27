@@ -6,6 +6,7 @@ import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent } from "../../components/ui/card";
 import { Label } from "../../components/ui/label";
+import { WorkspaceInstructions } from "./components/WorkspaceInstructions";
 import {
   Table,
   TableBody,
@@ -447,6 +448,9 @@ export function WorkspaceDetailPage() {
           </Table>
         )}
       </div>
+
+      {/* ── Workspace Instructions Section ───────────────────────── */}
+      {id && <WorkspaceInstructions wsId={id} canEdit={isWsAdmin} />}
 
       {/* ── Bundles Section ──────────────────────────────────────── */}
       <div className="space-y-4">

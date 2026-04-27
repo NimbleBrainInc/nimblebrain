@@ -5,6 +5,7 @@ import {
   CallToolRequestSchema,
   ErrorCode,
   ListResourcesRequestSchema,
+  ListResourceTemplatesRequestSchema,
   ListToolsRequestSchema,
   McpError,
   ReadResourceRequestSchema,
@@ -39,15 +40,43 @@ export interface InProcessTool {
  * (`mimeType: "text/html"`) — the common case for `ui://` panels.
  * Pass the structured form for non-HTML text, binary blobs, or to attach
  * `_meta` (e.g. ext-apps `io.modelcontextprotocol/ui` CSP / permissions).
+ *
+ * The `text` field accepts a string OR an async function. The function form
+ * is invoked on every `resources/read` so the body can be assembled lazily
+ * (e.g. composed prompts that change per assembly).
  */
 export type InProcessResource =
   | string
   | {
-      text?: string;
+      text?: string | (() => Promise<string>);
       blob?: Uint8Array;
       mimeType?: string;
       meta?: Record<string, unknown>;
     };
+
+/**
+ * Resource template advertisement — RFC 6570 URI templates surfaced via
+ * `resources/templates/list`. A template tells clients "URIs of this shape
+ * are readable" without enumerating each one. Reads dispatch through
+ * `resourceHandler` (or the static map for materialized URIs).
+ */
+export interface ResourceTemplate {
+  uriTemplate: string;
+  name: string;
+  description?: string;
+  mimeType?: string;
+}
+
+/**
+ * Dynamic resource entry surfaced from `listResources()`. Same wire shape as
+ * static map entries — `uri` is required; `name` defaults to the URI when
+ * absent, matching how the static map is rendered.
+ */
+export interface DynamicResourceEntry {
+  uri: string;
+  name?: string;
+  mimeType?: string;
+}
 
 export interface DefineInProcessAppOptions {
   /** Source name. Becomes the `<source>__` tool prefix and the resource owner identity. */
@@ -65,6 +94,24 @@ export interface DefineInProcessAppOptions {
   placements?: PlacementDeclaration[];
   /** Optional `instructions` exposed via `initialize.instructions`. */
   instructions?: string;
+  /**
+   * URI templates advertised via `resources/templates/list`. Use for
+   * parametric URIs (e.g. `instructions://bundles/{name}`) where the catalog
+   * is dynamic but the shape is known.
+   */
+  templates?: ResourceTemplate[];
+  /**
+   * Async dynamic supplement to the static `resources` map. Entries are
+   * merged into `resources/list` after the static entries on every call.
+   * Use when the catalog depends on workspace state (e.g. installed bundles).
+   */
+  listResources?: () => Promise<DynamicResourceEntry[]>;
+  /**
+   * Async fallback for `resources/read` when the static map misses. Returns
+   * the resolved resource or `null` to signal not-found (which surfaces as
+   * `McpError(InvalidParams)` to the client).
+   */
+  resourceHandler?: (uri: string) => Promise<InProcessResource | null>;
 }
 
 /**
@@ -92,7 +139,22 @@ export function defineInProcessApp(
     resources = new Map<string, InProcessResource>(),
     placements = [],
     instructions,
+    templates,
+    listResources,
+    resourceHandler,
   } = options;
+
+  // Any of the four fields means this source serves resources. When ANY is
+  // active, advertise `listChanged` + `subscribe` so external clients (and
+  // the SDK) know they can watch for changes — even if the dynamic catalog
+  // is empty at this instant. Sources with no resource fields keep
+  // `resources: undefined` to stay invisible to `resources/*` requests.
+  const hasResources =
+    resources.size > 0 ||
+    (templates !== undefined && templates.length > 0) ||
+    listResources !== undefined ||
+    resourceHandler !== undefined;
+  const hasTemplates = templates !== undefined && templates.length > 0;
 
   return new McpSource(
     name,
@@ -105,7 +167,7 @@ export function defineInProcessApp(
           {
             capabilities: {
               tools: {},
-              resources: resources.size > 0 ? {} : undefined,
+              resources: hasResources ? { listChanged: true, subscribe: true } : undefined,
             },
             ...(instructions ? { instructions } : {}),
           },
@@ -180,28 +242,46 @@ export function defineInProcessApp(
           };
         });
 
-        if (resources.size > 0) {
+        if (hasResources) {
           // resources/list — advertise URIs by full URI; name defaults to the
-          // URI itself. Callers that care about display-friendly names can
-          // pass them via the structured resource form in a future extension.
-          server.setRequestHandler(ListResourcesRequestSchema, async () => ({
-            resources: Array.from(resources.entries()).map(([uri, value]) => {
+          // URI itself. Static map entries are listed first; dynamic entries
+          // from `listResources()` are appended on every call so the catalog
+          // can react to workspace state without restarting the server.
+          server.setRequestHandler(ListResourcesRequestSchema, async () => {
+            const staticEntries = Array.from(resources.entries()).map(([uri, value]) => {
               const mimeType = typeof value === "string" ? "text/html" : value.mimeType;
               return {
                 uri,
                 name: uri,
                 ...(mimeType ? { mimeType } : {}),
               };
-            }),
-          }));
+            });
+            const dynamicEntries = listResources
+              ? (await listResources()).map((entry) => ({
+                  uri: entry.uri,
+                  name: entry.name ?? entry.uri,
+                  ...(entry.mimeType ? { mimeType: entry.mimeType } : {}),
+                }))
+              : [];
+            return { resources: [...staticEntries, ...dynamicEntries] };
+          });
 
           // resources/read — return one `contents[]` entry. Strings are HTML
           // by convention; structured entries pass through `_meta`. Missing
           // URIs raise `-32602` which the SDK transports as a JSON-RPC
           // error, matching how external MCP servers signal not-found.
+          //
+          // Lookup order: static map → resourceHandler fallback. The handler
+          // returning `null` is treated as not-found (same shape as missing
+          // static entries). Function-form `text` is awaited here so the body
+          // can be assembled lazily on each read.
           server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
             const uri = request.params.uri;
-            const value = resources.get(uri);
+            let value = resources.get(uri);
+            if (value === undefined && resourceHandler) {
+              const resolved = await resourceHandler(uri);
+              if (resolved !== null) value = resolved;
+            }
             if (value === undefined) {
               throw new McpError(ErrorCode.InvalidParams, `Resource not found: ${uri}`, { uri });
             }
@@ -216,11 +296,26 @@ export function defineInProcessApp(
               // SDK schema accepts base64-encoded blob strings.
               entry.blob = bytesToBase64(value.blob);
             } else {
-              entry.text = value.text ?? "";
+              const text = value.text;
+              entry.text = typeof text === "function" ? await text() : (text ?? "");
             }
             if (value.meta) entry._meta = value.meta;
             return { contents: [entry] };
           });
+
+          // resources/templates/list — only registered when templates are
+          // declared. SDK rejects the request with MethodNotFound otherwise,
+          // matching how a server that doesn't advertise templates behaves.
+          if (hasTemplates) {
+            server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => ({
+              resourceTemplates: templates.map((t) => ({
+                uriTemplate: t.uriTemplate,
+                name: t.name,
+                ...(t.description ? { description: t.description } : {}),
+                ...(t.mimeType ? { mimeType: t.mimeType } : {}),
+              })),
+            }));
+          }
         }
 
         const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();

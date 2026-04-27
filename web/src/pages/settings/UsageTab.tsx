@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { callTool } from "../../api/client";
 import { CostChart } from "../../components/charts/CostChart";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
+import { RequireActiveWorkspace } from "./components/RequireActiveWorkspace";
 import {
   Table,
   TableBody,
@@ -116,7 +117,18 @@ const PERIOD_OPTIONS: { value: Period; label: string }[] = [
 
 // ── Component ───────────────────────────────────────────────────
 
+// `usage.report` reads from the workspace-scoped data dir, so the tab
+// requires an active workspace. Wraps the inner component to hard-fail
+// loudly when none is set (rather than rendering empty data).
 export function UsageTab() {
+  return (
+    <RequireActiveWorkspace>
+      <UsageTabInner />
+    </RequireActiveWorkspace>
+  );
+}
+
+function UsageTabInner() {
   const [period, setPeriod] = useState<Period>("week");
   const [report, setReport] = useState<UsageReport | null>(null);
   const [loading, setLoading] = useState(true);
