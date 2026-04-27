@@ -19,22 +19,11 @@
 
 import { textContent } from "../../engine/content-helpers.ts";
 import type { EventSink, ToolResult } from "../../engine/types.ts";
+import { ORG_ADMIN_ROLES } from "../../identity/types.ts";
 import type { Scope } from "../../instructions/index.ts";
 import type { Runtime } from "../../runtime/runtime.ts";
 import { defineInProcessApp, type InProcessTool } from "../in-process-app.ts";
 import type { McpSource } from "../mcp-source.ts";
-
-// ── Roles ────────────────────────────────────────────────────────────────
-
-/**
- * Org-level roles allowed to write `org`-scope instructions, and (combined
- * with workspace-admin role) `workspace`-scope instructions.
- *
- * Mirrors `ORG_ADMIN_ROLES` in `src/tools/workspace-mgmt-tools.ts:389` —
- * intentionally duplicated rather than imported because that module's
- * `canManageMembers` helper is tagged deprecated. The tiny set is stable.
- */
-const ORG_ADMIN_ROLES = new Set(["admin", "owner"]);
 
 // ── Tool description (description-as-policy) ─────────────────────────────
 

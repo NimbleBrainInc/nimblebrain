@@ -6,7 +6,6 @@ import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent } from "../../components/ui/card";
 import { Label } from "../../components/ui/label";
-import { WorkspaceInstructions } from "./components/WorkspaceInstructions";
 import {
   Table,
   TableBody,
@@ -449,8 +448,24 @@ export function WorkspaceDetailPage() {
         )}
       </div>
 
-      {/* ── Workspace Instructions Section ───────────────────────── */}
-      {id && <WorkspaceInstructions wsId={id} canEdit={isWsAdmin} />}
+      {/*
+        Workspace Instructions are intentionally NOT shown on this admin
+        "manage another workspace" page. The instructions resource and
+        write tool resolve the target workspace from the request context
+        (active workspace via `X-Workspace-Id`), so editing here would
+        silently affect the *active* workspace, not the slug-targeted one.
+        To edit a workspace's instructions, switch into it via the header
+        switcher and use Settings → This Workspace → General.
+
+        See the "How to edit instructions" affordance below.
+      */}
+      <div className="rounded-md border border-dashed p-4">
+        <p className="text-sm text-muted-foreground">
+          To view or edit this workspace's custom instructions, switch into{" "}
+          <span className="font-medium">{workspace?.name}</span> via the header workspace switcher,
+          then go to <span className="font-medium">Settings → This Workspace → General</span>.
+        </p>
+      </div>
 
       {/* ── Bundles Section ──────────────────────────────────────── */}
       <div className="space-y-4">

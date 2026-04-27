@@ -4,6 +4,7 @@ import { readFile, rename, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { textContent } from "../engine/content-helpers.ts";
 import type { ToolResult } from "../engine/types.ts";
+import { ORG_ADMIN_ROLES } from "../identity/types.ts";
 import { getAvailableModels, isModelAllowed } from "../model/catalog.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import type { InProcessTool } from "./in-process-app.ts";
@@ -173,10 +174,23 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
           // caller (agent, external MCP client) can't bypass the UI gate.
           // Dev mode (no identity provider) bypasses, matching the rest of
           // the platform's dev-mode convention.
+          //
+          // The two failure modes are distinguished so future debug logs
+          // make non-user code paths (cron, automations triggered without
+          // a request context) obvious — they fail with "no identity"
+          // rather than the misleading "wrong role" message.
           if (runtime.getIdentityProvider() !== null) {
             const identity = runtime.getCurrentIdentity();
-            const ORG_ADMIN_ROLES = new Set(["admin", "owner"]);
-            if (!identity || !ORG_ADMIN_ROLES.has(identity.orgRole)) {
+            if (!identity) {
+              return {
+                content: textContent(
+                  "set_model_config requires an authenticated identity. " +
+                    "Calls without a request context (e.g. background jobs) cannot configure platform-wide model settings.",
+                ),
+                isError: true,
+              };
+            }
+            if (!ORG_ADMIN_ROLES.has(identity.orgRole)) {
               return {
                 content: textContent(
                   "Only org admins or owners can change model configuration. The model config affects every workspace.",
@@ -438,7 +452,6 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
 
           // Admin gating: org admin/owner OR workspace-level admin
           if (identity) {
-            const ORG_ADMIN_ROLES = new Set(["admin", "owner"]);
             if (!ORG_ADMIN_ROLES.has(identity.orgRole)) {
               const ws = await runtime.getWorkspaceStore().get(wsId);
               const member = ws?.members.find((m) => m.userId === identity.id);

@@ -1,6 +1,7 @@
 import { textContent } from "../engine/content-helpers.ts";
 import type { ToolResult } from "../engine/types.ts";
 import type { UserIdentity } from "../identity/provider.ts";
+import { ORG_ADMIN_ROLES } from "../identity/types.ts";
 import type { UserStore } from "../identity/user.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
 import {
@@ -395,8 +396,6 @@ async function handleList(ctx: ManageWorkspacesContext): Promise<ToolResult> {
 // ══════════════════════════════════════════════════════════════════
 // nb__manage_members tool
 // ══════════════════════════════════════════════════════════════════
-
-const ORG_ADMIN_ROLES = new Set(["admin", "owner"]);
 
 /**
  * Check whether the requesting user can manage members in the given workspace.

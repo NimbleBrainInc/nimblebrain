@@ -22,7 +22,7 @@
  *       confirming they appear in the composed system prompt.
  */
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type {
@@ -37,9 +37,18 @@ import { runWithRequestContext } from "../../src/runtime/request-context.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
 
 // ── HQ root resolution ──────────────────────────────────────────────────
+//
+// The negative case in this suite installs `mcp-servers/ipinfo` from the
+// meta-repo's sibling directory. If anyone runs this from a layout that
+// doesn't have the meta-repo structure (standalone clone of just
+// `nimblebrain/code`, reorganized worktree, etc.), the bundle dir won't
+// exist and `installLocal` would throw deep inside the lifecycle long
+// after the test body started — confusing failure mode. Gate at suite
+// start; skip with a clear message instead.
 
 const HQ_ROOT = resolve(import.meta.dir, "..", "..", "..", "..", "..");
 const IPINFO_BUNDLE_DIR = join(HQ_ROOT, "mcp-servers", "ipinfo");
+const HAS_IPINFO_BUNDLE = existsSync(IPINFO_BUNDLE_DIR);
 
 const TEST_BUNDLE_INSTRUCTIONS_BODY =
   "When asked about widgets, always prefer the user's brand voice: terse and confident.";
@@ -210,7 +219,9 @@ class CapturingModel implements LanguageModelV3 {
 
 // ── Suite ───────────────────────────────────────────────────────────────
 
-describe("bundle instructions — bundle-side convention", () => {
+const suiteFn = HAS_IPINFO_BUNDLE ? describe : describe.skip;
+
+suiteFn("bundle instructions — bundle-side convention", () => {
   let testRoot: string;
   let runtime: Runtime;
   let capturing: CapturingModel;
