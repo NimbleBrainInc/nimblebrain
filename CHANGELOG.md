@@ -6,6 +6,8 @@
 
 - **Platform sources unified on MCP.** Every tool/resource provider — built-in platform capabilities and user-installed bundles alike — is now an MCP server. Built-ins run in-process over `InMemoryTransport`; bundles continue to run as subprocess or remote MCP. One contract, one shape, one set of capabilities.
 - **Task-aware iframe tools** — widgets can now `callToolAsTask` for long-running tools (research runs, batch imports). The `/mcp` endpoint speaks the MCP 2025-11-25 tasks utility, and the iframe bridge always routes `tools/call` and `resources/read` through `/mcp` (legacy REST branches in the bridge are gone). The `/v1/tools/call` and `/v1/resources/read` REST endpoints stay for the web shell.
+- **Bundle-side custom instructions.** Bundles publish `app://instructions`; the platform reads it on every prompt assembly and wraps non-empty bodies in `<app-custom-instructions>` containment in the system prompt. Zero opt-in flag, zero new platform-side infrastructure per bundle ([docs](https://docs.nimblebrain.ai/apps/custom-instructions/), [#98](https://github.com/NimbleBrainInc/nimblebrain/pull/98)).
+- **Settings IA refactor.** Nav grouped by scope (This Workspace / Organization). Profile un-nested to top-level `/profile`. New shell `UserMenu` (avatar + popover) is the canonical path for identity actions; sidebar collapse moved to a half-overflow edge button. Old URLs redirect.
 
 ### Added
 
@@ -14,22 +16,38 @@
 - `/mcp` advertises `tasks` and `resources` capabilities; tool-level `taskSupport` negotiation enforces JSON-RPC `-32601` for required-without-task and forbidden-with-task.
 - `McpTaskStore` (in-memory, keyed by `${workspaceId}:${identityId}:${taskId}`) routes `tasks/{get,result,cancel}` to the originating engine handle with workspace-scoped authz; cross-tenant lookups return not-found.
 - `McpSource` per-phase task methods (`startToolAsTask`, `awaitToolTaskResult`, `getTaskStatus`, `cancelTask`) with owner-context enforcement and TTL sweeper.
+- `app://instructions` convention. Bundles publish; platform reads on every prompt assembly. Bundle owns storage, write tool, settings UI; platform owns URI, containment escape, fetch lifecycle. See [bundle-author docs](https://docs.nimblebrain.ai/apps/custom-instructions/).
+- Org / workspace instructions overlays. `instructions://org` and `instructions://workspace` resources backed by `InstructionsStore` (8 KiB UTF-8 cap, atomic writes). Single tool `instructions__write_instructions(scope, text)` with role gates. Workspace overlay editor on `/settings/workspace/general`; org UI deferred (agent-writeable now).
+- `useScopedRole` hook + `RouteGuard` component — centralized role determination for the web shell. Backend tools enforce roles independently — defense in depth.
+- `UserMenu` in the shell sidebar (avatar + display name + popover with Profile settings + Sign out).
+- Top-level `/profile` route. Identity isn't a setting; un-nested from `/settings/*`.
+- Org-admin gate on `set_model_config` — backend now refuses non-org-admin writes (was UI-only via RouteGuard). Distinguishes "no identity" (cron, automations) from "wrong role" so debug logs make non-user code paths obvious.
 
 ### Changed
 
 - Apps list in the system prompt now surfaces each bundle's `initialize.instructions` inside `<app-instructions>` containment tags, so per-bundle guidance reaches the LLM.
 - Iframe bridge uses the MCP transport (`StreamableHTTPClientTransport` against `/mcp`) for `tools/call` and `resources/read`. `INTERNAL_APPS` authz still precedes transport selection. Bridge advertises `hostCapabilities.tasks` to iframes and forwards `notifications/tasks/status` on a per-bridge subscription.
 - Inline (non-task) `tools/call` handler on `/mcp` now preserves `structuredContent` (was dropping it).
+- Settings nav grouped by scope. "This Workspace" (General / Members / Usage / Apps) and "Organization" (Model / Workspaces / Users) replace the flat tab list. About is the footer. Per-bundle settings panels nest under "Workspace > Apps."
+- Settings re-scoped by data ownership. Model → Organization (writes global `nimblebrain.json`, affects every workspace). Usage → This Workspace (uses `runtime.getWorkspaceScopedDir()`). MCP Connection card → Workspace > General.
+- Sidebar collapse toggle moved to a half-overflow edge button on the sidebar's right border (Linear pattern).
+- `manage_workspaces.list` now returns the requesting user's role within each workspace (`userRole?: "admin" | "member"`) so the web client can gate workspace-admin UI without an extra `list_members` round-trip.
 
 ### Fixed
 
 - Files-app uploads no longer fail with `Payload too large`. Picker bytes now flow through `POST /v1/resources` (multipart, workspace-scoped) instead of being base64-encoded into a `tools/call` argument; `isAllowedMime` strips Content-Type parameters, fixing a latent miss in the chat ingest path too ([#93](https://github.com/NimbleBrainInc/nimblebrain/pull/93)).
 - `nb__read_resource` and `POST /v1/resources/read` resolve `ui://` resources published by platform built-ins (settings, home, automations, conversations, files, usage, nb). Previously the structural type guard couldn't distinguish two divergent `readResource` shapes and silently skipped any platform source ([#90](https://github.com/NimbleBrainInc/nimblebrain/issues/90)).
+- `/v1/resources/read` request-context propagation. The route handler wasn't wrapping its source-call in `runWithRequestContext`, so callback-form resource bodies that called `runtime.requireWorkspaceId()` (e.g. `instructions://workspace`) threw and surfaced as 404 "not found." Wrapping matches the existing `handleCallTool` pattern.
 
 ### Removed
 
 - `InlineSource`, `ResourceReader`, `isResourceReader`. External callers should switch to `defineInProcessApp` (returns an `McpSource`); `InlineToolDef` becomes `InProcessTool` with the same shape.
 - `bridgeUseMcp` feature flag and its scaffolding (`web/src/features.ts`, `getBridgeUseMcp` / `setBridgeUseMcp`, the schema entry, the resolver field). The MCP transport is the only path; legacy REST branches in the bridge are deleted.
+
+### Operator notes
+
+- All pre-IA settings URLs redirect to their new locations (`/settings/profile` → `/profile`, `/settings/users` → `/settings/org/users`, etc.). No action required for end users.
+- Bundle authors who want to support custom instructions: publish `app://instructions` from your MCP server. See [the bundle-author guide](https://docs.nimblebrain.ai/apps/custom-instructions/) and the `synapse-todo-board` reference implementation.
 
 ## [0.4.0] - 2026-04-24
 
