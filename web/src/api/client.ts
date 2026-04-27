@@ -279,8 +279,10 @@ export interface UploadResourceResult {
  */
 export async function uploadResource(files: File[]): Promise<UploadResourceResult> {
   const formData = new FormData();
+  // Use `files` (plural) to match `streamChatMultipart`; the server
+  // accepts either, but one canonical spelling avoids surprises.
   for (const file of files) {
-    formData.append("file", file, file.name);
+    formData.append("files", file, file.name);
   }
 
   // Build headers WITHOUT Content-Type — let the browser set the

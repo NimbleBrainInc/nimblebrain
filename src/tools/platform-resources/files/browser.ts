@@ -975,8 +975,7 @@ export const FILES_BROWSER_HTML = `<!DOCTYPE html>
         _pending[reqId] = {
           resolve: function(result) {
             if (!result) return; // user cancelled
-            var entries = Array.isArray(result) ? result : [result];
-            if (entries.length === 0) return;
+            if (Array.isArray(result) && result.length === 0) return;
             loadFiles();
           },
           reject: function(err) {

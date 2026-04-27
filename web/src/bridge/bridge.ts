@@ -836,7 +836,6 @@ function filterHostContextForSpec(ctx: Record<string, unknown>): Record<string, 
   };
 }
 
-/** Open native file picker, read selected file(s), and return base64-encoded results. */
 /**
  * Open the OS file picker, then upload the selected files to the
  * workspace file store via `POST /v1/resources`. Returns the

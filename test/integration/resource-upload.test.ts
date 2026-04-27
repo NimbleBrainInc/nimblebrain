@@ -152,6 +152,95 @@ describe("POST /v1/resources", () => {
     expect(body.error).toBe("bad_request");
   });
 
+  it("persists tags / description / conversationId metadata onto the FileEntry", async () => {
+    const form = new FormData();
+    form.append("file", new Blob(["x"], { type: "text/plain" }), "x.txt");
+    form.append("tags", JSON.stringify(["report", "q2"]));
+    form.append("description", "Quarterly numbers");
+    form.append("conversationId", "conv_test_42");
+
+    const res = await fetch(`${baseUrl}/v1/resources`, {
+      method: "POST",
+      headers: { "X-Workspace-Id": TEST_WORKSPACE_ID },
+      body: form,
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    const entry = body.files[0];
+    expect(entry.tags).toEqual(["report", "q2"]);
+    expect(entry.description).toBe("Quarterly numbers");
+    expect(entry.conversationId).toBe("conv_test_42");
+    expect(entry.source).toBe("app");
+  });
+
+  it("rejects malformed tags JSON with 400 bad_request", async () => {
+    const form = new FormData();
+    form.append("file", new Blob(["x"], { type: "text/plain" }), "x.txt");
+    form.append("tags", "{not json"); // unterminated brace
+
+    const res = await fetch(`${baseUrl}/v1/resources`, {
+      method: "POST",
+      headers: { "X-Workspace-Id": TEST_WORKSPACE_ID },
+      body: form,
+    });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toBe("bad_request");
+    expect(body.message).toContain("tags");
+  });
+
+  it("rejects tags that aren't a JSON array of strings (e.g. mixed types)", async () => {
+    const form = new FormData();
+    form.append("file", new Blob(["x"], { type: "text/plain" }), "x.txt");
+    form.append("tags", JSON.stringify(["ok", 42])); // number in array
+
+    const res = await fetch(`${baseUrl}/v1/resources`, {
+      method: "POST",
+      headers: { "X-Workspace-Id": TEST_WORKSPACE_ID },
+      body: form,
+    });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toBe("bad_request");
+  });
+
+  it("ignores non-file form entries under non-`file` keys (no silent uploads)", async () => {
+    // A Blob accidentally appended under `tags` (instead of as a string)
+    // must NOT be saved as a file. The handler scans only `file` /
+    // `files` keys; everything else is form metadata.
+    const form = new FormData();
+    form.append("file", new Blob(["legit"], { type: "text/plain" }), "legit.txt");
+    form.append("tags", new Blob(["impostor"], { type: "text/plain" }), "impostor.txt");
+
+    const res = await fetch(`${baseUrl}/v1/resources`, {
+      method: "POST",
+      headers: { "X-Workspace-Id": TEST_WORKSPACE_ID },
+      body: form,
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.files).toHaveLength(1);
+    expect(body.files[0].filename).toBe("legit.txt");
+  });
+
+  it("accepts the canonical `files` (plural) field the bridge sends", async () => {
+    // streamChatMultipart and the new uploadResource both use `files`;
+    // pin both spellings as supported so a future tightening doesn't
+    // silently break the bridge.
+    const form = new FormData();
+    form.append("files", new Blob(["plural"], { type: "text/plain" }), "p.txt");
+
+    const res = await fetch(`${baseUrl}/v1/resources`, {
+      method: "POST",
+      headers: { "X-Workspace-Id": TEST_WORKSPACE_ID },
+      body: form,
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.files).toHaveLength(1);
+    expect(body.files[0].filename).toBe("p.txt");
+  });
+
   it("rejects upload to a workspace the caller is not a member of (403)", async () => {
     // Provision a second workspace with no member added — DEV_IDENTITY is
     // not in its member list, so resolveWorkspace must reject.

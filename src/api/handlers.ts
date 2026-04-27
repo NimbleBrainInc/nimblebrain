@@ -1244,24 +1244,33 @@ export async function handleResourceUpload(
     return apiError(400, "bad_request", "Invalid multipart form data");
   }
 
+  // Files MUST be sent under the `file` or `files` key. Other non-string
+  // entries (e.g. a Blob accidentally appended under `tags`) are ignored
+  // rather than silently treated as uploads — caller surprises in upload
+  // contracts age badly.
   const uploads: UploadedFile[] = [];
-  for (const [_key, value] of formData.entries()) {
-    if (typeof value === "string") continue;
-    const entry = value as unknown as {
-      arrayBuffer(): Promise<ArrayBuffer>;
-      name?: string;
-      type?: string;
-    };
-    if (typeof entry.arrayBuffer !== "function") continue;
-    uploads.push({
-      data: Buffer.from(await entry.arrayBuffer()),
-      filename: entry.name || "unnamed",
-      mimeType: entry.type || "application/octet-stream",
-    });
+  try {
+    for (const [key, value] of formData.entries()) {
+      if (typeof value === "string") continue;
+      if (key !== "file" && key !== "files") continue;
+      const entry = value as unknown as {
+        arrayBuffer(): Promise<ArrayBuffer>;
+        name?: string;
+        type?: string;
+      };
+      if (typeof entry.arrayBuffer !== "function") continue;
+      uploads.push({
+        data: Buffer.from(await entry.arrayBuffer()),
+        filename: entry.name || "unnamed",
+        mimeType: entry.type || "application/octet-stream",
+      });
+    }
+  } catch {
+    return apiError(400, "bad_request", "Malformed file entry in multipart body");
   }
 
   if (uploads.length === 0) {
-    return apiError(400, "bad_request", "No files in request");
+    return apiError(400, "bad_request", "No files in request (use the 'file' or 'files' field)");
   }
 
   const config = runtime.getFilesConfig();
