@@ -53,16 +53,27 @@ const ALLOWED_MIMES = new Set([
   ...BINARY_TYPES,
 ]);
 
-function isAllowedMime(mimeType: string): boolean {
-  return ALLOWED_MIMES.has(mimeType);
+/**
+ * Strip Content-Type parameters and case-fold so all classification
+ * predicates (allowlist + extractable + image) see the same shape.
+ * Browsers and Bun's Blob attach `;charset=…`, `;boundary=…` etc., and
+ * exact-Set lookups against the raw value silently miss otherwise.
+ */
+function normalizeMime(mimeType: string): string {
+  return mimeType.split(";", 1)[0]?.trim().toLowerCase() ?? "";
+}
+
+export function isAllowedMime(mimeType: string): boolean {
+  return ALLOWED_MIMES.has(normalizeMime(mimeType));
 }
 
 function isExtractable(mimeType: string): boolean {
-  return EXTRACTABLE_TEXT.has(mimeType) || EXTRACTABLE_DOCS.has(mimeType);
+  const bare = normalizeMime(mimeType);
+  return EXTRACTABLE_TEXT.has(bare) || EXTRACTABLE_DOCS.has(bare);
 }
 
 function isImage(mimeType: string): boolean {
-  return IMAGE_TYPES.has(mimeType);
+  return IMAGE_TYPES.has(normalizeMime(mimeType));
 }
 
 function humanSize(bytes: number): string {

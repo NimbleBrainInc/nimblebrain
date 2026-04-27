@@ -964,7 +964,10 @@ export const FILES_BROWSER_HTML = `<!DOCTYPE html>
       });
     }
 
-    // Upload button — uses synapse/request-file protocol
+    // Upload button — synapse/request-file uploads via the host's
+    // POST /v1/resources directly. The picker returns persisted
+    // FileEntry records, so no follow-up create() tool call is needed
+    // — bytes never traverse the iframe-bridge-tool path.
     var uploadBtn = document.getElementById("uploadBtn");
     if (uploadBtn) {
       uploadBtn.addEventListener("click", function() {
@@ -972,26 +975,11 @@ export const FILES_BROWSER_HTML = `<!DOCTYPE html>
         _pending[reqId] = {
           resolve: function(result) {
             if (!result) return; // user cancelled
-            var files = Array.isArray(result) ? result : [result];
-            var chain = Promise.resolve();
-            files.forEach(function(f) {
-              chain = chain.then(function() {
-                return callTool("create", {
-                  filename: f.filename,
-                  base64_data: f.base64Data,
-                  mime_type: f.mimeType || "application/octet-stream",
-                  tags: []
-                });
-              });
-            });
-            chain.then(function() { loadFiles(); })
-              .catch(function(err) {
-                state.error = "Upload failed: " + (err.message || err);
-                render();
-              });
+            if (Array.isArray(result) && result.length === 0) return;
+            loadFiles();
           },
           reject: function(err) {
-            state.error = "File picker failed: " + (err.message || err);
+            state.error = "Upload failed: " + (err.message || err);
             render();
           }
         };

@@ -23,6 +23,7 @@
 
 ### Fixed
 
+- Files-app uploads no longer fail with `Payload too large`. Picker bytes now flow through `POST /v1/resources` (multipart, workspace-scoped) instead of being base64-encoded into a `tools/call` argument; `isAllowedMime` strips Content-Type parameters, fixing a latent miss in the chat ingest path too ([#93](https://github.com/NimbleBrainInc/nimblebrain/pull/93)).
 - `nb__read_resource` and `POST /v1/resources/read` resolve `ui://` resources published by platform built-ins (settings, home, automations, conversations, files, usage, nb). Previously the structural type guard couldn't distinguish two divergent `readResource` shapes and silently skipped any platform source ([#90](https://github.com/NimbleBrainInc/nimblebrain/issues/90)).
 
 ### Removed

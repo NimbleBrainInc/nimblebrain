@@ -11,20 +11,24 @@ export async function extractText(
   mimeType: string,
   maxSize: number = 204_800,
 ): Promise<{ text: string; truncated: boolean } | null> {
+  // Normalize: callers may pass `text/plain;charset=utf-8` from a
+  // browser upload. Exact-Set / equality checks against the raw value
+  // silently miss otherwise.
+  const bare = mimeType.split(";", 1)[0]?.trim().toLowerCase() ?? "";
   try {
-    if (isTextMime(mimeType)) {
+    if (isTextMime(bare)) {
       return truncate(data.toString("utf-8"), maxSize);
     }
 
-    if (mimeType === "application/pdf") {
+    if (bare === "application/pdf") {
       return await extractPdf(data, maxSize);
     }
 
-    if (mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") {
+    if (bare === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") {
       return await extractDocx(data, maxSize);
     }
 
-    if (mimeType === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") {
+    if (bare === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") {
       return extractXlsx(data, maxSize);
     }
 

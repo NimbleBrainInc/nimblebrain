@@ -52,6 +52,25 @@ describe("ingestFiles", () => {
     expect(extractedPart).toBeDefined();
   });
 
+  test("text file with charset parameter still hits the extraction path", async () => {
+    // Regression: isAllowedMime, isExtractable and isImage must all
+    // see the bare MIME. A pre-fix bug accepted `text/plain;charset=utf-8`
+    // at the gate but skipped extraction because the classifier did an
+    // exact-Set lookup against the parameter-suffixed value.
+    const store = createFileStore(join(workDir, "files"));
+    const files = [makeFile("charset content", "with-charset.txt", "text/plain;charset=utf-8")];
+    const result = await ingestFiles(files, "conv_1", store, DEFAULT_CONFIG);
+
+    expect(result.errors).toHaveLength(0);
+    expect(result.fileRefs).toHaveLength(1);
+    expect(result.fileRefs[0].extracted).toBe(true);
+
+    const extractedPart = result.contentParts.find(
+      (p) => p.type === "text" && p.text.includes("charset content"),
+    );
+    expect(extractedPart).toBeDefined();
+  });
+
   test("image file produces image content part + metadata notice", async () => {
     const store = createFileStore(join(workDir, "files"));
     const pngHeader = Buffer.from([
