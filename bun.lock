@@ -11,7 +11,7 @@
         "@modelcontextprotocol/ext-apps": "^1.3.1",
         "@modelcontextprotocol/sdk": "^1.29.0",
         "@nimblebrain/mpak-sdk": "0.6.0",
-        "@nimblebrain/synapse": "^0.4.0",
+        "@nimblebrain/synapse": "^0.8.0",
         "@workos-inc/node": "^8.12.1",
         "ai": "^6.0.138",
         "ajv": "^8.18.0",
@@ -86,7 +86,7 @@
 
     "@nimblebrain/mpak-sdk": ["@nimblebrain/mpak-sdk@0.6.0", "", { "dependencies": { "@nimblebrain/mpak-schemas": "0.2.0", "yauzl": "^3.2.0", "zod": "^4.3.6" } }, "sha512-xH2fHc5OlBQmZUFr96yBIdM519yatq8lEaMQZSOM+6kRDviTsl15DBT39fkavfkp7VJIww7Ubftn8GC2trSzog=="],
 
-    "@nimblebrain/synapse": ["@nimblebrain/synapse@0.4.0", "", { "peerDependencies": { "@modelcontextprotocol/ext-apps": "^1.3.1", "react": "^18.0.0 || ^19.0.0" }, "optionalPeers": ["react"], "bin": { "synapse": "dist/codegen/cli.js" } }, "sha512-7VLuwPhAgp7n7Ok9IVRs/qtK64KTl7RAPMWR2IGmiyjXW/552vwuMrAgDkksuPrIiZECalXSx08Zaks/+SRsxg=="],
+    "@nimblebrain/synapse": ["@nimblebrain/synapse@0.8.0", "", { "peerDependencies": { "@modelcontextprotocol/ext-apps": "^1.3.1", "react": "^18.0.0 || ^19.0.0" }, "optionalPeers": ["react"], "bin": { "synapse": "dist/codegen/cli.js" } }, "sha512-he6+9AOZFsZwnQS6IGbBrkL5OoQ1AwTpjACNQnyyqXgljZ/BhXNCSG9CzzUtS+XorYcZ4EZIEadUXFXSafZkZw=="],
 
     "@opentelemetry/api": ["@opentelemetry/api@1.9.0", "", {}, "sha512-3giAOQvZiH5F9bMlMiv8+GSPMeqg0dbaeo58/0SlA9sxSqZhnUtxzX9/2FzyhS9sWQf5S0GJE0AKBrFqjpeYcg=="],
 
