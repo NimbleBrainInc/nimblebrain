@@ -135,11 +135,22 @@ describe("skills source — schema rejection", () => {
     expect(result.isError).toBe(true);
   });
 
-  test("active_for without conversation_id is rejected", async () => {
+  test("active_for without conversation_id errors when no current conversation is in scope", async () => {
+    // The schema no longer requires `conversation_id` — inside a chat the
+    // handler defaults to the current conversation via request context. But
+    // when called outside a chat (no request context, as in this test), the
+    // handler must error explicitly rather than silently falling back to a
+    // wrong conversation. This case verifies the explicit error path.
     const src = await buildSource();
     const client = src.getClient()!;
     const result = await client.callTool({ name: "active_for", arguments: {} });
     expect(result.isError).toBe(true);
+    const text = (result.content as Array<{ type: string; text: string }>)
+      .filter((c) => c.type === "text")
+      .map((c) => c.text)
+      .join("");
+    expect(text).toContain("conversation_id is required");
+    expect(text).toContain("outside a chat");
   });
 });
 

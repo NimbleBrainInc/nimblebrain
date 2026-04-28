@@ -12,6 +12,15 @@ export interface RequestContext {
   workspaceId: string | null;
   workspaceAgents: Record<string, AgentProfile> | null;
   workspaceModelOverride: Partial<ModelSlots> | null;
+  /**
+   * Active conversation id when this context was created inside `runtime.chat()`.
+   * Tools that ask "what's happening in the current conversation" (e.g.
+   * `skills__active_for`) read this when their input omits an explicit id.
+   * Optional / undefined when the context is created outside a chat (REST tool
+   * calls, MCP server requests, background jobs); tools must error explicitly
+   * rather than silently falling back to the wrong conversation.
+   */
+  conversationId?: string | null;
 }
 
 const storage = new AsyncLocalStorage<RequestContext>();
