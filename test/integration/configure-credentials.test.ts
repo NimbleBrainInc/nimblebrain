@@ -201,6 +201,14 @@ describe("manage_app configure — end-to-end", () => {
         restoreEnv();
       }
     },
-    10_000,
+    // 20s: spawns a real Node MCP subprocess and completes the full stdio
+    // handshake + tools/list. The platform's own MCP-stdio CONNECT_TIMEOUT
+    // is 30s (`src/tools/mcp-source.ts`), so the prior 10s outer guard
+    // tripped on slow CI runners while the platform was still well within
+    // its own connect budget. 20s matches the suite convention for
+    // subprocess-spawning tests (see remote-integration.test.ts) and
+    // stays under the platform ceiling so a genuine connect hang still
+    // surfaces as a failure rather than a test timeout.
+    20_000,
   );
 });
