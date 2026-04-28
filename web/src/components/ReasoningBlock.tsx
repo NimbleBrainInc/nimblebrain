@@ -38,7 +38,7 @@ function ReasoningBlockImpl({ text, streaming }: ReasoningBlockProps) {
         <span>{streaming && !text ? "Thinking…" : "Thoughts"}</span>
       </button>
       {expanded && text && (
-        <div className="mt-2 ml-4 px-3 py-2 rounded-md bg-muted/30 border border-border/60 text-sm text-muted-foreground whitespace-pre-wrap font-mono leading-relaxed">
+        <div className="mt-2 ml-4 px-3 py-2 rounded-md bg-muted/30 border border-border/60 text-sm text-muted-foreground whitespace-pre-wrap leading-relaxed">
           {text}
         </div>
       )}

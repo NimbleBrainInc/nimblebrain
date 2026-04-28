@@ -20,6 +20,12 @@ export interface EchoModelResponse {
    */
   reasoning?: string;
   /**
+   * Provider metadata to emit on the reasoning-end stream part. The
+   * Anthropic SDK forwards thinking-block signatures here; tests use
+   * this to verify multi-iteration round-trips preserve the signature.
+   */
+  reasoningProviderMetadata?: Record<string, Record<string, unknown>>;
+  /**
    * Optional reasoning-token subtotal reported in usage.outputTokens.reasoning.
    * Tests use this to verify the engine forwards the breakdown on llm.done.
    */
@@ -98,7 +104,13 @@ export function createEchoModel(options?: EchoModelOptions): LanguageModelV3 {
       const content: LanguageModelV3Content[] = [];
 
       if (queued.reasoning !== undefined) {
-        content.push({ type: "reasoning", text: queued.reasoning });
+        content.push({
+          type: "reasoning",
+          text: queued.reasoning,
+          ...(queued.reasoningProviderMetadata
+            ? { providerMetadata: queued.reasoningProviderMetadata }
+            : {}),
+        });
       }
 
       if (queued.text !== undefined) {
@@ -165,6 +177,18 @@ export function createEchoModel(options?: EchoModelOptions): LanguageModelV3 {
         if (item.type === "reasoning") {
           parts.push({ type: "reasoning-start", id: "reasoning-0" });
           parts.push({ type: "reasoning-delta", id: "reasoning-0", delta: item.text });
+          // Anthropic transports the thinking signature on a separate
+          // reasoning-delta with empty text. Mirror that here when the
+          // queued response provided providerMetadata so multi-iter
+          // tests can verify signature round-trip.
+          if (item.providerMetadata) {
+            parts.push({
+              type: "reasoning-delta",
+              id: "reasoning-0",
+              delta: "",
+              providerMetadata: item.providerMetadata,
+            });
+          }
           parts.push({ type: "reasoning-end", id: "reasoning-0" });
         } else if (item.type === "text") {
           parts.push({ type: "text-start", id: "text-0" });

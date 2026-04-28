@@ -11,12 +11,6 @@ import { estimateCost } from "../engine/cost.ts";
 import type { ConversationEvent, LlmResponseEvent, StoredMessage, ToolDoneEvent } from "./types.ts";
 
 /**
- * Parse tool-call input from its persisted form.
- * The AI SDK V3 stream emits tool-call input as a JSON string, which gets
- * written to the JSONL event log as-is. When reconstructing messages for
- * the LLM API, input must be a parsed object (dictionary), not a string.
- */
-/**
  * Per-finishReason placeholder text for empty turns. The marker becomes
  * the assistant message body so the model sees honest context on its
  * next turn ("your last attempt was cut off") and the UI has something
@@ -31,6 +25,12 @@ const TRUNCATION_MARKERS: Record<string, string> = {
   stop: "[Previous turn ended without producing content.]",
 };
 
+/**
+ * Parse tool-call input from its persisted form.
+ * The AI SDK V3 stream emits tool-call input as a JSON string, which gets
+ * written to the JSONL event log as-is. When reconstructing messages for
+ * the LLM API, input must be a parsed object (dictionary), not a string.
+ */
 function parseToolInput(input: unknown): Record<string, unknown> {
   if (typeof input === "string") {
     try {
@@ -192,9 +192,17 @@ export function reconstructMessages(events: readonly ConversationEvent[]): Store
         // so the UI renders a single collapsed reasoning block above the
         // assistant's tool call or text. Subsequent messages from the
         // same turn omit it to avoid duplication.
+        //
+        // Provider metadata (e.g. Anthropic's thinking signature) is
+        // promoted from `providerMetadata` (the V3Content output shape)
+        // to `providerOptions` (the V3ReasoningPart prompt shape) so
+        // the reasoning block survives a conversation reload + replay.
+        // Without this, the AI SDK Anthropic provider drops the block as
+        // "unsupported reasoning metadata" and Anthropic 400s the call.
         const reasoningContent = reasoningParts.map((r) => ({
           type: "reasoning" as const,
           text: r.text,
+          ...(r.providerMetadata ? { providerOptions: r.providerMetadata } : {}),
         }));
         let reasoningEmitted = false;
 
@@ -287,10 +295,12 @@ export function reconstructMessages(events: readonly ConversationEvent[]): Store
         // assistant message carrying finishReason in metadata so the UI
         // can render the truncation banner and the reasoning (if any).
         //
-        // If neither reasoning nor visible content exists, attach a
-        // short text marker so the LLM history isn't an empty-content
-        // assistant message (Anthropic rejects those) and the model
-        // gets honest context about what just happened.
+        // Reasoning content is ONLY usable as the placeholder body when
+        // it carries provider metadata that lets it round-trip (e.g.
+        // Anthropic's signature). Without that, the AI SDK provider
+        // drops the block on the next prompt → content: [] → API 400.
+        // Fall back to marker text whenever the reasoning can't be
+        // safely replayed.
         if (
           toolCallParts.length === 0 &&
           textParts.length === 0 &&
@@ -298,10 +308,12 @@ export function reconstructMessages(events: readonly ConversationEvent[]): Store
         ) {
           const placeholderText =
             TRUNCATION_MARKERS[llmResp.finishReason ?? "other"] ?? TRUNCATION_MARKERS.other!;
-          const placeholderContent =
-            reasoningContent.length > 0
-              ? reasoningContent
-              : [{ type: "text" as const, text: placeholderText }];
+          const reasoningRoundTrips = reasoningContent.some(
+            (r) => "providerOptions" in r && r.providerOptions != null,
+          );
+          const placeholderContent = reasoningRoundTrips
+            ? reasoningContent
+            : [{ type: "text" as const, text: placeholderText }];
           const assistantMsg: StoredMessage = {
             role: "assistant",
             content: placeholderContent,

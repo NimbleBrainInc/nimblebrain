@@ -4,6 +4,7 @@ import type {
   LanguageModelV3Content,
   LanguageModelV3FinishReason,
   LanguageModelV3Usage,
+  SharedV3ProviderMetadata,
 } from "@ai-sdk/provider";
 
 export interface StreamResult {
@@ -32,6 +33,14 @@ export async function callModel(
 
   let accumulatedText = "";
   let accumulatedReasoning = "";
+  // Reasoning provider metadata accumulator. Anthropic transports the
+  // thinking-block signature as a separate `signature_delta` event that
+  // the AI SDK forwards as a `reasoning-delta` with empty text and
+  // `providerMetadata.anthropic.signature`. Without persisting that
+  // signature, the next iteration's prompt fails to round-trip the
+  // reasoning block — the AI SDK provider drops it as "unsupported
+  // reasoning metadata" and Anthropic 400s the request.
+  let reasoningProviderMetadata: SharedV3ProviderMetadata | undefined;
 
   const reader = stream.getReader();
   try {
@@ -61,20 +70,37 @@ export async function callModel(
         // Without this case, reasoning tokens are billed but never appear
         // in `content[]` — turns that produce only reasoning render as
         // empty (the failure mode that started this whole thread).
+        // Provider metadata (e.g. Anthropic's thinking signature) is
+        // merged across all reasoning-* parts of a block so the block
+        // can round-trip on the next iteration's prompt.
         case "reasoning-start":
           accumulatedReasoning = "";
+          reasoningProviderMetadata = part.providerMetadata
+            ? { ...part.providerMetadata }
+            : undefined;
           break;
 
         case "reasoning-delta":
           onReasoningDelta?.(part.delta);
           accumulatedReasoning += part.delta;
+          if (part.providerMetadata) {
+            reasoningProviderMetadata = mergeProviderMetadata(
+              reasoningProviderMetadata,
+              part.providerMetadata,
+            );
+          }
           break;
 
         case "reasoning-end":
-          if (accumulatedReasoning) {
-            content.push({ type: "reasoning", text: accumulatedReasoning });
+          if (accumulatedReasoning || reasoningProviderMetadata) {
+            content.push({
+              type: "reasoning",
+              text: accumulatedReasoning,
+              ...(reasoningProviderMetadata ? { providerMetadata: reasoningProviderMetadata } : {}),
+            });
           }
           accumulatedReasoning = "";
+          reasoningProviderMetadata = undefined;
           break;
 
         case "tool-call":
@@ -95,9 +121,31 @@ export async function callModel(
   if (accumulatedText) {
     content.push({ type: "text", text: accumulatedText });
   }
-  if (accumulatedReasoning) {
-    content.push({ type: "reasoning", text: accumulatedReasoning });
+  if (accumulatedReasoning || reasoningProviderMetadata) {
+    content.push({
+      type: "reasoning",
+      text: accumulatedReasoning,
+      ...(reasoningProviderMetadata ? { providerMetadata: reasoningProviderMetadata } : {}),
+    });
   }
 
   return { content, usage, finishReason };
+}
+
+/**
+ * Shallow-merge two provider-metadata bags by provider key. Each provider
+ * gets its own object spread together; later keys win. The AI SDK only
+ * cares about the per-provider sub-object (e.g. `anthropic.signature`),
+ * so a deeper merge isn't needed.
+ */
+function mergeProviderMetadata(
+  a: SharedV3ProviderMetadata | undefined,
+  b: SharedV3ProviderMetadata,
+): SharedV3ProviderMetadata {
+  if (!a) return { ...b };
+  const out: SharedV3ProviderMetadata = { ...a };
+  for (const [provider, meta] of Object.entries(b)) {
+    out[provider] = { ...(out[provider] ?? {}), ...(meta ?? {}) };
+  }
+  return out;
 }

@@ -406,31 +406,85 @@ describe("reconstructMessages", () => {
     expect(text?.text).toContain("cut off");
   });
 
-  it("emits a reasoning-only assistant message when text and tool-calls are absent", () => {
-    // Extended-thinking turn that ran out of budget producing only
-    // reasoning. The placeholder uses the reasoning content directly
-    // rather than the canned marker text.
-    const reasoningOnly: LlmResponseEvent = {
-      ...llmText("run-1", ""),
-      content: [{ type: "reasoning", text: "Mid-thought when cap hit..." }],
-      finishReason: "length",
+  it("preserves Anthropic signature on reasoning blocks across reconstruction", () => {
+    // Verifies the multi-iteration round-trip path: stream captures
+    // signature → JSONL persists it → reconstructor copies into
+    // StoredMessage.content as `providerOptions` so the next prompt
+    // doesn't lose the block to "unsupported reasoning metadata".
+    const reasoningWithSig: LlmResponseEvent = {
+      ...llmToolCall("run-1", "tc-1", "lookup", { id: "x" }),
+      content: [
+        {
+          type: "reasoning",
+          text: "Need to look this up.",
+          providerMetadata: { anthropic: { signature: "sig-abc-123" } },
+        },
+        { type: "tool-call", toolCallId: "tc-1", toolName: "lookup", input: { id: "x" } },
+      ],
     };
     const events: ConversationEvent[] = [
-      userMessage("hi"),
+      userMessage("look up x"),
       runStart("run-1"),
-      reasoningOnly,
+      reasoningWithSig,
+      toolStart("run-1", "tc-1", "lookup"),
+      toolDone("run-1", "tc-1", "lookup"),
       runDone("run-1"),
     ];
     const messages = reconstructMessages(events);
-    expect(messages).toHaveLength(2);
-    const assistant = messages[1]!;
-    expect(assistant.metadata!.finishReason).toBe("length");
-    const reasoning = assistant.content.find(
-      (c): c is { type: "reasoning"; text: string } => c.type === "reasoning",
+    const assistant = messages.find((m) => m.role === "assistant");
+    expect(assistant).toBeDefined();
+    const reasoning = assistant!.content.find(
+      (c): c is { type: "reasoning"; text: string; providerOptions?: unknown } =>
+        c.type === "reasoning",
     );
-    expect(reasoning?.text).toBe("Mid-thought when cap hit...");
-    // No marker text — reasoning is the visible content
-    expect(assistant.content.find((c) => c.type === "text")).toBeUndefined();
+    expect(reasoning?.providerOptions).toEqual({ anthropic: { signature: "sig-abc-123" } });
+  });
+
+  it("placeholder uses reasoning content only when it carries provider metadata", () => {
+    // With signature → reasoning IS the placeholder body (round-trips fine).
+    const withSig: LlmResponseEvent = {
+      ...llmText("run-1", ""),
+      content: [
+        {
+          type: "reasoning",
+          text: "Mid-thought when cap hit.",
+          providerMetadata: { anthropic: { signature: "sig-x" } },
+        },
+      ],
+      finishReason: "length",
+    };
+    const withSigMessages = reconstructMessages([
+      userMessage("hi"),
+      runStart("run-1"),
+      withSig,
+      runDone("run-1"),
+    ]);
+    const reasoning = withSigMessages[1]!.content.find((c) => c.type === "reasoning");
+    expect(reasoning).toBeDefined();
+    expect(withSigMessages[1]!.content.find((c) => c.type === "text")).toBeUndefined();
+  });
+
+  it("placeholder falls back to marker text when reasoning has no provider metadata", () => {
+    // Without signature → reasoning would be stripped by the AI SDK on
+    // replay, leaving content: []. Anthropic 400s empty assistant
+    // messages, so the reconstructor must use the marker text instead.
+    const withoutSig: LlmResponseEvent = {
+      ...llmText("run-1", ""),
+      content: [{ type: "reasoning", text: "Thoughts without signature." }],
+      finishReason: "length",
+    };
+    const messages = reconstructMessages([
+      userMessage("hi"),
+      runStart("run-1"),
+      withoutSig,
+      runDone("run-1"),
+    ]);
+    const placeholder = messages[1]!;
+    const text = placeholder.content.find(
+      (c): c is { type: "text"; text: string } => c.type === "text",
+    );
+    expect(text?.text).toContain("cut off");
+    expect(placeholder.content.find((c) => c.type === "reasoning")).toBeUndefined();
   });
 
   it("forwards finishReason from llm.response into assistant message metadata", () => {

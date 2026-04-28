@@ -299,8 +299,15 @@ export class AgentEngine {
         }
 
         // 4. Append assistant message to history
-        // Stream tool-call parts have input as a JSON string, but the prompt format
-        // expects input as a parsed object. Convert before adding to history.
+        // Stream content uses fields that don't always match the prompt-side
+        // shape — convert before pushing back as next-iteration history:
+        //   - tool-call: input is a JSON string in stream output, but the
+        //     prompt format expects a parsed object.
+        //   - reasoning: stream output uses `providerMetadata` (matches
+        //     LanguageModelV3Reasoning); the prompt-side ReasoningPart
+        //     reads `providerOptions`. The AI SDK Anthropic provider
+        //     drops reasoning blocks without `providerOptions.anthropic.
+        //     signature`, breaking multi-iteration replay.
         const historyContent = response.content.map((part) => {
           if (part.type === "tool-call" && typeof part.input === "string") {
             try {
@@ -308,6 +315,9 @@ export class AgentEngine {
             } catch {
               return { ...part, input: {} };
             }
+          }
+          if (part.type === "reasoning" && part.providerMetadata) {
+            return { ...part, providerOptions: part.providerMetadata };
           }
           return part;
         });
