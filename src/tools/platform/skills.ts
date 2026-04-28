@@ -1267,6 +1267,27 @@ function snapshotVersion(filePath: string): void {
   copyFileSync(filePath, join(versionsDir, `${name}.${stamp}.md`));
 }
 
+/**
+ * Trigger a runtime reload of the boot-time skill pool after a mutation.
+ *
+ * `loadConversationSkills` reads workspace + user + org dirs fresh per
+ * call, but the `SkillMatcher` (which scans triggers/keywords on
+ * `runtime.chat()` to set `skillName`) is built only at boot and on
+ * explicit `reloadSkills()`. Without this call, a freshly-created
+ * org-tier skill won't match its triggers until the process restarts.
+ *
+ * Errors are swallowed: the on-disk write already succeeded, the file
+ * will load on next boot, and the operator already has a successful
+ * mutation result. Logging the failure beats failing the whole call.
+ */
+async function reloadBootSkills(runtime: Runtime): Promise<void> {
+  try {
+    await runtime.reloadSkills();
+  } catch (err) {
+    console.error("[skills] reloadSkills failed after mutation:", err);
+  }
+}
+
 function permissionDenied(reason: string): ToolResult {
   return {
     content: textContent(reason),
@@ -1333,6 +1354,7 @@ async function createSkill(
   }
 
   writeSkill(dir, name, merged, body ?? "");
+  await reloadBootSkills(runtime);
   eventSink.emit({
     type: "skill.created",
     data: { id: target, name, scope: writableScope, type: merged.type },
@@ -1392,6 +1414,7 @@ async function updateSkillHandler(
   // Reuse the writer's merge logic so behavior matches `system_tools` edit.
   const partial = patchRaw ? coerceManifestPatch(patchRaw) : undefined;
   updateSkill(dir, name, partial, body);
+  await reloadBootSkills(runtime);
 
   eventSink.emit({ type: "skill.updated", data: { id, name, scope } });
   return {
@@ -1431,6 +1454,7 @@ async function deleteSkillHandler(
 
   snapshotVersion(id);
   deleteSkill(dir, name);
+  await reloadBootSkills(runtime);
 
   eventSink.emit({ type: "skill.deleted", data: { id, name, scope } });
   return {
@@ -1516,6 +1540,7 @@ async function moveScopeHandler(
   const { scope: _drop, ...manifestWithoutScope } = skill.manifest;
   writeSkill(targetDir, name, manifestWithoutScope as typeof skill.manifest, skill.body);
   deleteSkill(dirname(id), name);
+  await reloadBootSkills(runtime);
 
   eventSink.emit({
     type: "skill.updated",
