@@ -29,6 +29,27 @@ function formatRelativeTime(iso: string): string {
   return `${days}d ago`;
 }
 
+/**
+ * User-facing copy for run-level stop reasons. Only fires when stopReason
+ * is not "complete" (the happy path is filtered upstream in useChat).
+ * Unknown values fall through to the generic fallback so a future engine
+ * change can't break the UI silently.
+ */
+function stopReasonMessage(stopReason: string): string {
+  switch (stopReason) {
+    case "max_iterations":
+      return "I reached my step limit for this turn. Send another message and I'll pick up where I left off.";
+    case "length":
+      return "I ran out of room mid-response (hit the output-token limit). Send another message and I'll continue.";
+    case "content_filter":
+      return "The response was blocked by content filtering. Try rephrasing your request.";
+    case "error":
+      return "The model returned an error. Try again, or rephrase if it keeps happening.";
+    default:
+      return `Run ended: ${stopReason}`;
+  }
+}
+
 type CopyState = "idle" | "copied" | "failed";
 
 function CopyButton({ content }: { content: string }) {
@@ -422,11 +443,7 @@ export function MessageList({
                     {msg.stopReason && (
                       <div className="flex items-start gap-2 px-3 py-2 rounded-md bg-muted/50 border border-border text-sm text-muted-foreground">
                         <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
-                        <span>
-                          {msg.stopReason === "max_iterations"
-                            ? "I reached my step limit for this turn. Send another message and I'll pick up where I left off."
-                            : `Run ended: ${msg.stopReason}`}
-                        </span>
+                        <span>{stopReasonMessage(msg.stopReason)}</span>
                       </div>
                     )}
                     {/* Inline error notice */}

@@ -152,6 +152,8 @@ export type StoredMessage = LanguageModelV3Message & {
     model?: string;
     llmMs?: number;
     iterations?: number;
+    /** Per-call finish reason — surfaces length truncation etc. to the UI. */
+    finishReason?: "stop" | "length" | "content-filter" | "tool-calls" | "error" | "other";
     files?: Array<{
       id: string;
       filename: string;
@@ -217,6 +219,12 @@ export interface LlmResponseEvent {
   cacheReadTokens: number;
   cacheCreationTokens: number;
   llmMs: number;
+  /**
+   * Per-call finish reason from the provider (AI SDK V3 unified value).
+   * Optional for backward-compat with conversations recorded before this
+   * field existed.
+   */
+  finishReason?: "stop" | "length" | "content-filter" | "tool-calls" | "error" | "other";
 }
 
 export interface ToolStartEvent {

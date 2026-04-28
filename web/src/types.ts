@@ -205,6 +205,12 @@ export interface LlmDoneEvent {
   cacheReadTokens: number;
   cacheCreationTokens: number;
   llmMs: number;
+  /**
+   * Per-call finish reason (AI SDK V3 unified). Optional for backward
+   * compat; surfaces length truncation, content filter, etc. so the UI
+   * can render a per-message indicator.
+   */
+  finishReason?: "stop" | "length" | "content-filter" | "tool-calls" | "error" | "other";
 }
 
 /** Chat stream SSE event type to payload mapping. */

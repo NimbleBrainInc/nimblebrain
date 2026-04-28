@@ -18,6 +18,12 @@ export interface EchoModelResponse {
     toolName: string;
     input: string; // stringified JSON
   }>;
+  /**
+   * Override the unified finish reason for this response. Defaults to
+   * `tool-calls` when toolCalls are present, otherwise `stop`. Tests use
+   * this to simulate length truncation, content filtering, etc.
+   */
+  finishReason?: "stop" | "length" | "content-filter" | "tool-calls" | "error" | "other";
 }
 
 export interface EchoModelOptions {
@@ -93,9 +99,13 @@ export function createEchoModel(options?: EchoModelOptions): LanguageModelV3 {
       const hasToolCalls = queued.toolCalls && queued.toolCalls.length > 0;
       const textLen = queued.text?.length ?? 0;
 
+      const finishReason: LanguageModelV3FinishReason = queued.finishReason
+        ? { unified: queued.finishReason, raw: undefined }
+        : buildFinishReason(!!hasToolCalls);
+
       return {
         content,
-        finishReason: buildFinishReason(!!hasToolCalls),
+        finishReason,
         usage: buildUsage(textLen),
       };
     }

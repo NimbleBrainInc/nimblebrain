@@ -63,5 +63,5 @@ export interface AutomationRun {
   outputTokens?: number;
   toolCalls?: number;
   iterations?: number;
-  stopReason?: "complete" | "max_iterations" | "token_budget";
+  stopReason?: "complete" | "max_iterations" | "length" | "content_filter" | "error" | "other";
 }

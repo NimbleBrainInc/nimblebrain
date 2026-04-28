@@ -491,6 +491,7 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
       }
 
       case "llm.done": {
+        const finishReason = d.finishReason as LlmResponseEvent["finishReason"];
         const e: LlmResponseEvent = {
           ts,
           type: "llm.response",
@@ -502,6 +503,7 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
           cacheReadTokens: (d.cacheReadTokens as number) ?? 0,
           cacheCreationTokens: (d.cacheCreationTokens as number) ?? 0,
           llmMs: (d.llmMs as number) ?? 0,
+          ...(finishReason !== undefined ? { finishReason } : {}),
         };
         return e;
       }
@@ -546,11 +548,16 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
       }
 
       case "run.done": {
+        // Pass the engine's stopReason through verbatim. Defaulting to
+        // "complete" here used to mask length-truncation and other
+        // model-driven exits — the engine now derives the real reason
+        // from the final LLM call's finishReason. If d.stopReason is
+        // somehow missing, persist "other" so it's clear we don't know.
         const e: RunDoneEvent = {
           ts,
           type: "run.done",
           runId,
-          stopReason: (d.stopReason as string) ?? "complete",
+          stopReason: (d.stopReason as string) ?? "other",
           totalMs: (d.totalMs as number) ?? 0,
         };
         return e;

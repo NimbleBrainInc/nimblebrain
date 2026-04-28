@@ -324,6 +324,32 @@ describe("reconstructMessages", () => {
     expect(messages[2].role).toBe("tool");
   });
 
+  it("forwards finishReason from llm.response into assistant message metadata", () => {
+    const lengthCapped: LlmResponseEvent = {
+      ...llmText("run-1", "Building now."),
+      finishReason: "length",
+    };
+    const events: ConversationEvent[] = [
+      userMessage("Build the doc"),
+      runStart("run-1"),
+      lengthCapped,
+      runDone("run-1"),
+    ];
+    const messages = reconstructMessages(events);
+    expect(messages[1].metadata!.finishReason).toBe("length");
+  });
+
+  it("omits finishReason from metadata when the event lacks it (legacy)", () => {
+    const events: ConversationEvent[] = [
+      userMessage("Hi"),
+      runStart("run-1"),
+      llmText("run-1", "Hello"),
+      runDone("run-1"),
+    ];
+    const messages = reconstructMessages(events);
+    expect(messages[1].metadata!.finishReason).toBeUndefined();
+  });
+
   it("populates costUsd in assistant metadata", () => {
     const events: ConversationEvent[] = [
       userMessage("Hello"),

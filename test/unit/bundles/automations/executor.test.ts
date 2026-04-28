@@ -194,25 +194,54 @@ describe("executeHttp", () => {
 		expect(run.stopReason).toBe("max_iterations");
 	});
 
-	test("stopReason token_budget → status timeout", async () => {
+	test("stopReason complete → status success", async () => {
+		const run = await executeHttp(makeAutomation());
+		expect(run.status).toBe("success");
+		expect(run.stopReason).toBe("complete");
+	});
+
+	test("stopReason length → status failure (model truncated mid-run)", async () => {
+		mockFetch.mockImplementation(() =>
+			Promise.resolve(
+				new Response(JSON.stringify(chatResponse({ stopReason: "length" })), {
+					status: 200,
+					headers: { "Content-Type": "application/json" },
+				}),
+			),
+		);
+
+		const run = await executeHttp(makeAutomation());
+		expect(run.status).toBe("failure");
+		expect(run.stopReason).toBe("length");
+	});
+
+	test("stopReason content_filter → status failure", async () => {
 		mockFetch.mockImplementation(() =>
 			Promise.resolve(
 				new Response(
-					JSON.stringify(chatResponse({ stopReason: "token_budget" })),
+					JSON.stringify(chatResponse({ stopReason: "content_filter" })),
 					{ status: 200, headers: { "Content-Type": "application/json" } },
 				),
 			),
 		);
 
 		const run = await executeHttp(makeAutomation());
-		expect(run.status).toBe("timeout");
-		expect(run.stopReason).toBe("token_budget");
+		expect(run.status).toBe("failure");
+		expect(run.stopReason).toBe("content_filter");
 	});
 
-	test("stopReason complete → status success", async () => {
+	test("stopReason other → status failure (unrecognized values fail closed)", async () => {
+		mockFetch.mockImplementation(() =>
+			Promise.resolve(
+				new Response(JSON.stringify(chatResponse({ stopReason: "other" })), {
+					status: 200,
+					headers: { "Content-Type": "application/json" },
+				}),
+			),
+		);
+
 		const run = await executeHttp(makeAutomation());
-		expect(run.status).toBe("success");
-		expect(run.stopReason).toBe("complete");
+		expect(run.status).toBe("failure");
 	});
 
 	// --- resultPreview truncation ---

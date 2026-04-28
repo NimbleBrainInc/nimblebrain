@@ -321,6 +321,141 @@ describe("AgentEngine", () => {
     expect(result.iterations).toBe(3);
   });
 
+  describe("finishReason propagation", () => {
+    it("derives stopReason='complete' from finish=stop", async () => {
+      const model = createEchoModel({
+        responses: [{ text: "hi", finishReason: "stop" }],
+      });
+      const result = await makeEngine(model).run(
+        defaultConfig,
+        "",
+        [{ role: "user", content: [{ type: "text", text: "x" }] }],
+        [],
+      );
+
+      expect(result.stopReason).toBe("complete");
+      expect(result.finishReason).toBe("stop");
+    });
+
+    it("derives stopReason='length' when the model is truncated", async () => {
+      const model = createEchoModel({
+        responses: [{ text: "Building now.", finishReason: "length" }],
+      });
+      const result = await makeEngine(model).run(
+        defaultConfig,
+        "",
+        [{ role: "user", content: [{ type: "text", text: "build" }] }],
+        [],
+      );
+
+      expect(result.stopReason).toBe("length");
+      expect(result.finishReason).toBe("length");
+    });
+
+    it("derives stopReason='content_filter' when the model is filtered", async () => {
+      const model = createEchoModel({
+        responses: [{ text: "", finishReason: "content-filter" }],
+      });
+      const result = await makeEngine(model).run(
+        defaultConfig,
+        "",
+        [{ role: "user", content: [{ type: "text", text: "x" }] }],
+        [],
+      );
+
+      expect(result.stopReason).toBe("content_filter");
+      expect(result.finishReason).toBe("content-filter");
+    });
+
+    it("derives stopReason='error' when the model finish reason is error", async () => {
+      const model = createEchoModel({
+        responses: [{ text: "", finishReason: "error" }],
+      });
+      const result = await makeEngine(model).run(
+        defaultConfig,
+        "",
+        [{ role: "user", content: [{ type: "text", text: "x" }] }],
+        [],
+      );
+
+      expect(result.stopReason).toBe("error");
+      expect(result.finishReason).toBe("error");
+    });
+
+    it("derives stopReason='other' when finish=tool-calls but content has no parsable calls", async () => {
+      // Edge case: provider declares it stopped to call tools, but the
+      // stream produced no tool-call parts. The loop exits (toolCalls is
+      // empty) and the run reports "other" rather than fake "complete".
+      const model = createEchoModel({
+        responses: [{ text: "", finishReason: "tool-calls" }],
+      });
+      const result = await makeEngine(model).run(
+        defaultConfig,
+        "",
+        [{ role: "user", content: [{ type: "text", text: "x" }] }],
+        [],
+      );
+
+      expect(result.stopReason).toBe("other");
+      expect(result.finishReason).toBe("tool-calls");
+    });
+
+    it("max_iterations beats finishReason in the stop reason", async () => {
+      const model = createMockModel(() => ({
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: `call_${Date.now()}`,
+            toolName: "test__noop",
+            input: JSON.stringify({}),
+          },
+        ],
+        inputTokens: 10,
+        outputTokens: 5,
+      }));
+      const tools = {
+        schemas: [{ name: "test__noop", description: "No-op", inputSchema: {} }],
+        handler: (): ToolResult => ({ content: textContent("ok"), isError: false }),
+      };
+
+      const result = await makeEngine(model, tools).run(
+        { ...defaultConfig, maxIterations: 2 },
+        "",
+        [{ role: "user", content: [{ type: "text", text: "loop" }] }],
+        tools.schemas,
+      );
+
+      expect(result.stopReason).toBe("max_iterations");
+    });
+
+    it("emits finishReason on the llm.done event", async () => {
+      const events: EngineEvent[] = [];
+      const sink: EventSink = {
+        emit(event: EngineEvent) {
+          events.push(event);
+        },
+      };
+
+      const model = createEchoModel({
+        responses: [{ text: "truncated mid-thought", finishReason: "length" }],
+      });
+      await new AgentEngine(
+        model,
+        new StaticToolRouter([], () => ({ content: textContent(""), isError: false })),
+        sink,
+      ).run(
+        defaultConfig,
+        "",
+        [{ role: "user", content: [{ type: "text", text: "x" }] }],
+        [],
+      );
+
+      const llmDone = events.find((e) => e.type === "llm.done");
+      expect(llmDone).toBeDefined();
+      expect((llmDone!.data as Record<string, unknown>).finishReason).toBe("length");
+    });
+  });
+
   it("respects absolute MAX_ITERATIONS ceiling of 25", async () => {
     const model = createMockModel(() => ({
       content: [
