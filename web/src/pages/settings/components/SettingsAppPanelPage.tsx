@@ -9,11 +9,15 @@ import { SettingsPageHeader } from "./SettingsPageHeader";
  *
  * Without this template, navigating to `/settings/workspace/apps/<server>`
  * dropped the user into a raw, chromeless iframe with no indication that
- * they were still inside settings. The panel UI then had to redundantly
- * render its own page title (or look adrift). This template provides the
- * settings frame consistently — bundle icon and title in the header,
- * back-link to the apps index, and a faint "provided by" footer crediting
- * the bundle below the iframe.
+ * they were still inside settings. This template provides the settings
+ * frame consistently — bundle icon and title in the header, back-link to
+ * the apps index, and a faint "provided by" footer below the iframe.
+ *
+ * The iframe is rendered flush — no outer ring or `bg-card`. Bundle UIs
+ * already render their own complete content (headings, sections, save
+ * bars), so wrapping them in host card chrome produces visible
+ * cards-in-cards. This also matches the rule the sibling templates follow
+ * (`SettingsFormPage` docstring): pages don't wrap content in cards.
  *
  * The credit is rendered as a footer (not a subtitle) so it recedes
  * properly. Subtitle position competes with the bundle's own internal
@@ -41,9 +45,7 @@ export function SettingsAppPanelPage({ panel, children }: SettingsAppPanelPagePr
           back={{ to: "/settings/workspace/apps", label: "Back to apps" }}
         />
       </div>
-      <div className="flex-1 min-h-0 overflow-hidden rounded-xl ring-1 ring-foreground/10 bg-card">
-        {children}
-      </div>
+      <div className="flex-1 min-h-0 overflow-hidden">{children}</div>
       <p className="shrink-0 pt-2 text-right text-xs text-muted-foreground">
         Provided by <code className="text-[11px]">{panel.serverName}</code>
       </p>
