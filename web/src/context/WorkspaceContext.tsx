@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { callTool, setActiveWorkspaceId } from "../api/client";
+import { parseWorkspaceListResponse } from "../lib/bootstrap";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -100,13 +101,12 @@ export function WorkspaceProvider({
           }
         }
 
-        // The response may be { workspaces: [...] } or an array directly
-        let list: WorkspaceInfo[] = [];
-        if (Array.isArray(raw)) {
-          list = raw as WorkspaceInfo[];
-        } else if (raw && typeof raw === "object" && "workspaces" in raw) {
-          list = (raw as { workspaces: WorkspaceInfo[] }).workspaces;
-        }
+        // Route through the shared parser so `userRole` propagates regardless
+        // of whether the server returns it under `role` (bootstrap shape) or
+        // `userRole` (`manage_workspaces.list` shape today). Without this,
+        // any drift between the two contracts silently filters every
+        // workspace-scoped settings nav item for non-org-admins.
+        const list = parseWorkspaceListResponse(raw);
 
         setWorkspaces(list);
 

@@ -9,11 +9,14 @@ export interface ResolveThinkingInput {
   /** Resolved model string (e.g. `"anthropic:claude-opus-4-7"`). */
   model?: string;
   /**
-   * Resolved per-call output budget. Required for budget capping — without
-   * it, the platform-default and `enabled` paths fall back to a conservative
-   * floor. Always pass it from the runtime: it lets us guarantee at least
-   * `MIN_VISIBLE_OUTPUT_TOKENS` of room for visible content, even when
-   * thinking is on.
+   * Resolved per-call output budget. Strongly recommended — without it,
+   * the platform-default and `enabled` paths can't compute a useful
+   * thinking budget and fall back to the 1024-token floor, which gives
+   * reasoning models far less room than they need. Pass it from the
+   * runtime so the cap leaves at least `MIN_VISIBLE_OUTPUT_TOKENS` of
+   * room for visible content while still giving thinking enough budget
+   * to produce quality reasoning. Optional only to keep legacy callsites
+   * compiling.
    */
   maxOutputTokens?: number;
 }

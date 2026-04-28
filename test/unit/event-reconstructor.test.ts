@@ -576,17 +576,42 @@ describe("reconstructMessages", () => {
     // run.start but BEFORE any llm.response landed in the JSONL. Without
     // the final invariant pass, the run scope contributes zero messages
     // and the next user message creates user→user adjacency.
+    //
+    // Explicit timestamps so the placeholder-position assertions below
+    // aren't subject to `Date.now()` collisions (the helper factories
+    // call `Date.now()` and multiple events in the same millisecond
+    // would tie, masking any reordering bug).
+    const t0 = "2026-04-28T12:00:00.000Z";
+    const t1 = "2026-04-28T12:00:01.000Z";
+    const t2 = "2026-04-28T12:01:00.000Z";
     const events: ConversationEvent[] = [
-      userMessage("Do thing"),
-      runStart("run-1"),
+      { ts: t0, type: "user.message", content: [{ type: "text", text: "Do thing" }] },
+      { ts: t1, type: "run.start", runId: "run-1", model: "claude-sonnet-4-5-20250929" },
       // No llm.response, no tool events, no run.done — process died here
-      userMessage("Hello?"),
+      { ts: t2, type: "user.message", content: [{ type: "text", text: "Hello?" }] },
     ];
     const messages = reconstructMessages(events);
 
     expect(messages.map((m) => m.role)).toEqual(["user", "assistant", "user"]);
-    const placeholder = messages[1]!.content as Array<{ type: string; text?: string }>;
-    expect(placeholder[0]!.text).toContain("without producing any response");
+    const placeholder = messages[1]!;
+    const content = placeholder.content as Array<{ type: string; text?: string }>;
+    expect(content[0]!.text).toContain("without producing any response");
+
+    // Carries finishReason metadata so the chat UI renders the same
+    // truncation banner it uses for length / content-filter cases. There
+    // was no real LLM call, so "other" is the closest enum value.
+    expect(placeholder.metadata?.finishReason).toBe("other");
+    expect(placeholder.metadata?.inputTokens).toBe(0);
+    expect(placeholder.metadata?.outputTokens).toBe(0);
+
+    // Placeholder timestamp falls strictly between the surrounding user
+    // messages so the UI sorts it between them. Tied timestamps would
+    // collapse onto the next user turn and look like a self-reply.
+    const prevUserMs = Date.parse(t0);
+    const nextUserMs = Date.parse(t2);
+    const placeholderMs = Date.parse(placeholder.timestamp);
+    expect(placeholderMs).toBeGreaterThan(prevUserMs);
+    expect(placeholderMs).toBeLessThan(nextUserMs);
   });
 
   it("orphaned tool-calls placeholder preserves role alternation across appends", () => {

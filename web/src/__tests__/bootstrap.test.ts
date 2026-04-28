@@ -9,7 +9,7 @@
 
 import { describe, expect, test } from "bun:test";
 
-import { bootstrapWorkspacesToInfo } from "../lib/bootstrap";
+import { bootstrapWorkspacesToInfo, parseWorkspaceListResponse } from "../lib/bootstrap";
 import type { BootstrapResponse } from "../types";
 
 function bootstrapWs(
@@ -59,5 +59,68 @@ describe("bootstrapWorkspacesToInfo", () => {
 
   test("empty input → empty output", () => {
     expect(bootstrapWorkspacesToInfo([])).toEqual([]);
+  });
+});
+
+describe("parseWorkspaceListResponse", () => {
+  test("propagates userRole when server returns it (manage_workspaces.list shape)", () => {
+    // Today's `manage_workspaces.list` server handler emits `userRole`
+    // directly (workspace-mgmt-tools.ts handleList).
+    const result = parseWorkspaceListResponse({
+      workspaces: [{ id: "ws_1", name: "A", memberCount: 2, userRole: "admin" }],
+    });
+    expect(result[0]?.userRole).toBe("admin");
+  });
+
+  test("propagates role when server returns it (bootstrap shape)", () => {
+    // Defense against future contract drift: if either side renames the
+    // field, the other should still find it. Pinning this in a test makes
+    // the contract bidirectional rather than silently fragile.
+    const result = parseWorkspaceListResponse({
+      workspaces: [{ id: "ws_1", name: "A", memberCount: 2, role: "member" }],
+    });
+    expect(result[0]?.userRole).toBe("member");
+  });
+
+  test("prefers userRole over role when both are present", () => {
+    // The newer field wins — server's intent is authoritative.
+    const result = parseWorkspaceListResponse({
+      workspaces: [{ id: "ws_1", name: "A", memberCount: 1, role: "member", userRole: "admin" }],
+    });
+    expect(result[0]?.userRole).toBe("admin");
+  });
+
+  test("accepts bare array envelope", () => {
+    const result = parseWorkspaceListResponse([
+      { id: "ws_1", name: "A", memberCount: 1, userRole: "admin" },
+    ]);
+    expect(result).toHaveLength(1);
+    expect(result[0]?.userRole).toBe("admin");
+  });
+
+  test("ignores unrecognized role values rather than passing them through", () => {
+    // Belt-and-suspenders: if the server starts returning "owner" or some
+    // other value we haven't whitelisted, drop it rather than letting an
+    // unexpected string flow into the role resolver.
+    const result = parseWorkspaceListResponse({
+      workspaces: [{ id: "ws_1", name: "A", memberCount: 1, userRole: "owner" }],
+    });
+    expect(result[0]?.userRole).toBeUndefined();
+  });
+
+  test("returns empty array for null / undefined / unrecognized envelope", () => {
+    expect(parseWorkspaceListResponse(null)).toEqual([]);
+    expect(parseWorkspaceListResponse(undefined)).toEqual([]);
+    expect(parseWorkspaceListResponse({ unrelated: 1 })).toEqual([]);
+  });
+
+  test("filters out malformed workspace entries", () => {
+    const result = parseWorkspaceListResponse([
+      { id: "ws_1", name: "Good", memberCount: 1, userRole: "member" },
+      null,
+      "not-an-object",
+    ]);
+    expect(result).toHaveLength(1);
+    expect(result[0]?.id).toBe("ws_1");
   });
 });

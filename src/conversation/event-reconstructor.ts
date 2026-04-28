@@ -403,10 +403,37 @@ function ensureRoleAlternation(messages: StoredMessage[]): StoredMessage[] {
   for (const msg of messages) {
     const prev = result[result.length - 1];
     if (prev?.role === "user" && msg.role === "user") {
+      // Place the synthetic turn 1ms after the previous user message so it
+      // sorts between the two user turns instead of collapsing onto the
+      // next user's timestamp (the UI sorts strictly by `timestamp`, and a
+      // tied-timestamp placeholder rendered after the user it precedes
+      // looks like the user replied to themselves). Clamp to the next
+      // message's timestamp when it's already <1ms ahead — clock skew or
+      // tight bursts can produce equal/backwards timestamps.
+      const prevTime = Date.parse(prev.timestamp);
+      const msgTime = Date.parse(msg.timestamp);
+      const placeholderTs =
+        Number.isFinite(prevTime) && Number.isFinite(msgTime)
+          ? new Date(Math.min(prevTime + 1, msgTime)).toISOString()
+          : msg.timestamp;
       result.push({
         role: "assistant",
         content: [{ type: "text" as const, text: ABANDONED_RUN_MARKER }],
-        timestamp: msg.timestamp,
+        timestamp: placeholderTs,
+        // Carry minimal metadata so the chat UI can render the same
+        // truncation banner it uses for length / content-filter cases.
+        // `finishReason: "other"` is the closest enum value — there was no
+        // real LLM call, so the categorical reasons (length, error, etc.)
+        // don't apply.
+        metadata: {
+          finishReason: "other",
+          inputTokens: 0,
+          outputTokens: 0,
+          cacheReadTokens: 0,
+          costUsd: 0,
+          llmMs: 0,
+          iterations: 0,
+        },
       });
     }
     result.push(msg);
