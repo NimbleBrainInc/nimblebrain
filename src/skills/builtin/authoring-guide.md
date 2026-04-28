@@ -107,6 +107,13 @@ tool set. The conventional pattern is the bundle prefix glob:
 Be specific. The point of tool affinity is to keep your skill out of
 context when its bundles are not in play.
 
+Only three pattern shapes are matched: `*` (everything), `<prefix>__*`
+(starts-with), and `*__<suffix>` (ends-with). Anything else — including
+embedded wildcards like `*__patch_*` — falls back to exact-string match
+against the literal pattern, which usually means it matches nothing and
+your skill silently never loads. If you need richer patterns, list each
+target tool by exact name instead.
+
 ## Overrides — the contradiction-prevention mechanism
 
 A Layer 3 skill that contradicts a Layer 1 vendored rule on tool

@@ -1,5 +1,11 @@
 import { resolve } from "node:path";
 import type { LanguageModelV3Content, LanguageModelV3Message } from "@ai-sdk/provider";
+import type { ContextAssembledSource, SkillsLoadedEntry } from "../engine/types.ts";
+
+// Re-export so conversation-event consumers don't need to know these
+// originate in engine/types.ts. Engine emits them; conversation persists
+// them; one definition keeps the wire shape from drifting.
+export type { ContextAssembledSource, SkillsLoadedEntry };
 
 /**
  * Conversation IDs are `conv_` followed by exactly 16 lowercase hex characters.
@@ -305,52 +311,12 @@ export interface ParticipantsChangeEvent {
   participants: string[];
 }
 
-/**
- * Per-skill telemetry attached to a `skills.loaded` event. One entry per
- * Layer 3 skill that the loader selected for this turn.
- *
- * `version` is the file mtime as ISO 8601 (cheap, stable). `tokens` is an
- * approximate count (`Math.ceil(body.length / 4)`); replace with a real
- * tokenizer in Phase 5 once attribution lands.
- */
-export interface SkillsLoadedEntry {
-  id: string;
-  layer: 3;
-  scope: "platform" | "workspace" | "user" | "bundle";
-  version: string;
-  tokens: number;
-  loadedBy: "always" | "tool_affinity";
-  reason: string;
-}
-
 export interface SkillsLoadedEvent {
   ts: string;
   type: "skills.loaded";
   runId: string;
   skills: SkillsLoadedEntry[];
   totalTokens: number;
-}
-
-/**
- * Snapshot of context assembled for a turn — counts and tokens only, no
- * content (the bodies are already in the conversation log via earlier
- * source events / message history).
- *
- * Each `sources[]` entry is a `{kind, ...}` row. `kind` values include
- * `"system_prompt"`, `"tool_descriptions"`, `"history"`, and the per-source
- * kinds Phase 2 introduces (`"skills"`). Future phases add more kinds; the
- * shape is open for extension.
- */
-export interface ContextAssembledSource {
-  kind: string;
-  count?: number;
-  tokens: number;
-  /** Optional discriminators per source kind. */
-  toolSetHash?: string;
-  version?: string | number;
-  userId?: string;
-  turns?: number;
-  compacted?: boolean;
 }
 
 export interface ContextAssembledEvent {

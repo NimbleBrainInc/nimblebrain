@@ -709,22 +709,15 @@ async function readConvEvents(
 
 function getEventStore(runtime: Runtime): EventSourcedConversationStore | null {
   // The runtime exposes a `ConversationStore` interface; for Phase 2 the
-  // event-sourced store is the only one with `readEvents`. Try the
-  // workspace-scoped store first; fall back to constructing one on the
-  // global workDir/conversations path.
-  let raw: unknown;
+  // event-sourced store is the only one with `readEvents`. Returns null
+  // when the store is missing (no workspace context) or is some other
+  // shape (e.g. an in-memory test double).
   try {
-    raw = runtime.getConversationStore();
+    const raw = runtime.getConversationStore();
+    return raw instanceof EventSourcedConversationStore ? raw : null;
   } catch {
-    raw = null;
+    return null;
   }
-  if (raw instanceof EventSourcedConversationStore) return raw;
-
-  // Fallback: a default event-sourced store rooted at the global workDir.
-  const workDir = runtime.getWorkDir();
-  const dir = join(workDir, "conversations");
-  if (!existsSync(dir)) return null;
-  return new EventSourcedConversationStore({ dir });
 }
 
 function conversationFileExists(store: EventSourcedConversationStore, convId: string): boolean {

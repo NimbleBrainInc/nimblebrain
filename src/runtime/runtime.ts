@@ -26,6 +26,7 @@ import { AgentEngine } from "../engine/engine.ts";
 import { RunMetricsCollector } from "../engine/run-metrics.ts";
 import type {
   ContextAssembledPayload,
+  ContextAssembledSource,
   EngineConfig,
   EngineEvent,
   EngineHooks,
@@ -1874,7 +1875,7 @@ function buildContextAssembledPayload(input: {
     0,
   );
   const historyTokens = input.messages.reduce((sum, m) => sum + approxTokens(JSON.stringify(m)), 0);
-  const sources: Array<Record<string, unknown>> = [
+  const sources: ContextAssembledSource[] = [
     { kind: "system_prompt", tokens: promptTokens },
     { kind: "tool_descriptions", count: input.activeTools.length, tokens: toolDescTokens },
     {
@@ -1884,7 +1885,7 @@ function buildContextAssembledPayload(input: {
     },
     { kind: "history", turns: input.messages.length, compacted: false, tokens: historyTokens },
   ];
-  const totalTokens = sources.reduce((sum, s) => sum + ((s.tokens as number) ?? 0), 0);
+  const totalTokens = sources.reduce((sum, s) => sum + s.tokens, 0);
   return { sources, excluded: [], totalTokens };
 }
 
