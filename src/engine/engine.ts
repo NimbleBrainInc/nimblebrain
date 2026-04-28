@@ -20,11 +20,39 @@ import type {
   EngineConfig,
   EngineResult,
   EventSink,
+  FinishReason,
+  StopReason,
   ToolCallRecord,
   ToolResult,
   ToolRouter,
   ToolSchema,
 } from "./types.ts";
+
+/**
+ * Map a per-call finish reason to a run-level stop reason. Called once
+ * the agent loop has exited (no pending tool calls). The iteration cap
+ * is checked first by the caller — this only handles model-driven exits.
+ */
+function deriveStopReason(finish: FinishReason | undefined): StopReason {
+  switch (finish) {
+    case "stop":
+      return "complete";
+    case "length":
+      return "length";
+    case "content-filter":
+      return "content_filter";
+    case "error":
+      return "error";
+    case "tool-calls":
+      // Loop only exits when toolCalls.length === 0; reaching here with
+      // finish="tool-calls" means the model declared tool calls but the
+      // stream produced no parsable ones. Surface as "other" rather than
+      // pretending it was a clean stop.
+      return "other";
+    default:
+      return "other";
+  }
+}
 
 /**
  * Sanitize messages before sending to the LLM API.
@@ -168,6 +196,11 @@ export class AgentEngine {
 
     const runStart = performance.now();
 
+    // Tracks the most recent LLM call's finish reason so the run-level
+    // stop reason can reflect why the model actually exited (length cap,
+    // content filter, etc.) rather than always reporting "complete".
+    let lastFinishReason: FinishReason | undefined;
+
     try {
       while (iteration < maxIter) {
         // 1. Apply context/prompt hooks and call LLM
@@ -231,6 +264,12 @@ export class AgentEngine {
         cumulativeInputTokens += turnInputTokens;
         cumulativeOutputTokens += turnOutputTokens;
 
+        // Track the model's per-call finish reason for downstream
+        // observability and the run-level stop reason derivation below.
+        // The AI SDK V3 default is { unified: "unknown" as "other" } when
+        // the provider didn't emit a finish — treat it as "other".
+        lastFinishReason = (response.finishReason?.unified ?? "other") as FinishReason;
+
         // Record the atomic LLM call fact
         this.events.emit({
           type: "llm.done",
@@ -243,6 +282,7 @@ export class AgentEngine {
             cacheReadTokens: turnCacheReadTokens,
             cacheCreationTokens: turnCacheCreationTokens,
             llmMs,
+            finishReason: lastFinishReason,
           },
         });
 
@@ -470,7 +510,8 @@ export class AgentEngine {
       throw err;
     }
 
-    const stopReason = iteration >= maxIter ? "max_iterations" : "complete";
+    const stopReason: StopReason =
+      iteration >= maxIter ? "max_iterations" : deriveStopReason(lastFinishReason);
     this.events.emit({
       type: "run.done",
       data: {
@@ -488,6 +529,7 @@ export class AgentEngine {
       inputTokens: cumulativeInputTokens,
       outputTokens: cumulativeOutputTokens,
       stopReason,
+      ...(lastFinishReason !== undefined ? { finishReason: lastFinishReason } : {}),
     };
   }
 }

@@ -202,6 +202,7 @@ export function reconstructMessages(events: readonly ConversationEvent[]): Store
                 iterations: runLlmResponses.length,
                 toolCalls: toolCallsMeta,
                 costUsd: cost,
+                ...(llmResp.finishReason ? { finishReason: llmResp.finishReason } : {}),
               },
             };
             messages.push(assistantMsg);
@@ -252,6 +253,7 @@ export function reconstructMessages(events: readonly ConversationEvent[]): Store
               llmMs: llmResp.llmMs,
               iterations: runLlmResponses.length,
               costUsd: cost,
+              ...(llmResp.finishReason ? { finishReason: llmResp.finishReason } : {}),
             },
           };
           messages.push(assistantMsg);

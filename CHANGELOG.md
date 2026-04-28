@@ -23,6 +23,7 @@
 
 ### Fixed
 
+- `run.done.stopReason` and the chat result's `stopReason` now reflect the model's actual finish reason (`length`, `content_filter`, `error`, `other`) instead of always reporting `complete`. The per-call `finishReason` is also persisted on every `llm.response` event in the JSONL log, so length-truncated turns are diagnosable post-hoc. Web `LlmDoneEvent.finishReason` is forwarded over SSE for per-message UI indicators.
 - `maxOutputTokens` is now derived per-call from the synced model catalog (`limits.output`) instead of a static 16,384 default — Opus 4.7 jumps from 16k → 128k, Sonnet 4.6 → 64k. Operator-pinned values still win, clamped to the model's catalog max ([#104](https://github.com/NimbleBrainInc/nimblebrain/pull/104)).
 - Files-app uploads no longer fail with `Payload too large`. Picker bytes now flow through `POST /v1/resources` (multipart, workspace-scoped) instead of being base64-encoded into a `tools/call` argument; `isAllowedMime` strips Content-Type parameters, fixing a latent miss in the chat ingest path too ([#93](https://github.com/NimbleBrainInc/nimblebrain/pull/93)).
 - `nb__read_resource` and `POST /v1/resources/read` resolve `ui://` resources published by platform built-ins (settings, home, automations, conversations, files, usage, nb). Previously the structural type guard couldn't distinguish two divergent `readResource` shapes and silently skipped any platform source ([#90](https://github.com/NimbleBrainInc/nimblebrain/issues/90)).

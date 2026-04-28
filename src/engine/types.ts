@@ -114,6 +114,35 @@ export interface EngineConfig {
   maxToolResultSize?: number;
 }
 
+/**
+ * Per-LLM-call finish reason (mirrors AI SDK V3 `LanguageModelV3FinishReason.unified`).
+ * Persisted on `llm.response` events so post-hoc analysis can tell a clean
+ * stop from a length-truncated turn from a content-filter rejection.
+ */
+export type FinishReason = "stop" | "length" | "content-filter" | "tool-calls" | "error" | "other";
+
+/**
+ * Run-level stop reason. Derived from the agent loop's exit condition
+ * combined with the final LLM call's finish reason:
+ *
+ *   - `complete`         — model said done (finish=stop) with no pending tools
+ *   - `max_iterations`   — agent loop hit its iteration cap
+ *   - `length`           — last LLM call hit `maxOutputTokens` mid-turn
+ *   - `content_filter`   — last LLM call was blocked by provider moderation
+ *   - `error`            — last LLM call's finish reason was `error`
+ *   - `other`            — anything else (provider returned `other` / `unknown`)
+ *
+ * `error` here is the *finish-reason* error category, not a thrown engine
+ * error — the latter still emits `run.error` instead.
+ */
+export type StopReason =
+  | "complete"
+  | "max_iterations"
+  | "length"
+  | "content_filter"
+  | "error"
+  | "other";
+
 /** Result returned from a single engine run. */
 export interface EngineResult {
   output: string;
@@ -121,7 +150,9 @@ export interface EngineResult {
   iterations: number;
   inputTokens: number;
   outputTokens: number;
-  stopReason: "complete" | "max_iterations";
+  stopReason: StopReason;
+  /** Final LLM call's finish reason. Useful for diagnosing why the loop ended. */
+  finishReason?: FinishReason;
 }
 
 export interface ToolCallRecord {
