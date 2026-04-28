@@ -19,17 +19,28 @@
  * next implementer registers them in the right place.
  */
 
-import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
-import { join, resolve } from "node:path";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  statSync,
+} from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { EventSourcedConversationStore } from "../../conversation/event-sourced-store.ts";
 import type { ConversationEvent, SkillsLoadedEvent } from "../../conversation/types.ts";
 import { textContent } from "../../engine/content-helpers.ts";
 import type { EventSink, ToolResult } from "../../engine/types.ts";
 import type { Runtime } from "../../runtime/runtime.ts";
 import { parseSkillFile, readSkillMtime } from "../../skills/loader.ts";
+import { coerceManifestInput, coerceManifestPatch } from "../../skills/manifest-input.ts";
 import { toolMatches } from "../../skills/select.ts";
 import { approxTokens } from "../../skills/tokens.ts";
 import type { Skill } from "../../skills/types.ts";
+import { validateSkill } from "../../skills/validator.ts";
+import { deleteSkill, updateSkill, writeSkill } from "../../skills/writer.ts";
 import { defineInProcessApp, type InProcessTool } from "../in-process-app.ts";
 import type { McpSource } from "../mcp-source.ts";
 
@@ -47,7 +58,7 @@ const AUTHORING_GUIDE_URI = "skill://skills/authoring-guide";
 
 const SKILLS_LIST_DESCRIPTION =
   "List Layer 3 skills (cross-bundle agent orchestration content) and Layer 1 vendored bundle skills. " +
-  "Filter by `scope` (platform | workspace | user | bundle), `layer` (1 | 3), `type` (context | skill), " +
+  "Filter by `scope` (org | workspace | user | bundle), `layer` (1 | 3), `type` (context | skill), " +
   "`tool_affinity` (a tool name; returns skills whose `applies_to_tools` glob matches it), " +
   "`status` (active | draft | disabled | archived), or `modified_since` (ISO 8601). " +
   "Returns id, name, layer, scope, status, token count, and source metadata for each skill. " +
@@ -73,6 +84,40 @@ const SKILLS_LOADING_LOG_DESCRIPTION =
   "run id, the skills loaded for that run, total tokens, and the active tool set at the time. " +
   "Use to audit which skills fired across a window of activity, or to debug why a particular skill " +
   "did or did not load.";
+
+const SKILLS_CREATE_DESCRIPTION =
+  "Create a new Layer 3 skill at the given scope (`org`, `workspace`, or `user`). Writes a " +
+  "markdown file with frontmatter to the appropriate skills directory. " +
+  "**Confirm with the user before creating org- or workspace-scope skills** — they affect " +
+  "every conversation in that scope. Manifest fields: `description`, `type` (context|skill), " +
+  "`priority` (11–99 for non-core), `loading_strategy` (always|tool_affined), `applies_to_tools` " +
+  "(globs; required for `tool_affined`), `status` (defaults active). The body is markdown content. " +
+  "Returns the new skill's id (filesystem path).";
+
+const SKILLS_UPDATE_DESCRIPTION =
+  "Update an existing skill. Provide the `id` (filesystem path) plus a partial `manifest` patch " +
+  "and/or a new `body`. Snapshots the current version to `_versions/` before writing so changes " +
+  "are reversible. Bundle (Layer 1) skills are not editable — call returns an error pointing the " +
+  "caller at the bundle's own settings surface.";
+
+const SKILLS_DELETE_DESCRIPTION =
+  "Delete a Layer 3 skill. Snapshots to `_versions/` before removing the live file. Confirm with " +
+  "the user before deleting org- or workspace-scope skills. Bundle (Layer 1) skills cannot " +
+  "be deleted via the platform — those ship with the bundle.";
+
+const SKILLS_ACTIVATE_DESCRIPTION =
+  "Activate a skill (set status=active). Sugar over `update`; cleaner permission/audit shape. " +
+  "Active skills are eligible for Layer 3 selection on subsequent turns.";
+
+const SKILLS_DEACTIVATE_DESCRIPTION =
+  "Deactivate a skill (set status=disabled). The skill stays on disk but is skipped during Layer 3 " +
+  "selection. Reactivate with `activate`. Use to mute a skill mid-incident without deleting it.";
+
+const SKILLS_MOVE_SCOPE_DESCRIPTION =
+  "Relocate a skill across scope tiers (e.g. workspace → org to promote a workspace-local " +
+  "skill that should apply org-wide). Snapshots the original to `_versions/` in the source scope, " +
+  "writes to the target scope, then deletes the source. Permissions: caller must satisfy both " +
+  "source and target scope rules.";
 
 // ── Source factory ───────────────────────────────────────────────────────
 
@@ -102,7 +147,7 @@ export function createSkillsSource(runtime: Runtime, eventSink: EventSink): McpS
         properties: {
           scope: {
             type: "string",
-            enum: ["platform", "workspace", "user", "bundle"],
+            enum: ["org", "workspace", "user", "bundle"],
             description: "Filter to a single tier of the skill catalog.",
           },
           layer: {
@@ -159,6 +204,33 @@ export function createSkillsSource(runtime: Runtime, eventSink: EventSink): McpS
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         try {
           const id = String(input.id ?? "");
+          // Determine scope for the permission check before any FS work.
+          // skill:// URIs always resolve to the Layer 1 bundle resource;
+          // anything else is path-derived.
+          const isUri = id === AUTHORING_GUIDE_URI || id.startsWith(SKILL_URI_PREFIX);
+          const scope = isUri ? "bundle" : scopeOfPath(runtime, id);
+          if (!scope) {
+            return {
+              content: textContent(`Skill path "${id}" is not under any allowed root`),
+              isError: true,
+            };
+          }
+          const permission = await checkPathAccess(runtime, id, scope, "read");
+          if (!permission.allowed) {
+            return permissionDenied(permission.reason ?? "Permission denied");
+          }
+          // Symlink-boundary check (skipped for skill:// URIs which
+          // dispatch to the resource handler, not the filesystem path).
+          // Without this, a tenant member could symlink another
+          // workspace's skill into their own dir and read its
+          // contents via parseSkillFile (which follows symlinks).
+          if (!isUri && existsSync(id)) {
+            try {
+              assertSymlinkBoundaryOrThrow(runtime, id, scope);
+            } catch (err) {
+              return errorResult(err);
+            }
+          }
           const result = await readSkillById(runtime, authoringGuidePath, id);
           if (!result) {
             return {
@@ -246,6 +318,145 @@ export function createSkillsSource(runtime: Runtime, eventSink: EventSink): McpS
         }
       },
     },
+    {
+      name: "create",
+      description: SKILLS_CREATE_DESCRIPTION,
+      inputSchema: {
+        type: "object",
+        properties: {
+          scope: {
+            type: "string",
+            enum: ["org", "workspace", "user"],
+            description: "Tier to write the skill into. Bundle (Layer 1) is not writable.",
+          },
+          name: {
+            type: "string",
+            description: "Skill name (alphanumeric, dash, underscore). Becomes the filename.",
+          },
+          manifest: {
+            type: "object",
+            description: "Manifest fields. `description`, `type`, `priority` are typical.",
+          },
+          body: {
+            type: "string",
+            description: "Markdown body of the skill.",
+          },
+        },
+        required: ["scope", "name"],
+      },
+      handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
+        try {
+          const result = await createSkill(runtime, input, eventSink);
+          return result;
+        } catch (err) {
+          return errorResult(err);
+        }
+      },
+    },
+    {
+      name: "update",
+      description: SKILLS_UPDATE_DESCRIPTION,
+      inputSchema: {
+        type: "object",
+        properties: {
+          id: { type: "string", description: "Filesystem path of the skill to update." },
+          manifest: {
+            type: "object",
+            description:
+              "Partial manifest fields to merge. Omitted fields keep their current values.",
+          },
+          body: {
+            type: "string",
+            description: "New markdown body. Omit to keep the current body.",
+          },
+        },
+        required: ["id"],
+      },
+      handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
+        try {
+          return await updateSkillHandler(runtime, input, eventSink);
+        } catch (err) {
+          return errorResult(err);
+        }
+      },
+    },
+    {
+      name: "delete",
+      description: SKILLS_DELETE_DESCRIPTION,
+      inputSchema: {
+        type: "object",
+        properties: {
+          id: { type: "string", description: "Filesystem path of the skill to delete." },
+        },
+        required: ["id"],
+      },
+      handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
+        try {
+          return await deleteSkillHandler(runtime, input, eventSink);
+        } catch (err) {
+          return errorResult(err);
+        }
+      },
+    },
+    {
+      name: "activate",
+      description: SKILLS_ACTIVATE_DESCRIPTION,
+      inputSchema: {
+        type: "object",
+        properties: {
+          id: { type: "string", description: "Filesystem path of the skill to activate." },
+        },
+        required: ["id"],
+      },
+      handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
+        try {
+          return await setStatusHandler(runtime, input, "active", eventSink);
+        } catch (err) {
+          return errorResult(err);
+        }
+      },
+    },
+    {
+      name: "deactivate",
+      description: SKILLS_DEACTIVATE_DESCRIPTION,
+      inputSchema: {
+        type: "object",
+        properties: {
+          id: { type: "string", description: "Filesystem path of the skill to deactivate." },
+        },
+        required: ["id"],
+      },
+      handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
+        try {
+          return await setStatusHandler(runtime, input, "disabled", eventSink);
+        } catch (err) {
+          return errorResult(err);
+        }
+      },
+    },
+    {
+      name: "move_scope",
+      description: SKILLS_MOVE_SCOPE_DESCRIPTION,
+      inputSchema: {
+        type: "object",
+        properties: {
+          id: { type: "string", description: "Filesystem path of the skill to move." },
+          target_scope: {
+            type: "string",
+            enum: ["org", "workspace", "user"],
+            description: "Tier to relocate the skill into.",
+          },
+        },
+        required: ["id", "target_scope"],
+      },
+      handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
+        try {
+          return await moveScopeHandler(runtime, input, eventSink);
+        } catch (err) {
+          return errorResult(err);
+        }
+      },
+    },
   ];
 
   // Layer 1 vendored authoring guide. Callback-form `text` so the file is
@@ -291,7 +502,7 @@ interface ListedSkill {
   id: string;
   name: string;
   layer: 1 | 3;
-  scope: "platform" | "workspace" | "user" | "bundle";
+  scope: "org" | "workspace" | "user" | "bundle";
   status: "active" | "draft" | "disabled" | "archived";
   type?: string;
   tokens: number;
@@ -307,7 +518,7 @@ interface ReadResult {
   id: string;
   content: string;
   layer: 1 | 3;
-  scope: "platform" | "workspace" | "user" | "bundle";
+  scope: "org" | "workspace" | "user" | "bundle";
   source: { bundle?: string; bundleVersion?: string; path?: string; uri?: string };
   metadata: {
     name: string;
@@ -331,7 +542,7 @@ function skillToListed(skill: Skill): ListedSkill {
     id,
     name: m.name,
     layer: 3,
-    scope: m.scope ?? "platform",
+    scope: m.scope ?? "org",
     status: m.status ?? "active",
     type: m.type,
     tokens: approxTokens(skill.body),
@@ -376,12 +587,21 @@ async function listSkills(
 
   // Layer 3: discovered via the runtime's per-conversation overlay (or the
   // platform-only static pool when there's no workspace context).
+  //
+  // Skills surfaced as Layer 1 resources (today: the vendored authoring
+  // guide) are filtered out here so they don't appear twice — once via
+  // their file path through the contextSkills pool and again as a Layer 1
+  // entry below.
+  const layer1SourcePaths = new Set<string>([resolve(authoringGuidePath)]);
   if (includeLayer3) {
     const { wsId, userId } = resolveCallContext(runtime);
     const skills = wsId
       ? runtime.loadConversationSkills(wsId, userId)
       : runtime.getContextSkills().concat(runtime.getMatchableSkills());
     for (const skill of skills) {
+      if (skill.sourcePath && layer1SourcePaths.has(resolve(skill.sourcePath))) {
+        continue;
+      }
       out.push(skillToListed(skill));
     }
   }
@@ -495,6 +715,89 @@ function realPathUnderAnyRootOrThrow(target: string, roots: string[]): string {
   return real;
 }
 
+/**
+ * Boundary check that catches symlink-based tenant escape.
+ *
+ * `realPathUnderAnyRootOrThrow` only verifies the realpath sits under
+ * SOME allowed root. That's insufficient when the link target is itself
+ * inside the platform's roots — e.g. a symlink at
+ * `{workDir}/workspaces/wsA/skills/evil.md` pointing to
+ * `{workDir}/workspaces/wsB/skills/secret.md` passes the under-root
+ * check, but `snapshotVersion`'s `copyFileSync` (and `readSkillById`'s
+ * `parseSkillFile`) then follow the link and read wsB's content from a
+ * caller authorised only for wsA.
+ *
+ * This helper additionally requires the realpath's scope and tenant
+ * identifier to match the lexical declaration:
+ *
+ *   1. realScope === expectedScope — catches tier-jumping (workspace
+ *      symlink → user file, etc.) AND outside-workdir paths (which
+ *      `scopeOfPath` returns as `"bundle"`, never matching a writable
+ *      scope).
+ *   2. realWsId === lexicalWsId for workspace scope — catches
+ *      cross-workspace symlinks within `{workDir}/workspaces/`.
+ *   3. realUserId === lexicalUserId for user scope — same for
+ *      `{workDir}/users/`.
+ *
+ * Called from update / delete / move_scope (after existsSync, before
+ * any FS read or write that follows symlinks) and from skills__read.
+ */
+function assertSymlinkBoundaryOrThrow(
+  runtime: Runtime,
+  target: string,
+  expectedScope: WritableScope | "bundle",
+): void {
+  const real = realpathSync(target);
+  const workDir = runtime.getWorkDir();
+  // realpath the workDir too so macOS tmpdir paths
+  // (`/var/folders/...` → `/private/var/folders/...`) don't make every
+  // legit comparison fail. Both sides need the same "real" base.
+  let realWorkDir = workDir;
+  try {
+    realWorkDir = realpathSync(workDir);
+  } catch {
+    /* fall back to lexical workDir */
+  }
+
+  // Compute realScope from the realpath against the realpath'd workDir.
+  const wsRoot = `${join(realWorkDir, "workspaces")}/`;
+  const userRoot = `${join(realWorkDir, "users")}/`;
+  const orgRoot = `${join(realWorkDir, "skills")}/`;
+  let realScope: WritableScope | "bundle";
+  if (real.startsWith(wsRoot)) realScope = "workspace";
+  else if (real.startsWith(userRoot)) realScope = "user";
+  else if (real.startsWith(orgRoot)) realScope = "org";
+  else realScope = "bundle";
+
+  if (realScope !== expectedScope) {
+    throw new Error(
+      `Skill path "${target}" resolves through a symlink to a different scope ` +
+        `(declared ${expectedScope}, real ${realScope})`,
+    );
+  }
+
+  if (expectedScope === "workspace") {
+    const lexWs = extractWsIdFromPath(target, workDir);
+    const realWs = extractWsIdFromPath(real, realWorkDir);
+    if (lexWs !== realWs) {
+      throw new Error(
+        `Skill path "${target}" resolves through a symlink to a different workspace ` +
+          `(declared "${lexWs}", real "${realWs}")`,
+      );
+    }
+  }
+  if (expectedScope === "user") {
+    const lexUser = extractUserIdFromPath(target, workDir);
+    const realUser = extractUserIdFromPath(real, realWorkDir);
+    if (lexUser !== realUser) {
+      throw new Error(
+        `Skill path "${target}" resolves through a symlink to a different user ` +
+          `(declared "${lexUser}", real "${realUser}")`,
+      );
+    }
+  }
+}
+
 async function readSkillById(
   runtime: Runtime,
   authoringGuidePath: string,
@@ -550,7 +853,7 @@ function buildReadResult(
   base: {
     id: string;
     layer: 1 | 3;
-    scope: "platform" | "workspace" | "user" | "bundle";
+    scope: "org" | "workspace" | "user" | "bundle";
     source: ReadResult["source"];
     modifiedAt?: string;
   },
@@ -579,20 +882,31 @@ function buildReadResult(
   };
 }
 
+/**
+ * Derive a scope label from a filesystem path. Used by `skills__read`
+ * when the manifest doesn't carry an explicit scope.
+ *
+ * Decision matrix mirrors `stampDerivedScope` in runtime.ts so the LIST
+ * tool and the READ tool agree on what's mutable. A skill under
+ * `{workDir}/skills/` is real platform-tier (writable by org admins);
+ * anything outside the three workDir roots is bundle-tier (vendored
+ * with the platform binary or an MCP bundle, and read-only).
+ */
 function inferScopeFromPath(
   path: string,
   workDir: string,
-): "platform" | "workspace" | "user" | "bundle" {
+): "org" | "workspace" | "user" | "bundle" {
   const resolved = resolve(path);
   if (resolved.startsWith(`${resolve(workDir, "workspaces")}/`)) return "workspace";
   if (resolved.startsWith(`${resolve(workDir, "users")}/`)) return "user";
-  return "platform";
+  if (resolved.startsWith(`${resolve(workDir, "skills")}/`)) return "org";
+  return "bundle";
 }
 
 interface ActiveForEntry {
   id: string;
   layer: 3;
-  scope: "platform" | "workspace" | "user" | "bundle";
+  scope: "org" | "workspace" | "user" | "bundle";
   tokens: number;
   loadedBy: "always" | "tool_affinity";
   reason: string;
@@ -618,7 +932,7 @@ async function activeForConversation(
       return (ev as SkillsLoadedEvent).skills.map((s) => ({
         id: s.id,
         layer: 3 as const,
-        scope: (s.scope ?? "platform") as ActiveForEntry["scope"],
+        scope: (s.scope ?? "org") as ActiveForEntry["scope"],
         tokens: s.tokens,
         loadedBy: s.loadedBy,
         reason: s.reason,
@@ -789,24 +1103,468 @@ function summarizeLog(events: LoadingLogEntry[]): string {
   return `${events.length} run${events.length === 1 ? "" : "s"} across ${conversations} conversation${conversations === 1 ? "" : "s"}`;
 }
 
-// ── Future Phase 3 mutation tools ────────────────────────────────────────
-//
-// The following tools are designed but NOT registered in Phase 2. They land
-// in subsequent phases and will be added to the `tools` array above:
-//
-//   skills__create        — create a new skill (write to the appropriate scope dir)
-//   skills__update        — update an existing skill body or manifest
-//   skills__delete        — delete a skill (Phase 3 — versioning lands with this)
-//   skills__activate      — flip status: draft|disabled → active
-//   skills__deactivate    — flip status: active → disabled
-//   skills__move_scope    — relocate a skill across platform/workspace/user
-//   skills__author        — agent-driven authoring flow (Phase 4)
-//   skills__commit_draft  — promote an authored draft to active (Phase 4)
-//   skills__lint          — auditor agent lint pass (Phase 4)
-//   skills__attribution   — attribution surface (Phase 5)
-//
-// When adding any of these, mirror the read-tool shape: production-quality
-// description, JSON Schema input, structured `ToolResult` returns, role gates
-// (admin-only for platform-scope writes; workspace-admin or org-admin for
-// workspace-scope writes; self for user-scope writes — see permissions table
-// in SPEC_REFERENCE.md).
+// ── Mutation handlers ────────────────────────────────────────────────────
+
+type WritableScope = "org" | "workspace" | "user";
+const WRITABLE_SCOPES = new Set<WritableScope>(["org", "workspace", "user"]);
+
+interface PermissionDecision {
+  allowed: boolean;
+  reason?: string;
+}
+
+const ORG_ADMIN_ROLES = new Set(["admin", "owner"]);
+
+type AccessMode = "read" | "write";
+
+/**
+ * Path-derived permission gate. The workspace and user identifiers come
+ * from the on-disk path being mutated (or read), NOT from the request
+ * context, so a workspace admin in `wsA` can't mutate / read a skill at
+ * `{workDir}/workspaces/wsB/skills/...` by naming the path directly.
+ *
+ * Strict cross-tenant policy: workspace skills require explicit
+ * membership in the workspace named by the path (no silent org-admin
+ * override into untouched workspaces — operators must switch to the
+ * workspace explicitly). User skills require the caller's identity id
+ * to match the user-segment in the path.
+ *
+ * Tier rules (read | write):
+ *   - bundle      — read: anyone (Layer 1 vendored). write: refused (caller side).
+ *   - org         — read: any tenant member.            write: org admin/owner.
+ *   - workspace   — read+write: must be a member of the path's workspace.
+ *                   write also requires `admin` role in that workspace.
+ *   - user        — read+write: only the owning user.
+ *
+ * Dev mode (no identity provider) opens everything, matching the
+ * `instructions.ts` precedent.
+ *
+ * For "create" operations the path doesn't exist yet — pass the
+ * destination directory as `path` (e.g. `{workDir}/workspaces/{wsId}/skills`).
+ * The wsId/userId derivation works on directory paths the same way.
+ */
+async function checkPathAccess(
+  runtime: Runtime,
+  path: string,
+  scope: WritableScope | "bundle",
+  mode: AccessMode,
+): Promise<PermissionDecision> {
+  if (runtime.getIdentityProvider() === null) return { allowed: true };
+  const identity = runtime.getCurrentIdentity();
+  if (!identity) return { allowed: false, reason: "No authenticated identity" };
+
+  const isOrgAdmin = ORG_ADMIN_ROLES.has(identity.orgRole);
+  const workDir = runtime.getWorkDir();
+
+  if (scope === "bundle") {
+    if (mode === "read") return { allowed: true };
+    return { allowed: false, reason: "Bundle (Layer 1) skills are vendored and not mutable" };
+  }
+
+  if (scope === "org") {
+    if (mode === "read") return { allowed: true };
+    return isOrgAdmin
+      ? { allowed: true }
+      : { allowed: false, reason: "Org-scope writes require org admin or owner" };
+  }
+
+  if (scope === "user") {
+    const pathUserId = extractUserIdFromPath(path, workDir);
+    if (!pathUserId) {
+      return { allowed: false, reason: "Could not derive user id from path" };
+    }
+    if (pathUserId === identity.id) return { allowed: true };
+    // Strict — no org-admin override across users. Operators access
+    // their own user-tier skills only.
+    return {
+      allowed: false,
+      reason: `User-scope skills are scoped to their owning user (${pathUserId})`,
+    };
+  }
+
+  // workspace
+  const pathWsId = extractWsIdFromPath(path, workDir);
+  if (!pathWsId) {
+    return { allowed: false, reason: "Could not derive workspace id from path" };
+  }
+  const ws = await runtime.getWorkspaceStore().get(pathWsId);
+  if (!ws) return { allowed: false, reason: `Workspace "${pathWsId}" not found` };
+  const member = ws.members.find((m) => m.userId === identity.id);
+  if (!member) {
+    // Strict — no org-admin override into a workspace the operator
+    // isn't a member of. Switch workspaces explicitly to act on its
+    // skills.
+    return {
+      allowed: false,
+      reason: `Not a member of workspace "${pathWsId}"`,
+    };
+  }
+  if (mode === "write" && member.role !== "admin") {
+    return {
+      allowed: false,
+      reason: `Workspace-scope writes require admin role in workspace "${pathWsId}"`,
+    };
+  }
+  return { allowed: true };
+}
+
+/**
+ * Resolve the on-disk directory for a writable scope. Mirrors the layout
+ * the loader scans (`{workDir}/skills`, `{workDir}/workspaces/{wsId}/skills`,
+ * `{workDir}/users/{userId}/skills`). Throws when context is missing for
+ * the requested scope so the caller can surface a clear error.
+ */
+function scopeDir(runtime: Runtime, scope: WritableScope): string {
+  const workDir = runtime.getWorkDir();
+  if (scope === "org") return join(workDir, "skills");
+  if (scope === "workspace") {
+    const wsId = runtime.requireWorkspaceId();
+    return join(workDir, "workspaces", wsId, "skills");
+  }
+  // user
+  const identity = runtime.getCurrentIdentity();
+  const userId = identity?.id;
+  if (!userId) throw new Error("User-scope writes require an authenticated identity");
+  return join(workDir, "users", userId, "skills");
+}
+
+/**
+ * Reject identifiers that don't fit the loader's filename rules. Belt-
+ * and-braces against tools whose JSON-schema gate is bypassed (e.g.
+ * external MCP clients that don't validate enums).
+ */
+const VALID_NAME_RE = /^[a-zA-Z0-9_-]+$/;
+function assertValidName(name: string): void {
+  if (!VALID_NAME_RE.test(name)) {
+    throw new Error(`Invalid skill name "${name}" — letters, digits, dash, underscore only`);
+  }
+}
+
+function scopeOfPath(runtime: Runtime, path: string): WritableScope | "bundle" | null {
+  const work = resolve(runtime.getWorkDir());
+  const real = resolve(path);
+  if (real.startsWith(`${join(work, "workspaces")}/`)) return "workspace";
+  if (real.startsWith(`${join(work, "users")}/`)) return "user";
+  if (real.startsWith(`${join(work, "skills")}/`)) return "org";
+  // Anything else — typically bundled built-ins under src/skills/builtin —
+  // is treated as bundle-tier and not mutable.
+  return "bundle";
+}
+
+/**
+ * Write the existing live file (if any) to `{dir}/_versions/{name}.{iso}.md`
+ * before a destructive operation. The loader's `_versions/` skip means
+ * snapshots never accidentally re-load as live skills.
+ */
+function snapshotVersion(filePath: string): void {
+  if (!existsSync(filePath)) return;
+  const dir = dirname(filePath);
+  const base = filePath.split("/").pop() ?? "skill.md";
+  const name = base.replace(/\.md$/, "");
+  const versionsDir = join(dir, "_versions");
+  mkdirSync(versionsDir, { recursive: true });
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  copyFileSync(filePath, join(versionsDir, `${name}.${stamp}.md`));
+}
+
+/**
+ * Trigger a runtime reload of the boot-time skill pool after a mutation.
+ *
+ * `loadConversationSkills` reads workspace + user + org dirs fresh per
+ * call, but the `SkillMatcher` (which scans triggers/keywords on
+ * `runtime.chat()` to set `skillName`) is built only at boot and on
+ * explicit `reloadSkills()`. Without this call, a freshly-created
+ * org-tier skill won't match its triggers until the process restarts.
+ *
+ * Errors are swallowed: the on-disk write already succeeded, the file
+ * will load on next boot, and the operator already has a successful
+ * mutation result. Logging the failure beats failing the whole call.
+ */
+async function reloadBootSkills(runtime: Runtime): Promise<void> {
+  try {
+    await runtime.reloadSkills();
+  } catch (err) {
+    console.error("[skills] reloadSkills failed after mutation:", err);
+  }
+}
+
+function permissionDenied(reason: string): ToolResult {
+  return {
+    content: textContent(reason),
+    structuredContent: { error: reason, code: "permission_denied" },
+    isError: true,
+  };
+}
+
+function bundleNotMutable(): ToolResult {
+  return {
+    content: textContent(
+      "Bundle (Layer 1) skills are vendored — edit them through the bundle's own settings surface, not the platform.",
+    ),
+    structuredContent: { error: "skill_not_mutable_via_platform", layer: 1 },
+    isError: true,
+  };
+}
+
+interface CreateInput {
+  scope?: string;
+  name?: string;
+  manifest?: Record<string, unknown>;
+  body?: string;
+}
+
+async function createSkill(
+  runtime: Runtime,
+  input: Record<string, unknown>,
+  eventSink: EventSink,
+): Promise<ToolResult> {
+  const { scope, name, manifest: rawManifest, body } = input as CreateInput;
+  if (!scope || !WRITABLE_SCOPES.has(scope as WritableScope)) {
+    return errorResult(new Error(`Scope must be one of org | workspace | user (got "${scope}")`));
+  }
+  if (!name) return errorResult(new Error("`name` is required"));
+  assertValidName(name);
+
+  const writableScope = scope as WritableScope;
+  // Resolve the target dir first so the permission check uses the
+  // *destination* path. For workspace/user creates this binds the wsId
+  // / userId to the current request context (you can only create inside
+  // your own workspace / user dir), and the path-derived membership
+  // check still applies.
+  let dir: string;
+  try {
+    dir = scopeDir(runtime, writableScope);
+  } catch (err) {
+    return errorResult(err);
+  }
+  const target = join(dir, `${name}.md`);
+  const permission = await checkPathAccess(runtime, target, writableScope, "write");
+  if (!permission.allowed) return permissionDenied(permission.reason ?? "Permission denied");
+
+  if (existsSync(target)) {
+    return errorResult(new Error(`Skill "${name}" already exists in ${writableScope} scope`));
+  }
+
+  const merged = coerceManifestInput(name, rawManifest);
+  const validation = validateSkill(name, merged, body ?? "");
+  if (!validation.valid) {
+    return errorResult(new Error(`Validation failed — ${validation.errors.join("; ")}`));
+  }
+
+  writeSkill(dir, name, merged, body ?? "");
+  await reloadBootSkills(runtime);
+  eventSink.emit({
+    type: "skill.created",
+    data: { id: target, name, scope: writableScope, type: merged.type },
+  });
+  return {
+    content: textContent(`Created ${writableScope} skill "${name}" → ${target}`),
+    structuredContent: { id: target, name, scope: writableScope },
+    isError: false,
+  };
+}
+
+async function updateSkillHandler(
+  runtime: Runtime,
+  input: Record<string, unknown>,
+  eventSink: EventSink,
+): Promise<ToolResult> {
+  const {
+    id,
+    manifest: patchRaw,
+    body,
+  } = input as {
+    id?: string;
+    manifest?: Record<string, unknown>;
+    body?: string;
+  };
+  if (!id) return errorResult(new Error("`id` is required"));
+
+  const scope = scopeOfPath(runtime, id);
+  if (scope === "bundle") return bundleNotMutable();
+  if (!scope) return errorResult(new Error(`Skill path "${id}" is not under any allowed root`));
+
+  const permission = await checkPathAccess(runtime, id, scope, "write");
+  if (!permission.allowed) return permissionDenied(permission.reason ?? "Permission denied");
+
+  if (!existsSync(id)) return errorResult(new Error(`Skill not found: ${id}`));
+
+  // Defense-in-depth: realpath the target and verify the link doesn't
+  // escape the declared scope/tenant. Catches three classes of attack:
+  //   - symlink to /etc/passwd (or anywhere outside workDir) — leaks
+  //     contents via snapshotVersion's copyFileSync
+  //   - symlink within {workDir}/workspaces/ but to a different
+  //     workspace — cross-workspace exfiltration
+  //   - symlink across scope tiers (workspace skill → user dir) —
+  //     tier-jumping
+  try {
+    assertSymlinkBoundaryOrThrow(runtime, id, scope);
+  } catch (err) {
+    return errorResult(err);
+  }
+
+  const dir = dirname(id);
+  const name = (id.split("/").pop() ?? "").replace(/\.md$/, "");
+  if (!name) return errorResult(new Error(`Cannot derive skill name from path "${id}"`));
+
+  snapshotVersion(id);
+
+  // Reuse the writer's merge logic so behavior matches `system_tools` edit.
+  const partial = patchRaw ? coerceManifestPatch(patchRaw) : undefined;
+  updateSkill(dir, name, partial, body);
+  await reloadBootSkills(runtime);
+
+  eventSink.emit({ type: "skill.updated", data: { id, name, scope } });
+  return {
+    content: textContent(`Updated ${scope} skill "${name}"`),
+    structuredContent: { id, name, scope },
+    isError: false,
+  };
+}
+
+async function deleteSkillHandler(
+  runtime: Runtime,
+  input: Record<string, unknown>,
+  eventSink: EventSink,
+): Promise<ToolResult> {
+  const { id } = input as { id?: string };
+  if (!id) return errorResult(new Error("`id` is required"));
+
+  const scope = scopeOfPath(runtime, id);
+  if (scope === "bundle") return bundleNotMutable();
+  if (!scope) return errorResult(new Error(`Skill path "${id}" is not under any allowed root`));
+
+  const permission = await checkPathAccess(runtime, id, scope, "write");
+  if (!permission.allowed) return permissionDenied(permission.reason ?? "Permission denied");
+
+  if (!existsSync(id)) return errorResult(new Error(`Skill not found: ${id}`));
+
+  // Symlink-boundary defense — see updateSkillHandler for rationale.
+  try {
+    assertSymlinkBoundaryOrThrow(runtime, id, scope);
+  } catch (err) {
+    return errorResult(err);
+  }
+
+  const dir = dirname(id);
+  const name = (id.split("/").pop() ?? "").replace(/\.md$/, "");
+  if (!name) return errorResult(new Error(`Cannot derive skill name from path "${id}"`));
+
+  snapshotVersion(id);
+  deleteSkill(dir, name);
+  await reloadBootSkills(runtime);
+
+  eventSink.emit({ type: "skill.deleted", data: { id, name, scope } });
+  return {
+    content: textContent(`Deleted ${scope} skill "${name}" (snapshotted to _versions/)`),
+    structuredContent: { id, name, scope },
+    isError: false,
+  };
+}
+
+async function setStatusHandler(
+  runtime: Runtime,
+  input: Record<string, unknown>,
+  status: "active" | "disabled",
+  eventSink: EventSink,
+): Promise<ToolResult> {
+  return updateSkillHandler(runtime, { id: input.id, manifest: { status } }, eventSink);
+}
+
+async function moveScopeHandler(
+  runtime: Runtime,
+  input: Record<string, unknown>,
+  eventSink: EventSink,
+): Promise<ToolResult> {
+  const { id, target_scope } = input as { id?: string; target_scope?: string };
+  if (!id) return errorResult(new Error("`id` is required"));
+  if (!target_scope || !WRITABLE_SCOPES.has(target_scope as WritableScope)) {
+    return errorResult(
+      new Error(`target_scope must be one of org | workspace | user (got "${target_scope}")`),
+    );
+  }
+  const sourceScope = scopeOfPath(runtime, id);
+  if (sourceScope === "bundle") return bundleNotMutable();
+  if (!sourceScope) {
+    return errorResult(new Error(`Skill path "${id}" is not under any allowed root`));
+  }
+  const target = target_scope as WritableScope;
+  if (sourceScope === target) {
+    return errorResult(new Error(`Skill is already in ${target} scope`));
+  }
+
+  // Source permission — derived from the *source path's* workspace/user
+  // segment. A workspace admin in wsA cannot move a skill out of wsB.
+  const sourceCheck = await checkPathAccess(runtime, id, sourceScope, "write");
+  if (!sourceCheck.allowed) return permissionDenied(sourceCheck.reason ?? "Permission denied");
+
+  // Target permission — derived from the destination path. For
+  // workspace/user targets, scopeDir() picks the caller's own
+  // workspace/user dir, so this is naturally bound to the caller's
+  // identity (no cross-tenant promotion possible).
+  let targetDir: string;
+  try {
+    targetDir = scopeDir(runtime, target);
+  } catch (err) {
+    return errorResult(err);
+  }
+  const targetCheck = await checkPathAccess(runtime, targetDir, target, "write");
+  if (!targetCheck.allowed) return permissionDenied(targetCheck.reason ?? "Permission denied");
+
+  if (!existsSync(id)) return errorResult(new Error(`Skill not found: ${id}`));
+
+  // Symlink-boundary defense on the source path before reading +
+  // copying. parseSkillFile + snapshotVersion both follow symlinks, so
+  // a cross-tenant link would otherwise leak content into the target
+  // location and into _versions/. See updateSkillHandler for full
+  // rationale.
+  try {
+    assertSymlinkBoundaryOrThrow(runtime, id, sourceScope);
+  } catch (err) {
+    return errorResult(err);
+  }
+
+  const skill = parseSkillFile(id);
+  if (!skill) return errorResult(new Error(`Failed to parse skill at ${id}`));
+  const name = skill.manifest.name;
+  const targetPath = join(targetDir, `${name}.md`);
+  if (existsSync(targetPath)) {
+    return errorResult(new Error(`A skill named "${name}" already exists in ${target} scope`));
+  }
+
+  snapshotVersion(id);
+  // Strip the source scope from the manifest so the target dir's loader
+  // stamp wins without conflicting with a stale frontmatter value.
+  const { scope: _drop, ...manifestWithoutScope } = skill.manifest;
+  writeSkill(targetDir, name, manifestWithoutScope as typeof skill.manifest, skill.body);
+  deleteSkill(dirname(id), name);
+  await reloadBootSkills(runtime);
+
+  eventSink.emit({
+    type: "skill.updated",
+    data: { id: targetPath, name, scope: target, action: "move_scope", from: sourceScope },
+  });
+  return {
+    content: textContent(`Moved skill "${name}" from ${sourceScope} → ${target}`),
+    structuredContent: { id: targetPath, name, scope: target, fromScope: sourceScope },
+    isError: false,
+  };
+}
+
+function extractUserIdFromPath(path: string, workDir: string): string | null {
+  const real = resolve(path);
+  const usersDir = `${resolve(workDir, "users")}/`;
+  if (!real.startsWith(usersDir)) return null;
+  const tail = real.slice(usersDir.length);
+  const slash = tail.indexOf("/");
+  return slash > 0 ? tail.slice(0, slash) : null;
+}
+
+function extractWsIdFromPath(path: string, workDir: string): string | null {
+  const real = resolve(path);
+  const wsRoot = `${resolve(workDir, "workspaces")}/`;
+  if (!real.startsWith(wsRoot)) return null;
+  const tail = real.slice(wsRoot.length);
+  const slash = tail.indexOf("/");
+  return slash > 0 ? tail.slice(0, slash) : null;
+}

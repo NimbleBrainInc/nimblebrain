@@ -13,7 +13,7 @@ export type SkillType = "context" | "skill";
  * loader parses them so a manifest authored against the full schema round-
  * trips cleanly when those features land.
  */
-export type SkillScope = "platform" | "workspace" | "user" | "bundle";
+export type SkillScope = "org" | "workspace" | "user" | "bundle";
 export type SkillLoadingStrategy = "always" | "tool_affined" | "retrieval" | "explicit";
 export type SkillStatus = "active" | "draft" | "disabled" | "archived";
 

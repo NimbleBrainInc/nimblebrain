@@ -752,7 +752,7 @@ describe("composeSystemPrompt — Layer 3 skills (Phase 2)", () => {
     return {
       name: "voice-rules",
       body: "Always answer in plain English.",
-      scope: "platform",
+      scope: "org",
       sourcePath: "/work/skills/voice-rules.md",
       loadedBy: "always",
       reason: "loading_strategy: always",
@@ -777,7 +777,7 @@ describe("composeSystemPrompt — Layer 3 skills (Phase 2)", () => {
     );
     expect(result).toContain("## Skills");
     expect(result).toContain("### voice-rules");
-    expect(result).toContain("scope: platform");
+    expect(result).toContain("scope: org");
     expect(result).toContain("loaded: always (loading_strategy: always)");
     expect(result).toContain("<layer3-skill>");
     expect(result).toContain("Always answer in plain English.");

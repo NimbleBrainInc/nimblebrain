@@ -32,6 +32,7 @@ interface FakeIdentity {
 
 class FakeRuntime {
   identity: FakeIdentity | null = null;
+  hasIdentityProvider = false;
   wsId: string | null = null;
   private readonly _store: EventSourcedConversationStore;
 
@@ -51,6 +52,9 @@ class FakeRuntime {
   getCurrentIdentity(): FakeIdentity | null {
     return this.identity;
   }
+  getIdentityProvider(): object | null {
+    return this.hasIdentityProvider ? ({} as object) : null;
+  }
   requireWorkspaceId(): string {
     if (!this.wsId) throw new Error("no workspace");
     return this.wsId;
@@ -60,6 +64,14 @@ class FakeRuntime {
   }
   getStore(): EventSourcedConversationStore {
     return this._store;
+  }
+  getWorkspaceStore() {
+    // Tests that exercise the cross-workspace path supply this directly
+    // by patching it. Default returns null for everything → access
+    // checks fail gracefully when a test forgets to set up membership.
+    return {
+      get: async (_id: string) => null,
+    };
   }
   getContextSkills(): Skill[] {
     return this.contextSkills;
@@ -378,7 +390,7 @@ describe("skills__read", () => {
     expect(metadata.name).toBe("voice-rules");
     expect(metadata.priority).toBe(25);
     expect(metadata.loadingStrategy).toBe("always");
-    expect(sc.scope).toBe("platform");
+    expect(sc.scope).toBe("org");
     expect(sc.layer).toBe(3);
   });
 
@@ -460,7 +472,7 @@ describe("skills__read", () => {
       { name: "voice", description: "x", version: "1.0.0", type: "context", priority: 25 },
       "Body content",
     );
-    skill.manifest.scope = "platform";
+    skill.manifest.scope = "org";
     runtime.conversationOverlay = [skill];
     runtime.wsId = "ws_a";
 
@@ -469,7 +481,7 @@ describe("skills__read", () => {
 
     const listResult = await client.callTool({
       name: "list",
-      arguments: { scope: "platform", layer: 3 },
+      arguments: { scope: "org", layer: 3 },
     });
     const listed = (listResult as { structuredContent?: { skills?: unknown[] } })
       .structuredContent?.skills as Array<{ id: string; name: string }>;
@@ -502,7 +514,7 @@ describe("skills__active_for", () => {
           {
             id: "/skills/old.md",
             layer: 3,
-            scope: "platform",
+            scope: "org",
             version: "",
             tokens: 50,
             loadedBy: "always",
@@ -587,7 +599,7 @@ describe("skills__loading_log", () => {
           {
             id: "/skills/a.md",
             layer: 3,
-            scope: "platform",
+            scope: "org",
             version: "",
             tokens: 10,
             loadedBy: "always",
@@ -603,7 +615,7 @@ describe("skills__loading_log", () => {
           {
             id: "/skills/b.md",
             layer: 3,
-            scope: "platform",
+            scope: "org",
             version: "",
             tokens: 20,
             loadedBy: "always",
@@ -619,7 +631,7 @@ describe("skills__loading_log", () => {
           {
             id: "/skills/a.md",
             layer: 3,
-            scope: "platform",
+            scope: "org",
             version: "",
             tokens: 30,
             loadedBy: "always",

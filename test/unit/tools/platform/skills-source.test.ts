@@ -83,25 +83,31 @@ describe("skills source — factory", () => {
 // ── Tools list ──────────────────────────────────────────────────────────
 
 describe("skills source — tools list", () => {
-  test("exposes exactly the four Phase 2 read tools", async () => {
+  test("exposes the four read tools plus the six mutation tools", async () => {
     const src = await buildSource();
     const client = src.getClient()!;
     const tools = await client.listTools();
     const names = tools.tools.map((t) => t.name).sort();
-    expect(names).toEqual(["active_for", "list", "loading_log", "read"]);
+    expect(names).toEqual([
+      "activate",
+      "active_for",
+      "create",
+      "deactivate",
+      "delete",
+      "list",
+      "loading_log",
+      "move_scope",
+      "read",
+      "update",
+    ]);
   });
 
-  test("does NOT expose Phase 3 mutation tools yet", async () => {
+  test("does NOT expose tools deferred to later phases", async () => {
     const src = await buildSource();
     const client = src.getClient()!;
     const tools = await client.listTools();
     const names = tools.tools.map((t) => t.name);
-    expect(names).not.toContain("create");
-    expect(names).not.toContain("update");
-    expect(names).not.toContain("delete");
-    expect(names).not.toContain("activate");
-    expect(names).not.toContain("deactivate");
-    expect(names).not.toContain("move_scope");
+    // Phase 4+ tools — author/commit_draft/lint/attribution land later.
     expect(names).not.toContain("author");
     expect(names).not.toContain("commit_draft");
     expect(names).not.toContain("lint");

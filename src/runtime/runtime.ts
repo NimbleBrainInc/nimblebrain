@@ -349,7 +349,9 @@ export class Runtime {
       configThinkingBudgetTokens: config.thinkingBudgetTokens,
     };
 
-    // System tools (search, manage_app, bundle_status, manage_skill, delegate)
+    // System tools (search, manage_app, bundle_status, delegate). Skill
+    // mutation lives in the dedicated `nb__skills` source — registered
+    // separately via `createPlatformSources`.
     // Use a late-bound holder so reloadSkills can reference `rt` after construction.
     const rtHolder: { rt?: Runtime } = {};
     const boundReloadSkills = async () => {
@@ -722,7 +724,7 @@ export class Runtime {
     const layer3Entries: Layer3SkillEntry[] = selectedLayer3.map((s) => ({
       name: s.skill.manifest.name,
       body: s.skill.body,
-      scope: s.skill.manifest.scope ?? "platform",
+      scope: s.skill.manifest.scope ?? "org",
       ...(s.skill.sourcePath ? { sourcePath: s.skill.sourcePath } : {}),
       loadedBy: s.loadedBy,
       reason: s.reason,
@@ -1504,23 +1506,45 @@ export class Runtime {
    * deduplicated by `manifest.name` with later scopes overriding earlier
    * ones (user > workspace > platform).
    *
-   * Platform-tier comes from the boot-time pool (`buildSkills` static set:
-   * builtin + core + global + config dirs). Workspace and user tiers are
-   * read fresh from disk on every call so authoring inside a workspace or
-   * user dir takes effect mid-session. If perf becomes an issue later we
-   * can cache by mtime; for Phase 2, fresh reads are fine.
+   * All three tiers are evaluated fresh per call so authoring or moving
+   * a skill takes effect mid-session without a process restart:
    *
-   * Each returned skill has `manifest.scope` populated. Platform-tier
-   * skills loaded from the legacy boot path may have arrived without a
-   * scope stamp (the loader only stamps scope inside `loadScopedSkills`);
-   * we clone-and-stamp them here so callers always see a scope.
+   *   - bundled (core + builtin from the source tree) — from the boot-
+   *     time `contextSkills` cache, since those files are immutable.
+   *   - platform (`{workDir}/skills/`) — fresh disk read, so writes via
+   *     `skills__create` / `skills__update` / `move_scope → platform`
+   *     surface immediately.
+   *   - workspace (`{workDir}/workspaces/{wsId}/skills/`) — fresh.
+   *   - user (`{workDir}/users/{userId}/skills/`) — fresh.
+   *
+   * The cached `contextSkills` set is filtered to entries whose
+   * `sourcePath` is OUTSIDE the live platform dir, so a removed file
+   * doesn't ghost in the listing as a stale boot-time cache hit.
+   *
+   * Each returned skill has `manifest.scope` populated.
    */
   loadConversationSkills(wsId: string, userId: string | null): Skill[] {
     const workDir = this.getWorkDir();
+    const orgDirPrefix = `${join(workDir, "skills")}/`;
 
-    const platformPool: Skill[] = [];
-    for (const s of this.contextSkills) platformPool.push(stampPlatformScope(s));
-    for (const s of this.skillMatcher.getSkills()) platformPool.push(stampPlatformScope(s));
+    const orgPool: Skill[] = [];
+    // Bundled skills (core + builtin) — sourcePath sits outside the
+    // live platform dir, so include from the cache. Skills loaded at
+    // boot from the live dir are dropped here in favour of the fresh
+    // read below; otherwise a deleted/moved platform skill would
+    // re-appear from cache.
+    for (const s of this.contextSkills) {
+      if (!s.sourcePath?.startsWith(orgDirPrefix)) {
+        orgPool.push(stampDerivedScope(workDir, s));
+      }
+    }
+    for (const s of this.skillMatcher.getSkills()) {
+      if (!s.sourcePath?.startsWith(orgDirPrefix)) {
+        orgPool.push(stampDerivedScope(workDir, s));
+      }
+    }
+    // Live org-tier dir, fresh every call.
+    orgPool.push(...loadScopedSkills(join(workDir, "skills"), "org"));
 
     const workspaceDir = join(workDir, "workspaces", wsId, "skills");
     const workspacePool = loadScopedSkills(workspaceDir, "workspace");
@@ -1531,7 +1555,7 @@ export class Runtime {
       userPool.push(...loadScopedSkills(userDir, "user"));
     }
 
-    return mergeScopedSkills(platformPool, workspacePool, userPool);
+    return mergeScopedSkills(orgPool, workspacePool, userPool);
   }
 
   /** Get the path to the nimblebrain.json config file. */
@@ -1816,19 +1840,30 @@ function loadAllSkills(configDirs?: string[], skillDir?: string): Skill[] {
 }
 
 /**
- * Return a Skill with `manifest.scope` set to "platform" if not already
- * stamped. Clones the manifest so the cached pool object is not mutated.
+ * Derive a scope for a skill loaded through the boot-time pool.
  *
- * The boot-time loaders (`loadBuiltinSkills`, `loadCoreSkills`,
- * `loadSkillDir`) don't stamp scope, so platform-tier skills surface here
- * without a scope. Frontmatter-declared scope on a platform-dir skill is
- * preserved (e.g. authoring tooling round-tripping the field).
+ * `loadSkillDir`-style loaders (used for `loadCoreSkills`,
+ * `loadBuiltinSkills`, plus `globalSkillDir` and any config-supplied
+ * dirs) do not stamp scope, so the manifest arrives without one. We
+ * can't unconditionally stamp `"org"` because core + builtin skills
+ * live in the source tree (`src/skills/{core,builtin}/`), not under
+ * `{workDir}/skills/` — they're vendored with the platform and not
+ * mutable. The mutation tools' `scopeOfPath` already rejects those
+ * paths as `"bundle"`; without this fix the UI would happily show an
+ * Edit button for them and only fail on save.
+ *
+ * Decision matrix:
+ *   - manifest.scope already set → trust the frontmatter
+ *   - sourcePath under {workDir}/skills/ → real org-tier (live, mutable)
+ *   - everything else → bundle (vendored, immutable)
  */
-function stampPlatformScope(skill: Skill): Skill {
+function stampDerivedScope(workDir: string, skill: Skill): Skill {
   if (skill.manifest.scope) return skill;
+  const orgDir = `${join(workDir, "skills")}/`;
+  const isOrg = skill.sourcePath?.startsWith(orgDir) ?? false;
   return {
     ...skill,
-    manifest: { ...skill.manifest, scope: "platform" },
+    manifest: { ...skill.manifest, scope: isOrg ? "org" : "bundle" },
   };
 }
 
@@ -1846,7 +1881,7 @@ function buildSkillsLoadedPayload(selected: SelectedSkill[]): SkillsLoadedPayloa
     return {
       id: sourcePath || `skill-in-memory:${s.skill.manifest.name}`,
       layer: 3 as const,
-      scope: (s.skill.manifest.scope ?? "platform") as "platform" | "workspace" | "user" | "bundle",
+      scope: (s.skill.manifest.scope ?? "org") as "org" | "workspace" | "user" | "bundle",
       version: sourcePath ? readSkillMtime(sourcePath) : "",
       tokens,
       loadedBy: s.loadedBy,

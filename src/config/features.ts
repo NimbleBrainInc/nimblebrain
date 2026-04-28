@@ -55,14 +55,19 @@ export function resolveFeatures(config?: FeatureFlags): ResolvedFeatures {
 export const FEATURE_TOOL_MAP: Record<string, keyof FeatureFlags> = {
   // Prefixed names (as seen by the LLM / MCP clients)
   nb__manage_app: "bundleManagement",
-  nb__manage_skill: "skillManagement",
   nb__delegate: "delegation",
   // Identity & workspace tools
   nb__manage_users: "userManagement",
   nb__manage_workspaces: "workspaceManagement",
+  // Skill mutation surface — all six gated by `skillManagement`.
+  skills__create: "skillManagement",
+  skills__update: "skillManagement",
+  skills__delete: "skillManagement",
+  skills__activate: "skillManagement",
+  skills__deactivate: "skillManagement",
+  skills__move_scope: "skillManagement",
   // Unprefixed names (used during system tool registration)
   manage_app: "bundleManagement",
-  manage_skill: "skillManagement",
   delegate: "delegation",
   manage_users: "userManagement",
   manage_workspaces: "workspaceManagement",

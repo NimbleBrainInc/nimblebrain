@@ -183,7 +183,7 @@ export interface ContextAssembledPayload {
 export interface SkillsLoadedEntry {
   id: string;
   layer: 3;
-  scope: "platform" | "workspace" | "user" | "bundle";
+  scope: "org" | "workspace" | "user" | "bundle";
   version: string;
   tokens: number;
   loadedBy: "always" | "tool_affinity";

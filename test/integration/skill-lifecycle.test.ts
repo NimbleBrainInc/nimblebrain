@@ -70,21 +70,21 @@ describe("skill lifecycle (end-to-end)", () => {
 		});
 		await provisionTestWorkspace(runtime);
 
-		// 1. Create a skill via nb__manage_skill
-		const createResult = await callTool(runtime, "nb__manage_skill", {
-			action: "create",
+		// 1. Create an org-tier skill via skills__create
+		const createResult = await callTool(runtime, "skills__create", {
+			scope: "org",
 			name: "test-greeter",
-			skill: {
+			manifest: {
 				description: "Greets people warmly",
 				type: "skill",
 				priority: 50,
-				body: "You are a warm and friendly greeter. Always say hello enthusiastically.",
 				triggers: ["greet someone", "say hello"],
 				keywords: ["hello", "greet", "welcome", "hi"],
 			},
+			body: "You are a warm and friendly greeter. Always say hello enthusiastically.",
 		});
 		expect(createResult.isError).toBe(false);
-		expect(createResult.content).toContain("created successfully");
+		expect(createResult.content).toContain("test-greeter");
 
 		// 2. Verify it appears in nb__status scope=skills output
 		const statusResult = await callTool(runtime, "nb__status", { scope: "skills" });
@@ -98,13 +98,11 @@ describe("skill lifecycle (end-to-end)", () => {
 		// 4. Verify the skill body appears in composed system prompt
 		expect(getSystem()).toContain("warm and friendly greeter");
 
-		// 5. Delete it via nb__manage_skill
-		const deleteResult = await callTool(runtime, "nb__manage_skill", {
-			action: "delete",
-			name: "test-greeter",
-		});
+		// 5. Delete it via skills__delete (id = full path)
+		const skillPath = join(workDir, "skills", "test-greeter.md");
+		const deleteResult = await callTool(runtime, "skills__delete", { id: skillPath });
 		expect(deleteResult.isError).toBe(false);
-		expect(deleteResult.content).toContain("deleted successfully");
+		expect(deleteResult.content).toContain("test-greeter");
 
 		// 6. Verify it no longer matches
 		const chatAfterDelete = await runtime.chat({ workspaceId: TEST_WORKSPACE_ID, message: "greet someone please" });
@@ -127,15 +125,15 @@ describe("skill lifecycle (end-to-end)", () => {
 		await provisionTestWorkspace(runtime);
 
 		// Create a context skill with priority 20 (above core threshold of 10)
-		const createResult = await callTool(runtime, "nb__manage_skill", {
-			action: "create",
+		const createResult = await callTool(runtime, "skills__create", {
+			scope: "org",
 			name: "team-context",
-			skill: {
+			manifest: {
 				description: "Team-specific context",
 				type: "context",
 				priority: 20,
-				body: "You are working for Acme Corp. Always mention the company name.",
 			},
+			body: "You are working for Acme Corp. Always mention the company name.",
 		});
 		expect(createResult.isError).toBe(false);
 
@@ -148,10 +146,8 @@ describe("skill lifecycle (end-to-end)", () => {
 		expect(getSystem()).toContain("Acme Corp");
 
 		// Delete and verify removal
-		const deleteResult = await callTool(runtime, "nb__manage_skill", {
-			action: "delete",
-			name: "team-context",
-		});
+		const skillPath = join(workDir, "skills", "team-context.md");
+		const deleteResult = await callTool(runtime, "skills__delete", { id: skillPath });
 		expect(deleteResult.isError).toBe(false);
 
 		await runtime.chat({ workspaceId: TEST_WORKSPACE_ID, message: "anything at all" });
@@ -174,18 +170,18 @@ describe("skill lifecycle (end-to-end)", () => {
 		await provisionTestWorkspace(runtime);
 
 		// Create a skill that requires a nonexistent bundle
-		const createResult = await callTool(runtime, "nb__manage_skill", {
-			action: "create",
+		const createResult = await callTool(runtime, "skills__create", {
+			scope: "org",
 			name: "dep-skill",
-			skill: {
+			manifest: {
 				description: "Skill with missing dependency",
 				type: "skill",
 				priority: 50,
-				body: "You are a data processor.",
 				triggers: ["process data"],
 				keywords: ["process", "data", "analyze"],
 				requires_bundles: ["@nonexistent/bundle"],
 			},
+			body: "You are a data processor.",
 		});
 		expect(createResult.isError).toBe(false);
 
@@ -196,10 +192,8 @@ describe("skill lifecycle (end-to-end)", () => {
 		expect(getSystem()).toContain("@nonexistent/bundle");
 
 		// Clean up
-		await callTool(runtime, "nb__manage_skill", {
-			action: "delete",
-			name: "dep-skill",
-		});
+		const skillPath = join(workDir, "skills", "dep-skill.md");
+		await callTool(runtime, "skills__delete", { id: skillPath });
 
 		await runtime.shutdown();
 	});
@@ -218,23 +212,21 @@ describe("skill lifecycle (end-to-end)", () => {
 		await provisionTestWorkspace(runtime);
 
 		// Attempt to create a skill with priority 5 (reserved range)
-		const createResult = await callTool(runtime, "nb__manage_skill", {
-			action: "create",
+		const createResult = await callTool(runtime, "skills__create", {
+			scope: "org",
 			name: "bad-priority",
-			skill: {
+			manifest: {
 				description: "Should be rejected",
 				type: "skill",
 				priority: 5,
-				body: "This should never be saved.",
 				triggers: ["bad priority"],
 				keywords: ["bad", "priority"],
 			},
+			body: "This should never be saved.",
 		});
 		expect(createResult.isError).toBe(true);
-		// Schema-level validation at the InlineSource layer catches this before
-		// the handler runs (schema declares minimum: 11).
-		expect(createResult.content).toContain("priority");
-		expect(createResult.content).toContain(">= 11");
+		// Handler runs validateSkill, which enforces the 11-99 range.
+		expect(createResult.content).toContain("Priority must be between 11 and 99");
 
 		// Verify no file was created
 		const skillFilePath = join(workDir, "skills", "bad-priority.md");

@@ -9,7 +9,7 @@ import { parseToolResponse } from "../lib/tool-response";
 interface ActiveSkill {
   id: string;
   layer: 3;
-  scope: "platform" | "workspace" | "user" | "bundle";
+  scope: "org" | "workspace" | "user" | "bundle";
   tokens: number;
   loadedBy: "always" | "tool_affinity";
   reason: string;
@@ -25,7 +25,7 @@ function shortName(id: string): string {
 }
 
 const SCOPE_COLOR: Record<ActiveSkill["scope"], string> = {
-  platform: "text-blue-400",
+  org: "text-blue-400",
   workspace: "text-emerald-400",
   user: "text-violet-400",
   bundle: "text-amber-400",

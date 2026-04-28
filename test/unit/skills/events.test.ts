@@ -57,7 +57,7 @@ function makeConfigWithMetadata(): EngineConfig {
           {
             id: "/work/skills/voice-rules.md",
             layer: 3,
-            scope: "platform",
+            scope: "org",
             version: "2026-04-27T00:00:00.000Z",
             tokens: 240,
             loadedBy: "always",
@@ -161,7 +161,7 @@ describe("engine.runMetadata — skills.loaded + context.assembled emission", ()
     const payload = event.data as unknown as SkillsLoadedEvent;
     expect(payload.skills).toHaveLength(2);
     expect(payload.skills[0]!.loadedBy).toBe("always");
-    expect(payload.skills[0]!.scope).toBe("platform");
+    expect(payload.skills[0]!.scope).toBe("org");
     expect(payload.skills[1]!.loadedBy).toBe("tool_affinity");
     expect(payload.skills[1]!.reason).toContain("applies_to_tools matched");
     expect(payload.totalTokens).toBe(1130);
@@ -272,7 +272,7 @@ describe("EventSourcedConversationStore — persistence", () => {
           {
             id: "/skills/x.md",
             layer: 3,
-            scope: "platform",
+            scope: "org",
             version: "2026-01-01T00:00:00.000Z",
             tokens: 100,
             loadedBy: "always",

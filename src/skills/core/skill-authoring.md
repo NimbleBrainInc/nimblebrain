@@ -11,15 +11,28 @@ metadata:
     - "manage skill"
     - "edit skill"
     - "delete skill"
-    - "manage_skill"
-    - "nb__manage_skill"
+    - "skills__create"
+    - "skills__update"
   keywords: [skill, behavior, customize, authoring, context, trigger, keyword, priority, allowed-tools]
 ---
 
 # Skill Authoring Guide
 
-When the user asks you to create, modify, or manage behavioral customizations,
-use nb__manage_skill. Follow these guidelines:
+When the user asks you to create, modify, or manage behavioral
+customizations, use the `nb__skills` tool surface:
+
+- `skills__create` — write a new skill at org/workspace/user scope
+- `skills__update` — patch manifest fields and/or replace the body
+- `skills__delete` — remove a skill (snapshots to `_versions/` first)
+- `skills__activate` / `skills__deactivate` — flip status without
+  deleting the file
+- `skills__move_scope` — relocate a skill across tiers (e.g. workspace
+  → org to promote)
+- `skills__list` / `skills__read` — inspect what exists before changing
+  anything
+
+Always read with `skills__list` before mutating so you know which
+existing skills you're working with. Follow the guidelines below.
 
 ## Choosing Type
 
@@ -66,6 +79,18 @@ If the skill needs specific tools:
 - Set requires_bundles to declare dependencies: ["@acme/policy-search"]
 - Before creating, use nb__search with scope "tools" to verify tools exist
 - If tools are missing, tell the user and offer to install via nb__manage_app
+
+## Choosing the Right Scope
+
+Each `skills__create` call writes to one of three tiers; pick by reach:
+
+- **org** — applies to every conversation in every workspace.
+  Reserve for org-wide voice / policy. Org admin only.
+- **workspace** — applies inside the active workspace only. Default for
+  domain-specific workflows. Workspace admin (membership in that
+  workspace required).
+- **user** — applies to your own conversations only. Personal
+  preferences. Self-write only.
 
 ## Priority Guidelines
 

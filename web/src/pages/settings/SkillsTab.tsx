@@ -1,8 +1,11 @@
-import { Lightbulb } from "lucide-react";
+import { Lightbulb, Plus, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { callTool } from "../../api/client";
 import { Badge } from "../../components/ui/badge";
+import { Button } from "../../components/ui/button";
 import { Card, CardContent } from "../../components/ui/card";
+import { Input } from "../../components/ui/input";
+import { Textarea } from "../../components/ui/textarea";
 import { parseToolResponse } from "../../lib/tool-response";
 import { cn } from "../../lib/utils";
 import { RequireActiveWorkspace } from "./components/RequireActiveWorkspace";
@@ -15,7 +18,7 @@ import { RequireActiveWorkspace } from "./components/RequireActiveWorkspace";
 // surfaces immediately in the UI.
 
 type Layer = 1 | 3;
-type Scope = "platform" | "workspace" | "user" | "bundle";
+type Scope = "org" | "workspace" | "user" | "bundle";
 type Status = "active" | "draft" | "disabled" | "archived";
 
 interface ListedSkill {
@@ -62,7 +65,7 @@ function formatTokens(n: number): string {
 }
 
 const SCOPE_BADGE: Record<Scope, string> = {
-  platform: "border-blue-300/30 text-blue-400",
+  org: "border-blue-300/30 text-blue-400",
   workspace: "border-emerald-300/30 text-emerald-400",
   user: "border-violet-300/30 text-violet-400",
   bundle: "border-amber-300/30 text-amber-400",
@@ -85,6 +88,8 @@ export function SkillsTab() {
   );
 }
 
+type DetailMode = "view" | "edit";
+
 function Inner() {
   const [skills, setSkills] = useState<ListedSkill[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -94,6 +99,9 @@ function Inner() {
   const [error, setError] = useState<string | null>(null);
   const [scopeFilter, setScopeFilter] = useState<Scope | "all">("all");
   const [statusFilter, setStatusFilter] = useState<Status | "all">("active");
+  const [mode, setMode] = useState<DetailMode>("view");
+  const [creating, setCreating] = useState(false);
+  const [actionPending, setActionPending] = useState(false);
 
   const fetchSkills = useCallback(async () => {
     setLoading(true);
@@ -125,49 +133,165 @@ function Inner() {
     if (!skills.some((s) => s.id === selectedId)) {
       setSelectedId(null);
       setDetail(null);
+      setMode("view");
     }
   }, [skills, selectedId]);
 
   // Fetch the detail body whenever selection changes.
+  const fetchDetail = useCallback(async (id: string) => {
+    setDetailLoading(true);
+    try {
+      const res = await callTool("skills", "read", { id });
+      const data = parseToolResponse<ReadSkill>(res);
+      setDetail(data);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Failed to read skill.";
+      setError(msg);
+      setDetail(null);
+    } finally {
+      setDetailLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     if (!selectedId) {
       setDetail(null);
+      setMode("view");
       return;
     }
-    let cancelled = false;
-    setDetailLoading(true);
-    (async () => {
+    void fetchDetail(selectedId);
+  }, [selectedId, fetchDetail]);
+
+  const handleSelect = useCallback((id: string) => {
+    setMode("view");
+    setCreating(false);
+    setError(null);
+    setSelectedId(id);
+  }, []);
+
+  const handleStartCreate = useCallback(() => {
+    setSelectedId(null);
+    setDetail(null);
+    setMode("view");
+    setCreating(true);
+    setError(null);
+  }, []);
+
+  const runMutation = useCallback(
+    async (
+      tool: string,
+      args: Record<string, unknown>,
+      onSuccess?: (result: { id?: string }) => void,
+    ) => {
+      setActionPending(true);
+      setError(null);
       try {
-        const res = await callTool("skills", "read", { id: selectedId });
-        const data = parseToolResponse<ReadSkill>(res);
-        if (!cancelled) setDetail(data);
+        const res = await callTool("skills", tool, args);
+        const data = parseToolResponse<{ id?: string; name?: string; scope?: string }>(res);
+        await fetchSkills();
+        onSuccess?.(data);
       } catch (err) {
-        if (!cancelled) {
-          const msg = err instanceof Error ? err.message : "Failed to read skill.";
-          setError(msg);
-          setDetail(null);
-        }
+        const msg = err instanceof Error ? err.message : `Failed to ${tool} skill.`;
+        setError(msg);
       } finally {
-        if (!cancelled) setDetailLoading(false);
+        setActionPending(false);
       }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedId]);
+    },
+    [fetchSkills],
+  );
+
+  const handleCreate = useCallback(
+    async (input: CreateInput) => {
+      await runMutation(
+        "create",
+        {
+          scope: input.scope,
+          name: input.name,
+          manifest: input.manifest,
+          body: input.body,
+        },
+        (result) => {
+          setCreating(false);
+          if (result.id) setSelectedId(result.id);
+        },
+      );
+    },
+    [runMutation],
+  );
+
+  const handleSaveEdit = useCallback(
+    async (id: string, patch: { manifest: Record<string, unknown>; body: string }) => {
+      await runMutation("update", { id, manifest: patch.manifest, body: patch.body }, async () => {
+        setMode("view");
+        await fetchDetail(id);
+      });
+    },
+    [runMutation, fetchDetail],
+  );
+
+  const handleDelete = useCallback(
+    async (id: string) => {
+      if (!window.confirm("Delete this skill? It will be snapshotted to _versions/ first.")) {
+        return;
+      }
+      await runMutation("delete", { id }, () => {
+        setSelectedId(null);
+        setDetail(null);
+        setMode("view");
+      });
+    },
+    [runMutation],
+  );
+
+  const handleToggleStatus = useCallback(
+    async (id: string, currentStatus: string | undefined) => {
+      const tool = currentStatus === "active" ? "deactivate" : "activate";
+      await runMutation(tool, { id }, () => {
+        void fetchDetail(id);
+      });
+    },
+    [runMutation, fetchDetail],
+  );
+
+  const handleMoveScope = useCallback(
+    async (id: string, targetScope: WritableScope) => {
+      if (
+        !window.confirm(
+          `Move skill to ${targetScope} scope? The original location is removed (snapshotted first).`,
+        )
+      ) {
+        return;
+      }
+      await runMutation("move_scope", { id, target_scope: targetScope }, (result) => {
+        if (result.id) setSelectedId(result.id);
+      });
+    },
+    [runMutation],
+  );
 
   const grouped = useMemo(() => groupByScope(skills), [skills]);
 
   return (
     <div className="space-y-4">
-      <header className="flex items-center gap-2">
-        <Lightbulb className="h-4 w-4 text-muted-foreground" />
-        <h2 className="text-base font-semibold">Skills</h2>
+      <header className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <Lightbulb className="h-4 w-4 text-muted-foreground" />
+          <h2 className="text-base font-semibold">Skills</h2>
+        </div>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={handleStartCreate}
+          disabled={creating || actionPending}
+        >
+          <Plus className="h-3.5 w-3.5 mr-1" />
+          New skill
+        </Button>
       </header>
       <p className="text-xs text-muted-foreground">
         Layer 3 cross-bundle agent orchestration content (voice, workflow, personal, tool routing)
         plus Layer 1 vendored bundle skills. The agent uses these to shape its behavior; you can
-        author them as markdown files under <code>~/.nimblebrain/skills/</code> (platform),{" "}
+        also author them as markdown files under <code>~/.nimblebrain/skills/</code> (org),{" "}
         <code>workspaces/&lt;wsId&gt;/skills/</code>, or <code>users/&lt;userId&gt;/skills/</code>.
       </p>
 
@@ -181,36 +305,72 @@ function Inner() {
       {loading && <div className="text-sm text-muted-foreground">Loading skills…</div>}
       {error && (
         <Card>
-          <CardContent className="py-6 text-center">
-            <p className="text-sm text-muted-foreground">{error}</p>
+          <CardContent className="py-3 px-4">
+            <p className="text-sm text-destructive">{error}</p>
           </CardContent>
         </Card>
       )}
 
-      {!loading && !error && skills.length === 0 && (
+      {!loading && !creating && skills.length === 0 && (
         <Card>
           <CardContent className="py-8 text-center">
             <p className="text-sm text-muted-foreground">
-              No skills match the current filters. Drop a markdown file under one of the skills
-              directories above to get started.
+              No skills match the current filters. Click <strong>New skill</strong> to create one,
+              or drop a markdown file under any of the skills directories above.
             </p>
           </CardContent>
         </Card>
       )}
 
-      {!loading && !error && skills.length > 0 && (
+      {!loading && (creating || skills.length > 0) && (
         <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
-          <SkillList grouped={grouped} selectedId={selectedId} onSelect={setSelectedId} />
-          <SkillDetail
-            selectedId={selectedId}
-            detail={detail}
-            loading={detailLoading}
-            placeholder={skills.length > 0}
-          />
+          <SkillList grouped={grouped} selectedId={selectedId} onSelect={handleSelect} />
+          {creating ? (
+            <CreateForm
+              pending={actionPending}
+              onCancel={() => {
+                setCreating(false);
+                setError(null);
+              }}
+              onSubmit={handleCreate}
+            />
+          ) : (
+            <SkillDetail
+              selectedId={selectedId}
+              detail={detail}
+              loading={detailLoading}
+              mode={mode}
+              actionPending={actionPending}
+              onEdit={() => {
+                setError(null);
+                setMode("edit");
+              }}
+              onCancelEdit={() => {
+                setMode("view");
+                setError(null);
+              }}
+              onSave={(patch) => selectedId && handleSaveEdit(selectedId, patch)}
+              onDelete={() => selectedId && handleDelete(selectedId)}
+              onToggleStatus={() =>
+                selectedId && handleToggleStatus(selectedId, detail?.metadata.status)
+              }
+              onMoveScope={(target) => selectedId && handleMoveScope(selectedId, target)}
+              placeholder={skills.length > 0}
+            />
+          )}
         </div>
       )}
     </div>
   );
+}
+
+type WritableScope = "org" | "workspace" | "user";
+
+interface CreateInput {
+  scope: WritableScope;
+  name: string;
+  manifest: Record<string, unknown>;
+  body: string;
 }
 
 // ── List view ────────────────────────────────────────────────────────────
@@ -221,7 +381,7 @@ interface GroupedSkills {
 }
 
 function groupByScope(skills: ListedSkill[]): GroupedSkills[] {
-  const order: Scope[] = ["user", "workspace", "platform", "bundle"];
+  const order: Scope[] = ["user", "workspace", "org", "bundle"];
   const map = new Map<Scope, ListedSkill[]>();
   for (const s of skills) {
     const list = map.get(s.scope) ?? [];
@@ -237,7 +397,7 @@ function groupByScope(skills: ListedSkill[]): GroupedSkills[] {
 const SCOPE_LABEL: Record<Scope, string> = {
   user: "User",
   workspace: "Workspace",
-  platform: "Platform",
+  org: "Org",
   bundle: "Bundle (Layer 1)",
 };
 
@@ -327,17 +487,23 @@ function SkillRow({
 
 // ── Detail panel ─────────────────────────────────────────────────────────
 
-function SkillDetail({
-  selectedId,
-  detail,
-  loading,
-  placeholder,
-}: {
+interface SkillDetailProps {
   selectedId: string | null;
   detail: ReadSkill | null;
   loading: boolean;
+  mode: DetailMode;
+  actionPending: boolean;
+  onEdit: () => void;
+  onCancelEdit: () => void;
+  onSave: (patch: { manifest: Record<string, unknown>; body: string }) => void;
+  onDelete: () => void;
+  onToggleStatus: () => void;
+  onMoveScope: (target: WritableScope) => void;
   placeholder: boolean;
-}) {
+}
+
+function SkillDetail(props: SkillDetailProps) {
+  const { selectedId, detail, loading, mode, placeholder } = props;
   if (!selectedId) {
     return (
       <Card className="lg:sticky lg:top-4 self-start">
@@ -354,26 +520,92 @@ function SkillDetail({
       </Card>
     );
   }
+  if (mode === "edit") {
+    return (
+      <SkillEditor
+        detail={detail}
+        actionPending={props.actionPending}
+        onCancelEdit={props.onCancelEdit}
+        onSave={props.onSave}
+      />
+    );
+  }
+  return (
+    <SkillDetailView
+      detail={detail}
+      actionPending={props.actionPending}
+      onEdit={props.onEdit}
+      onDelete={props.onDelete}
+      onToggleStatus={props.onToggleStatus}
+      onMoveScope={props.onMoveScope}
+    />
+  );
+}
+
+function SkillDetailView({
+  detail,
+  actionPending,
+  onEdit,
+  onDelete,
+  onToggleStatus,
+  onMoveScope,
+}: { detail: ReadSkill } & Pick<
+  SkillDetailProps,
+  "actionPending" | "onEdit" | "onDelete" | "onToggleStatus" | "onMoveScope"
+>) {
   const m = detail.metadata;
+  const isBundle = detail.scope === "bundle";
+  const currentStatus = (m.status ?? "active") as Status;
   return (
     <Card className="lg:sticky lg:top-4 self-start">
       <CardContent className="py-4 px-4 space-y-4">
-        <header className="space-y-1">
-          <div className="flex items-center gap-2 flex-wrap">
-            <h3 className="text-sm font-semibold">{m.name}</h3>
-            <Badge variant="outline" className={cn("text-[10px]", SCOPE_BADGE[detail.scope])}>
-              L{detail.layer} · {detail.scope}
-            </Badge>
-            {m.status && (
-              <Badge
-                variant="outline"
-                className={cn("text-[10px]", STATUS_BADGE[m.status as Status])}
-              >
-                {m.status}
+        <header className="space-y-2">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <div className="flex items-center gap-2 flex-wrap">
+              <h3 className="text-sm font-semibold">{m.name}</h3>
+              <Badge variant="outline" className={cn("text-[10px]", SCOPE_BADGE[detail.scope])}>
+                L{detail.layer} · {detail.scope}
               </Badge>
+              <Badge variant="outline" className={cn("text-[10px]", STATUS_BADGE[currentStatus])}>
+                {currentStatus}
+              </Badge>
+            </div>
+            {!isBundle && (
+              <div className="flex items-center gap-1">
+                <Button size="sm" variant="outline" onClick={onEdit} disabled={actionPending}>
+                  Edit
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={onToggleStatus}
+                  disabled={actionPending}
+                >
+                  {currentStatus === "active" ? "Deactivate" : "Activate"}
+                </Button>
+                <ScopeMover
+                  current={detail.scope as WritableScope}
+                  pending={actionPending}
+                  onMove={onMoveScope}
+                />
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={onDelete}
+                  disabled={actionPending}
+                  aria-label="Delete skill"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
+              </div>
             )}
           </div>
           {m.description && <p className="text-xs text-muted-foreground">{m.description}</p>}
+          {isBundle && (
+            <p className="text-[11px] text-muted-foreground italic">
+              Bundle (Layer 1) skills are vendored — edit them through the bundle's own settings.
+            </p>
+          )}
         </header>
 
         <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
@@ -417,6 +649,326 @@ function SkillDetail({
   );
 }
 
+// ── Editor (shared by edit + create) ─────────────────────────────────────
+
+interface EditorFormState {
+  description: string;
+  type: "context" | "skill";
+  priority: string; // string for input; parsed on save
+  loadingStrategy: "" | "always" | "tool_affined" | "retrieval" | "explicit";
+  appliesToTools: string; // comma-separated
+  status: Status;
+  body: string;
+}
+
+function SkillEditor({
+  detail,
+  actionPending,
+  onCancelEdit,
+  onSave,
+}: { detail: ReadSkill } & Pick<SkillDetailProps, "actionPending" | "onCancelEdit" | "onSave">) {
+  const m = detail.metadata;
+  const [form, setForm] = useState<EditorFormState>({
+    description: m.description ?? "",
+    type: (m.type as "context" | "skill") ?? "skill",
+    priority: m.priority !== undefined ? String(m.priority) : "50",
+    loadingStrategy: (m.loadingStrategy as EditorFormState["loadingStrategy"]) ?? "",
+    appliesToTools: (m.appliesToTools ?? []).join(", "),
+    status: (m.status as Status) ?? "active",
+    body: detail.content,
+  });
+
+  const handleSave = () => {
+    const patch: Record<string, unknown> = {
+      description: form.description,
+      type: form.type,
+      status: form.status,
+    };
+    const priorityNum = Number.parseInt(form.priority, 10);
+    if (Number.isFinite(priorityNum)) patch.priority = priorityNum;
+    if (form.loadingStrategy) patch["loading-strategy"] = form.loadingStrategy;
+    const tools = form.appliesToTools
+      .split(",")
+      .map((t) => t.trim())
+      .filter(Boolean);
+    patch["applies-to-tools"] = tools;
+    onSave({ manifest: patch, body: form.body });
+  };
+
+  return (
+    <Card className="lg:sticky lg:top-4 self-start">
+      <CardContent className="py-4 px-4 space-y-4">
+        <header className="flex items-center justify-between gap-2">
+          <h3 className="text-sm font-semibold">Edit {m.name}</h3>
+          <div className="flex gap-1">
+            <Button size="sm" variant="outline" onClick={onCancelEdit} disabled={actionPending}>
+              Cancel
+            </Button>
+            <Button size="sm" onClick={handleSave} disabled={actionPending}>
+              {actionPending ? "Saving…" : "Save"}
+            </Button>
+          </div>
+        </header>
+
+        <ManifestForm form={form} setForm={setForm} />
+
+        <div className="space-y-1">
+          <label className="text-xs font-medium" htmlFor="skill-body-edit">
+            Body
+          </label>
+          <Textarea
+            id="skill-body-edit"
+            value={form.body}
+            onChange={(e) => setForm({ ...form, body: e.target.value })}
+            className="font-mono text-[11px] min-h-[300px]"
+          />
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function CreateForm({
+  pending,
+  onCancel,
+  onSubmit,
+}: {
+  pending: boolean;
+  onCancel: () => void;
+  onSubmit: (input: CreateInput) => void;
+}) {
+  const [scope, setScope] = useState<WritableScope>("workspace");
+  const [name, setName] = useState("");
+  const [form, setForm] = useState<EditorFormState>({
+    description: "",
+    type: "skill",
+    priority: "50",
+    loadingStrategy: "",
+    appliesToTools: "",
+    status: "active",
+    body: "",
+  });
+
+  const handleSubmit = () => {
+    if (!name.trim()) return;
+    const manifest: Record<string, unknown> = {
+      description: form.description,
+      type: form.type,
+      status: form.status,
+    };
+    const priorityNum = Number.parseInt(form.priority, 10);
+    if (Number.isFinite(priorityNum)) manifest.priority = priorityNum;
+    if (form.loadingStrategy) manifest["loading-strategy"] = form.loadingStrategy;
+    const tools = form.appliesToTools
+      .split(",")
+      .map((t) => t.trim())
+      .filter(Boolean);
+    if (tools.length > 0) manifest["applies-to-tools"] = tools;
+    onSubmit({ scope, name: name.trim(), manifest, body: form.body });
+  };
+
+  return (
+    <Card className="lg:sticky lg:top-4 self-start">
+      <CardContent className="py-4 px-4 space-y-4">
+        <header className="flex items-center justify-between gap-2">
+          <h3 className="text-sm font-semibold">New skill</h3>
+          <div className="flex gap-1">
+            <Button size="sm" variant="outline" onClick={onCancel} disabled={pending}>
+              Cancel
+            </Button>
+            <Button size="sm" onClick={handleSubmit} disabled={pending || !name.trim()}>
+              {pending ? "Creating…" : "Create"}
+            </Button>
+          </div>
+        </header>
+
+        <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-1">
+            <label className="text-xs font-medium" htmlFor="skill-scope">
+              Scope
+            </label>
+            <select
+              id="skill-scope"
+              value={scope}
+              onChange={(e) => setScope(e.target.value as WritableScope)}
+              className="rounded-md border bg-background px-2 py-1 text-xs w-full focus:outline-none focus:ring-1 focus:ring-ring"
+            >
+              <option value="user">User</option>
+              <option value="workspace">Workspace</option>
+              <option value="org">Org</option>
+            </select>
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs font-medium" htmlFor="skill-name">
+              Name
+            </label>
+            <Input
+              id="skill-name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="voice-rules"
+              pattern="[a-zA-Z0-9_-]+"
+            />
+          </div>
+        </div>
+
+        <ManifestForm form={form} setForm={setForm} />
+
+        <div className="space-y-1">
+          <label className="text-xs font-medium" htmlFor="skill-body-new">
+            Body
+          </label>
+          <Textarea
+            id="skill-body-new"
+            value={form.body}
+            onChange={(e) => setForm({ ...form, body: e.target.value })}
+            className="font-mono text-[11px] min-h-[200px]"
+            placeholder="Markdown content of the skill…"
+          />
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function ManifestForm({
+  form,
+  setForm,
+}: {
+  form: EditorFormState;
+  setForm: (f: EditorFormState) => void;
+}) {
+  const selectClass =
+    "rounded-md border bg-background px-2 py-1 text-xs w-full focus:outline-none focus:ring-1 focus:ring-ring";
+  return (
+    <div className="space-y-3">
+      <div className="space-y-1">
+        <label className="text-xs font-medium" htmlFor="skill-description">
+          Description
+        </label>
+        <Input
+          id="skill-description"
+          value={form.description}
+          onChange={(e) => setForm({ ...form, description: e.target.value })}
+          placeholder="One-line summary of what this skill does"
+        />
+      </div>
+      <div className="grid grid-cols-3 gap-3">
+        <div className="space-y-1">
+          <label className="text-xs font-medium" htmlFor="skill-type">
+            Type
+          </label>
+          <select
+            id="skill-type"
+            value={form.type}
+            onChange={(e) => setForm({ ...form, type: e.target.value as EditorFormState["type"] })}
+            className={selectClass}
+          >
+            <option value="skill">skill (triggered)</option>
+            <option value="context">context (always-on)</option>
+          </select>
+        </div>
+        <div className="space-y-1">
+          <label className="text-xs font-medium" htmlFor="skill-priority">
+            Priority
+          </label>
+          <Input
+            id="skill-priority"
+            type="number"
+            min="11"
+            max="99"
+            value={form.priority}
+            onChange={(e) => setForm({ ...form, priority: e.target.value })}
+          />
+        </div>
+        <div className="space-y-1">
+          <label className="text-xs font-medium" htmlFor="skill-status">
+            Status
+          </label>
+          <select
+            id="skill-status"
+            value={form.status}
+            onChange={(e) => setForm({ ...form, status: e.target.value as Status })}
+            className={selectClass}
+          >
+            <option value="active">active</option>
+            <option value="draft">draft</option>
+            <option value="disabled">disabled</option>
+            <option value="archived">archived</option>
+          </select>
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <div className="space-y-1">
+          <label className="text-xs font-medium" htmlFor="skill-loading">
+            Loading strategy
+          </label>
+          <select
+            id="skill-loading"
+            value={form.loadingStrategy}
+            onChange={(e) =>
+              setForm({
+                ...form,
+                loadingStrategy: e.target.value as EditorFormState["loadingStrategy"],
+              })
+            }
+            className={selectClass}
+          >
+            <option value="">(default)</option>
+            <option value="always">always</option>
+            <option value="tool_affined">tool_affined</option>
+          </select>
+        </div>
+        <div className="space-y-1">
+          <label className="text-xs font-medium" htmlFor="skill-tools">
+            Tool affinity (comma-separated globs)
+          </label>
+          <Input
+            id="skill-tools"
+            value={form.appliesToTools}
+            onChange={(e) => setForm({ ...form, appliesToTools: e.target.value })}
+            placeholder="synapse-collateral__*, synapse-crm__*"
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ScopeMover({
+  current,
+  pending,
+  onMove,
+}: {
+  current: WritableScope;
+  pending: boolean;
+  onMove: (target: WritableScope) => void;
+}) {
+  const targets: WritableScope[] = (["org", "workspace", "user"] as WritableScope[]).filter(
+    (s) => s !== current,
+  );
+  return (
+    <select
+      onChange={(e) => {
+        const v = e.target.value as WritableScope | "";
+        if (v) onMove(v);
+        e.target.value = "";
+      }}
+      defaultValue=""
+      disabled={pending}
+      aria-label="Move skill to a different scope"
+      className="rounded-md border bg-background px-2 py-1 text-xs h-8 disabled:opacity-50"
+    >
+      <option value="">Move to…</option>
+      {targets.map((t) => (
+        <option key={t} value={t}>
+          {t}
+        </option>
+      ))}
+    </select>
+  );
+}
+
 function Row({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
   return (
     <>
@@ -441,7 +993,7 @@ const SCOPE_OPTIONS: Array<{ value: Scope | "all"; label: string }> = [
   { value: "all", label: "All scopes" },
   { value: "user", label: "User" },
   { value: "workspace", label: "Workspace" },
-  { value: "platform", label: "Platform" },
+  { value: "org", label: "Org" },
   { value: "bundle", label: "Bundle (L1)" },
 ];
 
