@@ -180,6 +180,24 @@ export interface ToolStartEvent {
   input?: Record<string, unknown>;
 }
 
+/**
+ * Fired when the model begins emitting a tool-call block, before the
+ * tool actually executes. Bridges the dark gap between the last text
+ * delta and `tool.start` when the model is streaming a large tool
+ * input (e.g. a 45 KB document body) — without this, the UI has no
+ * signal during that window.
+ */
+export interface ToolPreparingEvent {
+  runId: string;
+  id: string;
+  name: string;
+}
+
+export interface ToolPreparingDoneEvent {
+  runId: string;
+  id: string;
+}
+
 export interface ResourceLinkInfo {
   uri: string;
   name?: string;
@@ -232,6 +250,8 @@ export interface ChatStreamEventMap {
   "chat.start": { conversationId: string };
   "text.delta": TextDeltaEvent;
   "reasoning.delta": ReasoningDeltaEvent;
+  "tool.preparing": ToolPreparingEvent;
+  "tool.preparing.done": ToolPreparingDoneEvent;
   "tool.start": ToolStartEvent;
   "tool.done": ToolDoneEvent;
   "llm.done": LlmDoneEvent;

@@ -48,7 +48,7 @@ export const ChatPanel = forwardRef<ChatPanelRef, ChatPanelProps>(function ChatP
   const inputWrapperRef = useRef<HTMLDivElement>(null);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [copiedId, setCopiedId] = useState(false);
-  const { conversationId, streamingState } = useChatContext();
+  const { conversationId, streamingState, preparingTool } = useChatContext();
   const { currentUserId, participantMap } = useChatConfigContext();
 
   // Derive a title from the first user message, stripping markdown syntax
@@ -216,6 +216,7 @@ export const ChatPanel = forwardRef<ChatPanelRef, ChatPanelProps>(function ChatP
         messages={messages}
         isStreaming={isStreaming}
         streamingState={streamingState}
+        preparingTool={preparingTool}
         displayDetail={displayDetail}
         compact={compact}
         currentUserId={currentUserId}
@@ -229,6 +230,7 @@ export const ChatPanel = forwardRef<ChatPanelRef, ChatPanelProps>(function ChatP
           disabled={isStreaming}
           onNewConversation={handleNewChat}
           streamingState={streamingState}
+          preparingTool={preparingTool}
         />
       </div>
 

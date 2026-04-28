@@ -372,6 +372,8 @@ export class AgentEngine {
             },
             (text) => this.events.emit({ type: "text.delta", data: { runId, text } }),
             (text) => this.events.emit({ type: "reasoning.delta", data: { runId, text } }),
+            (id, name) => this.events.emit({ type: "tool.preparing", data: { runId, id, name } }),
+            (id) => this.events.emit({ type: "tool.preparing.done", data: { runId, id } }),
           ),
         );
         const llmMs = Math.round(performance.now() - llmStart);

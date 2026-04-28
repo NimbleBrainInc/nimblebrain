@@ -18,6 +18,19 @@ export async function callModel(
   options: LanguageModelV3CallOptions,
   onTextDelta: (text: string) => void,
   onReasoningDelta?: (text: string) => void,
+  /**
+   * Called once when the model begins emitting a tool-call block, with
+   * the tool name already known. Lets the engine surface "Calling X…"
+   * during the dark gap where the model is streaming a large tool
+   * input — `tool.start` only fires after `callModel` returns.
+   *
+   * Provider-agnostic: AI SDK V3 normalizes `tool-input-start` across
+   * Anthropic / OpenAI / Google. Providers that never emit it simply
+   * skip the callback (engine falls back to `tool.start`-only signals,
+   * matching legacy behavior).
+   */
+  onToolInputStart?: (id: string, toolName: string) => void,
+  onToolInputEnd?: (id: string) => void,
 ): Promise<StreamResult> {
   const { stream } = await model.doStream(options);
 
@@ -101,6 +114,21 @@ export async function callModel(
           }
           accumulatedReasoning = "";
           reasoningProviderMetadata = undefined;
+          break;
+
+        // Tool-input parts: surface model-side tool intent before the
+        // engine actually dispatches the tool. `-delta` is intentionally
+        // not forwarded — per-char SSE traffic for no UI gain (the chat
+        // shows tool *intent*, not the JSON forming).
+        case "tool-input-start":
+          onToolInputStart?.(part.id, part.toolName);
+          break;
+
+        case "tool-input-delta":
+          break;
+
+        case "tool-input-end":
+          onToolInputEnd?.(part.id);
           break;
 
         case "tool-call":

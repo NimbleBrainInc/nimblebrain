@@ -1,7 +1,8 @@
 import { AlertCircle, Check, ChevronDown, Copy, RotateCcw, Zap } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Streamdown } from "streamdown";
-import type { ChatMessage, StreamingState } from "../hooks/useChat";
+import type { ChatMessage, PreparingTool, StreamingState } from "../hooks/useChat";
+import { stripServerPrefix } from "../lib/format";
 import { participantColor } from "../lib/participant-colors";
 import type { DisplayDetail } from "../lib/tool-display";
 import { FileAttachment } from "./FileAttachment";
@@ -119,6 +120,8 @@ interface MessageListProps {
   messages: ChatMessage[];
   isStreaming: boolean;
   streamingState: StreamingState;
+  /** Set while the model is emitting a tool-call block (pre-execution). */
+  preparingTool?: PreparingTool | null;
   displayDetail: DisplayDetail;
   compact?: boolean;
   /** Current user's ID — messages from this user get no speaker label. */
@@ -220,6 +223,7 @@ export function MessageList({
   messages,
   isStreaming,
   streamingState,
+  preparingTool,
   displayDetail,
   compact = false,
   currentUserId,
@@ -451,6 +455,18 @@ export function MessageList({
                         </Streamdown>
                       </div>
                     )}
+                    {/* "Calling X…" — the model has emitted a tool-call
+                        block (tool-input-start) but the engine hasn't
+                        executed it yet. Without this, the indicator
+                        goes dark for the entire tool-args streaming
+                        window (minutes for large inputs). */}
+                    {idx === messages.length - 1 &&
+                      streamingState === "preparing" &&
+                      preparingTool && (
+                        <span className="text-xs font-mono text-muted-foreground/60 presence-thinking">
+                          Calling {stripServerPrefix(preparingTool.name)}...
+                        </span>
+                      )}
                     {/* File attachments */}
                     {msg.files && msg.files.length > 0 && (
                       <div className="flex flex-wrap gap-2">

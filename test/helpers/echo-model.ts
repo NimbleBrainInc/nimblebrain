@@ -196,6 +196,23 @@ export function createEchoModel(options?: EchoModelOptions): LanguageModelV3 {
           parts.push({ type: "text-end", id: "text-0" });
         } else if (item.type === "tool-call") {
           const tc = item as LanguageModelV3ToolCall;
+          // Real providers (Anthropic / OpenAI / Google) emit
+          // tool-input-start, then a stream of tool-input-delta, then
+          // tool-input-end *before* the assembled tool-call. Mirror
+          // that shape so callModel's tool-input-* callbacks see the
+          // signals they would in production. Stub deltas keep tests
+          // realistic without requiring per-char fixtures.
+          parts.push({
+            type: "tool-input-start",
+            id: tc.toolCallId,
+            toolName: tc.toolName,
+          });
+          parts.push({
+            type: "tool-input-delta",
+            id: tc.toolCallId,
+            delta: tc.input as string,
+          });
+          parts.push({ type: "tool-input-end", id: tc.toolCallId });
           parts.push({
             type: "tool-call",
             toolCallId: tc.toolCallId,

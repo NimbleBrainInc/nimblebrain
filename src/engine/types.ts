@@ -45,6 +45,8 @@ export type EngineEventType =
   | "run.start"
   | "text.delta"
   | "reasoning.delta"
+  | "tool.preparing"
+  | "tool.preparing.done"
   | "tool.start"
   | "tool.done"
   | "tool.progress"

@@ -147,6 +147,8 @@ export async function handleChatStream(
           event.type === "chat.start" ||
           event.type === "text.delta" ||
           event.type === "reasoning.delta" ||
+          event.type === "tool.preparing" ||
+          event.type === "tool.preparing.done" ||
           event.type === "tool.start" ||
           event.type === "tool.done" ||
           event.type === "llm.done" ||
