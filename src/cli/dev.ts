@@ -53,6 +53,28 @@ async function prefixLines(
 }
 
 /**
+ * Poll the API's /v1/health endpoint until it responds OK or the deadline elapses.
+ * Used to gate Vite dev server spawns on API readiness so they don't fire requests
+ * into a not-yet-listening port (which produces noisy ECONNREFUSED stack traces).
+ */
+async function waitForHealth(port: number, opts: { timeoutMs: number }): Promise<void> {
+  const deadline = Date.now() + opts.timeoutMs;
+  const url = `http://localhost:${port}/v1/health`;
+
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(url);
+      if (res.ok) return;
+    } catch {
+      // Port not bound yet — expected during startup.
+    }
+    await Bun.sleep(100);
+  }
+
+  throw new Error(`API did not become ready within ${opts.timeoutMs}ms`);
+}
+
+/**
  * `nb dev` — supervised dual-process development mode.
  *
  * Starts the API server with bun --watch (auto-restart on source changes)
@@ -86,6 +108,23 @@ export async function runDev(options: DevOptions): Promise<void> {
   // Pipe API output with [api] prefix
   prefixLines(apiProc.stdout as ReadableStream<Uint8Array>, "[api]", process.stdout);
   prefixLines(apiProc.stderr as ReadableStream<Uint8Array>, "[api]", process.stderr);
+
+  // Gate Vite spawns on API readiness. Without this, Vite proxies fire requests
+  // into a not-yet-listening API and the user sees ECONNREFUSED stack traces
+  // until bundles finish loading.
+  log.info("[dev] Waiting for API to become ready...");
+  try {
+    await waitForHealth(port, { timeoutMs: 30_000 });
+    log.info("[dev] API ready");
+  } catch {
+    log.info("[dev] API failed to become ready within 30s. Exiting.");
+    try {
+      apiProc.kill("SIGTERM");
+    } catch {
+      // Already dead
+    }
+    process.exit(1);
+  }
 
   // --- Web dev server (unless --no-web) ---
   let webProc: Subprocess | undefined;
