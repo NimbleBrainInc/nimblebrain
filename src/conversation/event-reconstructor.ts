@@ -26,6 +26,28 @@ const TRUNCATION_MARKERS: Record<string, string> = {
 };
 
 /**
+ * Marker for the case where the LLM produced tool calls but the run was
+ * cut short before any of them executed (process death, abort, stalled
+ * call). Without this placeholder the reconstructed history would skip
+ * the turn entirely, producing two adjacent `user` messages on the next
+ * append — which Anthropic rejects with
+ * `"This model does not support assistant message prefill."`. The marker
+ * preserves the role-alternation invariant and tells the model honestly
+ * what happened.
+ */
+const ORPHANED_TOOL_CALLS_MARKER =
+  "[Previous turn called tools but tool execution did not complete (the run was cut short before any tool returned). The tool calls were dropped on reload.]";
+
+/**
+ * Generic marker for a run scope that emitted no messages at all (no
+ * llm.response events between `run.start` and the run's terminator —
+ * process died before any model call returned, or some other edge case).
+ * Used by the final invariant pass to repair user→user adjacency that
+ * the per-run logic didn't catch.
+ */
+const ABANDONED_RUN_MARKER = "[Previous turn ended without producing any response.]";
+
+/**
  * Parse tool-call input from its persisted form.
  * The AI SDK V3 stream emits tool-call input as a JSON string, which gets
  * written to the JSONL event log as-is. When reconstructing messages for
@@ -95,6 +117,11 @@ export interface UsageMetrics {
  * 4. Per-run metrics accumulate into assistant message metadata.
  */
 export function reconstructMessages(events: readonly ConversationEvent[]): StoredMessage[] {
+  const messages = buildMessagesFromEvents(events);
+  return ensureRoleAlternation(messages);
+}
+
+function buildMessagesFromEvents(events: readonly ConversationEvent[]): StoredMessage[] {
   const messages: StoredMessage[] = [];
 
   for (let i = 0; i < events.length; ) {
@@ -141,6 +168,16 @@ export function reconstructMessages(events: readonly ConversationEvent[]): Store
         if (inner.type === "run.error" && inner.runId === runId) {
           // Run errored — we still emit messages collected so far
           i++;
+          break;
+        }
+
+        // Implicit run end: a new user.message or run.start means the
+        // previous run never closed cleanly (process died, abort fired
+        // without emitting a terminal event). Break out — but DO NOT
+        // increment `i`, so the outer loop processes the event itself.
+        // Without this, subsequent user messages get swallowed by the
+        // run loop and the conversation appears to skip turns on reload.
+        if (inner.type === "user.message" || inner.type === "run.start") {
           break;
         }
 
@@ -206,13 +243,16 @@ export function reconstructMessages(events: readonly ConversationEvent[]): Store
         }));
         let reasoningEmitted = false;
 
-        if (toolCallParts.length > 0) {
-          // Only include tool calls that were actually executed (have a tool.done event).
-          // Unexecuted calls happen when a run is cut short (abort, crash, etc.)
-          // before tools could run. Including them would create orphaned tool_use blocks
-          // that the Claude API rejects, or fake empty tool results that confuse the model.
-          const executedToolCalls = toolCallParts.filter((tc) => runToolDones.has(tc.toolCallId));
+        // Only include tool calls that were actually executed (have a tool.done event).
+        // Unexecuted calls happen when a run is cut short (abort, crash, etc.)
+        // before tools could run. Including them would create orphaned tool_use blocks
+        // that the Claude API rejects, or fake empty tool results that confuse the model.
+        // Lifted out of the `if (toolCallParts.length > 0)` block so step 4a can
+        // detect the all-unexecuted case and emit a placeholder for it.
+        const executedToolCalls = toolCallParts.filter((tc) => runToolDones.has(tc.toolCallId));
+        const hasOrphanedToolCalls = toolCallParts.length > 0 && executedToolCalls.length === 0;
 
+        if (toolCallParts.length > 0) {
           if (executedToolCalls.length > 0) {
             const toolCallsMeta = executedToolCalls.map((tc) => {
               const done = runToolDones.get(tc.toolCallId)!;
@@ -284,33 +324,43 @@ export function reconstructMessages(events: readonly ConversationEvent[]): Store
         }
 
         // Step 4a — replay honesty.
-        // No tool-call, no text. Two reasons we can land here:
+        // We land here when no assistant message was emitted above (no
+        // executed tool calls, no text). Several reasons:
         //   1. The turn produced reasoning only (extended thinking that
         //      ran out of budget before any visible content).
         //   2. The turn produced literally nothing AND the model didn't
         //      end cleanly (length / content_filter / error).
-        // Either way, dropping the message silently — the pre-existing
-        // behavior — leaves the operator looking at a conversation that
-        // skips a turn that actually happened. Emit a placeholder
-        // assistant message carrying finishReason in metadata so the UI
-        // can render the truncation banner and the reasoning (if any).
+        //   3. The turn produced tool calls that NEVER executed (process
+        //      death, abort, stalled call). Without a placeholder, the
+        //      next user message lands directly after the prior user
+        //      message and Anthropic rejects the conversation on reload
+        //      with "model does not support assistant message prefill".
+        //
+        // Dropping the message silently — the pre-existing behavior —
+        // either skips a turn that actually happened or breaks role
+        // alternation. Emit a placeholder assistant message carrying
+        // finishReason in metadata so the UI can render the truncation
+        // banner and the reasoning (if any) survives.
         //
         // Reasoning content is ONLY usable as the placeholder body when
         // it carries provider metadata that lets it round-trip (e.g.
         // Anthropic's signature). Without that, the AI SDK provider
         // drops the block on the next prompt → content: [] → API 400.
-        // Fall back to marker text whenever the reasoning can't be
-        // safely replayed.
-        if (
-          toolCallParts.length === 0 &&
-          textParts.length === 0 &&
-          (reasoningContent.length > 0 || (llmResp.finishReason && llmResp.finishReason !== "stop"))
-        ) {
-          const placeholderText =
-            TRUNCATION_MARKERS[llmResp.finishReason ?? "other"] ?? TRUNCATION_MARKERS.other!;
-          const reasoningRoundTrips = reasoningContent.some(
-            (r) => "providerOptions" in r && r.providerOptions != null,
-          );
+        // For the orphaned-tool-calls case we always use marker text:
+        // the reasoning may end mid-tool-call-intent, and the marker is
+        // the load-bearing signal to the model on retry.
+        const wouldEmitAssistantMessage = executedToolCalls.length > 0 || textParts.length > 0;
+        const hasReasoningOrAbnormalFinish =
+          reasoningContent.length > 0 ||
+          (llmResp.finishReason != null && llmResp.finishReason !== "stop");
+
+        if (!wouldEmitAssistantMessage && (hasReasoningOrAbnormalFinish || hasOrphanedToolCalls)) {
+          const placeholderText = hasOrphanedToolCalls
+            ? ORPHANED_TOOL_CALLS_MARKER
+            : (TRUNCATION_MARKERS[llmResp.finishReason ?? "other"] ?? TRUNCATION_MARKERS.other!);
+          const reasoningRoundTrips =
+            !hasOrphanedToolCalls &&
+            reasoningContent.some((r) => "providerOptions" in r && r.providerOptions != null);
           const placeholderContent = reasoningRoundTrips
             ? reasoningContent
             : [{ type: "text" as const, text: placeholderText }];
@@ -332,6 +382,63 @@ export function reconstructMessages(events: readonly ConversationEvent[]): Store
   }
 
   return messages;
+}
+
+/**
+ * Defense-in-depth invariant pass: ensure the reconstructed message list
+ * never has two adjacent `user` messages. Anthropic rejects such a
+ * sequence on the next append with
+ * `"This model does not support assistant message prefill."`.
+ *
+ * The per-run step-4a handler covers the cases we've seen in production
+ * (orphaned tool-calls, length-truncated empty turns). This pass catches
+ * anything we haven't enumerated — e.g. a run scope that emitted zero
+ * `llm.response` events because the process died before the model
+ * returned. Cheap O(n) scan; never fires on healthy data.
+ */
+function ensureRoleAlternation(messages: StoredMessage[]): StoredMessage[] {
+  if (messages.length < 2) return messages;
+
+  const result: StoredMessage[] = [];
+  for (const msg of messages) {
+    const prev = result[result.length - 1];
+    if (prev?.role === "user" && msg.role === "user") {
+      // Place the synthetic turn 1ms after the previous user message so it
+      // sorts between the two user turns instead of collapsing onto the
+      // next user's timestamp (the UI sorts strictly by `timestamp`, and a
+      // tied-timestamp placeholder rendered after the user it precedes
+      // looks like the user replied to themselves). Clamp to the next
+      // message's timestamp when it's already <1ms ahead — clock skew or
+      // tight bursts can produce equal/backwards timestamps.
+      const prevTime = Date.parse(prev.timestamp);
+      const msgTime = Date.parse(msg.timestamp);
+      const placeholderTs =
+        Number.isFinite(prevTime) && Number.isFinite(msgTime)
+          ? new Date(Math.min(prevTime + 1, msgTime)).toISOString()
+          : msg.timestamp;
+      result.push({
+        role: "assistant",
+        content: [{ type: "text" as const, text: ABANDONED_RUN_MARKER }],
+        timestamp: placeholderTs,
+        // Carry minimal metadata so the chat UI can render the same
+        // truncation banner it uses for length / content-filter cases.
+        // `finishReason: "other"` is the closest enum value — there was no
+        // real LLM call, so the categorical reasons (length, error, etc.)
+        // don't apply.
+        metadata: {
+          finishReason: "other",
+          inputTokens: 0,
+          outputTokens: 0,
+          cacheReadTokens: 0,
+          costUsd: 0,
+          llmMs: 0,
+          iterations: 0,
+        },
+      });
+    }
+    result.push(msg);
+  }
+  return result;
 }
 
 /**

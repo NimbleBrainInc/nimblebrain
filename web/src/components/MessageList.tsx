@@ -41,7 +41,12 @@ function stopReasonMessage(stopReason: string): string {
     case "max_iterations":
       return "I reached my step limit for this turn. Send another message and I'll pick up where I left off.";
     case "length":
-      return "I ran out of room mid-response (hit the output-token limit). Send another message and I'll continue.";
+      // The two common causes of `length` are (a) writing a long response
+      // and running out of room and (b) extended thinking burning the
+      // output budget before any visible content lands. The platform now
+      // caps thinking to leave headroom (see resolveThinking), but breaking
+      // the task up still helps when the response itself is large.
+      return "I ran out of room mid-response (hit the output-token limit). Send another message to continue, or try splitting the task into smaller pieces.";
     case "content_filter":
       return "The response was blocked by content filtering. Try rephrasing your request.";
     case "error":

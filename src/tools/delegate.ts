@@ -187,10 +187,21 @@ export function createDelegateTool(ctx: DelegateContext): InProcessTool {
         const parentRunId = ctx.getParentRunId();
         const childEvents = new ChildEventSink(ctx.events, parentRunId);
 
+        // Resolve maxOutputTokens FIRST — resolveThinking needs it to clamp
+        // the thinking budget so visible-content headroom is preserved on
+        // delegated runs too. Without this, child agents would fall through
+        // to the 1024-token MIN_THINKING_BUDGET_TOKENS floor regardless of
+        // the model's actual output capacity.
+        const childMaxOutputTokens = resolveMaxOutputTokens({
+          configValue: ctx.configMaxOutputTokens,
+          model: modelString,
+        });
+
         const childThinking = resolveThinking({
           configMode: ctx.configThinking,
           configBudgetTokens: ctx.configThinkingBudgetTokens,
           model: modelString,
+          maxOutputTokens: childMaxOutputTokens,
         });
 
         // Create child engine config
@@ -198,10 +209,7 @@ export function createDelegateTool(ctx: DelegateContext): InProcessTool {
           model: modelString,
           maxIterations: cappedIterations,
           maxInputTokens: ctx.defaultMaxInputTokens,
-          maxOutputTokens: resolveMaxOutputTokens({
-            configValue: ctx.configMaxOutputTokens,
-            model: modelString,
-          }),
+          maxOutputTokens: childMaxOutputTokens,
           ...(childThinking ? { thinking: childThinking } : {}),
         };
 
