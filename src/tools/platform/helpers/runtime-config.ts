@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import type { Runtime } from "../../../runtime/runtime.ts";
 
 export interface RuntimeConfigResult {
   defaultModel: string;
@@ -14,32 +14,33 @@ export interface RuntimeConfigResult {
   };
 }
 
-export function getRuntimeConfig(configPath: string): RuntimeConfigResult {
-  let raw: Record<string, unknown> = {};
-  try {
-    const content = readFileSync(configPath, "utf-8");
-    raw = JSON.parse(content) as Record<string, unknown>;
-  } catch {
-    // File missing or invalid — use defaults
-  }
-
-  const providers = raw.providers as Record<string, unknown> | undefined;
-  const configuredProviders = providers ? Object.keys(providers) : ["anthropic"];
-
-  const prefs = raw.preferences as Record<string, unknown> | undefined;
-  const home = raw.home as Record<string, unknown> | undefined;
-
+/**
+ * Shape the runtime configuration for the settings UI.
+ *
+ * Delegates entirely to the live `Runtime` instance — the resolver-aware
+ * source of truth. Reading the config file independently here would
+ * duplicate logic and drift (e.g. before this refactor, this helper
+ * returned a static 16,384 fallback for `maxOutputTokens` while the
+ * runtime returned a catalog-derived value, silently undermining the
+ * fix when the operator opened + saved the model settings page).
+ *
+ * Per-user identity preferences override these tenant defaults at the
+ * call site (see `settings.ts`'s `config` tool handler).
+ */
+export function getRuntimeConfig(runtime: Runtime): RuntimeConfigResult {
+  const cfg = runtime.getRuntimeConfig();
+  const tenantPrefs = runtime.getTenantDefaultPreferences();
   return {
-    defaultModel: (raw.defaultModel as string) ?? "anthropic:claude-sonnet-4-6",
-    maxIterations: (raw.maxIterations as number) ?? 10,
-    maxInputTokens: (raw.maxInputTokens as number) ?? 500_000,
-    maxOutputTokens: (raw.maxOutputTokens as number) ?? 16_384,
-    configuredProviders,
+    defaultModel: cfg.defaultModel,
+    maxIterations: cfg.maxIterations,
+    maxInputTokens: cfg.maxInputTokens,
+    maxOutputTokens: cfg.maxOutputTokens,
+    configuredProviders: runtime.getConfiguredProviders(),
     preferences: {
-      displayName: (prefs?.displayName as string) ?? (home?.userName as string) ?? "",
-      timezone: (prefs?.timezone as string) ?? (home?.timezone as string) ?? "",
-      locale: (prefs?.locale as string) ?? "en-US",
-      theme: (prefs?.theme as string) ?? "system",
+      displayName: tenantPrefs.displayName ?? "",
+      timezone: tenantPrefs.timezone ?? "",
+      locale: tenantPrefs.locale ?? "en-US",
+      theme: tenantPrefs.theme ?? "system",
     },
   };
 }

@@ -113,7 +113,7 @@ describe("multi-model routing", () => {
 				getParentRunId: () => "parent-run-1",
 				defaultModel: "test-default-model",
 				defaultMaxInputTokens: 500_000,
-				defaultMaxOutputTokens: 16_384,
+				configMaxOutputTokens: 16_384,
 			};
 
 			const tool = createDelegateTool(ctx);
@@ -149,7 +149,7 @@ describe("multi-model routing", () => {
 				getParentRunId: () => "parent-run-2",
 				defaultModel: "my-default-model",
 				defaultMaxInputTokens: 500_000,
-				defaultMaxOutputTokens: 16_384,
+				configMaxOutputTokens: 16_384,
 			};
 
 			const tool = createDelegateTool(ctx);
@@ -191,7 +191,7 @@ describe("multi-model routing", () => {
 				getParentRunId: () => "parent-run-3",
 				defaultModel: "test-default",
 				defaultMaxInputTokens: 500_000,
-				defaultMaxOutputTokens: 16_384,
+				configMaxOutputTokens: 16_384,
 			};
 
 			const tool = createDelegateTool(ctx);
@@ -221,7 +221,7 @@ describe("multi-model routing", () => {
 				getParentRunId: () => "parent-run-4",
 				defaultModel: "claude-sonnet-4-5-20250929",
 				defaultMaxInputTokens: 500_000,
-				defaultMaxOutputTokens: 16_384,
+				configMaxOutputTokens: 16_384,
 			};
 
 			const tool = createDelegateTool(ctx);

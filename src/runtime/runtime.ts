@@ -72,11 +72,8 @@ import { createWorkspaceRegistry, startWorkspaceBundles } from "./workspace-runt
 const DEFAULT_WORK_DIR = join(homedir(), ".nimblebrain");
 const DEFAULT_MODEL = "claude-sonnet-4-6";
 
-import {
-  DEFAULT_MAX_INPUT_TOKENS,
-  DEFAULT_MAX_ITERATIONS,
-  DEFAULT_MAX_OUTPUT_TOKENS,
-} from "../limits.ts";
+import { DEFAULT_MAX_INPUT_TOKENS, DEFAULT_MAX_ITERATIONS } from "../limits.ts";
+import { resolveMaxOutputTokens } from "./resolve-max-output-tokens.ts";
 
 const DEFAULT_MAX_HISTORY_MESSAGES = 40;
 
@@ -293,7 +290,6 @@ export class Runtime {
     const gate = config.confirmationGate ?? new NoopConfirmationGate();
 
     const maxInputTokens = config.maxInputTokens ?? DEFAULT_MAX_INPUT_TOKENS;
-    const maxOutputTokens = config.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
     const maxHistoryMessages = config.maxHistoryMessages ?? DEFAULT_MAX_HISTORY_MESSAGES;
 
     // Build delegate context for nb__delegate tool
@@ -336,7 +332,9 @@ export class Runtime {
       getParentRunId: () => delegateTracker.getParentRunId(),
       defaultModel: getDefaultModel(),
       defaultMaxInputTokens: maxInputTokens,
-      defaultMaxOutputTokens: maxOutputTokens,
+      // Raw operator config (may be undefined). Delegate resolves against
+      // the child's model via resolveMaxOutputTokens at execution time.
+      configMaxOutputTokens: config.maxOutputTokens,
     };
 
     // System tools (search, manage_app, bundle_status, manage_skill, delegate)
@@ -726,7 +724,10 @@ export class Runtime {
       model: resolvedModelString,
       maxIterations: request.maxIterations ?? this.config.maxIterations ?? DEFAULT_MAX_ITERATIONS,
       maxInputTokens: this.config.maxInputTokens ?? DEFAULT_MAX_INPUT_TOKENS,
-      maxOutputTokens: this.config.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
+      maxOutputTokens: resolveMaxOutputTokens({
+        configValue: this.config.maxOutputTokens,
+        model: resolvedModelString,
+      }),
       maxToolResultSize: this.config.maxToolResultSize,
       hooks: this.hooks,
     };
@@ -1326,6 +1327,30 @@ export class Runtime {
     return { anthropic: {} };
   }
 
+  /**
+   * Tenant-level default preferences from the deployed runtime config
+   * (`config.preferences` with `config.home` as a legacy fallback for
+   * displayName/timezone). These are the values an operator sets via Helm
+   * values; per-user identity preferences override them at request time.
+   */
+  getTenantDefaultPreferences(): {
+    displayName?: string;
+    timezone?: string;
+    locale?: string;
+    theme?: "system" | "light" | "dark";
+  } {
+    const prefs = this.config.preferences ?? {};
+    const home = this.config.home ?? {};
+    return {
+      ...((prefs.displayName ?? home.userName)
+        ? { displayName: prefs.displayName ?? home.userName }
+        : {}),
+      ...((prefs.timezone ?? home.timezone) ? { timezone: prefs.timezone ?? home.timezone } : {}),
+      ...(prefs.locale ? { locale: prefs.locale } : {}),
+      ...(prefs.theme ? { theme: prefs.theme } : {}),
+    };
+  }
+
   /** Get max agentic iterations per request. */
   getMaxIterations(): number {
     return this.config.maxIterations ?? 10;
@@ -1336,9 +1361,19 @@ export class Runtime {
     return this.config.maxInputTokens ?? 500_000;
   }
 
-  /** Get max output tokens per LLM call. */
-  getMaxOutputTokens(): number {
-    return this.config.maxOutputTokens ?? 16_384;
+  /**
+   * Get max output tokens per LLM call.
+   *
+   * If a model is supplied, the value is resolved through the catalog so
+   * the answer reflects what would actually be used for that model. Without
+   * a model, the default-slot model is used (so the bare call returns the
+   * cap that applies to a default chat turn).
+   */
+  getMaxOutputTokens(model?: string): number {
+    return resolveMaxOutputTokens({
+      configValue: this.config.maxOutputTokens,
+      model: model ?? this.getDefaultModel(),
+    });
   }
 
   /** Update live runtime config (in-memory). Called by set_config tool after disk write. */
@@ -1399,7 +1434,10 @@ export class Runtime {
       defaultModel: this.getDefaultModel(),
       maxIterations: this.config.maxIterations ?? DEFAULT_MAX_ITERATIONS,
       maxInputTokens: this.config.maxInputTokens ?? DEFAULT_MAX_INPUT_TOKENS,
-      maxOutputTokens: this.config.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
+      maxOutputTokens: resolveMaxOutputTokens({
+        configValue: this.config.maxOutputTokens,
+        model: this.getDefaultModel(),
+      }),
     };
   }
 
