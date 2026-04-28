@@ -267,6 +267,42 @@ describe("Core Source", () => {
 		}
 	});
 
+	it("nb__set_model_config rejects thinking='enabled' + budget=null even with an existing budget", async () => {
+		// The existing budget would survive validation if the validator
+		// only checked disk state, but the merge then deletes it — leaving
+		// thinking=enabled with no budget, the silent-downgrade trap.
+		const workDir = join(testDir, `work-thinking-clearbudget-${Date.now()}`);
+		mkdirSync(workDir, { recursive: true });
+		const configPath = join(workDir, "nimblebrain.json");
+		writeFileSync(
+			configPath,
+			JSON.stringify({ thinking: "enabled", thinkingBudgetTokens: 8192 }),
+		);
+
+		const runtime = await Runtime.start({
+			model: { provider: "custom", adapter: createEchoModel() },
+			noDefaultBundles: true,
+			workDir,
+			configPath,
+			logging: { disabled: true },
+		});
+		try {
+			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
+			const result = await source.execute("set_model_config", {
+				thinking: "enabled",
+				thinkingBudgetTokens: null,
+			});
+			expect(result.isError).toBe(true);
+			expect(extractText(result.content)).toContain("requires thinkingBudgetTokens");
+			// Disk untouched
+			const raw = JSON.parse(require("node:fs").readFileSync(configPath, "utf-8"));
+			expect(raw.thinking).toBe("enabled");
+			expect(raw.thinkingBudgetTokens).toBe(8192);
+		} finally {
+			await runtime.shutdown();
+		}
+	});
+
 	it("nb__set_model_config thinking=null clears the override (and budget)", async () => {
 		const workDir = join(testDir, `work-thinking-clear-${Date.now()}`);
 		mkdirSync(workDir, { recursive: true });

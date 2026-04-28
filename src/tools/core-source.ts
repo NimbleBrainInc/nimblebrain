@@ -179,10 +179,11 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
               "(adaptive for catalog-flagged reasoning models, off otherwise).",
           },
           thinkingBudgetTokens: {
-            type: "number",
+            type: ["number", "null"],
             description:
               "Token budget when thinking=enabled. Counts toward maxOutputTokens. " +
-              "Anthropic requires a minimum of 1,024.",
+              "Anthropic requires a minimum of 1,024. " +
+              "null: clear any persisted budget.",
           },
         },
       },
@@ -332,12 +333,22 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
           // Without one, the Anthropic SDK silently downgrades to its
           // 1,024-token minimum — almost certainly not the operator's
           // intent. Force the explicit choice.
+          //
+          // Important edge case: when the patch is *clearing* the budget
+          // (thinkingBudgetTokens=null), the merge below deletes the
+          // existing budget. The validator must mirror that — treating
+          // existingBudget as gone — so a patch like
+          //   { thinking: "enabled", thinkingBudgetTokens: null }
+          // can't slip past by relying on a budget the merge will drop.
           if (input.thinking === "enabled") {
+            const clearingBudget = input.thinkingBudgetTokens === null;
             const patchBudget =
-              input.thinkingBudgetTokens !== undefined && input.thinkingBudgetTokens !== null
+              !clearingBudget && input.thinkingBudgetTokens !== undefined
                 ? Number(input.thinkingBudgetTokens)
                 : undefined;
-            const existingBudget = existing.thinkingBudgetTokens as number | undefined;
+            const existingBudget = clearingBudget
+              ? undefined
+              : (existing.thinkingBudgetTokens as number | undefined);
             if (patchBudget == null && existingBudget == null) {
               return {
                 content: textContent(
