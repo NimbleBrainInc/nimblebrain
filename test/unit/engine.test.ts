@@ -432,6 +432,8 @@ describe("AgentEngine", () => {
       // Captures the call options the engine sends to the model. Asserts
       // the platform's provider-neutral thinking config is translated to
       // the Anthropic-specific shape without leaking through other layers.
+      // Sonnet 4.6 supports the `enabled` shape directly — the engine
+      // passes the budget through verbatim.
       const capturedOptions: Array<Record<string, unknown>> = [];
       const recordingModel: LanguageModelV3 = {
         ...createEchoModel({ responses: [{ text: "ok" }] }),
@@ -449,7 +451,7 @@ describe("AgentEngine", () => {
       ).run(
         {
           ...defaultConfig,
-          model: "anthropic:claude-opus-4-7",
+          model: "anthropic:claude-sonnet-4-6",
           thinking: { mode: "enabled", budgetTokens: 4096 },
         },
         "",
@@ -462,6 +464,74 @@ describe("AgentEngine", () => {
         | { anthropic?: { thinking?: { type: string; budgetTokens?: number } } }
         | undefined;
       expect(po?.anthropic?.thinking).toEqual({ type: "enabled", budgetTokens: 4096 });
+    });
+
+    it("translates enabled→adaptive+effort for adaptive-only models (Opus 4.7)", async () => {
+      // Opus 4.7 rejects `thinking.type=enabled` with an API error pointing
+      // at `output_config.effort`. The engine translates the platform's
+      // enabled+budget into adaptive+effort on the fly. Budget=12288 maps
+      // to effort=medium (the safeThinkingBudget output for a 16K cap).
+      const captured: Array<Record<string, unknown>> = [];
+      const model: LanguageModelV3 = { ...createEchoModel({ responses: [{ text: "ok" }] }) };
+      const orig = model.doStream.bind(model);
+      model.doStream = async (o) => {
+        captured.push(o as unknown as Record<string, unknown>);
+        return orig(o);
+      };
+
+      await new AgentEngine(
+        model,
+        new StaticToolRouter([], () => ({ content: textContent(""), isError: false })),
+        new NoopEventSink(),
+      ).run(
+        {
+          ...defaultConfig,
+          model: "anthropic:claude-opus-4-7",
+          thinking: { mode: "enabled", budgetTokens: 12288 },
+        },
+        "",
+        [{ role: "user", content: [{ type: "text", text: "x" }] }],
+        [],
+      );
+
+      const po = captured[0]!.providerOptions as
+        | { anthropic?: { thinking?: { type: string }; effort?: string } }
+        | undefined;
+      expect(po?.anthropic?.thinking).toEqual({ type: "adaptive" });
+      expect(po?.anthropic?.effort).toBe("medium");
+    });
+
+    it("maps a large enabled budget to effort=max on adaptive-only models", async () => {
+      // 128K-cap path: safeThinkingBudget ≈ 123904 → effort=max. Confirms
+      // the budget→effort tiers don't quietly cap at "high".
+      const captured: Array<Record<string, unknown>> = [];
+      const model: LanguageModelV3 = { ...createEchoModel({ responses: [{ text: "ok" }] }) };
+      const orig = model.doStream.bind(model);
+      model.doStream = async (o) => {
+        captured.push(o as unknown as Record<string, unknown>);
+        return orig(o);
+      };
+
+      await new AgentEngine(
+        model,
+        new StaticToolRouter([], () => ({ content: textContent(""), isError: false })),
+        new NoopEventSink(),
+      ).run(
+        {
+          ...defaultConfig,
+          model: "anthropic:claude-opus-4-7",
+          thinking: { mode: "enabled", budgetTokens: 123904 },
+        },
+        "",
+        [{ role: "user", content: [{ type: "text", text: "x" }] }],
+        [],
+      );
+
+      const po = captured[0]!.providerOptions as
+        | { anthropic?: { thinking?: { type: string }; effort?: string } }
+        | undefined;
+      expect(po?.anthropic?.thinking).toEqual({ type: "adaptive" });
+      expect(po?.anthropic?.effort).toBe("max");
     });
 
     it("translates thinking=adaptive without budget", async () => {
@@ -488,6 +558,42 @@ describe("AgentEngine", () => {
         | { anthropic?: { thinking?: { type: string } } }
         | undefined;
       expect(po?.anthropic?.thinking).toEqual({ type: "adaptive" });
+    });
+
+    it("maps operator adaptive+budget to effort on adaptive-only models", async () => {
+      // Operator path: thinking="adaptive" + thinkingBudgetTokens=12288 in
+      // tenant config. resolveThinking passes the budget through verbatim;
+      // for adaptive-only models the engine maps it to effort so the
+      // operator's intended cap actually constrains thinking (the SDK
+      // would otherwise drop budgetTokens on adaptive).
+      const captured: Array<Record<string, unknown>> = [];
+      const model: LanguageModelV3 = { ...createEchoModel({ responses: [{ text: "ok" }] }) };
+      const orig = model.doStream.bind(model);
+      model.doStream = async (o) => {
+        captured.push(o as unknown as Record<string, unknown>);
+        return orig(o);
+      };
+
+      await new AgentEngine(
+        model,
+        new StaticToolRouter([], () => ({ content: textContent(""), isError: false })),
+        new NoopEventSink(),
+      ).run(
+        {
+          ...defaultConfig,
+          model: "anthropic:claude-opus-4-7",
+          thinking: { mode: "adaptive", budgetTokens: 12288 },
+        },
+        "",
+        [{ role: "user", content: [{ type: "text", text: "x" }] }],
+        [],
+      );
+
+      const po = captured[0]!.providerOptions as
+        | { anthropic?: { thinking?: { type: string }; effort?: string } }
+        | undefined;
+      expect(po?.anthropic?.thinking).toEqual({ type: "adaptive" });
+      expect(po?.anthropic?.effort).toBe("medium");
     });
 
     it("does NOT set providerOptions when thinking is undefined", async () => {
