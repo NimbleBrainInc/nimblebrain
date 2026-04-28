@@ -50,6 +50,17 @@ const PRIVILEGE_CANDIDATES: PrivilegeEntry[] = [
     describe: (input) => `${input.action} ${input.name}?`,
   },
   {
+    // Creates land in the prompt as soon as they're written (always-load
+    // skills) or on the next applicable turn (tool_affined). Gating
+    // matches the description-as-policy line "confirm before creating
+    // platform-/workspace-scope skills" so the agent doesn't spawn
+    // org-wide context unilaterally. Web-UI calls bypass the engine
+    // hook (trusted same-origin), so this only fires for agent calls.
+    tool: "skills__create",
+    feature: "skillManagement",
+    describe: (input) => `Create ${input.scope} skill "${input.name}"?`,
+  },
+  {
     tool: "skills__delete",
     feature: "skillManagement",
     describe: (input) => `Delete skill ${input.id}? Snapshots to _versions/ before removal.`,

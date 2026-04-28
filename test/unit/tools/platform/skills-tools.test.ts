@@ -32,6 +32,7 @@ interface FakeIdentity {
 
 class FakeRuntime {
   identity: FakeIdentity | null = null;
+  hasIdentityProvider = false;
   wsId: string | null = null;
   private readonly _store: EventSourcedConversationStore;
 
@@ -51,6 +52,9 @@ class FakeRuntime {
   getCurrentIdentity(): FakeIdentity | null {
     return this.identity;
   }
+  getIdentityProvider(): object | null {
+    return this.hasIdentityProvider ? ({} as object) : null;
+  }
   requireWorkspaceId(): string {
     if (!this.wsId) throw new Error("no workspace");
     return this.wsId;
@@ -60,6 +64,14 @@ class FakeRuntime {
   }
   getStore(): EventSourcedConversationStore {
     return this._store;
+  }
+  getWorkspaceStore() {
+    // Tests that exercise the cross-workspace path supply this directly
+    // by patching it. Default returns null for everything → access
+    // checks fail gracefully when a test forgets to set up membership.
+    return {
+      get: async (_id: string) => null,
+    };
   }
   getContextSkills(): Skill[] {
     return this.contextSkills;

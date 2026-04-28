@@ -14,6 +14,7 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -396,5 +397,252 @@ describe("skills__move_scope", () => {
       arguments: { id: wsPath, target_scope: "platform" },
     });
     expect(result.isError).toBe(true);
+  });
+});
+
+// ── Cross-tenant access regressions ──────────────────────────────────────
+//
+// These exercise the strict access policy: workspace skills are scoped
+// to the workspace named in the path (no silent org-admin override into
+// untouched workspaces); user skills are scoped to the owning user.
+
+describe("cross-workspace access — regression", () => {
+  function configureCrossWorkspaceFixture() {
+    runtime.hasIdentityProvider = true;
+    runtime.identity = {
+      id: "u_alice",
+      email: "alice@ex.com",
+      displayName: "Alice",
+      orgRole: "member",
+      preferences: { timezone: "UTC", locale: "en-US", theme: "system" },
+    };
+    runtime.wsId = "ws_alice";
+    // Alice is admin in ws_alice. ws_other has no Alice membership.
+    runtime.setMember("ws_alice", "u_alice", "admin");
+    runtime.workspaces.set("ws_other", {
+      id: "ws_other",
+      name: "Other",
+      members: [{ userId: "u_carol", role: "admin" }],
+    });
+    // Pre-stage a skill under ws_other, on disk.
+    const otherDir = join(workDir, "workspaces", "ws_other", "skills");
+    mkdirSync(otherDir, { recursive: true });
+    const otherPath = join(otherDir, "secret.md");
+    writeFileSync(
+      otherPath,
+      [
+        "---",
+        "name: secret",
+        'description: "ws_other secret"',
+        'version: "1.0.0"',
+        "type: skill",
+        "priority: 50",
+        "---",
+        "secret body",
+        "",
+      ].join("\n"),
+    );
+    return otherPath;
+  }
+
+  test("update against another workspace's path is permission_denied", async () => {
+    const otherPath = configureCrossWorkspaceFixture();
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const result = await client.callTool({
+      name: "update",
+      arguments: { id: otherPath, body: "tampered" },
+    });
+    expect(result.isError).toBe(true);
+    expect((result as { structuredContent?: { code?: string } }).structuredContent?.code).toBe(
+      "permission_denied",
+    );
+    // File on disk must be unchanged.
+    expect(readFileSync(otherPath, "utf-8")).toContain("secret body");
+  });
+
+  test("delete against another workspace's path is permission_denied", async () => {
+    const otherPath = configureCrossWorkspaceFixture();
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const result = await client.callTool({
+      name: "delete",
+      arguments: { id: otherPath },
+    });
+    expect(result.isError).toBe(true);
+    expect(existsSync(otherPath)).toBe(true);
+  });
+
+  test("activate / deactivate against another workspace's path is permission_denied", async () => {
+    const otherPath = configureCrossWorkspaceFixture();
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const off = await client.callTool({ name: "deactivate", arguments: { id: otherPath } });
+    expect(off.isError).toBe(true);
+    const on = await client.callTool({ name: "activate", arguments: { id: otherPath } });
+    expect(on.isError).toBe(true);
+  });
+
+  test("move_scope from another workspace is permission_denied (source check)", async () => {
+    const otherPath = configureCrossWorkspaceFixture();
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const result = await client.callTool({
+      name: "move_scope",
+      arguments: { id: otherPath, target_scope: "platform" },
+    });
+    expect(result.isError).toBe(true);
+    expect(existsSync(otherPath)).toBe(true);
+  });
+
+  test("read against another workspace's path is permission_denied", async () => {
+    const otherPath = configureCrossWorkspaceFixture();
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const result = await client.callTool({
+      name: "read",
+      arguments: { id: otherPath },
+    });
+    expect(result.isError).toBe(true);
+    expect((result as { structuredContent?: { code?: string } }).structuredContent?.code).toBe(
+      "permission_denied",
+    );
+  });
+
+  test("workspace member but not admin: read allowed, write denied", async () => {
+    runtime.hasIdentityProvider = true;
+    runtime.identity = {
+      id: "u_bob",
+      email: "bob@ex.com",
+      displayName: "Bob",
+      orgRole: "member",
+      preferences: { timezone: "UTC", locale: "en-US", theme: "system" },
+    };
+    runtime.wsId = "ws_team";
+    runtime.setMember("ws_team", "u_bob", "member");
+    const wsDir = join(workDir, "workspaces", "ws_team", "skills");
+    mkdirSync(wsDir, { recursive: true });
+    const path = join(wsDir, "team-skill.md");
+    writeFileSync(
+      path,
+      [
+        "---",
+        "name: team-skill",
+        'description: "team rules"',
+        'version: "1.0.0"',
+        "type: skill",
+        "priority: 50",
+        "---",
+        "team body",
+        "",
+      ].join("\n"),
+    );
+    const src = await buildSource();
+    const client = src.getClient()!;
+
+    const read = await client.callTool({ name: "read", arguments: { id: path } });
+    expect(read.isError).toBeFalsy();
+
+    const write = await client.callTool({
+      name: "update",
+      arguments: { id: path, body: "edited" },
+    });
+    expect(write.isError).toBe(true);
+    expect((write as { structuredContent?: { code?: string } }).structuredContent?.code).toBe(
+      "permission_denied",
+    );
+  });
+
+  test("user-scope skills: another user's path is permission_denied", async () => {
+    runtime.hasIdentityProvider = true;
+    runtime.identity = {
+      id: "u_alice",
+      email: "alice@ex.com",
+      displayName: "Alice",
+      orgRole: "owner", // even owner — strict policy denies cross-user
+      preferences: { timezone: "UTC", locale: "en-US", theme: "system" },
+    };
+    const otherUserDir = join(workDir, "users", "u_carol", "skills");
+    mkdirSync(otherUserDir, { recursive: true });
+    const otherPath = join(otherUserDir, "carols.md");
+    writeFileSync(
+      otherPath,
+      [
+        "---",
+        "name: carols",
+        'description: "carol secret"',
+        'version: "1.0.0"',
+        "type: skill",
+        "priority: 50",
+        "---",
+        "carol body",
+        "",
+      ].join("\n"),
+    );
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const result = await client.callTool({ name: "read", arguments: { id: otherPath } });
+    expect(result.isError).toBe(true);
+    expect((result as { structuredContent?: { code?: string } }).structuredContent?.code).toBe(
+      "permission_denied",
+    );
+  });
+});
+
+// ── Symlink-escape regressions ──────────────────────────────────────────
+//
+// Mutation handlers must run the realpath check before any FS write,
+// otherwise a writer with access to a workspace skills dir could place
+// a symlink that the platform follows during snapshotVersion's
+// copyFileSync — leaking arbitrary file contents into _versions/.
+
+describe("symlink escape — mutation defense", () => {
+  test("update refuses a symlink whose target is outside allowed roots", async () => {
+    const src = await buildSource();
+    const client = src.getClient()!;
+    runtime.wsId = "ws_demo";
+    // Create a real file outside the work tree.
+    const outsideDir = mkdtempSync(join(tmpdir(), "skills-mut-outside-"));
+    const outsidePath = join(outsideDir, "secret.md");
+    writeFileSync(
+      outsidePath,
+      ["---", "name: secret", "type: skill", "priority: 50", "---", "outside body", ""].join("\n"),
+    );
+    // Symlink under a writable scope dir.
+    const wsDir = join(workDir, "workspaces", "ws_demo", "skills");
+    mkdirSync(wsDir, { recursive: true });
+    const linkPath = join(wsDir, "evil.md");
+    symlinkSync(outsidePath, linkPath);
+
+    const result = await client.callTool({
+      name: "update",
+      arguments: { id: linkPath, body: "tampered" },
+    });
+    expect(result.isError).toBe(true);
+    // No snapshot copy of the outside file should have been created.
+    const versionsDir = join(wsDir, "_versions");
+    expect(existsSync(versionsDir)).toBe(false);
+    rmSync(outsideDir, { recursive: true, force: true });
+  });
+
+  test("delete refuses a symlink whose target is outside allowed roots", async () => {
+    const src = await buildSource();
+    const client = src.getClient()!;
+    runtime.wsId = "ws_demo";
+    const outsideDir = mkdtempSync(join(tmpdir(), "skills-mut-outside-"));
+    const outsidePath = join(outsideDir, "secret.md");
+    writeFileSync(
+      outsidePath,
+      ["---", "name: secret", "type: skill", "priority: 50", "---", "outside body", ""].join("\n"),
+    );
+    const wsDir = join(workDir, "workspaces", "ws_demo", "skills");
+    mkdirSync(wsDir, { recursive: true });
+    const linkPath = join(wsDir, "evil.md");
+    symlinkSync(outsidePath, linkPath);
+
+    const result = await client.callTool({ name: "delete", arguments: { id: linkPath } });
+    expect(result.isError).toBe(true);
+    expect(existsSync(outsidePath)).toBe(true);
+    rmSync(outsideDir, { recursive: true, force: true });
   });
 });

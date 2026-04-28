@@ -204,6 +204,21 @@ export function createSkillsSource(runtime: Runtime, eventSink: EventSink): McpS
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         try {
           const id = String(input.id ?? "");
+          // Determine scope for the permission check before any FS work.
+          // skill:// URIs always resolve to the Layer 1 bundle resource;
+          // anything else is path-derived.
+          const isUri = id === AUTHORING_GUIDE_URI || id.startsWith(SKILL_URI_PREFIX);
+          const scope = isUri ? "bundle" : scopeOfPath(runtime, id);
+          if (!scope) {
+            return {
+              content: textContent(`Skill path "${id}" is not under any allowed root`),
+              isError: true,
+            };
+          }
+          const permission = await checkPathAccess(runtime, id, scope, "read");
+          if (!permission.allowed) {
+            return permissionDenied(permission.reason ?? "Permission denied");
+          }
           const result = await readSkillById(runtime, authoringGuidePath, id);
           if (!result) {
             return {
@@ -1005,55 +1020,97 @@ interface PermissionDecision {
 
 const ORG_ADMIN_ROLES = new Set(["admin", "owner"]);
 
+type AccessMode = "read" | "write";
+
 /**
- * Permission gate for mutating a Layer 3 skill at the given scope.
+ * Path-derived permission gate. The workspace and user identifiers come
+ * from the on-disk path being mutated (or read), NOT from the request
+ * context, so a workspace admin in `wsA` can't mutate / read a skill at
+ * `{workDir}/workspaces/wsB/skills/...` by naming the path directly.
  *
- * Tier rules:
- *   - platform — org admin/owner only
- *   - workspace — org admin/owner OR workspace admin
- *   - user — the caller themselves (own user dir)
+ * Strict cross-tenant policy: workspace skills require explicit
+ * membership in the workspace named by the path (no silent org-admin
+ * override into untouched workspaces — operators must switch to the
+ * workspace explicitly). User skills require the caller's identity id
+ * to match the user-segment in the path.
+ *
+ * Tier rules (read | write):
+ *   - bundle      — read: anyone (Layer 1 vendored). write: refused (caller side).
+ *   - platform    — read: any tenant member.            write: org admin/owner.
+ *   - workspace   — read+write: must be a member of the path's workspace.
+ *                   write also requires `admin` role in that workspace.
+ *   - user        — read+write: only the owning user.
  *
  * Dev mode (no identity provider) opens everything, matching the
  * `instructions.ts` precedent.
+ *
+ * For "create" operations the path doesn't exist yet — pass the
+ * destination directory as `path` (e.g. `{workDir}/workspaces/{wsId}/skills`).
+ * The wsId/userId derivation works on directory paths the same way.
  */
-async function checkScopeWritePermission(
+async function checkPathAccess(
   runtime: Runtime,
-  scope: WritableScope,
-  wsId: string | null,
-  targetUserId: string | null,
+  path: string,
+  scope: WritableScope | "bundle",
+  mode: AccessMode,
 ): Promise<PermissionDecision> {
   if (runtime.getIdentityProvider() === null) return { allowed: true };
   const identity = runtime.getCurrentIdentity();
   if (!identity) return { allowed: false, reason: "No authenticated identity" };
 
   const isOrgAdmin = ORG_ADMIN_ROLES.has(identity.orgRole);
+  const workDir = runtime.getWorkDir();
+
+  if (scope === "bundle") {
+    if (mode === "read") return { allowed: true };
+    return { allowed: false, reason: "Bundle (Layer 1) skills are vendored and not mutable" };
+  }
 
   if (scope === "platform") {
+    if (mode === "read") return { allowed: true };
     return isOrgAdmin
       ? { allowed: true }
       : { allowed: false, reason: "Platform-scope writes require org admin or owner" };
   }
 
   if (scope === "user") {
-    if (!targetUserId || targetUserId === identity.id) return { allowed: true };
-    return isOrgAdmin
-      ? { allowed: true }
-      : { allowed: false, reason: "User-scope writes are limited to the caller's own dir" };
+    const pathUserId = extractUserIdFromPath(path, workDir);
+    if (!pathUserId) {
+      return { allowed: false, reason: "Could not derive user id from path" };
+    }
+    if (pathUserId === identity.id) return { allowed: true };
+    // Strict — no org-admin override across users. Operators access
+    // their own user-tier skills only.
+    return {
+      allowed: false,
+      reason: `User-scope skills are scoped to their owning user (${pathUserId})`,
+    };
   }
 
   // workspace
-  if (isOrgAdmin) return { allowed: true };
-  if (!wsId)
-    return { allowed: false, reason: "Workspace-scope writes require a workspace context" };
-  const ws = await runtime.getWorkspaceStore().get(wsId);
-  if (!ws) return { allowed: false, reason: `Workspace "${wsId}" not found` };
+  const pathWsId = extractWsIdFromPath(path, workDir);
+  if (!pathWsId) {
+    return { allowed: false, reason: "Could not derive workspace id from path" };
+  }
+  const ws = await runtime.getWorkspaceStore().get(pathWsId);
+  if (!ws) return { allowed: false, reason: `Workspace "${pathWsId}" not found` };
   const member = ws.members.find((m) => m.userId === identity.id);
-  return member?.role === "admin"
-    ? { allowed: true }
-    : {
-        allowed: false,
-        reason: "Workspace-scope writes require workspace admin (or org admin/owner)",
-      };
+  if (!member) {
+    // Strict — no org-admin override into a workspace the operator
+    // isn't a member of. Switch workspaces explicitly to act on its
+    // skills.
+    return {
+      allowed: false,
+      reason: `Not a member of workspace "${pathWsId}"`,
+    };
+  }
+  if (mode === "write" && member.role !== "admin") {
+    return {
+      allowed: false,
+      reason: `Workspace-scope writes require admin role in workspace "${pathWsId}"`,
+    };
+  }
+  return { allowed: true };
 }
 
 /**
@@ -1155,14 +1212,21 @@ async function createSkill(
   assertValidName(name);
 
   const writableScope = scope as WritableScope;
-  const wsId = writableScope === "workspace" ? safeRequireWorkspace(runtime) : null;
-  const userId = writableScope === "user" ? (runtime.getCurrentIdentity()?.id ?? null) : null;
-
-  const permission = await checkScopeWritePermission(runtime, writableScope, wsId, userId);
+  // Resolve the target dir first so the permission check uses the
+  // *destination* path. For workspace/user creates this binds the wsId
+  // / userId to the current request context (you can only create inside
+  // your own workspace / user dir), and the path-derived membership
+  // check still applies.
+  let dir: string;
+  try {
+    dir = scopeDir(runtime, writableScope);
+  } catch (err) {
+    return errorResult(err);
+  }
+  const target = join(dir, `${name}.md`);
+  const permission = await checkPathAccess(runtime, target, writableScope, "write");
   if (!permission.allowed) return permissionDenied(permission.reason ?? "Permission denied");
 
-  const dir = scopeDir(runtime, writableScope);
-  const target = join(dir, `${name}.md`);
   if (existsSync(target)) {
     return errorResult(new Error(`Skill "${name}" already exists in ${writableScope} scope`));
   }
@@ -1205,13 +1269,22 @@ async function updateSkillHandler(
   if (scope === "bundle") return bundleNotMutable();
   if (!scope) return errorResult(new Error(`Skill path "${id}" is not under any allowed root`));
 
-  const wsId = scope === "workspace" ? safeRequireWorkspace(runtime) : null;
-  const userId = scope === "user" ? extractUserIdFromPath(id, runtime.getWorkDir()) : null;
-
-  const permission = await checkScopeWritePermission(runtime, scope, wsId, userId);
+  const permission = await checkPathAccess(runtime, id, scope, "write");
   if (!permission.allowed) return permissionDenied(permission.reason ?? "Permission denied");
 
   if (!existsSync(id)) return errorResult(new Error(`Skill not found: ${id}`));
+
+  // Defense-in-depth: chase symlinks and confirm the realpath sits under
+  // the same allowed root before any FS write. snapshotVersion uses
+  // copyFileSync, which follows symlinks at the source — without this
+  // guard a workspace member could `ln -s /etc/passwd evil.md` and have
+  // the platform copy its contents into _versions/, then re-read it via
+  // skills__read.
+  try {
+    realPathUnderAnyRootOrThrow(id, allowedReadRoots(runtime, ""));
+  } catch (err) {
+    return errorResult(err);
+  }
 
   const dir = dirname(id);
   const name = (id.split("/").pop() ?? "").replace(/\.md$/, "");
@@ -1243,13 +1316,17 @@ async function deleteSkillHandler(
   if (scope === "bundle") return bundleNotMutable();
   if (!scope) return errorResult(new Error(`Skill path "${id}" is not under any allowed root`));
 
-  const wsId = scope === "workspace" ? safeRequireWorkspace(runtime) : null;
-  const userId = scope === "user" ? extractUserIdFromPath(id, runtime.getWorkDir()) : null;
-
-  const permission = await checkScopeWritePermission(runtime, scope, wsId, userId);
+  const permission = await checkPathAccess(runtime, id, scope, "write");
   if (!permission.allowed) return permissionDenied(permission.reason ?? "Permission denied");
 
   if (!existsSync(id)) return errorResult(new Error(`Skill not found: ${id}`));
+
+  // Symlink-escape defense — see updateSkillHandler for rationale.
+  try {
+    realPathUnderAnyRootOrThrow(id, allowedReadRoots(runtime, ""));
+  } catch (err) {
+    return errorResult(err);
+  }
 
   const dir = dirname(id);
   const name = (id.split("/").pop() ?? "").replace(/\.md$/, "");
@@ -1297,29 +1374,36 @@ async function moveScopeHandler(
     return errorResult(new Error(`Skill is already in ${target} scope`));
   }
 
-  // Both source and target permission checks must pass.
-  const sourceWsId = sourceScope === "workspace" ? safeRequireWorkspace(runtime) : null;
-  const sourceUserId =
-    sourceScope === "user" ? extractUserIdFromPath(id, runtime.getWorkDir()) : null;
-  const sourceCheck = await checkScopeWritePermission(
-    runtime,
-    sourceScope,
-    sourceWsId,
-    sourceUserId,
-  );
+  // Source permission — derived from the *source path's* workspace/user
+  // segment. A workspace admin in wsA cannot move a skill out of wsB.
+  const sourceCheck = await checkPathAccess(runtime, id, sourceScope, "write");
   if (!sourceCheck.allowed) return permissionDenied(sourceCheck.reason ?? "Permission denied");
 
-  const targetWsId = target === "workspace" ? safeRequireWorkspace(runtime) : null;
-  const targetUserId = target === "user" ? (runtime.getCurrentIdentity()?.id ?? null) : null;
-  const targetCheck = await checkScopeWritePermission(runtime, target, targetWsId, targetUserId);
+  // Target permission — derived from the destination path. For
+  // workspace/user targets, scopeDir() picks the caller's own
+  // workspace/user dir, so this is naturally bound to the caller's
+  // identity (no cross-tenant promotion possible).
+  let targetDir: string;
+  try {
+    targetDir = scopeDir(runtime, target);
+  } catch (err) {
+    return errorResult(err);
+  }
+  const targetCheck = await checkPathAccess(runtime, targetDir, target, "write");
   if (!targetCheck.allowed) return permissionDenied(targetCheck.reason ?? "Permission denied");
 
   if (!existsSync(id)) return errorResult(new Error(`Skill not found: ${id}`));
 
+  // Symlink-escape defense on the source path before reading + copying.
+  try {
+    realPathUnderAnyRootOrThrow(id, allowedReadRoots(runtime, ""));
+  } catch (err) {
+    return errorResult(err);
+  }
+
   const skill = parseSkillFile(id);
   if (!skill) return errorResult(new Error(`Failed to parse skill at ${id}`));
   const name = skill.manifest.name;
-  const targetDir = scopeDir(runtime, target);
   const targetPath = join(targetDir, `${name}.md`);
   if (existsSync(targetPath)) {
     return errorResult(new Error(`A skill named "${name}" already exists in ${target} scope`));
@@ -1343,19 +1427,20 @@ async function moveScopeHandler(
   };
 }
 
-function safeRequireWorkspace(runtime: Runtime): string | null {
-  try {
-    return runtime.requireWorkspaceId();
-  } catch {
-    return null;
-  }
-}
-
 function extractUserIdFromPath(path: string, workDir: string): string | null {
   const real = resolve(path);
   const usersDir = `${resolve(workDir, "users")}/`;
   if (!real.startsWith(usersDir)) return null;
   const tail = real.slice(usersDir.length);
+  const slash = tail.indexOf("/");
+  return slash > 0 ? tail.slice(0, slash) : null;
+}
+
+function extractWsIdFromPath(path: string, workDir: string): string | null {
+  const real = resolve(path);
+  const wsRoot = `${resolve(workDir, "workspaces")}/`;
+  if (!real.startsWith(wsRoot)) return null;
+  const tail = real.slice(wsRoot.length);
   const slash = tail.indexOf("/");
   return slash > 0 ? tail.slice(0, slash) : null;
 }
