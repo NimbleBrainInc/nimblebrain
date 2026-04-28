@@ -28,11 +28,15 @@ interface ReasoningBlockProps {
  * 4 chars/token heuristic. Real `reasoningTokens` comes from `llm.done`
  * after streaming, but for live progress we render the approximation —
  * it's accurate enough for "is the model still working?" judgment.
+ *
+ * Threshold for the "Nk" form is 2,500 tokens (≈10k chars) rather than
+ * the bare 1,000 — avoids the slightly noisy "1.0k tokens" right after
+ * crossing the boundary.
  */
 function approximateTokenLabel(charCount: number): string {
   if (charCount === 0) return "";
   const tokens = Math.round(charCount / 4);
-  if (tokens >= 1000) return `${(tokens / 1000).toFixed(1)}k tokens`;
+  if (tokens >= 2500) return `${(tokens / 1000).toFixed(1)}k tokens`;
   return `${tokens} tokens`;
 }
 
@@ -43,6 +47,11 @@ function ReasoningBlockImpl({ text, streaming }: ReasoningBlockProps) {
   // Ref because we don't want a re-render when the override flips.
   const userOverrodeRef = useRef(false);
 
+  // Mirror the streaming flag into expanded unless the user has
+  // overridden. The first run on mount is a no-op (the state initializer
+  // already wrote the same value); we keep it that way so the same
+  // logic handles both initial mount and later transitions, which keeps
+  // the intent of the effect obvious at a glance.
   useEffect(() => {
     if (!userOverrodeRef.current) {
       setExpanded(!!streaming);
