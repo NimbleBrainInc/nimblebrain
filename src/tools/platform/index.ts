@@ -6,22 +6,28 @@ import { createConversationsSource } from "./conversations.ts";
 import { createFilesSource } from "./files.ts";
 import { createHomeSource } from "./home.ts";
 import { createInstructionsSource } from "./instructions.ts";
-import { createSettingsSource } from "./settings.ts";
 import { createUsageSource } from "./usage.ts";
 
 /**
  * Create all platform capability sources, started and ready to register.
  *
- * Each platform capability (conversations, files, automations, home, settings,
- * usage) is an in-process MCP server (`defineInProcessApp`) that talks to the
- * runtime through the same MCP transport as external bundles — just over an
- * `InMemoryTransport` instead of stdio/HTTP. They have tools, resources,
- * placements, and (in the future) any other MCP capability the SDK adds.
+ * Each platform capability (conversations, files, automations, home, usage,
+ * instructions) is an in-process MCP server (`defineInProcessApp`) that talks
+ * to the runtime through the same MCP transport as external bundles — just
+ * over an `InMemoryTransport` instead of stdio/HTTP. They have tools,
+ * resources, placements, and (in the future) any other MCP capability the
+ * SDK adds.
  *
  * Sources are returned already-started: `McpSource.start()` is what wires
  * the in-memory transport pair and runs the MCP `initialize` handshake, so
  * the source isn't usable until that's done. Callers shouldn't have to
  * remember to start them — the factory hands back a ready object.
+ *
+ * The platform "settings" source was deleted in favor of the React org
+ * settings pages (`/settings/org/*` → `web/src/pages/settings/*Tab.tsx`).
+ * The agent-facing config tools (`nb__get_config`, `nb__set_model_config`)
+ * already cover the same surface; the iframe-mounted settings panel had
+ * no live consumer in the web shell.
  */
 export async function createPlatformSources(
   runtime: Runtime,
@@ -33,7 +39,6 @@ export async function createPlatformSources(
     await createConversationsSource(runtime, eventSink),
     createFilesSource(runtime, eventSink),
     await createAutomationsSource(runtime, eventSink),
-    createSettingsSource(runtime, eventSink),
     createUsageSource(runtime, eventSink),
     createInstructionsSource(runtime, eventSink),
   ];

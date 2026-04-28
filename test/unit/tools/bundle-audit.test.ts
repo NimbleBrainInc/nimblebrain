@@ -19,7 +19,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createFilesSource } from "../../../src/tools/platform/files.ts";
 import { createHomeSource } from "../../../src/tools/platform/home.ts";
-import { createSettingsSource } from "../../../src/tools/platform/settings.ts";
 import { createUsageSource } from "../../../src/tools/platform/usage.ts";
 import { createConversationsSource } from "../../../src/tools/platform/conversations.ts";
 import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
@@ -79,15 +78,6 @@ describe("Bundle audit — every inline bundle has compilable schemas", () => {
     const dir = mkdtempSync(join(tmpdir(), "nb-audit-home-"));
     try {
       await auditSource(createHomeSource(makeRuntime(dir), new NoopEventSink()));
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  test("settings", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "nb-audit-settings-"));
-    try {
-      await auditSource(createSettingsSource(makeRuntime(dir), new NoopEventSink()));
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
