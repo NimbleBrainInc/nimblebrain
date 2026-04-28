@@ -8,7 +8,7 @@ import type {
   SharedV3ProviderOptions,
 } from "@ai-sdk/provider";
 import { MAX_ITERATIONS, MAX_TOOL_RESULT_CHARS } from "../limits.ts";
-import { getProviderFromModel } from "../model/catalog.ts";
+import { getProviderFromModel, supportsEnabledThinking } from "../model/catalog.ts";
 import { callModel, type StreamResult } from "../model/stream.ts";
 import { validateToolInput } from "../tools/validate-input.ts";
 import {
@@ -32,6 +32,24 @@ import type {
 } from "./types.ts";
 
 /**
+ * Map a thinking budget (tokens) to an Anthropic effort tier. Used when
+ * translating the platform's `enabled`-mode budget to the adaptive+effort
+ * shape required by adaptive-only models like Opus 4.7. Bands are
+ * calibrated against `safeThinkingBudget` output so the effort tier
+ * scales with `maxOutputTokens`:
+ *   maxOutputTokens 8K   → budget   4096 → "low"
+ *   maxOutputTokens 16K  → budget  12288 → "medium"
+ *   maxOutputTokens 32K  → budget  28672 → "high"
+ *   maxOutputTokens 128K → budget 123904 → "max"
+ */
+function budgetToEffort(budget: number): "low" | "medium" | "high" | "max" {
+  if (budget <= 4096) return "low";
+  if (budget <= 16384) return "medium";
+  if (budget <= 32768) return "high";
+  return "max";
+}
+
+/**
  * Translate the platform's provider-neutral thinking config into the
  * call's `providerOptions` shape. Each provider has its own option name
  * and discriminated-union shape; we keep them confined to this helper
@@ -40,6 +58,11 @@ import type {
  * Today: Anthropic only. OpenAI o-series (`reasoningEffort`) and
  * Google Gemini 2.5 (`thinkingConfig`) are TODO and ignored — those
  * providers fall back to their own defaults until wired in.
+ *
+ * Adaptive-only models (e.g. Opus 4.7) reject `thinking.type=enabled`
+ * outright; for those we emit `thinking.type=adaptive` plus a top-level
+ * `effort` mapped from the resolved budget. The AI SDK forwards `effort`
+ * as `output_config.effort` and adds the `effort-2025-11-24` beta header.
  */
 function buildThinkingProviderOptions(
   model: string,
@@ -53,8 +76,36 @@ function buildThinkingProviderOptions(
     if (thinking.mode === "off") {
       return { anthropic: { thinking: { type: "disabled" } } };
     }
+    const adaptiveOnly = !supportsEnabledThinking(model);
     if (thinking.mode === "adaptive") {
+      // Adaptive with an explicit budget on adaptive-only models maps to
+      // effort so the operator's intended cap actually constrains thinking
+      // (the SDK drops budgetTokens on adaptive otherwise). For models that
+      // accept enabled, adaptive is left bare — the model decides.
+      if (adaptiveOnly && thinking.budgetTokens != null) {
+        return {
+          anthropic: {
+            thinking: { type: "adaptive" },
+            effort: budgetToEffort(thinking.budgetTokens),
+          },
+        };
+      }
       return { anthropic: { thinking: { type: "adaptive" } } };
+    }
+    // mode === "enabled"
+    if (adaptiveOnly) {
+      // Anthropic rejects `thinking.type=enabled` for these models with a
+      // specific error pointing at `output_config.effort`. Translate the
+      // platform's enabled+budget into adaptive+effort here so the
+      // resolver stays provider-neutral.
+      return {
+        anthropic: {
+          thinking: { type: "adaptive" },
+          ...(thinking.budgetTokens != null
+            ? { effort: budgetToEffort(thinking.budgetTokens) }
+            : {}),
+        },
+      };
     }
     return {
       anthropic: {

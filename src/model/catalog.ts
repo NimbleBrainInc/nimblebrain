@@ -197,3 +197,26 @@ function parseModelString(modelString: string): { provider: string; modelId: str
 export function getProviderFromModel(modelString: string): string {
   return parseModelString(modelString).provider;
 }
+
+/**
+ * Anthropic model IDs that reject `thinking.type=enabled` and require
+ * `thinking.type=adaptive` plus `output_config.effort` instead. Hardcoded
+ * (not synced from models.dev — that source doesn't track this
+ * distinction). Add new IDs here when Anthropic ships them.
+ */
+const ADAPTIVE_ONLY_THINKING_MODELS: ReadonlySet<string> = new Set(["claude-opus-4-7"]);
+
+/**
+ * Whether the model accepts Anthropic's `thinking.type=enabled` shape.
+ * Adaptive-only models reject it with `"thinking.type.enabled" is not
+ * supported for this model. Use "thinking.type.adaptive" and
+ * "output_config.effort" to control thinking behavior.` — the engine
+ * translates the platform's `enabled` mode to that shape on the fly when
+ * this returns false. Non-Anthropic providers always return true; the
+ * engine only emits Anthropic thinking options today.
+ */
+export function supportsEnabledThinking(modelString: string): boolean {
+  const { provider, modelId } = parseModelString(modelString);
+  if (provider !== "anthropic") return true;
+  return !ADAPTIVE_ONLY_THINKING_MODELS.has(modelId);
+}
