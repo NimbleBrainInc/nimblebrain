@@ -1327,6 +1327,30 @@ export class Runtime {
     return { anthropic: {} };
   }
 
+  /**
+   * Tenant-level default preferences from the deployed runtime config
+   * (`config.preferences` with `config.home` as a legacy fallback for
+   * displayName/timezone). These are the values an operator sets via Helm
+   * values; per-user identity preferences override them at request time.
+   */
+  getTenantDefaultPreferences(): {
+    displayName?: string;
+    timezone?: string;
+    locale?: string;
+    theme?: "system" | "light" | "dark";
+  } {
+    const prefs = this.config.preferences ?? {};
+    const home = this.config.home ?? {};
+    return {
+      ...((prefs.displayName ?? home.userName)
+        ? { displayName: prefs.displayName ?? home.userName }
+        : {}),
+      ...((prefs.timezone ?? home.timezone) ? { timezone: prefs.timezone ?? home.timezone } : {}),
+      ...(prefs.locale ? { locale: prefs.locale } : {}),
+      ...(prefs.theme ? { theme: prefs.theme } : {}),
+    };
+  }
+
   /** Get max agentic iterations per request. */
   getMaxIterations(): number {
     return this.config.maxIterations ?? 10;

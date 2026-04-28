@@ -51,7 +51,6 @@ const coreSectionRenderers: Record<string, () => string> = {
  */
 export function createSettingsSource(runtime: Runtime, eventSink: EventSink): McpSource {
   const workDir = runtime.getWorkDir();
-  const configPath = join(workDir, "nimblebrain.json");
   const skillsDir = join(workDir, "skills");
   // Core skills are shipped with the package
   const coreSkillsDir = join(import.meta.dirname ?? __dirname, "../../skills/core");
@@ -111,7 +110,7 @@ export function createSettingsSource(runtime: Runtime, eventSink: EventSink): Mc
         properties: {},
       },
       handler: async (_input: Record<string, unknown>): Promise<ToolResult> => {
-        const result = getRuntimeConfig(configPath);
+        const result = getRuntimeConfig(runtime);
 
         // Override preferences with the current user's profile preferences
         const identity = runtime.getCurrentIdentity();
