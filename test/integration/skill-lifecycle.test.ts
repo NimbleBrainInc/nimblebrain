@@ -198,6 +198,74 @@ describe("skill lifecycle (end-to-end)", () => {
 		await runtime.shutdown();
 	});
 
+	it("skills__update on a bare/garbage id returns the unrecognized-id error, not the bundle error", async () => {
+		// Regression: scopeOfPath used to fall through to "bundle" for any
+		// path that didn't sit under workspaces/users/skills. That meant
+		// passing a bare name like "dl-production-memory" got back the
+		// misleading "Bundle (Layer 1) skills are vendored" error, which
+		// pointed agents at the wrong fix path. After the fix, scopeOfPath
+		// returns null for unclassified inputs and the handler errors with
+		// a clear message describing the real input contract.
+		const workDir = join(testDir, "garbage-id");
+		const { model } = createCapturingModel();
+		const runtime = await Runtime.start({
+			model: { provider: "custom", adapter: model },
+			noDefaultBundles: true,
+			workDir,
+			logging: { disabled: true },
+			telemetry: { enabled: false },
+		});
+		await provisionTestWorkspace(runtime);
+
+		for (const id of [
+			"dl-production-memory",
+			"org/dl-production-memory",
+			"workspace/voice-rules.md",
+			"some-random-name",
+		]) {
+			const r = await callTool(runtime, "skills__update", { id, body: "test" });
+			expect(r.isError).toBe(true);
+			expect(r.content).toContain("not a recognized form");
+			expect(r.content).not.toContain("Bundle (Layer 1)");
+		}
+
+		await runtime.shutdown();
+	});
+
+	it("skills__list textContent includes per-skill rows with ids", async () => {
+		// Regression: summarizeList used to emit only counts ("12 skills
+		// (12 org)"). Agents couldn't enumerate ids from text and were
+		// forced to guess paths. textContent now includes one row per
+		// skill so an LLM consumer can copy ids directly.
+		const workDir = join(testDir, "list-rows");
+		const { model } = createCapturingModel();
+		const runtime = await Runtime.start({
+			model: { provider: "custom", adapter: model },
+			noDefaultBundles: true,
+			workDir,
+			logging: { disabled: true },
+			telemetry: { enabled: false },
+		});
+		await provisionTestWorkspace(runtime);
+
+		await callTool(runtime, "skills__create", {
+			scope: "org",
+			name: "row-fixture",
+			manifest: { description: "Fixture for list-rows test", type: "skill", priority: 50 },
+			body: "Body.",
+		});
+
+		const list = await callTool(runtime, "skills__list", { scope: "org" });
+		expect(list.isError).toBe(false);
+		// Header still summarizes (count + scope breakdown).
+		expect(list.content).toMatch(/skill[s]? \(\d+ org/);
+		// Plus one row per skill, with the absolute path id and meta tags.
+		expect(list.content).toContain("row-fixture.md");
+		expect(list.content).toContain("(L3 org");
+
+		await runtime.shutdown();
+	});
+
 	it("validation rejects priority below 11", async () => {
 		const workDir = join(testDir, "validation-reject");
 		const { model } = createCapturingModel();

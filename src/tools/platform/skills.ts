@@ -65,11 +65,11 @@ const SKILLS_LIST_DESCRIPTION =
   "Use this to answer 'what skills do I have?' or 'what's available for the active tool set?'";
 
 const SKILLS_READ_DESCRIPTION =
-  "Read one skill by id (filesystem path or `skill://` URI). " +
-  "Returns the markdown body plus parsed manifest fields (name, description, version, type, " +
-  "priority, scope, layer, loading_strategy, applies_to_tools, status, allowed_tools, " +
-  "requires_bundles, metadata). Use after `skills__list` to inspect a specific skill before " +
-  "answering questions about it or proposing changes.";
+  "Read one skill by id. The `id` is either a filesystem path (returned by `skills__list`) " +
+  "or a bundle skill:// URI. Returns the markdown body plus parsed manifest fields (name, " +
+  "description, version, type, priority, scope, layer, loading_strategy, applies_to_tools, " +
+  "status, allowed_tools, requires_bundles, metadata). Always call `skills__list` first to " +
+  "discover ids — bare names and scope-prefixed forms (e.g. `org/foo`) are NOT valid input.";
 
 const SKILLS_ACTIVE_FOR_DESCRIPTION =
   "Show which Layer 3 skills are currently loaded for the conversation `conversation_id`. " +
@@ -95,15 +95,18 @@ const SKILLS_CREATE_DESCRIPTION =
   "Returns the new skill's id (filesystem path).";
 
 const SKILLS_UPDATE_DESCRIPTION =
-  "Update an existing skill. Provide the `id` (filesystem path) plus a partial `manifest` patch " +
-  "and/or a new `body`. Snapshots the current version to `_versions/` before writing so changes " +
-  "are reversible. Bundle (Layer 1) skills are not editable — call returns an error pointing the " +
-  "caller at the bundle's own settings surface.";
+  "Update an existing Layer 3 skill. The `id` is the filesystem path returned by `skills__list` " +
+  "(call that first to discover ids — bare names and scope-prefixed forms are NOT valid). " +
+  "Provide a partial `manifest` patch and/or a new `body`. Snapshots the current version to " +
+  "`_versions/` before writing so changes are reversible. Bundle (Layer 1) skills are not " +
+  "editable — the call returns a structured error directing the caller to publish a new " +
+  "bundle version instead.";
 
 const SKILLS_DELETE_DESCRIPTION =
-  "Delete a Layer 3 skill. Snapshots to `_versions/` before removing the live file. Confirm with " +
-  "the user before deleting org- or workspace-scope skills. Bundle (Layer 1) skills cannot " +
-  "be deleted via the platform — those ship with the bundle.";
+  "Delete a Layer 3 skill. The `id` is the filesystem path returned by `skills__list`. " +
+  "Snapshots to `_versions/` before removing the live file. Confirm with the user before " +
+  "deleting org- or workspace-scope skills. Bundle (Layer 1) skills cannot be deleted via " +
+  "the platform — those ship with the bundle.";
 
 const SKILLS_ACTIVATE_DESCRIPTION =
   "Activate a skill (set status=active). Sugar over `update`; cleaner permission/audit shape. " +
@@ -114,10 +117,11 @@ const SKILLS_DEACTIVATE_DESCRIPTION =
   "selection. Reactivate with `activate`. Use to mute a skill mid-incident without deleting it.";
 
 const SKILLS_MOVE_SCOPE_DESCRIPTION =
-  "Relocate a skill across scope tiers (e.g. workspace → org to promote a workspace-local " +
-  "skill that should apply org-wide). Snapshots the original to `_versions/` in the source scope, " +
-  "writes to the target scope, then deletes the source. Permissions: caller must satisfy both " +
-  "source and target scope rules.";
+  "Relocate a Layer 3 skill across scope tiers (e.g. workspace → org to promote a " +
+  "workspace-local skill that should apply org-wide). The `id` is the filesystem path returned " +
+  "by `skills__list`. Snapshots the original to `_versions/` in the source scope, writes to " +
+  "the target scope, then deletes the source. Permissions: caller must satisfy both source " +
+  "and target scope rules.";
 
 // ── Source factory ───────────────────────────────────────────────────────
 
@@ -208,10 +212,10 @@ export function createSkillsSource(runtime: Runtime, eventSink: EventSink): McpS
           // skill:// URIs always resolve to the Layer 1 bundle resource;
           // anything else is path-derived.
           const isUri = id === AUTHORING_GUIDE_URI || id.startsWith(SKILL_URI_PREFIX);
-          const scope = isUri ? "bundle" : scopeOfPath(runtime, id);
+          const scope = isUri ? "bundle" : scopeOfPath(runtime, id, authoringGuidePath);
           if (!scope) {
             return {
-              content: textContent(`Skill path "${id}" is not under any allowed root`),
+              content: textContent(unrecognizedIdMessage(id)),
               isError: true,
             };
           }
@@ -359,7 +363,7 @@ export function createSkillsSource(runtime: Runtime, eventSink: EventSink): McpS
       inputSchema: {
         type: "object",
         properties: {
-          id: { type: "string", description: "Filesystem path of the skill to update." },
+          id: { type: "string", description: "Filesystem path returned by `skills__list`." },
           manifest: {
             type: "object",
             description:
@@ -374,7 +378,7 @@ export function createSkillsSource(runtime: Runtime, eventSink: EventSink): McpS
       },
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         try {
-          return await updateSkillHandler(runtime, input, eventSink);
+          return await updateSkillHandler(runtime, input, eventSink, authoringGuidePath);
         } catch (err) {
           return errorResult(err);
         }
@@ -386,13 +390,13 @@ export function createSkillsSource(runtime: Runtime, eventSink: EventSink): McpS
       inputSchema: {
         type: "object",
         properties: {
-          id: { type: "string", description: "Filesystem path of the skill to delete." },
+          id: { type: "string", description: "Filesystem path returned by `skills__list`." },
         },
         required: ["id"],
       },
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         try {
-          return await deleteSkillHandler(runtime, input, eventSink);
+          return await deleteSkillHandler(runtime, input, eventSink, authoringGuidePath);
         } catch (err) {
           return errorResult(err);
         }
@@ -404,13 +408,13 @@ export function createSkillsSource(runtime: Runtime, eventSink: EventSink): McpS
       inputSchema: {
         type: "object",
         properties: {
-          id: { type: "string", description: "Filesystem path of the skill to activate." },
+          id: { type: "string", description: "Filesystem path returned by `skills__list`." },
         },
         required: ["id"],
       },
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         try {
-          return await setStatusHandler(runtime, input, "active", eventSink);
+          return await setStatusHandler(runtime, input, "active", eventSink, authoringGuidePath);
         } catch (err) {
           return errorResult(err);
         }
@@ -422,13 +426,13 @@ export function createSkillsSource(runtime: Runtime, eventSink: EventSink): McpS
       inputSchema: {
         type: "object",
         properties: {
-          id: { type: "string", description: "Filesystem path of the skill to deactivate." },
+          id: { type: "string", description: "Filesystem path returned by `skills__list`." },
         },
         required: ["id"],
       },
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         try {
-          return await setStatusHandler(runtime, input, "disabled", eventSink);
+          return await setStatusHandler(runtime, input, "disabled", eventSink, authoringGuidePath);
         } catch (err) {
           return errorResult(err);
         }
@@ -440,7 +444,7 @@ export function createSkillsSource(runtime: Runtime, eventSink: EventSink): McpS
       inputSchema: {
         type: "object",
         properties: {
-          id: { type: "string", description: "Filesystem path of the skill to move." },
+          id: { type: "string", description: "Filesystem path returned by `skills__list`." },
           target_scope: {
             type: "string",
             enum: ["org", "workspace", "user"],
@@ -451,7 +455,7 @@ export function createSkillsSource(runtime: Runtime, eventSink: EventSink): McpS
       },
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         try {
-          return await moveScopeHandler(runtime, input, eventSink);
+          return await moveScopeHandler(runtime, input, eventSink, authoringGuidePath);
         } catch (err) {
           return errorResult(err);
         }
@@ -669,15 +673,12 @@ async function listSkills(
  */
 function allowedReadRoots(runtime: Runtime, authoringGuidePath: string): string[] {
   const workDir = runtime.getWorkDir();
-  const roots = [
+  return [
     join(workDir, "skills"),
     join(workDir, "workspaces"),
     join(workDir, "users"),
-    // Built-in skills directory (Layer 1 + core).
-    resolve(authoringGuidePath, ".."), // src/skills/builtin
-    resolve(authoringGuidePath, "../../core"), // src/skills/core
-  ];
-  return roots.map((r) => resolve(r));
+    ...bundleSkillRoots(authoringGuidePath),
+  ].map((r) => resolve(r));
 }
 
 function isPathUnderAnyRoot(target: string, roots: string[]): boolean {
@@ -830,9 +831,7 @@ async function readSkillById(
   //      against symlink escape from inside an allowed dir.
   const roots = allowedReadRoots(runtime, authoringGuidePath);
   if (!isPathUnderAnyRoot(id, roots)) {
-    throw new Error(
-      `Skill path "${id}" is not under any allowed root (platform/workspace/user/builtin)`,
-    );
+    throw new Error(unrecognizedIdMessage(id));
   }
 
   if (!existsSync(id)) return null;
@@ -1080,7 +1079,21 @@ function summarizeList(skills: ListedSkill[]): string {
     .sort()
     .map(([scope, count]) => `${count} ${scope}`)
     .join(", ");
-  return `${skills.length} skill${skills.length === 1 ? "" : "s"} (${breakdown})`;
+  const header = `${skills.length} skill${skills.length === 1 ? "" : "s"} (${breakdown})`;
+  // Emit one row per skill so an LLM consumer can read IDs without
+  // depending on structuredContent (which the engine doesn't surface to
+  // the model). Rows are stable & terse: id, scope/layer/type/priority
+  // tags, status if not active, and a truncated description.
+  const lines = skills.map((s) => {
+    const tags: string[] = [`L${s.layer}`, s.scope];
+    if (s.type) tags.push(s.type);
+    if (s.priority != null) tags.push(`p${s.priority}`);
+    if (s.status && s.status !== "active") tags.push(s.status);
+    const meta = `(${tags.join(" ")})`;
+    const desc = s.description ? ` — ${s.description.slice(0, 100)}` : "";
+    return `- ${s.id} ${meta}${desc}`;
+  });
+  return `${header}\n${lines.join("\n")}`;
 }
 
 function summarizeRead(skill: ReadResult): string {
@@ -1240,15 +1253,42 @@ function assertValidName(name: string): void {
   }
 }
 
-function scopeOfPath(runtime: Runtime, path: string): WritableScope | "bundle" | null {
+/**
+ * The two filesystem roots that hold bundle-vendored skills (Layer 1):
+ * the authoring guide's own directory (`src/skills/builtin`) and the
+ * sibling core dir (`src/skills/core`). Computed from `authoringGuidePath`
+ * so adding/moving bundle skill roots happens in one place.
+ */
+function bundleSkillRoots(authoringGuidePath: string): string[] {
+  return [resolve(authoringGuidePath, ".."), resolve(authoringGuidePath, "../../core")];
+}
+
+/**
+ * Classify a filesystem path into a writable scope (`workspace` / `user` /
+ * `org`), the read-only `bundle` tier, or `null` if the path doesn't sit
+ * under any known skill root.
+ *
+ * Returning `null` for unclassified paths (rather than the previous "treat
+ * as bundle" fallback) is load-bearing: callers — especially mutation
+ * handlers — distinguish "this is a real bundle skill" from "this id is
+ * garbage / bare name / wrong shape." The previous behavior turned every
+ * mistyped path into a misleading "Bundle (Layer 1) skills are vendored"
+ * error.
+ */
+function scopeOfPath(
+  runtime: Runtime,
+  path: string,
+  authoringGuidePath: string,
+): WritableScope | "bundle" | null {
   const work = resolve(runtime.getWorkDir());
   const real = resolve(path);
   if (real.startsWith(`${join(work, "workspaces")}/`)) return "workspace";
   if (real.startsWith(`${join(work, "users")}/`)) return "user";
   if (real.startsWith(`${join(work, "skills")}/`)) return "org";
-  // Anything else — typically bundled built-ins under src/skills/builtin —
-  // is treated as bundle-tier and not mutable.
-  return "bundle";
+  for (const root of bundleSkillRoots(authoringGuidePath)) {
+    if (real === root || real.startsWith(`${root}/`)) return "bundle";
+  }
+  return null;
 }
 
 /**
@@ -1297,13 +1337,39 @@ function permissionDenied(reason: string): ToolResult {
 }
 
 function bundleNotMutable(): ToolResult {
+  // Structured error shape per the skill management design doc — the
+  // `suggested_action` discriminator lets calling agents present the
+  // right next step without parsing prose.
   return {
     content: textContent(
-      "Bundle (Layer 1) skills are vendored — edit them through the bundle's own settings surface, not the platform.",
+      "Bundle (Layer 1) skills ship with the bundle and are versioned with it. " +
+        "To change one, publish a new bundle version — the platform cannot edit it in place.",
     ),
-    structuredContent: { error: "skill_not_mutable_via_platform", layer: 1 },
+    structuredContent: {
+      error: "skill_not_mutable_via_platform",
+      layer: 1,
+      suggested_action: "publish_new_bundle_version",
+      message:
+        "This skill ships with the bundle and is versioned with it. To change it, publish a new bundle version.",
+    },
     isError: true,
   };
+}
+
+/**
+ * Honest error message for a skill `id` that doesn't fit any known form.
+ * Replaces the previous `(platform/workspace/user/builtin)` text — those
+ * scope names are stale (the rename to `org/workspace/user/bundle` made
+ * the message lie) and the `<scope>/<name>` shape it implied was never a
+ * real input format. Tells the caller what `id` actually accepts.
+ */
+function unrecognizedIdMessage(id: string): string {
+  return (
+    `Skill id "${id}" is not a recognized form. Pass either ` +
+    `(a) an absolute filesystem path returned by skills__list — typically under ` +
+    `/data/skills, /data/workspaces/<wsId>/skills, or /data/users/<userId>/skills — ` +
+    `or (b) a skill:// URI from a bundle (e.g. skill://collateral/main).`
+  );
 }
 
 interface CreateInput {
@@ -1368,6 +1434,7 @@ async function updateSkillHandler(
   runtime: Runtime,
   input: Record<string, unknown>,
   eventSink: EventSink,
+  authoringGuidePath: string,
 ): Promise<ToolResult> {
   const {
     id,
@@ -1380,9 +1447,9 @@ async function updateSkillHandler(
   };
   if (!id) return errorResult(new Error("`id` is required"));
 
-  const scope = scopeOfPath(runtime, id);
+  const scope = scopeOfPath(runtime, id, authoringGuidePath);
   if (scope === "bundle") return bundleNotMutable();
-  if (!scope) return errorResult(new Error(`Skill path "${id}" is not under any allowed root`));
+  if (!scope) return errorResult(new Error(unrecognizedIdMessage(id)));
 
   const permission = await checkPathAccess(runtime, id, scope, "write");
   if (!permission.allowed) return permissionDenied(permission.reason ?? "Permission denied");
@@ -1426,13 +1493,14 @@ async function deleteSkillHandler(
   runtime: Runtime,
   input: Record<string, unknown>,
   eventSink: EventSink,
+  authoringGuidePath: string,
 ): Promise<ToolResult> {
   const { id } = input as { id?: string };
   if (!id) return errorResult(new Error("`id` is required"));
 
-  const scope = scopeOfPath(runtime, id);
+  const scope = scopeOfPath(runtime, id, authoringGuidePath);
   if (scope === "bundle") return bundleNotMutable();
-  if (!scope) return errorResult(new Error(`Skill path "${id}" is not under any allowed root`));
+  if (!scope) return errorResult(new Error(unrecognizedIdMessage(id)));
 
   const permission = await checkPathAccess(runtime, id, scope, "write");
   if (!permission.allowed) return permissionDenied(permission.reason ?? "Permission denied");
@@ -1467,14 +1535,21 @@ async function setStatusHandler(
   input: Record<string, unknown>,
   status: "active" | "disabled",
   eventSink: EventSink,
+  authoringGuidePath: string,
 ): Promise<ToolResult> {
-  return updateSkillHandler(runtime, { id: input.id, manifest: { status } }, eventSink);
+  return updateSkillHandler(
+    runtime,
+    { id: input.id, manifest: { status } },
+    eventSink,
+    authoringGuidePath,
+  );
 }
 
 async function moveScopeHandler(
   runtime: Runtime,
   input: Record<string, unknown>,
   eventSink: EventSink,
+  authoringGuidePath: string,
 ): Promise<ToolResult> {
   const { id, target_scope } = input as { id?: string; target_scope?: string };
   if (!id) return errorResult(new Error("`id` is required"));
@@ -1483,10 +1558,10 @@ async function moveScopeHandler(
       new Error(`target_scope must be one of org | workspace | user (got "${target_scope}")`),
     );
   }
-  const sourceScope = scopeOfPath(runtime, id);
+  const sourceScope = scopeOfPath(runtime, id, authoringGuidePath);
   if (sourceScope === "bundle") return bundleNotMutable();
   if (!sourceScope) {
-    return errorResult(new Error(`Skill path "${id}" is not under any allowed root`));
+    return errorResult(new Error(unrecognizedIdMessage(id)));
   }
   const target = target_scope as WritableScope;
   if (sourceScope === target) {
