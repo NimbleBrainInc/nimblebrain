@@ -50,32 +50,40 @@ describe("LoginRateLimiter", () => {
 	});
 
 	it("global limit resets after window expires", () => {
-		// Use a 1ms window so it expires immediately
-		const limiter = new LoginRateLimiter(10, 1, 5);
+		// 50ms window: long enough that the recordGlobal() loop below finishes
+		// inside one window (a 1ms window was racy under load — the loop
+		// itself could span >1ms and reset the counter mid-burst, dropping
+		// the post-loop count below the limit), short enough that the
+		// busy-wait afterwards is still cheap.
+		const windowMs = 50;
+		const limiter = new LoginRateLimiter(10, windowMs, 5);
 		for (let i = 0; i < 5; i++) {
 			limiter.recordGlobal();
 		}
 		expect(limiter.checkGlobal()).toBe(false);
 
-		// Wait for the window to expire
+		// Wait comfortably past the window.
 		const start = Date.now();
-		while (Date.now() - start < 5) {
-			// busy-wait a few ms for the 1ms window to expire
+		while (Date.now() - start < windowMs * 2) {
+			// busy-wait
 		}
 
 		expect(limiter.checkGlobal()).toBe(true);
 	});
 
 	it("removes expired windows on cleanup", () => {
-		// Use a very short window so entries expire immediately
-		const limiter = new LoginRateLimiter(10, 1);
+		// 50ms window — see above; same race applies to single-record entries
+		// under load. Window must be small enough that the busy-wait stays
+		// cheap, large enough that a single record() reliably lands inside
+		// it.
+		const windowMs = 50;
+		const limiter = new LoginRateLimiter(10, windowMs);
 		const ip = "192.0.2.1";
 		limiter.record(ip);
 
-		// Wait for the window to expire, then cleanup
 		const start = Date.now();
-		while (Date.now() - start < 5) {
-			// busy-wait a few ms for the 1ms window to expire
+		while (Date.now() - start < windowMs * 2) {
+			// busy-wait
 		}
 
 		limiter.cleanup();
@@ -112,14 +120,17 @@ describe("RequestRateLimiter", () => {
 	});
 
 	it("resets after window expires", () => {
-		const limiter = new RequestRateLimiter(2, 1); // 1ms window
+		// 50ms window — the consume() pair below must land inside the same
+		// window. A 1ms window was racy under load (loop spanned >1ms,
+		// silently resetting the count between calls).
+		const windowMs = 50;
+		const limiter = new RequestRateLimiter(2, windowMs);
 		expect(limiter.consume("user-1")).toBe(true);
 		expect(limiter.consume("user-1")).toBe(true);
 		expect(limiter.consume("user-1")).toBe(false);
 
-		// Wait for window to expire
 		const start = Date.now();
-		while (Date.now() - start < 5) {
+		while (Date.now() - start < windowMs * 2) {
 			// busy-wait
 		}
 

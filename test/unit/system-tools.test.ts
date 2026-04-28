@@ -89,17 +89,11 @@ describe("System Tools", () => {
 		expect(extractText(result.content)).toContain('No tools matched "nonexistent"');
 	});
 
-	it("search with scope=registry searches mpak registry", async () => {
-		const registry = await makeRegistry();
-		const systemTools = await createSystemTools(() => registry);
-		const result = await systemTools.execute("search", {
-			scope: "registry",
-			query: "ipinfo",
-		});
-		expect(result.isError).toBe(false);
-		// Should contain actual search results (mpak must be installed)
-		expect(extractText(result.content)).toContain("ipinfo");
-	}, 15_000);
+	// `search with scope=registry` lives in test/smoke/system-tools-registry.test.ts.
+	// It hits the live mpak registry over the network, which makes it a smoke
+	// test by definition (CLAUDE.md: smoke tier owns "real MCP server spawns,
+	// network calls"). Unit gate stays deterministic; smoke job continues to
+	// validate the live wiring on main.
 
 	it("manage_app install requires lifecycle context", async () => {
 		const registry = await makeRegistry();
