@@ -58,7 +58,7 @@ const AUTHORING_GUIDE_URI = "skill://skills/authoring-guide";
 
 const SKILLS_LIST_DESCRIPTION =
   "List Layer 3 skills (cross-bundle agent orchestration content) and Layer 1 vendored bundle skills. " +
-  "Filter by `scope` (platform | workspace | user | bundle), `layer` (1 | 3), `type` (context | skill), " +
+  "Filter by `scope` (org | workspace | user | bundle), `layer` (1 | 3), `type` (context | skill), " +
   "`tool_affinity` (a tool name; returns skills whose `applies_to_tools` glob matches it), " +
   "`status` (active | draft | disabled | archived), or `modified_since` (ISO 8601). " +
   "Returns id, name, layer, scope, status, token count, and source metadata for each skill. " +
@@ -86,9 +86,9 @@ const SKILLS_LOADING_LOG_DESCRIPTION =
   "did or did not load.";
 
 const SKILLS_CREATE_DESCRIPTION =
-  "Create a new Layer 3 skill at the given scope (`platform`, `workspace`, or `user`). Writes a " +
+  "Create a new Layer 3 skill at the given scope (`org`, `workspace`, or `user`). Writes a " +
   "markdown file with frontmatter to the appropriate skills directory. " +
-  "**Confirm with the user before creating platform- or workspace-scope skills** — they affect " +
+  "**Confirm with the user before creating org- or workspace-scope skills** — they affect " +
   "every conversation in that scope. Manifest fields: `description`, `type` (context|skill), " +
   "`priority` (11–99 for non-core), `loading_strategy` (always|tool_affined), `applies_to_tools` " +
   "(globs; required for `tool_affined`), `status` (defaults active). The body is markdown content. " +
@@ -102,7 +102,7 @@ const SKILLS_UPDATE_DESCRIPTION =
 
 const SKILLS_DELETE_DESCRIPTION =
   "Delete a Layer 3 skill. Snapshots to `_versions/` before removing the live file. Confirm with " +
-  "the user before deleting platform- or workspace-scope skills. Bundle (Layer 1) skills cannot " +
+  "the user before deleting org- or workspace-scope skills. Bundle (Layer 1) skills cannot " +
   "be deleted via the platform — those ship with the bundle.";
 
 const SKILLS_ACTIVATE_DESCRIPTION =
@@ -114,7 +114,7 @@ const SKILLS_DEACTIVATE_DESCRIPTION =
   "selection. Reactivate with `activate`. Use to mute a skill mid-incident without deleting it.";
 
 const SKILLS_MOVE_SCOPE_DESCRIPTION =
-  "Relocate a skill across scope tiers (e.g. workspace → platform to promote a workspace-local " +
+  "Relocate a skill across scope tiers (e.g. workspace → org to promote a workspace-local " +
   "skill that should apply org-wide). Snapshots the original to `_versions/` in the source scope, " +
   "writes to the target scope, then deletes the source. Permissions: caller must satisfy both " +
   "source and target scope rules.";
@@ -1131,7 +1131,7 @@ type AccessMode = "read" | "write";
  *
  * Tier rules (read | write):
  *   - bundle      — read: anyone (Layer 1 vendored). write: refused (caller side).
- *   - platform    — read: any tenant member.            write: org admin/owner.
+ *   - org         — read: any tenant member.            write: org admin/owner.
  *   - workspace   — read+write: must be a member of the path's workspace.
  *                   write also requires `admin` role in that workspace.
  *   - user        — read+write: only the owning user.
@@ -1320,9 +1320,7 @@ async function createSkill(
 ): Promise<ToolResult> {
   const { scope, name, manifest: rawManifest, body } = input as CreateInput;
   if (!scope || !WRITABLE_SCOPES.has(scope as WritableScope)) {
-    return errorResult(
-      new Error(`Scope must be one of platform | workspace | user (got "${scope}")`),
-    );
+    return errorResult(new Error(`Scope must be one of org | workspace | user (got "${scope}")`));
   }
   if (!name) return errorResult(new Error("`name` is required"));
   assertValidName(name);
@@ -1482,7 +1480,7 @@ async function moveScopeHandler(
   if (!id) return errorResult(new Error("`id` is required"));
   if (!target_scope || !WRITABLE_SCOPES.has(target_scope as WritableScope)) {
     return errorResult(
-      new Error(`target_scope must be one of platform | workspace | user (got "${target_scope}")`),
+      new Error(`target_scope must be one of org | workspace | user (got "${target_scope}")`),
     );
   }
   const sourceScope = scopeOfPath(runtime, id);
