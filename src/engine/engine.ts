@@ -8,6 +8,7 @@ import type {
   SharedV3ProviderOptions,
 } from "@ai-sdk/provider";
 import { MAX_ITERATIONS, MAX_TOOL_RESULT_CHARS } from "../limits.ts";
+import { getProviderFromModel } from "../model/catalog.ts";
 import { callModel, type StreamResult } from "../model/stream.ts";
 import { validateToolInput } from "../tools/validate-input.ts";
 import {
@@ -46,7 +47,7 @@ function buildThinkingProviderOptions(
 ): SharedV3ProviderOptions {
   if (!thinking) return {};
 
-  const provider = model.includes(":") ? model.split(":")[0] : "anthropic";
+  const provider = getProviderFromModel(model);
 
   if (provider === "anthropic") {
     if (thinking.mode === "off") {

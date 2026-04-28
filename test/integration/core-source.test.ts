@@ -214,6 +214,91 @@ describe("Core Source", () => {
 		}
 	});
 
+	it("nb__set_model_config rejects thinking='enabled' without a budget", async () => {
+		const workDir = join(testDir, `work-thinking-noburget-${Date.now()}`);
+		mkdirSync(workDir, { recursive: true });
+		const configPath = join(workDir, "nimblebrain.json");
+		writeFileSync(configPath, JSON.stringify({ version: "1" }));
+
+		const runtime = await Runtime.start({
+			model: { provider: "custom", adapter: createEchoModel() },
+			noDefaultBundles: true,
+			workDir,
+			configPath,
+			logging: { disabled: true },
+		});
+		try {
+			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
+			const result = await source.execute("set_model_config", {
+				thinking: "enabled",
+			});
+			expect(result.isError).toBe(true);
+			expect(extractText(result.content)).toContain("requires thinkingBudgetTokens");
+		} finally {
+			await runtime.shutdown();
+		}
+	});
+
+	it("nb__set_model_config accepts thinking='enabled' with a valid budget", async () => {
+		const workDir = join(testDir, `work-thinking-ok-${Date.now()}`);
+		mkdirSync(workDir, { recursive: true });
+		const configPath = join(workDir, "nimblebrain.json");
+		writeFileSync(configPath, JSON.stringify({ version: "1" }));
+
+		const runtime = await Runtime.start({
+			model: { provider: "custom", adapter: createEchoModel() },
+			noDefaultBundles: true,
+			workDir,
+			configPath,
+			logging: { disabled: true },
+		});
+		try {
+			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
+			const result = await source.execute("set_model_config", {
+				thinking: "enabled",
+				thinkingBudgetTokens: 8192,
+			});
+			expect(result.isError).toBe(false);
+			const raw = JSON.parse(require("node:fs").readFileSync(configPath, "utf-8"));
+			expect(raw.thinking).toBe("enabled");
+			expect(raw.thinkingBudgetTokens).toBe(8192);
+		} finally {
+			await runtime.shutdown();
+		}
+	});
+
+	it("nb__set_model_config thinking=null clears the override (and budget)", async () => {
+		const workDir = join(testDir, `work-thinking-clear-${Date.now()}`);
+		mkdirSync(workDir, { recursive: true });
+		const configPath = join(workDir, "nimblebrain.json");
+		// Pre-existing operator override
+		writeFileSync(
+			configPath,
+			JSON.stringify({ thinking: "enabled", thinkingBudgetTokens: 8192 }),
+		);
+
+		const runtime = await Runtime.start({
+			model: { provider: "custom", adapter: createEchoModel() },
+			noDefaultBundles: true,
+			workDir,
+			configPath,
+			logging: { disabled: true },
+		});
+		try {
+			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
+			const result = await source.execute("set_model_config", {
+				thinking: null,
+			});
+			expect(result.isError).toBe(false);
+			const raw = JSON.parse(require("node:fs").readFileSync(configPath, "utf-8"));
+			expect(raw.thinking).toBeUndefined();
+			// Budget is cleared together — a budget without a mode is meaningless.
+			expect(raw.thinkingBudgetTokens).toBeUndefined();
+		} finally {
+			await runtime.shutdown();
+		}
+	});
+
 	it("nb__set_model_config without configPath returns error", async () => {
 		const runtime = await makeRuntime();
 		try {

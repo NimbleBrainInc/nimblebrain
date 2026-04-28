@@ -1387,7 +1387,16 @@ export class Runtime {
     });
   }
 
-  /** Update live runtime config (in-memory). Called by set_config tool after disk write. */
+  /**
+   * Update live runtime config (in-memory). Called by set_config tool
+   * after disk write.
+   *
+   * For `thinking` and `thinkingBudgetTokens`, `null` is the explicit
+   * "clear my override" sentinel — distinct from `undefined` (leave the
+   * field alone). After clearing, the resolver falls back to the
+   * platform default policy (adaptive for catalog-flagged reasoning
+   * models, off otherwise).
+   */
   updateConfig(patch: {
     defaultModel?: string;
     models?: Partial<ModelSlots>;
@@ -1395,8 +1404,8 @@ export class Runtime {
     maxInputTokens?: number;
     maxOutputTokens?: number;
     maxToolResultSize?: number;
-    thinking?: "off" | "adaptive" | "enabled";
-    thinkingBudgetTokens?: number;
+    thinking?: "off" | "adaptive" | "enabled" | null;
+    thinkingBudgetTokens?: number | null;
     preferences?: Record<string, string>;
   }) {
     if (patch.models) {
@@ -1417,9 +1426,20 @@ export class Runtime {
     if (patch.maxOutputTokens !== undefined) this.config.maxOutputTokens = patch.maxOutputTokens;
     if (patch.maxToolResultSize !== undefined)
       this.config.maxToolResultSize = patch.maxToolResultSize;
-    if (patch.thinking !== undefined) this.config.thinking = patch.thinking;
-    if (patch.thinkingBudgetTokens !== undefined)
-      this.config.thinkingBudgetTokens = patch.thinkingBudgetTokens;
+    if (patch.thinking !== undefined) {
+      if (patch.thinking === null) {
+        this.config.thinking = undefined;
+      } else {
+        this.config.thinking = patch.thinking;
+      }
+    }
+    if (patch.thinkingBudgetTokens !== undefined) {
+      if (patch.thinkingBudgetTokens === null) {
+        this.config.thinkingBudgetTokens = undefined;
+      } else {
+        this.config.thinkingBudgetTokens = patch.thinkingBudgetTokens;
+      }
+    }
   }
 
   /** Get loaded context skills (for skill_status tool). */

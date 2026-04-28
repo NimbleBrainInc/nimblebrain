@@ -188,3 +188,12 @@ function parseModelString(modelString: string): { provider: string; modelId: str
   if (idx === -1) return { provider: "anthropic", modelId: modelString };
   return { provider: modelString.slice(0, idx), modelId: modelString.slice(idx + 1) };
 }
+
+/**
+ * Extract the provider name from a model string. Bare strings (no `:`)
+ * are treated as `"anthropic"` — same rule as `getModelByString`.
+ * Single source of truth for that convention.
+ */
+export function getProviderFromModel(modelString: string): string {
+  return parseModelString(modelString).provider;
+}

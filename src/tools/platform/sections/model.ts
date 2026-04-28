@@ -123,7 +123,12 @@ const CONFIG_SECTION_SCRIPT = `
 				maxOutputTokens: parseInt(document.getElementById("cfg-output").value, 10),
 			};
 			var thinkingValue = thinkingSel.value;
-			if (thinkingValue) {
+			if (thinkingValue === "") {
+				// "Default" — clear any persisted override so the resolver falls
+				// back to the platform default policy.
+				patch.thinking = null;
+				patch.thinkingBudgetTokens = null;
+			} else {
 				patch.thinking = thinkingValue;
 				if (thinkingValue === "enabled") {
 					patch.thinkingBudgetTokens = parseInt(document.getElementById("cfg-budget").value, 10);
