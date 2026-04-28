@@ -250,34 +250,32 @@ describe("BundleLifecycleManager — placement unregistration on uninstall", () 
 // ---------------------------------------------------------------------------
 
 describe("nb-core placements via PlacementRegistry", () => {
-	it("nb-core placements registered at startup cover all 7 entries", () => {
+	it("registers ambient core placements across multiple slots", () => {
+		// Representative payload — the registry doesn't care about the
+		// specific URIs, only that ambient (no wsId) entries surface for
+		// any workspace and stay tagged with their serverName. The actual
+		// per-source placements in production are declared by each
+		// platform source's factory and registered via `Runtime.start()`.
 		const pr = new PlacementRegistry();
 
-		// Simulate what Runtime.start() does — sidebar nav is native, only content placements registered
 		const NB_CORE_PLACEMENTS: PlacementDeclaration[] = [
-			{ slot: "sidebar.bottom", resourceUri: "ui://core/settings-link", priority: 90, label: "Settings", icon: "⚙️", route: "settings" },
 			{ slot: "main", resourceUri: "ui://core/usage-dashboard", route: "usage", label: "Usage", icon: "📊" },
-			{ slot: "main", resourceUri: "ui://core/settings", route: "settings", label: "Settings", icon: "⚙️" },
+			{ slot: "sidebar", resourceUri: "ui://core/home-nav", route: "home", label: "Home", icon: "🏠" },
 		];
 		pr.register("nb", NB_CORE_PLACEMENTS);
 
 		// Ambient entries show up for any workspace the user is in.
 		const all = pr.forWorkspace("ws_any");
-		expect(all).toHaveLength(3);
+		expect(all).toHaveLength(2);
 
 		// All belong to core
 		for (const entry of all) {
 			expect(entry.serverName).toBe("nb");
 		}
 
-		// Verify main placements
-		const main = all.filter((e) => e.slot === "main");
-		expect(main).toHaveLength(2);
-
-		// Verify sidebar.bottom (settings)
-		const bottom = all.filter((e) => e.slot === "sidebar.bottom");
-		expect(bottom).toHaveLength(1);
-		expect(bottom[0].label).toBe("Settings");
+		// Slot filtering returns the right entries.
+		expect(all.filter((e) => e.slot === "main")).toHaveLength(1);
+		expect(all.filter((e) => e.slot === "sidebar")).toHaveLength(1);
 	});
 
 	it("bundle placements coexist with nb-core placements", () => {
