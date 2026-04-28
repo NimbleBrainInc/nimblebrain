@@ -25,7 +25,15 @@ const VALID_LOADING_STRATEGIES = new Set<SkillLoadingStrategy>([
   "explicit",
 ]);
 const VALID_STATUSES = new Set<SkillStatus>(["active", "draft", "disabled", "archived"]);
-const VALID_SCOPES = new Set<SkillScope>(["platform", "workspace", "user", "bundle"]);
+const VALID_SCOPES = new Set<SkillScope>(["org", "workspace", "user", "bundle"]);
+/**
+ * Scope rename — `platform` was the original Phase-2 label for the
+ * org-wide tier. We accept it as a back-compat alias on read so any
+ * skill file still on disk with `scope: platform` keeps loading; the
+ * value is normalised to `org` in the manifest, and the writer always
+ * emits the new label.
+ */
+const SCOPE_ALIASES: Record<string, SkillScope> = { platform: "org" };
 
 /** Subdirectories that the multi-scope loader must skip. */
 const RESERVED_SUBDIR_PREFIX = "_";
@@ -247,7 +255,10 @@ export function parseSkillContent(raw: string, sourcePath: string): Skill | null
   // the field without losing it.
   let scope: SkillScope | undefined;
   if (typeof data.scope === "string") {
-    if (VALID_SCOPES.has(data.scope as SkillScope)) {
+    const aliased = SCOPE_ALIASES[data.scope];
+    if (aliased) {
+      scope = aliased;
+    } else if (VALID_SCOPES.has(data.scope as SkillScope)) {
       scope = data.scope as SkillScope;
     } else {
       console.error(`[skill] Warning: invalid scope "${data.scope}" in ${sourcePath}, ignoring`);

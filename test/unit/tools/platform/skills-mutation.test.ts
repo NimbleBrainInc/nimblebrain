@@ -137,7 +137,7 @@ describe("skills__create", () => {
     const result = await client.callTool({
       name: "create",
       arguments: {
-        scope: "platform",
+        scope: "org",
         name: "voice-rules",
         manifest: {
           description: "speak plainly",
@@ -161,7 +161,7 @@ describe("skills__create", () => {
     const make = () =>
       client.callTool({
         name: "create",
-        arguments: { scope: "platform", name: "voice", body: "v1" },
+        arguments: { scope: "org", name: "voice", body: "v1" },
       });
     expect((await make()).isError).toBeFalsy();
     const second = await make();
@@ -174,7 +174,7 @@ describe("skills__create", () => {
     const client = src.getClient()!;
     const result = await client.callTool({
       name: "create",
-      arguments: { scope: "platform", name: "../etc/passwd", body: "" },
+      arguments: { scope: "org", name: "../etc/passwd", body: "" },
     });
     expect(result.isError).toBe(true);
   });
@@ -192,7 +192,7 @@ describe("skills__create", () => {
     const client = src.getClient()!;
     const result = await client.callTool({
       name: "create",
-      arguments: { scope: "platform", name: "no-perm", body: "x" },
+      arguments: { scope: "org", name: "no-perm", body: "x" },
     });
     expect(result.isError).toBe(true);
     expect((result as { structuredContent?: { code?: string } }).structuredContent?.code).toBe(
@@ -222,7 +222,7 @@ describe("skills__update", () => {
     await client.callTool({
       name: "create",
       arguments: {
-        scope: "platform",
+        scope: "org",
         name: "voice",
         manifest: { description: "v1", type: "context", priority: 25 },
         body: "Body v1",
@@ -287,7 +287,7 @@ describe("skills__delete", () => {
     const client = src.getClient()!;
     await client.callTool({
       name: "create",
-      arguments: { scope: "platform", name: "doomed", body: "rip" },
+      arguments: { scope: "org", name: "doomed", body: "rip" },
     });
     const id = join(workDir, "skills", "doomed.md");
     expect(existsSync(id)).toBe(true);
@@ -318,7 +318,7 @@ describe("skills__activate / skills__deactivate", () => {
     const client = src.getClient()!;
     await client.callTool({
       name: "create",
-      arguments: { scope: "platform", name: "togglable", body: "x" },
+      arguments: { scope: "org", name: "togglable", body: "x" },
     });
     const id = join(workDir, "skills", "togglable.md");
 
@@ -352,7 +352,7 @@ describe("skills__move_scope", () => {
 
     const result = await client.callTool({
       name: "move_scope",
-      arguments: { id: sourcePath, target_scope: "platform" },
+      arguments: { id: sourcePath, target_scope: "org" },
     });
     expect(result.isError).toBeFalsy();
     expect(existsSync(sourcePath)).toBe(false);
@@ -369,12 +369,12 @@ describe("skills__move_scope", () => {
     const client = src.getClient()!;
     await client.callTool({
       name: "create",
-      arguments: { scope: "platform", name: "stay", body: "x" },
+      arguments: { scope: "org", name: "stay", body: "x" },
     });
     const id = join(workDir, "skills", "stay.md");
     const result = await client.callTool({
       name: "move_scope",
-      arguments: { id, target_scope: "platform" },
+      arguments: { id, target_scope: "org" },
     });
     expect(result.isError).toBe(true);
   });
@@ -385,7 +385,7 @@ describe("skills__move_scope", () => {
     const client = src.getClient()!;
     await client.callTool({
       name: "create",
-      arguments: { scope: "platform", name: "collide", body: "platform" },
+      arguments: { scope: "org", name: "collide", body: "org" },
     });
     await client.callTool({
       name: "create",
@@ -394,7 +394,7 @@ describe("skills__move_scope", () => {
     const wsPath = join(workDir, "workspaces", "ws_demo", "skills", "collide.md");
     const result = await client.callTool({
       name: "move_scope",
-      arguments: { id: wsPath, target_scope: "platform" },
+      arguments: { id: wsPath, target_scope: "org" },
     });
     expect(result.isError).toBe(true);
   });
@@ -489,7 +489,7 @@ describe("cross-workspace access — regression", () => {
     const client = src.getClient()!;
     const result = await client.callTool({
       name: "move_scope",
-      arguments: { id: otherPath, target_scope: "platform" },
+      arguments: { id: otherPath, target_scope: "org" },
     });
     expect(result.isError).toBe(true);
     expect(existsSync(otherPath)).toBe(true);

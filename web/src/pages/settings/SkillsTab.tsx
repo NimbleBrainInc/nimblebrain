@@ -18,7 +18,7 @@ import { RequireActiveWorkspace } from "./components/RequireActiveWorkspace";
 // surfaces immediately in the UI.
 
 type Layer = 1 | 3;
-type Scope = "platform" | "workspace" | "user" | "bundle";
+type Scope = "org" | "workspace" | "user" | "bundle";
 type Status = "active" | "draft" | "disabled" | "archived";
 
 interface ListedSkill {
@@ -65,7 +65,7 @@ function formatTokens(n: number): string {
 }
 
 const SCOPE_BADGE: Record<Scope, string> = {
-  platform: "border-blue-300/30 text-blue-400",
+  org: "border-blue-300/30 text-blue-400",
   workspace: "border-emerald-300/30 text-emerald-400",
   user: "border-violet-300/30 text-violet-400",
   bundle: "border-amber-300/30 text-amber-400",
@@ -291,7 +291,7 @@ function Inner() {
       <p className="text-xs text-muted-foreground">
         Layer 3 cross-bundle agent orchestration content (voice, workflow, personal, tool routing)
         plus Layer 1 vendored bundle skills. The agent uses these to shape its behavior; you can
-        also author them as markdown files under <code>~/.nimblebrain/skills/</code> (platform),{" "}
+        also author them as markdown files under <code>~/.nimblebrain/skills/</code> (org),{" "}
         <code>workspaces/&lt;wsId&gt;/skills/</code>, or <code>users/&lt;userId&gt;/skills/</code>.
       </p>
 
@@ -364,7 +364,7 @@ function Inner() {
   );
 }
 
-type WritableScope = "platform" | "workspace" | "user";
+type WritableScope = "org" | "workspace" | "user";
 
 interface CreateInput {
   scope: WritableScope;
@@ -381,7 +381,7 @@ interface GroupedSkills {
 }
 
 function groupByScope(skills: ListedSkill[]): GroupedSkills[] {
-  const order: Scope[] = ["user", "workspace", "platform", "bundle"];
+  const order: Scope[] = ["user", "workspace", "org", "bundle"];
   const map = new Map<Scope, ListedSkill[]>();
   for (const s of skills) {
     const list = map.get(s.scope) ?? [];
@@ -397,7 +397,7 @@ function groupByScope(skills: ListedSkill[]): GroupedSkills[] {
 const SCOPE_LABEL: Record<Scope, string> = {
   user: "User",
   workspace: "Workspace",
-  platform: "Platform",
+  org: "Org",
   bundle: "Bundle (Layer 1)",
 };
 
@@ -795,7 +795,7 @@ function CreateForm({
             >
               <option value="user">User</option>
               <option value="workspace">Workspace</option>
-              <option value="platform">Platform</option>
+              <option value="org">Org</option>
             </select>
           </div>
           <div className="space-y-1">
@@ -944,7 +944,7 @@ function ScopeMover({
   pending: boolean;
   onMove: (target: WritableScope) => void;
 }) {
-  const targets: WritableScope[] = (["platform", "workspace", "user"] as WritableScope[]).filter(
+  const targets: WritableScope[] = (["org", "workspace", "user"] as WritableScope[]).filter(
     (s) => s !== current,
   );
   return (
@@ -993,7 +993,7 @@ const SCOPE_OPTIONS: Array<{ value: Scope | "all"; label: string }> = [
   { value: "all", label: "All scopes" },
   { value: "user", label: "User" },
   { value: "workspace", label: "Workspace" },
-  { value: "platform", label: "Platform" },
+  { value: "org", label: "Org" },
   { value: "bundle", label: "Bundle (L1)" },
 ];
 

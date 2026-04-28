@@ -68,7 +68,7 @@ export interface OverlayLayers {
 export interface Layer3SkillEntry {
   name: string;
   body: string;
-  scope: "platform" | "workspace" | "user" | "bundle";
+  scope: "org" | "workspace" | "user" | "bundle";
   sourcePath?: string;
   loadedBy: "always" | "tool_affinity";
   reason: string;

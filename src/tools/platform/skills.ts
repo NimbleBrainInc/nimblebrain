@@ -147,7 +147,7 @@ export function createSkillsSource(runtime: Runtime, eventSink: EventSink): McpS
         properties: {
           scope: {
             type: "string",
-            enum: ["platform", "workspace", "user", "bundle"],
+            enum: ["org", "workspace", "user", "bundle"],
             description: "Filter to a single tier of the skill catalog.",
           },
           layer: {
@@ -314,7 +314,7 @@ export function createSkillsSource(runtime: Runtime, eventSink: EventSink): McpS
         properties: {
           scope: {
             type: "string",
-            enum: ["platform", "workspace", "user"],
+            enum: ["org", "workspace", "user"],
             description: "Tier to write the skill into. Bundle (Layer 1) is not writable.",
           },
           name: {
@@ -431,7 +431,7 @@ export function createSkillsSource(runtime: Runtime, eventSink: EventSink): McpS
           id: { type: "string", description: "Filesystem path of the skill to move." },
           target_scope: {
             type: "string",
-            enum: ["platform", "workspace", "user"],
+            enum: ["org", "workspace", "user"],
             description: "Tier to relocate the skill into.",
           },
         },
@@ -490,7 +490,7 @@ interface ListedSkill {
   id: string;
   name: string;
   layer: 1 | 3;
-  scope: "platform" | "workspace" | "user" | "bundle";
+  scope: "org" | "workspace" | "user" | "bundle";
   status: "active" | "draft" | "disabled" | "archived";
   type?: string;
   tokens: number;
@@ -506,7 +506,7 @@ interface ReadResult {
   id: string;
   content: string;
   layer: 1 | 3;
-  scope: "platform" | "workspace" | "user" | "bundle";
+  scope: "org" | "workspace" | "user" | "bundle";
   source: { bundle?: string; bundleVersion?: string; path?: string; uri?: string };
   metadata: {
     name: string;
@@ -530,7 +530,7 @@ function skillToListed(skill: Skill): ListedSkill {
     id,
     name: m.name,
     layer: 3,
-    scope: m.scope ?? "platform",
+    scope: m.scope ?? "org",
     status: m.status ?? "active",
     type: m.type,
     tokens: approxTokens(skill.body),
@@ -758,7 +758,7 @@ function buildReadResult(
   base: {
     id: string;
     layer: 1 | 3;
-    scope: "platform" | "workspace" | "user" | "bundle";
+    scope: "org" | "workspace" | "user" | "bundle";
     source: ReadResult["source"];
     modifiedAt?: string;
   },
@@ -800,18 +800,18 @@ function buildReadResult(
 function inferScopeFromPath(
   path: string,
   workDir: string,
-): "platform" | "workspace" | "user" | "bundle" {
+): "org" | "workspace" | "user" | "bundle" {
   const resolved = resolve(path);
   if (resolved.startsWith(`${resolve(workDir, "workspaces")}/`)) return "workspace";
   if (resolved.startsWith(`${resolve(workDir, "users")}/`)) return "user";
-  if (resolved.startsWith(`${resolve(workDir, "skills")}/`)) return "platform";
+  if (resolved.startsWith(`${resolve(workDir, "skills")}/`)) return "org";
   return "bundle";
 }
 
 interface ActiveForEntry {
   id: string;
   layer: 3;
-  scope: "platform" | "workspace" | "user" | "bundle";
+  scope: "org" | "workspace" | "user" | "bundle";
   tokens: number;
   loadedBy: "always" | "tool_affinity";
   reason: string;
@@ -837,7 +837,7 @@ async function activeForConversation(
       return (ev as SkillsLoadedEvent).skills.map((s) => ({
         id: s.id,
         layer: 3 as const,
-        scope: (s.scope ?? "platform") as ActiveForEntry["scope"],
+        scope: (s.scope ?? "org") as ActiveForEntry["scope"],
         tokens: s.tokens,
         loadedBy: s.loadedBy,
         reason: s.reason,
@@ -1010,8 +1010,8 @@ function summarizeLog(events: LoadingLogEntry[]): string {
 
 // ── Mutation handlers ────────────────────────────────────────────────────
 
-type WritableScope = "platform" | "workspace" | "user";
-const WRITABLE_SCOPES = new Set<WritableScope>(["platform", "workspace", "user"]);
+type WritableScope = "org" | "workspace" | "user";
+const WRITABLE_SCOPES = new Set<WritableScope>(["org", "workspace", "user"]);
 
 interface PermissionDecision {
   allowed: boolean;
@@ -1066,11 +1066,11 @@ async function checkPathAccess(
     return { allowed: false, reason: "Bundle (Layer 1) skills are vendored and not mutable" };
   }
 
-  if (scope === "platform") {
+  if (scope === "org") {
     if (mode === "read") return { allowed: true };
     return isOrgAdmin
       ? { allowed: true }
-      : { allowed: false, reason: "Platform-scope writes require org admin or owner" };
+      : { allowed: false, reason: "Org-scope writes require org admin or owner" };
   }
 
   if (scope === "user") {
@@ -1121,7 +1121,7 @@ async function checkPathAccess(
  */
 function scopeDir(runtime: Runtime, scope: WritableScope): string {
   const workDir = runtime.getWorkDir();
-  if (scope === "platform") return join(workDir, "skills");
+  if (scope === "org") return join(workDir, "skills");
   if (scope === "workspace") {
     const wsId = runtime.requireWorkspaceId();
     return join(workDir, "workspaces", wsId, "skills");
@@ -1150,7 +1150,7 @@ function scopeOfPath(runtime: Runtime, path: string): WritableScope | "bundle" |
   const real = resolve(path);
   if (real.startsWith(`${join(work, "workspaces")}/`)) return "workspace";
   if (real.startsWith(`${join(work, "users")}/`)) return "user";
-  if (real.startsWith(`${join(work, "skills")}/`)) return "platform";
+  if (real.startsWith(`${join(work, "skills")}/`)) return "org";
   // Anything else — typically bundled built-ins under src/skills/builtin —
   // is treated as bundle-tier and not mutable.
   return "bundle";

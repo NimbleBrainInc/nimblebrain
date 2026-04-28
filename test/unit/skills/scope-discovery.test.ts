@@ -54,10 +54,10 @@ describe("loadScopedSkills — stamping", () => {
     writeSkillFile(join(dir, "alpha.md"), "alpha");
     writeSkillFile(join(dir, "beta.md"), "beta", "context");
 
-    const skills = loadScopedSkills(dir, "platform");
+    const skills = loadScopedSkills(dir, "org");
     expect(skills).toHaveLength(2);
     for (const s of skills) {
-      expect(s.manifest.scope).toBe("platform");
+      expect(s.manifest.scope).toBe("org");
     }
 
     // Same content, different scope → re-stamped accordingly.
@@ -148,7 +148,7 @@ describe("loadScopedSkills — error tolerance", () => {
 
 // ---- mergeScopedSkills (pure helper backing Runtime.loadConversationSkills) -----
 
-function makeSkill(name: string, scope: "platform" | "workspace" | "user", body = ""): Skill {
+function makeSkill(name: string, scope: "org" | "workspace" | "user", body = ""): Skill {
   return {
     manifest: {
       name,
@@ -167,18 +167,18 @@ function makeSkill(name: string, scope: "platform" | "workspace" | "user", body 
 describe("mergeScopedSkills — precedence", () => {
   test("platform-only skills appear with scope=platform", () => {
     const merged = mergeScopedSkills(
-      [makeSkill("only-platform", "platform")],
+      [makeSkill("only-platform", "org")],
       [],
       [],
     );
     expect(merged).toHaveLength(1);
     expect(merged[0]!.manifest.name).toBe("only-platform");
-    expect(merged[0]!.manifest.scope).toBe("platform");
+    expect(merged[0]!.manifest.scope).toBe("org");
   });
 
   test("workspace overrides platform on name collision", () => {
     const merged = mergeScopedSkills(
-      [makeSkill("voice", "platform", "platform-body")],
+      [makeSkill("voice", "org", "platform-body")],
       [makeSkill("voice", "workspace", "workspace-body")],
       [],
     );
@@ -189,7 +189,7 @@ describe("mergeScopedSkills — precedence", () => {
 
   test("user overrides workspace (and platform) on name collision", () => {
     const merged = mergeScopedSkills(
-      [makeSkill("voice", "platform", "platform-body")],
+      [makeSkill("voice", "org", "platform-body")],
       [makeSkill("voice", "workspace", "workspace-body")],
       [makeSkill("voice", "user", "user-body")],
     );
@@ -200,7 +200,7 @@ describe("mergeScopedSkills — precedence", () => {
 
   test("non-colliding skills from all three layers all survive", () => {
     const merged = mergeScopedSkills(
-      [makeSkill("p1", "platform"), makeSkill("p2", "platform")],
+      [makeSkill("p1", "org"), makeSkill("p2", "org")],
       [makeSkill("w1", "workspace")],
       [makeSkill("u1", "user")],
     );
@@ -210,13 +210,13 @@ describe("mergeScopedSkills — precedence", () => {
 
   test("user collision shadows platform without affecting unrelated workspace skills", () => {
     const merged = mergeScopedSkills(
-      [makeSkill("voice", "platform"), makeSkill("identity", "platform")],
+      [makeSkill("voice", "org"), makeSkill("identity", "org")],
       [makeSkill("kanban-rules", "workspace")],
       [makeSkill("voice", "user")],
     );
     const byName = new Map(merged.map((s) => [s.manifest.name, s]));
     expect(byName.get("voice")!.manifest.scope).toBe("user");
-    expect(byName.get("identity")!.manifest.scope).toBe("platform");
+    expect(byName.get("identity")!.manifest.scope).toBe("org");
     expect(byName.get("kanban-rules")!.manifest.scope).toBe("workspace");
     expect(merged).toHaveLength(3);
   });
@@ -243,7 +243,7 @@ describe("loadScopedSkills + mergeScopedSkills — end-to-end on tmpdir", () => 
     writeSkillFile(join(userDir, "voice.md"), "voice"); // overrides workspace.voice
     writeSkillFile(join(userDir, "personal.md"), "personal"); // user-only
 
-    const platform = loadScopedSkills(platformDir, "platform");
+    const platform = loadScopedSkills(platformDir, "org");
     const workspace = loadScopedSkills(wsDir, "workspace");
     const user = loadScopedSkills(userDir, "user");
     const merged = mergeScopedSkills(platform, workspace, user);
@@ -251,7 +251,7 @@ describe("loadScopedSkills + mergeScopedSkills — end-to-end on tmpdir", () => 
     const byName = new Map(merged.map((s) => [s.manifest.name, s]));
     expect(byName.size).toBe(4);
     expect(byName.get("voice")!.manifest.scope).toBe("user");
-    expect(byName.get("identity")!.manifest.scope).toBe("platform");
+    expect(byName.get("identity")!.manifest.scope).toBe("org");
     expect(byName.get("kanban")!.manifest.scope).toBe("workspace");
     expect(byName.get("personal")!.manifest.scope).toBe("user");
   });
@@ -264,13 +264,13 @@ describe("loadScopedSkills + mergeScopedSkills — end-to-end on tmpdir", () => 
     const wsDir = join(root, "workspaces", "ws_test", "skills"); // not created
     const userDir = join(root, "users", "user_test", "skills"); // not created
 
-    const platform = loadScopedSkills(platformDir, "platform");
+    const platform = loadScopedSkills(platformDir, "org");
     const workspace = loadScopedSkills(wsDir, "workspace");
     const user = loadScopedSkills(userDir, "user");
     const merged = mergeScopedSkills(platform, workspace, user);
 
     expect(merged).toHaveLength(1);
     expect(merged[0]!.manifest.name).toBe("voice");
-    expect(merged[0]!.manifest.scope).toBe("platform");
+    expect(merged[0]!.manifest.scope).toBe("org");
   });
 });

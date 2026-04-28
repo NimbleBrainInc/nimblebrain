@@ -21,13 +21,13 @@ metadata:
 When the user asks you to create, modify, or manage behavioral
 customizations, use the `nb__skills` tool surface:
 
-- `skills__create` — write a new skill at platform/workspace/user scope
+- `skills__create` — write a new skill at org/workspace/user scope
 - `skills__update` — patch manifest fields and/or replace the body
 - `skills__delete` — remove a skill (snapshots to `_versions/` first)
 - `skills__activate` / `skills__deactivate` — flip status without
   deleting the file
 - `skills__move_scope` — relocate a skill across tiers (e.g. workspace
-  → platform to promote)
+  → org to promote)
 - `skills__list` / `skills__read` — inspect what exists before changing
   anything
 
@@ -84,10 +84,11 @@ If the skill needs specific tools:
 
 Each `skills__create` call writes to one of three tiers; pick by reach:
 
-- **platform** — applies to every conversation in every workspace.
-  Reserve for org-wide voice / policy. Org-admin only.
-- **workspace** — applies inside the active workspace. Default for
-  domain-specific workflows. Workspace admin or org admin.
+- **org** — applies to every conversation in every workspace.
+  Reserve for org-wide voice / policy. Org admin only.
+- **workspace** — applies inside the active workspace only. Default for
+  domain-specific workflows. Workspace admin (membership in that
+  workspace required).
 - **user** — applies to your own conversations only. Personal
   preferences. Self-write only.
 
