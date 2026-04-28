@@ -219,6 +219,18 @@ export function createSkillsSource(runtime: Runtime, eventSink: EventSink): McpS
           if (!permission.allowed) {
             return permissionDenied(permission.reason ?? "Permission denied");
           }
+          // Symlink-boundary check (skipped for skill:// URIs which
+          // dispatch to the resource handler, not the filesystem path).
+          // Without this, a tenant member could symlink another
+          // workspace's skill into their own dir and read its
+          // contents via parseSkillFile (which follows symlinks).
+          if (!isUri && existsSync(id)) {
+            try {
+              assertSymlinkBoundaryOrThrow(runtime, id, scope);
+            } catch (err) {
+              return errorResult(err);
+            }
+          }
           const result = await readSkillById(runtime, authoringGuidePath, id);
           if (!result) {
             return {
@@ -701,6 +713,89 @@ function realPathUnderAnyRootOrThrow(target: string, roots: string[]): string {
     throw new Error(`Skill path "${target}" resolves through a symlink outside allowed roots`);
   }
   return real;
+}
+
+/**
+ * Boundary check that catches symlink-based tenant escape.
+ *
+ * `realPathUnderAnyRootOrThrow` only verifies the realpath sits under
+ * SOME allowed root. That's insufficient when the link target is itself
+ * inside the platform's roots — e.g. a symlink at
+ * `{workDir}/workspaces/wsA/skills/evil.md` pointing to
+ * `{workDir}/workspaces/wsB/skills/secret.md` passes the under-root
+ * check, but `snapshotVersion`'s `copyFileSync` (and `readSkillById`'s
+ * `parseSkillFile`) then follow the link and read wsB's content from a
+ * caller authorised only for wsA.
+ *
+ * This helper additionally requires the realpath's scope and tenant
+ * identifier to match the lexical declaration:
+ *
+ *   1. realScope === expectedScope — catches tier-jumping (workspace
+ *      symlink → user file, etc.) AND outside-workdir paths (which
+ *      `scopeOfPath` returns as `"bundle"`, never matching a writable
+ *      scope).
+ *   2. realWsId === lexicalWsId for workspace scope — catches
+ *      cross-workspace symlinks within `{workDir}/workspaces/`.
+ *   3. realUserId === lexicalUserId for user scope — same for
+ *      `{workDir}/users/`.
+ *
+ * Called from update / delete / move_scope (after existsSync, before
+ * any FS read or write that follows symlinks) and from skills__read.
+ */
+function assertSymlinkBoundaryOrThrow(
+  runtime: Runtime,
+  target: string,
+  expectedScope: WritableScope | "bundle",
+): void {
+  const real = realpathSync(target);
+  const workDir = runtime.getWorkDir();
+  // realpath the workDir too so macOS tmpdir paths
+  // (`/var/folders/...` → `/private/var/folders/...`) don't make every
+  // legit comparison fail. Both sides need the same "real" base.
+  let realWorkDir = workDir;
+  try {
+    realWorkDir = realpathSync(workDir);
+  } catch {
+    /* fall back to lexical workDir */
+  }
+
+  // Compute realScope from the realpath against the realpath'd workDir.
+  const wsRoot = `${join(realWorkDir, "workspaces")}/`;
+  const userRoot = `${join(realWorkDir, "users")}/`;
+  const orgRoot = `${join(realWorkDir, "skills")}/`;
+  let realScope: WritableScope | "bundle";
+  if (real.startsWith(wsRoot)) realScope = "workspace";
+  else if (real.startsWith(userRoot)) realScope = "user";
+  else if (real.startsWith(orgRoot)) realScope = "org";
+  else realScope = "bundle";
+
+  if (realScope !== expectedScope) {
+    throw new Error(
+      `Skill path "${target}" resolves through a symlink to a different scope ` +
+        `(declared ${expectedScope}, real ${realScope})`,
+    );
+  }
+
+  if (expectedScope === "workspace") {
+    const lexWs = extractWsIdFromPath(target, workDir);
+    const realWs = extractWsIdFromPath(real, realWorkDir);
+    if (lexWs !== realWs) {
+      throw new Error(
+        `Skill path "${target}" resolves through a symlink to a different workspace ` +
+          `(declared "${lexWs}", real "${realWs}")`,
+      );
+    }
+  }
+  if (expectedScope === "user") {
+    const lexUser = extractUserIdFromPath(target, workDir);
+    const realUser = extractUserIdFromPath(real, realWorkDir);
+    if (lexUser !== realUser) {
+      throw new Error(
+        `Skill path "${target}" resolves through a symlink to a different user ` +
+          `(declared "${lexUser}", real "${realUser}")`,
+      );
+    }
+  }
 }
 
 async function readSkillById(
@@ -1274,14 +1369,16 @@ async function updateSkillHandler(
 
   if (!existsSync(id)) return errorResult(new Error(`Skill not found: ${id}`));
 
-  // Defense-in-depth: chase symlinks and confirm the realpath sits under
-  // the same allowed root before any FS write. snapshotVersion uses
-  // copyFileSync, which follows symlinks at the source — without this
-  // guard a workspace member could `ln -s /etc/passwd evil.md` and have
-  // the platform copy its contents into _versions/, then re-read it via
-  // skills__read.
+  // Defense-in-depth: realpath the target and verify the link doesn't
+  // escape the declared scope/tenant. Catches three classes of attack:
+  //   - symlink to /etc/passwd (or anywhere outside workDir) — leaks
+  //     contents via snapshotVersion's copyFileSync
+  //   - symlink within {workDir}/workspaces/ but to a different
+  //     workspace — cross-workspace exfiltration
+  //   - symlink across scope tiers (workspace skill → user dir) —
+  //     tier-jumping
   try {
-    realPathUnderAnyRootOrThrow(id, allowedReadRoots(runtime, ""));
+    assertSymlinkBoundaryOrThrow(runtime, id, scope);
   } catch (err) {
     return errorResult(err);
   }
@@ -1321,9 +1418,9 @@ async function deleteSkillHandler(
 
   if (!existsSync(id)) return errorResult(new Error(`Skill not found: ${id}`));
 
-  // Symlink-escape defense — see updateSkillHandler for rationale.
+  // Symlink-boundary defense — see updateSkillHandler for rationale.
   try {
-    realPathUnderAnyRootOrThrow(id, allowedReadRoots(runtime, ""));
+    assertSymlinkBoundaryOrThrow(runtime, id, scope);
   } catch (err) {
     return errorResult(err);
   }
@@ -1394,9 +1491,13 @@ async function moveScopeHandler(
 
   if (!existsSync(id)) return errorResult(new Error(`Skill not found: ${id}`));
 
-  // Symlink-escape defense on the source path before reading + copying.
+  // Symlink-boundary defense on the source path before reading +
+  // copying. parseSkillFile + snapshotVersion both follow symlinks, so
+  // a cross-tenant link would otherwise leak content into the target
+  // location and into _versions/. See updateSkillHandler for full
+  // rationale.
   try {
-    realPathUnderAnyRootOrThrow(id, allowedReadRoots(runtime, ""));
+    assertSymlinkBoundaryOrThrow(runtime, id, sourceScope);
   } catch (err) {
     return errorResult(err);
   }
