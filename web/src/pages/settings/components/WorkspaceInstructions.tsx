@@ -3,13 +3,17 @@ import { callTool, readResource } from "../../../api/client";
 import { Button } from "../../../components/ui/button";
 import { Label } from "../../../components/ui/label";
 import { Textarea } from "../../../components/ui/textarea";
+import { useFlashState } from "../../../hooks/useFlashState";
 import { InlineError } from "./InlineError";
 
 /**
  * Byte cap matches the backend's `MAX_INSTRUCTIONS_BYTES` in
  * `src/instructions/types.ts`. Counting must be in UTF-8 bytes (via
  * `Blob`) — using `text.length` (UTF-16 code units, ≈ characters)
- * lets emoji-heavy bodies pass UI validation and 500 on save.
+ * lets emoji-heavy bodies pass UI validation and 500 on save. The
+ * counter label is "bytes" to match what's actually being measured;
+ * for ASCII text bytes ≡ characters, but emoji-heavy bodies will
+ * exceed `text.length` here and that's the correct behavior.
  */
 const MAX_WORKSPACE_INSTRUCTIONS = 8 * 1024;
 
@@ -34,7 +38,7 @@ export function WorkspaceInstructions({ wsId, canEdit }: { wsId: string; canEdit
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [savedFlash, setSavedFlash] = useState(false);
+  const [savedFlash, flashSaved] = useFlashState(1500);
 
   const load = useCallback(async () => {
     try {
@@ -79,14 +83,13 @@ export function WorkspaceInstructions({ wsId, canEdit }: { wsId: string; canEdit
         throw new Error(parsed.error ?? "Save failed");
       }
       setLastSaved(text);
-      setSavedFlash(true);
-      setTimeout(() => setSavedFlash(false), 1500);
+      flashSaved();
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : "Save failed");
     } finally {
       setSaving(false);
     }
-  }, [overLimit, text]);
+  }, [overLimit, text, flashSaved]);
 
   const handleReset = useCallback(() => {
     setText(lastSaved);
@@ -120,7 +123,7 @@ export function WorkspaceInstructions({ wsId, canEdit }: { wsId: string; canEdit
         />
         <div className="flex items-center justify-between text-xs">
           <span className={overLimit ? "text-destructive" : "text-muted-foreground"}>
-            {charCount.toLocaleString()} / {MAX_WORKSPACE_INSTRUCTIONS.toLocaleString()} characters
+            {charCount.toLocaleString()} / {MAX_WORKSPACE_INSTRUCTIONS.toLocaleString()} bytes
           </span>
           {savedFlash ? (
             <span role="status" className="text-success dark:text-green-400">

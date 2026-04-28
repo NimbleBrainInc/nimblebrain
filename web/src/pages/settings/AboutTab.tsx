@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { callTool, getPlatformVersion } from "../../api/client";
 import { parseToolResult } from "../../api/tool-result";
 import { Badge } from "../../components/ui/badge";
+import { Button } from "../../components/ui/button";
 import {
   Table,
   TableBody,
@@ -10,7 +11,7 @@ import {
   TableHeader,
   TableRow,
 } from "../../components/ui/table";
-import { EmptyState, Section, SettingsDashboardPage } from "./components";
+import { EmptyState, InlineError, Section, SettingsDashboardPage } from "./components";
 
 interface AppInfo {
   name: string;
@@ -45,16 +46,23 @@ export function AboutTab() {
   const { version, buildSha } = getPlatformVersion();
   const [apps, setApps] = useState<AppInfo[]>([]);
   const [loading, setLoading] = useState(true);
+  const [bundlesError, setBundlesError] = useState<string | null>(null);
 
   const fetchApps = useCallback(async () => {
     try {
+      setBundlesError(null);
       const result = await callTool("nb", "list_apps", {});
       const data = parseToolResult<{ apps?: AppInfo[] }>(result);
       if (Array.isArray(data.apps)) {
         setApps(data.apps);
       }
-    } catch {
-      // Non-critical — show empty state
+    } catch (err) {
+      // Surface the failure rather than silently degrading to "no bundles
+      // installed" — the empty state would otherwise read as authoritative
+      // ("there are no bundles") when really the call failed and we don't
+      // know. The platform-version section is independent (read from
+      // bootstrap), so the page still renders useful content above.
+      setBundlesError(err instanceof Error ? err.message : "Failed to load installed bundles.");
     } finally {
       setLoading(false);
     }
@@ -81,6 +89,22 @@ export function AboutTab() {
       <Section title="Installed Bundles">
         {loading ? (
           <p className="text-sm text-muted-foreground">Loading...</p>
+        ) : bundlesError ? (
+          <InlineError
+            message={bundlesError}
+            action={
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setLoading(true);
+                  fetchApps();
+                }}
+              >
+                Retry
+              </Button>
+            }
+          />
         ) : apps.length === 0 ? (
           <EmptyState message="No bundles installed." />
         ) : (

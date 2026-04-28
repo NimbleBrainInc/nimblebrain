@@ -1,10 +1,7 @@
-import { Check, Copy } from "lucide-react";
-import { useState } from "react";
-import { Button } from "../../components/ui/button";
-import { Label } from "../../components/ui/label";
 import { useWorkspaceContext } from "../../context/WorkspaceContext";
 import { roleAtLeast, useScopedRole } from "../../hooks/useScopedRole";
 import {
+  CopyableWorkspaceId,
   RequireActiveWorkspace,
   Section,
   SettingsFormPage,
@@ -41,7 +38,7 @@ function Inner() {
       description="Settings for the active workspace. Changes affect everyone in this workspace."
     >
       <Section title="MCP Connection" flush>
-        <McpConnectionBody workspaceId={ws.id} />
+        <CopyableWorkspaceId workspaceId={ws.id} />
       </Section>
 
       <Section
@@ -51,42 +48,5 @@ function Inner() {
         <WorkspaceInstructions wsId={ws.id} canEdit={canEdit} />
       </Section>
     </SettingsFormPage>
-  );
-}
-
-function McpConnectionBody({ workspaceId }: { workspaceId: string }) {
-  const [copied, setCopied] = useState(false);
-  const handleCopy = () => {
-    navigator.clipboard.writeText(workspaceId).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    });
-  };
-  return (
-    <div className="space-y-2">
-      <div className="flex items-center justify-between">
-        <div className="space-y-1 min-w-0">
-          <Label className="text-xs text-muted-foreground">Workspace ID</Label>
-          <code className="block text-sm font-mono truncate">{workspaceId}</code>
-        </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={handleCopy}
-          className="h-8 w-8 p-0 shrink-0"
-          aria-label="Copy workspace ID"
-        >
-          {copied ? (
-            <Check className="h-4 w-4 text-success" />
-          ) : (
-            <Copy className="h-4 w-4 text-muted-foreground" />
-          )}
-        </Button>
-      </div>
-      <p className="text-xs text-muted-foreground">
-        Use this ID as the <code className="text-[11px]">X-Workspace-Id</code> header when
-        connecting external MCP clients to this workspace.
-      </p>
-    </div>
   );
 }

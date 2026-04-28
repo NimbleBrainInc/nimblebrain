@@ -1,4 +1,4 @@
-import { Check, Copy, Package, Plus, Trash2, Users } from "lucide-react";
+import { Package, Plus, Trash2, Users } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { callTool } from "../../api/client";
@@ -17,7 +17,13 @@ import {
   TableRow,
 } from "../../components/ui/table";
 import { useSession } from "../../context/SessionContext";
-import { EmptyState, InlineError, Section, SettingsPageHeader } from "./components";
+import {
+  CopyableWorkspaceId,
+  EmptyState,
+  InlineError,
+  Section,
+  SettingsPageHeader,
+} from "./components";
 
 interface Workspace {
   id: string;
@@ -52,45 +58,6 @@ function formatDate(iso?: string): string {
   } catch {
     return iso;
   }
-}
-
-function CopyableWorkspaceId({ workspaceId }: { workspaceId: string }) {
-  const [copied, setCopied] = useState(false);
-
-  const handleCopy = () => {
-    navigator.clipboard.writeText(workspaceId).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    });
-  };
-
-  return (
-    <div className="space-y-2">
-      <div className="flex items-center justify-between">
-        <div className="min-w-0">
-          <Label className="text-xs text-muted-foreground">Workspace ID</Label>
-          <code className="block text-sm font-mono mt-0.5 truncate">{workspaceId}</code>
-        </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={handleCopy}
-          className="h-8 w-8 p-0 shrink-0"
-          aria-label="Copy workspace ID"
-        >
-          {copied ? (
-            <Check className="h-4 w-4 text-success" />
-          ) : (
-            <Copy className="h-4 w-4 text-muted-foreground" />
-          )}
-        </Button>
-      </div>
-      <p className="text-xs text-muted-foreground">
-        Use this ID as the <code className="text-[11px]">X-Workspace-Id</code> header when
-        connecting external MCP clients.
-      </p>
-    </div>
-  );
 }
 
 /**
