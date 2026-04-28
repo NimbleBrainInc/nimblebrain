@@ -1447,6 +1447,10 @@ async function updateSkillHandler(
   };
   if (!id) return errorResult(new Error("`id` is required"));
 
+  // skill:// URIs are bundle-served by design — return the structured
+  // not-mutable error so calling agents can branch on suggested_action
+  // without parsing prose. (Filesystem path → scope is determined below.)
+  if (id.startsWith(SKILL_URI_PREFIX)) return bundleNotMutable();
   const scope = scopeOfPath(runtime, id, authoringGuidePath);
   if (scope === "bundle") return bundleNotMutable();
   if (!scope) return errorResult(new Error(unrecognizedIdMessage(id)));
@@ -1498,6 +1502,7 @@ async function deleteSkillHandler(
   const { id } = input as { id?: string };
   if (!id) return errorResult(new Error("`id` is required"));
 
+  if (id.startsWith(SKILL_URI_PREFIX)) return bundleNotMutable();
   const scope = scopeOfPath(runtime, id, authoringGuidePath);
   if (scope === "bundle") return bundleNotMutable();
   if (!scope) return errorResult(new Error(unrecognizedIdMessage(id)));
@@ -1558,6 +1563,7 @@ async function moveScopeHandler(
       new Error(`target_scope must be one of org | workspace | user (got "${target_scope}")`),
     );
   }
+  if (id.startsWith(SKILL_URI_PREFIX)) return bundleNotMutable();
   const sourceScope = scopeOfPath(runtime, id, authoringGuidePath);
   if (sourceScope === "bundle") return bundleNotMutable();
   if (!sourceScope) {
