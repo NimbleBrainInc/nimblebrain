@@ -5,8 +5,10 @@ import type {
   LanguageModelV3Message,
   LanguageModelV3ToolCall,
   LanguageModelV3ToolResultPart,
+  SharedV3ProviderOptions,
 } from "@ai-sdk/provider";
 import { MAX_ITERATIONS, MAX_TOOL_RESULT_CHARS } from "../limits.ts";
+import { getProviderFromModel } from "../model/catalog.ts";
 import { callModel, type StreamResult } from "../model/stream.ts";
 import { validateToolInput } from "../tools/validate-input.ts";
 import {
@@ -21,12 +23,53 @@ import type {
   EngineResult,
   EventSink,
   FinishReason,
+  ResolvedThinking,
   StopReason,
   ToolCallRecord,
   ToolResult,
   ToolRouter,
   ToolSchema,
 } from "./types.ts";
+
+/**
+ * Translate the platform's provider-neutral thinking config into the
+ * call's `providerOptions` shape. Each provider has its own option name
+ * and discriminated-union shape; we keep them confined to this helper
+ * so adding a new provider doesn't ripple through the engine loop.
+ *
+ * Today: Anthropic only. OpenAI o-series (`reasoningEffort`) and
+ * Google Gemini 2.5 (`thinkingConfig`) are TODO and ignored — those
+ * providers fall back to their own defaults until wired in.
+ */
+function buildThinkingProviderOptions(
+  model: string,
+  thinking: ResolvedThinking | undefined,
+): SharedV3ProviderOptions {
+  if (!thinking) return {};
+
+  const provider = getProviderFromModel(model);
+
+  if (provider === "anthropic") {
+    if (thinking.mode === "off") {
+      return { anthropic: { thinking: { type: "disabled" } } };
+    }
+    if (thinking.mode === "adaptive") {
+      return { anthropic: { thinking: { type: "adaptive" } } };
+    }
+    return {
+      anthropic: {
+        thinking: {
+          type: "enabled",
+          ...(thinking.budgetTokens != null ? { budgetTokens: thinking.budgetTokens } : {}),
+        },
+      },
+    };
+  }
+
+  // openai / google: not yet wired. The provider falls back to its own
+  // default behavior. Tracked for follow-up.
+  return {};
+}
 
 /**
  * Map a per-call finish reason to a run-level stop reason. Called once
@@ -222,6 +265,8 @@ export class AgentEngine {
             "remains unfinished so the user can continue in a follow-up message.]";
         }
 
+        const callProviderOptions = buildThinkingProviderOptions(config.model, config.thinking);
+
         const llmStart = performance.now();
         const response: StreamResult = await withRetry(() =>
           callModel(
@@ -239,6 +284,9 @@ export class AgentEngine {
               ],
               tools: modelTools,
               maxOutputTokens: config.maxOutputTokens,
+              ...(Object.keys(callProviderOptions).length > 0
+                ? { providerOptions: callProviderOptions }
+                : {}),
             },
             (text) => this.events.emit({ type: "text.delta", data: { runId, text } }),
             (text) => this.events.emit({ type: "reasoning.delta", data: { runId, text } }),

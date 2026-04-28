@@ -81,6 +81,18 @@ const CONFIG_SECTION_SCRIPT = `
 			+ '<div class="field"><label for="cfg-output">Max Output Tokens</label>'
 			+ '<input type="number" id="cfg-output" min="1" value="' + cfg.maxOutputTokens + '" />'
 			+ '<div class="hint">Maximum tokens per LLM response.</div></div>'
+			+ '<div class="field"><label for="cfg-thinking">Extended Thinking</label>'
+			+ '<select id="cfg-thinking">'
+			+ '<option value="">Default (adaptive for reasoning models, off otherwise)</option>'
+			+ '<option value="off"' + (cfg.thinking === "off" ? " selected" : "") + '>Off — never reason</option>'
+			+ '<option value="adaptive"' + (cfg.thinking === "adaptive" ? " selected" : "") + '>Adaptive — model decides per call</option>'
+			+ '<option value="enabled"' + (cfg.thinking === "enabled" ? " selected" : "") + '>Enabled — always reason</option>'
+			+ '</select>'
+			+ '<div class="hint">Anthropic-only today. Reasoning is billed; adaptive only engages when the model judges it useful.</div></div>'
+			+ '<div class="field" id="cfg-budget-row" style="' + (cfg.thinking === "enabled" ? "" : "display:none") + '">'
+			+ '<label for="cfg-budget">Thinking Budget Tokens</label>'
+			+ '<input type="number" id="cfg-budget" min="1024" value="' + (cfg.thinkingBudgetTokens || 16000) + '" />'
+			+ '<div class="hint">Min 1024. Counts toward Max Output Tokens.</div></div>'
 			+ '<div class="actions">'
 			+ '<button class="save-btn" id="cfg-save">Save</button>'
 			+ '<span class="feedback" id="cfg-feedback"></span>'
@@ -89,6 +101,11 @@ const CONFIG_SECTION_SCRIPT = `
 
 		var saveBtn = document.getElementById("cfg-save");
 		var feedback = document.getElementById("cfg-feedback");
+		var thinkingSel = document.getElementById("cfg-thinking");
+		var budgetRow = document.getElementById("cfg-budget-row");
+		thinkingSel.addEventListener("change", function() {
+			budgetRow.style.display = thinkingSel.value === "enabled" ? "" : "none";
+		});
 
 		saveBtn.addEventListener("click", async function() {
 			saveBtn.disabled = true;
@@ -105,6 +122,18 @@ const CONFIG_SECTION_SCRIPT = `
 				maxInputTokens: parseInt(document.getElementById("cfg-input").value, 10),
 				maxOutputTokens: parseInt(document.getElementById("cfg-output").value, 10),
 			};
+			var thinkingValue = thinkingSel.value;
+			if (thinkingValue === "") {
+				// "Default" — clear any persisted override so the resolver falls
+				// back to the platform default policy.
+				patch.thinking = null;
+				patch.thinkingBudgetTokens = null;
+			} else {
+				patch.thinking = thinkingValue;
+				if (thinkingValue === "enabled") {
+					patch.thinkingBudgetTokens = parseInt(document.getElementById("cfg-budget").value, 10);
+				}
+			}
 
 			try {
 				var result = await callTool("nb__set_model_config", patch);

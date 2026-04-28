@@ -63,6 +63,27 @@ export interface RuntimeConfig {
   /** Max output tokens per LLM call. Default: 16_384. */
   maxOutputTokens?: number;
 
+  /**
+   * Extended-thinking mode. Currently maps to Anthropic's `thinking`
+   * provider option; non-Anthropic providers ignore it.
+   *
+   *   - `off`        — never request thinking. Cheapest; no reasoning content.
+   *   - `adaptive`   — model decides per call (Anthropic's recommended default
+   *                    for reasoning-capable models like Opus 4.7 / Sonnet 4.6).
+   *   - `enabled`    — always think, with optional `thinkingBudgetTokens` cap.
+   *
+   * If unset, the platform defaults to `adaptive` for catalog-flagged
+   * reasoning-capable models and `off` otherwise.
+   */
+  thinking?: "off" | "adaptive" | "enabled";
+
+  /**
+   * Token budget when `thinking === "enabled"`. Counts toward
+   * `maxOutputTokens`. Ignored for `off`/`adaptive`. Anthropic requires
+   * a minimum of 1,024 tokens.
+   */
+  thinkingBudgetTokens?: number;
+
   /** Max conversation history messages to keep. Default: 40. */
   maxHistoryMessages?: number;
 

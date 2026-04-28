@@ -428,6 +428,89 @@ describe("AgentEngine", () => {
       expect(result.stopReason).toBe("max_iterations");
     });
 
+    it("threads ResolvedThinking into providerOptions.anthropic.thinking on the call", async () => {
+      // Captures the call options the engine sends to the model. Asserts
+      // the platform's provider-neutral thinking config is translated to
+      // the Anthropic-specific shape without leaking through other layers.
+      const capturedOptions: Array<Record<string, unknown>> = [];
+      const recordingModel: LanguageModelV3 = {
+        ...createEchoModel({ responses: [{ text: "ok" }] }),
+      };
+      const orig = recordingModel.doStream.bind(recordingModel);
+      recordingModel.doStream = async (callOptions) => {
+        capturedOptions.push(callOptions as unknown as Record<string, unknown>);
+        return orig(callOptions);
+      };
+
+      await new AgentEngine(
+        recordingModel,
+        new StaticToolRouter([], () => ({ content: textContent(""), isError: false })),
+        new NoopEventSink(),
+      ).run(
+        {
+          ...defaultConfig,
+          model: "anthropic:claude-opus-4-7",
+          thinking: { mode: "enabled", budgetTokens: 4096 },
+        },
+        "",
+        [{ role: "user", content: [{ type: "text", text: "x" }] }],
+        [],
+      );
+
+      expect(capturedOptions).toHaveLength(1);
+      const po = capturedOptions[0]!.providerOptions as
+        | { anthropic?: { thinking?: { type: string; budgetTokens?: number } } }
+        | undefined;
+      expect(po?.anthropic?.thinking).toEqual({ type: "enabled", budgetTokens: 4096 });
+    });
+
+    it("translates thinking=adaptive without budget", async () => {
+      const captured: Array<Record<string, unknown>> = [];
+      const model: LanguageModelV3 = { ...createEchoModel({ responses: [{ text: "ok" }] }) };
+      const orig = model.doStream.bind(model);
+      model.doStream = async (o) => {
+        captured.push(o as unknown as Record<string, unknown>);
+        return orig(o);
+      };
+
+      await new AgentEngine(
+        model,
+        new StaticToolRouter([], () => ({ content: textContent(""), isError: false })),
+        new NoopEventSink(),
+      ).run(
+        { ...defaultConfig, model: "anthropic:claude-opus-4-7", thinking: { mode: "adaptive" } },
+        "",
+        [{ role: "user", content: [{ type: "text", text: "x" }] }],
+        [],
+      );
+
+      const po = captured[0]!.providerOptions as
+        | { anthropic?: { thinking?: { type: string } } }
+        | undefined;
+      expect(po?.anthropic?.thinking).toEqual({ type: "adaptive" });
+    });
+
+    it("does NOT set providerOptions when thinking is undefined", async () => {
+      const captured: Array<Record<string, unknown>> = [];
+      const model: LanguageModelV3 = { ...createEchoModel({ responses: [{ text: "ok" }] }) };
+      const orig = model.doStream.bind(model);
+      model.doStream = async (o) => {
+        captured.push(o as unknown as Record<string, unknown>);
+        return orig(o);
+      };
+
+      await new AgentEngine(
+        model,
+        new StaticToolRouter([], () => ({ content: textContent(""), isError: false })),
+        new NoopEventSink(),
+      ).run(defaultConfig, "", [{ role: "user", content: [{ type: "text", text: "x" }] }], []);
+
+      // No top-level providerOptions when thinking is omitted (the
+      // system message still carries cacheControl, but that's per-message
+      // not per-call).
+      expect(captured[0]!.providerOptions).toBeUndefined();
+    });
+
     it("preserves Anthropic signature on reasoning across iterations (round-trip)", async () => {
       // The first turn emits reasoning + a tool call. The engine pushes
       // the assistant content into history for the second turn — and

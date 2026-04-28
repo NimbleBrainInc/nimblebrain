@@ -9,6 +9,7 @@
 
 ### Added
 
+- Extended-thinking config (`thinking: off | adaptive | enabled` + `thinkingBudgetTokens`) in runtime config and Settings → Model; defaults to `adaptive` for catalog-flagged reasoning models, `off` otherwise ([#109](https://github.com/NimbleBrainInc/nimblebrain/pull/109)).
 - Reasoning (extended-thinking) content is now captured end-to-end: `stream.ts` handles `reasoning-*` parts, the engine emits `reasoning.delta` SSE events, and the chat UI renders a collapsed "Thoughts" block above the assistant text. Empty turns with non-stop finishReason now emit a placeholder so replay surfaces truncations.
 - `nb__read_resource` system tool — the agent can now load `skill://` / `ui://` resources advertised by an installed bundle's MCP server ([#3](https://github.com/NimbleBrainInc/nimblebrain/pull/25)).
 - `defineInProcessApp` helper for building in-process MCP sources from JSON Schema tool defs and a resource map — same authoring ergonomic as the former `InlineSource`, with the full MCP capability surface (resources, instructions, tasks, future capabilities).
@@ -24,6 +25,7 @@
 
 ### Fixed
 
+- `estimateCost` no longer double-bills reasoning tokens for models with a separate `cost.reasoning` rate. Reasoning is a subset of `outputTokens` per the V3 usage spec; the corrected formula splits rather than adds.
 - `stopReason` now reflects the model's real finish reason (length, content_filter, error, other) instead of always reporting `complete`; per-call `finishReason` is persisted on `llm.response` events and forwarded over SSE ([#105](https://github.com/NimbleBrainInc/nimblebrain/pull/105)).
 - `maxOutputTokens` is now derived per-call from the synced model catalog (`limits.output`) instead of a static 16,384 default — Opus 4.7 jumps from 16k → 128k, Sonnet 4.6 → 64k. Operator-pinned values still win, clamped to the model's catalog max ([#104](https://github.com/NimbleBrainInc/nimblebrain/pull/104)).
 - Files-app uploads no longer fail with `Payload too large`. Picker bytes now flow through `POST /v1/resources` (multipart, workspace-scoped) instead of being base64-encoded into a `tools/call` argument; `isAllowedMime` strips Content-Type parameters, fixing a latent miss in the chat ingest path too ([#93](https://github.com/NimbleBrainInc/nimblebrain/pull/93)).

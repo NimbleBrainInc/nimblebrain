@@ -76,6 +76,7 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
           const maxIterations = runtime.getMaxIterations();
           const maxInputTokens = runtime.getMaxInputTokens();
           const maxOutputTokens = runtime.getMaxOutputTokens();
+          const runtimeConfig = runtime.getRuntimeConfig();
           const identity = runtime.getCurrentIdentity();
           const preferences = identity?.preferences ?? {};
           return {
@@ -88,6 +89,10 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
               maxIterations,
               maxInputTokens,
               maxOutputTokens,
+              ...(runtimeConfig.thinking !== undefined ? { thinking: runtimeConfig.thinking } : {}),
+              ...(runtimeConfig.thinkingBudgetTokens !== undefined
+                ? { thinkingBudgetTokens: runtimeConfig.thinkingBudgetTokens }
+                : {}),
               preferences: {
                 displayName: identity?.displayName ?? "",
                 timezone: preferences.timezone ?? "",
@@ -162,6 +167,23 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
           maxOutputTokens: {
             type: "number",
             description: "Max output tokens per LLM call (must be > 0).",
+          },
+          thinking: {
+            type: ["string", "null"],
+            enum: ["off", "adaptive", "enabled", null],
+            description:
+              "Extended-thinking mode for reasoning-capable models. " +
+              "off: never reason. adaptive: model decides per call. " +
+              "enabled: always reason (use thinkingBudgetTokens to cap). " +
+              "null: clear the operator override and revert to platform default " +
+              "(adaptive for catalog-flagged reasoning models, off otherwise).",
+          },
+          thinkingBudgetTokens: {
+            type: ["number", "null"],
+            description:
+              "Token budget when thinking=enabled. Counts toward maxOutputTokens. " +
+              "Anthropic requires a minimum of 1,024. " +
+              "null: clear any persisted budget.",
           },
         },
       },
@@ -271,6 +293,31 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
               };
             }
           }
+          // `null` is the explicit "clear my override" sentinel — distinct
+          // from `undefined` (skip this field). Validate string values
+          // against the enum; pass through nulls unchanged.
+          if (input.thinking !== undefined && input.thinking !== null) {
+            const v = String(input.thinking);
+            if (v !== "off" && v !== "adaptive" && v !== "enabled") {
+              return {
+                content: textContent(
+                  'thinking must be "off", "adaptive", "enabled", or null (clear override).',
+                ),
+                isError: true,
+              };
+            }
+          }
+          if (input.thinkingBudgetTokens !== undefined && input.thinkingBudgetTokens !== null) {
+            const n = Number(input.thinkingBudgetTokens);
+            if (!Number.isInteger(n) || n < 1024) {
+              return {
+                content: textContent(
+                  "thinkingBudgetTokens must be a positive integer ≥ 1024 (Anthropic minimum).",
+                ),
+                isError: true,
+              };
+            }
+          }
 
           // Read current config
           let existing: Record<string, unknown> = {};
@@ -279,6 +326,38 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
             existing = JSON.parse(raw);
           } catch {
             // File doesn't exist or invalid — start fresh
+          }
+
+          // Cross-field validation: thinking="enabled" requires a budget,
+          // either from this patch or already in the persisted config.
+          // Without one, the Anthropic SDK silently downgrades to its
+          // 1,024-token minimum — almost certainly not the operator's
+          // intent. Force the explicit choice.
+          //
+          // Important edge case: when the patch is *clearing* the budget
+          // (thinkingBudgetTokens=null), the merge below deletes the
+          // existing budget. The validator must mirror that — treating
+          // existingBudget as gone — so a patch like
+          //   { thinking: "enabled", thinkingBudgetTokens: null }
+          // can't slip past by relying on a budget the merge will drop.
+          if (input.thinking === "enabled") {
+            const clearingBudget = input.thinkingBudgetTokens === null;
+            const patchBudget =
+              !clearingBudget && input.thinkingBudgetTokens !== undefined
+                ? Number(input.thinkingBudgetTokens)
+                : undefined;
+            const existingBudget = clearingBudget
+              ? undefined
+              : (existing.thinkingBudgetTokens as number | undefined);
+            if (patchBudget == null && existingBudget == null) {
+              return {
+                content: textContent(
+                  'thinking="enabled" requires thinkingBudgetTokens (≥ 1024). ' +
+                    "Provide a budget alongside enabled, or use adaptive instead.",
+                ),
+                isError: true,
+              };
+            }
           }
 
           // Merge only allowed fields
@@ -299,6 +378,20 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
             existing.maxInputTokens = Number(input.maxInputTokens);
           if (input.maxOutputTokens !== undefined)
             existing.maxOutputTokens = Number(input.maxOutputTokens);
+          // null = clear the operator override; undefined = leave alone.
+          if (input.thinking === null) {
+            delete existing.thinking;
+            // Clearing the mode also clears the budget — a budget without
+            // a mode is meaningless and would otherwise hang around.
+            delete existing.thinkingBudgetTokens;
+          } else if (input.thinking !== undefined) {
+            existing.thinking = String(input.thinking);
+          }
+          if (input.thinkingBudgetTokens === null) {
+            delete existing.thinkingBudgetTokens;
+          } else if (input.thinkingBudgetTokens !== undefined) {
+            existing.thinkingBudgetTokens = Number(input.thinkingBudgetTokens);
+          }
           // Atomic write: write to temp file, then rename
           const tmpPath = `${configPath}.tmp.${Date.now()}`;
           await writeFile(tmpPath, `${JSON.stringify(existing, null, 2)}\n`, "utf-8");
@@ -327,6 +420,21 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
               : {}),
             ...(input.maxOutputTokens !== undefined
               ? { maxOutputTokens: Number(input.maxOutputTokens) }
+              : {}),
+            // `null` is the clear-override sentinel. It propagates to
+            // updateConfig as null so the live runtime drops the field
+            // alongside the disk write.
+            ...(input.thinking !== undefined
+              ? input.thinking === null
+                ? { thinking: null, thinkingBudgetTokens: null }
+                : {
+                    thinking: String(input.thinking) as "off" | "adaptive" | "enabled",
+                  }
+              : {}),
+            ...(input.thinkingBudgetTokens !== undefined && input.thinking !== null
+              ? input.thinkingBudgetTokens === null
+                ? { thinkingBudgetTokens: null }
+                : { thinkingBudgetTokens: Number(input.thinkingBudgetTokens) }
               : {}),
           });
 

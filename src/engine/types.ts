@@ -89,12 +89,35 @@ export interface EngineHooks {
   transformPrompt?: (prompt: string) => string;
 }
 
+/**
+ * Provider-neutral extended-thinking config. The engine translates this
+ * to per-provider options at call time:
+ *   - Anthropic — `providerOptions.anthropic.thinking.{type,budgetTokens?}`
+ *   - OpenAI o-series — `providerOptions.openai.reasoningEffort` (TODO)
+ *   - Google Gemini 2.5 — `providerOptions.google.thinkingConfig` (TODO)
+ *   - Any other provider — ignored
+ *
+ * Resolution priority is handled upstream (see resolveThinking in
+ * src/runtime/resolve-thinking.ts); the engine receives an already-
+ * resolved value or `undefined` for "let the provider default decide".
+ */
+export interface ResolvedThinking {
+  mode: "off" | "adaptive" | "enabled";
+  /** Token budget for `enabled`. Ignored for `off`/`adaptive`. */
+  budgetTokens?: number;
+}
+
 /** Engine configuration per run. */
 export interface EngineConfig {
   model: string;
   maxIterations: number;
   maxInputTokens: number;
   maxOutputTokens: number;
+  /**
+   * Resolved thinking option for this call. Optional; absent means the
+   * engine doesn't request thinking (provider default behavior).
+   */
+  thinking?: ResolvedThinking;
   hooks?: EngineHooks;
   /**
    * AbortSignal for run cancellation.
