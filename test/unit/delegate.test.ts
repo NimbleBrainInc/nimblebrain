@@ -44,7 +44,7 @@ function makeDelegateCtx(opts: {
 		getParentRunId: () => opts.parentRunId ?? "parent-run-123",
 		defaultModel: DEFAULT_MODEL,
 		defaultMaxInputTokens: 500_000,
-		defaultMaxOutputTokens: 16_384,
+		configMaxOutputTokens: 16_384,
 	};
 }
 
@@ -381,7 +381,7 @@ describe("nb__delegate", () => {
 			getParentRunId: () => "parent-run-id",
 			defaultModel: DEFAULT_MODEL,
 			defaultMaxInputTokens: 500_000,
-			defaultMaxOutputTokens: 16_384,
+			configMaxOutputTokens: 16_384,
 		};
 
 		const tool = createDelegateTool(ctx);
@@ -454,7 +454,7 @@ describe("nb__delegate", () => {
 			getParentRunId: () => "parent-parallel",
 			defaultModel: DEFAULT_MODEL,
 			defaultMaxInputTokens: 500_000,
-			defaultMaxOutputTokens: 16_384,
+			configMaxOutputTokens: 16_384,
 		};
 
 		const delegateTool = createDelegateTool(delegateCtx);
@@ -510,7 +510,7 @@ describe("nb__delegate", () => {
 			getParentRunId: () => "parent-run-id",
 			defaultModel: DEFAULT_MODEL,
 			defaultMaxInputTokens: 500_000,
-			defaultMaxOutputTokens: 16_384,
+			configMaxOutputTokens: 16_384,
 		};
 
 		const tool = createDelegateTool(ctx);
@@ -544,7 +544,7 @@ describe("nb__delegate", () => {
 			getParentRunId: () => "parent-run-id",
 			defaultModel: "my-default-model",
 			defaultMaxInputTokens: 500_000,
-			defaultMaxOutputTokens: 16_384,
+			configMaxOutputTokens: 16_384,
 		};
 
 		const tool = createDelegateTool(ctx);
@@ -569,7 +569,7 @@ describe("nb__delegate", () => {
 			getParentRunId: () => "parent-run-id",
 			defaultModel: DEFAULT_MODEL,
 			defaultMaxInputTokens: 500_000,
-			defaultMaxOutputTokens: 16_384,
+			configMaxOutputTokens: 16_384,
 		};
 
 		const tool = createDelegateTool(ctx);
@@ -729,7 +729,7 @@ describe("nb__delegate", () => {
 			getParentRunId: () => "parent-run-id",
 			defaultModel: DEFAULT_MODEL,
 			defaultMaxInputTokens: 500_000,
-			defaultMaxOutputTokens: 16_384,
+			configMaxOutputTokens: 16_384,
 		};
 
 		const tool = createDelegateTool(ctx);
@@ -766,7 +766,7 @@ describe("nb__delegate", () => {
 			getParentRunId: () => "parent-run-id",
 			defaultModel: DEFAULT_MODEL,
 			defaultMaxInputTokens: 500_000,
-			defaultMaxOutputTokens: 16_384,
+			configMaxOutputTokens: 16_384,
 		};
 
 		const tool = createDelegateTool(ctx);

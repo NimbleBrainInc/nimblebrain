@@ -11,6 +11,7 @@ import type {
   ToolSchema,
 } from "../engine/types.ts";
 import { DEFAULT_CHILD_ITERATIONS, MAX_CHILD_ITERATIONS } from "../limits.ts";
+import { resolveMaxOutputTokens } from "../runtime/resolve-max-output-tokens.ts";
 import { filterTools } from "../runtime/tools.ts";
 import type { AgentProfile } from "../runtime/types.ts";
 import type { InProcessTool } from "./in-process-app.ts";
@@ -37,8 +38,13 @@ export interface DelegateContext {
   defaultModel: string;
   /** Default max input tokens for child engines. */
   defaultMaxInputTokens: number;
-  /** Default max output tokens for child engines. */
-  defaultMaxOutputTokens: number;
+  /**
+   * Operator-pinned `maxOutputTokens` from runtime config (raw, may be
+   * undefined). Resolved against the child's model via
+   * `resolveMaxOutputTokens` at execution time so the child gets a cap
+   * that fits its model rather than the parent's.
+   */
+  configMaxOutputTokens?: number;
 }
 
 /**
@@ -181,7 +187,10 @@ export function createDelegateTool(ctx: DelegateContext): InProcessTool {
           model: modelString,
           maxIterations: cappedIterations,
           maxInputTokens: ctx.defaultMaxInputTokens,
-          maxOutputTokens: ctx.defaultMaxOutputTokens,
+          maxOutputTokens: resolveMaxOutputTokens({
+            configValue: ctx.configMaxOutputTokens,
+            model: modelString,
+          }),
         };
 
         // Wrap the parent router in a filtering proxy when tool globs are active.

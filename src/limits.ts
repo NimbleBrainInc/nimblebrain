@@ -10,6 +10,12 @@ export const MAX_TOOL_RESULT_CHARS = 50_000;
 
 export const DEFAULT_MAX_ITERATIONS = 25;
 export const DEFAULT_MAX_INPUT_TOKENS = 500_000;
+/**
+ * Last-resort `maxOutputTokens` when the requested model isn't in the
+ * synced catalog. Conservative because the unknown-model case usually
+ * means a typo or a freshly-released model — sized to fit Haiku-class
+ * models without surprising anyone. Real models go through the catalog.
+ */
 export const DEFAULT_MAX_OUTPUT_TOKENS = 16_384;
 export const DEFAULT_MAX_DIRECT_TOOLS = 30;
 
