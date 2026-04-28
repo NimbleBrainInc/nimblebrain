@@ -78,9 +78,8 @@ function mapResultToRun(
   startedAt: string,
   data: ChatFnResult,
 ): AutomationRun {
-  const stopReason = data.stopReason as "complete" | "max_iterations" | "token_budget";
-  const status: AutomationRun["status"] =
-    stopReason === "max_iterations" || stopReason === "token_budget" ? "timeout" : "success";
+  const stopReason = data.stopReason as AutomationRun["stopReason"];
+  const status: AutomationRun["status"] = mapStopReasonToStatus(stopReason);
 
   return {
     id: `run_${crypto.randomUUID().slice(0, 12)}`,
@@ -96,6 +95,31 @@ function mapResultToRun(
     resultPreview: data.response ? data.response.slice(0, 500) : undefined,
     stopReason,
   };
+}
+
+/**
+ * Map an engine stop reason to an automation-run status.
+ *
+ *   complete                                 → success (model said done)
+ *   max_iterations                           → timeout (agent loop cap)
+ *   length / content_filter / error / other  → failure (model couldn't
+ *                                              finish — surface so the
+ *                                              operator knows)
+ *
+ * Defaulting unknown values to `failure` is intentional: the alternative
+ * is silent green status, which is exactly the masking this PR's parent
+ * change is meant to eliminate. Any new stop reason from the engine
+ * should explicitly opt into `success` here.
+ */
+function mapStopReasonToStatus(stopReason: AutomationRun["stopReason"]): AutomationRun["status"] {
+  switch (stopReason) {
+    case "complete":
+      return "success";
+    case "max_iterations":
+      return "timeout";
+    default:
+      return "failure";
+  }
 }
 
 // ---------------------------------------------------------------------------

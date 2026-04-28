@@ -367,6 +367,39 @@ describe("AgentEngine", () => {
       expect(result.finishReason).toBe("content-filter");
     });
 
+    it("derives stopReason='error' when the model finish reason is error", async () => {
+      const model = createEchoModel({
+        responses: [{ text: "", finishReason: "error" }],
+      });
+      const result = await makeEngine(model).run(
+        defaultConfig,
+        "",
+        [{ role: "user", content: [{ type: "text", text: "x" }] }],
+        [],
+      );
+
+      expect(result.stopReason).toBe("error");
+      expect(result.finishReason).toBe("error");
+    });
+
+    it("derives stopReason='other' when finish=tool-calls but content has no parsable calls", async () => {
+      // Edge case: provider declares it stopped to call tools, but the
+      // stream produced no tool-call parts. The loop exits (toolCalls is
+      // empty) and the run reports "other" rather than fake "complete".
+      const model = createEchoModel({
+        responses: [{ text: "", finishReason: "tool-calls" }],
+      });
+      const result = await makeEngine(model).run(
+        defaultConfig,
+        "",
+        [{ role: "user", content: [{ type: "text", text: "x" }] }],
+        [],
+      );
+
+      expect(result.stopReason).toBe("other");
+      expect(result.finishReason).toBe("tool-calls");
+    });
+
     it("max_iterations beats finishReason in the stop reason", async () => {
       const model = createMockModel(() => ({
         content: [

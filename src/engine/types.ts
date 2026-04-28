@@ -134,6 +134,12 @@ export type FinishReason = "stop" | "length" | "content-filter" | "tool-calls" |
  *
  * `error` here is the *finish-reason* error category, not a thrown engine
  * error — the latter still emits `run.error` instead.
+ *
+ * Note the casing asymmetry vs `FinishReason`: the V3 spec uses
+ * kebab-case (`content-filter`, `tool-calls`); our run-level union uses
+ * snake_case to match the legacy `max_iterations` value already in
+ * persisted JSONL. They're related but not identical — see
+ * `deriveStopReason()` in engine.ts for the mapping.
  */
 export type StopReason =
   | "complete"

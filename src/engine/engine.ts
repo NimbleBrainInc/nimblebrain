@@ -266,9 +266,9 @@ export class AgentEngine {
 
         // Track the model's per-call finish reason for downstream
         // observability and the run-level stop reason derivation below.
-        // The AI SDK V3 default is { unified: "unknown" as "other" } when
-        // the provider didn't emit a finish — treat it as "other".
-        lastFinishReason = (response.finishReason?.unified ?? "other") as FinishReason;
+        // `unified` is non-optional in the V3 spec and stream.ts defaults
+        // to "other" if no finish part arrives, so no fallback needed.
+        lastFinishReason = response.finishReason.unified;
 
         // Record the atomic LLM call fact
         this.events.emit({

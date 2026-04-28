@@ -24,7 +24,10 @@ export async function callModel(
     inputTokens: { total: 0, noCache: undefined, cacheRead: undefined, cacheWrite: undefined },
     outputTokens: { total: 0, text: undefined, reasoning: undefined },
   };
-  let finishReason: LanguageModelV3FinishReason = { unified: "unknown" as "other", raw: undefined };
+  // Default if the stream ends without a `finish` part. "other" is the
+  // V3-defined catch-all for unclassified stops; using it directly avoids
+  // the runtime-vs-type lie of `"unknown" as "other"`.
+  let finishReason: LanguageModelV3FinishReason = { unified: "other", raw: undefined };
 
   let accumulatedText = "";
 

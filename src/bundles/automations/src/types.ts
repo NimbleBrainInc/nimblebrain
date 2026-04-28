@@ -148,7 +148,12 @@ export interface AutomationRun {
   transient?: boolean;
   /** Final agent response (truncated to 500 chars). */
   resultPreview?: string;
-  stopReason?: "complete" | "max_iterations" | "token_budget";
+  /**
+   * Engine-level stop reason. Mirrors `StopReason` from `src/engine/types.ts`
+   * (intentionally duplicated here to keep this bundle's types decoupled
+   * from the engine package). Keep in sync when the engine union changes.
+   */
+  stopReason?: "complete" | "max_iterations" | "length" | "content_filter" | "error" | "other";
 }
 
 // ---------------------------------------------------------------------------
