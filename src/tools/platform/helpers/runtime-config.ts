@@ -5,6 +5,8 @@ export interface RuntimeConfigResult {
   maxIterations: number;
   maxInputTokens: number;
   maxOutputTokens: number;
+  thinking?: "off" | "adaptive" | "enabled";
+  thinkingBudgetTokens?: number;
   configuredProviders: string[];
   preferences: {
     displayName: string;
@@ -35,6 +37,10 @@ export function getRuntimeConfig(runtime: Runtime): RuntimeConfigResult {
     maxIterations: cfg.maxIterations,
     maxInputTokens: cfg.maxInputTokens,
     maxOutputTokens: cfg.maxOutputTokens,
+    ...(cfg.thinking !== undefined ? { thinking: cfg.thinking } : {}),
+    ...(cfg.thinkingBudgetTokens !== undefined
+      ? { thinkingBudgetTokens: cfg.thinkingBudgetTokens }
+      : {}),
     configuredProviders: runtime.getConfiguredProviders(),
     preferences: {
       displayName: tenantPrefs.displayName ?? "",

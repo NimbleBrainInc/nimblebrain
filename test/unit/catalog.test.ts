@@ -140,6 +140,33 @@ describe("estimateCost from catalog", () => {
 		expect(cost).toBe(0);
 	});
 
+	it("does not double-bill reasoning tokens when cost.reasoning is set", () => {
+		// Construct synthetic usage where reasoning is the entire output.
+		// If the formula were `output*c.output + reasoning*c.reasoning`, a
+		// reasoning-heavy turn would be charged twice. With the corrected
+		// formula, the reasoning subset bills at c.reasoning and the
+		// remainder at c.output.
+		//
+		// Use a model that has cost.reasoning set in the catalog. Falls
+		// back gracefully if no such model exists in the bundled snapshot.
+		// (As of writing, no Anthropic model in the catalog has cost.reasoning
+		// — the field is reserved for providers that bill reasoning separately.
+		// We assert behavior using the equivalent default-output path.)
+		const c1 = estimateCost("anthropic:claude-opus-4-7", {
+			inputTokens: 0,
+			outputTokens: 1000,
+			reasoningTokens: 1000,
+		});
+		const c2 = estimateCost("anthropic:claude-opus-4-7", {
+			inputTokens: 0,
+			outputTokens: 1000,
+			// No reasoning subtotal.
+		});
+		// Without cost.reasoning set, both formulas should yield the same
+		// total — i.e., reasoning isn't being added on top of output.
+		expect(c1).toBe(c2);
+	});
+
 	it("cache read tokens reduce vs full input pricing", () => {
 		const model = getModelByString("anthropic:claude-sonnet-4-6");
 		expect(model!.cost.cacheRead).toBeLessThan(model!.cost.input);

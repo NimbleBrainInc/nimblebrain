@@ -12,6 +12,7 @@ import type {
 } from "../engine/types.ts";
 import { DEFAULT_CHILD_ITERATIONS, MAX_CHILD_ITERATIONS } from "../limits.ts";
 import { resolveMaxOutputTokens } from "../runtime/resolve-max-output-tokens.ts";
+import { resolveThinking } from "../runtime/resolve-thinking.ts";
 import { filterTools } from "../runtime/tools.ts";
 import type { AgentProfile } from "../runtime/types.ts";
 import type { InProcessTool } from "./in-process-app.ts";
@@ -45,6 +46,10 @@ export interface DelegateContext {
    * that fits its model rather than the parent's.
    */
   configMaxOutputTokens?: number;
+  /** Operator-pinned thinking mode (raw runtime config, may be undefined). */
+  configThinking?: "off" | "adaptive" | "enabled";
+  /** Operator-pinned thinking budget (raw runtime config, may be undefined). */
+  configThinkingBudgetTokens?: number;
 }
 
 /**
@@ -182,6 +187,12 @@ export function createDelegateTool(ctx: DelegateContext): InProcessTool {
         const parentRunId = ctx.getParentRunId();
         const childEvents = new ChildEventSink(ctx.events, parentRunId);
 
+        const childThinking = resolveThinking({
+          configMode: ctx.configThinking,
+          configBudgetTokens: ctx.configThinkingBudgetTokens,
+          model: modelString,
+        });
+
         // Create child engine config
         const childConfig: EngineConfig = {
           model: modelString,
@@ -191,6 +202,7 @@ export function createDelegateTool(ctx: DelegateContext): InProcessTool {
             configValue: ctx.configMaxOutputTokens,
             model: modelString,
           }),
+          ...(childThinking ? { thinking: childThinking } : {}),
         };
 
         // Wrap the parent router in a filtering proxy when tool globs are active.

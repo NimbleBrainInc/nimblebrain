@@ -76,6 +76,7 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
           const maxIterations = runtime.getMaxIterations();
           const maxInputTokens = runtime.getMaxInputTokens();
           const maxOutputTokens = runtime.getMaxOutputTokens();
+          const runtimeConfig = runtime.getRuntimeConfig();
           const identity = runtime.getCurrentIdentity();
           const preferences = identity?.preferences ?? {};
           return {
@@ -88,6 +89,10 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
               maxIterations,
               maxInputTokens,
               maxOutputTokens,
+              ...(runtimeConfig.thinking !== undefined ? { thinking: runtimeConfig.thinking } : {}),
+              ...(runtimeConfig.thinkingBudgetTokens !== undefined
+                ? { thinkingBudgetTokens: runtimeConfig.thinkingBudgetTokens }
+                : {}),
               preferences: {
                 displayName: identity?.displayName ?? "",
                 timezone: preferences.timezone ?? "",
@@ -162,6 +167,21 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
           maxOutputTokens: {
             type: "number",
             description: "Max output tokens per LLM call (must be > 0).",
+          },
+          thinking: {
+            type: "string",
+            enum: ["off", "adaptive", "enabled"],
+            description:
+              "Extended-thinking mode for reasoning-capable models. " +
+              "off: never reason. adaptive: model decides per call. " +
+              "enabled: always reason (use thinkingBudgetTokens to cap). " +
+              "Unset = adaptive for catalog-flagged reasoning models, off otherwise.",
+          },
+          thinkingBudgetTokens: {
+            type: "number",
+            description:
+              "Token budget when thinking=enabled. Counts toward maxOutputTokens. " +
+              "Anthropic requires a minimum of 1,024.",
           },
         },
       },
@@ -271,6 +291,26 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
               };
             }
           }
+          if (input.thinking !== undefined) {
+            const v = String(input.thinking);
+            if (v !== "off" && v !== "adaptive" && v !== "enabled") {
+              return {
+                content: textContent('thinking must be one of "off", "adaptive", "enabled".'),
+                isError: true,
+              };
+            }
+          }
+          if (input.thinkingBudgetTokens !== undefined) {
+            const n = Number(input.thinkingBudgetTokens);
+            if (!Number.isInteger(n) || n < 1024) {
+              return {
+                content: textContent(
+                  "thinkingBudgetTokens must be a positive integer ≥ 1024 (Anthropic minimum).",
+                ),
+                isError: true,
+              };
+            }
+          }
 
           // Read current config
           let existing: Record<string, unknown> = {};
@@ -299,6 +339,9 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
             existing.maxInputTokens = Number(input.maxInputTokens);
           if (input.maxOutputTokens !== undefined)
             existing.maxOutputTokens = Number(input.maxOutputTokens);
+          if (input.thinking !== undefined) existing.thinking = String(input.thinking);
+          if (input.thinkingBudgetTokens !== undefined)
+            existing.thinkingBudgetTokens = Number(input.thinkingBudgetTokens);
           // Atomic write: write to temp file, then rename
           const tmpPath = `${configPath}.tmp.${Date.now()}`;
           await writeFile(tmpPath, `${JSON.stringify(existing, null, 2)}\n`, "utf-8");
@@ -327,6 +370,12 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
               : {}),
             ...(input.maxOutputTokens !== undefined
               ? { maxOutputTokens: Number(input.maxOutputTokens) }
+              : {}),
+            ...(input.thinking !== undefined
+              ? { thinking: String(input.thinking) as "off" | "adaptive" | "enabled" }
+              : {}),
+            ...(input.thinkingBudgetTokens !== undefined
+              ? { thinkingBudgetTokens: Number(input.thinkingBudgetTokens) }
               : {}),
           });
 

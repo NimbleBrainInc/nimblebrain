@@ -74,6 +74,7 @@ const DEFAULT_MODEL = "claude-sonnet-4-6";
 
 import { DEFAULT_MAX_INPUT_TOKENS, DEFAULT_MAX_ITERATIONS } from "../limits.ts";
 import { resolveMaxOutputTokens } from "./resolve-max-output-tokens.ts";
+import { resolveThinking } from "./resolve-thinking.ts";
 
 const DEFAULT_MAX_HISTORY_MESSAGES = 40;
 
@@ -333,8 +334,11 @@ export class Runtime {
       defaultModel: getDefaultModel(),
       defaultMaxInputTokens: maxInputTokens,
       // Raw operator config (may be undefined). Delegate resolves against
-      // the child's model via resolveMaxOutputTokens at execution time.
+      // the child's model at execution time so the resolved values fit
+      // the child's model rather than the parent's.
       configMaxOutputTokens: config.maxOutputTokens,
+      configThinking: config.thinking,
+      configThinkingBudgetTokens: config.thinkingBudgetTokens,
     };
 
     // System tools (search, manage_app, bundle_status, manage_skill, delegate)
@@ -720,6 +724,12 @@ export class Runtime {
       resolvedModelString = this.getModelSlot(aliasSlot);
     }
 
+    const resolvedThinking = resolveThinking({
+      configMode: this.config.thinking,
+      configBudgetTokens: this.config.thinkingBudgetTokens,
+      model: resolvedModelString,
+    });
+
     const engineConfig: EngineConfig = {
       model: resolvedModelString,
       maxIterations: request.maxIterations ?? this.config.maxIterations ?? DEFAULT_MAX_ITERATIONS,
@@ -728,6 +738,7 @@ export class Runtime {
         configValue: this.config.maxOutputTokens,
         model: resolvedModelString,
       }),
+      ...(resolvedThinking ? { thinking: resolvedThinking } : {}),
       maxToolResultSize: this.config.maxToolResultSize,
       hooks: this.hooks,
     };
@@ -1384,6 +1395,8 @@ export class Runtime {
     maxInputTokens?: number;
     maxOutputTokens?: number;
     maxToolResultSize?: number;
+    thinking?: "off" | "adaptive" | "enabled";
+    thinkingBudgetTokens?: number;
     preferences?: Record<string, string>;
   }) {
     if (patch.models) {
@@ -1404,6 +1417,9 @@ export class Runtime {
     if (patch.maxOutputTokens !== undefined) this.config.maxOutputTokens = patch.maxOutputTokens;
     if (patch.maxToolResultSize !== undefined)
       this.config.maxToolResultSize = patch.maxToolResultSize;
+    if (patch.thinking !== undefined) this.config.thinking = patch.thinking;
+    if (patch.thinkingBudgetTokens !== undefined)
+      this.config.thinkingBudgetTokens = patch.thinkingBudgetTokens;
   }
 
   /** Get loaded context skills (for skill_status tool). */
@@ -1428,6 +1444,9 @@ export class Runtime {
     maxIterations: number;
     maxInputTokens: number;
     maxOutputTokens: number;
+    /** Operator-pinned thinking mode if set; absent when relying on model-default policy. */
+    thinking?: "off" | "adaptive" | "enabled";
+    thinkingBudgetTokens?: number;
   } {
     return {
       models: this.getModelSlots(),
@@ -1438,6 +1457,10 @@ export class Runtime {
         configValue: this.config.maxOutputTokens,
         model: this.getDefaultModel(),
       }),
+      ...(this.config.thinking !== undefined ? { thinking: this.config.thinking } : {}),
+      ...(this.config.thinkingBudgetTokens !== undefined
+        ? { thinkingBudgetTokens: this.config.thinkingBudgetTokens }
+        : {}),
     };
   }
 
