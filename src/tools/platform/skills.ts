@@ -560,12 +560,21 @@ async function listSkills(
 
   // Layer 3: discovered via the runtime's per-conversation overlay (or the
   // platform-only static pool when there's no workspace context).
+  //
+  // Skills surfaced as Layer 1 resources (today: the vendored authoring
+  // guide) are filtered out here so they don't appear twice — once via
+  // their file path through the contextSkills pool and again as a Layer 1
+  // entry below.
+  const layer1SourcePaths = new Set<string>([resolve(authoringGuidePath)]);
   if (includeLayer3) {
     const { wsId, userId } = resolveCallContext(runtime);
     const skills = wsId
       ? runtime.loadConversationSkills(wsId, userId)
       : runtime.getContextSkills().concat(runtime.getMatchableSkills());
     for (const skill of skills) {
+      if (skill.sourcePath && layer1SourcePaths.has(resolve(skill.sourcePath))) {
+        continue;
+      }
       out.push(skillToListed(skill));
     }
   }
@@ -763,6 +772,16 @@ function buildReadResult(
   };
 }
 
+/**
+ * Derive a scope label from a filesystem path. Used by `skills__read`
+ * when the manifest doesn't carry an explicit scope.
+ *
+ * Decision matrix mirrors `stampDerivedScope` in runtime.ts so the LIST
+ * tool and the READ tool agree on what's mutable. A skill under
+ * `{workDir}/skills/` is real platform-tier (writable by org admins);
+ * anything outside the three workDir roots is bundle-tier (vendored
+ * with the platform binary or an MCP bundle, and read-only).
+ */
 function inferScopeFromPath(
   path: string,
   workDir: string,
@@ -770,7 +789,8 @@ function inferScopeFromPath(
   const resolved = resolve(path);
   if (resolved.startsWith(`${resolve(workDir, "workspaces")}/`)) return "workspace";
   if (resolved.startsWith(`${resolve(workDir, "users")}/`)) return "user";
-  return "platform";
+  if (resolved.startsWith(`${resolve(workDir, "skills")}/`)) return "platform";
+  return "bundle";
 }
 
 interface ActiveForEntry {
