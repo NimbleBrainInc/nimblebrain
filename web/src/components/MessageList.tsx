@@ -6,6 +6,7 @@ import { participantColor } from "../lib/participant-colors";
 import type { DisplayDetail } from "../lib/tool-display";
 import { FileAttachment } from "./FileAttachment";
 import { InlineAppView } from "./InlineAppView";
+import { ReasoningBlock } from "./ReasoningBlock";
 import { ResourceLinkView } from "./ResourceLinkView";
 import { ToolAccordion } from "./ToolAccordion";
 
@@ -347,6 +348,20 @@ export function MessageList({
                     {/* Render content blocks in temporal order */}
                     {msg.blocks ? (
                       msg.blocks.map((block, blockIdx) => {
+                        if (block.type === "reasoning") {
+                          return (
+                            // biome-ignore lint/suspicious/noArrayIndexKey: blocks are append-only and don't reorder
+                            <ReasoningBlock
+                              key={blockIdx}
+                              text={block.text}
+                              streaming={
+                                isStreaming &&
+                                idx === messages.length - 1 &&
+                                blockIdx === msg.blocks!.length - 1
+                              }
+                            />
+                          );
+                        }
                         if (block.type === "text" && block.text) {
                           return (
                             // biome-ignore lint/suspicious/noArrayIndexKey: blocks are append-only and don't reorder

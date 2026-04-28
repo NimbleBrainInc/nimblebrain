@@ -213,9 +213,21 @@ export interface LlmResponseEvent {
   type: "llm.response";
   runId: string;
   model: string;
+  /**
+   * V3 content blocks. Includes `text`, `tool-call`, and `reasoning`
+   * (extended thinking) parts. Reasoning blocks are surfaced to the UI
+   * collapsed-by-default; bare absence on a turn with non-stop
+   * finishReason is what indicates a real empty turn.
+   */
   content: LanguageModelV3Content[];
   inputTokens: number;
   outputTokens: number;
+  /**
+   * Reasoning-token subtotal (subset of `outputTokens`). 0 when the model
+   * emitted no reasoning. Useful for cost attribution and for diagnosing
+   * "why is outputTokens at the cap with empty visible content?".
+   */
+  reasoningTokens?: number;
   cacheReadTokens: number;
   cacheCreationTokens: number;
   llmMs: number;

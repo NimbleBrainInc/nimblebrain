@@ -160,6 +160,18 @@ export interface TextDeltaEvent {
   text: string;
 }
 
+/**
+ * Streaming reasoning (extended-thinking) delta. Same shape as
+ * `TextDeltaEvent` — handled symmetrically in `useChat`. Only fires
+ * when the model emits reasoning content (Anthropic with
+ * `providerOptions.anthropic.thinking` enabled, or any model that
+ * produces reasoning by default).
+ */
+export interface ReasoningDeltaEvent {
+  runId: string;
+  text: string;
+}
+
 export interface ToolStartEvent {
   runId: string;
   name: string;
@@ -202,6 +214,8 @@ export interface LlmDoneEvent {
   model: string;
   inputTokens: number;
   outputTokens: number;
+  /** Reasoning-token subtotal (subset of outputTokens). 0 if absent. */
+  reasoningTokens?: number;
   cacheReadTokens: number;
   cacheCreationTokens: number;
   llmMs: number;
@@ -217,6 +231,7 @@ export interface LlmDoneEvent {
 export interface ChatStreamEventMap {
   "chat.start": { conversationId: string };
   "text.delta": TextDeltaEvent;
+  "reasoning.delta": ReasoningDeltaEvent;
   "tool.start": ToolStartEvent;
   "tool.done": ToolDoneEvent;
   "llm.done": LlmDoneEvent;

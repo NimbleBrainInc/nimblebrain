@@ -428,6 +428,110 @@ describe("AgentEngine", () => {
       expect(result.stopReason).toBe("max_iterations");
     });
 
+    it("preserves Anthropic signature on reasoning across iterations (round-trip)", async () => {
+      // The first turn emits reasoning + a tool call. The engine pushes
+      // the assistant content into history for the second turn — and
+      // the reasoning's providerMetadata must be promoted to
+      // providerOptions on that history entry, otherwise the AI SDK
+      // Anthropic provider would silently drop the block as
+      // "unsupported reasoning metadata" on the second prompt.
+      const sentMessages: LanguageModelV3Message[][] = [];
+      const recordingModel: LanguageModelV3 = {
+        ...createEchoModel({
+          responses: [
+            {
+              reasoning: "Need to look this up.",
+              reasoningProviderMetadata: { anthropic: { signature: "sig-test-789" } },
+              toolCalls: [
+                { toolCallId: "call_1", toolName: "test__noop", input: JSON.stringify({}) },
+              ],
+            },
+            { text: "Done." },
+          ],
+        }),
+      };
+      const originalDoStream = recordingModel.doStream.bind(recordingModel);
+      recordingModel.doStream = async (callOptions) => {
+        sentMessages.push([...callOptions.prompt]);
+        return originalDoStream(callOptions);
+      };
+
+      const tools = {
+        schemas: [{ name: "test__noop", description: "No-op", inputSchema: {} }],
+        handler: (): ToolResult => ({ content: textContent("ok"), isError: false }),
+      };
+
+      await new AgentEngine(
+        recordingModel,
+        new StaticToolRouter(tools.schemas, tools.handler),
+        new NoopEventSink(),
+      ).run(
+        defaultConfig,
+        "",
+        [{ role: "user", content: [{ type: "text", text: "look it up" }] }],
+        tools.schemas,
+      );
+
+      expect(sentMessages).toHaveLength(2);
+      const secondPrompt = sentMessages[1]!;
+      const assistant = secondPrompt.find((m) => m.role === "assistant");
+      expect(assistant).toBeDefined();
+      const reasoning = (assistant!.content as Array<Record<string, unknown>>).find(
+        (c) => c.type === "reasoning",
+      );
+      expect(reasoning).toBeDefined();
+      // The critical assertion — providerOptions must be set, not just
+      // providerMetadata, because that's what the Anthropic prompt path reads.
+      expect(reasoning!.providerOptions).toEqual({
+        anthropic: { signature: "sig-test-789" },
+      });
+    });
+
+    it("captures reasoning content blocks and reasoning.delta events", async () => {
+      const events: EngineEvent[] = [];
+      const sink: EventSink = {
+        emit(event: EngineEvent) {
+          events.push(event);
+        },
+      };
+      const model = createEchoModel({
+        responses: [
+          {
+            reasoning: "Let me think about this carefully...",
+            text: "Done.",
+            reasoningTokens: 42,
+          },
+        ],
+      });
+
+      await new AgentEngine(
+        model,
+        new StaticToolRouter([], () => ({ content: textContent(""), isError: false })),
+        sink,
+      ).run(
+        defaultConfig,
+        "",
+        [{ role: "user", content: [{ type: "text", text: "x" }] }],
+        [],
+      );
+
+      const reasoningDeltas = events.filter((e) => e.type === "reasoning.delta");
+      expect(reasoningDeltas).toHaveLength(1);
+      expect((reasoningDeltas[0]!.data as Record<string, unknown>).text).toBe(
+        "Let me think about this carefully...",
+      );
+
+      const llmDone = events.find((e) => e.type === "llm.done");
+      expect(llmDone).toBeDefined();
+      const llmData = llmDone!.data as Record<string, unknown>;
+      expect(llmData.reasoningTokens).toBe(42);
+      const content = llmData.content as Array<{ type: string; text?: string }>;
+      expect(content.find((c) => c.type === "reasoning")?.text).toBe(
+        "Let me think about this carefully...",
+      );
+      expect(content.find((c) => c.type === "text")?.text).toBe("Done.");
+    });
+
     it("emits finishReason on the llm.done event", async () => {
       const events: EngineEvent[] = [];
       const sink: EventSink = {

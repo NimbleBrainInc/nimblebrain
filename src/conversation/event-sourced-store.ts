@@ -492,6 +492,7 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
 
       case "llm.done": {
         const finishReason = d.finishReason as LlmResponseEvent["finishReason"];
+        const reasoningTokens = (d.reasoningTokens as number) ?? 0;
         const e: LlmResponseEvent = {
           ts,
           type: "llm.response",
@@ -503,6 +504,7 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
           cacheReadTokens: (d.cacheReadTokens as number) ?? 0,
           cacheCreationTokens: (d.cacheCreationTokens as number) ?? 0,
           llmMs: (d.llmMs as number) ?? 0,
+          ...(reasoningTokens > 0 ? { reasoningTokens } : {}),
           ...(finishReason !== undefined ? { finishReason } : {}),
         };
         return e;

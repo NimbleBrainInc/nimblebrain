@@ -9,6 +9,7 @@
 
 ### Added
 
+- Reasoning (extended-thinking) content is now captured end-to-end: `stream.ts` handles `reasoning-*` parts, the engine emits `reasoning.delta` SSE events, and the chat UI renders a collapsed "Thoughts" block above the assistant text. Empty turns with non-stop finishReason now emit a placeholder so replay surfaces truncations.
 - `nb__read_resource` system tool — the agent can now load `skill://` / `ui://` resources advertised by an installed bundle's MCP server ([#3](https://github.com/NimbleBrainInc/nimblebrain/pull/25)).
 - `defineInProcessApp` helper for building in-process MCP sources from JSON Schema tool defs and a resource map — same authoring ergonomic as the former `InlineSource`, with the full MCP capability surface (resources, instructions, tasks, future capabilities).
 - `/mcp` advertises `tasks` and `resources` capabilities; tool-level `taskSupport` negotiation enforces JSON-RPC `-32601` for required-without-task and forbidden-with-task.
