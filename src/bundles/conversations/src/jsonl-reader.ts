@@ -53,6 +53,7 @@ export interface DisplayMessage {
 
 export type DisplayBlock =
   | { type: "text"; text: string }
+  | { type: "reasoning"; text: string }
   | { type: "tool"; toolCalls: DisplayToolCall[] };
 
 export interface DisplayToolCall {
@@ -443,6 +444,17 @@ function collectRun(
   let model = "";
 
   for (const llm of llmResponses) {
+    // Reasoning content — collapse all reasoning parts in this response
+    // into a single block. Emitted before text/tool blocks so the UI
+    // renders the model's thinking above its visible output.
+    const reasoningParts = llm.content.filter(
+      (c): c is { type: "reasoning"; text: string } => c.type === "reasoning",
+    );
+    if (reasoningParts.length > 0) {
+      const reasoningText = reasoningParts.map((r) => r.text).join("");
+      if (reasoningText) blocks.push({ type: "reasoning", text: reasoningText });
+    }
+
     // Text content — one text block per llm.response that has any text.
     const text = extractText(llm.content);
     if (text) blocks.push({ type: "text", text });

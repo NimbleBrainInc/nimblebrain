@@ -16,6 +16,21 @@ import type { ConversationEvent, LlmResponseEvent, StoredMessage, ToolDoneEvent 
  * written to the JSONL event log as-is. When reconstructing messages for
  * the LLM API, input must be a parsed object (dictionary), not a string.
  */
+/**
+ * Per-finishReason placeholder text for empty turns. The marker becomes
+ * the assistant message body so the model sees honest context on its
+ * next turn ("your last attempt was cut off") and the UI has something
+ * to render (the friendly banner is keyed off `metadata.finishReason`).
+ */
+const TRUNCATION_MARKERS: Record<string, string> = {
+  length: "[Previous turn was cut off at the output-token limit before producing visible content.]",
+  "content-filter": "[Previous turn was blocked by content filtering.]",
+  error: "[Previous turn ended with a model error.]",
+  "tool-calls": "[Previous turn declared tool calls but emitted none.]",
+  other: "[Previous turn ended without producing content.]",
+  stop: "[Previous turn ended without producing content.]",
+};
+
 function parseToolInput(input: unknown): Record<string, unknown> {
   if (typeof input === "string") {
     try {
@@ -154,6 +169,34 @@ export function reconstructMessages(events: readonly ConversationEvent[]): Store
         const textParts = llmResp.content.filter(
           (c): c is LanguageModelV3Content & { type: "text" } => c.type === "text",
         );
+        const reasoningParts = llmResp.content.filter(
+          (c): c is LanguageModelV3Content & { type: "reasoning" } => c.type === "reasoning",
+        );
+
+        const baseMetadata = () => ({
+          inputTokens: llmResp.inputTokens,
+          outputTokens: llmResp.outputTokens,
+          cacheReadTokens: llmResp.cacheReadTokens,
+          model: llmResp.model,
+          llmMs: llmResp.llmMs,
+          iterations: runLlmResponses.length,
+          costUsd: estimateCost(llmResp.model, {
+            inputTokens: llmResp.inputTokens,
+            outputTokens: llmResp.outputTokens,
+            cacheReadTokens: llmResp.cacheReadTokens,
+          }),
+          ...(llmResp.finishReason ? { finishReason: llmResp.finishReason } : {}),
+        });
+
+        // Reasoning attaches to the FIRST emitted message of this turn,
+        // so the UI renders a single collapsed reasoning block above the
+        // assistant's tool call or text. Subsequent messages from the
+        // same turn omit it to avoid duplication.
+        const reasoningContent = reasoningParts.map((r) => ({
+          type: "reasoning" as const,
+          text: r.text,
+        }));
+        let reasoningEmitted = false;
 
         if (toolCallParts.length > 0) {
           // Only include tool calls that were actually executed (have a tool.done event).
@@ -178,33 +221,21 @@ export function reconstructMessages(events: readonly ConversationEvent[]): Store
               };
             });
 
-            const cost = estimateCost(llmResp.model, {
-              inputTokens: llmResp.inputTokens,
-              outputTokens: llmResp.outputTokens,
-              cacheReadTokens: llmResp.cacheReadTokens,
-            });
-
             const assistantMsg: StoredMessage = {
               role: "assistant",
-              content: executedToolCalls.map((tc) => ({
-                type: "tool-call" as const,
-                toolCallId: tc.toolCallId,
-                toolName: tc.toolName,
-                input: parseToolInput(tc.input),
-              })),
+              content: [
+                ...(reasoningEmitted ? [] : reasoningContent),
+                ...executedToolCalls.map((tc) => ({
+                  type: "tool-call" as const,
+                  toolCallId: tc.toolCallId,
+                  toolName: tc.toolName,
+                  input: parseToolInput(tc.input),
+                })),
+              ],
               timestamp: llmResp.ts,
-              metadata: {
-                inputTokens: llmResp.inputTokens,
-                outputTokens: llmResp.outputTokens,
-                cacheReadTokens: llmResp.cacheReadTokens,
-                model: llmResp.model,
-                llmMs: llmResp.llmMs,
-                iterations: runLlmResponses.length,
-                toolCalls: toolCallsMeta,
-                costUsd: cost,
-                ...(llmResp.finishReason ? { finishReason: llmResp.finishReason } : {}),
-              },
+              metadata: { ...baseMetadata(), toolCalls: toolCallsMeta },
             };
+            reasoningEmitted = true;
             messages.push(assistantMsg);
 
             // Emit tool-result messages for each executed tool call
@@ -231,30 +262,51 @@ export function reconstructMessages(events: readonly ConversationEvent[]): Store
         }
 
         if (textParts.length > 0) {
-          // Assistant message with text content
-          const cost = estimateCost(llmResp.model, {
-            inputTokens: llmResp.inputTokens,
-            outputTokens: llmResp.outputTokens,
-            cacheReadTokens: llmResp.cacheReadTokens,
-          });
-
           const assistantMsg: StoredMessage = {
             role: "assistant",
-            content: textParts.map((t) => ({
-              type: "text" as const,
-              text: t.text,
-            })),
+            content: [
+              ...(reasoningEmitted ? [] : reasoningContent),
+              ...textParts.map((t) => ({ type: "text" as const, text: t.text })),
+            ],
             timestamp: llmResp.ts,
-            metadata: {
-              inputTokens: llmResp.inputTokens,
-              outputTokens: llmResp.outputTokens,
-              cacheReadTokens: llmResp.cacheReadTokens,
-              model: llmResp.model,
-              llmMs: llmResp.llmMs,
-              iterations: runLlmResponses.length,
-              costUsd: cost,
-              ...(llmResp.finishReason ? { finishReason: llmResp.finishReason } : {}),
-            },
+            metadata: baseMetadata(),
+          };
+          reasoningEmitted = true;
+          messages.push(assistantMsg);
+        }
+
+        // Step 4a — replay honesty.
+        // No tool-call, no text. Two reasons we can land here:
+        //   1. The turn produced reasoning only (extended thinking that
+        //      ran out of budget before any visible content).
+        //   2. The turn produced literally nothing AND the model didn't
+        //      end cleanly (length / content_filter / error).
+        // Either way, dropping the message silently — the pre-existing
+        // behavior — leaves the operator looking at a conversation that
+        // skips a turn that actually happened. Emit a placeholder
+        // assistant message carrying finishReason in metadata so the UI
+        // can render the truncation banner and the reasoning (if any).
+        //
+        // If neither reasoning nor visible content exists, attach a
+        // short text marker so the LLM history isn't an empty-content
+        // assistant message (Anthropic rejects those) and the model
+        // gets honest context about what just happened.
+        if (
+          toolCallParts.length === 0 &&
+          textParts.length === 0 &&
+          (reasoningContent.length > 0 || (llmResp.finishReason && llmResp.finishReason !== "stop"))
+        ) {
+          const placeholderText =
+            TRUNCATION_MARKERS[llmResp.finishReason ?? "other"] ?? TRUNCATION_MARKERS.other!;
+          const placeholderContent =
+            reasoningContent.length > 0
+              ? reasoningContent
+              : [{ type: "text" as const, text: placeholderText }];
+          const assistantMsg: StoredMessage = {
+            role: "assistant",
+            content: placeholderContent,
+            timestamp: llmResp.ts,
+            metadata: baseMetadata(),
           };
           messages.push(assistantMsg);
         }

@@ -44,6 +44,7 @@ export type EngineEventType =
   | "chat.start"
   | "run.start"
   | "text.delta"
+  | "reasoning.delta"
   | "tool.start"
   | "tool.done"
   | "tool.progress"

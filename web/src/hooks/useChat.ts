@@ -9,6 +9,7 @@ import type {
   ChatStreamEventMap,
   ChatStreamEventType,
   LlmDoneEvent,
+  ReasoningDeltaEvent,
   StreamErrorEvent,
   TextDeltaEvent,
   ToolDoneEvent,
@@ -55,9 +56,10 @@ export interface ToolCallDisplay {
   appName?: string;
 }
 
-/** A block in the assistant message stream — text or tool call group, in temporal order. */
+/** A block in the assistant message stream — text, reasoning, or tool call group, in temporal order. */
 export type ContentBlock =
   | { type: "text"; text: string }
+  | { type: "reasoning"; text: string }
   | { type: "tool"; toolCalls: ToolCallDisplay[] };
 
 /** Live iteration progress during streaming. */
@@ -132,10 +134,14 @@ export interface UseChatReturn {
 
 /** Deep-copy blocks for immutable state updates. */
 function cloneBlocks(blocks: ContentBlock[]): ContentBlock[] {
-  return blocks.map((b) => (b.type === "text" ? { ...b } : { ...b, toolCalls: [...b.toolCalls] }));
+  return blocks.map((b) => {
+    if (b.type === "tool") return { ...b, toolCalls: [...b.toolCalls] };
+    return { ...b }; // text or reasoning — both shaped { type, text }
+  });
 }
 
-/** Derive full text from blocks. */
+/** Derive full visible text from blocks. Reasoning is NOT included
+ *  (it's collapsed-by-default UI and shouldn't pollute the message body). */
 function textFromBlocks(blocks: ContentBlock[]): string {
   return blocks
     .filter((b): b is ContentBlock & { type: "text" } => b.type === "text")
@@ -275,6 +281,19 @@ export function useChat(initialConversationId?: string, currentUserId?: string):
                 lastBlock.text += evt.text;
               } else {
                 blocks.push({ type: "text", text: evt.text });
+              }
+              flushToMessage();
+              break;
+            }
+            case "reasoning.delta": {
+              const evt = data as ReasoningDeltaEvent;
+              setStreamingState((prev) => (prev !== "streaming" ? "streaming" : prev));
+              const blocks = blocksRef.current;
+              const lastBlock = blocks[blocks.length - 1];
+              if (lastBlock && lastBlock.type === "reasoning") {
+                lastBlock.text += evt.text;
+              } else {
+                blocks.push({ type: "reasoning", text: evt.text });
               }
               flushToMessage();
               break;
@@ -552,6 +571,19 @@ export function useChat(initialConversationId?: string, currentUserId?: string):
             lastBlock.text += evt.text;
           } else {
             blocks.push({ type: "text", text: evt.text });
+          }
+          flushToMessage();
+          break;
+        }
+        case "reasoning.delta": {
+          const evt = data as ReasoningDeltaEvent;
+          setStreamingState((prev) => (prev !== "streaming" ? "streaming" : prev));
+          const blocks = blocksRef.current;
+          const lastBlock = blocks[blocks.length - 1];
+          if (lastBlock && lastBlock.type === "reasoning") {
+            lastBlock.text += evt.text;
+          } else {
+            blocks.push({ type: "reasoning", text: evt.text });
           }
           flushToMessage();
           break;

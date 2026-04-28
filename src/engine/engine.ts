@@ -241,6 +241,7 @@ export class AgentEngine {
               maxOutputTokens: config.maxOutputTokens,
             },
             (text) => this.events.emit({ type: "text.delta", data: { runId, text } }),
+            (text) => this.events.emit({ type: "reasoning.delta", data: { runId, text } }),
           ),
         );
         const llmMs = Math.round(performance.now() - llmStart);
@@ -259,6 +260,7 @@ export class AgentEngine {
         // Accumulate tokens
         const turnInputTokens = response.usage.inputTokens.total ?? 0;
         const turnOutputTokens = response.usage.outputTokens.total ?? 0;
+        const turnReasoningTokens = response.usage.outputTokens.reasoning ?? 0;
         const turnCacheReadTokens = response.usage.inputTokens.cacheRead ?? 0;
         const turnCacheCreationTokens = response.usage.inputTokens.cacheWrite ?? 0;
         cumulativeInputTokens += turnInputTokens;
@@ -279,6 +281,7 @@ export class AgentEngine {
             content: response.content,
             inputTokens: turnInputTokens,
             outputTokens: turnOutputTokens,
+            reasoningTokens: turnReasoningTokens,
             cacheReadTokens: turnCacheReadTokens,
             cacheCreationTokens: turnCacheCreationTokens,
             llmMs,

@@ -324,6 +324,115 @@ describe("reconstructMessages", () => {
     expect(messages[2].role).toBe("tool");
   });
 
+  it("preserves reasoning content blocks alongside text", () => {
+    const reasoningResp: LlmResponseEvent = {
+      ...llmText("run-1", "The answer is 42."),
+      content: [
+        { type: "reasoning", text: "Computing 6 * 7 carefully..." },
+        { type: "text", text: "The answer is 42." },
+      ],
+    };
+    const events: ConversationEvent[] = [
+      userMessage("What is 6 * 7?"),
+      runStart("run-1"),
+      reasoningResp,
+      runDone("run-1"),
+    ];
+    const messages = reconstructMessages(events);
+    expect(messages).toHaveLength(2);
+    const assistant = messages[1]!;
+    const reasoningBlock = assistant.content.find(
+      (c): c is { type: "reasoning"; text: string } => c.type === "reasoning",
+    );
+    const textBlock = assistant.content.find(
+      (c): c is { type: "text"; text: string } => c.type === "text",
+    );
+    expect(reasoningBlock?.text).toBe("Computing 6 * 7 carefully...");
+    expect(textBlock?.text).toBe("The answer is 42.");
+  });
+
+  it("attaches reasoning to the FIRST assistant message of a turn (tool-call before text)", () => {
+    // When a turn produces both a tool-call message AND a text message,
+    // reasoning attaches only to the first to avoid UI duplication.
+    const reasoningWithToolCall: LlmResponseEvent = {
+      ...llmToolCall("run-1", "tc-1", "lookup", { id: "x" }),
+      content: [
+        { type: "reasoning", text: "Need to look this up." },
+        { type: "tool-call", toolCallId: "tc-1", toolName: "lookup", input: { id: "x" } },
+      ],
+    };
+    const finalText = llmText("run-1", "Found it.");
+    const events: ConversationEvent[] = [
+      userMessage("Look up X"),
+      runStart("run-1"),
+      reasoningWithToolCall,
+      toolStart("run-1", "tc-1", "lookup"),
+      toolDone("run-1", "tc-1", "lookup"),
+      finalText,
+      runDone("run-1"),
+    ];
+    const messages = reconstructMessages(events);
+    const assistantMessages = messages.filter((m) => m.role === "assistant");
+    expect(assistantMessages).toHaveLength(2);
+
+    const firstReasoning = assistantMessages[0]!.content.find((c) => c.type === "reasoning");
+    const secondReasoning = assistantMessages[1]!.content.find((c) => c.type === "reasoning");
+    expect(firstReasoning).toBeDefined();
+    expect(secondReasoning).toBeUndefined();
+  });
+
+  it("emits a placeholder for an empty turn that ended with non-stop finishReason", () => {
+    // Reproduces the failure mode that started this whole thread: turn
+    // burns the output budget without producing visible content. The
+    // reconstructor must not silently drop it.
+    const truncatedTurn: LlmResponseEvent = {
+      ...llmText("run-1", ""),
+      content: [],
+      finishReason: "length",
+    };
+    const events: ConversationEvent[] = [
+      userMessage("Build the doc"),
+      runStart("run-1"),
+      truncatedTurn,
+      runDone("run-1"),
+    ];
+    const messages = reconstructMessages(events);
+    expect(messages).toHaveLength(2);
+    const placeholder = messages[1]!;
+    expect(placeholder.role).toBe("assistant");
+    expect(placeholder.metadata!.finishReason).toBe("length");
+    // Carries explicit marker text so LLM history isn't an empty msg
+    const text = placeholder.content.find((c): c is { type: "text"; text: string } => c.type === "text");
+    expect(text?.text).toContain("cut off");
+  });
+
+  it("emits a reasoning-only assistant message when text and tool-calls are absent", () => {
+    // Extended-thinking turn that ran out of budget producing only
+    // reasoning. The placeholder uses the reasoning content directly
+    // rather than the canned marker text.
+    const reasoningOnly: LlmResponseEvent = {
+      ...llmText("run-1", ""),
+      content: [{ type: "reasoning", text: "Mid-thought when cap hit..." }],
+      finishReason: "length",
+    };
+    const events: ConversationEvent[] = [
+      userMessage("hi"),
+      runStart("run-1"),
+      reasoningOnly,
+      runDone("run-1"),
+    ];
+    const messages = reconstructMessages(events);
+    expect(messages).toHaveLength(2);
+    const assistant = messages[1]!;
+    expect(assistant.metadata!.finishReason).toBe("length");
+    const reasoning = assistant.content.find(
+      (c): c is { type: "reasoning"; text: string } => c.type === "reasoning",
+    );
+    expect(reasoning?.text).toBe("Mid-thought when cap hit...");
+    // No marker text — reasoning is the visible content
+    expect(assistant.content.find((c) => c.type === "text")).toBeUndefined();
+  });
+
   it("forwards finishReason from llm.response into assistant message metadata", () => {
     const lengthCapped: LlmResponseEvent = {
       ...llmText("run-1", "Building now."),

@@ -428,6 +428,51 @@ describe("AgentEngine", () => {
       expect(result.stopReason).toBe("max_iterations");
     });
 
+    it("captures reasoning content blocks and reasoning.delta events", async () => {
+      const events: EngineEvent[] = [];
+      const sink: EventSink = {
+        emit(event: EngineEvent) {
+          events.push(event);
+        },
+      };
+      const model = createEchoModel({
+        responses: [
+          {
+            reasoning: "Let me think about this carefully...",
+            text: "Done.",
+            reasoningTokens: 42,
+          },
+        ],
+      });
+
+      await new AgentEngine(
+        model,
+        new StaticToolRouter([], () => ({ content: textContent(""), isError: false })),
+        sink,
+      ).run(
+        defaultConfig,
+        "",
+        [{ role: "user", content: [{ type: "text", text: "x" }] }],
+        [],
+      );
+
+      const reasoningDeltas = events.filter((e) => e.type === "reasoning.delta");
+      expect(reasoningDeltas).toHaveLength(1);
+      expect((reasoningDeltas[0]!.data as Record<string, unknown>).text).toBe(
+        "Let me think about this carefully...",
+      );
+
+      const llmDone = events.find((e) => e.type === "llm.done");
+      expect(llmDone).toBeDefined();
+      const llmData = llmDone!.data as Record<string, unknown>;
+      expect(llmData.reasoningTokens).toBe(42);
+      const content = llmData.content as Array<{ type: string; text?: string }>;
+      expect(content.find((c) => c.type === "reasoning")?.text).toBe(
+        "Let me think about this carefully...",
+      );
+      expect(content.find((c) => c.type === "text")?.text).toBe("Done.");
+    });
+
     it("emits finishReason on the llm.done event", async () => {
       const events: EngineEvent[] = [];
       const sink: EventSink = {

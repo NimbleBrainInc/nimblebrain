@@ -13,6 +13,17 @@ import type {
  */
 export interface EchoModelResponse {
   text?: string;
+  /**
+   * Reasoning (extended-thinking) content emitted before any text/tool_use.
+   * When set, the stream produces reasoning-start/delta/end parts that
+   * src/model/stream.ts must capture and push as a `reasoning` content block.
+   */
+  reasoning?: string;
+  /**
+   * Optional reasoning-token subtotal reported in usage.outputTokens.reasoning.
+   * Tests use this to verify the engine forwards the breakdown on llm.done.
+   */
+  reasoningTokens?: number;
   toolCalls?: Array<{
     toolCallId: string;
     toolName: string;
@@ -57,10 +68,15 @@ export function createEchoModel(options?: EchoModelOptions): LanguageModelV3 {
     return "[echo]";
   }
 
-  function buildUsage(textLen: number): LanguageModelV3Usage {
+  function buildUsage(textLen: number, reasoningTokens?: number): LanguageModelV3Usage {
+    const total = textLen + (reasoningTokens ?? 0);
     return {
       inputTokens: { total: textLen, noCache: textLen, cacheRead: undefined, cacheWrite: undefined },
-      outputTokens: { total: textLen, text: textLen, reasoning: undefined },
+      outputTokens: {
+        total,
+        text: textLen,
+        reasoning: reasoningTokens,
+      },
     };
   }
 
@@ -80,6 +96,10 @@ export function createEchoModel(options?: EchoModelOptions): LanguageModelV3 {
 
     if (queued) {
       const content: LanguageModelV3Content[] = [];
+
+      if (queued.reasoning !== undefined) {
+        content.push({ type: "reasoning", text: queued.reasoning });
+      }
 
       if (queued.text !== undefined) {
         content.push({ type: "text", text: queued.text });
@@ -106,7 +126,7 @@ export function createEchoModel(options?: EchoModelOptions): LanguageModelV3 {
       return {
         content,
         finishReason,
-        usage: buildUsage(textLen),
+        usage: buildUsage(textLen, queued.reasoningTokens),
       };
     }
 
@@ -142,7 +162,11 @@ export function createEchoModel(options?: EchoModelOptions): LanguageModelV3 {
 
       // Emit content parts
       for (const item of result.content) {
-        if (item.type === "text") {
+        if (item.type === "reasoning") {
+          parts.push({ type: "reasoning-start", id: "reasoning-0" });
+          parts.push({ type: "reasoning-delta", id: "reasoning-0", delta: item.text });
+          parts.push({ type: "reasoning-end", id: "reasoning-0" });
+        } else if (item.type === "text") {
           parts.push({ type: "text-start", id: "text-0" });
           parts.push({ type: "text-delta", id: "text-0", delta: item.text });
           parts.push({ type: "text-end", id: "text-0" });
