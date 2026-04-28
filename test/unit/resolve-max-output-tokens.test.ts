@@ -50,30 +50,9 @@ describe("resolveMaxOutputTokens", () => {
 		).toBe(100_000);
 	});
 
-	it("request override wins over operator config", () => {
+	it("zero or negative config override falls through to the catalog default", () => {
 		expect(
 			resolveMaxOutputTokens({
-				requestOverride: 4_000,
-				configValue: 16_000,
-				model: "anthropic:claude-opus-4-7",
-			}),
-		).toBe(4_000);
-	});
-
-	it("request override is clamped by the model max", () => {
-		const opus = getModelByString("anthropic:claude-opus-4-7");
-		expect(
-			resolveMaxOutputTokens({
-				requestOverride: 10_000_000,
-				model: "anthropic:claude-opus-4-7",
-			}),
-		).toBe(opus!.limits.output);
-	});
-
-	it("zero or negative overrides fall through to the next layer", () => {
-		expect(
-			resolveMaxOutputTokens({
-				requestOverride: 0,
 				configValue: -1,
 				model: "anthropic:claude-opus-4-7",
 			}),
