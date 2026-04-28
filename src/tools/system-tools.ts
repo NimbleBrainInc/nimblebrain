@@ -727,6 +727,29 @@ function mapInputToManifest(
     manifest.requiresBundles = skillInput.requires_bundles as string[];
   if (skillInput.body !== undefined) body = String(skillInput.body);
 
+  // Phase 2 fields — input keys mirror the snake_case used elsewhere on
+  // the system-tools surface. The writer round-trips kebab-case YAML.
+  if (skillInput.scope !== undefined) {
+    manifest.scope = String(skillInput.scope) as SkillManifest["scope"];
+  }
+  if (skillInput.loading_strategy !== undefined) {
+    manifest.loadingStrategy = String(
+      skillInput.loading_strategy,
+    ) as SkillManifest["loadingStrategy"];
+  }
+  if (skillInput.applies_to_tools !== undefined) {
+    manifest.appliesToTools = skillInput.applies_to_tools as string[];
+  }
+  if (skillInput.status !== undefined) {
+    manifest.status = String(skillInput.status) as SkillManifest["status"];
+  }
+  if (skillInput.overrides !== undefined) {
+    manifest.overrides = skillInput.overrides as SkillManifest["overrides"];
+  }
+  if (skillInput.derived_from !== undefined) {
+    manifest.derivedFrom = String(skillInput.derived_from);
+  }
+
   // Build metadata from input fields
   const metadata: Partial<SkillMetadata> = {};
   if (skillInput.triggers !== undefined) metadata.triggers = skillInput.triggers as string[];
@@ -768,6 +791,15 @@ async function handleCreateSkill(
     allowedTools: manifest.allowedTools,
     requiresBundles: manifest.requiresBundles,
     metadata: manifest.metadata ?? { keywords: [], triggers: [] },
+    // Phase 2 fields — only emit when supplied; the loader fills in
+    // defaults at parse time (status="active", loadingStrategy resolved
+    // from type/applies-to-tools).
+    ...(manifest.scope ? { scope: manifest.scope } : {}),
+    ...(manifest.loadingStrategy ? { loadingStrategy: manifest.loadingStrategy } : {}),
+    ...(manifest.appliesToTools ? { appliesToTools: manifest.appliesToTools } : {}),
+    ...(manifest.status ? { status: manifest.status } : {}),
+    ...(manifest.overrides ? { overrides: manifest.overrides } : {}),
+    ...(manifest.derivedFrom ? { derivedFrom: manifest.derivedFrom } : {}),
   };
 
   const skillBody = body ?? "";
@@ -848,6 +880,15 @@ async function handleEditSkill(
   if (partial.allowedTools !== undefined) merged.allowedTools = partial.allowedTools;
   if (partial.requiresBundles !== undefined) merged.requiresBundles = partial.requiresBundles;
   if (partial.metadata !== undefined) merged.metadata = partial.metadata;
+  // Phase 2 fields — keep merge in lockstep with `writer.updateSkill`,
+  // which already merges these. Without this block, edits via system-tools
+  // would silently drop user-supplied Phase 2 fields.
+  if (partial.scope !== undefined) merged.scope = partial.scope;
+  if (partial.loadingStrategy !== undefined) merged.loadingStrategy = partial.loadingStrategy;
+  if (partial.appliesToTools !== undefined) merged.appliesToTools = partial.appliesToTools;
+  if (partial.status !== undefined) merged.status = partial.status;
+  if (partial.overrides !== undefined) merged.overrides = partial.overrides;
+  if (partial.derivedFrom !== undefined) merged.derivedFrom = partial.derivedFrom;
 
   const mergedBody = newBody !== undefined ? newBody : existing.body;
 

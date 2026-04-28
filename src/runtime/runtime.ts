@@ -2,7 +2,7 @@ import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { LanguageModelV3 } from "@ai-sdk/provider";
+import type { LanguageModelV3, LanguageModelV3Message } from "@ai-sdk/provider";
 import { NoopEventSink } from "../adapters/noop-events.ts";
 import { WorkspaceLogSink } from "../adapters/workspace-log-sink.ts";
 import { BundleLifecycleManager } from "../bundles/lifecycle.ts";
@@ -25,10 +25,13 @@ import { estimateCost } from "../engine/cost.ts";
 import { AgentEngine } from "../engine/engine.ts";
 import { RunMetricsCollector } from "../engine/run-metrics.ts";
 import type {
+  ContextAssembledPayload,
+  ContextAssembledSource,
   EngineConfig,
   EngineEvent,
   EngineHooks,
   EventSink,
+  SkillsLoadedPayload,
   ToolSchema,
 } from "../engine/types.ts";
 import { DEFAULT_FILE_CONFIG, type FileConfig } from "../files/types.ts";
@@ -40,15 +43,20 @@ import { DEV_IDENTITY } from "../identity/providers/dev.ts";
 import { UserStore } from "../identity/user.ts";
 import { InstructionsStore } from "../instructions/index.ts";
 import { buildModelResolver } from "../model/registry.ts";
-import type { PromptAppInfo } from "../prompt/compose.ts";
+import type { Layer3SkillEntry, PromptAppInfo } from "../prompt/compose.ts";
 import { composeSystemPrompt } from "../prompt/compose.ts";
 import {
   loadBuiltinSkills,
   loadCoreSkills,
+  loadScopedSkills,
   loadSkillDir,
+  mergeScopedSkills,
   partitionSkills,
+  readSkillMtime,
 } from "../skills/loader.ts";
 import { SkillMatcher } from "../skills/matcher.ts";
+import { type SelectedSkill, selectLayer3Skills } from "../skills/select.ts";
+import { approxTokens } from "../skills/tokens.ts";
 import type { Skill } from "../skills/types.ts";
 import { TelemetryManager } from "../telemetry/manager.ts";
 import { PostHogEventSink } from "../telemetry/posthog-sink.ts";
@@ -700,6 +708,26 @@ export class Runtime {
       ? [...this.contextSkills, identityOverride]
       : this.contextSkills;
 
+    // Layer 3 selection — pick skills with `loading_strategy: always` and
+    // `tool_affined` strategies based on the active tool set. The merged pool
+    // includes platform / workspace / user tier skills (user > workspace >
+    // platform on name collisions).
+    const userId = reqIdentity?.id ?? null;
+    const layer3Pool = this.loadConversationSkills(wsId, userId);
+    const activeToolNames = tools.map((t) => t.name);
+    const selectedLayer3 = selectLayer3Skills({
+      skills: layer3Pool,
+      activeTools: activeToolNames,
+    });
+    const layer3Entries: Layer3SkillEntry[] = selectedLayer3.map((s) => ({
+      name: s.skill.manifest.name,
+      body: s.skill.body,
+      scope: s.skill.manifest.scope ?? "platform",
+      ...(s.skill.sourcePath ? { sourcePath: s.skill.sourcePath } : {}),
+      loadedBy: s.loadedBy,
+      reason: s.reason,
+    }));
+
     const systemPrompt = composeSystemPrompt(
       requestContextSkills,
       skill,
@@ -711,6 +739,7 @@ export class Runtime {
       participants,
       workspaceContext,
       liveOverlays,
+      layer3Entries,
     );
 
     const messages = await store.history(conversation);
@@ -730,6 +759,18 @@ export class Runtime {
       model: resolvedModelString,
     });
 
+    // Build pre-emit run telemetry tied to the engine's runId. The engine fires
+    // these immediately after `run.start` and before any LLM call so the conv
+    // log records what the prompt looked like for this turn — even if the LLM
+    // call fails or the process is killed.
+    const skillsLoaded = buildSkillsLoadedPayload(selectedLayer3);
+    const contextAssembled = buildContextAssembledPayload({
+      systemPrompt,
+      activeTools: tools,
+      messages,
+      skillsLoaded,
+    });
+
     const engineConfig: EngineConfig = {
       model: resolvedModelString,
       maxIterations: request.maxIterations ?? this.config.maxIterations ?? DEFAULT_MAX_ITERATIONS,
@@ -741,6 +782,10 @@ export class Runtime {
       ...(resolvedThinking ? { thinking: resolvedThinking } : {}),
       maxToolResultSize: this.config.maxToolResultSize,
       hooks: this.hooks,
+      runMetadata: {
+        skillsLoaded,
+        contextAssembled,
+      },
     };
 
     // Determine which event store handles conversation events for this request.
@@ -1452,6 +1497,43 @@ export class Runtime {
     return this.skillMatcher.getSkills();
   }
 
+  /**
+   * Phase 2 — per-conversation Layer 3 skill overlay.
+   *
+   * Returns the merged platform-tier + workspace-tier + user-tier set,
+   * deduplicated by `manifest.name` with later scopes overriding earlier
+   * ones (user > workspace > platform).
+   *
+   * Platform-tier comes from the boot-time pool (`buildSkills` static set:
+   * builtin + core + global + config dirs). Workspace and user tiers are
+   * read fresh from disk on every call so authoring inside a workspace or
+   * user dir takes effect mid-session. If perf becomes an issue later we
+   * can cache by mtime; for Phase 2, fresh reads are fine.
+   *
+   * Each returned skill has `manifest.scope` populated. Platform-tier
+   * skills loaded from the legacy boot path may have arrived without a
+   * scope stamp (the loader only stamps scope inside `loadScopedSkills`);
+   * we clone-and-stamp them here so callers always see a scope.
+   */
+  loadConversationSkills(wsId: string, userId: string | null): Skill[] {
+    const workDir = this.getWorkDir();
+
+    const platformPool: Skill[] = [];
+    for (const s of this.contextSkills) platformPool.push(stampPlatformScope(s));
+    for (const s of this.skillMatcher.getSkills()) platformPool.push(stampPlatformScope(s));
+
+    const workspaceDir = join(workDir, "workspaces", wsId, "skills");
+    const workspacePool = loadScopedSkills(workspaceDir, "workspace");
+
+    const userPool: Skill[] = [];
+    if (userId) {
+      const userDir = join(workDir, "users", userId, "skills");
+      userPool.push(...loadScopedSkills(userDir, "user"));
+    }
+
+    return mergeScopedSkills(platformPool, workspacePool, userPool);
+  }
+
   /** Get the path to the nimblebrain.json config file. */
   getConfigPath(): string | undefined {
     return this.config.configPath;
@@ -1731,6 +1813,80 @@ function loadAllSkills(configDirs?: string[], skillDir?: string): Skill[] {
   if (skillDir) skills.push(...loadSkillDir(skillDir));
   for (const dir of configDirs ?? []) skills.push(...loadSkillDir(dir));
   return skills;
+}
+
+/**
+ * Return a Skill with `manifest.scope` set to "platform" if not already
+ * stamped. Clones the manifest so the cached pool object is not mutated.
+ *
+ * The boot-time loaders (`loadBuiltinSkills`, `loadCoreSkills`,
+ * `loadSkillDir`) don't stamp scope, so platform-tier skills surface here
+ * without a scope. Frontmatter-declared scope on a platform-dir skill is
+ * preserved (e.g. authoring tooling round-tripping the field).
+ */
+function stampPlatformScope(skill: Skill): Skill {
+  if (skill.manifest.scope) return skill;
+  return {
+    ...skill,
+    manifest: { ...skill.manifest, scope: "platform" },
+  };
+}
+
+/**
+ * Build the `skills.loaded` payload from the Layer 3 selection result. Each
+ * entry carries id (sourcePath or "in-memory" sentinel), scope, version
+ * (file mtime), tokens (approximate), `loadedBy`, and the matcher's reason
+ * string. Total is the sum of per-skill tokens.
+ */
+function buildSkillsLoadedPayload(selected: SelectedSkill[]): SkillsLoadedPayload {
+  const entries = selected.map((s) => {
+    const body = s.skill.body;
+    const tokens = approxTokens(body);
+    const sourcePath = s.skill.sourcePath || "";
+    return {
+      id: sourcePath || `skill-in-memory:${s.skill.manifest.name}`,
+      layer: 3 as const,
+      scope: (s.skill.manifest.scope ?? "platform") as "platform" | "workspace" | "user" | "bundle",
+      version: sourcePath ? readSkillMtime(sourcePath) : "",
+      tokens,
+      loadedBy: s.loadedBy,
+      reason: s.reason,
+    };
+  });
+  const totalTokens = entries.reduce((sum, e) => sum + e.tokens, 0);
+  return { skills: entries, totalTokens };
+}
+
+/**
+ * Build the `context.assembled` snapshot from the assembled prompt + tool
+ * set + history + Layer 3 skills counted in `skills.loaded`. The snapshot
+ * carries counts and tokens only — never content (the bodies are already
+ * in the conversation log via earlier source events / message history).
+ */
+function buildContextAssembledPayload(input: {
+  systemPrompt: string;
+  activeTools: ToolSchema[];
+  messages: LanguageModelV3Message[];
+  skillsLoaded: SkillsLoadedPayload;
+}): ContextAssembledPayload {
+  const promptTokens = approxTokens(input.systemPrompt);
+  const toolDescTokens = input.activeTools.reduce(
+    (sum, t) => sum + approxTokens(`${t.name}\n${t.description}\n${JSON.stringify(t.inputSchema)}`),
+    0,
+  );
+  const historyTokens = input.messages.reduce((sum, m) => sum + approxTokens(JSON.stringify(m)), 0);
+  const sources: ContextAssembledSource[] = [
+    { kind: "system_prompt", tokens: promptTokens },
+    { kind: "tool_descriptions", count: input.activeTools.length, tokens: toolDescTokens },
+    {
+      kind: "skills",
+      count: input.skillsLoaded.skills.length,
+      tokens: input.skillsLoaded.totalTokens,
+    },
+    { kind: "history", turns: input.messages.length, compacted: false, tokens: historyTokens },
+  ];
+  const totalTokens = sources.reduce((sum, s) => sum + s.tokens, 0);
+  return { sources, excluded: [], totalTokens };
 }
 
 /**

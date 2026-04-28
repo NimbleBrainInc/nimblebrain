@@ -51,6 +51,8 @@ export type EngineEventType =
   | "llm.done"
   | "run.done"
   | "run.error"
+  | "skills.loaded"
+  | "context.assembled"
   | "bundle.installed"
   | "bundle.uninstalled"
   | "bundle.crashed"
@@ -136,6 +138,74 @@ export interface EngineConfig {
    * Set to 0 to disable. Defaults to 1_000_000 (1M chars).
    */
   maxToolResultSize?: number;
+  /**
+   * Pre-computed run-scope telemetry the runtime hands to the engine so the
+   * engine can emit it tied to the same `runId` as `run.start`. The engine
+   * fires these immediately after `run.start` and before the first LLM call,
+   * so the conversation log records what the prompt looked like.
+   *
+   * Phase 2: `skills.loaded` and `context.assembled` payloads. Future phases
+   * may add more entries here without touching the engine signature.
+   */
+  runMetadata?: RunMetadata;
+}
+
+/**
+ * Pre-emit telemetry attached to an engine run. The runtime computes this
+ * before calling `engine.run()`; the engine emits matching events after
+ * `run.start`. Shared between `EngineConfig` and the runtime helpers
+ * (`buildSkillsLoadedPayload` / `buildContextAssembledPayload`) so any
+ * shape drift is a type error rather than silent disagreement.
+ */
+export interface RunMetadata {
+  skillsLoaded?: SkillsLoadedPayload;
+  contextAssembled?: ContextAssembledPayload;
+}
+
+export interface SkillsLoadedPayload {
+  skills: SkillsLoadedEntry[];
+  totalTokens: number;
+}
+
+export interface ContextAssembledPayload {
+  sources: ContextAssembledSource[];
+  excluded: ContextAssembledSource[];
+  totalTokens: number;
+  modelMaxContext?: number;
+  headroomTokens?: number;
+}
+
+/**
+ * Per-skill telemetry attached to a `skills.loaded` event. Re-exported
+ * from `src/conversation/types.ts` so emitters and persisters reference
+ * one definition; drift surfaces as a type error.
+ */
+export interface SkillsLoadedEntry {
+  id: string;
+  layer: 3;
+  scope: "platform" | "workspace" | "user" | "bundle";
+  version: string;
+  tokens: number;
+  loadedBy: "always" | "tool_affinity";
+  reason: string;
+}
+
+/**
+ * One entry in `context.assembled.sources` / `excluded`. Required `tokens`
+ * + free-form discriminators (`count`, `version`, `turns`, etc.) per source
+ * kind. Tightening the engine payload to this shape (vs `Record<string,
+ * unknown>`) prevents emitters from accidentally shipping rows without a
+ * token count.
+ */
+export interface ContextAssembledSource {
+  kind: string;
+  count?: number;
+  tokens: number;
+  toolSetHash?: string;
+  version?: string | number;
+  userId?: string;
+  turns?: number;
+  compacted?: boolean;
 }
 
 /**

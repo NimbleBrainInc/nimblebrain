@@ -1,3 +1,4 @@
+import { Fragment } from "react";
 import { NavLink, Outlet } from "react-router-dom";
 import { useShellContext } from "../context/ShellContext";
 import { useWorkspaceContext } from "../context/WorkspaceContext";
@@ -72,6 +73,13 @@ const PLATFORM_SECTIONS: PlatformSection[] = [
     to: "/settings/workspace/apps",
     group: "workspace",
     end: true,
+    minRole: "ws_member",
+  },
+  {
+    id: "ws-skills",
+    label: "Skills",
+    to: "/settings/workspace/skills",
+    group: "workspace",
     minRole: "ws_member",
   },
 
@@ -187,35 +195,38 @@ export function SettingsPage() {
               return (
                 <SettingsGroup key={group} label={GROUP_LABELS[group]} isFirst={idx === 0}>
                   {sections.map((section) => (
-                    <NavLink
-                      key={section.id}
-                      to={section.to}
-                      end={section.end}
-                      className={({ isActive }) => navItemClass(isActive)}
-                    >
-                      {section.label}
-                    </NavLink>
+                    <Fragment key={section.id}>
+                      <NavLink
+                        to={section.to}
+                        end={section.end}
+                        className={({ isActive }) => navItemClass(isActive)}
+                      >
+                        {section.label}
+                      </NavLink>
+                      {/* App sub-panels nest under the Apps entry specifically,
+                       *  so reordering sections doesn't reparent them.
+                       */}
+                      {section.id === "ws-apps" && appPanels.length > 0 && (
+                        <div className="ml-3 mt-0.5 flex flex-col gap-0.5 border-l border-border pl-2">
+                          {appPanels.map((panel) => {
+                            const Icon = panel.icon ? resolveIcon(panel.icon) : null;
+                            return (
+                              <NavLink
+                                key={panel.serverName}
+                                to={`/settings/workspace/apps/${panel.serverName}`}
+                                className={({ isActive }) =>
+                                  cn(navItemClass(isActive), "flex items-center gap-2 text-xs")
+                                }
+                              >
+                                {Icon && <Icon className="shrink-0 w-3.5 h-3.5" />}
+                                <span className="truncate">{panel.label ?? panel.serverName}</span>
+                              </NavLink>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </Fragment>
                   ))}
-                  {/* App panels nest under "This Workspace > Apps" */}
-                  {group === "workspace" && appPanels.length > 0 && (
-                    <div className="ml-3 mt-0.5 flex flex-col gap-0.5 border-l border-border pl-2">
-                      {appPanels.map((panel) => {
-                        const Icon = panel.icon ? resolveIcon(panel.icon) : null;
-                        return (
-                          <NavLink
-                            key={panel.serverName}
-                            to={`/settings/workspace/apps/${panel.serverName}`}
-                            className={({ isActive }) =>
-                              cn(navItemClass(isActive), "flex items-center gap-2 text-xs")
-                            }
-                          >
-                            {Icon && <Icon className="shrink-0 w-3.5 h-3.5" />}
-                            <span className="truncate">{panel.label ?? panel.serverName}</span>
-                          </NavLink>
-                        );
-                      })}
-                    </div>
-                  )}
                 </SettingsGroup>
               );
             })}

@@ -1,5 +1,11 @@
 import { resolve } from "node:path";
 import type { LanguageModelV3Content, LanguageModelV3Message } from "@ai-sdk/provider";
+import type { ContextAssembledSource, SkillsLoadedEntry } from "../engine/types.ts";
+
+// Re-export so conversation-event consumers don't need to know these
+// originate in engine/types.ts. Engine emits them; conversation persists
+// them; one definition keeps the wire shape from drifting.
+export type { ContextAssembledSource, SkillsLoadedEntry };
 
 /**
  * Conversation IDs are `conv_` followed by exactly 16 lowercase hex characters.
@@ -177,6 +183,8 @@ export type ConversationEventType =
   | "tool.progress"
   | "run.done"
   | "run.error"
+  | "skills.loaded"
+  | "context.assembled"
   | "metadata.title"
   | "metadata.visibility"
   | "metadata.participants";
@@ -303,6 +311,25 @@ export interface ParticipantsChangeEvent {
   participants: string[];
 }
 
+export interface SkillsLoadedEvent {
+  ts: string;
+  type: "skills.loaded";
+  runId: string;
+  skills: SkillsLoadedEntry[];
+  totalTokens: number;
+}
+
+export interface ContextAssembledEvent {
+  ts: string;
+  type: "context.assembled";
+  runId: string;
+  sources: ContextAssembledSource[];
+  excluded: ContextAssembledSource[];
+  totalTokens: number;
+  modelMaxContext?: number;
+  headroomTokens?: number;
+}
+
 /** Discriminated union of all conversation event types. */
 export type ConversationEvent =
   | UserMessageEvent
@@ -313,6 +340,8 @@ export type ConversationEvent =
   | ToolProgressEvent
   | RunDoneEvent
   | RunErrorEvent
+  | SkillsLoadedEvent
+  | ContextAssembledEvent
   | TitleChangeEvent
   | VisibilityChangeEvent
   | ParticipantsChangeEvent;
