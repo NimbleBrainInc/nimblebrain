@@ -280,7 +280,7 @@
         },
         "skillManagement": {
           "type": "boolean",
-          "description": "Enable skill create/update/delete via nb__manage_skill. Default: true.",
+          "description": "Enable skill create/update/delete/activate/deactivate/move_scope via the nb__skills tool surface. Default: true.",
           "default": true
         },
         "delegation": {

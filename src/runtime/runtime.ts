@@ -349,7 +349,9 @@ export class Runtime {
       configThinkingBudgetTokens: config.thinkingBudgetTokens,
     };
 
-    // System tools (search, manage_app, bundle_status, manage_skill, delegate)
+    // System tools (search, manage_app, bundle_status, delegate). Skill
+    // mutation lives in the dedicated `nb__skills` source — registered
+    // separately via `createPlatformSources`.
     // Use a late-bound holder so reloadSkills can reference `rt` after construction.
     const rtHolder: { rt?: Runtime } = {};
     const boundReloadSkills = async () => {
