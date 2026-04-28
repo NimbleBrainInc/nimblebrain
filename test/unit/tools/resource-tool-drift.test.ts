@@ -19,10 +19,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FILES_BROWSER_HTML } from "../../../src/tools/platform-resources/files/browser.ts";
-import { SETTINGS_PANEL_HTML } from "../../../src/tools/platform-resources/settings/panel.ts";
 import { USAGE_DASHBOARD_HTML } from "../../../src/tools/platform-resources/usage/dashboard.ts";
 import { createFilesSource } from "../../../src/tools/platform/files.ts";
-import { createSettingsSource } from "../../../src/tools/platform/settings.ts";
 import { createUsageSource } from "../../../src/tools/platform/usage.ts";
 import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
 import type { McpSource } from "../../../src/tools/mcp-source.ts";
@@ -91,25 +89,6 @@ describe("Resource client / source contract — tool names match", () => {
         }
       } finally {
         await filesSource.stop();
-      }
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  test("settings/panel.ts calls only tools advertised by settings source", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "nb-drift-settings-"));
-    try {
-      const settingsSource = createSettingsSource(makeRuntime(dir), new NoopEventSink());
-      await settingsSource.start();
-      try {
-        const names = extractCallToolNames(SETTINGS_PANEL_HTML);
-        expect(names.length).toBeGreaterThan(0);
-        for (const name of names) {
-          await assertAdvertised(name, settingsSource, { settings: settingsSource });
-        }
-      } finally {
-        await settingsSource.stop();
       }
     } finally {
       rmSync(dir, { recursive: true, force: true });

@@ -11,6 +11,11 @@ interface ModelEntry {
   limits: { context: number };
 }
 
+type ThinkingMode = "off" | "adaptive" | "enabled";
+
+/** Sentinel select value for "no operator override — use platform default policy". */
+const THINKING_DEFAULT = "" as const;
+
 interface ModelConfig {
   models: { default: string; fast: string; reasoning: string };
   configuredProviders: string[];
@@ -18,6 +23,8 @@ interface ModelConfig {
   maxIterations: number;
   maxInputTokens: number;
   maxOutputTokens: number;
+  thinking?: ThinkingMode;
+  thinkingBudgetTokens?: number;
 }
 
 interface Feedback {
@@ -89,6 +96,13 @@ export function ModelTab() {
   const [maxIterations, setMaxIterations] = useState(10);
   const [maxInputTokens, setMaxInputTokens] = useState(500000);
   const [maxOutputTokens, setMaxOutputTokens] = useState(16384);
+  // Empty string is the "no override — use platform default" sentinel
+  // for the select. On save, that becomes a literal `null` to the tool,
+  // which clears any persisted operator override.
+  const [thinking, setThinking] = useState<ThinkingMode | typeof THINKING_DEFAULT>(
+    THINKING_DEFAULT,
+  );
+  const [thinkingBudgetTokens, setThinkingBudgetTokens] = useState(16000);
   const [availableModels, setAvailableModels] = useState<Record<string, ModelEntry[]>>({});
   const [saving, setSaving] = useState(false);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
@@ -104,6 +118,10 @@ export function ModelTab() {
         setMaxIterations(config.maxIterations ?? 10);
         setMaxInputTokens(config.maxInputTokens ?? 500000);
         setMaxOutputTokens(config.maxOutputTokens ?? 16384);
+        setThinking(config.thinking ?? THINKING_DEFAULT);
+        if (config.thinkingBudgetTokens != null) {
+          setThinkingBudgetTokens(config.thinkingBudgetTokens);
+        }
         setAvailableModels(config.availableModels ?? {});
       })
       .catch((err) => {
@@ -117,6 +135,16 @@ export function ModelTab() {
     setSaving(true);
     setFeedback(null);
     try {
+      // null → clear operator override (revert to platform default policy)
+      // string mode → set explicit override
+      // budget only sent for "enabled"; "off"/"adaptive" don't need it
+      const thinkingPatch =
+        thinking === THINKING_DEFAULT
+          ? { thinking: null, thinkingBudgetTokens: null }
+          : thinking === "enabled"
+            ? { thinking, thinkingBudgetTokens }
+            : { thinking };
+
       await callTool("nb", "set_model_config", {
         models: {
           default: defaultModel,
@@ -126,6 +154,7 @@ export function ModelTab() {
         maxIterations,
         maxInputTokens,
         maxOutputTokens,
+        ...thinkingPatch,
       });
       setFeedback({ type: "success", message: "Model configuration saved." });
     } catch (err) {
@@ -134,7 +163,16 @@ export function ModelTab() {
     } finally {
       setSaving(false);
     }
-  }, [defaultModel, fastModel, reasoningModel, maxIterations, maxInputTokens, maxOutputTokens]);
+  }, [
+    defaultModel,
+    fastModel,
+    reasoningModel,
+    maxIterations,
+    maxInputTokens,
+    maxOutputTokens,
+    thinking,
+    thinkingBudgetTokens,
+  ]);
 
   if (loading) {
     return <div className="text-muted-foreground text-sm">Loading model configuration...</div>;
@@ -209,6 +247,46 @@ export function ModelTab() {
               onChange={(e) => setMaxOutputTokens(Number(e.target.value))}
             />
           </div>
+
+          {/* Extended Thinking */}
+          <div className="space-y-1.5">
+            <Label htmlFor="thinking">Extended Thinking</Label>
+            <select
+              id="thinking"
+              value={thinking}
+              onChange={(e) =>
+                setThinking(e.target.value as ThinkingMode | typeof THINKING_DEFAULT)
+              }
+              className={selectClass}
+            >
+              <option value={THINKING_DEFAULT}>
+                Default (adaptive for reasoning models, off otherwise)
+              </option>
+              <option value="off">Off — never reason</option>
+              <option value="adaptive">Adaptive — model decides per call</option>
+              <option value="enabled">Enabled — always reason</option>
+            </select>
+            <p className="text-xs text-muted-foreground">
+              Anthropic-only today. Reasoning is billed as output tokens; adaptive only engages when
+              the model judges it useful.
+            </p>
+          </div>
+
+          {thinking === "enabled" && (
+            <div className="space-y-1.5">
+              <Label htmlFor="thinkingBudgetTokens">Thinking Budget Tokens</Label>
+              <Input
+                id="thinkingBudgetTokens"
+                type="number"
+                min={1024}
+                value={thinkingBudgetTokens}
+                onChange={(e) => setThinkingBudgetTokens(Number(e.target.value))}
+              />
+              <p className="text-xs text-muted-foreground">
+                Min 1024. Counts toward Max Output Tokens.
+              </p>
+            </div>
+          )}
 
           {/* Feedback */}
           {feedback && (
