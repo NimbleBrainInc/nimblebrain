@@ -30,11 +30,15 @@ import { SessionProvider } from "./context/SessionContext";
 import { ShellProvider } from "./context/ShellContext";
 import { SidebarProvider } from "./context/SidebarContext";
 import { ThemeProvider, useTheme } from "./context/ThemeContext.tsx";
-import type { WorkspaceInfo } from "./context/WorkspaceContext";
-import { useWorkspaceContext, WorkspaceProvider } from "./context/WorkspaceContext";
+import {
+  useWorkspaceContext,
+  type WorkspaceInfo,
+  WorkspaceProvider,
+} from "./context/WorkspaceContext";
 import { useDataSync } from "./hooks/useDataSync";
 import { useEvents } from "./hooks/useEvents";
 import { useShell } from "./hooks/useShell";
+import { bootstrapWorkspacesToInfo } from "./lib/bootstrap";
 import { toSlug } from "./lib/workspace-slug";
 import { ProfilePage } from "./pages/ProfilePage";
 import { SettingsPage } from "./pages/SettingsPage";
@@ -82,13 +86,7 @@ function AuthenticatedApp({
       .catch(() => {});
   }, []);
 
-  // Map bootstrap workspace shape to WorkspaceInfo for the provider
-  const initialWorkspaces: WorkspaceInfo[] = bootstrap.workspaces.map((ws) => ({
-    id: ws.id,
-    name: ws.name,
-    memberCount: ws.memberCount,
-    bundles: [],
-  }));
+  const initialWorkspaces: WorkspaceInfo[] = bootstrapWorkspacesToInfo(bootstrap.workspaces);
 
   const initialShell: ShellData = bootstrap.shell;
 

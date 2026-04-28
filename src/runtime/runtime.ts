@@ -755,10 +755,18 @@ export class Runtime {
       resolvedModelString = this.getModelSlot(aliasSlot);
     }
 
+    // Resolve maxOutputTokens FIRST — resolveThinking needs it to clamp the
+    // thinking budget so visible-content headroom is always preserved.
+    const resolvedMaxOutputTokens = resolveMaxOutputTokens({
+      configValue: this.config.maxOutputTokens,
+      model: resolvedModelString,
+    });
+
     const resolvedThinking = resolveThinking({
       configMode: this.config.thinking,
       configBudgetTokens: this.config.thinkingBudgetTokens,
       model: resolvedModelString,
+      maxOutputTokens: resolvedMaxOutputTokens,
     });
 
     // Build pre-emit run telemetry tied to the engine's runId. The engine fires
@@ -777,10 +785,7 @@ export class Runtime {
       model: resolvedModelString,
       maxIterations: request.maxIterations ?? this.config.maxIterations ?? DEFAULT_MAX_ITERATIONS,
       maxInputTokens: this.config.maxInputTokens ?? DEFAULT_MAX_INPUT_TOKENS,
-      maxOutputTokens: resolveMaxOutputTokens({
-        configValue: this.config.maxOutputTokens,
-        model: resolvedModelString,
-      }),
+      maxOutputTokens: resolvedMaxOutputTokens,
       ...(resolvedThinking ? { thinking: resolvedThinking } : {}),
       maxToolResultSize: this.config.maxToolResultSize,
       hooks: this.hooks,

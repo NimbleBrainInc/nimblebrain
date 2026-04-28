@@ -538,10 +538,14 @@ describe("reconstructMessages", () => {
     expect(events).toEqual(frozen);
   });
 
-  it("drops unexecuted tool calls when run ends early (token_budget)", () => {
-    // Reproduces production bug: LLM response with 4 tool calls is persisted,
-    // but the run is cut short before tools execute. The reconstructor should
-    // NOT create fake empty tool results for unexecuted tool calls.
+  it("drops unexecuted tool calls when run ends early (token_budget) and emits a placeholder", () => {
+    // Reproduces production bug + role-alternation guarantee: LLM response
+    // with 4 tool calls is persisted, but the run is cut short before any
+    // tool executes. The reconstructor:
+    //   - Drops the orphaned tool-call blocks (Anthropic rejects orphans).
+    //   - Emits a placeholder assistant message so the next user message
+    //     doesn't create user→user adjacency, which Anthropic rejects with
+    //     "model does not support assistant message prefill".
     const events: ConversationEvent[] = [
       userMessage("Read all files"),
       runStart("run-1"),
@@ -556,10 +560,49 @@ describe("reconstructMessages", () => {
     ];
     const messages = reconstructMessages(events);
 
-    // Should only have the user message — no assistant or tool messages
-    // because the tool calls were never executed
-    expect(messages).toHaveLength(1);
+    // user + assistant placeholder. Critically: NO assistant tool-call
+    // blocks (those are filtered) and NO synthetic tool-result blocks.
+    expect(messages).toHaveLength(2);
     expect(messages[0]!.role).toBe("user");
+    expect(messages[1]!.role).toBe("assistant");
+    const placeholder = messages[1]!.content as Array<{ type: string; text?: string }>;
+    expect(placeholder).toHaveLength(1);
+    expect(placeholder[0]!.type).toBe("text");
+    expect(placeholder[0]!.text).toContain("tool execution did not complete");
+  });
+
+  it("abandoned run with zero llm.response events still preserves role alternation", () => {
+    // Edge case the per-run step 4a doesn't catch: process died after
+    // run.start but BEFORE any llm.response landed in the JSONL. Without
+    // the final invariant pass, the run scope contributes zero messages
+    // and the next user message creates user→user adjacency.
+    const events: ConversationEvent[] = [
+      userMessage("Do thing"),
+      runStart("run-1"),
+      // No llm.response, no tool events, no run.done — process died here
+      userMessage("Hello?"),
+    ];
+    const messages = reconstructMessages(events);
+
+    expect(messages.map((m) => m.role)).toEqual(["user", "assistant", "user"]);
+    const placeholder = messages[1]!.content as Array<{ type: string; text?: string }>;
+    expect(placeholder[0]!.text).toContain("without producing any response");
+  });
+
+  it("orphaned tool-calls placeholder preserves role alternation across appends", () => {
+    // Concrete cascade scenario: orphaned tool-calls run is followed by
+    // another user message. The reconstructed history must alternate
+    // user→assistant→user (Anthropic invariant), NOT user→user.
+    const events: ConversationEvent[] = [
+      userMessage("Start research"),
+      runStart("run-1"),
+      llmParallelToolCalls("run-1", [{ toolCallId: "tc-a", toolName: "research__start" }]),
+      // Process died — no tool.done, no run.done
+      userMessage("What happened?"),
+    ];
+    const messages = reconstructMessages(events);
+
+    expect(messages.map((m) => m.role)).toEqual(["user", "assistant", "user"]);
   });
 
   it("keeps executed tool calls but drops unexecuted ones from same response", () => {

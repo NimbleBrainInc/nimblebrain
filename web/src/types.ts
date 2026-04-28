@@ -269,7 +269,14 @@ export interface BootstrapResponse {
   workspaces: Array<{
     id: string;
     name: string;
-    role: string;
+    /**
+     * The signed-in user's role within this workspace. Drives the
+     * workspace-scoped permission UX (see `useScopedRole`). Tightened to
+     * the literal union so a future server change can't silently widen it
+     * back to `string` — that regression dropped every non-admin's
+     * settings nav to "About only" until detected in production.
+     */
+    role: "admin" | "member";
     memberCount: number;
     bundleCount: number;
   }>;
