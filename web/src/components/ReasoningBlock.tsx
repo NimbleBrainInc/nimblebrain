@@ -1,19 +1,21 @@
 /**
- * ReasoningBlock — collapsed-by-default view of the model's extended-thinking
- * content. Renders above the assistant's visible text, signaling that
- * the model deliberated before responding without crowding the message body.
+ * ReasoningBlock — view of the model's extended-thinking content.
  *
- * Interaction:
- *   - Collapsed (default): single-line "Thoughts" affordance with a chevron.
- *   - Expanded: the full reasoning text in a subdued container.
+ * Display rules:
+ *   - While streaming: auto-expanded so the user can watch the model think.
+ *     The header shows a pulsing brain + "Thinking… ~Nk tokens" so progress
+ *     is visible at a glance even with the body collapsed.
+ *   - After streaming: auto-collapses to "Thoughts · ~Nk tokens" so the
+ *     reasoning doesn't crowd the message body. Click to expand.
+ *   - User override: a manual click during streaming sticks for the rest
+ *     of this block's lifetime (no fighting the user's intent).
  *
- * Live streaming: while reasoning deltas are arriving, the block stays
- * collapsed but shows a subtle "thinking…" indicator so the user knows
- * the model is actively reasoning.
+ * The block lifetime is one assistant turn — every new turn instantiates
+ * a fresh component, so the override doesn't leak across messages.
  */
 
 import { Brain, ChevronRight } from "lucide-react";
-import { memo, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 
 interface ReasoningBlockProps {
   text: string;
@@ -21,21 +23,67 @@ interface ReasoningBlockProps {
   streaming?: boolean;
 }
 
+/**
+ * Approximate token count from character length using the standard
+ * 4 chars/token heuristic. Real `reasoningTokens` comes from `llm.done`
+ * after streaming, but for live progress we render the approximation —
+ * it's accurate enough for "is the model still working?" judgment.
+ *
+ * Threshold for the "Nk" form is 2,500 tokens (≈10k chars) rather than
+ * the bare 1,000 — avoids the slightly noisy "1.0k tokens" right after
+ * crossing the boundary.
+ */
+function approximateTokenLabel(charCount: number): string {
+  if (charCount === 0) return "";
+  const tokens = Math.round(charCount / 4);
+  if (tokens >= 2500) return `${(tokens / 1000).toFixed(1)}k tokens`;
+  return `${tokens} tokens`;
+}
+
 function ReasoningBlockImpl({ text, streaming }: ReasoningBlockProps) {
-  const [expanded, setExpanded] = useState(false);
+  // Default: expanded while streaming, collapsed when done.
+  const [expanded, setExpanded] = useState(!!streaming);
+  // Once the user manually toggles, stop auto-following the streaming flag.
+  // Ref because we don't want a re-render when the override flips.
+  const userOverrodeRef = useRef(false);
+
+  // Mirror the streaming flag into expanded unless the user has
+  // overridden. The first run on mount is a no-op (the state initializer
+  // already wrote the same value); we keep it that way so the same
+  // logic handles both initial mount and later transitions, which keeps
+  // the intent of the effect obvious at a glance.
+  useEffect(() => {
+    if (!userOverrodeRef.current) {
+      setExpanded(!!streaming);
+    }
+  }, [streaming]);
+
+  const handleToggle = () => {
+    userOverrodeRef.current = true;
+    setExpanded((v) => !v);
+  };
 
   if (!text && !streaming) return null;
+
+  const tokenLabel = approximateTokenLabel(text.length);
+  const headerLabel = streaming
+    ? tokenLabel
+      ? `Thinking… ${tokenLabel}`
+      : "Thinking…"
+    : tokenLabel
+      ? `Thoughts · ${tokenLabel}`
+      : "Thoughts";
 
   return (
     <div className="my-2">
       <button
         type="button"
-        onClick={() => setExpanded((v) => !v)}
+        onClick={handleToggle}
         className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
       >
         <ChevronRight className={`w-3 h-3 transition-transform ${expanded ? "rotate-90" : ""}`} />
-        <Brain className="w-3 h-3" />
-        <span>{streaming && !text ? "Thinking…" : "Thoughts"}</span>
+        <Brain className={`w-3 h-3 ${streaming ? "animate-pulse" : ""}`} />
+        <span>{headerLabel}</span>
       </button>
       {expanded && text && (
         <div className="mt-2 ml-4 px-3 py-2 rounded-md bg-muted/30 border border-border/60 text-sm text-muted-foreground whitespace-pre-wrap leading-relaxed">
