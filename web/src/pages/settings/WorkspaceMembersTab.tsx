@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { callTool } from "../../api/client";
 import { parseToolResult } from "../../api/tool-result";
+import { Button } from "../../components/ui/button";
 import { RoleBadge } from "../../components/ui/role-badge";
 import {
   Table,
@@ -73,18 +74,31 @@ function Inner() {
     void fetchData();
   }, [fetchData]);
 
-  if (loading) {
-    return <p className="text-sm text-muted-foreground">Loading members…</p>;
-  }
-
   return (
     <SettingsListPage
       title="Members"
       description="Workspace admins manage membership from the organization Workspaces view."
+      loading={loading}
+      loadingMessage="Loading members…"
       loadError={error}
     >
-      {members.length === 0 ? (
+      {members.length === 0 && !error ? (
         <EmptyState message="No members in this workspace." />
+      ) : members.length === 0 && error ? (
+        // Load failed — empty-state would imply the workspace has no
+        // members when really we couldn't fetch. Offer Retry instead.
+        <div className="flex justify-center pt-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              setLoading(true);
+              void fetchData();
+            }}
+          >
+            Retry
+          </Button>
+        </div>
       ) : (
         <Table>
           <TableHeader>

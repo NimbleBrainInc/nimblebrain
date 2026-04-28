@@ -28,6 +28,7 @@ export interface SettingsDashboardPageProps extends Omit<SettingsPageHeaderProps
 export function SettingsDashboardPage({
   title,
   description,
+  icon,
   back,
   controls,
   loadError,
@@ -37,7 +38,7 @@ export function SettingsDashboardPage({
 }: SettingsDashboardPageProps) {
   return (
     <div className="max-w-5xl mx-auto space-y-6">
-      <SettingsPageHeader title={title} description={description} back={back} />
+      <SettingsPageHeader title={title} description={description} icon={icon} back={back} />
 
       {controls ? <div>{controls}</div> : null}
 

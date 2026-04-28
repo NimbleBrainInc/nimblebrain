@@ -5,7 +5,8 @@ import { Link } from "react-router-dom";
 /**
  * Page-level header used by every settings page kind (Form / List /
  * Dashboard / AppPanel). Centralizes title typography, description
- * styling, optional back-nav, and a right-aligned action slot.
+ * styling, optional back-nav, optional leading icon, and a right-aligned
+ * action slot.
  *
  * Heading hierarchy convention for the settings tree:
  *   - Page title (this component): `h2 text-lg font-semibold tracking-tight`
@@ -18,13 +19,26 @@ import { Link } from "react-router-dom";
 export interface SettingsPageHeaderProps {
   title: string;
   description?: ReactNode;
+  /**
+   * Optional glyph rendered inline to the left of the title — used for
+   * pages whose identity is reinforced by an icon (currently
+   * `SettingsAppPanelPage`, which carries the bundle's icon). Render the
+   * icon node yourself; the header doesn't size or color it.
+   */
+  icon?: ReactNode;
   /** Right-aligned action — typically a primary button (Create, Save, etc). */
   action?: ReactNode;
   /** Optional back-nav rendered as an arrow button to the left of the title. */
   back?: { to: string; label?: string };
 }
 
-export function SettingsPageHeader({ title, description, action, back }: SettingsPageHeaderProps) {
+export function SettingsPageHeader({
+  title,
+  description,
+  icon,
+  action,
+  back,
+}: SettingsPageHeaderProps) {
   return (
     <header className="flex items-start justify-between gap-4">
       <div className="flex items-start gap-2 min-w-0">
@@ -36,6 +50,14 @@ export function SettingsPageHeader({ title, description, action, back }: Setting
           >
             <ArrowLeft className="h-4 w-4" />
           </Link>
+        ) : null}
+        {icon ? (
+          <span
+            className="shrink-0 inline-flex h-8 w-8 items-center justify-center text-muted-foreground"
+            aria-hidden="true"
+          >
+            {icon}
+          </span>
         ) : null}
         <div className="min-w-0">
           <h2 className="text-lg font-semibold tracking-tight truncate">{title}</h2>

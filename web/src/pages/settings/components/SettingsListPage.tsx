@@ -13,11 +13,13 @@ import { SettingsPageHeader, type SettingsPageHeaderProps } from "./SettingsPage
  *   - column width (`max-w-5xl` — wide enough for tables with 4-6 cols)
  *   - the reveal-create pattern (button-in-header → form-card-below)
  *     that was duplicated in three tabs with subtly different state shapes
- *   - the load-error banner
+ *   - the load-error banner and loading placeholder
  *
  * The list itself (`children`) is bare — table or card-list, page's
  * choice. The page is responsible for rendering its own empty state via
- * `EmptyState` when `children` would otherwise be empty.
+ * `EmptyState` when `children` would otherwise be empty (and should guard
+ * that with `loadError` so the banner and the empty state don't both
+ * render after a fetch failure).
  *
  * `create.canCreate === false` hides the create button entirely (used
  * for non-admin viewers). `create` omitted = no create flow at all
@@ -42,6 +44,15 @@ export interface SettingsListPageProps extends Omit<SettingsPageHeaderProps, "ac
   };
   /** Persistent banner above the body. */
   loadError?: string | null;
+  /**
+   * When true, replaces the body with a loading placeholder while keeping
+   * the page header and load-error banner in place. Matches FormPage /
+   * DashboardPage so the page chrome is structurally consistent across
+   * loading → loaded → error states (rather than callers short-circuiting
+   * before the wrapper).
+   */
+  loading?: boolean;
+  loadingMessage?: string;
   children: ReactNode;
 }
 
@@ -49,8 +60,11 @@ export function SettingsListPage({
   title,
   description,
   back,
+  icon,
   create,
   loadError,
+  loading,
+  loadingMessage = "Loading...",
   children,
 }: SettingsListPageProps) {
   const showCreateButton = create && (create.canCreate ?? true);
@@ -72,17 +86,29 @@ export function SettingsListPage({
 
   return (
     <div className="max-w-5xl mx-auto space-y-6">
-      <SettingsPageHeader title={title} description={description} back={back} action={action} />
+      <SettingsPageHeader
+        title={title}
+        description={description}
+        icon={icon}
+        back={back}
+        action={action}
+      />
 
       {loadError ? <InlineError message={loadError} /> : null}
 
-      {create?.showing ? (
-        <Card>
-          <CardContent className="py-4 space-y-4">{create.form}</CardContent>
-        </Card>
-      ) : null}
+      {loading ? (
+        <p className="text-sm text-muted-foreground">{loadingMessage}</p>
+      ) : (
+        <>
+          {create?.showing ? (
+            <Card>
+              <CardContent className="py-4 space-y-4">{create.form}</CardContent>
+            </Card>
+          ) : null}
 
-      {children}
+          {children}
+        </>
+      )}
     </div>
   );
 }

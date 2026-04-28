@@ -115,37 +115,15 @@ export function UsersTab() {
     [fetchUsers],
   );
 
-  if (loading) {
-    return <p className="text-sm text-muted-foreground">Loading users...</p>;
-  }
-
-  if (error && users.length === 0) {
-    return (
-      <div className="max-w-5xl mx-auto space-y-3">
-        <InlineError
-          message={error}
-          action={
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                setLoading(true);
-                fetchUsers();
-              }}
-            >
-              Retry
-            </Button>
-          }
-        />
-      </div>
-    );
-  }
-
+  // Loading and load-error states route through the template so the page
+  // header stays put across loading → loaded → error transitions.
   return (
     <SettingsListPage
       title="Users"
       description="Manage organization users and their roles."
-      loadError={error && users.length > 0 ? error : null}
+      loading={loading}
+      loadingMessage="Loading users..."
+      loadError={error}
       create={{
         label: "Create User",
         icon: <UserPlus className="mr-1 h-4 w-4" />,
@@ -200,7 +178,11 @@ export function UsersTab() {
         ),
       }}
     >
-      {users.length === 0 ? (
+      {users.length === 0 && !error ? (
+        // Genuine "load succeeded but list is empty" — invite the user to
+        // create the first item. Hidden when `error` is set so the
+        // failure banner above isn't contradicted by a "No users yet"
+        // message implying an empty (but loaded) list.
         <EmptyState
           message="No users yet."
           action={
@@ -212,6 +194,22 @@ export function UsersTab() {
             ) : null
           }
         />
+      ) : users.length === 0 && error ? (
+        // Load failed and we have nothing to show — surface a Retry button
+        // beneath the error banner. The page owns retry semantics
+        // (knows how to refetch).
+        <div className="flex justify-center pt-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              setLoading(true);
+              fetchUsers();
+            }}
+          >
+            Retry
+          </Button>
+        </div>
       ) : (
         <Table>
           <TableHeader>

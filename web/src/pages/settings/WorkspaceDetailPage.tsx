@@ -221,9 +221,18 @@ export function WorkspaceDetailPage() {
   // bug from the previous version.
   const backTo = "/settings/org/workspaces";
 
+  // The page header (title + back-nav) renders across all states —
+  // loading, notFound, error-without-data, and the loaded view — so the
+  // user always knows which page they're on and has a path back.
+  // WorkspaceDetailPage is a composite (back-nav + multiple sections) so
+  // it doesn't compose through one of the page-kind templates; we render
+  // the chrome manually here.
+  const back = { to: backTo, label: "Back to workspaces" };
+
   if (loading) {
     return (
-      <div className="max-w-5xl mx-auto">
+      <div className="max-w-5xl mx-auto space-y-6">
+        <SettingsPageHeader title="Workspace" back={back} />
         <p className="text-sm text-muted-foreground">Loading workspace...</p>
       </div>
     );
@@ -231,11 +240,8 @@ export function WorkspaceDetailPage() {
 
   if (notFound) {
     return (
-      <div className="max-w-5xl mx-auto space-y-4">
-        <SettingsPageHeader
-          title="Workspace not found"
-          back={{ to: backTo, label: "Back to workspaces" }}
-        />
+      <div className="max-w-5xl mx-auto space-y-6">
+        <SettingsPageHeader title="Workspace not found" back={back} />
         <p className="text-sm text-destructive">
           This workspace doesn't exist or has been deleted.
         </p>
@@ -245,22 +251,21 @@ export function WorkspaceDetailPage() {
 
   if (error && !workspace) {
     return (
-      <div className="max-w-5xl mx-auto space-y-3">
-        <InlineError
-          message={error}
-          action={
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                setLoading(true);
-                fetchData();
-              }}
-            >
-              Retry
-            </Button>
-          }
-        />
+      <div className="max-w-5xl mx-auto space-y-6">
+        <SettingsPageHeader title="Workspace" back={back} />
+        <InlineError message={error} />
+        <div className="flex justify-center pt-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              setLoading(true);
+              fetchData();
+            }}
+          >
+            Retry
+          </Button>
+        </div>
       </div>
     );
   }
@@ -270,7 +275,7 @@ export function WorkspaceDetailPage() {
       <SettingsPageHeader
         title={workspace?.name ?? "Workspace"}
         description={`Created ${formatDate(workspace?.createdAt)}`}
-        back={{ to: backTo, label: "Back to workspaces" }}
+        back={back}
       />
 
       {error ? <InlineError message={error} /> : null}

@@ -32,6 +32,12 @@ export interface SettingsFormPageProps extends Omit<SettingsPageHeaderProps, "ac
   save?: {
     onSave: () => void | Promise<void>;
     saving?: boolean;
+    /**
+     * Tristate: `true` enables Save, `false` disables it (clean state),
+     * `undefined` means the page doesn't track dirty — Save stays enabled
+     * regardless. Profile / Model rely on the undefined branch because
+     * users expect Save to be available without first re-typing a value.
+     */
     dirty?: boolean;
     /**
      * Override the default disable rule (`saving || dirty === false`).
@@ -58,6 +64,7 @@ export interface SettingsFormPageProps extends Omit<SettingsPageHeaderProps, "ac
 export function SettingsFormPage({
   title,
   description,
+  icon,
   back,
   save,
   loadError,
@@ -68,7 +75,7 @@ export function SettingsFormPage({
 }: SettingsFormPageProps) {
   return (
     <div className="max-w-2xl mx-auto space-y-6">
-      <SettingsPageHeader title={title} description={description} back={back} />
+      <SettingsPageHeader title={title} description={description} icon={icon} back={back} />
 
       {loadError ? <InlineError message={loadError} /> : null}
 

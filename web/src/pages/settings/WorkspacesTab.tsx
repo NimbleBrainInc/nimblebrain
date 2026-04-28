@@ -109,37 +109,13 @@ export function WorkspacesTab() {
     [fetchWorkspaces],
   );
 
-  if (loading) {
-    return <p className="text-sm text-muted-foreground">Loading workspaces...</p>;
-  }
-
-  if (error && workspaces.length === 0) {
-    return (
-      <div className="max-w-5xl mx-auto space-y-3">
-        <InlineError
-          message={error}
-          action={
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                setLoading(true);
-                fetchWorkspaces();
-              }}
-            >
-              Retry
-            </Button>
-          }
-        />
-      </div>
-    );
-  }
-
   return (
     <SettingsListPage
       title="Workspaces"
       description="Manage workspaces and their bundles."
-      loadError={error && workspaces.length > 0 ? error : null}
+      loading={loading}
+      loadingMessage="Loading workspaces..."
+      loadError={error}
       create={
         isAdmin
           ? {
@@ -178,7 +154,7 @@ export function WorkspacesTab() {
           : undefined
       }
     >
-      {workspaces.length === 0 ? (
+      {workspaces.length === 0 && !error ? (
         <EmptyState
           message={isAdmin ? "No workspaces yet." : "No workspaces available."}
           action={
@@ -189,6 +165,19 @@ export function WorkspacesTab() {
             ) : null
           }
         />
+      ) : workspaces.length === 0 && error ? (
+        <div className="flex justify-center pt-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              setLoading(true);
+              fetchWorkspaces();
+            }}
+          >
+            Retry
+          </Button>
+        </div>
       ) : (
         <Table>
           <TableHeader>
