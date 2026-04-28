@@ -19,7 +19,7 @@
  * next implementer registers them in the right place.
  */
 
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { EventSourcedConversationStore } from "../../conversation/event-sourced-store.ts";
 import type { ConversationEvent, SkillsLoadedEvent } from "../../conversation/types.ts";
@@ -28,6 +28,7 @@ import type { EventSink, ToolResult } from "../../engine/types.ts";
 import type { Runtime } from "../../runtime/runtime.ts";
 import { parseSkillFile, readSkillMtime } from "../../skills/loader.ts";
 import { toolMatches } from "../../skills/select.ts";
+import { approxTokens } from "../../skills/tokens.ts";
 import type { Skill } from "../../skills/types.ts";
 import { defineInProcessApp, type InProcessTool } from "../in-process-app.ts";
 import type { McpSource } from "../mcp-source.ts";
@@ -133,7 +134,7 @@ export function createSkillsSource(runtime: Runtime, eventSink: EventSink): McpS
         try {
           const list = await listSkills(runtime, authoringGuidePath, input);
           return {
-            content: textContent(JSON.stringify(list)),
+            content: textContent(summarizeList(list)),
             structuredContent: { skills: list },
             isError: false,
           };
@@ -161,12 +162,12 @@ export function createSkillsSource(runtime: Runtime, eventSink: EventSink): McpS
           const result = await readSkillById(runtime, authoringGuidePath, id);
           if (!result) {
             return {
-              content: textContent(JSON.stringify({ error: `Skill not found: ${id}` })),
+              content: textContent(`Skill not found: ${id}`),
               isError: true,
             };
           }
           return {
-            content: textContent(JSON.stringify(result)),
+            content: textContent(summarizeRead(result)),
             structuredContent: result as unknown as Record<string, unknown>,
             isError: false,
           };
@@ -194,12 +195,12 @@ export function createSkillsSource(runtime: Runtime, eventSink: EventSink): McpS
           const result = await activeForConversation(runtime, convId);
           if (result === null) {
             return {
-              content: textContent(JSON.stringify({ error: `Conversation not found: ${convId}` })),
+              content: textContent(`Conversation not found: ${convId}`),
               isError: true,
             };
           }
           return {
-            content: textContent(JSON.stringify(result)),
+            content: textContent(summarizeActive(result)),
             structuredContent: { active: result },
             isError: false,
           };
@@ -236,7 +237,7 @@ export function createSkillsSource(runtime: Runtime, eventSink: EventSink): McpS
         try {
           const events = await loadingLog(runtime, input);
           return {
-            content: textContent(JSON.stringify(events)),
+            content: textContent(summarizeLog(events)),
             structuredContent: { events },
             isError: false,
           };
@@ -320,10 +321,6 @@ interface ReadResult {
     derivedFrom?: string;
   };
   modifiedAt?: string;
-}
-
-function approxTokens(text: string): number {
-  return Math.ceil(text.length / 4);
 }
 
 function skillToListed(skill: Skill): ListedSkill {
@@ -430,10 +427,15 @@ async function listSkills(
     if (filter.modified_since && s.modifiedAt) {
       if (s.modifiedAt < filter.modified_since) return false;
     }
-    if (filter.tool_affinity) {
+    if (filter.tool_affinity !== undefined) {
+      // Short-circuit empty/whitespace-only target: an empty string would
+      // match `*`-pattern skills via `toolMatches`, but the operator's
+      // intent is clearly "no tool", which should match nothing rather
+      // than every wildcard skill.
+      const target = filter.tool_affinity.trim();
+      if (target.length === 0) return false;
       const patterns = s.appliesToTools ?? [];
       if (patterns.length === 0) return false;
-      const target = filter.tool_affinity;
       if (!patterns.some((p) => toolMatches(target, p))) return false;
     }
     return true;
@@ -463,6 +465,36 @@ function isPathUnderAnyRoot(target: string, roots: string[]): boolean {
   return roots.some((root) => resolved === root || resolved.startsWith(`${root}/`));
 }
 
+/**
+ * Defend against symlink escape from inside an allowed root. A writer
+ * with access to `{workDir}/workspaces/{wsId}/skills/` could drop a
+ * symlink (`evil.md` → `/etc/passwd`); `path.resolve()` normalizes `..`
+ * but doesn't resolve symlinks, so the lexical under-root check passes.
+ * `realpathSync` chases the link before the second under-root check.
+ *
+ * Roots are real-pathed too, since the work dir itself may pass through a
+ * symlink (e.g. macOS tmpdirs live under `/var/folders/...` which is a
+ * symlink into `/private/var/...`).
+ *
+ * Throws if the realpath escapes; returns the real path on success.
+ * Caller has already verified existence (this is the second gate).
+ */
+function realPathUnderAnyRootOrThrow(target: string, roots: string[]): string {
+  const real = realpathSync(target);
+  const realRoots = roots.map((r) => {
+    try {
+      return realpathSync(r);
+    } catch {
+      return r;
+    }
+  });
+  const ok = realRoots.some((root) => real === root || real.startsWith(`${root}/`));
+  if (!ok) {
+    throw new Error(`Skill path "${target}" resolves through a symlink outside allowed roots`);
+  }
+  return real;
+}
+
 async function readSkillById(
   runtime: Runtime,
   authoringGuidePath: string,
@@ -488,8 +520,11 @@ async function readSkillById(
     });
   }
 
-  // Treat as filesystem path. Reject path-traversal: must resolve under one
-  // of the allowed roots.
+  // Treat as filesystem path. Two security gates:
+  //   1. Lexical: the resolved path (.. normalized) sits under an allowed
+  //      root. Cheap; rejects most attacks before any FS access.
+  //   2. Real: realpath chases symlinks and re-checks under-root. Defends
+  //      against symlink escape from inside an allowed dir.
   const roots = allowedReadRoots(runtime, authoringGuidePath);
   if (!isPathUnderAnyRoot(id, roots)) {
     throw new Error(
@@ -498,6 +533,7 @@ async function readSkillById(
   }
 
   if (!existsSync(id)) return null;
+  realPathUnderAnyRootOrThrow(id, roots);
   const skill = parseSkillFile(id);
   if (!skill) return null;
   return buildReadResult(skill, {
@@ -717,9 +753,47 @@ function listWorkspaceConversationIds(runtime: Runtime): string[] {
 function errorResult(err: unknown): ToolResult {
   const message = err instanceof Error ? err.message : String(err);
   return {
-    content: textContent(JSON.stringify({ error: message })),
+    content: textContent(message),
     isError: true,
   };
+}
+
+// ── Human-readable summaries for tool `content` field ──────────────────
+//
+// Per AGENTS.md, `content` carries a short human-readable summary; the
+// full structured payload lives only in `structuredContent`. Each summary
+// is one or two short lines optimized for a debug log or a CLI render —
+// agents and UI clients consume the structured form.
+
+function summarizeList(skills: ListedSkill[]): string {
+  if (skills.length === 0) return "0 skills";
+  const byScope = new Map<string, number>();
+  for (const s of skills) byScope.set(s.scope, (byScope.get(s.scope) ?? 0) + 1);
+  const breakdown = Array.from(byScope.entries())
+    .sort()
+    .map(([scope, count]) => `${count} ${scope}`)
+    .join(", ");
+  return `${skills.length} skill${skills.length === 1 ? "" : "s"} (${breakdown})`;
+}
+
+function summarizeRead(skill: ReadResult): string {
+  const m = skill.metadata;
+  const parts = [`${m.name} (L${skill.layer} ${skill.scope})`];
+  if (m.loadingStrategy) parts.push(`loads: ${m.loadingStrategy}`);
+  if (m.status && m.status !== "active") parts.push(`status: ${m.status}`);
+  return parts.join(" · ");
+}
+
+function summarizeActive(active: ActiveForEntry[]): string {
+  if (active.length === 0) return "No skills loaded for this conversation yet.";
+  const totalTokens = active.reduce((sum, a) => sum + a.tokens, 0);
+  return `${active.length} skill${active.length === 1 ? "" : "s"} loaded · ${totalTokens} tokens`;
+}
+
+function summarizeLog(events: LoadingLogEntry[]): string {
+  if (events.length === 0) return "No skills.loaded events match the filters.";
+  const conversations = new Set(events.map((e) => e.conv_id)).size;
+  return `${events.length} run${events.length === 1 ? "" : "s"} across ${conversations} conversation${conversations === 1 ? "" : "s"}`;
 }
 
 // ── Future Phase 3 mutation tools ────────────────────────────────────────

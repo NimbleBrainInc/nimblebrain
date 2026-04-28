@@ -12,6 +12,7 @@ export {
 export { SkillMatcher } from "./matcher.ts";
 export type { LoadedBy, SelectedSkill, SelectInput } from "./select.ts";
 export { selectLayer3Skills, toolMatches } from "./select.ts";
+export { approxTokens } from "./tokens.ts";
 export type {
   Skill,
   SkillLoadingStrategy,

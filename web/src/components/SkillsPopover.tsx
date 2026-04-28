@@ -2,6 +2,7 @@ import { Lightbulb } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { callTool } from "../api/client";
+import { parseToolResponse } from "../lib/tool-response";
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -15,26 +16,6 @@ interface ActiveSkill {
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────
-
-function parseToolResponse<T>(res: {
-  content?: Array<{ type: string; text?: string }>;
-  structuredContent?: unknown;
-  isError?: boolean;
-}): T {
-  if (res.isError) {
-    const msg = res.content?.[0]?.text ?? "Operation failed";
-    throw new Error(msg);
-  }
-  if (res.structuredContent) return res.structuredContent as T;
-  if (res.content?.[0]?.text) {
-    try {
-      return JSON.parse(res.content[0].text) as T;
-    } catch {
-      throw new Error(res.content[0].text);
-    }
-  }
-  throw new Error("Empty response");
-}
 
 function shortName(id: string): string {
   // Filesystem ids end in /<name>.md; URI ids look like skill://owner/<name>.

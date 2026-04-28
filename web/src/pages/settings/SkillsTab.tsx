@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { callTool } from "../../api/client";
 import { Badge } from "../../components/ui/badge";
 import { Card, CardContent } from "../../components/ui/card";
+import { parseToolResponse } from "../../lib/tool-response";
 import { cn } from "../../lib/utils";
 import { RequireActiveWorkspace } from "./components/RequireActiveWorkspace";
 
@@ -54,26 +55,6 @@ interface ReadSkill {
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────
-
-function parseToolResponse<T>(res: {
-  content?: Array<{ type: string; text?: string }>;
-  structuredContent?: unknown;
-  isError?: boolean;
-}): T {
-  if (res.isError) {
-    const msg = res.content?.[0]?.text ?? "Operation failed";
-    throw new Error(msg);
-  }
-  if (res.structuredContent) return res.structuredContent as T;
-  if (res.content?.[0]?.text) {
-    try {
-      return JSON.parse(res.content[0].text) as T;
-    } catch {
-      throw new Error(res.content[0].text);
-    }
-  }
-  throw new Error("Empty response");
-}
 
 function formatTokens(n: number): string {
   if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;

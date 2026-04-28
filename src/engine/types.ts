@@ -147,27 +147,40 @@ export interface EngineConfig {
    * Phase 2: `skills.loaded` and `context.assembled` payloads. Future phases
    * may add more entries here without touching the engine signature.
    */
-  runMetadata?: {
-    skillsLoaded?: {
-      skills: Array<{
-        id: string;
-        layer: 3;
-        scope: "platform" | "workspace" | "user" | "bundle";
-        version: string;
-        tokens: number;
-        loadedBy: "always" | "tool_affinity";
-        reason: string;
-      }>;
-      totalTokens: number;
-    };
-    contextAssembled?: {
-      sources: Array<Record<string, unknown>>;
-      excluded: Array<Record<string, unknown>>;
-      totalTokens: number;
-      modelMaxContext?: number;
-      headroomTokens?: number;
-    };
-  };
+  runMetadata?: RunMetadata;
+}
+
+/**
+ * Pre-emit telemetry attached to an engine run. The runtime computes this
+ * before calling `engine.run()`; the engine emits matching events after
+ * `run.start`. Shared between `EngineConfig` and the runtime helpers
+ * (`buildSkillsLoadedPayload` / `buildContextAssembledPayload`) so any
+ * shape drift is a type error rather than silent disagreement.
+ */
+export interface RunMetadata {
+  skillsLoaded?: SkillsLoadedPayload;
+  contextAssembled?: ContextAssembledPayload;
+}
+
+export interface SkillsLoadedPayload {
+  skills: Array<{
+    id: string;
+    layer: 3;
+    scope: "platform" | "workspace" | "user" | "bundle";
+    version: string;
+    tokens: number;
+    loadedBy: "always" | "tool_affinity";
+    reason: string;
+  }>;
+  totalTokens: number;
+}
+
+export interface ContextAssembledPayload {
+  sources: Array<Record<string, unknown>>;
+  excluded: Array<Record<string, unknown>>;
+  totalTokens: number;
+  modelMaxContext?: number;
+  headroomTokens?: number;
 }
 
 /**

@@ -13,7 +13,7 @@
  * in a tmpdir so the conversation-event paths are exercised end-to-end.
  */
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -255,6 +255,38 @@ describe("skills__list", () => {
     expect(names).not.toContain("crm-skill");
   });
 
+  test("empty tool_affinity matches nothing (does not silently match all wildcard skills)", async () => {
+    const wsDir = join(workDir, "workspaces", "ws_a", "skills");
+    mkdirSync(wsDir, { recursive: true });
+    // A skill whose applies-to-tools = ["*"] would naively match an empty
+    // target — verify the handler short-circuits before that.
+    const wildcard = writeSkill(
+      join(wsDir, "wild.md"),
+      {
+        name: "wildcard-skill",
+        description: "x",
+        version: "1.0.0",
+        type: "skill",
+        priority: 50,
+        "applies-to-tools": ["*"],
+      },
+      "body",
+    );
+    wildcard.manifest.scope = "workspace";
+    runtime.conversationOverlay = [wildcard];
+    runtime.wsId = "ws_a";
+
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const result = await client.callTool({
+      name: "list",
+      arguments: { tool_affinity: "" },
+    });
+    const skills = (result as { structuredContent?: { skills?: unknown[] } }).structuredContent
+      ?.skills as Array<{ name: string }>;
+    expect(skills.map((s) => s.name)).not.toContain("wildcard-skill");
+  });
+
   test("status filter excludes other statuses", async () => {
     const wsDir = join(workDir, "workspaces", "ws_a", "skills");
     mkdirSync(wsDir, { recursive: true });
@@ -393,6 +425,30 @@ describe("skills__read", () => {
     const client = src.getClient()!;
     const result = await client.callTool({ name: "read", arguments: { id: missing } });
     expect(result.isError).toBe(true);
+  });
+
+  test("rejects symlinks that escape allowed roots", async () => {
+    // A writer with access to the workspace skills dir drops a symlink
+    // pointing at /etc/passwd. The lexical under-root check passes because
+    // the link itself sits under an allowed root; the realpath check is
+    // what catches the escape.
+    const skillsDir = join(workDir, "workspaces", "ws_a", "skills");
+    mkdirSync(skillsDir, { recursive: true });
+    // Write a real file outside the roots.
+    const outsideDir = mkdtempSync(join(tmpdir(), "skills-outside-"));
+    const outsidePath = join(outsideDir, "secret.md");
+    writeFileSync(
+      outsidePath,
+      ["---", "name: secret", "type: skill", "priority: 50", "---", "secret body", ""].join("\n"),
+    );
+    const linkPath = join(skillsDir, "evil.md");
+    symlinkSync(outsidePath, linkPath);
+
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const result = await client.callTool({ name: "read", arguments: { id: linkPath } });
+    expect(result.isError).toBe(true);
+    rmSync(outsideDir, { recursive: true, force: true });
   });
 
   test("list-then-read round-trips: id from list works as input to read", async () => {

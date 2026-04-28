@@ -25,10 +25,12 @@ import { estimateCost } from "../engine/cost.ts";
 import { AgentEngine } from "../engine/engine.ts";
 import { RunMetricsCollector } from "../engine/run-metrics.ts";
 import type {
+  ContextAssembledPayload,
   EngineConfig,
   EngineEvent,
   EngineHooks,
   EventSink,
+  SkillsLoadedPayload,
   ToolSchema,
 } from "../engine/types.ts";
 import { DEFAULT_FILE_CONFIG, type FileConfig } from "../files/types.ts";
@@ -53,6 +55,7 @@ import {
 } from "../skills/loader.ts";
 import { SkillMatcher } from "../skills/matcher.ts";
 import { type SelectedSkill, selectLayer3Skills } from "../skills/select.ts";
+import { approxTokens } from "../skills/tokens.ts";
 import type { Skill } from "../skills/types.ts";
 import { TelemetryManager } from "../telemetry/manager.ts";
 import { PostHogEventSink } from "../telemetry/posthog-sink.ts";
@@ -1829,32 +1832,12 @@ function stampPlatformScope(skill: Skill): Skill {
 }
 
 /**
- * Approximate token count for a text body. Phase 2 uses `chars / 4` as a
- * cheap stand-in for the real tokenizer; Phase 5 swaps this for accurate
- * model-specific counts when attribution lands.
- */
-function approxTokens(text: string): number {
-  return Math.ceil(text.length / 4);
-}
-
-/**
  * Build the `skills.loaded` payload from the Layer 3 selection result. Each
  * entry carries id (sourcePath or "in-memory" sentinel), scope, version
  * (file mtime), tokens (approximate), `loadedBy`, and the matcher's reason
  * string. Total is the sum of per-skill tokens.
  */
-function buildSkillsLoadedPayload(selected: SelectedSkill[]): {
-  skills: Array<{
-    id: string;
-    layer: 3;
-    scope: "platform" | "workspace" | "user" | "bundle";
-    version: string;
-    tokens: number;
-    loadedBy: "always" | "tool_affinity";
-    reason: string;
-  }>;
-  totalTokens: number;
-} {
+function buildSkillsLoadedPayload(selected: SelectedSkill[]): SkillsLoadedPayload {
   const entries = selected.map((s) => {
     const body = s.skill.body;
     const tokens = approxTokens(body);
@@ -1883,12 +1866,8 @@ function buildContextAssembledPayload(input: {
   systemPrompt: string;
   activeTools: ToolSchema[];
   messages: LanguageModelV3Message[];
-  skillsLoaded: { skills: Array<{ tokens: number }>; totalTokens: number };
-}): {
-  sources: Array<Record<string, unknown>>;
-  excluded: Array<Record<string, unknown>>;
-  totalTokens: number;
-} {
+  skillsLoaded: SkillsLoadedPayload;
+}): ContextAssembledPayload {
   const promptTokens = approxTokens(input.systemPrompt);
   const toolDescTokens = input.activeTools.reduce(
     (sum, t) => sum + approxTokens(`${t.name}\n${t.description}\n${JSON.stringify(t.inputSchema)}`),
