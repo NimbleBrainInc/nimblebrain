@@ -1,9 +1,8 @@
-import { Package } from "lucide-react";
 import { Link } from "react-router-dom";
 import { Card, CardContent } from "../../components/ui/card";
 import { useShellContext } from "../../context/ShellContext";
 import { resolveIcon } from "../../lib/icons";
-import { RequireActiveWorkspace } from "./components/RequireActiveWorkspace";
+import { EmptyState, RequireActiveWorkspace, SettingsListPage } from "./components";
 
 /**
  * Active-workspace "Apps" tab — index of installed bundles whose authors
@@ -27,22 +26,12 @@ function Inner() {
   const panels = shell ? shell.forSlot("settings") : [];
 
   return (
-    <div className="space-y-4">
-      <header className="flex items-center gap-2">
-        <Package className="h-4 w-4 text-muted-foreground" />
-        <h2 className="text-base font-semibold">Apps</h2>
-      </header>
-      <p className="text-xs text-muted-foreground">
-        Per-bundle settings for apps installed in this workspace. Apps appear here only when their
-        author has registered a settings panel.
-      </p>
-
+    <SettingsListPage
+      title="Apps"
+      description="Per-bundle settings for apps installed in this workspace. Apps appear here only when their author has registered a settings panel."
+    >
       {panels.length === 0 ? (
-        <div className="rounded-md border border-dashed p-8 text-center">
-          <p className="text-sm text-muted-foreground">
-            No installed bundles publish a settings panel.
-          </p>
-        </div>
+        <EmptyState message="No installed bundles publish a settings panel." />
       ) : (
         <div className="grid gap-2">
           {panels.map((panel) => {
@@ -66,6 +55,6 @@ function Inner() {
           })}
         </div>
       )}
-    </div>
+    </SettingsListPage>
   );
 }

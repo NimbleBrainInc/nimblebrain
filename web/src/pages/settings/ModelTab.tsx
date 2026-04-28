@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { callTool } from "../../api/client";
-import { Button } from "../../components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
+import { parseToolResult } from "../../api/tool-result";
 import { Input } from "../../components/ui/input";
 import { Label } from "../../components/ui/label";
+import { Select } from "../../components/ui/select";
+import { Section, SettingsFormPage } from "./components";
 
 interface ModelEntry {
   id: string;
@@ -32,26 +33,6 @@ interface Feedback {
   message: string;
 }
 
-function parseToolResponse<T>(res: {
-  content?: Array<{ type: string; text?: string }>;
-  structuredContent?: unknown;
-  isError?: boolean;
-}): T {
-  if (res.isError) throw new Error(res.content?.[0]?.text ?? "Operation failed");
-  if (res.structuredContent) return res.structuredContent as T;
-  if (res.content?.[0]?.text) {
-    try {
-      return JSON.parse(res.content[0].text) as T;
-    } catch {
-      throw new Error(res.content[0].text);
-    }
-  }
-  throw new Error("Empty response");
-}
-
-const selectClass =
-  "flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
-
 function ModelSelect({
   id,
   label,
@@ -68,12 +49,7 @@ function ModelSelect({
   return (
     <div className="space-y-1.5">
       <Label htmlFor={id}>{label}</Label>
-      <select
-        id={id}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className={selectClass}
-      >
+      <Select id={id} value={value} onChange={(e) => onChange(e.target.value)}>
         <option value="">Select a model</option>
         {Object.entries(availableModels).map(([provider, models]) => (
           <optgroup key={provider} label={provider}>
@@ -84,7 +60,7 @@ function ModelSelect({
             ))}
           </optgroup>
         ))}
-      </select>
+      </Select>
     </div>
   );
 }
@@ -107,11 +83,12 @@ export function ModelTab() {
   const [saving, setSaving] = useState(false);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
     callTool("nb", "get_config")
       .then((res) => {
-        const config = parseToolResponse<ModelConfig>(res);
+        const config = parseToolResult<ModelConfig>(res);
         setDefaultModel(config.models.default ?? "");
         setFastModel(config.models.fast ?? "");
         setReasoningModel(config.models.reasoning ?? "");
@@ -125,8 +102,7 @@ export function ModelTab() {
         setAvailableModels(config.availableModels ?? {});
       })
       .catch((err) => {
-        const msg = err instanceof Error ? err.message : "Failed to load config.";
-        setFeedback({ type: "error", message: msg });
+        setLoadError(err instanceof Error ? err.message : "Failed to load configuration.");
       })
       .finally(() => setLoading(false));
   }, []);
@@ -174,21 +150,18 @@ export function ModelTab() {
     thinkingBudgetTokens,
   ]);
 
-  if (loading) {
-    return <div className="text-muted-foreground text-sm">Loading model configuration...</div>;
-  }
-
   return (
-    <div className="max-w-xl mx-auto">
-      <Card>
-        <CardHeader>
-          <CardTitle>Model Configuration</CardTitle>
-          <p className="text-sm text-muted-foreground">
-            Configure model slots for different tasks and set runtime limits.
-          </p>
-        </CardHeader>
-        <CardContent className="space-y-5">
-          {/* Model Slots */}
+    <SettingsFormPage
+      title="Model"
+      description="Default model assignments and runtime limits. Applies organization-wide."
+      loading={loading}
+      loadingMessage="Loading model configuration..."
+      loadError={loadError}
+      feedback={feedback}
+      save={{ onSave: handleSave, saving, disabled: saving }}
+    >
+      <Section title="Models" flush>
+        <div className="space-y-4">
           <ModelSelect
             id="defaultModel"
             label="Default Model"
@@ -212,8 +185,11 @@ export function ModelTab() {
             onChange={setReasoningModel}
             availableModels={availableModels}
           />
+        </div>
+      </Section>
 
-          {/* Runtime Limits */}
+      <Section title="Limits" description="Runtime caps applied to every conversation.">
+        <div className="space-y-4">
           <div className="space-y-1.5">
             <Label htmlFor="maxIterations">Max Iterations</Label>
             <Input
@@ -247,17 +223,22 @@ export function ModelTab() {
               onChange={(e) => setMaxOutputTokens(Number(e.target.value))}
             />
           </div>
+        </div>
+      </Section>
 
-          {/* Extended Thinking */}
+      <Section
+        title="Extended Thinking"
+        description="Anthropic-only today. Reasoning is billed as output tokens; adaptive only engages when the model judges it useful."
+      >
+        <div className="space-y-4">
           <div className="space-y-1.5">
-            <Label htmlFor="thinking">Extended Thinking</Label>
-            <select
+            <Label htmlFor="thinking">Mode</Label>
+            <Select
               id="thinking"
               value={thinking}
               onChange={(e) =>
                 setThinking(e.target.value as ThinkingMode | typeof THINKING_DEFAULT)
               }
-              className={selectClass}
             >
               <option value={THINKING_DEFAULT}>
                 Default (adaptive for reasoning models, off otherwise)
@@ -265,11 +246,7 @@ export function ModelTab() {
               <option value="off">Off — never reason</option>
               <option value="adaptive">Adaptive — model decides per call</option>
               <option value="enabled">Enabled — always reason</option>
-            </select>
-            <p className="text-xs text-muted-foreground">
-              Anthropic-only today. Reasoning is billed as output tokens; adaptive only engages when
-              the model judges it useful.
-            </p>
+            </Select>
           </div>
 
           {thinking === "enabled" && (
@@ -287,26 +264,8 @@ export function ModelTab() {
               </p>
             </div>
           )}
-
-          {/* Feedback */}
-          {feedback && (
-            <p
-              className={
-                feedback.type === "success"
-                  ? "text-sm text-green-600 dark:text-green-400"
-                  : "text-sm text-destructive"
-              }
-            >
-              {feedback.message}
-            </p>
-          )}
-
-          {/* Save */}
-          <Button onClick={handleSave} disabled={saving}>
-            {saving ? "Saving..." : "Save"}
-          </Button>
-        </CardContent>
-      </Card>
-    </div>
+        </div>
+      </Section>
+    </SettingsFormPage>
   );
 }

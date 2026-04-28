@@ -1,21 +1,15 @@
-import { FileText } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { callTool, readResource } from "../../../api/client";
 import { Button } from "../../../components/ui/button";
 import { Label } from "../../../components/ui/label";
 import { Textarea } from "../../../components/ui/textarea";
+import { InlineError } from "./InlineError";
 
 /**
  * Byte cap matches the backend's `MAX_INSTRUCTIONS_BYTES` in
  * `src/instructions/types.ts`. Counting must be in UTF-8 bytes (via
  * `Blob`) — using `text.length` (UTF-16 code units, ≈ characters)
  * lets emoji-heavy bodies pass UI validation and 500 on save.
- *
- * Display label says "characters" because that's the user-facing
- * unit for typical Markdown text; for ASCII the byte and character
- * counts are identical, and for multibyte text the cap kicks in
- * earlier than the user might expect, but the request never fails
- * silently — the count is accurate.
  */
 const MAX_WORKSPACE_INSTRUCTIONS = 8 * 1024;
 
@@ -24,20 +18,14 @@ function utf8ByteLength(text: string): number {
 }
 
 /**
- * Editor for `instructions://workspace` — the active workspace's overlay.
+ * Editor body for `instructions://workspace` — used inside a `Section`
+ * provided by `WorkspaceGeneralTab`. The Section owns the title; this
+ * component renders only the field, helper copy, counter, and Save/Reset
+ * buttons.
  *
- * Used by `WorkspaceGeneralTab` (`/settings/workspace/general`).
- * Not reused on the org-admin "manage another workspace" page
- * (`/settings/org/workspaces/:slug`) — the instructions resource and
- * write tool both resolve the target workspace from the request
- * context (active workspace), so editing on that page would silently
- * mutate the wrong workspace.
- *
- * `wsId` is informational (used for the form id only — backend writes the
- * active workspace's overlay regardless, since `instructions__write_instructions`
- * resolves the workspace from the request context). `canEdit` is the role
- * gate at the UI layer; the backend tool independently re-checks role on
- * write, so this prop is convenience, not security.
+ * `wsId` is informational (form id only — the backend writes to whatever
+ * workspace the request resolves against). `canEdit` is the UI role gate;
+ * the backend tool independently re-checks role on write.
  */
 export function WorkspaceInstructions({ wsId, canEdit }: { wsId: string; canEdit: boolean }) {
   const [text, setText] = useState("");
@@ -106,33 +94,12 @@ export function WorkspaceInstructions({ wsId, canEdit }: { wsId: string; canEdit
   }, [lastSaved]);
 
   if (loading) {
-    return (
-      <div className="space-y-4">
-        <div className="flex items-center gap-2">
-          <FileText className="h-4 w-4 text-muted-foreground" />
-          <h4 className="text-sm font-semibold">Workspace Instructions</h4>
-        </div>
-        <p className="text-sm text-muted-foreground">Loading...</p>
-      </div>
-    );
+    return <p className="text-sm text-muted-foreground">Loading...</p>;
   }
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-2">
-        <FileText className="h-4 w-4 text-muted-foreground" />
-        <h4 className="text-sm font-semibold">Workspace Instructions</h4>
-      </div>
-      <p className="text-xs text-muted-foreground">
-        Custom instructions injected into every conversation in this workspace. Applies on top of
-        organization-wide policies and is readable by anyone in the workspace.
-      </p>
-
-      {loadError && (
-        <p className="text-sm text-destructive" role="alert">
-          {loadError}
-        </p>
-      )}
+    <div className="space-y-3">
+      {loadError ? <InlineError message={loadError} /> : null}
 
       <div className="space-y-2">
         <Label htmlFor={`workspace-instructions-${wsId}`} className="sr-only">
@@ -155,21 +122,17 @@ export function WorkspaceInstructions({ wsId, canEdit }: { wsId: string; canEdit
           <span className={overLimit ? "text-destructive" : "text-muted-foreground"}>
             {charCount.toLocaleString()} / {MAX_WORKSPACE_INSTRUCTIONS.toLocaleString()} characters
           </span>
-          {savedFlash && (
-            <span role="status" className="text-green-600 dark:text-green-400">
+          {savedFlash ? (
+            <span role="status" className="text-success dark:text-green-400">
               Saved
             </span>
-          )}
+          ) : null}
         </div>
       </div>
 
-      {saveError && (
-        <p className="text-sm text-destructive" role="alert">
-          {saveError}
-        </p>
-      )}
+      {saveError ? <InlineError message={saveError} /> : null}
 
-      {canEdit && (
+      {canEdit ? (
         <div className="flex gap-2">
           <Button
             size="sm"
@@ -183,9 +146,7 @@ export function WorkspaceInstructions({ wsId, canEdit }: { wsId: string; canEdit
             Reset
           </Button>
         </div>
-      )}
-
-      {!canEdit && (
+      ) : (
         <p className="text-xs text-muted-foreground italic">
           Only workspace admins can edit these instructions.
         </p>

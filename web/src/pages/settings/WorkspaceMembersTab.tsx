@@ -1,7 +1,7 @@
-import { Users } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { callTool } from "../../api/client";
-import { Badge } from "../../components/ui/badge";
+import { parseToolResult } from "../../api/tool-result";
+import { RoleBadge } from "../../components/ui/role-badge";
 import {
   Table,
   TableBody,
@@ -11,7 +11,7 @@ import {
   TableRow,
 } from "../../components/ui/table";
 import { useWorkspaceContext } from "../../context/WorkspaceContext";
-import { RequireActiveWorkspace } from "./components/RequireActiveWorkspace";
+import { EmptyState, RequireActiveWorkspace, SettingsListPage } from "./components";
 
 /**
  * Active-workspace "Members" tab — list view.
@@ -19,9 +19,7 @@ import { RequireActiveWorkspace } from "./components/RequireActiveWorkspace";
  * Edit affordances (add/remove/role-change) live on the admin path
  * (`/settings/org/workspaces/:slug` → `WorkspaceDetailPage`). This page is
  * intentionally read-only because the active-workspace surface is for
- * everyone, not just admins. Admins manage members from the org-scoped
- * "Workspaces" view where the workspace is explicitly selected as the
- * target of admin actions.
+ * everyone, not just admins.
  */
 export function WorkspaceMembersTab() {
   return (
@@ -42,22 +40,6 @@ interface UserInfo {
   displayName: string;
 }
 
-const ROLE_STYLES: Record<string, string> = {
-  admin: "bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300",
-  member: "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300",
-};
-
-function parseToolResponse<T>(res: {
-  content?: Array<{ type: string; text?: string }>;
-  structuredContent?: unknown;
-}): T {
-  if (res.structuredContent) return res.structuredContent as T;
-  if (res.content?.[0]?.text) {
-    return JSON.parse(res.content[0].text) as T;
-  }
-  throw new Error("Empty response");
-}
-
 function Inner() {
   const { activeWorkspace } = useWorkspaceContext();
   const ws = activeWorkspace!;
@@ -74,9 +56,9 @@ function Inner() {
         callTool("nb", "manage_workspaces", { action: "list_members", workspaceId: ws.id }),
         callTool("nb", "manage_users", { action: "list" }),
       ]);
-      const membersData = parseToolResponse<{ workspaceId: string; members: Member[] }>(membersRes);
+      const membersData = parseToolResult<{ workspaceId: string; members: Member[] }>(membersRes);
       setMembers(membersData.members ?? []);
-      const usersData = parseToolResponse<{ users: UserInfo[] }>(usersRes);
+      const usersData = parseToolResult<{ users: UserInfo[] }>(usersRes);
       const map = new Map<string, UserInfo>();
       for (const u of usersData.users ?? []) map.set(u.id, u);
       setUserMap(map);
@@ -95,28 +77,14 @@ function Inner() {
     return <p className="text-sm text-muted-foreground">Loading members…</p>;
   }
 
-  if (error) {
-    return (
-      <p className="text-sm text-destructive" role="alert">
-        {error}
-      </p>
-    );
-  }
-
   return (
-    <div className="space-y-4">
-      <header className="flex items-center gap-2">
-        <Users className="h-4 w-4 text-muted-foreground" />
-        <h2 className="text-base font-semibold">Members</h2>
-      </header>
-      <p className="text-xs text-muted-foreground">
-        Workspace admins manage membership from the organization Workspaces view.
-      </p>
-
+    <SettingsListPage
+      title="Members"
+      description="Workspace admins manage membership from the organization Workspaces view."
+      loadError={error}
+    >
       {members.length === 0 ? (
-        <div className="rounded-md border border-dashed p-8 text-center">
-          <p className="text-sm text-muted-foreground">No members in this workspace.</p>
-        </div>
+        <EmptyState message="No members in this workspace." />
       ) : (
         <Table>
           <TableHeader>
@@ -134,9 +102,7 @@ function Inner() {
                   <TableCell className="font-medium">{user?.displayName ?? m.userId}</TableCell>
                   <TableCell>{user?.email ?? "—"}</TableCell>
                   <TableCell>
-                    <Badge variant="outline" className={ROLE_STYLES[m.role] ?? ROLE_STYLES.member}>
-                      {m.role}
-                    </Badge>
+                    <RoleBadge role={m.role} />
                   </TableCell>
                 </TableRow>
               );
@@ -144,6 +110,6 @@ function Inner() {
           </TableBody>
         </Table>
       )}
-    </div>
+    </SettingsListPage>
   );
 }

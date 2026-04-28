@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { callTool } from "../../api/client";
+import { parseToolResult } from "../../api/tool-result";
 import { CostChart } from "../../components/charts/CostChart";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
-import { RequireActiveWorkspace } from "./components/RequireActiveWorkspace";
+import { Select } from "../../components/ui/select";
 import {
   Table,
   TableBody,
@@ -11,8 +12,7 @@ import {
   TableHeader,
   TableRow,
 } from "../../components/ui/table";
-
-// ── Types ───────────────────────────────────────────────────────
+import { RequireActiveWorkspace, Section, SettingsDashboardPage } from "./components";
 
 interface TokenBreakdown {
   input: number;
@@ -57,8 +57,6 @@ interface UsageReport {
 
 type Period = "day" | "week" | "month" | "all";
 
-// ── Helpers ─────────────────────────────────────────────────────
-
 function formatNumber(n: number): string {
   return n.toLocaleString();
 }
@@ -86,28 +84,6 @@ function shortModel(m: string): string {
   return m.replace(/^(anthropic:|openai:|google:)/, "").replace(/-\d{8}$/, "");
 }
 
-function parseToolResponse<T>(res: {
-  content?: Array<{ type: string; text?: string }>;
-  structuredContent?: unknown;
-  isError?: boolean;
-}): T {
-  if (res.isError) throw new Error(res.content?.[0]?.text ?? "Operation failed");
-  if (res.structuredContent) return res.structuredContent as T;
-  if (res.content?.[0]?.text) {
-    try {
-      return JSON.parse(res.content[0].text) as T;
-    } catch {
-      throw new Error(res.content[0].text);
-    }
-  }
-  throw new Error("Empty response");
-}
-
-// ── Styles ──────────────────────────────────────────────────────
-
-const selectClass =
-  "flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
-
 const PERIOD_OPTIONS: { value: Period; label: string }[] = [
   { value: "day", label: "Today" },
   { value: "week", label: "Last 7 days" },
@@ -115,11 +91,8 @@ const PERIOD_OPTIONS: { value: Period; label: string }[] = [
   { value: "all", label: "All time" },
 ];
 
-// ── Component ───────────────────────────────────────────────────
-
 // `usage.report` reads from the workspace-scoped data dir, so the tab
-// requires an active workspace. Wraps the inner component to hard-fail
-// loudly when none is set (rather than rendering empty data).
+// requires an active workspace.
 export function UsageTab() {
   return (
     <RequireActiveWorkspace>
@@ -142,11 +115,10 @@ function UsageTabInner() {
         period: p,
         groupBy: "day",
       });
-      const data = parseToolResponse<UsageReport>(res);
+      const data = parseToolResult<UsageReport>(res);
       setReport(data);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to load usage data.";
-      // Detect tool_not_found / bundle not available
       if (
         msg.includes("tool_not_found") ||
         msg.includes("not found") ||
@@ -167,52 +139,44 @@ function UsageTabInner() {
     fetchReport(period);
   }, [period, fetchReport]);
 
-  const handlePeriodChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    setPeriod(e.target.value as Period);
-  };
+  const controls = (
+    <div className="max-w-xs">
+      <Select
+        value={period}
+        onChange={(e) => setPeriod(e.target.value as Period)}
+        aria-label="Select time period"
+      >
+        {PERIOD_OPTIONS.map((opt) => (
+          <option key={opt.value} value={opt.value}>
+            {opt.label}
+          </option>
+        ))}
+      </Select>
+    </div>
+  );
 
-  if (loading) {
-    return <div className="text-muted-foreground text-sm">Loading usage data...</div>;
-  }
+  return (
+    <SettingsDashboardPage
+      title="Usage"
+      description="Token consumption and cost for this workspace."
+      controls={controls}
+      loading={loading}
+      loadingMessage="Loading usage data..."
+      loadError={error}
+    >
+      {report ? <UsageBody report={report} /> : null}
+    </SettingsDashboardPage>
+  );
+}
 
-  if (error) {
-    return (
-      <div className="max-w-2xl">
-        <Card>
-          <CardContent className="py-8 text-center">
-            <p className="text-sm text-muted-foreground">{error}</p>
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
-
-  if (!report) return null;
-
+function UsageBody({ report }: { report: UsageReport }) {
   const { tokens, cost } = report.totals;
   const totalTokens = tokens.input + tokens.output + tokens.cacheRead;
   const hasActivity = report.totals.llmCalls > 0;
 
   return (
-    <div className="max-w-5xl mx-auto space-y-6">
-      {/* Period selector */}
-      <div className="max-w-xs">
-        <select
-          value={period}
-          onChange={handlePeriodChange}
-          className={selectClass}
-          aria-label="Select time period"
-        >
-          {PERIOD_OPTIONS.map((opt) => (
-            <option key={opt.value} value={opt.value}>
-              {opt.label}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      {/* Stats cards */}
-      <div className="grid grid-cols-4 gap-4">
+    <div className="space-y-6">
+      <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">Total Cost</CardTitle>
@@ -220,22 +184,10 @@ function UsageTabInner() {
           <CardContent>
             <p className="text-2xl font-semibold">{formatUsd(cost.total)}</p>
             <div className="mt-2 space-y-0.5 text-xs text-muted-foreground">
-              <div className="flex justify-between">
-                <span>Input</span>
-                <span>{formatUsdPrecise(cost.input)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Output</span>
-                <span>{formatUsdPrecise(cost.output)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Cache read</span>
-                <span>{formatUsdPrecise(cost.cacheRead)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Cache write</span>
-                <span>{formatUsdPrecise(cost.cacheCreation)}</span>
-              </div>
+              <CostRow label="Input" value={formatUsdPrecise(cost.input)} />
+              <CostRow label="Output" value={formatUsdPrecise(cost.output)} />
+              <CostRow label="Cache read" value={formatUsdPrecise(cost.cacheRead)} />
+              <CostRow label="Cache write" value={formatUsdPrecise(cost.cacheCreation)} />
             </div>
           </CardContent>
         </Card>
@@ -247,18 +199,9 @@ function UsageTabInner() {
           <CardContent>
             <p className="text-2xl font-semibold">{formatTokens(totalTokens)}</p>
             <div className="mt-2 space-y-0.5 text-xs text-muted-foreground">
-              <div className="flex justify-between">
-                <span>Input</span>
-                <span>{formatTokens(tokens.input)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Output</span>
-                <span>{formatTokens(tokens.output)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Cache read</span>
-                <span>{formatTokens(tokens.cacheRead)}</span>
-              </div>
+              <CostRow label="Input" value={formatTokens(tokens.input)} />
+              <CostRow label="Output" value={formatTokens(tokens.output)} />
+              <CostRow label="Cache read" value={formatTokens(tokens.cacheRead)} />
             </div>
           </CardContent>
         </Card>
@@ -284,89 +227,78 @@ function UsageTabInner() {
         </Card>
       </div>
 
-      {/* Daily cost chart */}
-      {hasActivity && (
-        <Card className="overflow-visible">
-          <CardHeader>
-            <CardTitle>Daily Cost</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <CostChart data={report.breakdown} />
-          </CardContent>
-        </Card>
-      )}
+      {hasActivity ? (
+        <Section title="Daily Cost" flush>
+          <CostChart data={report.breakdown} />
+        </Section>
+      ) : null}
 
-      {/* Model breakdown */}
-      {report.models && report.models.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle>By Model</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Model</TableHead>
-                  <TableHead className="text-right">Tokens</TableHead>
-                  <TableHead className="text-right">Cost</TableHead>
-                  <TableHead className="text-right">Calls</TableHead>
+      {report.models && report.models.length > 0 ? (
+        <Section title="By Model">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Model</TableHead>
+                <TableHead className="text-right">Tokens</TableHead>
+                <TableHead className="text-right">Cost</TableHead>
+                <TableHead className="text-right">Calls</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {report.models.map((m) => (
+                <TableRow key={m.model}>
+                  <TableCell className="font-mono text-xs">{shortModel(m.model)}</TableCell>
+                  <TableCell className="text-right">
+                    {formatTokens(m.tokens.input + m.tokens.output + m.tokens.cacheRead)}
+                  </TableCell>
+                  <TableCell className="text-right">{formatUsdPrecise(m.cost.total)}</TableCell>
+                  <TableCell className="text-right">{formatNumber(m.llmCalls)}</TableCell>
                 </TableRow>
-              </TableHeader>
-              <TableBody>
-                {report.models.map((m) => (
-                  <TableRow key={m.model}>
-                    <TableCell className="font-mono text-xs">{shortModel(m.model)}</TableCell>
-                    <TableCell className="text-right">
-                      {formatTokens(m.tokens.input + m.tokens.output + m.tokens.cacheRead)}
-                    </TableCell>
-                    <TableCell className="text-right">{formatUsdPrecise(m.cost.total)}</TableCell>
-                    <TableCell className="text-right">{formatNumber(m.llmCalls)}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
-      )}
+              ))}
+            </TableBody>
+          </Table>
+        </Section>
+      ) : null}
 
-      {/* Daily breakdown */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Daily Breakdown</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {!hasActivity ? (
-            <p className="text-sm text-muted-foreground">No usage data for this period.</p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Date</TableHead>
-                  <TableHead className="text-right">Input</TableHead>
-                  <TableHead className="text-right">Output</TableHead>
-                  <TableHead className="text-right">Cache</TableHead>
-                  <TableHead className="text-right">Cost</TableHead>
-                  <TableHead className="text-right">Calls</TableHead>
+      <Section title="Daily Breakdown">
+        {!hasActivity ? (
+          <p className="text-sm text-muted-foreground">No usage data for this period.</p>
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Date</TableHead>
+                <TableHead className="text-right">Input</TableHead>
+                <TableHead className="text-right">Output</TableHead>
+                <TableHead className="text-right">Cache</TableHead>
+                <TableHead className="text-right">Cost</TableHead>
+                <TableHead className="text-right">Calls</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {report.breakdown.map((row) => (
+                <TableRow key={row.key}>
+                  <TableCell>{formatDate(row.key)}</TableCell>
+                  <TableCell className="text-right">{formatTokens(row.tokens.input)}</TableCell>
+                  <TableCell className="text-right">{formatTokens(row.tokens.output)}</TableCell>
+                  <TableCell className="text-right">{formatTokens(row.tokens.cacheRead)}</TableCell>
+                  <TableCell className="text-right">{formatUsdPrecise(row.cost.total)}</TableCell>
+                  <TableCell className="text-right">{formatNumber(row.llmCalls)}</TableCell>
                 </TableRow>
-              </TableHeader>
-              <TableBody>
-                {report.breakdown.map((row) => (
-                  <TableRow key={row.key}>
-                    <TableCell>{formatDate(row.key)}</TableCell>
-                    <TableCell className="text-right">{formatTokens(row.tokens.input)}</TableCell>
-                    <TableCell className="text-right">{formatTokens(row.tokens.output)}</TableCell>
-                    <TableCell className="text-right">
-                      {formatTokens(row.tokens.cacheRead)}
-                    </TableCell>
-                    <TableCell className="text-right">{formatUsdPrecise(row.cost.total)}</TableCell>
-                    <TableCell className="text-right">{formatNumber(row.llmCalls)}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </Section>
+    </div>
+  );
+}
+
+function CostRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex justify-between">
+      <span>{label}</span>
+      <span>{value}</span>
     </div>
   );
 }
