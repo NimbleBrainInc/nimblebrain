@@ -732,9 +732,9 @@ function realPathUnderAnyRootOrThrow(target: string, roots: string[]): string {
  * identifier to match the lexical declaration:
  *
  *   1. realScope === expectedScope — catches tier-jumping (workspace
- *      symlink → user file, etc.) AND outside-workdir paths (which
- *      `scopeOfPath` returns as `"bundle"`, never matching a writable
- *      scope).
+ *      symlink → user file, etc.) AND outside-workdir paths (the local
+ *      fallback below classifies those as `"bundle"`, which never
+ *      matches an `expectedScope` of `workspace` / `user` / `org`).
  *   2. realWsId === lexicalWsId for workspace scope — catches
  *      cross-workspace symlinks within `{workDir}/workspaces/`.
  *   3. realUserId === lexicalUserId for user scope — same for
@@ -1340,6 +1340,14 @@ function bundleNotMutable(): ToolResult {
   // Structured error shape per the skill management design doc — the
   // `suggested_action` discriminator lets calling agents present the
   // right next step without parsing prose.
+  //
+  // TODO: the design doc shape also includes `bundle` and `bundleVersion`
+  // (e.g. `{bundle: "synapse-collateral", bundleVersion: "0.5.2"}`). Those
+  // aren't reachable here without threading bundle context through every
+  // mutation handler — for `skill://<bundle>/<name>` we'd parse the URI
+  // authority; for filesystem paths under the bundle skill roots we'd
+  // derive the bundle from the path. Both also need the runtime's bundle
+  // registry for the version lookup. Filed as a follow-up.
   return {
     content: textContent(
       "Bundle (Layer 1) skills ship with the bundle and are versioned with it. " +
