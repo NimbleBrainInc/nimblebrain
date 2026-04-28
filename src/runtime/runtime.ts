@@ -1521,8 +1521,8 @@ export class Runtime {
     const workDir = this.getWorkDir();
 
     const platformPool: Skill[] = [];
-    for (const s of this.contextSkills) platformPool.push(stampPlatformScope(s));
-    for (const s of this.skillMatcher.getSkills()) platformPool.push(stampPlatformScope(s));
+    for (const s of this.contextSkills) platformPool.push(stampDerivedScope(workDir, s));
+    for (const s of this.skillMatcher.getSkills()) platformPool.push(stampDerivedScope(workDir, s));
 
     const workspaceDir = join(workDir, "workspaces", wsId, "skills");
     const workspacePool = loadScopedSkills(workspaceDir, "workspace");
@@ -1826,11 +1826,31 @@ function loadAllSkills(configDirs?: string[], skillDir?: string): Skill[] {
  * without a scope. Frontmatter-declared scope on a platform-dir skill is
  * preserved (e.g. authoring tooling round-tripping the field).
  */
-function stampPlatformScope(skill: Skill): Skill {
+/**
+ * Derive a scope for a skill loaded through the boot-time pool.
+ *
+ * `loadSkillDir`-style loaders (used for `loadCoreSkills`,
+ * `loadBuiltinSkills`, plus `globalSkillDir` and any config-supplied
+ * dirs) do not stamp scope, so the manifest arrives without one. We
+ * can't unconditionally stamp `"platform"` because core + builtin
+ * skills live in the source tree (`src/skills/{core,builtin}/`), not
+ * under `{workDir}/skills/` — they're vendored with the platform and
+ * not mutable. The mutation tools' `scopeOfPath` already rejects those
+ * paths as `"bundle"`; without this fix the UI would happily show an
+ * Edit button for them and only fail on save.
+ *
+ * Decision matrix:
+ *   - manifest.scope already set → trust the frontmatter
+ *   - sourcePath under {workDir}/skills/ → real platform-tier
+ *   - everything else → bundle (vendored)
+ */
+function stampDerivedScope(workDir: string, skill: Skill): Skill {
   if (skill.manifest.scope) return skill;
+  const platformDir = `${join(workDir, "skills")}/`;
+  const isPlatform = skill.sourcePath?.startsWith(platformDir) ?? false;
   return {
     ...skill,
-    manifest: { ...skill.manifest, scope: "platform" },
+    manifest: { ...skill.manifest, scope: isPlatform ? "platform" : "bundle" },
   };
 }
 

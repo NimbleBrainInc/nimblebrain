@@ -165,6 +165,7 @@ function Inner() {
   const handleSelect = useCallback((id: string) => {
     setMode("view");
     setCreating(false);
+    setError(null);
     setSelectedId(id);
   }, []);
 
@@ -327,7 +328,10 @@ function Inner() {
           {creating ? (
             <CreateForm
               pending={actionPending}
-              onCancel={() => setCreating(false)}
+              onCancel={() => {
+                setCreating(false);
+                setError(null);
+              }}
               onSubmit={handleCreate}
             />
           ) : (
@@ -337,8 +341,14 @@ function Inner() {
               loading={detailLoading}
               mode={mode}
               actionPending={actionPending}
-              onEdit={() => setMode("edit")}
-              onCancelEdit={() => setMode("view")}
+              onEdit={() => {
+                setError(null);
+                setMode("edit");
+              }}
+              onCancelEdit={() => {
+                setMode("view");
+                setError(null);
+              }}
               onSave={(patch) => selectedId && handleSaveEdit(selectedId, patch)}
               onDelete={() => selectedId && handleDelete(selectedId)}
               onToggleStatus={() =>
