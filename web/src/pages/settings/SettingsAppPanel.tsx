@@ -1,10 +1,12 @@
 import { Navigate, useParams } from "react-router-dom";
 import { SlotRenderer } from "../../components/SlotRenderer";
 import { useShellContext } from "../../context/ShellContext";
-import { RequireActiveWorkspace } from "./components/RequireActiveWorkspace";
+import { RequireActiveWorkspace, SettingsAppPanelPage } from "./components";
 
 /**
- * Renders an app's settings panel from the "settings" slot.
+ * Renders an app's settings panel from the "settings" slot, wrapped in
+ * `SettingsAppPanelPage` so it inherits page chrome (back-link, title,
+ * "provided by" footer) consistent with sibling settings tabs.
  *
  * Route: /settings/workspace/apps/:serverName
  *
@@ -26,7 +28,7 @@ function Inner() {
   const shell = useShellContext();
 
   if (!shell || !serverName) {
-    return <div className="text-muted-foreground text-sm">App settings not available.</div>;
+    return <p className="text-sm text-muted-foreground">App settings not available.</p>;
   }
 
   const panels = shell.forSlot("settings");
@@ -37,5 +39,9 @@ function Inner() {
     return <Navigate to="/settings/workspace/apps" replace />;
   }
 
-  return <SlotRenderer placements={[panel]} className="h-full" />;
+  return (
+    <SettingsAppPanelPage panel={panel}>
+      <SlotRenderer placements={[panel]} className="h-full" />
+    </SettingsAppPanelPage>
+  );
 }
