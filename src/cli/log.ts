@@ -17,6 +17,12 @@
  *
  * Keep this list in sync with the CLAUDE.md "Debugging" section so it's
  * discoverable without reading source.
+ *
+ * `log.bundle(sourceName, line)` is intentionally NOT gated. Bundle stderr
+ * is the bundle author's deliberate diagnostic output (tracebacks, warnings,
+ * logs) — different concern than NB's protocol tracing, and the dev-loop
+ * cost of hiding it (see issue #116) outweighs the cost of dimmed lines on
+ * a chatty bundle. Visual prefix + dim formatting makes it tunable by eye.
  */
 
 const dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
@@ -56,4 +62,11 @@ export const log = {
   },
   /** Check whether a namespace is enabled, e.g. to skip expensive log args. */
   debugEnabled: isDebugEnabled,
+  /**
+   * Emit a single line of bundle subprocess stderr output. Default-on,
+   * dimmed, prefixed `[bundle:<name>]` so it's visually distinct from NB's
+   * own output. See file header for rationale.
+   */
+  bundle: (sourceName: string, line: string) =>
+    console.error(dim(`[bundle:${sourceName}] ${line}`)),
 };

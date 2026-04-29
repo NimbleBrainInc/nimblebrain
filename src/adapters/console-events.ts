@@ -28,9 +28,20 @@ export class ConsoleEventSink implements EventSink {
       case "run.done":
         console.error(`[engine] run done: ${event.data.stopReason}`);
         break;
-      case "run.error":
+      case "run.error": {
         console.error(`[engine] error: ${event.data.error}`);
+        // Render bundle stderr tail (if any) immediately after the error
+        // line, dimmed and indented so it's visually nested under the
+        // crash. Issue #116: keeps the cause-of-death visible without
+        // requiring the developer to reproduce the failure outside NB.
+        const tail = event.data.stderrTail;
+        if (typeof tail === "string" && tail.length > 0) {
+          for (const line of tail.split("\n")) {
+            console.error(`\x1b[2m  | ${line}\x1b[0m`);
+          }
+        }
         break;
+      }
     }
   }
 }
