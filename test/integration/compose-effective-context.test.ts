@@ -144,12 +144,12 @@ describe("compose_effective_context — live mode", () => {
     );
     await runtime.reloadSkills();
 
-    const res = await callCompose(runtime, {}, "conv_test_live_basic");
+    const res = await callCompose(runtime, {}, "conv_aaaaaaaaaaaaaaaa");
     expect(res.isError).toBe(false);
     expect(res.structured).not.toBeNull();
     const r = res.structured!;
     expect(r.mode).toBe("live");
-    expect(r.conversationId).toBe("conv_test_live_basic");
+    expect(r.conversationId).toBe("conv_aaaaaaaaaaaaaaaa");
     expect(r.warnings).toEqual([]);
 
     // The skill body is composed into one of the layer texts, NOT necessarily
@@ -185,7 +185,7 @@ describe("compose_effective_context — live mode", () => {
     });
     await provisionTestWorkspace(runtime);
 
-    const res = await callCompose(runtime, {}, "conv_ws");
+    const res = await callCompose(runtime, {}, "conv_bbbbbbbbbbbbbbbb");
     expect(res.isError).toBe(false);
     const wsRow = res.structured!.layers.find((l) => l.kind === "workspace_context");
     expect(wsRow).toBeDefined();
@@ -314,6 +314,69 @@ describe("compose_effective_context — historical mode", () => {
 
     await runtime.shutdown();
   });
+
+  it("recovers the loaded body from a _versions/ snapshot when the live file has drifted", async () => {
+    // The headline value of historical mode: "I edited a skill — what was
+    // it before?" If a `_versions/<basename>.<ts>.md` snapshot's body
+    // hashes to the recorded contentHash, the audit returns the snapshot
+    // body verbatim with hashStatus="recovered".
+    const workDir = join(testDir, "historical-recovered");
+    const runtime = await Runtime.start({
+      model: { provider: "custom", adapter: makeModel() },
+      noDefaultBundles: true,
+      workDir,
+      logging: { disabled: true },
+      telemetry: { enabled: false },
+    });
+    await provisionTestWorkspace(runtime);
+
+    mkdirSync(join(workDir, "skills"), { recursive: true });
+    const originalBody = "Recoverable rule: vintage instruction.";
+    const skillPath = join(workDir, "skills", "recoverable.md");
+    const frontmatter =
+      "---\nname: recoverable\ndescription: Test\nversion: 1.0.0\ntype: context\npriority: 30\nloading_strategy: always\n---\n";
+    writeFileSync(skillPath, `${frontmatter}\n${originalBody}\n`);
+    await runtime.reloadSkills();
+
+    // Run a chat — records `skills.loaded` with the original body's hash.
+    const result = await runtime.chat({
+      workspaceId: TEST_WORKSPACE_ID,
+      message: "test",
+    });
+    const runId = await getLatestRunId(runtime, result.conversationId);
+    expect(runId).not.toBeNull();
+
+    // Plant a `_versions/` snapshot whose body hashes to the recorded value.
+    // The naming convention is `<basename>.<utc-iso>.md` — see
+    // `src/skills/writer.ts::snapshotVersion`. The audit walks the dir
+    // newest-first and matches by hash, so any timestamp suffix works.
+    const versionsDir = join(workDir, "skills", "_versions");
+    mkdirSync(versionsDir, { recursive: true });
+    const snapshotPath = join(versionsDir, "recoverable.2026-04-28T12-00-00.000Z.md");
+    writeFileSync(snapshotPath, `${frontmatter}\n${originalBody}\n`);
+
+    // Now drift the live file. The snapshot still holds the original body.
+    const editedBody = "Edited rule: brand new instruction.";
+    writeFileSync(skillPath, `${frontmatter}\n${editedBody}\n`);
+
+    const res = await callCompose(runtime, { run_id: runId }, result.conversationId);
+    expect(res.isError).toBe(false);
+    const sub = res
+      .structured!.layers.find((l) => l.kind === "layer3_skills")!
+      .subItems!.find((s) => s.id === skillPath);
+    expect(sub).toBeDefined();
+    const meta = sub!.metadata as { hashStatus: string; snapshotPath?: string };
+    expect(meta.hashStatus).toBe("recovered");
+    expect(meta.snapshotPath).toBe(snapshotPath);
+
+    // The warning list mentions both the live path and the snapshot path
+    // so a reader knows where the recovered body came from.
+    expect(
+      res.structured!.warnings.some((w) => w.includes(skillPath) && w.includes(snapshotPath)),
+    ).toBe(true);
+
+    await runtime.shutdown();
+  });
 });
 
 describe("compose_effective_context — bundle filter", () => {
@@ -348,7 +411,7 @@ describe("compose_effective_context — bundle filter", () => {
     // skills (e.g. the bundled authoring-guide if its tool-affinity matches
     // the platform's own tools) may also be present — the test asserts our
     // two skills made it in, not exact count.
-    const unfiltered = await callCompose(runtime, {}, "conv_filter");
+    const unfiltered = await callCompose(runtime, {}, "conv_cccccccccccccccc");
     const l3Section = unfiltered.structured!.layers.find((l) => l.kind === "layer3_skills");
     expect(l3Section).toBeDefined();
     const unfilteredBundles = (l3Section!.subItems ?? [])
@@ -365,7 +428,7 @@ describe("compose_effective_context — bundle filter", () => {
     const filtered = await callCompose(
       runtime,
       { bundle: "synapse-collateral" },
-      "conv_filter",
+      "conv_cccccccccccccccc",
     );
     expect(filtered.isError).toBe(false);
     const l3Filtered = filtered.structured!.layers.find((l) => l.kind === "layer3_skills");
@@ -389,9 +452,9 @@ describe("compose_effective_context — conversation_id resolution", () => {
     });
     await provisionTestWorkspace(runtime);
 
-    const res = await callCompose(runtime, {}, "conv_from_ctx");
+    const res = await callCompose(runtime, {}, "conv_dddddddddddddddd");
     expect(res.isError).toBe(false);
-    expect(res.structured!.conversationId).toBe("conv_from_ctx");
+    expect(res.structured!.conversationId).toBe("conv_dddddddddddddddd");
 
     await runtime.shutdown();
   });
@@ -409,11 +472,11 @@ describe("compose_effective_context — conversation_id resolution", () => {
 
     const res = await callCompose(
       runtime,
-      { conversation_id: "conv_arg_wins" },
-      "conv_from_ctx",
+      { conversation_id: "conv_eeeeeeeeeeeeeeee" },
+      "conv_dddddddddddddddd",
     );
     expect(res.isError).toBe(false);
-    expect(res.structured!.conversationId).toBe("conv_arg_wins");
+    expect(res.structured!.conversationId).toBe("conv_eeeeeeeeeeeeeeee");
 
     await runtime.shutdown();
   });

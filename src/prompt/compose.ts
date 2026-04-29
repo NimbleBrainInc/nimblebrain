@@ -368,20 +368,21 @@ export function composeSystemPromptTraced(
         tokens: approxTokens(section),
         subItems: layer3Skills
           .filter((entry) => entry.body && entry.body.trim().length > 0)
-          .map((entry) => ({
-            kind: "layer3_skill" as const,
-            id: entry.sourcePath ?? `nb:layer3:${entry.name}`,
-            source: entry.sourcePath ?? entry.name,
-            ...(deriveBundleFromSkillPath(entry.sourcePath) !== undefined
-              ? { bundle: deriveBundleFromSkillPath(entry.sourcePath) }
-              : {}),
-            metadata: {
-              name: entry.name,
-              scope: entry.scope,
-              loadedBy: entry.loadedBy,
-              reason: entry.reason,
-            },
-          })),
+          .map((entry) => {
+            const bundle = deriveBundleFromSkillPath(entry.sourcePath);
+            return {
+              kind: "layer3_skill" as const,
+              id: entry.sourcePath ?? `nb:layer3:${entry.name}`,
+              source: entry.sourcePath ?? entry.name,
+              ...(bundle !== undefined ? { bundle } : {}),
+              metadata: {
+                name: entry.name,
+                scope: entry.scope,
+                loadedBy: entry.loadedBy,
+                reason: entry.reason,
+              },
+            };
+          }),
       });
     }
   }
@@ -465,8 +466,13 @@ export function composeSystemPromptTraced(
  * (the documented convention for bundle-affined L3 skills), attribute it
  * to that bundle. Otherwise return undefined — the skill is bundle-
  * agnostic and the `bundle` filter shouldn't claim it.
+ *
+ * Exported so other surfaces (e.g. the historical-audit path in
+ * `tools/platform/compose.ts`) classify skills the same way as the live
+ * trace — drift between the two would silently mis-attribute the bundle
+ * filter.
  */
-function deriveBundleFromSkillPath(sourcePath?: string): string | undefined {
+export function deriveBundleFromSkillPath(sourcePath?: string): string | undefined {
   if (!sourcePath) return undefined;
   const m = sourcePath.match(/\/skills\/bundles\/([^/]+)\//);
   return m?.[1];

@@ -30,12 +30,17 @@
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { ContextAssembledEvent, SkillsLoadedEvent } from "../../conversation/types.ts";
+import {
+  CONVERSATION_ID_RE,
+  type ContextAssembledEvent,
+  type SkillsLoadedEvent,
+} from "../../conversation/types.ts";
 import { textContent } from "../../engine/content-helpers.ts";
 import type { EventSink, ToolResult } from "../../engine/types.ts";
 import {
   type ComposedPrompt,
   composeSystemPromptTraced,
+  deriveBundleFromSkillPath,
   type Layer3SkillEntry,
   type TracedLayer,
   type WorkspaceContext,
@@ -68,7 +73,8 @@ interface ComposeArgs {
   bundle?: string;
 }
 
-interface ComposeResponse {
+/** Exported for unit testing. */
+export interface ComposeResponse {
   mode: "live" | "historical";
   conversationId: string;
   runId?: string;
@@ -129,6 +135,16 @@ export function createComposeSource(runtime: Runtime, eventSink: EventSink): Mcp
             return errorResult(
               "conversation_id is required when called outside a chat — no current " +
                 "conversation is in scope. Pass conversation_id explicitly.",
+            );
+          }
+          // Validate the id shape before any filesystem access. Without this,
+          // a malformed id (`../foo`, etc.) would reach `existsSync` first and
+          // probe an arbitrary path — boolean info disclosure. The downstream
+          // `validateConversationId` already throws inside the store, but
+          // gating up front shifts the trust boundary to where it belongs.
+          if (!CONVERSATION_ID_RE.test(convId)) {
+            return errorResult(
+              `conversation_id "${convId}" is not a valid conversation id (expected conv_<16 hex chars>).`,
             );
           }
 
@@ -341,12 +357,27 @@ async function composeHistorical(
     totalTokens = contextAssembled.totalTokens;
   }
 
+  // Prefix the joined text with a banner so anyone reading `text` directly
+  // (instead of the structured `layers` array) sees this is a partial
+  // reconstruction, not the full prompt as recorded. Live mode's `text`
+  // IS the full prompt; historical mode's `text` is layer-3-only by design,
+  // and a programmatic caller treating it as "the prompt" without reading
+  // `warnings[]` would silently get an L3 slice.
+  const HISTORICAL_BANNER =
+    "[historical mode — layer 3 only. Identity, prefs, overlays, apps, focused-app, " +
+    "and app-state are not reconstructed from events. Use live mode for the full " +
+    "current composition; see warnings[] for details.]";
+  const composedText =
+    layers.length > 0
+      ? `${HISTORICAL_BANNER}\n\n---\n\n${layers.map((l) => l.text).join("\n\n---\n\n")}`
+      : HISTORICAL_BANNER;
+
   return {
     mode: "historical",
     conversationId: convId,
     runId,
     totalTokens,
-    text: layers.map((l) => l.text).join("\n\n---\n\n"),
+    text: composedText,
     layers,
     warnings,
   };
@@ -373,6 +404,10 @@ function auditL3Skill(entry: SkillsLoadedEvent["skills"][number]): L3SkillAudit 
   const path = entry.id;
   // `skill-in-memory:<name>` ids are synthesized for skills without a
   // sourcePath (e.g. workspace identity overrides). Nothing to verify.
+  // POSIX-only check — the platform's deployed targets (Linux, macOS) put
+  // skill files under absolute POSIX paths. A future Windows port would
+  // need to broaden this (`path.isAbsolute(path)`) since drive-letter
+  // paths don't begin with `/`.
   if (!path.startsWith("/")) {
     return {
       hashStatus: "missing",
@@ -396,7 +431,7 @@ function auditL3Skill(entry: SkillsLoadedEvent["skills"][number]): L3SkillAudit 
     };
   }
   const currentHash = hashSkillBody(currentBody);
-  const bundle = deriveBundleFromPath(path);
+  const bundle = deriveBundleFromSkillPath(path);
 
   if (entry.contentHash === currentHash) {
     return { hashStatus: "match", body: currentBody, ...(bundle ? { bundle } : {}) };
@@ -482,17 +517,6 @@ function findMatchingSnapshot(
   return null;
 }
 
-/**
- * Same convention as `compose.ts::deriveBundleFromSkillPath` — duplicated
- * here so the historical-audit path doesn't need to import compose.ts's
- * private helper. A skill at `.../skills/bundles/<name>/x.md` is bundle-
- * affined; anything else is bundle-agnostic.
- */
-function deriveBundleFromPath(sourcePath: string): string | undefined {
-  const m = sourcePath.match(/\/skills\/bundles\/([^/]+)\//);
-  return m?.[1];
-}
-
 // ── conv-event reading ───────────────────────────────────────────────────
 
 async function readConvEvents(
@@ -532,7 +556,8 @@ async function readConvEvents(
  * concatenate `layers.map(l => l.text)`; the per-bundle composition is
  * better served by clicking through to source IDs anyway.
  */
-function applyBundleFilter(response: ComposeResponse, bundle: string): void {
+/** Exported for unit testing. */
+export function applyBundleFilter(response: ComposeResponse, bundle: string): void {
   const filtered: TracedLayer[] = [];
   for (const layer of response.layers) {
     const ownBundleMatches = layer.bundle === bundle;
