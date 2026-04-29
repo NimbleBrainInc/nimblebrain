@@ -2,6 +2,8 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeEach, describe, expect, it } from "bun:test";
+import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
+import { _clearAll, resolveWithCode } from "../../src/tools/oauth-flow-registry.ts";
 import {
   InteractiveOAuthNotSupportedError,
   WorkspaceOAuthProvider,
@@ -149,7 +151,7 @@ describe("WorkspaceOAuthProvider — authorize redirect probe (interactive)", ()
     workDir = mkdtempSync(join(tmpdir(), "nb-oauth-integ-"));
   });
 
-  it("302 to a non-self-target login page throws InteractiveOAuthNotSupportedError", async () => {
+  it("302 to a non-self-target login page registers flow + fires callback + throws UnauthorizedError", async () => {
     const mockAuthServer = Bun.serve({
       port: 0,
       fetch(_req: Request) {
@@ -161,22 +163,39 @@ describe("WorkspaceOAuthProvider — authorize redirect probe (interactive)", ()
     });
     try {
       const authUrl = new URL(`http://localhost:${mockAuthServer.port}/authorize`);
-      const p = makeProvider(workDir);
+      const callbackUrls: string[] = [];
+      const p = new WorkspaceOAuthProvider({
+        wsId: "ws_test",
+        serverName: "test-srv",
+        workDir,
+        callbackUrl: CALLBACK,
+        allowInsecureRemotes: true,
+        onInteractiveAuthRequired: (url) => callbackUrls.push(url),
+      });
       const state = p.state();
       authUrl.searchParams.set("state", state);
-      const pending = p.awaitPendingFlow();
-      const pendingSettled = pending.catch((err) => err);
 
-      await expect(p.redirectToAuthorization(authUrl)).rejects.toBeInstanceOf(
-        InteractiveOAuthNotSupportedError,
-      );
-      expect(await pendingSettled).toBeInstanceOf(InteractiveOAuthNotSupportedError);
+      // Provider should throw UnauthorizedError (the SDK's own class) so
+      // McpSource catches it and awaits the registry promise.
+      await expect(p.redirectToAuthorization(authUrl)).rejects.toBeInstanceOf(UnauthorizedError);
+
+      // Callback fired with the auth URL — lifecycle uses this to
+      // transition the Connection to pending_auth.
+      expect(callbackUrls.length).toBe(1);
+      expect(callbackUrls[0]).toContain(`http://localhost:${mockAuthServer.port}/authorize`);
+
+      // Flow is registered with the registry; resolving via callback
+      // resolves the awaitPendingFlow promise.
+      const pending = p.awaitPendingFlow();
+      const resolved = resolveWithCode(state, "the-code-123");
+      expect(resolved).toBe(true);
+      expect(await pending).toBe("the-code-123");
     } finally {
       mockAuthServer.stop(true);
     }
   });
 
-  it("200 with a login form (no redirect) throws InteractiveOAuthNotSupportedError", async () => {
+  it("200 with a login form (no redirect) takes the same interactive path", async () => {
     const mockAuthServer = Bun.serve({
       port: 0,
       fetch(_req: Request) {
@@ -188,19 +207,33 @@ describe("WorkspaceOAuthProvider — authorize redirect probe (interactive)", ()
     });
     try {
       const authUrl = new URL(`http://localhost:${mockAuthServer.port}/authorize`);
-      const p = makeProvider(workDir);
+      let captured: string | null = null;
+      const p = new WorkspaceOAuthProvider({
+        wsId: "ws_test",
+        serverName: "test-srv",
+        workDir,
+        callbackUrl: CALLBACK,
+        allowInsecureRemotes: true,
+        onInteractiveAuthRequired: (url) => {
+          captured = url;
+        },
+      });
       const state = p.state();
       authUrl.searchParams.set("state", state);
-      const pending = p.awaitPendingFlow();
-      const pendingSettled = pending.catch((err) => err);
 
-      await expect(p.redirectToAuthorization(authUrl)).rejects.toBeInstanceOf(
-        InteractiveOAuthNotSupportedError,
-      );
-      expect(await pendingSettled).toBeInstanceOf(InteractiveOAuthNotSupportedError);
+      await expect(p.redirectToAuthorization(authUrl)).rejects.toBeInstanceOf(UnauthorizedError);
+      expect(captured).not.toBeNull();
+      expect(captured).toContain("/authorize");
     } finally {
       mockAuthServer.stop(true);
     }
+  });
+
+  it("InteractiveOAuthNotSupportedError class still exists for backwards compat (deprecated)", () => {
+    // Smoke test — the class is kept exported for any consumer still
+    // importing the symbol. Should not be thrown by the provider.
+    const err = new InteractiveOAuthNotSupportedError("https://x/");
+    expect(err.name).toBe("InteractiveOAuthNotSupportedError");
   });
 });
 
