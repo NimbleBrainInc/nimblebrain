@@ -104,6 +104,22 @@ EXCLUDE from the LLM-facing schema:
 Test: if a field is set by the runtime in 100% of cases, it does not
 belong in the LLM-facing schema. Set it in the handler.
 
+**Internal callers use the domain API, not the tool handler.** When a
+domain has both LLM-facing and operator-facing callers (CLI, bundle
+lifecycle, settings UI), factor a `domain.ts` module that accepts the
+full shape including operator fields. The tool handler becomes a thin
+wrapper that narrows the input and stamps `source: "agent"`. Internal
+callers (CLI, lifecycle.ts) call the domain directly via a runtime-
+exposed getter. **The CLI does not call the LLM-facing tool — that path
+silently no-ops or strips operator fields.** See
+`src/bundles/automations/src/domain.ts` for the reference implementation
+and `src/runtime/runtime.ts::registerAutomationsContext` for the wiring.
+
+The cost of doing this once per domain: one extra file. The cost of not
+doing it: bundle install loses bundle-contributed schedules, CLI pause/
+resume silently no-ops, and the tool surface accumulates operator fields
+to "make it work" — exactly what (1.4) forbids.
+
 ---
 
 ## 2. Handler contract

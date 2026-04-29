@@ -58,8 +58,10 @@ const TOKEN_BUDGET_SCHEMA = {
 };
 
 /**
- * Manifest properties — used by both create (with required: [name,
- * schedule]) and update (no required, all optional patch).
+ * Manifest properties — used by create (with required: [name, schedule]).
+ * The update schema uses `AUTOMATION_UPDATE_MANIFEST_PROPERTIES` below,
+ * which omits `name` (renames are not patchable; the kebab-case id would
+ * drift from the human-readable name).
  */
 const AUTOMATION_MANIFEST_PROPERTIES = {
   name: {
@@ -98,6 +100,10 @@ const AUTOMATION_MANIFEST_PROPERTIES = {
   tokenBudget: TOKEN_BUDGET_SCHEMA,
 };
 
+/** Update-shape manifest — same as create minus `name` (renames not supported). */
+const { name: _autoName, ...AUTOMATION_UPDATE_MANIFEST_PROPERTIES } =
+  AUTOMATION_MANIFEST_PROPERTIES;
+
 // ── Tool schemas ─────────────────────────────────────────────────────────
 
 export const TOOL_SCHEMAS: ToolSchema[] = [
@@ -135,7 +141,8 @@ export const TOOL_SCHEMAS: ToolSchema[] = [
         name: { type: "string", description: "Name of the automation to update." },
         manifest: {
           type: "object",
-          properties: AUTOMATION_MANIFEST_PROPERTIES,
+          // Note: `name` deliberately omitted — renames not supported.
+          properties: AUTOMATION_UPDATE_MANIFEST_PROPERTIES,
           description: "Partial manifest patch. Omitted fields keep their current values.",
         },
         body: {

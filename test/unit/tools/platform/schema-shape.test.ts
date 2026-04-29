@@ -25,6 +25,7 @@ import { NoopEventSink } from "../../../../src/adapters/noop-events.ts";
 import type { McpSource } from "../../../../src/tools/mcp-source.ts";
 import { createConversationsSource } from "../../../../src/tools/platform/conversations.ts";
 import { createFilesSource } from "../../../../src/tools/platform/files.ts";
+import { createAutomationsSource } from "../../../../src/tools/platform/automations.ts";
 import { createInstructionsSource } from "../../../../src/tools/platform/instructions.ts";
 import { createSkillsSource } from "../../../../src/tools/platform/skills.ts";
 
@@ -54,6 +55,9 @@ function makeRuntimeStub(workDir: string): unknown {
     getContextSkills: () => [],
     getMatchableSkills: () => [],
     loadConversationSkills: () => [],
+    // Automations source registers a domain-context getter at construction.
+    // Capture-and-discard for the lint test — we never invoke handlers.
+    registerAutomationsContext: () => {},
   };
 }
 
@@ -64,6 +68,7 @@ const SOURCES = [
   { name: "instructions", factory: createInstructionsSource },
   { name: "files", factory: createFilesSource },
   { name: "conversations", factory: createConversationsSource },
+  { name: "automations", factory: createAutomationsSource },
 ] as const;
 
 // ── Schema walker ────────────────────────────────────────────────────────

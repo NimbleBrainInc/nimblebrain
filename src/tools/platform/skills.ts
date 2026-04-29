@@ -153,6 +153,14 @@ const SKILL_MANIFEST_PROPERTIES = {
   },
 };
 
+/**
+ * Manifest properties for `skills__update`. Same as create-shape minus
+ * `name` — renaming a skill is not patchable via update (the name is
+ * the filename, and the path-derived id would drift). If renaming
+ * becomes a real need, add a dedicated `skills__rename` tool.
+ */
+const { name: _skillName, ...SKILL_UPDATE_MANIFEST_PROPERTIES } = SKILL_MANIFEST_PROPERTIES;
+
 const SKILLS_DELETE_DESCRIPTION =
   "Delete a Layer 3 skill. The `id` is the filesystem path returned by `skills__list`. " +
   "Snapshots to `_versions/` before removing the live file. Confirm with the user before " +
@@ -434,7 +442,8 @@ export function createSkillsSource(runtime: Runtime, eventSink: EventSink): McpS
           id: { type: "string", description: "Filesystem path returned by `skills__list`." },
           manifest: {
             type: "object",
-            properties: SKILL_MANIFEST_PROPERTIES,
+            // Note: `name` deliberately omitted — renames not supported.
+            properties: SKILL_UPDATE_MANIFEST_PROPERTIES,
             description: "Partial manifest patch. Omitted fields keep their current values.",
           },
           body: {

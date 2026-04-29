@@ -462,3 +462,51 @@ describe("createDirectExecutor", () => {
 		expect(capturedRequest!.identity).toBeUndefined();
 	});
 });
+
+// ---------------------------------------------------------------------------
+// Recursive-call guard at the executor
+// ---------------------------------------------------------------------------
+//
+// `allowedTools` is no longer in the LLM-facing schema (PR #127), but
+// operator file edits and bundle-contributed schedules can still set it.
+// The guard lives at the executor — closest to the actual chat() call —
+// so it sees the merged Automation regardless of how the field got there.
+
+describe("createDirectExecutor — recursive-call guard", () => {
+	test("refuses to run when allowedTools includes automations__create", async () => {
+		const executor = createDirectExecutor(
+			makeDirectChatFn(),
+			() => ({ workspaceId: "ws_test", identity: { id: "u" } }),
+		);
+		const automation = makeAutomation({
+			allowedTools: ["files__*", "automations__create"],
+		});
+
+		await expect(executor(automation)).rejects.toThrow(/allowedTools/);
+	});
+
+	test("refuses to run when allowedTools includes automations__update", async () => {
+		const executor = createDirectExecutor(
+			makeDirectChatFn(),
+			() => ({ workspaceId: "ws_test", identity: { id: "u" } }),
+		);
+		const automation = makeAutomation({
+			allowedTools: ["automations__update"],
+		});
+
+		await expect(executor(automation)).rejects.toThrow(/allowedTools/);
+	});
+
+	test("permits non-recursive allowedTools", async () => {
+		const executor = createDirectExecutor(
+			makeDirectChatFn(),
+			() => ({ workspaceId: "ws_test", identity: { id: "u" } }),
+		);
+		const automation = makeAutomation({
+			allowedTools: ["files__*", "skills__list", "conversations__search"],
+		});
+
+		const result = await executor(automation);
+		expect(result.status).toBe("success");
+	});
+});
