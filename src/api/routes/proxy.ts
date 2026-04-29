@@ -34,7 +34,7 @@ import { type AppContext, type AppEnv, apiError } from "../types.ts";
  *   2. `Authorization`, `Cookie`, `X-Workspace-Id`, `X-Forwarded-For`
  *      stripped before forwarding — bundle's loopback server can't read
  *      user credentials and can't be told to trust a forged client IP.
- *   3. `Accept-Encoding` stripped on forward so upstream returns
+ *   3. `Accept-Encoding: identity` forced on forward so upstream returns
  *      identity-encoded bodies — keeps us out of the business of
  *      tracking which encodings our HTTP client decompresses.
  *   4. `Set-Cookie` stripped from upstream — bundle can't plant cookies
@@ -130,6 +130,12 @@ export function proxyRoutes(ctx: AppContext) {
       }
       forwardHeaders.set("X-Forwarded-Host", url.host);
       forwardHeaders.set("X-Forwarded-Proto", url.protocol.replace(":", ""));
+      // Force identity encoding from upstream. Stripping the inbound
+      // `Accept-Encoding` isn't enough: Bun's `fetch` auto-injects a default
+      // (`gzip, deflate, br, zstd`) when the header is absent, which would
+      // re-introduce the encoding-mismatch class of bug we're avoiding.
+      // Setting `identity` explicitly is the defensive fix.
+      forwardHeaders.set("accept-encoding", "identity");
 
       // `duplex: "half"` is only valid (per WHATWG fetch) when the body is a
       // stream — passing it for bodyless GET/HEAD can produce a 400 in Bun.
@@ -192,11 +198,11 @@ const HOP_BY_HOP = new Set([
  *   - authorization, cookie, x-workspace-id: user credentials, see trust model.
  *   - x-forwarded-for: client-supplied; the bundle has no way to verify it
  *     and we don't want to imply we did.
- *   - accept-encoding: forces upstream to send identity-encoded bodies. Avoids
- *     the trap of "our HTTP client transparently decompressed gzip, so we
- *     stripped content-encoding from the response, but it didn't decompress
- *     br/zstd, so those came through corrupted." Identity in, identity out,
- *     no encoding state to track. Loopback bandwidth cost is negligible.
+ *   - accept-encoding: stripped here, then forced to `identity` after the
+ *     loop. The strip alone isn't enough — Bun's `fetch` auto-injects a
+ *     default Accept-Encoding when the header is absent, which would
+ *     re-introduce the encoding mismatch. Identity in, identity out, no
+ *     encoding state to track. Loopback bandwidth cost is negligible.
  */
 const REQUEST_HEADERS_STRIPPED = new Set([
   "host",
