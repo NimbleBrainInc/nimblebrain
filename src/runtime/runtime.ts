@@ -55,7 +55,6 @@ import {
 } from "../skills/loader.ts";
 import { SkillMatcher } from "../skills/matcher.ts";
 import { selectLayer3Skills } from "../skills/select.ts";
-import { buildSkillsLoadedPayload } from "./skills-loaded-payload.ts";
 import { approxTokens } from "../skills/tokens.ts";
 import type { Skill } from "../skills/types.ts";
 import { TelemetryManager } from "../telemetry/manager.ts";
@@ -73,6 +72,7 @@ import {
   type RequestContext,
   runWithRequestContext,
 } from "./request-context.ts";
+import { buildSkillsLoadedPayload } from "./skills-loaded-payload.ts";
 import { surfaceTools } from "./tools.ts";
 import type { ChatRequest, ChatResult, ModelSlots, RuntimeConfig, TurnUsage } from "./types.ts";
 import { createWorkspaceRegistry, startWorkspaceBundles } from "./workspace-runtime.ts";
@@ -1871,13 +1871,6 @@ function stampDerivedScope(workDir: string, skill: Skill): Skill {
     manifest: { ...skill.manifest, scope: isOrg ? "org" : "bundle" },
   };
 }
-
-/**
- * Build the `skills.loaded` payload from the Layer 3 selection result. Each
- * entry carries id (sourcePath or "in-memory" sentinel), scope, version
- * (file mtime), tokens (approximate), `loadedBy`, and the matcher's reason
- * string. Total is the sum of per-skill tokens.
- */
 
 /**
  * Build the `context.assembled` snapshot from the assembled prompt + tool

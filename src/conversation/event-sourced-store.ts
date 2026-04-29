@@ -603,6 +603,13 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
       }
 
       case "skills.loaded": {
+        // Trust boundary: persisted JSON → typed projection. The cast assumes
+        // every emitter populates the full `SkillsLoadedEntry` shape (the
+        // platform's only emitter, `buildSkillsLoadedPayload`, does). Tools
+        // that depend on per-field guarantees on read should validate at
+        // their consumption point rather than assume the cast is sound for
+        // arbitrary on-disk data — the broader event-shape validation is its
+        // own audit, not in scope here.
         const skills = Array.isArray(d.skills)
           ? (d.skills as SkillsLoadedEntry[])
           : ([] as SkillsLoadedEntry[]);

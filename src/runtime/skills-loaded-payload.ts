@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
-import type { SelectedSkill } from "../skills/select.ts";
 import type { SkillsLoadedPayload } from "../engine/types.ts";
 import { readSkillMtime } from "../skills/loader.ts";
+import type { SelectedSkill } from "../skills/select.ts";
 import { approxTokens } from "../skills/tokens.ts";
 
 /**
