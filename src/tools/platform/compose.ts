@@ -59,15 +59,18 @@ import type { McpSource } from "../mcp-source.ts";
 const COMPOSE_SOURCE_NAME = "compose";
 
 const COMPOSE_DESCRIPTION =
-  "Return the composed system prompt for a conversation, with provenance per " +
-  "layer (identity, core skills, user context, overlays, layer-3 skills, apps, " +
-  "etc). Defaults to live mode (current state for the conversation's workspace). " +
+  "Return the composed system prompt with provenance per layer (identity, core " +
+  "skills, user context, overlays, layer-3 skills, apps, etc). Defaults to live " +
+  "mode, which composes against the **calling request's workspace** — `convId` " +
+  "is echoed as a label and does NOT select the workspace. To inspect a " +
+  "different workspace, call from within that workspace's context. " +
   "Pass `run_id` for historical mode — reads the recorded `skills.loaded` event " +
-  "for that run and verifies each layer-3 skill's `contentHash` against its " +
-  "current source, flagging drift. Pass `bundle` to filter the response to one " +
-  "bundle's contributions (the apps section row + any layer-3 skills in that " +
-  "bundle's affined directory). Read-only. Use this to answer 'what's in the " +
-  "agent's prompt right now' or 'what was in the prompt for run X'.";
+  "for that run from the calling workspace's conv jsonl and verifies each " +
+  "layer-3 skill's `contentHash` against its current source, flagging drift. " +
+  "Pass `bundle` to filter the response to one bundle's contributions (apps " +
+  "section + layer-3 skills under the bundle's affined directory). Read-only. " +
+  "Use this to answer 'what's in the agent's prompt right now' or 'what was " +
+  "in the prompt for run X'.";
 
 interface ComposeArgs {
   conversation_id?: string;
@@ -187,17 +190,33 @@ export function createComposeSource(runtime: Runtime, eventSink: EventSink): Mcp
 /**
  * Live mode: re-gather the same inputs `runtime.chat()` uses and call
  * `composeSystemPromptTraced` to produce the full per-layer breakdown for
- * the current state.
+ * the current state. The composition is scoped to the **calling
+ * request's workspace** (`runtime.requireWorkspaceId()`), not to the
+ * `convId`'s workspace — `convId` is a label echoed back in the
+ * response, NOT a workspace selector. To inspect a different workspace,
+ * the caller must invoke from within that workspace's request context.
  *
- * Skipped vs. `runtime.chat()`:
- *   - matched skill (legacy SkillMatcher path) — needs a user message, not
- *     in scope for a "what's currently composed" query.
- *   - focused-app section / app-state — request-scoped, only present when
- *     a chat is running against an app context.
- *   - participants — request-scoped (shared-conv state).
+ * Inputs gathered (mirrors `runtime.chat()` for everything not request-
+ * scoped):
+ *   - `contextSkills` = global `runtime.getContextSkills()` PLUS the
+ *     workspace identity override (`workspace.identity` synthesized into
+ *     a priority-1 core skill). The override is the workspace-scoping
+ *     piece — without it the trace would lie for any workspace using a
+ *     custom identity.
+ *   - `apps` = `runtime.buildAppsList(wsId)` — workspace-scoped, includes
+ *     each bundle's `app://instructions` overlay.
+ *   - `overlays` = `runtime.readPromptOverlays(wsId)` — org + workspace
+ *     instruction overlays.
+ *   - `layer3Skills` = `loadConversationSkills` ∩ `selectLayer3Skills`
+ *     against the role-filtered active tool set.
+ *   - `prefs` = identity preferences.
  *
- * Everything else (core skills, user context, prefs, workspace context,
- * overlays, layer-3 skills, apps) is workspace-scoped and faithful.
+ * Skipped vs. `runtime.chat()` (request-scoped, no signal in a debug
+ * call):
+ *   - matched skill (legacy SkillMatcher path) — needs a user message.
+ *   - focused-app section / app-state — only present when a chat is
+ *     running against an app context.
+ *   - participants — shared-conv state.
  */
 async function composeLive(runtime: Runtime, convId: string): Promise<ComposeResponse> {
   const wsId = runtime.requireWorkspaceId();
@@ -310,6 +329,13 @@ async function composeHistorical(
   const skillsLoaded = events.find(
     (e): e is SkillsLoadedEvent => e.type === "skills.loaded" && e.runId === runId,
   );
+  // Read for `totalTokens` only — the run's full prompt token count is the
+  // honest answer for historical mode (vs. just the L3 sum from
+  // skillsLoaded). The event's other fields (per-source breakdown,
+  // exclusions) are recorded but intentionally not surfaced here; the
+  // L3-only view is the design contract for historical mode v1, and
+  // surfacing the rest would imply we can reconstruct the layers we can't.
+  // A future "rich historical mode" PR could expand this.
   const contextAssembled = events.find(
     (e): e is ContextAssembledEvent => e.type === "context.assembled" && e.runId === runId,
   );
@@ -568,15 +594,23 @@ async function readConvEvents(
 /**
  * Filter the response to one bundle's contributions in place. A layer is
  * kept if its top-level `bundle` matches OR if any of its `subItems`
- * carries the matching bundle. For sections with subItems, the subItems
+ * carries the matching bundle; for sections with subItems, the subItems
  * array is also pared to just the matching ones.
  *
- * The `text` field is left intact even after filtering: reconstructing
- * a faithful per-bundle text slice would require re-running the
- * formatters with the filtered list, which is more change-surface than
- * v1 of this tool warrants. Consumers that need filtered text can
- * concatenate `layers.map(l => l.text)`; the per-bundle composition is
- * better served by clicking through to source IDs anyway.
+ * All three response fields are kept consistent with the filtered layers:
+ * `layers`, `totalTokens` (re-summed), and `text` (re-joined from the
+ * filtered layer texts). Earlier versions left `text` untouched, which
+ * meant a caller using `r.totalTokens` to budget context would be misled
+ * by an `r.text` carrying content from layers that aren't in
+ * `r.layers` — a self-inconsistent response.
+ *
+ * Note that for sections like `apps` where `subItems` are pared, the
+ * layer's `text` field still contains the section's full original
+ * formatting (we don't re-run the apps-section formatter against just
+ * the filtered apps). This is honest about scope: the tool surfaces the
+ * filtered subItems for fine-grained inspection while keeping section
+ * text intact for context. Consumers wanting per-bundle prompt text
+ * should walk the subItems, not slice the section text.
  */
 /** Exported for unit testing. */
 export function applyBundleFilter(response: ComposeResponse, bundle: string): void {
@@ -594,6 +628,11 @@ export function applyBundleFilter(response: ComposeResponse, bundle: string): vo
   }
   response.layers = filtered;
   response.totalTokens = filtered.reduce((sum, l) => sum + l.tokens, 0);
+  // Rejoin from the filtered layer texts so `text` reflects the same
+  // subset as `layers` and `totalTokens`. In historical mode this drops
+  // the leading banner — that's correct; the filter narrowed the view
+  // and the banner described an unfiltered partial.
+  response.text = filtered.map((l) => l.text).join("\n\n---\n\n");
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────

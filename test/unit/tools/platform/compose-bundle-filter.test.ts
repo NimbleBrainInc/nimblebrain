@@ -175,4 +175,35 @@ describe("applyBundleFilter", () => {
 
     expect(response.totalTokens).toBe(10);
   });
+
+  test("text is rebuilt from filtered layers (response stays self-consistent)", () => {
+    // Regression: earlier versions left `response.text` untouched after
+    // filtering, so a caller using `r.totalTokens` (filtered) to budget
+    // context against `r.text` (unfiltered) would be misled by the
+    // self-inconsistent response. The filter MUST keep all three fields
+    // (layers, totalTokens, text) describing the same subset.
+    const kept: TracedLayer = {
+      kind: "focused_app",
+      id: "nb:focused-app",
+      source: "focused app: synapse-crm",
+      text: "## Active App: synapse-crm",
+      tokens: 10,
+      bundle: "synapse-crm",
+    };
+    const dropped: TracedLayer = {
+      kind: "user_prefs",
+      id: "nb:user-prefs",
+      source: "runtime — user prefs",
+      text: "## User\n- Name: Mat",
+      tokens: 20,
+    };
+    const response = makeResponse([kept, dropped]);
+
+    applyBundleFilter(response, "synapse-crm");
+
+    expect(response.text).toBe("## Active App: synapse-crm");
+    expect(response.text).not.toContain("## User");
+    // And the joined text equals the layers it claims to describe.
+    expect(response.text).toBe(response.layers.map((l) => l.text).join("\n\n---\n\n"));
+  });
 });
