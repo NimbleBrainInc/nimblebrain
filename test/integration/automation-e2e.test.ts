@@ -114,10 +114,12 @@ describe("automation e2e: create -> run -> verify", () => {
 		// Step 1: Create automation
 		const createResult = handleCreate(
 			{
-				name: "Daily Summary",
-				prompt: "Summarize today's activity",
-				schedule: { type: "cron", expression: "0 8 * * *", timezone: "Pacific/Honolulu" },
-				description: "Generates a daily activity summary",
+				manifest: {
+					name: "Daily Summary",
+					schedule: { type: "cron", expression: "0 8 * * *", timezone: "Pacific/Honolulu" },
+					description: "Generates a daily activity summary",
+				},
+				body: "Summarize today's activity",
 			},
 			ctx,
 		) as { automation: Automation; created: boolean };
@@ -153,14 +155,16 @@ describe("automation e2e: create -> run -> verify", () => {
 
 		handleCreate(
 			{
-				name: "Weekly Report",
-				prompt: "Generate the weekly report",
-				schedule: { type: "interval", intervalMs: 3_600_000 },
-				description: "Compiles weekly metrics",
-				skill: "reporting",
-				maxIterations: 8,
-				maxInputTokens: 100_000,
-				model: "claude-sonnet-4-5-20250929",
+				manifest: {
+					name: "Weekly Report",
+					schedule: { type: "interval", intervalMs: 3_600_000 },
+					description: "Compiles weekly metrics",
+					skill: "reporting",
+					maxIterations: 8,
+					maxInputTokens: 100_000,
+					model: "claude-sonnet-4-5-20250929",
+				},
+				body: "Generate the weekly report",
 			},
 			ctx,
 		);
@@ -184,18 +188,30 @@ describe("automation e2e: create -> run -> verify", () => {
 		expect(executorCalls[0]!.signal.aborted).toBe(false);
 	});
 
-	test("create with multi-tool allowedTools, verify passed through to executor", async () => {
+	test("allowedTools passed through to executor when set on the stored automation", async () => {
+		// `allowedTools` is no longer in the LLM-facing schema (it's a
+		// leaky literal-tool-name affinity). Operators set it by directly
+		// editing the stored Automation. This test seeds the store
+		// directly to exercise the executor pass-through behavior.
 		const ctx = createHarness();
 
 		handleCreate(
 			{
-				name: "Scoped Automation",
-				prompt: "Do scoped work",
-				schedule: { type: "interval", intervalMs: 120_000 },
-				allowedTools: ["files__*", "reports__generate", "analytics__*"],
+				manifest: {
+					name: "Scoped Automation",
+					schedule: { type: "interval", intervalMs: 120_000 },
+				},
+				body: "Do scoped work",
 			},
 			ctx,
 		);
+		const defs = ctx.definitions();
+		defs.get("scoped-automation")!.allowedTools = [
+			"files__*",
+			"reports__generate",
+			"analytics__*",
+		];
+		ctx.save(defs);
 
 		await handleRun({ name: "Scoped Automation" }, ctx);
 
@@ -234,9 +250,11 @@ describe("automation e2e: run records metrics", () => {
 
 		handleCreate(
 			{
-				name: "Multi Tool Job",
-				prompt: "Use many tools",
-				schedule: { type: "interval", intervalMs: 60_000 },
+				manifest: {
+					name: "Multi Tool Job",
+					schedule: { type: "interval", intervalMs: 60_000 },
+				},
+				body: "Use many tools",
 			},
 			ctx,
 		);
@@ -256,9 +274,11 @@ describe("automation e2e: run records metrics", () => {
 
 		handleCreate(
 			{
-				name: "Status Check",
-				prompt: "Check status",
-				schedule: { type: "interval", intervalMs: 60_000 },
+				manifest: {
+					name: "Status Check",
+					schedule: { type: "interval", intervalMs: 60_000 },
+				},
+				body: "Check status",
 			},
 			ctx,
 		);

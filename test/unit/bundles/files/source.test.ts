@@ -56,9 +56,8 @@ describe("files bundle", () => {
     const encoded = Buffer.from(payload).toString("base64");
 
     const created = await source.execute("create", {
-      filename: "fox.txt",
-      base64_data: encoded,
-      mime_type: "text/plain",
+      manifest: { filename: "fox.txt", mimeType: "text/plain" },
+      body: encoded,
     });
     expect(created.isError).toBe(false);
     const { id } = parseFirst(created) as { id: string };

@@ -175,9 +175,8 @@ describe("chat multipart upload ↔ files__* visibility (bug 4)", () => {
 
   it("agent-created files and chat-uploaded files coexist in the same registry", async () => {
     const agentCreate = await callFilesTool("create", {
-      filename: "from-agent.bin",
-      base64_data: Buffer.from("agent bytes").toString("base64"),
-      mime_type: "application/octet-stream",
+      manifest: { filename: "from-agent.bin", mimeType: "application/octet-stream" },
+      body: Buffer.from("agent bytes").toString("base64"),
     });
     expect(agentCreate.status).toBe(200);
     const agentId = (extractStructured(agentCreate.body) as { id: string }).id;

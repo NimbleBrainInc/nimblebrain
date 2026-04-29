@@ -2,6 +2,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { Command } from "commander";
 import { ConsoleEventSink } from "../../adapters/console-events.ts";
+import { updateAutomation } from "../../bundles/automations/src/domain.ts";
 import { extractText } from "../../engine/content-helpers.ts";
 import { Runtime } from "../../runtime/runtime.ts";
 import { loadConfig } from "../config.ts";
@@ -256,10 +257,10 @@ export function createAutomationCommand(): Command {
       let runtime: Runtime | undefined;
       try {
         runtime = await startHeadlessRuntime(globals.config);
-        const data = (await callTool(runtime, "automations__update", {
-          name,
-          enabled: false,
-        })) as { automation: { name: string; enabled: boolean }; message: string };
+        // Internal caller — bypass the LLM-facing schema and call the
+        // domain API directly. The schema doesn't accept `enabled` at
+        // root; trying to send the old flat shape would silently no-op.
+        const data = updateAutomation(name, { enabled: false }, runtime.getAutomationsContext());
 
         if (globals.json) {
           process.stdout.write(`${JSON.stringify(data)}\n`);
@@ -286,10 +287,8 @@ export function createAutomationCommand(): Command {
       let runtime: Runtime | undefined;
       try {
         runtime = await startHeadlessRuntime(globals.config);
-        const data = (await callTool(runtime, "automations__update", {
-          name,
-          enabled: true,
-        })) as { automation: { name: string; enabled: boolean }; message: string };
+        // Internal caller — see pause comment.
+        const data = updateAutomation(name, { enabled: true }, runtime.getAutomationsContext());
 
         if (globals.json) {
           process.stdout.write(`${JSON.stringify(data)}\n`);

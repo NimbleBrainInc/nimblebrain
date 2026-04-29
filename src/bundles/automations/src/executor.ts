@@ -55,7 +55,40 @@ export interface ExecutorContext {
 // Shared helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * Recursive-call guard. An automation whose `allowedTools` includes a
+ * tool that creates more automations would spawn an unbounded loop on
+ * every scheduled run. The LLM-facing schema doesn't accept
+ * `allowedTools`, but operator file edits and bundle-contributed
+ * schedules can still set it — so the guard lives at the executor,
+ * which sees the merged Automation regardless of how it was authored.
+ */
+const RECURSIVE_TOOL_PATTERNS = [
+  "automations__create",
+  "automations__update",
+  "automations__delete",
+];
+
+export function containsRecursiveTool(allowedTools: string[] | undefined): string | null {
+  if (!allowedTools) return null;
+  for (const tool of allowedTools) {
+    for (const pattern of RECURSIVE_TOOL_PATTERNS) {
+      if (tool === pattern || tool.includes(pattern)) return tool;
+    }
+  }
+  return null;
+}
+
 function buildRequest(automation: Automation, ctx?: ExecutorContext): ChatFnRequest {
+  const offending = containsRecursiveTool(automation.allowedTools);
+  if (offending !== null) {
+    throw new Error(
+      `Automation "${automation.name}" lists "${offending}" in allowedTools — refusing to run. ` +
+        `Automations cannot create/update/delete other automations from a scheduled run; ` +
+        `that pattern produces unbounded growth. Edit the automation file to remove the entry.`,
+    );
+  }
+
   const req: ChatFnRequest = {
     message: automation.prompt,
     metadata: {

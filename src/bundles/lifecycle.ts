@@ -2,11 +2,11 @@ import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { clearAllWorkspaceCredentials } from "../config/workspace-credentials.ts";
-import { extractText } from "../engine/content-helpers.ts";
 import type { EventSink } from "../engine/types.ts";
 import type { PlacementRegistry } from "../runtime/placement-registry.ts";
 import { McpSource } from "../tools/mcp-source.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
+import { createAutomation, deleteAutomation } from "./automations/src/domain.ts";
 import { getMpak } from "./mpak.ts";
 import { deriveBundleDataDir, deriveServerName } from "./paths.ts";
 import { startBundleSource } from "./startup.ts";
@@ -30,6 +30,17 @@ import type {
 export class BundleLifecycleManager {
   private instances = new Map<string, BundleInstance>();
   private placementRegistry: PlacementRegistry | null = null;
+  /**
+   * Getter for a workspace-scoped automations domain context. Set by
+   * Runtime after the automations platform source is constructed. Used
+   * by `syncBundleAutomations` / `removeBundleAutomations` to bypass the
+   * LLM-facing tool surface — bundle-contributed schedules need to set
+   * `source: "bundle"` and `bundleName`, which the LLM-facing schema
+   * deliberately doesn't accept. See src/tools/platform/CLAUDE.md § 1.4.
+   */
+  private getAutomationsCtx:
+    | (() => import("./automations/src/domain.ts").AutomationDomainContext)
+    | null = null;
 
   constructor(
     private eventSink: EventSink,
@@ -41,6 +52,19 @@ export class BundleLifecycleManager {
   /** Set the PlacementRegistry (called by Runtime after construction). */
   setPlacementRegistry(pr: PlacementRegistry): void {
     this.placementRegistry = pr;
+  }
+
+  /**
+   * Wire the automations domain-context getter. Called by Runtime once
+   * the automations platform source is constructed. Until this is set,
+   * bundle-contributed schedules will be skipped (with a stderr warning)
+   * — useful for minimal test runtimes that don't want the automations
+   * subsystem.
+   */
+  setAutomationsContextGetter(
+    getter: () => import("./automations/src/domain.ts").AutomationDomainContext,
+  ): void {
+    this.getAutomationsCtx = getter;
   }
 
   // ---- Queries -----------------------------------------------------------
@@ -460,14 +484,21 @@ export class BundleLifecycleManager {
   // ---- Bundle-contributed automations -------------------------------------
 
   /**
-   * Extract schedules from an Upjack manifest and create automations via the
-   * tool registry.  Idempotent — create returns existing if the id matches.
-   * Errors are logged but never fail the install (graceful degradation).
+   * Extract schedules from an Upjack manifest and create automations via
+   * the domain API. Idempotent — create returns existing if the id
+   * matches. Errors are logged but never fail the install (graceful
+   * degradation).
+   *
+   * Bypasses the LLM-facing `automations__create` tool because bundle-
+   * authored schedules need to stamp `source: "bundle"` and `bundleName`
+   * — operator fields the tool surface doesn't accept. Without this,
+   * `removeBundleAutomations` couldn't find what to clean up on
+   * uninstall.
    */
   private async syncBundleAutomations(
     manifest: BundleManifest,
     bundleName: string,
-    registry: ToolRegistry,
+    _registry: ToolRegistry,
   ): Promise<void> {
     const upjackMeta = manifest._meta?.["ai.nimblebrain/upjack"] as
       | Record<string, unknown>
@@ -476,6 +507,14 @@ export class BundleLifecycleManager {
 
     const schedules = upjackMeta.schedules as UpjackScheduleDeclaration[] | undefined;
     if (!schedules || !Array.isArray(schedules) || schedules.length === 0) return;
+
+    if (!this.getAutomationsCtx) {
+      process.stderr.write(
+        `[lifecycle] Automations subsystem not registered — skipping ${schedules.length} schedule(s) for ${bundleName}\n`,
+      );
+      return;
+    }
+    const ctx = this.getAutomationsCtx();
 
     // Derive the short name used as the automation id prefix
     // e.g. "@acme/monitoring" → "monitoring"
@@ -492,10 +531,8 @@ export class BundleLifecycleManager {
 
         const automationId = `${shortName}__${sched.name}`;
 
-        await registry.execute({
-          id: `lifecycle-auto-create-${automationId}`,
-          name: "automations__create",
-          input: {
+        createAutomation(
+          {
             name: automationId,
             prompt: sched.prompt,
             schedule: sched.schedule,
@@ -504,12 +541,13 @@ export class BundleLifecycleManager {
             allowedTools: sched.allowedTools,
             maxIterations: sched.maxIterations,
             maxInputTokens: sched.maxInputTokens,
-            model: sched.model,
+            model: sched.model ?? undefined,
             enabled: sched.enabled ?? true,
             source: "bundle",
             bundleName,
           },
-        });
+          ctx,
+        );
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         process.stderr.write(
@@ -521,43 +559,35 @@ export class BundleLifecycleManager {
 
   /**
    * Remove all bundle-contributed automations for a given bundleName.
-   * Lists automations with source="bundle", filters by bundleName, and deletes each.
+   * Reads the store directly via the domain context, filters by
+   * `source: "bundle"` and matching `bundleName`, then deletes each.
    * Errors are logged but never fail the uninstall.
    */
-  private async removeBundleAutomations(bundleName: string, registry: ToolRegistry): Promise<void> {
+  private async removeBundleAutomations(
+    bundleName: string,
+    _registry: ToolRegistry,
+  ): Promise<void> {
+    if (!this.getAutomationsCtx) return; // No automations subsystem in this runtime.
     try {
-      // List automations with source="bundle"
-      const listResult = await registry.execute({
-        id: "lifecycle-auto-list",
-        name: "automations__list",
-        input: { source: "bundle" },
-      });
-
-      if (listResult.isError) return;
-
-      // Parse the result to find automations matching this bundle
-      const parsed = JSON.parse(extractText(listResult.content)) as {
-        automations?: Array<{ name: string; id?: string; source?: string; bundleName?: string }>;
-      };
-
-      const toDelete = (parsed.automations ?? []).filter((a) => a.bundleName === bundleName);
-
-      for (const auto of toDelete) {
+      const ctx = this.getAutomationsCtx();
+      const defs = ctx.definitions();
+      const toDelete: string[] = [];
+      for (const auto of defs.values()) {
+        if (auto.source === "bundle" && auto.bundleName === bundleName) {
+          toDelete.push(auto.name);
+        }
+      }
+      for (const name of toDelete) {
         try {
-          await registry.execute({
-            id: `lifecycle-auto-delete-${auto.name}`,
-            name: "automations__delete",
-            input: { name: auto.name },
-          });
+          deleteAutomation(name, ctx);
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           process.stderr.write(
-            `[lifecycle] Failed to delete automation "${auto.name}" during uninstall of ${bundleName}: ${msg}\n`,
+            `[lifecycle] Failed to delete automation "${name}" during uninstall of ${bundleName}: ${msg}\n`,
           );
         }
       }
     } catch (err) {
-      // automations source may not be registered — that's fine
       const msg = err instanceof Error ? err.message : String(err);
       process.stderr.write(
         `[lifecycle] Could not clean up automations for ${bundleName}: ${msg}\n`,

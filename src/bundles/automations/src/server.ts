@@ -18,8 +18,9 @@ import {
   ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { Cron } from "croner";
+import { createAutomation, deleteAutomation, updateAutomation } from "./domain.ts";
 import { executeHttp } from "./executor.ts";
-import { computeNextRunAt, Scheduler } from "./scheduler.ts";
+import { Scheduler } from "./scheduler.ts";
 import { TOOL_SCHEMAS } from "./schemas.ts";
 import { detectOrphans, loadDefinitions, readAllRuns, readRuns, saveDefinitions } from "./store.ts";
 import type { Automation, AutomationRun, ScheduleSpec } from "./types.ts";
@@ -247,19 +248,6 @@ export function toKebabCase(name: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Recursive prevention
-// ---------------------------------------------------------------------------
-
-const RECURSIVE_TOOL_PATTERNS = ["automations__create", "automations__update"];
-
-function containsRecursiveTool(allowedTools?: string[]): boolean {
-  if (!allowedTools) return false;
-  return allowedTools.some((tool) =>
-    RECURSIVE_TOOL_PATTERNS.some((pattern) => tool === pattern || tool.includes(pattern)),
-  );
-}
-
-// ---------------------------------------------------------------------------
 // Tool definitions
 // ---------------------------------------------------------------------------
 
@@ -285,10 +273,24 @@ export interface ToolContext {
   currentWorkspaceId?: string;
 }
 
-/** Validate schedule, iteration, and token fields. Throws on invalid input. */
-export function validateAutomationFields(args: Record<string, unknown>): void {
+/**
+ * Validate schedule, iteration, and token fields. Throws on invalid input.
+ *
+ * Accepts either a full create-manifest or a partial update-patch — both
+ * have the same load-bearing fields (`schedule`, `maxIterations`,
+ * `maxInputTokens`, `maxRunDurationMs`). The signature is the union so
+ * callers don't need synthetic flat-record casts.
+ */
+export interface ValidatableAutomationFields {
+  schedule?: ScheduleSpec;
+  maxIterations?: number;
+  maxInputTokens?: number;
+  maxRunDurationMs?: number;
+}
+
+export function validateAutomationFields(args: ValidatableAutomationFields): void {
   // Schedule validation
-  const schedule = args.schedule as ScheduleSpec | undefined;
+  const schedule = args.schedule;
   if (schedule) {
     if (schedule.type === "interval") {
       if (schedule.intervalMs == null) {
@@ -313,183 +315,112 @@ export function validateAutomationFields(args: Record<string, unknown>): void {
   }
 
   // maxIterations validation
-  const maxIterations = args.maxIterations as number | undefined;
+  const { maxIterations } = args;
   if (maxIterations != null && (maxIterations < 1 || maxIterations > 15)) {
     throw new Error("maxIterations must be between 1 and 15");
   }
 
   // maxInputTokens validation
-  const maxInputTokens = args.maxInputTokens as number | undefined;
+  const { maxInputTokens } = args;
   if (maxInputTokens != null && (maxInputTokens < 1_000 || maxInputTokens > 1_000_000)) {
     throw new Error("maxInputTokens must be between 1,000 and 1,000,000");
   }
 
   // maxRunDurationMs validation
-  const maxRunDurationMs = args.maxRunDurationMs as number | undefined;
+  const { maxRunDurationMs } = args;
   if (maxRunDurationMs != null && (maxRunDurationMs < 10_000 || maxRunDurationMs > 600_000)) {
     throw new Error("maxRunDurationMs must be between 10 seconds and 10 minutes");
   }
 }
 
+/**
+ * Strict input shape for `automations__create`. The validator has already
+ * enforced shape — handler reads typed fields directly. Operator-only
+ * fields (`source`, `bundleName`, `allowedTools`) are NOT in this shape;
+ * the LLM-facing handler hardcodes `source: "agent"` and never sets the
+ * others. Internal callers (CLI, lifecycle) bypass this handler and call
+ * `createAutomation` from `domain.ts` directly with the full shape.
+ */
+interface CreateInput {
+  manifest: {
+    name: string;
+    description?: string;
+    schedule: ScheduleSpec;
+    enabled?: boolean;
+    skill?: string;
+    model?: string;
+    maxIterations?: number;
+    maxInputTokens?: number;
+    maxRunDurationMs?: number;
+    tokenBudget?: Automation["tokenBudget"];
+  };
+  body: string;
+}
+
 export function handleCreate(args: Record<string, unknown>, ctx: ToolContext): object {
-  const name = args.name as string;
-  const prompt = args.prompt as string;
-  const schedule = args.schedule as ScheduleSpec;
+  const { manifest, body } = args as unknown as CreateInput;
 
-  if (!name || !prompt || !schedule) {
-    throw new Error("Missing required fields: name, prompt, schedule");
-  }
+  validateAutomationFields(manifest);
 
-  validateAutomationFields(args);
+  return createAutomation(
+    {
+      name: manifest.name,
+      prompt: body,
+      schedule: manifest.schedule,
+      description: manifest.description,
+      skill: manifest.skill,
+      model: manifest.model,
+      maxIterations: manifest.maxIterations,
+      maxInputTokens: manifest.maxInputTokens,
+      maxRunDurationMs: manifest.maxRunDurationMs,
+      tokenBudget: manifest.tokenBudget,
+      enabled: manifest.enabled,
+      // LLM-facing path: stamp `agent` source and derive ownership from
+      // request context. Operator fields (`bundleName`, `allowedTools`)
+      // are intentionally not reachable from this surface.
+      source: "agent",
+      ownerId: ctx.currentUserId,
+      workspaceId: ctx.currentWorkspaceId,
+    },
+    ctx,
+  );
+}
 
-  // Recursive prevention
-  const allowedTools = args.allowedTools as string[] | undefined;
-  if (containsRecursiveTool(allowedTools)) {
-    throw new Error(
-      "Recursive prevention: allowedTools must not contain automations__create or automations__update",
-    );
-  }
-
-  const id = toKebabCase(name);
-  const defs = ctx.definitions();
-
-  // Idempotent: return existing if same id
-  const existing = defs.get(id);
-  if (existing) {
-    return {
-      automation: existing,
-      created: false,
-      message: `Automation "${name}" already exists (id: ${id}). Returning existing.`,
-    };
-  }
-
-  const now = new Date().toISOString();
-  const automation: Automation = {
-    id,
-    name,
-    ownerId: ctx.currentUserId,
-    workspaceId: ctx.currentWorkspaceId,
-    prompt,
-    schedule,
-    description: args.description as string | undefined,
-    skill: args.skill as string | undefined,
-    allowedTools,
-    maxIterations: args.maxIterations as number | undefined,
-    maxInputTokens: args.maxInputTokens as number | undefined,
-    maxRunDurationMs: args.maxRunDurationMs as number | undefined,
-    model: (args.model as string | undefined) ?? undefined,
-    tokenBudget: args.tokenBudget as Automation["tokenBudget"],
-    enabled: (args.enabled as boolean | undefined) ?? true,
-    source: (args.source as Automation["source"] | undefined) ?? "agent",
-    bundleName: args.bundleName as string | undefined,
-    createdAt: now,
-    updatedAt: now,
-    runCount: 0,
-    consecutiveErrors: 0,
-    cumulativeInputTokens: 0,
-    cumulativeOutputTokens: 0,
-  };
-
-  // Compute initial nextRunAt
-  const nextRun = computeNextRunAt(automation, Date.now(), ctx.defaultTimezone);
-  if (nextRun !== null) {
-    automation.nextRunAt = new Date(nextRun).toISOString();
-  }
-
-  defs.set(id, automation);
-  ctx.save(defs);
-  ctx.reloadScheduler();
-
-  return {
-    automation,
-    created: true,
-    message: `Automation "${name}" created (id: ${id}).`,
-  };
+/**
+ * Strict input shape for `automations__update`. `manifest` is a partial
+ * of the create-shape; `body` is an optional new prompt. `name` at root
+ * is the reference key — `manifest.name` cannot be patched (renaming is
+ * a separate operation, blocked at the schema layer).
+ */
+interface UpdateInput {
+  name: string;
+  manifest?: Partial<Omit<CreateInput["manifest"], "name">>;
+  body?: string;
 }
 
 export function handleUpdate(args: Record<string, unknown>, ctx: ToolContext): object {
-  const name = args.name as string;
+  const { name, manifest: patch, body } = args as unknown as UpdateInput;
   if (!name) throw new Error("Missing required field: name");
 
-  const defs = ctx.definitions();
-  const automation = findByName(defs, name);
-  if (!automation) {
-    throw new Error(`Automation not found: "${name}"`);
+  if (patch) {
+    validateAutomationFields(patch);
   }
 
-  validateAutomationFields(args);
-
-  const updatableFields = [
-    "description",
-    "prompt",
-    "schedule",
-    "skill",
-    "allowedTools",
-    "maxIterations",
-    "maxInputTokens",
-    "model",
-    "maxRunDurationMs",
-    "tokenBudget",
-    "enabled",
-  ] as const;
-
-  let changed = false;
-  for (const field of updatableFields) {
-    if (field in args && args[field] !== undefined) {
-      (automation as unknown as Record<string, unknown>)[field] = args[field];
-      changed = true;
-    }
-  }
-
-  // Clear disable state when re-enabling
-  if (args.enabled === true) {
-    automation.consecutiveErrors = 0;
-    automation.disabledAt = undefined;
-    automation.disabledReason = undefined;
-  }
-
-  if (changed) {
-    automation.updatedAt = new Date().toISOString();
-
-    // Recompute nextRunAt if schedule changed
-    if ("schedule" in args) {
-      const nextRun = computeNextRunAt(automation, Date.now(), ctx.defaultTimezone);
-      if (nextRun !== null) {
-        automation.nextRunAt = new Date(nextRun).toISOString();
-      }
-    }
-
-    defs.set(automation.id, automation);
-    ctx.save(defs);
-    ctx.reloadScheduler();
-  }
-
-  return {
-    automation,
-    updated: changed,
-    message: changed ? `Automation "${name}" updated.` : `No changes applied to "${name}".`,
-  };
+  return updateAutomation(
+    name,
+    {
+      ...(patch ?? {}),
+      // Tool's `body` field maps to domain's `prompt`.
+      ...(body !== undefined ? { prompt: body } : {}),
+    },
+    ctx,
+  );
 }
 
 export function handleDelete(args: Record<string, unknown>, ctx: ToolContext): object {
   const name = args.name as string;
   if (!name) throw new Error("Missing required field: name");
-
-  const defs = ctx.definitions();
-  const automation = findByName(defs, name);
-  if (!automation) {
-    throw new Error(`Automation not found: "${name}"`);
-  }
-
-  defs.delete(automation.id);
-  ctx.save(defs);
-  ctx.reloadScheduler();
-
-  return {
-    deleted: true,
-    id: automation.id,
-    message: `Automation "${name}" deleted. Run history preserved.`,
-  };
+  return deleteAutomation(name, ctx);
 }
 
 export function handleList(args: Record<string, unknown>, ctx: ToolContext): object {

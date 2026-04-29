@@ -106,37 +106,46 @@ async function handleRead(store: FileStore, args: { id: string }): Promise<objec
   };
 }
 
+/**
+ * Strict input shape for `files__create`. Mirrors the JSON Schema:
+ * `manifest` holds the file metadata; `body` is the base64-encoded
+ * content. Field names match `FileEntry` (camelCase) — no kebab/snake
+ * acceptance.
+ */
 interface CreateInput {
-  filename: string;
-  base64_data: string;
-  mime_type: string;
-  tags?: string[];
-  description?: string;
+  manifest: {
+    filename: string;
+    mimeType: string;
+    tags?: string[];
+    description?: string;
+  };
+  body: string;
 }
 
 async function handleCreate(store: FileStore, args: CreateInput): Promise<object> {
   // TODO: apply the same MIME allowlist as chat-multipart ingest
   // (`ALLOWED_MIMES` in `src/files/ingest.ts`). The tool currently accepts
-  // any `mime_type` the LLM supplies; the chat path rejects anything
+  // any `mimeType` the LLM supplies; the chat path rejects anything
   // outside the allowlist. Changing the tool contract is fenced out of the
   // store-unification PR that introduced this comment — track separately.
-  const decoded = Buffer.from(args.base64_data, "base64");
-  const saved = await store.saveFile(decoded, args.filename, args.mime_type);
+  const { manifest, body } = args;
+  const decoded = Buffer.from(body, "base64");
+  const saved = await store.saveFile(decoded, manifest.filename, manifest.mimeType);
   const entry: FileEntry = {
     id: saved.id,
-    filename: args.filename,
-    mimeType: args.mime_type,
+    filename: manifest.filename,
+    mimeType: manifest.mimeType,
     size: saved.size,
-    tags: args.tags ?? [],
+    tags: manifest.tags ?? [],
     // The LLM invokes this tool; human-uploaded-via-UI is "manual",
     // chat-multipart is "chat", app-generated is "app".
     source: "agent",
     conversationId: null,
     createdAt: new Date().toISOString(),
-    description: args.description ?? null,
+    description: manifest.description ?? null,
   };
   await store.appendRegistry(entry);
-  return { id: saved.id, filename: args.filename, size: saved.size };
+  return { id: saved.id, filename: manifest.filename, size: saved.size };
 }
 
 async function handleInfo(store: FileStore, args: { id: string }): Promise<object> {
@@ -296,33 +305,40 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
     },
     {
       name: "create",
-      description: "Create a new file in the workspace. Provide base64-encoded data.",
+      description:
+        "Create a new file in the workspace. `manifest` is the file metadata; `body` is the base64-encoded content.",
       inputSchema: {
         type: "object" as const,
         properties: {
-          filename: {
+          manifest: {
+            type: "object",
+            properties: {
+              filename: {
+                type: "string",
+                description: "Filename (e.g. 'logo.png').",
+              },
+              mimeType: {
+                type: "string",
+                description: "MIME type (e.g. 'image/png').",
+              },
+              tags: {
+                type: "array",
+                items: { type: "string" },
+                description: "Optional tags for categorization.",
+              },
+              description: {
+                type: "string",
+                description: "Optional description of the file.",
+              },
+            },
+            required: ["filename", "mimeType"],
+          },
+          body: {
             type: "string",
-            description: "Filename (e.g. 'logo.png').",
-          },
-          base64_data: {
-            type: "string",
-            description: "File content as base64-encoded string.",
-          },
-          mime_type: {
-            type: "string",
-            description: "MIME type (e.g. 'image/png').",
-          },
-          tags: {
-            type: "array",
-            items: { type: "string" },
-            description: "Optional tags for categorization.",
-          },
-          description: {
-            type: ["string", "null"],
-            description: "Optional description of the file.",
+            description: "File content as a base64-encoded string.",
           },
         },
-        required: ["filename", "base64_data", "mime_type"],
+        required: ["manifest", "body"],
       },
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         try {

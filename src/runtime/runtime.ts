@@ -183,6 +183,18 @@ export class Runtime {
   _systemSource: import("../tools/types.ts").ToolSource | null;
   /** Platform sources (home, conversations, files, etc.) — retained for JIT workspace registration. */
   private _platformSources: import("../tools/types.ts").ToolSource[] = [];
+  /**
+   * Domain-context getter for the automations bundle. Set by the
+   * automations source factory; consumed by internal callers (CLI's
+   * `nb automation pause/resume`, bundle lifecycle's
+   * `installBundleSchedules` / `removeBundleAutomations`) that need the
+   * full domain shape — including operator-only fields (`source`,
+   * `bundleName`, `allowedTools`) — that the LLM-facing tool schema
+   * deliberately doesn't expose. See `src/tools/platform/CLAUDE.md` § 1.4.
+   */
+  private _automationsContextGetter:
+    | (() => import("../bundles/automations/src/domain.ts").AutomationDomainContext)
+    | null = null;
   /** Getter for current workspace ID (set per-request). */
   private _currentWorkspaceId: (() => string | null) | null = null;
   private _manageConversationCtx:
@@ -477,8 +489,18 @@ export class Runtime {
     // Phase 2: Create platform capability sources. Each is an in-process
     // MCP server reachable through `InMemoryTransport` — no subprocess.
     // `createPlatformSources` returns sources already started.
+    //
+    // The automations source registers its domain-context getter on `rt`
+    // during construction (rt.registerAutomationsContext). We forward the
+    // getter to the lifecycle manager so bundle-contributed schedules
+    // can be created/removed via the domain API directly — bypassing the
+    // LLM-facing tool surface (which doesn't accept `source: "bundle"`
+    // or `bundleName`). See src/tools/platform/CLAUDE.md § 1.4.
     const { createPlatformSources } = await import("../tools/platform/index.ts");
     const platformSources = await createPlatformSources(rt, events);
+    if (rt._automationsContextGetter) {
+      lifecycle.setAutomationsContextGetter(rt._automationsContextGetter);
+    }
 
     // Register placements declared by platform sources. The helper isolates
     // the duck-type — `getPlacements()` is on `McpSource` (carrying the
@@ -1316,6 +1338,33 @@ export class Runtime {
     if (!this._identityProvider) return workDir;
 
     throw new Error("No workspace context — cannot resolve scoped directory.");
+  }
+
+  /**
+   * Register the automations domain context getter. Called by the
+   * automations platform source during construction. Internal callers
+   * (CLI, lifecycle) read it back via `getAutomationsContext()` to bypass
+   * the LLM-facing tool surface and call the domain API directly.
+   */
+  registerAutomationsContext(
+    getter: () => import("../bundles/automations/src/domain.ts").AutomationDomainContext,
+  ): void {
+    this._automationsContextGetter = getter;
+  }
+
+  /**
+   * Get a workspace-scoped automations domain context. Throws if the
+   * automations source isn't registered (e.g. minimal test runtimes).
+   * Each call returns a fresh context bound to the current request's
+   * workspace — workspace switching between calls is safe.
+   */
+  getAutomationsContext(): import("../bundles/automations/src/domain.ts").AutomationDomainContext {
+    if (!this._automationsContextGetter) {
+      throw new Error(
+        "Automations source not registered — runtime started without platform sources?",
+      );
+    }
+    return this._automationsContextGetter();
   }
 
   /** Get the loaded InstanceConfig (null when no instance.json exists — dev mode). */

@@ -7,6 +7,9 @@
 // §5.1 — Automation Definition
 // ---------------------------------------------------------------------------
 
+/** Who created this automation. */
+export type AutomationSource = "user" | "agent" | "bundle";
+
 export interface Automation {
   /** Unique identifier. Kebab-case, derived from name. */
   id: string;
@@ -51,7 +54,7 @@ export interface Automation {
   workspaceId?: string;
 
   /** Who created this automation. */
-  source: "user" | "agent" | "bundle";
+  source: AutomationSource;
 
   /** If bundle-contributed, which bundle. */
   bundleName?: string;

@@ -110,6 +110,20 @@ export async function createAutomationsSource(
     };
   }
 
+  // Expose a workspace-scoped domain context to internal callers (CLI,
+  // lifecycle). The ToolContext is a superset; we expose only the four
+  // fields the domain needs. See src/tools/platform/CLAUDE.md § 1.4 for
+  // why internal callers don't go through the LLM-facing tool.
+  runtime.registerAutomationsContext(() => {
+    const tc = getToolContext();
+    return {
+      definitions: tc.definitions,
+      save: tc.save,
+      reloadScheduler: tc.reloadScheduler,
+      defaultTimezone: tc.defaultTimezone,
+    };
+  });
+
   /** Shared error handler — catches, formats, returns isError result. */
   function withErrorHandling(
     fn: (input: Record<string, unknown>) => Promise<object> | object,
