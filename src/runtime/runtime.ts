@@ -846,6 +846,7 @@ export class Runtime {
       workspaceId: wsId,
       workspaceAgents: workspace?.agents ?? null,
       workspaceModelOverride: workspace?.models ?? null,
+      conversationId: conversation.id,
     };
 
     // Emit chat.start so the client knows the conversation ID immediately

@@ -33,6 +33,7 @@ import { EventSourcedConversationStore } from "../../conversation/event-sourced-
 import type { ConversationEvent, SkillsLoadedEvent } from "../../conversation/types.ts";
 import { textContent } from "../../engine/content-helpers.ts";
 import type { EventSink, ToolResult } from "../../engine/types.ts";
+import { getRequestContext } from "../../runtime/request-context.ts";
 import type { Runtime } from "../../runtime/runtime.ts";
 import { parseSkillFile, readSkillMtime } from "../../skills/loader.ts";
 import { coerceManifestInput, coerceManifestPatch } from "../../skills/manifest-input.ts";
@@ -72,11 +73,13 @@ const SKILLS_READ_DESCRIPTION =
   "discover ids — bare names and scope-prefixed forms (e.g. `org/foo`) are NOT valid input.";
 
 const SKILLS_ACTIVE_FOR_DESCRIPTION =
-  "Show which Layer 3 skills are currently loaded for the conversation `conversation_id`. " +
-  "Returns one entry per loaded skill with id, layer, scope, token count, `loadedBy` " +
-  "(`always` or `tool_affinity`), and a human-readable `reason`. " +
-  "Use this to answer 'what's active for this conversation right now?' — distinct from `skills__list` " +
-  "which enumerates the catalog regardless of load state.";
+  "Show which Layer 3 skills are currently loaded for a conversation. " +
+  "`conversation_id` is optional inside a chat — when omitted, defaults to the " +
+  "current conversation (the one this tool call belongs to). Returns one entry per " +
+  "loaded skill with id, layer, scope, token count, `loadedBy` (`always` or " +
+  "`tool_affinity`), and a human-readable `reason`. Use this to answer 'what's " +
+  "active for this conversation right now?' — distinct from `skills__list` which " +
+  "enumerates the catalog regardless of load state.";
 
 const SKILLS_LOADING_LOG_DESCRIPTION =
   "Replay `skills.loaded` events from conversation logs. Filter by `conversation_id`, `skill_id`, " +
@@ -260,14 +263,33 @@ export function createSkillsSource(runtime: Runtime, eventSink: EventSink): McpS
         properties: {
           conversation_id: {
             type: "string",
-            description: "Conversation id whose loaded-skill state is being inspected.",
+            description:
+              "Conversation id whose loaded-skill state is being inspected. " +
+              "Optional inside a chat — defaults to the current conversation.",
           },
         },
-        required: ["conversation_id"],
       },
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         try {
-          const convId = String(input.conversation_id ?? "");
+          // Explicit arg wins; otherwise use the current conversation from
+          // request context. The agent making this call from inside a chat
+          // doesn't know its own conv id, so requiring it forced agents to
+          // either guess or skip the tool entirely.
+          const argConvId =
+            typeof input.conversation_id === "string" && input.conversation_id.length > 0
+              ? input.conversation_id
+              : undefined;
+          const ctxConvId = getRequestContext()?.conversationId;
+          const convId = argConvId ?? ctxConvId;
+          if (!convId) {
+            return {
+              content: textContent(
+                "conversation_id is required when called outside a chat — " +
+                  "no current conversation is in scope. Pass conversation_id explicitly.",
+              ),
+              isError: true,
+            };
+          }
           const result = await activeForConversation(runtime, convId);
           if (result === null) {
             return {
@@ -277,7 +299,7 @@ export function createSkillsSource(runtime: Runtime, eventSink: EventSink): McpS
           }
           return {
             content: textContent(summarizeActive(result)),
-            structuredContent: { active: result },
+            structuredContent: { active: result, conversationId: convId },
             isError: false,
           };
         } catch (err) {
