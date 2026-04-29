@@ -2,6 +2,7 @@ import type { EventSink } from "../../engine/types.ts";
 import type { Runtime } from "../../runtime/runtime.ts";
 import type { ToolSource } from "../types.ts";
 import { createAutomationsSource } from "./automations.ts";
+import { createComposeSource } from "./compose.ts";
 import { createConversationsSource } from "./conversations.ts";
 import { createFilesSource } from "./files.ts";
 import { createHomeSource } from "./home.ts";
@@ -43,6 +44,7 @@ export async function createPlatformSources(
     createUsageSource(runtime, eventSink),
     createInstructionsSource(runtime, eventSink),
     createSkillsSource(runtime, eventSink),
+    createComposeSource(runtime, eventSink),
   ];
 
   // start() builds the in-process MCP server + InMemoryTransport pair and
