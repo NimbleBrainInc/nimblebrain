@@ -118,7 +118,7 @@ All endpoints require authentication (Bearer token or session cookie) unless not
 | POST | /v1/auth/refresh | No | Refresh access token |
 | GET | /.well-known/oauth-protected-resource | No | MCP OAuth discovery (RFC 9728) |
 | GET | /.well-known/oauth-authorization-server | No | AuthKit metadata proxy (RFC 8414) |
-| POST/GET/DELETE | /mcp | Yes | Streamable HTTP MCP server endpoint |
+| POST/DELETE | /mcp | Yes | Streamable HTTP MCP server endpoint (GET returns 405; no standalone server→client SSE channel) |
 
 ## Architecture
 
