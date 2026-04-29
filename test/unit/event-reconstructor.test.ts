@@ -406,6 +406,61 @@ describe("reconstructMessages", () => {
     expect(text?.text).toContain("cut off");
   });
 
+  it("preserves original block ordering within an llm.response (Anthropic latest-message invariant)", () => {
+    // Regression guard for the HQ replay bug: Anthropic validates the
+    // LATEST assistant message byte-for-byte and rejects any modification
+    // of thinking blocks. Anthropic returns content like
+    //   [reasoning_A, tool_call_1, reasoning_B, tool_call_2]
+    // and the reconstructed assistant message MUST preserve that order.
+    // The previous categorical-bucketing implementation hoisted all
+    // reasoning to the front (`[A, B, T1, T2]`) and 400'd on replay.
+    const interleavedTurn: LlmResponseEvent = {
+      ...llmText("run-1", ""),
+      content: [
+        {
+          type: "reasoning",
+          text: "Plan: search then fetch.",
+          providerMetadata: { anthropic: { signature: "sig-A" } },
+        },
+        { type: "tool-call", toolCallId: "tc-1", toolName: "search", input: { q: "x" } },
+        {
+          type: "reasoning",
+          text: "Now fetch the top result.",
+          providerMetadata: { anthropic: { signature: "sig-B" } },
+        },
+        { type: "tool-call", toolCallId: "tc-2", toolName: "fetch", input: { id: 1 } },
+      ],
+    };
+    const events: ConversationEvent[] = [
+      userMessage("research x"),
+      runStart("run-1"),
+      interleavedTurn,
+      toolStart("run-1", "tc-1", "search"),
+      toolDone("run-1", "tc-1", "search"),
+      toolStart("run-1", "tc-2", "fetch"),
+      toolDone("run-1", "tc-2", "fetch"),
+      runDone("run-1"),
+    ];
+    const messages = reconstructMessages(events);
+    const assistant = messages.find((m) => m.role === "assistant");
+    expect(assistant).toBeDefined();
+
+    // Block types must come back in original interleaved order — NOT
+    // grouped (reasoning, reasoning, tool-call, tool-call).
+    const types = assistant!.content.map((c) => c.type);
+    expect(types).toEqual(["reasoning", "tool-call", "reasoning", "tool-call"]);
+
+    // Both signatures must round-trip via providerOptions so the AI SDK
+    // Anthropic provider re-emits both thinking blocks on the next call.
+    const reasonings = assistant!.content.filter(
+      (c): c is { type: "reasoning"; text: string; providerOptions?: unknown } =>
+        c.type === "reasoning",
+    );
+    expect(reasonings).toHaveLength(2);
+    expect(reasonings[0]!.providerOptions).toEqual({ anthropic: { signature: "sig-A" } });
+    expect(reasonings[1]!.providerOptions).toEqual({ anthropic: { signature: "sig-B" } });
+  });
+
   it("preserves Anthropic signature on reasoning blocks across reconstruction", () => {
     // Verifies the multi-iteration round-trip path: stream captures
     // signature → JSONL persists it → reconstructor copies into

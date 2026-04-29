@@ -9,6 +9,7 @@ import type {
 } from "@ai-sdk/provider";
 import { MAX_ITERATIONS, MAX_TOOL_RESULT_CHARS } from "../limits.ts";
 import { getProviderFromModel, supportsEnabledThinking } from "../model/catalog.ts";
+import { normalizeForReplay } from "../model/inbound-fit.ts";
 import { callModel, type StreamResult } from "../model/stream.ts";
 import { validateToolInput } from "../tools/validate-input.ts";
 import {
@@ -430,29 +431,11 @@ export class AgentEngine {
           break; // Model is done
         }
 
-        // 4. Append assistant message to history
-        // Stream content uses fields that don't always match the prompt-side
-        // shape — convert before pushing back as next-iteration history:
-        //   - tool-call: input is a JSON string in stream output, but the
-        //     prompt format expects a parsed object.
-        //   - reasoning: stream output uses `providerMetadata` (matches
-        //     LanguageModelV3Reasoning); the prompt-side ReasoningPart
-        //     reads `providerOptions`. The AI SDK Anthropic provider
-        //     drops reasoning blocks without `providerOptions.anthropic.
-        //     signature`, breaking multi-iteration replay.
-        const historyContent = response.content.map((part) => {
-          if (part.type === "tool-call" && typeof part.input === "string") {
-            try {
-              return { ...part, input: JSON.parse(part.input) };
-            } catch {
-              return { ...part, input: {} };
-            }
-          }
-          if (part.type === "reasoning" && part.providerMetadata) {
-            return { ...part, providerOptions: part.providerMetadata };
-          }
-          return part;
-        });
+        // 4. Append assistant message to history.
+        // `normalizeForReplay` handles the stream→prompt shape mismatches
+        // (tool-call input string→object, reasoning providerMetadata→
+        // providerOptions). See src/model/inbound-fit.ts.
+        const historyContent = normalizeForReplay(response.content);
         history.push({ role: "assistant", content: historyContent } as LanguageModelV3Message);
 
         // 5. Execute tools in PARALLEL (sync + task-augmented concurrently, §13)

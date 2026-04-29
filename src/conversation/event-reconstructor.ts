@@ -8,6 +8,7 @@
 
 import type { LanguageModelV3Content } from "@ai-sdk/provider";
 import { estimateCost } from "../engine/cost.ts";
+import { normalizeForReplay } from "../model/inbound-fit.ts";
 import type { ConversationEvent, LlmResponseEvent, StoredMessage, ToolDoneEvent } from "./types.ts";
 
 /**
@@ -198,18 +199,24 @@ function buildMessagesFromEvents(events: readonly ConversationEvent[]): StoredMe
       // If we ran out of events without run.done/run.error, still emit what we have
       // (handles incomplete runs)
 
-      // Now produce messages from llm.response events in order
+      // Now produce messages from llm.response events in order.
+      //
+      // Faithful replay shape: each llm.response becomes ONE assistant
+      // message whose content array preserves the provider's original
+      // block ordering — text, reasoning, and executed tool-calls in the
+      // exact order Anthropic returned them. Unexecuted (orphaned) tool-
+      // calls are filtered out (the API rejects orphans), but no other
+      // reordering happens.
+      //
+      // Why ordering matters: Anthropic validates the LATEST assistant
+      // message byte-for-byte ("thinking blocks in the latest assistant
+      // message cannot be modified"). An older implementation grouped
+      // content by category (reasoning / text / tool-call) and emitted
+      // them as separate messages — convenient for UI rendering but a
+      // 400 on multi-iteration runs with thinking enabled. The chat UI
+      // consumes its own projection from src/bundles/conversations/src/
+      // jsonl-reader.ts; this function is the LLM-replay projection.
       for (const llmResp of runLlmResponses) {
-        const toolCallParts = llmResp.content.filter(
-          (c): c is LanguageModelV3Content & { type: "tool-call" } => c.type === "tool-call",
-        );
-        const textParts = llmResp.content.filter(
-          (c): c is LanguageModelV3Content & { type: "text" } => c.type === "text",
-        );
-        const reasoningParts = llmResp.content.filter(
-          (c): c is LanguageModelV3Content & { type: "reasoning" } => c.type === "reasoning",
-        );
-
         const baseMetadata = () => ({
           inputTokens: llmResp.inputTokens,
           outputTokens: llmResp.outputTokens,
@@ -225,107 +232,87 @@ function buildMessagesFromEvents(events: readonly ConversationEvent[]): StoredMe
           ...(llmResp.finishReason ? { finishReason: llmResp.finishReason } : {}),
         });
 
-        // Reasoning attaches to the FIRST emitted message of this turn,
-        // so the UI renders a single collapsed reasoning block above the
-        // assistant's tool call or text. Subsequent messages from the
-        // same turn omit it to avoid duplication.
-        //
-        // Provider metadata (e.g. Anthropic's thinking signature) is
-        // promoted from `providerMetadata` (the V3Content output shape)
-        // to `providerOptions` (the V3ReasoningPart prompt shape) so
-        // the reasoning block survives a conversation reload + replay.
-        // Without this, the AI SDK Anthropic provider drops the block as
-        // "unsupported reasoning metadata" and Anthropic 400s the call.
-        const reasoningContent = reasoningParts.map((r) => ({
-          type: "reasoning" as const,
-          text: r.text,
-          ...(r.providerMetadata ? { providerOptions: r.providerMetadata } : {}),
-        }));
-        let reasoningEmitted = false;
+        const executedToolCalls = llmResp.content.filter(
+          (c): c is LanguageModelV3Content & { type: "tool-call" } =>
+            c.type === "tool-call" && runToolDones.has(c.toolCallId),
+        );
+        const totalToolCalls = llmResp.content.filter((c) => c.type === "tool-call").length;
+        const hasOrphanedToolCalls = totalToolCalls > executedToolCalls.length;
 
-        // Only include tool calls that were actually executed (have a tool.done event).
-        // Unexecuted calls happen when a run is cut short (abort, crash, etc.)
-        // before tools could run. Including them would create orphaned tool_use blocks
-        // that the Claude API rejects, or fake empty tool results that confuse the model.
-        // Lifted out of the `if (toolCallParts.length > 0)` block so step 4a can
-        // detect the all-unexecuted case and emit a placeholder for it.
-        const executedToolCalls = toolCallParts.filter((tc) => runToolDones.has(tc.toolCallId));
-        const hasOrphanedToolCalls = toolCallParts.length > 0 && executedToolCalls.length === 0;
+        // Filter out orphaned tool-calls; preserve all other blocks in
+        // their original order. normalizeForReplay then handles the
+        // stream→prompt shape mismatches (reasoning providerMetadata→
+        // providerOptions, tool-call input string→object).
+        const replayContent = normalizeForReplay(
+          llmResp.content.filter((c) => c.type !== "tool-call" || runToolDones.has(c.toolCallId)),
+        );
 
-        if (toolCallParts.length > 0) {
-          if (executedToolCalls.length > 0) {
-            const toolCallsMeta = executedToolCalls.map((tc) => {
-              const done = runToolDones.get(tc.toolCallId)!;
-              return {
-                id: tc.toolCallId,
-                name: tc.toolName,
-                input: (runToolInputs.get(tc.toolCallId) ?? parseToolInput(tc.input)) as Record<
-                  string,
-                  unknown
-                >,
-                output: done.output ?? "",
-                ok: done.ok ?? true,
-                ms: done.ms ?? 0,
-              };
-            });
+        // Tool-call metadata for the chat UI (input/output rendering).
+        // Carried on the assistant message; not part of the LLM replay.
+        const toolCallsMeta = executedToolCalls.map((tc) => {
+          const done = runToolDones.get(tc.toolCallId)!;
+          return {
+            id: tc.toolCallId,
+            name: tc.toolName,
+            input: (runToolInputs.get(tc.toolCallId) ?? parseToolInput(tc.input)) as Record<
+              string,
+              unknown
+            >,
+            output: done.output ?? "",
+            ok: done.ok ?? true,
+            ms: done.ms ?? 0,
+          };
+        });
 
-            const assistantMsg: StoredMessage = {
-              role: "assistant",
+        const hasRealContent =
+          replayContent.some((c) => c.type === "text") || executedToolCalls.length > 0;
+
+        if (hasRealContent) {
+          // Normal path: one assistant message, original block order.
+          // Orphaned tool-calls (if any) were already filtered out of
+          // replayContent — text alongside them survives as the visible
+          // assistant turn, no placeholder needed.
+          //
+          // Cast: stream-side `LanguageModelV3Content` is wider than the
+          // assistant-role content union (it includes tool-result/source
+          // which only appear on tool/system messages). The data IS
+          // assistant-valid by construction — orphan filter is the only
+          // mutation — but TS can't prove it without a runtime type guard
+          // on every block. Same cast used by engine.ts after doStream.
+          const assistantMsg = {
+            role: "assistant",
+            content: replayContent,
+            timestamp: llmResp.ts,
+            metadata: {
+              ...baseMetadata(),
+              ...(toolCallsMeta.length > 0 ? { toolCalls: toolCallsMeta } : {}),
+            },
+          } as StoredMessage;
+          messages.push(assistantMsg);
+
+          // Tool-result message per executed tool-call (one per result so
+          // role alternation alternates assistant→tool→tool→… cleanly).
+          for (const tc of executedToolCalls) {
+            const done = runToolDones.get(tc.toolCallId)!;
+            const toolMsg: StoredMessage = {
+              role: "tool",
               content: [
-                ...(reasoningEmitted ? [] : reasoningContent),
-                ...executedToolCalls.map((tc) => ({
-                  type: "tool-call" as const,
+                {
+                  type: "tool-result" as const,
                   toolCallId: tc.toolCallId,
                   toolName: tc.toolName,
-                  input: parseToolInput(tc.input),
-                })),
+                  output: { type: "text", value: done.output ?? "" },
+                },
               ],
-              timestamp: llmResp.ts,
-              metadata: { ...baseMetadata(), toolCalls: toolCallsMeta },
+              timestamp: done.ts ?? llmResp.ts,
             };
-            reasoningEmitted = true;
-            messages.push(assistantMsg);
-
-            // Emit tool-result messages for each executed tool call
-            for (const tc of executedToolCalls) {
-              const done = runToolDones.get(tc.toolCallId)!;
-              const toolMsg: StoredMessage = {
-                role: "tool",
-                content: [
-                  {
-                    type: "tool-result" as const,
-                    toolCallId: tc.toolCallId,
-                    toolName: tc.toolName,
-                    output: {
-                      type: "text",
-                      value: done.output ?? "",
-                    },
-                  },
-                ],
-                timestamp: done.ts ?? llmResp.ts,
-              };
-              messages.push(toolMsg);
-            }
+            messages.push(toolMsg);
           }
-        }
-
-        if (textParts.length > 0) {
-          const assistantMsg: StoredMessage = {
-            role: "assistant",
-            content: [
-              ...(reasoningEmitted ? [] : reasoningContent),
-              ...textParts.map((t) => ({ type: "text" as const, text: t.text })),
-            ],
-            timestamp: llmResp.ts,
-            metadata: baseMetadata(),
-          };
-          reasoningEmitted = true;
-          messages.push(assistantMsg);
+          continue;
         }
 
         // Step 4a — replay honesty.
-        // We land here when no assistant message was emitted above (no
-        // executed tool calls, no text). Several reasons:
+        // No real content emitted above. Reasons:
         //   1. The turn produced reasoning only (extended thinking that
         //      ran out of budget before any visible content).
         //   2. The turn produced literally nothing AND the model didn't
@@ -336,12 +323,6 @@ function buildMessagesFromEvents(events: readonly ConversationEvent[]): StoredMe
         //      message and Anthropic rejects the conversation on reload
         //      with "model does not support assistant message prefill".
         //
-        // Dropping the message silently — the pre-existing behavior —
-        // either skips a turn that actually happened or breaks role
-        // alternation. Emit a placeholder assistant message carrying
-        // finishReason in metadata so the UI can render the truncation
-        // banner and the reasoning (if any) survives.
-        //
         // Reasoning content is ONLY usable as the placeholder body when
         // it carries provider metadata that lets it round-trip (e.g.
         // Anthropic's signature). Without that, the AI SDK provider
@@ -349,29 +330,33 @@ function buildMessagesFromEvents(events: readonly ConversationEvent[]): StoredMe
         // For the orphaned-tool-calls case we always use marker text:
         // the reasoning may end mid-tool-call-intent, and the marker is
         // the load-bearing signal to the model on retry.
-        const wouldEmitAssistantMessage = executedToolCalls.length > 0 || textParts.length > 0;
-        const hasReasoningOrAbnormalFinish =
-          reasoningContent.length > 0 ||
-          (llmResp.finishReason != null && llmResp.finishReason !== "stop");
+        const reasoningWithMeta = replayContent.filter(
+          (c): c is LanguageModelV3Content & { type: "reasoning" } =>
+            c.type === "reasoning" &&
+            "providerOptions" in c &&
+            (c as { providerOptions?: unknown }).providerOptions != null,
+        );
+        const hasAbnormalFinish = llmResp.finishReason != null && llmResp.finishReason !== "stop";
+        const hasAnyReasoning = replayContent.some((c) => c.type === "reasoning");
+        const shouldEmitPlaceholder = hasOrphanedToolCalls || hasAnyReasoning || hasAbnormalFinish;
 
-        if (!wouldEmitAssistantMessage && (hasReasoningOrAbnormalFinish || hasOrphanedToolCalls)) {
-          const placeholderText = hasOrphanedToolCalls
-            ? ORPHANED_TOOL_CALLS_MARKER
-            : (TRUNCATION_MARKERS[llmResp.finishReason ?? "other"] ?? TRUNCATION_MARKERS.other!);
-          const reasoningRoundTrips =
-            !hasOrphanedToolCalls &&
-            reasoningContent.some((r) => "providerOptions" in r && r.providerOptions != null);
-          const placeholderContent = reasoningRoundTrips
-            ? reasoningContent
-            : [{ type: "text" as const, text: placeholderText }];
-          const assistantMsg: StoredMessage = {
-            role: "assistant",
-            content: placeholderContent,
-            timestamp: llmResp.ts,
-            metadata: baseMetadata(),
-          };
-          messages.push(assistantMsg);
-        }
+        if (!shouldEmitPlaceholder) continue;
+
+        const placeholderText = hasOrphanedToolCalls
+          ? ORPHANED_TOOL_CALLS_MARKER
+          : (TRUNCATION_MARKERS[llmResp.finishReason ?? "other"] ?? TRUNCATION_MARKERS.other!);
+        const reasoningRoundTrips = !hasOrphanedToolCalls && reasoningWithMeta.length > 0;
+        const placeholderContent: LanguageModelV3Content[] = reasoningRoundTrips
+          ? reasoningWithMeta
+          : [{ type: "text" as const, text: placeholderText }];
+
+        const assistantMsg = {
+          role: "assistant",
+          content: placeholderContent,
+          timestamp: llmResp.ts,
+          metadata: baseMetadata(),
+        } as StoredMessage;
+        messages.push(assistantMsg);
       }
 
       continue;
