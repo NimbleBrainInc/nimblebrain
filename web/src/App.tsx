@@ -27,6 +27,7 @@ import { WorkspaceRouteGuard } from "./components/WorkspaceRouteGuard";
 import { ChatProvider, useChatConfigContext, useChatContext } from "./context/ChatContext";
 import { ChatPanelProvider, useChatPanelContext } from "./context/ChatPanelContext";
 import { SessionProvider } from "./context/SessionContext";
+import { PendingAuthBanner } from "./components/PendingAuthBanner";
 import { ShellProvider } from "./context/ShellContext";
 import { SidebarProvider } from "./context/SidebarContext";
 import { ThemeProvider, useTheme } from "./context/ThemeContext.tsx";
@@ -214,10 +215,33 @@ function AuthenticatedAppContent({
   const { applyPreference } = useTheme();
   const wsCtx = useWorkspaceContext();
   const onDataChanged = useDataSync();
+  // Track URL bundles whose Connection is in pending_auth so the workspace
+  // shell can render an "X needs you to sign in — Connect" banner.
+  // Keyed `${serverName}|${principalId}`; updated by connection.state_changed
+  // SSE events. A row is removed once its connection transitions away from
+  // pending_auth (running, dead, etc.) — the banner clears itself.
+  const [pendingAuth, setPendingAuth] = useState<
+    Map<string, import("./types").ConnectionStateChangedEvent>
+  >(() => new Map());
   useEvents(token, wsCtx.activeWorkspace?.id, {
     onDataChanged,
     onConfigChanged: () => config.refreshConfig(),
+    onConnectionStateChanged: (evt) => {
+      setPendingAuth((prev) => {
+        const next = new Map(prev);
+        const key = `${evt.serverName}|${evt.principalId}`;
+        if (evt.state === "pending_auth") next.set(key, evt);
+        else next.delete(key);
+        return next;
+      });
+    },
   });
+
+  // Drop pending-auth rows when the active workspace changes — they're
+  // workspace-scoped and would otherwise leak across switches.
+  useEffect(() => {
+    setPendingAuth(new Map());
+  }, [wsCtx.activeWorkspace?.id]);
 
   // Sync server-side theme preference to the client theme context
   const serverTheme = config.preferences?.theme;
@@ -285,6 +309,7 @@ function AuthenticatedAppContent({
           (streaming) but renders nothing, so its re-renders are free. */}
       <ActionBridge handleNavigate={handleNavigate} resolveAppRoute={resolveAppRoute} />
       <ShellLayout forSlot={forSlot} onLogout={onLogout}>
+        <PendingAuthBanner pending={pendingAuth} />
         <ErrorBoundary resetKeys={[location.pathname]}>
           <Routes>
             {/* Root → redirect to workspace-scoped home */}

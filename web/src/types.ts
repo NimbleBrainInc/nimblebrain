@@ -5,7 +5,13 @@ export interface BundleUiMeta {
 }
 
 /** Bundle lifecycle states. */
-export type BundleState = "starting" | "running" | "crashed" | "dead" | "stopped";
+export type BundleState =
+  | "starting"
+  | "running"
+  | "crashed"
+  | "dead"
+  | "stopped"
+  | "pending_auth";
 
 /** App info returned by GET /v1/apps. */
 export interface AppInfo {
@@ -127,6 +133,18 @@ export interface BundleDeadEvent {
   message: string;
 }
 
+export interface ConnectionStateChangedEvent {
+  wsId: string;
+  serverName: string;
+  bundleName: string;
+  principalId: string;
+  state: BundleState;
+  /** Populated only when state === "pending_auth". */
+  authorizationUrl?: string;
+  /** Populated when state === "dead" or "crashed". */
+  lastError?: string;
+}
+
 export interface DataChangedEvent {
   server: string;
   tool: string;
@@ -149,6 +167,7 @@ export interface SseEventMap {
   "bundle.crashed": BundleCrashedEvent;
   "bundle.recovered": BundleRecoveredEvent;
   "bundle.dead": BundleDeadEvent;
+  "connection.state_changed": ConnectionStateChangedEvent;
   "data.changed": DataChangedEvent;
   "config.changed": ConfigChangedEvent;
   heartbeat: HeartbeatEvent;

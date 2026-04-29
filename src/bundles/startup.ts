@@ -154,6 +154,38 @@ export async function startBundleSource(
     // installed from different workspaces would share OAuth tokens under
     // the same default id. Callers must thread workspace context through
     // `installRemote` / `startBundleSource`.
+    // Wrap the user's onInteractiveAuthRequired callback to also signal an
+    // early-return path. Without this, `await source.start()` blocks
+    // indefinitely while the user clicks Connect → completes browser auth
+    // (could be minutes or never), which would hang both the install API
+    // call and the workspace-startup loop. With it, the moment the
+    // provider determines interactive auth is needed, the caller's
+    // `onInteractiveAuthRequired` fires (lifecycle transitions Connection
+    // to pending_auth and emits SSE so the banner appears), AND the
+    // function returns early with a placeholder meta. `source.start()`
+    // continues in the background; when it eventually resolves (user
+    // completed auth), the connection state machine transitions via the
+    // existing UnauthorizedError-retry path inside `mcp-source.ts`. The
+    // lifecycle observes the eventual `connection.state_changed` running
+    // event and the bundle becomes fully usable.
+    let pendingAuthDetected = false;
+    const userCallback = opts?.onInteractiveAuthRequired;
+    const earlyReturn: { resolve: () => void; promise: Promise<void> } = (() => {
+      let resolve!: () => void;
+      const promise = new Promise<void>((r) => {
+        resolve = r;
+      });
+      return { resolve, promise };
+    })();
+    const wrappedCallback = (authorizationUrl: string) => {
+      pendingAuthDetected = true;
+      try {
+        userCallback?.(authorizationUrl);
+      } finally {
+        earlyReturn.resolve();
+      }
+    };
+
     let authProvider: WorkspaceOAuthProvider | undefined;
     const hasStaticAuth = ref.transport?.auth && ref.transport.auth.type !== "none";
     if (!hasStaticAuth) {
@@ -185,7 +217,7 @@ export async function startBundleSource(
         workDir,
         callbackUrl,
         allowInsecureRemotes: opts.allowInsecureRemotes === true,
-        onInteractiveAuthRequired: opts.onInteractiveAuthRequired,
+        onInteractiveAuthRequired: wrappedCallback,
       });
     }
 
@@ -199,23 +231,82 @@ export async function startBundleSource(
       },
       eventSink,
     );
-    await source.start();
-    const tools = await source.tools();
-    registry.addSource(source);
-    log.info(`[bundles] ✓ ${sourceName} ready (${tools.length} tools, remote)`);
-    return {
-      meta: {
-        version: `remote (${tools.length} tools)`,
-        ui: ref.ui ?? null,
-        briefing: null,
-        httpProxy: null,
-        type: "plain" as const,
-      },
-      sourceName,
-      // Remote bundles have no local manifest — the platform reads tools
-      // over the wire instead.
-      manifest: null,
-    };
+
+    // Kick off start() and finalize on completion. The promise's value
+    // is the full `StartBundleResult` for the success path; on failure it
+    // logs and rethrows so the lifecycle can record the connection as
+    // dead. We register the source with the registry from inside the
+    // success branch; on failure (transport error, auth never completes)
+    // the source is never registered so callers asserting
+    // `registry.hasSource()` after a failed startup see the right shape.
+    //
+    // Pending-auth registration happens later (below): if the early-
+    // return signal fires, we register the source so the registry
+    // reflects the bundle exists. Tool calls against an unstarted source
+    // throw cleanly until start() succeeds.
+    const startPromise: Promise<StartBundleResult> = source
+      .start()
+      .then(async () => {
+        const tools = await source.tools();
+        if (!registry.hasSource(sourceName)) {
+          registry.addSource(source);
+        }
+        log.info(`[bundles] ✓ ${sourceName} ready (${tools.length} tools, remote)`);
+        return {
+          meta: {
+            version: `remote (${tools.length} tools)`,
+            ui: ref.ui ?? null,
+            briefing: null,
+            httpProxy: null,
+            type: "plain" as const,
+          },
+          sourceName,
+          manifest: null,
+        };
+      })
+      .catch((err) => {
+        log.error(`[bundles] ${sourceName} start failed: ${err}`);
+        // Make sure the source isn't left in the registry if start
+        // ultimately failed (background pending-auth path could have
+        // added it). Best-effort — removeSource is idempotent.
+        void registry.removeSource(sourceName).catch(() => {});
+        throw err;
+      });
+
+    // Race start against the early-return signal. If the provider hits
+    // the interactive branch, `wrappedCallback` resolves earlyReturn before
+    // start() rejects/awaits — earlyReturn.promise wins, we return a
+    // placeholder meta, and startPromise continues in the background.
+    // (Attach a no-op .catch so a delayed background failure doesn't
+    // surface as an unhandled rejection.)
+    await Promise.race([startPromise.then(() => undefined).catch(() => undefined), earlyReturn.promise]);
+
+    if (pendingAuthDetected) {
+      // Register the source so the registry reflects the bundle exists.
+      // Tool calls against the unstarted source throw cleanly until
+      // start() succeeds (which happens after the user completes auth).
+      if (!registry.hasSource(sourceName)) {
+        registry.addSource(source);
+      }
+      // Don't await startPromise — it'll resolve when the user finishes
+      // auth (could be minutes). Background-protect against unhandled
+      // rejection if start ultimately fails.
+      startPromise.catch(() => {});
+      return {
+        meta: {
+          version: "remote (pending auth)",
+          ui: ref.ui ?? null,
+          briefing: null,
+          httpProxy: null,
+          type: "plain" as const,
+        },
+        sourceName,
+        manifest: null,
+      };
+    }
+
+    // Headless path or already-completed auth. start() succeeded.
+    return await startPromise;
   }
   const label = "name" in ref ? ref.name : ref.path;
   log.info(`[bundles] Starting ${label}...`);
