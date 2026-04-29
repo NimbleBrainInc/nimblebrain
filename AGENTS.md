@@ -139,6 +139,10 @@ Namespaces (`src/cli/log.ts`):
 
 Add a namespace by calling `log.debug("ns", "message")` (from `src/cli/log.ts`). Keep this table and the `log.ts` doc comment in sync.
 
+### Bundle subprocess stderr (default-on)
+
+Lines a bundle writes to stderr — Python tracebacks, warnings, application logs — are surfaced verbatim and prefixed `[bundle:<sourceName>]`, dimmed. **No flag required.** This is the bundle author's deliberate diagnostic output, separate from NB's own `NB_DEBUG=mcp` tracing; hiding it costs hours when a bundle crashes (issue #116). To quiet a chatty bundle, silence at the bundle level (logger config) or redirect at the shell (`bun run dev 2> >(grep -v '\[bundle:')`). The last 50 lines are also captured into the `source.crashed` event payload as `stderrTail`, so post-mortem consumers see the cause-of-death.
+
 ### Browser (`localStorage.nb_debug`)
 
 ```js

@@ -294,7 +294,10 @@ export class McpSource implements ToolSource {
       // there explicitly notes this is to avoid losing early child output),
       // so listeners attached now will catch bytes written during
       // initialize-time crashes.
-      this.attachStderrReader(stdioTransport);
+      // SDK types `stderr` as bare `Stream | null`, but the actual return
+      // is always a Node Readable (`PassThrough` when piped, otherwise
+      // `child_process.stderr`). Narrow at the boundary.
+      this.attachStderrReader(stdioTransport.stderr as NodeJS.ReadableStream | null);
 
       // Stdio close handler. The SDK's Protocol.connect() chains existing
       // onclose handlers (it captures the prior callback and calls it
@@ -302,19 +305,7 @@ export class McpSource implements ToolSource {
       // correct and survives the handshake. Without this handler, a
       // subprocess that exits mid-session is only detected lazily inside
       // execute()'s catch branch — issue #116 root cause #2.
-      stdioTransport.onclose = () => {
-        if (this.stopping) return;
-        this.dead = true;
-        this.eventSink.emit({
-          type: "run.error",
-          data: {
-            source: this.name,
-            event: "source.crashed",
-            error: "Stdio subprocess exited",
-            stderrTail: this.stderrTail.join("\n"),
-          },
-        });
-      };
+      stdioTransport.onclose = () => this.emitSourceCrashed("Stdio subprocess exited");
     } else if (this.mode.type === "remote") {
       this.transport = createRemoteTransport(
         this.mode.url,
@@ -323,19 +314,7 @@ export class McpSource implements ToolSource {
       );
 
       // Remote: watch for transport close — mark source as dead
-      this.transport.onclose = () => {
-        if (this.stopping) return;
-        this.dead = true;
-        this.eventSink.emit({
-          type: "run.error",
-          data: {
-            source: this.name,
-            event: "source.crashed",
-            error: "Remote transport closed",
-            stderrTail: "",
-          },
-        });
-      };
+      this.transport.onclose = () => this.emitSourceCrashed("Remote transport closed");
     } else {
       // In-process: the factory builds a fresh InMemoryTransport pair and an
       // already-connected Server on each call, so restart is a clean slate.
@@ -346,19 +325,7 @@ export class McpSource implements ToolSource {
       this.inProcessServer = server;
       this.transport = clientTransport;
 
-      this.transport.onclose = () => {
-        if (this.stopping) return;
-        this.dead = true;
-        this.eventSink.emit({
-          type: "run.error",
-          data: {
-            source: this.name,
-            event: "source.crashed",
-            error: "In-process transport closed",
-            stderrTail: "",
-          },
-        });
-      };
+      this.transport.onclose = () => this.emitSourceCrashed("In-process transport closed");
     }
 
     // Advertise client-side tasks capability per MCP spec draft 2025-11-25:
@@ -418,6 +385,12 @@ export class McpSource implements ToolSource {
           await this.cleanupOnStartFailure();
           this.rebuildRemoteTransport();
           this.client = this.buildClient();
+          // Re-arm crash detection for the retry: cleanupOnStartFailure
+          // set `stopping = true` to suppress its own teardown noise; we
+          // need it false again before the new transport's onclose can
+          // fire usefully. If this retry connect also fails, the catch
+          // below calls cleanupOnStartFailure again and re-suppresses.
+          this.stopping = false;
 
           await this.connectWithTimeout(CONNECT_TIMEOUT);
           this.startedAt = Date.now();
@@ -467,6 +440,13 @@ export class McpSource implements ToolSource {
   }
 
   private async cleanupOnStartFailure(): Promise<void> {
+    // A start that never reached the "running" state is not a crash —
+    // the caller is about to throw the real error. Suppress the
+    // `source.crashed` event that would otherwise fire when
+    // `transport.close()` triggers our onclose handler. Without this,
+    // every failed connect would emit a parallel crash event for a
+    // source the listener has never seen "running."
+    this.stopping = true;
     try {
       if (this.transport) await this.transport.close();
       if (this.inProcessServer) await this.inProcessServer.close();
@@ -476,6 +456,40 @@ export class McpSource implements ToolSource {
     this.client = null;
     this.transport = null;
     this.inProcessServer = null;
+  }
+
+  /**
+   * Single emit point for `source.crashed`. Two guards, two invariants:
+   *
+   *   - `stopping` — set in `stop()` and `cleanupOnStartFailure()`. The
+   *     SDK fires `transport.onclose` synchronously inside
+   *     `transport.close()`, so without this guard every deliberate
+   *     teardown would surface as a crash event.
+   *
+   *   - `dead` — set on first death-observation. The transport's
+   *     `onclose` and `execute()`'s catch can BOTH observe a single
+   *     subprocess death (the call throws because the pipe broke; the
+   *     subprocess exit also fires onclose). Without this guard,
+   *     listeners would see two `source.crashed` events for one death,
+   *     which any deduplicating consumer (UI, telemetry) gets wrong.
+   *     Whichever path runs first wins; its payload is canonical.
+   *
+   * `stderrTail` is sourced from the ring buffer, so it's empty for
+   * non-stdio modes (which never populate it) and populated for stdio
+   * regardless of which path triggered the emit.
+   */
+  private emitSourceCrashed(error: string): void {
+    if (this.stopping || this.dead) return;
+    this.dead = true;
+    this.eventSink.emit({
+      type: "run.error",
+      data: {
+        source: this.name,
+        event: "source.crashed",
+        error,
+        stderrTail: this.stderrTail.join("\n"),
+      },
+    });
   }
 
   /**
@@ -494,19 +508,7 @@ export class McpSource implements ToolSource {
       this.mode.transportConfig,
       this.mode.authProvider,
     );
-    this.transport.onclose = () => {
-      if (this.stopping) return;
-      this.dead = true;
-      this.eventSink.emit({
-        type: "run.error",
-        data: {
-          source: this.name,
-          event: "source.crashed",
-          error: "Remote transport closed",
-          stderrTail: "",
-        },
-      });
-    };
+    this.transport.onclose = () => this.emitSourceCrashed("Remote transport closed");
   }
 
   /**
@@ -533,8 +535,7 @@ export class McpSource implements ToolSource {
    * subprocess exit and the listeners are released by the transport's
    * own teardown — no explicit unsubscribe needed.
    */
-  private attachStderrReader(stdioTransport: StdioClientTransport): void {
-    const stream = stdioTransport.stderr;
+  private attachStderrReader(stream: NodeJS.ReadableStream | null): void {
     if (!stream) return;
     const decoder = new TextDecoder("utf-8", { fatal: false });
 
@@ -832,16 +833,12 @@ export class McpSource implements ToolSource {
         };
       }
 
-      this.dead = true;
-      this.eventSink.emit({
-        type: "run.error",
-        data: {
-          source: this.name,
-          event: "source.crashed",
-          error: String(err),
-          stderrTail: this.stderrTail.join("\n"),
-        },
-      });
+      // De-duped via the `dead` guard inside emitSourceCrashed: if the
+      // transport's `onclose` already fired (subprocess died before our
+      // catch ran), this is a no-op and the onclose-side payload — which
+      // includes stderrTail — wins. If we get here first, the thrown
+      // error is the more informative payload.
+      this.emitSourceCrashed(String(err));
 
       // Crash-retry is ONLY safe for inline calls. A task-augmented call has
       // spawned server-side state (the task, an entity, possibly external
@@ -1427,6 +1424,35 @@ export class McpSource implements ToolSource {
    */
   _taskHandleCountForTesting(): number {
     return this.taskHandles.size;
+  }
+
+  /**
+   * Test-only — drive the stderr reader against a synthetic Readable so
+   * tests can exercise chunk-boundary, CRLF, partial-line, and runaway-
+   * line handling without spawning a real subprocess.
+   * Production code MUST NOT call this.
+   */
+  _attachStderrReaderForTesting(stream: NodeJS.ReadableStream): void {
+    this.attachStderrReader(stream);
+  }
+
+  /** Test-only — read the current stderr ring-buffer contents. */
+  _stderrTailForTesting(): readonly string[] {
+    return this.stderrTail;
+  }
+
+  /** Test-only — observe `dead` to verify the de-dup guard. */
+  _isDeadForTesting(): boolean {
+    return this.dead;
+  }
+
+  /**
+   * Test-only — directly invoke the crash emitter to verify de-dup
+   * (second call must be a no-op once `dead` is set).
+   * Production code MUST NOT call this.
+   */
+  _emitSourceCrashedForTesting(error: string): void {
+    this.emitSourceCrashed(error);
   }
 
   private async tryRestart(): Promise<boolean> {
