@@ -10,6 +10,7 @@ import { createAutomation, deleteAutomation } from "./automations/src/domain.ts"
 import { getMpak } from "./mpak.ts";
 import { deriveBundleDataDir, deriveServerName } from "./paths.ts";
 import { startBundleSource } from "./startup.ts";
+import { type Connection, type ConnectionState, summarizeConnectionState } from "./connection.ts";
 import type {
   BriefingBlock,
   BundleInstance,
@@ -232,6 +233,21 @@ export class BundleLifecycleManager {
   /**
    * Install a remote MCP server by URL.
    * No mpak download — connects directly via HTTP transport (PRODUCT_SPEC ss15).
+   *
+   * Connection lifecycle: the BundleInstance is registered up-front with
+   * a single `_workspace` Connection in `starting` state. If the OAuth
+   * provider needs interactive auth, the
+   * `onInteractiveAuthRequired` callback fires synchronously inside
+   * `startBundleSource` → the Connection transitions to `pending_auth`
+   * and a `connection.state_changed` event broadcasts BEFORE
+   * `startBundleSource` returns. (`startBundleSource` itself still
+   * blocks on `source.start()` until auth completes; non-blocking install
+   * is a follow-up. The UI banner appears the moment we hit
+   * `pending_auth`, even though the API caller is still awaiting.)
+   *
+   * On success: Connection transitions to `running`. On failure: `dead`.
+   * The install API caller's `BundleInstance` reflects the post-completion
+   * state.
    */
   async installRemote(
     url: string,
@@ -242,26 +258,17 @@ export class BundleLifecycleManager {
     ui?: BundleUiMeta | null,
     trustScore?: number | null,
   ): Promise<BundleInstance> {
-    // Thread wsId + workDir through to startBundleSource so the URL-bundle
-    // branch can key OAuth credentials by (wsId, serverName) instead of
-    // falling back to `ws_default`. Without this, a URL bundle installed
-    // via `installRemote` from any workspace would share OAuth tokens across
-    // workspaces under the default id — silent cross-tenant credential
-    // leakage.
     const nbWorkDir = process.env.NB_WORK_DIR ?? join(homedir(), ".nimblebrain");
-    const { sourceName, meta } = await startBundleSource(
-      { url, serverName, transport: transportConfig, ui: ui ?? null },
-      registry,
-      this.eventSink,
-      this.configPath ? dirname(this.configPath) : undefined,
-      { allowInsecureRemotes: this.allowInsecureRemotes, wsId, workDir: nbWorkDir },
-    );
 
+    // Pre-register the instance + Connection BEFORE startBundleSource so
+    // the interactive-auth callback (fired during source.start()) can find
+    // the instance to transition. The lifecycle.recordConnectionStateChange
+    // path below would otherwise no-op on a missing instance.
     const instance: BundleInstance = {
-      serverName: sourceName,
+      serverName,
       bundleName: url,
-      version: meta?.version ?? "remote",
-      state: "running",
+      version: "remote",
+      state: "starting",
       trustScore: trustScore ?? null,
       ui: ui ?? null,
       briefing: null,
@@ -270,7 +277,46 @@ export class BundleLifecycleManager {
       type: "plain",
       wsId,
     };
-    this.transition(instance, "running");
+    this.instances.set(`${serverName}|${wsId}`, instance);
+    this.recordConnectionStateChange(serverName, wsId, "_workspace", "starting");
+
+    const onInteractiveAuthRequired = (authorizationUrl: string) => {
+      this.recordConnectionStateChange(serverName, wsId, "_workspace", "pending_auth", {
+        authorizationUrl,
+      });
+    };
+
+    let sourceName: string;
+    let meta: Awaited<ReturnType<typeof startBundleSource>>["meta"];
+    try {
+      const result = await startBundleSource(
+        { url, serverName, transport: transportConfig, ui: ui ?? null },
+        registry,
+        this.eventSink,
+        this.configPath ? dirname(this.configPath) : undefined,
+        {
+          allowInsecureRemotes: this.allowInsecureRemotes,
+          wsId,
+          workDir: nbWorkDir,
+          onInteractiveAuthRequired,
+        },
+      );
+      sourceName = result.sourceName;
+      meta = result.meta;
+    } catch (err) {
+      // Auth flow rejected, transport unavailable, etc. Transition the
+      // pre-registered Connection to dead so the UI updates and the
+      // bundle isn't left stuck in starting/pending_auth.
+      this.recordConnectionStateChange(serverName, wsId, "_workspace", "dead", {
+        lastError: err instanceof Error ? err.message : String(err),
+      });
+      this.instances.delete(`${serverName}|${wsId}`);
+      throw err;
+    }
+
+    instance.serverName = sourceName;
+    instance.version = meta?.version ?? "remote";
+    this.recordConnectionStateChange(sourceName, wsId, "_workspace", "running");
 
     // Register placements in PlacementRegistry
     this.registerPlacements(sourceName, instance.ui, wsId);
@@ -284,7 +330,11 @@ export class BundleLifecycleManager {
       atomicConfigAdd(this.configPath, entry);
     }
 
-    this.instances.set(`${sourceName}|${wsId}`, instance);
+    // Re-key in case sourceName differs from the input serverName.
+    if (sourceName !== serverName) {
+      this.instances.delete(`${serverName}|${wsId}`);
+      this.instances.set(`${sourceName}|${wsId}`, instance);
+    }
 
     // Emit event
     this.eventSink.emit({
@@ -481,6 +531,86 @@ export class BundleLifecycleManager {
       type: "bundle.dead",
       data: { serverName, bundleName: instance.bundleName, wsId },
     });
+  }
+
+  /**
+   * Record a Connection state transition for a URL bundle. Owns:
+   *   - Updating the named Connection's state on the BundleInstance
+   *   - Recomputing `BundleInstance.state` via `summarizeConnectionState`
+   *   - Emitting the `connection.state_changed` SSE event
+   *
+   * Idempotent on no-op transitions (same state in, same state out — still
+   * emits, since callers may rely on the event for "starting reconfirmed"
+   * semantics; if that turns out noisy we can dedupe later).
+   *
+   * Creates the Connection if it doesn't exist yet. This lets the
+   * background `start()` path call `recordConnectionStateChange(...,
+   * "running")` without the caller having to construct the Connection
+   * shape manually — useful for the headless OAuth path where pending_auth
+   * is skipped entirely.
+   *
+   * Workspace-scoped bundles call with `principalId =
+   * WORKSPACE_PRINCIPAL_ID`. Step 3 lights up real member ids.
+   */
+  recordConnectionStateChange(
+    serverName: string,
+    wsId: string,
+    principalId: string,
+    newState: ConnectionState,
+    opts?: { authorizationUrl?: string; lastError?: string; source?: McpSource | null },
+  ): void {
+    const instance = this.instances.get(`${serverName}|${wsId}`);
+    if (!instance) return;
+    if (!instance.connections) instance.connections = new Map<string, Connection>();
+
+    const existing = instance.connections.get(principalId);
+    const next: Connection = {
+      principalId,
+      state: newState,
+      source: opts?.source !== undefined ? opts.source : (existing?.source ?? null),
+      // Authorization URL is only meaningful while pending_auth — clear it
+      // on any other transition so a stale URL can't leak into /initiate.
+      authorizationUrl:
+        newState === "pending_auth"
+          ? (opts?.authorizationUrl ?? existing?.authorizationUrl)
+          : undefined,
+      lastError: opts?.lastError ?? (newState === "running" ? undefined : existing?.lastError),
+    };
+    instance.connections.set(principalId, next);
+
+    // Recompute summary state so legacy consumers (HealthMonitor,
+    // briefing-collector, runtime status API) see the right surface.
+    instance.state = summarizeConnectionState(instance.connections);
+
+    this.eventSink.emit({
+      type: "connection.state_changed",
+      data: {
+        wsId,
+        serverName,
+        bundleName: instance.bundleName,
+        principalId,
+        state: newState,
+        ...(next.authorizationUrl ? { authorizationUrl: next.authorizationUrl } : {}),
+        ...(next.lastError ? { lastError: next.lastError } : {}),
+      },
+    });
+  }
+
+  /**
+   * Lookup helper used by `/v1/mcp-auth/initiate` to find the
+   * authorization URL for a `(wsId, serverName, principalId)` tuple.
+   *
+   * Returns the URL only if the named Connection is in `pending_auth` —
+   * any other state means we have no business handing out a URL (would
+   * either be stale, a leak, or a bug). Caller should treat `null` as
+   * "this connection is not awaiting auth right now."
+   */
+  getPendingAuthUrl(serverName: string, wsId: string, principalId: string): string | null {
+    const instance = this.instances.get(`${serverName}|${wsId}`);
+    if (!instance?.connections) return null;
+    const conn = instance.connections.get(principalId);
+    if (!conn || conn.state !== "pending_auth" || !conn.authorizationUrl) return null;
+    return conn.authorizationUrl;
   }
 
   // ---- Bundle-contributed automations -------------------------------------

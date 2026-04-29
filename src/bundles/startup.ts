@@ -126,6 +126,14 @@ export async function startBundleSource(
      * for `bundleDataDir`.
      */
     workDir?: string;
+    /**
+     * Optional callback fired when a URL bundle's OAuth provider determines
+     * the flow requires a real browser. Threaded into
+     * `WorkspaceOAuthProvider`; receivers typically transition the bundle's
+     * Connection to `pending_auth` and emit a `connection.state_changed`
+     * SSE event so the UI banner appears. No-op for non-URL bundles.
+     */
+    onInteractiveAuthRequired?: (authorizationUrl: string) => void;
   },
 ): Promise<StartBundleResult> {
   if ("url" in ref) {
@@ -177,6 +185,7 @@ export async function startBundleSource(
         workDir,
         callbackUrl,
         allowInsecureRemotes: opts.allowInsecureRemotes === true,
+        onInteractiveAuthRequired: opts.onInteractiveAuthRequired,
       });
     }
 
