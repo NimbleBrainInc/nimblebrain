@@ -107,9 +107,6 @@ export const WorkspaceSelector = memo(function WorkspaceSelector({
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const canSwitch = workspaces.length > 1;
-  // Always allow opening the dropdown — even with one workspace, the
-  // "Settings" link inside is useful.
   const canOpen = true;
 
   useEffect(() => {
@@ -172,54 +169,50 @@ export const WorkspaceSelector = memo(function WorkspaceSelector({
       )}
     >
       {/* Workspace list */}
-      {canSwitch && (
-        <div className="p-1">
-          {sortedWorkspaces.map((ws) => {
-            const isActive = ws.id === activeWorkspace.id;
-            return (
-              <button
-                type="button"
-                key={ws.id}
-                onClick={() => handleSelect(ws)}
-                className={cn(
-                  "flex items-center gap-2.5 w-full rounded-md px-2 py-2 text-sm text-left transition-all duration-150",
-                  "text-sidebar-foreground",
-                  isActive
-                    ? "bg-sidebar-foreground/10 font-medium"
-                    : "hover:bg-sidebar-foreground/5",
-                )}
-              >
-                <WorkspaceAvatar name={ws.name} size="sm" variant="colored" />
-                <div className="flex-1 min-w-0">
-                  <span className="block truncate">{ws.name}</span>
-                </div>
-                {ws.memberCount <= 1 ? (
-                  <span className="shrink-0" title="Personal">
-                    <Lock className="w-3 h-3 text-sidebar-foreground/30" />
-                  </span>
-                ) : (
-                  <span
-                    className="flex items-center gap-1 text-[11px] text-sidebar-foreground/40 shrink-0"
-                    title={`${ws.memberCount} members`}
-                  >
-                    <Users className="w-3 h-3" />
-                    <span className="tabular-nums">{ws.memberCount}</span>
-                  </span>
-                )}
-                <span className="w-4 shrink-0 flex items-center justify-center">
-                  {isActive && <Check className="w-3.5 h-3.5 text-sidebar-primary" />}
+      <div className="p-1">
+        {sortedWorkspaces.map((ws) => {
+          const isActive = ws.id === activeWorkspace.id;
+          return (
+            <button
+              type="button"
+              key={ws.id}
+              onClick={() => handleSelect(ws)}
+              className={cn(
+                "flex items-center gap-2.5 w-full rounded-md px-2 py-2 text-sm text-left transition-all duration-150",
+                "text-sidebar-foreground",
+                isActive ? "bg-sidebar-foreground/10 font-medium" : "hover:bg-sidebar-foreground/5",
+              )}
+            >
+              <WorkspaceAvatar name={ws.name} size="sm" variant="colored" />
+              <div className="flex-1 min-w-0">
+                <span className="block truncate">{ws.name}</span>
+              </div>
+              {ws.memberCount <= 1 ? (
+                <span className="shrink-0" title="Personal">
+                  <Lock className="w-3 h-3 text-sidebar-foreground/30" />
                 </span>
-              </button>
-            );
-          })}
-        </div>
-      )}
+              ) : (
+                <span
+                  className="flex items-center gap-1 text-[11px] text-sidebar-foreground/40 shrink-0"
+                  title={`${ws.memberCount} members`}
+                >
+                  <Users className="w-3 h-3" />
+                  <span className="tabular-nums">{ws.memberCount}</span>
+                </span>
+              )}
+              <span className="w-4 shrink-0 flex items-center justify-center">
+                {isActive && <Check className="w-3.5 h-3.5 text-sidebar-primary" />}
+              </span>
+            </button>
+          );
+        })}
+      </div>
 
       {/* Settings link — keeps the workspace dropdown a one-stop shop for
           "I'm in workspace X, take me to its settings." Sign out lives in
           the UserMenu (bottom-left) since it's an identity action, not a
           workspace one. */}
-      {canSwitch && <div className="mx-2 border-t border-sidebar-border" />}
+      <div className="mx-2 border-t border-sidebar-border" />
       <div className="p-1">
         <button
           type="button"
