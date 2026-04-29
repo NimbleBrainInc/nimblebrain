@@ -10,6 +10,7 @@ import { eventRoutes } from "./routes/events.ts";
 import { healthRoutes } from "./routes/health.ts";
 import { mcpRoutes } from "./routes/mcp.ts";
 import { mcpAuthRoutes } from "./routes/mcp-auth.ts";
+import { proxyRoutes } from "./routes/proxy.ts";
 import { resourceRoutes } from "./routes/resources.ts";
 import { toolRoutes } from "./routes/tools.ts";
 import { wellKnownRoutes } from "./routes/well-known.ts";
@@ -41,6 +42,15 @@ export function createApp(
   // middleware from ALL sub-apps mounted at "/" that appear before the
   // matching route, so MCP must be registered before chat/tools/events.
   app.route("/", mcpRoutes(ctx));
+
+  // HTTP proxy routes — same Hono ordering constraint as mcpRoutes above.
+  // `resourceRoutes`/`chatRoutes`/etc. attach `.use("*", requireWorkspace(...))`
+  // middleware that resolves workspace from the X-Workspace-Id header. Browser
+  // iframe loads can't set custom headers, so the proxy puts the workspace ID
+  // in the URL path (`/v1/ws/<wsId>/apps/...`). Register before any sub-app
+  // with header-based workspace middleware so it doesn't 400 the iframe load
+  // before our path-based handler runs.
+  app.route("/", proxyRoutes(ctx));
 
   app.route("/", bootstrapRoutes(ctx));
   app.route("/", chatRoutes(ctx));

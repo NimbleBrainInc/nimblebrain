@@ -42,6 +42,28 @@ export interface BundleUiMeta {
   placements?: PlacementDeclaration[];
 }
 
+/**
+ * HTTP proxy declaration — declared by bundles that run their own HTTP server
+ * (e.g., an Astro preview, a Jupyter kernel gateway, a notebook renderer)
+ * and want the platform to expose it to the user's browser through a
+ * same-origin route under `/v1/ws/<wsId>/apps/<bundle>/<mount>/*`.
+ *
+ * Opt-in: most bundles don't declare this. Workspaces can globally disable via
+ * `Workspace.allowHttpProxy = false`.
+ *
+ * Read from `_meta["ai.nimblebrain/http-proxy"]` in the manifest.
+ */
+export interface HttpProxyConfig {
+  /** URL of the bundle-local HTTP server to forward to. Must point to a
+   *  loopback host (127.0.0.1, ::1, or localhost). */
+  target: string;
+  /** Single path segment under `/v1/ws/<wsId>/apps/<bundle>/`. Cannot contain `/`. */
+  mount: string;
+  /** Whether the proxy should handle WebSocket upgrades (HMR, live channels).
+   *  Declared today; upgrade forwarding is not yet wired through the route. */
+  websocket?: boolean;
+}
+
 /** Transport configuration for remote MCP servers (url-based bundles). */
 export interface RemoteTransportConfig {
   type?: "streamable-http" | "sse";
@@ -181,6 +203,8 @@ export interface BundleInstance {
   ui: BundleUiMeta | null;
   /** Briefing metadata from _meta["ai.nimblebrain/host"].briefing. */
   briefing: BriefingBlock | null;
+  /** HTTP proxy declaration from _meta["ai.nimblebrain/http-proxy"]. */
+  httpProxy: HttpProxyConfig | null;
   /** Whether the bundle is protected from uninstall. */
   protected: boolean;
   /** Whether this is an Upjack app or plain MCP server. */
@@ -208,6 +232,8 @@ export interface LocalBundleMeta {
   type: "upjack" | "plain";
   /** Upjack namespace from manifest (e.g., "apps/crm"). */
   upjackNamespace?: string;
+  /** HTTP proxy declaration (opt-in). */
+  httpProxy: HttpProxyConfig | null;
 }
 
 /** Env vars injected into protected default bundles for internal host communication. */

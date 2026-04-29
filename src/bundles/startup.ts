@@ -135,6 +135,7 @@ export async function startBundleSource(
         version: `remote (${tools.length} tools)`,
         ui: ref.ui ?? null,
         briefing: null,
+        httpProxy: null,
         type: "plain" as const,
       },
       sourceName,
@@ -236,7 +237,14 @@ export async function startBundleSource(
     );
   } else {
     const internalEnv = ref.protected && opts?.internalEnv ? opts.internalEnv : undefined;
-    const result = buildLocalSource(ref, configDir, internalEnv, opts?.dataDir, eventSink);
+    const result = buildLocalSource(
+      ref,
+      configDir,
+      internalEnv,
+      opts?.dataDir,
+      eventSink,
+      opts?.wsId,
+    );
     source = result.source;
     meta = result.meta;
     manifest = result.manifest;
@@ -262,6 +270,7 @@ function buildLocalSource(
   internalEnv: InternalBundleEnv | undefined,
   dataDirOverride: string | undefined,
   eventSink: EventSink,
+  wsId: string | undefined,
 ): { source: McpSource; meta: LocalBundleMeta; manifest: BundleManifest } {
   const bundleDir = resolveLocalBundle(ref.path, configDir);
   if (!bundleDir) {
@@ -314,6 +323,42 @@ function buildLocalSource(
     dataDirOverride ?? join(nbWorkDir, "data", deriveBundleDataDir(manifest.name));
   spawnEnv.MPAK_WORKSPACE = bundleDataDir;
   spawnEnv.UPJACK_ROOT = bundleDataDir;
+
+  // Tell every bundle which workspace it's running for. Each BundleInstance
+  // is workspace-scoped already, so this is just surfacing what the platform
+  // already knows. Bundles need it to compose URLs that include the workspace
+  // segment (the http-proxy route requires it in the path because browser
+  // iframe loads can't set the X-Workspace-Id header).
+  if (wsId) {
+    spawnEnv.NB_WORKSPACE_ID = wsId;
+  }
+
+  // If the bundle declares an http-proxy, tell it the public path prefix so it
+  // can configure its upstream server (e.g., `astro --base`) to match.
+  // Format: /v1/ws/<wsId>/apps/<serverName>/<mount>. Without wsId we can't
+  // build a usable prefix; skip in that case (the bundle simply won't expose
+  // a working preview URL until the workspace context is wired through).
+  const httpProxyMeta = (manifest._meta as Record<string, unknown> | undefined)?.[
+    "ai.nimblebrain/http-proxy"
+  ] as { mount?: string } | undefined;
+  if (httpProxyMeta?.mount && wsId) {
+    const mount = String(httpProxyMeta.mount).replace(/^\/+|\/+$/g, "");
+    if (mount && !/\//.test(mount)) {
+      spawnEnv.NB_PROXY_PREFIX = `/v1/ws/${wsId}/apps/${serverName}/${mount}`;
+    }
+  }
+
+  // Tell bundles the platform's browser-facing origin so they can declare it
+  // in `_meta.ui.csp.{frameDomains, connectDomains}` on UI resources that need
+  // to frame or fetch same-origin URLs (proxied preview, same-origin WS).
+  // Operators set NB_PUBLIC_ORIGIN explicitly; we fall back to the first
+  // ALLOWED_ORIGINS entry as a best-effort default for dev. Empty/unset →
+  // bundle simply doesn't declare and the host CSP stays restrictive.
+  const publicOrigin =
+    process.env.NB_PUBLIC_ORIGIN ?? process.env.ALLOWED_ORIGINS?.split(",")[0]?.trim() ?? "";
+  if (publicOrigin) {
+    spawnEnv.NB_PUBLIC_ORIGIN = publicOrigin;
+  }
 
   // Python bundles: resolve "python" -> "python3" if needed, build PYTHONPATH
   if (manifest.server.type === "python") {
