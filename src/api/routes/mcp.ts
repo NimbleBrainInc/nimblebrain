@@ -77,9 +77,6 @@ export function mcpRoutes(ctx: AppContext) {
 
   app.all("/mcp", bodyLimit(1_048_576), async (c) => {
     const features = ctx.runtime.getFeatures();
-    if (!features.mcpServer) {
-      return apiError(404, "not_found", "Not found");
-    }
 
     // Every MCP request must be workspace-scoped
     const identity = c.var.identity;

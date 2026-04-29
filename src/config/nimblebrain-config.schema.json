@@ -298,11 +298,6 @@
           "description": "Enable registry search via nb__search scope=registry. Default: true.",
           "default": true
         },
-        "mcpServer": {
-          "type": "boolean",
-          "description": "Enable MCP server endpoint. Default: true.",
-          "default": true
-        },
         "fileContext": {
           "type": "boolean",
           "description": "Enable file context (workspace files, chat attachments). Default: true.",

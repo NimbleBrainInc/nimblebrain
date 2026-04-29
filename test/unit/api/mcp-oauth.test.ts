@@ -10,6 +10,7 @@ import { describe, expect, it } from "bun:test";
 import { Hono } from "hono";
 import type { AppContext } from "../../../src/api/types.ts";
 import { mcpRoutes } from "../../../src/api/routes/mcp.ts";
+import { resolveFeatures } from "../../../src/config/features.ts";
 
 // ── Test helpers ──────────────────────────────────────────────────
 
@@ -44,7 +45,7 @@ function makeCtx(opts: { authkitDomain?: string } = {}): AppContext {
       internalToken: "test-internal-token",
     },
     runtime: {
-      getFeatures: () => ({ mcpServer: true }),
+      getFeatures: () => resolveFeatures(),
     },
     workspaceStore: null,
   } as unknown as AppContext;

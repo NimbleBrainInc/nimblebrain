@@ -89,7 +89,6 @@ describe("loadConfig", () => {
     const configPath = writeTestConfig("features.json", {
       features: {
         delegation: false,
-        mcpServer: false,
         workspaceManagement: false,
       },
     });
@@ -97,7 +96,6 @@ describe("loadConfig", () => {
     const config = loadConfig({ config: configPath });
     expect(config.features).toEqual({
       delegation: false,
-      mcpServer: false,
       workspaceManagement: false,
     });
   });
