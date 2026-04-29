@@ -45,6 +45,12 @@ class CollectingSink implements EventSink {
   }
 }
 
+// Two distinct SHA-256 hex placeholders for skill body content. The fixtures
+// here exercise event projection / order — none of these tests verify hash
+// math, so the actual values just need to be syntactically valid and stable.
+const TEST_HASH_A = "a".repeat(64);
+const TEST_HASH_B = "b".repeat(64);
+
 function makeConfigWithMetadata(): EngineConfig {
   return {
     model: "test-model",
@@ -60,6 +66,7 @@ function makeConfigWithMetadata(): EngineConfig {
             scope: "org",
             version: "2026-04-27T00:00:00.000Z",
             tokens: 240,
+            contentHash: TEST_HASH_A,
             loadedBy: "always",
             reason: "loading_strategy: always",
           },
@@ -69,6 +76,7 @@ function makeConfigWithMetadata(): EngineConfig {
             scope: "workspace",
             version: "2026-04-26T00:00:00.000Z",
             tokens: 890,
+            contentHash: TEST_HASH_B,
             loadedBy: "tool_affinity",
             reason: "applies_to_tools matched synapse-collateral__*",
           },
@@ -275,6 +283,7 @@ describe("EventSourcedConversationStore — persistence", () => {
             scope: "org",
             version: "2026-01-01T00:00:00.000Z",
             tokens: 100,
+            contentHash: TEST_HASH_A,
             loadedBy: "always",
             reason: "loading_strategy: always",
           },

@@ -24,6 +24,11 @@ import type { Skill } from "../../../../src/skills/types.ts";
 import { McpSource } from "../../../../src/tools/mcp-source.ts";
 import { createSkillsSource } from "../../../../src/tools/platform/skills.ts";
 
+// SHA-256 hex placeholder. Tests in this file exercise event projection /
+// filtering / dispatch — none verify hash math, so the actual value just
+// needs to be syntactically valid and stable across fixture rows.
+const TEST_HASH = "0".repeat(64);
+
 // ── Fake Runtime ─────────────────────────────────────────────────────────
 
 interface FakeIdentity {
@@ -517,6 +522,7 @@ describe("skills__active_for", () => {
             scope: "org",
             version: "",
             tokens: 50,
+            contentHash: TEST_HASH,
             loadedBy: "always",
             reason: "loading_strategy: always",
           },
@@ -535,6 +541,7 @@ describe("skills__active_for", () => {
             scope: "workspace",
             version: "",
             tokens: 100,
+            contentHash: TEST_HASH,
             loadedBy: "tool_affinity",
             reason: "applies_to_tools matched foo__*",
           },
@@ -602,6 +609,7 @@ describe("skills__loading_log", () => {
             scope: "org",
             version: "",
             tokens: 10,
+            contentHash: TEST_HASH,
             loadedBy: "always",
             reason: "r",
           },
@@ -618,6 +626,7 @@ describe("skills__loading_log", () => {
             scope: "org",
             version: "",
             tokens: 20,
+            contentHash: TEST_HASH,
             loadedBy: "always",
             reason: "r",
           },
@@ -634,6 +643,7 @@ describe("skills__loading_log", () => {
             scope: "org",
             version: "",
             tokens: 30,
+            contentHash: TEST_HASH,
             loadedBy: "always",
             reason: "r",
           },
@@ -643,6 +653,7 @@ describe("skills__loading_log", () => {
             scope: "user",
             version: "",
             tokens: 40,
+            contentHash: TEST_HASH,
             loadedBy: "tool_affinity",
             reason: "r",
           },
