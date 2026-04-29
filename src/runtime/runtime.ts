@@ -52,10 +52,10 @@ import {
   loadSkillDir,
   mergeScopedSkills,
   partitionSkills,
-  readSkillMtime,
 } from "../skills/loader.ts";
 import { SkillMatcher } from "../skills/matcher.ts";
-import { type SelectedSkill, selectLayer3Skills } from "../skills/select.ts";
+import { selectLayer3Skills } from "../skills/select.ts";
+import { buildSkillsLoadedPayload } from "./skills-loaded-payload.ts";
 import { approxTokens } from "../skills/tokens.ts";
 import type { Skill } from "../skills/types.ts";
 import { TelemetryManager } from "../telemetry/manager.ts";
@@ -1878,24 +1878,6 @@ function stampDerivedScope(workDir: string, skill: Skill): Skill {
  * (file mtime), tokens (approximate), `loadedBy`, and the matcher's reason
  * string. Total is the sum of per-skill tokens.
  */
-function buildSkillsLoadedPayload(selected: SelectedSkill[]): SkillsLoadedPayload {
-  const entries = selected.map((s) => {
-    const body = s.skill.body;
-    const tokens = approxTokens(body);
-    const sourcePath = s.skill.sourcePath || "";
-    return {
-      id: sourcePath || `skill-in-memory:${s.skill.manifest.name}`,
-      layer: 3 as const,
-      scope: (s.skill.manifest.scope ?? "org") as "org" | "workspace" | "user" | "bundle",
-      version: sourcePath ? readSkillMtime(sourcePath) : "",
-      tokens,
-      loadedBy: s.loadedBy,
-      reason: s.reason,
-    };
-  });
-  const totalTokens = entries.reduce((sum, e) => sum + e.tokens, 0);
-  return { skills: entries, totalTokens };
-}
 
 /**
  * Build the `context.assembled` snapshot from the assembled prompt + tool

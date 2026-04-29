@@ -179,6 +179,21 @@ export interface ContextAssembledPayload {
  * Per-skill telemetry attached to a `skills.loaded` event. Re-exported
  * from `src/conversation/types.ts` so emitters and persisters reference
  * one definition; drift surfaces as a type error.
+ *
+ * `contentHash` is the SHA-256 (hex) of the skill body that was actually
+ * composed into the prompt. New emissions always populate it; the field
+ * is optional only to preserve backward compat with events written
+ * before the hash field was added. Debug tools that read the field MUST
+ * handle missing values explicitly (e.g. surface "this skill loaded
+ * before content-hash telemetry — can't verify it hasn't drifted").
+ *
+ * The hash lets debug tools detect mutation between when the skill
+ * loaded and when an operator inspects it: equal hashes mean the
+ * current on-disk body matches what ran, and can be displayed
+ * verbatim; differing hashes can be looked up against `_versions/`
+ * snapshots to find the body that actually loaded. Cheap (~64 bytes
+ * per skill per turn); decoupled from the body itself so event size
+ * stays bounded.
  */
 export interface SkillsLoadedEntry {
   id: string;
@@ -186,6 +201,8 @@ export interface SkillsLoadedEntry {
   scope: "org" | "workspace" | "user" | "bundle";
   version: string;
   tokens: number;
+  /** SHA-256 hex of the skill body. Always populated on new events. */
+  contentHash?: string;
   loadedBy: "always" | "tool_affinity";
   reason: string;
 }
