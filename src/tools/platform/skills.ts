@@ -36,10 +36,9 @@ import type { EventSink, ToolResult } from "../../engine/types.ts";
 import { getRequestContext } from "../../runtime/request-context.ts";
 import type { Runtime } from "../../runtime/runtime.ts";
 import { parseSkillFile, readSkillMtime } from "../../skills/loader.ts";
-import { coerceManifestInput, coerceManifestPatch } from "../../skills/manifest-input.ts";
 import { toolMatches } from "../../skills/select.ts";
 import { approxTokens } from "../../skills/tokens.ts";
-import type { Skill } from "../../skills/types.ts";
+import type { Skill, SkillManifest } from "../../skills/types.ts";
 import { validateSkill } from "../../skills/validator.ts";
 import { deleteSkill, updateSkill, writeSkill } from "../../skills/writer.ts";
 import { defineInProcessApp, type InProcessTool } from "../in-process-app.ts";
@@ -89,21 +88,70 @@ const SKILLS_LOADING_LOG_DESCRIPTION =
   "did or did not load.";
 
 const SKILLS_CREATE_DESCRIPTION =
-  "Create a new Layer 3 skill at the given scope (`org`, `workspace`, or `user`). Writes a " +
-  "markdown file with frontmatter to the appropriate skills directory. " +
-  "**Confirm with the user before creating org- or workspace-scope skills** — they affect " +
-  "every conversation in that scope. Manifest fields: `description`, `type` (context|skill), " +
-  "`priority` (11–99 for non-core), `loading_strategy` (always|tool_affined), `applies_to_tools` " +
-  "(globs; required for `tool_affined`), `status` (defaults active). The body is markdown content. " +
-  "Returns the new skill's id (filesystem path).";
+  "Create a Layer 3 skill at the given scope (`org`, `workspace`, or `user`). Writes a " +
+  "markdown file with YAML frontmatter — `manifest` becomes the frontmatter, `body` is the " +
+  "markdown below it. **Confirm with the user before creating org- or workspace-scope " +
+  "skills** — they affect every conversation in that scope. Returns the new skill's id " +
+  "(filesystem path).";
 
 const SKILLS_UPDATE_DESCRIPTION =
   "Update an existing Layer 3 skill. The `id` is the filesystem path returned by `skills__list` " +
-  "(call that first to discover ids — bare names and scope-prefixed forms are NOT valid). " +
-  "Provide a partial `manifest` patch and/or a new `body`. Snapshots the current version to " +
-  "`_versions/` before writing so changes are reversible. Bundle (Layer 1) skills are not " +
-  "editable — the call returns a structured error directing the caller to publish a new " +
-  "bundle version instead.";
+  "(call that first — bare names and scope-prefixed forms are NOT valid). Provide a partial " +
+  "`manifest` patch (any subset of the create-shape fields) and/or a new `body`. Snapshots the " +
+  "current version to `_versions/` before writing. Bundle (Layer 1) skills are not editable.";
+
+// ── Shared manifest property schema ──────────────────────────────────────
+//
+// Mirrors `SkillManifest` from src/skills/types.ts field-for-field. Used by
+// both `skills__create` (with required: [name, description, type]) and
+// `skills__update` (no required — partial patch).
+//
+// Operator/advanced fields are intentionally absent from the LLM-facing
+// schema (see SCHEMA_PRINCIPLES at the bottom of this file): `allowedTools`,
+// `requiresBundles`, `loadingStrategy`, `appliesToTools`, `overrides`,
+// `derivedFrom`. They live on the type and the on-disk format; if a future
+// change makes them load-bearing for agent authoring, promote them here
+// deliberately with a description.
+const SKILL_MANIFEST_PROPERTIES = {
+  name: {
+    type: "string" as const,
+    pattern: "^[a-zA-Z0-9_-]+$",
+    description: "Becomes the filename. Alphanumeric, dash, underscore.",
+  },
+  description: {
+    type: "string" as const,
+    description: "What the skill does. Surfaced to the agent during Layer 3 selection.",
+  },
+  type: {
+    type: "string" as const,
+    enum: ["skill", "context"],
+    description: "`skill` for procedural how-to content; `context` for declarative facts.",
+  },
+  priority: {
+    type: "number" as const,
+    minimum: 0,
+    maximum: 100,
+    description: "Selection priority. 11–99 for non-core. Default 50.",
+  },
+  status: {
+    type: "string" as const,
+    enum: ["active", "draft", "disabled", "archived"],
+    description: "`active` to load. `draft` while authoring. Default `active`.",
+  },
+  version: {
+    type: "string" as const,
+    description: "Semver. Default 1.0.0.",
+  },
+  metadata: {
+    type: "object" as const,
+    properties: {
+      keywords: { type: "array" as const, items: { type: "string" as const } },
+      triggers: { type: "array" as const, items: { type: "string" as const } },
+      category: { type: "string" as const },
+      tags: { type: "array" as const, items: { type: "string" as const } },
+    },
+  },
+};
 
 const SKILLS_DELETE_DESCRIPTION =
   "Delete a Layer 3 skill. The `id` is the filesystem path returned by `skills__list`. " +
@@ -355,20 +403,18 @@ export function createSkillsSource(runtime: Runtime, eventSink: EventSink): McpS
             enum: ["org", "workspace", "user"],
             description: "Tier to write the skill into. Bundle (Layer 1) is not writable.",
           },
-          name: {
-            type: "string",
-            description: "Skill name (alphanumeric, dash, underscore). Becomes the filename.",
-          },
           manifest: {
             type: "object",
-            description: "Manifest fields. `description`, `type`, `priority` are typical.",
+            properties: SKILL_MANIFEST_PROPERTIES,
+            required: ["name", "description", "type"],
+            description: "YAML frontmatter for the skill file. Identity + selection metadata.",
           },
           body: {
             type: "string",
-            description: "Markdown body of the skill.",
+            description: "Markdown body — the prose below the frontmatter.",
           },
         },
-        required: ["scope", "name"],
+        required: ["scope", "manifest", "body"],
       },
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         try {
@@ -388,8 +434,8 @@ export function createSkillsSource(runtime: Runtime, eventSink: EventSink): McpS
           id: { type: "string", description: "Filesystem path returned by `skills__list`." },
           manifest: {
             type: "object",
-            description:
-              "Partial manifest fields to merge. Omitted fields keep their current values.",
+            properties: SKILL_MANIFEST_PROPERTIES,
+            description: "Partial manifest patch. Omitted fields keep their current values.",
           },
           body: {
             type: "string",
@@ -1402,11 +1448,25 @@ function unrecognizedIdMessage(id: string): string {
   );
 }
 
+/**
+ * Strict input shape for `skills__create`. Mirrors the JSON Schema 1:1 —
+ * the validator (validateToolInput) has already rejected anything that
+ * doesn't match before this runs, so the handler reads typed fields
+ * directly. `name` lives inside manifest (not at root) — same place as
+ * the on-disk frontmatter.
+ */
 interface CreateInput {
-  scope?: string;
-  name?: string;
-  manifest?: Record<string, unknown>;
-  body?: string;
+  scope: WritableScope;
+  manifest: {
+    name: string;
+    description: string;
+    type: SkillManifest["type"];
+    priority?: number;
+    status?: SkillManifest["status"];
+    version?: string;
+    metadata?: SkillManifest["metadata"];
+  };
+  body: string;
 }
 
 async function createSkill(
@@ -1414,14 +1474,10 @@ async function createSkill(
   input: Record<string, unknown>,
   eventSink: EventSink,
 ): Promise<ToolResult> {
-  const { scope, name, manifest: rawManifest, body } = input as CreateInput;
-  if (!scope || !WRITABLE_SCOPES.has(scope as WritableScope)) {
-    return errorResult(new Error(`Scope must be one of org | workspace | user (got "${scope}")`));
-  }
-  if (!name) return errorResult(new Error("`name` is required"));
+  const { scope, manifest, body } = input as unknown as CreateInput;
+  const { name } = manifest;
   assertValidName(name);
 
-  const writableScope = scope as WritableScope;
   // Resolve the target dir first so the permission check uses the
   // *destination* path. For workspace/user creates this binds the wsId
   // / userId to the current request context (you can only create inside
@@ -1429,35 +1485,58 @@ async function createSkill(
   // check still applies.
   let dir: string;
   try {
-    dir = scopeDir(runtime, writableScope);
+    dir = scopeDir(runtime, scope);
   } catch (err) {
     return errorResult(err);
   }
   const target = join(dir, `${name}.md`);
-  const permission = await checkPathAccess(runtime, target, writableScope, "write");
+  const permission = await checkPathAccess(runtime, target, scope, "write");
   if (!permission.allowed) return permissionDenied(permission.reason ?? "Permission denied");
 
   if (existsSync(target)) {
-    return errorResult(new Error(`Skill "${name}" already exists in ${writableScope} scope`));
+    return errorResult(new Error(`Skill "${name}" already exists in ${scope} scope`));
   }
 
-  const merged = coerceManifestInput(name, rawManifest);
-  const validation = validateSkill(name, merged, body ?? "");
+  // Fill in defaults the schema doesn't enforce (priority, version) so the
+  // on-disk SkillManifest is complete. The schema's strong typing means
+  // every other field is either present-and-correct or absent.
+  const fullManifest: SkillManifest = {
+    name,
+    description: manifest.description,
+    type: manifest.type,
+    priority: manifest.priority ?? 50,
+    version: manifest.version ?? "1.0.0",
+    ...(manifest.status ? { status: manifest.status } : {}),
+    ...(manifest.metadata ? { metadata: manifest.metadata } : {}),
+  };
+
+  const validation = validateSkill(name, fullManifest, body);
   if (!validation.valid) {
     return errorResult(new Error(`Validation failed — ${validation.errors.join("; ")}`));
   }
 
-  writeSkill(dir, name, merged, body ?? "");
+  writeSkill(dir, name, fullManifest, body);
   await reloadBootSkills(runtime);
   eventSink.emit({
     type: "skill.created",
-    data: { id: target, name, scope: writableScope, type: merged.type },
+    data: { id: target, name, scope, type: fullManifest.type },
   });
   return {
-    content: textContent(`Created ${writableScope} skill "${name}" → ${target}`),
-    structuredContent: { id: target, name, scope: writableScope },
+    content: textContent(`Created ${scope} skill "${name}" → ${target}`),
+    structuredContent: { id: target, name, scope },
     isError: false,
   };
+}
+
+/**
+ * Strict input shape for `skills__update`. `manifest` is a partial of the
+ * create-shape — every field optional. The validator has already enforced
+ * shape; the handler reads typed fields directly.
+ */
+interface UpdateInput {
+  id: string;
+  manifest?: Partial<CreateInput["manifest"]>;
+  body?: string;
 }
 
 async function updateSkillHandler(
@@ -1466,15 +1545,7 @@ async function updateSkillHandler(
   eventSink: EventSink,
   authoringGuidePath: string,
 ): Promise<ToolResult> {
-  const {
-    id,
-    manifest: patchRaw,
-    body,
-  } = input as {
-    id?: string;
-    manifest?: Record<string, unknown>;
-    body?: string;
-  };
+  const { id, manifest: patch, body } = input as unknown as UpdateInput;
   if (!id) return errorResult(new Error("`id` is required"));
 
   // skill:// URIs are bundle-served by design — return the structured
@@ -1510,8 +1581,19 @@ async function updateSkillHandler(
 
   snapshotVersion(id);
 
-  // Reuse the writer's merge logic so behavior matches `system_tools` edit.
-  const partial = patchRaw ? coerceManifestPatch(patchRaw) : undefined;
+  // Patch is already shaped exactly like Partial<SkillManifest> — no
+  // coercion needed. `name` in the patch is ignored since it's derived
+  // from the path (renaming is a separate operation).
+  const partial: Partial<SkillManifest> | undefined = patch
+    ? {
+        ...(patch.description !== undefined ? { description: patch.description } : {}),
+        ...(patch.type !== undefined ? { type: patch.type } : {}),
+        ...(patch.priority !== undefined ? { priority: patch.priority } : {}),
+        ...(patch.status !== undefined ? { status: patch.status } : {}),
+        ...(patch.version !== undefined ? { version: patch.version } : {}),
+        ...(patch.metadata !== undefined ? { metadata: patch.metadata } : {}),
+      }
+    : undefined;
   updateSkill(dir, name, partial, body);
   await reloadBootSkills(runtime);
 

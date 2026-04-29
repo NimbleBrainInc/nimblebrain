@@ -69,7 +69,7 @@ export function WorkspaceInstructions({ wsId, canEdit }: { wsId: string; canEdit
     try {
       const res = await callTool("instructions", "write_instructions", {
         scope: "workspace",
-        text,
+        body: text,
       });
       if (res.isError) {
         const errText = res.content?.[0]?.text ?? "Save failed";

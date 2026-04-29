@@ -362,7 +362,7 @@ suiteFn("bundle instructions — bundle-side convention", () => {
           const writeResult = await wsRegistry.execute({
             id: "test-write-ws",
             name: "instructions__write_instructions",
-            input: { scope: "workspace", text: overlayText },
+            input: { scope: "workspace", body: overlayText },
           });
           expect(writeResult.isError).toBe(false);
         },
@@ -400,7 +400,7 @@ suiteFn("bundle instructions — bundle-side convention", () => {
           const clearResult = await wsRegistry.execute({
             id: "test-clear-ws",
             name: "instructions__write_instructions",
-            input: { scope: "workspace", text: "" },
+            input: { scope: "workspace", body: "" },
           });
           expect(clearResult.isError).toBe(false);
         },

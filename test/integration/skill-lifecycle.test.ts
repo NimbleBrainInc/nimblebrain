@@ -1,5 +1,5 @@
 import { describe, expect, it, afterAll } from "bun:test";
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Runtime } from "../../src/runtime/runtime.ts";
@@ -73,13 +73,15 @@ describe("skill lifecycle (end-to-end)", () => {
 		// 1. Create an org-tier skill via skills__create
 		const createResult = await callTool(runtime, "skills__create", {
 			scope: "org",
-			name: "test-greeter",
 			manifest: {
+				name: "test-greeter",
 				description: "Greets people warmly",
 				type: "skill",
 				priority: 50,
-				triggers: ["greet someone", "say hello"],
-				keywords: ["hello", "greet", "welcome", "hi"],
+				metadata: {
+					triggers: ["greet someone", "say hello"],
+					keywords: ["hello", "greet", "welcome", "hi"],
+				},
 			},
 			body: "You are a warm and friendly greeter. Always say hello enthusiastically.",
 		});
@@ -127,8 +129,8 @@ describe("skill lifecycle (end-to-end)", () => {
 		// Create a context skill with priority 20 (above core threshold of 10)
 		const createResult = await callTool(runtime, "skills__create", {
 			scope: "org",
-			name: "team-context",
 			manifest: {
+				name: "team-context",
 				description: "Team-specific context",
 				type: "context",
 				priority: 20,
@@ -169,21 +171,40 @@ describe("skill lifecycle (end-to-end)", () => {
 		});
 		await provisionTestWorkspace(runtime);
 
-		// Create a skill that requires a nonexistent bundle
-		const createResult = await callTool(runtime, "skills__create", {
-			scope: "org",
-			name: "dep-skill",
-			manifest: {
-				description: "Skill with missing dependency",
-				type: "skill",
-				priority: 50,
-				triggers: ["process data"],
-				keywords: ["process", "data", "analyze"],
-				requires_bundles: ["@nonexistent/bundle"],
-			},
-			body: "You are a data processor.",
-		});
-		expect(createResult.isError).toBe(false);
+		// `requires-bundles` is an operator-only field — not authorable via
+		// the LLM-facing schema. To exercise the dependency-warning path,
+		// write the skill file directly with the YAML frontmatter the
+		// loader expects. Mirrors the on-disk format produced by the
+		// writer for any other field.
+		const skillsDir = join(workDir, "skills");
+		mkdirSync(skillsDir, { recursive: true });
+		const skillPath = join(skillsDir, "dep-skill.md");
+		writeFileSync(
+			skillPath,
+			[
+				"---",
+				"name: dep-skill",
+				'description: "Skill with missing dependency"',
+				"type: skill",
+				"priority: 50",
+				'version: "1.0.0"',
+				"requires-bundles:",
+				'  - "@nonexistent/bundle"',
+				"metadata:",
+				"  triggers:",
+				'    - "process data"',
+				"  keywords:",
+				"    - process",
+				"    - data",
+				"    - analyze",
+				"---",
+				"You are a data processor.",
+				"",
+			].join("\n"),
+		);
+		// Force a reload so the runtime picks up the new file before
+		// dispatch (mirrors what skills__create does internally).
+		await runtime.reloadSkills();
 
 		// Trigger the skill and verify the dependency warning appears
 		await runtime.chat({ workspaceId: TEST_WORKSPACE_ID, message: "process data for me" });
@@ -192,7 +213,6 @@ describe("skill lifecycle (end-to-end)", () => {
 		expect(getSystem()).toContain("@nonexistent/bundle");
 
 		// Clean up
-		const skillPath = join(workDir, "skills", "dep-skill.md");
 		await callTool(runtime, "skills__delete", { id: skillPath });
 
 		await runtime.shutdown();
@@ -250,8 +270,12 @@ describe("skill lifecycle (end-to-end)", () => {
 
 		await callTool(runtime, "skills__create", {
 			scope: "org",
-			name: "row-fixture",
-			manifest: { description: "Fixture for list-rows test", type: "skill", priority: 50 },
+			manifest: {
+				name: "row-fixture",
+				description: "Fixture for list-rows test",
+				type: "skill",
+				priority: 50,
+			},
 			body: "Body.",
 		});
 
@@ -279,16 +303,19 @@ describe("skill lifecycle (end-to-end)", () => {
 		});
 		await provisionTestWorkspace(runtime);
 
-		// Attempt to create a skill with priority 5 (reserved range)
+		// Attempt to create a skill with priority 5 (reserved range — the
+		// validator rejects below 11 for non-core skills).
 		const createResult = await callTool(runtime, "skills__create", {
 			scope: "org",
-			name: "bad-priority",
 			manifest: {
+				name: "bad-priority",
 				description: "Should be rejected",
 				type: "skill",
 				priority: 5,
-				triggers: ["bad priority"],
-				keywords: ["bad", "priority"],
+				metadata: {
+					triggers: ["bad priority"],
+					keywords: ["bad", "priority"],
+				},
 			},
 			body: "This should never be saved.",
 		});

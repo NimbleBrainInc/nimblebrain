@@ -247,19 +247,6 @@ export function toKebabCase(name: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Recursive prevention
-// ---------------------------------------------------------------------------
-
-const RECURSIVE_TOOL_PATTERNS = ["automations__create", "automations__update"];
-
-function containsRecursiveTool(allowedTools?: string[]): boolean {
-  if (!allowedTools) return false;
-  return allowedTools.some((tool) =>
-    RECURSIVE_TOOL_PATTERNS.some((pattern) => tool === pattern || tool.includes(pattern)),
-  );
-}
-
-// ---------------------------------------------------------------------------
 // Tool definitions
 // ---------------------------------------------------------------------------
 
@@ -331,24 +318,36 @@ export function validateAutomationFields(args: Record<string, unknown>): void {
   }
 }
 
+/**
+ * Strict input shape for `automations__create`. Mirrors the JSON Schema:
+ * `manifest` carries all config; `body` is the prompt sent on each run.
+ * The validator has already enforced shape — handler reads typed fields
+ * directly. Operator-only fields (`source`, `bundleName`) are not in the
+ * input contract; they default at the runtime layer below.
+ */
+interface CreateInput {
+  manifest: {
+    name: string;
+    description?: string;
+    schedule: ScheduleSpec;
+    enabled?: boolean;
+    skill?: string;
+    model?: string;
+    maxIterations?: number;
+    maxInputTokens?: number;
+    maxRunDurationMs?: number;
+    tokenBudget?: Automation["tokenBudget"];
+  };
+  body: string;
+}
+
 export function handleCreate(args: Record<string, unknown>, ctx: ToolContext): object {
-  const name = args.name as string;
-  const prompt = args.prompt as string;
-  const schedule = args.schedule as ScheduleSpec;
+  const { manifest, body } = args as unknown as CreateInput;
+  const { name, schedule } = manifest;
 
-  if (!name || !prompt || !schedule) {
-    throw new Error("Missing required fields: name, prompt, schedule");
-  }
-
-  validateAutomationFields(args);
-
-  // Recursive prevention
-  const allowedTools = args.allowedTools as string[] | undefined;
-  if (containsRecursiveTool(allowedTools)) {
-    throw new Error(
-      "Recursive prevention: allowedTools must not contain automations__create or automations__update",
-    );
-  }
+  // Validate the manifest fields (validator reads from a flat shape, so we
+  // pass a synthetic flat record built from the typed manifest).
+  validateAutomationFields(manifest as unknown as Record<string, unknown>);
 
   const id = toKebabCase(name);
   const defs = ctx.definitions();
@@ -369,19 +368,17 @@ export function handleCreate(args: Record<string, unknown>, ctx: ToolContext): o
     name,
     ownerId: ctx.currentUserId,
     workspaceId: ctx.currentWorkspaceId,
-    prompt,
+    prompt: body,
     schedule,
-    description: args.description as string | undefined,
-    skill: args.skill as string | undefined,
-    allowedTools,
-    maxIterations: args.maxIterations as number | undefined,
-    maxInputTokens: args.maxInputTokens as number | undefined,
-    maxRunDurationMs: args.maxRunDurationMs as number | undefined,
-    model: (args.model as string | undefined) ?? undefined,
-    tokenBudget: args.tokenBudget as Automation["tokenBudget"],
-    enabled: (args.enabled as boolean | undefined) ?? true,
-    source: (args.source as Automation["source"] | undefined) ?? "agent",
-    bundleName: args.bundleName as string | undefined,
+    description: manifest.description,
+    skill: manifest.skill,
+    maxIterations: manifest.maxIterations,
+    maxInputTokens: manifest.maxInputTokens,
+    maxRunDurationMs: manifest.maxRunDurationMs,
+    model: manifest.model,
+    tokenBudget: manifest.tokenBudget,
+    enabled: manifest.enabled ?? true,
+    source: "agent",
     createdAt: now,
     updatedAt: now,
     runCount: 0,
@@ -407,8 +404,20 @@ export function handleCreate(args: Record<string, unknown>, ctx: ToolContext): o
   };
 }
 
+/**
+ * Strict input shape for `automations__update`. `manifest` is a partial
+ * of the create-shape; `body` is an optional new prompt. `name` at root
+ * is the reference key — `manifest.name` cannot be patched (renaming is
+ * a separate operation).
+ */
+interface UpdateInput {
+  name: string;
+  manifest?: Partial<CreateInput["manifest"]>;
+  body?: string;
+}
+
 export function handleUpdate(args: Record<string, unknown>, ctx: ToolContext): object {
-  const name = args.name as string;
+  const { name, manifest: patch, body } = args as unknown as UpdateInput;
   if (!name) throw new Error("Missing required field: name");
 
   const defs = ctx.definitions();
@@ -417,14 +426,17 @@ export function handleUpdate(args: Record<string, unknown>, ctx: ToolContext): o
     throw new Error(`Automation not found: "${name}"`);
   }
 
-  validateAutomationFields(args);
+  if (patch) {
+    validateAutomationFields(patch as unknown as Record<string, unknown>);
+  }
 
+  // Manifest fields that update applies to (skip `name` — renaming is a
+  // separate concern, and the path-derived id would drift). Each field is
+  // typed; the validator above already constrained ranges.
   const updatableFields = [
     "description",
-    "prompt",
     "schedule",
     "skill",
-    "allowedTools",
     "maxIterations",
     "maxInputTokens",
     "model",
@@ -434,15 +446,21 @@ export function handleUpdate(args: Record<string, unknown>, ctx: ToolContext): o
   ] as const;
 
   let changed = false;
-  for (const field of updatableFields) {
-    if (field in args && args[field] !== undefined) {
-      (automation as unknown as Record<string, unknown>)[field] = args[field];
-      changed = true;
+  if (patch) {
+    for (const field of updatableFields) {
+      if (field in patch && patch[field] !== undefined) {
+        (automation as unknown as Record<string, unknown>)[field] = patch[field];
+        changed = true;
+      }
     }
+  }
+  if (body !== undefined) {
+    automation.prompt = body;
+    changed = true;
   }
 
   // Clear disable state when re-enabling
-  if (args.enabled === true) {
+  if (patch?.enabled === true) {
     automation.consecutiveErrors = 0;
     automation.disabledAt = undefined;
     automation.disabledReason = undefined;
@@ -452,7 +470,7 @@ export function handleUpdate(args: Record<string, unknown>, ctx: ToolContext): o
     automation.updatedAt = new Date().toISOString();
 
     // Recompute nextRunAt if schedule changed
-    if ("schedule" in args) {
+    if (patch && "schedule" in patch) {
       const nextRun = computeNextRunAt(automation, Date.now(), ctx.defaultTimezone);
       if (nextRun !== null) {
         automation.nextRunAt = new Date(nextRun).toISOString();

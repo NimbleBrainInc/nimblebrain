@@ -116,16 +116,16 @@ export function createInstructionsSource(runtime: Runtime, eventSink: EventSink)
             description:
               "Which overlay to write. `org` applies platform-wide; `workspace` applies to the active workspace only.",
           },
-          text: {
+          body: {
             type: "string",
             description: "Markdown body. Empty string clears the overlay.",
           },
         },
-        required: ["scope", "text"],
+        required: ["scope", "body"],
       },
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         const scope = input.scope as Scope;
-        const text = String(input.text ?? "");
+        const body = String(input.body ?? "");
         const wsId = scope === "workspace" ? safeRequireWorkspace(runtime) : null;
 
         const permission = await checkScopePermission(runtime, scope, wsId);
@@ -142,11 +142,11 @@ export function createInstructionsSource(runtime: Runtime, eventSink: EventSink)
         try {
           const result =
             scope === "org"
-              ? await store.write({ scope: "org", text, updatedBy: "agent" })
+              ? await store.write({ scope: "org", text: body, updatedBy: "agent" })
               : await store.write({
                   scope: "workspace",
                   wsId: wsId!,
-                  text,
+                  text: body,
                   updatedBy: "agent",
                 });
 

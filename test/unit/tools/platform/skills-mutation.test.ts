@@ -138,12 +138,11 @@ describe("skills__create", () => {
       name: "create",
       arguments: {
         scope: "org",
-        name: "voice-rules",
         manifest: {
+          name: "voice-rules",
           description: "speak plainly",
           type: "context",
           priority: 25,
-          "loading-strategy": "always",
         },
         body: "Be concise.",
       },
@@ -161,7 +160,11 @@ describe("skills__create", () => {
     const make = () =>
       client.callTool({
         name: "create",
-        arguments: { scope: "org", name: "voice", body: "v1" },
+        arguments: {
+          scope: "org",
+          manifest: { name: "voice", description: "test", type: "skill" },
+          body: "v1",
+        },
       });
     expect((await make()).isError).toBeFalsy();
     const second = await make();
@@ -172,9 +175,17 @@ describe("skills__create", () => {
   test("rejects invalid skill name (slashes)", async () => {
     const src = await buildSource();
     const client = src.getClient()!;
+    // Schema enforces `name: ^[a-zA-Z0-9_-]+$` — invalid name is rejected at
+    // the validator before reaching the handler. The validator uses pattern
+    // matching, so this surfaces as a JSON-RPC validation error (not the
+    // handler's `assertValidName`).
     const result = await client.callTool({
       name: "create",
-      arguments: { scope: "org", name: "../etc/passwd", body: "" },
+      arguments: {
+        scope: "org",
+        manifest: { name: "../etc/passwd", description: "test", type: "skill" },
+        body: "",
+      },
     });
     expect(result.isError).toBe(true);
   });
@@ -192,7 +203,11 @@ describe("skills__create", () => {
     const client = src.getClient()!;
     const result = await client.callTool({
       name: "create",
-      arguments: { scope: "org", name: "no-perm", body: "x" },
+      arguments: {
+        scope: "org",
+        manifest: { name: "no-perm", description: "test", type: "skill" },
+        body: "x",
+      },
     });
     expect(result.isError).toBe(true);
     expect((result as { structuredContent?: { code?: string } }).structuredContent?.code).toBe(
@@ -206,7 +221,11 @@ describe("skills__create", () => {
     const client = src.getClient()!;
     const result = await client.callTool({
       name: "create",
-      arguments: { scope: "workspace", name: "ws-only", body: "ws body" },
+      arguments: {
+        scope: "workspace",
+        manifest: { name: "ws-only", description: "test", type: "skill" },
+        body: "ws body",
+      },
     });
     expect(result.isError).toBeFalsy();
     expect(existsSync(join(workDir, "workspaces", "ws_demo", "skills", "ws-only.md"))).toBe(true);
@@ -223,8 +242,7 @@ describe("skills__update", () => {
       name: "create",
       arguments: {
         scope: "org",
-        name: "voice",
-        manifest: { description: "v1", type: "context", priority: 25 },
+        manifest: { name: "voice", description: "v1", type: "context", priority: 25 },
         body: "Body v1",
       },
     });
@@ -287,7 +305,11 @@ describe("skills__delete", () => {
     const client = src.getClient()!;
     await client.callTool({
       name: "create",
-      arguments: { scope: "org", name: "doomed", body: "rip" },
+      arguments: {
+        scope: "org",
+        manifest: { name: "doomed", description: "test", type: "skill" },
+        body: "rip",
+      },
     });
     const id = join(workDir, "skills", "doomed.md");
     expect(existsSync(id)).toBe(true);
@@ -318,7 +340,11 @@ describe("skills__activate / skills__deactivate", () => {
     const client = src.getClient()!;
     await client.callTool({
       name: "create",
-      arguments: { scope: "org", name: "togglable", body: "x" },
+      arguments: {
+        scope: "org",
+        manifest: { name: "togglable", description: "test", type: "skill" },
+        body: "x",
+      },
     });
     const id = join(workDir, "skills", "togglable.md");
 
@@ -344,7 +370,11 @@ describe("skills__move_scope", () => {
     const client = src.getClient()!;
     const create = await client.callTool({
       name: "create",
-      arguments: { scope: "workspace", name: "promote-me", body: "wide value" },
+      arguments: {
+        scope: "workspace",
+        manifest: { name: "promote-me", description: "test", type: "skill" },
+        body: "wide value",
+      },
     });
     expect(create.isError).toBeFalsy();
     const sourcePath = join(workDir, "workspaces", "ws_demo", "skills", "promote-me.md");
@@ -369,7 +399,11 @@ describe("skills__move_scope", () => {
     const client = src.getClient()!;
     await client.callTool({
       name: "create",
-      arguments: { scope: "org", name: "stay", body: "x" },
+      arguments: {
+        scope: "org",
+        manifest: { name: "stay", description: "test", type: "skill" },
+        body: "x",
+      },
     });
     const id = join(workDir, "skills", "stay.md");
     const result = await client.callTool({
@@ -385,11 +419,19 @@ describe("skills__move_scope", () => {
     const client = src.getClient()!;
     await client.callTool({
       name: "create",
-      arguments: { scope: "org", name: "collide", body: "org" },
+      arguments: {
+        scope: "org",
+        manifest: { name: "collide", description: "test", type: "skill" },
+        body: "org",
+      },
     });
     await client.callTool({
       name: "create",
-      arguments: { scope: "workspace", name: "collide", body: "workspace" },
+      arguments: {
+        scope: "workspace",
+        manifest: { name: "collide", description: "test", type: "skill" },
+        body: "workspace",
+      },
     });
     const wsPath = join(workDir, "workspaces", "ws_demo", "skills", "collide.md");
     const result = await client.callTool({

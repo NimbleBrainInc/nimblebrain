@@ -2,6 +2,17 @@
  * Shared tool schema definitions for automations.
  * Used by both the standalone MCP server (server.ts) and the in-process
  * platform source (src/tools/platform/automations.ts).
+ *
+ * Shape convention (per src/tools/platform/types.ts SCHEMA_PRINCIPLES):
+ *
+ *   create: { manifest: { ...config }, body: <prompt> }
+ *   update: { name, manifest?: Partial<config>, body?: <new prompt> }
+ *
+ * `manifest` is the persistent automation definition; `body` is the prompt
+ * sent to POST /v1/chat on each run — the analog of a skill's markdown
+ * body. Operator-only fields (`source`, `bundleName`) are not in the
+ * LLM-facing schema; they live on the stored type and are set by the
+ * runtime, never by an authoring caller.
  */
 
 export interface ToolSchema {
@@ -14,118 +25,123 @@ export interface ToolSchema {
   };
 }
 
+// ── Shared sub-schemas ───────────────────────────────────────────────────
+
+const SCHEDULE_SCHEMA = {
+  type: "object" as const,
+  properties: {
+    type: { type: "string" as const, enum: ["cron", "interval"] },
+    expression: {
+      type: "string" as const,
+      description: "5-field cron expression (when type=cron).",
+    },
+    timezone: {
+      type: "string" as const,
+      description: "IANA timezone. Default: system timezone.",
+    },
+    intervalMs: {
+      type: "number" as const,
+      minimum: 60000,
+      description: "Interval in ms (when type=interval). Min 60000.",
+    },
+  },
+  required: ["type"],
+};
+
+const TOKEN_BUDGET_SCHEMA = {
+  type: "object" as const,
+  properties: {
+    maxInputTokens: { type: "number" as const },
+    maxOutputTokens: { type: "number" as const },
+    period: { type: "string" as const, enum: ["daily", "monthly"] },
+  },
+};
+
+/**
+ * Manifest properties — used by both create (with required: [name,
+ * schedule]) and update (no required, all optional patch).
+ */
+const AUTOMATION_MANIFEST_PROPERTIES = {
+  name: {
+    type: "string" as const,
+    description: "Human-readable name. Becomes the kebab-case id.",
+  },
+  description: {
+    type: "string" as const,
+    description: "What this automation does.",
+  },
+  schedule: SCHEDULE_SCHEMA,
+  enabled: {
+    type: "boolean" as const,
+    description: "Whether the automation runs. Default true.",
+  },
+  skill: {
+    type: "string" as const,
+    description: "Force a specific skill match for this automation's runs.",
+  },
+  model: {
+    type: "string" as const,
+    description: "Model override. Omit to use the workspace default.",
+  },
+  maxIterations: {
+    type: "number" as const,
+    description: "Max LLM iterations per run. Default 5, hard cap 15.",
+  },
+  maxInputTokens: {
+    type: "number" as const,
+    description: "Max input tokens per run. Default 200000.",
+  },
+  maxRunDurationMs: {
+    type: "number" as const,
+    description: "Max wall-clock per run (ms). Default 120000.",
+  },
+  tokenBudget: TOKEN_BUDGET_SCHEMA,
+};
+
+// ── Tool schemas ─────────────────────────────────────────────────────────
+
 export const TOOL_SCHEMAS: ToolSchema[] = [
   {
     name: "create",
     description:
-      "Create a new scheduled automation. Generates a kebab-case id from the name. Idempotent: if an automation with the same id already exists, returns the existing one.",
+      "Create a scheduled automation. `manifest` is the config; `body` is the prompt sent " +
+      "to POST /v1/chat on each run. Generates a kebab-case id from `manifest.name`. " +
+      "Idempotent: returns the existing automation if one with the same id exists.",
     inputSchema: {
       type: "object" as const,
       properties: {
-        name: {
-          type: "string",
-          description: "Human-readable name for the automation.",
-        },
-        prompt: {
-          type: "string",
-          description: "The message sent to POST /v1/chat on each run.",
-        },
-        schedule: {
+        manifest: {
           type: "object",
-          description: 'Schedule specification. Type "cron" or "interval".',
-          properties: {
-            type: { type: "string", enum: ["cron", "interval"] },
-            expression: {
-              type: "string",
-              description: "5-field cron expression (when type=cron).",
-            },
-            timezone: { type: "string", description: "IANA timezone. Default: system timezone." },
-            intervalMs: {
-              type: "number",
-              description: "Interval in ms (when type=interval). Min: 60000.",
-            },
-          },
-          required: ["type"],
+          properties: AUTOMATION_MANIFEST_PROPERTIES,
+          required: ["name", "schedule"],
+          description: "Automation definition: identity, schedule, run-time policy.",
         },
-        description: { type: "string", description: "What this automation does." },
-        skill: { type: "string", description: "Force a specific skill match." },
-        allowedTools: {
-          type: "array",
-          items: { type: "string" },
-          description: "Tool allowlist (glob patterns).",
-        },
-        maxIterations: {
-          type: "number",
-          description: "Max iterations per run. Default: 5, hard cap: 15.",
-        },
-        maxInputTokens: {
-          type: "number",
-          description: "Max input tokens per run. Default: 200000.",
-        },
-        model: { type: "string", description: "Model override (null = workspace default)." },
-        maxRunDurationMs: {
-          type: "number",
-          description: "Max execution time per run in ms. Default: 120000 (2 minutes).",
-        },
-        tokenBudget: {
-          type: "object",
-          description: "Optional token budget. Auto-disables when exceeded.",
-          properties: {
-            maxInputTokens: { type: "number", description: "Max cumulative input tokens." },
-            maxOutputTokens: { type: "number", description: "Max cumulative output tokens." },
-            period: {
-              type: "string",
-              enum: ["daily", "monthly"],
-              description: "Budget reset period.",
-            },
-          },
-        },
-        enabled: { type: "boolean", description: "Whether active. Default: true." },
-        source: {
+        body: {
           type: "string",
-          enum: ["user", "agent", "bundle"],
-          description: 'Who created this. Default: "agent".',
+          description: "The prompt sent on each scheduled run.",
         },
-        bundleName: { type: "string", description: "If bundle-contributed, which bundle." },
       },
-      required: ["name", "prompt", "schedule"],
+      required: ["manifest", "body"],
     },
   },
   {
     name: "update",
     description:
-      "Update an existing automation by name. Applies partial updates to editable fields.",
+      "Update an existing automation by name. Provide a partial `manifest` patch and/or a new " +
+      "`body` (prompt). Omitted fields keep their current values.",
     inputSchema: {
       type: "object" as const,
       properties: {
         name: { type: "string", description: "Name of the automation to update." },
-        description: { type: "string" },
-        prompt: { type: "string" },
-        schedule: {
+        manifest: {
           type: "object",
-          properties: {
-            type: { type: "string", enum: ["cron", "interval"] },
-            expression: { type: "string" },
-            timezone: { type: "string" },
-            intervalMs: { type: "number" },
-          },
-          required: ["type"],
+          properties: AUTOMATION_MANIFEST_PROPERTIES,
+          description: "Partial manifest patch. Omitted fields keep their current values.",
         },
-        skill: { type: "string" },
-        allowedTools: { type: "array", items: { type: "string" } },
-        maxIterations: { type: "number" },
-        maxInputTokens: { type: "number" },
-        model: { type: "string" },
-        maxRunDurationMs: { type: "number" },
-        tokenBudget: {
-          type: "object",
-          properties: {
-            maxInputTokens: { type: "number" },
-            maxOutputTokens: { type: "number" },
-            period: { type: "string", enum: ["daily", "monthly"] },
-          },
+        body: {
+          type: "string",
+          description: "New prompt. Omit to keep the current prompt.",
         },
-        enabled: { type: "boolean" },
       },
       required: ["name"],
     },

@@ -30,6 +30,28 @@ import {
 // Test helpers
 // ---------------------------------------------------------------------------
 
+/** Build the new {manifest, body} shape for handleCreate without ceremony. */
+function createArgs(
+	name: string,
+	prompt: string,
+	schedule: { type: string; [k: string]: unknown },
+	extra: Record<string, unknown> = {},
+): Record<string, unknown> {
+	return { manifest: { name, schedule, ...extra }, body: prompt };
+}
+
+/** Build the {name, manifest?, body?} shape for handleUpdate. */
+function updateArgs(
+	name: string,
+	patch: Record<string, unknown> = {},
+): Record<string, unknown> {
+	const { body, ...manifest } = patch as { body?: string } & Record<string, unknown>;
+	const out: Record<string, unknown> = { name };
+	if (Object.keys(manifest).length > 0) out.manifest = manifest;
+	if (body !== undefined) out.body = body;
+	return out;
+}
+
 const TMP_DIR = join(import.meta.dir, ".tmp-automation-server");
 
 let savedDefs: Map<string, Automation>;
@@ -207,9 +229,11 @@ describe("handleCreate", () => {
 		const ctx = makeCtx();
 		const result = handleCreate(
 			{
-				name: "Daily Report",
-				prompt: "Generate daily report",
-				schedule: { type: "cron", expression: "0 8 * * *", timezone: "Pacific/Honolulu" },
+				manifest: {
+					name: "Daily Report",
+					schedule: { type: "cron", expression: "0 8 * * *", timezone: "Pacific/Honolulu" },
+				},
+				body: "Generate daily report",
 			},
 			ctx,
 		) as { automation: Automation; created: boolean };
@@ -230,9 +254,11 @@ describe("handleCreate", () => {
 		const ctx = makeCtx();
 		const first = handleCreate(
 			{
-				name: "Daily Report",
-				prompt: "Generate daily report",
-				schedule: { type: "interval", intervalMs: 60_000 },
+				manifest: {
+					name: "Daily Report",
+					schedule: { type: "interval", intervalMs: 60_000 },
+				},
+				body: "Generate daily report",
 			},
 			ctx,
 		) as { automation: Automation; created: boolean };
@@ -241,9 +267,11 @@ describe("handleCreate", () => {
 
 		const second = handleCreate(
 			{
-				name: "Daily Report",
-				prompt: "Different prompt",
-				schedule: { type: "interval", intervalMs: 120_000 },
+				manifest: {
+					name: "Daily Report",
+					schedule: { type: "interval", intervalMs: 120_000 },
+				},
+				body: "Different prompt",
 			},
 			ctx,
 		) as { automation: Automation; created: boolean };
@@ -251,43 +279,6 @@ describe("handleCreate", () => {
 		expect(second.created).toBe(false);
 		expect(second.automation.id).toBe(first.automation.id);
 		expect(second.automation.prompt).toBe("Generate daily report"); // original prompt
-	});
-
-	test("rejects recursive allowedTools (automations__create)", () => {
-		const ctx = makeCtx();
-		expect(() =>
-			handleCreate(
-				{
-					name: "Recursive",
-					prompt: "Bad",
-					schedule: { type: "interval", intervalMs: 60_000 },
-					allowedTools: ["automations__create"],
-				},
-				ctx,
-			),
-		).toThrow("Recursive prevention");
-	});
-
-	test("rejects recursive allowedTools (automations__update)", () => {
-		const ctx = makeCtx();
-		expect(() =>
-			handleCreate(
-				{
-					name: "Recursive",
-					prompt: "Bad",
-					schedule: { type: "interval", intervalMs: 60_000 },
-					allowedTools: ["some_tool", "automations__update"],
-				},
-				ctx,
-			),
-		).toThrow("Recursive prevention");
-	});
-
-	test("rejects missing required fields", () => {
-		const ctx = makeCtx();
-		expect(() =>
-			handleCreate({ name: "No prompt" } as Record<string, unknown>, ctx),
-		).toThrow("Missing required fields");
 	});
 });
 
@@ -300,9 +291,11 @@ describe("create → list", () => {
 		const ctx = makeCtx();
 		handleCreate(
 			{
-				name: "Daily Report",
-				prompt: "Generate daily report",
-				schedule: { type: "interval", intervalMs: 1_800_000 },
+				manifest: {
+					name: "Daily Report",
+					schedule: { type: "interval", intervalMs: 1_800_000 },
+				},
+				body: "Generate daily report",
 			},
 			ctx,
 		);
@@ -326,16 +319,12 @@ describe("handleUpdate", () => {
 	test("updates enabled status", () => {
 		const ctx = makeCtx();
 		handleCreate(
-			{
-				name: "Daily Report",
-				prompt: "Generate report",
-				schedule: { type: "interval", intervalMs: 60_000 },
-			},
+			createArgs("Daily Report", "Generate report", { type: "interval", intervalMs: 60_000 }),
 			ctx,
 		);
 
 		const result = handleUpdate(
-			{ name: "Daily Report", enabled: false },
+			updateArgs("Daily Report", { enabled: false }),
 			ctx,
 		) as { automation: Automation; updated: boolean };
 
@@ -352,20 +341,15 @@ describe("handleUpdate", () => {
 	test("updates schedule and reloads scheduler", () => {
 		const ctx = makeCtx();
 		handleCreate(
-			{
-				name: "My Task",
-				prompt: "Do it",
-				schedule: { type: "interval", intervalMs: 60_000 },
-			},
+			createArgs("My Task", "Do it", { type: "interval", intervalMs: 60_000 }),
 			ctx,
 		);
 
 		schedulerReloaded = false;
 		handleUpdate(
-			{
-				name: "My Task",
+			updateArgs("My Task", {
 				schedule: { type: "cron", expression: "0 9 * * 1", timezone: "Pacific/Honolulu" },
-			},
+			}),
 			ctx,
 		);
 
@@ -375,7 +359,7 @@ describe("handleUpdate", () => {
 	test("throws for nonexistent automation", () => {
 		const ctx = makeCtx();
 		expect(() =>
-			handleUpdate({ name: "Nonexistent" }, ctx),
+			handleUpdate(updateArgs("Nonexistent"), ctx),
 		).toThrow("Automation not found");
 	});
 });
@@ -388,11 +372,7 @@ describe("handleDelete", () => {
 	test("removes automation from list", () => {
 		const ctx = makeCtx();
 		handleCreate(
-			{
-				name: "Temp",
-				prompt: "Temporary",
-				schedule: { type: "interval", intervalMs: 60_000 },
-			},
+			createArgs("Temp", "Temporary", { type: "interval", intervalMs: 60_000 }),
 			ctx,
 		);
 
@@ -418,37 +398,28 @@ describe("handleDelete", () => {
 // ---------------------------------------------------------------------------
 
 describe("handleList filters", () => {
+	// `source` is set by the runtime, not by the tool input — the LLM-facing
+	// schema doesn't accept it. To exercise filter-by-source, seed the store
+	// directly with automations whose `source` is set as an operator would.
 	function seedAutomations(ctx: ToolContext): void {
 		handleCreate(
-			{
-				name: "Active Bundle",
-				prompt: "p",
-				schedule: { type: "interval", intervalMs: 60_000 },
-				enabled: true,
-				source: "bundle",
-			},
+			createArgs("Active Bundle", "p", { type: "interval", intervalMs: 60_000 }),
 			ctx,
 		);
 		handleCreate(
-			{
-				name: "Disabled User",
-				prompt: "p",
-				schedule: { type: "interval", intervalMs: 60_000 },
-				enabled: false,
-				source: "user",
-			},
+			createArgs("Disabled User", "p", { type: "interval", intervalMs: 60_000 }, { enabled: false }),
 			ctx,
 		);
 		handleCreate(
-			{
-				name: "Active Agent",
-				prompt: "p",
-				schedule: { type: "interval", intervalMs: 60_000 },
-				enabled: true,
-				source: "agent",
-			},
+			createArgs("Active Agent", "p", { type: "interval", intervalMs: 60_000 }),
 			ctx,
 		);
+		// Stamp non-default sources directly — bypasses the tool input contract,
+		// which is the right shape for this test (filtering, not authoring).
+		const defs = ctx.definitions();
+		defs.get("active-bundle")!.source = "bundle";
+		defs.get("disabled-user")!.source = "user";
+		ctx.save(defs);
 	}
 
 	test("filter enabled: true", () => {
@@ -496,11 +467,7 @@ describe("handleStatus", () => {
 	test("returns automation with recent runs (newest first)", () => {
 		const ctx = makeCtx();
 		handleCreate(
-			{
-				name: "Status Test",
-				prompt: "p",
-				schedule: { type: "interval", intervalMs: 60_000 },
-			},
+			createArgs("Status Test", "p", { type: "interval", intervalMs: 60_000 }),
 			ctx,
 		);
 
@@ -556,11 +523,7 @@ describe("handleRuns", () => {
 	test("filters by status", () => {
 		const ctx = makeCtx();
 		handleCreate(
-			{
-				name: "Run Filter Test",
-				prompt: "p",
-				schedule: { type: "interval", intervalMs: 60_000 },
-			},
+			createArgs("Run Filter Test", "p", { type: "interval", intervalMs: 60_000 }),
 			ctx,
 		);
 
@@ -604,14 +567,8 @@ describe("handleRuns", () => {
 
 	test("queries across all automations", () => {
 		const ctx = makeCtx();
-		handleCreate(
-			{ name: "A", prompt: "p", schedule: { type: "interval", intervalMs: 60_000 } },
-			ctx,
-		);
-		handleCreate(
-			{ name: "B", prompt: "p", schedule: { type: "interval", intervalMs: 60_000 } },
-			ctx,
-		);
+		handleCreate(createArgs("A", "p", { type: "interval", intervalMs: 60_000 }), ctx);
+		handleCreate(createArgs("B", "p", { type: "interval", intervalMs: 60_000 }), ctx);
 
 		appendRun("a", makeRun({ automationId: "a", startedAt: "2025-06-15T10:00:00.000Z" }), TMP_DIR);
 		appendRun("b", makeRun({ automationId: "b", startedAt: "2025-06-15T11:00:00.000Z" }), TMP_DIR);
@@ -629,11 +586,7 @@ describe("handleRun", () => {
 	test("triggers immediate execution and returns result", async () => {
 		const ctx = makeCtx();
 		handleCreate(
-			{
-				name: "Immediate",
-				prompt: "Run now",
-				schedule: { type: "interval", intervalMs: 60_000 },
-			},
+			createArgs("Immediate", "Run now", { type: "interval", intervalMs: 60_000 }),
 			ctx,
 		);
 
@@ -662,11 +615,7 @@ describe("delete preserves run history", () => {
 	test("runs still accessible after deletion", () => {
 		const ctx = makeCtx();
 		handleCreate(
-			{
-				name: "Deletable",
-				prompt: "p",
-				schedule: { type: "interval", intervalMs: 60_000 },
-			},
+			createArgs("Deletable", "p", { type: "interval", intervalMs: 60_000 }),
 			ctx,
 		);
 
@@ -695,13 +644,13 @@ describe("delete preserves run history", () => {
 describe("handleCreate — new fields", () => {
 	test("stores maxRunDurationMs and tokenBudget", () => {
 		const ctx = makeCtx();
-		const result = handleCreate({
-			name: "Budget Test",
-			prompt: "test",
-			schedule: { type: "interval", intervalMs: 60_000 },
-			maxRunDurationMs: 60_000,
-			tokenBudget: { maxInputTokens: 10000, period: "daily" },
-		}, ctx) as Record<string, unknown>;
+		const result = handleCreate(
+			createArgs("Budget Test", "test", { type: "interval", intervalMs: 60_000 }, {
+				maxRunDurationMs: 60_000,
+				tokenBudget: { maxInputTokens: 10000, period: "daily" },
+			}),
+			ctx,
+		) as Record<string, unknown>;
 
 		const auto = (result.automation as Automation);
 		expect(auto.maxRunDurationMs).toBe(60_000);
@@ -719,11 +668,10 @@ describe("handleUpdate — re-enable clears disable state", () => {
 	test("enabled=true clears disabledAt, disabledReason, and consecutiveErrors", () => {
 		const ctx = makeCtx();
 		// Create an automation first
-		handleCreate({
-			name: "Disabled Test",
-			prompt: "test",
-			schedule: { type: "interval", intervalMs: 60_000 },
-		}, ctx);
+		handleCreate(
+			createArgs("Disabled Test", "test", { type: "interval", intervalMs: 60_000 }),
+			ctx,
+		);
 
 		// Simulate auto-disable by writing directly
 		const defs = loadDefinitions(TMP_DIR);
@@ -735,7 +683,10 @@ describe("handleUpdate — re-enable clears disable state", () => {
 		saveDefinitions(defs, TMP_DIR);
 
 		// Re-enable
-		const result = handleUpdate({ name: "Disabled Test", enabled: true }, ctx) as Record<string, unknown>;
+		const result = handleUpdate(
+			updateArgs("Disabled Test", { enabled: true }),
+			ctx,
+		) as Record<string, unknown>;
 		const updated = (result.automation as Automation);
 		expect(updated.enabled).toBe(true);
 		expect(updated.consecutiveErrors).toBe(0);
@@ -754,11 +705,10 @@ describe("handleCancel", () => {
 		const ctx = makeCtx({
 			cancelRun: (id) => { cancelledId = id; return true; },
 		});
-		handleCreate({
-			name: "Cancel Target",
-			prompt: "test",
-			schedule: { type: "interval", intervalMs: 60_000 },
-		}, ctx);
+		handleCreate(
+			createArgs("Cancel Target", "test", { type: "interval", intervalMs: 60_000 }),
+			ctx,
+		);
 
 		const result = handleCancel({ name: "Cancel Target" }, ctx) as Record<string, unknown>;
 		expect(result.cancelled).toBe(true);
@@ -778,11 +728,10 @@ describe("handleCancel", () => {
 describe("handleList — disable info", () => {
 	test("includes disabledReason when auto-disabled", () => {
 		const ctx = makeCtx();
-		handleCreate({
-			name: "List Disabled",
-			prompt: "test",
-			schedule: { type: "interval", intervalMs: 60_000 },
-		}, ctx);
+		handleCreate(
+			createArgs("List Disabled", "test", { type: "interval", intervalMs: 60_000 }),
+			ctx,
+		);
 
 		// Simulate auto-disable
 		const defs = loadDefinitions(TMP_DIR);
@@ -910,11 +859,7 @@ describe("handleCreate — validation", () => {
 		const ctx = makeCtx();
 		expect(() =>
 			handleCreate(
-				{
-					name: "Bad Interval",
-					prompt: "test",
-					schedule: { type: "interval", intervalMs: 10_000 },
-				},
+				createArgs("Bad Interval", "test", { type: "interval", intervalMs: 10_000 }),
 				ctx,
 			),
 		).toThrow("at least 1 minute");
@@ -924,11 +869,7 @@ describe("handleCreate — validation", () => {
 		const ctx = makeCtx();
 		expect(() =>
 			handleCreate(
-				{
-					name: "Bad Cron",
-					prompt: "test",
-					schedule: { type: "cron", expression: "nope" },
-				},
+				createArgs("Bad Cron", "test", { type: "cron", expression: "nope" }),
 				ctx,
 			),
 		).toThrow("Invalid cron");
@@ -943,20 +884,15 @@ describe("handleUpdate — validation", () => {
 	test("rejects update with invalid intervalMs", () => {
 		const ctx = makeCtx();
 		handleCreate(
-			{
-				name: "Update Target",
-				prompt: "test",
-				schedule: { type: "interval", intervalMs: 60_000 },
-			},
+			createArgs("Update Target", "test", { type: "interval", intervalMs: 60_000 }),
 			ctx,
 		);
 
 		expect(() =>
 			handleUpdate(
-				{
-					name: "Update Target",
+				updateArgs("Update Target", {
 					schedule: { type: "interval", intervalMs: 5_000 },
-				},
+				}),
 				ctx,
 			),
 		).toThrow("at least 1 minute");
@@ -965,19 +901,14 @@ describe("handleUpdate — validation", () => {
 	test("accepts valid schedule update", () => {
 		const ctx = makeCtx();
 		handleCreate(
-			{
-				name: "Update Target Valid",
-				prompt: "test",
-				schedule: { type: "interval", intervalMs: 60_000 },
-			},
+			createArgs("Update Target Valid", "test", { type: "interval", intervalMs: 60_000 }),
 			ctx,
 		);
 
 		const result = handleUpdate(
-			{
-				name: "Update Target Valid",
+			updateArgs("Update Target Valid", {
 				schedule: { type: "cron", expression: "0 9 * * 1" },
-			},
+			}),
 			ctx,
 		) as Record<string, unknown>;
 		expect(result.updated).toBe(true);
@@ -992,11 +923,10 @@ describe("automation ownership", () => {
 	test("handleCreate sets ownerId from context", () => {
 		const ctx = makeCtx({ currentUserId: "usr_alice" });
 		const result = handleCreate(
-			{
-				name: "Owned Automation",
-				prompt: "do something",
-				schedule: { type: "interval", intervalMs: 60_000 },
-			},
+			createArgs("Owned Automation", "do something", {
+				type: "interval",
+				intervalMs: 60_000,
+			}),
 			ctx,
 		) as { automation: Automation; created: boolean };
 
@@ -1007,11 +937,10 @@ describe("automation ownership", () => {
 	test("handleCreate sets workspaceId from context", () => {
 		const ctx = makeCtx({ currentWorkspaceId: "ws_engineering" });
 		const result = handleCreate(
-			{
-				name: "Workspace Automation",
-				prompt: "do something",
-				schedule: { type: "interval", intervalMs: 60_000 },
-			},
+			createArgs("Workspace Automation", "do something", {
+				type: "interval",
+				intervalMs: 60_000,
+			}),
 			ctx,
 		) as { automation: Automation; created: boolean };
 
@@ -1025,11 +954,10 @@ describe("automation ownership", () => {
 			currentWorkspaceId: "ws_ops",
 		});
 		const result = handleCreate(
-			{
-				name: "Full Context Automation",
-				prompt: "do something",
-				schedule: { type: "cron", expression: "0 9 * * *" },
-			},
+			createArgs("Full Context Automation", "do something", {
+				type: "cron",
+				expression: "0 9 * * *",
+			}),
 			ctx,
 		) as { automation: Automation; created: boolean };
 
@@ -1038,14 +966,13 @@ describe("automation ownership", () => {
 		expect(result.automation.workspaceId).toBe("ws_ops");
 	});
 
-	test("automations without ownerId continue to work (backward compat)", () => {
+	test("automations without ownerId continue to work", () => {
 		const ctx = makeCtx(); // no currentUserId or currentWorkspaceId
 		const result = handleCreate(
-			{
-				name: "Legacy Automation",
-				prompt: "do something",
-				schedule: { type: "interval", intervalMs: 120_000 },
-			},
+			createArgs("Legacy Automation", "do something", {
+				type: "interval",
+				intervalMs: 120_000,
+			}),
 			ctx,
 		) as { automation: Automation; created: boolean };
 

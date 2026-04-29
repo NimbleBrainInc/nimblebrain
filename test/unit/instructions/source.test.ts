@@ -185,7 +185,7 @@ describe("instructions source — write_instructions", () => {
 
     const result = await client.callTool({
       name: "write_instructions",
-      arguments: { scope: "workspace", text: "ws body" },
+      arguments: { scope: "workspace", body: "ws body" },
     });
     expect(result.isError).toBeFalsy();
     expect((result as { structuredContent?: { ok?: boolean } }).structuredContent?.ok).toBe(true);
@@ -207,7 +207,7 @@ describe("instructions source — write_instructions", () => {
     const client = src.getClient()!;
     const result = await client.callTool({
       name: "write_instructions",
-      arguments: { scope: "workspace", text: "" },
+      arguments: { scope: "workspace", body: "" },
     });
     expect(result.isError).toBeFalsy();
     expect(
@@ -222,7 +222,7 @@ describe("instructions source — write_instructions", () => {
     const huge = "x".repeat(8 * 1024 + 1);
     const result = await client.callTool({
       name: "write_instructions",
-      arguments: { scope: "workspace", text: huge },
+      arguments: { scope: "workspace", body: huge },
     });
     expect(result.isError).toBe(true);
     const parsed = parseStructured(result as { content?: Array<{ type: string; text?: string }> });
@@ -234,7 +234,7 @@ describe("instructions source — write_instructions", () => {
     const client = src.getClient()!;
     const result = await client.callTool({
       name: "write_instructions",
-      arguments: { scope: "bundles/foo", text: "x" },
+      arguments: { scope: "bundles/foo", body: "x" },
     });
     expect(result.isError).toBe(true);
   });
@@ -259,7 +259,7 @@ describe("instructions source — role gates", () => {
     const client = src.getClient()!;
     const result = await client.callTool({
       name: "write_instructions",
-      arguments: { scope: "workspace", text: "x" },
+      arguments: { scope: "workspace", body: "x" },
     });
     expect(result.isError).toBe(true);
   });
@@ -280,7 +280,7 @@ describe("instructions source — role gates", () => {
     const client = src.getClient()!;
     const result = await client.callTool({
       name: "write_instructions",
-      arguments: { scope: "workspace", text: "ws-body" },
+      arguments: { scope: "workspace", body: "ws-body" },
     });
     expect(result.isError).toBeFalsy();
   });
@@ -299,7 +299,7 @@ describe("instructions source — role gates", () => {
     };
     const denied = await client.callTool({
       name: "write_instructions",
-      arguments: { scope: "org", text: "x" },
+      arguments: { scope: "org", body: "x" },
     });
     expect(denied.isError).toBe(true);
 
@@ -309,7 +309,7 @@ describe("instructions source — role gates", () => {
     };
     const allowed = await client.callTool({
       name: "write_instructions",
-      arguments: { scope: "org", text: "org-policy" },
+      arguments: { scope: "org", body: "org-policy" },
     });
     expect(allowed.isError).toBeFalsy();
   });
