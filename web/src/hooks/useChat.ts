@@ -300,6 +300,12 @@ export function useChat(initialConversationId?: string, currentUserId?: string):
             case "text.delta": {
               const evt = data as TextDeltaEvent;
               setStreamingState((prev) => (prev !== "streaming" ? "streaming" : prev));
+              // Defensive: keeps `preparingTool` paired with the
+              // `"preparing"` streamingState. Render sites gate on the
+              // state, so stale data never shows today, but a future
+              // caller reading `preparingTool` directly would otherwise
+              // see a tool name from a long-finished iteration.
+              setPreparingTool(null);
               // Append to last text block or create a new one
               const blocks = blocksRef.current;
               const lastBlock = blocks[blocks.length - 1];
@@ -314,6 +320,7 @@ export function useChat(initialConversationId?: string, currentUserId?: string):
             case "reasoning.delta": {
               const evt = data as ReasoningDeltaEvent;
               setStreamingState((prev) => (prev !== "streaming" ? "streaming" : prev));
+              setPreparingTool(null);
               const blocks = blocksRef.current;
               const lastBlock = blocks[blocks.length - 1];
               if (lastBlock && lastBlock.type === "reasoning") {
@@ -608,6 +615,7 @@ export function useChat(initialConversationId?: string, currentUserId?: string):
         case "text.delta": {
           const evt = data as TextDeltaEvent;
           setStreamingState((prev) => (prev !== "streaming" ? "streaming" : prev));
+          setPreparingTool(null);
           const blocks = blocksRef.current;
           const lastBlock = blocks[blocks.length - 1];
           if (lastBlock && lastBlock.type === "text") {
@@ -621,6 +629,7 @@ export function useChat(initialConversationId?: string, currentUserId?: string):
         case "reasoning.delta": {
           const evt = data as ReasoningDeltaEvent;
           setStreamingState((prev) => (prev !== "streaming" ? "streaming" : prev));
+          setPreparingTool(null);
           const blocks = blocksRef.current;
           const lastBlock = blocks[blocks.length - 1];
           if (lastBlock && lastBlock.type === "reasoning") {
