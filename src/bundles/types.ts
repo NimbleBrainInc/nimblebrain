@@ -108,7 +108,19 @@ export type BundleRef =
     };
 
 /** Bundle lifecycle states. */
-export type BundleState = "starting" | "running" | "crashed" | "dead" | "stopped";
+export type BundleState =
+  | "starting"
+  | "running"
+  | "crashed"
+  | "dead"
+  | "stopped"
+  /**
+   * Remote URL bundle is waiting for the user to complete an interactive
+   * OAuth flow. The bundle's MCP source is constructed but not connected;
+   * tools are unavailable until the user completes auth via
+   * `POST /v1/mcp-auth/initiate` → AS → `GET /v1/mcp-auth/callback`.
+   */
+  | "pending_auth";
 
 /** MCP server config — how to spawn the process. */
 export interface McpConfig {

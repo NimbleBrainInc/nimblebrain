@@ -61,6 +61,7 @@ export type EngineEventType =
   | "bundle.crashed"
   | "bundle.recovered"
   | "bundle.dead"
+  | "bundle.pending_auth"
   | "data.changed"
   | "config.changed"
   | "skill.created"
