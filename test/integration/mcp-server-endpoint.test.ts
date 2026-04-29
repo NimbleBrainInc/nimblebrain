@@ -166,6 +166,25 @@ describe("MCP Server Endpoint (/mcp)", () => {
 			await Promise.all([client1.close(), client2.close()]);
 		}
 	});
+
+	// Standalone GET /mcp is the spec's optional server→client SSE channel.
+	// We deliberately don't implement it (see comment on `handleMcpRequest`)
+	// because we don't push standalone notifications and a long-lived
+	// idle connection gets killed by intermediate proxies. Returning 405
+	// is the spec-blessed escape hatch — the SDK client treats it as
+	// "server doesn't offer GET-style listening" and proceeds POST-only.
+	it("returns 405 for GET /mcp so the SDK skips the standalone SSE stream", async () => {
+		const res = await fetch(`${baseUrl}/mcp`, {
+			method: "GET",
+			headers: {
+				Accept: "text/event-stream",
+				"x-workspace-id": TEST_WORKSPACE_ID,
+			},
+		});
+		expect(res.status).toBe(405);
+		expect(res.headers.get("allow")).toBe("POST, DELETE");
+		await res.body?.cancel();
+	});
 });
 
 describe("MCP Server Auth", () => {
