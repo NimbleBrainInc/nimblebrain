@@ -111,12 +111,12 @@ export function ModelTab() {
     setSaving(true);
     setFeedback(null);
     try {
-      // null → clear operator override (revert to platform default policy)
+      // clearThinking → revert to platform default policy (drops persisted override + budget)
       // string mode → set explicit override
       // budget only sent for "enabled"; "off"/"adaptive" don't need it
       const thinkingPatch =
         thinking === THINKING_DEFAULT
-          ? { thinking: null, thinkingBudgetTokens: null }
+          ? { clearThinking: true, clearThinkingBudget: true }
           : thinking === "enabled"
             ? { thinking, thinkingBudgetTokens }
             : { thinking };

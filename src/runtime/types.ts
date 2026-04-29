@@ -68,12 +68,15 @@ export interface RuntimeConfig {
    * provider option; non-Anthropic providers ignore it.
    *
    *   - `off`        — never request thinking. Cheapest; no reasoning content.
-   *   - `adaptive`   — model decides per call (Anthropic's recommended default
-   *                    for reasoning-capable models like Opus 4.7 / Sonnet 4.6).
+   *   - `adaptive`   — model decides per call.
    *   - `enabled`    — always think, with optional `thinkingBudgetTokens` cap.
    *
-   * If unset, the platform defaults to `adaptive` for catalog-flagged
-   * reasoning-capable models and `off` otherwise.
+   * If unset, the platform defaults to `enabled` (with a budget capped at
+   * roughly half of `maxOutputTokens`) for catalog-flagged reasoning-capable
+   * models and `off` otherwise. The default was changed from `adaptive`
+   * after production showed Opus 4.7 routinely consumed the entire output
+   * budget on internal reasoning, producing empty user-visible turns on
+   * long-context tasks.
    */
   thinking?: "off" | "adaptive" | "enabled";
 

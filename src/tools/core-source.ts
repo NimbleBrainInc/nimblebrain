@@ -169,21 +169,31 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
             description: "Max output tokens per LLM call (must be > 0).",
           },
           thinking: {
-            type: ["string", "null"],
-            enum: ["off", "adaptive", "enabled", null],
+            type: "string",
+            enum: ["off", "adaptive", "enabled"],
             description:
               "Extended-thinking mode for reasoning-capable models. " +
               "off: never reason. adaptive: model decides per call. " +
               "enabled: always reason (use thinkingBudgetTokens to cap). " +
-              "null: clear the operator override and revert to platform default " +
-              "(adaptive for catalog-flagged reasoning models, off otherwise).",
+              "Use clearThinking=true to revert to the platform default.",
+          },
+          clearThinking: {
+            type: "boolean",
+            description:
+              "If true, clears any persisted thinking override and reverts to the platform default. " +
+              "Mutually exclusive with `thinking`.",
           },
           thinkingBudgetTokens: {
-            type: ["number", "null"],
+            type: "number",
             description:
               "Token budget when thinking=enabled. Counts toward maxOutputTokens. " +
-              "Anthropic requires a minimum of 1,024. " +
-              "null: clear any persisted budget.",
+              "Anthropic requires a minimum of 1,024.",
+          },
+          clearThinkingBudget: {
+            type: "boolean",
+            description:
+              "If true, clears any persisted thinking budget. " +
+              "Mutually exclusive with `thinkingBudgetTokens`.",
           },
         },
       },
@@ -228,6 +238,35 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
               content: textContent("No config file path available. Cannot persist changes."),
               isError: true,
             };
+          }
+
+          // Normalize the `clear*` booleans into the canonical null sentinel
+          // the merge logic below already understands. The schema previously
+          // expressed "revert to default" as `type: ["string","null"]` with
+          // a null in the enum — Gemini rejects enums on non-string types,
+          // breaking every tool call on Google-only tenants. Booleans are
+          // the LCD-clean way to expose the same semantic across providers.
+          if (input.clearThinking === true) {
+            if (input.thinking !== undefined && input.thinking !== null) {
+              return {
+                content: textContent(
+                  "Cannot set both `thinking` and `clearThinking`. Use one or the other.",
+                ),
+                isError: true,
+              };
+            }
+            input.thinking = null;
+          }
+          if (input.clearThinkingBudget === true) {
+            if (input.thinkingBudgetTokens !== undefined && input.thinkingBudgetTokens !== null) {
+              return {
+                content: textContent(
+                  "Cannot set both `thinkingBudgetTokens` and `clearThinkingBudget`. Use one or the other.",
+                ),
+                isError: true,
+              };
+            }
+            input.thinkingBudgetTokens = null;
           }
 
           // Validate inputs

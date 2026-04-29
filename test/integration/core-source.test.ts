@@ -267,7 +267,7 @@ describe("Core Source", () => {
 		}
 	});
 
-	it("nb__set_model_config rejects thinking='enabled' + budget=null even with an existing budget", async () => {
+	it("nb__set_model_config rejects thinking='enabled' + clearThinkingBudget=true even with an existing budget", async () => {
 		// The existing budget would survive validation if the validator
 		// only checked disk state, but the merge then deletes it — leaving
 		// thinking=enabled with no budget, the silent-downgrade trap.
@@ -290,7 +290,7 @@ describe("Core Source", () => {
 			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
 			const result = await source.execute("set_model_config", {
 				thinking: "enabled",
-				thinkingBudgetTokens: null,
+				clearThinkingBudget: true,
 			});
 			expect(result.isError).toBe(true);
 			expect(extractText(result.content)).toContain("requires thinkingBudgetTokens");
@@ -303,11 +303,14 @@ describe("Core Source", () => {
 		}
 	});
 
-	it("nb__set_model_config thinking=null clears the override (and budget)", async () => {
-		const workDir = join(testDir, `work-thinking-clear-${Date.now()}`);
+	it("nb__set_model_config clearThinking=true clears the override and the budget", async () => {
+		// The schema-clean replacement for the legacy `thinking: null` sentinel.
+		// The handler still understands null internally — see the normalize step
+		// at the top of the handler — but the public surface is the boolean flag
+		// because Gemini rejects enums on non-string types.
+		const workDir = join(testDir, `work-clear-thinking-${Date.now()}`);
 		mkdirSync(workDir, { recursive: true });
 		const configPath = join(workDir, "nimblebrain.json");
-		// Pre-existing operator override
 		writeFileSync(
 			configPath,
 			JSON.stringify({ thinking: "enabled", thinkingBudgetTokens: 8192 }),
@@ -323,13 +326,94 @@ describe("Core Source", () => {
 		try {
 			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
 			const result = await source.execute("set_model_config", {
-				thinking: null,
+				clearThinking: true,
 			});
 			expect(result.isError).toBe(false);
 			const raw = JSON.parse(require("node:fs").readFileSync(configPath, "utf-8"));
 			expect(raw.thinking).toBeUndefined();
 			// Budget is cleared together — a budget without a mode is meaningless.
 			expect(raw.thinkingBudgetTokens).toBeUndefined();
+		} finally {
+			await runtime.shutdown();
+		}
+	});
+
+	it("nb__set_model_config clearThinkingBudget=true clears just the budget", async () => {
+		const workDir = join(testDir, `work-clear-budget-${Date.now()}`);
+		mkdirSync(workDir, { recursive: true });
+		const configPath = join(workDir, "nimblebrain.json");
+		// Start in adaptive with an inherited budget that should disappear.
+		writeFileSync(
+			configPath,
+			JSON.stringify({ thinking: "adaptive", thinkingBudgetTokens: 8192 }),
+		);
+
+		const runtime = await Runtime.start({
+			model: { provider: "custom", adapter: createEchoModel() },
+			noDefaultBundles: true,
+			workDir,
+			configPath,
+			logging: { disabled: true },
+		});
+		try {
+			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
+			const result = await source.execute("set_model_config", {
+				clearThinkingBudget: true,
+			});
+			expect(result.isError).toBe(false);
+			const raw = JSON.parse(require("node:fs").readFileSync(configPath, "utf-8"));
+			expect(raw.thinking).toBe("adaptive");
+			expect(raw.thinkingBudgetTokens).toBeUndefined();
+		} finally {
+			await runtime.shutdown();
+		}
+	});
+
+	it("nb__set_model_config rejects ambiguous thinking + clearThinking together", async () => {
+		const workDir = join(testDir, `work-clear-ambiguous-${Date.now()}`);
+		mkdirSync(workDir, { recursive: true });
+		const configPath = join(workDir, "nimblebrain.json");
+		writeFileSync(configPath, JSON.stringify({}));
+
+		const runtime = await Runtime.start({
+			model: { provider: "custom", adapter: createEchoModel() },
+			noDefaultBundles: true,
+			workDir,
+			configPath,
+			logging: { disabled: true },
+		});
+		try {
+			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
+			const result = await source.execute("set_model_config", {
+				thinking: "off",
+				clearThinking: true,
+			});
+			expect(result.isError).toBe(true);
+			expect(extractText(result.content)).toContain("Cannot set both");
+		} finally {
+			await runtime.shutdown();
+		}
+	});
+
+	it("nb__set_model_config schema declares thinking as plain string + boolean clear flags (Gemini-compatible)", async () => {
+		// Regression guard: any future schema change that puts `enum` on a
+		// non-string type, or uses union types, will break Google-only tenants
+		// because Gemini rejects the entire request. Lock the LCD shape.
+		const runtime = await makeRuntime();
+		try {
+			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
+			const tools = await source.tools();
+			const setModelConfig = tools.find((t) => t.name === "nb__set_model_config");
+			expect(setModelConfig).toBeDefined();
+			const props = (setModelConfig?.inputSchema as { properties: Record<string, unknown> })
+				.properties;
+			const thinking = props.thinking as { type: unknown; enum: unknown };
+			expect(thinking.type).toBe("string");
+			expect(thinking.enum).toEqual(["off", "adaptive", "enabled"]);
+			const budget = props.thinkingBudgetTokens as { type: unknown };
+			expect(budget.type).toBe("number");
+			expect((props.clearThinking as { type: unknown }).type).toBe("boolean");
+			expect((props.clearThinkingBudget as { type: unknown }).type).toBe("boolean");
 		} finally {
 			await runtime.shutdown();
 		}
