@@ -13,7 +13,6 @@ import type {
   StreamErrorEvent,
   TextDeltaEvent,
   ToolDoneEvent,
-  ToolPreparingDoneEvent,
   ToolPreparingEvent,
   ToolStartEvent,
 } from "../types";
