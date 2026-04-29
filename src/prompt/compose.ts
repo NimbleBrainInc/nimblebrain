@@ -1,7 +1,81 @@
 import type { ParticipantInfo } from "../conversation/types.ts";
+import { approxTokens } from "../skills/tokens.ts";
 import type { Skill } from "../skills/types.ts";
 
 const SEPARATOR = "\n\n---\n\n";
+
+/**
+ * A single section of the composed system prompt, captured with provenance.
+ *
+ * The traced compose pipeline (`composeSystemPromptTraced`) emits one
+ * `TracedLayer` per section that ends up in the prompt, in the order they
+ * appear. Joining `layers.map(l => l.text)` with `SEPARATOR` reconstructs
+ * the same string `composeSystemPrompt` returns — the trace is non-lossy.
+ *
+ * `subItems` is populated for sections that aggregate multiple operator-
+ * authored entries (apps, layer3 skills). It lets debug tools render per-
+ * item attribution, filter by bundle, and detect content drift on a
+ * per-skill basis without re-parsing the section text.
+ */
+export interface TracedLayer {
+  kind: TracedLayerKind;
+  /**
+   * Stable identifier. Filesystem path for file-backed layers; `nb:<slug>`
+   * for runtime-derived layers; `instructions://<scope>` for overlays.
+   */
+  id: string;
+  /** Human-readable origin (display string for the debug tool's row UI). */
+  source: string;
+  /** The text contribution this layer makes to the composed prompt. */
+  text: string;
+  /** Approximate tokens for `text`. */
+  tokens: number;
+  /**
+   * Bundle attribution, when applicable. For the apps section / focused-app
+   * section / layer3-skills under a bundles/<name>/ subdir. Used by the
+   * compose-effective-context tool's `bundle` filter.
+   */
+  bundle?: string;
+  /**
+   * Per-entry breakdown for sections that aggregate multiple operator-
+   * authored items. Empty / absent for atomic sections.
+   */
+  subItems?: TracedSubItem[];
+}
+
+export type TracedLayerKind =
+  | "default_identity"
+  | "core_skill"
+  | "user_context_skill"
+  | "user_prefs"
+  | "participants"
+  | "workspace_context"
+  | "org_overlay"
+  | "workspace_overlay"
+  | "layer3_skills"
+  | "apps"
+  | "app_state"
+  | "focused_app"
+  | "matched_skill";
+
+export interface TracedSubItem {
+  /** Item kind — finer-grained than the parent layer's kind. */
+  kind: "app" | "layer3_skill";
+  /** Stable identifier — filesystem path for skills; bundle name for apps. */
+  id: string;
+  /** Human-readable display. */
+  source: string;
+  /** Bundle attribution when known. Drives the `bundle` filter. */
+  bundle?: string;
+  /** Free-form metadata appropriate to the kind (skill scope, app trustScore, etc.). */
+  metadata?: Record<string, unknown>;
+}
+
+export interface ComposedPrompt {
+  text: string;
+  layers: TracedLayer[];
+  totalTokens: number;
+}
 
 /**
  * Strip newlines and control characters from single-line fields.
@@ -129,9 +203,50 @@ export function composeSystemPrompt(
   overlays?: OverlayLayers,
   layer3Skills?: Layer3SkillEntry[],
 ): string {
-  const layers: string[] = [];
+  return composeSystemPromptTraced(
+    contextSkills,
+    matchedSkill,
+    apps,
+    focusedApp,
+    appState,
+    userPrefs,
+    hasProxiedTools,
+    participants,
+    workspaceContext,
+    overlays,
+    layer3Skills,
+  ).text;
+}
 
-  // Separate core context (priority ≤ threshold) from user context (priority > threshold)
+/**
+ * Traced variant of `composeSystemPrompt` — same composition logic,
+ * returns a per-section breakdown alongside the joined text.
+ *
+ * Joining `layers.map(l => l.text)` with `SEPARATOR` reproduces the
+ * string `composeSystemPrompt` returns. The trace is non-lossy by
+ * construction: this function is the single source of truth for layer
+ * order; the string variant is derived by joining `.text`.
+ *
+ * Used by the `compose_effective_context` debug tool. No additional
+ * filesystem access vs. the string variant — works over the same
+ * already-resolved inputs the runtime gathers for `runtime.chat()`.
+ */
+export function composeSystemPromptTraced(
+  contextSkills: Skill[],
+  matchedSkill?: Skill | null,
+  apps?: PromptAppInfo[],
+  focusedApp?: FocusedAppInfo,
+  appState?: AppStateInfo,
+  userPrefs?: UserPrefs,
+  hasProxiedTools?: boolean,
+  participants?: ParticipantInfo[],
+  workspaceContext?: WorkspaceContext,
+  overlays?: OverlayLayers,
+  layer3Skills?: Layer3SkillEntry[],
+): ComposedPrompt {
+  const layers: TracedLayer[] = [];
+
+  // Separate core context (priority ≤ threshold) from user context (priority > threshold).
   const coreContext: Skill[] = [];
   const userContext: Skill[] = [];
   for (const ctx of contextSkills) {
@@ -142,76 +257,219 @@ export function composeSystemPrompt(
     }
   }
 
-  // Layer 0: Core context bodies (identity layer)
+  // Layer 0: Core context bodies (identity layer). One row per skill so
+  // a debug reader can attribute identity content to the file it came
+  // from (soul.md, capabilities.md, etc.).
   for (const ctx of coreContext) {
-    if (ctx.body) layers.push(ctx.body);
+    if (ctx.body) {
+      layers.push({
+        kind: "core_skill",
+        id: ctx.sourcePath || `core:${ctx.manifest.name}`,
+        source: ctx.sourcePath || `core skill "${ctx.manifest.name}"`,
+        text: ctx.body,
+        tokens: approxTokens(ctx.body),
+      });
+    }
   }
 
-  // Fallback to default identity if no core context skills produced content
+  // Fallback to default identity if no core context skills produced content.
   if (layers.length === 0) {
-    layers.push(DEFAULT_IDENTITY);
+    layers.push({
+      kind: "default_identity",
+      id: "nb:default-identity",
+      source: "platform default (no core context skills loaded)",
+      text: DEFAULT_IDENTITY,
+      tokens: approxTokens(DEFAULT_IDENTITY),
+    });
   }
 
-  // Layer 1: User context bodies
+  // Layer 1: User context bodies (priority > 10, type: context, always-on).
   for (const ctx of userContext) {
-    if (ctx.body) layers.push(ctx.body);
+    if (ctx.body) {
+      layers.push({
+        kind: "user_context_skill",
+        id: ctx.sourcePath || `nb:user-context:${ctx.manifest.name}`,
+        source: ctx.sourcePath || `user context skill "${ctx.manifest.name}"`,
+        text: ctx.body,
+        tokens: approxTokens(ctx.body),
+      });
+    }
   }
 
-  // Layer 1.5: User preferences (name, timezone, locale) + current date
-  layers.push(formatUserPrefs(userPrefs));
+  // Layer 1.5: User preferences (name, timezone, locale) + current date.
+  // Always emitted — ensures the model knows "today" even with no prefs.
+  const prefsText = formatUserPrefs(userPrefs);
+  layers.push({
+    kind: "user_prefs",
+    id: "nb:user-prefs",
+    source: "runtime — user preferences + current date",
+    text: prefsText,
+    tokens: approxTokens(prefsText),
+  });
 
-  // Layer 1.6: Participants section (shared conversations)
+  // Layer 1.6: Participants section (shared conversations only).
   if (participants && participants.length > 0) {
-    layers.push(formatParticipantsSection(participants));
+    const participantsText = formatParticipantsSection(participants);
+    layers.push({
+      kind: "participants",
+      id: "nb:participants",
+      source: "runtime — shared conversation participants",
+      text: participantsText,
+      tokens: approxTokens(participantsText),
+    });
   }
 
-  // Layer 1.7: Workspace context
+  // Layer 1.7: Workspace context.
   if (workspaceContext) {
-    layers.push(formatWorkspaceContext(workspaceContext));
+    const wsText = formatWorkspaceContext(workspaceContext);
+    layers.push({
+      kind: "workspace_context",
+      id: "nb:workspace-context",
+      source: `runtime — workspace ${workspaceContext.id}`,
+      text: wsText,
+      tokens: approxTokens(wsText),
+    });
   }
 
-  // Layer 1.8: Org / workspace instruction overlays (slot-reserved in Phase 1).
-  // Empty / missing text omits the layer entirely — no marker tag in the
-  // assembled prompt. Each layer carries a provenance heading so the agent
-  // (and any debug reader) can attribute the content to its scope.
+  // Layer 1.8: Org / workspace instruction overlays.
   if (overlays?.org && overlays.org.trim().length > 0) {
-    layers.push(formatScopeOverlay("Organization Instructions", overlays.org));
+    const text = formatScopeOverlay("Organization Instructions", overlays.org);
+    layers.push({
+      kind: "org_overlay",
+      id: "instructions://org",
+      source: "org-tier instruction overlay",
+      text,
+      tokens: approxTokens(text),
+    });
   }
   if (overlays?.workspace && overlays.workspace.trim().length > 0) {
-    layers.push(formatScopeOverlay("Workspace Instructions", overlays.workspace));
+    const text = formatScopeOverlay("Workspace Instructions", overlays.workspace);
+    layers.push({
+      kind: "workspace_overlay",
+      id: "instructions://workspace",
+      source: "workspace-tier instruction overlay",
+      text,
+      tokens: approxTokens(text),
+    });
   }
 
-  // Layer 1.9: Layer 3 skills (cross-bundle agent orchestration content).
-  // Each selected skill is injected with a provenance heading and contained
-  // in a `<layer3-skill>` block so a debug reader can attribute the body
-  // to the file it came from. Empty `layer3Skills` skips the entire section
-  // — no marker, no heading.
+  // Layer 1.9: Layer 3 skills section. One TracedLayer for the whole
+  // section; per-skill detail in `subItems` so the debug tool can filter
+  // / inspect / hash-verify each skill independently. Empty list skips
+  // the section entirely (no marker, no row).
   if (layer3Skills && layer3Skills.length > 0) {
     const section = formatLayer3SkillsSection(layer3Skills);
-    if (section) layers.push(section);
+    if (section) {
+      layers.push({
+        kind: "layer3_skills",
+        id: "nb:layer3-skills",
+        source: `layer 3 skills (${layer3Skills.length} loaded)`,
+        text: section,
+        tokens: approxTokens(section),
+        subItems: layer3Skills
+          .filter((entry) => entry.body && entry.body.trim().length > 0)
+          .map((entry) => ({
+            kind: "layer3_skill" as const,
+            id: entry.sourcePath ?? `nb:layer3:${entry.name}`,
+            source: entry.sourcePath ?? entry.name,
+            ...(deriveBundleFromSkillPath(entry.sourcePath) !== undefined
+              ? { bundle: deriveBundleFromSkillPath(entry.sourcePath) }
+              : {}),
+            metadata: {
+              name: entry.name,
+              scope: entry.scope,
+              loadedBy: entry.loadedBy,
+              reason: entry.reason,
+            },
+          })),
+      });
+    }
   }
 
-  // Layer 2: Installed apps section (§7.3)
+  // Layer 2: Installed apps section. One TracedLayer for the section;
+  // per-app detail in `subItems`. Each subItem carries the bundle name
+  // so a `bundle` filter on the debug tool can pick out a single app's
+  // contribution from the section text.
   if (apps && apps.length > 0) {
-    layers.push(formatAppsSection(apps, hasProxiedTools));
+    const text = formatAppsSection(apps, hasProxiedTools);
+    layers.push({
+      kind: "apps",
+      id: "nb:apps",
+      source: `installed apps (${apps.length})`,
+      text,
+      tokens: approxTokens(text),
+      subItems: apps.map((app) => ({
+        kind: "app" as const,
+        id: app.name,
+        source: app.name,
+        bundle: app.name,
+        metadata: {
+          description: app.description,
+          hasInstructions: !!app.instructions,
+          hasCustomInstructions:
+            !!app.customInstructions && app.customInstructions.trim().length > 0,
+          trustScore: app.trustScore,
+          ui: app.ui,
+        },
+      })),
+    });
   }
 
-  // Layer 2.5: Active app state (Synapse Feature 2 — LLM-aware UI state)
+  // Layer 2.5: Active app state (Synapse Feature 2). May return null if
+  // the trust score is below threshold — skip the layer in that case.
   if (appState) {
     const stateSection = formatAppStateSection(appState);
-    if (stateSection) layers.push(stateSection);
+    if (stateSection) {
+      layers.push({
+        kind: "app_state",
+        id: "nb:app-state",
+        source: "runtime — focused-app state",
+        text: stateSection,
+        tokens: approxTokens(stateSection),
+      });
+    }
   }
 
-  // Layer 3: Focused app section (between apps and matched skill)
+  // Layer 3: Focused app section.
   if (focusedApp) {
-    layers.push(formatFocusedAppSection(focusedApp));
+    const text = formatFocusedAppSection(focusedApp);
+    layers.push({
+      kind: "focused_app",
+      id: "nb:focused-app",
+      source: `focused app: ${focusedApp.name}`,
+      text,
+      tokens: approxTokens(text),
+      bundle: focusedApp.name,
+    });
   }
 
-  // Layer 4: Matched skill
-  if (matchedSkill?.body)
-    layers.push(`<skill-instructions>\n${matchedSkill.body}\n</skill-instructions>`);
+  // Layer 4: Matched skill (legacy SkillMatcher path).
+  if (matchedSkill?.body) {
+    const text = `<skill-instructions>\n${matchedSkill.body}\n</skill-instructions>`;
+    layers.push({
+      kind: "matched_skill",
+      id: matchedSkill.sourcePath || `nb:matched-skill:${matchedSkill.manifest.name}`,
+      source: matchedSkill.sourcePath ?? `matched skill "${matchedSkill.manifest.name}"`,
+      text,
+      tokens: approxTokens(text),
+    });
+  }
 
-  return layers.join(SEPARATOR);
+  const text = layers.map((l) => l.text).join(SEPARATOR);
+  const totalTokens = layers.reduce((sum, l) => sum + l.tokens, 0);
+  return { text, layers, totalTokens };
+}
+
+/**
+ * Heuristic: if a Layer 3 skill lives under `.../skills/bundles/<name>/`
+ * (the documented convention for bundle-affined L3 skills), attribute it
+ * to that bundle. Otherwise return undefined — the skill is bundle-
+ * agnostic and the `bundle` filter shouldn't claim it.
+ */
+function deriveBundleFromSkillPath(sourcePath?: string): string | undefined {
+  if (!sourcePath) return undefined;
+  const m = sourcePath.match(/\/skills\/bundles\/([^/]+)\//);
+  return m?.[1];
 }
 
 function formatAppsSection(apps: PromptAppInfo[], hasProxiedTools?: boolean): string {

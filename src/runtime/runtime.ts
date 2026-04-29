@@ -1088,7 +1088,10 @@ export class Runtime {
    * containment in `formatAppsSection`. Bundles own storage, the agent tool
    * to write, validation, and the editor UI.
    */
-  private async buildAppsList(workspaceId: string): Promise<PromptAppInfo[]> {
+  /** Public so the compose-effective-context debug tool can re-gather the same
+   *  inputs `runtime.chat()` uses, without duplicating the bundle-instructions
+   *  fetch logic. Workspace-scoped via the wsId argument; no privilege escalation. */
+  async buildAppsList(workspaceId: string): Promise<PromptAppInfo[]> {
     const instances = this.getBundleInstancesForWorkspace(workspaceId);
     const registry = this._workspaceRegistries.get(workspaceId);
 
@@ -1185,7 +1188,9 @@ export class Runtime {
    * Reads happen on every call (no caching) per the locked decision: edits
    * must apply mid-conversation.
    */
-  private async readPromptOverlays(wsId: string): Promise<{ org: string; workspace: string }> {
+  /** Public so the compose-effective-context debug tool can re-read overlays
+   *  in live mode. Workspace-scoped; no caller-controlled escalation. */
+  async readPromptOverlays(wsId: string): Promise<{ org: string; workspace: string }> {
     const store = this.getInstructionsStore();
     const [org, workspaceOverlay] = await Promise.all([
       store.read({ scope: "org" }),

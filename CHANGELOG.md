@@ -11,7 +11,8 @@
 
 ### Added
 
-- `skills.loaded` events now carry a `contentHash` (SHA-256 hex) per skill — telemetry foundation for the upcoming `compose_effective_context` debug tool (#119), which uses the hash to detect whether an on-disk skill body has been mutated between when the skill loaded and when an operator inspects the run. ~64 bytes per skill per turn.
+- `compose__effective_context` debug tool — single-call answer to "what's in the system prompt for this conversation, with provenance per layer." Live mode returns the full traced composition; historical mode (`run_id` set) reads the recorded `skills.loaded` event for that run and verifies each layer-3 skill's `contentHash` against current source, with `_versions/` snapshot recovery on drift. Bundle filter narrows to one app's contributions ([#119](https://github.com/NimbleBrainInc/nimblebrain/issues/119)).
+- `skills.loaded` events now carry a `contentHash` (SHA-256 hex) per skill — telemetry foundation for the `compose__effective_context` debug tool. ~64 bytes per skill per turn.
 - Extended-thinking config (`thinking: off | adaptive | enabled` + `thinkingBudgetTokens`) in runtime config and Settings → Model; defaults to `adaptive` for catalog-flagged reasoning models, `off` otherwise ([#109](https://github.com/NimbleBrainInc/nimblebrain/pull/109)).
 - Reasoning (extended-thinking) content is now captured end-to-end: `stream.ts` handles `reasoning-*` parts, the engine emits `reasoning.delta` SSE events, and the chat UI renders a collapsed "Thoughts" block above the assistant text. Empty turns with non-stop finishReason now emit a placeholder so replay surfaces truncations.
 - `nb__read_resource` system tool — the agent can now load `skill://` / `ui://` resources advertised by an installed bundle's MCP server ([#3](https://github.com/NimbleBrainInc/nimblebrain/pull/25)).

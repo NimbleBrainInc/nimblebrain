@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import {
   composeSystemPrompt,
+  composeSystemPromptTraced,
   CORE_PRIORITY_THRESHOLD,
   DEFAULT_IDENTITY,
   type FocusedAppInfo,
@@ -8,6 +9,7 @@ import {
   type OverlayLayers,
   type PromptAppInfo,
   type UserPrefs,
+  type WorkspaceContext,
 } from "../../src/prompt/compose.ts";
 import type { Skill } from "../../src/skills/types.ts";
 
@@ -889,5 +891,193 @@ describe("composeSystemPrompt — Layer 3 skills (Phase 2)", () => {
     expect(idxWorkspace).toBeGreaterThan(-1);
     expect(idxSkills).toBeGreaterThan(idxWorkspace);
     expect(idxApps).toBeGreaterThan(idxSkills);
+  });
+});
+
+describe("composeSystemPromptTraced", () => {
+  it("returns layers whose joined text equals composeSystemPrompt's string output", () => {
+    // The trace MUST be lossless: joining layer texts with the section
+    // separator should recover the same prompt the legacy string-returning
+    // function emits. Drift here would mean the debug tool lies about
+    // what's actually in the prompt.
+    const soul = makeContextSkill("soul", 0, "I am the soul.");
+    const userCtx = makeContextSkill("voice", 50, "Speak plainly.");
+    const overlays: OverlayLayers = { workspace: "Be concise." };
+    const entry: Layer3SkillEntry = {
+      name: "test",
+      body: "L3 body.",
+      scope: "org",
+      sourcePath: "/work/skills/test.md",
+      loadedBy: "always",
+      reason: "loading_strategy: always",
+    };
+    const apps: PromptAppInfo[] = [
+      { name: "synapse-collateral", trustScore: 90, ui: { name: "Collateral" } },
+    ];
+    const args: Parameters<typeof composeSystemPrompt> = [
+      [soul, userCtx],
+      null,
+      apps,
+      undefined,
+      undefined,
+      { displayName: "Mat", timezone: "Pacific/Honolulu", locale: "en-US" },
+      false,
+      undefined,
+      { id: "ws_test", name: "Test" },
+      overlays,
+      [entry],
+    ];
+    const stringOutput = composeSystemPrompt(...args);
+    const traced = composeSystemPromptTraced(...args);
+    expect(traced.text).toBe(stringOutput);
+    expect(traced.layers.map((l) => l.text).join("\n\n---\n\n")).toBe(stringOutput);
+  });
+
+  it("emits one core_skill row per core context skill", () => {
+    const soul = makeContextSkill("soul", 0, "soul body");
+    const caps = makeContextSkill("capabilities", 5, "caps body");
+    const traced = composeSystemPromptTraced([soul, caps]);
+    const cores = traced.layers.filter((l) => l.kind === "core_skill");
+    expect(cores).toHaveLength(2);
+    expect(cores[0]!.id).toBe("/test/soul.md");
+    expect(cores[0]!.text).toBe("soul body");
+    expect(cores[1]!.id).toBe("/test/capabilities.md");
+    expect(cores[1]!.text).toBe("caps body");
+  });
+
+  it("falls back to default_identity when no core skills produce content", () => {
+    const traced = composeSystemPromptTraced([]);
+    const defaultRow = traced.layers.find((l) => l.kind === "default_identity");
+    expect(defaultRow).toBeDefined();
+    expect(defaultRow!.text).toBe(DEFAULT_IDENTITY);
+    expect(defaultRow!.id).toBe("nb:default-identity");
+  });
+
+  it("emits one user_context_skill row per priority>10 context skill", () => {
+    const soul = makeContextSkill("soul", 0, "soul");
+    const voice = makeContextSkill("voice", 50, "voice rules");
+    const dl = makeContextSkill("dl-memory", 30, "dl rules");
+    const traced = composeSystemPromptTraced([soul, voice, dl]);
+    const userCtx = traced.layers.filter((l) => l.kind === "user_context_skill");
+    expect(userCtx).toHaveLength(2);
+    expect(userCtx.map((l) => l.id).sort()).toEqual([
+      "/test/dl-memory.md",
+      "/test/voice.md",
+    ]);
+  });
+
+  it("layer3_skills section carries one subItem per skill, with bundle attribution where applicable", () => {
+    const bundleAffined: Layer3SkillEntry = {
+      name: "collateral-rules",
+      body: "Use patch_source.",
+      scope: "workspace",
+      sourcePath: "/work/skills/bundles/synapse-collateral/collateral-rules.md",
+      loadedBy: "tool_affinity",
+      reason: "applies_to_tools matched synapse-collateral__*",
+    };
+    const standalone: Layer3SkillEntry = {
+      name: "voice-rules",
+      body: "Plain English.",
+      scope: "org",
+      sourcePath: "/work/skills/voice-rules.md",
+      loadedBy: "always",
+      reason: "loading_strategy: always",
+    };
+    const traced = composeSystemPromptTraced(
+      [makeContextSkill("soul", 0, "I am.")],
+      null,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      [bundleAffined, standalone],
+    );
+    const section = traced.layers.find((l) => l.kind === "layer3_skills");
+    expect(section).toBeDefined();
+    expect(section!.subItems).toHaveLength(2);
+    const collateralSub = section!.subItems!.find((s) => s.id.includes("collateral-rules"));
+    expect(collateralSub?.bundle).toBe("synapse-collateral");
+    const voiceSub = section!.subItems!.find((s) => s.id.includes("voice-rules"));
+    expect(voiceSub?.bundle).toBeUndefined();
+  });
+
+  it("apps section carries one subItem per app with bundle attribution", () => {
+    const apps: PromptAppInfo[] = [
+      { name: "synapse-collateral", trustScore: 90, ui: { name: "Collateral" } },
+      { name: "synapse-crm", trustScore: 80, ui: null, customInstructions: "Use stages strictly." },
+    ];
+    const traced = composeSystemPromptTraced(
+      [makeContextSkill("soul", 0, "I am.")],
+      null,
+      apps,
+    );
+    const section = traced.layers.find((l) => l.kind === "apps");
+    expect(section).toBeDefined();
+    expect(section!.subItems).toHaveLength(2);
+    expect(section!.subItems!.map((s) => s.bundle).sort()).toEqual([
+      "synapse-collateral",
+      "synapse-crm",
+    ]);
+    const crmSub = section!.subItems!.find((s) => s.bundle === "synapse-crm");
+    expect((crmSub!.metadata as { hasCustomInstructions: boolean }).hasCustomInstructions).toBe(
+      true,
+    );
+  });
+
+  it("workspace_overlay row only emitted when the overlay is non-empty", () => {
+    const tracedEmpty = composeSystemPromptTraced(
+      [makeContextSkill("soul", 0, "I am.")],
+      null,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { workspace: "" },
+    );
+    expect(tracedEmpty.layers.find((l) => l.kind === "workspace_overlay")).toBeUndefined();
+
+    const tracedSet = composeSystemPromptTraced(
+      [makeContextSkill("soul", 0, "I am.")],
+      null,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { workspace: "Be concise." },
+    );
+    const overlay = tracedSet.layers.find((l) => l.kind === "workspace_overlay");
+    expect(overlay).toBeDefined();
+    expect(overlay!.id).toBe("instructions://workspace");
+    expect(overlay!.text).toContain("Be concise.");
+  });
+
+  it("totalTokens equals the sum of per-layer tokens", () => {
+    const soul = makeContextSkill("soul", 0, "I am the soul.");
+    const ctx = makeContextSkill("voice", 50, "Speak plainly.");
+    const wsCtx: WorkspaceContext = { id: "ws_test", name: "Test" };
+    const traced = composeSystemPromptTraced(
+      [soul, ctx],
+      null,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      wsCtx,
+    );
+    const sum = traced.layers.reduce((s, l) => s + l.tokens, 0);
+    expect(traced.totalTokens).toBe(sum);
+    expect(traced.totalTokens).toBeGreaterThan(0);
   });
 });
