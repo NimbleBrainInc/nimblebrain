@@ -61,7 +61,13 @@ export type EngineEventType =
   | "bundle.crashed"
   | "bundle.recovered"
   | "bundle.dead"
-  | "bundle.pending_auth"
+  /**
+   * Per-principal connection state change for a remote URL bundle.
+   * Payload: { wsId, serverName, principalId, state, authorizationUrl? }.
+   * Workspace-scoped bundles emit one event stream (principalId = "_workspace");
+   * member-scoped bundles emit one stream per active member.
+   */
+  | "connection.state_changed"
   | "data.changed"
   | "config.changed"
   | "skill.created"

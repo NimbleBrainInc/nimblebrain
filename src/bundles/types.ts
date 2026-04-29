@@ -230,6 +230,28 @@ export interface BundleInstance {
   wsId: string;
   /** Absolute path to the entity data root (e.g., {wsDir}/data/{bundle}/apps/crm/data). Resolved at startup. */
   entityDataRoot?: string;
+  /**
+   * OAuth identity scope for URL bundles. Defaults to "workspace".
+   * `"member"` is plumbed through types in Step 1 but only lights up in
+   * Step 3 — Step 1 always treats this as `"workspace"` regardless of
+   * declared value. Undefined for non-URL bundles.
+   */
+  oauthScope?: "workspace" | "member";
+  /**
+   * Per-principal Connections for URL bundles. Each entry is one
+   * (bundle, principal) tuple owning an McpSource and its OAuth state
+   * machine. For workspace-scoped bundles this map has exactly one entry
+   * keyed `WORKSPACE_PRINCIPAL_ID` ("_workspace"); for member-scoped
+   * (Step 3) it lazily grows with one entry per active member.
+   *
+   * `state` above is a derived summary of these — see
+   * `summarizeConnectionState` in `connection.ts` and the rules
+   * documented there. Updated by lifecycle on every connection transition.
+   *
+   * Empty / undefined for non-URL bundles (stdio, in-process); they never
+   * speak OAuth.
+   */
+  connections?: Map<string, import("./connection.ts").Connection>;
 }
 
 /** Metadata extracted from a local bundle's manifest during startup. */
