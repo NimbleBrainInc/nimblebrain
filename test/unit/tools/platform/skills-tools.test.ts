@@ -504,6 +504,11 @@ describe("skills__read", () => {
 describe("skills__active_for", () => {
   test("returns the most recent skills.loaded event projected to active-for shape", async () => {
     const conv = await runtime.store().create();
+    // setActiveConversation routes the subsequent emit() calls into conv's
+    // event log (the store appends to whatever conversation is "active" at
+    // emit time — see event-sourced-store.ts:appendEvent). The active_for
+    // handler queries by id, not by active-conv, but the test fixtures
+    // need this to land the events somewhere readable.
     runtime.store().setActiveConversation(conv.id);
 
     // Two skills.loaded events — the second should be the one active_for returns.
@@ -673,8 +678,16 @@ describe("skills__active_for", () => {
         }),
     );
     expect(result.isError).toBeFalsy();
-    const sc = (result as { structuredContent?: { conversationId?: string } }).structuredContent;
+    const sc = (
+      result as { structuredContent?: { active?: unknown[]; conversationId?: string } }
+    ).structuredContent;
     expect(sc?.conversationId).toBe(argConv.id);
+    // skills.loaded was emitted against argConv only — the returned skill
+    // proves the handler queried argConv, not just echoed the input id back.
+    // (If the handler bug-queried ctxConv, active would be empty.)
+    const active = sc?.active as Array<{ id: string }>;
+    expect(active).toHaveLength(1);
+    expect(active[0]!.id).toBe("/skills/from-arg.md");
   });
 });
 

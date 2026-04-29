@@ -20,7 +20,7 @@ export interface RequestContext {
    * calls, MCP server requests, background jobs); tools must error explicitly
    * rather than silently falling back to the wrong conversation.
    */
-  conversationId?: string | null;
+  conversationId?: string;
 }
 
 const storage = new AsyncLocalStorage<RequestContext>();
