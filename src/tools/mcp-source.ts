@@ -313,8 +313,15 @@ export class McpSource implements ToolSource {
         this.mode.authProvider,
       );
 
-      // Remote: watch for transport close — mark source as dead
-      this.transport.onclose = () => this.emitSourceCrashed("Remote transport closed");
+      // Remote: watch for transport close — wired AFTER successful start
+      // (in `start()` below) rather than here, so transport closures that
+      // happen during the start handshake (SDK 401 → provider throws
+      // UnauthorizedError → SDK closes transport) don't get classified as
+      // `source.crashed` — they're start failures handled by the catch
+      // branch + the OAuth retry path. Setting it here would race with
+      // that retry: the close fires before McpSource catches
+      // `UnauthorizedError`, marks the source dead, and HealthMonitor
+      // starts restart attempts that fight our own retry.
     } else {
       // In-process: the factory builds a fresh InMemoryTransport pair and an
       // already-connected Server on each call, so restart is a clean slate.
@@ -382,6 +389,14 @@ export class McpSource implements ToolSource {
           // after a failed start; the SDK tracks internal state
           // (AbortController on the transport, handshake promise on the
           // client) that a second connect would trip over.
+          //
+          // Clear the onclose handler before close — the existing handler
+          // marks the source dead and emits source.crashed, which would
+          // race with the retry path: the upcoming HealthMonitor sweep
+          // would see `dead === true` and try to restart, fighting our
+          // own retry. Re-attached on the new transport in
+          // `rebuildRemoteTransport`.
+          if (this.transport) this.transport.onclose = undefined;
           await this.cleanupOnStartFailure();
           this.rebuildRemoteTransport();
           this.client = this.buildClient();
@@ -407,6 +422,14 @@ export class McpSource implements ToolSource {
 
     this.dead = false;
     this.startedAt = Date.now();
+
+    // Now that start has succeeded, wire transport close-detection.
+    // Closes from this point on indicate a real mid-session disconnect
+    // (server crashed, network drop, idle timeout) and should mark the
+    // source dead so HealthMonitor can take over.
+    if (this.transport && this.mode.type === "remote") {
+      this.transport.onclose = () => this.emitSourceCrashed("Remote transport closed");
+    }
 
     // Capture the server's initialize `instructions` field (may be undefined).
     // The MCP SDK stores it internally; we expose it via getInstructions() so
@@ -508,7 +531,12 @@ export class McpSource implements ToolSource {
       this.mode.transportConfig,
       this.mode.authProvider,
     );
-    this.transport.onclose = () => this.emitSourceCrashed("Remote transport closed");
+    // onclose is wired in `start()` AFTER the connect succeeds — same
+    // reason as the initial-construction site: a transport close that
+    // happens during the retry's connect handshake is part of the start
+    // flow, not a mid-session crash. The OAuth retry path that calls
+    // this method is precisely the case we want NOT to surface as
+    // `source.crashed`.
   }
 
   /**

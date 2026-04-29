@@ -238,9 +238,45 @@ function AuthenticatedAppContent({
   });
 
   // Drop pending-auth rows when the active workspace changes — they're
-  // workspace-scoped and would otherwise leak across switches.
+  // workspace-scoped and would otherwise leak across switches. Then
+  // fetch the current snapshot so the banner appears even when bundles
+  // entered pending_auth before the SSE stream connected (typical at
+  // boot for URL bundles in workspace.json).
   useEffect(() => {
     setPendingAuth(new Map());
+    const wsId = wsCtx.activeWorkspace?.id;
+    if (!wsId) return;
+    let cancelled = false;
+    import("./api/client").then(({ listPendingConnections }) => {
+      listPendingConnections()
+        .then(({ connections }) => {
+          if (cancelled) return;
+          if (connections.length === 0) return;
+          setPendingAuth((prev) => {
+            const next = new Map(prev);
+            for (const c of connections) {
+              const key = `${c.serverName}|${c.principalId}`;
+              if (!next.has(key)) {
+                next.set(key, {
+                  wsId,
+                  serverName: c.serverName,
+                  bundleName: c.bundleName,
+                  principalId: c.principalId,
+                  state: "pending_auth",
+                });
+              }
+            }
+            return next;
+          });
+        })
+        .catch(() => {
+          // Fail silent — if the fetch errors, SSE events still keep
+          // the banner accurate from this point on.
+        });
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [wsCtx.activeWorkspace?.id]);
 
   // Sync server-side theme preference to the client theme context

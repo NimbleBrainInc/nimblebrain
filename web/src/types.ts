@@ -5,13 +5,7 @@ export interface BundleUiMeta {
 }
 
 /** Bundle lifecycle states. */
-export type BundleState =
-  | "starting"
-  | "running"
-  | "crashed"
-  | "dead"
-  | "stopped"
-  | "pending_auth";
+export type BundleState = "starting" | "running" | "crashed" | "dead" | "stopped" | "pending_auth";
 
 /** App info returned by GET /v1/apps. */
 export interface AppInfo {

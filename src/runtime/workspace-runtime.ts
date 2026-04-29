@@ -9,6 +9,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { deriveServerName, resolveBundleDataDir } from "../bundles/paths.ts";
+import { setPendingAuth } from "../bundles/pending-auth-buffer.ts";
 import { startBundleSource } from "../bundles/startup.ts";
 import type { BundleRef, LocalBundleMeta } from "../bundles/types.ts";
 import { log } from "../cli/log.ts";
@@ -208,6 +209,17 @@ export async function startWorkspaceBundles(
         // prepareServer validates it.
         wsId: entry.wsId,
         workDir,
+        // URL bundles that hit interactive OAuth fire this BEFORE
+        // BundleLifecycleManager exists (it's constructed in
+        // `Runtime.start` after this boot loop). Buffer the
+        // authorization URL keyed by (wsId, serverName); lifecycle
+        // consumes the buffer in `seedInstance` and constructs a
+        // Connection in `pending_auth`. Without this, the pending_auth
+        // signal would be silently dropped and the UI banner would
+        // never appear for boot-time bundles.
+        onInteractiveAuthRequired: (authorizationUrl) => {
+          setPendingAuth(entry.wsId, entry.serverName, authorizationUrl);
+        },
       });
       // Use the actual source name from the registry (may differ from path-derived name)
       resultEntries[idx] = { ...entry, serverName: result.sourceName, meta: result.meta };

@@ -3,8 +3,8 @@ import { existsSync } from "node:fs";
 import { chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
-  UnauthorizedError,
   type OAuthClientProvider,
+  UnauthorizedError,
 } from "@modelcontextprotocol/sdk/client/auth.js";
 import type {
   OAuthClientInformationFull,

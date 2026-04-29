@@ -7,6 +7,7 @@ import { NoopEventSink } from "../adapters/noop-events.ts";
 import { WorkspaceLogSink } from "../adapters/workspace-log-sink.ts";
 import { BundleLifecycleManager } from "../bundles/lifecycle.ts";
 import { deriveServerName } from "../bundles/paths.ts";
+import { setConnectionRunningHandler } from "../bundles/pending-auth-buffer.ts";
 import type { AppInfo, BundleInstance } from "../bundles/types.ts";
 import { log } from "../cli/log.ts";
 import { isToolVisibleToRole, type ResolvedFeatures, resolveFeatures } from "../config/features.ts";
@@ -314,6 +315,14 @@ export class Runtime {
       mpakHome,
     );
     lifecycle.setPlacementRegistry(placementRegistry);
+
+    // Wire the connection-running notification path so URL bundles
+    // whose interactive OAuth completes (after the user clicks Connect
+    // and returns from the AS) transition out of `pending_auth` and
+    // emit the `connection.state_changed` SSE event for the UI.
+    setConnectionRunningHandler((wsId, serverName) => {
+      lifecycle.recordConnectionStateChange(serverName, wsId, "_workspace", "running");
+    });
 
     const gate = config.confirmationGate ?? new NoopConfirmationGate();
 

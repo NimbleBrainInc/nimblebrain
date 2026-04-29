@@ -7,10 +7,11 @@ import type { PlacementRegistry } from "../runtime/placement-registry.ts";
 import { McpSource } from "../tools/mcp-source.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
 import { createAutomation, deleteAutomation } from "./automations/src/domain.ts";
+import { type Connection, type ConnectionState, summarizeConnectionState } from "./connection.ts";
 import { getMpak } from "./mpak.ts";
 import { deriveBundleDataDir, deriveServerName } from "./paths.ts";
+import { consumePendingAuth } from "./pending-auth-buffer.ts";
 import { startBundleSource } from "./startup.ts";
-import { type Connection, type ConnectionState, summarizeConnectionState } from "./connection.ts";
 import type {
   BriefingBlock,
   BundleInstance,
@@ -613,6 +614,37 @@ export class BundleLifecycleManager {
     return conn.authorizationUrl;
   }
 
+  /**
+   * Snapshot of all Connections currently in `pending_auth` for a
+   * workspace. Used by `GET /v1/connections/pending` so the web client
+   * can populate its banner state on first render — `connection.state_changed`
+   * SSE events only fire from this point forward, so a client that
+   * connects after the bundle entered pending_auth would otherwise miss
+   * the signal until the user reloads.
+   *
+   * Excludes the authorizationUrl from the response (the client gets it
+   * later via POST /v1/mcp-auth/initiate, which sets the session-bound
+   * state cookie at the same time).
+   */
+  getPendingConnections(
+    wsId: string,
+  ): Array<{ serverName: string; bundleName: string; principalId: string }> {
+    const out: Array<{ serverName: string; bundleName: string; principalId: string }> = [];
+    for (const instance of this.instances.values()) {
+      if (instance.wsId !== wsId || !instance.connections) continue;
+      for (const conn of instance.connections.values()) {
+        if (conn.state === "pending_auth") {
+          out.push({
+            serverName: instance.serverName,
+            bundleName: instance.bundleName,
+            principalId: conn.principalId,
+          });
+        }
+      }
+    }
+    return out;
+  }
+
   // ---- Bundle-contributed automations -------------------------------------
 
   /**
@@ -790,6 +822,24 @@ export class BundleLifecycleManager {
     };
     const key = `${serverName}|${wsId}`;
     this.instances.set(key, instance);
+
+    // If this URL bundle hit interactive OAuth during boot (before
+    // BundleLifecycleManager existed), the authorization URL was buffered
+    // by `pending-auth-buffer`. Consume it here, transition the
+    // Connection to `pending_auth`, and emit the
+    // `connection.state_changed` SSE event so the UI banner appears.
+    // For URL bundles that started cleanly (headless OAuth or no auth),
+    // the buffer entry is absent and we record `running`.
+    if ("url" in ref) {
+      const pendingAuthUrl = consumePendingAuth(wsId, serverName);
+      if (pendingAuthUrl) {
+        this.recordConnectionStateChange(serverName, wsId, "_workspace", "pending_auth", {
+          authorizationUrl: pendingAuthUrl,
+        });
+      } else {
+        this.recordConnectionStateChange(serverName, wsId, "_workspace", "running");
+      }
+    }
   }
 }
 

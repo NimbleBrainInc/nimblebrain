@@ -22,6 +22,7 @@ import {
   resolveBundleDataDir,
   validateServerName,
 } from "./paths.ts";
+import { notifyConnectionRunning } from "./pending-auth-buffer.ts";
 import { resolveLocalBundle } from "./resolve.ts";
 import type {
   BundleManifest,
@@ -251,6 +252,17 @@ export async function startBundleSource(
         if (!registry.hasSource(sourceName)) {
           registry.addSource(source);
         }
+        // Notify lifecycle that this Connection finished its OAuth
+        // dance and is now running. For URL bundles that went through
+        // pending_auth → running (background path after the user
+        // completed auth), this transitions the BundleInstance's
+        // Connection out of pending_auth and emits the
+        // `connection.state_changed` SSE event so the UI banner
+        // clears. For headless bundles that succeeded without ever
+        // hitting pending_auth, this is just a confirming update.
+        if (opts?.wsId) {
+          notifyConnectionRunning(opts.wsId, sourceName);
+        }
         log.info(`[bundles] ✓ ${sourceName} ready (${tools.length} tools, remote)`);
         return {
           meta: {
@@ -279,7 +291,10 @@ export async function startBundleSource(
     // placeholder meta, and startPromise continues in the background.
     // (Attach a no-op .catch so a delayed background failure doesn't
     // surface as an unhandled rejection.)
-    await Promise.race([startPromise.then(() => undefined).catch(() => undefined), earlyReturn.promise]);
+    await Promise.race([
+      startPromise.then(() => undefined).catch(() => undefined),
+      earlyReturn.promise,
+    ]);
 
     if (pendingAuthDetected) {
       // Register the source so the registry reflects the bundle exists.

@@ -3,7 +3,7 @@ import { Hono } from "hono";
 import { resolveWithCode } from "../../tools/oauth-flow-registry.ts";
 import { requireAuth } from "../middleware/auth.ts";
 import { requireWorkspace } from "../middleware/workspace.ts";
-import { apiError, type AppContext, type AppEnv } from "../types.ts";
+import { type AppContext, type AppEnv, apiError } from "../types.ts";
 
 /**
  * OAuth integration routes for outbound flows where NimbleBrain is the
@@ -38,10 +38,17 @@ export function mcpAuthRoutes(ctx: AppContext) {
   // Workspace-authed. Body: { serverName, principalId? }. principalId
   // defaults to "_workspace" (the only mode in Step 1); Step 3 will let
   // member-scoped bundles pass a real member id.
-  const initiate = new Hono<AppEnv>()
-    .use("*", requireAuth(ctx.authOptions))
-    .use("*", requireWorkspace(ctx.workspaceStore))
-    .post("/v1/mcp-auth/initiate", async (c) => {
+  //
+  // Auth + workspace middleware applied per-handler (not via .use("*"))
+  // so the unauthenticated /callback below is unaffected. Hono's
+  // sub-app `.use("*")` middleware applies to ALL routes under the
+  // mount, which would otherwise gate /callback on workspace headers
+  // the user's browser can't set on a return-from-AS navigation.
+  app.post(
+    "/v1/mcp-auth/initiate",
+    requireAuth(ctx.authOptions),
+    requireWorkspace(ctx.workspaceStore),
+    async (c) => {
       let body: { serverName?: unknown; principalId?: unknown };
       try {
         body = await c.req.json();
@@ -102,9 +109,27 @@ export function mcpAuthRoutes(ctx: AppContext) {
       c.header("Set-Cookie", cookieParts.join("; "));
 
       return c.json({ authorizationUrl });
-    });
+    },
+  );
 
-  app.route("/", initiate);
+  // ── GET /v1/connections/pending ────────────────────────────────────
+  //
+  // Workspace-authed snapshot of Connections in pending_auth. The web
+  // client fetches this once on workspace render to populate the banner
+  // — connection.state_changed SSE events only fire from connect time
+  // forward, so a client that connects after a bundle entered
+  // pending_auth would otherwise miss the signal until reload.
+  app.get(
+    "/v1/connections/pending",
+    requireAuth(ctx.authOptions),
+    requireWorkspace(ctx.workspaceStore),
+    (c) => {
+      const wsId = c.var.workspaceId;
+      const lifecycle = ctx.runtime.getLifecycle();
+      const pending = lifecycle.getPendingConnections(wsId);
+      return c.json({ connections: pending });
+    },
+  );
 
   // ── GET /v1/mcp-auth/callback ─────────────────────────────────────
   //
