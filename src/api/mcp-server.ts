@@ -372,8 +372,28 @@ function createServer(
  * Handle an incoming HTTP request on the /mcp path.
  *
  * - POST: JSON-RPC messages (initialization or subsequent)
- * - GET: SSE stream for server-initiated messages
+ * - GET:  405 — see comment below
  * - DELETE: Session termination
+ *
+ * GET /mcp is the spec's *optional* server→client SSE channel for
+ * notifications outside any in-flight request (broadcast notifications,
+ * sampling, elicitation). We don't push anything down it: tool responses
+ * and task progress flow on the POST that started them, and our own
+ * server→client signaling for the iframe app (data.changed, conversation
+ * events, heartbeats) goes through `/v1/events`, not MCP.
+ *
+ * Holding the connection open with nothing to write meant Bun's
+ * `idleTimeout` (max 255s) — and any L7 proxy in front of the API (Vite
+ * dev proxy, ALB's 60s default, nginx) — would silently kill the socket,
+ * surfacing as `socket hang up` upstream and triggering the SDK's
+ * limited reconnect loop (default `maxRetries: 2`).
+ *
+ * Returning 405 is the spec-blessed escape hatch: the SDK explicitly
+ * treats it as "server doesn't offer GET-style listening" and gracefully
+ * runs POST-only (`@modelcontextprotocol/sdk/.../client/streamableHttp.js`
+ * in `_startOrAuthSse`). If we ever start emitting standalone-stream
+ * notifications, switch this back to a real handler and add a heartbeat
+ * (see `src/api/sse-heartbeat.ts`).
  */
 export async function handleMcpRequest(
   request: Request,
@@ -387,15 +407,14 @@ export async function handleMcpRequest(
     return handlePost(request, registry, features, workspaceCtx);
   }
 
-  if (method === "GET") {
-    return handleGet(request);
-  }
-
   if (method === "DELETE") {
     return handleDelete(request);
   }
 
-  return new Response("Method not allowed", { status: 405 });
+  return new Response("Method Not Allowed", {
+    status: 405,
+    headers: { Allow: "POST, DELETE" },
+  });
 }
 
 async function handlePost(
@@ -493,19 +512,6 @@ async function handlePost(
   await server.connect(transport);
 
   return transport.handleRequest(request, { parsedBody: body });
-}
-
-async function handleGet(request: Request): Promise<Response> {
-  const sessionId = request.headers.get("mcp-session-id");
-  if (!sessionId) {
-    return new Response("Missing session ID", { status: 400 });
-  }
-  const entry = sessions.get(sessionId);
-  if (!entry) {
-    return new Response("Session not found", { status: 404 });
-  }
-  entry.lastAccessedAt = Date.now();
-  return entry.transport.handleRequest(request);
 }
 
 async function handleDelete(request: Request): Promise<Response> {

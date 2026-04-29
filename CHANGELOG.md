@@ -50,6 +50,7 @@
 - Files-app uploads no longer fail with `Payload too large`. Picker bytes now flow through `POST /v1/resources` (multipart, workspace-scoped) instead of being base64-encoded into a `tools/call` argument; `isAllowedMime` strips Content-Type parameters, fixing a latent miss in the chat ingest path too ([#93](https://github.com/NimbleBrainInc/nimblebrain/pull/93)).
 - `nb__read_resource` and `POST /v1/resources/read` resolve `ui://` resources published by platform built-ins (settings, home, automations, conversations, files, usage, nb). Previously the structural type guard couldn't distinguish two divergent `readResource` shapes and silently skipped any platform source ([#90](https://github.com/NimbleBrainInc/nimblebrain/issues/90)).
 - `/v1/resources/read` request-context propagation. The route handler wasn't wrapping its source-call in `runWithRequestContext`, so callback-form resource bodies that called `runtime.requireWorkspaceId()` (e.g. `instructions://workspace`) threw and surfaced as 404 "not found." Wrapping matches the existing `handleCallTool` pattern.
+- `GET /mcp` returns 405 instead of opening an idle SSE listener. The standalone server→client stream was held open with nothing to write, so Bun's `idleTimeout` (and any L7 proxy: Vite dev, ALB, nginx) silently killed it — surfacing as `[vite] http proxy error: /mcp` + `socket hang up` and exhausting the SDK client's reconnect budget. The MCP SDK treats 405 as "no GET-style listening" and runs POST-only ([#138](https://github.com/NimbleBrainInc/nimblebrain/pull/138)).
 
 ### Removed
 
