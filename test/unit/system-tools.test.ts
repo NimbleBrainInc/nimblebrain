@@ -287,7 +287,7 @@ describe("search — feature flag gating", () => {
 		const features = {
 			bundleManagement: true, skillManagement: true, delegation: true,
 			toolDiscovery: false, bundleDiscovery: true,
-			mcpServer: true, fileContext: true, userManagement: true, workspaceManagement: true,
+			fileContext: true, userManagement: true, workspaceManagement: true,
 		};
 		const systemTools = await createSystemTools(
 			() => registry,
@@ -304,7 +304,7 @@ describe("search — feature flag gating", () => {
 		const features = {
 			bundleManagement: true, skillManagement: true, delegation: true,
 			toolDiscovery: true, bundleDiscovery: false,
-			mcpServer: true, fileContext: true, userManagement: true, workspaceManagement: true,
+			fileContext: true, userManagement: true, workspaceManagement: true,
 		};
 		const systemTools = await createSystemTools(
 			() => registry,
@@ -321,7 +321,7 @@ describe("search — feature flag gating", () => {
 		const features = {
 			bundleManagement: true, skillManagement: true, delegation: true,
 			toolDiscovery: true, bundleDiscovery: false,
-			mcpServer: true, fileContext: true, userManagement: true, workspaceManagement: true,
+			fileContext: true, userManagement: true, workspaceManagement: true,
 		};
 		const systemTools = await createSystemTools(
 			() => registry,

@@ -9,7 +9,6 @@ describe("resolveFeatures", () => {
 		expect(features.delegation).toBe(true);
 		expect(features.toolDiscovery).toBe(true);
 		expect(features.bundleDiscovery).toBe(true);
-		expect(features.mcpServer).toBe(true);
 	});
 
 	it("merges partial config correctly", () => {

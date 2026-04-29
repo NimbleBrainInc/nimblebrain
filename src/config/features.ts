@@ -10,7 +10,6 @@ export interface FeatureFlags {
   delegation?: boolean;
   toolDiscovery?: boolean;
   bundleDiscovery?: boolean;
-  mcpServer?: boolean;
   fileContext?: boolean;
   userManagement?: boolean;
   workspaceManagement?: boolean;
@@ -25,7 +24,6 @@ const DEFAULTS: ResolvedFeatures = {
   delegation: true,
   toolDiscovery: true,
   bundleDiscovery: true,
-  mcpServer: true,
   fileContext: true,
   userManagement: true,
   workspaceManagement: true,
@@ -40,7 +38,6 @@ export function resolveFeatures(config?: FeatureFlags): ResolvedFeatures {
     delegation: config.delegation ?? true,
     toolDiscovery: config.toolDiscovery ?? true,
     bundleDiscovery: config.bundleDiscovery ?? true,
-    mcpServer: config.mcpServer ?? true,
     fileContext: config.fileContext ?? true,
     userManagement: config.userManagement ?? true,
     workspaceManagement: config.workspaceManagement ?? true,

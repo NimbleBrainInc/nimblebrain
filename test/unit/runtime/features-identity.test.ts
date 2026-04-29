@@ -35,7 +35,6 @@ describe("identity & workspace feature flags", () => {
 			expect(features.delegation).toBe(true);
 			expect(features.toolDiscovery).toBe(true);
 			expect(features.bundleDiscovery).toBe(true);
-			expect(features.mcpServer).toBe(true);
 			expect(features.fileContext).toBe(true);
 		});
 	});

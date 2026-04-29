@@ -44,7 +44,7 @@ function makeCtx(opts: { authkitDomain?: string } = {}): AppContext {
       internalToken: "test-internal-token",
     },
     runtime: {
-      getFeatures: () => ({ mcpServer: true }),
+      getFeatures: () => ({}),
     },
     workspaceStore: null,
   } as unknown as AppContext;
