@@ -1914,7 +1914,14 @@ function buildContextAssembledPayload(input: {
  * Create a synthetic identity skill from a workspace's identity markdown.
  * Injected at priority 1 (core context layer) so it becomes the agent persona.
  */
-function makeIdentitySkill(body: string): Skill {
+/**
+ * Exported so the compose-effective-context debug tool can build the
+ * same per-request identity override `runtime.chat()` uses, instead of
+ * silently composing against the bare global `contextSkills` (which
+ * would lie about what's in the prompt for any workspace that has
+ * `workspace.identity` set).
+ */
+export function makeIdentitySkill(body: string): Skill {
   return {
     manifest: {
       name: "identity-override",

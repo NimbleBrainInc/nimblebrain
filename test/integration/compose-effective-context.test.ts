@@ -174,6 +174,47 @@ describe("compose_effective_context — live mode", () => {
     await runtime.shutdown();
   });
 
+  it("includes the workspace identity override as a core_skill row", async () => {
+    // Regression: composeLive used to pass `runtime.getContextSkills()`
+    // directly, which is the global static set. `runtime.chat()` augments
+    // it per-request with `makeIdentitySkill(workspace.identity)` at
+    // priority 1 (core context). Without the override, the trace would
+    // report DEFAULT_IDENTITY for any workspace operating under a custom
+    // identity — the exact case the tool exists to expose.
+    const workDir = join(testDir, "live-workspace-identity");
+    const runtime = await Runtime.start({
+      model: { provider: "custom", adapter: makeModel() },
+      noDefaultBundles: true,
+      workDir,
+      logging: { disabled: true },
+      telemetry: { enabled: false },
+    });
+    await provisionTestWorkspace(runtime);
+
+    // Set the workspace identity directly on the workspace store. The
+    // test helper doesn't expose this — `update` is the public API.
+    const wsStore = runtime.getWorkspaceStore();
+    const overrideText =
+      "You are LegalBot. Be precise. Cite sources. Defer to qualified counsel.";
+    await wsStore.update(TEST_WORKSPACE_ID, { identity: overrideText });
+
+    const res = await callCompose(runtime, {}, "conv_aaaaaaaaaaaaaaaa");
+    expect(res.isError).toBe(false);
+
+    // The override has priority 1, so it lands in the `core_skill` band.
+    // It's appended to the contextSkills list, so it becomes ONE OF the
+    // core_skill rows (not necessarily the only one).
+    const coreSkills = res.structured!.layers.filter((l) => l.kind === "core_skill");
+    const overrideRow = coreSkills.find((l) => l.text === overrideText);
+    expect(overrideRow).toBeDefined();
+
+    // And DEFAULT_IDENTITY must NOT appear when an override is present —
+    // the fallback only fires if there's nothing else in the core band.
+    expect(res.structured!.layers.find((l) => l.kind === "default_identity")).toBeUndefined();
+
+    await runtime.shutdown();
+  });
+
   it("returns the workspace_context layer with the workspace id", async () => {
     const workDir = join(testDir, "live-ws");
     const runtime = await Runtime.start({

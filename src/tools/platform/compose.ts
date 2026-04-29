@@ -30,6 +30,7 @@
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { isToolVisibleToRole } from "../../config/features.ts";
 import {
   CONVERSATION_ID_RE,
   type ContextAssembledEvent,
@@ -46,8 +47,9 @@ import {
   type WorkspaceContext,
 } from "../../prompt/compose.ts";
 import { getRequestContext } from "../../runtime/request-context.ts";
-import type { Runtime } from "../../runtime/runtime.ts";
+import { makeIdentitySkill, type Runtime } from "../../runtime/runtime.ts";
 import { hashSkillBody } from "../../runtime/skills-loaded-payload.ts";
+import { surfaceTools } from "../../runtime/tools.ts";
 import { parseSkillContent } from "../../skills/loader.ts";
 import { selectLayer3Skills } from "../../skills/select.ts";
 import type { InProcessTool } from "../in-process-app.ts";
@@ -201,9 +203,18 @@ async function composeLive(runtime: Runtime, convId: string): Promise<ComposeRes
   const wsId = runtime.requireWorkspaceId();
   const identity = runtime.getCurrentIdentity();
 
-  // Gather workspace metadata for the workspace_context layer.
+  // Gather workspace metadata + the workspace identity override (per-
+  // workspace `workspace.identity` synthesized into a priority-1 context
+  // skill, exactly like `runtime.chat()` does at line ~708). Without this
+  // append, the trace would silently report `DEFAULT_IDENTITY` for any
+  // workspace operating under a custom identity — defeating the headline
+  // purpose of the tool.
   const ws = await runtime.getWorkspaceStore().get(wsId);
   const workspaceContext: WorkspaceContext = ws ? { id: ws.id, name: ws.name } : { id: wsId };
+  const identityOverride = ws?.identity ? makeIdentitySkill(ws.identity) : null;
+  const requestContextSkills = identityOverride
+    ? [...runtime.getContextSkills(), identityOverride]
+    : runtime.getContextSkills();
 
   // Gather inputs in parallel where possible.
   const [apps, overlays] = await Promise.all([
@@ -211,12 +222,24 @@ async function composeLive(runtime: Runtime, convId: string): Promise<ComposeRes
     runtime.readPromptOverlays(wsId),
   ]);
 
-  // Layer 3 selection requires the workspace's currently-active tool set
-  // (so `tool_affined` skills resolve correctly). Match `runtime.chat()`'s
-  // pattern: read tools from the workspace registry.
+  // Replicate `runtime.chat()`'s tool-set construction so the trace
+  // matches reality:
+  //   1. Read the workspace registry's full tool list.
+  //   2. Filter by `isToolVisibleToRole(toolName, identity?.orgRole)` —
+  //      runtime.chat skips tools the caller's role can't see, and L3
+  //      `tool_affined` skills match against that filtered set.
+  //   3. Run `surfaceTools` to split the result into `direct` (in the
+  //      LLM's tool list) and `proxied` (discoverable via `nb__search`).
+  //      The apps section's prompt body changes based on
+  //      `proxied.length > 0`, so the trace MUST compute this correctly
+  //      — the previous hard-coded `false` understated the prompt for
+  //      Tier 2/3 workspaces (more than DEFAULT_MAX_DIRECT_TOOLS tools).
   const registry = runtime.getRegistryForWorkspace(wsId);
-  const tools = await registry.availableTools();
-  const activeToolNames = tools.map((t) => t.name);
+  const allTools = (await registry.availableTools()).filter((t) =>
+    isToolVisibleToRole(t.name, identity?.orgRole),
+  );
+  const { direct: directTools, proxied } = surfaceTools(allTools, null, {});
+  const activeToolNames = directTools.map((t) => t.name);
 
   const userId = identity?.id ?? null;
   const layer3Pool = runtime.loadConversationSkills(wsId, userId);
@@ -234,7 +257,7 @@ async function composeLive(runtime: Runtime, convId: string): Promise<ComposeRes
   }));
 
   const composed: ComposedPrompt = composeSystemPromptTraced(
-    runtime.getContextSkills(),
+    requestContextSkills,
     null, // matched skill — request-scoped, skipped in live mode
     apps,
     undefined, // focused app — request-scoped
@@ -246,7 +269,7 @@ async function composeLive(runtime: Runtime, convId: string): Promise<ComposeRes
           locale: identity.preferences?.locale ?? "en-US",
         }
       : undefined,
-    false, // hasProxiedTools — informational; safe default in live mode
+    proxied.length > 0,
     undefined, // participants — request-scoped
     workspaceContext,
     overlays,
@@ -387,9 +410,8 @@ interface L3SkillAudit {
   /** "match" — current body matches recorded hash; body is the current on-disk text.
    *  "drift" — current body's hash differs from recorded; body is the current text.
    *  "recovered" — current body differs but a `_versions/` snapshot matches; body is the snapshot text.
-   *  "missing" — file no longer exists on disk; body is null.
-   *  "no-recorded-hash" — the event was written before contentHash was added; can't verify. */
-  hashStatus: "match" | "drift" | "recovered" | "missing" | "no-recorded-hash";
+   *  "missing" — file no longer exists on disk; body is null. */
+  hashStatus: "match" | "drift" | "recovered" | "missing";
   body: string | null;
   bundle?: string;
   snapshotPath?: string;
