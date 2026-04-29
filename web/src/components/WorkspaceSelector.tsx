@@ -107,8 +107,6 @@ export const WorkspaceSelector = memo(function WorkspaceSelector({
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const canOpen = true;
-
   useEffect(() => {
     if (!open) return;
     function handleClick(e: MouseEvent) {
@@ -160,7 +158,7 @@ export const WorkspaceSelector = memo(function WorkspaceSelector({
   }
 
   // --- Dropdown panel ---
-  const dropdown = open && canOpen && (
+  const dropdown = open && (
     <div
       className={cn(
         "absolute z-50 mt-1 rounded-lg border border-sidebar-border bg-sidebar shadow-lg",
@@ -235,15 +233,11 @@ export const WorkspaceSelector = memo(function WorkspaceSelector({
       <div ref={containerRef} className="relative shrink-0 mx-2 py-1">
         <button
           type="button"
-          onClick={() => canOpen && setOpen(!open)}
+          onClick={() => setOpen(!open)}
           title={activeWorkspace.name}
           aria-label={`Workspace: ${activeWorkspace.name}`}
           aria-expanded={open}
-          className={cn(
-            "flex items-center justify-center w-full rounded-lg p-1.5 transition-all duration-150",
-            canOpen && "hover:bg-sidebar-foreground/5 cursor-pointer",
-            !canOpen && "cursor-default",
-          )}
+          className="flex items-center justify-center w-full rounded-lg p-1.5 transition-all duration-150 hover:bg-sidebar-foreground/5 cursor-pointer"
         >
           <WorkspaceAvatar name={activeWorkspace.name} size="md" />
         </button>
@@ -257,12 +251,12 @@ export const WorkspaceSelector = memo(function WorkspaceSelector({
     <div ref={containerRef} className="relative shrink-0 mx-2 py-1">
       <button
         type="button"
-        onClick={() => canOpen && setOpen(!open)}
+        onClick={() => setOpen(!open)}
         aria-label={`Workspace: ${activeWorkspace.name}`}
         aria-expanded={open}
         className={cn(
           "flex items-center gap-2.5 w-full rounded-lg px-2 py-2 text-sm transition-all duration-150",
-          canOpen ? "hover:bg-sidebar-foreground/5 cursor-pointer" : "cursor-default",
+          "hover:bg-sidebar-foreground/5 cursor-pointer",
           open && "bg-sidebar-foreground/5",
         )}
       >
@@ -270,14 +264,12 @@ export const WorkspaceSelector = memo(function WorkspaceSelector({
         <span className="flex-1 truncate text-left font-semibold text-sidebar-foreground">
           {activeWorkspace.name}
         </span>
-        {canOpen && (
-          <ChevronDown
-            className={cn(
-              "shrink-0 w-4 h-4 text-sidebar-foreground/40 transition-transform duration-200",
-              open && "rotate-180",
-            )}
-          />
-        )}
+        <ChevronDown
+          className={cn(
+            "shrink-0 w-4 h-4 text-sidebar-foreground/40 transition-transform duration-200",
+            open && "rotate-180",
+          )}
+        />
       </button>
       {dropdown}
     </div>
