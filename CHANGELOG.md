@@ -24,6 +24,7 @@
 - `UserMenu` in the shell sidebar (avatar + display name + popover with Profile settings + Sign out).
 - Top-level `/profile` route. Identity isn't a setting; un-nested from `/settings/*`.
 - Org-admin gate on `set_model_config` — backend now refuses non-org-admin writes (was UI-only via RouteGuard). Distinguishes "no identity" (cron, automations) from "wrong role" so debug logs make non-user code paths obvious.
+- HTTP proxy primitive (`_meta["ai.nimblebrain/http-proxy"]`). Bundles can expose a loopback HTTP server (e.g. `astro preview`, Jupyter kernel) through the platform at `/v1/ws/<wsId>/apps/<bundle>/<mount>/*`. Loopback-only target, credentials and `Accept-Encoding` stripped on forward, `Set-Cookie`/CSP/X-Frame-Options stripped on response, per-workspace kill switch via `Workspace.allowHttpProxy`. Bundles get `NB_WORKSPACE_ID`, `NB_PROXY_PREFIX`, `NB_PUBLIC_ORIGIN` in their env at spawn ([docs](https://docs.nimblebrain.ai/apps/http-proxy/)).
 
 ### Changed
 

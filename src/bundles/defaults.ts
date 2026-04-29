@@ -6,9 +6,6 @@ import type {
   LocalBundleMeta,
 } from "./types.ts";
 
-/** Path segments reserved for platform-managed routes under /v1/apps/<bundle>/. */
-const RESERVED_PROXY_MOUNTS = new Set(["resources", "tools", "mcp", "events"]);
-
 /** Hostnames that resolve to the bundle's own loopback interface. */
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "[::1]", "localhost"]);
 
@@ -71,7 +68,9 @@ export function extractBundleMeta(manifest: Record<string, unknown>): LocalBundl
  * internal/RFC1918 networks, or arbitrary external hosts, with the
  * authenticated user's credentials attached.
  */
-function extractHttpProxy(meta: Record<string, unknown> | undefined): HttpProxyConfig | null {
+export function extractHttpProxy(
+  meta: Record<string, unknown> | undefined,
+): HttpProxyConfig | null {
   const raw = meta?.["ai.nimblebrain/http-proxy"];
   if (!raw || typeof raw !== "object") return null;
   const r = raw as Record<string, unknown>;
@@ -103,10 +102,6 @@ function extractHttpProxy(meta: Record<string, unknown> | undefined): HttpProxyC
     console.warn(
       `[bundles] http-proxy mount must be a single path segment (no slashes) — got ${mount}, ignoring`,
     );
-    return null;
-  }
-  if (RESERVED_PROXY_MOUNTS.has(normalizedMount)) {
-    console.warn(`[bundles] http-proxy mount "${normalizedMount}" is reserved — ignoring`);
     return null;
   }
   return {

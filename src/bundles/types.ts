@@ -44,9 +44,9 @@ export interface BundleUiMeta {
 
 /**
  * HTTP proxy declaration — declared by bundles that run their own HTTP server
- * (e.g., an Astro dev server, a Jupyter kernel gateway, a notebook renderer)
+ * (e.g., an Astro preview, a Jupyter kernel gateway, a notebook renderer)
  * and want the platform to expose it to the user's browser through a
- * same-origin route under `/v1/apps/<bundle>/<mount>/*`.
+ * same-origin route under `/v1/ws/<wsId>/apps/<bundle>/<mount>/*`.
  *
  * Opt-in: most bundles don't declare this. Workspaces can globally disable via
  * `Workspace.allowHttpProxy = false`.
@@ -54,12 +54,13 @@ export interface BundleUiMeta {
  * Read from `_meta["ai.nimblebrain/http-proxy"]` in the manifest.
  */
 export interface HttpProxyConfig {
-  /** URL of the bundle-local HTTP server to forward to. Usually `http://127.0.0.1:<port>`. */
+  /** URL of the bundle-local HTTP server to forward to. Must point to a
+   *  loopback host (127.0.0.1, ::1, or localhost). */
   target: string;
-  /** Path segment under /v1/apps/<bundle>/. Must not collide with
-   *  reserved segments (`resources`, `tools`, `mcp`, `events`). */
+  /** Single path segment under `/v1/ws/<wsId>/apps/<bundle>/`. Cannot contain `/`. */
   mount: string;
-  /** Whether the proxy should handle WebSocket upgrades (HMR, live channels). */
+  /** Whether the proxy should handle WebSocket upgrades (HMR, live channels).
+   *  Declared today; upgrade forwarding is not yet wired through the route. */
   websocket?: boolean;
 }
 

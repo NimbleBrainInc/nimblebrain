@@ -31,16 +31,26 @@ import { type AppContext, type AppEnv, apiError } from "../types.ts";
  * Defenses we DO enforce:
  *   1. `target` restricted to loopback hosts in `extractHttpProxy` (no
  *      SSRF to cloud metadata, RFC1918 networks, or external hosts).
- *   2. `Authorization`, `Cookie`, `X-Workspace-Id` stripped before
- *      forwarding — bundle's loopback server can't read user credentials.
- *   3. `Set-Cookie` stripped from upstream — bundle can't plant cookies
+ *   2. `Authorization`, `Cookie`, `X-Workspace-Id`, `X-Forwarded-For`
+ *      stripped before forwarding — bundle's loopback server can't read
+ *      user credentials and can't be told to trust a forged client IP.
+ *   3. `Accept-Encoding` stripped on forward so upstream returns
+ *      identity-encoded bodies — keeps us out of the business of
+ *      tracking which encodings our HTTP client decompresses.
+ *   4. `Set-Cookie` stripped from upstream — bundle can't plant cookies
  *      on the platform's origin.
- *   4. Workspace membership verified per-request before forwarding.
- *   5. `Workspace.allowHttpProxy = false` is the per-workspace kill switch.
+ *   5. Workspace membership verified per-request before forwarding.
+ *   6. `Workspace.allowHttpProxy = false` is the per-workspace kill switch.
  *
- * Defenses we do NOT have today: cross-origin isolation per bundle (would
- * require subdomain-per-bundle + COEP). For untrusted-bundle marketplaces,
- * that's the next investment.
+ * Defenses we do NOT have today:
+ *   - Cross-origin isolation per bundle (would require subdomain-per-bundle
+ *     + COEP). For untrusted-bundle marketplaces, that's the next
+ *     investment.
+ *   - In **dev auth mode** (no IdentityProvider configured) the request
+ *     identity is undefined and the membership check below is a no-op —
+ *     consistent with how every other workspace-scoped route on the
+ *     platform behaves in dev. Production deployments configure an
+ *     IdentityProvider and the membership check fires per request.
  *
  * Scope (v1): HTTP methods only. WebSocket upgrade declared in
  * HttpProxyConfig.websocket but not yet wired through the route.
@@ -120,7 +130,6 @@ export function proxyRoutes(ctx: AppContext) {
       }
       forwardHeaders.set("X-Forwarded-Host", url.host);
       forwardHeaders.set("X-Forwarded-Proto", url.protocol.replace(":", ""));
-      forwardHeaders.set("X-Forwarded-For", forwardHeaders.get("X-Forwarded-For") ?? "");
 
       // `duplex: "half"` is only valid (per WHATWG fetch) when the body is a
       // stream — passing it for bodyless GET/HEAD can produce a 400 in Bun.
@@ -176,20 +185,33 @@ const HOP_BY_HOP = new Set([
   "upgrade",
 ]);
 
-/** Stripped before forwarding upstream — see top-of-file trust model. */
-const REQUEST_HEADERS_STRIPPED = new Set(["host", "authorization", "cookie", "x-workspace-id"]);
+/**
+ * Stripped before forwarding upstream — see top-of-file trust model.
+ *
+ *   - host: fetch sets its own based on the target.
+ *   - authorization, cookie, x-workspace-id: user credentials, see trust model.
+ *   - x-forwarded-for: client-supplied; the bundle has no way to verify it
+ *     and we don't want to imply we did.
+ *   - accept-encoding: forces upstream to send identity-encoded bodies. Avoids
+ *     the trap of "our HTTP client transparently decompressed gzip, so we
+ *     stripped content-encoding from the response, but it didn't decompress
+ *     br/zstd, so those came through corrupted." Identity in, identity out,
+ *     no encoding state to track. Loopback bandwidth cost is negligible.
+ */
+const REQUEST_HEADERS_STRIPPED = new Set([
+  "host",
+  "authorization",
+  "cookie",
+  "x-workspace-id",
+  "x-forwarded-for",
+  "accept-encoding",
+]);
 
 /**
  * Stripped from upstream responses.
  *
  *   - Set-Cookie / Set-Cookie2: see top-of-file trust model.
  *   - X-Frame-Options / CSP: replaced with our own SAMEORIGIN.
- *   - Content-Encoding / Content-Length: Bun's fetch transparently decompresses
- *     gzipped responses, so the body we hand back is already decoded. Forwarding
- *     the original `content-encoding: gzip` would tell the browser to gunzip
- *     decompressed bytes → corrupted/empty render. Stripping `content-length`
- *     for the same reason — Bun's response layer sets transfer-encoding:
- *     chunked anyway.
  */
 const RESPONSE_HEADERS_STRIPPED = new Set([
   "set-cookie",
@@ -197,8 +219,6 @@ const RESPONSE_HEADERS_STRIPPED = new Set([
   "x-frame-options",
   "content-security-policy",
   "content-security-policy-report-only",
-  "content-encoding",
-  "content-length",
 ]);
 
 const REQUEST_HAS_BODY = new Set(["POST", "PUT", "PATCH", "DELETE"]);
