@@ -54,11 +54,7 @@ type GroupBy = "day" | "model" | "conversation";
 /* ---------- formatters ---------- */
 
 function fmtCost(n: number): string {
-  return n < 0.01 ? `$${(n * 100).toFixed(2)}c` : `$${n.toFixed(2)}`;
-}
-
-function fmtCostP(n: number): string {
-  return `$${n.toFixed(4)}`;
+  return n < 0.01 ? `${(n * 100).toFixed(2)}¢` : `$${n.toFixed(2)}`;
 }
 
 function fmtTok(n: number): string {
@@ -158,19 +154,19 @@ function Dashboard() {
           <div className="stat-detail">
             <div className="row">
               <span>Input</span>
-              <span>{fmtCostP(cost.input || 0)}</span>
+              <span>{fmtCost(cost.input || 0)}</span>
             </div>
             <div className="row">
               <span>Output</span>
-              <span>{fmtCostP(cost.output || 0)}</span>
+              <span>{fmtCost(cost.output || 0)}</span>
             </div>
             <div className="row">
               <span>Cache read</span>
-              <span>{fmtCostP(cost.cacheRead || 0)}</span>
+              <span>{fmtCost(cost.cacheRead || 0)}</span>
             </div>
             <div className="row">
               <span>Cache write</span>
-              <span>{fmtCostP(cost.cacheWrite || 0)}</span>
+              <span>{fmtCost(cost.cacheWrite || 0)}</span>
             </div>
           </div>
         </div>
@@ -232,7 +228,7 @@ function Dashboard() {
                       (m.tokens.input || 0) + (m.tokens.output || 0) + (m.tokens.cacheRead || 0),
                     )}
                   </td>
-                  <td className="right">{fmtCostP(m.cost.total)}</td>
+                  <td className="right">{fmtCost(m.cost.total)}</td>
                   <td className="right">{m.llmCalls}</td>
                 </tr>
               ))
@@ -268,7 +264,7 @@ function Dashboard() {
                   <td className="right">{fmtTok(d.tokens.input)}</td>
                   <td className="right">{fmtTok(d.tokens.output)}</td>
                   <td className="right">{fmtTok(d.tokens.cacheRead)}</td>
-                  <td className="right">{fmtCostP(d.cost.total)}</td>
+                  <td className="right">{fmtCost(d.cost.total)}</td>
                   <td className="right">{d.llmCalls}</td>
                 </tr>
               ))

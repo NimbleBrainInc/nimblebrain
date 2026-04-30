@@ -98,7 +98,7 @@ export function estimateCost(modelString: string, usage: TokenUsage): number {
 
 /** Format USD cost for display. Sub-penny values shown as cents. */
 export function formatCost(usd: number): string {
-  if (usd < 0.01) return `$${(usd * 100).toFixed(2)}c`;
+  if (usd < 0.01) return `${(usd * 100).toFixed(2)}¢`;
   return `$${usd.toFixed(2)}`;
 }
 

@@ -5,7 +5,7 @@ export const USAGE_BAR_SCRIPT =
   `
 const app = document.getElementById("app");
 
-function fmtCost(n) { return n < 0.01 ? "$" + (n * 100).toFixed(2) + "c" : "$" + n.toFixed(2); }
+function fmtCost(n) { return n < 0.01 ? (n * 100).toFixed(2) + "¢" : "$" + n.toFixed(2); }
 function fmtTokens(n) {
   if (n >= 1000000) return (n / 1000000).toFixed(1) + "M";
   if (n >= 1000) return Math.round(n / 1000) + "K";

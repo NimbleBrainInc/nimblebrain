@@ -2,7 +2,6 @@ import { useCallback, useEffect, useState } from "react";
 import { callTool } from "../../api/client";
 import { parseToolResult } from "../../api/tool-result";
 import { CostChart } from "../../components/charts/CostChart";
-import { formatDateLabel } from "../../lib/format";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
 import { Select } from "../../components/ui/select";
 import {
@@ -13,6 +12,7 @@ import {
   TableHeader,
   TableRow,
 } from "../../components/ui/table";
+import { formatDateLabel, formatTokens, formatUsd } from "../../lib/format";
 import { RequireActiveWorkspace, Section, SettingsDashboardPage } from "./components";
 
 interface TokenBreakdown {
@@ -61,21 +61,6 @@ type Period = "day" | "week" | "month" | "all";
 
 function formatNumber(n: number): string {
   return n.toLocaleString();
-}
-
-function formatUsd(n: number): string {
-  if (n < 0.01 && n > 0) return `$${(n * 100).toFixed(2)}c`;
-  return `$${n.toFixed(2)}`;
-}
-
-function formatUsdPrecise(n: number): string {
-  return `$${n.toFixed(4)}`;
-}
-
-function formatTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${Math.round(n / 1_000)}K`;
-  return String(n);
 }
 
 function shortModel(m: string): string {
@@ -186,10 +171,10 @@ function UsageBody({ report }: { report: UsageReport }) {
           <CardContent>
             <p className="text-2xl font-semibold">{formatUsd(cost.total)}</p>
             <div className="mt-2 space-y-0.5 text-xs text-muted-foreground">
-              <CostRow label="Input" value={formatUsdPrecise(cost.input)} />
-              <CostRow label="Output" value={formatUsdPrecise(cost.output)} />
-              <CostRow label="Cache read" value={formatUsdPrecise(cost.cacheRead)} />
-              <CostRow label="Cache write" value={formatUsdPrecise(cost.cacheWrite)} />
+              <CostRow label="Input" value={formatUsd(cost.input)} />
+              <CostRow label="Output" value={formatUsd(cost.output)} />
+              <CostRow label="Cache read" value={formatUsd(cost.cacheRead)} />
+              <CostRow label="Cache write" value={formatUsd(cost.cacheWrite)} />
             </div>
           </CardContent>
         </Card>
@@ -256,7 +241,7 @@ function UsageBody({ report }: { report: UsageReport }) {
                       m.tokens.input + m.tokens.output + m.tokens.cacheRead + m.tokens.cacheWrite,
                     )}
                   </TableCell>
-                  <TableCell className="text-right">{formatUsdPrecise(m.cost.total)}</TableCell>
+                  <TableCell className="text-right">{formatUsd(m.cost.total)}</TableCell>
                   <TableCell className="text-right">{formatNumber(m.llmCalls)}</TableCell>
                 </TableRow>
               ))}
@@ -289,7 +274,7 @@ function UsageBody({ report }: { report: UsageReport }) {
                   <TableCell className="text-right">
                     {formatTokens(row.tokens.cacheRead + row.tokens.cacheWrite)}
                   </TableCell>
-                  <TableCell className="text-right">{formatUsdPrecise(row.cost.total)}</TableCell>
+                  <TableCell className="text-right">{formatUsd(row.cost.total)}</TableCell>
                   <TableCell className="text-right">{formatNumber(row.llmCalls)}</TableCell>
                 </TableRow>
               ))}

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { formatShortDate } from "../../lib/format";
+import { formatShortDate, formatUsd } from "../../lib/format";
 
 interface CostBreakdown {
   input: number;
@@ -33,11 +33,6 @@ const LABELS: Record<string, string> = {
   cacheRead: "Cache read",
   cacheWrite: "Cache write",
 };
-
-function formatUsd(n: number): string {
-  if (n < 0.01 && n > 0) return `$${(n * 100).toFixed(2)}c`;
-  return `$${n.toFixed(4)}`;
-}
 
 export function CostChart({ data }: CostChartProps) {
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
@@ -114,7 +109,7 @@ export function CostChart({ data }: CostChartProps) {
                 className="fill-muted-foreground"
                 style={{ fontSize: 10 }}
               >
-                ${value < 0.01 ? value.toFixed(3) : value.toFixed(2)}
+                {formatUsd(value)}
               </text>
             </g>
           );

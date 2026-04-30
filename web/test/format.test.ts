@@ -1,5 +1,12 @@
 import { describe, expect, it } from "bun:test";
-import { formatDateLabel, formatDuration, formatShortDate, stripServerPrefix } from "../src/lib/format";
+import {
+  formatDateLabel,
+  formatDuration,
+  formatShortDate,
+  formatTokens,
+  formatUsd,
+  stripServerPrefix,
+} from "../src/lib/format";
 
 describe("formatDuration", () => {
   it("renders <1ms for sub-millisecond values that round to 0", () => {
@@ -47,6 +54,41 @@ describe("stripServerPrefix", () => {
 
   it("only strips the first __ boundary (preserves the rest)", () => {
     expect(stripServerPrefix("a__b__c")).toBe("b__c");
+  });
+});
+
+describe("formatUsd", () => {
+  it("formats sub-penny values as cents with ¢ symbol", () => {
+    expect(formatUsd(0.005)).toBe("0.50¢");
+    expect(formatUsd(0.001)).toBe("0.10¢");
+    expect(formatUsd(0.0099)).toBe("0.99¢");
+  });
+
+  it("formats dollar values with two decimal places", () => {
+    expect(formatUsd(0.01)).toBe("$0.01");
+    expect(formatUsd(0.02)).toBe("$0.02");
+    expect(formatUsd(42.08)).toBe("$42.08");
+    expect(formatUsd(12.456)).toBe("$12.46");
+  });
+
+  it("formats zero as $0.00", () => {
+    expect(formatUsd(0)).toBe("$0.00");
+  });
+});
+
+describe("formatTokens", () => {
+  it("formats millions", () => {
+    expect(formatTokens(2_500_000)).toBe("2.5M");
+  });
+
+  it("formats thousands", () => {
+    expect(formatTokens(512_000)).toBe("512K");
+    expect(formatTokens(1_000)).toBe("1K");
+  });
+
+  it("formats small numbers as-is", () => {
+    expect(formatTokens(453)).toBe("453");
+    expect(formatTokens(0)).toBe("0");
   });
 });
 

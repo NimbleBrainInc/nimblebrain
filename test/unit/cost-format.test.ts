@@ -3,11 +3,11 @@ import { formatCost, formatTokenCount } from "../../src/usage/cost.ts";
 
 describe("formatCost", () => {
   it("formats sub-penny values as cents", () => {
-    expect(formatCost(0.005)).toBe("$0.50c");
+    expect(formatCost(0.005)).toBe("0.50¢");
   });
 
   it("formats zero as cents", () => {
-    expect(formatCost(0)).toBe("$0.00c");
+    expect(formatCost(0)).toBe("0.00¢");
   });
 
   it("formats dollar values with two decimals", () => {

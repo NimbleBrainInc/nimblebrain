@@ -1,3 +1,16 @@
+/** Format USD cost. Sub-penny → cents with ¢ symbol; otherwise 2 decimal places. */
+export function formatUsd(n: number): string {
+  if (n < 0.01 && n > 0) return `${(n * 100).toFixed(2)}¢`;
+  return `$${n.toFixed(2)}`;
+}
+
+/** Format token count: >=1M → "2.5M", >=1K → "512K", else raw number. */
+export function formatTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${Math.round(n / 1_000)}K`;
+  return String(n);
+}
+
 /**
  * Format a UTC date-only string (YYYY-MM-DD) as short "M/D".
  * Input is always a UTC date key from the server — never local.
