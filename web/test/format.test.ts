@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { formatDuration, stripServerPrefix } from "../src/lib/format";
+import { formatDateLabel, formatDuration, formatShortDate, stripServerPrefix } from "../src/lib/format";
 
 describe("formatDuration", () => {
   it("renders <1ms for sub-millisecond values that round to 0", () => {
@@ -47,5 +47,42 @@ describe("stripServerPrefix", () => {
 
   it("only strips the first __ boundary (preserves the rest)", () => {
     expect(stripServerPrefix("a__b__c")).toBe("b__c");
+  });
+});
+
+describe("formatShortDate", () => {
+  it("formats UTC date-only string as M/D using UTC day", () => {
+    // "2026-04-30" is UTC midnight. In PDT (UTC-7), getDate() returns 29.
+    // Correct behavior: always show 4/30.
+    expect(formatShortDate("2026-04-30")).toBe("4/30");
+  });
+
+  it("formats first of month correctly", () => {
+    expect(formatShortDate("2026-01-01")).toBe("1/1");
+  });
+
+  it("formats December 31 correctly", () => {
+    expect(formatShortDate("2026-12-31")).toBe("12/31");
+  });
+
+  it("handles month boundary (UTC date differs from local in west-of-UTC TZ)", () => {
+    // "2026-05-01" UTC midnight = April 30 in PDT
+    expect(formatShortDate("2026-05-01")).toBe("5/1");
+  });
+});
+
+describe("formatDateLabel", () => {
+  it("preserves UTC date, not local interpretation", () => {
+    // "2026-04-30" should always format as April 30, never April 29.
+    const result = formatDateLabel("2026-04-30");
+    expect(result).toContain("30");
+    expect(result).not.toContain("29");
+  });
+
+  it("handles year boundary", () => {
+    const result = formatDateLabel("2026-01-01");
+    expect(result).toContain("1");
+    // Should not roll back to December 31
+    expect(result).not.toContain("31");
   });
 });
