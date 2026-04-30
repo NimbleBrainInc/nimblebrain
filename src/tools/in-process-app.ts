@@ -13,6 +13,7 @@ import {
 import type { PlacementDeclaration } from "../bundles/types.ts";
 import type { EventSink, ToolResult } from "../engine/types.ts";
 import { bytesToBase64 } from "../util/base64.ts";
+import { coerceInputForSchema } from "./coerce-input.ts";
 import { McpSource } from "./mcp-source.ts";
 import { validateToolInput } from "./validate-input.ts";
 
@@ -218,7 +219,12 @@ export function defineInProcessApp(
             };
           }
 
-          const input = (request.params.arguments ?? {}) as Record<string, unknown>;
+          // Coerce nested string-encoded object/array values before
+          // validating — see src/tools/coerce-input.ts for rationale. The
+          // engine performs the same step, but external `/mcp` clients
+          // bypass the engine and enter directly here.
+          const rawInput = (request.params.arguments ?? {}) as Record<string, unknown>;
+          const input = coerceInputForSchema(rawInput, tool.inputSchema);
           const validation = validateToolInput(input, tool.inputSchema);
           if (!validation.valid) {
             return {

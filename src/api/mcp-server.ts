@@ -356,7 +356,6 @@ function createServer(
         } catch {
           // Resource not found on this source; keep trying the next one.
         }
-        continue;
       }
     }
 

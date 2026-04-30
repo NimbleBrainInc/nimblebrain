@@ -278,16 +278,36 @@ export function createSkillsSource(runtime: Runtime, eventSink: EventSink): McpS
               isError: true,
             };
           }
+          // Existence before permission. A stale `id` (e.g. a path the
+          // agent cached before the skill was moved to a workspace dir)
+          // should report "not found" — telling the caller their file
+          // is gone. Reporting "permission denied" on a missing path
+          // sends the agent down a hallucination loop trying to fix a
+          // role instead of refreshing its path. (skill:// URIs skip
+          // this — existence is checked inside readSkillById.)
+          if (!isUri && !existsSync(id)) {
+            return {
+              content: textContent(
+                `Skill not found at "${id}". The file may have been moved or deleted — ` +
+                  `call skills__list to get current paths.`,
+              ),
+              isError: true,
+            };
+          }
           const permission = await checkPathAccess(runtime, id, scope, "read");
           if (!permission.allowed) {
-            return permissionDenied(permission.reason ?? "Permission denied");
+            return permissionDenied(permission.reason ?? "Permission denied", {
+              path: id,
+              scope,
+              role: currentRoleHint(runtime, scope),
+            });
           }
           // Symlink-boundary check (skipped for skill:// URIs which
           // dispatch to the resource handler, not the filesystem path).
           // Without this, a tenant member could symlink another
           // workspace's skill into their own dir and read its
           // contents via parseSkillFile (which follows symlinks).
-          if (!isUri && existsSync(id)) {
+          if (!isUri) {
             try {
               assertSymlinkBoundaryOrThrow(runtime, id, scope);
             } catch (err) {
@@ -1405,12 +1425,72 @@ async function reloadBootSkills(runtime: Runtime): Promise<void> {
   }
 }
 
-function permissionDenied(reason: string): ToolResult {
+/**
+ * Render a permission-denied error with causation. The bare reason from
+ * `checkPathAccess` ("Org-scope writes require org admin or owner") leaves
+ * the caller hypothesizing about why their path landed in that scope and
+ * what role they actually have — surfaced as a real problem in production
+ * when an agent looped trying to fix its role instead of fixing its `id`.
+ *
+ * Now appends:
+ *   - which scope was inferred and that it came from the path prefix
+ *   - the caller's current role (when known)
+ *   - what an alternate-scope path would look like
+ *
+ * Self-correctable signal for both LLM agents and human operators.
+ */
+function permissionDenied(
+  reason: string,
+  context?: {
+    path?: string;
+    scope?: WritableScope | "bundle";
+    role?: string;
+  },
+): ToolResult {
+  const lines: string[] = [reason];
+  if (context?.path && context.scope) {
+    lines.push(
+      `Path "${context.path}" classified as ${context.scope}-scope (derived from path prefix).`,
+    );
+    if (context.scope === "org") {
+      lines.push(
+        "If this skill should be workspace-scoped, the path would be " +
+          "/data/workspaces/<wsId>/skills/<file>. Run skills__list to refresh paths.",
+      );
+    } else if (context.scope === "workspace") {
+      lines.push(
+        "If this skill should be user-scoped, the path would be " +
+          "/data/users/<userId>/skills/<file>. Run skills__list to refresh paths.",
+      );
+    }
+  }
+  if (context?.role) {
+    lines.push(`Your current role: ${context.role}.`);
+  }
   return {
-    content: textContent(reason),
-    structuredContent: { error: reason, code: "permission_denied" },
+    content: textContent(lines.join("\n")),
+    structuredContent: {
+      error: reason,
+      code: "permission_denied",
+      ...(context?.path ? { path: context.path } : {}),
+      ...(context?.scope ? { scope: context.scope } : {}),
+      ...(context?.role ? { role: context.role } : {}),
+    },
     isError: true,
   };
+}
+
+/** Best-effort role lookup for permission-denied causation messages. */
+function currentRoleHint(runtime: Runtime, scope: WritableScope | "bundle"): string | undefined {
+  const identity = runtime.getCurrentIdentity();
+  if (!identity) return undefined;
+  if (scope === "workspace") {
+    // Workspace role lives on the membership record, not the identity —
+    // resolving it here would require the path's wsId and an async store
+    // read. The org role is informative enough for the message.
+    return `org=${identity.orgRole}`;
+  }
+  return identity.orgRole;
 }
 
 function bundleNotMutable(): ToolResult {
@@ -1500,7 +1580,13 @@ async function createSkill(
   }
   const target = join(dir, `${name}.md`);
   const permission = await checkPathAccess(runtime, target, scope, "write");
-  if (!permission.allowed) return permissionDenied(permission.reason ?? "Permission denied");
+  if (!permission.allowed) {
+    return permissionDenied(permission.reason ?? "Permission denied", {
+      path: target,
+      scope,
+      role: currentRoleHint(runtime, scope),
+    });
+  }
 
   if (existsSync(target)) {
     return errorResult(new Error(`Skill "${name}" already exists in ${scope} scope`));
@@ -1565,10 +1651,25 @@ async function updateSkillHandler(
   if (scope === "bundle") return bundleNotMutable();
   if (!scope) return errorResult(new Error(unrecognizedIdMessage(id)));
 
-  const permission = await checkPathAccess(runtime, id, scope, "write");
-  if (!permission.allowed) return permissionDenied(permission.reason ?? "Permission denied");
+  // Existence before permission — a stale `id` should report "not found",
+  // not "permission denied". See read handler for full rationale.
+  if (!existsSync(id)) {
+    return errorResult(
+      new Error(
+        `Skill not found at "${id}". The file may have been moved or deleted — ` +
+          `call skills__list to get current paths.`,
+      ),
+    );
+  }
 
-  if (!existsSync(id)) return errorResult(new Error(`Skill not found: ${id}`));
+  const permission = await checkPathAccess(runtime, id, scope, "write");
+  if (!permission.allowed) {
+    return permissionDenied(permission.reason ?? "Permission denied", {
+      path: id,
+      scope,
+      role: currentRoleHint(runtime, scope),
+    });
+  }
 
   // Defense-in-depth: realpath the target and verify the link doesn't
   // escape the declared scope/tenant. Catches three classes of attack:
@@ -1628,10 +1729,24 @@ async function deleteSkillHandler(
   if (scope === "bundle") return bundleNotMutable();
   if (!scope) return errorResult(new Error(unrecognizedIdMessage(id)));
 
-  const permission = await checkPathAccess(runtime, id, scope, "write");
-  if (!permission.allowed) return permissionDenied(permission.reason ?? "Permission denied");
+  // Existence before permission — see updateSkillHandler for rationale.
+  if (!existsSync(id)) {
+    return errorResult(
+      new Error(
+        `Skill not found at "${id}". The file may have been moved or deleted — ` +
+          `call skills__list to get current paths.`,
+      ),
+    );
+  }
 
-  if (!existsSync(id)) return errorResult(new Error(`Skill not found: ${id}`));
+  const permission = await checkPathAccess(runtime, id, scope, "write");
+  if (!permission.allowed) {
+    return permissionDenied(permission.reason ?? "Permission denied", {
+      path: id,
+      scope,
+      role: currentRoleHint(runtime, scope),
+    });
+  }
 
   // Symlink-boundary defense — see updateSkillHandler for rationale.
   try {

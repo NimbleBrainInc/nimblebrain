@@ -11,6 +11,7 @@ import { MAX_ITERATIONS, MAX_TOOL_RESULT_CHARS } from "../limits.ts";
 import { getProviderFromModel, supportsEnabledThinking } from "../model/catalog.ts";
 import { normalizeForReplay } from "../model/inbound-fit.ts";
 import { callModel, type StreamResult } from "../model/stream.ts";
+import { coerceInputForSchema } from "../tools/coerce-input.ts";
 import { validateToolInput } from "../tools/validate-input.ts";
 import {
   estimateContentSize,
@@ -486,13 +487,16 @@ export class AgentEngine {
             const start = performance.now();
             let result: ToolResult | undefined;
 
-            // Validate tool input against declared schema before execution
+            // Validate tool input against declared schema before execution.
+            // Coerce first: models occasionally emit nested object/array
+            // values as JSON-encoded strings (`{ manifest: "{...}" }`).
+            // The coerce pass uses the schema as a parsing oracle to
+            // recover those one-level misencodings before validation.
             const toolSchema = toolSchemaMap.get(gatedCall.name);
             if (toolSchema?.inputSchema) {
-              const validation = validateToolInput(
-                gatedCall.input,
-                toolSchema.inputSchema as Record<string, unknown>,
-              );
+              const schema = toolSchema.inputSchema as Record<string, unknown>;
+              gatedCall.input = coerceInputForSchema(gatedCall.input, schema);
+              const validation = validateToolInput(gatedCall.input, schema);
               if (!validation.valid) {
                 result = {
                   content: textContent(`Invalid tool input: ${validation.error}`),

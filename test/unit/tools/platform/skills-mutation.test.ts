@@ -295,6 +295,84 @@ describe("skills__update", () => {
     });
     expect(result.isError).toBe(true);
   });
+
+  // Regression: production bug where the agent passed a stale `id` (a path
+  // the skill used to live at, before being moved to a workspace dir). The
+  // old ordering ran the permission check first and returned "Org-scope
+  // writes require org admin or owner" — sending the agent down a
+  // hallucination loop trying to fix its role instead of refreshing its
+  // path. Existence-first surfaces the actual cause.
+  test("stale org-scope id (file moved away) returns 'not found', not 'permission denied'", async () => {
+    runtime.hasIdentityProvider = true;
+    runtime.identity = {
+      id: "u_member",
+      email: "m@ex.com",
+      displayName: "M",
+      orgRole: "member",
+      preferences: { timezone: "UTC", locale: "en-US", theme: "system" },
+    };
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const result = await client.callTool({
+      name: "update",
+      arguments: { id: join(workDir, "skills", "moved-away.md"), body: "x" },
+    });
+    expect(result.isError).toBe(true);
+    const text = (result.content as Array<{ text: string }>)[0]?.text ?? "";
+    expect(text).toMatch(/not found/i);
+    expect(text).toMatch(/skills__list/);
+    // Must NOT lead with the role/permission narrative for a missing file.
+    expect(text).not.toMatch(/permission denied/i);
+    expect(text).not.toMatch(/org admin/i);
+  });
+
+  test("permission-denied error carries scope + role causation", async () => {
+    runtime.hasIdentityProvider = true;
+    runtime.identity = {
+      id: "u_member",
+      email: "m@ex.com",
+      displayName: "M",
+      orgRole: "member",
+      preferences: { timezone: "UTC", locale: "en-US", theme: "system" },
+    };
+    // Pre-stage an org-scope skill on disk so existence-check passes and
+    // permission becomes the real failure.
+    const orgDir = join(workDir, "skills");
+    mkdirSync(orgDir, { recursive: true });
+    const id = join(orgDir, "org-skill.md");
+    writeFileSync(
+      id,
+      [
+        "---",
+        "name: org-skill",
+        'description: "x"',
+        'version: "1.0.0"',
+        "type: skill",
+        "priority: 50",
+        "---",
+        "body",
+        "",
+      ].join("\n"),
+    );
+
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const result = await client.callTool({
+      name: "update",
+      arguments: { id, body: "tampered" },
+    });
+    expect(result.isError).toBe(true);
+    const sc = (
+      result as { structuredContent?: { code?: string; scope?: string; role?: string } }
+    ).structuredContent;
+    expect(sc?.code).toBe("permission_denied");
+    expect(sc?.scope).toBe("org");
+    expect(sc?.role).toBe("member");
+    const text = (result.content as Array<{ text: string }>)[0]?.text ?? "";
+    expect(text).toMatch(/org-scope/);
+    expect(text).toMatch(/workspace-scoped/); // alternate-scope hint
+    expect(text).toMatch(/member/);
+  });
 });
 
 // ── delete ───────────────────────────────────────────────────────────────

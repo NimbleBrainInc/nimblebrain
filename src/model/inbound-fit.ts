@@ -101,7 +101,6 @@ export function normalizeForReplay(content: readonly LanguageModelV3Content[]): 
         ? { ...part, providerOptions: part.providerMetadata }
         : part;
       out.push(replay);
-      continue;
     }
 
     // Drop the rest:

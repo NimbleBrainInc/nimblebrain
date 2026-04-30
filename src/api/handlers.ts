@@ -12,6 +12,7 @@ import { RunInProgressError } from "../runtime/errors.ts";
 import { type RequestContext, runWithRequestContext } from "../runtime/request-context.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import type { ChatRequest } from "../runtime/types.ts";
+import { coerceInputForSchema } from "../tools/coerce-input.ts";
 import type { HealthMonitor } from "../tools/health-monitor.ts";
 import type { ResourceData } from "../tools/types.ts";
 import { validateToolInput } from "../tools/validate-input.ts";
@@ -524,6 +525,11 @@ export async function handleToolCall(
   // or bare (e.g., "briefing"). Normalize to full name.
   const toolName = tool.startsWith(`${server}__`) ? tool : `${server}__${tool}`;
 
+  // Coerced args flow through to registry.execute below — validation and
+  // execution must see the same shape. Defaults to the raw args; replaced
+  // with the schema-coerced version once we resolve the tool definition.
+  let coercedArgs: Record<string, unknown> = args ?? {};
+
   const source = registry.getSources().find((s) => s.name === server);
   if (source) {
     try {
@@ -536,9 +542,12 @@ export async function handleToolCall(
         });
       }
 
-      // Validate input against the tool's declared JSON Schema
+      // Validate input against the tool's declared JSON Schema. Coerce
+      // first to recover nested string-encoded object/array values — see
+      // src/tools/coerce-input.ts.
       if (toolDef.inputSchema) {
-        const validation = validateToolInput(args ?? {}, toolDef.inputSchema);
+        coercedArgs = coerceInputForSchema(coercedArgs, toolDef.inputSchema);
+        const validation = validateToolInput(coercedArgs, toolDef.inputSchema);
         if (!validation.valid) {
           return apiError(
             400,
@@ -603,7 +612,7 @@ export async function handleToolCall(
       registry.execute({
         id: callId,
         name: toolName,
-        input: args ?? {},
+        input: coercedArgs,
       }),
     );
   } catch (err) {
