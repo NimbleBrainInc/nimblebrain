@@ -7,9 +7,13 @@ LABEL org.opencontainers.image.url="https://nimblebrain.ai"
 LABEL org.opencontainers.image.vendor="NimbleBrain"
 LABEL org.opencontainers.image.licenses="Apache-2.0"
 
-# Bun runtime
+# Bun runtime + tools that Synapse bundles routinely shell out to.
+# `git` is required by any bundle that clones a repo at boot (e.g.
+# synapse-astro-editor). Without it, `subprocess.exec("git", ...)`
+# inside the bundle raises FileNotFoundError(2) and the boot phase
+# fails with no clear cause.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl unzip nodejs npm \
+    curl unzip nodejs npm git \
     && curl -fsSL https://bun.sh/install | BUN_INSTALL=/usr bash \
     && rm -rf /var/lib/apt/lists/*
 
