@@ -13,7 +13,9 @@ LABEL org.opencontainers.image.licenses="Apache-2.0"
 # inside the bundle raises FileNotFoundError(2) and the boot phase
 # fails with no clear cause.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl unzip nodejs npm git \
+    curl unzip git ca-certificates gnupg \
+    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
     && curl -fsSL https://bun.sh/install | BUN_INSTALL=/usr bash \
     && rm -rf /var/lib/apt/lists/*
 
