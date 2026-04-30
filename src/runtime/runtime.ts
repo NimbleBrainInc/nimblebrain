@@ -43,7 +43,7 @@ import { createIdentityProvider } from "../identity/provider.ts";
 import { DEV_IDENTITY } from "../identity/providers/dev.ts";
 import { UserStore } from "../identity/user.ts";
 import { InstructionsStore } from "../instructions/index.ts";
-import { buildModelResolver } from "../model/registry.ts";
+import { buildModelResolver, resolveModelString } from "../model/registry.ts";
 import type { Layer3SkillEntry, PromptAppInfo } from "../prompt/compose.ts";
 import { composeSystemPrompt } from "../prompt/compose.ts";
 import {
@@ -785,6 +785,15 @@ export class Runtime {
     if (aliasSlot) {
       resolvedModelString = this.getModelSlot(aliasSlot);
     }
+    // Qualify bare model ids at the request-entry boundary so the rest of
+    // the pipeline (cost aggregation, capability checks, max-output and
+    // thinking resolvers, provider option shape, log lines) sees a fully-
+    // qualified `provider:id`. Without this, a tenant with a legacy bare
+    // id on disk gets correct routing (resolveModelString runs again
+    // inside buildModelResolver) but $0 cost reports, no thinking, and
+    // anthropic-shaped providerOptions on Google calls — every other
+    // consumer reads engineConfig.model directly.
+    resolvedModelString = resolveModelString(resolvedModelString);
 
     // Resolve maxOutputTokens FIRST — resolveThinking needs it to clamp the
     // thinking budget so visible-content headroom is always preserved.

@@ -7,11 +7,7 @@ import { ToolRegistry } from "../../src/tools/registry.ts";
 import { createDelegateTool } from "../../src/tools/delegate.ts";
 import type { DelegateContext } from "../../src/tools/delegate.ts";
 import { textContent } from "../../src/engine/content-helpers.ts";
-import {
-	resolveModelString,
-	buildRegistry,
-	buildModelResolver,
-} from "../../src/model/registry.ts";
+import { buildModelResolver, buildRegistry } from "../../src/model/registry.ts";
 import type {
 	EngineConfig,
 	EngineEvent,
@@ -265,26 +261,11 @@ describe("multi-model routing", () => {
 		});
 	});
 
-	describe("bare string gets anthropic prefix", () => {
-		it("resolveModelString adds anthropic: to bare model names", () => {
-			expect(resolveModelString("claude-sonnet-4-6")).toBe(
-				"anthropic:claude-sonnet-4-6",
-			);
-		});
-
-		it("resolveModelString preserves already-qualified strings", () => {
-			expect(resolveModelString("openai:gpt-4o")).toBe("openai:gpt-4o");
-			expect(resolveModelString("google:gemini-2.5-flash")).toBe(
-				"google:gemini-2.5-flash",
-			);
-		});
-
-		it("resolveModelString handles bare haiku model", () => {
-			expect(resolveModelString("claude-haiku-4-5-20251001")).toBe(
-				"anthropic:claude-haiku-4-5-20251001",
-			);
-		});
-	});
+	// Direct semantics for resolveModelString live in
+	// test/unit/model-registry.test.ts (catalog lookup, fallback, qualified
+	// pass-through). Removed the legacy "bare string gets anthropic prefix"
+	// block from this file — it was duplicate AND mis-describing the
+	// function's actual behavior after the catalog-fallback fix.
 
 	describe("engine works with LanguageModelV3 end-to-end", () => {
 		it("engine processes multiple turns with echo model", async () => {
