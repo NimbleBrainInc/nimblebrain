@@ -53,11 +53,18 @@ function ModelSelect({
         <option value="">Select a model</option>
         {Object.entries(availableModels).map(([provider, models]) => (
           <optgroup key={provider} label={provider}>
-            {models.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.id} (in: {m.cost.input}, out: {m.cost.output})
-              </option>
-            ))}
+            {models.map((m) => {
+              // Persisted model ids are fully-qualified `provider:id` strings;
+              // the resolver routes bare ids to anthropic by default, so a
+              // selected `gemini-3.1-pro-preview` would 404 against the
+              // Anthropic API. Encode the provider into the option value.
+              const qualified = `${provider}:${m.id}`;
+              return (
+                <option key={qualified} value={qualified}>
+                  {m.id} (in: {m.cost.input}, out: {m.cost.output})
+                </option>
+              );
+            })}
           </optgroup>
         ))}
       </Select>

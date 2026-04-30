@@ -92,6 +92,21 @@ export function getModelByString(modelString: string): CatalogModel | undefined 
 }
 
 /**
+ * Find which provider in the catalog owns the given bare model id.
+ * Returns the first match (catalog ids are unique across providers in
+ * practice). Used by the resolver to rescue bare ids written to disk
+ * before the settings UI started encoding `provider:` into option values.
+ *
+ * Returns null when the id isn't in any provider's catalog.
+ */
+export function findProviderForModelId(modelId: string): string | null {
+  for (const [provider, p] of Object.entries(data)) {
+    if (modelId in p.models) return provider;
+  }
+  return null;
+}
+
+/**
  * List all models for a provider. Optionally filter by an allowlist.
  */
 export function listModels(provider: string, allowedModelIds?: string[]): CatalogModel[] {
