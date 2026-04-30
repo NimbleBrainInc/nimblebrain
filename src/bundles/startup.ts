@@ -251,6 +251,16 @@ export async function startBundleSource(
     if (cachedManifest) {
       meta = extractBundleMeta(cachedManifest as unknown as Record<string, unknown>);
       manifest = cachedManifest;
+    } else {
+      // Same silent-failure shape as the bug this file's helper extraction was
+      // written to fix: with no manifest in cache we can't read `_meta`
+      // capability declarations, so http-proxy (and any future declaration)
+      // gets silently skipped at spawn. Surface it loudly instead of letting
+      // operators chase phantom UI bugs.
+      log.warn(
+        `[bundles] manifest cache miss for ${ref.name} — capability declarations ` +
+          "(http-proxy, etc.) will be skipped at spawn. Reinstall the bundle to repopulate.",
+      );
     }
 
     // Read host-side credentials from the workspace credential store. The
