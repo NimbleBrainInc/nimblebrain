@@ -225,6 +225,17 @@ function addCacheBreakpoint(messages: LanguageModelV3Message[]): LanguageModelV3
   return result;
 }
 
+const DISCOVERED_TOOL_NAME_RE = /^- \*\*([a-zA-Z0-9_-]+__[a-zA-Z0-9_-]+)\*\*:/gm;
+
+function extractDiscoveredToolNames(text: string): string[] {
+  const names = new Set<string>();
+  for (const match of text.matchAll(DISCOVERED_TOOL_NAME_RE)) {
+    const name = match[1];
+    if (name) names.add(name);
+  }
+  return [...names];
+}
+
 export class AgentEngine {
   constructor(
     private model: LanguageModelV3,
@@ -258,19 +269,13 @@ export class AgentEngine {
       if (t.annotations) toolAnnotations.set(t.name, t.annotations);
     }
 
-    // Translate ToolSchema[] to LanguageModelV3FunctionTool[] for the model call
-    const modelTools: LanguageModelV3FunctionTool[] = tools.map((t) => ({
-      type: "function" as const,
-      name: t.name,
-      description: t.description,
-      inputSchema: t.inputSchema as JSONSchema7,
-    }));
-
-    // Build tool schema lookup for input validation (once per run, not per iteration)
-    const toolSchemaMap = new Map<string, ToolSchema>();
-    for (const t of tools) {
-      toolSchemaMap.set(t.name, t);
+    const allToolSchemaMap = new Map<string, ToolSchema>();
+    for (const t of allRouterTools) {
+      allToolSchemaMap.set(t.name, t);
     }
+
+    const directTools = [...tools];
+    const directToolNames = new Set(directTools.map((t) => t.name));
 
     this.events.emit({
       type: "run.start",
@@ -330,6 +335,18 @@ export class AgentEngine {
 
     try {
       while (iteration < maxIter) {
+        const modelTools: LanguageModelV3FunctionTool[] = directTools.map((t) => ({
+          type: "function" as const,
+          name: t.name,
+          description: t.description,
+          inputSchema: t.inputSchema as JSONSchema7,
+        }));
+
+        const toolSchemaMap = new Map<string, ToolSchema>();
+        for (const t of directTools) {
+          toolSchemaMap.set(t.name, t);
+        }
+
         // 1. Apply context/prompt hooks and call LLM
         const windowed = config.hooks?.transformContext
           ? config.hooks.transformContext([...history])
@@ -459,6 +476,11 @@ export class AgentEngine {
             if (gatedCall === null) {
               return {
                 toolCall,
+                gatedCall: {
+                  id: toolCall.toolCallId,
+                  name: toolCall.toolName,
+                  input: parsedInput,
+                },
                 result: {
                   content: textContent("Tool call was denied by policy."),
                   isError: true,
@@ -570,7 +592,7 @@ export class AgentEngine {
               },
             });
 
-            return { toolCall, result: finalResult, ms, resourceUri, resourceLinks };
+            return { toolCall, gatedCall, result: finalResult, ms, resourceUri, resourceLinks };
           }),
         );
 
@@ -582,6 +604,7 @@ export class AgentEngine {
 
         for (const {
           toolCall,
+          gatedCall,
           result,
           ms,
           resourceUri: uri,
@@ -627,6 +650,21 @@ export class AgentEngine {
               ? { type: "error-text", value: llmText }
               : { type: "text", value: llmText },
           });
+
+          if (
+            gatedCall.name === "nb__search" &&
+            !result.isError &&
+            gatedCall.input.scope === "tools"
+          ) {
+            const discoveredNames = extractDiscoveredToolNames(llmText);
+            for (const name of discoveredNames) {
+              if (directToolNames.has(name)) continue;
+              const schema = allToolSchemaMap.get(name);
+              if (!schema) continue;
+              directTools.push(schema);
+              directToolNames.add(name);
+            }
+          }
         }
 
         // 6. Feed results back as tool message

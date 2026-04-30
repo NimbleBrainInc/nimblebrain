@@ -119,6 +119,96 @@ describe("AgentEngine", () => {
     expect(result.stopReason).toBe("complete");
   });
 
+  it("promotes tools discovered by nb__search for the next iteration", async () => {
+    let callCount = 0;
+    const seenToolLists: string[][] = [];
+    const model = createMockModel((options) => {
+      callCount++;
+      const toolNames = (options.tools ?? []).map((t) => t.name);
+      seenToolLists.push(toolNames);
+
+      if (callCount === 1) {
+        return {
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call_search",
+              toolName: "nb__search",
+              input: JSON.stringify({ scope: "tools", query: "newsapi" }),
+            },
+          ],
+          inputTokens: 10,
+          outputTokens: 5,
+        };
+      }
+
+      if (callCount === 2) {
+        expect(toolNames).toContain("newsapi__get_top_headlines");
+        return {
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call_news",
+              toolName: "newsapi__get_top_headlines",
+              input: JSON.stringify({ country: "us", category: "technology", page_size: 5 }),
+            },
+          ],
+          inputTokens: 10,
+          outputTokens: 5,
+        };
+      }
+
+      return {
+        content: [{ type: "text", text: "Done!" }],
+        inputTokens: 10,
+        outputTokens: 5,
+      };
+    });
+
+    const toolSchemas: ToolSchema[] = [
+      { name: "nb__search", description: "Search tools", inputSchema: { type: "object", properties: {} } },
+      {
+        name: "newsapi__get_top_headlines",
+        description: "Get top headlines",
+        inputSchema: { type: "object", properties: {} },
+      },
+    ];
+
+    const engine = new AgentEngine(
+      model,
+      new StaticToolRouter(toolSchemas, (call) => {
+        if (call.name === "nb__search") {
+          return {
+            content: textContent(
+              'Found 1 tool(s) for "newsapi":\n\n- **newsapi__get_top_headlines**: Get top news headlines by country and category.',
+            ),
+            isError: false,
+          };
+        }
+        if (call.name === "newsapi__get_top_headlines") {
+          return { content: textContent("headline results"), isError: false };
+        }
+        return { content: textContent(""), isError: false };
+      }),
+      new NoopEventSink(),
+    );
+
+    const result = await engine.run(
+      defaultConfig,
+      "",
+      [{ role: "user", content: [{ type: "text", text: "Get me tech news" }] }],
+      [toolSchemas[0]!],
+    );
+
+    expect(seenToolLists[0]).toEqual(["nb__search"]);
+    expect(seenToolLists[1]).toContain("newsapi__get_top_headlines");
+    expect(result.toolCalls.map((c) => c.name)).toEqual([
+      "nb__search",
+      "newsapi__get_top_headlines",
+    ]);
+    expect(result.output).toBe("Done!");
+  });
+
   it("includes resourceUri in tool events when tool has UI annotations", async () => {
     let callCount = 0;
     const model = createMockModel(() => {
