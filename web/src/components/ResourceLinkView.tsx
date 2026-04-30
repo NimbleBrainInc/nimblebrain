@@ -142,14 +142,21 @@ export function ResourceLinkView({
     return (
       <div className="w-full my-2 rounded-lg border border-border bg-card overflow-hidden">
         {header}
-        {/* sandbox="allow-scripts" lets the browser's PDF viewer run its
-            internal scripts in a null origin, so a malicious PDF can't reach
-            this document's cookies, storage, or same-origin resources. We
-            deliberately omit allow-same-origin. */}
+        {/* No `sandbox` attribute by design. Chromium routes application/pdf
+            to PDFium, which runs in a separate sandboxed renderer process
+            and disables the JS APIs a malicious PDF could abuse (no
+            window.parent, fetch, cookie, etc.). Adding `sandbox` would not
+            tighten that boundary; it would make the iframe an opaque origin
+            and Chromium then refuses to navigate it to a parent-owned blob:
+            URL — Arc surfaces that refusal as "This page has been blocked
+            by Arc". The pattern: pick the HTML primitive by MIME (img for
+            images, iframe for PDFs, pre for text, download link otherwise)
+            and rely on the browser's per-format process isolation. The
+            iframe `sandbox` attribute is for untrusted *HTML*, not for
+            binary resources whose viewer the browser already isolates. */}
         <iframe
           src={objectUrl}
           title={displayName}
-          sandbox="allow-scripts"
           className="w-full"
           style={{ height: 600, border: 0, display: "block" }}
         />
