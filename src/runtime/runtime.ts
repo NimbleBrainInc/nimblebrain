@@ -10,6 +10,7 @@ import { deriveServerName } from "../bundles/paths.ts";
 import type { AppInfo, BundleInstance } from "../bundles/types.ts";
 import { log } from "../cli/log.ts";
 import { isToolVisibleToRole, type ResolvedFeatures, resolveFeatures } from "../config/features.ts";
+import { deriveOverridePath } from "../config/overrides.ts";
 import { createPrivilegeHook, NoopConfirmationGate } from "../config/privilege.ts";
 import { generateTitle } from "../conversation/auto-title.ts";
 import { EventSourcedConversationStore } from "../conversation/event-sourced-store.ts";
@@ -263,6 +264,14 @@ export class Runtime {
 
   /** Create and start a runtime from config. */
   static async start(config: RuntimeConfig): Promise<Runtime> {
+    // Derive the override-file path when the caller supplied a configPath
+    // but not an explicit override path. The CLI's loadConfig already
+    // populates both; this fallback covers embedded callers (tests,
+    // library use) that build a RuntimeConfig directly.
+    if (config.configPath && !config.configOverridePath) {
+      config = { ...config, configOverridePath: deriveOverridePath(config.configPath) };
+    }
+
     const resolveModelFn = resolveModel(config);
 
     const telemetryManager = TelemetryManager.create({
@@ -1618,9 +1627,19 @@ export class Runtime {
     return mergeScopedSkills(orgPool, workspacePool, userPool);
   }
 
-  /** Get the path to the nimblebrain.json config file. */
+  /** Get the path to the nimblebrain.json config file (Helm-managed seed). */
   getConfigPath(): string | undefined {
     return this.config.configPath;
+  }
+
+  /**
+   * Get the path to nimblebrain.overrides.json — the user-managed override
+   * file written by `set_model_config` and preserved across deploys.
+   * Defaults to a sibling of `configPath`; absent only when no `configPath`
+   * is set (in-memory tests, embedded usage).
+   */
+  getConfigOverridePath(): string | undefined {
+    return this.config.configOverridePath;
   }
 
   /** Get current runtime config values (safe subset — no secrets). */

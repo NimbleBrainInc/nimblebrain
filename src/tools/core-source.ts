@@ -134,9 +134,17 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
       },
     },
     {
+      // Atomic write (temp + rename) but NOT lock-protected against
+      // concurrent calls: two parallel set_model_config invocations both
+      // read the override file, both apply their patch to the read state,
+      // both write — last writer wins, first writer's patch is silently
+      // lost. Admin-only and rare in practice; documenting here so the
+      // next caller doesn't assume it's safe to fire many in parallel.
+      // If concurrency becomes a real concern, gate writes on a per-path
+      // mutex via async-mutex or similar.
       name: "set_model_config",
       description:
-        "Update model selection and runtime limits. Writes atomically to nimblebrain.json. Does not allow changing API keys or secrets.",
+        "Update model selection and runtime limits. Writes atomically to nimblebrain.overrides.json (preserved across deploys). Does not allow changing API keys or secrets.",
       inputSchema: {
         type: "object",
         properties: {
@@ -169,21 +177,31 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
             description: "Max output tokens per LLM call (must be > 0).",
           },
           thinking: {
-            type: ["string", "null"],
-            enum: ["off", "adaptive", "enabled", null],
+            type: "string",
+            enum: ["off", "adaptive", "enabled"],
             description:
               "Extended-thinking mode for reasoning-capable models. " +
               "off: never reason. adaptive: model decides per call. " +
               "enabled: always reason (use thinkingBudgetTokens to cap). " +
-              "null: clear the operator override and revert to platform default " +
-              "(adaptive for catalog-flagged reasoning models, off otherwise).",
+              "Use clearThinking=true to revert to the platform default.",
+          },
+          clearThinking: {
+            type: "boolean",
+            description:
+              "If true, clears any persisted thinking override and reverts to the platform default. " +
+              "Mutually exclusive with `thinking`.",
           },
           thinkingBudgetTokens: {
-            type: ["number", "null"],
+            type: "number",
             description:
               "Token budget when thinking=enabled. Counts toward maxOutputTokens. " +
-              "Anthropic requires a minimum of 1,024. " +
-              "null: clear any persisted budget.",
+              "Anthropic requires a minimum of 1,024.",
+          },
+          clearThinkingBudget: {
+            type: "boolean",
+            description:
+              "If true, clears any persisted thinking budget. " +
+              "Mutually exclusive with `thinkingBudgetTokens`.",
           },
         },
       },
@@ -222,12 +240,69 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
             }
           }
 
-          const configPath = runtime.getConfigPath();
-          if (!configPath) {
+          // Writes go to the override file, NOT the Helm-managed seed.
+          // The init container overwrites the seed on every deploy, so any
+          // value written here would last only until the next rollout. The
+          // override file is a sibling on the PVC that the init container
+          // leaves alone, so user changes survive deploys. The runtime
+          // loader merges seed → override at startup; override values win.
+          const configOverridePath = runtime.getConfigOverridePath();
+          if (!configOverridePath) {
             return {
-              content: textContent("No config file path available. Cannot persist changes."),
+              content: textContent("No config override path available. Cannot persist changes."),
               isError: true,
             };
+          }
+
+          // Normalize the `clear*` booleans into the canonical null sentinel
+          // the merge logic below already understands. The schema previously
+          // expressed "revert to default" as `type: ["string","null"]` with
+          // a null in the enum — Gemini rejects enums on non-string types,
+          // breaking every tool call on Google-only tenants. Booleans are
+          // the LCD-clean way to expose the same semantic across providers.
+          //
+          // Note: this mutates the caller's `input` object so downstream
+          // branches read the normalized null. Safe today because each
+          // tool call has its own input. If we ever batch/replay tool
+          // calls, switch to a local copy.
+          if (input.clearThinking === true) {
+            if (input.thinking !== undefined && input.thinking !== null) {
+              return {
+                content: textContent(
+                  "Cannot set both `thinking` and `clearThinking`. Use one or the other.",
+                ),
+                isError: true,
+              };
+            }
+            // `clearThinking` clears BOTH thinking and the budget (a budget
+            // without a mode is meaningless). Setting `thinkingBudgetTokens`
+            // alongside `clearThinking` would produce an orphan budget on
+            // disk: the merge below deletes both fields when thinking is
+            // null, then re-sets the budget from the patch. Live runtime
+            // stays consistent (the handler's updateConfig call clears
+            // both) but disk diverges, surfacing at next restart. Reject
+            // the combination at the input boundary instead.
+            if (input.thinkingBudgetTokens !== undefined && input.thinkingBudgetTokens !== null) {
+              return {
+                content: textContent(
+                  "Cannot set `thinkingBudgetTokens` while clearing `thinking` — " +
+                    "clearing the mode also clears the budget. Drop one or the other.",
+                ),
+                isError: true,
+              };
+            }
+            input.thinking = null;
+          }
+          if (input.clearThinkingBudget === true) {
+            if (input.thinkingBudgetTokens !== undefined && input.thinkingBudgetTokens !== null) {
+              return {
+                content: textContent(
+                  "Cannot set both `thinkingBudgetTokens` and `clearThinkingBudget`. Use one or the other.",
+                ),
+                isError: true,
+              };
+            }
+            input.thinkingBudgetTokens = null;
           }
 
           // Validate inputs
@@ -319,37 +394,40 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
             }
           }
 
-          // Read current config
+          // Read current override file (the one we'll patch and write back).
+          // The seed file is read separately by the runtime loader; we only
+          // touch overrides here.
           let existing: Record<string, unknown> = {};
           try {
-            const raw = await readFile(configPath, "utf-8");
+            const raw = await readFile(configOverridePath, "utf-8");
             existing = JSON.parse(raw);
           } catch {
-            // File doesn't exist or invalid — start fresh
+            // Override file doesn't exist yet (fresh deploy / first call) —
+            // start with empty overrides.
           }
 
           // Cross-field validation: thinking="enabled" requires a budget,
-          // either from this patch or already in the persisted config.
-          // Without one, the Anthropic SDK silently downgrades to its
-          // 1,024-token minimum — almost certainly not the operator's
-          // intent. Force the explicit choice.
+          // either from this patch or already in the *effective* config
+          // (seed + overrides). Without one, the Anthropic SDK silently
+          // downgrades to its 1,024-token minimum — almost certainly not
+          // the operator's intent. Force the explicit choice.
           //
-          // Important edge case: when the patch is *clearing* the budget
+          // Edge case: when the patch is *clearing* the budget
           // (thinkingBudgetTokens=null), the merge below deletes the
-          // existing budget. The validator must mirror that — treating
-          // existingBudget as gone — so a patch like
-          //   { thinking: "enabled", thinkingBudgetTokens: null }
-          // can't slip past by relying on a budget the merge will drop.
+          // override-side budget. After clear, the effective budget falls
+          // back to the seed's budget (if any). The validator must mirror
+          // that — read the merged effective state from the runtime, not
+          // just the override file.
           if (input.thinking === "enabled") {
             const clearingBudget = input.thinkingBudgetTokens === null;
             const patchBudget =
               !clearingBudget && input.thinkingBudgetTokens !== undefined
                 ? Number(input.thinkingBudgetTokens)
                 : undefined;
-            const existingBudget = clearingBudget
+            const effectiveBudget = clearingBudget
               ? undefined
-              : (existing.thinkingBudgetTokens as number | undefined);
-            if (patchBudget == null && existingBudget == null) {
+              : runtime.getRuntimeConfig().thinkingBudgetTokens;
+            if (patchBudget == null && effectiveBudget == null) {
               return {
                 content: textContent(
                   'thinking="enabled" requires thinkingBudgetTokens (≥ 1024). ' +
@@ -392,10 +470,10 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
           } else if (input.thinkingBudgetTokens !== undefined) {
             existing.thinkingBudgetTokens = Number(input.thinkingBudgetTokens);
           }
-          // Atomic write: write to temp file, then rename
-          const tmpPath = `${configPath}.tmp.${Date.now()}`;
+          // Atomic write of the override file: write to temp file, then rename.
+          const tmpPath = `${configOverridePath}.tmp.${Date.now()}`;
           await writeFile(tmpPath, `${JSON.stringify(existing, null, 2)}\n`, "utf-8");
-          await rename(tmpPath, configPath);
+          await rename(tmpPath, configOverridePath);
 
           // Apply changes to live runtime config
           const modelsPatch =

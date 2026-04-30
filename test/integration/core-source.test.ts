@@ -8,6 +8,8 @@ import { createEchoModel } from "../helpers/echo-model.ts";
 import { createCoreToolDefs } from "../../src/tools/core-source.ts";
 import { makeInProcessSource } from "../helpers/in-process-source.ts";
 import { extractText } from "../../src/engine/content-helpers.ts";
+import { loadConfig } from "../../src/cli/config.ts";
+import { deriveOverridePath } from "../../src/config/overrides.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
 
 const testDir = join(tmpdir(), `nimblebrain-core-source-${Date.now()}`);
@@ -123,9 +125,9 @@ describe("Core Source", () => {
 			const data = result.structuredContent as Record<string, unknown>;
 			expect(data.success).toBe(true);
 
-			// Verify file was written
+			// Verify the override file (NOT the seed) was written.
 			const raw = JSON.parse(
-				require("node:fs").readFileSync(configPath, "utf-8"),
+				require("node:fs").readFileSync(deriveOverridePath(configPath), "utf-8"),
 			);
 			expect(raw.defaultModel).toBe("claude-haiku-4-5-20251001");
 		} finally {
@@ -202,13 +204,18 @@ describe("Core Source", () => {
 				maxOutputTokens: 8192,
 			});
 
-			// File must be valid JSON and preserve existing fields
-			const raw = JSON.parse(
+			// Override file must be valid JSON with only the field we wrote.
+			// The seed file is NOT touched — it stays Helm-managed.
+			const overrideRaw = JSON.parse(
+				require("node:fs").readFileSync(deriveOverridePath(configPath), "utf-8"),
+			);
+			expect(overrideRaw.maxOutputTokens).toBe(8192);
+			const seedRaw = JSON.parse(
 				require("node:fs").readFileSync(configPath, "utf-8"),
 			);
-			expect(raw.version).toBe("1");
-			expect(raw.maxIterations).toBe(5);
-			expect(raw.maxOutputTokens).toBe(8192);
+			expect(seedRaw.version).toBe("1");
+			expect(seedRaw.maxIterations).toBe(5);
+			expect(seedRaw.maxOutputTokens).toBeUndefined();
 		} finally {
 			await runtime.shutdown();
 		}
@@ -259,7 +266,9 @@ describe("Core Source", () => {
 				thinkingBudgetTokens: 8192,
 			});
 			expect(result.isError).toBe(false);
-			const raw = JSON.parse(require("node:fs").readFileSync(configPath, "utf-8"));
+			const raw = JSON.parse(
+				require("node:fs").readFileSync(deriveOverridePath(configPath), "utf-8"),
+			);
 			expect(raw.thinking).toBe("enabled");
 			expect(raw.thinkingBudgetTokens).toBe(8192);
 		} finally {
@@ -267,15 +276,18 @@ describe("Core Source", () => {
 		}
 	});
 
-	it("nb__set_model_config rejects thinking='enabled' + budget=null even with an existing budget", async () => {
+	it("nb__set_model_config rejects thinking='enabled' + clearThinkingBudget=true even with an existing budget", async () => {
 		// The existing budget would survive validation if the validator
 		// only checked disk state, but the merge then deletes it — leaving
 		// thinking=enabled with no budget, the silent-downgrade trap.
 		const workDir = join(testDir, `work-thinking-clearbudget-${Date.now()}`);
 		mkdirSync(workDir, { recursive: true });
 		const configPath = join(workDir, "nimblebrain.json");
+		const overridePath = deriveOverridePath(configPath);
+		writeFileSync(configPath, JSON.stringify({ version: "1" }));
+		// Pre-existing user override (representing prior set_model_config state).
 		writeFileSync(
-			configPath,
+			overridePath,
 			JSON.stringify({ thinking: "enabled", thinkingBudgetTokens: 8192 }),
 		);
 
@@ -290,12 +302,12 @@ describe("Core Source", () => {
 			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
 			const result = await source.execute("set_model_config", {
 				thinking: "enabled",
-				thinkingBudgetTokens: null,
+				clearThinkingBudget: true,
 			});
 			expect(result.isError).toBe(true);
 			expect(extractText(result.content)).toContain("requires thinkingBudgetTokens");
-			// Disk untouched
-			const raw = JSON.parse(require("node:fs").readFileSync(configPath, "utf-8"));
+			// Override file untouched on validation failure.
+			const raw = JSON.parse(require("node:fs").readFileSync(overridePath, "utf-8"));
 			expect(raw.thinking).toBe("enabled");
 			expect(raw.thinkingBudgetTokens).toBe(8192);
 		} finally {
@@ -303,13 +315,18 @@ describe("Core Source", () => {
 		}
 	});
 
-	it("nb__set_model_config thinking=null clears the override (and budget)", async () => {
-		const workDir = join(testDir, `work-thinking-clear-${Date.now()}`);
+	it("nb__set_model_config clearThinking=true clears the override and the budget", async () => {
+		// The schema-clean replacement for the legacy `thinking: null` sentinel.
+		// The handler still understands null internally — see the normalize step
+		// at the top of the handler — but the public surface is the boolean flag
+		// because Gemini rejects enums on non-string types.
+		const workDir = join(testDir, `work-clear-thinking-${Date.now()}`);
 		mkdirSync(workDir, { recursive: true });
 		const configPath = join(workDir, "nimblebrain.json");
-		// Pre-existing operator override
+		const overridePath = deriveOverridePath(configPath);
+		writeFileSync(configPath, JSON.stringify({ version: "1" }));
 		writeFileSync(
-			configPath,
+			overridePath,
 			JSON.stringify({ thinking: "enabled", thinkingBudgetTokens: 8192 }),
 		);
 
@@ -323,13 +340,199 @@ describe("Core Source", () => {
 		try {
 			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
 			const result = await source.execute("set_model_config", {
-				thinking: null,
+				clearThinking: true,
 			});
 			expect(result.isError).toBe(false);
-			const raw = JSON.parse(require("node:fs").readFileSync(configPath, "utf-8"));
+			const raw = JSON.parse(require("node:fs").readFileSync(overridePath, "utf-8"));
 			expect(raw.thinking).toBeUndefined();
 			// Budget is cleared together — a budget without a mode is meaningless.
 			expect(raw.thinkingBudgetTokens).toBeUndefined();
+		} finally {
+			await runtime.shutdown();
+		}
+	});
+
+	it("nb__set_model_config clearThinkingBudget=true clears just the budget", async () => {
+		const workDir = join(testDir, `work-clear-budget-${Date.now()}`);
+		mkdirSync(workDir, { recursive: true });
+		const configPath = join(workDir, "nimblebrain.json");
+		const overridePath = deriveOverridePath(configPath);
+		writeFileSync(configPath, JSON.stringify({ version: "1" }));
+		// Start in adaptive with an inherited budget that should disappear.
+		writeFileSync(
+			overridePath,
+			JSON.stringify({ thinking: "adaptive", thinkingBudgetTokens: 8192 }),
+		);
+
+		const runtime = await Runtime.start({
+			model: { provider: "custom", adapter: createEchoModel() },
+			noDefaultBundles: true,
+			workDir,
+			configPath,
+			logging: { disabled: true },
+		});
+		try {
+			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
+			const result = await source.execute("set_model_config", {
+				clearThinkingBudget: true,
+			});
+			expect(result.isError).toBe(false);
+			const raw = JSON.parse(require("node:fs").readFileSync(overridePath, "utf-8"));
+			expect(raw.thinking).toBe("adaptive");
+			expect(raw.thinkingBudgetTokens).toBeUndefined();
+		} finally {
+			await runtime.shutdown();
+		}
+	});
+
+	it("nb__set_model_config rejects clearThinking=true + thinkingBudgetTokens together (would orphan the budget on disk)", async () => {
+		// Without this guard, the disk-side merge:
+		//   - L430: input.thinking === null → delete existing.thinking + budget
+		//   - L441: input.thinkingBudgetTokens !== undefined/null → re-set budget
+		// produced { thinkingBudgetTokens: 4096 } with no thinking — an orphan
+		// budget on disk. Live runtime stayed clean (handler passes both as
+		// null to updateConfig when input.thinking === null), so the divergence
+		// surfaces only on next restart. Reject the combination at the input
+		// boundary instead.
+		const workDir = join(testDir, `work-clear-orphan-${Date.now()}`);
+		mkdirSync(workDir, { recursive: true });
+		const configPath = join(workDir, "nimblebrain.json");
+		const overridePath = deriveOverridePath(configPath);
+		writeFileSync(configPath, JSON.stringify({ version: "1" }));
+
+		const runtime = await Runtime.start({
+			model: { provider: "custom", adapter: createEchoModel() },
+			noDefaultBundles: true,
+			workDir,
+			configPath,
+			logging: { disabled: true },
+		});
+		try {
+			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
+			const result = await source.execute("set_model_config", {
+				clearThinking: true,
+				thinkingBudgetTokens: 4096,
+			});
+			expect(result.isError).toBe(true);
+			expect(extractText(result.content)).toContain(
+				"Cannot set `thinkingBudgetTokens` while clearing `thinking`",
+			);
+			// Override file untouched on validation failure.
+			expect(existsSync(overridePath)).toBe(false);
+		} finally {
+			await runtime.shutdown();
+		}
+	});
+
+	it("nb__set_model_config rejects ambiguous thinking + clearThinking together", async () => {
+		const workDir = join(testDir, `work-clear-ambiguous-${Date.now()}`);
+		mkdirSync(workDir, { recursive: true });
+		const configPath = join(workDir, "nimblebrain.json");
+		writeFileSync(configPath, JSON.stringify({}));
+
+		const runtime = await Runtime.start({
+			model: { provider: "custom", adapter: createEchoModel() },
+			noDefaultBundles: true,
+			workDir,
+			configPath,
+			logging: { disabled: true },
+		});
+		try {
+			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
+			const result = await source.execute("set_model_config", {
+				thinking: "off",
+				clearThinking: true,
+			});
+			expect(result.isError).toBe(true);
+			expect(extractText(result.content)).toContain("Cannot set both");
+		} finally {
+			await runtime.shutdown();
+		}
+	});
+
+	it("set_model_config writes survive a runtime restart (layered seed + override)", async () => {
+		// Regression guard for the deploy-replay scenario: an operator runs
+		// set_model_config to pin defaultModel and thinking, then the pod
+		// restarts. The init container overwrites the seed (simulated by us
+		// keeping the seed file unchanged) but the override file on the PVC
+		// survives, and the runtime should boot with the user's last values.
+		const workDir = join(testDir, `work-layered-restart-${Date.now()}`);
+		mkdirSync(workDir, { recursive: true });
+		const configPath = join(workDir, "nimblebrain.json");
+		const overridePath = deriveOverridePath(configPath);
+		writeFileSync(
+			configPath,
+			JSON.stringify({ version: "1", defaultModel: "claude-opus-4-7", maxIterations: 10 }),
+		);
+
+		// First runtime: simulate the operator changing config.
+		const r1 = await Runtime.start({
+			model: { provider: "custom", adapter: createEchoModel() },
+			noDefaultBundles: true,
+			workDir,
+			configPath,
+			logging: { disabled: true },
+		});
+		try {
+			const source = await makeInProcessSource("nb", createCoreToolDefs(r1));
+			const result = await source.execute("set_model_config", {
+				defaultModel: "claude-haiku-4-5-20251001",
+				thinking: "off",
+			});
+			expect(result.isError).toBe(false);
+		} finally {
+			await r1.shutdown();
+		}
+
+		// Override file written, seed file untouched.
+		const overrideAfterWrite = JSON.parse(
+			require("node:fs").readFileSync(overridePath, "utf-8"),
+		);
+		expect(overrideAfterWrite.defaultModel).toBe("claude-haiku-4-5-20251001");
+		expect(overrideAfterWrite.thinking).toBe("off");
+		const seedAfterWrite = JSON.parse(require("node:fs").readFileSync(configPath, "utf-8"));
+		expect(seedAfterWrite.defaultModel).toBe("claude-opus-4-7"); // unchanged
+		expect(seedAfterWrite.thinking).toBeUndefined();
+
+		// Second runtime: load via loadConfig (the production path that
+		// reads seed + override). Effective config should reflect the
+		// override, not the seed — that's the whole point.
+		const loaded = loadConfig({ config: configPath });
+		const r2 = await Runtime.start({
+			...loaded,
+			model: { provider: "custom", adapter: createEchoModel() },
+			noDefaultBundles: true,
+			workDir,
+			logging: { disabled: true },
+		});
+		try {
+			const cfg = r2.getRuntimeConfig();
+			expect(cfg.defaultModel).toBe("claude-haiku-4-5-20251001");
+			expect(cfg.thinking).toBe("off");
+		} finally {
+			await r2.shutdown();
+		}
+	});
+
+	it("nb__set_model_config schema declares thinking as plain string + boolean clear flags (Gemini-compatible)", async () => {
+		// Regression guard: any future schema change that puts `enum` on a
+		// non-string type, or uses union types, will break Google-only tenants
+		// because Gemini rejects the entire request. Lock the LCD shape.
+		const runtime = await makeRuntime();
+		try {
+			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
+			const tools = await source.tools();
+			const setModelConfig = tools.find((t) => t.name === "nb__set_model_config");
+			expect(setModelConfig).toBeDefined();
+			const props = (setModelConfig?.inputSchema as { properties: Record<string, unknown> })
+				.properties;
+			const thinking = props.thinking as { type: unknown; enum: unknown };
+			expect(thinking.type).toBe("string");
+			expect(thinking.enum).toEqual(["off", "adaptive", "enabled"]);
+			const budget = props.thinkingBudgetTokens as { type: unknown };
+			expect(budget.type).toBe("number");
+			expect((props.clearThinking as { type: unknown }).type).toBe("boolean");
+			expect((props.clearThinkingBudget as { type: unknown }).type).toBe("boolean");
 		} finally {
 			await runtime.shutdown();
 		}
@@ -343,7 +546,7 @@ describe("Core Source", () => {
 				maxIterations: 5,
 			});
 			expect(result.isError).toBe(true);
-			expect(extractText(result.content)).toContain("No config file path");
+			expect(extractText(result.content)).toContain("No config override path");
 		} finally {
 			await runtime.shutdown();
 		}
