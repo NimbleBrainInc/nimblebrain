@@ -6,7 +6,7 @@
  * builder, and the web client.
  */
 
-import type { LanguageModelV3Content } from "@ai-sdk/provider";
+import type { LanguageModelV3Content, LanguageModelV3ReasoningPart } from "@ai-sdk/provider";
 import { estimateCost } from "../engine/cost.ts";
 import { normalizeForReplay } from "../model/inbound-fit.ts";
 import type { ConversationEvent, LlmResponseEvent, StoredMessage, ToolDoneEvent } from "./types.ts";
@@ -272,14 +272,7 @@ function buildMessagesFromEvents(events: readonly ConversationEvent[]): StoredMe
           // Orphaned tool-calls (if any) were already filtered out of
           // replayContent — text alongside them survives as the visible
           // assistant turn, no placeholder needed.
-          //
-          // Cast: stream-side `LanguageModelV3Content` is wider than the
-          // assistant-role content union (it includes tool-result/source
-          // which only appear on tool/system messages). The data IS
-          // assistant-valid by construction — orphan filter is the only
-          // mutation — but TS can't prove it without a runtime type guard
-          // on every block. Same cast used by engine.ts after doStream.
-          const assistantMsg = {
+          const assistantMsg: StoredMessage = {
             role: "assistant",
             content: replayContent,
             timestamp: llmResp.ts,
@@ -287,7 +280,7 @@ function buildMessagesFromEvents(events: readonly ConversationEvent[]): StoredMe
               ...baseMetadata(),
               ...(toolCallsMeta.length > 0 ? { toolCalls: toolCallsMeta } : {}),
             },
-          } as StoredMessage;
+          };
           messages.push(assistantMsg);
 
           // Tool-result message per executed tool-call (one per result so
@@ -340,10 +333,8 @@ function buildMessagesFromEvents(events: readonly ConversationEvent[]): StoredMe
         // Filtering up-front is more honest — the reconstructed message
         // accurately reflects what the next call will actually send.
         const reasoningWithMeta = replayContent.filter(
-          (c): c is LanguageModelV3Content & { type: "reasoning" } =>
-            c.type === "reasoning" &&
-            "providerOptions" in c &&
-            (c as { providerOptions?: unknown }).providerOptions != null,
+          (c): c is LanguageModelV3ReasoningPart =>
+            c.type === "reasoning" && c.providerOptions != null,
         );
         const hasAbnormalFinish = llmResp.finishReason != null && llmResp.finishReason !== "stop";
         const hasAnyReasoning = replayContent.some((c) => c.type === "reasoning");
@@ -355,16 +346,20 @@ function buildMessagesFromEvents(events: readonly ConversationEvent[]): StoredMe
           ? ORPHANED_TOOL_CALLS_MARKER
           : (TRUNCATION_MARKERS[llmResp.finishReason ?? "other"] ?? TRUNCATION_MARKERS.other!);
         const reasoningRoundTrips = !hasOrphanedToolCalls && reasoningWithMeta.length > 0;
-        const placeholderContent: LanguageModelV3Content[] = reasoningRoundTrips
+        // Inferred type: ReasoningPart[] | [{type:"text",text:string}].
+        // Both are assignable to the assistant variant's content union;
+        // an explicit `LanguageModelV3Content[]` annotation here is the
+        // wrong type (stream-side, doesn't include `providerOptions`).
+        const placeholderContent = reasoningRoundTrips
           ? reasoningWithMeta
           : [{ type: "text" as const, text: placeholderText }];
 
-        const assistantMsg = {
+        const assistantMsg: StoredMessage = {
           role: "assistant",
           content: placeholderContent,
           timestamp: llmResp.ts,
           metadata: baseMetadata(),
-        } as StoredMessage;
+        };
         messages.push(assistantMsg);
       }
 

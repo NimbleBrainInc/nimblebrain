@@ -53,8 +53,10 @@ import type {
 
 /** Prompt-side assistant-message content union — the shape the AI SDK
  *  converters expect on the way out. Mirror of `LanguageModelV3Message`'s
- *  content array element type. */
-export type ReplayContent =
+ *  assistant-role content array element type. Unexported because no
+ *  caller outside this module needs the name; callers receive the same
+ *  shape via `LanguageModelV3Message`'s assistant variant. */
+type ReplayContent =
   | LanguageModelV3TextPart
   | LanguageModelV3ReasoningPart
   | LanguageModelV3FilePart
@@ -102,20 +104,16 @@ export function normalizeForReplay(content: readonly LanguageModelV3Content[]): 
       continue;
     }
 
-    if (part.type === "tool-result") {
-      // Stream-side ToolResult (`result` field) and prompt-side
-      // ToolResultPart (`output` field) have divergent shapes. In this
-      // codebase tool-results are built by the runtime as `role: "tool"`
-      // messages, NOT pulled from `doStream()` content; this branch is
-      // defensive for provider-side tool execution (e.g. Anthropic
-      // `code_execution`, server tools). Skip rather than mis-shape —
-      // a wrong-shaped ToolResultPart would fail the SDK's prompt
-      // validation more confusingly than its absence.
-      continue;
-    }
-
-    // tool-approval-request and source: stream-side only, never appear
-    // in assistant prompt content. Drop.
+    // Drop the rest:
+    //  - tool-result: stream-side `result` field vs prompt-side `output`
+    //    field have divergent shapes. In this codebase tool-results are
+    //    built by the runtime as `role: "tool"` messages, NOT pulled from
+    //    `doStream()` content; this branch is defensive for provider-side
+    //    tool execution (e.g. Anthropic `code_execution`, server tools).
+    //    Skipping rather than mis-shaping — a wrong-shaped ToolResultPart
+    //    would fail the SDK's prompt validation more confusingly.
+    //  - tool-approval-request, source: stream-side only, never appear in
+    //    assistant prompt content.
   }
   return out;
 }

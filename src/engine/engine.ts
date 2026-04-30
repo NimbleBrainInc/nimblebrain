@@ -433,10 +433,10 @@ export class AgentEngine {
 
         // 4. Append assistant message to history.
         // `normalizeForReplay` handles the stream→prompt shape mismatches
-        // (tool-call input string→object, reasoning providerMetadata→
-        // providerOptions). See src/model/inbound-fit.ts.
+        // (tool-call input string→object, providerMetadata→providerOptions
+        // on every content type). See src/model/inbound-fit.ts.
         const historyContent = normalizeForReplay(response.content);
-        history.push({ role: "assistant", content: historyContent } as LanguageModelV3Message);
+        history.push({ role: "assistant", content: historyContent });
 
         // 5. Execute tools in PARALLEL (sync + task-augmented concurrently, §13)
         const toolResults = await Promise.all(

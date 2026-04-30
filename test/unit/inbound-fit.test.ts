@@ -121,8 +121,8 @@ describe("normalizeForReplay", () => {
 			toolName: "echo",
 			input: { x: 1 },
 		});
-		expect("providerOptions" in out[0]!).toBe(false);
-		expect("providerOptions" in out[1]!).toBe(false);
+		expect(out[0]).not.toHaveProperty("providerOptions");
+		expect(out[1]).not.toHaveProperty("providerOptions");
 	});
 
 	it("is idempotent — applying twice produces the same result", () => {
@@ -163,6 +163,47 @@ describe("normalizeForReplay", () => {
 			input: { verbose: true },
 			providerOptions: { google: { thoughtSignature: "sig-combined" } },
 		});
+	});
+
+	it("filters out tool-result, source, and tool-approval-request parts", () => {
+		// Behavior assertion: these stream-side content types do not pass
+		// through to the prompt. Tool-results in this codebase are emitted
+		// by the runtime as `role: "tool"` messages (separate path);
+		// source / tool-approval-request never appear in assistant prompt
+		// content. Prevents regression if anyone "simplifies" the function
+		// by removing the filter — they'd silently mis-shape ToolResultPart
+		// (stream `result` field vs prompt `output` field) and produce
+		// confusing SDK validation errors downstream.
+		const input: LanguageModelV3Content[] = [
+			{ type: "text", text: "kept" },
+			{
+				type: "tool-result",
+				toolCallId: "tc-1",
+				toolName: "search",
+				result: "dropped — wrong shape for prompt-side ToolResultPart",
+			},
+			{
+				type: "source",
+				id: "src-1",
+				sourceType: "url",
+				url: "https://example.com",
+			},
+			{
+				type: "tool-approval-request",
+				approvalId: "ar-1",
+				toolCallId: "tc-1",
+			},
+			{
+				type: "tool-call",
+				toolCallId: "tc-2",
+				toolName: "ping",
+				input: "{}",
+			},
+		];
+		const out = normalizeForReplay(input);
+		expect(out).toHaveLength(2);
+		expect(out[0]).toEqual({ type: "text", text: "kept" });
+		expect(out[1]).toMatchObject({ type: "tool-call", toolCallId: "tc-2" });
 	});
 
 	it("does not mutate the input array or its parts", () => {
