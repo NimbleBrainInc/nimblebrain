@@ -1,5 +1,7 @@
 # NimbleBrain
 
+> This file is read by agents. Keep edits terse, imperative, token-aware. No long-form prose; bullets with concrete triggers and examples.
+
 Self-hosted platform for MCP Apps and agent automations, built on Bun. Agentic loop + MCP bundle management + interactive UI host + cron-scheduled automations + skill-driven prompt composition + HTTP API + web client.
 
 ## Build & Verify
@@ -36,6 +38,7 @@ bun run build:bundles      # Rebuild every src/bundles/*/ui (vite single-file)
 - **Module system:** ESM only. All imports use `.ts` extensions.
 - **Linting:** Biome (not ESLint/Prettier). Run `bun run lint`.
 - **Type checking:** `bunx tsc --noEmit`. Strict mode enabled.
+- **Prefer typed-safe paths over `as unknown as T`.** When TS errors, find the input/output type matching runtime shape (e.g. stream-side vs prompt-side) before widening. Cast escape hatches require a comment naming the mismatch. Example: `src/model/inbound-fit.ts`.
 - **HTTP framework:** Hono for routing and middleware. Typed context via `AppEnv`/`AuthEnv`.
 - **Model types:** Use Vercel AI SDK V3 types (`LanguageModelV3`, `LanguageModelV3Message`, etc.) from `@ai-sdk/provider`. The engine calls `model.doStream()` directly.
 - **No classes for data** — plain interfaces + factory functions preferred.
