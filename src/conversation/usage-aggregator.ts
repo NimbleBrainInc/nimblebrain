@@ -93,7 +93,15 @@ function computeCost(record: LlmCallRecord): CostBreakdown {
   if (!model) return createCostBreakdown();
 
   const c = model.cost;
-  const inputCost = (record.inputTokens * c.input) / 1_000_000;
+  // `record.inputTokens` is the AI SDK V3 grand total — already includes
+  // cacheRead and cacheCreation. Subtract them before applying the full
+  // input rate so cache tokens aren't billed twice. Clamp to 0 to guard
+  // against corrupted records where the cache subtotals exceed the total.
+  const inputNonCached = Math.max(
+    record.inputTokens - record.cacheReadTokens - record.cacheCreationTokens,
+    0,
+  );
+  const inputCost = (inputNonCached * c.input) / 1_000_000;
   const outputCost = (record.outputTokens * c.output) / 1_000_000;
   const cacheReadCost = (record.cacheReadTokens * (c.cacheRead ?? c.input)) / 1_000_000;
   const cacheCreationCost = (record.cacheCreationTokens * (c.cacheWrite ?? c.input)) / 1_000_000;
@@ -108,7 +116,15 @@ function computeCost(record: LlmCallRecord): CostBreakdown {
 }
 
 function addTokens(target: TokenBreakdown, record: LlmCallRecord): void {
-  target.input += record.inputTokens;
+  // `record.inputTokens` is the AI SDK V3 grand total. Surface the
+  // non-cached portion as `input` so `input + cacheRead + cacheCreation`
+  // sums to the grand total cleanly (same shape as the Anthropic
+  // dashboard) and parallels the cost breakdown.
+  const inputNonCached = Math.max(
+    record.inputTokens - record.cacheReadTokens - record.cacheCreationTokens,
+    0,
+  );
+  target.input += inputNonCached;
   target.output += record.outputTokens;
   target.cacheRead += record.cacheReadTokens;
   target.cacheCreation += record.cacheCreationTokens;

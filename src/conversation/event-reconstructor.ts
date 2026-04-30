@@ -228,6 +228,8 @@ function buildMessagesFromEvents(events: readonly ConversationEvent[]): StoredMe
             inputTokens: llmResp.inputTokens,
             outputTokens: llmResp.outputTokens,
             cacheReadTokens: llmResp.cacheReadTokens,
+            cacheWriteTokens: llmResp.cacheCreationTokens,
+            reasoningTokens: llmResp.reasoningTokens,
           }),
           ...(llmResp.finishReason ? { finishReason: llmResp.finishReason } : {}),
         });
@@ -449,6 +451,8 @@ export function deriveUsageMetrics(events: readonly ConversationEvent[]): UsageM
         inputTokens: event.inputTokens,
         outputTokens: event.outputTokens,
         cacheReadTokens: event.cacheReadTokens,
+        cacheWriteTokens: event.cacheCreationTokens,
+        reasoningTokens: event.reasoningTokens,
       });
     }
   }
