@@ -507,7 +507,13 @@ describe("Core Source", () => {
 		});
 		try {
 			const cfg = r2.getRuntimeConfig();
-			expect(cfg.defaultModel).toBe("claude-haiku-4-5-20251001");
+			// `getRuntimeConfig` reads through `getModelSlots` which now
+			// qualifies bare ids in the catalog. The override on disk is
+			// bare (`claude-haiku-4-5-20251001`); the runtime returns the
+			// catalog-qualified form so downstream consumers (cost,
+			// capabilities, providerOptions shape, log lines) see a
+			// consistent shape.
+			expect(cfg.defaultModel).toBe("anthropic:claude-haiku-4-5-20251001");
 			expect(cfg.thinking).toBe("off");
 		} finally {
 			await r2.shutdown();

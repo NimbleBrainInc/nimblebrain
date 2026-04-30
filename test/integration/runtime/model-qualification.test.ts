@@ -88,4 +88,34 @@ describe("model qualification at runtime boundary", () => {
 
     await runtime.shutdown();
   });
+
+  it("getModelSlots() returns qualified ids when stored config has bare strings", async () => {
+    // Ensures the slot reader qualifies — get_config (which feeds the
+    // settings UI dropdown), telemetry, and any other consumer that
+    // reads slots directly all see fully-qualified `provider:id`.
+    const workDir = join(testDir, "qualify-slot-reader");
+    mkdirSync(workDir, { recursive: true });
+
+    const runtime = await Runtime.start({
+      model: { provider: "custom", adapter: createEchoModel() },
+      noDefaultBundles: true,
+      workDir,
+      // Stored config simulates the legacy state: bare ids saved by an
+      // older settings UI that didn't encode the provider into option
+      // values.
+      models: {
+        default: "claude-sonnet-4-6",
+        fast: "gpt-4o",
+        reasoning: "gemini-3.1-pro-preview",
+      },
+    });
+    try {
+      const slots = runtime.getModelSlots();
+      expect(slots.default).toBe("anthropic:claude-sonnet-4-6");
+      expect(slots.fast).toBe("openai:gpt-4o");
+      expect(slots.reasoning).toBe("google:gemini-3.1-pro-preview");
+    } finally {
+      await runtime.shutdown();
+    }
+  });
 });
