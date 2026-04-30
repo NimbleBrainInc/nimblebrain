@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { callTool } from "../../api/client";
 import { parseToolResult } from "../../api/tool-result";
 import { CostChart } from "../../components/charts/CostChart";
+import { formatDateLabel } from "../../lib/format";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
 import { Select } from "../../components/ui/select";
 import {
@@ -74,10 +75,6 @@ function formatTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${Math.round(n / 1_000)}K`;
   return String(n);
-}
-
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString();
 }
 
 function shortModel(m: string): string {
@@ -278,7 +275,7 @@ function UsageBody({ report }: { report: UsageReport }) {
             <TableBody>
               {report.breakdown.map((row) => (
                 <TableRow key={row.key}>
-                  <TableCell>{formatDate(row.key)}</TableCell>
+                  <TableCell>{formatDateLabel(row.key)}</TableCell>
                   <TableCell className="text-right">{formatTokens(row.tokens.input)}</TableCell>
                   <TableCell className="text-right">{formatTokens(row.tokens.output)}</TableCell>
                   <TableCell className="text-right">{formatTokens(row.tokens.cacheRead)}</TableCell>

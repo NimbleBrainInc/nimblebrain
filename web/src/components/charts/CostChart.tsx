@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { formatShortDate } from "../../lib/format";
 
 interface CostBreakdown {
   input: number;
@@ -32,11 +33,6 @@ const LABELS: Record<string, string> = {
   cacheRead: "Cache read",
   cacheCreation: "Cache write",
 };
-
-function formatShortDate(iso: string): string {
-  const d = new Date(iso);
-  return `${d.getMonth() + 1}/${d.getDate()}`;
-}
 
 function formatUsd(n: number): string {
   if (n < 0.01 && n > 0) return `$${(n * 100).toFixed(2)}c`;

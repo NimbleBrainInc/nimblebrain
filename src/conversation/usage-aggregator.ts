@@ -141,15 +141,15 @@ export function resolveDateRange(
     case "day":
       return { from: toDate, to: toDate };
     case "week": {
-      const d = new Date(toDate);
-      d.setDate(d.getDate() - 7);
+      const d = new Date(`${toDate}T00:00:00Z`);
+      d.setUTCDate(d.getUTCDate() - 7);
       return { from: d.toISOString().slice(0, 10), to: toDate };
     }
     case "all":
       return { from: "2020-01-01", to: toDate };
     default: {
-      const d = new Date(toDate);
-      d.setDate(1);
+      const d = new Date(`${toDate}T00:00:00Z`);
+      d.setUTCDate(1);
       return { from: d.toISOString().slice(0, 10), to: toDate };
     }
   }

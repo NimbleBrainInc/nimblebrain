@@ -2,7 +2,7 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { aggregateUsage } from "../../../src/conversation/usage-aggregator.ts";
+import { aggregateUsage, resolveDateRange } from "../../../src/conversation/usage-aggregator.ts";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -200,5 +200,69 @@ describe("usage-aggregator", () => {
 
     expect(report.totals.llmCalls).toBe(0);
     expect(report.totals.conversations).toBe(0);
+  });
+
+  it("zero-fills missing days in bounded period", async () => {
+    const dir = makeTmpDir();
+    writeFileSync(
+      join(dir, "sparse.jsonl"),
+      buildJsonl({ id: "sp", updatedAt: "2026-04-12T10:00:00Z" }, [
+        llmEvent({ ts: "2026-04-10T08:00:00Z", inputTokens: 100, outputTokens: 50 }),
+        llmEvent({ ts: "2026-04-12T10:00:00Z", inputTokens: 200, outputTokens: 100 }),
+      ]),
+    );
+
+    const report = await aggregateUsage(dir, "week", "day", "2026-04-10", "2026-04-12");
+
+    expect(report.breakdown).toHaveLength(3);
+    expect(report.breakdown[0].key).toBe("2026-04-10");
+    expect(report.breakdown[1].key).toBe("2026-04-11");
+    expect(report.breakdown[1].llmCalls).toBe(0);
+    expect(report.breakdown[2].key).toBe("2026-04-12");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// resolveDateRange — timezone safety
+// ---------------------------------------------------------------------------
+
+describe("resolveDateRange", () => {
+  it("'month' range starts on the 1st regardless of timezone", () => {
+    // Bug: new Date("2026-04-30") in PDT = April 29 local.
+    // setDate(1) then gives March 1 local → "2026-03-02" UTC.
+    // Correct: from should always be "2026-04-01".
+    const range = resolveDateRange("month", undefined, "2026-04-30");
+    expect(range.from).toBe("2026-04-01");
+    expect(range.to).toBe("2026-04-30");
+  });
+
+  it("'month' range correct for January (no year rollback)", () => {
+    const range = resolveDateRange("month", undefined, "2026-01-15");
+    expect(range.from).toBe("2026-01-01");
+    expect(range.to).toBe("2026-01-15");
+  });
+
+  it("'week' range subtracts exactly 7 days", () => {
+    const range = resolveDateRange("week", undefined, "2026-04-30");
+    expect(range.from).toBe("2026-04-23");
+    expect(range.to).toBe("2026-04-30");
+  });
+
+  it("'week' range across month boundary", () => {
+    const range = resolveDateRange("week", undefined, "2026-05-03");
+    expect(range.from).toBe("2026-04-26");
+    expect(range.to).toBe("2026-05-03");
+  });
+
+  it("'day' range returns same date for from and to", () => {
+    const range = resolveDateRange("day", undefined, "2026-04-30");
+    expect(range.from).toBe("2026-04-30");
+    expect(range.to).toBe("2026-04-30");
+  });
+
+  it("explicit from/to passed through unchanged", () => {
+    const range = resolveDateRange("month", "2026-03-01", "2026-04-30");
+    expect(range.from).toBe("2026-03-01");
+    expect(range.to).toBe("2026-04-30");
   });
 });
