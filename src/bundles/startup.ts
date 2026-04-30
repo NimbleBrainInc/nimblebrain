@@ -32,6 +32,70 @@ import type {
 } from "./types.ts";
 import { validateBundleUrl } from "./url-validator.ts";
 
+/**
+ * Platform-side context every bundle subprocess needs at spawn time,
+ * regardless of how it was installed (registry vs. sideloaded local path).
+ *
+ * Typed deliberately: this is the contract between the platform and a bundle
+ * for "what does it know about its host." Adding a field here is the single
+ * edit needed to surface a new platform fact to bundles — TypeScript then
+ * forces every spawn site to provide it.
+ */
+export interface PlatformContext {
+  /** Workspace this bundle is being spawned for. Undefined outside a workspace. */
+  workspaceId: string | undefined;
+  /** Stable name the platform addresses this bundle by — composes into proxy URLs. */
+  serverName: string;
+  /** Manifest `_meta` — read for capability declarations (e.g. `ai.nimblebrain/http-proxy`). */
+  manifestMeta: Record<string, unknown> | undefined;
+  /** Browser-facing origin of the platform (e.g. https://hq.platform.nimblebrain.ai). */
+  publicOrigin: string;
+}
+
+/**
+ * Build the NB_* env vars every bundle subprocess receives.
+ *
+ * Both spawn paths in this file (registry + local) call this so the contract
+ * cannot drift. The previous implementation duplicated this logic inline in
+ * only the local branch, which silently broke registry-installed bundles that
+ * declared `ai.nimblebrain/http-proxy` — preview URLs came back null with no
+ * error in the logs.
+ */
+export function buildPlatformEnv(ctx: PlatformContext): Record<string, string> {
+  const env: Record<string, string> = {};
+
+  if (ctx.workspaceId) {
+    env.NB_WORKSPACE_ID = ctx.workspaceId;
+  }
+
+  const httpProxyMeta = ctx.manifestMeta?.["ai.nimblebrain/http-proxy"] as
+    | { mount?: string }
+    | undefined;
+  if (httpProxyMeta?.mount && ctx.workspaceId) {
+    const mount = String(httpProxyMeta.mount).replace(/^\/+|\/+$/g, "");
+    if (mount && !/\//.test(mount)) {
+      env.NB_PROXY_PREFIX = `/v1/ws/${ctx.workspaceId}/apps/${ctx.serverName}/${mount}`;
+    }
+  }
+
+  if (ctx.publicOrigin) {
+    env.NB_PUBLIC_ORIGIN = ctx.publicOrigin;
+  }
+
+  return env;
+}
+
+/**
+ * Resolve the platform's browser-facing origin from process env.
+ * Operators set `NB_PUBLIC_ORIGIN` explicitly; ALLOWED_ORIGINS is a best-effort
+ * dev fallback. Empty result → bundles simply don't declare host-side CSP entries.
+ */
+export function resolvePublicOrigin(
+  env: Record<string, string | undefined> = process.env as Record<string, string | undefined>,
+): string {
+  return env.NB_PUBLIC_ORIGIN ?? env.ALLOWED_ORIGINS?.split(",")[0]?.trim() ?? "";
+}
+
 /** Create and start a McpSource for a BundleRef, then add to registry.
  *  Returns manifest metadata and actual source name for local bundles. */
 export async function startBundleSource(
@@ -216,6 +280,13 @@ export async function startBundleSource(
       throw friendlyMpakConfigError(err, opts.wsId);
     }
 
+    const platformEnv = buildPlatformEnv({
+      workspaceId: opts.wsId,
+      serverName: sourceName,
+      manifestMeta: cachedManifest?._meta as Record<string, unknown> | undefined,
+      publicOrigin: resolvePublicOrigin(),
+    });
+
     source = new McpSource(
       sourceName,
       {
@@ -229,6 +300,7 @@ export async function startBundleSource(
             ...(ref.env ?? {}),
             MPAK_WORKSPACE: bundleDataDir,
             UPJACK_ROOT: bundleDataDir,
+            ...platformEnv,
           },
           cwd: server.cwd,
         },
@@ -324,41 +396,15 @@ function buildLocalSource(
   spawnEnv.MPAK_WORKSPACE = bundleDataDir;
   spawnEnv.UPJACK_ROOT = bundleDataDir;
 
-  // Tell every bundle which workspace it's running for. Each BundleInstance
-  // is workspace-scoped already, so this is just surfacing what the platform
-  // already knows. Bundles need it to compose URLs that include the workspace
-  // segment (the http-proxy route requires it in the path because browser
-  // iframe loads can't set the X-Workspace-Id header).
-  if (wsId) {
-    spawnEnv.NB_WORKSPACE_ID = wsId;
-  }
-
-  // If the bundle declares an http-proxy, tell it the public path prefix so it
-  // can configure its upstream server (e.g., `astro --base`) to match.
-  // Format: /v1/ws/<wsId>/apps/<serverName>/<mount>. Without wsId we can't
-  // build a usable prefix; skip in that case (the bundle simply won't expose
-  // a working preview URL until the workspace context is wired through).
-  const httpProxyMeta = (manifest._meta as Record<string, unknown> | undefined)?.[
-    "ai.nimblebrain/http-proxy"
-  ] as { mount?: string } | undefined;
-  if (httpProxyMeta?.mount && wsId) {
-    const mount = String(httpProxyMeta.mount).replace(/^\/+|\/+$/g, "");
-    if (mount && !/\//.test(mount)) {
-      spawnEnv.NB_PROXY_PREFIX = `/v1/ws/${wsId}/apps/${serverName}/${mount}`;
-    }
-  }
-
-  // Tell bundles the platform's browser-facing origin so they can declare it
-  // in `_meta.ui.csp.{frameDomains, connectDomains}` on UI resources that need
-  // to frame or fetch same-origin URLs (proxied preview, same-origin WS).
-  // Operators set NB_PUBLIC_ORIGIN explicitly; we fall back to the first
-  // ALLOWED_ORIGINS entry as a best-effort default for dev. Empty/unset →
-  // bundle simply doesn't declare and the host CSP stays restrictive.
-  const publicOrigin =
-    process.env.NB_PUBLIC_ORIGIN ?? process.env.ALLOWED_ORIGINS?.split(",")[0]?.trim() ?? "";
-  if (publicOrigin) {
-    spawnEnv.NB_PUBLIC_ORIGIN = publicOrigin;
-  }
+  Object.assign(
+    spawnEnv,
+    buildPlatformEnv({
+      workspaceId: wsId,
+      serverName,
+      manifestMeta: manifest._meta as Record<string, unknown> | undefined,
+      publicOrigin: resolvePublicOrigin(),
+    }),
+  );
 
   // Python bundles: resolve "python" -> "python3" if needed, build PYTHONPATH
   if (manifest.server.type === "python") {
