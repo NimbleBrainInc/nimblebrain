@@ -134,9 +134,17 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
       },
     },
     {
+      // Atomic write (temp + rename) but NOT lock-protected against
+      // concurrent calls: two parallel set_model_config invocations both
+      // read the override file, both apply their patch to the read state,
+      // both write — last writer wins, first writer's patch is silently
+      // lost. Admin-only and rare in practice; documenting here so the
+      // next caller doesn't assume it's safe to fire many in parallel.
+      // If concurrency becomes a real concern, gate writes on a per-path
+      // mutex via async-mutex or similar.
       name: "set_model_config",
       description:
-        "Update model selection and runtime limits. Writes atomically to nimblebrain.json. Does not allow changing API keys or secrets.",
+        "Update model selection and runtime limits. Writes atomically to nimblebrain.overrides.json (preserved across deploys). Does not allow changing API keys or secrets.",
       inputSchema: {
         type: "object",
         properties: {
@@ -252,11 +260,33 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
           // a null in the enum — Gemini rejects enums on non-string types,
           // breaking every tool call on Google-only tenants. Booleans are
           // the LCD-clean way to expose the same semantic across providers.
+          //
+          // Note: this mutates the caller's `input` object so downstream
+          // branches read the normalized null. Safe today because each
+          // tool call has its own input. If we ever batch/replay tool
+          // calls, switch to a local copy.
           if (input.clearThinking === true) {
             if (input.thinking !== undefined && input.thinking !== null) {
               return {
                 content: textContent(
                   "Cannot set both `thinking` and `clearThinking`. Use one or the other.",
+                ),
+                isError: true,
+              };
+            }
+            // `clearThinking` clears BOTH thinking and the budget (a budget
+            // without a mode is meaningless). Setting `thinkingBudgetTokens`
+            // alongside `clearThinking` would produce an orphan budget on
+            // disk: the merge below deletes both fields when thinking is
+            // null, then re-sets the budget from the patch. Live runtime
+            // stays consistent (the handler's updateConfig call clears
+            // both) but disk diverges, surfacing at next restart. Reject
+            // the combination at the input boundary instead.
+            if (input.thinkingBudgetTokens !== undefined && input.thinkingBudgetTokens !== null) {
+              return {
+                content: textContent(
+                  "Cannot set `thinkingBudgetTokens` while clearing `thinking` — " +
+                    "clearing the mode also clears the budget. Drop one or the other.",
                 ),
                 isError: true,
               };

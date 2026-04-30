@@ -330,6 +330,15 @@ function buildMessagesFromEvents(events: readonly ConversationEvent[]): StoredMe
         // For the orphaned-tool-calls case we always use marker text:
         // the reasoning may end mid-tool-call-intent, and the marker is
         // the load-bearing signal to the model on retry.
+        //
+        // Behavior change vs. the pre-block-ordering reconstructor: when
+        // a turn has both signed and unsigned reasoning blocks, only the
+        // signed ones are kept in the placeholder. The old code kept all
+        // reasoning blocks as long as ANY had a signature; the unsigned
+        // blocks would then be silently dropped by the AI SDK provider on
+        // the next prompt with an "unsupported reasoning metadata" warning.
+        // Filtering up-front is more honest — the reconstructed message
+        // accurately reflects what the next call will actually send.
         const reasoningWithMeta = replayContent.filter(
           (c): c is LanguageModelV3Content & { type: "reasoning" } =>
             c.type === "reasoning" &&

@@ -18,8 +18,23 @@ export interface CliFlags {
   defaultWorkDir?: string;
 }
 
-/** Validate config file contents using JSON Schema. Throws on structural errors, warns on unknown keys. */
-function validateConfig(config: Record<string, unknown>, path: string): void {
+/**
+ * Validate config file contents using JSON Schema. Throws on structural
+ * errors. Warns on unknown keys when `warnUnknownKeys` is true (default).
+ *
+ * The override file is written by `set_model_config` and contains a known
+ * small surface — its valid keys (e.g., `thinking`, `thinkingBudgetTokens`)
+ * are not yet in the published JSON schema, so unknown-key warnings would
+ * fire on every boot for any tenant that's run `set_model_config`. The
+ * structural validation (type errors) still fires; only the key-name
+ * warning is suppressed for that file.
+ */
+function validateConfig(
+  config: Record<string, unknown>,
+  path: string,
+  opts: { warnUnknownKeys?: boolean } = {},
+): void {
+  const warnUnknownKeys = opts.warnUnknownKeys ?? true;
   const validate = getValidator();
   const valid = validate(config);
 
@@ -38,8 +53,10 @@ function validateConfig(config: Record<string, unknown>, path: string): void {
       }
     }
 
-    for (const key of warnings) {
-      console.error(`[config] Warning: unknown key "${key}" in ${path} (ignored)`);
+    if (warnUnknownKeys) {
+      for (const key of warnings) {
+        console.error(`[config] Warning: unknown key "${key}" in ${path} (ignored)`);
+      }
     }
 
     if (errors.length > 0) {
@@ -95,7 +112,11 @@ export function loadConfig(flags: CliFlags = {}): RuntimeConfig {
     try {
       const overrideRaw = readFileSync(configOverridePath, "utf-8");
       const override = JSON.parse(overrideRaw) as Record<string, unknown>;
-      validateConfig(override, configOverridePath);
+      // Suppress unknown-key warnings: the override file's vocabulary
+      // (thinking, thinkingBudgetTokens) is not yet in the published
+      // JSON schema, and warning every boot for every tenant that's
+      // run set_model_config is noise. Structural errors still throw.
+      validateConfig(override, configOverridePath, { warnUnknownKeys: false });
       const overrideKeys = Object.keys(override);
       if (overrideKeys.length > 0) {
         fileConfig = mergeConfigs(seedConfig, override) as Partial<RuntimeConfig> &

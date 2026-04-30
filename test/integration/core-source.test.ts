@@ -385,6 +385,45 @@ describe("Core Source", () => {
 		}
 	});
 
+	it("nb__set_model_config rejects clearThinking=true + thinkingBudgetTokens together (would orphan the budget on disk)", async () => {
+		// Without this guard, the disk-side merge:
+		//   - L430: input.thinking === null → delete existing.thinking + budget
+		//   - L441: input.thinkingBudgetTokens !== undefined/null → re-set budget
+		// produced { thinkingBudgetTokens: 4096 } with no thinking — an orphan
+		// budget on disk. Live runtime stayed clean (handler passes both as
+		// null to updateConfig when input.thinking === null), so the divergence
+		// surfaces only on next restart. Reject the combination at the input
+		// boundary instead.
+		const workDir = join(testDir, `work-clear-orphan-${Date.now()}`);
+		mkdirSync(workDir, { recursive: true });
+		const configPath = join(workDir, "nimblebrain.json");
+		const overridePath = deriveOverridePath(configPath);
+		writeFileSync(configPath, JSON.stringify({ version: "1" }));
+
+		const runtime = await Runtime.start({
+			model: { provider: "custom", adapter: createEchoModel() },
+			noDefaultBundles: true,
+			workDir,
+			configPath,
+			logging: { disabled: true },
+		});
+		try {
+			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
+			const result = await source.execute("set_model_config", {
+				clearThinking: true,
+				thinkingBudgetTokens: 4096,
+			});
+			expect(result.isError).toBe(true);
+			expect(extractText(result.content)).toContain(
+				"Cannot set `thinkingBudgetTokens` while clearing `thinking`",
+			);
+			// Override file untouched on validation failure.
+			expect(existsSync(overridePath)).toBe(false);
+		} finally {
+			await runtime.shutdown();
+		}
+	});
+
 	it("nb__set_model_config rejects ambiguous thinking + clearThinking together", async () => {
 		const workDir = join(testDir, `work-clear-ambiguous-${Date.now()}`);
 		mkdirSync(workDir, { recursive: true });
