@@ -232,10 +232,16 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
             }
           }
 
-          const configPath = runtime.getConfigPath();
-          if (!configPath) {
+          // Writes go to the override file, NOT the Helm-managed seed.
+          // The init container overwrites the seed on every deploy, so any
+          // value written here would last only until the next rollout. The
+          // override file is a sibling on the PVC that the init container
+          // leaves alone, so user changes survive deploys. The runtime
+          // loader merges seed → override at startup; override values win.
+          const configOverridePath = runtime.getConfigOverridePath();
+          if (!configOverridePath) {
             return {
-              content: textContent("No config file path available. Cannot persist changes."),
+              content: textContent("No config override path available. Cannot persist changes."),
               isError: true,
             };
           }
@@ -358,37 +364,40 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
             }
           }
 
-          // Read current config
+          // Read current override file (the one we'll patch and write back).
+          // The seed file is read separately by the runtime loader; we only
+          // touch overrides here.
           let existing: Record<string, unknown> = {};
           try {
-            const raw = await readFile(configPath, "utf-8");
+            const raw = await readFile(configOverridePath, "utf-8");
             existing = JSON.parse(raw);
           } catch {
-            // File doesn't exist or invalid — start fresh
+            // Override file doesn't exist yet (fresh deploy / first call) —
+            // start with empty overrides.
           }
 
           // Cross-field validation: thinking="enabled" requires a budget,
-          // either from this patch or already in the persisted config.
-          // Without one, the Anthropic SDK silently downgrades to its
-          // 1,024-token minimum — almost certainly not the operator's
-          // intent. Force the explicit choice.
+          // either from this patch or already in the *effective* config
+          // (seed + overrides). Without one, the Anthropic SDK silently
+          // downgrades to its 1,024-token minimum — almost certainly not
+          // the operator's intent. Force the explicit choice.
           //
-          // Important edge case: when the patch is *clearing* the budget
+          // Edge case: when the patch is *clearing* the budget
           // (thinkingBudgetTokens=null), the merge below deletes the
-          // existing budget. The validator must mirror that — treating
-          // existingBudget as gone — so a patch like
-          //   { thinking: "enabled", thinkingBudgetTokens: null }
-          // can't slip past by relying on a budget the merge will drop.
+          // override-side budget. After clear, the effective budget falls
+          // back to the seed's budget (if any). The validator must mirror
+          // that — read the merged effective state from the runtime, not
+          // just the override file.
           if (input.thinking === "enabled") {
             const clearingBudget = input.thinkingBudgetTokens === null;
             const patchBudget =
               !clearingBudget && input.thinkingBudgetTokens !== undefined
                 ? Number(input.thinkingBudgetTokens)
                 : undefined;
-            const existingBudget = clearingBudget
+            const effectiveBudget = clearingBudget
               ? undefined
-              : (existing.thinkingBudgetTokens as number | undefined);
-            if (patchBudget == null && existingBudget == null) {
+              : runtime.getRuntimeConfig().thinkingBudgetTokens;
+            if (patchBudget == null && effectiveBudget == null) {
               return {
                 content: textContent(
                   'thinking="enabled" requires thinkingBudgetTokens (≥ 1024). ' +
@@ -431,10 +440,10 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
           } else if (input.thinkingBudgetTokens !== undefined) {
             existing.thinkingBudgetTokens = Number(input.thinkingBudgetTokens);
           }
-          // Atomic write: write to temp file, then rename
-          const tmpPath = `${configPath}.tmp.${Date.now()}`;
+          // Atomic write of the override file: write to temp file, then rename.
+          const tmpPath = `${configOverridePath}.tmp.${Date.now()}`;
           await writeFile(tmpPath, `${JSON.stringify(existing, null, 2)}\n`, "utf-8");
-          await rename(tmpPath, configPath);
+          await rename(tmpPath, configOverridePath);
 
           // Apply changes to live runtime config
           const modelsPatch =

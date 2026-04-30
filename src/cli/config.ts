@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { getValidator } from "../config/index.ts";
+import { deriveOverridePath, mergeConfigs } from "../config/overrides.ts";
 import type { RuntimeConfig } from "../runtime/types.ts";
 
 const DEFAULT_CONFIG_FILE = "nimblebrain.json";
@@ -67,12 +68,13 @@ function resolveConfigPath(flags: CliFlags): string {
 /** Load RuntimeConfig from a nimblebrain.json file, merged with CLI flags. */
 export function loadConfig(flags: CliFlags = {}): RuntimeConfig {
   const configPath = resolveConfigPath(flags);
+  const configOverridePath = deriveOverridePath(configPath);
 
-  let fileConfig: Partial<RuntimeConfig> & Record<string, unknown> = {};
+  let seedConfig: Record<string, unknown> = {};
   if (existsSync(configPath)) {
     const raw = readFileSync(configPath, "utf-8");
-    fileConfig = JSON.parse(raw);
-    validateConfig(fileConfig, configPath);
+    seedConfig = JSON.parse(raw);
+    validateConfig(seedConfig, configPath);
   } else if (flags.config) {
     // Explicit --config/-c path must exist
     throw new Error(`Config file not found: ${configPath}`);
@@ -80,6 +82,35 @@ export function loadConfig(flags: CliFlags = {}): RuntimeConfig {
     // Auto-create default config if the parent directory exists
     if (existsSync(dirname(configPath))) {
       writeFileSync(configPath, `${JSON.stringify(DEFAULT_CONFIG_CONTENT, null, 2)}\n`, "utf-8");
+    }
+  }
+
+  // Layer the override file (if present) over the seed. The override is
+  // user-managed (set_model_config writes here) and preserved across
+  // deploys; the seed is operator-managed and overwritten on every deploy
+  // by the init container. Override values win on every key.
+  let fileConfig: Partial<RuntimeConfig> & Record<string, unknown> =
+    seedConfig as Partial<RuntimeConfig> & Record<string, unknown>;
+  if (existsSync(configOverridePath)) {
+    try {
+      const overrideRaw = readFileSync(configOverridePath, "utf-8");
+      const override = JSON.parse(overrideRaw) as Record<string, unknown>;
+      validateConfig(override, configOverridePath);
+      const overrideKeys = Object.keys(override);
+      if (overrideKeys.length > 0) {
+        fileConfig = mergeConfigs(seedConfig, override) as Partial<RuntimeConfig> &
+          Record<string, unknown>;
+        console.error(
+          `[config] Applied ${overrideKeys.length} runtime override${overrideKeys.length === 1 ? "" : "s"} from ${configOverridePath}: ${overrideKeys.join(", ")}`,
+        );
+      }
+    } catch (err) {
+      // A malformed override file should NOT take down startup — the seed
+      // is still valid and the operator can fix the override file later.
+      // Log loudly so the divergence is visible.
+      console.error(
+        `[config] Failed to load override file ${configOverridePath}: ${err instanceof Error ? err.message : String(err)}. Using seed config only.`,
+      );
     }
   }
 
@@ -120,6 +151,8 @@ export function loadConfig(flags: CliFlags = {}): RuntimeConfig {
     maxOutputTokens: fileConfig.maxOutputTokens,
     maxHistoryMessages: fileConfig.maxHistoryMessages,
     maxToolResultSize: fileConfig.maxToolResultSize,
+    thinking: fileConfig.thinking as RuntimeConfig["thinking"],
+    thinkingBudgetTokens: fileConfig.thinkingBudgetTokens as RuntimeConfig["thinkingBudgetTokens"],
     events: fileConfig.events,
     logging: fileConfig.logging as RuntimeConfig["logging"],
     http: fileConfig.http as RuntimeConfig["http"],
@@ -127,6 +160,7 @@ export function loadConfig(flags: CliFlags = {}): RuntimeConfig {
     files: fileConfig.files as RuntimeConfig["files"],
     // Pass config path for bundle install/uninstall persistence
     configPath,
+    configOverridePath,
     workDir:
       process.env.NB_WORK_DIR ?? (fileConfig.workDir as string | undefined) ?? flags.defaultWorkDir,
     telemetry: fileConfig.telemetry as RuntimeConfig["telemetry"],

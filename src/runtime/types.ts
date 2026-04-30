@@ -125,8 +125,17 @@ export interface RuntimeConfig {
   /** Confirmation gate for privileged operations and credential prompts. */
   confirmationGate?: ConfirmationGate;
 
-  /** Path to nimblebrain.json. Used for config persistence. */
+  /** Path to nimblebrain.json. The Helm-managed seed file. Overwritten on every deploy. */
   configPath?: string;
+
+  /**
+   * Path to nimblebrain.overrides.json. The user-managed override file written
+   * by `set_model_config`. Preserved across deploys (init container leaves it
+   * alone). Loaded by `loadConfig` and 1-level deep-merged over the seed —
+   * override values win. Defaults to a sibling of `configPath` (`<dir>/
+   * nimblebrain.overrides.json`).
+   */
+  configOverridePath?: string;
 
   /**
    * Working directory for all runtime state (conversations, skills, cache).
