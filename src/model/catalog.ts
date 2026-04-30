@@ -71,6 +71,36 @@ type CatalogData = Record<
 const data = catalogData as CatalogData;
 
 /**
+ * Reverse lookup: bare model id → owning provider. Built once at module
+ * load (O(N) over all catalog entries). Lets `findProviderForModelId`
+ * answer in O(1) and gives us a place to surface duplicate ids — if the
+ * same id is declared under two providers, routing of the bare id silently
+ * depends on JSON insertion order, which is not a contract we want.
+ *
+ * Logs a warning rather than throwing: duplicates are a data hygiene
+ * issue, not a fatal one. The first-seen provider wins, matching prior
+ * behavior.
+ */
+const idToProvider: Map<string, string> = (() => {
+  const map = new Map<string, string>();
+  for (const [provider, p] of Object.entries(data)) {
+    for (const id of Object.keys(p.models)) {
+      const existing = map.get(id);
+      if (existing) {
+        console.warn(
+          `[catalog] Duplicate model id "${id}" appears in providers "${existing}" and "${provider}". ` +
+            `findProviderForModelId will return "${existing}" (first seen); routing of the bare id ` +
+            `should not depend on iteration order. Qualify with "<provider>:" or rename one entry.`,
+        );
+      } else {
+        map.set(id, provider);
+      }
+    }
+  }
+  return map;
+})();
+
+/**
  * Look up a model by provider and model ID.
  * Returns undefined if not in catalog.
  */
@@ -93,17 +123,15 @@ export function getModelByString(modelString: string): CatalogModel | undefined 
 
 /**
  * Find which provider in the catalog owns the given bare model id.
- * Returns the first match (catalog ids are unique across providers in
- * practice). Used by the resolver to rescue bare ids written to disk
- * before the settings UI started encoding `provider:` into option values.
+ * Used by the resolver to rescue bare ids written to disk before the
+ * settings UI started encoding `provider:` into option values.
  *
- * Returns null when the id isn't in any provider's catalog.
+ * Returns null when the id isn't in any provider's catalog. O(1) via
+ * the precomputed `idToProvider` map; duplicates surface as warnings
+ * at module load.
  */
 export function findProviderForModelId(modelId: string): string | null {
-  for (const [provider, p] of Object.entries(data)) {
-    if (modelId in p.models) return provider;
-  }
-  return null;
+  return idToProvider.get(modelId) ?? null;
 }
 
 /**

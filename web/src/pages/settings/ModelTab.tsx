@@ -96,9 +96,23 @@ export function ModelTab() {
     callTool("nb", "get_config")
       .then((res) => {
         const config = parseToolResult<ModelConfig>(res);
-        setDefaultModel(config.models.default ?? "");
-        setFastModel(config.models.fast ?? "");
-        setReasoningModel(config.models.reasoning ?? "");
+        // Qualify bare model ids (legacy disk state from older UI versions
+        // that wrote `m.id` without the `provider:` prefix). Without this,
+        // those bare ids don't match any option value and the dropdown
+        // shows the placeholder even though routing works at runtime via
+        // the catalog fallback in `resolveModelString`. Re-saving with a
+        // qualified value also migrates the persisted state.
+        const qualify = (id: string | undefined): string => {
+          if (!id) return "";
+          if (id.includes(":")) return id;
+          for (const [provider, models] of Object.entries(config.availableModels ?? {})) {
+            if (models.some((m) => m.id === id)) return `${provider}:${id}`;
+          }
+          return id; // unknown — leave as-is so the field still shows the value
+        };
+        setDefaultModel(qualify(config.models.default));
+        setFastModel(qualify(config.models.fast));
+        setReasoningModel(qualify(config.models.reasoning));
         setMaxIterations(config.maxIterations ?? 10);
         setMaxInputTokens(config.maxInputTokens ?? 500000);
         setMaxOutputTokens(config.maxOutputTokens ?? 16384);
