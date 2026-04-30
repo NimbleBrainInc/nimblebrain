@@ -1,13 +1,14 @@
 import { describe, expect, it } from "bun:test";
 import {
+	estimateCost,
+	findProviderForModelId,
+	getAvailableModels,
 	getModel,
 	getModelByString,
+	getProviderName,
+	isModelAllowed,
 	listModels,
 	listProviders,
-	getProviderName,
-	getAvailableModels,
-	isModelAllowed,
-	estimateCost,
 } from "../../src/model/catalog.ts";
 
 describe("Model Catalog", () => {
@@ -75,6 +76,30 @@ describe("Model Catalog", () => {
 		const all = listModels("anthropic");
 		const withEmpty = listModels("anthropic", []);
 		expect(withEmpty.length).toBe(all.length);
+	});
+});
+
+describe("findProviderForModelId", () => {
+	it("returns the owning provider for a known anthropic id", () => {
+		expect(findProviderForModelId("claude-sonnet-4-6")).toBe("anthropic");
+	});
+
+	it("returns the owning provider for a known google id", () => {
+		expect(findProviderForModelId("gemini-3.1-pro-preview")).toBe("google");
+	});
+
+	it("returns the owning provider for a known openai id", () => {
+		expect(findProviderForModelId("gpt-4o")).toBe("openai");
+	});
+
+	it("returns null for an unknown model id", () => {
+		// Pinned/custom model ids that aren't in the catalog should fall back
+		// to the resolver's anthropic-default path, not to a wrong provider.
+		expect(findProviderForModelId("custom-fine-tune-not-in-catalog")).toBeNull();
+	});
+
+	it("returns null for the empty string", () => {
+		expect(findProviderForModelId("")).toBeNull();
 	});
 });
 

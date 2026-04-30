@@ -6,9 +6,32 @@ import {
 } from "../../src/model/registry.ts";
 
 describe("resolveModelString", () => {
-  it("prefixes bare string with anthropic:", () => {
+  it("looks up bare anthropic model id in the catalog", () => {
     expect(resolveModelString("claude-sonnet-4-6")).toBe(
       "anthropic:claude-sonnet-4-6",
+    );
+  });
+
+  it("looks up bare google model id in the catalog (fixes UI sending bare gemini ids to anthropic)", () => {
+    // Regression: the settings UI used to write `gemini-3.1-pro-preview`
+    // as the saved value (no `google:` prefix). Without the catalog
+    // fallback, that id defaulted to `anthropic:` and 404'd against
+    // the Anthropic API.
+    expect(resolveModelString("gemini-3.1-pro-preview")).toBe(
+      "google:gemini-3.1-pro-preview",
+    );
+  });
+
+  it("looks up bare openai model id in the catalog", () => {
+    expect(resolveModelString("gpt-4o")).toBe("openai:gpt-4o");
+  });
+
+  it("falls back to anthropic for bare ids not in the catalog (backward compat)", () => {
+    // Bespoke / pinned model ids that pre-date the catalog still default
+    // to anthropic — preserves the historical behavior for tenants who
+    // configured custom model strings.
+    expect(resolveModelString("custom-fine-tune-not-in-catalog")).toBe(
+      "anthropic:custom-fine-tune-not-in-catalog",
     );
   });
 

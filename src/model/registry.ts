@@ -3,6 +3,7 @@ import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenAI } from "@ai-sdk/openai";
 import type { LanguageModelV3, ProviderV3 } from "@ai-sdk/provider";
 import { createProviderRegistry, type Provider } from "ai";
+import { findProviderForModelId } from "./catalog.ts";
 
 export interface ProvidersConfig {
   providers?: {
@@ -41,11 +42,24 @@ export function buildRegistry(config: ProvidersConfig): Provider {
 
 /**
  * Resolve a model string to provider:model-id format.
- * Bare strings (no `:`) are prefixed with `anthropic:` for backward compat.
+ *
+ * - `provider:model-id` strings pass through unchanged.
+ * - Bare strings are looked up in the catalog and routed to whichever
+ *   provider declares them. This rescues bare ids that the settings UI
+ *   wrote before it started encoding the provider into option values
+ *   (e.g., `gemini-3.1-pro-preview` saved by an older client) — without
+ *   the catalog lookup, those ids would default to anthropic and 404.
+ * - Bare strings not in the catalog fall back to `anthropic:` for
+ *   backward compat with bespoke / pinned model ids that pre-date the
+ *   catalog-driven UI.
  */
 export function resolveModelString(model: string): string {
   if (model.includes(":")) {
     return model;
+  }
+  const catalogProvider = findProviderForModelId(model);
+  if (catalogProvider) {
+    return `${catalogProvider}:${model}`;
   }
   return `anthropic:${model}`;
 }

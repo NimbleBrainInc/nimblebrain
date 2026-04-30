@@ -53,11 +53,18 @@ function ModelSelect({
         <option value="">Select a model</option>
         {Object.entries(availableModels).map(([provider, models]) => (
           <optgroup key={provider} label={provider}>
-            {models.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.id} (in: {m.cost.input}, out: {m.cost.output})
-              </option>
-            ))}
+            {models.map((m) => {
+              // Persisted model ids are fully-qualified `provider:id` strings;
+              // the resolver routes bare ids to anthropic by default, so a
+              // selected `gemini-3.1-pro-preview` would 404 against the
+              // Anthropic API. Encode the provider into the option value.
+              const qualified = `${provider}:${m.id}`;
+              return (
+                <option key={qualified} value={qualified}>
+                  {m.id} (in: {m.cost.input}, out: {m.cost.output})
+                </option>
+              );
+            })}
           </optgroup>
         ))}
       </Select>
@@ -89,9 +96,23 @@ export function ModelTab() {
     callTool("nb", "get_config")
       .then((res) => {
         const config = parseToolResult<ModelConfig>(res);
-        setDefaultModel(config.models.default ?? "");
-        setFastModel(config.models.fast ?? "");
-        setReasoningModel(config.models.reasoning ?? "");
+        // Qualify bare model ids (legacy disk state from older UI versions
+        // that wrote `m.id` without the `provider:` prefix). Without this,
+        // those bare ids don't match any option value and the dropdown
+        // shows the placeholder even though routing works at runtime via
+        // the catalog fallback in `resolveModelString`. Re-saving with a
+        // qualified value also migrates the persisted state.
+        const qualify = (id: string | undefined): string => {
+          if (!id) return "";
+          if (id.includes(":")) return id;
+          for (const [provider, models] of Object.entries(config.availableModels ?? {})) {
+            if (models.some((m) => m.id === id)) return `${provider}:${id}`;
+          }
+          return id; // unknown — leave as-is so the field still shows the value
+        };
+        setDefaultModel(qualify(config.models.default));
+        setFastModel(qualify(config.models.fast));
+        setReasoningModel(qualify(config.models.reasoning));
         setMaxIterations(config.maxIterations ?? 10);
         setMaxInputTokens(config.maxInputTokens ?? 500000);
         setMaxOutputTokens(config.maxOutputTokens ?? 16384);

@@ -43,7 +43,7 @@ import { createIdentityProvider } from "../identity/provider.ts";
 import { DEV_IDENTITY } from "../identity/providers/dev.ts";
 import { UserStore } from "../identity/user.ts";
 import { InstructionsStore } from "../instructions/index.ts";
-import { buildModelResolver } from "../model/registry.ts";
+import { buildModelResolver, resolveModelString } from "../model/registry.ts";
 import type { Layer3SkillEntry, PromptAppInfo } from "../prompt/compose.ts";
 import { composeSystemPrompt } from "../prompt/compose.ts";
 import {
@@ -785,6 +785,15 @@ export class Runtime {
     if (aliasSlot) {
       resolvedModelString = this.getModelSlot(aliasSlot);
     }
+    // Qualify bare model ids at the request-entry boundary. Slot-read
+    // values are already qualified by `getModelSlots()`, but the per-
+    // request `request.model` override path bypasses that reader, so
+    // we normalize once here to cover both. Belt-and-suspenders with
+    // the slot reader: the rest of the pipeline (cost aggregation,
+    // capability checks, max-output and thinking resolvers, provider-
+    // options shape, log lines) reads `engineConfig.model` directly
+    // and depends on it being qualified.
+    resolvedModelString = resolveModelString(resolvedModelString);
 
     // Resolve maxOutputTokens FIRST — resolveThinking needs it to clamp the
     // thinking budget so visible-content headroom is always preserved.
@@ -1388,22 +1397,31 @@ export class Runtime {
 
   /** Get the resolved model slots (all three, with fallback logic).
    *  When a workspace model override is active (set per-request in chat()),
-   *  workspace slots are merged over instance defaults. */
+   *  workspace slots are merged over instance defaults.
+   *
+   *  All slot values are returned in fully-qualified `provider:id` form.
+   *  Stored config can contain bare ids (legacy state from older settings
+   *  UI saves); qualifying at the slot reader means every consumer of
+   *  this method — engine config, get_config tool (which feeds the
+   *  dropdown), telemetry, briefing — sees the same qualified shape
+   *  without each having to remember to call `resolveModelString`. The
+   *  per-request `request.model` override path (in `chat()`) qualifies
+   *  separately because it bypasses this reader. */
   getModelSlots(): ModelSlots {
     const models = this.config.models;
     const fallback = this.config.defaultModel ?? DEFAULT_MODEL;
     const base: ModelSlots = {
-      default: models?.default ?? fallback,
-      fast: models?.fast ?? fallback,
-      reasoning: models?.reasoning ?? fallback,
+      default: resolveModelString(models?.default ?? fallback),
+      fast: resolveModelString(models?.fast ?? fallback),
+      reasoning: resolveModelString(models?.reasoning ?? fallback),
     };
     // Merge workspace model overrides from request context (partial — only overrides specified slots)
     const wsModels = getRequestContext()?.workspaceModelOverride;
     if (wsModels) {
       return {
-        default: wsModels.default ?? base.default,
-        fast: wsModels.fast ?? base.fast,
-        reasoning: wsModels.reasoning ?? base.reasoning,
+        default: wsModels.default ? resolveModelString(wsModels.default) : base.default,
+        fast: wsModels.fast ? resolveModelString(wsModels.fast) : base.fast,
+        reasoning: wsModels.reasoning ? resolveModelString(wsModels.reasoning) : base.reasoning,
       };
     }
     return base;
