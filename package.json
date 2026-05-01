@@ -83,6 +83,7 @@
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@nimblebrain/mpak-sdk": "0.6.0",
     "@nimblebrain/synapse": "^0.8.0",
+    "@sinclair/typebox": "^0.34.49",
     "@workos-inc/node": "^8.12.1",
     "ai": "^6.0.138",
     "ajv": "^8.18.0",
