@@ -19,6 +19,7 @@ import {
   ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { aggregateUsage } from "../../../conversation/usage-aggregator.ts";
+import { UsageReportInput } from "../../../tools/platform/schemas/usage.ts";
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -39,29 +40,7 @@ const TOOLS = [
   {
     name: "report",
     description: "Get aggregated usage data (tokens, cost, tool calls) from conversation files.",
-    inputSchema: {
-      type: "object" as const,
-      properties: {
-        period: {
-          type: "string",
-          enum: ["day", "week", "month", "all"],
-          description: "Time period. Default: month.",
-        },
-        from: {
-          type: "string",
-          description: "Start date (YYYY-MM-DD). Overrides period.",
-        },
-        to: {
-          type: "string",
-          description: "End date (YYYY-MM-DD). Default: today.",
-        },
-        groupBy: {
-          type: "string",
-          enum: ["day", "conversation", "model"],
-          description: "Group breakdown. Default: day.",
-        },
-      },
-    },
+    inputSchema: UsageReportInput,
   },
 ];
 

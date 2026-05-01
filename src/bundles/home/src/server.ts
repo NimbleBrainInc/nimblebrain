@@ -18,6 +18,7 @@ import {
   ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 
+import { HomeActivityInput } from "../../../tools/platform/schemas/home.ts";
 import { ActivityCollector } from "./services/activity-collector.ts";
 
 // ---------------------------------------------------------------------------
@@ -54,28 +55,7 @@ const TOOLS = [
     name: "activity",
     description:
       "Get raw workspace activity data — conversations, tool usage, bundle events, and errors. Use for specific questions about workspace activity.",
-    inputSchema: {
-      type: "object" as const,
-      properties: {
-        since: {
-          type: "string",
-          description: "ISO timestamp. Default: 24 hours ago.",
-        },
-        until: {
-          type: "string",
-          description: "ISO timestamp. Default: now.",
-        },
-        category: {
-          type: "string",
-          enum: ["conversations", "bundles", "tools", "errors"],
-          description: "Filter to one category.",
-        },
-        limit: {
-          type: "number",
-          description: "Max items per category. Default: 50.",
-        },
-      },
-    },
+    inputSchema: HomeActivityInput,
   },
 ];
 
