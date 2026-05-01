@@ -1,5 +1,12 @@
 import type { Static, TSchema } from "@sinclair/typebox";
+import * as Automations from "./automations.ts";
+import * as Compose from "./compose.ts";
+import * as Conversations from "./conversations.ts";
+import * as Files from "./files.ts";
+import * as Home from "./home.ts";
+import * as Instructions from "./instructions.ts";
 import * as Skills from "./skills.ts";
+import * as Usage from "./usage.ts";
 
 // Registry mapping (source, tool) → input schema. The web client and any
 // other typed caller reads this catalog to derive `callTool` argument
@@ -17,6 +24,46 @@ export const PlatformToolCatalog = {
     activate: { input: Skills.SkillsActivateInput },
     deactivate: { input: Skills.SkillsDeactivateInput },
     move_scope: { input: Skills.SkillsMoveScopeInput },
+  },
+  home: {
+    activity: { input: Home.HomeActivityInput },
+  },
+  usage: {
+    report: { input: Usage.UsageReportInput },
+  },
+  instructions: {
+    write_instructions: { input: Instructions.InstructionsWriteInput },
+  },
+  compose: {
+    effective_context: { input: Compose.ComposeEffectiveContextInput },
+  },
+  automations: {
+    create: { input: Automations.AutomationsCreateInput },
+    update: { input: Automations.AutomationsUpdateInput },
+    delete: { input: Automations.AutomationsDeleteInput },
+    list: { input: Automations.AutomationsListInput },
+    status: { input: Automations.AutomationsStatusInput },
+    runs: { input: Automations.AutomationsRunsInput },
+    run: { input: Automations.AutomationsRunInput },
+    cancel: { input: Automations.AutomationsCancelInput },
+  },
+  conversations: {
+    list: { input: Conversations.ConversationsListInput },
+    get: { input: Conversations.ConversationsGetInput },
+    search: { input: Conversations.ConversationsSearchInput },
+    update: { input: Conversations.ConversationsUpdateInput },
+    fork: { input: Conversations.ConversationsForkInput },
+    stats: { input: Conversations.ConversationsStatsInput },
+    export: { input: Conversations.ConversationsExportInput },
+  },
+  files: {
+    list: { input: Files.FilesListInput },
+    search: { input: Files.FilesSearchInput },
+    read: { input: Files.FilesReadInput },
+    create: { input: Files.FilesCreateInput },
+    info: { input: Files.FilesInfoInput },
+    tag: { input: Files.FilesTagInput },
+    delete: { input: Files.FilesDeleteInput },
   },
 } as const satisfies Record<string, Record<string, { input: TSchema }>>;
 

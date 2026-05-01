@@ -1,23 +1,5 @@
 import { type Static, Type } from "@sinclair/typebox";
-
-// `Type.Union([Type.Literal(...)])` produces `anyOf` of `const`-shaped
-// alternatives. The platform's existing inline schemas use the older
-// `{ type: "string", enum: [...] }` form, which is what AJV and external
-// MCP clients expect. These helpers emit that exact JSON Schema while
-// preserving the literal-narrowed TS type.
-function StringEnum<T extends string>(
-  values: readonly T[],
-  options: { description?: string } = {},
-) {
-  return Type.Unsafe<T>({ type: "string", enum: [...values], ...options });
-}
-
-function NumberEnum<T extends number>(
-  values: readonly T[],
-  options: { description?: string } = {},
-) {
-  return Type.Unsafe<T>({ type: "number", enum: [...values], ...options });
-}
+import { NumberEnum, StringEnum } from "./_shared.ts";
 
 // ── Shared building blocks ───────────────────────────────────────────────
 

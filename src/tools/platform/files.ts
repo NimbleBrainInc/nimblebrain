@@ -23,6 +23,15 @@ import type { Runtime } from "../../runtime/runtime.ts";
 import { defineInProcessApp, type InProcessTool } from "../in-process-app.ts";
 import type { McpSource } from "../mcp-source.ts";
 import { FILES_BROWSER_HTML } from "../platform-resources/files/browser.ts";
+import {
+  FilesCreateInput,
+  FilesDeleteInput,
+  FilesInfoInput,
+  FilesListInput,
+  FilesReadInput,
+  FilesSearchInput,
+  FilesTagInput,
+} from "./schemas/files.ts";
 
 // ---------------------------------------------------------------------------
 // Tool handler helpers
@@ -211,34 +220,7 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
       name: "list",
       description:
         "List files in the workspace with pagination, filtering by tags or MIME type, and sorting.",
-      inputSchema: {
-        type: "object" as const,
-        properties: {
-          limit: {
-            type: "number",
-            description: "Max files to return. Default: 20.",
-          },
-          offset: {
-            type: "number",
-            description: "Number of files to skip. Default: 0.",
-          },
-          tags: {
-            type: "array",
-            items: { type: "string" },
-            description: "Filter by tags (files must have ALL specified tags).",
-          },
-          mimeType: {
-            type: "string",
-            description:
-              "Filter by MIME type prefix (e.g. 'image/' matches image/png, image/jpeg).",
-          },
-          sort: {
-            type: "string",
-            enum: ["createdAt", "filename", "size"],
-            description: 'Sort field. Default: "createdAt".',
-          },
-        },
-      },
+      inputSchema: FilesListInput,
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         try {
           return ok(await handleList(getStore(), input as unknown as ListInput));
@@ -251,29 +233,7 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
       name: "search",
       description:
         "Search files by keyword. Case-insensitive substring match on filename, description, and tags.",
-      inputSchema: {
-        type: "object" as const,
-        properties: {
-          query: {
-            type: "string",
-            description: "Search query.",
-          },
-          tags: {
-            type: "array",
-            items: { type: "string" },
-            description: "Filter by tags.",
-          },
-          mimeType: {
-            type: "string",
-            description: "Filter by MIME type prefix.",
-          },
-          limit: {
-            type: "number",
-            description: "Max results. Default: 20.",
-          },
-        },
-        required: ["query"],
-      },
+      inputSchema: FilesSearchInput,
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         try {
           return ok(await handleSearch(getStore(), input as unknown as SearchInput));
@@ -285,16 +245,7 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
     {
       name: "read",
       description: "Read a file's content by ID. Returns base64-encoded data along with metadata.",
-      inputSchema: {
-        type: "object" as const,
-        properties: {
-          id: {
-            type: "string",
-            description: "File ID.",
-          },
-        },
-        required: ["id"],
-      },
+      inputSchema: FilesReadInput,
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         try {
           return ok(await handleRead(getStore(), input as unknown as { id: string }));
@@ -307,39 +258,7 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
       name: "create",
       description:
         "Create a new file in the workspace. `manifest` is the file metadata; `body` is the base64-encoded content.",
-      inputSchema: {
-        type: "object" as const,
-        properties: {
-          manifest: {
-            type: "object",
-            properties: {
-              filename: {
-                type: "string",
-                description: "Filename (e.g. 'logo.png').",
-              },
-              mimeType: {
-                type: "string",
-                description: "MIME type (e.g. 'image/png').",
-              },
-              tags: {
-                type: "array",
-                items: { type: "string" },
-                description: "Optional tags for categorization.",
-              },
-              description: {
-                type: "string",
-                description: "Optional description of the file.",
-              },
-            },
-            required: ["filename", "mimeType"],
-          },
-          body: {
-            type: "string",
-            description: "File content as a base64-encoded string.",
-          },
-        },
-        required: ["manifest", "body"],
-      },
+      inputSchema: FilesCreateInput,
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         try {
           return ok(await handleCreate(getStore(), input as unknown as CreateInput));
@@ -351,16 +270,7 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
     {
       name: "info",
       description: "Get file metadata by ID (no file content returned).",
-      inputSchema: {
-        type: "object" as const,
-        properties: {
-          id: {
-            type: "string",
-            description: "File ID.",
-          },
-        },
-        required: ["id"],
-      },
+      inputSchema: FilesInfoInput,
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         try {
           return ok(await handleInfo(getStore(), input as unknown as { id: string }));
@@ -372,26 +282,7 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
     {
       name: "tag",
       description: "Add or remove tags on a file.",
-      inputSchema: {
-        type: "object" as const,
-        properties: {
-          id: {
-            type: "string",
-            description: "File ID.",
-          },
-          add: {
-            type: "array",
-            items: { type: "string" },
-            description: "Tags to add.",
-          },
-          remove: {
-            type: "array",
-            items: { type: "string" },
-            description: "Tags to remove.",
-          },
-        },
-        required: ["id"],
-      },
+      inputSchema: FilesTagInput,
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         try {
           return ok(await handleTag(getStore(), input as unknown as TagInput));
@@ -404,16 +295,7 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
       name: "delete",
       description:
         "Delete a file by ID. Removes the file from disk and marks it as deleted in the registry.",
-      inputSchema: {
-        type: "object" as const,
-        properties: {
-          id: {
-            type: "string",
-            description: "File ID.",
-          },
-        },
-        required: ["id"],
-      },
+      inputSchema: FilesDeleteInput,
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         try {
           return ok(await handleDelete(getStore(), input as unknown as { id: string }));
