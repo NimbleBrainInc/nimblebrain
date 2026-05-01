@@ -1,5 +1,6 @@
 import { Lightbulb, Plus, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import type { ToolInput } from "@platform/schemas/catalog";
 import { callTool } from "../../api/client";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
@@ -202,19 +203,10 @@ function Inner() {
 
   const handleCreate = useCallback(
     async (input: CreateInput) => {
-      await runMutation(
-        "create",
-        {
-          scope: input.scope,
-          name: input.name,
-          manifest: input.manifest,
-          body: input.body,
-        },
-        (result) => {
-          setCreating(false);
-          if (result.id) setSelectedId(result.id);
-        },
-      );
+      await runMutation("create", input, (result) => {
+        setCreating(false);
+        if (result.id) setSelectedId(result.id);
+      });
     },
     [runMutation],
   );
@@ -366,12 +358,11 @@ function Inner() {
 
 type WritableScope = "org" | "workspace" | "user";
 
-interface CreateInput {
-  scope: WritableScope;
-  name: string;
-  manifest: Record<string, unknown>;
-  body: string;
-}
+// Args shape derived from the schema catalog. `name` lives inside `manifest`
+// because that's where the on-disk frontmatter has it — see the original
+// SkillsTab incident where the form was sending name at the root and the
+// validator rejected it.
+type CreateInput = ToolInput<"skills", "create">;
 
 // ── List view ────────────────────────────────────────────────────────────
 
@@ -655,8 +646,6 @@ interface EditorFormState {
   description: string;
   type: "context" | "skill";
   priority: string; // string for input; parsed on save
-  loadingStrategy: "" | "always" | "tool_affined" | "retrieval" | "explicit";
-  appliesToTools: string; // comma-separated
   status: Status;
   body: string;
 }
@@ -672,26 +661,18 @@ function SkillEditor({
     description: m.description ?? "",
     type: (m.type as "context" | "skill") ?? "skill",
     priority: m.priority !== undefined ? String(m.priority) : "50",
-    loadingStrategy: (m.loadingStrategy as EditorFormState["loadingStrategy"]) ?? "",
-    appliesToTools: (m.appliesToTools ?? []).join(", "),
     status: (m.status as Status) ?? "active",
     body: detail.content,
   });
 
   const handleSave = () => {
-    const patch: Record<string, unknown> = {
+    const priorityNum = Number.parseInt(form.priority, 10);
+    const patch: NonNullable<ToolInput<"skills", "update">["manifest"]> = {
       description: form.description,
       type: form.type,
       status: form.status,
+      ...(Number.isFinite(priorityNum) ? { priority: priorityNum } : {}),
     };
-    const priorityNum = Number.parseInt(form.priority, 10);
-    if (Number.isFinite(priorityNum)) patch.priority = priorityNum;
-    if (form.loadingStrategy) patch["loading-strategy"] = form.loadingStrategy;
-    const tools = form.appliesToTools
-      .split(",")
-      .map((t) => t.trim())
-      .filter(Boolean);
-    patch["applies-to-tools"] = tools;
     onSave({ manifest: patch, body: form.body });
   };
 
@@ -743,28 +724,21 @@ function CreateForm({
     description: "",
     type: "skill",
     priority: "50",
-    loadingStrategy: "",
-    appliesToTools: "",
     status: "active",
     body: "",
   });
 
   const handleSubmit = () => {
     if (!name.trim()) return;
-    const manifest: Record<string, unknown> = {
+    const priorityNum = Number.parseInt(form.priority, 10);
+    const manifest: CreateInput["manifest"] = {
+      name: name.trim(),
       description: form.description,
       type: form.type,
       status: form.status,
+      ...(Number.isFinite(priorityNum) ? { priority: priorityNum } : {}),
     };
-    const priorityNum = Number.parseInt(form.priority, 10);
-    if (Number.isFinite(priorityNum)) manifest.priority = priorityNum;
-    if (form.loadingStrategy) manifest["loading-strategy"] = form.loadingStrategy;
-    const tools = form.appliesToTools
-      .split(",")
-      .map((t) => t.trim())
-      .filter(Boolean);
-    if (tools.length > 0) manifest["applies-to-tools"] = tools;
-    onSubmit({ scope, name: name.trim(), manifest, body: form.body });
+    onSubmit({ scope, manifest, body: form.body });
   };
 
   return (
@@ -896,39 +870,6 @@ function ManifestForm({
             <option value="disabled">disabled</option>
             <option value="archived">archived</option>
           </select>
-        </div>
-      </div>
-      <div className="grid grid-cols-2 gap-3">
-        <div className="space-y-1">
-          <label className="text-xs font-medium" htmlFor="skill-loading">
-            Loading strategy
-          </label>
-          <select
-            id="skill-loading"
-            value={form.loadingStrategy}
-            onChange={(e) =>
-              setForm({
-                ...form,
-                loadingStrategy: e.target.value as EditorFormState["loadingStrategy"],
-              })
-            }
-            className={selectClass}
-          >
-            <option value="">(default)</option>
-            <option value="always">always</option>
-            <option value="tool_affined">tool_affined</option>
-          </select>
-        </div>
-        <div className="space-y-1">
-          <label className="text-xs font-medium" htmlFor="skill-tools">
-            Tool affinity (comma-separated globs)
-          </label>
-          <Input
-            id="skill-tools"
-            value={form.appliesToTools}
-            onChange={(e) => setForm({ ...form, appliesToTools: e.target.value })}
-            placeholder="synapse-collateral__*, synapse-crm__*"
-          />
         </div>
       </div>
     </div>
