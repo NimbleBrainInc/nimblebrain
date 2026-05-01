@@ -225,17 +225,6 @@ function addCacheBreakpoint(messages: LanguageModelV3Message[]): LanguageModelV3
   return result;
 }
 
-const DISCOVERED_TOOL_NAME_RE = /^- \*\*([a-zA-Z0-9_-]+__[a-zA-Z0-9_-]+)\*\*:/gm;
-
-function extractDiscoveredToolNames(text: string): string[] {
-  const names = new Set<string>();
-  for (const match of text.matchAll(DISCOVERED_TOOL_NAME_RE)) {
-    const name = match[1];
-    if (name) names.add(name);
-  }
-  return [...names];
-}
-
 export class AgentEngine {
   constructor(
     private model: LanguageModelV3,
@@ -656,11 +645,15 @@ export class AgentEngine {
             !result.isError &&
             gatedCall.input.scope === "tools"
           ) {
-            const discoveredNames = extractDiscoveredToolNames(llmText);
-            for (const name of discoveredNames) {
+            const structured = result.structuredContent as
+              | { tools?: Array<{ name?: string }> }
+              | undefined;
+            for (const { name } of structured?.tools ?? []) {
+              if (!name) continue;
               if (directToolNames.has(name)) continue;
               const schema = allToolSchemaMap.get(name);
               if (!schema) continue;
+              if (schema.annotations?.["ai.nimblebrain/internal"]) continue;
               directTools.push(schema);
               directToolNames.add(name);
             }

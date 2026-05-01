@@ -57,6 +57,10 @@ async function makeRegistry(): Promise<ToolRegistry> {
 	return registry;
 }
 
+function getStructured<T>(result: { structuredContent?: unknown }): T | undefined {
+	return result.structuredContent as T | undefined;
+}
+
 describe("System Tools", () => {
 	it("search with scope=tools returns matching tools by substring", async () => {
 		const registry = await makeRegistry();
@@ -67,6 +71,9 @@ describe("System Tools", () => {
 		});
 		expect(result.isError).toBe(false);
 		expect(extractText(result.content)).toContain("test__greet");
+		expect(getStructured<{ tools?: Array<{ name: string }> }>(result)?.tools).toEqual([
+			{ name: "test__greet" },
+		]);
 	});
 
 	it("search with scope=tools and empty query returns all tools grouped", async () => {
@@ -87,6 +94,38 @@ describe("System Tools", () => {
 		});
 		expect(result.isError).toBe(false);
 		expect(extractText(result.content)).toContain('No tools matched "nonexistent"');
+	});
+
+	it("search with scope=tools excludes internal tools from results", async () => {
+		const registry = new ToolRegistry();
+		const source = await makeInProcessSource("test", [
+			{
+				name: "visible",
+				description: "Visible tool",
+				inputSchema: { type: "object", properties: {} },
+				handler: async () => ({ content: textContent("ok"), isError: false }),
+			},
+			{
+				name: "hidden",
+				description: "Hidden internal tool",
+				inputSchema: { type: "object", properties: {} },
+				handler: async () => ({ content: textContent("ok"), isError: false }),
+				annotations: { "ai.nimblebrain/internal": true },
+			},
+		]);
+		registry.addSource(source);
+		const systemTools = await createSystemTools(() => registry);
+		const result = await systemTools.execute("search", {
+			scope: "tools",
+			query: "tool",
+		});
+		expect(result.isError).toBe(false);
+		const text = extractText(result.content);
+		expect(text).toContain("test__visible");
+		expect(text).not.toContain("test__hidden");
+		expect(getStructured<{ tools?: Array<{ name: string }> }>(result)?.tools).toEqual([
+			{ name: "test__visible" },
+		]);
 	});
 
 	// `search with scope=registry` lives in test/smoke/system-tools-registry.test.ts.

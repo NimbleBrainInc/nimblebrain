@@ -182,6 +182,9 @@ describe("AgentEngine", () => {
             content: textContent(
               'Found 1 tool(s) for "newsapi":\n\n- **newsapi__get_top_headlines**: Get top news headlines by country and category.',
             ),
+            structuredContent: {
+              tools: [{ name: "newsapi__get_top_headlines" }],
+            },
             isError: false,
           };
         }
