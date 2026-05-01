@@ -19,6 +19,8 @@ import { validateToolInput } from "../tools/validate-input.ts";
 import { bytesToBase64 } from "../util/base64.ts";
 import type { ConversationEventManager } from "./conversation-events.ts";
 import type { SseEventManager } from "./events.ts";
+import { ChatRequestBody, ToolCallRequestEnvelope } from "./schemas/rest.ts";
+import { validateAgainst } from "./schemas/validate.ts";
 import { startSseHeartbeat } from "./sse-heartbeat.ts";
 import { apiError } from "./types.ts";
 
@@ -492,19 +494,19 @@ export async function handleToolCall(
   const body = await parseJsonBody(request);
   if (body instanceof Response) return body;
 
+  const envelopeCheck = validateAgainst(body, ToolCallRequestEnvelope);
+  if (!envelopeCheck.ok) {
+    return apiError(400, "bad_request", envelopeCheck.reason ?? "Invalid request envelope");
+  }
   const {
     server,
     tool,
     arguments: args,
   } = body as {
-    server?: string;
-    tool?: string;
+    server: string;
+    tool: string;
     arguments?: Record<string, unknown>;
   };
-
-  if (!server || !tool) {
-    return apiError(400, "bad_request", "'server' and 'tool' are required");
-  }
 
   const { sseManager, eventSink, identity, workspaceId } = options ?? {};
 
@@ -1077,49 +1079,23 @@ async function parseChatBody(
   const body = await parseJsonBody(request);
   if (body instanceof Response) return body;
 
-  const {
-    message,
-    conversationId,
-    model,
-    appContext,
-    metadata,
-    allowedTools,
-    workspaceId: bodyWorkspaceId,
-  } = body;
-  if (typeof message !== "string" || !message) {
-    return apiError(400, "bad_request", "message is required and must be a string");
+  const check = validateAgainst(body, ChatRequestBody);
+  if (!check.ok) {
+    return apiError(400, "bad_request", check.reason ?? "Invalid chat request body");
   }
-
-  // Validate metadata is a plain object if provided
-  if (
-    metadata !== undefined &&
-    (typeof metadata !== "object" || metadata === null || Array.isArray(metadata))
-  ) {
-    return apiError(400, "bad_request", "metadata must be a JSON object");
-  }
-
-  // Validate allowedTools is a string array if provided
-  if (allowedTools !== undefined) {
-    if (
-      !Array.isArray(allowedTools) ||
-      !allowedTools.every((t: unknown) => typeof t === "string")
-    ) {
-      return apiError(400, "bad_request", "allowedTools must be an array of strings");
-    }
-  }
+  const parsed = body as ChatRequestBody;
 
   // Middleware-resolved workspace takes precedence over body field
-  const resolvedWorkspaceId =
-    workspaceId ?? (typeof bodyWorkspaceId === "string" ? bodyWorkspaceId : undefined);
+  const resolvedWorkspaceId = workspaceId ?? parsed.workspaceId;
 
   return {
-    message,
-    conversationId: conversationId as string | undefined,
-    model: model as string | undefined,
+    message: parsed.message,
+    ...(parsed.conversationId !== undefined ? { conversationId: parsed.conversationId } : {}),
+    ...(parsed.model !== undefined ? { model: parsed.model } : {}),
     ...(resolvedWorkspaceId ? { workspaceId: resolvedWorkspaceId } : {}),
-    appContext: appContext as { appName: string; serverName: string } | undefined,
-    ...(metadata !== undefined ? { metadata: metadata as Record<string, unknown> } : {}),
-    ...(allowedTools !== undefined ? { allowedTools: allowedTools as string[] } : {}),
+    ...(parsed.appContext !== undefined ? { appContext: parsed.appContext } : {}),
+    ...(parsed.metadata !== undefined ? { metadata: parsed.metadata } : {}),
+    ...(parsed.allowedTools !== undefined ? { allowedTools: parsed.allowedTools } : {}),
     ...(identity ? { identity } : {}),
   };
 }
