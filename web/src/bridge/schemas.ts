@@ -13,6 +13,17 @@
 //     the type-derivation win; no runtime validation is applied because
 //     there's no untrusted source.
 //
+// `additionalProperties` policy: schemas in this file do NOT set
+// `additionalProperties: false`. The host's per-message handlers in
+// bridge.ts read only the documented fields; extra fields from a buggy
+// or hostile iframe are ignored, not propagated. Validation here checks
+// "the documented fields are well-formed," not "no extras present." If
+// you need to forbid extras for a specific envelope, add the constraint
+// explicitly on that envelope's `params` object — don't tighten this
+// file as a whole, since the relaxation on `ui/initialize` (clientInfo
+// + capabilities optional) is deliberate and matches existing-bridge
+// behavior.
+//
 // Spec methods use the `ui/` and `tools/` prefixes (ext-apps spec
 // 2026-01-26). NimbleBrain extensions use the `synapse/` prefix.
 // ---------------------------------------------------------------------------

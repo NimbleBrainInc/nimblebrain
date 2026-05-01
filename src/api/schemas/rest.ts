@@ -57,7 +57,10 @@ const FileReference = Type.Object({ id: Type.String() }, { additionalProperties:
  */
 export const ChatRequestBody = Type.Object(
   {
-    message: Type.String({ description: "The user's message." }),
+    message: Type.String({
+      minLength: 1,
+      description: "The user's message. Must be non-empty.",
+    }),
     conversationId: Type.Optional(
       Type.String({ description: "Existing conversation id; omit to start a new one." }),
     ),
