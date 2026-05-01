@@ -473,6 +473,11 @@ export class AgentEngine {
             const resourceUri =
               typeof uiMeta?.resourceUri === "string" ? uiMeta.resourceUri : undefined;
 
+            // tool.start fires with the *pre-coercion* input on purpose:
+            // audit/telemetry should see the raw model emission so we can
+            // observe when models string-encode nested objects (the very
+            // misbehavior coerceInputForSchema below recovers from). Do
+            // not move this emit after the coerce step.
             this.events.emit({
               type: "tool.start",
               data: {

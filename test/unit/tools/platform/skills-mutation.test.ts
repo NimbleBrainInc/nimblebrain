@@ -375,6 +375,37 @@ describe("skills__update", () => {
   });
 });
 
+// ── read (regression: existence-first ordering) ──────────────────────────
+
+// Mirrors the update-side regression at line 305. The read handler picked
+// up the same existence-before-permission reorder; without a dedicated
+// test the read path could regress silently (cross-workspace tests cover
+// permission denial on extant files but not the stale-id case).
+describe("skills__read — stale-id regression", () => {
+  test("stale org-scope id (file moved away) returns 'not found', not 'permission denied'", async () => {
+    runtime.hasIdentityProvider = true;
+    runtime.identity = {
+      id: "u_member",
+      email: "m@ex.com",
+      displayName: "M",
+      orgRole: "member",
+      preferences: { timezone: "UTC", locale: "en-US", theme: "system" },
+    };
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const result = await client.callTool({
+      name: "read",
+      arguments: { id: join(workDir, "skills", "moved-away.md") },
+    });
+    expect(result.isError).toBe(true);
+    const text = (result.content as Array<{ text: string }>)[0]?.text ?? "";
+    expect(text).toMatch(/not found/i);
+    expect(text).toMatch(/skills__list/);
+    expect(text).not.toMatch(/permission denied/i);
+    expect(text).not.toMatch(/org admin/i);
+  });
+});
+
 // ── delete ───────────────────────────────────────────────────────────────
 
 describe("skills__delete", () => {

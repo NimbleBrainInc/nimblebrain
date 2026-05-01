@@ -60,9 +60,15 @@ function tryJsonParse(s: string): unknown {
 }
 
 /**
- * Coerce one value against one sub-schema. Recurses through nested objects,
- * array items, and `oneOf`/`anyOf` alternatives. Returns the (possibly new)
- * value — callers should rebind, not mutate.
+ * Coerce one value against one sub-schema. Recurses through nested objects
+ * (via `properties`) and array items (via `items`); union types declared
+ * as `type: ["object", "null"]` etc. are honored. `oneOf` / `anyOf` are
+ * NOT walked — first-party tools follow the strict-schema convention in
+ * `src/tools/platform/CLAUDE.md` § 1.2 and don't use them; if a bundle
+ * ever needs it, the fix is additive (treat each alternative as a
+ * candidate sub-schema and pick the one that produces a non-string value).
+ *
+ * Returns the (possibly new) value — callers should rebind, not mutate.
  */
 function coerceValue(value: unknown, schema: Schema): unknown {
   if (!schema) return value;

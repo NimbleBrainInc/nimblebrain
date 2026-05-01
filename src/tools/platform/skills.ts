@@ -285,6 +285,17 @@ export function createSkillsSource(runtime: Runtime, eventSink: EventSink): McpS
           // sends the agent down a hallucination loop trying to fix a
           // role instead of refreshing its path. (skill:// URIs skip
           // this — existence is checked inside readSkillById.)
+          //
+          // Trade-off: an authenticated tenant member can now distinguish
+          // "file exists but I lack permission" from "file doesn't exist"
+          // for paths in other workspaces — a thin filename-existence
+          // oracle. Severity is low in our threat model: skill filenames
+          // are not secrets, content is still gated by checkPathAccess,
+          // and the caller is already inside the tenant. If a future
+          // deployment needs to close this oracle, gate the existence
+          // check behind the same scope-allowance that `checkPathAccess`
+          // applies (e.g. only run existsSync for paths in the caller's
+          // own workspace / user dir / org).
           if (!isUri && !existsSync(id)) {
             return {
               content: textContent(
