@@ -47,6 +47,7 @@ import type {
   UiToolResultMessage,
   UiToolResultResponse,
 } from "./types";
+import { validateAppToHostMessage } from "./validate";
 
 // ---------------------------------------------------------------------------
 // App state stores (module-level, shared across bridges)
@@ -160,6 +161,20 @@ export function createBridge(
 
     const msg = event.data;
     if (!msg || typeof msg !== "object") return;
+
+    // Trust boundary: the iframe runs third-party app code. Validate
+    // inbound envelopes against the declared schemas before acting on
+    // them. Unrecognized methods (no schema in the registry) pass
+    // through and rely on the switch statement's default-drop.
+    const validation = validateAppToHostMessage(msg);
+    if (!validation.ok) {
+      // Drop and log. A malformed envelope is either a buggy app or
+      // a probe — either way the host should not process it.
+      console.warn(
+        `[bridge] dropping malformed ${validation.method ?? "(no method)"} envelope from app "${appName}": ${validation.reason}`,
+      );
+      return;
+    }
 
     // --- ext-apps protocol: ui/initialize REQUEST (has id + method) ---
     // JSON-RPC 2.0 (and the ext-apps spec by extension) allows request IDs to
