@@ -55,19 +55,21 @@ const MCP_SERVER_VERSION = process.env.NB_VERSION || mcpPkg.version;
  * TTL default is 8h: long enough that a connector left open during a working
  * day never expires mid-use. Sessions are evicted on idle, not absolute age,
  * so an actively-used connection survives indefinitely (each request bumps
- * `lastAccessedAt`). Override via `MCP_SESSION_TTL_MS` for tighter limits.
+ * `lastAccessedAt`). Override via `MCP_SESSION_TTL_SECONDS` for tighter
+ * limits. The internal sweep math is in milliseconds (matches `Date.now()`)
+ * but the operator-facing knob is in seconds — operators don't think in ms.
  *
- * `parsePositiveIntEnv` rejects non-positive and non-integer values to close
- * two failure modes the previous `parseInt(env, 10)` left open:
- *   - `MCP_SESSION_TTL_MS=8h` → `parseInt("8h", 10)` returned `8`, i.e. an
- *     8-millisecond TTL that evicted every session on the next sweep.
- *   - `MCP_SESSION_TTL_MS=foo` → `parseInt("foo", 10)` returned `NaN`, which
- *     silently disabled eviction (every comparison against NaN is false).
- * Both surface as runaway capacity-cap 429s. The new helper rejects either
- * shape with a warning and uses the in-code default.
+ * `parsePositiveIntEnv` rejects non-positive and non-integer values. The
+ * previous `parseInt(env, 10)` left two failure modes open: a typo like
+ * `8h` parsed to `8` (an 8-second TTL that evicted every session on the
+ * next sweep) and `foo` parsed to `NaN` (silently disabled eviction
+ * because every comparison against NaN is false). Both surface as runaway
+ * capacity-cap 429s. The helper rejects either shape with a warning and
+ * uses the in-code default.
  */
 const MAX_MCP_SESSIONS = parsePositiveIntEnv("MCP_MAX_SESSIONS", 100);
-const SESSION_TTL_MS = parsePositiveIntEnv("MCP_SESSION_TTL_MS", 8 * 60 * 60 * 1000);
+const SESSION_TTL_SECONDS = parsePositiveIntEnv("MCP_SESSION_TTL_SECONDS", 8 * 60 * 60);
+const SESSION_TTL_MS = SESSION_TTL_SECONDS * 1000;
 
 /** Exported for unit testing. */
 export function parsePositiveIntEnv(name: string, fallback: number): number {
