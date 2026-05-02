@@ -21,6 +21,7 @@ import {
   type Resource,
   type ServerCapabilities,
 } from "@modelcontextprotocol/sdk/types.js";
+import { log } from "../cli/log.ts";
 import { isToolEnabled, isToolVisibleToRole, type ResolvedFeatures } from "../config/features.ts";
 import type { UserIdentity } from "../identity/provider.ts";
 import { type RequestContext, runWithRequestContext } from "../runtime/request-context.ts";
@@ -49,9 +50,15 @@ const mcpPkg = JSON.parse(readFileSync(mcpPkgPath, "utf-8")) as {
 // Prefer the build-time-injected git tag; fall back to package.json for local dev.
 const MCP_SERVER_VERSION = process.env.NB_VERSION || mcpPkg.version;
 
-/* ── Session limits (configurable via env) ── */
+/* ── Session limits (configurable via env) ──
+ *
+ * TTL default is 8h: long enough that a connector left open during a working
+ * day never expires mid-use. Sessions are evicted on idle, not absolute age,
+ * so an actively-used connection survives indefinitely (each request bumps
+ * `lastAccessedAt`). Override via `MCP_SESSION_TTL_MS` for tighter limits.
+ */
 const MAX_MCP_SESSIONS = parseInt(process.env.MCP_MAX_SESSIONS ?? "100", 10);
-const SESSION_TTL_MS = parseInt(process.env.MCP_SESSION_TTL_MS ?? String(30 * 60 * 1000), 10);
+const SESSION_TTL_MS = parseInt(process.env.MCP_SESSION_TTL_MS ?? String(8 * 60 * 60 * 1000), 10);
 
 interface SessionEntry {
   transport: WebStandardStreamableHTTPServerTransport;
@@ -428,6 +435,13 @@ async function handlePost(
   if (sessionId) {
     const entry = sessions.get(sessionId);
     if (!entry) {
+      // Surface session-not-found as a warning. The client is sending a real
+      // session ID we don't recognize — most often because the pod restarted,
+      // the session was swept on idle TTL, or (with future multi-replica) the
+      // request landed on a pod that doesn't own this session. Logging the
+      // prefix + identity + workspace lets us correlate with client reports
+      // without requiring NB_DEBUG.
+      log.warn(`[mcp] session miss ${fmtSessionContext(request, sessionId, workspaceCtx)}`);
       return new Response(
         JSON.stringify({
           jsonrpc: "2.0",
@@ -457,6 +471,11 @@ async function handlePost(
   }
 
   if (!isInitializeRequest(body)) {
+    // Same diagnostic value as the 404 above: a non-init POST with no session
+    // ID typically means the client dropped its session ID without reinitializing.
+    log.warn(
+      `[mcp] non-init request without session id ${fmtSessionContext(request, null, workspaceCtx)}`,
+    );
     return new Response(
       JSON.stringify({
         jsonrpc: "2.0",
@@ -520,10 +539,31 @@ async function handleDelete(request: Request): Promise<Response> {
   }
   const entry = sessions.get(sessionId);
   if (!entry) {
+    // Routine: client closing a session we already reaped. Info-level so it
+    // shows up in correlation but doesn't trip alerting.
+    log.info(`[mcp] delete session miss ${fmtSessionContext(request, sessionId)}`);
     return new Response("Session not found", { status: 404 });
   }
   entry.lastAccessedAt = Date.now();
   return entry.transport.handleRequest(request);
+}
+
+/**
+ * Build a `key=value` log fragment with the request context that matters for
+ * session-miss diagnosis: a sessionId prefix (UUIDs are not sensitive but the
+ * prefix keeps lines greppable), workspace + identity (for cross-tenant
+ * correlation), and the client IP from `x-forwarded-for` (the ALB sets it).
+ */
+function fmtSessionContext(
+  request: Request,
+  sessionId: string | null,
+  workspaceCtx?: McpWorkspaceContext,
+): string {
+  const sidPrefix = sessionId ? sessionId.slice(0, 8) : "none";
+  const wsId = workspaceCtx?.workspaceId ?? "none";
+  const identityId = workspaceCtx?.identity?.id ?? "none";
+  const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "direct";
+  return `sessionId=${sidPrefix} workspace=${wsId} identity=${identityId} ip=${ip}`;
 }
 
 /**

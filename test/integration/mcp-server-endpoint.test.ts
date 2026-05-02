@@ -185,6 +185,63 @@ describe("MCP Server Endpoint (/mcp)", () => {
 		expect(res.headers.get("allow")).toBe("POST, DELETE");
 		await res.body?.cancel();
 	});
+
+	// Session-miss surface: a POST carrying an unknown session ID must return
+	// 404 with a JSON-RPC error envelope. This is the fault the client sees
+	// after a pod restart, an idle-TTL sweep, or (with future multi-replica)
+	// a misrouted request — exactly what `[mcp] session miss` is logged for.
+	it("returns 404 for POST /mcp with an unknown session id", async () => {
+		const res = await fetch(`${baseUrl}/mcp`, {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				Accept: "application/json, text/event-stream",
+				"x-workspace-id": TEST_WORKSPACE_ID,
+				"mcp-session-id": "00000000-0000-0000-0000-000000000000",
+			},
+			body: JSON.stringify({
+				jsonrpc: "2.0",
+				method: "tools/list",
+				id: 1,
+			}),
+		});
+		expect(res.status).toBe(404);
+		const body = (await res.json()) as {
+			error?: { code: number; message: string };
+		};
+		expect(body.error?.code).toBe(-32000);
+		expect(body.error?.message).toBe("Session not found");
+	});
+
+	// Companion case: a non-init POST with no session id at all. Different
+	// code path (we never look in the map) but the same client confusion.
+	it("returns 400 for POST /mcp without a session id when method is not initialize", async () => {
+		const res = await fetch(`${baseUrl}/mcp`, {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				Accept: "application/json, text/event-stream",
+				"x-workspace-id": TEST_WORKSPACE_ID,
+			},
+			body: JSON.stringify({
+				jsonrpc: "2.0",
+				method: "tools/list",
+				id: 1,
+			}),
+		});
+		expect(res.status).toBe(400);
+	});
+
+	it("returns 404 for DELETE /mcp with an unknown session id", async () => {
+		const res = await fetch(`${baseUrl}/mcp`, {
+			method: "DELETE",
+			headers: {
+				"x-workspace-id": TEST_WORKSPACE_ID,
+				"mcp-session-id": "00000000-0000-0000-0000-000000000000",
+			},
+		});
+		expect(res.status).toBe(404);
+	});
 });
 
 describe("MCP Server Auth", () => {
