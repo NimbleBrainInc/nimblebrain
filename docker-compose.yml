@@ -15,7 +15,12 @@ services:
 
   web:
     image: ghcr.io/nimblebraininc/nimblebrain-web:latest
-    build: web/
+    # Build context is the repo root, not web/ — the web tsconfig path
+    # alias `@platform/schemas/*` resolves to a sibling tree
+    # (`../src/tools/platform/schemas/*`), so the build needs both.
+    build:
+      context: .
+      dockerfile: web/Dockerfile
     restart: unless-stopped
     ports:
       - "27246:8080"

@@ -92,7 +92,7 @@ jobs:
             -t ${{ steps.ecr.outputs.registry }}/nimblebrain/agent-web:${{ steps.tags.outputs.sha }} \
             -t ghcr.io/nimblebraininc/nimblebrain-web:${{ steps.tags.outputs.version }} \
             -t ghcr.io/nimblebraininc/nimblebrain-web:${{ steps.tags.outputs.sha }} \
-            -f web/Dockerfile web/
+            -f web/Dockerfile .
           docker push ${{ steps.ecr.outputs.registry }}/nimblebrain/agent-web:${{ steps.tags.outputs.version }}
           docker push ${{ steps.ecr.outputs.registry }}/nimblebrain/agent-web:${{ steps.tags.outputs.sha }}
           docker push ghcr.io/nimblebraininc/nimblebrain-web:${{ steps.tags.outputs.version }}
