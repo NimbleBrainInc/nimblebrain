@@ -56,9 +56,26 @@ const MCP_SERVER_VERSION = process.env.NB_VERSION || mcpPkg.version;
  * day never expires mid-use. Sessions are evicted on idle, not absolute age,
  * so an actively-used connection survives indefinitely (each request bumps
  * `lastAccessedAt`). Override via `MCP_SESSION_TTL_MS` for tighter limits.
+ *
+ * `parsePositiveIntEnv` rejects `NaN` and non-positive values: a typo like
+ * `MCP_SESSION_TTL_MS=8h` would otherwise leave `SESSION_TTL_MS=NaN`, which
+ * silently disables eviction (NaN comparisons are always false) and the
+ * capacity cap eventually 429s every new client.
  */
-const MAX_MCP_SESSIONS = parseInt(process.env.MCP_MAX_SESSIONS ?? "100", 10);
-const SESSION_TTL_MS = parseInt(process.env.MCP_SESSION_TTL_MS ?? String(8 * 60 * 60 * 1000), 10);
+const MAX_MCP_SESSIONS = parsePositiveIntEnv("MCP_MAX_SESSIONS", 100);
+const SESSION_TTL_MS = parsePositiveIntEnv("MCP_SESSION_TTL_MS", 8 * 60 * 60 * 1000);
+
+/** Exported for unit testing. */
+export function parsePositiveIntEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw === "") return fallback;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0 || !Number.isInteger(parsed)) {
+    log.warn(`[mcp] ignoring invalid ${name}="${raw}" (not a positive integer); using ${fallback}`);
+    return fallback;
+  }
+  return parsed;
+}
 
 interface SessionEntry {
   transport: WebStandardStreamableHTTPServerTransport;
