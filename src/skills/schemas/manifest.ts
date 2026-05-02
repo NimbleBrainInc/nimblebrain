@@ -12,11 +12,12 @@
 //     reference, the tool input is a `Pick<>` — drift between the two is
 //     a compile error.
 //
-// Migration policy (from `src/tools/platform/CLAUDE.md`): on-disk schemas
-// are Ring 3, lowest priority. They migrate after Ring 1 (MCP wire) and
-// Ring 2 (REST/SSE/postMessage) are stable. This module is the reference
-// pattern for the remaining on-disk formats (FileEntry, Automation,
-// ConversationEvent, WorkspaceConfig, MCPB manifest).
+// Migration scope: this module is the only on-disk schema in the PR
+// that established the pattern. The remaining on-disk formats
+// (FileEntry, Automation, ConversationEvent, WorkspaceConfig, MCPB
+// manifest) are tracked in #163 for a follow-up PR. Use this file as
+// the template: declare the SUPERSET shape (writer + operator-only
+// fields), let any LLM-facing tool input be a `Pick<>` of the subset.
 //
 // No runtime validation is wired today — the loader (`src/skills/loader.ts`)
 // continues to use its existing permissive parser. Schema-validating reads

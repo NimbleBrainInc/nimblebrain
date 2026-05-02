@@ -11,9 +11,13 @@
 // Response shapes are type-only (no runtime check) — we generate them,
 // we trust them.
 //
-// Migration policy: opportunistic. Endpoints get schemas when they're
-// touched, not in a sweep. The two we ship here (/v1/tools/call envelope
-// + /v1/chat JSON body) cover the highest-traffic surfaces.
+// Migration scope: this module covers `/v1/tools/call` and `/v1/chat`
+// only — the highest-traffic endpoints. The remaining REST routes
+// (`/v1/auth/*`, `/v1/bootstrap`, `/v1/events`, `/v1/resources/*`,
+// `/v1/shell`, `/v1/files/*`, `/v1/apps/*`, well-known, mcp internals)
+// are tracked in #163 for a follow-up PR. Until then they continue to
+// use hand-rolled shape checks; do not add new routes that follow that
+// pattern — add them here.
 // ---------------------------------------------------------------------------
 
 import { type Static, Type } from "@sinclair/typebox";
