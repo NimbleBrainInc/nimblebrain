@@ -37,6 +37,7 @@
 - Settings re-scoped by data ownership. Model → Organization (writes global `nimblebrain.json`, affects every workspace). Usage → This Workspace (uses `runtime.getWorkspaceScopedDir()`). MCP Connection card → Workspace > General.
 - Sidebar collapse toggle moved to a half-overflow edge button on the sidebar's right border (Linear pattern).
 - `manage_workspaces.list` now returns the requesting user's role within each workspace (`userRole?: "admin" | "member"`) so the web client can gate workspace-admin UI without an extra `list_members` round-trip.
+- `POST /v1/chat` validation error wording. Hand-rolled checks (`"metadata must be a JSON object"`, `"allowedTools must be an array of strings"`) replaced with TypeBox path-prefixed errors (`"/metadata: Expected object"`, `"/allowedTools: Expected array"`). HTTP status (400) and `error: "bad_request"` are unchanged. External callers asserting on the exact wording need to update; the field name still appears in the message.
 
 ### Fixed
 

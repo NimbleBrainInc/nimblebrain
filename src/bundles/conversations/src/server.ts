@@ -4,6 +4,14 @@
  * Reads JSONL conversation files from NB_CONVERSATIONS_DIR (default: ~/.nimblebrain/conversations/).
  * Exposes 7 v0.1 tools: list, get, search, update, fork, stats, export.
  * Uses stdio transport — stdout is JSON-RPC only, logging goes to stderr.
+ *
+ * In-monorepo constraint: this server imports its tool schemas from the
+ * platform schemas module via `../../../tools/platform/schemas/conversations.ts`
+ * so the standalone server and the in-process platform source share one
+ * source of truth (drift impossible). The cross-tree import means this
+ * directory cannot be packaged as a standalone .mcpb without first
+ * inlining or vendoring the schema file. If you copy this server as a
+ * template for a new bundle, vendor the schemas locally instead.
  */
 
 import { homedir } from "node:os";

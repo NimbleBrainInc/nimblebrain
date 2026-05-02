@@ -6,6 +6,12 @@
  * source of truth.
  *
  * Uses stdio transport — stdout is JSON-RPC only, logging goes to stderr.
+ *
+ * In-monorepo constraint: this server imports its tool schemas from
+ * `../../../tools/platform/schemas/usage.ts` so the standalone server
+ * and the in-process platform source share one source of truth. The
+ * cross-tree import means this directory cannot be packaged as a
+ * standalone .mcpb without first inlining or vendoring the schema file.
  */
 
 import { homedir } from "node:os";

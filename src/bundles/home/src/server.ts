@@ -4,6 +4,12 @@
  * Reads workspace data from NB_WORK_DIR (default: ~/.nimblebrain).
  * Exposes 1 tool: activity. Briefing generation moved to nb__briefing.
  * Uses stdio transport — stdout is JSON-RPC only, logging goes to stderr.
+ *
+ * In-monorepo constraint: this server imports its tool schemas from
+ * `../../../tools/platform/schemas/home.ts` so the standalone server
+ * and the in-process platform source share one source of truth. The
+ * cross-tree import means this directory cannot be packaged as a
+ * standalone .mcpb without first inlining or vendoring the schema file.
  */
 
 import { existsSync, readFileSync } from "node:fs";
