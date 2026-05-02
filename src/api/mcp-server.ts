@@ -57,10 +57,14 @@ const MCP_SERVER_VERSION = process.env.NB_VERSION || mcpPkg.version;
  * so an actively-used connection survives indefinitely (each request bumps
  * `lastAccessedAt`). Override via `MCP_SESSION_TTL_MS` for tighter limits.
  *
- * `parsePositiveIntEnv` rejects `NaN` and non-positive values: a typo like
- * `MCP_SESSION_TTL_MS=8h` would otherwise leave `SESSION_TTL_MS=NaN`, which
- * silently disables eviction (NaN comparisons are always false) and the
- * capacity cap eventually 429s every new client.
+ * `parsePositiveIntEnv` rejects non-positive and non-integer values to close
+ * two failure modes the previous `parseInt(env, 10)` left open:
+ *   - `MCP_SESSION_TTL_MS=8h` → `parseInt("8h", 10)` returned `8`, i.e. an
+ *     8-millisecond TTL that evicted every session on the next sweep.
+ *   - `MCP_SESSION_TTL_MS=foo` → `parseInt("foo", 10)` returned `NaN`, which
+ *     silently disabled eviction (every comparison against NaN is false).
+ * Both surface as runaway capacity-cap 429s. The new helper rejects either
+ * shape with a warning and uses the in-code default.
  */
 const MAX_MCP_SESSIONS = parsePositiveIntEnv("MCP_MAX_SESSIONS", 100);
 const SESSION_TTL_MS = parsePositiveIntEnv("MCP_SESSION_TTL_MS", 8 * 60 * 60 * 1000);
@@ -431,7 +435,7 @@ export async function handleMcpRequest(
   }
 
   if (method === "DELETE") {
-    return handleDelete(request);
+    return handleDelete(request, workspaceCtx);
   }
 
   return new Response("Method Not Allowed", {
@@ -549,7 +553,10 @@ async function handlePost(
   return transport.handleRequest(request, { parsedBody: body });
 }
 
-async function handleDelete(request: Request): Promise<Response> {
+async function handleDelete(
+  request: Request,
+  workspaceCtx?: McpWorkspaceContext,
+): Promise<Response> {
   const sessionId = request.headers.get("mcp-session-id");
   if (!sessionId) {
     return new Response("Missing session ID", { status: 400 });
@@ -557,8 +564,10 @@ async function handleDelete(request: Request): Promise<Response> {
   const entry = sessions.get(sessionId);
   if (!entry) {
     // Routine: client closing a session we already reaped. Info-level so it
-    // shows up in correlation but doesn't trip alerting.
-    log.info(`[mcp] delete session miss ${fmtSessionContext(request, sessionId)}`);
+    // shows up in correlation but doesn't trip alerting. Thread the workspace
+    // context so the log line matches the format used by the POST 404 path —
+    // workspace + identity are exactly what cross-tenant correlation needs.
+    log.info(`[mcp] delete session miss ${fmtSessionContext(request, sessionId, workspaceCtx)}`);
     return new Response("Session not found", { status: 404 });
   }
   entry.lastAccessedAt = Date.now();

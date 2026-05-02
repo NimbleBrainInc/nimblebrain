@@ -1,4 +1,4 @@
-import { describe, expect, it, afterAll, beforeAll } from "bun:test";
+import { describe, expect, it, afterAll, afterEach, beforeAll, beforeEach } from "bun:test";
 import { mkdirSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -7,12 +7,36 @@ import { createEchoModel } from "../helpers/echo-model.ts";
 import { createTestAuthAdapter } from "../helpers/test-auth-adapter.ts";
 import { startServer } from "../../src/api/server.ts";
 import type { ServerHandle } from "../../src/api/server.ts";
+import { log } from "../../src/cli/log.ts";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { ToolSource, Tool } from "../../src/tools/types.ts";
 import type { ToolResult } from "../../src/engine/types.ts";
 import { textContent } from "../../src/engine/content-helpers.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+
+// ---------------------------------------------------------------------------
+// Log capture helper
+// ---------------------------------------------------------------------------
+//
+// The session-miss tests below assert on log content, not just status codes.
+// The whole reason this PR's logs exist is to make session-miss diagnoseable
+// in production — if a future refactor silently drops the `log.warn` calls,
+// status codes alone wouldn't catch it. Capturing also keeps stderr clean of
+// the yellow `[mcp] session miss` lines that the tests deliberately provoke.
+function captureLogs(): { lines: string[]; restore: () => void } {
+	const lines: string[] = [];
+	const orig = { warn: log.warn, info: log.info };
+	log.warn = (msg: string) => lines.push(`warn ${msg}`);
+	log.info = (msg: string) => lines.push(`info ${msg}`);
+	return {
+		lines,
+		restore: () => {
+			log.warn = orig.warn;
+			log.info = orig.info;
+		},
+	};
+}
 
 // ---------------------------------------------------------------------------
 // Fake tool source for testing
@@ -187,60 +211,99 @@ describe("MCP Server Endpoint (/mcp)", () => {
 	});
 
 	// Session-miss surface: a POST carrying an unknown session ID must return
-	// 404 with a JSON-RPC error envelope. This is the fault the client sees
-	// after a pod restart, an idle-TTL sweep, or (with future multi-replica)
-	// a misrouted request — exactly what `[mcp] session miss` is logged for.
-	it("returns 404 for POST /mcp with an unknown session id", async () => {
-		const res = await fetch(`${baseUrl}/mcp`, {
-			method: "POST",
-			headers: {
-				"Content-Type": "application/json",
-				Accept: "application/json, text/event-stream",
-				"x-workspace-id": TEST_WORKSPACE_ID,
-				"mcp-session-id": "00000000-0000-0000-0000-000000000000",
-			},
-			body: JSON.stringify({
-				jsonrpc: "2.0",
-				method: "tools/list",
-				id: 1,
-			}),
+	// 404 with a JSON-RPC error envelope AND emit a structured log line.
+	// This is the fault the client sees after a pod restart, an idle-TTL
+	// sweep, or (with future multi-replica) a misrouted request — exactly
+	// what `[mcp] session miss` is logged for.
+	describe("session-miss logging", () => {
+		let capture: ReturnType<typeof captureLogs>;
+		beforeEach(() => {
+			capture = captureLogs();
 		});
-		expect(res.status).toBe(404);
-		const body = (await res.json()) as {
-			error?: { code: number; message: string };
-		};
-		expect(body.error?.code).toBe(-32000);
-		expect(body.error?.message).toBe("Session not found");
-	});
+		afterEach(() => {
+			capture.restore();
+		});
 
-	// Companion case: a non-init POST with no session id at all. Different
-	// code path (we never look in the map) but the same client confusion.
-	it("returns 400 for POST /mcp without a session id when method is not initialize", async () => {
-		const res = await fetch(`${baseUrl}/mcp`, {
-			method: "POST",
-			headers: {
-				"Content-Type": "application/json",
-				Accept: "application/json, text/event-stream",
-				"x-workspace-id": TEST_WORKSPACE_ID,
-			},
-			body: JSON.stringify({
-				jsonrpc: "2.0",
-				method: "tools/list",
-				id: 1,
-			}),
-		});
-		expect(res.status).toBe(400);
-	});
+		it("returns 404 and warn-logs key=value context for POST with unknown session id", async () => {
+			const res = await fetch(`${baseUrl}/mcp`, {
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					Accept: "application/json, text/event-stream",
+					"x-workspace-id": TEST_WORKSPACE_ID,
+					"mcp-session-id": "00000000-0000-0000-0000-000000000000",
+				},
+				body: JSON.stringify({
+					jsonrpc: "2.0",
+					method: "tools/list",
+					id: 1,
+				}),
+			});
+			expect(res.status).toBe(404);
+			const body = (await res.json()) as {
+				error?: { code: number; message: string };
+			};
+			expect(body.error?.code).toBe(-32000);
+			expect(body.error?.message).toBe("Session not found");
 
-	it("returns 404 for DELETE /mcp with an unknown session id", async () => {
-		const res = await fetch(`${baseUrl}/mcp`, {
-			method: "DELETE",
-			headers: {
-				"x-workspace-id": TEST_WORKSPACE_ID,
-				"mcp-session-id": "00000000-0000-0000-0000-000000000000",
-			},
+			// The whole point of this PR: a structured log line we can grep
+			// for in prod. Asserting prefix + key=value shape rather than
+			// the exact string lets future tweaks to wording survive.
+			const line = capture.lines.find((l) => l.startsWith("warn [mcp] session miss"));
+			expect(line).toBeDefined();
+			expect(line).toContain("sessionId=00000000");
+			expect(line).toContain(`workspace=${TEST_WORKSPACE_ID}`);
+			expect(line).toMatch(/identity=\S+/);
+			expect(line).toMatch(/ip=\S+/);
 		});
-		expect(res.status).toBe(404);
+
+		// Companion case: a non-init POST with no session id at all. Different
+		// code path (we never look in the map) but the same client confusion.
+		it("returns 400 and warn-logs for non-init POST without a session id", async () => {
+			const res = await fetch(`${baseUrl}/mcp`, {
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					Accept: "application/json, text/event-stream",
+					"x-workspace-id": TEST_WORKSPACE_ID,
+				},
+				body: JSON.stringify({
+					jsonrpc: "2.0",
+					method: "tools/list",
+					id: 1,
+				}),
+			});
+			expect(res.status).toBe(400);
+
+			const line = capture.lines.find((l) =>
+				l.startsWith("warn [mcp] non-init request without session id"),
+			);
+			expect(line).toBeDefined();
+			expect(line).toContain("sessionId=none");
+			expect(line).toContain(`workspace=${TEST_WORKSPACE_ID}`);
+		});
+
+		it("returns 404 and info-logs context (incl. workspace) for DELETE with unknown session id", async () => {
+			const res = await fetch(`${baseUrl}/mcp`, {
+				method: "DELETE",
+				headers: {
+					"x-workspace-id": TEST_WORKSPACE_ID,
+					"mcp-session-id": "00000000-0000-0000-0000-000000000000",
+				},
+			});
+			expect(res.status).toBe(404);
+
+			// Regression guard: the workspace context must reach the DELETE
+			// log line, not just the POST ones. An earlier version of this
+			// PR dropped `workspaceCtx` at the route → handler boundary and
+			// the DELETE log emitted `workspace=none identity=none`, which
+			// defeated the cross-tenant correlation the PR exists to enable.
+			const line = capture.lines.find((l) => l.startsWith("info [mcp] delete session miss"));
+			expect(line).toBeDefined();
+			expect(line).toContain("sessionId=00000000");
+			expect(line).toContain(`workspace=${TEST_WORKSPACE_ID}`);
+			expect(line).toMatch(/identity=\S+/);
+		});
 	});
 });
 
