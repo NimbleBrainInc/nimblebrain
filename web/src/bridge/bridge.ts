@@ -47,6 +47,7 @@ import type {
   UiToolResultMessage,
   UiToolResultResponse,
 } from "./types";
+import { validateAppToHostMessage } from "./validate";
 
 // ---------------------------------------------------------------------------
 // App state stores (module-level, shared across bridges)
@@ -160,6 +161,20 @@ export function createBridge(
 
     const msg = event.data;
     if (!msg || typeof msg !== "object") return;
+
+    // Trust boundary: the iframe runs third-party app code. Validate
+    // inbound envelopes against the declared schemas before acting on
+    // them. Unrecognized methods (no schema in the registry) pass
+    // through and rely on the switch statement's default-drop.
+    const validation = validateAppToHostMessage(msg);
+    if (!validation.ok) {
+      // Drop and log. A malformed envelope is either a buggy app or
+      // a probe — either way the host should not process it.
+      console.warn(
+        `[bridge] dropping malformed ${validation.method ?? "(no method)"} envelope from app "${appName}": ${validation.reason}`,
+      );
+      return;
+    }
 
     // --- ext-apps protocol: ui/initialize REQUEST (has id + method) ---
     // JSON-RPC 2.0 (and the ext-apps spec by extension) allows request IDs to
@@ -902,9 +917,32 @@ async function pickFiles(accept: string, maxSize: number, multiple: boolean): Pr
   });
 }
 
-/** Trigger a browser file download via a temporary anchor tag. */
-function triggerDownload(data: Blob, filename: string, mimeType: string): void {
-  const blob = data.type === mimeType ? data : new Blob([data], { type: mimeType });
+/**
+ * Trigger a browser file download via a temporary anchor tag.
+ *
+ * `data` is typed as `Blob` but the schema's `Type.Unknown()` (Blob isn't
+ * a JSON shape; structured-clone postMessage carries it transparently)
+ * means a malformed app could ship a plain object or null. Validate at
+ * the consumer instead of at the schema — Blob/string/ArrayBuffer/
+ * ArrayBufferView are all valid `BlobPart`s; everything else is rejected
+ * with a console warning rather than throwing inside the Blob ctor.
+ */
+function triggerDownload(data: unknown, filename: string, mimeType: string): void {
+  const isBlobPart =
+    data instanceof Blob ||
+    typeof data === "string" ||
+    data instanceof ArrayBuffer ||
+    ArrayBuffer.isView(data);
+  if (!isBlobPart) {
+    console.warn(
+      `[bridge] synapse/download-file: ignoring data of unsupported type (got ${typeof data})`,
+    );
+    return;
+  }
+  const blob =
+    data instanceof Blob && data.type === mimeType
+      ? data
+      : new Blob([data as BlobPart], { type: mimeType });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;

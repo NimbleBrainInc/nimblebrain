@@ -1,4 +1,5 @@
 import type { McpUiResourceMeta } from "@modelcontextprotocol/ext-apps";
+import type { ToolInput } from "../_generated/platform-schemas/catalog";
 import type {
   ApiError,
   BootstrapResponse,
@@ -218,11 +219,19 @@ export async function getResources(
   };
 }
 
-/** Invoke a tool directly. */
-export async function callTool(
-  server: string,
-  tool: string,
-  args?: Record<string, unknown>,
+/**
+ * Invoke a tool directly.
+ *
+ * `args` is type-checked against the catalog at `@platform/schemas/catalog`.
+ * For a `(server, tool)` pair registered there, callers must pass a payload
+ * matching the schema-derived type. Unregistered pairs fall through to
+ * `Record<string, unknown>` so untyped legacy callers continue to compile
+ * while sources migrate one by one.
+ */
+export async function callTool<S extends string, T extends string>(
+  server: S,
+  tool: T,
+  args?: ToolInput<S, T>,
 ): Promise<ToolCallResult> {
   return request<ToolCallResult>("/v1/tools/call", {
     method: "POST",

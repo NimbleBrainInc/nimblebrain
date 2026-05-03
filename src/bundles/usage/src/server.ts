@@ -6,6 +6,12 @@
  * source of truth.
  *
  * Uses stdio transport — stdout is JSON-RPC only, logging goes to stderr.
+ *
+ * In-monorepo constraint: this server imports its tool schemas from
+ * `../../../tools/platform/schemas/usage.ts` so the standalone server
+ * and the in-process platform source share one source of truth. The
+ * cross-tree import means this directory cannot be packaged as a
+ * standalone .mcpb without first inlining or vendoring the schema file.
  */
 
 import { homedir } from "node:os";
@@ -19,6 +25,7 @@ import {
   ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { aggregateUsage } from "../../../conversation/usage-aggregator.ts";
+import { UsageReportInput } from "../../../tools/platform/schemas/usage.ts";
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -39,29 +46,7 @@ const TOOLS = [
   {
     name: "report",
     description: "Get aggregated usage data (tokens, cost, tool calls) from conversation files.",
-    inputSchema: {
-      type: "object" as const,
-      properties: {
-        period: {
-          type: "string",
-          enum: ["day", "week", "month", "all"],
-          description: "Time period. Default: month.",
-        },
-        from: {
-          type: "string",
-          description: "Start date (YYYY-MM-DD). Overrides period.",
-        },
-        to: {
-          type: "string",
-          description: "End date (YYYY-MM-DD). Default: today.",
-        },
-        groupBy: {
-          type: "string",
-          enum: ["day", "conversation", "model"],
-          description: "Group breakdown. Default: day.",
-        },
-      },
-    },
+    inputSchema: UsageReportInput,
   },
 ];
 

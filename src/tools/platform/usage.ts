@@ -14,35 +14,14 @@ import type { Runtime } from "../../runtime/runtime.ts";
 import { defineInProcessApp, type InProcessTool } from "../in-process-app.ts";
 import type { McpSource } from "../mcp-source.ts";
 import { USAGE_DASHBOARD_HTML } from "../platform-resources/usage/dashboard.ts";
+import { UsageReportInput } from "./schemas/usage.ts";
 
 export function createUsageSource(runtime: Runtime, eventSink: EventSink): McpSource {
   const tools: InProcessTool[] = [
     {
       name: "report",
       description: "Get aggregated usage data (tokens, cost, tool calls) from structured logs.",
-      inputSchema: {
-        type: "object" as const,
-        properties: {
-          period: {
-            type: "string",
-            enum: ["day", "week", "month", "all"],
-            description: "Time period. Default: month.",
-          },
-          from: {
-            type: "string",
-            description: "Start date (YYYY-MM-DD). Overrides period.",
-          },
-          to: {
-            type: "string",
-            description: "End date (YYYY-MM-DD). Default: today.",
-          },
-          groupBy: {
-            type: "string",
-            enum: ["day", "conversation", "model"],
-            description: "Group breakdown. Default: day.",
-          },
-        },
-      },
+      inputSchema: UsageReportInput,
       handler: async (input: Record<string, unknown>) => {
         try {
           const wsDir = runtime.getWorkspaceScopedDir();

@@ -6,6 +6,7 @@ import type { Runtime } from "../../runtime/runtime.ts";
 import { defineInProcessApp, type InProcessTool } from "../in-process-app.ts";
 import type { McpSource } from "../mcp-source.ts";
 import { DASHBOARD_HTML } from "../platform-resources/home/dashboard.ts";
+import { HomeActivityInput } from "./schemas/home.ts";
 
 /**
  * Create the "home" platform source — an in-process MCP server.
@@ -22,28 +23,7 @@ export function createHomeSource(runtime: Runtime, eventSink: EventSink): McpSou
       name: "activity",
       description:
         "Get raw workspace activity data — conversations, tool usage, bundle events, and errors. Use for specific questions about workspace activity.",
-      inputSchema: {
-        type: "object" as const,
-        properties: {
-          since: {
-            type: "string",
-            description: "ISO timestamp. Default: 24 hours ago.",
-          },
-          until: {
-            type: "string",
-            description: "ISO timestamp. Default: now.",
-          },
-          category: {
-            type: "string",
-            enum: ["conversations", "bundles", "tools", "errors"],
-            description: "Filter to one category.",
-          },
-          limit: {
-            type: "number",
-            description: "Max items per category. Default: 50.",
-          },
-        },
-      },
+      inputSchema: HomeActivityInput,
       handler: async (input: Record<string, unknown>) => {
         try {
           const wsDir = runtime.getWorkspaceScopedDir();

@@ -55,6 +55,7 @@ import { selectLayer3Skills } from "../../skills/select.ts";
 import type { InProcessTool } from "../in-process-app.ts";
 import { defineInProcessApp } from "../in-process-app.ts";
 import type { McpSource } from "../mcp-source.ts";
+import { ComposeEffectiveContextInput } from "./schemas/compose.ts";
 
 const COMPOSE_SOURCE_NAME = "compose";
 
@@ -99,30 +100,7 @@ export function createComposeSource(runtime: Runtime, eventSink: EventSink): Mcp
     {
       name: "effective_context",
       description: COMPOSE_DESCRIPTION,
-      inputSchema: {
-        type: "object",
-        properties: {
-          conversation_id: {
-            type: "string",
-            description:
-              "Conversation id whose prompt is being inspected. Optional inside " +
-              "a chat — defaults to the current conversation.",
-          },
-          run_id: {
-            type: "string",
-            description:
-              "Specific past run within the conversation. Triggers historical " +
-              "mode (reads `context.assembled` + `skills.loaded` events; verifies " +
-              "layer-3 skill content hashes). Default: live mode (current state).",
-          },
-          bundle: {
-            type: "string",
-            description:
-              "Filter the response to one bundle's contributions (apps section " +
-              "row + layer-3 skills under the bundle's affined directory).",
-          },
-        },
-      },
+      inputSchema: ComposeEffectiveContextInput,
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         const args = input as ComposeArgs;
         try {

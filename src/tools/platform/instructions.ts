@@ -24,6 +24,7 @@ import type { Scope } from "../../instructions/index.ts";
 import type { Runtime } from "../../runtime/runtime.ts";
 import { defineInProcessApp, type InProcessTool } from "../in-process-app.ts";
 import type { McpSource } from "../mcp-source.ts";
+import { InstructionsWriteInput } from "./schemas/instructions.ts";
 
 // ── Tool description (description-as-policy) ─────────────────────────────
 
@@ -107,22 +108,7 @@ export function createInstructionsSource(runtime: Runtime, eventSink: EventSink)
     {
       name: "write_instructions",
       description: WRITE_INSTRUCTIONS_DESCRIPTION,
-      inputSchema: {
-        type: "object",
-        properties: {
-          scope: {
-            type: "string",
-            enum: ["org", "workspace"],
-            description:
-              "Which overlay to write. `org` applies platform-wide; `workspace` applies to the active workspace only.",
-          },
-          body: {
-            type: "string",
-            description: "Markdown body. Empty string clears the overlay.",
-          },
-        },
-        required: ["scope", "body"],
-      },
+      inputSchema: InstructionsWriteInput,
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         const scope = input.scope as Scope;
         const body = String(input.body ?? "");

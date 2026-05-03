@@ -4,6 +4,12 @@
  * Reads workspace data from NB_WORK_DIR (default: ~/.nimblebrain).
  * Exposes 1 tool: activity. Briefing generation moved to nb__briefing.
  * Uses stdio transport — stdout is JSON-RPC only, logging goes to stderr.
+ *
+ * In-monorepo constraint: this server imports its tool schemas from
+ * `../../../tools/platform/schemas/home.ts` so the standalone server
+ * and the in-process platform source share one source of truth. The
+ * cross-tree import means this directory cannot be packaged as a
+ * standalone .mcpb without first inlining or vendoring the schema file.
  */
 
 import { existsSync, readFileSync } from "node:fs";
@@ -18,6 +24,7 @@ import {
   ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 
+import { HomeActivityInput } from "../../../tools/platform/schemas/home.ts";
 import { ActivityCollector } from "./services/activity-collector.ts";
 
 // ---------------------------------------------------------------------------
@@ -54,28 +61,7 @@ const TOOLS = [
     name: "activity",
     description:
       "Get raw workspace activity data — conversations, tool usage, bundle events, and errors. Use for specific questions about workspace activity.",
-    inputSchema: {
-      type: "object" as const,
-      properties: {
-        since: {
-          type: "string",
-          description: "ISO timestamp. Default: 24 hours ago.",
-        },
-        until: {
-          type: "string",
-          description: "ISO timestamp. Default: now.",
-        },
-        category: {
-          type: "string",
-          enum: ["conversations", "bundles", "tools", "errors"],
-          description: "Filter to one category.",
-        },
-        limit: {
-          type: "number",
-          description: "Max items per category. Default: 50.",
-        },
-      },
-    },
+    inputSchema: HomeActivityInput,
   },
 ];
 

@@ -43,6 +43,18 @@ import { validateSkill } from "../../skills/validator.ts";
 import { deleteSkill, updateSkill, writeSkill } from "../../skills/writer.ts";
 import { defineInProcessApp, type InProcessTool } from "../in-process-app.ts";
 import type { McpSource } from "../mcp-source.ts";
+import {
+  SkillsActivateInput,
+  SkillsActiveForInput,
+  SkillsCreateInput,
+  SkillsDeactivateInput,
+  SkillsDeleteInput,
+  SkillsListInput,
+  SkillsLoadingLogInput,
+  SkillsMoveScopeInput,
+  SkillsReadInput,
+  SkillsUpdateInput,
+} from "./schemas/skills.ts";
 
 // ── Source name ──────────────────────────────────────────────────────────
 
@@ -100,66 +112,14 @@ const SKILLS_UPDATE_DESCRIPTION =
   "`manifest` patch (any subset of the create-shape fields) and/or a new `body`. Snapshots the " +
   "current version to `_versions/` before writing. Bundle (Layer 1) skills are not editable.";
 
-// ── Shared manifest property schema ──────────────────────────────────────
-//
-// Mirrors `SkillManifest` from src/skills/types.ts field-for-field. Used by
-// both `skills__create` (with required: [name, description, type]) and
-// `skills__update` (no required — partial patch).
-//
-// Operator/advanced fields are intentionally absent from the LLM-facing
-// schema (see SCHEMA_PRINCIPLES at the bottom of this file): `allowedTools`,
+// Tool input schemas live in `./schemas/skills.ts` — see the catalog at
+// `./schemas/catalog.ts`. Operator/advanced fields (`allowedTools`,
 // `requiresBundles`, `loadingStrategy`, `appliesToTools`, `overrides`,
-// `derivedFrom`. They live on the type and the on-disk format; if a future
-// change makes them load-bearing for agent authoring, promote them here
-// deliberately with a description.
-const SKILL_MANIFEST_PROPERTIES = {
-  name: {
-    type: "string" as const,
-    pattern: "^[a-zA-Z0-9_-]+$",
-    description: "Becomes the filename. Alphanumeric, dash, underscore.",
-  },
-  description: {
-    type: "string" as const,
-    description: "What the skill does. Surfaced to the agent during Layer 3 selection.",
-  },
-  type: {
-    type: "string" as const,
-    enum: ["skill", "context"],
-    description: "`skill` for procedural how-to content; `context` for declarative facts.",
-  },
-  priority: {
-    type: "number" as const,
-    minimum: 0,
-    maximum: 100,
-    description: "Selection priority. 11–99 for non-core. Default 50.",
-  },
-  status: {
-    type: "string" as const,
-    enum: ["active", "draft", "disabled", "archived"],
-    description: "`active` to load. `draft` while authoring. Default `active`.",
-  },
-  version: {
-    type: "string" as const,
-    description: "Semver. Default 1.0.0.",
-  },
-  metadata: {
-    type: "object" as const,
-    properties: {
-      keywords: { type: "array" as const, items: { type: "string" as const } },
-      triggers: { type: "array" as const, items: { type: "string" as const } },
-      category: { type: "string" as const },
-      tags: { type: "array" as const, items: { type: "string" as const } },
-    },
-  },
-};
-
-/**
- * Manifest properties for `skills__update`. Same as create-shape minus
- * `name` — renaming a skill is not patchable via update (the name is
- * the filename, and the path-derived id would drift). If renaming
- * becomes a real need, add a dedicated `skills__rename` tool.
- */
-const { name: _skillName, ...SKILL_UPDATE_MANIFEST_PROPERTIES } = SKILL_MANIFEST_PROPERTIES;
+// `derivedFrom`) are intentionally absent from the LLM-facing schema (see
+// SCHEMA_PRINCIPLES at the bottom of this file). They live on the type
+// and the on-disk format; if a future change makes them load-bearing for
+// agent authoring, add them to the schemas/skills.ts module deliberately
+// with a description.
 
 const SKILLS_DELETE_DESCRIPTION =
   "Delete a Layer 3 skill. The `id` is the filesystem path returned by `skills__list`. " +
@@ -205,39 +165,7 @@ export function createSkillsSource(runtime: Runtime, eventSink: EventSink): McpS
     {
       name: "list",
       description: SKILLS_LIST_DESCRIPTION,
-      inputSchema: {
-        type: "object",
-        properties: {
-          scope: {
-            type: "string",
-            enum: ["org", "workspace", "user", "bundle"],
-            description: "Filter to a single tier of the skill catalog.",
-          },
-          layer: {
-            type: "number",
-            enum: [1, 3],
-            description: "Filter to Layer 1 (vendored) or Layer 3 (orchestration) skills.",
-          },
-          type: {
-            type: "string",
-            description: "Filter by manifest `type` (e.g. `context`, `skill`).",
-          },
-          tool_affinity: {
-            type: "string",
-            description:
-              "A tool name; returns only skills whose `applies_to_tools` glob matches it.",
-          },
-          status: {
-            type: "string",
-            enum: ["active", "draft", "disabled", "archived"],
-            description: "Filter by lifecycle status. Defaults to all statuses when omitted.",
-          },
-          modified_since: {
-            type: "string",
-            description: "ISO 8601 timestamp; only skills modified at or after this are returned.",
-          },
-        },
-      },
+      inputSchema: SkillsListInput,
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         try {
           const list = await listSkills(runtime, authoringGuidePath, input);
@@ -254,16 +182,7 @@ export function createSkillsSource(runtime: Runtime, eventSink: EventSink): McpS
     {
       name: "read",
       description: SKILLS_READ_DESCRIPTION,
-      inputSchema: {
-        type: "object",
-        properties: {
-          id: {
-            type: "string",
-            description: "Skill identifier — filesystem path or `skill://` URI.",
-          },
-        },
-        required: ["id"],
-      },
+      inputSchema: SkillsReadInput,
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         try {
           const id = String(input.id ?? "");
@@ -345,17 +264,7 @@ export function createSkillsSource(runtime: Runtime, eventSink: EventSink): McpS
     {
       name: "active_for",
       description: SKILLS_ACTIVE_FOR_DESCRIPTION,
-      inputSchema: {
-        type: "object",
-        properties: {
-          conversation_id: {
-            type: "string",
-            description:
-              "Conversation id whose loaded-skill state is being inspected. " +
-              "Optional inside a chat — defaults to the current conversation.",
-          },
-        },
-      },
+      inputSchema: SkillsActiveForInput,
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         try {
           // Explicit arg wins; otherwise use the current conversation from
@@ -397,27 +306,7 @@ export function createSkillsSource(runtime: Runtime, eventSink: EventSink): McpS
     {
       name: "loading_log",
       description: SKILLS_LOADING_LOG_DESCRIPTION,
-      inputSchema: {
-        type: "object",
-        properties: {
-          conversation_id: {
-            type: "string",
-            description: "Filter to a single conversation id.",
-          },
-          skill_id: {
-            type: "string",
-            description: "Filter to runs that loaded this specific skill id.",
-          },
-          since: {
-            type: "string",
-            description: "ISO 8601 lower bound (inclusive).",
-          },
-          until: {
-            type: "string",
-            description: "ISO 8601 upper bound (inclusive).",
-          },
-        },
-      },
+      inputSchema: SkillsLoadingLogInput,
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         try {
           const events = await loadingLog(runtime, input);
@@ -434,27 +323,7 @@ export function createSkillsSource(runtime: Runtime, eventSink: EventSink): McpS
     {
       name: "create",
       description: SKILLS_CREATE_DESCRIPTION,
-      inputSchema: {
-        type: "object",
-        properties: {
-          scope: {
-            type: "string",
-            enum: ["org", "workspace", "user"],
-            description: "Tier to write the skill into. Bundle (Layer 1) is not writable.",
-          },
-          manifest: {
-            type: "object",
-            properties: SKILL_MANIFEST_PROPERTIES,
-            required: ["name", "description", "type"],
-            description: "YAML frontmatter for the skill file. Identity + selection metadata.",
-          },
-          body: {
-            type: "string",
-            description: "Markdown body — the prose below the frontmatter.",
-          },
-        },
-        required: ["scope", "manifest", "body"],
-      },
+      inputSchema: SkillsCreateInput,
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         try {
           const result = await createSkill(runtime, input, eventSink);
@@ -467,23 +336,7 @@ export function createSkillsSource(runtime: Runtime, eventSink: EventSink): McpS
     {
       name: "update",
       description: SKILLS_UPDATE_DESCRIPTION,
-      inputSchema: {
-        type: "object",
-        properties: {
-          id: { type: "string", description: "Filesystem path returned by `skills__list`." },
-          manifest: {
-            type: "object",
-            // Note: `name` deliberately omitted — renames not supported.
-            properties: SKILL_UPDATE_MANIFEST_PROPERTIES,
-            description: "Partial manifest patch. Omitted fields keep their current values.",
-          },
-          body: {
-            type: "string",
-            description: "New markdown body. Omit to keep the current body.",
-          },
-        },
-        required: ["id"],
-      },
+      inputSchema: SkillsUpdateInput,
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         try {
           return await updateSkillHandler(runtime, input, eventSink, authoringGuidePath);
@@ -495,13 +348,7 @@ export function createSkillsSource(runtime: Runtime, eventSink: EventSink): McpS
     {
       name: "delete",
       description: SKILLS_DELETE_DESCRIPTION,
-      inputSchema: {
-        type: "object",
-        properties: {
-          id: { type: "string", description: "Filesystem path returned by `skills__list`." },
-        },
-        required: ["id"],
-      },
+      inputSchema: SkillsDeleteInput,
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         try {
           return await deleteSkillHandler(runtime, input, eventSink, authoringGuidePath);
@@ -513,13 +360,7 @@ export function createSkillsSource(runtime: Runtime, eventSink: EventSink): McpS
     {
       name: "activate",
       description: SKILLS_ACTIVATE_DESCRIPTION,
-      inputSchema: {
-        type: "object",
-        properties: {
-          id: { type: "string", description: "Filesystem path returned by `skills__list`." },
-        },
-        required: ["id"],
-      },
+      inputSchema: SkillsActivateInput,
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         try {
           return await setStatusHandler(runtime, input, "active", eventSink, authoringGuidePath);
@@ -531,13 +372,7 @@ export function createSkillsSource(runtime: Runtime, eventSink: EventSink): McpS
     {
       name: "deactivate",
       description: SKILLS_DEACTIVATE_DESCRIPTION,
-      inputSchema: {
-        type: "object",
-        properties: {
-          id: { type: "string", description: "Filesystem path returned by `skills__list`." },
-        },
-        required: ["id"],
-      },
+      inputSchema: SkillsDeactivateInput,
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         try {
           return await setStatusHandler(runtime, input, "disabled", eventSink, authoringGuidePath);
@@ -549,18 +384,7 @@ export function createSkillsSource(runtime: Runtime, eventSink: EventSink): McpS
     {
       name: "move_scope",
       description: SKILLS_MOVE_SCOPE_DESCRIPTION,
-      inputSchema: {
-        type: "object",
-        properties: {
-          id: { type: "string", description: "Filesystem path returned by `skills__list`." },
-          target_scope: {
-            type: "string",
-            enum: ["org", "workspace", "user"],
-            description: "Tier to relocate the skill into.",
-          },
-        },
-        required: ["id", "target_scope"],
-      },
+      inputSchema: SkillsMoveScopeInput,
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         try {
           return await moveScopeHandler(runtime, input, eventSink, authoringGuidePath);
@@ -1548,33 +1372,17 @@ function unrecognizedIdMessage(id: string): string {
   );
 }
 
-/**
- * Strict input shape for `skills__create`. Mirrors the JSON Schema 1:1 —
- * the validator (validateToolInput) has already rejected anything that
- * doesn't match before this runs, so the handler reads typed fields
- * directly. `name` lives inside manifest (not at root) — same place as
- * the on-disk frontmatter.
- */
-interface CreateInput {
-  scope: WritableScope;
-  manifest: {
-    name: string;
-    description: string;
-    type: SkillManifest["type"];
-    priority?: number;
-    status?: SkillManifest["status"];
-    version?: string;
-    metadata?: SkillManifest["metadata"];
-  };
-  body: string;
-}
-
+// Input shape for `skills__create`. Derived from the TypeBox schema in
+// `./schemas/skills.ts`; the validator (validateToolInput) has already
+// rejected anything that doesn't match before this runs, so the handler
+// reads typed fields directly. `name` lives inside manifest (not at root)
+// — same place as the on-disk frontmatter.
 async function createSkill(
   runtime: Runtime,
   input: Record<string, unknown>,
   eventSink: EventSink,
 ): Promise<ToolResult> {
-  const { scope, manifest, body } = input as unknown as CreateInput;
+  const { scope, manifest, body } = input as unknown as SkillsCreateInput;
   const { name } = manifest;
   assertValidName(name);
 
@@ -1603,9 +1411,11 @@ async function createSkill(
     return errorResult(new Error(`Skill "${name}" already exists in ${scope} scope`));
   }
 
-  // Fill in defaults the schema doesn't enforce (priority, version) so the
-  // on-disk SkillManifest is complete. The schema's strong typing means
-  // every other field is either present-and-correct or absent.
+  // Fill in defaults the schema doesn't enforce so the on-disk
+  // SkillManifest is complete. The LLM-facing schema treats metadata
+  // sub-fields (keywords, triggers, etc.) as optional; the domain type
+  // expects keywords and triggers as arrays. Normalize at the boundary
+  // by defaulting to empty arrays when the caller omitted them.
   const fullManifest: SkillManifest = {
     name,
     description: manifest.description,
@@ -1613,7 +1423,18 @@ async function createSkill(
     priority: manifest.priority ?? 50,
     version: manifest.version ?? "1.0.0",
     ...(manifest.status ? { status: manifest.status } : {}),
-    ...(manifest.metadata ? { metadata: manifest.metadata } : {}),
+    ...(manifest.metadata
+      ? {
+          metadata: {
+            keywords: manifest.metadata.keywords ?? [],
+            triggers: manifest.metadata.triggers ?? [],
+            ...(manifest.metadata.category !== undefined
+              ? { category: manifest.metadata.category }
+              : {}),
+            ...(manifest.metadata.tags !== undefined ? { tags: manifest.metadata.tags } : {}),
+          },
+        }
+      : {}),
   };
 
   const validation = validateSkill(name, fullManifest, body);
@@ -1634,24 +1455,16 @@ async function createSkill(
   };
 }
 
-/**
- * Strict input shape for `skills__update`. `manifest` is a partial of the
- * create-shape — every field optional. The validator has already enforced
- * shape; the handler reads typed fields directly.
- */
-interface UpdateInput {
-  id: string;
-  manifest?: Partial<CreateInput["manifest"]>;
-  body?: string;
-}
-
+// Input shape for `skills__update`. `manifest` is a partial of the
+// create-shape — every field optional. Derived from the TypeBox schema
+// in `./schemas/skills.ts`; the validator has already enforced shape.
 async function updateSkillHandler(
   runtime: Runtime,
   input: Record<string, unknown>,
   eventSink: EventSink,
   authoringGuidePath: string,
 ): Promise<ToolResult> {
-  const { id, manifest: patch, body } = input as unknown as UpdateInput;
+  const { id, manifest: patch, body } = input as unknown as SkillsUpdateInput;
   if (!id) return errorResult(new Error("`id` is required"));
 
   // skill:// URIs are bundle-served by design — return the structured
@@ -1702,9 +1515,12 @@ async function updateSkillHandler(
 
   snapshotVersion(id);
 
-  // Patch is already shaped exactly like Partial<SkillManifest> — no
-  // coercion needed. `name` in the patch is ignored since it's derived
-  // from the path (renaming is a separate operation).
+  // Build a Partial<SkillManifest> from the patch. `name` in the patch
+  // is ignored since it's derived from the path (renaming is a separate
+  // operation). Metadata sub-fields (keywords, triggers) are required
+  // arrays in the domain type but optional in the LLM-facing schema, so
+  // we default-to-empty when they're omitted — same boundary normalization
+  // as createSkill.
   const partial: Partial<SkillManifest> | undefined = patch
     ? {
         ...(patch.description !== undefined ? { description: patch.description } : {}),
@@ -1712,7 +1528,18 @@ async function updateSkillHandler(
         ...(patch.priority !== undefined ? { priority: patch.priority } : {}),
         ...(patch.status !== undefined ? { status: patch.status } : {}),
         ...(patch.version !== undefined ? { version: patch.version } : {}),
-        ...(patch.metadata !== undefined ? { metadata: patch.metadata } : {}),
+        ...(patch.metadata !== undefined
+          ? {
+              metadata: {
+                keywords: patch.metadata.keywords ?? [],
+                triggers: patch.metadata.triggers ?? [],
+                ...(patch.metadata.category !== undefined
+                  ? { category: patch.metadata.category }
+                  : {}),
+                ...(patch.metadata.tags !== undefined ? { tags: patch.metadata.tags } : {}),
+              },
+            }
+          : {}),
       }
     : undefined;
   updateSkill(dir, name, partial, body);

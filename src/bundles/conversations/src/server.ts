@@ -4,6 +4,14 @@
  * Reads JSONL conversation files from NB_CONVERSATIONS_DIR (default: ~/.nimblebrain/conversations/).
  * Exposes 7 v0.1 tools: list, get, search, update, fork, stats, export.
  * Uses stdio transport — stdout is JSON-RPC only, logging goes to stderr.
+ *
+ * In-monorepo constraint: this server imports its tool schemas from the
+ * platform schemas module via `../../../tools/platform/schemas/conversations.ts`
+ * so the standalone server and the in-process platform source share one
+ * source of truth (drift impossible). The cross-tree import means this
+ * directory cannot be packaged as a standalone .mcpb without first
+ * inlining or vendoring the schema file. If you copy this server as a
+ * template for a new bundle, vendor the schemas locally instead.
  */
 
 import { homedir } from "node:os";
@@ -16,6 +24,15 @@ import {
   ListToolsRequestSchema,
   ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
+import {
+  ConversationsExportInput,
+  ConversationsForkInput,
+  ConversationsGetInput,
+  ConversationsListInput,
+  ConversationsSearchInput,
+  ConversationsStatsInput,
+  ConversationsUpdateInput,
+} from "../../../tools/platform/schemas/conversations.ts";
 import { ConversationIndex } from "./index-cache.ts";
 import { type ExportInput, handleExport } from "./tools/export.ts";
 import { type ForkInput, handleFork } from "./tools/fork.ts";
@@ -46,146 +63,42 @@ const TOOLS = [
     name: "list",
     description:
       "List conversations with pagination, sorting, and filtering. Returns conversation metadata (title, timestamps, token counts, preview).",
-    inputSchema: {
-      type: "object" as const,
-      properties: {
-        limit: {
-          type: "number",
-          description: "Max conversations to return. Default: 20.",
-        },
-        cursor: {
-          type: "string",
-          description: "Opaque pagination cursor from a previous response.",
-        },
-        search: {
-          type: "string",
-          description: "Substring match on title and preview.",
-        },
-        sortBy: {
-          type: "string",
-          enum: ["created", "updated"],
-          description: 'Sort field. Default: "updated".',
-        },
-        dateFrom: {
-          type: "string",
-          description: "Filter: only conversations created on or after this ISO 8601 date.",
-        },
-        dateTo: {
-          type: "string",
-          description: "Filter: only conversations created on or before this ISO 8601 date.",
-        },
-      },
-    },
+    inputSchema: ConversationsListInput,
   },
   {
     name: "get",
     description:
       "Load a conversation's full message history including metadata, message content, tool calls, and token usage per message.",
-    inputSchema: {
-      type: "object" as const,
-      properties: {
-        id: {
-          type: "string",
-          description: "Conversation ID.",
-        },
-        limit: {
-          type: "number",
-          description: "Max messages to return (from end of conversation).",
-        },
-      },
-      required: ["id"],
-    },
+    inputSchema: ConversationsGetInput,
   },
   {
     name: "search",
     description:
       "Full-text search across ALL message content in all conversations. Returns matching conversations with context snippets around each match.",
-    inputSchema: {
-      type: "object" as const,
-      properties: {
-        query: {
-          type: "string",
-          description: "Search query. Case-insensitive substring match on message content.",
-        },
-        limit: {
-          type: "number",
-          description: "Max conversations to return. Default: 10.",
-        },
-      },
-      required: ["query"],
-    },
+    inputSchema: ConversationsSearchInput,
   },
   {
     name: "update",
     description: "Update a conversation's title.",
-    inputSchema: {
-      type: "object" as const,
-      properties: {
-        id: {
-          type: "string",
-          description: "Conversation ID.",
-        },
-        title: {
-          type: "string",
-          description: "New title for the conversation.",
-        },
-      },
-      required: ["id", "title"],
-    },
+    inputSchema: ConversationsUpdateInput,
   },
   {
     name: "fork",
     description:
       "Fork a conversation at a specific message index, creating a new conversation with messages up to that point.",
-    inputSchema: {
-      type: "object" as const,
-      properties: {
-        id: {
-          type: "string",
-          description: "Source conversation ID.",
-        },
-        atMessage: {
-          type: "number",
-          description: "Message index to fork at. Default: all messages.",
-        },
-      },
-      required: ["id"],
-    },
+    inputSchema: ConversationsForkInput,
   },
   {
     name: "stats",
     description:
       "Token usage analytics. Returns total tokens, breakdown by model, and top tools used.",
-    inputSchema: {
-      type: "object" as const,
-      properties: {
-        period: {
-          type: "string",
-          enum: ["day", "week", "month", "all"],
-          description: 'Time period for stats. Default: "week".',
-        },
-      },
-    },
+    inputSchema: ConversationsStatsInput,
   },
   {
     name: "export",
     description:
       "Export a conversation as markdown or JSON. Markdown renders messages as a readable document; JSON returns raw JSONL content as a JSON array.",
-    inputSchema: {
-      type: "object" as const,
-      properties: {
-        id: {
-          type: "string",
-          description: "Conversation ID.",
-        },
-        format: {
-          type: "string",
-          enum: ["markdown", "json"],
-          description: "Export format.",
-        },
-      },
-      required: ["id", "format"],
-    },
+    inputSchema: ConversationsExportInput,
   },
 ];
 

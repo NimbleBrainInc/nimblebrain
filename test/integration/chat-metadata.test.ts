@@ -111,7 +111,9 @@ describe("POST /v1/chat — metadata passthrough", () => {
 		expect(res.status).toBe(400);
 		const body = await res.json();
 		expect(body.error).toBe("bad_request");
-		expect(body.message).toContain("metadata must be a JSON object");
+		// Schema validator surfaces the offending field in the message;
+		// exact wording is owned by the validator and may change.
+		expect(body.message).toContain("metadata");
 	});
 
 	test("invalid metadata (string) returns 400", async () => {
@@ -165,7 +167,7 @@ describe("POST /v1/chat — allowedTools filtering", () => {
 		expect(res.status).toBe(400);
 		const body = await res.json();
 		expect(body.error).toBe("bad_request");
-		expect(body.message).toContain("allowedTools must be an array");
+		expect(body.message).toContain("allowedTools");
 	});
 
 	test("invalid allowedTools (array of non-strings) returns 400", async () => {

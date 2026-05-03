@@ -37,6 +37,8 @@
 - Settings re-scoped by data ownership. Model → Organization (writes global `nimblebrain.json`, affects every workspace). Usage → This Workspace (uses `runtime.getWorkspaceScopedDir()`). MCP Connection card → Workspace > General.
 - Sidebar collapse toggle moved to a half-overflow edge button on the sidebar's right border (Linear pattern).
 - `manage_workspaces.list` now returns the requesting user's role within each workspace (`userRole?: "admin" | "member"`) so the web client can gate workspace-admin UI without an extra `list_members` round-trip.
+- `POST /v1/chat` validation error wording. Hand-rolled checks (`"metadata must be a JSON object"`, `"allowedTools must be an array of strings"`) replaced with TypeBox path-prefixed errors (`"/metadata: Expected object"`, `"/allowedTools: Expected array"`). HTTP status (400) and `error: "bad_request"` are unchanged. External callers asserting on the exact wording need to update; the field name still appears in the message.
+- Skill manifest writes now always include `metadata.keywords` and `metadata.triggers` as arrays (defaulting to `[]` when omitted by the caller). Previously a partial `metadata: { category: "X" }` could write a manifest with no `keywords`/`triggers` keys at all; the loader's domain type required them, so the divergence was a latent type lie. The on-disk JSON shape is now what the type always claimed.
 
 ### Fixed
 
@@ -58,6 +60,7 @@
 
 - `InlineSource`, `ResourceReader`, `isResourceReader`. External callers should switch to `defineInProcessApp` (returns an `McpSource`); `InlineToolDef` becomes `InProcessTool` with the same shape.
 - `bridgeUseMcp` feature flag and its scaffolding (`web/src/features.ts`, `getBridgeUseMcp` / `setBridgeUseMcp`, the schema entry, the resolver field). The MCP transport is the only path; legacy REST branches in the bridge are deleted.
+- Skill create/edit form no longer surfaces "Loading strategy" and "Tool affinity (comma-separated globs)" inputs. These fields exist on the on-disk `SkillManifest` but were never in the LLM-facing tool schema and were silently dropped by `skills__create` / `skills__update`. Operators who need them today should edit the skill markdown file directly under `~/.nimblebrain/{skills,workspaces/<wsId>/skills,users/<userId>/skills}/`; a future operator-only API may surface them.
 
 ### Operator notes
 
