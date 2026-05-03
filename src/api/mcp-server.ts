@@ -21,6 +21,7 @@ import {
   type Resource,
   type ServerCapabilities,
 } from "@modelcontextprotocol/sdk/types.js";
+import { log } from "../cli/log.ts";
 import { isToolEnabled, isToolVisibleToRole, type ResolvedFeatures } from "../config/features.ts";
 import type { UserIdentity } from "../identity/provider.ts";
 import { type RequestContext, runWithRequestContext } from "../runtime/request-context.ts";
@@ -49,9 +50,38 @@ const mcpPkg = JSON.parse(readFileSync(mcpPkgPath, "utf-8")) as {
 // Prefer the build-time-injected git tag; fall back to package.json for local dev.
 const MCP_SERVER_VERSION = process.env.NB_VERSION || mcpPkg.version;
 
-/* ── Session limits (configurable via env) ── */
-const MAX_MCP_SESSIONS = parseInt(process.env.MCP_MAX_SESSIONS ?? "100", 10);
-const SESSION_TTL_MS = parseInt(process.env.MCP_SESSION_TTL_MS ?? String(30 * 60 * 1000), 10);
+/* ── Session limits (configurable via env) ──
+ *
+ * TTL default is 8h: long enough that a connector left open during a working
+ * day never expires mid-use. Sessions are evicted on idle, not absolute age,
+ * so an actively-used connection survives indefinitely (each request bumps
+ * `lastAccessedAt`). Override via `MCP_SESSION_TTL_SECONDS` for tighter
+ * limits. The internal sweep math is in milliseconds (matches `Date.now()`)
+ * but the operator-facing knob is in seconds — operators don't think in ms.
+ *
+ * `parsePositiveIntEnv` rejects non-positive and non-integer values. The
+ * previous `parseInt(env, 10)` left two failure modes open: a typo like
+ * `8h` parsed to `8` (an 8-second TTL that evicted every session on the
+ * next sweep) and `foo` parsed to `NaN` (silently disabled eviction
+ * because every comparison against NaN is false). Both surface as runaway
+ * capacity-cap 429s. The helper rejects either shape with a warning and
+ * uses the in-code default.
+ */
+const MAX_MCP_SESSIONS = parsePositiveIntEnv("MCP_MAX_SESSIONS", 100);
+const SESSION_TTL_SECONDS = parsePositiveIntEnv("MCP_SESSION_TTL_SECONDS", 8 * 60 * 60);
+const SESSION_TTL_MS = SESSION_TTL_SECONDS * 1000;
+
+/** Exported for unit testing. */
+export function parsePositiveIntEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw === "") return fallback;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0 || !Number.isInteger(parsed)) {
+    log.warn(`[mcp] ignoring invalid ${name}="${raw}" (not a positive integer); using ${fallback}`);
+    return fallback;
+  }
+  return parsed;
+}
 
 interface SessionEntry {
   transport: WebStandardStreamableHTTPServerTransport;
@@ -407,7 +437,7 @@ export async function handleMcpRequest(
   }
 
   if (method === "DELETE") {
-    return handleDelete(request);
+    return handleDelete(request, workspaceCtx);
   }
 
   return new Response("Method Not Allowed", {
@@ -428,6 +458,13 @@ async function handlePost(
   if (sessionId) {
     const entry = sessions.get(sessionId);
     if (!entry) {
+      // Surface session-not-found as a warning. The client is sending a real
+      // session ID we don't recognize — most often because the pod restarted,
+      // the session was swept on idle TTL, or (with future multi-replica) the
+      // request landed on a pod that doesn't own this session. Logging the
+      // prefix + identity + workspace lets us correlate with client reports
+      // without requiring NB_DEBUG.
+      log.warn(`[mcp] session miss ${fmtSessionContext(request, sessionId, workspaceCtx)}`);
       return new Response(
         JSON.stringify({
           jsonrpc: "2.0",
@@ -457,6 +494,11 @@ async function handlePost(
   }
 
   if (!isInitializeRequest(body)) {
+    // Same diagnostic value as the 404 above: a non-init POST with no session
+    // ID typically means the client dropped its session ID without reinitializing.
+    log.warn(
+      `[mcp] non-init request without session id ${fmtSessionContext(request, null, workspaceCtx)}`,
+    );
     return new Response(
       JSON.stringify({
         jsonrpc: "2.0",
@@ -513,17 +555,43 @@ async function handlePost(
   return transport.handleRequest(request, { parsedBody: body });
 }
 
-async function handleDelete(request: Request): Promise<Response> {
+async function handleDelete(
+  request: Request,
+  workspaceCtx?: McpWorkspaceContext,
+): Promise<Response> {
   const sessionId = request.headers.get("mcp-session-id");
   if (!sessionId) {
     return new Response("Missing session ID", { status: 400 });
   }
   const entry = sessions.get(sessionId);
   if (!entry) {
+    // Routine: client closing a session we already reaped. Info-level so it
+    // shows up in correlation but doesn't trip alerting. Thread the workspace
+    // context so the log line matches the format used by the POST 404 path —
+    // workspace + identity are exactly what cross-tenant correlation needs.
+    log.info(`[mcp] delete session miss ${fmtSessionContext(request, sessionId, workspaceCtx)}`);
     return new Response("Session not found", { status: 404 });
   }
   entry.lastAccessedAt = Date.now();
   return entry.transport.handleRequest(request);
+}
+
+/**
+ * Build a `key=value` log fragment with the request context that matters for
+ * session-miss diagnosis: a sessionId prefix (UUIDs are not sensitive but the
+ * prefix keeps lines greppable), workspace + identity (for cross-tenant
+ * correlation), and the client IP from `x-forwarded-for` (the ALB sets it).
+ */
+function fmtSessionContext(
+  request: Request,
+  sessionId: string | null,
+  workspaceCtx?: McpWorkspaceContext,
+): string {
+  const sidPrefix = sessionId ? sessionId.slice(0, 8) : "none";
+  const wsId = workspaceCtx?.workspaceId ?? "none";
+  const identityId = workspaceCtx?.identity?.id ?? "none";
+  const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "direct";
+  return `sessionId=${sidPrefix} workspace=${wsId} identity=${identityId} ip=${ip}`;
 }
 
 /**
