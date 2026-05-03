@@ -33,7 +33,7 @@ import {
   TaskStatusNotificationSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { uploadResource } from "../api/client";
-import { getMcpBridgeClient } from "../mcp-bridge-client";
+import { getMcpBridgeClient, withSessionRetry } from "../mcp-bridge-client";
 import { getHostThemeMode, getSpecThemeTokens, getThemeTokens } from "./theme";
 import type {
   BridgeCallbacks,
@@ -672,8 +672,6 @@ async function callToolViaMcp(
   params: ToolsCallParams,
   id: string,
 ): Promise<UiToolResultResponse | UiToolResultError | Record<string, unknown>> {
-  const client = await getMcpBridgeClient();
-
   // The `/mcp` endpoint advertises tool names as `<source>__<tool>`, so
   // the wire `tools/call` must use the qualified form (see
   // `mcp-server.ts::CallToolRequestSchema`). Iframes that already pass a
@@ -681,56 +679,60 @@ async function callToolViaMcp(
   // the resolved `server` (post-INTERNAL_APPS authz).
   const wireName = params.name.includes("__") ? params.name : `${server}__${params.name}`;
 
-  if (params.task) {
-    // Task-augmented: the server returns CreateTaskResult, not
-    // CallToolResult. The typed `client.callTool()` would reject that;
-    // use the generic `request()` path with the right schema and
-    // forward the result verbatim (Non-Negotiable Rule 4).
-    const method: CallToolRequest["method"] = "tools/call";
-    const result = await client.request(
-      {
-        method,
-        params: {
-          name: wireName,
-          arguments: params.arguments ?? {},
-          task: params.task,
+  return withSessionRetry(async () => {
+    const client = await getMcpBridgeClient();
+
+    if (params.task) {
+      // Task-augmented: the server returns CreateTaskResult, not
+      // CallToolResult. The typed `client.callTool()` would reject that;
+      // use the generic `request()` path with the right schema and
+      // forward the result verbatim (Non-Negotiable Rule 4).
+      const method: CallToolRequest["method"] = "tools/call";
+      const result = await client.request(
+        {
+          method,
+          params: {
+            name: wireName,
+            arguments: params.arguments ?? {},
+            task: params.task,
+          },
         },
+        CreateTaskResultSchema,
+      );
+      return { jsonrpc: "2.0", id, result };
+    }
+
+    const result = await client.callTool(
+      {
+        name: wireName,
+        arguments: params.arguments ?? {},
       },
-      CreateTaskResultSchema,
+      CallToolResultSchema,
     );
-    return { jsonrpc: "2.0", id, result };
-  }
 
-  const result = await client.callTool(
-    {
-      name: wireName,
-      arguments: params.arguments ?? {},
-    },
-    CallToolResultSchema,
-  );
+    if (result.isError) {
+      const errorText =
+        (result.content as Array<{ text?: string }> | undefined)
+          ?.map((b) => b.text ?? "")
+          .filter(Boolean)
+          .join("\n") || "Tool error";
+      return {
+        jsonrpc: "2.0",
+        id,
+        error: { code: -32000, message: errorText },
+      } satisfies UiToolResultError;
+    }
 
-  if (result.isError) {
-    const errorText =
-      (result.content as Array<{ text?: string }> | undefined)
-        ?.map((b) => b.text ?? "")
-        .filter(Boolean)
-        .join("\n") || "Tool error";
+    // Forward the full CallToolResult shape (content + structuredContent).
     return {
       jsonrpc: "2.0",
       id,
-      error: { code: -32000, message: errorText },
-    } satisfies UiToolResultError;
-  }
-
-  // Forward the full CallToolResult shape (content + structuredContent).
-  return {
-    jsonrpc: "2.0",
-    id,
-    result: {
-      content: result.content as UiToolResultResponse["result"]["content"],
-      structuredContent: result.structuredContent as Record<string, unknown> | undefined,
-    },
-  } satisfies UiToolResultResponse;
+      result: {
+        content: result.content as UiToolResultResponse["result"]["content"],
+        structuredContent: result.structuredContent as Record<string, unknown> | undefined,
+      },
+    } satisfies UiToolResultResponse;
+  });
 }
 
 /**
@@ -739,15 +741,16 @@ async function callToolViaMcp(
  * JSON-RPC response envelope for the iframe.
  */
 async function readResourceViaMcp(server: string, uri: string): Promise<{ contents: unknown[] }> {
-  const client = await getMcpBridgeClient();
-
   // Per spec, `resources/read` carries only the URI — the resource is
   // namespaced by the bundle that authored it, not by request params.
   // `server` is consumed by the INTERNAL_APPS authz at the call site
   // (cross-call permission); it doesn't appear on the wire here.
   void server;
-  const result = await client.readResource({ uri });
-  return { contents: result.contents as unknown[] };
+  return withSessionRetry(async () => {
+    const client = await getMcpBridgeClient();
+    const result = await client.readResource({ uri });
+    return { contents: result.contents as unknown[] };
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -815,10 +818,16 @@ async function forwardTaskRequest(
   id: string,
 ): Promise<Record<string, unknown>> {
   try {
-    const client = await getMcpBridgeClient();
-    const result = await client.request({ method, params }, schema);
-    // Forward the result verbatim (Non-Negotiable Rule 4: never unwrap).
-    return { jsonrpc: "2.0", id, result };
+    // `withSessionRetry` only re-runs on the specific session-not-found
+    // shape; any other error (incl. spec-mandated `-32602` for missing
+    // tasks) propagates through this catch and gets translated to the
+    // JSON-RPC error envelope the iframe expects.
+    return await withSessionRetry(async () => {
+      const client = await getMcpBridgeClient();
+      const result = await client.request({ method, params }, schema);
+      // Forward the result verbatim (Non-Negotiable Rule 4: never unwrap).
+      return { jsonrpc: "2.0", id, result };
+    });
   } catch (err) {
     return { jsonrpc: "2.0", id, error: translateTaskError(err) };
   }

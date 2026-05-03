@@ -80,7 +80,7 @@ mock.module("@modelcontextprotocol/sdk/client/streamableHttp.js", () => ({
 // ---------------------------------------------------------------------------
 
 import { setActiveWorkspaceId, setAuthLifecycleHandler, setAuthToken } from "../api/client";
-import { getMcpBridgeClient, resetMcpBridgeClient } from "../mcp-bridge-client";
+import { getMcpBridgeClient, resetMcpBridgeClient, withSessionRetry } from "../mcp-bridge-client";
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -205,6 +205,117 @@ describe("resetMcpBridgeClient", () => {
     expect(() => resetMcpBridgeClient()).not.toThrow();
     expect(clientCloseCalls).toBe(0);
     expect(transportCloseCalls).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Session-not-found recovery — fixes the symptom in #141 where a stale
+// `Mcp-Session-Id` (after a server-side TTL eviction or process restart)
+// would lock every iframe call into a permanent error until page refresh.
+// ---------------------------------------------------------------------------
+
+describe("withSessionRetry", () => {
+  /**
+   * The platform's exact 404 body, embedded inside the SDK transport's
+   * wrapper text. Matching `mcp-server.ts::handlePost`. If the wording on
+   * the server side changes, this test breaks loudly — which is the point.
+   */
+  const SESSION_NOT_FOUND_TRANSPORT_ERROR = new Error(
+    `Streamable HTTP error: Error POSTing to endpoint: ${JSON.stringify({
+      jsonrpc: "2.0",
+      error: { code: -32000, message: "Session not found" },
+      id: null,
+    })}`,
+  );
+
+  test("returns the operation's value when no error", async () => {
+    const op = mock(async () => "ok");
+    const result = await withSessionRetry(op);
+    expect(result).toBe("ok");
+    expect(op).toHaveBeenCalledTimes(1);
+  });
+
+  test("retries once on session-not-found and returns the second-call value", async () => {
+    let invocations = 0;
+    const op = async () => {
+      invocations += 1;
+      if (invocations === 1) throw SESSION_NOT_FOUND_TRANSPORT_ERROR;
+      return "recovered";
+    };
+
+    // Prime the singleton so the reset path actually has something to close.
+    await getMcpBridgeClient();
+    expect(clientCtorCalls).toBe(1);
+
+    const result = await withSessionRetry(op);
+    expect(result).toBe("recovered");
+    expect(invocations).toBe(2);
+
+    // After-the-fact wait for the async client.close() the reset triggers.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(clientCloseCalls).toBe(1);
+  });
+
+  test("recognizes the parsed error.data.reason variant (forward-compat with #162)", async () => {
+    let invocations = 0;
+    const op = async () => {
+      invocations += 1;
+      if (invocations === 1) {
+        // Simulate the post-#162 SDK exposing parsed JSON-RPC error data.
+        throw Object.assign(new Error("session miss"), {
+          data: { reason: "unavailable" },
+        });
+      }
+      return "recovered";
+    };
+
+    const result = await withSessionRetry(op);
+    expect(result).toBe("recovered");
+    expect(invocations).toBe(2);
+  });
+
+  test("propagates non-session errors without retrying", async () => {
+    let invocations = 0;
+    const op = async () => {
+      invocations += 1;
+      throw new Error("Tool execution failed: bad input");
+    };
+
+    await expect(withSessionRetry(op)).rejects.toThrow("Tool execution failed");
+    expect(invocations).toBe(1);
+  });
+
+  test("propagates the second error if the retry also fails", async () => {
+    let invocations = 0;
+    const op = async () => {
+      invocations += 1;
+      if (invocations === 1) throw SESSION_NOT_FOUND_TRANSPORT_ERROR;
+      throw new Error("auth failed on retry");
+    };
+
+    await expect(withSessionRetry(op)).rejects.toThrow("auth failed on retry");
+    expect(invocations).toBe(2);
+  });
+
+  test("retried op gets a fresh client (singleton was dropped)", async () => {
+    const firstClient = await getMcpBridgeClient();
+    expect(clientCtorCalls).toBe(1);
+
+    let invocations = 0;
+    let secondClient: unknown = null;
+    await withSessionRetry(async () => {
+      invocations += 1;
+      if (invocations === 1) throw SESSION_NOT_FOUND_TRANSPORT_ERROR;
+      // The op closes over getMcpBridgeClient — second invocation must
+      // see a freshly-constructed client, not the dead singleton.
+      secondClient = await getMcpBridgeClient();
+      return "ok";
+    });
+
+    expect(secondClient).not.toBe(firstClient);
+    expect(clientCtorCalls).toBe(2);
+    expect(connectCalls).toBe(2);
   });
 });
 

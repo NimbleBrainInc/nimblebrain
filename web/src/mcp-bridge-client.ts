@@ -91,6 +91,79 @@ export function resetMcpBridgeClient(): void {
 setAuthLifecycleHandler(resetMcpBridgeClient);
 
 // ---------------------------------------------------------------------------
+// Session-not-found recovery
+// ---------------------------------------------------------------------------
+
+/**
+ * Run an MCP bridge operation, recovering once from a stale `Mcp-Session-Id`.
+ *
+ * The platform's `/mcp` endpoint may respond with a 404 + JSON-RPC `Session
+ * not found` envelope after a server-side TTL eviction or process restart.
+ * The bridge's cached `Client` keeps replaying the dead session id on every
+ * subsequent request — every iframe call would fail with that error until
+ * the user refreshed the page (issue #141).
+ *
+ * This wrapper catches the specific shape, drops the cached singleton via
+ * `resetMcpBridgeClient`, and runs `op` once more. The retried operation
+ * triggers a fresh `getMcpBridgeClient()` → fresh `initialize` → fresh
+ * session id, and the original request goes out clean. Other errors (real
+ * tool failures, network outages, auth) propagate without modification —
+ * this is recovery scoped to the single failure mode it claims to fix.
+ *
+ * Single retry only. If the retry also fails for any reason, the caller
+ * sees that second error. Looping would mask infrastructure problems.
+ *
+ * Note: retry is per-operation, not per-session. A session-augmented
+ * `tasks/{get,result,cancel}` against a task that lived on the lost
+ * session will get a fresh session AND a fresh (empty) task table — the
+ * task-id will resolve to `-32602 task not found`. That's the correct
+ * answer (the task really is gone); iframes that care must re-issue any
+ * in-flight work after seeing it.
+ */
+export async function withSessionRetry<T>(op: () => Promise<T>): Promise<T> {
+  try {
+    return await op();
+  } catch (err) {
+    if (!isSessionNotFoundError(err)) throw err;
+    resetMcpBridgeClient();
+    return await op();
+  }
+}
+
+/**
+ * Detect the platform's session-miss 404 across the two shapes the SDK
+ * surfaces it in:
+ *
+ *   1. `StreamableHTTPClientTransport` sees a non-2xx response and throws
+ *      a generic `Error` whose `.message` embeds the JSON-RPC envelope
+ *      verbatim (`Error POSTing to endpoint: {"jsonrpc":"2.0",...}`). The
+ *      substring `Session not found` reliably distinguishes us from any
+ *      other JSON the transport might wrap.
+ *   2. Future SDK versions may parse the JSON-RPC envelope and expose
+ *      `error.data.reason` directly. Forward-compat: match `not_found`
+ *      and `unavailable` (the two reasons emitted by the post-#162
+ *      session-store classifier).
+ *
+ * Both paths return the same boolean — the recovery is identical.
+ */
+function isSessionNotFoundError(err: unknown): boolean {
+  if (!err) return false;
+
+  // Substring match on the SDK-wrapped transport error.
+  if (err instanceof Error && err.message.includes("Session not found")) {
+    return true;
+  }
+
+  // Parsed `error.data.reason` (post-#162 forward-compat).
+  if (typeof err === "object" && err !== null) {
+    const reason = (err as { data?: { reason?: unknown } }).data?.reason;
+    if (reason === "not_found" || reason === "unavailable") return true;
+  }
+
+  return false;
+}
+
+// ---------------------------------------------------------------------------
 // Internals
 // ---------------------------------------------------------------------------
 
