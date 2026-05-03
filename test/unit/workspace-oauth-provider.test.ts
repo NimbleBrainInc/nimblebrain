@@ -110,3 +110,118 @@ describe("WorkspaceOAuthProvider — file I/O roundtrips", () => {
     await expect(p.awaitPendingFlow()).rejects.toThrow(/no active flow/i);
   });
 });
+
+describe("WorkspaceOAuthProvider — member-scoped persistence", () => {
+  let workDir: string;
+
+  beforeEach(() => {
+    workDir = mkdtempSync(join(tmpdir(), "nb-oauth-mem-"));
+  });
+
+  function memberProvider(memberId: string, serverName = "test-srv"): WorkspaceOAuthProvider {
+    return new WorkspaceOAuthProvider({
+      wsId: "ws_test",
+      serverName,
+      workDir,
+      callbackUrl: CALLBACK,
+      memberId,
+    });
+  }
+
+  it("rejects malformed memberId at construction", () => {
+    expect(() => memberProvider("../escape")).toThrow(/invalid memberId/);
+    expect(() => memberProvider("with/slash")).toThrow(/invalid memberId/);
+    expect(() => memberProvider("..")).toThrow(/invalid memberId/);
+    expect(() => memberProvider(".")).toThrow(/invalid memberId/);
+    expect(() => memberProvider("")).toThrow(/invalid memberId/);
+    expect(() => memberProvider("a".repeat(129))).toThrow(/invalid memberId/);
+  });
+
+  it("tokens land under members/<memberId>/ — never at workspace root", async () => {
+    const a = memberProvider("usr_alice", "granola");
+    const tokens: OAuthTokens = { access_token: "alice-token", token_type: "Bearer" };
+    await a.saveTokens(tokens);
+
+    const memberPath = join(
+      workDir,
+      "workspaces",
+      "ws_test",
+      "credentials",
+      "mcp-oauth",
+      "granola",
+      "members",
+      "usr_alice",
+      "tokens.json",
+    );
+    expect(JSON.parse(readFileSync(memberPath, "utf-8"))).toEqual(tokens);
+
+    // Workspace-level tokens.json must NOT exist (no leakage to shared dir).
+    const workspaceLevelPath = join(
+      workDir,
+      "workspaces",
+      "ws_test",
+      "credentials",
+      "mcp-oauth",
+      "granola",
+      "tokens.json",
+    );
+    expect(() => readFileSync(workspaceLevelPath)).toThrow();
+  });
+
+  it("two members store tokens independently — neither sees the other's", async () => {
+    const a = memberProvider("usr_alice", "granola");
+    const b = memberProvider("usr_bob", "granola");
+    await a.saveTokens({ access_token: "alice-token", token_type: "Bearer" });
+    await b.saveTokens({ access_token: "bob-token", token_type: "Bearer" });
+
+    // Fresh providers (no in-memory cache) read from disk.
+    const a2 = memberProvider("usr_alice", "granola");
+    const b2 = memberProvider("usr_bob", "granola");
+    expect((await a2.tokens())?.access_token).toBe("alice-token");
+    expect((await b2.tokens())?.access_token).toBe("bob-token");
+  });
+
+  it("client.json is workspace-shared even when tokens are per-member", async () => {
+    // Member A saves DCR client info — should land at the workspace level
+    // (NimbleBrain registers as one client per workspace, regardless of
+    // which member happened to trigger DCR first).
+    const a = memberProvider("usr_alice", "granola");
+    const info: OAuthClientInformationFull = { client_id: "cid-shared", redirect_uris: [CALLBACK] };
+    await a.saveClientInformation(info);
+
+    // Member B (different memberId) reads the same client.json.
+    const b = memberProvider("usr_bob", "granola");
+    expect(await b.clientInformation()).toEqual(info);
+
+    // And on disk, client.json is at the workspace level (no /members/ segment).
+    const workspaceClientPath = join(
+      workDir,
+      "workspaces",
+      "ws_test",
+      "credentials",
+      "mcp-oauth",
+      "granola",
+      "client.json",
+    );
+    expect(JSON.parse(readFileSync(workspaceClientPath, "utf-8"))).toEqual(info);
+  });
+
+  it("invalidateCredentials('tokens') only clears the calling member's tokens", async () => {
+    const a = memberProvider("usr_alice", "granola");
+    const b = memberProvider("usr_bob", "granola");
+    await a.saveTokens({ access_token: "alice-token", token_type: "Bearer" });
+    await b.saveTokens({ access_token: "bob-token", token_type: "Bearer" });
+
+    await a.invalidateCredentials("tokens");
+
+    const a2 = memberProvider("usr_alice", "granola");
+    const b2 = memberProvider("usr_bob", "granola");
+    expect(await a2.tokens()).toBeUndefined();
+    expect((await b2.tokens())?.access_token).toBe("bob-token");
+  });
+
+  it("getMemberId returns memberId for member-scope and undefined for workspace-scope", () => {
+    expect(memberProvider("usr_alice").getMemberId()).toBe("usr_alice");
+    expect(makeProvider(workDir).getMemberId()).toBeUndefined();
+  });
+});

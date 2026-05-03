@@ -805,6 +805,13 @@ export class BundleLifecycleManager {
         ? join(dataDir, manifestMeta.upjackNamespace, "data")
         : undefined;
 
+    // Resolve oauthScope for URL bundles. Member-scoped bundles seed with
+    // an empty connections map — Connections are created on-demand when
+    // each member calls a tool or hits Connect from the UI.
+    const oauthScope: BundleInstance["oauthScope"] | undefined = "url" in ref
+      ? (ref.oauthScope ?? "workspace")
+      : undefined;
+
     const instance: BundleInstance = {
       serverName,
       // Prefer the scoped manifest name over the config label (filesystem path)
@@ -821,19 +828,25 @@ export class BundleLifecycleManager {
       protected: ref.protected ?? false,
       type: manifestMeta?.type ?? "plain",
       wsId,
+      ...(oauthScope !== undefined ? { oauthScope } : {}),
       ...(entityDataRoot !== undefined ? { entityDataRoot } : {}),
     };
     const key = `${serverName}|${wsId}`;
     this.instances.set(key, instance);
 
-    // If this URL bundle hit interactive OAuth during boot (before
-    // BundleLifecycleManager existed), the authorization URL was buffered
-    // by `pending-auth-buffer`. Consume it here, transition the
-    // Connection to `pending_auth`, and emit the
-    // `connection.state_changed` SSE event so the UI banner appears.
-    // For URL bundles that started cleanly (headless OAuth or no auth),
-    // the buffer entry is absent and we record `running`.
+    // For URL bundles, derive the boot-time Connection state.
     if ("url" in ref) {
+      if (oauthScope === "member") {
+        // No auto-Connection at boot — connections.size = 0 and the
+        // BundleInstance.state stays in its default. Members create
+        // their own Connections on-demand via the Connect UI.
+        instance.state = "stopped";
+        return;
+      }
+      // Workspace-scope: existing behavior. If the bundle hit interactive
+      // OAuth during boot (before lifecycle existed), the URL was buffered
+      // by `pending-auth-buffer`; consume it here and transition to
+      // `pending_auth`. Otherwise record `running`.
       const pendingAuthUrl = consumePendingAuth(wsId, serverName);
       if (pendingAuthUrl) {
         this.recordConnectionStateChange(serverName, wsId, "_workspace", "pending_auth", {

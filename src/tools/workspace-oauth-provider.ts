@@ -45,6 +45,22 @@ export interface WorkspaceOAuthProviderOptions {
   /** Absolute callback URL — must match the /v1/mcp-auth/callback route. */
   callbackUrl: string;
   /**
+   * Optional principal id when the bundle is `oauthScope: "member"`. When
+   * present, `tokens.json`, `verifier.json`, and `identity.json` resolve
+   * under `…/members/<memberId>/`. `client.json` (DCR registration) stays
+   * at the workspace level — one DCR'd client represents "NimbleBrain on
+   * behalf of `<wsId>`" and is shared across members; rotating it would
+   * force every member to re-consent.
+   *
+   * Must satisfy the same `safeKey` shape we use for credential keys
+   * (alphanumerics + `._-`, no path separators) so a member id can never
+   * traverse out of the credentials tree. Validated at construction.
+   *
+   * Omit (or `undefined`) for `oauthScope: "workspace"` — the legacy path
+   * where tokens live at the workspace level.
+   */
+  memberId?: string;
+  /**
    * Whether loopback / RFC1918 / cloud-metadata hosts are acceptable targets
    * for the authorize chain. Mirrors the platform-level `allowInsecureRemotes`
    * flag; when `false` (production default), every hop of the authorize
@@ -88,6 +104,30 @@ function canonicalEndpoint(u: URL): string {
   const origin = u.origin.toLowerCase();
   const path = u.pathname.replace(/\/+$/, "") || "/";
   return `${origin}${path}`;
+}
+
+/**
+ * Validate a member id before it composes into a filesystem path. Same
+ * shape as the credential-store key validator (alphanumerics + `._-`,
+ * length-bounded, no `..` / `.`). Reuses the same allowed-character set
+ * the platform's credential store uses so member ids and credential keys
+ * have a single safe-name story.
+ */
+const MEMBER_ID_RE = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/;
+function assertSafeMemberId(memberId: string): void {
+  if (
+    typeof memberId !== "string" ||
+    memberId.length === 0 ||
+    memberId.length > 128 ||
+    !MEMBER_ID_RE.test(memberId) ||
+    memberId === "." ||
+    memberId === ".."
+  ) {
+    throw new Error(
+      `[workspace-oauth-provider] invalid memberId: "${memberId}". ` +
+        "Must be 1-128 chars matching /^[A-Za-z0-9][A-Za-z0-9._-]*[A-Za-z0-9]$/.",
+    );
+  }
 }
 
 interface Deferred<T> {
@@ -135,7 +175,19 @@ function deferred<T>(): Deferred<T> {
 export class WorkspaceOAuthProvider implements OAuthClientProvider {
   private readonly wsId: string;
   private readonly serverName: string;
-  private readonly dir: string;
+  private readonly memberId?: string;
+  /**
+   * Workspace-shared directory for the DCR registration. `client.json`
+   * lives here regardless of scope — same NimbleBrain-as-a-client identity
+   * for every member of the workspace.
+   */
+  private readonly clientDir: string;
+  /**
+   * Per-principal directory for tokens / verifier / identity. Equals
+   * `clientDir` for `oauthScope: "workspace"`; `${clientDir}/members/<memberId>/`
+   * for `oauthScope: "member"`. Member files never leak across principals.
+   */
+  private readonly tokenDir: string;
   private readonly callbackUrl: string;
   /** Canonical form of `callbackUrl` for self-match comparison. */
   private readonly canonicalCallback: string;
@@ -166,11 +218,12 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
   constructor(opts: WorkspaceOAuthProviderOptions) {
     this.wsId = opts.wsId;
     this.serverName = opts.serverName;
+    this.memberId = opts.memberId;
     this.callbackUrl = opts.callbackUrl;
     this.canonicalCallback = canonicalEndpoint(new URL(opts.callbackUrl));
     this.allowInsecureRemotes = opts.allowInsecureRemotes === true;
     this.onInteractiveAuthRequired = opts.onInteractiveAuthRequired;
-    this.dir = join(
+    this.clientDir = join(
       opts.workDir,
       "workspaces",
       opts.wsId,
@@ -178,6 +231,12 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
       "mcp-oauth",
       opts.serverName,
     );
+    if (opts.memberId !== undefined) {
+      assertSafeMemberId(opts.memberId);
+      this.tokenDir = join(this.clientDir, "members", opts.memberId);
+    } else {
+      this.tokenDir = this.clientDir;
+    }
   }
 
   // ── OAuthClientProvider interface ─────────────────────────────────
@@ -209,36 +268,48 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     return s;
   }
 
+  /**
+   * The principal id this provider represents — `memberId` for member-scope
+   * bundles, `undefined` for workspace-shared bundles. Read by the
+   * disconnect route + connections snapshot to key per-principal records.
+   */
+  getMemberId(): string | undefined {
+    return this.memberId;
+  }
+
   async clientInformation(): Promise<OAuthClientInformationMixed | undefined> {
     if (this.cachedClientInfo) return this.cachedClientInfo;
-    const data = await this.readJson<OAuthClientInformationFull>("client.json");
+    // DCR client info is workspace-shared regardless of scope — every
+    // member of the workspace authenticates as the same NimbleBrain
+    // OAuth client.
+    const data = await this.readJson<OAuthClientInformationFull>(this.clientDir, "client.json");
     if (data) this.cachedClientInfo = data;
     return data ?? undefined;
   }
 
   async saveClientInformation(info: OAuthClientInformationFull): Promise<void> {
     this.cachedClientInfo = info;
-    await this.writeJson("client.json", info);
+    await this.writeJson(this.clientDir, "client.json", info);
   }
 
   async tokens(): Promise<OAuthTokens | undefined> {
     if (this.cachedTokens) return this.cachedTokens;
-    const data = await this.readJson<OAuthTokens>("tokens.json");
+    const data = await this.readJson<OAuthTokens>(this.tokenDir, "tokens.json");
     if (data) this.cachedTokens = data;
     return data ?? undefined;
   }
 
   async saveTokens(tokens: OAuthTokens): Promise<void> {
     this.cachedTokens = tokens;
-    await this.writeJson("tokens.json", tokens);
+    await this.writeJson(this.tokenDir, "tokens.json", tokens);
   }
 
   async saveCodeVerifier(codeVerifier: string): Promise<void> {
-    await this.writeJson("verifier.json", { codeVerifier });
+    await this.writeJson(this.tokenDir, "verifier.json", { codeVerifier });
   }
 
   async codeVerifier(): Promise<string> {
-    const data = await this.readJson<{ codeVerifier: string }>("verifier.json");
+    const data = await this.readJson<{ codeVerifier: string }>(this.tokenDir, "verifier.json");
     if (!data) throw new Error("PKCE code verifier missing — OAuth flow corrupted");
     return data.codeVerifier;
   }
@@ -388,14 +459,14 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
   ): Promise<void> {
     if (scope === "all" || scope === "client") {
       this.cachedClientInfo = null;
-      await this.unlinkIfExists("client.json");
+      await this.unlinkIfExists(this.clientDir, "client.json");
     }
     if (scope === "all" || scope === "tokens") {
       this.cachedTokens = null;
-      await this.unlinkIfExists("tokens.json");
+      await this.unlinkIfExists(this.tokenDir, "tokens.json");
     }
     if (scope === "all" || scope === "verifier") {
-      await this.unlinkIfExists("verifier.json");
+      await this.unlinkIfExists(this.tokenDir, "verifier.json");
     }
     // 'discovery' is SDK-internal metadata; we don't persist it.
   }
@@ -420,11 +491,17 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
   }
 
   // ── File I/O helpers ──────────────────────────────────────────────
+  //
+  // All disk operations are parameterized by directory so the same atomic-
+  // write discipline serves both the workspace-shared `clientDir` and the
+  // per-principal `tokenDir`. The DCR registration goes to one; tokens +
+  // verifier + identity to the other; invalidateCredentials targets each
+  // explicitly.
 
-  private async ensureDir(): Promise<void> {
-    await mkdir(this.dir, { recursive: true, mode: 0o700 });
+  private async ensureDir(dir: string): Promise<void> {
+    await mkdir(dir, { recursive: true, mode: 0o700 });
     try {
-      await chmod(this.dir, 0o700);
+      await chmod(dir, 0o700);
     } catch {
       // mkdir succeeded; chmod failure is non-fatal (file mode 0o600 still
       // protects the contents). A permissive parent leaks existence of
@@ -432,12 +509,8 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     }
   }
 
-  private filePath(name: string): string {
-    return join(this.dir, name);
-  }
-
-  private async readJson<T>(name: string): Promise<T | null> {
-    const path = this.filePath(name);
+  private async readJson<T>(dir: string, name: string): Promise<T | null> {
+    const path = join(dir, name);
     if (!existsSync(path)) return null;
     try {
       const raw = await readFile(path, "utf-8");
@@ -448,9 +521,9 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     }
   }
 
-  private async writeJson(name: string, value: unknown): Promise<void> {
-    await this.ensureDir();
-    const path = this.filePath(name);
+  private async writeJson(dir: string, name: string, value: unknown): Promise<void> {
+    await this.ensureDir(dir);
+    const path = join(dir, name);
     const tmp = `${path}.tmp.${randomBytes(4).toString("hex")}`;
     const content = JSON.stringify(value, null, 2);
     await writeFile(tmp, content, { encoding: "utf-8", mode: 0o600 });
@@ -458,8 +531,8 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     await rename(tmp, path);
   }
 
-  private async unlinkIfExists(name: string): Promise<void> {
-    const path = this.filePath(name);
+  private async unlinkIfExists(dir: string, name: string): Promise<void> {
+    const path = join(dir, name);
     if (!existsSync(path)) return;
     try {
       await unlink(path);

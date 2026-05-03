@@ -105,6 +105,20 @@ export type BundleRef =
       protected?: boolean;
       trustScore?: number | null;
       ui?: BundleUiMeta | null;
+      /**
+       * OAuth identity scope for this URL bundle.
+       *
+       * - `"workspace"` (default): one identity per `(workspace, server)`. All
+       *   members share the same OAuth tokens. Correct for shared
+       *   integrations like a team Notion or org Slack.
+       * - `"member"`: each workspace member authenticates independently and
+       *   has their own tokens at `…/credentials/mcp-oauth/<server>/members/
+       *   <memberId>/`. Correct for personal-account services (Granola,
+       *   personal Gmail, personal Zoom). Opt-in per member: those who don't
+       *   connect get a structured `pending_auth` error when they (or the
+       *   agent on their behalf) try to call a tool.
+       */
+      oauthScope?: "workspace" | "member";
     };
 
 /** Bundle lifecycle states. */
