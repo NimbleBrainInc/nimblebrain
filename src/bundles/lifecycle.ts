@@ -2,10 +2,13 @@ import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { clearAllWorkspaceCredentials } from "../config/workspace-credentials.ts";
+import { log } from "../cli/log.ts";
 import type { EventSink } from "../engine/types.ts";
 import type { PlacementRegistry } from "../runtime/placement-registry.ts";
 import { McpSource } from "../tools/mcp-source.ts";
+import { MemberPoolSource } from "../tools/member-pool-source.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
+import { WorkspaceOAuthProvider } from "../tools/workspace-oauth-provider.ts";
 import { createAutomation, deleteAutomation } from "./automations/src/domain.ts";
 import { type Connection, type ConnectionState, summarizeConnectionState } from "./connection.ts";
 import { getMpak } from "./mpak.ts";
@@ -648,6 +651,189 @@ export class BundleLifecycleManager {
     return out;
   }
 
+  /**
+   * Start an interactive OAuth flow for a member-scoped URL bundle.
+   *
+   * Constructs a per-member `WorkspaceOAuthProvider` + `McpSource`, adds
+   * the source to the bundle's `MemberPoolSource`, kicks off
+   * `source.start()` in the background, and waits up to 15s for the
+   * provider's interactive callback to fire (which records pending_auth
+   * + populates `Connection.authorizationUrl`).
+   *
+   * Resolves with the authorization URL the caller should send the
+   * user's browser to. Throws if:
+   *   - bundle isn't installed in this workspace
+   *   - bundle isn't `oauthScope: "member"`
+   *   - principalId is invalid or `_workspace`
+   *   - the bundle's URL ref is missing (shouldn't happen post-seed)
+   *   - the auth flow fails to enter pending_auth within the timeout
+   *     (server is unreachable, AS doesn't redirect us anywhere
+   *     interactive, etc.)
+   *
+   * If the member already has a pending_auth Connection with an
+   * authorization URL, returns that URL without starting a new flow —
+   * the existing buffered URL is still valid (15min TTL on the
+   * registry); reuse avoids racing duplicate authorize requests when a
+   * user double-clicks Connect.
+   */
+  async startMemberAuth(
+    serverName: string,
+    wsId: string,
+    principalId: string,
+    opts: { workDir: string; callbackUrl: string; allowInsecureRemotes?: boolean },
+  ): Promise<{ authorizationUrl: string }> {
+    if (principalId === "_workspace") {
+      throw new Error(
+        `[lifecycle] startMemberAuth requires a member principal id, got "_workspace"`,
+      );
+    }
+    const instance = this.instances.get(`${serverName}|${wsId}`);
+    if (!instance) {
+      throw new Error(`[lifecycle] bundle "${serverName}" not installed in workspace ${wsId}`);
+    }
+    if (instance.oauthScope !== "member") {
+      throw new Error(
+        `[lifecycle] bundle "${serverName}" is not member-scoped (oauthScope="${instance.oauthScope ?? "workspace"}")`,
+      );
+    }
+    if (!instance.ref || !("url" in instance.ref)) {
+      throw new Error(`[lifecycle] missing URL ref for "${serverName}" — cannot construct source`);
+    }
+
+    // Reuse an existing pending_auth URL if present (debounce double-clicks).
+    const existingConn = instance.connections?.get(principalId);
+    if (existingConn?.state === "pending_auth" && existingConn.authorizationUrl) {
+      return { authorizationUrl: existingConn.authorizationUrl };
+    }
+    if (existingConn?.state === "running") {
+      throw new Error(
+        `[lifecycle] member "${principalId}" already connected to "${serverName}" — disconnect before reconnecting`,
+      );
+    }
+
+    // Look up the pool — must exist (registered at seed time for member-scope).
+    // We don't have a direct registry reference here, but `setMemberSource`
+    // is called below by way of the Connection bookkeeping; the pool
+    // discovery lives in a separate helper (`attachMemberSourceToPool`)
+    // wired by Runtime when the registries map is built.
+    const pool = this.memberPools.get(`${serverName}|${wsId}`);
+    if (!pool) {
+      throw new Error(
+        `[lifecycle] member-pool not registered for "${serverName}" in ${wsId} — this is a boot-ordering bug`,
+      );
+    }
+
+    // Construct provider with our pending-auth callback. The callback
+    // fires synchronously inside `redirectToAuthorization` BEFORE the
+    // provider throws UnauthorizedError, so it always runs before
+    // McpSource.start() returns (or its background promise resolves).
+    let capturedAuthUrl: string | undefined;
+    let resolveAuthUrl!: (url: string) => void;
+    let rejectAuthUrl!: (err: Error) => void;
+    const authUrlPromise = new Promise<string>((res, rej) => {
+      resolveAuthUrl = res;
+      rejectAuthUrl = rej;
+    });
+
+    const provider = new WorkspaceOAuthProvider({
+      wsId,
+      serverName,
+      workDir: opts.workDir,
+      memberId: principalId,
+      callbackUrl: opts.callbackUrl,
+      allowInsecureRemotes: opts.allowInsecureRemotes === true,
+      onInteractiveAuthRequired: (url) => {
+        capturedAuthUrl = url;
+        this.recordConnectionStateChange(serverName, wsId, principalId, "pending_auth", {
+          authorizationUrl: url,
+        });
+        resolveAuthUrl(url);
+      },
+    });
+
+    const ref = instance.ref;
+    const source = new McpSource(
+      serverName,
+      {
+        type: "remote",
+        url: new URL(ref.url),
+        transportConfig: ref.transport,
+        authProvider: provider,
+      },
+      this.eventSink,
+    );
+
+    // Add to pool BEFORE start so any tool calls during the flow find
+    // the source (and get a "starting" / "pending_auth" structured error
+    // instead of "no member source").
+    await pool.setMemberSource(principalId, source);
+    this.recordConnectionStateChange(serverName, wsId, principalId, "starting", {
+      source,
+    });
+
+    // Background start. The provider's callback will resolve `authUrlPromise`
+    // when interactive auth is required. If start() succeeds without ever
+    // hitting interactive (headless / pre-authenticated), we transition to
+    // running and reject the auth URL promise (caller wasn't expecting that
+    // path; they should call /v1/connections/installed to refresh state).
+    void source
+      .start()
+      .then(() => {
+        this.recordConnectionStateChange(serverName, wsId, principalId, "running");
+        if (!capturedAuthUrl) {
+          rejectAuthUrl(
+            new Error(
+              `[lifecycle] ${serverName} for ${principalId} connected without interactive auth — already authenticated`,
+            ),
+          );
+        }
+      })
+      .catch((err) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        // For UnauthorizedError, the callback path already recorded
+        // pending_auth — we don't want to overwrite that with `dead`.
+        // Other errors (network, SSRF block, server crash) → record dead.
+        if (!capturedAuthUrl) {
+          this.recordConnectionStateChange(serverName, wsId, principalId, "dead", {
+            lastError: msg,
+          });
+          rejectAuthUrl(err instanceof Error ? err : new Error(msg));
+        }
+      });
+
+    // Race the auth URL signal against a hard timeout. 15s is generous —
+    // the provider's redirect probe + the SDK's metadata fetch + DCR
+    // typically complete in under 5s on a healthy server.
+    const TIMEOUT_MS = 15_000;
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, rej) => {
+      timeoutHandle = setTimeout(
+        () => rej(new Error(`[lifecycle] startMemberAuth timed out after ${TIMEOUT_MS}ms`)),
+        TIMEOUT_MS,
+      );
+    });
+    try {
+      const authorizationUrl = await Promise.race([authUrlPromise, timeout]);
+      return { authorizationUrl };
+    } finally {
+      if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
+    }
+  }
+
+  /**
+   * Map of `(serverName|wsId)` → `MemberPoolSource` for member-scoped
+   * bundles. Populated by `seedInstance`; consumed by `startMemberAuth`
+   * and the disconnect flow. Kept here (rather than reaching into the
+   * per-workspace ToolRegistry) so lifecycle has direct access without
+   * coupling to a specific registry shape.
+   */
+  private readonly memberPools = new Map<string, MemberPoolSource>();
+
+  /** Lookup helper — returns the pool for diagnostic / testing use. */
+  getMemberPool(serverName: string, wsId: string): MemberPoolSource | undefined {
+    return this.memberPools.get(`${serverName}|${wsId}`);
+  }
+
   // ---- Bundle-contributed automations -------------------------------------
 
   /**
@@ -778,6 +964,15 @@ export class BundleLifecycleManager {
   /**
    * Seed instances from the initial bundle startup (called by Runtime.start
    * after bundles are already running).
+   *
+   * For URL bundles with `oauthScope: "member"`, an empty
+   * `MemberPoolSource` is constructed and registered in the supplied
+   * `registry` so the bundle's name appears in tool routing — even
+   * before any member has connected. The pool itself returns `tools()
+   * = []` until a member's per-principal source connects (Track B
+   * acceptance: agent sees no tools from the bundle until at least one
+   * member connects, which matches the "Connect to access N tools"
+   * affordance on the Connections page).
    */
   seedInstance(
     serverName: string,
@@ -797,6 +992,10 @@ export class BundleLifecycleManager {
       | undefined,
     wsId: string,
     dataDir?: string,
+    /** Per-workspace ToolRegistry — used to register the MemberPoolSource
+     *  for member-scoped URL bundles. Optional for backward compat with
+     *  test callers; production callers should always pass it. */
+    registry?: ToolRegistry,
   ): void {
     // Resolve entity data root from dataDir + upjack namespace at seed time.
     // This is the single source of truth — downstream consumers read it directly.
@@ -830,6 +1029,10 @@ export class BundleLifecycleManager {
       wsId,
       ...(oauthScope !== undefined ? { oauthScope } : {}),
       ...(entityDataRoot !== undefined ? { entityDataRoot } : {}),
+      // URL bundles only — needed for member-scope to reconstruct per-
+      // member McpSources on-demand (URL, transport config, eventually
+      // oauthClient + scopes). Stored as an opaque copy.
+      ...("url" in ref ? { ref: { ...ref } } : {}),
     };
     const key = `${serverName}|${wsId}`;
     this.instances.set(key, instance);
@@ -837,9 +1040,29 @@ export class BundleLifecycleManager {
     // For URL bundles, derive the boot-time Connection state.
     if ("url" in ref) {
       if (oauthScope === "member") {
+        // Construct + register the per-bundle MemberPoolSource so the
+        // bundle exists in the workspace registry from boot. Per-member
+        // McpSources are added to the pool lazily as members connect
+        // (`startMemberAuth` below). Without this registration the
+        // bundle would be invisible to the agent's tool list until a
+        // member connected — which is too late.
+        const pool = new MemberPoolSource(serverName);
+        this.memberPools.set(`${serverName}|${wsId}`, pool);
+        // Pool's start() is a no-op; calling it for symmetry / future
+        // hooks. Errors here are unrecoverable so we log + continue.
+        void pool.start().catch((err) => {
+          log.warn(
+            `[lifecycle] member-pool start failed for ${serverName}: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        });
+        if (registry && !registry.hasSource(serverName)) {
+          registry.addSource(pool);
+        }
         // No auto-Connection at boot — connections.size = 0 and the
         // BundleInstance.state stays in its default. Members create
-        // their own Connections on-demand via the Connect UI.
+        // their own Connections on-demand via Connect.
         instance.state = "stopped";
         return;
       }

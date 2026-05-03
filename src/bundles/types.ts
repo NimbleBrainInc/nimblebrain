@@ -266,6 +266,15 @@ export interface BundleInstance {
    * speak OAuth.
    */
   connections?: Map<string, import("./connection.ts").Connection>;
+  /**
+   * Original `BundleRef` for URL bundles, retained on the instance so
+   * lifecycle can reconstruct per-member `McpSource`s on-demand for
+   * `oauthScope: "member"` (the URL, transport config, oauthClient and
+   * scopes are all on the ref). Undefined for non-URL bundles —
+   * named/local bundles don't need to spawn additional sources after
+   * boot.
+   */
+  ref?: BundleRef;
 }
 
 /** Metadata extracted from a local bundle's manifest during startup. */

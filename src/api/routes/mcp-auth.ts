@@ -67,13 +67,46 @@ export function mcpAuthRoutes(ctx: AppContext) {
 
       const wsId = c.var.workspaceId;
       const lifecycle = ctx.runtime.getLifecycle();
-      const authorizationUrl = lifecycle.getPendingAuthUrl(serverName, wsId, principalId);
+
+      // Resolve the authorization URL. Two paths:
+      //
+      // 1. Existing pending_auth Connection (workspace-scope at boot, or
+      //    member-scope after a previous /initiate kicked off the dance).
+      //    Reuse its URL so double-clicks debounce instead of starting
+      //    duplicate flows.
+      //
+      // 2. Member-scope, first connect for this principal: lifecycle
+      //    constructs the per-member McpSource + provider, kicks off
+      //    start() in the background, waits up to 15s for the provider's
+      //    interactive callback to fire, returns the captured URL.
+      let authorizationUrl = lifecycle.getPendingAuthUrl(serverName, wsId, principalId);
       if (!authorizationUrl) {
-        return apiError(
-          404,
-          "not_pending_auth",
-          `No pending OAuth flow for serverName="${serverName}" in this workspace.`,
-        );
+        const instance = lifecycle.getInstance(serverName, wsId);
+        if (!instance) {
+          return apiError(404, "bundle_not_found", `Bundle "${serverName}" not installed.`);
+        }
+        if (instance.oauthScope === "member" && principalId !== "_workspace") {
+          // First-connect path — start the flow.
+          try {
+            const apiBase = process.env.NB_API_URL ?? "http://localhost:27247";
+            const callbackUrl = `${apiBase.replace(/\/+$/, "")}/v1/mcp-auth/callback`;
+            const result = await lifecycle.startMemberAuth(serverName, wsId, principalId, {
+              workDir: ctx.runtime.getWorkDir(),
+              callbackUrl,
+              allowInsecureRemotes: ctx.runtime.getAllowInsecureRemotes(),
+            });
+            authorizationUrl = result.authorizationUrl;
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return apiError(500, "auth_start_failed", `Failed to start OAuth flow: ${msg}`);
+          }
+        } else {
+          return apiError(
+            404,
+            "not_pending_auth",
+            `No pending OAuth flow for serverName="${serverName}" in this workspace.`,
+          );
+        }
       }
 
       // Extract `state` from the URL the SDK built. We bind the user's

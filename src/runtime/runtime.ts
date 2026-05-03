@@ -543,7 +543,10 @@ export class Runtime {
     for (const entry of workspaceBundleEntries) {
       const { serverName: sn, bundle: ref, meta, wsId, dataDir } = entry;
       const label = "name" in ref ? ref.name : "url" in ref ? ref.url : ref.path;
-      lifecycle.seedInstance(sn, label, ref, meta ?? undefined, wsId, dataDir);
+      // Pass the per-workspace registry so seedInstance can register a
+      // MemberPoolSource for member-scoped URL bundles (Track B).
+      const wsRegistry = workspaceRegistries.get(wsId);
+      lifecycle.seedInstance(sn, label, ref, meta ?? undefined, wsId, dataDir, wsRegistry);
 
       const instance = lifecycle.getInstance(sn, wsId);
       if (instance?.ui?.placements && instance.ui.placements.length > 0) {
@@ -1743,6 +1746,17 @@ export class Runtime {
   /** Get the resolved work directory path. */
   getWorkDir(): string {
     return resolveWorkDir(this.config);
+  }
+
+  /**
+   * Whether the runtime allows OAuth flows / bundle URLs to target loopback
+   * / RFC1918 / cloud-metadata hosts. Mirrors `config.allowInsecureRemotes`;
+   * read by `/v1/mcp-auth/initiate` when constructing per-member providers
+   * for `oauthScope: "member"` URL bundles so the SSRF allowlist matches
+   * the boot-time provider's behavior.
+   */
+  getAllowInsecureRemotes(): boolean {
+    return this.config.allowInsecureRemotes === true;
   }
 
   /** Inject the per-conversation event manager for participant eviction on removal/unshare. */
