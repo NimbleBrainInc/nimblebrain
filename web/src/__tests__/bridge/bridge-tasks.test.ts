@@ -114,6 +114,12 @@ mock.module("../../mcp-bridge-client", () => ({
   resetMcpBridgeClient: () => {
     /* noop */
   },
+  // Passthrough: this file doesn't exercise the session-miss recovery path,
+  // so the wrapper just runs the op once. Mocking it is required because
+  // bridge.ts named-imports it; without this the file fails to link in
+  // isolation (passes under `bun test` only because mcp-bridge-client.test.ts
+  // happens to load the real module first and Bun shares link state).
+  withSessionRetry: async <T>(op: () => Promise<T>): Promise<T> => op(),
 }));
 
 // Import bridge AFTER mocks so it picks up the stubs.
