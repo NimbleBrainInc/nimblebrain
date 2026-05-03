@@ -249,6 +249,29 @@ The platform serves three audiences with three protocol surfaces. They are not t
 
 `/v1/tools/call` and `/v1/resources/read` are NOT being deprecated. They are the platform's first-party API and stay alive indefinitely.
 
+## MCP Session Architecture
+
+Two-layer state model for `/mcp`. Don't merge them.
+
+- **Transport map** (`McpServerHost.transports`): per-process `Map<sessionId, transport>`. Owns the live `WebStandardStreamableHTTPServerTransport`, the SDK `Server` instance, and in-flight JSON-RPC state. Process-bound — never serialize, never share across processes.
+- **`SessionRegistry`** (`src/api/session-store/`): pluggable cluster-shared metadata. Stores `{sessionId, identityId, workspaceId, createdAt, lastAccessedAt}` only. **No pod / instance / owner fields** — adding any would leak deployment vocabulary into a metadata interface. Implementations: `InMemorySessionRegistry` (default) and `RedisSessionRegistry`.
+
+Routing requests to the process owning a session's transport is the **load balancer's** job (ALB `lb_cookie` stickiness or header-hash on `Mcp-Session-Id`). The registry doesn't route; it can't move transports.
+
+**Session-miss `error.data.reason`** has exactly two values:
+
+- `not_found` — registry has no entry (idle-TTL eviction or never created).
+- `unavailable` — registry has an entry; this process doesn't have the transport. Don't try to distinguish process-restart from sticky-miss in the response — operators do that via deploy timing + `transport-count vs registry-size` divergence.
+
+**Prerequisites for `platform.replicas > 1`** (all four required):
+
+1. RWX storage or workspace data moved off the PVC. RWO PVC + `RollingUpdate` deadlocks on attach.
+2. Routing keyed on `Mcp-Session-Id`. ALB `lb_cookie` stickiness on the platform target group, or NGINX/Envoy header-hash routing.
+3. `sessionStore.type: "redis"`. Each tenant gets its own Redis instance in its own namespace (see `infra/CLAUDE.md` per-tenant Redis pattern). Default `nb:mcp:session:` keyPrefix is correct under that model.
+4. `platform.strategy.type: RollingUpdate`. Only after (1).
+
+**TTL units: seconds at the surface, ms internally.** Operator-facing: `MCP_SESSION_TTL_SECONDS` env (highest priority) > `sessionStore.ttlSeconds` config > 8h default. Conversion to ms happens in `Runtime.getSessionStoreTtlMs()` only — registry constructors and sweep math take ms. Don't add mixed-unit code elsewhere.
+
 ## MCP App Bridge Rules
 
 These cause production bugs if violated:
