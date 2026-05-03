@@ -159,6 +159,53 @@ async function postRevoke(
 }
 
 /**
+ * Parse an OIDC id_token's payload claims. Returns the relevant subset
+ * (`sub`, `email`, `name`) or `null` if the token doesn't look like a
+ * JWT or the payload isn't valid JSON.
+ *
+ * Deliberately does NOT verify the signature. Two reasons:
+ *
+ *   1. The token came directly from the AS over TLS (the SDK fetches
+ *      the token endpoint), which is the trust anchor we already rely
+ *      on for the access_token itself.
+ *   2. We treat the parsed claims as informational only — they're shown
+ *      in the Connections page UI, never used for access decisions.
+ *
+ * Catching `email_verified=false` is also out of scope: the upstream AS
+ * controls verification and we surface what they tell us.
+ */
+function parseIdTokenClaims(
+  idToken: string,
+): { sub?: string; email?: string; name?: string } | null {
+  // JWT shape: header.payload.signature — three base64url segments
+  // separated by dots. We only need the payload (segment index 1).
+  const parts = idToken.split(".");
+  if (parts.length !== 3) return null;
+  const payloadB64 = parts[1];
+  if (!payloadB64) return null;
+  // base64url → base64 (replace url-safe chars + pad)
+  const padded = payloadB64.replace(/-/g, "+").replace(/_/g, "/");
+  const padding = padded.length % 4 === 0 ? "" : "=".repeat(4 - (padded.length % 4));
+  let payloadJson: string;
+  try {
+    payloadJson = atob(padded + padding);
+  } catch {
+    return null;
+  }
+  let claims: Record<string, unknown>;
+  try {
+    claims = JSON.parse(payloadJson) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  const out: { sub?: string; email?: string; name?: string } = {};
+  if (typeof claims.sub === "string") out.sub = claims.sub;
+  if (typeof claims.email === "string") out.email = claims.email;
+  if (typeof claims.name === "string") out.name = claims.name;
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+/**
  * Validate a member id before it composes into a filesystem path. Same
  * shape as the credential-store key validator (alphanumerics + `._-`,
  * length-bounded, no `..` / `.`). Reuses the same allowed-character set
@@ -354,6 +401,42 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
   async saveTokens(tokens: OAuthTokens): Promise<void> {
     this.cachedTokens = tokens;
     await this.writeJson(this.tokenDir, "tokens.json", tokens);
+    // OIDC identity capture (best-effort). When the AS returns an
+    // id_token alongside the tokens — Google, Microsoft, and Zoom all
+    // do; many other OAuth 2.1 servers do too — parse the JWT payload
+    // and store the relevant identity claims to identity.json so the
+    // Connections page can show "Connected as <email>". No signature
+    // verification: TLS to the token endpoint is the trust anchor for
+    // this token, and we treat the result as informational (not used
+    // for access decisions). Failures here are silent — auth still
+    // succeeds; the UI just doesn't get a display name.
+    const idToken = (tokens as { id_token?: unknown }).id_token;
+    if (typeof idToken === "string" && idToken.length > 0) {
+      try {
+        const claims = parseIdTokenClaims(idToken);
+        if (claims) {
+          await this.writeJson(this.tokenDir, "identity.json", claims);
+        }
+      } catch (err) {
+        log.debug(
+          "mcp",
+          `[oauth] ${this.serverName} id_token parse failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+  }
+
+  /**
+   * Read the captured OIDC identity claims for this principal. Returns
+   * `null` when no `identity.json` exists (no id_token was issued, or
+   * the bundle predates id_token capture). Used by the Connections
+   * page to show "Connected as <email>".
+   */
+  async identity(): Promise<{ sub?: string; email?: string; name?: string } | null> {
+    return await this.readJson<{ sub?: string; email?: string; name?: string }>(
+      this.tokenDir,
+      "identity.json",
+    );
   }
 
   async saveCodeVerifier(codeVerifier: string): Promise<void> {
@@ -516,6 +599,10 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     if (scope === "all" || scope === "tokens") {
       this.cachedTokens = null;
       await this.unlinkIfExists(this.tokenDir, "tokens.json");
+      // identity.json is bound 1:1 with tokens — when tokens go, the
+      // captured identity is no longer meaningful (the user might
+      // re-auth as someone else next time).
+      await this.unlinkIfExists(this.tokenDir, "identity.json");
     }
     if (scope === "all" || scope === "verifier") {
       await this.unlinkIfExists(this.tokenDir, "verifier.json");

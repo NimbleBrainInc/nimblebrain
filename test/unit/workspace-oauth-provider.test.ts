@@ -351,6 +351,90 @@ describe("WorkspaceOAuthProvider — revokeAndDeleteTokens", () => {
     expect(await p2.tokens()).toBeUndefined();
   });
 
+  it("captures OIDC id_token claims to identity.json on saveTokens", async () => {
+    const p = new WorkspaceOAuthProvider({
+      wsId: "ws_test",
+      serverName: "google",
+      workDir,
+      callbackUrl: CALLBACK,
+    });
+    // Build a fake JWT — the parser only cares about the payload segment.
+    const header = btoa(JSON.stringify({ alg: "RS256", typ: "JWT" })).replace(/=/g, "");
+    const payload = btoa(
+      JSON.stringify({
+        sub: "1234567890",
+        email: "mat@nimblebrain.ai",
+        name: "Mat Goldsborough",
+        iss: "https://accounts.google.com",
+        aud: "test-client",
+      }),
+    ).replace(/=/g, "");
+    const fakeIdToken = `${header}.${payload}.fakesig`;
+
+    await p.saveTokens({
+      access_token: "acc",
+      token_type: "Bearer",
+      // biome-ignore lint/suspicious/noExplicitAny: id_token is an OIDC extension on OAuthTokens
+      id_token: fakeIdToken,
+    } as any);
+
+    const identity = await p.identity();
+    expect(identity).toEqual({
+      sub: "1234567890",
+      email: "mat@nimblebrain.ai",
+      name: "Mat Goldsborough",
+    });
+  });
+
+  it("identity() returns null when no id_token was issued", async () => {
+    const p = new WorkspaceOAuthProvider({
+      wsId: "ws_test",
+      serverName: "no-oidc",
+      workDir,
+      callbackUrl: CALLBACK,
+    });
+    await p.saveTokens({ access_token: "acc", token_type: "Bearer" });
+    expect(await p.identity()).toBeNull();
+  });
+
+  it("invalidateCredentials('tokens') also removes identity.json", async () => {
+    const p = new WorkspaceOAuthProvider({
+      wsId: "ws_test",
+      serverName: "google",
+      workDir,
+      callbackUrl: CALLBACK,
+    });
+    const header = btoa(JSON.stringify({ alg: "RS256" })).replace(/=/g, "");
+    const payload = btoa(JSON.stringify({ sub: "x", email: "x@y.z" })).replace(/=/g, "");
+    await p.saveTokens({
+      access_token: "a",
+      token_type: "Bearer",
+      // biome-ignore lint/suspicious/noExplicitAny: id_token extension
+      id_token: `${header}.${payload}.s`,
+    } as any);
+    expect(await p.identity()).not.toBeNull();
+    await p.invalidateCredentials("tokens");
+    expect(await p.identity()).toBeNull();
+  });
+
+  it("malformed id_token does not break saveTokens", async () => {
+    const p = new WorkspaceOAuthProvider({
+      wsId: "ws_test",
+      serverName: "broken",
+      workDir,
+      callbackUrl: CALLBACK,
+    });
+    // Not enough segments → parser returns null, identity not written, no throw.
+    await p.saveTokens({
+      access_token: "a",
+      token_type: "Bearer",
+      // biome-ignore lint/suspicious/noExplicitAny: malformed id_token
+      id_token: "not.a.jwt.at.all",
+    } as any);
+    expect(await p.identity()).toBeNull();
+    expect((await p.tokens())?.access_token).toBe("a");
+  });
+
   it("treats RFC 7009 invalid_token 400 as success", async () => {
     const p = new WorkspaceOAuthProvider({
       wsId: "ws_test",
