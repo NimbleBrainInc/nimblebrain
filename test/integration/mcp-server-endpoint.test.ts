@@ -211,10 +211,12 @@ describe("MCP Server Endpoint (/mcp)", () => {
 	});
 
 	// Session-miss surface: a POST carrying an unknown session ID must return
-	// 404 with a JSON-RPC error envelope AND emit a structured log line.
-	// This is the fault the client sees after a pod restart, an idle-TTL
-	// sweep, or (with future multi-replica) a misrouted request — exactly
-	// what `[mcp] session miss` is logged for.
+	// 404 with a JSON-RPC error envelope, the new `error.data.reason`
+	// classification (`not_found` for an unknown sessionId; `unavailable`
+	// when the registry has it but the local transport doesn't), AND emit a
+	// structured log line. This is the fault the client sees after a process
+	// restart, an idle-TTL sweep, or a sticky-routing miss — exactly what
+	// `[mcp] session miss` is logged for.
 	describe("session-miss logging", () => {
 		let capture: ReturnType<typeof captureLogs>;
 		beforeEach(() => {
@@ -224,7 +226,7 @@ describe("MCP Server Endpoint (/mcp)", () => {
 			capture.restore();
 		});
 
-		it("returns 404 and warn-logs key=value context for POST with unknown session id", async () => {
+		it("returns 404 with reason=not_found and warn-logs key=value context", async () => {
 			const res = await fetch(`${baseUrl}/mcp`, {
 				method: "POST",
 				headers: {
@@ -241,16 +243,19 @@ describe("MCP Server Endpoint (/mcp)", () => {
 			});
 			expect(res.status).toBe(404);
 			const body = (await res.json()) as {
-				error?: { code: number; message: string };
+				error?: { code: number; message: string; data?: { reason?: string } };
 			};
 			expect(body.error?.code).toBe(-32000);
 			expect(body.error?.message).toBe("Session not found");
+			// Default registry is in-memory and starts empty; an unknown
+			// sessionId necessarily lands on `not_found`, not `unavailable`.
+			expect(body.error?.data?.reason).toBe("not_found");
 
-			// The whole point of this PR: a structured log line we can grep
-			// for in prod. Asserting prefix + key=value shape rather than
-			// the exact string lets future tweaks to wording survive.
+			// Asserting prefix + key=value shape rather than the exact
+			// string lets future tweaks to wording survive.
 			const line = capture.lines.find((l) => l.startsWith("warn [mcp] session miss"));
 			expect(line).toBeDefined();
+			expect(line).toContain("reason=not_found");
 			expect(line).toContain("sessionId=00000000");
 			expect(line).toContain(`workspace=${TEST_WORKSPACE_ID}`);
 			expect(line).toMatch(/identity=\S+/);

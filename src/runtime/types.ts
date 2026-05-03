@@ -125,6 +125,23 @@ export interface RuntimeConfig {
   /** Confirmation gate for privileged operations and credential prompts. */
   confirmationGate?: ConfirmationGate;
 
+  /**
+   * MCP session metadata store. Controls how sessions for `/mcp` are tracked
+   * across the cluster. Defaults to `memory` (process-local) — fine for any
+   * single-replica deploy. Set `type: "redis"` with a `redis.url` for
+   * multi-replica deploys; the registry shares session metadata across
+   * processes. See `src/api/session-store/`.
+   */
+  sessionStore?: {
+    type?: "memory" | "redis";
+    /** Idle TTL in seconds. Default: 28800 (8 h). */
+    ttlSeconds?: number;
+    redis?: {
+      url?: string;
+      keyPrefix?: string;
+    };
+  };
+
   /** Path to nimblebrain.json. The Helm-managed seed file. Overwritten on every deploy. */
   configPath?: string;
 

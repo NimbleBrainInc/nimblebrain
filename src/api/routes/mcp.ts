@@ -8,7 +8,7 @@ import {
   resolveWorkspace,
   WorkspaceResolutionError,
 } from "../auth-middleware.ts";
-import { handleMcpRequest, type McpWorkspaceContext } from "../mcp-server.ts";
+import type { McpWorkspaceContext } from "../mcp-server.ts";
 import { bodyLimit } from "../middleware/body-limit.ts";
 import { type AppContext, type AuthEnv, apiError } from "../types.ts";
 
@@ -106,7 +106,7 @@ export function mcpRoutes(ctx: AppContext) {
       identity,
       workspaceId: wsId,
     };
-    return handleMcpRequest(c.req.raw, registry, features, mcpWorkspaceCtx);
+    return ctx.mcpHost.handle(c.req.raw, registry, features, mcpWorkspaceCtx);
   });
 
   return app;

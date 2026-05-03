@@ -9,8 +9,9 @@ import { createApp } from "./app.ts";
 import { resolveAuthMode } from "./auth-middleware.ts";
 import { ConversationEventManager } from "./conversation-events.ts";
 import { SseEventManager } from "./events.ts";
-import { closeAllMcpSessions } from "./mcp-server.ts";
+import { McpServerHost } from "./mcp-server.ts";
 import { LoginRateLimiter, RequestRateLimiter } from "./rate-limiter.ts";
+import { InMemorySessionRegistry, type SessionRegistry } from "./session-store/index.ts";
 import type { AppContext } from "./types.ts";
 
 export interface ServerOptions {
@@ -18,6 +19,13 @@ export interface ServerOptions {
   port?: number;
   /** Pluggable identity provider. Falls back to DevIdentityProvider (no auth) when null. */
   provider?: IdentityProvider | null;
+  /**
+   * Pluggable cluster-shared session metadata store. When omitted, a process-
+   * local in-memory registry is constructed with the runtime's configured TTL
+   * — equivalent to legacy single-pod behavior. Multi-replica deploys must
+   * pass a Redis-backed registry built via `createSessionRegistry`.
+   */
+  sessionRegistry?: SessionRegistry;
 }
 
 export interface ServerHandle {
@@ -157,6 +165,15 @@ export function startServer(options: ServerOptions): ServerHandle {
   const authMode = resolveAuthMode(effectiveProvider);
   const authConfigured = authMode.type !== "dev";
 
+  // Construct the per-pod MCP host. The transport map lives here; the
+  // session-metadata registry is either supplied by the caller (production
+  // bootstrap building a Redis registry from config) or defaulted to an
+  // in-memory store using the runtime's configured TTL.
+  const sessionRegistry: SessionRegistry =
+    options.sessionRegistry ??
+    new InMemorySessionRegistry({ ttlMs: runtime.getSessionStoreTtlMs() });
+  const mcpHost = new McpServerHost({ registry: sessionRegistry });
+
   // Build shared context for all route groups
   const ctx: AppContext = {
     runtime,
@@ -174,6 +191,7 @@ export function startServer(options: ServerOptions): ServerHandle {
     isLocalhost: true, // Updated after Bun.serve starts
     appOrigin: allowedOrigins ? [...allowedOrigins][0] : undefined,
     internalToken,
+    mcpHost,
   };
 
   const app = createApp(ctx, authConfigured, allowedOrigins);
@@ -203,7 +221,7 @@ export function startServer(options: ServerOptions): ServerHandle {
       sseManager.stop();
       conversationEventManager.stop();
       healthMonitor.stop();
-      closeAllMcpSessions().catch(() => {});
+      mcpHost.shutdown().catch(() => {});
       server.stop(closeConnections);
     },
   };

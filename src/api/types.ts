@@ -7,6 +7,7 @@ import type { WorkspaceStore } from "../workspace/workspace-store.ts";
 import type { AuthMiddlewareOptions } from "./auth-middleware.ts";
 import type { ConversationEventManager } from "./conversation-events.ts";
 import type { SseEventManager } from "./events.ts";
+import type { McpServerHost } from "./mcp-server.ts";
 import type { LoginRateLimiter, RequestRateLimiter } from "./rate-limiter.ts";
 
 // ---------------------------------------------------------------------------
@@ -76,4 +77,5 @@ export interface AppContext {
   isLocalhost: boolean;
   appOrigin: string | undefined;
   internalToken: string;
+  mcpHost: McpServerHost;
 }

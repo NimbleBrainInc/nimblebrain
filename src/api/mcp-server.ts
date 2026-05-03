@@ -3,6 +3,35 @@
  *
  * External MCP clients (Claude Code, Open WebUI, etc.) connect to /mcp and
  * access all installed tools through the standard MCP protocol.
+ *
+ * Two-layer state architecture:
+ *
+ *   1. **Transport map** (per-process, in-memory, never abstracted) — owns
+ *      the live `WebStandardStreamableHTTPServerTransport`, the SDK `Server`
+ *      instance with its registered handlers, and any in-flight JSON-RPC
+ *      state. Process-bound: holds open response streams and JS object
+ *      references that cannot be serialized or moved.
+ *
+ *   2. **SessionRegistry** (pluggable; see `./session-store/`) — cluster-
+ *      shared metadata. Tells us whether a session exists, when it was last
+ *      touched, and which workspace + identity it's bound to. Deliberately
+ *      deployment-vocabulary-free — no pod, no instance, no ownership.
+ *      Routing requests to the process that owns a session's transport is
+ *      the load balancer's job (cookie stickiness, header-hash), not the
+ *      registry's.
+ *
+ * On a request whose sessionId we don't have a local transport for:
+ *
+ *   - Registry says nothing exists → `not_found`. Session evicted or never
+ *     created.
+ *   - Registry says it exists      → `unavailable`. The live transport isn't
+ *     on this process. Could be: process restart, sticky-routing miss,
+ *     local transport closed, anything. Client's correct action is the
+ *     same in either case: re-initialize.
+ *
+ * Both return 404 with a JSON-RPC envelope; `error.data.reason` lets
+ * operators correlate logs without the registry having to know what an
+ * "instance" is.
  */
 
 import { readFileSync } from "node:fs";
@@ -33,6 +62,7 @@ import {
   type OwnerContext,
   type TaskAwareSource,
 } from "./mcp-task-store.ts";
+import type { SessionRegistry } from "./session-store/index.ts";
 
 /**
  * JSON-RPC error code for "resource not found".
@@ -50,28 +80,27 @@ const mcpPkg = JSON.parse(readFileSync(mcpPkgPath, "utf-8")) as {
 // Prefer the build-time-injected git tag; fall back to package.json for local dev.
 const MCP_SERVER_VERSION = process.env.NB_VERSION || mcpPkg.version;
 
-/* ── Session limits (configurable via env) ──
+/* ── Capacity limit (configurable via env) ──
  *
- * TTL default is 8h: long enough that a connector left open during a working
- * day never expires mid-use. Sessions are evicted on idle, not absolute age,
- * so an actively-used connection survives indefinitely (each request bumps
- * `lastAccessedAt`). Override via `MCP_SESSION_TTL_SECONDS` for tighter
- * limits. The internal sweep math is in milliseconds (matches `Date.now()`)
- * but the operator-facing knob is in seconds — operators don't think in ms.
+ * Sessions are evicted on idle TTL (managed by the injected SessionRegistry,
+ * not by this module). The cap below is a memory ceiling on the local
+ * transport map: a misbehaving client that re-inits on every request can't
+ * blow the heap by allocating transports faster than the registry's TTL
+ * reclaims them. Override via `MCP_MAX_SESSIONS`.
  *
- * `parsePositiveIntEnv` rejects non-positive and non-integer values. The
- * previous `parseInt(env, 10)` left two failure modes open: a typo like
- * `8h` parsed to `8` (an 8-second TTL that evicted every session on the
- * next sweep) and `foo` parsed to `NaN` (silently disabled eviction
- * because every comparison against NaN is false). Both surface as runaway
- * capacity-cap 429s. The helper rejects either shape with a warning and
- * uses the in-code default.
+ * The TTL knob (`MCP_SESSION_TTL_SECONDS` / `sessionStore.ttlSeconds`) is
+ * applied in `Runtime.getSessionStoreTtlMs()` — it shapes the registry,
+ * not this map.
  */
 const MAX_MCP_SESSIONS = parsePositiveIntEnv("MCP_MAX_SESSIONS", 100);
-const SESSION_TTL_SECONDS = parsePositiveIntEnv("MCP_SESSION_TTL_SECONDS", 8 * 60 * 60);
-const SESSION_TTL_MS = SESSION_TTL_SECONDS * 1000;
 
-/** Exported for unit testing. */
+/**
+ * Validate a positive-integer env var. Rejects NaN / non-positive values
+ * (e.g. `8h` typo) and falls back loudly so silent eviction-disabled state
+ * can't ship to prod undetected.
+ *
+ * Exported for unit testing.
+ */
 export function parsePositiveIntEnv(name: string, fallback: number): number {
   const raw = process.env[name];
   if (raw === undefined || raw === "") return fallback;
@@ -83,45 +112,10 @@ export function parsePositiveIntEnv(name: string, fallback: number): number {
   return parsed;
 }
 
-interface SessionEntry {
+interface TransportEntry {
   transport: WebStandardStreamableHTTPServerTransport;
-  createdAt: number;
-  lastAccessedAt: number;
+  workspaceId: string;
 }
-
-/** Active sessions keyed by session ID. */
-const sessions = new Map<string, SessionEntry>();
-
-/** Periodic cleanup interval handle. */
-let cleanupInterval: ReturnType<typeof setInterval> | null = null;
-
-/** Close and delete sessions that have exceeded the TTL. */
-function sweepExpiredSessions(): void {
-  const now = Date.now();
-  for (const [sid, entry] of sessions) {
-    if (now - entry.lastAccessedAt > SESSION_TTL_MS) {
-      try {
-        entry.transport.close();
-      } catch {
-        // Ignore close errors during sweep
-      }
-      sessions.delete(sid);
-    }
-  }
-}
-
-/** Start the periodic session cleanup (60s interval). */
-function startSessionCleanup(): void {
-  if (cleanupInterval) return;
-  cleanupInterval = setInterval(sweepExpiredSessions, 60_000);
-  // Allow the process to exit even if the interval is active
-  if (cleanupInterval && typeof cleanupInterval === "object" && "unref" in cleanupInterval) {
-    cleanupInterval.unref();
-  }
-}
-
-// Start cleanup on module load
-startSessionCleanup();
 
 /** Workspace context captured at session creation time. */
 export interface McpWorkspaceContext {
@@ -144,6 +138,268 @@ const TASKS_CAPABILITY: NonNullable<ServerCapabilities["tasks"]> = {
   cancel: {},
   requests: { tools: { call: {} } },
 };
+
+/**
+ * Per-process MCP HTTP host. Owns the in-process transport map and delegates
+ * cluster-shared session metadata to the injected `SessionRegistry`.
+ *
+ * One instance per process. Constructed in `startServer`, threaded through
+ * `AppContext`, used by `routes/mcp.ts`.
+ */
+export class McpServerHost {
+  private readonly transports = new Map<string, TransportEntry>();
+  private readonly registry: SessionRegistry;
+
+  constructor(opts: { registry: SessionRegistry }) {
+    this.registry = opts.registry;
+  }
+
+  /**
+   * Handle an incoming HTTP request on the /mcp path.
+   *
+   * - POST: JSON-RPC messages (initialization or subsequent)
+   * - GET:  405 — see comment below
+   * - DELETE: Session termination
+   *
+   * GET /mcp is the spec's *optional* server→client SSE channel for
+   * notifications outside any in-flight request (broadcast notifications,
+   * sampling, elicitation). We don't push anything down it: tool responses
+   * and task progress flow on the POST that started them, and our own
+   * server→client signaling for the iframe app (data.changed, conversation
+   * events, heartbeats) goes through `/v1/events`, not MCP.
+   *
+   * Holding the connection open with nothing to write meant Bun's
+   * `idleTimeout` (max 255s) — and any L7 proxy in front of the API (Vite
+   * dev proxy, ALB's 60s default, nginx) — would silently kill the socket,
+   * surfacing as `socket hang up` upstream and triggering the SDK's
+   * limited reconnect loop (default `maxRetries: 2`).
+   *
+   * Returning 405 is the spec-blessed escape hatch: the SDK explicitly
+   * treats it as "server doesn't offer GET-style listening" and gracefully
+   * runs POST-only (`@modelcontextprotocol/sdk/.../client/streamableHttp.js`
+   * in `_startOrAuthSse`). If we ever start emitting standalone-stream
+   * notifications, switch this back to a real handler and add a heartbeat
+   * (see `src/api/sse-heartbeat.ts`).
+   */
+  async handle(
+    request: Request,
+    toolRegistry: ToolRegistry,
+    features: ResolvedFeatures,
+    workspaceCtx?: McpWorkspaceContext,
+  ): Promise<Response> {
+    const method = request.method;
+    if (method === "POST") return this.handlePost(request, toolRegistry, features, workspaceCtx);
+    if (method === "DELETE") return this.handleDelete(request, workspaceCtx);
+    return new Response("Method Not Allowed", {
+      status: 405,
+      headers: { Allow: "POST, DELETE" },
+    });
+  }
+
+  /**
+   * Close every transport this pod owns and shut the registry down. Called
+   * during graceful server stop.
+   */
+  async shutdown(): Promise<void> {
+    for (const [sid, entry] of this.transports) {
+      try {
+        await entry.transport.close();
+      } catch {
+        // Ignore close errors during shutdown
+      }
+      this.transports.delete(sid);
+    }
+    await this.registry.shutdown();
+  }
+
+  /** Test-only: number of locally-held transports. */
+  transportCount(): number {
+    return this.transports.size;
+  }
+
+  // ─── private ──────────────────────────────────────────────────────
+
+  private async handlePost(
+    request: Request,
+    toolRegistry: ToolRegistry,
+    features: ResolvedFeatures,
+    workspaceCtx?: McpWorkspaceContext,
+  ): Promise<Response> {
+    const sessionId = request.headers.get("mcp-session-id");
+
+    if (sessionId) {
+      const local = this.transports.get(sessionId);
+      if (local) {
+        // Fast path: we own this transport. Best-effort registry touch
+        // keeps the cluster-shared TTL aligned without blocking the request.
+        this.registry.touch(sessionId, Date.now()).catch((err) => {
+          log.warn(`[mcp] registry touch failed: ${(err as Error).message}`);
+        });
+        return local.transport.handleRequest(request);
+      }
+      return this.localMissResponse(request, sessionId, workspaceCtx);
+    }
+
+    // No session id — must be an initialize.
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return jsonRpcError(400, -32700, "Parse error");
+    }
+
+    if (!isInitializeRequest(body)) {
+      log.warn(
+        `[mcp] non-init request without session id ${fmtSessionContext(request, null, workspaceCtx)}`,
+      );
+      return jsonRpcError(400, -32000, "Bad Request: No valid session ID provided");
+    }
+
+    if (this.transports.size >= MAX_MCP_SESSIONS) {
+      return jsonRpcError(429, -32000, "Too many active sessions");
+    }
+
+    return this.initializeSession(request, body, toolRegistry, features, workspaceCtx);
+  }
+
+  private async handleDelete(
+    request: Request,
+    workspaceCtx?: McpWorkspaceContext,
+  ): Promise<Response> {
+    const sessionId = request.headers.get("mcp-session-id");
+    if (!sessionId) return new Response("Missing session ID", { status: 400 });
+    const local = this.transports.get(sessionId);
+    if (!local) {
+      // Thread the workspace context so the log line carries `workspace=...`
+      // and `identity=...` — exactly the cross-tenant correlation context
+      // operators need to distinguish noisy clients from real eviction.
+      log.info(`[mcp] delete session miss ${fmtSessionContext(request, sessionId, workspaceCtx)}`);
+      // Mirror the POST cleanup: registry delete is best-effort so a stale
+      // entry doesn't linger after a client says "I'm done."
+      this.bestEffortDelete(sessionId);
+      return new Response("Session not found", { status: 404 });
+    }
+    return local.transport.handleRequest(request);
+  }
+
+  /**
+   * Build the 404 response when the local transport map doesn't contain the
+   * requested session ID. The `error.data.reason` distinguishes:
+   *
+   *   - `not_found` — the registry has no entry. Session evicted by TTL,
+   *     never existed, or already deleted.
+   *   - `unavailable` — the registry has an entry, but the live transport
+   *     isn't on this process. Could be a process restart (transport state
+   *     was lost) or a sticky-routing miss (the request landed on a process
+   *     that didn't initialize this session). Client should re-initialize
+   *     either way; operators distinguish via deploy timing, uptime, and
+   *     "registry size vs local transport count" signals.
+   */
+  private async localMissResponse(
+    request: Request,
+    sessionId: string,
+    workspaceCtx?: McpWorkspaceContext,
+  ): Promise<Response> {
+    const meta = await this.safeRegistryGet(sessionId);
+    const ctx = fmtSessionContext(request, sessionId, workspaceCtx);
+
+    const reason: "not_found" | "unavailable" = meta ? "unavailable" : "not_found";
+    log.warn(`[mcp] session miss reason=${reason} ${ctx}`);
+
+    return new Response(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        error: { code: -32000, message: "Session not found", data: { reason } },
+        id: null,
+      }),
+      { status: 404, headers: { "Content-Type": "application/json" } },
+    );
+  }
+
+  /**
+   * Wrap `registry.get` so a registry outage degrades to "treat as missing"
+   * rather than killing the request. The local transport map already
+   * answered "I don't have it"; the worst case here is we report `not_found`
+   * instead of a more specific reason — still a useful 404.
+   */
+  private async safeRegistryGet(
+    sessionId: string,
+  ): Promise<Awaited<ReturnType<SessionRegistry["get"]>>> {
+    try {
+      return await this.registry.get(sessionId);
+    } catch (err) {
+      log.warn(`[mcp] registry get failed: ${(err as Error).message}`);
+      return null;
+    }
+  }
+
+  private async initializeSession(
+    request: Request,
+    parsedBody: unknown,
+    toolRegistry: ToolRegistry,
+    features: ResolvedFeatures,
+    workspaceCtx: McpWorkspaceContext | undefined,
+  ): Promise<Response> {
+    const transport = new WebStandardStreamableHTTPServerTransport({
+      sessionIdGenerator: () => crypto.randomUUID(),
+      onsessioninitialized: (sid: string) => {
+        const now = Date.now();
+        const wsId = workspaceCtx?.workspaceId;
+        if (!wsId) {
+          // Should never happen — `routes/mcp.ts` enforces workspace
+          // resolution before reaching the host. Fail loudly so a future
+          // refactor can't slip past this guarantee silently.
+          log.warn("[mcp] session init reached host without workspaceId — closing transport");
+          transport.close().catch(() => {});
+          return;
+        }
+
+        this.transports.set(sid, { transport, workspaceId: wsId });
+        // Fire-and-forget the registry write. The session is already live
+        // on this process; if the registry is down we still serve the client.
+        this.registry
+          .create({
+            sessionId: sid,
+            identityId: workspaceCtx?.identity?.id ?? null,
+            workspaceId: wsId,
+            createdAt: now,
+            lastAccessedAt: now,
+          })
+          .catch((err) => {
+            log.warn(`[mcp] registry create failed: ${(err as Error).message}`);
+          });
+      },
+      onsessionclosed: (sid: string) => {
+        this.transports.delete(sid);
+        this.bestEffortDelete(sid);
+      },
+    });
+
+    transport.onclose = () => {
+      if (transport.sessionId) {
+        this.transports.delete(transport.sessionId);
+        this.bestEffortDelete(transport.sessionId);
+      }
+    };
+
+    const server = createServer(toolRegistry, features, workspaceCtx);
+    await server.connect(transport);
+    return transport.handleRequest(request, { parsedBody });
+  }
+
+  /**
+   * Best-effort registry delete on session teardown. Failures are not fatal
+   * (the local transport is already gone; the registry entry will TTL out)
+   * but we log them so a chronically-failing Redis surfaces in the same
+   * observability stream as `session miss` warnings rather than vanishing
+   * into a silent `.catch`.
+   */
+  private bestEffortDelete(sessionId: string): void {
+    this.registry.delete(sessionId).catch((err) => {
+      log.warn(`[mcp] registry delete failed: ${(err as Error).message}`);
+    });
+  }
+}
 
 /**
  * Create a new MCP Server instance wired to the given ToolRegistry.
@@ -397,183 +653,16 @@ function createServer(
   return server;
 }
 
-/**
- * Handle an incoming HTTP request on the /mcp path.
- *
- * - POST: JSON-RPC messages (initialization or subsequent)
- * - GET:  405 — see comment below
- * - DELETE: Session termination
- *
- * GET /mcp is the spec's *optional* server→client SSE channel for
- * notifications outside any in-flight request (broadcast notifications,
- * sampling, elicitation). We don't push anything down it: tool responses
- * and task progress flow on the POST that started them, and our own
- * server→client signaling for the iframe app (data.changed, conversation
- * events, heartbeats) goes through `/v1/events`, not MCP.
- *
- * Holding the connection open with nothing to write meant Bun's
- * `idleTimeout` (max 255s) — and any L7 proxy in front of the API (Vite
- * dev proxy, ALB's 60s default, nginx) — would silently kill the socket,
- * surfacing as `socket hang up` upstream and triggering the SDK's
- * limited reconnect loop (default `maxRetries: 2`).
- *
- * Returning 405 is the spec-blessed escape hatch: the SDK explicitly
- * treats it as "server doesn't offer GET-style listening" and gracefully
- * runs POST-only (`@modelcontextprotocol/sdk/.../client/streamableHttp.js`
- * in `_startOrAuthSse`). If we ever start emitting standalone-stream
- * notifications, switch this back to a real handler and add a heartbeat
- * (see `src/api/sse-heartbeat.ts`).
- */
-export async function handleMcpRequest(
-  request: Request,
-  registry: ToolRegistry,
-  features: ResolvedFeatures,
-  workspaceCtx?: McpWorkspaceContext,
-): Promise<Response> {
-  const method = request.method;
-
-  if (method === "POST") {
-    return handlePost(request, registry, features, workspaceCtx);
-  }
-
-  if (method === "DELETE") {
-    return handleDelete(request, workspaceCtx);
-  }
-
-  return new Response("Method Not Allowed", {
-    status: 405,
-    headers: { Allow: "POST, DELETE" },
-  });
-}
-
-async function handlePost(
-  request: Request,
-  registry: ToolRegistry,
-  features: ResolvedFeatures,
-  workspaceCtx?: McpWorkspaceContext,
-): Promise<Response> {
-  const sessionId = request.headers.get("mcp-session-id");
-
-  // Existing session — reuse transport
-  if (sessionId) {
-    const entry = sessions.get(sessionId);
-    if (!entry) {
-      // Surface session-not-found as a warning. The client is sending a real
-      // session ID we don't recognize — most often because the pod restarted,
-      // the session was swept on idle TTL, or (with future multi-replica) the
-      // request landed on a pod that doesn't own this session. Logging the
-      // prefix + identity + workspace lets us correlate with client reports
-      // without requiring NB_DEBUG.
-      log.warn(`[mcp] session miss ${fmtSessionContext(request, sessionId, workspaceCtx)}`);
-      return new Response(
-        JSON.stringify({
-          jsonrpc: "2.0",
-          error: { code: -32000, message: "Session not found" },
-          id: null,
-        }),
-        { status: 404, headers: { "Content-Type": "application/json" } },
-      );
-    }
-    entry.lastAccessedAt = Date.now();
-    return entry.transport.handleRequest(request);
-  }
-
-  // New session — check if this is an initialize request
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return new Response(
-      JSON.stringify({
-        jsonrpc: "2.0",
-        error: { code: -32700, message: "Parse error" },
-        id: null,
-      }),
-      { status: 400, headers: { "Content-Type": "application/json" } },
-    );
-  }
-
-  if (!isInitializeRequest(body)) {
-    // Same diagnostic value as the 404 above: a non-init POST with no session
-    // ID typically means the client dropped its session ID without reinitializing.
-    log.warn(
-      `[mcp] non-init request without session id ${fmtSessionContext(request, null, workspaceCtx)}`,
-    );
-    return new Response(
-      JSON.stringify({
-        jsonrpc: "2.0",
-        error: {
-          code: -32000,
-          message: "Bad Request: No valid session ID provided",
-        },
-        id: null,
-      }),
-      { status: 400, headers: { "Content-Type": "application/json" } },
-    );
-  }
-
-  // Evict expired sessions and enforce capacity limit
-  sweepExpiredSessions();
-  if (sessions.size >= MAX_MCP_SESSIONS) {
-    return new Response(
-      JSON.stringify({
-        jsonrpc: "2.0",
-        error: {
-          code: -32000,
-          message: "Too many active sessions",
-        },
-        id: null,
-      }),
-      { status: 429, headers: { "Content-Type": "application/json" } },
-    );
-  }
-
-  const transport = new WebStandardStreamableHTTPServerTransport({
-    sessionIdGenerator: () => crypto.randomUUID(),
-    onsessioninitialized: (sid: string) => {
-      const now = Date.now();
-      sessions.set(sid, {
-        transport,
-        createdAt: now,
-        lastAccessedAt: now,
-      });
-    },
-    onsessionclosed: (sid: string) => {
-      sessions.delete(sid);
-    },
-  });
-
-  transport.onclose = () => {
-    if (transport.sessionId) {
-      sessions.delete(transport.sessionId);
-    }
-  };
-
-  const server = createServer(registry, features, workspaceCtx);
-  await server.connect(transport);
-
-  return transport.handleRequest(request, { parsedBody: body });
-}
-
-async function handleDelete(
-  request: Request,
-  workspaceCtx?: McpWorkspaceContext,
-): Promise<Response> {
-  const sessionId = request.headers.get("mcp-session-id");
-  if (!sessionId) {
-    return new Response("Missing session ID", { status: 400 });
-  }
-  const entry = sessions.get(sessionId);
-  if (!entry) {
-    // Routine: client closing a session we already reaped. Info-level so it
-    // shows up in correlation but doesn't trip alerting. Thread the workspace
-    // context so the log line matches the format used by the POST 404 path —
-    // workspace + identity are exactly what cross-tenant correlation needs.
-    log.info(`[mcp] delete session miss ${fmtSessionContext(request, sessionId, workspaceCtx)}`);
-    return new Response("Session not found", { status: 404 });
-  }
-  entry.lastAccessedAt = Date.now();
-  return entry.transport.handleRequest(request);
+/** JSON-RPC error response with the proper headers. */
+function jsonRpcError(status: number, code: number, message: string): Response {
+  return new Response(
+    JSON.stringify({
+      jsonrpc: "2.0",
+      error: { code, message },
+      id: null,
+    }),
+    { status, headers: { "Content-Type": "application/json" } },
+  );
 }
 
 /**
@@ -592,22 +681,4 @@ function fmtSessionContext(
   const identityId = workspaceCtx?.identity?.id ?? "none";
   const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "direct";
   return `sessionId=${sidPrefix} workspace=${wsId} identity=${identityId} ip=${ip}`;
-}
-
-/**
- * Close all active MCP sessions and stop the cleanup timer. Called during server shutdown.
- */
-export async function closeAllMcpSessions(): Promise<void> {
-  if (cleanupInterval) {
-    clearInterval(cleanupInterval);
-    cleanupInterval = null;
-  }
-  for (const [sid, entry] of sessions) {
-    try {
-      await entry.transport.close();
-    } catch {
-      // Ignore close errors during shutdown
-    }
-    sessions.delete(sid);
-  }
 }

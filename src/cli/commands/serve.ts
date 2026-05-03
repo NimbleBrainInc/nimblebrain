@@ -4,6 +4,7 @@ import { Command } from "commander";
 import { ConsoleEventSink } from "../../adapters/console-events.ts";
 import { DebugEventSink } from "../../adapters/debug-events.ts";
 import { startServerWithShutdown } from "../../api/server.ts";
+import { createSessionRegistry, resolveSessionStoreConfig } from "../../api/session-store/index.ts";
 import { Runtime } from "../../runtime/runtime.ts";
 import type { TelemetryManager } from "../../telemetry/manager.ts";
 import { loadConfig } from "../config.ts";
@@ -35,7 +36,14 @@ export function createServeCommand(telemetry: TelemetryManager): Command {
       });
       log.info("[nimblebrain] Runtime ready.");
 
+      // Build the MCP session metadata store from config. Defaults to in-
+      // memory; production deploys point this at Redis. Resolution + connect
+      // happens here (not in `startServer`) so misconfiguration fails the
+      // boot loudly instead of every individual MCP request.
+      const sessionStoreConfig = resolveSessionStoreConfig(runtime.getSessionStoreConfig());
+      const sessionRegistry = await createSessionRegistry(sessionStoreConfig);
+
       const port = Number(process.env.PORT) || Number(opts.port) || 27247;
-      await startServerWithShutdown({ runtime, port });
+      await startServerWithShutdown({ runtime, port, sessionRegistry });
     });
 }

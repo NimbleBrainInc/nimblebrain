@@ -1651,6 +1651,45 @@ export class Runtime {
   }
 
   /**
+   * Loose session-store config for the API host to resolve. The actual
+   * defaulting + validation lives in `api/session-store/factory.ts` so this
+   * returns whatever was put in `nimblebrain.json`, untouched.
+   */
+  getSessionStoreConfig(): RuntimeConfig["sessionStore"] {
+    return this.config.sessionStore;
+  }
+
+  /**
+   * Resolved idle TTL for sessions, in milliseconds. Two operator surfaces,
+   * one currency:
+   *
+   *   - `MCP_SESSION_TTL_SECONDS` env var (highest priority — env wins so
+   *     ops can flip TTL without redeploying the configmap)
+   *   - `sessionStore.ttlSeconds` in `nimblebrain.json`
+   *   - 8 h fallback
+   *
+   * Internal callers (registry constructors, sweep math) take ms; the
+   * conversion happens once here so the rest of the runtime never deals
+   * in mixed units. `parsePositiveIntEnv`-style validation lives in
+   * `mcp-server.ts`; this accessor only consumes the parsed env value.
+   */
+  getSessionStoreTtlMs(): number {
+    const envRaw = process.env.MCP_SESSION_TTL_SECONDS;
+    if (envRaw !== undefined && envRaw !== "") {
+      const parsed = Number(envRaw);
+      if (Number.isFinite(parsed) && parsed > 0 && Number.isInteger(parsed)) {
+        return parsed * 1000;
+      }
+      // Invalid env value — fall through to config / default. We don't
+      // log here because the chart-rendered config path is the typical
+      // source of truth; an unset/typo'd env should be a quiet fallback,
+      // not a noise generator on every cold start.
+    }
+    const seconds = this.config.sessionStore?.ttlSeconds ?? 8 * 60 * 60;
+    return seconds * 1000;
+  }
+
+  /**
    * Get the path to nimblebrain.overrides.json — the user-managed override
    * file written by `set_model_config` and preserved across deploys.
    * Defaults to a sibling of `configPath`; absent only when no `configPath`

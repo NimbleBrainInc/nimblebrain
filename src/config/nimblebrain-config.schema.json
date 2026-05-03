@@ -257,6 +257,41 @@
       "description": "Working directory for all runtime state. Defaults to ~/.nimblebrain.",
       "type": "string"
     },
+    "sessionStore": {
+      "description": "MCP session metadata store for /mcp. Tracks each Mcp-Session-Id and its idle TTL. Default: in-memory (process-local). Use 'redis' for multi-replica deploys; the same provider also gives single-replica deploys cluster-wide visibility for ops/admin tooling.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "description": "Provider. 'memory' is process-local (default). 'redis' is cluster-shared (required for platform.replicas > 1).",
+          "type": "string",
+          "enum": ["memory", "redis"],
+          "default": "memory"
+        },
+        "ttlSeconds": {
+          "description": "Idle TTL for sessions in seconds. Each request resets the clock — actively-used sessions never expire. Default: 28800 (8 h).",
+          "type": "integer",
+          "minimum": 1,
+          "default": 28800
+        },
+        "redis": {
+          "description": "Redis-specific options. Required when type='redis'.",
+          "type": "object",
+          "properties": {
+            "url": {
+              "description": "Redis connection URL (redis:// or rediss://). Typically injected via environment from a secret.",
+              "type": "string"
+            },
+            "keyPrefix": {
+              "description": "Hash key prefix for session entries. Default: 'nb:mcp:session:'.",
+              "type": "string",
+              "default": "nb:mcp:session:"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
     "telemetry": {
       "description": "Anonymous usage telemetry. Disable with telemetry.enabled: false, NB_TELEMETRY_DISABLED=1, or DO_NOT_TRACK=1.",
       "type": "object",
