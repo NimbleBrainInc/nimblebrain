@@ -1,0 +1,39 @@
+import { type Static } from "@sinclair/typebox";
+export declare const ConversationsListInput: import("@sinclair/typebox").TObject<{
+    limit: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+    cursor: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    search: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    sortBy: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"created" | "updated">>;
+    dateFrom: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    dateTo: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+}>;
+export type ConversationsListInput = Static<typeof ConversationsListInput>;
+export declare const ConversationsGetInput: import("@sinclair/typebox").TObject<{
+    id: import("@sinclair/typebox").TString;
+    limit: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+}>;
+export type ConversationsGetInput = Static<typeof ConversationsGetInput>;
+export declare const ConversationsSearchInput: import("@sinclair/typebox").TObject<{
+    query: import("@sinclair/typebox").TString;
+    limit: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+}>;
+export type ConversationsSearchInput = Static<typeof ConversationsSearchInput>;
+export declare const ConversationsUpdateInput: import("@sinclair/typebox").TObject<{
+    id: import("@sinclair/typebox").TString;
+    title: import("@sinclair/typebox").TString;
+}>;
+export type ConversationsUpdateInput = Static<typeof ConversationsUpdateInput>;
+export declare const ConversationsForkInput: import("@sinclair/typebox").TObject<{
+    id: import("@sinclair/typebox").TString;
+    atMessage: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+}>;
+export type ConversationsForkInput = Static<typeof ConversationsForkInput>;
+export declare const ConversationsStatsInput: import("@sinclair/typebox").TObject<{
+    period: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"day" | "week" | "month" | "all">>;
+}>;
+export type ConversationsStatsInput = Static<typeof ConversationsStatsInput>;
+export declare const ConversationsExportInput: import("@sinclair/typebox").TObject<{
+    id: import("@sinclair/typebox").TString;
+    format: import("@sinclair/typebox").TUnsafe<"markdown" | "json">;
+}>;
+export type ConversationsExportInput = Static<typeof ConversationsExportInput>;

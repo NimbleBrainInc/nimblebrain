@@ -1,6 +1,6 @@
 import { Lightbulb, Plus, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { ToolInput } from "@platform/schemas/catalog";
+import type { ToolInput } from "../../_generated/platform-schemas/catalog";
 import { callTool } from "../../api/client";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";

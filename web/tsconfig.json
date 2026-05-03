@@ -21,10 +21,9 @@
 
     "baseUrl": ".",
     "paths": {
-      "@/*": ["./src/*"],
-      "@platform/schemas/*": ["../src/tools/platform/schemas/*"]
+      "@/*": ["./src/*"]
     }
   },
-  "include": ["src", "../src/tools/platform/schemas/**/*.ts"],
+  "include": ["src"],
   "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx", "src/**/__tests__"]
 }

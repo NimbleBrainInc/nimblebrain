@@ -1,0 +1,44 @@
+import { type Static } from "@sinclair/typebox";
+export declare const FilesListInput: import("@sinclair/typebox").TObject<{
+    limit: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+    offset: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+    tags: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
+    mimeType: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    sort: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"createdAt" | "filename" | "size">>;
+}>;
+export type FilesListInput = Static<typeof FilesListInput>;
+export declare const FilesSearchInput: import("@sinclair/typebox").TObject<{
+    query: import("@sinclair/typebox").TString;
+    tags: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
+    mimeType: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    limit: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+}>;
+export type FilesSearchInput = Static<typeof FilesSearchInput>;
+export declare const FilesReadInput: import("@sinclair/typebox").TObject<{
+    id: import("@sinclair/typebox").TString;
+}>;
+export type FilesReadInput = Static<typeof FilesReadInput>;
+export declare const FilesCreateInput: import("@sinclair/typebox").TObject<{
+    manifest: import("@sinclair/typebox").TObject<{
+        filename: import("@sinclair/typebox").TString;
+        mimeType: import("@sinclair/typebox").TString;
+        tags: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
+        description: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    }>;
+    body: import("@sinclair/typebox").TString;
+}>;
+export type FilesCreateInput = Static<typeof FilesCreateInput>;
+export declare const FilesInfoInput: import("@sinclair/typebox").TObject<{
+    id: import("@sinclair/typebox").TString;
+}>;
+export type FilesInfoInput = Static<typeof FilesInfoInput>;
+export declare const FilesTagInput: import("@sinclair/typebox").TObject<{
+    id: import("@sinclair/typebox").TString;
+    add: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
+    remove: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
+}>;
+export type FilesTagInput = Static<typeof FilesTagInput>;
+export declare const FilesDeleteInput: import("@sinclair/typebox").TObject<{
+    id: import("@sinclair/typebox").TString;
+}>;
+export type FilesDeleteInput = Static<typeof FilesDeleteInput>;

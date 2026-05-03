@@ -8,12 +8,6 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
-      // Mirrors the tsconfig path alias so `@platform/schemas/*` resolves
-      // identically at build time and at type-check time. Today the only
-      // consumers use `import type` (Vite/esbuild erases these), but a
-      // future runtime import would 404 in dev without this alias —
-      // adding it preemptively avoids a confusing debugging session.
-      "@platform/schemas": path.resolve(__dirname, "../src/tools/platform/schemas"),
     },
   },
   server: {

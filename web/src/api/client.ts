@@ -1,5 +1,5 @@
 import type { McpUiResourceMeta } from "@modelcontextprotocol/ext-apps";
-import type { ToolInput } from "@platform/schemas/catalog";
+import type { ToolInput } from "../_generated/platform-schemas/catalog";
 import type {
   ApiError,
   BootstrapResponse,
