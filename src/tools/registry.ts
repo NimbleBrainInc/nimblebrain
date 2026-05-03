@@ -49,8 +49,9 @@ export class SharedSourceRef implements ToolSource {
     toolName: string,
     input: Record<string, unknown>,
     signal?: AbortSignal,
+    principalId?: string,
   ): Promise<ToolResult> {
-    return this.inner.execute(toolName, input, signal);
+    return this.inner.execute(toolName, input, signal, principalId);
   }
   /** Unwrap to the underlying source — used by task-aware dispatch. */
   unwrap(): ToolSource {
@@ -96,7 +97,7 @@ export class ToolRegistry implements ToolRouter {
     return all;
   }
 
-  async execute(call: ToolCall, signal?: AbortSignal): Promise<ToolResult> {
+  async execute(call: ToolCall, signal?: AbortSignal, principalId?: string): Promise<ToolResult> {
     const sepIndex = call.name.indexOf("__");
     if (sepIndex === -1) {
       // Auto-search for matching tools to help the LLM recover
@@ -127,7 +128,7 @@ export class ToolRegistry implements ToolRouter {
       };
     }
 
-    return source.execute(localName, call.input, signal);
+    return source.execute(localName, call.input, signal, principalId);
   }
 
   /** Search all tools by keyword (substring match on name + description). */

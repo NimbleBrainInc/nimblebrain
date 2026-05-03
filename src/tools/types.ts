@@ -39,11 +39,18 @@ export interface ToolSource {
    * run-scoped cancellation — MCP sources forward it into the protocol
    * (tasks/cancel for task-augmented calls, RequestOptions for inline);
    * other sources may ignore it if their work is fast.
+   *
+   * `principalId` is the identity to authenticate as for member-scoped
+   * remote MCP bundles — the conversation owner's user id for agent-loop
+   * calls, the explicit caller for the REST `/v1/tools/call` path. Only
+   * `MemberPoolSource` reads it; single-principal sources (workspace-scope
+   * MCP, in-process platform sources, stdio bundles) ignore the value.
    */
   execute(
     toolName: string,
     input: Record<string, unknown>,
     signal?: AbortSignal,
+    principalId?: string,
   ): Promise<ToolResult>;
 }
 
