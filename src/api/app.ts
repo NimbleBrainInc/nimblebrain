@@ -9,6 +9,7 @@ import { conversationEventRoutes } from "./routes/conversation-events.ts";
 import { eventRoutes } from "./routes/events.ts";
 import { healthRoutes } from "./routes/health.ts";
 import { mcpRoutes } from "./routes/mcp.ts";
+import { connectionsRoutes } from "./routes/connections.ts";
 import { mcpAuthRoutes } from "./routes/mcp-auth.ts";
 import { proxyRoutes } from "./routes/proxy.ts";
 import { resourceRoutes } from "./routes/resources.ts";
@@ -58,6 +59,7 @@ export function createApp(
   app.route("/", resourceRoutes(ctx));
   app.route("/", eventRoutes(ctx));
   app.route("/", conversationEventRoutes(ctx));
+  app.route("/", connectionsRoutes(ctx));
 
   // 404 fallback
   app.notFound(() => apiError(404, "not_found", "Not found"));
