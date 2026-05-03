@@ -40,6 +40,21 @@ const UnknownRecord = Type.Record(Type.String(), Type.Unknown());
 /** Empty params shape (`Record<string, never>` in the legacy interfaces). */
 const EmptyParams = Type.Object({}, { additionalProperties: false });
 
+/**
+ * JSON-RPC 2.0 request id. Per spec § 4: "An identifier established by
+ * the Client that MUST contain a String, Number, or NULL value if
+ * included." The MCP SDK's `RequestId` (`@modelcontextprotocol/sdk/types`)
+ * is `string | number`. ext-apps clients built on
+ * `@reboot-dev/reboot-react` use numeric ids starting at 0; the iframe
+ * boundary cannot dictate caller id shape.
+ *
+ * Response envelopes (Host → App) echo whichever shape the request used,
+ * so they take the same union — narrowing the response side to string
+ * would force-coerce numeric requests to string responses, breaking
+ * id correlation in clients that compare strictly.
+ */
+const RequestId = Type.Union([Type.String(), Type.Number()]);
+
 const ContentItem = Type.Object(
   {
     type: Type.String(),
@@ -62,7 +77,7 @@ const ToolResultContent = Type.Object(
 export const ToolsCallMessage = Type.Object({
   jsonrpc: JsonRpcVersion,
   method: Type.Literal("tools/call"),
-  id: Type.String(),
+  id: RequestId,
   params: Type.Object({
     name: Type.String(),
     arguments: Type.Optional(UnknownRecord),
@@ -73,7 +88,7 @@ export type ToolsCallMessage = Static<typeof ToolsCallMessage>;
 export const ResourcesReadMessage = Type.Object({
   jsonrpc: JsonRpcVersion,
   method: Type.Literal("resources/read"),
-  id: Type.String(),
+  id: RequestId,
   params: Type.Object({
     uri: Type.String(),
     server: Type.Optional(Type.String()),
@@ -115,7 +130,7 @@ export type UiSizeChangedMessage = Static<typeof UiSizeChangedMessage>;
 
 export const UiUpdateModelContextMessage = Type.Object({
   jsonrpc: JsonRpcVersion,
-  id: Type.String(),
+  id: RequestId,
   method: Type.Literal("ui/update-model-context"),
   params: Type.Object({
     content: Type.Optional(
@@ -128,7 +143,7 @@ export type UiUpdateModelContextMessage = Static<typeof UiUpdateModelContextMess
 
 export const ExtAppsInitializeRequest = Type.Object({
   jsonrpc: JsonRpcVersion,
-  id: Type.Union([Type.String(), Type.Number()]),
+  id: RequestId,
   method: Type.Literal("ui/initialize"),
   // `clientInfo` and `capabilities` are spec-required, but the existing
   // bridge accepts ui/initialize regardless of params shape — relaxing
@@ -189,7 +204,7 @@ export type UiDownloadFileMessage = Static<typeof UiDownloadFileMessage> & {
 export const UiPersistStateMessage = Type.Object({
   jsonrpc: JsonRpcVersion,
   method: Type.Literal("synapse/persist-state"),
-  id: Type.String(),
+  id: RequestId,
   params: Type.Object({
     state: UnknownRecord,
     version: Type.Optional(Type.Number()),
@@ -200,7 +215,7 @@ export type UiPersistStateMessage = Static<typeof UiPersistStateMessage>;
 export const SynapseRequestFileMessage = Type.Object({
   jsonrpc: JsonRpcVersion,
   method: Type.Literal("synapse/request-file"),
-  id: Type.String(),
+  id: RequestId,
   params: Type.Object({
     accept: Type.Optional(Type.String()),
     maxSize: Type.Optional(Type.Number()),
@@ -266,7 +281,7 @@ export type UiInitializeMessage = Static<typeof UiInitializeMessage>;
 
 export const UiResourceResultResponse = Type.Object({
   jsonrpc: JsonRpcVersion,
-  id: Type.String(),
+  id: RequestId,
   result: Type.Object({
     contents: Type.Array(
       Type.Object({
@@ -282,14 +297,14 @@ export type UiResourceResultResponse = Static<typeof UiResourceResultResponse>;
 
 export const UiResourceResultError = Type.Object({
   jsonrpc: JsonRpcVersion,
-  id: Type.String(),
+  id: RequestId,
   error: Type.Object({ code: Type.Number(), message: Type.String() }),
 });
 export type UiResourceResultError = Static<typeof UiResourceResultError>;
 
 export const UiToolResultResponse = Type.Object({
   jsonrpc: JsonRpcVersion,
-  id: Type.String(),
+  id: RequestId,
   result: Type.Object({
     content: Type.Array(ToolResultContent),
     structuredContent: Type.Optional(UnknownRecord),
@@ -299,7 +314,7 @@ export type UiToolResultResponse = Static<typeof UiToolResultResponse>;
 
 export const UiToolResultError = Type.Object({
   jsonrpc: JsonRpcVersion,
-  id: Type.String(),
+  id: RequestId,
   error: Type.Object({ code: Type.Number(), message: Type.String() }),
 });
 export type UiToolResultError = Static<typeof UiToolResultError>;
@@ -316,9 +331,7 @@ export type UiToolResultMessage = Static<typeof UiToolResultMessage>;
 
 export const ExtAppsInitializeResponse = Type.Object({
   jsonrpc: JsonRpcVersion,
-  // Numeric IDs allowed: ext-apps SDK clients (Reboot via @reboot-dev/
-  // reboot-react) use numeric IDs starting at 0; response echoes shape.
-  id: Type.Union([Type.String(), Type.Number()]),
+  id: RequestId,
   result: Type.Object({
     protocolVersion: Type.String(),
     hostInfo: Type.Object({ name: Type.String(), version: Type.String() }),

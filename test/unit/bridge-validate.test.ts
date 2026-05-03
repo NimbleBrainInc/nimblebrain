@@ -22,6 +22,21 @@ describe("validateAppToHostMessage", () => {
     expect(result).toEqual({ ok: true, method: "tools/call", reason: null });
   });
 
+  test("accepts a tools/call with numeric id (JSON-RPC 2.0 spec, MCP RequestId, ext-apps SDK)", () => {
+    // ext-apps SDK clients (Reboot via @reboot-dev/reboot-react) generate
+    // numeric ids starting at 0. ui/initialize already accepts both shapes;
+    // tools/call must too — otherwise an app handshakes successfully then
+    // its first tool call gets silently dropped.
+    const result = validateAppToHostMessage({
+      jsonrpc: "2.0",
+      method: "tools/call",
+      id: 0,
+      params: { name: "search", arguments: { q: "hello" } },
+    });
+    expect(result.ok).toBe(true);
+    expect(result.method).toBe("tools/call");
+  });
+
   test("rejects a tools/call missing required params.name", () => {
     const result = validateAppToHostMessage({
       jsonrpc: "2.0",
