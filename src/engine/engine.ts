@@ -529,8 +529,11 @@ export class AgentEngine {
               try {
                 // Forward the run's AbortSignal so task-augmented MCP tools
                 // propagate cancellation via tasks/cancel and inline tools
-                // abort their in-flight RPC.
-                result = await this.tools.execute(gatedCall, config.signal);
+                // abort their in-flight RPC. principalId is the conversation
+                // owner's id — used by member-scoped MCP bundles to route
+                // to the right per-principal source. Workspace-scoped
+                // sources ignore it.
+                result = await this.tools.execute(gatedCall, config.signal, config.principalId);
               } catch (err) {
                 result = {
                   content: textContent(err instanceof Error ? err.message : String(err)),

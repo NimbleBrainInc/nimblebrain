@@ -843,6 +843,11 @@ export class Runtime {
         skillsLoaded,
         contextAssembled,
       },
+      // Agent-loop identity rule: tool calls inside this run authenticate
+      // as the request's identity (= conversation owner for chat-based
+      // runs). Member-scoped MCP bundles use this to route to the right
+      // per-principal source. Workspace-scoped sources ignore it.
+      ...(request.identity ? { principalId: request.identity.id } : {}),
     };
 
     // Determine which event store handles conversation events for this request.
