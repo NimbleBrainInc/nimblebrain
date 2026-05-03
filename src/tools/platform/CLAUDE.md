@@ -203,3 +203,34 @@ If you're tempted to violate any of section 1, ask whether the underlying
 need is actually load-bearing for the LLM or operator-only. If
 operator-only, route it through a non-LLM path (direct file edit,
 runtime-applied default, settings UI) and keep the tool surface clean.
+
+---
+
+## 6. After editing any file in `schemas/`
+
+The web shell consumes the catalog's derived types via a generated
+`.d.ts` tree at `web/src/_generated/platform-schemas/`. Web is a
+separate package (own `package.json`, own Docker context); a cross-tree
+TypeScript path alias would force every Dockerfile, Makefile, and CI
+invocation to know about the cross-tree relationship. Codegen keeps
+web a self-contained package.
+
+After editing **any** file under `src/tools/platform/schemas/`,
+including the catalog and the per-source schemas:
+
+```bash
+bun run codegen
+```
+
+This regenerates `web/src/_generated/platform-schemas/`. CI runs
+`bun run check:codegen` (part of `verify:static`) to verify the
+checked-in generated tree matches what the current schemas would
+produce — drift is a build failure. `bun run verify` runs codegen
+implicitly via `verify:static`, so if you're following the standard
+"run verify before opening a PR" rule from the repo-root AGENTS.md,
+the regen happens automatically.
+
+Server-side imports of the schemas (in `src/tools/platform/<source>.ts`,
+`src/bundles/{conversations,home,usage,automations}/src/server.ts`) are
+intra-package and need no codegen — they import the schemas directly
+via relative paths.
