@@ -525,6 +525,63 @@ export async function initiateMcpOAuth(
 }
 
 /**
+ * Connections catalog entry — one card on Settings → Connections.
+ * Mirrors the server-side `ConnectionCatalogEntry` shape.
+ */
+export interface ConnectionCatalogEntry {
+  id: string;
+  name: string;
+  description: string;
+  iconUrl: string;
+  url: string;
+  auth: "dcr" | "static";
+  defaultScope: "workspace" | "member";
+  requiredScopes?: string[];
+  additionalAuthorizationParams?: Record<string, string>;
+  operatorSetup?: { portalUrl: string; hint: string; credentialKey: string };
+  tags?: string[];
+}
+
+/** Workspace-filtered catalog. */
+export async function getConnectionsCatalog(): Promise<{ catalog: ConnectionCatalogEntry[] }> {
+  return request<{ catalog: ConnectionCatalogEntry[] }>("/v1/connections/catalog");
+}
+
+/**
+ * Per-workspace + per-principal installed view. The page joins this
+ * with the catalog to render two columns.
+ */
+export interface InstalledConnection {
+  catalogId: string | null;
+  serverName: string;
+  url: string;
+  oauthScope: "workspace" | "member";
+  catalog?: ConnectionCatalogEntry;
+  myConnection?: {
+    state: string;
+    authorizationUrl?: string;
+    identity?: { sub?: string; email?: string; name?: string };
+  };
+  workspaceConnection?: { state: string; authorizationUrl?: string };
+  missingOperatorSetup?: boolean;
+}
+
+export async function getInstalledConnections(): Promise<{ installed: InstalledConnection[] }> {
+  return request<{ installed: InstalledConnection[] }>("/v1/connections/installed");
+}
+
+export async function disconnectConnection(
+  serverName: string,
+  principalId?: string,
+): Promise<{ ok: boolean; revoked: { access?: boolean; refresh?: boolean }; deletedLocal: boolean; revokeError?: string }> {
+  return request("/v1/connections/disconnect", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(principalId ? { serverName, principalId } : { serverName }),
+  });
+}
+
+/**
  * Snapshot of Connections in pending_auth for the active workspace.
  * The web banner fetches this on workspace render so it appears even if
  * the bundle entered pending_auth before the SSE stream connected

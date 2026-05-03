@@ -49,6 +49,7 @@ import { SettingsAppPanel } from "./pages/settings/SettingsAppPanel";
 import { SkillsTab } from "./pages/settings/SkillsTab";
 import { UsageTab } from "./pages/settings/UsageTab";
 import { UsersTab } from "./pages/settings/UsersTab";
+import { ConnectionsTab } from "./pages/settings/ConnectionsTab";
 import { WorkspaceAppsTab } from "./pages/settings/WorkspaceAppsTab";
 import { WorkspaceDetailPage } from "./pages/settings/WorkspaceDetailPage";
 import { WorkspaceGeneralTab } from "./pages/settings/WorkspaceGeneralTab";
@@ -395,6 +396,7 @@ function AuthenticatedAppContent({
                 <Route path="usage" element={<UsageTab />} />
                 <Route path="apps" element={<WorkspaceAppsTab />} />
                 <Route path="apps/:serverName" element={<SettingsAppPanel />} />
+                <Route path="connections" element={<ConnectionsTab />} />
                 <Route path="skills" element={<SkillsTab />} />
               </Route>
 

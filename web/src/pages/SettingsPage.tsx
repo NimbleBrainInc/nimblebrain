@@ -76,6 +76,13 @@ const PLATFORM_SECTIONS: PlatformSection[] = [
     minRole: "ws_member",
   },
   {
+    id: "ws-connections",
+    label: "Connections",
+    to: "/settings/workspace/connections",
+    group: "workspace",
+    minRole: "ws_member",
+  },
+  {
     id: "ws-skills",
     label: "Skills",
     to: "/settings/workspace/skills",
