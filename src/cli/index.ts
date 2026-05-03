@@ -6,6 +6,7 @@ import { TelemetryManager } from "../telemetry/manager.ts";
 import { createAutomationCommand } from "./commands/automation.ts";
 import { createBundleCommand } from "./commands/bundle.ts";
 import { createConfigCommand } from "./commands/config-cmd.ts";
+import { createCredentialCommand } from "./commands/credential.ts";
 import { registerDefaultAction } from "./commands/default.ts";
 import { createDevCommand } from "./commands/dev.ts";
 import { createReloadCommand } from "./commands/reload.ts";
@@ -28,6 +29,8 @@ const KNOWN_COMMANDS = new Set([
   "telemetry",
   "automation",
   "user",
+  "credential",
+  "creds",
 ]);
 
 async function main() {
@@ -58,6 +61,7 @@ async function main() {
   program.addCommand(createServeCommand(telemetry));
   program.addCommand(createDevCommand());
   program.addCommand(createUserCommand());
+  program.addCommand(createCredentialCommand());
 
   // Default action: TUI or headless (when no subcommand given)
   registerDefaultAction(program, telemetry);
