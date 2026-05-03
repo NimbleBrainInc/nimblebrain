@@ -27,7 +27,7 @@ import { WorkspaceRouteGuard } from "./components/WorkspaceRouteGuard";
 import { ChatProvider, useChatConfigContext, useChatContext } from "./context/ChatContext";
 import { ChatPanelProvider, useChatPanelContext } from "./context/ChatPanelContext";
 import { SessionProvider } from "./context/SessionContext";
-import { PendingAuthBanner } from "./components/PendingAuthBanner";
+import { PendingAuthBanner, PendingAuthBannerSpacer } from "./components/PendingAuthBanner";
 import { ShellProvider } from "./context/ShellContext";
 import { SidebarProvider } from "./context/SidebarContext";
 import { ThemeProvider, useTheme } from "./context/ThemeContext.tsx";
@@ -344,8 +344,12 @@ function AuthenticatedAppContent({
       {/* ActionBridge handles iframe action events. It consumes ChatContext
           (streaming) but renders nothing, so its re-renders are free. */}
       <ActionBridge handleNavigate={handleNavigate} resolveAppRoute={resolveAppRoute} />
+      {/* Banner is fixed-position at the top of the viewport so it sits
+          above ChatPanel (z-10) and the sidebar; the spacer inside
+          ShellLayout pushes the main content down by the banner height. */}
+      <PendingAuthBanner pending={pendingAuth} />
       <ShellLayout forSlot={forSlot} onLogout={onLogout}>
-        <PendingAuthBanner pending={pendingAuth} />
+        <PendingAuthBannerSpacer pending={pendingAuth} />
         <ErrorBoundary resetKeys={[location.pathname]}>
           <Routes>
             {/* Root → redirect to workspace-scoped home */}

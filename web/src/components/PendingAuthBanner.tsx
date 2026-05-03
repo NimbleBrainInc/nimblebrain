@@ -28,8 +28,14 @@ export function PendingAuthBanner({ pending }: Props) {
   const entries = [...pending.values()];
   if (entries.length === 0) return null;
 
+  // `fixed` + high z-index so the banner sits above the chat panel
+  // (which is `fixed top-0 right-0 z-10` in AppWithChat). When the
+  // chat slides in, the right portion of the banner — including the
+  // Connect button — would otherwise be hidden under it. The
+  // ShellLayout below us pads its main content via the spacer that
+  // App.tsx renders alongside this component.
   return (
-    <div className="border-b border-amber-300/60 bg-amber-50 dark:border-amber-800/60 dark:bg-amber-950/40">
+    <div className="fixed inset-x-0 top-0 z-50 border-b border-amber-300/60 bg-amber-50 dark:border-amber-800/60 dark:bg-amber-950/40">
       <div className="px-4 py-2 space-y-1">
         {entries.map((evt) => (
           <PendingRow key={`${evt.serverName}|${evt.principalId}`} evt={evt} />
@@ -37,6 +43,18 @@ export function PendingAuthBanner({ pending }: Props) {
       </div>
     </div>
   );
+}
+
+/**
+ * Spacer to push the main shell down by the banner's height when one
+ * or more banner rows are present. Sized to match a single-row banner
+ * (~40px); for multi-row stacks Step 3 will need to measure dynamically.
+ */
+export function PendingAuthBannerSpacer({ pending }: Props) {
+  if (pending.size === 0) return null;
+  // 40px = py-2 (16px vertical) + ~24px content + 1px border. Matches a
+  // single row; multi-row banners will under-pad until we measure.
+  return <div className="h-10 shrink-0" aria-hidden />;
 }
 
 function PendingRow({ evt }: { evt: ConnectionStateChangedEvent }) {
