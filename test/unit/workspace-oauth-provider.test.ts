@@ -226,6 +226,173 @@ describe("WorkspaceOAuthProvider — member-scoped persistence", () => {
   });
 });
 
+describe("WorkspaceOAuthProvider — Track A: pre-registered client + scopes + extra params", () => {
+  let workDir: string;
+
+  beforeEach(() => {
+    workDir = mkdtempSync(join(tmpdir(), "nb-oauth-trackA-"));
+  });
+
+  it("clientInformation returns the static client when staticClient is set; saveClientInformation is a no-op", async () => {
+    const p = new WorkspaceOAuthProvider({
+      wsId: "ws_test",
+      serverName: "hubspot",
+      workDir,
+      callbackUrl: CALLBACK,
+      staticClient: {
+        clientId: "static-cid",
+        clientSecret: "static-secret",
+        tokenEndpointAuthMethod: "client_secret_post",
+      },
+    });
+    const info = await p.clientInformation();
+    expect(info).toMatchObject({
+      client_id: "static-cid",
+      client_secret: "static-secret",
+      redirect_uris: [CALLBACK],
+    });
+
+    // Stray DCR-style save MUST NOT overwrite client.json.
+    await p.saveClientInformation({
+      client_id: "should-not-persist",
+      redirect_uris: [CALLBACK],
+    });
+    const stillStatic = await p.clientInformation();
+    expect(stillStatic?.client_id).toBe("static-cid");
+
+    // No client.json on disk either.
+    const onDiskPath = join(
+      workDir,
+      "workspaces",
+      "ws_test",
+      "credentials",
+      "mcp-oauth",
+      "hubspot",
+      "client.json",
+    );
+    expect(() => readFileSync(onDiskPath)).toThrow();
+  });
+
+  it("clientMetadata.scope reflects the configured scopes (space-joined per RFC 6749)", () => {
+    const p = new WorkspaceOAuthProvider({
+      wsId: "ws_test",
+      serverName: "gmail",
+      workDir,
+      callbackUrl: CALLBACK,
+      scopes: [
+        "https://www.googleapis.com/auth/gmail.readonly",
+        "https://www.googleapis.com/auth/gmail.send",
+      ],
+    });
+    expect(p.clientMetadata.scope).toBe(
+      "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send",
+    );
+  });
+
+  it("clientMetadata default token_endpoint_auth_method = 'none' (DCR PKCE-only) when no staticClient", () => {
+    const p = new WorkspaceOAuthProvider({
+      wsId: "ws_test",
+      serverName: "granola",
+      workDir,
+      callbackUrl: CALLBACK,
+    });
+    expect(p.clientMetadata.token_endpoint_auth_method).toBe("none");
+  });
+
+  it("clientMetadata default token_endpoint_auth_method = 'client_secret_post' when secret provided without override", () => {
+    const p = new WorkspaceOAuthProvider({
+      wsId: "ws_test",
+      serverName: "hubspot",
+      workDir,
+      callbackUrl: CALLBACK,
+      staticClient: { clientId: "c", clientSecret: "s" },
+    });
+    expect(p.clientMetadata.token_endpoint_auth_method).toBe("client_secret_post");
+  });
+
+  it("explicit tokenEndpointAuthMethod override wins", () => {
+    const p = new WorkspaceOAuthProvider({
+      wsId: "ws_test",
+      serverName: "weird-vendor",
+      workDir,
+      callbackUrl: CALLBACK,
+      staticClient: {
+        clientId: "c",
+        clientSecret: "s",
+        tokenEndpointAuthMethod: "client_secret_basic",
+      },
+    });
+    expect(p.clientMetadata.token_endpoint_auth_method).toBe("client_secret_basic");
+  });
+
+  it("constructor rejects reserved keys in additionalAuthorizationParams", () => {
+    const make = (extras: Record<string, string>) =>
+      () =>
+        new WorkspaceOAuthProvider({
+          wsId: "ws_test",
+          serverName: "broken",
+          workDir,
+          callbackUrl: CALLBACK,
+          additionalAuthorizationParams: extras,
+        });
+
+    expect(make({ client_id: "evil" })).toThrow(/reserved keys/);
+    expect(make({ state: "no" })).toThrow(/reserved keys/);
+    expect(make({ scope: "more" })).toThrow(/reserved keys/);
+    expect(make({ code_challenge: "bypass" })).toThrow(/reserved keys/);
+  });
+
+  it("redirectToAuthorization appends additionalAuthorizationParams to the authorize URL", async () => {
+    // Use a Bun-served mock to verify the URL the provider tries to fetch.
+    // Test asserts the built URL by inspecting the deferred-thrown
+    // UnauthorizedError's message, which carries `url.origin`. For full
+    // URL-shape verification we use a different angle: spy on fetch by
+    // wrapping global fetch via a closure-captured array. To keep the
+    // test simple and avoid Bun.serve, we just construct the URL the
+    // SDK would build and call redirectToAuthorization directly with a
+    // controlled `state`, then read the URL back from the captured
+    // fetch call's URL parameter.
+    const calls: string[] = [];
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async (url: string | URL | Request) => {
+      const u = typeof url === "string" ? url : url.toString();
+      calls.push(u);
+      // Force the headless probe to fail (200 response with no Location)
+      // so the provider falls through to the interactive branch.
+      return new Response("not a redirect", { status: 200 });
+    }) as typeof fetch;
+    try {
+      const p = new WorkspaceOAuthProvider({
+        wsId: "ws_test",
+        serverName: "google",
+        workDir,
+        callbackUrl: CALLBACK,
+        allowInsecureRemotes: true,
+        additionalAuthorizationParams: {
+          access_type: "offline",
+          prompt: "consent",
+        },
+      });
+      const state = p.state();
+      const authUrl = new URL("http://localhost:39991/oauth/authorize");
+      authUrl.searchParams.set("state", state);
+      try {
+        await p.redirectToAuthorization(authUrl);
+      } catch {
+        // expected — UnauthorizedError on interactive branch
+      }
+      // The URL passed to fetch (after our params were appended) should
+      // contain access_type and prompt.
+      const fetched = calls[0] ?? "";
+      expect(fetched).toContain("access_type=offline");
+      expect(fetched).toContain("prompt=consent");
+      expect(fetched).toContain(`state=${state}`);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+});
+
 describe("WorkspaceOAuthProvider — revokeAndDeleteTokens", () => {
   let workDir: string;
 

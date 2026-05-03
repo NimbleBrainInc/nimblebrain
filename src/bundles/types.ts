@@ -119,7 +119,74 @@ export type BundleRef =
        *   agent on their behalf) try to call a tool.
        */
       oauthScope?: "workspace" | "member";
+      /**
+       * Pre-registered OAuth client config. Required for vendors that don't
+       * support Dynamic Client Registration (RFC 7591) — Gmail, Outlook,
+       * HubSpot, Asana, Zoom Marketplace user-OAuth apps. Operator pre-
+       * registers an app in the vendor's developer portal, gets back a
+       * `client_id` (and usually a `client_secret`), and points this field
+       * at it.
+       *
+       * When present, the OAuth provider skips DCR — `clientInformation()`
+       * returns the static client; `saveClientInformation()` is a no-op.
+       * `clientSecret` is NEVER inline — it's a reference into the
+       * credential store, resolved per-request so the secret doesn't sit
+       * in workspace.json. Operators set the secret via
+       * `nb credential set <wsId> <key> <value>`.
+       *
+       * Omit for vendors that DO support DCR (Granola, Notion). DCR is the
+       * default path; static config is the opt-in.
+       */
+      oauthClient?: OAuthClientConfig;
+      /**
+       * OAuth scopes the bundle requests. Threaded into the provider's
+       * `clientMetadata.scope` so the authorize URL carries the right
+       * `scope=` param. Surfaces the requested permissions on the review
+       * surface (admin reading workspace.json sees what the bundle asks
+       * for) and lets the same MCP server be installed at different
+       * permission levels (e.g., Gmail read-only vs. read+send).
+       *
+       * Omit to use server defaults — correct for DCR servers that derive
+       * scopes automatically (Granola, Notion).
+       */
+      scopes?: string[];
+      /**
+       * Extra query params appended to the authorize URL. Covers Google's
+       * `access_type=offline` + `prompt=consent` (needed for refresh-token
+       * issuance) and any vendor-specific parameter. Static strings only —
+       * no template interpolation.
+       *
+       * **Reserved keys rejected at config load** (`client_id`,
+       * `redirect_uri`, `response_type`, `state`, `code_challenge`,
+       * `code_challenge_method`, `scope`) so config can't override
+       * security-critical params the provider sets itself.
+       */
+      additionalAuthorizationParams?: Record<string, string>;
     };
+
+/**
+ * Config for a pre-registered OAuth client (Track A — alternative to DCR).
+ * Lives on the URL bundle ref. The provider reads `clientId` directly
+ * and resolves `clientSecret` per-request via `CredentialStore` (the
+ * value is never inline in `workspace.json`).
+ */
+export interface OAuthClientConfig {
+  /** OAuth `client_id` from the vendor's developer portal. */
+  clientId: string;
+  /**
+   * Reference to the client secret in the workspace credential store.
+   * Operator seeds the value via `nb credential set <wsId> <key> <value>`.
+   * Omit for public PKCE-only clients (rare for pre-registered).
+   */
+  clientSecret?: { ref: "credential"; key: string };
+  /**
+   * Token endpoint auth method. Defaults to "none" (PKCE-only public
+   * client) when `clientSecret` is absent; "client_secret_post" is the
+   * common case when a secret is present. "client_secret_basic" is
+   * supported for vendors that mandate it.
+   */
+  tokenEndpointAuthMethod?: "none" | "client_secret_post" | "client_secret_basic";
+}
 
 /** Bundle lifecycle states. */
 export type BundleState =

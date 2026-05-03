@@ -5,10 +5,14 @@ import { clearAllWorkspaceCredentials } from "../config/workspace-credentials.ts
 import { log } from "../cli/log.ts";
 import type { EventSink } from "../engine/types.ts";
 import type { PlacementRegistry } from "../runtime/placement-registry.ts";
+import { FileCredentialStore } from "../tools/credential-store.ts";
 import { McpSource } from "../tools/mcp-source.ts";
 import { MemberPoolSource } from "../tools/member-pool-source.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
-import { WorkspaceOAuthProvider } from "../tools/workspace-oauth-provider.ts";
+import {
+  WorkspaceOAuthProvider,
+  validateAdditionalAuthorizationParams,
+} from "../tools/workspace-oauth-provider.ts";
 import { createAutomation, deleteAutomation } from "./automations/src/domain.ts";
 import { type Connection, type ConnectionState, summarizeConnectionState } from "./connection.ts";
 import { getMpak } from "./mpak.ts";
@@ -735,6 +739,42 @@ export class BundleLifecycleManager {
       rejectAuthUrl = rej;
     });
 
+    const ref = instance.ref;
+    if (!("url" in ref)) {
+      throw new Error(`[lifecycle] startMemberAuth: ref is not a URL ref for ${serverName}`);
+    }
+
+    // Track A: resolve pre-registered client config (oauthClient + scopes
+    // + additionalAuthorizationParams) for member-scope bundles. The
+    // boot-time resolution in startup.ts handles workspace-scope; here
+    // we replicate it so member-scope bundles can also use static-client
+    // OAuth. Same credential-store dereference path; same provider
+    // surface.
+    let staticClient:
+      | { clientId: string; clientSecret?: string; tokenEndpointAuthMethod?: "none" | "client_secret_post" | "client_secret_basic" }
+      | undefined;
+    if (ref.oauthClient) {
+      let resolvedSecret: string | undefined;
+      if (ref.oauthClient.clientSecret) {
+        const secretStore = new FileCredentialStore(opts.workDir);
+        const wrapped = await secretStore.get(wsId, ref.oauthClient.clientSecret.key);
+        if (!wrapped) {
+          throw new Error(
+            `[lifecycle] OAuth client_secret not found at credential key "${ref.oauthClient.clientSecret.key}" for ${serverName} — ` +
+              `run \`nb credential set ${wsId} ${ref.oauthClient.clientSecret.key} <value>\``,
+          );
+        }
+        resolvedSecret = wrapped.reveal();
+      }
+      staticClient = {
+        clientId: ref.oauthClient.clientId,
+        ...(resolvedSecret ? { clientSecret: resolvedSecret } : {}),
+        ...(ref.oauthClient.tokenEndpointAuthMethod
+          ? { tokenEndpointAuthMethod: ref.oauthClient.tokenEndpointAuthMethod }
+          : {}),
+      };
+    }
+
     const provider = new WorkspaceOAuthProvider({
       wsId,
       serverName,
@@ -749,9 +789,12 @@ export class BundleLifecycleManager {
         });
         resolveAuthUrl(url);
       },
+      ...(staticClient ? { staticClient } : {}),
+      ...(ref.scopes ? { scopes: ref.scopes } : {}),
+      ...(ref.additionalAuthorizationParams
+        ? { additionalAuthorizationParams: ref.additionalAuthorizationParams }
+        : {}),
     });
-
-    const ref = instance.ref;
     const source = new McpSource(
       serverName,
       {
@@ -1010,6 +1053,13 @@ export class BundleLifecycleManager {
     const oauthScope: BundleInstance["oauthScope"] | undefined = "url" in ref
       ? (ref.oauthScope ?? "workspace")
       : undefined;
+
+    // Track A: validate authorize-URL params at the seed boundary.
+    // Catches reserved-key collisions (client_id, state, PKCE, scope, etc.)
+    // before they break OAuth flows at runtime.
+    if ("url" in ref && ref.additionalAuthorizationParams) {
+      validateAdditionalAuthorizationParams(ref.additionalAuthorizationParams);
+    }
 
     const instance: BundleInstance = {
       serverName,

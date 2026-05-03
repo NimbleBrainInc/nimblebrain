@@ -8,10 +8,14 @@ import {
   type UserConfigFieldDef,
 } from "../config/workspace-credentials.ts";
 import type { EventSink } from "../engine/types.ts";
+import { FileCredentialStore } from "../tools/credential-store.ts";
 import { McpSource } from "../tools/mcp-source.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
 import type { ToolSource } from "../tools/types.ts";
-import { WorkspaceOAuthProvider } from "../tools/workspace-oauth-provider.ts";
+import {
+  WorkspaceOAuthProvider,
+  type WorkspaceOAuthProviderOptions,
+} from "../tools/workspace-oauth-provider.ts";
 import { extractBundleMeta } from "./defaults.ts";
 import { filterEnvForBundle } from "./env-filter.ts";
 import { validateManifest } from "./manifest.ts";
@@ -212,6 +216,38 @@ export async function startBundleSource(
         );
       }
       const callbackUrl = `${(apiBase ?? "http://localhost:27247").replace(/\/+$/, "")}/v1/mcp-auth/callback`;
+
+      // Track A: resolve pre-registered client config when present. The
+      // oauthClient.clientSecret is a reference into the workspace
+      // credential store; we resolve it to a string here so the provider
+      // can stamp it into clientInformation()'s response. The catalog
+      // boundary already enforced that the secret reference is well-
+      // formed; here we just dereference it. Errors abort the boot of
+      // this bundle (the connection enters dead) — user can fix the
+      // credential and restart.
+      let staticClient: WorkspaceOAuthProviderOptions["staticClient"] | undefined;
+      if (ref.oauthClient) {
+        let resolvedSecret: string | undefined;
+        if (ref.oauthClient.clientSecret) {
+          const secretStore = new FileCredentialStore(workDir);
+          const wrapped = await secretStore.get(opts.wsId, ref.oauthClient.clientSecret.key);
+          if (!wrapped) {
+            throw new Error(
+              `[bundles] OAuth client_secret not found at credential key "${ref.oauthClient.clientSecret.key}" — ` +
+                `run \`nb credential set ${opts.wsId} ${ref.oauthClient.clientSecret.key} <value>\` to seed it`,
+            );
+          }
+          resolvedSecret = wrapped.reveal();
+        }
+        staticClient = {
+          clientId: ref.oauthClient.clientId,
+          ...(resolvedSecret ? { clientSecret: resolvedSecret } : {}),
+          ...(ref.oauthClient.tokenEndpointAuthMethod
+            ? { tokenEndpointAuthMethod: ref.oauthClient.tokenEndpointAuthMethod }
+            : {}),
+        };
+      }
+
       authProvider = new WorkspaceOAuthProvider({
         wsId: opts.wsId,
         serverName,
@@ -219,6 +255,11 @@ export async function startBundleSource(
         callbackUrl,
         allowInsecureRemotes: opts.allowInsecureRemotes === true,
         onInteractiveAuthRequired: wrappedCallback,
+        ...(staticClient ? { staticClient } : {}),
+        ...(ref.scopes ? { scopes: ref.scopes } : {}),
+        ...(ref.additionalAuthorizationParams
+          ? { additionalAuthorizationParams: ref.additionalAuthorizationParams }
+          : {}),
       });
     }
 

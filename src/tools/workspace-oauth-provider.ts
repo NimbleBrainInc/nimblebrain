@@ -91,6 +91,69 @@ export interface WorkspaceOAuthProviderOptions {
    * the implementation cheap and defensive.
    */
   onInteractiveAuthRequired?: (authorizationUrl: string) => void;
+  /**
+   * Pre-registered OAuth client (Track A). When present, the provider
+   * skips DCR — `clientInformation()` returns this static client and
+   * `saveClientInformation()` is a no-op. The client_secret is supplied
+   * separately via the `clientSecret` field below; the catalog entry
+   * referenced this via `oauthClient.clientSecret = { ref: "credential",
+   * key: ... }`, and the route handler resolves it before constructing
+   * the provider.
+   */
+  staticClient?: {
+    clientId: string;
+    clientSecret?: string;
+    tokenEndpointAuthMethod?: "none" | "client_secret_post" | "client_secret_basic";
+  };
+  /**
+   * OAuth scopes for `clientMetadata.scope`. Threaded into the SDK's
+   * authorize URL build so the AS sees the requested permissions.
+   * Omit for DCR servers that derive scopes from server metadata.
+   */
+  scopes?: string[];
+  /**
+   * Extra query params appended to the authorize URL inside
+   * `redirectToAuthorization`. Reserved keys (`client_id`, `redirect_uri`,
+   * `response_type`, `state`, `code_challenge`, `code_challenge_method`,
+   * `scope`) are validated out at config-load time.
+   */
+  additionalAuthorizationParams?: Record<string, string>;
+}
+
+/**
+ * Reserved authorize-URL params that the OAuth flow controls itself.
+ * Operator-supplied `additionalAuthorizationParams` from
+ * `workspace.json` MUST NOT include these — overriding any of them
+ * would let a misconfigured catalog entry break PKCE binding or steal
+ * the redirect target. Validated at config load (see
+ * `validateAdditionalAuthorizationParams`).
+ */
+export const RESERVED_AUTHORIZE_PARAMS = [
+  "client_id",
+  "redirect_uri",
+  "response_type",
+  "state",
+  "code_challenge",
+  "code_challenge_method",
+  "scope",
+] as const;
+
+/**
+ * Throw if any reserved key appears in the params map. Called at the
+ * boundary where `workspace.json` is parsed — bundle install /
+ * `seedInstance` — so a bad config fails loud rather than at OAuth-
+ * flow time.
+ */
+export function validateAdditionalAuthorizationParams(
+  params: Record<string, string> | undefined,
+): void {
+  if (!params) return;
+  const reserved = RESERVED_AUTHORIZE_PARAMS.filter((k) => k in params);
+  if (reserved.length > 0) {
+    throw new Error(
+      `[workspace-oauth-provider] additionalAuthorizationParams cannot include reserved keys: ${reserved.join(", ")}`,
+    );
+  }
 }
 
 /**
@@ -292,6 +355,9 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
   private readonly canonicalCallback: string;
   private readonly allowInsecureRemotes: boolean;
   private readonly onInteractiveAuthRequired?: (authorizationUrl: string) => void;
+  private readonly staticClient?: WorkspaceOAuthProviderOptions["staticClient"];
+  private readonly scopes?: string[];
+  private readonly additionalAuthorizationParams?: Record<string, string>;
   /** Cached DCR result + tokens to avoid redundant disk reads within a flow. */
   private cachedClientInfo: OAuthClientInformationFull | null = null;
   private cachedTokens: OAuthTokens | null = null;
@@ -322,6 +388,12 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     this.canonicalCallback = canonicalEndpoint(new URL(opts.callbackUrl));
     this.allowInsecureRemotes = opts.allowInsecureRemotes === true;
     this.onInteractiveAuthRequired = opts.onInteractiveAuthRequired;
+    this.staticClient = opts.staticClient;
+    this.scopes = opts.scopes;
+    // Validate at construction so a bad config fails fast — same boundary
+    // discipline as `assertSafeMemberId`.
+    validateAdditionalAuthorizationParams(opts.additionalAuthorizationParams);
+    this.additionalAuthorizationParams = opts.additionalAuthorizationParams;
     this.clientDir = join(
       opts.workDir,
       "workspaces",
@@ -345,13 +417,22 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
   }
 
   get clientMetadata(): OAuthClientMetadata {
-    return {
+    const meta: OAuthClientMetadata = {
       client_name: `NimbleBrain (${this.wsId})`,
       redirect_uris: [this.callbackUrl],
       grant_types: ["authorization_code", "refresh_token"],
       response_types: ["code"],
-      token_endpoint_auth_method: "none",
+      token_endpoint_auth_method:
+        this.staticClient?.tokenEndpointAuthMethod ??
+        (this.staticClient?.clientSecret ? "client_secret_post" : "none"),
     };
+    // Track A: requested OAuth scopes flow into the SDK's authorize URL
+    // build via the standard `scope` field on clientMetadata. Joined with
+    // a single space per RFC 6749 § 3.3.
+    if (this.scopes && this.scopes.length > 0) {
+      meta.scope = this.scopes.join(" ");
+    }
+    return meta;
   }
 
   state(): string {
@@ -377,6 +458,20 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
   }
 
   async clientInformation(): Promise<OAuthClientInformationMixed | undefined> {
+    // Track A: pre-registered (static) client takes precedence over
+    // any persisted DCR registration. Returning the static info each
+    // call (rather than caching it) is fine — the values come from
+    // construction-time options, not disk.
+    if (this.staticClient) {
+      const info: OAuthClientInformationFull = {
+        client_id: this.staticClient.clientId,
+        redirect_uris: [this.callbackUrl],
+        ...(this.staticClient.clientSecret
+          ? { client_secret: this.staticClient.clientSecret }
+          : {}),
+      };
+      return info;
+    }
     if (this.cachedClientInfo) return this.cachedClientInfo;
     // DCR client info is workspace-shared regardless of scope — every
     // member of the workspace authenticates as the same NimbleBrain
@@ -387,6 +482,17 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
   }
 
   async saveClientInformation(info: OAuthClientInformationFull): Promise<void> {
+    // Track A: pre-registered clients are immutable from the SDK's
+    // perspective — DCR is the only path that calls saveClientInformation,
+    // and we don't run DCR when staticClient is set. No-op here so a
+    // stray SDK call doesn't overwrite the static client to disk.
+    if (this.staticClient) {
+      log.debug(
+        "mcp",
+        `[oauth] ${this.serverName} saveClientInformation skipped — using pre-registered static client`,
+      );
+      return;
+    }
     this.cachedClientInfo = info;
     await this.writeJson(this.clientDir, "client.json", info);
   }
@@ -454,6 +560,15 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
       throw new Error(
         "[workspace-oauth-provider] redirectToAuthorization called without an active flow",
       );
+    }
+    // Track A: append operator-supplied additional authorize params
+    // (e.g. Google's access_type=offline + prompt=consent for refresh-
+    // token issuance). Reserved keys are blocked at construction so we
+    // can't accidentally overwrite client_id / state / PKCE here.
+    if (this.additionalAuthorizationParams) {
+      for (const [k, v] of Object.entries(this.additionalAuthorizationParams)) {
+        url.searchParams.set(k, v);
+      }
     }
     // Local deferred for the headless branch. The interactive branch
     // doesn't use this — it swaps `pendingFlow.promise` for the flow
