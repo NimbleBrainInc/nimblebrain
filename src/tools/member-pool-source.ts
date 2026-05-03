@@ -1,5 +1,5 @@
-import { textContent } from "../engine/content-helpers.ts";
 import { log } from "../cli/log.ts";
+import { textContent } from "../engine/content-helpers.ts";
 import type { McpSource } from "./mcp-source.ts";
 import type { Tool, ToolResult, ToolSource } from "./types.ts";
 
@@ -72,10 +72,7 @@ export class MemberPoolSource implements ToolSource {
       try {
         await src.stop();
       } catch (err) {
-        log.debug(
-          "mcp",
-          `[member-pool ${this.name}] stop failed for one member: ${String(err)}`,
-        );
+        log.debug("mcp", `[member-pool ${this.name}] stop failed for one member: ${String(err)}`);
       }
     }
   }

@@ -573,7 +573,12 @@ export async function getInstalledConnections(): Promise<{ installed: InstalledC
 export async function disconnectConnection(
   serverName: string,
   principalId?: string,
-): Promise<{ ok: boolean; revoked: { access?: boolean; refresh?: boolean }; deletedLocal: boolean; revokeError?: string }> {
+): Promise<{
+  ok: boolean;
+  revoked: { access?: boolean; refresh?: boolean };
+  deletedLocal: boolean;
+  revokeError?: string;
+}> {
   return request("/v1/connections/disconnect", {
     method: "POST",
     headers: { "Content-Type": "application/json" },

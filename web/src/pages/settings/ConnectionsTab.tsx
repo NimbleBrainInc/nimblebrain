@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   type ConnectionCatalogEntry,
-  type InstalledConnection,
   disconnectConnection,
   getConnectionsCatalog,
   getInstalledConnections,
+  type InstalledConnection,
   initiateMcpOAuth,
 } from "../../api/client";
 import { Card, CardContent } from "../../components/ui/card";
@@ -175,9 +175,7 @@ function ConnectionCard({
   const [err, setErr] = useState<string | null>(null);
 
   const conn =
-    installed?.oauthScope === "member"
-      ? installed.myConnection
-      : installed?.workspaceConnection;
+    installed?.oauthScope === "member" ? installed.myConnection : installed?.workspaceConnection;
   const state = conn?.state ?? (installed ? "not_connected" : "not_installed");
   const connected = state === "running";
   const pending = state === "pending_auth";
@@ -187,7 +185,9 @@ function ConnectionCard({
     setBusy(true);
     setErr(null);
     try {
-      const { authorizationUrl } = await initiateMcpOAuth(entry.url ? installed?.serverName ?? "" : "");
+      const { authorizationUrl } = await initiateMcpOAuth(
+        entry.url ? (installed?.serverName ?? "") : "",
+      );
       window.location.assign(authorizationUrl);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -262,13 +262,7 @@ function ConnectionCard({
   );
 }
 
-function OrphanCard({
-  ins,
-  onChanged,
-}: {
-  ins: InstalledConnection;
-  onChanged: () => void;
-}) {
+function OrphanCard({ ins, onChanged }: { ins: InstalledConnection; onChanged: () => void }) {
   const [busy, setBusy] = useState(false);
   const conn = ins.oauthScope === "member" ? ins.myConnection : ins.workspaceConnection;
   const state = conn?.state ?? "not_connected";
@@ -316,8 +310,7 @@ function StatusPill({
 }) {
   const variants: Record<string, string> = {
     running: "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300",
-    pending_auth:
-      "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300",
+    pending_auth: "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300",
     starting: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300",
     crashed: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300",
     dead: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300",
@@ -333,8 +326,6 @@ function StatusPill({
         ? "Connected"
         : state.replace(/_/g, " ");
   return (
-    <span className={`text-[10px] px-2 py-0.5 rounded-full whitespace-nowrap ${cls}`}>
-      {label}
-    </span>
+    <span className={`text-[10px] px-2 py-0.5 rounded-full whitespace-nowrap ${cls}`}>{label}</span>
   );
 }

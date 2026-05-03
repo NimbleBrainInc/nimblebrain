@@ -165,7 +165,8 @@ export const DEFAULT_CONNECTION_CATALOG: ConnectionCatalogEntry[] = [
     auth: "static",
     defaultScope: "member",
     operatorSetup: {
-      portalUrl: "https://developers.hubspot.com/docs/apps/developer-platform/build-apps/integrate-with-the-remote-hubspot-mcp-server",
+      portalUrl:
+        "https://developers.hubspot.com/docs/apps/developer-platform/build-apps/integrate-with-the-remote-hubspot-mcp-server",
       hint: "Create an MCP Auth App in HubSpot Developer Portal; copy client_id + client_secret",
       credentialKey: "hubspot.client_secret",
     },
@@ -185,7 +186,8 @@ export const DEFAULT_CONNECTION_CATALOG: ConnectionCatalogEntry[] = [
       "offline_access",
     ],
     operatorSetup: {
-      portalUrl: "https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade",
+      portalUrl:
+        "https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade",
       hint: "Register a multi-tenant app in Entra ID; add Microsoft Graph delegated permissions; copy client_id + client_secret",
       credentialKey: "entra.client_secret",
     },

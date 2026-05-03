@@ -775,10 +775,7 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
    * `bundleUrl` is the bundle's MCP endpoint URL — used as the origin
    * for OAuth metadata discovery. `fetchImpl` is injectable for tests.
    */
-  async revokeAndDeleteTokens(opts: {
-    bundleUrl: string;
-    fetchImpl?: typeof fetch;
-  }): Promise<{
+  async revokeAndDeleteTokens(opts: { bundleUrl: string; fetchImpl?: typeof fetch }): Promise<{
     revoked: { access?: boolean; refresh?: boolean };
     deletedLocal: boolean;
     error?: string;
@@ -786,7 +783,11 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     const fetcher = opts.fetchImpl ?? fetch;
     const tokens = await this.tokens();
     const clientInfo = await this.clientInformation();
-    const result: { revoked: { access?: boolean; refresh?: boolean }; deletedLocal: boolean; error?: string } = {
+    const result: {
+      revoked: { access?: boolean; refresh?: boolean };
+      deletedLocal: boolean;
+      error?: string;
+    } = {
       revoked: {},
       deletedLocal: false,
     };

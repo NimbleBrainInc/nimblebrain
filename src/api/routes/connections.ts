@@ -1,8 +1,8 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
-import { loadCatalog } from "../../connections/load-catalog.ts";
 import type { ConnectionCatalogEntry } from "../../connections/catalog.ts";
+import { loadCatalog } from "../../connections/load-catalog.ts";
 import { FileCredentialStore } from "../../tools/credential-store.ts";
 import { WorkspaceOAuthProvider } from "../../tools/workspace-oauth-provider.ts";
 import { requireAuth } from "../middleware/auth.ts";

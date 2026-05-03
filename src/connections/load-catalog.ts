@@ -29,9 +29,7 @@ export function loadCatalog(): ConnectionCatalogEntry[] {
   const overridePath = process.env.NB_CATALOG_PATH;
   if (!overridePath) return DEFAULT_CONNECTION_CATALOG;
   if (!existsSync(overridePath)) {
-    log.warn(
-      `[catalog] NB_CATALOG_PATH=${overridePath} not found — using default catalog`,
-    );
+    log.warn(`[catalog] NB_CATALOG_PATH=${overridePath} not found — using default catalog`);
     return DEFAULT_CONNECTION_CATALOG;
   }
   let raw: unknown;

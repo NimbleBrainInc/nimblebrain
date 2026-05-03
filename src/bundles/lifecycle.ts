@@ -1,8 +1,8 @@
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { clearAllWorkspaceCredentials } from "../config/workspace-credentials.ts";
 import { log } from "../cli/log.ts";
+import { clearAllWorkspaceCredentials } from "../config/workspace-credentials.ts";
 import type { EventSink } from "../engine/types.ts";
 import type { PlacementRegistry } from "../runtime/placement-registry.ts";
 import { FileCredentialStore } from "../tools/credential-store.ts";
@@ -10,8 +10,8 @@ import { McpSource } from "../tools/mcp-source.ts";
 import { MemberPoolSource } from "../tools/member-pool-source.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
 import {
-  WorkspaceOAuthProvider,
   validateAdditionalAuthorizationParams,
+  WorkspaceOAuthProvider,
 } from "../tools/workspace-oauth-provider.ts";
 import { createAutomation, deleteAutomation } from "./automations/src/domain.ts";
 import { type Connection, type ConnectionState, summarizeConnectionState } from "./connection.ts";
@@ -751,7 +751,11 @@ export class BundleLifecycleManager {
     // OAuth. Same credential-store dereference path; same provider
     // surface.
     let staticClient:
-      | { clientId: string; clientSecret?: string; tokenEndpointAuthMethod?: "none" | "client_secret_post" | "client_secret_basic" }
+      | {
+          clientId: string;
+          clientSecret?: string;
+          tokenEndpointAuthMethod?: "none" | "client_secret_post" | "client_secret_basic";
+        }
       | undefined;
     if (ref.oauthClient) {
       let resolvedSecret: string | undefined;
@@ -1050,9 +1054,8 @@ export class BundleLifecycleManager {
     // Resolve oauthScope for URL bundles. Member-scoped bundles seed with
     // an empty connections map — Connections are created on-demand when
     // each member calls a tool or hits Connect from the UI.
-    const oauthScope: BundleInstance["oauthScope"] | undefined = "url" in ref
-      ? (ref.oauthScope ?? "workspace")
-      : undefined;
+    const oauthScope: BundleInstance["oauthScope"] | undefined =
+      "url" in ref ? (ref.oauthScope ?? "workspace") : undefined;
 
     // Track A: validate authorize-URL params at the seed boundary.
     // Catches reserved-key collisions (client_id, state, PKCE, scope, etc.)
