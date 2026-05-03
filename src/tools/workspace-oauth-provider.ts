@@ -107,6 +107,58 @@ function canonicalEndpoint(u: URL): string {
 }
 
 /**
+ * POST to an RFC 7009 revocation endpoint. Returns `true` for any 2xx
+ * response (or 4xx with `invalid_token` per RFC 7009 § 2.2 — the token
+ * is "considered already invalid" which counts as success for our
+ * purposes). Throws on network errors so the caller can decide whether
+ * to log + continue or surface.
+ *
+ * Encoded as `application/x-www-form-urlencoded` per RFC 7009 § 2.1.
+ * client_id is always sent; client_secret only when the client info
+ * declares secret-based auth (DCR clients with `token_endpoint_auth_method:
+ * "none"` skip the secret).
+ */
+async function postRevoke(
+  fetchImpl: typeof fetch,
+  endpoint: string,
+  token: string,
+  tokenTypeHint: "access_token" | "refresh_token",
+  clientInfo: OAuthClientInformationMixed,
+): Promise<boolean> {
+  const params = new URLSearchParams();
+  params.set("token", token);
+  params.set("token_type_hint", tokenTypeHint);
+  params.set("client_id", clientInfo.client_id);
+  // Attach client_secret if the registration carries one. Public PKCE-
+  // only clients (DCR with `token_endpoint_auth_method: "none"`) won't
+  // have a secret — `client_secret in clientInfo` is the discriminator.
+  if ("client_secret" in clientInfo && typeof clientInfo.client_secret === "string") {
+    params.set("client_secret", clientInfo.client_secret);
+  }
+
+  const res = await fetchImpl(endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: params.toString(),
+  });
+
+  if (res.ok) return true;
+  // RFC 7009 § 2.2: "If the server is unable to locate the token using
+  // the given hint, it MUST extend its search across all of its supported
+  // token types." Some servers respond 400 invalid_token if the token's
+  // already invalid — treat as success for revocation purposes.
+  if (res.status === 400) {
+    try {
+      const body = (await res.json()) as { error?: string };
+      if (body.error === "invalid_token") return true;
+    } catch {
+      // body wasn't JSON — fall through
+    }
+  }
+  return false;
+}
+
+/**
  * Validate a member id before it composes into a filesystem path. Same
  * shape as the credential-store key validator (alphanumerics + `._-`,
  * length-bounded, no `..` / `.`). Reuses the same allowed-character set
@@ -488,6 +540,129 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
       );
     }
     return this.pendingFlow.promise;
+  }
+
+  /**
+   * Best-effort revoke the persisted tokens at the upstream
+   * authorization server (RFC 7009) and delete them locally.
+   *
+   * Order of operations:
+   *
+   *   1. Read tokens off disk + read DCR client info (or static client
+   *      from `oauthClient` / cached in-memory).
+   *   2. Discover the AS's `revocation_endpoint` via the well-known
+   *      OAuth metadata path: `<server-origin>/.well-known/oauth-authorization-server`.
+   *      We bind discovery to the bundle URL's origin since that's the
+   *      only origin we know belongs to this server; servers that put
+   *      their AS at a different origin can declare it via metadata
+   *      but we don't currently support cross-origin discovery (rare
+   *      in practice for the vendors we care about).
+   *   3. POST `token` + `client_id` (+ `client_secret` for static
+   *      clients with secret-based auth) to the revocation_endpoint.
+   *      RFC 7009 says revoke both access + refresh in one call when
+   *      revoking a refresh token (servers SHOULD cascade); we revoke
+   *      whichever we have, refresh first when present.
+   *   4. Delete tokens.json + verifier.json + identity.json locally.
+   *
+   * Returns a structured result indicating which steps succeeded —
+   * callers should log but not fail-the-whole-disconnect on partial
+   * success: the local files are gone, the upstream may have stale
+   * refresh tokens for at most their natural expiry. Best-effort is
+   * the right discipline here.
+   *
+   * `bundleUrl` is the bundle's MCP endpoint URL — used as the origin
+   * for OAuth metadata discovery. `fetchImpl` is injectable for tests.
+   */
+  async revokeAndDeleteTokens(opts: {
+    bundleUrl: string;
+    fetchImpl?: typeof fetch;
+  }): Promise<{
+    revoked: { access?: boolean; refresh?: boolean };
+    deletedLocal: boolean;
+    error?: string;
+  }> {
+    const fetcher = opts.fetchImpl ?? fetch;
+    const tokens = await this.tokens();
+    const clientInfo = await this.clientInformation();
+    const result: { revoked: { access?: boolean; refresh?: boolean }; deletedLocal: boolean; error?: string } = {
+      revoked: {},
+      deletedLocal: false,
+    };
+
+    // No tokens to revoke — just clear local state.
+    if (!tokens) {
+      await this.invalidateCredentials("tokens");
+      await this.invalidateCredentials("verifier");
+      result.deletedLocal = true;
+      return result;
+    }
+
+    // Discover the revocation endpoint from OAuth metadata. Best-effort —
+    // skip revocation entirely if discovery fails (server may not advertise
+    // a revocation_endpoint, in which case there's nothing to call).
+    let revocationEndpoint: string | undefined;
+    try {
+      const bundleOrigin = new URL(opts.bundleUrl).origin;
+      const metadataUrl = `${bundleOrigin}/.well-known/oauth-authorization-server`;
+      // SSRF defense: validate the discovery target with the same
+      // allowlist as bundle URLs, modulo the allowInsecureRemotes
+      // flag set at construction. A misconfigured catalog entry could
+      // otherwise let revocation discovery touch a private network.
+      validateBundleUrl(new URL(metadataUrl), { allowInsecure: this.allowInsecureRemotes });
+      const res = await fetcher(metadataUrl);
+      if (res.ok) {
+        const meta = (await res.json()) as { revocation_endpoint?: unknown };
+        if (typeof meta.revocation_endpoint === "string") {
+          revocationEndpoint = meta.revocation_endpoint;
+        }
+      }
+    } catch (err) {
+      log.debug(
+        "mcp",
+        `[oauth] ${this.serverName} revocation discovery failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+
+    if (revocationEndpoint && clientInfo) {
+      try {
+        // Revoke both tokens in sequence. RFC 7009 doesn't define an
+        // order; we revoke the refresh token first because it's the
+        // longer-lived credential — even if access-token revocation
+        // races a separate caller's request, the AS won't issue a fresh
+        // one once the RT is gone.
+        if (tokens.refresh_token) {
+          result.revoked.refresh = await postRevoke(
+            fetcher,
+            revocationEndpoint,
+            tokens.refresh_token,
+            "refresh_token",
+            clientInfo,
+          );
+        }
+        if (tokens.access_token) {
+          result.revoked.access = await postRevoke(
+            fetcher,
+            revocationEndpoint,
+            tokens.access_token,
+            "access_token",
+            clientInfo,
+          );
+        }
+      } catch (err) {
+        // Don't fail disconnect on revocation errors — log + continue
+        // to local cleanup.
+        result.error = err instanceof Error ? err.message : String(err);
+        log.warn(
+          `[oauth] ${this.serverName} revocation failed: ${result.error} (continuing with local cleanup)`,
+        );
+      }
+    }
+
+    // Always clear local state regardless of upstream revocation result.
+    await this.invalidateCredentials("tokens");
+    await this.invalidateCredentials("verifier");
+    result.deletedLocal = true;
+    return result;
   }
 
   // ── File I/O helpers ──────────────────────────────────────────────
