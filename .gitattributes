@@ -1,0 +1,4 @@
+# GitHub auto-collapses files marked `linguist-generated` in PR diffs and
+# excludes them from language stats. Useful for generated artifacts that
+# we check in for review visibility but don't want noisy in normal review.
+web/src/_generated/** linguist-generated=true
