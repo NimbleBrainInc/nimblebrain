@@ -12,7 +12,7 @@ import type { EventSink } from "../../engine/types.ts";
 import type { Runtime } from "../../runtime/runtime.ts";
 import { defineInProcessApp, type InProcessTool } from "../in-process-app.ts";
 import type { McpSource } from "../mcp-source.ts";
-import { BROWSER_HTML } from "../platform-resources/conversations/browser.ts";
+import { loadConversationsUi } from "../platform-resources/conversations/browser.ts";
 import {
   ConversationsExportInput,
   ConversationsForkInput,
@@ -150,7 +150,9 @@ export async function createConversationsSource(
     },
   ];
 
-  const resources = new Map([["ui://conversations/browser", BROWSER_HTML]]);
+  const resources = new Map([
+    ["ui://conversations/browser", { text: loadConversationsUi, mimeType: "text/html" }],
+  ]);
 
   return defineInProcessApp(
     {

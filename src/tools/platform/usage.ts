@@ -13,7 +13,7 @@ import type { EventSink } from "../../engine/types.ts";
 import type { Runtime } from "../../runtime/runtime.ts";
 import { defineInProcessApp, type InProcessTool } from "../in-process-app.ts";
 import type { McpSource } from "../mcp-source.ts";
-import { USAGE_DASHBOARD_HTML } from "../platform-resources/usage/dashboard.ts";
+import { loadUsageUi } from "../platform-resources/usage/dashboard.ts";
 import { UsageReportInput } from "./schemas/usage.ts";
 
 export function createUsageSource(runtime: Runtime, eventSink: EventSink): McpSource {
@@ -46,7 +46,9 @@ export function createUsageSource(runtime: Runtime, eventSink: EventSink): McpSo
     },
   ];
 
-  const resources = new Map([["ui://usage/dashboard", USAGE_DASHBOARD_HTML]]);
+  const resources = new Map([
+    ["ui://usage/dashboard", { text: loadUsageUi, mimeType: "text/html" }],
+  ]);
 
   return defineInProcessApp(
     {

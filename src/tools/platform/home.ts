@@ -5,7 +5,7 @@ import type { EventSink } from "../../engine/types.ts";
 import type { Runtime } from "../../runtime/runtime.ts";
 import { defineInProcessApp, type InProcessTool } from "../in-process-app.ts";
 import type { McpSource } from "../mcp-source.ts";
-import { DASHBOARD_HTML } from "../platform-resources/home/dashboard.ts";
+import { loadHomeUi } from "../platform-resources/home/dashboard.ts";
 import { HomeActivityInput } from "./schemas/home.ts";
 
 /**
@@ -64,7 +64,7 @@ export function createHomeSource(runtime: Runtime, eventSink: EventSink): McpSou
     },
   ];
 
-  const resources = new Map([["ui://home/dashboard", DASHBOARD_HTML]]);
+  const resources = new Map([["ui://home/dashboard", { text: loadHomeUi, mimeType: "text/html" }]]);
 
   return defineInProcessApp(
     {
