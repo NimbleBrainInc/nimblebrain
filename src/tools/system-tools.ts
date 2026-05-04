@@ -165,7 +165,7 @@ export async function createSystemTools(
     {
       name: "manage_app",
       description:
-        "Install, uninstall, or configure an app. 'configure' prompts for API keys/credentials securely via the terminal. Requires user approval.",
+        "Install, uninstall, or configure an app. 'configure' prompts for API keys/credentials securely via the terminal. Requires user approval. For uploaded .mcpb bundles, pass 'path' instead of 'name'.",
       inputSchema: {
         type: "object",
         properties: {
@@ -178,12 +178,18 @@ export async function createSystemTools(
             type: "string",
             description: "Bundle name (e.g., @nimblebraininc/ipinfo)",
           },
+          path: {
+            type: "string",
+            description:
+              "Absolute path to a local .mcpb bundle file. Use instead of 'name' for uploaded bundles.",
+          },
         },
-        required: ["action", "name"],
+        required: ["action"],
       },
       handler: async (input): Promise<ToolResult> => {
         const action = String(input.action);
-        const name = String(input.name);
+        const name = input.name ? String(input.name) : undefined;
+        const path = input.path ? String(input.path) : undefined;
         if (!lifecycle || !manageBundleCtx) {
           return {
             content: textContent("Bundle management requires lifecycle context"),
@@ -198,8 +204,14 @@ export async function createSystemTools(
           };
         }
         if (action === "install") {
+          if (!name && !path) {
+            return {
+              content: textContent("Either 'name' or 'path' is required for install"),
+              isError: true,
+            };
+          }
           return await installBundleInWorkspaceViaCtx(
-            name,
+            { name, path },
             wsId,
             lifecycle,
             getRegistry(),
@@ -207,8 +219,15 @@ export async function createSystemTools(
           );
         }
         if (action === "uninstall") {
+          const target = name ?? path;
+          if (!target) {
+            return {
+              content: textContent("Either 'name' or 'path' is required for uninstall"),
+              isError: true,
+            };
+          }
           return await uninstallBundleFromWorkspaceViaCtx(
-            name,
+            target,
             wsId,
             lifecycle,
             getRegistry(),
@@ -216,6 +235,12 @@ export async function createSystemTools(
           );
         }
         if (action === "configure") {
+          if (!name) {
+            return {
+              content: textContent("'name' is required for configure"),
+              isError: true,
+            };
+          }
           return await configureBundle(
             name,
             getRegistry(),
@@ -810,16 +835,18 @@ async function configureBundle(
  * add to workspace.json bundles, seed lifecycle instance.
  */
 async function installBundleInWorkspaceViaCtx(
-  name: string,
+  target: { name?: string; path?: string },
   wsId: string,
   lifecycle: BundleLifecycleManager,
   registry: ToolRegistry,
   ctx: ManageBundleContext,
 ): Promise<ToolResult> {
-  try {
-    const bundleRef = { name } as import("../bundles/types.ts").BundleRef;
+  const label = target.name ?? target.path!;
+  const bundleRef = (
+    target.name ? { name: target.name } : { path: target.path! }
+  ) as import("../bundles/types.ts").BundleRef;
 
-    // Spawn the bundle process with plain server name in workspace registry
+  try {
     const entry = await installBundleInWorkspace(
       wsId,
       bundleRef,
@@ -832,10 +859,9 @@ async function installBundleInWorkspaceViaCtx(
       },
     );
 
-    // Seed lifecycle instance so it can be tracked/queried
     lifecycle.seedInstance(
       entry.serverName,
-      name,
+      label,
       bundleRef,
       entry.meta ?? undefined,
       wsId,
@@ -846,13 +872,15 @@ async function installBundleInWorkspaceViaCtx(
     // a bundle on the user's behalf.
     lifecycle.notifyInstalled(entry.serverName, wsId);
 
-    // Add bundle to workspace.json
     const ws = await ctx.workspaceStore.get(wsId);
     if (ws) {
-      const already = ws.bundles.some((b) => "name" in b && b.name === name);
+      const already = ws.bundles.some((b) => {
+        if (target.name) return "name" in b && b.name === target.name;
+        return "path" in b && b.path === target.path;
+      });
       if (!already) {
         await ctx.workspaceStore.update(wsId, {
-          bundles: [...ws.bundles, { name }],
+          bundles: [...ws.bundles, target.name ? { name: target.name } : { path: target.path! }],
         });
       }
     }
@@ -861,14 +889,14 @@ async function installBundleInWorkspaceViaCtx(
     const count = tools.filter((t) => t.name.startsWith(`${entry.serverName}__`)).length;
     return {
       content: textContent(
-        `Installed ${name} in workspace ${wsId}. ${count} tools now available from ${entry.serverName}.`,
+        `Installed ${label} in workspace ${wsId}. ${count} tools now available from ${entry.serverName}.`,
       ),
       isError: false,
     };
   } catch (err) {
     return {
       content: textContent(
-        `Failed to install ${name} in workspace ${wsId}: ${err instanceof Error ? err.message : String(err)}`,
+        `Failed to install ${label} in workspace ${wsId}: ${err instanceof Error ? err.message : String(err)}`,
       ),
       isError: true,
     };

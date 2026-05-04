@@ -329,6 +329,59 @@ export async function uploadResource(files: File[]): Promise<UploadResourceResul
 }
 
 // ---------------------------------------------------------------------------
+// Bundle upload
+// ---------------------------------------------------------------------------
+
+export interface BundleUploadResult {
+  path: string;
+  manifest: {
+    name: string;
+    version: string;
+    description: string;
+    display_name: string | null;
+    server_type: string;
+    tools: Array<{ name: string; description?: string }>;
+  };
+}
+
+/**
+ * Upload a .mcpb bundle file for validation. Returns the saved path and
+ * manifest on success. The caller should then trigger install via
+ * `callTool("nb__manage_app", { action: "install", path })`.
+ */
+export async function uploadBundle(file: File): Promise<BundleUploadResult> {
+  const formData = new FormData();
+  formData.append("file", file, file.name);
+
+  const h: Record<string, string> = {};
+  if (authToken && authToken !== "__cookie__") {
+    h.Authorization = `Bearer ${authToken}`;
+  }
+  if (activeWorkspaceId) {
+    h["X-Workspace-Id"] = activeWorkspaceId;
+  }
+
+  const res = await fetchWithRefresh(`${API_BASE}/v1/bundles/upload`, {
+    method: "POST",
+    credentials: "include",
+    headers: h,
+    body: formData,
+  });
+
+  if (res.status === 401) {
+    throw new ApiClientError("unauthorized", "Unauthorized", 401);
+  }
+  if (!res.ok) {
+    const body: ApiError = await res.json().catch(() => ({
+      error: "unknown",
+      message: res.statusText,
+    }));
+    throw new ApiClientError(body.error, body.message, res.status, body.details);
+  }
+  return res.json() as Promise<BundleUploadResult>;
+}
+
+// ---------------------------------------------------------------------------
 // Chat
 // ---------------------------------------------------------------------------
 

@@ -485,6 +485,54 @@ export async function startBundleSource(
       },
       eventSink,
     );
+  } else if ("path" in ref && ref.path.endsWith(".mcpb")) {
+    // .mcpb archive — use the SDK to extract and prepare
+    const mpakHome = process.env.MPAK_HOME ?? join(homedir(), ".mpak");
+    const mpak = getMpak(mpakHome);
+    const nbWorkDir = opts?.workDir ?? process.env.NB_WORK_DIR ?? join(homedir(), ".nimblebrain");
+
+    const server = await mpak.prepareServer(
+      { local: ref.path },
+      { workspaceDir: opts?.dataDir ?? nbWorkDir },
+    );
+
+    const serverName = deriveServerName(server.name);
+    validateServerName(serverName);
+
+    // Read manifest from the extracted cache dir
+    const manifestPath = join(server.cwd, "manifest.json");
+    const rawManifest = JSON.parse(readFileSync(manifestPath, "utf-8"));
+    const manifestResult = validateManifest(rawManifest);
+    if (manifestResult.valid && manifestResult.manifest) {
+      manifest = manifestResult.manifest;
+      meta = extractBundleMeta(rawManifest);
+    }
+
+    const platformEnv = buildPlatformEnv({
+      workspaceId: opts?.wsId,
+      serverName,
+      manifestMeta: (manifest?._meta ?? undefined) as Record<string, unknown> | undefined,
+      publicOrigin: resolvePublicOrigin(),
+    });
+
+    source = new McpSource(
+      serverName,
+      {
+        type: "stdio",
+        spawn: {
+          command: server.command,
+          args: server.args,
+          env: {
+            ...server.env,
+            ...filterEnvForBundle(process.env as Record<string, string>, undefined, ref.allowedEnv),
+            ...(ref.env ?? {}),
+            ...platformEnv,
+          },
+          cwd: server.cwd,
+        },
+      },
+      eventSink,
+    );
   } else {
     const internalEnv = ref.protected && opts?.internalEnv ? opts.internalEnv : undefined;
     const result = buildLocalSource(

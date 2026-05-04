@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
+import { Upload } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { callTool, getPlatformVersion } from "../../api/client";
+import { callTool, getPlatformVersion, uploadBundle } from "../../api/client";
 import { parseToolResult } from "../../api/tool-result";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
@@ -61,6 +62,8 @@ export function AboutTab() {
   const [apps, setApps] = useState<AppInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [bundlesError, setBundlesError] = useState<string | null>(null);
+  const [uploadStatus, setUploadStatus] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   const fetchApps = useCallback(async () => {
     try {
@@ -71,11 +74,6 @@ export function AboutTab() {
         setApps(data.apps);
       }
     } catch (err) {
-      // Surface the failure rather than silently degrading to "no bundles
-      // installed" — the empty state would otherwise read as authoritative
-      // ("there are no bundles") when really the call failed and we don't
-      // know. The platform-version section is independent (read from
-      // bootstrap), so the page still renders useful content above.
       setBundlesError(err instanceof Error ? err.message : "Failed to load installed bundles.");
     } finally {
       setLoading(false);
@@ -85,6 +83,39 @@ export function AboutTab() {
   useEffect(() => {
     fetchApps();
   }, [fetchApps]);
+
+  const handleUpload = useCallback(
+    async (file: File) => {
+      if (!file.name.endsWith(".mcpb")) {
+        setUploadStatus("File must have .mcpb extension");
+        return;
+      }
+      setUploadStatus("Validating...");
+      try {
+        const result = await uploadBundle(file);
+        setUploadStatus("Installing...");
+        const installResult = await callTool("nb", "manage_app", {
+          action: "install",
+          path: result.path,
+        });
+        if (installResult.isError) {
+          const msg =
+            installResult.content
+              ?.filter((c: { type: string }) => c.type === "text")
+              .map((c: { text: string }) => c.text)
+              .join("") ?? "Install failed";
+          setUploadStatus(msg);
+          return;
+        }
+        setUploadStatus(null);
+        setLoading(true);
+        fetchApps();
+      } catch (err: unknown) {
+        setUploadStatus(err instanceof Error ? err.message : String(err));
+      }
+    },
+    [fetchApps],
+  );
 
   return (
     <SettingsDashboardPage
@@ -100,9 +131,37 @@ export function AboutTab() {
         </dl>
       </Section>
 
-      <Section title="Installed Bundles">
+      <Section
+        title="Installed Bundles"
+        action={
+          <>
+            <input
+              ref={fileRef}
+              type="file"
+              accept=".mcpb"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) handleUpload(file);
+                e.target.value = "";
+              }}
+            />
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => fileRef.current?.click()}
+              disabled={uploadStatus === "Validating..." || uploadStatus === "Installing..."}
+            >
+              <Upload className="mr-1 h-3.5 w-3.5" />
+              {uploadStatus === "Validating..." || uploadStatus === "Installing..."
+                ? uploadStatus
+                : "Upload"}
+            </Button>
+          </>
+        }
+      >
         <p className="text-xs text-muted-foreground mb-3">
-          Read-only view. Manage installed bundles in{" "}
+          Read-only view (apart from .mcpb upload). Manage installed bundles in{" "}
           <Link
             to="/settings/workspace/connectors"
             className="text-primary underline-offset-4 hover:underline"
@@ -111,6 +170,18 @@ export function AboutTab() {
           </Link>
           .
         </p>
+        {uploadStatus && uploadStatus !== "Validating..." && uploadStatus !== "Installing..." ? (
+          <InlineError
+            message={uploadStatus}
+            action={
+              <Button variant="outline" size="sm" onClick={() => setUploadStatus(null)}>
+                Dismiss
+              </Button>
+            }
+          />
+        ) : null}
+
+
         {loading ? (
           <p className="text-sm text-muted-foreground">Loading...</p>
         ) : bundlesError ? (

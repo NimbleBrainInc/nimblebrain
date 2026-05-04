@@ -1374,3 +1374,84 @@ export async function handleResourceUpload(
   }
   return json({ files: entries, ...(errors.length > 0 ? { errors } : {}) });
 }
+
+// ---------------------------------------------------------------------------
+// Bundle upload
+// ---------------------------------------------------------------------------
+
+export async function handleBundleUpload(
+  raw: Request,
+  runtime: Runtime,
+  workspaceId: string,
+): Promise<Response> {
+  let formData: FormData;
+  try {
+    formData = await raw.formData();
+  } catch {
+    return apiError(400, "bad_request", "Expected multipart/form-data");
+  }
+
+  const fileEntry = formData.get("file") ?? formData.get("bundle");
+  if (!fileEntry || typeof fileEntry === "string") {
+    return apiError(400, "bad_request", "No bundle file in request (use the 'file' or 'bundle' field)");
+  }
+
+  const entry = fileEntry as unknown as {
+    arrayBuffer(): Promise<ArrayBuffer>;
+    name?: string;
+    type?: string;
+  };
+  if (typeof entry.arrayBuffer !== "function") {
+    return apiError(400, "bad_request", "Malformed file entry in multipart body");
+  }
+
+  const filename = entry.name || "bundle.mcpb";
+  if (!filename.endsWith(".mcpb")) {
+    return apiError(400, "bad_request", "File must have .mcpb extension");
+  }
+
+  const data = Buffer.from(await entry.arrayBuffer());
+  if (data.length === 0) {
+    return apiError(400, "bad_request", "Uploaded file is empty");
+  }
+
+  // Save to workspace bundles directory
+  const { existsSync, mkdirSync, writeFileSync } = await import("node:fs");
+  const { join: joinPath } = await import("node:path");
+
+  const bundlesDir = joinPath(runtime.getWorkspaceScopedDir(workspaceId), "bundles");
+  mkdirSync(bundlesDir, { recursive: true });
+
+  const safeName = sanitizeFilename(filename);
+  const bundlePath = joinPath(bundlesDir, safeName);
+  writeFileSync(bundlePath, data, { mode: 0o600 });
+
+  // Validate via mpak SDK
+  const { validateMcpb } = await import("@nimblebrain/mpak-sdk");
+  const result = await validateMcpb(bundlePath);
+
+  if (!result.valid) {
+    // Clean up invalid bundle
+    const { unlinkSync } = await import("node:fs");
+    try {
+      unlinkSync(bundlePath);
+    } catch {
+      // best-effort cleanup
+    }
+    return apiError(400, "invalid_bundle", "Bundle validation failed", {
+      errors: result.errors,
+    });
+  }
+
+  return json({
+    path: bundlePath,
+    manifest: {
+      name: result.manifest.name,
+      version: result.manifest.version,
+      description: result.manifest.description,
+      display_name: result.manifest.display_name ?? null,
+      server_type: result.manifest.server.type,
+      tools: result.manifest.tools ?? [],
+    },
+  });
+}

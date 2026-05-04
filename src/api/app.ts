@@ -11,6 +11,7 @@ import { healthRoutes } from "./routes/health.ts";
 import { mcpRoutes } from "./routes/mcp.ts";
 import { mcpAuthRoutes } from "./routes/mcp-auth.ts";
 import { proxyRoutes } from "./routes/proxy.ts";
+import { bundleRoutes } from "./routes/bundles.ts";
 import { resourceRoutes } from "./routes/resources.ts";
 import { toolRoutes } from "./routes/tools.ts";
 import { wellKnownRoutes } from "./routes/well-known.ts";
@@ -56,6 +57,7 @@ export function createApp(
   app.route("/", chatRoutes(ctx));
   app.route("/", toolRoutes(ctx));
   app.route("/", resourceRoutes(ctx));
+  app.route("/", bundleRoutes(ctx));
   app.route("/", eventRoutes(ctx));
   app.route("/", conversationEventRoutes(ctx));
 
