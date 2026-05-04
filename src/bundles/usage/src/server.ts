@@ -72,7 +72,7 @@ async function main(): Promise<void> {
   log(`Starting — conversations dir: ${CONVERSATIONS_DIR}`);
 
   const server = new Server(
-    { name: "@nimblebraininc/usage", version: "0.3.0" },
+    { name: "@nimblebraininc/usage", version: "0.1.0" },
     { capabilities: { tools: {}, resources: {} } },
   );
 

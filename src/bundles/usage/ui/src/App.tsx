@@ -282,7 +282,7 @@ function Dashboard() {
 
 export function App() {
   return (
-    <SynapseProvider name="@nimblebraininc/usage" version="0.3.0">
+    <SynapseProvider name="@nimblebraininc/usage" version="0.1.0">
       <Dashboard />
     </SynapseProvider>
   );
