@@ -1,17 +1,17 @@
 /**
  * Drift detection: UI clients vs source tool lists.
  *
- * Every platform resource (files browser, settings panel, usage dashboard)
- * embeds an HTML/JS client that postMessages JSON-RPC tools/call up to the
- * iframe bridge. Tool names in these client strings are hand-typed and have
- * no compile-time link to the source's tools() output. Rename a tool and
- * forget to update the client → the UI breaks at runtime.
+ * Inline-HTML resources (files browser) embed a hand-typed client that
+ * postMessages JSON-RPC tools/call up to the iframe bridge. Tool names
+ * are string literals with no compile-time link to the source's tools()
+ * output. Rename a tool and forget to update the client → the UI breaks
+ * at runtime. This test extracts every callTool("...", ...) literal from
+ * the inline HTML and asserts the target tool actually exists.
  *
- * This test extracts every callTool("...", ...) literal from each resource
- * and asserts the target tool actually exists on the source that owns it.
- * Unprefixed names route to the source in whose directory the resource
- * lives (files/browser.ts → "files" source); prefixed "source__tool" names
- * route explicitly.
+ * Vite-built resources (home, usage) call the SDK's typed `useCallTool`
+ * from their App.tsx — the regex below cannot find tool names in the
+ * minified bundle. Drift coverage for those bundles comes from the SDK
+ * envelope-parity test plus runtime smoke checks.
  */
 
 import { describe, expect, test } from "bun:test";
@@ -19,9 +19,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FILES_BROWSER_HTML } from "../../../src/tools/platform-resources/files/browser.ts";
-import { USAGE_DASHBOARD_HTML } from "../../../src/tools/platform-resources/usage/dashboard.ts";
 import { createFilesSource } from "../../../src/tools/platform/files.ts";
-import { createUsageSource } from "../../../src/tools/platform/usage.ts";
 import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
 import type { McpSource } from "../../../src/tools/mcp-source.ts";
 import type { Runtime } from "../../../src/runtime/runtime.ts";
@@ -95,22 +93,4 @@ describe("Resource client / source contract — tool names match", () => {
     }
   });
 
-  test("usage/dashboard.ts calls only tools advertised by usage source", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "nb-drift-usage-"));
-    try {
-      const usageSource = createUsageSource(makeRuntime(dir), new NoopEventSink());
-      await usageSource.start();
-      try {
-        const names = extractCallToolNames(USAGE_DASHBOARD_HTML);
-        expect(names.length).toBeGreaterThan(0);
-        for (const name of names) {
-          await assertAdvertised(name, usageSource, { usage: usageSource });
-        }
-      } finally {
-        await usageSource.stop();
-      }
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
 });
