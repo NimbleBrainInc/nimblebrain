@@ -1,4 +1,3 @@
-import { useEffect, useRef } from "react";
 import { FILTER_GROUPS, FILTER_LABELS } from "./dateUtils";
 import type { DateGroup, FilterKey } from "./types";
 
@@ -15,6 +14,10 @@ interface HeaderProps {
   onClearSearch: () => void;
 }
 
+// React preserves the input's DOM node across re-renders, so the input keeps
+// its focus naturally when the user clears via Esc / × / typing. The original
+// inline-HTML implementation needed manual `.focus()` because each render
+// rewrote the entire DOM via `innerHTML`; that's no longer the case.
 export function Header({
   totalCount,
   loading,
@@ -27,16 +30,6 @@ export function Header({
   onSearchSubmit,
   onClearSearch,
 }: HeaderProps) {
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  // Refocus the search input after clearing — preserves the original UX
-  // where Esc clears and re-focuses the input.
-  useEffect(() => {
-    if (!isSearching && searchQuery === "" && document.activeElement === inputRef.current) {
-      inputRef.current?.focus();
-    }
-  }, [isSearching, searchQuery]);
-
   const hasQuery = searchQuery.trim().length > 0;
 
   return (
@@ -72,7 +65,6 @@ export function Header({
 
         <div className="search-wrap">
           <input
-            ref={inputRef}
             type="text"
             className="search-input"
             placeholder="Search…"

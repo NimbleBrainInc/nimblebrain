@@ -91,8 +91,11 @@ export function Dashboard() {
     (value: string) => {
       setSearchQuery(value);
       // Empty input while in search view → revert to full list.
+      // Clear stale results so the state machine doesn't carry phantom data
+      // into the next search session.
       if (!value.trim() && view === "search") {
         setView("list");
+        setSearchResults(null);
         loadList();
       }
     },
