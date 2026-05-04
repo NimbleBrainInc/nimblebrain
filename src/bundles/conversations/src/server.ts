@@ -14,8 +14,9 @@
  * template for a new bundle, vendor the schemas locally instead.
  */
 
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
@@ -41,7 +42,6 @@ import { handleList, type ListInput } from "./tools/list.ts";
 import { handleSearch, type SearchInput } from "./tools/search.ts";
 import { handleStats, type StatsInput } from "./tools/stats.ts";
 import { handleUpdate, type UpdateInput } from "./tools/update.ts";
-import { BROWSER_HTML } from "./ui/browser.ts";
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -49,6 +49,19 @@ import { BROWSER_HTML } from "./ui/browser.ts";
 
 const WORK_DIR = process.env.NB_WORK_DIR ?? join(homedir(), ".nimblebrain");
 const CONVERSATIONS_DIR = join(WORK_DIR, "conversations");
+
+// UI: load the built React SPA from ui/dist/index.html
+const UI_DIR = resolve(import.meta.dirname ?? __dirname, "../ui/dist");
+const FALLBACK_HTML =
+  "<html><body><p>UI not built. Run: cd src/bundles/conversations/ui && bun install && bun run build</p></body></html>";
+
+function loadUi(): string {
+  const built = join(UI_DIR, "index.html");
+  if (existsSync(built)) {
+    return readFileSync(built, "utf-8");
+  }
+  return FALLBACK_HTML;
+}
 
 function log(msg: string): void {
   process.stderr.write(`[conversations] ${msg}\n`);
@@ -215,7 +228,7 @@ async function main(): Promise<void> {
           {
             uri: request.params.uri,
             mimeType: "text/html",
-            text: BROWSER_HTML,
+            text: loadUi(),
           },
         ],
       };
