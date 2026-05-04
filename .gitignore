@@ -44,6 +44,9 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 .environments/*/skills/
 .environments/*/files/
 .environments/*/automations/
+.environments/*/core/
+.environments/*/users/
+.environments/*/workspaces/
 
 # implementation tasks (ephemeral)
 .tasks
