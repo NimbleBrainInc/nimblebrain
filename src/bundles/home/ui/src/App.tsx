@@ -73,7 +73,18 @@ function renderMd(text: string): string {
     .replace(/`([^`]+)`/g, "<code>$1</code>");
 }
 
-/* ---------- raw tool call (cross-server, bypasses Synapse SDK routing) ---------- */
+/* ---------- cross-server tool call ----------------------------------------
+ *
+ * `synapse.callTool(name, args)` always routes to the bundle's own server.
+ * `home` needs to invoke `briefing` on the platform's `nb` source, which is
+ * a different server. The bridge supports `params.server` for internal
+ * apps (see `INTERNAL_APPS` in `web/src/bridge/bridge.ts`); the SDK does
+ * not expose this because it isn't part of the ext-apps spec.
+ *
+ * Until the SDK gains a typed cross-server API, this function is the
+ * documented escape hatch. Phase 4's bundle-transport lint allowlists
+ * exactly the call inside `loadBriefing` via a `// lint-ok:` marker.
+ * -------------------------------------------------------------------------- */
 
 let _rpcId = 0;
 const _pending = new Map<string, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
@@ -91,7 +102,7 @@ window.addEventListener("message", (e) => {
   }
 });
 
-function rawToolCall<T>(
+function callServerTool<T>(
   server: string,
   tool: string,
   args: Record<string, unknown> = {},
@@ -105,6 +116,7 @@ function rawToolCall<T>(
       },
       reject,
     });
+    // lint-ok:bundle-transport — typed cross-server call, see comment above.
     window.parent.postMessage(
       {
         jsonrpc: "2.0",
@@ -197,11 +209,9 @@ function Dashboard() {
     setStale(false);
     setLoading(true);
     try {
-      // Use raw postMessage to call nb__briefing on the "nb" server.
-      // The Synapse SDK's callTool routes to the app's own server ("home"),
-      // but briefing lives on the "nb" inline source. Internal apps can
-      // specify params.server to cross-call.
-      const result = await rawToolCall(
+      // `briefing` lives on the platform's `nb` source, not on `home`.
+      // See `callServerTool` definition above.
+      const result = await callServerTool(
         "nb",
         "briefing",
         forceRefresh ? { force_refresh: true } : {},

@@ -22,7 +22,7 @@ import type { FileEntry } from "../../files/types.ts";
 import type { Runtime } from "../../runtime/runtime.ts";
 import { defineInProcessApp, type InProcessTool } from "../in-process-app.ts";
 import type { McpSource } from "../mcp-source.ts";
-import { FILES_BROWSER_HTML } from "../platform-resources/files/browser.ts";
+import { loadFilesUi } from "../platform-resources/files/browser.ts";
 import {
   FilesCreateInput,
   FilesDeleteInput,
@@ -306,7 +306,7 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
     },
   ];
 
-  const resources = new Map([["ui://files/browser", FILES_BROWSER_HTML]]);
+  const resources = new Map([["ui://files/browser", { text: loadFilesUi, mimeType: "text/html" }]]);
 
   return defineInProcessApp(
     {

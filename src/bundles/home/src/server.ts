@@ -38,7 +38,7 @@ const CONVERSATIONS_DIR = join(WORK_DIR, "conversations");
 // UI: load the built React SPA from ui/dist/index.html
 const UI_DIR = resolve(import.meta.dirname ?? __dirname, "../ui/dist");
 const FALLBACK_HTML =
-  "<html><body><p>UI not built. Run: cd src/bundles/home/ui && npm install && npm run build</p></body></html>";
+  "<html><body><p>UI not built. Run: cd src/bundles/home/ui && bun install && bun run build</p></body></html>";
 
 function loadUi(): string {
   const built = join(UI_DIR, "index.html");

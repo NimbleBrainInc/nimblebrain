@@ -81,6 +81,10 @@ export const ToolsCallMessage = Type.Object({
   params: Type.Object({
     name: Type.String(),
     arguments: Type.Optional(UnknownRecord),
+    // NimbleBrain-only extension: internal apps (see `INTERNAL_APPS` in
+    // `bridge.ts`) may set `server` to cross-call another MCP source
+    // instead of their own. Non-spec; ignored for non-internal apps.
+    server: Type.Optional(Type.String()),
   }),
 });
 export type ToolsCallMessage = Static<typeof ToolsCallMessage>;
