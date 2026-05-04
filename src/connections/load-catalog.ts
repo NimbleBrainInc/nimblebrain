@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { log } from "../cli/log.ts";
+import { validateAdditionalAuthorizationParams } from "../tools/workspace-oauth-provider.ts";
 import { type ConnectionCatalogEntry, DEFAULT_CONNECTION_CATALOG } from "./catalog.ts";
 
 /**
@@ -100,6 +101,16 @@ export function validateCatalog(
       log.warn(`[catalog] ${tag} dropped — iconUrl missing`);
       continue;
     }
+    // iconUrl renders as <img src=...> in the Connections page. React's
+    // JSX doesn't sanitize <img src> — a malicious / misconfigured catalog
+    // entry with `iconUrl: "javascript:..."` or
+    // `iconUrl: "data:image/svg+xml;..."` (SVGs can carry <script>) is a
+    // real vector. Allow only http(s) absolute URLs and same-origin
+    // relative paths (anything starting with `/`).
+    if (!isSafeIconUrl(candidate.iconUrl)) {
+      log.warn(`[catalog] ${tag} dropped — iconUrl must be http(s) absolute or '/'-relative`);
+      continue;
+    }
     if (typeof candidate.url !== "string" || candidate.url.length === 0) {
       log.warn(`[catalog] ${tag} dropped — url missing`);
       continue;
@@ -124,6 +135,24 @@ export function validateCatalog(
         log.warn(
           `[catalog] ${tag} dropped — auth='static' requires operatorSetup.{portalUrl,hint,credentialKey}`,
         );
+        continue;
+      }
+    }
+    // Defense-in-depth: reserved-key collisions in
+    // additionalAuthorizationParams are caught at provider construction,
+    // but failing here at catalog-load gives operators a clearer error
+    // (entry id + reserved key names) than a runtime OAuth-flow stack
+    // trace. Drop the entry on collision rather than the whole catalog.
+    if (
+      candidate.additionalAuthorizationParams &&
+      typeof candidate.additionalAuthorizationParams === "object"
+    ) {
+      try {
+        validateAdditionalAuthorizationParams(
+          candidate.additionalAuthorizationParams as Record<string, string>,
+        );
+      } catch (err) {
+        log.warn(`[catalog] ${tag} dropped — ${err instanceof Error ? err.message : String(err)}`);
         continue;
       }
     }
@@ -154,4 +183,20 @@ export function validateCatalog(
   }
 
   return out;
+}
+
+/**
+ * iconUrl protocol allowlist: http(s) absolute or `/`-relative.
+ * Rejects `javascript:`, `data:`, `file:`, `vbscript:`, etc. — anything
+ * that could let a catalog ConfigMap inject script execution via the
+ * Connections page's `<img src>`.
+ */
+function isSafeIconUrl(url: string): boolean {
+  if (url.startsWith("/")) return true; // relative path served from same origin
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
 }

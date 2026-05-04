@@ -238,7 +238,14 @@ export function connectionsRoutes(ctx: AppContext) {
       }
 
       // Emit a connection.state_changed so the UI updates immediately.
-      lifecycle.recordConnectionStateChange(serverName, wsId, principalId, "stopped");
+      // Pass `source: null` explicitly so the Connection record drops its
+      // reference to the now-stopped McpSource — without this,
+      // recordConnectionStateChange inherits the existing source field
+      // (still pointing at the dead instance) and we leak it on the
+      // Connection map.
+      lifecycle.recordConnectionStateChange(serverName, wsId, principalId, "stopped", {
+        source: null,
+      });
 
       return c.json({
         ok: true,

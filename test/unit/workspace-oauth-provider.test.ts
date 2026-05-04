@@ -467,7 +467,10 @@ describe("WorkspaceOAuthProvider — revokeAndDeleteTokens", () => {
     expect(result.deletedLocal).toBe(true);
     expect(result.revoked.refresh).toBe(true);
     expect(result.revoked.access).toBe(true);
-    expect(calls.length).toBe(3); // metadata + 2 revoke calls
+    // Discovery probes RFC 9728 (/.well-known/oauth-protected-resource —
+    // not in fake → 404) then RFC 8414 fallback (/.well-known/oauth-
+    // authorization-server — in fake), then 2 revoke calls = 4 total.
+    expect(calls.length).toBe(4);
 
     // Both revoke calls are POSTs with x-www-form-urlencoded
     const revokeCalls = calls.filter((c) => c.url.endsWith("/oauth/revoke"));
@@ -600,6 +603,48 @@ describe("WorkspaceOAuthProvider — revokeAndDeleteTokens", () => {
     } as any);
     expect(await p.identity()).toBeNull();
     expect((await p.tokens())?.access_token).toBe("a");
+  });
+
+  it("RFC 9728: discovers AS at a different origin via oauth-protected-resource", async () => {
+    // Mimics Google: bundle at gmailmcp.googleapis.com but AS at
+    // oauth2.googleapis.com. The protected-resource metadata points at
+    // the AS origin; we then fetch the AS's authorization-server metadata
+    // for the revocation_endpoint.
+    const p = new WorkspaceOAuthProvider({
+      wsId: "ws_test",
+      serverName: "gmail",
+      workDir,
+      callbackUrl: CALLBACK,
+      allowInsecureRemotes: true,
+    });
+    await p.saveClientInformation({ client_id: "g-client", redirect_uris: [CALLBACK] });
+    await p.saveTokens({
+      access_token: "g-access",
+      token_type: "Bearer",
+      refresh_token: "g-refresh",
+    });
+
+    // Bundle origin: localhost:39990. AS origin: localhost:39991.
+    const bundleUrl = "http://localhost:39990/mcp/v1";
+    const { fetch: f, calls } = makeFetcher({
+      "http://localhost:39990/.well-known/oauth-protected-resource": {
+        status: 200,
+        body: { authorization_servers: ["http://localhost:39991/"] },
+      },
+      "http://localhost:39991/.well-known/oauth-authorization-server": {
+        status: 200,
+        body: { revocation_endpoint: "http://localhost:39991/oauth/revoke" },
+      },
+      "http://localhost:39991/oauth/revoke": { status: 200 },
+    });
+
+    const result = await p.revokeAndDeleteTokens({ bundleUrl, fetchImpl: f });
+    expect(result.revoked.refresh).toBe(true);
+    expect(result.revoked.access).toBe(true);
+    // 1 PR metadata + 1 AS metadata + 2 revoke = 4 calls.
+    expect(calls.length).toBe(4);
+    // Revocation hit the OTHER origin, not the bundle origin.
+    expect(calls.some((c) => c.url === "http://localhost:39991/oauth/revoke")).toBe(true);
   });
 
   it("treats RFC 7009 invalid_token 400 as success", async () => {

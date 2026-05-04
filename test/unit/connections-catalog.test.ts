@@ -27,10 +27,10 @@ describe("DEFAULT_CONNECTION_CATALOG", () => {
 describe("validateCatalog", () => {
   test("rejects entries with missing required fields", () => {
     const out = validateCatalog([
-      { id: "ok", name: "OK", description: "d", iconUrl: "u", url: "u", auth: "dcr", defaultScope: "workspace" },
-      { id: "no-name", description: "d", iconUrl: "u", url: "u", auth: "dcr", defaultScope: "workspace" } as unknown,
+      { id: "ok", name: "OK", description: "d", iconUrl: "https://x.test/i.svg", url: "u", auth: "dcr", defaultScope: "workspace" },
+      { id: "no-name", description: "d", iconUrl: "https://x.test/i.svg", url: "u", auth: "dcr", defaultScope: "workspace" } as unknown,
       { name: "no-id" } as unknown,
-      { id: "BAD-CASE", name: "x", description: "d", iconUrl: "u", url: "u", auth: "dcr", defaultScope: "workspace" } as unknown,
+      { id: "BAD-CASE", name: "x", description: "d", iconUrl: "https://x.test/i.svg", url: "u", auth: "dcr", defaultScope: "workspace" } as unknown,
     ]);
     expect(out.length).toBe(1);
     expect(out[0]?.id).toBe("ok");
@@ -38,8 +38,8 @@ describe("validateCatalog", () => {
 
   test("rejects duplicate ids — first wins", () => {
     const out = validateCatalog([
-      { id: "dup", name: "first", description: "d", iconUrl: "u", url: "u1", auth: "dcr", defaultScope: "workspace" },
-      { id: "dup", name: "second", description: "d", iconUrl: "u", url: "u2", auth: "dcr", defaultScope: "workspace" },
+      { id: "dup", name: "first", description: "d", iconUrl: "https://x.test/i.svg", url: "u1", auth: "dcr", defaultScope: "workspace" },
+      { id: "dup", name: "second", description: "d", iconUrl: "https://x.test/i.svg", url: "u2", auth: "dcr", defaultScope: "workspace" },
     ]);
     expect(out.length).toBe(1);
     expect(out[0]?.name).toBe("first");
@@ -47,7 +47,7 @@ describe("validateCatalog", () => {
 
   test("rejects static-auth entry missing operatorSetup", () => {
     const out = validateCatalog([
-      { id: "no-setup", name: "n", description: "d", iconUrl: "u", url: "u", auth: "static", defaultScope: "member" } as unknown,
+      { id: "no-setup", name: "n", description: "d", iconUrl: "https://x.test/i.svg", url: "u", auth: "static", defaultScope: "member" } as unknown,
     ]);
     expect(out.length).toBe(0);
   });
@@ -58,7 +58,7 @@ describe("validateCatalog", () => {
         id: "with-setup",
         name: "n",
         description: "d",
-        iconUrl: "u",
+        iconUrl: "https://x.test/i.svg",
         url: "u",
         auth: "static",
         defaultScope: "member",
@@ -72,13 +72,66 @@ describe("validateCatalog", () => {
     expect(out.length).toBe(1);
   });
 
+  test("rejects iconUrl with non-http(s) protocol", () => {
+    const base = {
+      id: "x",
+      name: "x",
+      description: "d",
+      url: "https://example.com",
+      auth: "dcr" as const,
+      defaultScope: "workspace" as const,
+    };
+    expect(validateCatalog([{ ...base, iconUrl: "javascript:alert(1)" }]).length).toBe(0);
+    expect(
+      validateCatalog([{ ...base, iconUrl: "data:image/svg+xml;<script>alert(1)</script>" }])
+        .length,
+    ).toBe(0);
+    expect(validateCatalog([{ ...base, iconUrl: "file:///etc/passwd" }]).length).toBe(0);
+    // Allowed shapes:
+    expect(validateCatalog([{ ...base, iconUrl: "https://x.test/i.svg" }]).length).toBe(1);
+    expect(validateCatalog([{ ...base, iconUrl: "/icons/x.svg" }]).length).toBe(1); // relative
+  });
+
+  test("rejects entries with reserved keys in additionalAuthorizationParams", () => {
+    const base = {
+      id: "x",
+      name: "x",
+      description: "d",
+      iconUrl: "https://x.test/i.svg",
+      url: "https://example.com",
+      auth: "dcr" as const,
+      defaultScope: "workspace" as const,
+    };
+    expect(
+      validateCatalog([
+        { ...base, additionalAuthorizationParams: { client_id: "evil" } },
+      ]).length,
+    ).toBe(0);
+    expect(
+      validateCatalog([
+        { ...base, additionalAuthorizationParams: { state: "no" } },
+      ]).length,
+    ).toBe(0);
+    expect(
+      validateCatalog([
+        { ...base, additionalAuthorizationParams: { request: "smuggled-jwt" } },
+      ]).length,
+    ).toBe(0);
+    // Non-reserved is fine.
+    expect(
+      validateCatalog([
+        { ...base, additionalAuthorizationParams: { access_type: "offline" } },
+      ]).length,
+    ).toBe(1);
+  });
+
   test("drops malformed optional fields silently (entry survives)", () => {
     const out = validateCatalog([
       {
         id: "weird-extras",
         name: "n",
         description: "d",
-        iconUrl: "u",
+        iconUrl: "https://x.test/i.svg",
         url: "u",
         auth: "dcr",
         defaultScope: "workspace",

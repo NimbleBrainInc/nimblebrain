@@ -136,6 +136,13 @@ export const RESERVED_AUTHORIZE_PARAMS = [
   "code_challenge",
   "code_challenge_method",
   "scope",
+  // OIDC-style hijack vectors: `request` / `request_uri` smuggle a
+  // signed/unsigned JWT request object that can override every other
+  // parameter; `response_mode` can change response delivery (form_post,
+  // fragment) in ways that break our callback assumptions.
+  "request",
+  "request_uri",
+  "response_mode",
 ] as const;
 
 /**
@@ -167,6 +174,58 @@ function canonicalEndpoint(u: URL): string {
   const origin = u.origin.toLowerCase();
   const path = u.pathname.replace(/\/+$/, "") || "/";
   return `${origin}${path}`;
+}
+
+/**
+ * Discover the OAuth authorization-server origins for a resource (the MCP
+ * bundle URL). Tries RFC 9728 (Protected Resource Metadata) first to
+ * support vendors where the AS lives at a different origin than the
+ * resource (Google, Microsoft); falls back to the bundle origin itself
+ * for co-located deployments (Granola, Notion, HubSpot).
+ *
+ * Returns the list of AS origins to probe for token-revocation metadata.
+ * Order: RFC 9728-listed origins first (most specific signal), bundle
+ * origin appended last as the universal fallback. Duplicates removed
+ * preserving order.
+ *
+ * Best-effort — network errors at the protected-resource layer return
+ * just the bundle-origin fallback. SSRF-validated by the caller (the
+ * fetcher itself doesn't enforce, since revocation discovery happens
+ * post-auth in a trusted context).
+ */
+async function discoverAuthorizationServerOrigins(
+  fetchImpl: typeof fetch,
+  bundleOrigin: string,
+  allowInsecure: boolean,
+): Promise<string[]> {
+  const origins = new Set<string>();
+  // 1. RFC 9728 — Protected Resource Metadata.
+  try {
+    const prMetadataUrl = `${bundleOrigin}/.well-known/oauth-protected-resource`;
+    validateBundleUrl(new URL(prMetadataUrl), { allowInsecure });
+    const res = await fetchImpl(prMetadataUrl);
+    if (res.ok) {
+      const body = (await res.json()) as { authorization_servers?: unknown };
+      if (Array.isArray(body.authorization_servers)) {
+        for (const entry of body.authorization_servers) {
+          if (typeof entry !== "string") continue;
+          try {
+            origins.add(new URL(entry).origin);
+          } catch {
+            // ignore malformed entries
+          }
+        }
+      }
+    }
+  } catch {
+    // RFC 9728 not advertised — fall through to the bundle-origin
+    // probe below. This is the common case for vendors where the AS
+    // lives at the same origin as the MCP server.
+  }
+  // 2. Bundle origin always appended as the last fallback (covers
+  //    Granola/Notion/HubSpot pattern). Set deduplicates.
+  origins.add(bundleOrigin);
+  return [...origins];
 }
 
 /**
@@ -237,9 +296,18 @@ async function postRevoke(
  * Catching `email_verified=false` is also out of scope: the upstream AS
  * controls verification and we surface what they tell us.
  */
+/**
+ * Hard ceiling on id_token byte length we'll attempt to parse. JWT payloads
+ * in practice run well under 4KB; 16KB leaves headroom for AS-specific
+ * extensions while bounding the cost of malicious or malformed tokens. A
+ * 1MB id_token would cost real CPU through atob + JSON.parse otherwise.
+ */
+const ID_TOKEN_MAX_LENGTH = 16 * 1024;
+
 function parseIdTokenClaims(
   idToken: string,
 ): { sub?: string; email?: string; name?: string } | null {
+  if (idToken.length > ID_TOKEN_MAX_LENGTH) return null;
   // JWT shape: header.payload.signature — three base64url segments
   // separated by dots. We only need the payload (segment index 1).
   const parts = idToken.split(".");
@@ -251,7 +319,13 @@ function parseIdTokenClaims(
   const padding = padded.length % 4 === 0 ? "" : "=".repeat(4 - (padded.length % 4));
   let payloadJson: string;
   try {
-    payloadJson = atob(padded + padding);
+    // atob returns a binary string treating bytes as Latin-1; that mangles
+    // multibyte UTF-8 names (e.g. "山田太郎"). Decode through Uint8Array +
+    // TextDecoder so the JSON parses as the bytes the AS actually sent.
+    const binary = atob(padded + padding);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    payloadJson = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
   } catch {
     return null;
   }
@@ -800,23 +874,52 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
       return result;
     }
 
-    // Discover the revocation endpoint from OAuth metadata. Best-effort —
-    // skip revocation entirely if discovery fails (server may not advertise
-    // a revocation_endpoint, in which case there's nothing to call).
+    // Discover the revocation endpoint. Best-effort — skip revocation
+    // entirely if discovery fails (server may not advertise a
+    // revocation_endpoint, in which case there's nothing to call).
+    //
+    // Discovery order:
+    //   1. RFC 9728 Protected Resource Metadata at
+    //      `<bundleOrigin>/.well-known/oauth-protected-resource`. This
+    //      lists `authorization_servers[]` whose origins host the AS
+    //      metadata. Required for vendors where the AS lives at a
+    //      different origin than the resource (Google: AS at
+    //      `oauth2.googleapis.com`, bundle at `gmailmcp.googleapis.com`;
+    //      Microsoft: AS at `login.microsoftonline.com`).
+    //   2. RFC 8414 fallback at
+    //      `<bundleOrigin>/.well-known/oauth-authorization-server` for
+    //      vendors that co-locate the AS with the resource (Granola,
+    //      Notion, HubSpot).
     let revocationEndpoint: string | undefined;
     try {
       const bundleOrigin = new URL(opts.bundleUrl).origin;
-      const metadataUrl = `${bundleOrigin}/.well-known/oauth-authorization-server`;
-      // SSRF defense: validate the discovery target with the same
-      // allowlist as bundle URLs, modulo the allowInsecureRemotes
-      // flag set at construction. A misconfigured catalog entry could
-      // otherwise let revocation discovery touch a private network.
-      validateBundleUrl(new URL(metadataUrl), { allowInsecure: this.allowInsecureRemotes });
-      const res = await fetcher(metadataUrl);
-      if (res.ok) {
-        const meta = (await res.json()) as { revocation_endpoint?: unknown };
-        if (typeof meta.revocation_endpoint === "string") {
-          revocationEndpoint = meta.revocation_endpoint;
+      const asOrigins = await discoverAuthorizationServerOrigins(
+        fetcher,
+        bundleOrigin,
+        this.allowInsecureRemotes,
+      );
+      // Try each AS in order. First one that advertises a
+      // revocation_endpoint wins.
+      for (const asOrigin of asOrigins) {
+        const metadataUrl = `${asOrigin}/.well-known/oauth-authorization-server`;
+        try {
+          validateBundleUrl(new URL(metadataUrl), {
+            allowInsecure: this.allowInsecureRemotes,
+          });
+          const res = await fetcher(metadataUrl);
+          if (!res.ok) continue;
+          const meta = (await res.json()) as { revocation_endpoint?: unknown };
+          if (typeof meta.revocation_endpoint === "string") {
+            revocationEndpoint = meta.revocation_endpoint;
+            break;
+          }
+        } catch (innerErr) {
+          log.debug(
+            "mcp",
+            `[oauth] ${this.serverName} AS metadata fetch failed at ${metadataUrl}: ${
+              innerErr instanceof Error ? innerErr.message : String(innerErr)
+            }`,
+          );
         }
       }
     } catch (err) {
