@@ -3,6 +3,7 @@ import { log } from "../../cli/log.ts";
 import { WORKSPACE_ID_RE } from "../auth-middleware.ts";
 import { requireAuth } from "../middleware/auth.ts";
 import { errorLog } from "../middleware/error-log.ts";
+import { SKIP_DEFAULTS_HEADER } from "../middleware/security-headers.ts";
 import { type AppContext, type AppEnv, apiError } from "../types.ts";
 
 /**
@@ -172,6 +173,10 @@ export function proxyRoutes(ctx: AppContext) {
       // Same-origin embedding: the security-headers middleware respects this
       // when already set; cross-origin embedding stays denied.
       outHeaders.set("X-Frame-Options", "SAMEORIGIN");
+      // Opt out of default HSTS/CSP — iframed bundle dev-server content needs
+      // its own (typically permissive) policy. The middleware strips this
+      // header before egress.
+      outHeaders.set(SKIP_DEFAULTS_HEADER, "1");
       return new Response(upstream.body, {
         status: upstream.status,
         statusText: upstream.statusText,
@@ -218,6 +223,9 @@ const REQUEST_HEADERS_STRIPPED = new Set([
  *
  *   - Set-Cookie / Set-Cookie2: see top-of-file trust model.
  *   - X-Frame-Options / CSP: replaced with our own SAMEORIGIN.
+ *   - X-NB-Skip-Security-Defaults: internal signal — this route sets it
+ *     deliberately below. Stripping upstream copies prevents a bundle dev
+ *     server from disabling platform HSTS/CSP for unrelated responses.
  */
 const RESPONSE_HEADERS_STRIPPED = new Set([
   "set-cookie",
@@ -225,6 +233,7 @@ const RESPONSE_HEADERS_STRIPPED = new Set([
   "x-frame-options",
   "content-security-policy",
   "content-security-policy-report-only",
+  "x-nb-skip-security-defaults",
 ]);
 
 const REQUEST_HAS_BODY = new Set(["POST", "PUT", "PATCH", "DELETE"]);
