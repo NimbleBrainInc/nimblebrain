@@ -39,6 +39,7 @@
 - `manage_workspaces.list` now returns the requesting user's role within each workspace (`userRole?: "admin" | "member"`) so the web client can gate workspace-admin UI without an extra `list_members` round-trip.
 - `POST /v1/chat` validation error wording. Hand-rolled checks (`"metadata must be a JSON object"`, `"allowedTools must be an array of strings"`) replaced with TypeBox path-prefixed errors (`"/metadata: Expected object"`, `"/allowedTools: Expected array"`). HTTP status (400) and `error: "bad_request"` are unchanged. External callers asserting on the exact wording need to update; the field name still appears in the message.
 - Skill manifest writes now always include `metadata.keywords` and `metadata.triggers` as arrays (defaulting to `[]` when omitted by the caller). Previously a partial `metadata: { category: "X" }` could write a manifest with no `keywords`/`triggers` keys at all; the loader's domain type required them, so the divergence was a latent type lie. The on-disk JSON shape is now what the type always claimed.
+- API responses now carry HSTS (`max-age=31536000; includeSubDomains`) and CSP (`default-src 'none'; frame-ancestors 'none'; base-uri 'none'`) by default so direct-exposure self-hosted deployments aren't naked. Operators terminating TLS at a reverse proxy that already emits these can disable via `NB_HSTS=""` / `NB_CSP=""`, or override to a custom value via env var or middleware option ([#20](https://github.com/NimbleBrainInc/nimblebrain/pull/20)).
 
 ### Fixed
 

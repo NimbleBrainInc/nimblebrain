@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import {
   DEFAULT_CSP,
   DEFAULT_HSTS,
+  SKIP_DEFAULTS_HEADER,
   securityHeaders,
 } from "../../../src/api/middleware/security-headers.ts";
 
@@ -95,6 +96,34 @@ describe("securityHeaders middleware", () => {
     process.env.NB_HSTS = "";
     const res = await createTestApp({ hsts: "max-age=60" }).request("/test");
     expect(res.headers.get("Strict-Transport-Security")).toBeNull();
+  });
+
+  test(`${SKIP_DEFAULTS_HEADER} opts route out of HSTS/CSP and is stripped from egress`, async () => {
+    const app = new Hono();
+    app.use("*", securityHeaders());
+    app.get("/proxied", (c) => {
+      c.header(SKIP_DEFAULTS_HEADER, "1");
+      return c.text("ok");
+    });
+    const res = await app.request("/proxied");
+    expect(res.headers.get("Strict-Transport-Security")).toBeNull();
+    expect(res.headers.get("Content-Security-Policy")).toBeNull();
+    expect(res.headers.get(SKIP_DEFAULTS_HEADER)).toBeNull();
+    // Other defaults still apply — the opt-out is HSTS/CSP-specific.
+    expect(res.headers.get("X-Content-Type-Options")).toBe("nosniff");
+  });
+
+  test("preserves route-level HSTS/CSP overrides", async () => {
+    const app = new Hono();
+    app.use("*", securityHeaders());
+    app.get("/custom", (c) => {
+      c.header("Strict-Transport-Security", "max-age=600");
+      c.header("Content-Security-Policy", "default-src 'self'");
+      return c.text("ok");
+    });
+    const res = await app.request("/custom");
+    expect(res.headers.get("Strict-Transport-Security")).toBe("max-age=600");
+    expect(res.headers.get("Content-Security-Policy")).toBe("default-src 'self'");
   });
 
   test("sets headers on POST responses too", async () => {

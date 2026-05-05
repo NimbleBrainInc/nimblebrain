@@ -223,6 +223,9 @@ const REQUEST_HEADERS_STRIPPED = new Set([
  *
  *   - Set-Cookie / Set-Cookie2: see top-of-file trust model.
  *   - X-Frame-Options / CSP: replaced with our own SAMEORIGIN.
+ *   - X-NB-Skip-Security-Defaults: internal signal — this route sets it
+ *     deliberately below. Stripping upstream copies prevents a bundle dev
+ *     server from disabling platform HSTS/CSP for unrelated responses.
  */
 const RESPONSE_HEADERS_STRIPPED = new Set([
   "set-cookie",
@@ -230,6 +233,7 @@ const RESPONSE_HEADERS_STRIPPED = new Set([
   "x-frame-options",
   "content-security-policy",
   "content-security-policy-report-only",
+  "x-nb-skip-security-defaults",
 ]);
 
 const REQUEST_HAS_BODY = new Set(["POST", "PUT", "PATCH", "DELETE"]);
