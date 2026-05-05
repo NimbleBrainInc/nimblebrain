@@ -117,6 +117,8 @@ export interface ChatMessage {
     inputTokens: number;
     outputTokens: number;
     cacheReadTokens?: number;
+    cacheWriteTokens?: number;
+    reasoningTokens?: number;
     model: string;
     llmMs: number;
   };

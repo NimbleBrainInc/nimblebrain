@@ -128,8 +128,14 @@ function migrateLine(line: string): LineMigration {
     return { ...NOOP(line), malformed: true };
   }
 
-  // Event-format llm.response
-  if (parsed.type === "llm.response" && typeof parsed.usage !== "object") {
+  // Event-format llm.response. Treat both `undefined` and `null` as
+  // "no usage object yet" so a hypothetical partial-migration record
+  // (`usage: null`) gets re-migrated rather than skipped — `typeof null`
+  // is `"object"`, which the naive check would accept.
+  if (
+    parsed.type === "llm.response" &&
+    (parsed.usage == null || typeof parsed.usage !== "object")
+  ) {
     const flatInput = typeof parsed.inputTokens === "number" ? parsed.inputTokens : 0;
     const flatOutput = typeof parsed.outputTokens === "number" ? parsed.outputTokens : 0;
     const flatCacheRead =
@@ -169,7 +175,9 @@ function migrateLine(line: string): LineMigration {
       typeof meta.outputTokens === "number" ||
       typeof meta.cacheReadTokens === "number";
     const hasCostUsd = typeof meta.costUsd === "number";
-    const alreadyHasUsage = typeof meta.usage === "object";
+    // Tighten against `usage: null` masquerading as a real object —
+    // typeof null is "object", which would wrongly skip migration.
+    const alreadyHasUsage = meta.usage != null && typeof meta.usage === "object";
 
     if (!hasFlat && !hasCostUsd) return NOOP(line);
 

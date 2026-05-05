@@ -64,15 +64,19 @@ export interface ChatRequest {
   appContext?: AppContext;
 }
 
-/** Token usage for a single chat turn. */
-export interface TurnUsage {
-  inputTokens: number;
-  outputTokens: number;
-  cacheReadTokens: number;
-  costUsd: number;
+/**
+ * Token usage for a single chat turn — the wire shape returned by
+ * `POST /v1/chat` and the SSE `done` event. Mirrors `TurnUsage` from
+ * the runtime (`src/runtime/types.ts`) plus `costUsd` which the API
+ * boundary computes from `(model, usage)`. Cache and reasoning fields
+ * are optional per the canonical `TokenUsage` shape.
+ */
+export interface TurnUsage extends UsageShape {
   model: string;
   llmMs: number;
   iterations: number;
+  /** Computed at the API boundary from (model, usage). Always present. */
+  costUsd: number;
 }
 
 /** Full chat result from POST /v1/chat and the final SSE "done" event. */
