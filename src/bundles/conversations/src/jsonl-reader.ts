@@ -144,9 +144,10 @@ interface RunStartEvent {
  * Token usage shape mirrored from the runtime's canonical TokenUsage.
  * This bundle is intentionally self-contained (no imports from runtime),
  * so the shape is duplicated rather than imported. Keep in sync with
- * src/usage/types.ts.
+ * src/usage/types.ts — verified at test time by
+ * `test/unit/bundles/conversations/usage-shape-sync.test.ts`.
  */
-interface UsageShape {
+export interface UsageShape {
   inputTokens: number;
   outputTokens: number;
   cacheReadTokens?: number;

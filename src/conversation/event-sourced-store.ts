@@ -91,6 +91,8 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
   private index = new ConversationIndex();
   private activeConversationId: string | null = null;
   private pendingWrites = new Set<Promise<unknown>>();
+  /** Flag for once-per-process logging when the usage fallback fires. */
+  private warnedMissingUsage = false;
 
   constructor(config: EventSourcedStoreConfig) {
     this.dir = config.dir;
@@ -525,10 +527,18 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
         // corrupts the file forever and crashes every downstream reader.
         // The current engine always supplies `data.usage`, but this
         // guard means a single bad code path can't poison the stream.
-        const usage = (d.usage as LlmResponseEvent["usage"] | undefined) ?? {
-          inputTokens: 0,
-          outputTokens: 0,
-        };
+        // Log once when the fallback fires so a regressed emitter isn't
+        // a silent telemetry blackout.
+        let usage = d.usage as LlmResponseEvent["usage"] | undefined;
+        if (!usage) {
+          if (!this.warnedMissingUsage) {
+            this.warnedMissingUsage = true;
+            process.stderr.write(
+              "[event-sourced-store] llm.done event arrived without `data.usage`; writing zeroed fallback. This indicates a regressed emitter — check the engine.\n",
+            );
+          }
+          usage = { inputTokens: 0, outputTokens: 0 };
+        }
         const e: LlmResponseEvent = {
           ts,
           type: "llm.response",

@@ -113,8 +113,20 @@ function decomposeUsage(record: LlmCallRecord): { tokens: TokenBreakdown; cost: 
     return { tokens, cost: createCostBreakdown() };
   }
   const c = model.cost;
+  // Mirror the reasoning-token split from src/usage/cost.ts so the
+  // dashboard total can never silently diverge from the live per-turn
+  // `usage.costUsd` once a model adds a separate `cost.reasoning` rate.
+  // Reasoning is folded back into the `output` bucket for display
+  // (reasoning IS output tokens — splitting at the rate boundary is a
+  // billing concern, not a UX one).
+  const reasoning = record.usage.reasoningTokens ?? 0;
+  const outputNonReasoning =
+    c.reasoning != null
+      ? Math.max(record.usage.outputTokens - reasoning, 0)
+      : record.usage.outputTokens;
+  const reasoningCost = c.reasoning != null ? reasoning * c.reasoning : 0;
   const inputCost = (inputNonCached * c.input) / 1_000_000;
-  const outputCost = (record.usage.outputTokens * c.output) / 1_000_000;
+  const outputCost = (outputNonReasoning * c.output + reasoningCost) / 1_000_000;
   const cacheReadCost = (cacheRead * (c.cacheRead ?? c.input)) / 1_000_000;
   const cacheWriteCost = (cacheWrite * (c.cacheWrite ?? c.input)) / 1_000_000;
   const cost: CostBreakdown = {

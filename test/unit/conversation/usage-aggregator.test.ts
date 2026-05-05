@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { aggregateUsage, resolveDateRange } from "../../../src/conversation/usage-aggregator.ts";
+import { estimateCost } from "../../../src/usage/cost.ts";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -230,6 +231,34 @@ describe("usage-aggregator", () => {
     expect(report.breakdown[1].key).toBe("2026-04-11");
     expect(report.breakdown[1].llmCalls).toBe(0);
     expect(report.breakdown[2].key).toBe("2026-04-12");
+  });
+
+  it("aggregator cost.total matches estimateCost for the same inputs (drift guard)", async () => {
+    // Regression: pre-fix, decomposeUsage's cost math diverged from
+    // estimateCost on models with cost.reasoning. Today no catalog model
+    // has that field so the values match by coincidence — pin the
+    // equivalence so future divergence fails this test instead of
+    // silently producing dashboard ≠ live-cost numbers.
+    const dir = makeTmpDir();
+    const usage = {
+      inputTokens: 2_000_000,
+      outputTokens: 1_000_000,
+      cacheReadTokens: 500_000,
+      cacheWriteTokens: 1_000_000,
+      reasoningTokens: 200_000,
+    };
+    writeFileSync(
+      join(dir, "drift.jsonl"),
+      buildJsonl({ id: "drift", updatedAt: "2026-04-10T10:00:00Z" }, [
+        llmEvent({
+          model: "claude-sonnet-4-5-20250929",
+          ...usage,
+        }),
+      ]),
+    );
+    const report = await aggregateUsage(dir, "all", "day");
+    const expectedTotal = estimateCost("claude-sonnet-4-5-20250929", usage);
+    expect(report.totals.cost.total).toBeCloseTo(expectedTotal, 8);
   });
 });
 
