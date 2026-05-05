@@ -142,7 +142,9 @@ export async function createSystemTools(
 
         // scope === "tools" (default)
         const q = query.toLowerCase();
-        const all = await getRegistry().availableTools();
+        const all = (await getRegistry().availableTools()).filter(
+          (t) => !t.annotations?.["ai.nimblebrain/internal"],
+        );
         if (!q) return groupToolsBySource(all);
         const matches = all.filter(
           (t) => t.name.toLowerCase().includes(q) || t.description.toLowerCase().includes(q),
@@ -151,7 +153,11 @@ export async function createSystemTools(
           return { content: textContent(`No tools matched "${query}".`), isError: false };
         const lines = [`Found ${matches.length} tool(s) for "${query}":\n`];
         for (const t of matches) lines.push(`- **${t.name}**: ${t.description}`);
-        return { content: textContent(lines.join("\n")), isError: false };
+        return {
+          content: textContent(lines.join("\n")),
+          structuredContent: { tools: matches.map((t) => ({ name: t.name })) },
+          isError: false,
+        };
       },
     },
     {
@@ -905,5 +911,9 @@ function groupToolsBySource(all: Array<{ name: string; description: string }>): 
   for (const [source, names] of groups) {
     lines.push(`**${source}** (${names.length} tools): ${names.join(", ")}`);
   }
-  return { content: textContent(lines.join("\n")), isError: false };
+  return {
+    content: textContent(lines.join("\n")),
+    structuredContent: { tools: all.map((t) => ({ name: t.name })) },
+    isError: false,
+  };
 }
