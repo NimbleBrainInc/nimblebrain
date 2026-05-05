@@ -58,6 +58,7 @@ export type EngineEventType =
   | "context.assembled"
   | "bundle.installed"
   | "bundle.uninstalled"
+  | "bundle.upgraded"
   | "bundle.crashed"
   | "bundle.recovered"
   | "bundle.dead"

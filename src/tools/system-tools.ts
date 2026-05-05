@@ -163,14 +163,15 @@ export async function createSystemTools(
     {
       name: "manage_app",
       description:
-        "Install, uninstall, or configure an app. 'configure' prompts for API keys/credentials securely via the terminal. Requires user approval.",
+        "Install, uninstall, upgrade, or configure an app. 'upgrade' pulls the latest version from the registry and hot-swaps the running bundle. 'configure' prompts for API keys/credentials securely via the terminal. Requires user approval.",
       inputSchema: {
         type: "object",
         properties: {
           action: {
             type: "string",
-            enum: ["install", "uninstall", "configure"],
-            description: "Action: install, uninstall, or configure (set credentials)",
+            enum: ["install", "uninstall", "configure", "upgrade"],
+            description:
+              "Action: install, uninstall, configure (set credentials), or upgrade (pull latest version)",
           },
           name: {
             type: "string",
@@ -224,11 +225,15 @@ export async function createSystemTools(
             mpakHome,
           );
         }
+        if (action === "upgrade") {
+          return await upgradeBundle(name, wsId, lifecycle, getRegistry());
+        }
         return { content: textContent(`Unknown action: ${action}`), isError: true };
       },
     },
     createReadResourceTool(getRegistry),
     createStatusTool(getRegistry, getSkills, lifecycle, runtime),
+    createCheckUpdatesTool(lifecycle, mpakHome, manageBundleCtx),
   ];
 
   if (delegateCtx) {
@@ -897,6 +902,119 @@ async function uninstallBundleFromWorkspaceViaCtx(
       isError: true,
     };
   }
+}
+
+async function upgradeBundle(
+  name: string,
+  wsId: string,
+  lifecycle: BundleLifecycleManager,
+  registry: ToolRegistry,
+): Promise<ToolResult> {
+  try {
+    const { from, to, serverName } = await lifecycle.upgrade(name, wsId, registry);
+    if (from === to) {
+      return {
+        content: textContent(`${name} is already at the latest version (${from}).`),
+        isError: false,
+      };
+    }
+    const tools = await registry.availableTools();
+    const count = tools.filter((t) => t.name.startsWith(`${serverName}__`)).length;
+    return {
+      content: textContent(`Upgraded ${name}: ${from} → ${to}. ${count} tools available.`),
+      isError: false,
+    };
+  } catch (err) {
+    return {
+      content: textContent(
+        `Failed to upgrade ${name}: ${err instanceof Error ? err.message : String(err)}`,
+      ),
+      isError: true,
+    };
+  }
+}
+
+function createCheckUpdatesTool(
+  lifecycle?: BundleLifecycleManager,
+  mpakHome?: string,
+  manageBundleCtx?: ManageBundleContext,
+): InProcessTool {
+  return {
+    name: "check_updates",
+    description:
+      "Check installed bundles for available updates from the mpak registry. Returns a list of bundles that have newer versions available.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+    },
+    handler: async (): Promise<ToolResult> => {
+      if (!lifecycle || !mpakHome) {
+        return {
+          content: textContent("Update checking requires lifecycle and mpak context."),
+          isError: true,
+        };
+      }
+      const wsId = manageBundleCtx?.getWorkspaceId();
+      if (!wsId) {
+        return {
+          content: textContent("Workspace context required for update checking."),
+          isError: true,
+        };
+      }
+
+      const instances = lifecycle.getInstances().filter((i) => i.wsId === wsId);
+      // Only check registry-installed bundles (not local dev copies or remote URLs)
+      const named = instances.filter((i) => i.installSource === "registry");
+
+      if (named.length === 0) {
+        return {
+          content: textContent("All bundles are up to date (no registry bundles installed)."),
+          isError: false,
+        };
+      }
+
+      const mpak = getMpak(mpakHome);
+      const updates: Array<{ name: string; current: string; latest: string }> = [];
+
+      await Promise.all(
+        named.map(async (instance) => {
+          try {
+            const latest = await mpak.bundleCache.checkForUpdate(instance.bundleName, {
+              force: true,
+            });
+            if (latest) {
+              updates.push({
+                name: instance.bundleName,
+                current: instance.version,
+                latest,
+              });
+            }
+          } catch {
+            // Skip bundles that fail to check (may have been removed from registry)
+          }
+        }),
+      );
+
+      if (updates.length === 0) {
+        return {
+          content: textContent("All bundles are up to date."),
+          isError: false,
+        };
+      }
+
+      const lines = [`${updates.length} update(s) available:\n`];
+      for (const u of updates.sort((a, b) => a.name.localeCompare(b.name))) {
+        lines.push(`- **${u.name}**: ${u.current} → ${u.latest}`);
+      }
+      lines.push(`\nRun \`nb__manage_app action=upgrade name=<bundle>\` to upgrade.`);
+
+      return {
+        content: textContent(lines.join("\n")),
+        isError: false,
+        structuredContent: { updates },
+      };
+    },
+  };
 }
 
 function groupToolsBySource(all: Array<{ name: string; description: string }>): ToolResult {

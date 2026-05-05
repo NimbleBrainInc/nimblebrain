@@ -22,6 +22,11 @@ import type {
   RemoteTransportConfig,
 } from "./types.ts";
 
+/** Resolve work dir at call time — env var may be overridden in tests. */
+function resolveWorkDir(): string {
+  return process.env.NB_WORK_DIR ?? join(homedir(), ".nimblebrain");
+}
+
 // ---------------------------------------------------------------------------
 // BundleLifecycleManager — owns the state of all installed bundles and
 // provides the formal install / uninstall / start / stop / restart flows
@@ -120,7 +125,7 @@ export class BundleLifecycleManager {
     // Workspace-scoped data dir keeps two workspaces installing the same
     // bundle from stomping on each other's entity data. Matches the
     // seedInstance layout used at platform boot.
-    const nbWorkDir = process.env.NB_WORK_DIR ?? join(homedir(), ".nimblebrain");
+    const nbWorkDir = resolveWorkDir();
     const bundleDataDir = join(nbWorkDir, "workspaces", wsId, "data", deriveBundleDataDir(name));
 
     const { sourceName, manifest } = await startBundleSource(
@@ -139,6 +144,7 @@ export class BundleLifecycleManager {
     const isUpjack = manifest._meta?.["ai.nimblebrain/upjack"] != null;
     const instance = createInstance(sourceName, name, manifest, isUpjack, wsId);
     instance.configKey = name;
+    instance.installSource = "registry";
     this.transition(instance, "running");
 
     instance.trustScore = await fetchTrustScore(name, this.mpakHome);
@@ -199,6 +205,7 @@ export class BundleLifecycleManager {
     // Use manifest.name (scoped name) as bundleName, not the filesystem path.
     const instance = createInstance(sourceName, manifest.name, manifest, isUpjack, wsId);
     instance.configKey = bundlePath; // config entry uses the filesystem path
+    instance.installSource = "local";
     this.transition(instance, "running");
 
     instance.ui = extractUiMeta(manifest);
@@ -248,7 +255,7 @@ export class BundleLifecycleManager {
     // via `installRemote` from any workspace would share OAuth tokens across
     // workspaces under the default id — silent cross-tenant credential
     // leakage.
-    const nbWorkDir = process.env.NB_WORK_DIR ?? join(homedir(), ".nimblebrain");
+    const nbWorkDir = resolveWorkDir();
     const { sourceName, meta } = await startBundleSource(
       { url, serverName, transport: transportConfig, ui: ui ?? null },
       registry,
@@ -269,6 +276,7 @@ export class BundleLifecycleManager {
       protected: false,
       type: "plain",
       wsId,
+      installSource: "remote",
     };
     this.transition(instance, "running");
 
@@ -367,7 +375,7 @@ export class BundleLifecycleManager {
     // Credentials are config, not data — they should not persist across
     // uninstalls. Data directories are preserved (step 6).
     if (instance) {
-      const workDir = process.env.NB_WORK_DIR ?? join(homedir(), ".nimblebrain");
+      const workDir = resolveWorkDir();
       try {
         await clearAllWorkspaceCredentials(instance.wsId, instance.bundleName, workDir);
       } catch (err) {
@@ -383,6 +391,104 @@ export class BundleLifecycleManager {
       type: "bundle.uninstalled",
       data: { serverName, bundleName: nameOrPath, wsId },
     });
+  }
+
+  // ---- Upgrade -----------------------------------------------------------
+
+  /**
+   * Upgrade a named bundle to the latest version from the mpak registry.
+   *
+   * Best-effort hot-swap: tears down the old process, then starts the new
+   * version. Brief unavailability window during the swap (sub-second,
+   * same pattern as `configureBundle`). If the new version fails to start
+   * the bundle is left unregistered until a reinstall or restart.
+   *
+   * No `protected` guard — protected bundles can be upgraded (but not
+   * uninstalled) so they aren't frozen out of security updates.
+   *
+   * Preserves: workspace-scoped data dir, credentials, config entry.
+   * Emits: bundle.upgraded event on success.
+   */
+  async upgrade(
+    name: string,
+    wsId: string,
+    registry: ToolRegistry,
+  ): Promise<{ from: string; to: string; serverName: string }> {
+    const serverName = deriveServerName(name);
+    const instance = this.instances.get(`${serverName}|${wsId}`);
+    if (!instance) {
+      throw new Error(`No bundle instance found for "${name}" in workspace "${wsId}"`);
+    }
+
+    const mpak = getMpak(this.mpakHome);
+    const fromVersion = instance.version;
+
+    // Check if a newer version exists
+    const latest = await mpak.bundleCache.checkForUpdate(name, { force: true });
+    if (!latest) {
+      return { from: fromVersion, to: fromVersion, serverName };
+    }
+
+    // Fetch the new artifact into cache
+    await mpak.bundleCache.loadBundle(name, { force: true });
+
+    // Resolve workspace-scoped paths (same as installNamed)
+    const nbWorkDir = resolveWorkDir();
+    const bundleDataDir = join(nbWorkDir, "workspaces", wsId, "data", deriveBundleDataDir(name));
+
+    // Remove old source, then spawn new process. The registry throws on
+    // duplicate names so we can't hold both simultaneously. The window is
+    // sub-second (process spawn time) — same pattern as configureBundle.
+    if (registry.hasSource(serverName)) {
+      await registry.removeSource(serverName);
+    }
+
+    const { sourceName: newSourceName, manifest } = await startBundleSource(
+      { name },
+      registry,
+      this.eventSink,
+      this.configPath ? dirname(this.configPath) : undefined,
+      { dataDir: bundleDataDir, wsId, workDir: nbWorkDir },
+    );
+    if (!manifest) {
+      throw new Error(`No manifest found for ${name} after upgrade fetch`);
+    }
+
+    // Update instance metadata in place
+    const isUpjack = manifest._meta?.["ai.nimblebrain/upjack"] != null;
+    instance.version = manifest.version;
+    instance.description = manifest.description;
+    instance.type = isUpjack ? "upjack" : "plain";
+    instance.ui = extractUiMeta(manifest);
+    instance.briefing = extractBriefing(manifest);
+    instance.trustScore = await fetchTrustScore(name, this.mpakHome);
+    this.transition(instance, "running");
+
+    // Always unregister stale placements, then re-register if new manifest
+    // declares any. Without unconditional unregister, a version that drops
+    // all placements would leave stale nav entries.
+    this.placementRegistry?.unregister(serverName, wsId);
+    if (instance.ui?.placements) {
+      this.placementRegistry?.register(newSourceName, instance.ui.placements, wsId);
+    }
+
+    // Clean stale automations then sync from new manifest. Without the
+    // remove, schedules dropped between versions keep running with stale prompts.
+    await this.removeBundleAutomations(name, registry);
+    await this.syncBundleAutomations(manifest, name, registry);
+
+    this.eventSink.emit({
+      type: "bundle.upgraded",
+      data: {
+        serverName,
+        bundleName: name,
+        fromVersion,
+        toVersion: manifest.version,
+        wsId,
+      },
+    });
+
+    return { from: fromVersion, to: manifest.version, serverName };
   }
 
   // ---- Start / Stop / Restart -------------------------------------------
@@ -640,12 +746,16 @@ export class BundleLifecycleManager {
         ? join(dataDir, manifestMeta.upjackNamespace, "data")
         : undefined;
 
+    const installSource: BundleInstance["installSource"] =
+      "name" in ref ? "registry" : "url" in ref ? "remote" : "local";
+
     const instance: BundleInstance = {
       serverName,
       // Prefer the scoped manifest name over the config label (filesystem path)
       bundleName: manifestMeta?.manifestName ?? bundleName,
       // Config key for reliable uninstall — the original value from nimblebrain.json
       configKey: bundleName,
+      installSource,
       version: manifestMeta?.version ?? "unknown",
       description: manifestMeta?.description,
       state: "running",

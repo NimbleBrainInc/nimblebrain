@@ -191,6 +191,8 @@ export interface BundleInstance {
   bundleName: string;
   /** The config key used to find this bundle in nimblebrain.json (name, path, or url value). */
   configKey?: string;
+  /** How this bundle was installed. Used to distinguish registry bundles from local dev copies. */
+  installSource?: "registry" | "local" | "remote";
   /** Version from manifest. */
   version: string;
   /** Human-readable description from the manifest. */
@@ -267,4 +269,5 @@ export interface AppInfo {
   toolCount: number;
   trustScore: number;
   ui: BundleUiMeta | null;
+  installSource?: "registry" | "local" | "remote";
 }

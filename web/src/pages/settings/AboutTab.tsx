@@ -11,7 +11,8 @@ import {
   TableHeader,
   TableRow,
 } from "../../components/ui/table";
-import { EmptyState, InlineError, Section, SettingsDashboardPage } from "./components";
+import { roleAtLeast, useScopedRole } from "../../hooks/useScopedRole";
+import { InlineError, Section, SettingsDashboardPage } from "./components";
 
 interface AppInfo {
   name: string;
@@ -20,10 +21,16 @@ interface AppInfo {
   status: string;
   type: string;
   toolCount: number;
+  installSource?: "registry" | "local" | "remote";
+}
+
+interface UpdateInfo {
+  name: string;
+  current: string;
+  latest: string;
 }
 
 function mpakUrl(bundleName: string): string | null {
-  // Scoped names like @nimblebraininc/echo → mpak.dev/packages/@nimblebraininc/echo
   if (bundleName.startsWith("@")) return `https://mpak.dev/packages/${bundleName}`;
   return null;
 }
@@ -44,24 +51,44 @@ function statusColor(status: string): "default" | "secondary" | "destructive" | 
 
 export function AboutTab() {
   const { version, buildSha } = getPlatformVersion();
+  const role = useScopedRole();
+  const canUpgrade = roleAtLeast(role, "org_admin");
+
   const [apps, setApps] = useState<AppInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [bundlesError, setBundlesError] = useState<string | null>(null);
+  const [updates, setUpdates] = useState<Map<string, string>>(new Map());
+  const [updatesChecked, setUpdatesChecked] = useState(false);
+  const [upgrading, setUpgrading] = useState<Set<string>>(new Set());
+  const [upgradeErrors, setUpgradeErrors] = useState<Map<string, string>>(new Map());
 
   const fetchApps = useCallback(async () => {
     try {
       setBundlesError(null);
-      const result = await callTool("nb", "list_apps", {});
-      const data = parseToolResult<{ apps?: AppInfo[] }>(result);
+      const [appsResult, updatesResult] = await Promise.all([
+        callTool("nb", "list_apps", {}),
+        callTool("nb", "check_updates", {}).catch(() => null),
+      ]);
+      const data = parseToolResult<{ apps?: AppInfo[] }>(appsResult);
       if (Array.isArray(data.apps)) {
         setApps(data.apps);
       }
+      if (updatesResult) {
+        const map = new Map<string, string>();
+        try {
+          const updateData = parseToolResult<{ updates?: UpdateInfo[] }>(updatesResult);
+          if (Array.isArray(updateData.updates)) {
+            for (const u of updateData.updates) {
+              map.set(u.name, u.latest);
+            }
+          }
+        } catch {
+          // No structured update data — all bundles up to date
+        }
+        setUpdates(map);
+        setUpdatesChecked(true);
+      }
     } catch (err) {
-      // Surface the failure rather than silently degrading to "no bundles
-      // installed" — the empty state would otherwise read as authoritative
-      // ("there are no bundles") when really the call failed and we don't
-      // know. The platform-version section is independent (read from
-      // bootstrap), so the page still renders useful content above.
       setBundlesError(err instanceof Error ? err.message : "Failed to load installed bundles.");
     } finally {
       setLoading(false);
@@ -71,6 +98,53 @@ export function AboutTab() {
   useEffect(() => {
     fetchApps();
   }, [fetchApps]);
+
+  const handleUpgrade = useCallback(
+    async (bundleName: string) => {
+      setUpgrading((prev) => new Set(prev).add(bundleName));
+      setUpgradeErrors((prev) => {
+        const next = new Map(prev);
+        next.delete(bundleName);
+        return next;
+      });
+      try {
+        const result = await callTool("nb", "manage_app", {
+          action: "upgrade",
+          name: bundleName,
+        });
+        if (result.isError) {
+          const msg =
+            result.content
+              ?.filter((c) => c.type === "text")
+              .map((c) => c.text ?? "")
+              .join("") || "Upgrade failed";
+          setUpgradeErrors((prev) => {
+            const next = new Map(prev);
+            next.set(bundleName, msg);
+            return next;
+          });
+          return;
+        }
+        await fetchApps();
+      } catch (err) {
+        setUpgradeErrors((prev) => {
+          const next = new Map(prev);
+          next.set(bundleName, err instanceof Error ? err.message : "Upgrade failed");
+          return next;
+        });
+      } finally {
+        setUpgrading((prev) => {
+          const next = new Set(prev);
+          next.delete(bundleName);
+          return next;
+        });
+      }
+    },
+    [fetchApps],
+  );
+
+  const hasRegistryBundles = apps.some((a) => a.installSource === "registry");
+  const showUpdateColumn = updatesChecked && hasRegistryBundles;
 
   return (
     <SettingsDashboardPage
@@ -105,9 +179,7 @@ export function AboutTab() {
               </Button>
             }
           />
-        ) : apps.length === 0 ? (
-          <EmptyState message="No bundles installed." />
-        ) : (
+        ) : apps.length === 0 ? null : (
           <Table>
             <TableHeader>
               <TableRow>
@@ -115,11 +187,15 @@ export function AboutTab() {
                 <TableHead>Version</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead className="text-right">Tools</TableHead>
+                {showUpdateColumn && <TableHead className="text-right">Update</TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
               {apps.map((app) => {
                 const href = mpakUrl(app.bundleName);
+                const latestVersion = updates.get(app.bundleName);
+                const isUpgrading = upgrading.has(app.bundleName);
+                const upgradeError = upgradeErrors.get(app.bundleName);
                 return (
                   <TableRow key={app.bundleName}>
                     <TableCell className="font-mono text-xs">
@@ -138,11 +214,40 @@ export function AboutTab() {
                     </TableCell>
                     <TableCell className="font-mono text-xs">{app.version || "—"}</TableCell>
                     <TableCell>
-                      <Badge variant={statusColor(app.status)} className="text-xs">
-                        {app.status}
+                      <Badge
+                        variant={isUpgrading ? "secondary" : statusColor(app.status)}
+                        className="text-xs"
+                      >
+                        {isUpgrading ? "updating" : app.status}
                       </Badge>
                     </TableCell>
                     <TableCell className="text-right">{app.toolCount}</TableCell>
+                    {showUpdateColumn && (
+                      <TableCell className="text-right">
+                        {app.installSource !== "registry" ? null : latestVersion ? (
+                          <div className="flex items-center justify-end gap-2">
+                            <span className="text-xs text-muted-foreground">
+                              {app.version} → {latestVersion}
+                            </span>
+                            {canUpgrade && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                disabled={isUpgrading}
+                                onClick={() => handleUpgrade(app.bundleName)}
+                              >
+                                {isUpgrading ? "Updating…" : "Update"}
+                              </Button>
+                            )}
+                            {upgradeError && (
+                              <span className="text-xs text-destructive">{upgradeError}</span>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">Up to date</span>
+                        )}
+                      </TableCell>
+                    )}
                   </TableRow>
                 );
               })}

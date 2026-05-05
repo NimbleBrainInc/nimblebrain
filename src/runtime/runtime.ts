@@ -1778,6 +1778,7 @@ export class Runtime {
         toolCount,
         trustScore: instance.trustScore ?? 0,
         ui: instance.ui,
+        installSource: instance.installSource,
       });
     }
     return apps;

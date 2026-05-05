@@ -6,6 +6,7 @@ import type { EngineEvent, EngineEventType, EventSink } from "../engine/types.ts
 const WORKSPACE_EVENTS = new Set<EngineEventType>([
   "bundle.installed",
   "bundle.uninstalled",
+  "bundle.upgraded",
   "bundle.crashed",
   "bundle.recovered",
   "bundle.dead",
