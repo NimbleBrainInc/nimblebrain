@@ -13,6 +13,8 @@ import { normalizeForReplay } from "../model/inbound-fit.ts";
 import { callModel, type StreamResult } from "../model/stream.ts";
 import { coerceInputForSchema } from "../tools/coerce-input.ts";
 import { validateToolInput } from "../tools/validate-input.ts";
+import type { TokenUsage } from "../usage/types.ts";
+import { addUsage, emptyUsage } from "../usage/types.ts";
 import {
   estimateContentSize,
   extractResourceLinks,
@@ -20,8 +22,6 @@ import {
   textContent,
 } from "./content-helpers.ts";
 import { withRetry } from "./retry.ts";
-import { addUsage, emptyUsage } from "../usage/types.ts";
-import type { TokenUsage } from "../usage/types.ts";
 import type {
   EngineConfig,
   EngineResult,

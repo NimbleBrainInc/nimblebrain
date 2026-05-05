@@ -501,13 +501,22 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
 
       case "llm.done": {
         const finishReason = d.finishReason as LlmResponseEvent["finishReason"];
+        // Defensive default at the write boundary: a malformed emitter
+        // must not produce `usage: undefined` in the JSONL — that
+        // corrupts the file forever and crashes every downstream reader.
+        // The current engine always supplies `data.usage`, but this
+        // guard means a single bad code path can't poison the stream.
+        const usage = (d.usage as LlmResponseEvent["usage"] | undefined) ?? {
+          inputTokens: 0,
+          outputTokens: 0,
+        };
         const e: LlmResponseEvent = {
           ts,
           type: "llm.response",
           runId,
           model: d.model as string,
           content: (d.content ?? []) as LlmResponseEvent["content"],
-          usage: d.usage as LlmResponseEvent["usage"],
+          usage,
           llmMs: (d.llmMs as number) ?? 0,
           ...(finishReason !== undefined ? { finishReason } : {}),
         };

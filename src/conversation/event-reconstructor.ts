@@ -7,8 +7,8 @@
  */
 
 import type { LanguageModelV3Content, LanguageModelV3ReasoningPart } from "@ai-sdk/provider";
-import { estimateCost } from "../usage/cost.ts";
 import { normalizeForReplay } from "../model/inbound-fit.ts";
+import { estimateCost } from "../usage/cost.ts";
 import type { ConversationEvent, LlmResponseEvent, StoredMessage, ToolDoneEvent } from "./types.ts";
 
 /**
@@ -431,7 +431,10 @@ export function deriveUsageMetrics(events: readonly ConversationEvent[]): UsageM
   let lastModel: string | null = null;
 
   for (const event of events) {
-    if (event.type === "llm.response") {
+    // Pre-unification events stored token counts as flat fields and have
+    // no `usage` struct. We deliberately do not migrate them — they
+    // contribute zero to derived totals — but we must not crash on them.
+    if (event.type === "llm.response" && event.usage) {
       totalInputTokens += event.usage.inputTokens;
       totalOutputTokens += event.usage.outputTokens;
       lastModel = event.model;

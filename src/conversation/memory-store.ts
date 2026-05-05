@@ -1,6 +1,6 @@
 import { estimateCost } from "../usage/cost.ts";
-import { addUsage, emptyUsage } from "../usage/types.ts";
 import type { TokenUsage } from "../usage/types.ts";
+import { addUsage, emptyUsage } from "../usage/types.ts";
 import { canAccess } from "./index-cache.ts";
 import type {
   Conversation,

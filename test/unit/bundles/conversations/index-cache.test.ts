@@ -26,14 +26,36 @@ function writeConvFile(spec: ConvSpec): string {
 		createdAt: spec.createdAt,
 		updatedAt: spec.updatedAt,
 		title: spec.title,
-		totalInputTokens: spec.totalInputTokens ?? 0,
-		totalOutputTokens: spec.totalOutputTokens ?? 0,
-		totalCostUsd: 0,
 		lastModel: spec.lastModel ?? null,
 	};
 
+	// Bundle no longer reads line-1 totals — attach the requested totals
+	// as `metadata.usage` on the last assistant message so the read-time
+	// derivation produces matching numbers without changing message count.
+	const messages = (spec.messages ?? []).map((m) => ({ ...m })) as Array<
+		Record<string, unknown>
+	>;
+	const wantsTotals = spec.totalInputTokens || spec.totalOutputTokens;
+	if (wantsTotals) {
+		const lastAssistantIdx = (() => {
+			for (let i = messages.length - 1; i >= 0; i--) {
+				if (messages[i]!.role === "assistant") return i;
+			}
+			return -1;
+		})();
+		if (lastAssistantIdx >= 0) {
+			messages[lastAssistantIdx]!.metadata = {
+				model: spec.lastModel ?? "claude-sonnet-4-5-20250929",
+				usage: {
+					inputTokens: spec.totalInputTokens ?? 0,
+					outputTokens: spec.totalOutputTokens ?? 0,
+				},
+			};
+		}
+	}
+
 	const lines = [JSON.stringify(meta)];
-	for (const msg of spec.messages ?? []) {
+	for (const msg of messages) {
 		lines.push(JSON.stringify(msg));
 	}
 

@@ -46,13 +46,36 @@ function writeConv(opts: ConvOptions): void {
 		createdAt: opts.createdAt,
 		updatedAt: opts.updatedAt ?? opts.createdAt,
 		title: opts.title ?? null,
-		totalInputTokens: opts.totalInputTokens ?? 0,
-		totalOutputTokens: opts.totalOutputTokens ?? 0,
-		totalCostUsd: 0,
 		lastModel: opts.lastModel ?? null,
 	};
+	// Bundle no longer reads line-1 totals — synthesize an assistant
+	// message carrying the requested usage IF the supplied messages don't
+	// already declare their own. Tests that want explicit per-message
+	// usage just include it in `messages`; tests that just want a top-line
+	// total can pass `totalInputTokens` and let this helper synthesize.
+	const messages = (opts.messages ?? []).map((m) => ({ ...m }));
+	const hasUsageAlready = messages.some(
+		(m) =>
+			m.role === "assistant" &&
+			(m as { metadata?: { usage?: unknown } }).metadata?.usage,
+	);
+	const wantsTotals = opts.totalInputTokens || opts.totalOutputTokens;
+	if (wantsTotals && !hasUsageAlready) {
+		messages.push({
+			role: "assistant",
+			content: "synthesized for usage totals",
+			timestamp: opts.createdAt,
+			metadata: {
+				model: opts.lastModel ?? "claude-sonnet-4-5-20250929",
+				usage: {
+					inputTokens: opts.totalInputTokens ?? 0,
+					outputTokens: opts.totalOutputTokens ?? 0,
+				},
+			},
+		});
+	}
 	const lines = [JSON.stringify(meta)];
-	for (const msg of opts.messages ?? []) {
+	for (const msg of messages) {
 		lines.push(JSON.stringify(msg));
 	}
 	writeFileSync(join(TMP_DIR, `${opts.id}.jsonl`), lines.join("\n") + "\n");
@@ -383,8 +406,6 @@ describe("handleStats", () => {
 		writeConv({
 			id: "conv_nometa",
 			createdAt: now,
-			totalInputTokens: 50,
-			totalOutputTokens: 25,
 			messages: [
 				{ role: "user", content: "Hi", timestamp: now },
 				{ role: "assistant", content: "Hello", timestamp: now },
@@ -396,8 +417,10 @@ describe("handleStats", () => {
 
 		const result = await handleStats({ period: "all" }, index);
 
+		// Conversation is counted; assistant messages without metadata
+		// contribute zero to derived totals (no crash, no spurious values).
 		expect(result.totalConversations).toBe(1);
-		expect(result.totalInputTokens).toBe(50);
+		expect(result.totalInputTokens).toBe(0);
 		expect(result.byModel).toEqual({});
 		expect(result.topTools).toEqual([]);
 	});

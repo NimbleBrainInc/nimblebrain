@@ -824,6 +824,32 @@ describe("deriveUsageMetrics", () => {
     expect(metrics.totalOutputTokens).toBe(0);
     expect(metrics.lastModel).toBeNull();
   });
+
+  it("does not crash on legacy events with flat token fields and no `usage`", () => {
+    // Pre-unification on-disk shape: token counts at the top level instead
+    // of nested under `usage`. The reader must skip these without crashing
+    // (the conversation load path goes through deriveUsageMetrics — a
+    // crash here takes down the entire conversation list).
+    const legacyEvent = {
+      ts: "2025-01-01T00:00:00Z",
+      type: "llm.response" as const,
+      runId: "r1",
+      model: "claude-sonnet-4-5",
+      content: [{ type: "text" as const, text: "hi" }],
+      inputTokens: 100,
+      outputTokens: 50,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+      llmMs: 200,
+    };
+    const metrics = deriveUsageMetrics([legacyEvent as unknown as ConversationEvent]);
+    // Legacy events contribute zero — the deliberate "ignore old data"
+    // choice. The point of this test is the absence of a TypeError.
+    expect(metrics.totalInputTokens).toBe(0);
+    expect(metrics.totalOutputTokens).toBe(0);
+    expect(metrics.totalCostUsd).toBe(0);
+    expect(metrics.lastModel).toBeNull();
+  });
 });
 
 // ---------------------------------------------------------------------------

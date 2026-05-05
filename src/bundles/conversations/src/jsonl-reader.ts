@@ -268,12 +268,30 @@ function deriveMetricsFromLines(lines: string[]): DerivedMetrics {
 
   for (const line of lines) {
     const evt = parseEventLine(line);
-    if (!evt) continue;
-    lastEventTs = evt.ts;
-    if (isLlmResponse(evt)) {
-      totalInputTokens += evt.usage?.inputTokens ?? 0;
-      totalOutputTokens += evt.usage?.outputTokens ?? 0;
-      lastModel = evt.model;
+    if (evt) {
+      lastEventTs = evt.ts;
+      if (isLlmResponse(evt)) {
+        totalInputTokens += evt.usage?.inputTokens ?? 0;
+        totalOutputTokens += evt.usage?.outputTokens ?? 0;
+        lastModel = evt.model;
+      }
+      continue;
+    }
+    // Legacy message-format line: read assistant metadata.usage. Mirrors
+    // the runtime's index-cache so both surfaces report the same totals
+    // for the same file.
+    try {
+      const msg = JSON.parse(line) as {
+        role?: string;
+        metadata?: { usage?: { inputTokens?: number; outputTokens?: number }; model?: string };
+      };
+      if (msg.role === "assistant" && msg.metadata?.usage && msg.metadata.model) {
+        totalInputTokens += msg.metadata.usage.inputTokens ?? 0;
+        totalOutputTokens += msg.metadata.usage.outputTokens ?? 0;
+        lastModel = msg.metadata.model;
+      }
+    } catch {
+      // Skip malformed lines.
     }
   }
 
@@ -281,11 +299,14 @@ function deriveMetricsFromLines(lines: string[]): DerivedMetrics {
 }
 
 function applyDerivedMetrics(meta: ConversationMeta, metrics: DerivedMetrics): void {
-  if (metrics.totalInputTokens > 0 || metrics.totalOutputTokens > 0) {
-    meta.totalInputTokens = metrics.totalInputTokens;
-    meta.totalOutputTokens = metrics.totalOutputTokens;
-    meta.lastModel = metrics.lastModel;
-  }
+  // Always overwrite with derived values — never fall back to the line-1
+  // totals stored on disk. The line-1 totals were a stored-derived field
+  // we deliberately stopped maintaining; preserving them here would
+  // produce different totals than the runtime's index-cache, which now
+  // always derives from events. Old conversations show zero totals.
+  meta.totalInputTokens = metrics.totalInputTokens;
+  meta.totalOutputTokens = metrics.totalOutputTokens;
+  meta.lastModel = metrics.lastModel;
   if (metrics.lastEventTs) meta.updatedAt = metrics.lastEventTs;
 }
 

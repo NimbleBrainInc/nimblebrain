@@ -27,23 +27,41 @@ function writeConversation(dir: string, id: string, opts: WriteOpts = {}): void 
 	const createdAt = opts.createdAt ?? "2025-01-15T10:00:00.000Z";
 	const updatedAt = opts.updatedAt ?? createdAt;
 
+	// Line-1 totals are no longer read by the bundle; lastModel still is.
 	const meta = JSON.stringify({
 		id,
 		createdAt,
 		updatedAt,
 		title: opts.title ?? null,
-		totalInputTokens: 500,
-		totalOutputTokens: 200,
-		totalCostUsd: 0.05,
 		lastModel: "claude-sonnet-4-5-20250929",
 	});
 
+	// Attach usage to the last assistant message (or fall through to the
+	// default message pair) so derived totals match the test's stable
+	// expectations: 500 in / 200 out / model claude-sonnet-4-5-20250929.
 	const messages = opts.messages ?? [
 		{ role: "user" as const, content: "Hello", timestamp: createdAt },
 		{ role: "assistant" as const, content: "Hi there!", timestamp: createdAt },
 	];
+	const annotated = messages.map((m, i, arr) => {
+		const isLastAssistant =
+			m.role === "assistant" &&
+			!arr.slice(i + 1).some((later) => later.role === "assistant");
+		if (!isLastAssistant) return m;
+		const existingMeta = (m as { metadata?: Record<string, unknown> }).metadata ?? {};
+		// Don't clobber metadata.usage if the test set it explicitly.
+		if ("usage" in existingMeta) return m;
+		return {
+			...m,
+			metadata: {
+				...existingMeta,
+				model: "claude-sonnet-4-5-20250929",
+				usage: { inputTokens: 500, outputTokens: 200 },
+			},
+		};
+	});
 
-	const lines = [meta, ...messages.map((m) => JSON.stringify({ ...m, timestamp: m.timestamp ?? createdAt }))];
+	const lines = [meta, ...annotated.map((m) => JSON.stringify({ ...m, timestamp: m.timestamp ?? createdAt }))];
 	writeFileSync(join(dir, `${id}.jsonl`), lines.join("\n") + "\n");
 }
 

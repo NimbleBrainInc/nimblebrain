@@ -77,10 +77,43 @@ export async function handleFork(input: ForkInput, index: ConversationIndex): Pr
     lastModel,
   };
 
-  // Build JSONL content: metadata line + message lines
+  // Build JSONL content: metadata line + message lines.
+  //
+  // Project the in-memory DisplayMessage onto the on-disk StoredMessage
+  // shape (`metadata.usage` instead of top-level `usage`), so the reader's
+  // derived-totals path can see this fork's tokens. Without this, the
+  // reader saw `usage` at the wrong level and aggregated zero — masked
+  // before by the now-removed line-1 totals fallback.
   const lines = [JSON.stringify(newMeta)];
   for (const msg of messagesToCopy) {
-    lines.push(JSON.stringify(msg));
+    const onDisk: Record<string, unknown> = {
+      role: msg.role,
+      content: msg.content,
+      timestamp: msg.timestamp,
+      ...(msg.userId ? { userId: msg.userId } : {}),
+    };
+    const metadata: Record<string, unknown> = {};
+    if (msg.role === "assistant" && msg.usage) {
+      metadata.usage = {
+        inputTokens: msg.usage.inputTokens,
+        outputTokens: msg.usage.outputTokens,
+        ...(msg.usage.cacheReadTokens !== undefined
+          ? { cacheReadTokens: msg.usage.cacheReadTokens }
+          : {}),
+      };
+      metadata.model = msg.usage.model;
+      metadata.llmMs = msg.usage.llmMs;
+    }
+    if (msg.toolCalls && msg.toolCalls.length > 0) {
+      metadata.toolCalls = msg.toolCalls;
+    }
+    if (msg.files) {
+      metadata.files = msg.files;
+    }
+    if (Object.keys(metadata).length > 0) {
+      onDisk.metadata = metadata;
+    }
+    lines.push(JSON.stringify(onDisk));
   }
 
   // Write new file via temp+rename for atomicity

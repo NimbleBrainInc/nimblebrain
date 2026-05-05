@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { formatCost, formatTokenCount } from "../../src/engine/cost.ts";
+import { formatCost, formatTokenCount } from "../../src/usage/cost.ts";
 
 describe("formatCost", () => {
   it("formats sub-penny values as cents", () => {

@@ -220,11 +220,12 @@ function parseFileHeader(
   let preview = "";
   let messageCount = 0;
 
-  // Derived metrics (event-sourced format only)
+  // Derived metrics (from events for event-sourced files, from message
+  // metadata for legacy files). `lastModel` is on Conversation, not on
+  // ConversationSummary, so we don't track it here.
   let derivedInputTokens = 0;
   let derivedOutputTokens = 0;
   let derivedCostUsd = 0;
-  let derivedLastModel: string | null = null;
   let lastEventTs: string | null = null;
   let derivedTitle: string | null | undefined;
   let derivedVisibility: "private" | "shared" | undefined;
@@ -255,7 +256,6 @@ function parseFileHeader(
         } else if (event.type === "llm.response" && event.usage && event.model) {
           derivedInputTokens += event.usage.inputTokens;
           derivedOutputTokens += event.usage.outputTokens;
-          derivedLastModel = event.model;
           derivedCostUsd += estimateCost(event.model, event.usage);
         } else if (event.type === "metadata.title") {
           derivedTitle = event.title;
@@ -282,7 +282,6 @@ function parseFileHeader(
         if (msg.role === "assistant" && msg.metadata?.usage && msg.metadata.model) {
           derivedInputTokens += msg.metadata.usage.inputTokens;
           derivedOutputTokens += msg.metadata.usage.outputTokens;
-          derivedLastModel = msg.metadata.model;
           derivedCostUsd += estimateCost(msg.metadata.model, msg.metadata.usage);
         }
       } catch {
@@ -291,13 +290,11 @@ function parseFileHeader(
     }
   }
 
-  // Totals are always derived from events. Legacy line-1 metadata totals
-  // are intentionally ignored — old conversations show zero totals if their
+  // Totals are always derived. Legacy line-1 metadata totals are
+  // intentionally ignored — old conversations show zero totals if their
   // events don't carry usage. (See PR removing stored totals.)
   const effectiveVisibility = derivedVisibility ?? meta.visibility;
   const effectiveParticipants = derivedParticipants ?? meta.participants;
-  // Surface derivedLastModel for future debugging if needed.
-  void derivedLastModel;
 
   return {
     summary: {
