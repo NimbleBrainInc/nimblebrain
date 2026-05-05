@@ -83,6 +83,12 @@ describe("System Tools", () => {
 		expect(result.isError).toBe(false);
 		expect(extractText(result.content)).toContain("test");
 		expect(extractText(result.content)).toContain("2 tools");
+		// Browse path must populate structuredContent so the engine can promote
+		// discovered tools into the direct callable set on the next iteration.
+		expect(getStructured<{ tools?: Array<{ name: string }> }>(result)?.tools).toEqual([
+			{ name: "test__greet" },
+			{ name: "test__farewell" },
+		]);
 	});
 
 	it("search with scope=tools returns no-match message", async () => {

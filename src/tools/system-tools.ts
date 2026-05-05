@@ -911,5 +911,9 @@ function groupToolsBySource(all: Array<{ name: string; description: string }>): 
   for (const [source, names] of groups) {
     lines.push(`**${source}** (${names.length} tools): ${names.join(", ")}`);
   }
-  return { content: textContent(lines.join("\n")), isError: false };
+  return {
+    content: textContent(lines.join("\n")),
+    structuredContent: { tools: all.map((t) => ({ name: t.name })) },
+    isError: false,
+  };
 }
