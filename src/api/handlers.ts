@@ -1420,7 +1420,7 @@ export async function handleBundleUpload(
   }
 
   // Save to workspace bundles directory
-  const { existsSync, mkdirSync, writeFileSync } = await import("node:fs");
+  const { mkdirSync, writeFileSync } = await import("node:fs");
   const { join: joinPath } = await import("node:path");
 
   const bundlesDir = joinPath(runtime.getWorkspaceScopedDir(workspaceId), "bundles");
