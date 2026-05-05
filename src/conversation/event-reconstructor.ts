@@ -7,8 +7,8 @@
  */
 
 import type { LanguageModelV3Content, LanguageModelV3ReasoningPart } from "@ai-sdk/provider";
-import { estimateCost } from "../engine/cost.ts";
 import { normalizeForReplay } from "../model/inbound-fit.ts";
+import { estimateCost } from "../usage/cost.ts";
 import type { ConversationEvent, LlmResponseEvent, StoredMessage, ToolDoneEvent } from "./types.ts";
 
 /**
@@ -218,17 +218,10 @@ function buildMessagesFromEvents(events: readonly ConversationEvent[]): StoredMe
       // jsonl-reader.ts; this function is the LLM-replay projection.
       for (const llmResp of runLlmResponses) {
         const baseMetadata = () => ({
-          inputTokens: llmResp.inputTokens,
-          outputTokens: llmResp.outputTokens,
-          cacheReadTokens: llmResp.cacheReadTokens,
+          usage: llmResp.usage,
           model: llmResp.model,
           llmMs: llmResp.llmMs,
           iterations: runLlmResponses.length,
-          costUsd: estimateCost(llmResp.model, {
-            inputTokens: llmResp.inputTokens,
-            outputTokens: llmResp.outputTokens,
-            cacheReadTokens: llmResp.cacheReadTokens,
-          }),
           ...(llmResp.finishReason ? { finishReason: llmResp.finishReason } : {}),
         });
 
@@ -416,10 +409,7 @@ function ensureRoleAlternation(messages: StoredMessage[]): StoredMessage[] {
         // don't apply.
         metadata: {
           finishReason: "other",
-          inputTokens: 0,
-          outputTokens: 0,
-          cacheReadTokens: 0,
-          costUsd: 0,
+          usage: { inputTokens: 0, outputTokens: 0 },
           llmMs: 0,
           iterations: 0,
         },
@@ -441,15 +431,14 @@ export function deriveUsageMetrics(events: readonly ConversationEvent[]): UsageM
   let lastModel: string | null = null;
 
   for (const event of events) {
-    if (event.type === "llm.response") {
-      totalInputTokens += event.inputTokens;
-      totalOutputTokens += event.outputTokens;
+    // Pre-unification events stored token counts as flat fields and have
+    // no `usage` struct. We deliberately do not migrate them — they
+    // contribute zero to derived totals — but we must not crash on them.
+    if (event.type === "llm.response" && event.usage) {
+      totalInputTokens += event.usage.inputTokens;
+      totalOutputTokens += event.usage.outputTokens;
       lastModel = event.model;
-      totalCostUsd += estimateCost(event.model, {
-        inputTokens: event.inputTokens,
-        outputTokens: event.outputTokens,
-        cacheReadTokens: event.cacheReadTokens,
-      });
+      totalCostUsd += estimateCost(event.model, event.usage);
     }
   }
 

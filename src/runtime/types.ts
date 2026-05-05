@@ -5,6 +5,7 @@ import type { ConversationStore } from "../conversation/types.ts";
 import type { EventSink } from "../engine/types.ts";
 import type { ContentPart, FileReference } from "../files/types.ts";
 import type { ProvidersConfig } from "../model/registry.ts";
+import type { TokenUsage } from "../usage/types.ts";
 
 /** Model slot configuration. Each slot maps to a provider:model-id string. */
 export interface ModelSlots {
@@ -235,12 +236,16 @@ export interface ChatRequest {
   identity?: import("../identity/provider.ts").UserIdentity;
 }
 
-/** Detailed usage breakdown for a single chat turn. */
-export interface TurnUsage {
-  inputTokens: number;
-  outputTokens: number;
-  cacheReadTokens: number;
-  costUsd: number;
+/**
+ * Detailed usage breakdown for a single chat turn.
+ *
+ * Carries the canonical TokenUsage plus runtime-added fields. NO costUsd —
+ * cost is a derived value computed at the API boundary from
+ * `cost(model, usage)`. Storing it here would invite the same drift bug
+ * that double-billed cache tokens (issue #140): a stored derived value
+ * that consumers forgot to refresh when its inputs changed.
+ */
+export interface TurnUsage extends TokenUsage {
   model: string;
   llmMs: number;
   iterations: number;
@@ -260,8 +265,6 @@ export interface ChatResult {
     ok: boolean;
     ms: number;
   }>;
-  inputTokens: number;
-  outputTokens: number;
   stopReason: string;
   /** Detailed usage breakdown for this turn. */
   usage: TurnUsage;

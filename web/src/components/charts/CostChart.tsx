@@ -5,7 +5,7 @@ interface CostBreakdown {
   input: number;
   output: number;
   cacheRead: number;
-  cacheCreation: number;
+  cacheWrite: number;
   total: number;
 }
 
@@ -24,14 +24,14 @@ const COLORS = {
   input: "#6366f1", // indigo
   output: "#f59e0b", // amber
   cacheRead: "#10b981", // emerald
-  cacheCreation: "#8b5cf6", // violet
+  cacheWrite: "#8b5cf6", // violet
 };
 
 const LABELS: Record<string, string> = {
   input: "Input",
   output: "Output",
   cacheRead: "Cache read",
-  cacheCreation: "Cache write",
+  cacheWrite: "Cache write",
 };
 
 function formatUsd(n: number): string {
@@ -70,7 +70,7 @@ export function CostChart({ data }: CostChartProps) {
   const yStep = maxCost / yTicks;
 
   const segments: Array<{ key: keyof typeof COLORS; field: keyof CostBreakdown }> = [
-    { key: "cacheCreation", field: "cacheCreation" },
+    { key: "cacheWrite", field: "cacheWrite" },
     { key: "cacheRead", field: "cacheRead" },
     { key: "output", field: "output" },
     { key: "input", field: "input" },
@@ -142,7 +142,7 @@ export function CostChart({ data }: CostChartProps) {
                 fill="transparent"
               />
 
-              {/* Stacked segments (bottom to top: input, output, cacheRead, cacheCreation) */}
+              {/* Stacked segments (bottom to top: input, output, cacheRead, cacheWrite) */}
               {segments.map(({ key, field }) => {
                 const value = d.cost[field] as number;
                 if (value <= 0) return null;

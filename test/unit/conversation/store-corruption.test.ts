@@ -50,10 +50,7 @@ describe("conversation store corruption resilience", () => {
         type: "llm.done",
         model: "test",
         content: [{ type: "text", text: "Hi!" }],
-        inputTokens: 10,
-        outputTokens: 5,
-        cacheReadTokens: 0,
-        cacheCreationTokens: 0,
+        usage: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: 0 },
         llmMs: 100,
       } as any),
     ];
@@ -74,7 +71,7 @@ describe("conversation store corruption resilience", () => {
       makeMetadataLine(id),
       makeEvent({ type: "user.message", content: [{ type: "text", text: "Hello" }] } as any),
       "TRUNCATED LINE",
-      '{"ts":"2026-04-14T00:02:00Z","type":"llm.done","model":"test","content":[{"type":"text","text":"Reply"}],"inputTokens":10,"outputTokens":5,"cacheReadTokens":0,"cacheCreationTokens":0,"llmMs":100}',
+      '{"ts":"2026-04-14T00:02:00Z","type":"llm.done","model":"test","content":[{"type":"text","text":"Reply"}],"usage":{"inputTokens":10,"outputTokens":5,"cacheReadTokens":0,"cacheWriteTokens":0},"llmMs":100}',
       makeEvent({ type: "run.done", runId: "r1", toolCalls: 0, iterations: 1, inputTokens: 10, outputTokens: 5, totalMs: 200 } as any),
     ];
 
@@ -120,7 +117,7 @@ describe("conversation store corruption resilience", () => {
     const conv = await store.load(id);
     expect(conv).not.toBeNull();
     expect(conv!.id).toBe(id);
-    expect(conv!.totalInputTokens).toBe(0);
+    expect(conv!.lastModel).toBeNull();
   });
 
   it("history() returns empty array when all event lines are corrupt", async () => {

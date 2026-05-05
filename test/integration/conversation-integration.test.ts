@@ -52,29 +52,28 @@ describe("Conversation full lifecycle (store-level)", () => {
 		// --- create ---
 		const conv = await store.create();
 		expect(conv.id).toMatch(/^conv_/);
-		expect(conv.totalInputTokens).toBe(0);
 
 		// --- append 3 messages ---
 		await store.append(conv, msg("user", "Tell me about deployment pipelines"));
 		await store.append(
 			conv,
 			assistantMsg("Deployment pipelines automate releases...", {
-				inputTokens: 200,
-				outputTokens: 80,
-				costUsd: 0.008,
+				usage: { inputTokens: 200, outputTokens: 80 },
 				model: "claude-sonnet-4-5-20250929",
 			}),
 		);
 		await store.append(conv, msg("user", "Can you show me an example?"));
 
-		// --- list and verify token accumulation ---
+		// --- list and verify token accumulation (derived at read time) ---
 		const listResult = await store.list();
 		expect(listResult.totalCount).toBe(1);
 		const summary = listResult.conversations[0]!;
 		expect(summary.id).toBe(conv.id);
 		expect(summary.totalInputTokens).toBe(200);
 		expect(summary.totalOutputTokens).toBe(80);
-		expect(summary.totalCostUsd).toBeCloseTo(0.008);
+		// claude-sonnet-4-5: input $3/M, output $15/M
+		// 200 * $3/M + 80 * $15/M = $0.0006 + $0.0012 = $0.0018
+		expect(summary.totalCostUsd).toBeCloseTo(0.0018, 5);
 		expect(summary.messageCount).toBe(3);
 
 		// --- rename ---
@@ -98,8 +97,9 @@ describe("Conversation full lifecycle (store-level)", () => {
 		const forked = await store.fork(conv.id, 2);
 		expect(forked).not.toBeNull();
 		expect(forked!.id).not.toBe(conv.id);
-		expect(forked!.totalInputTokens).toBe(200);
-		expect(forked!.totalOutputTokens).toBe(80);
+		const forkedSummary = (await store.list()).conversations.find((c) => c.id === forked!.id);
+		expect(forkedSummary!.totalInputTokens).toBe(200);
+		expect(forkedSummary!.totalOutputTokens).toBe(80);
 
 		const forkedHistory = await store.history(forked!);
 		expect(forkedHistory).toHaveLength(2);
@@ -144,7 +144,7 @@ describe("Backward compatibility: old-format JSONL → append", () => {
 		if (existsSync(dir)) rmSync(dir, { recursive: true });
 	});
 
-	it("loads old-format JSONL, appends new messages, and accumulates tokens correctly", async () => {
+	it("loads old-format JSONL, appends new messages, and derives tokens correctly", async () => {
 		// Write an old-format file (only id + createdAt on line 1, no enriched fields)
 		const id = "conv_1e9ac400000000b1";
 		const createdAt = "2024-06-15T10:00:00.000Z";
@@ -167,30 +167,30 @@ describe("Backward compatibility: old-format JSONL → append", () => {
 		const store = new JsonlConversationStore(dir);
 		const loaded = await store.load(id);
 
-		// Verify defaults applied
 		expect(loaded).not.toBeNull();
 		expect(loaded!.updatedAt).toBe(createdAt);
 		expect(loaded!.title).toBeNull();
-		expect(loaded!.totalInputTokens).toBe(0);
-		expect(loaded!.totalOutputTokens).toBe(0);
 		expect(loaded!.lastModel).toBeNull();
 
-		// Append a new assistant message with token metadata
+		// Append a new assistant message with usage data
 		await store.append(
 			loaded!,
 			assistantMsg("Updated budget analysis...", {
-				inputTokens: 350,
-				outputTokens: 120,
-				costUsd: 0.015,
+				usage: { inputTokens: 350, outputTokens: 120 },
 				model: "claude-sonnet-4-5-20250929",
 			}),
 		);
 
-		// Token accumulation should work on migrated conversation
-		expect(loaded!.totalInputTokens).toBe(350);
-		expect(loaded!.totalOutputTokens).toBe(120);
-		expect(loaded!.totalCostUsd).toBeCloseTo(0.015);
 		expect(loaded!.lastModel).toBe("claude-sonnet-4-5-20250929");
+
+		// Derived totals via the list summary (read time, from messages).
+		const summary = (await store.list()).conversations.find((c) => c.id === id);
+		expect(summary).toBeDefined();
+		expect(summary!.totalInputTokens).toBe(350);
+		expect(summary!.totalOutputTokens).toBe(120);
+		// Cost is derivable; we don't pin the exact value here (rate
+		// changes shouldn't break this integration test).
+		expect(summary!.totalCostUsd).toBeGreaterThan(0);
 
 		// Verify history includes old + new messages
 		const history = await store.history(loaded!);
@@ -200,10 +200,9 @@ describe("Backward compatibility: old-format JSONL → append", () => {
 
 		// Reload from disk to verify persistence
 		const store2 = new JsonlConversationStore(dir);
-		const reloaded = await store2.load(id);
-		expect(reloaded!.totalInputTokens).toBe(350);
-		expect(reloaded!.totalOutputTokens).toBe(120);
-		expect(reloaded!.lastModel).toBe("claude-sonnet-4-5-20250929");
+		const reloadedSummary = (await store2.list()).conversations.find((c) => c.id === id);
+		expect(reloadedSummary!.totalInputTokens).toBe(350);
+		expect(reloadedSummary!.totalOutputTokens).toBe(120);
 	});
 });
 

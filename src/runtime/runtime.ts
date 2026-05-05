@@ -22,9 +22,7 @@ import type {
   ParticipantInfo,
 } from "../conversation/types.ts";
 import { sliceHistory, windowMessages } from "../conversation/window.ts";
-import { estimateCost } from "../engine/cost.ts";
 import { AgentEngine } from "../engine/engine.ts";
-import { RunMetricsCollector } from "../engine/run-metrics.ts";
 import type {
   ContextAssembledPayload,
   ContextAssembledSource,
@@ -850,13 +848,12 @@ export class Runtime {
       this.eventStore.setActiveConversation(conversation.id);
     }
 
-    // Create a per-turn metrics collector to capture cache tokens and LLM latency
-    const metricsCollector = new RunMetricsCollector();
-
-    // Build per-request sink chain
+    // Build per-request sink chain. The engine itself returns cumulative
+    // usage and llmMs in its EngineResult — no need for a side-channel
+    // metrics collector.
     const sinks: EventSink[] = requestSink
-      ? [requestSink, this.defaultEvents, metricsCollector]
-      : [this.defaultEvents, metricsCollector];
+      ? [requestSink, this.defaultEvents]
+      : [this.defaultEvents];
     if (isWorkspaceRequest) {
       sinks.push(store as EventSourcedConversationStore);
     }
@@ -910,16 +907,9 @@ export class Runtime {
     );
 
     const usage: TurnUsage = {
-      inputTokens: result.inputTokens,
-      outputTokens: result.outputTokens,
-      cacheReadTokens: metricsCollector.cacheReadTokens,
-      costUsd: estimateCost(model, {
-        inputTokens: result.inputTokens,
-        outputTokens: result.outputTokens,
-        cacheReadTokens: metricsCollector.cacheReadTokens,
-      }),
+      ...result.usage,
       model,
-      llmMs: metricsCollector.totalLlmMs,
+      llmMs: result.llmMs,
       iterations: result.iterations,
     };
 
@@ -938,12 +928,9 @@ export class Runtime {
         metadata: {
           skill: skill?.manifest.name ?? null,
           toolCalls: result.toolCalls,
-          inputTokens: result.inputTokens,
-          outputTokens: result.outputTokens,
-          cacheReadTokens: metricsCollector.cacheReadTokens,
-          costUsd: usage.costUsd,
+          usage: result.usage,
           model,
-          llmMs: metricsCollector.totalLlmMs,
+          llmMs: result.llmMs,
           iterations: result.iterations,
         },
       });
@@ -969,8 +956,6 @@ export class Runtime {
       workspaceId: wsId,
       skillName: skill?.manifest.name ?? null,
       toolCalls: result.toolCalls,
-      inputTokens: result.inputTokens,
-      outputTokens: result.outputTokens,
       stopReason: result.stopReason,
       usage,
     };

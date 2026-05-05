@@ -7,14 +7,14 @@ interface TokenBreakdown {
   input: number;
   output: number;
   cacheRead: number;
-  cacheCreation: number;
+  cacheWrite: number;
 }
 
 interface CostBreakdown {
   input: number;
   output: number;
   cacheRead: number;
-  cacheCreation: number;
+  cacheWrite: number;
   total: number;
 }
 
@@ -170,7 +170,7 @@ function Dashboard() {
             </div>
             <div className="row">
               <span>Cache write</span>
-              <span>{fmtCostP(cost.cacheCreation || 0)}</span>
+              <span>{fmtCostP(cost.cacheWrite || 0)}</span>
             </div>
           </div>
         </div>

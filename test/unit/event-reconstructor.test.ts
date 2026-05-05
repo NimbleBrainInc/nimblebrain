@@ -33,21 +33,34 @@ function runStart(runId: string, model = "claude-sonnet-4-5-20250929"): RunStart
   return { ts: ts(1), type: "run.start", runId, model };
 }
 
-function llmText(
-  runId: string,
-  text: string,
-  opts?: Partial<Pick<LlmResponseEvent, "inputTokens" | "outputTokens" | "cacheReadTokens" | "cacheCreationTokens" | "llmMs" | "model">>,
-): LlmResponseEvent {
+interface LlmEventOpts {
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+  reasoningTokens?: number;
+  llmMs?: number;
+  model?: string;
+}
+
+function buildUsage(opts?: LlmEventOpts): LlmResponseEvent["usage"] {
+  return {
+    inputTokens: opts?.inputTokens ?? 100,
+    outputTokens: opts?.outputTokens ?? 50,
+    cacheReadTokens: opts?.cacheReadTokens ?? 0,
+    cacheWriteTokens: opts?.cacheWriteTokens ?? 0,
+    ...(opts?.reasoningTokens !== undefined ? { reasoningTokens: opts.reasoningTokens } : {}),
+  };
+}
+
+function llmText(runId: string, text: string, opts?: LlmEventOpts): LlmResponseEvent {
   return {
     ts: ts(2),
     type: "llm.response",
     runId,
     model: opts?.model ?? "claude-sonnet-4-5-20250929",
     content: [{ type: "text", text }],
-    inputTokens: opts?.inputTokens ?? 100,
-    outputTokens: opts?.outputTokens ?? 50,
-    cacheReadTokens: opts?.cacheReadTokens ?? 0,
-    cacheCreationTokens: opts?.cacheCreationTokens ?? 0,
+    usage: buildUsage(opts),
     llmMs: opts?.llmMs ?? 500,
   };
 }
@@ -57,7 +70,7 @@ function llmToolCall(
   toolCallId: string,
   toolName: string,
   input: Record<string, unknown> = {},
-  opts?: Partial<Pick<LlmResponseEvent, "inputTokens" | "outputTokens" | "cacheReadTokens" | "cacheCreationTokens" | "llmMs" | "model">>,
+  opts?: LlmEventOpts,
 ): LlmResponseEvent {
   return {
     ts: ts(2),
@@ -65,10 +78,7 @@ function llmToolCall(
     runId,
     model: opts?.model ?? "claude-sonnet-4-5-20250929",
     content: [{ type: "tool-call", toolCallId, toolName, input }],
-    inputTokens: opts?.inputTokens ?? 100,
-    outputTokens: opts?.outputTokens ?? 50,
-    cacheReadTokens: opts?.cacheReadTokens ?? 0,
-    cacheCreationTokens: opts?.cacheCreationTokens ?? 0,
+    usage: buildUsage(opts),
     llmMs: opts?.llmMs ?? 500,
   };
 }
@@ -77,7 +87,7 @@ function llmToolCall(
 function llmParallelToolCalls(
   runId: string,
   calls: Array<{ toolCallId: string; toolName: string; input?: Record<string, unknown> }>,
-  opts?: Partial<Pick<LlmResponseEvent, "inputTokens" | "outputTokens" | "cacheReadTokens" | "cacheCreationTokens" | "llmMs" | "model">>,
+  opts?: LlmEventOpts,
 ): LlmResponseEvent {
   return {
     ts: ts(2),
@@ -90,10 +100,7 @@ function llmParallelToolCalls(
       toolName: c.toolName,
       input: c.input ?? {},
     })),
-    inputTokens: opts?.inputTokens ?? 100,
-    outputTokens: opts?.outputTokens ?? 50,
-    cacheReadTokens: opts?.cacheReadTokens ?? 0,
-    cacheCreationTokens: opts?.cacheCreationTokens ?? 0,
+    usage: buildUsage(opts),
     llmMs: opts?.llmMs ?? 500,
   };
 }
@@ -173,8 +180,8 @@ describe("reconstructMessages", () => {
     expect(messages[1].role).toBe("assistant");
     expect(messages[1].content).toEqual([{ type: "text", text: "4" }]);
     expect(messages[1].metadata).toBeDefined();
-    expect(messages[1].metadata!.inputTokens).toBe(100);
-    expect(messages[1].metadata!.outputTokens).toBe(50);
+    expect(messages[1].metadata!.usage?.inputTokens).toBe(100);
+    expect(messages[1].metadata!.usage?.outputTokens).toBe(50);
     expect(messages[1].metadata!.model).toBe("claude-sonnet-4-5-20250929");
     expect(messages[1].metadata!.iterations).toBe(1);
   });
@@ -235,10 +242,7 @@ describe("reconstructMessages", () => {
         runId: "run-1",
         model: "claude-haiku-4-5-20251001",
         content: [{ type: "tool-call", toolCallId: "tc-1", toolName: "seed_data", input: "{}" as unknown }],
-        inputTokens: 100,
-        outputTokens: 50,
-        cacheReadTokens: 0,
-        cacheCreationTokens: 0,
+        usage: { inputTokens: 100, outputTokens: 50, cacheReadTokens: 0, cacheWriteTokens: 0 },
         llmMs: 500,
       } as LlmResponseEvent,
       toolStart("run-1", "tc-1", "seed_data"),
@@ -568,7 +572,10 @@ describe("reconstructMessages", () => {
     expect(messages[1].metadata!.finishReason).toBeUndefined();
   });
 
-  it("populates costUsd in assistant metadata", () => {
+  it("populates usage in assistant metadata so cost can be derived later", () => {
+    // costUsd is no longer stored on metadata — cost is computed at the API
+    // boundary from (model, usage). The reconstructor's job is to make the
+    // inputs available; downstream consumers compute the dollar value.
     const events: ConversationEvent[] = [
       userMessage("Hello"),
       runStart("run-1"),
@@ -577,8 +584,9 @@ describe("reconstructMessages", () => {
     ];
     const messages = reconstructMessages(events);
     const assistantMeta = messages[1].metadata!;
-    expect(typeof assistantMeta.costUsd).toBe("number");
-    expect(assistantMeta.costUsd).toBeGreaterThanOrEqual(0);
+    expect(assistantMeta.usage?.inputTokens).toBe(1000);
+    expect(assistantMeta.usage?.outputTokens).toBe(500);
+    expect(assistantMeta.model).toBe("claude-sonnet-4-5-20250929");
   });
 
   it("does not mutate input events", () => {
@@ -656,8 +664,8 @@ describe("reconstructMessages", () => {
     // truncation banner it uses for length / content-filter cases. There
     // was no real LLM call, so "other" is the closest enum value.
     expect(placeholder.metadata?.finishReason).toBe("other");
-    expect(placeholder.metadata?.inputTokens).toBe(0);
-    expect(placeholder.metadata?.outputTokens).toBe(0);
+    expect(placeholder.metadata?.usage?.inputTokens).toBe(0);
+    expect(placeholder.metadata?.usage?.outputTokens).toBe(0);
 
     // Placeholder timestamp falls strictly between the surrounding user
     // messages so the UI sorts it between them. Tied timestamps would
@@ -733,10 +741,7 @@ describe("reconstructMessages", () => {
           { type: "tool-call", toolCallId: "tc-1", toolName: "files__read", input: {} },
           { type: "tool-call", toolCallId: "tc-2", toolName: "files__read", input: {} },
         ],
-        inputTokens: 100,
-        outputTokens: 50,
-        cacheReadTokens: 0,
-        cacheCreationTokens: 0,
+        usage: { inputTokens: 100, outputTokens: 50, cacheReadTokens: 0, cacheWriteTokens: 0 },
         llmMs: 500,
       } as LlmResponseEvent,
       // Run ends without executing tools
@@ -817,6 +822,32 @@ describe("deriveUsageMetrics", () => {
     const metrics = deriveUsageMetrics(events);
     expect(metrics.totalInputTokens).toBe(0);
     expect(metrics.totalOutputTokens).toBe(0);
+    expect(metrics.lastModel).toBeNull();
+  });
+
+  it("does not crash on legacy events with flat token fields and no `usage`", () => {
+    // Pre-unification on-disk shape: token counts at the top level instead
+    // of nested under `usage`. The reader must skip these without crashing
+    // (the conversation load path goes through deriveUsageMetrics — a
+    // crash here takes down the entire conversation list).
+    const legacyEvent = {
+      ts: "2025-01-01T00:00:00Z",
+      type: "llm.response" as const,
+      runId: "r1",
+      model: "claude-sonnet-4-5",
+      content: [{ type: "text" as const, text: "hi" }],
+      inputTokens: 100,
+      outputTokens: 50,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+      llmMs: 200,
+    };
+    const metrics = deriveUsageMetrics([legacyEvent as unknown as ConversationEvent]);
+    // Legacy events contribute zero — the deliberate "ignore old data"
+    // choice. The point of this test is the absence of a TypeError.
+    expect(metrics.totalInputTokens).toBe(0);
+    expect(metrics.totalOutputTokens).toBe(0);
+    expect(metrics.totalCostUsd).toBe(0);
     expect(metrics.lastModel).toBeNull();
   });
 });
@@ -1002,10 +1033,7 @@ describe("reconstructMessages structural invariants", () => {
           { type: "tool-call", toolCallId: "tc1", toolName: "read", input: {} },
           { type: "tool-call", toolCallId: "tc2", toolName: "read", input: {} },
         ],
-        inputTokens: 100,
-        outputTokens: 50,
-        cacheReadTokens: 0,
-        cacheCreationTokens: 0,
+        usage: { inputTokens: 100, outputTokens: 50, cacheReadTokens: 0, cacheWriteTokens: 0 },
         llmMs: 500,
       } as LlmResponseEvent,
       runDone("r1"),

@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { aggregateUsage, resolveDateRange } from "../../../src/conversation/usage-aggregator.ts";
+import { estimateCost } from "../../../src/usage/cost.ts";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -51,17 +52,19 @@ function llmEvent(overrides: Partial<{
   inputTokens: number;
   outputTokens: number;
   cacheReadTokens: number;
-  cacheCreationTokens: number;
+  cacheWriteTokens: number;
   llmMs: number;
 }> = {}): Record<string, unknown> {
   return {
     type: "llm.response",
     ts: overrides.ts ?? "2026-04-10T12:00:00Z",
     model: overrides.model ?? "claude-sonnet-4-5-20250929",
-    inputTokens: overrides.inputTokens ?? 1000,
-    outputTokens: overrides.outputTokens ?? 500,
-    cacheReadTokens: overrides.cacheReadTokens ?? 0,
-    cacheCreationTokens: overrides.cacheCreationTokens ?? 0,
+    usage: {
+      inputTokens: overrides.inputTokens ?? 1000,
+      outputTokens: overrides.outputTokens ?? 500,
+      cacheReadTokens: overrides.cacheReadTokens ?? 0,
+      cacheWriteTokens: overrides.cacheWriteTokens ?? 0,
+    },
     llmMs: overrides.llmMs ?? 200,
   };
 }
@@ -129,15 +132,17 @@ describe("usage-aggregator", () => {
   it("computes cost correctly from model catalog", async () => {
     const dir = makeTmpDir();
     // claude-sonnet-4-5-20250929: input=$3/M, output=$15/M, cacheRead=$0.30/M, cacheWrite=$3.75/M
+    // AI SDK V3 contract: inputTokens is grand total = noCache + cacheRead + cacheWrite.
+    // So 2_000_000 total = 500K noCache + 500K cacheRead + 1M cacheWrite.
     writeFileSync(
       join(dir, "cost.jsonl"),
       buildJsonl({ id: "cost-conv", updatedAt: "2026-04-10T10:00:00Z" }, [
         llmEvent({
           model: "claude-sonnet-4-5-20250929",
-          inputTokens: 1_000_000,
+          inputTokens: 2_000_000,
           outputTokens: 1_000_000,
-          cacheReadTokens: 1_000_000,
-          cacheCreationTokens: 1_000_000,
+          cacheReadTokens: 500_000,
+          cacheWriteTokens: 1_000_000,
         }),
       ]),
     );
@@ -145,11 +150,18 @@ describe("usage-aggregator", () => {
     const report = await aggregateUsage(dir, "all", "day");
 
     const cost = report.totals.cost;
-    expect(cost.input).toBeCloseTo(3.0, 4);
+    // Non-cached input = 2M - 500K - 1M = 500K. 500K * $3/M = $1.50.
+    expect(cost.input).toBeCloseTo(1.5, 4);
     expect(cost.output).toBeCloseTo(15.0, 4);
-    expect(cost.cacheRead).toBeCloseTo(0.3, 4);
-    expect(cost.cacheCreation).toBeCloseTo(3.75, 4);
-    expect(cost.total).toBeCloseTo(3.0 + 15.0 + 0.3 + 3.75, 4);
+    expect(cost.cacheRead).toBeCloseTo(0.15, 4);
+    expect(cost.cacheWrite).toBeCloseTo(3.75, 4);
+    expect(cost.total).toBeCloseTo(1.5 + 15.0 + 0.15 + 3.75, 4);
+
+    // Token breakdown: input is the non-cached portion, not the grand total.
+    expect(report.totals.tokens.input).toBe(500_000);
+    expect(report.totals.tokens.cacheRead).toBe(500_000);
+    expect(report.totals.tokens.cacheWrite).toBe(1_000_000);
+    expect(report.totals.tokens.output).toBe(1_000_000);
   });
 
   it("groups by day correctly using event timestamp", async () => {
@@ -219,6 +231,95 @@ describe("usage-aggregator", () => {
     expect(report.breakdown[1].key).toBe("2026-04-11");
     expect(report.breakdown[1].llmCalls).toBe(0);
     expect(report.breakdown[2].key).toBe("2026-04-12");
+  });
+
+  it("aggregator cost.total matches estimateCost for the same inputs (drift guard)", async () => {
+    // Regression: pre-fix, decomposeUsage's cost math diverged from
+    // estimateCost on models with cost.reasoning. Today no catalog model
+    // has that field so the values match by coincidence — pin the
+    // equivalence so future divergence fails this test instead of
+    // silently producing dashboard ≠ live-cost numbers.
+    const dir = makeTmpDir();
+    const usage = {
+      inputTokens: 2_000_000,
+      outputTokens: 1_000_000,
+      cacheReadTokens: 500_000,
+      cacheWriteTokens: 1_000_000,
+      reasoningTokens: 200_000,
+    };
+    writeFileSync(
+      join(dir, "drift.jsonl"),
+      buildJsonl({ id: "drift", updatedAt: "2026-04-10T10:00:00Z" }, [
+        llmEvent({
+          model: "claude-sonnet-4-5-20250929",
+          ...usage,
+        }),
+      ]),
+    );
+    const report = await aggregateUsage(dir, "all", "day");
+    const expectedTotal = estimateCost("claude-sonnet-4-5-20250929", usage);
+    expect(report.totals.cost.total).toBeCloseTo(expectedTotal, 8);
+  });
+
+  it("UsageReport shape contract — pins the wire-format key set", async () => {
+    // Regression: external consumers (web shell, dashboards) read fields
+    // off this report. A silent rename here is what produced the
+    // `cost.cacheCreation` → `cacheWrite` cross-package breakage that
+    // crashed the web/src/pages/settings/UsageTab. Pin the exact key
+    // set so any future rename fails this test instead of going
+    // unnoticed until a UI panel throws on render.
+    const dir = makeTmpDir();
+    writeFileSync(
+      join(dir, "shape.jsonl"),
+      buildJsonl({ id: "shape", updatedAt: "2026-04-10T10:00:00Z" }, [
+        llmEvent({
+          model: "claude-sonnet-4-5-20250929",
+          inputTokens: 1000,
+          outputTokens: 500,
+          cacheReadTokens: 100,
+          cacheWriteTokens: 200,
+        }),
+      ]),
+    );
+    const report = await aggregateUsage(dir, "all", "day");
+
+    // Top-level
+    expect(Object.keys(report).sort()).toEqual(["breakdown", "models", "period", "totals"]);
+
+    // totals.tokens — exact bucket set; if a rename happens, this fails
+    expect(Object.keys(report.totals.tokens).sort()).toEqual([
+      "cacheRead",
+      "cacheWrite",
+      "input",
+      "output",
+    ]);
+
+    // totals.cost — same buckets plus `total`
+    expect(Object.keys(report.totals.cost).sort()).toEqual([
+      "cacheRead",
+      "cacheWrite",
+      "input",
+      "output",
+      "total",
+    ]);
+
+    // models[] entry shape
+    expect(report.models.length).toBeGreaterThan(0);
+    const m = report.models[0]!;
+    expect(Object.keys(m).sort()).toEqual(["cost", "llmCalls", "model", "tokens"]);
+    expect(Object.keys(m.tokens).sort()).toEqual(["cacheRead", "cacheWrite", "input", "output"]);
+    expect(Object.keys(m.cost).sort()).toEqual([
+      "cacheRead",
+      "cacheWrite",
+      "input",
+      "output",
+      "total",
+    ]);
+
+    // breakdown[] entry shape
+    expect(report.breakdown.length).toBeGreaterThan(0);
+    const b = report.breakdown[0]!;
+    expect(Object.keys(b).sort()).toEqual(["conversations", "cost", "key", "llmCalls", "tokens"]);
   });
 });
 

@@ -34,10 +34,7 @@ describe("StructuredLogSink", () => {
       data: {
         runId: "r1",
         model: "test-model",
-        inputTokens: 1000,
-        outputTokens: 200,
-        cacheReadTokens: 500,
-        cacheCreationTokens: 0,
+        usage: { inputTokens: 1000, outputTokens: 200, cacheReadTokens: 500, cacheWriteTokens: 0 },
         llmMs: 80,
       },
     });
@@ -74,10 +71,7 @@ describe("StructuredLogSink", () => {
       data: {
         runId: "r1",
         model: "claude-sonnet-4-5-20250929",
-        inputTokens: 1000,
-        outputTokens: 200,
-        cacheReadTokens: 500,
-        cacheCreationTokens: 100,
+        usage: { inputTokens: 1000, outputTokens: 200, cacheReadTokens: 500, cacheWriteTokens: 100 },
         llmMs: 80,
       },
     });
@@ -86,10 +80,7 @@ describe("StructuredLogSink", () => {
       data: {
         runId: "r1",
         model: "claude-sonnet-4-5-20250929",
-        inputTokens: 2000,
-        outputTokens: 400,
-        cacheReadTokens: 1500,
-        cacheCreationTokens: 0,
+        usage: { inputTokens: 2000, outputTokens: 400, cacheReadTokens: 1500, cacheWriteTokens: 0 },
         llmMs: 120,
       },
     });
@@ -99,11 +90,14 @@ describe("StructuredLogSink", () => {
     const llmRecords = records.filter((r) => r.event === "llm.done");
     expect(llmRecords).toHaveLength(2);
 
-    // Each record has its own per-call values, not accumulated
-    expect(llmRecords[0]!.inputTokens).toBe(1000);
+    // Each record has its own per-call values, not accumulated. Usage is
+    // nested under `usage` (the canonical TokenUsage struct).
+    const usage0 = llmRecords[0]!.usage as { inputTokens: number };
+    const usage1 = llmRecords[1]!.usage as { inputTokens: number; cacheReadTokens: number };
+    expect(usage0.inputTokens).toBe(1000);
     expect(llmRecords[0]!.model).toBe("claude-sonnet-4-5-20250929");
-    expect(llmRecords[1]!.inputTokens).toBe(2000);
-    expect(llmRecords[1]!.cacheReadTokens).toBe(1500);
+    expect(usage1.inputTokens).toBe(2000);
+    expect(usage1.cacheReadTokens).toBe(1500);
   });
 
   it("run.done is a lightweight bookend with no derived data", () => {
@@ -112,7 +106,7 @@ describe("StructuredLogSink", () => {
     sink.emit({ type: "run.start", data: { runId: "r1", model: "test-model" } });
     sink.emit({
       type: "llm.done",
-      data: { runId: "r1", model: "test-model", inputTokens: 1000, outputTokens: 200, cacheReadTokens: 0, cacheCreationTokens: 0, llmMs: 50 },
+      data: { runId: "r1", model: "test-model", usage: { inputTokens: 1000, outputTokens: 200, cacheReadTokens: 0, cacheWriteTokens: 0 }, llmMs: 50 },
     });
     sink.emit({
       type: "run.done",
@@ -140,7 +134,7 @@ describe("StructuredLogSink", () => {
     sink.emit({ type: "run.start", data: { runId: "r1" } });
     sink.emit({
       type: "llm.done",
-      data: { runId: "r1", model: "m", inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, cacheCreationTokens: 0, llmMs: 1 },
+      data: { runId: "r1", model: "m", usage: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: 0 }, llmMs: 1 },
     });
     sink.close();
 
@@ -157,7 +151,7 @@ describe("StructuredLogSink", () => {
     sink.setConversationId("conv_xyz");
     sink.emit({
       type: "llm.done",
-      data: { runId: "r1", model: "m", inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, cacheCreationTokens: 0, llmMs: 1 },
+      data: { runId: "r1", model: "m", usage: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: 0 }, llmMs: 1 },
     });
     sink.close();
 
@@ -209,11 +203,11 @@ describe("StructuredLogSink", () => {
     sink.emit({ type: "run.start", data: { runId: "b" } });
     sink.emit({
       type: "llm.done",
-      data: { runId: "a", model: "model-a", inputTokens: 100, outputTokens: 50, cacheReadTokens: 0, cacheCreationTokens: 0, llmMs: 10 },
+      data: { runId: "a", model: "model-a", usage: { inputTokens: 100, outputTokens: 50, cacheReadTokens: 0, cacheWriteTokens: 0 }, llmMs: 10 },
     });
     sink.emit({
       type: "llm.done",
-      data: { runId: "b", model: "model-b", inputTokens: 200, outputTokens: 80, cacheReadTokens: 0, cacheCreationTokens: 0, llmMs: 20 },
+      data: { runId: "b", model: "model-b", usage: { inputTokens: 200, outputTokens: 80, cacheReadTokens: 0, cacheWriteTokens: 0 }, llmMs: 20 },
     });
     sink.emit({ type: "run.done", data: { runId: "a", stopReason: "complete", iterations: 1, totalMs: 100 } });
     sink.emit({ type: "run.done", data: { runId: "b", stopReason: "complete", iterations: 1, totalMs: 200 } });
@@ -224,8 +218,8 @@ describe("StructuredLogSink", () => {
     const llmB = records.find((r) => r.event === "llm.done" && r.runId === "b");
 
     expect(llmA!.model).toBe("model-a");
-    expect(llmA!.inputTokens).toBe(100);
+    expect((llmA!.usage as { inputTokens: number }).inputTokens).toBe(100);
     expect(llmB!.model).toBe("model-b");
-    expect(llmB!.inputTokens).toBe(200);
+    expect((llmB!.usage as { inputTokens: number }).inputTokens).toBe(200);
   });
 });

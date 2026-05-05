@@ -41,9 +41,9 @@ describe("readConversation", () => {
 		};
 		const messages = [
 			{ role: "user", content: "Hello there", timestamp: "2025-01-01T00:01:00.000Z" },
-			{ role: "assistant", content: "Hi! How can I help?", timestamp: "2025-01-01T00:02:00.000Z", metadata: { inputTokens: 100, outputTokens: 60, model: "claude-sonnet-4-5-20250929" } },
+			{ role: "assistant", content: "Hi! How can I help?", timestamp: "2025-01-01T00:02:00.000Z", metadata: { usage: { inputTokens: 100, outputTokens: 60 }, model: "claude-sonnet-4-5-20250929" } },
 			{ role: "user", content: "What is MCP?", timestamp: "2025-01-01T00:03:00.000Z" },
-			{ role: "assistant", content: "MCP stands for Model Context Protocol.", timestamp: "2025-01-01T00:04:00.000Z", metadata: { inputTokens: 200, outputTokens: 120, model: "claude-sonnet-4-5-20250929" } },
+			{ role: "assistant", content: "MCP stands for Model Context Protocol.", timestamp: "2025-01-01T00:04:00.000Z", metadata: { usage: { inputTokens: 200, outputTokens: 120 }, model: "claude-sonnet-4-5-20250929" } },
 			{ role: "user", content: "Thanks!", timestamp: "2025-01-01T00:05:00.000Z" },
 		];
 
@@ -54,9 +54,9 @@ describe("readConversation", () => {
 		expect(result).not.toBeNull();
 		expect(result!.meta.id).toBe("conv_abc123");
 		expect(result!.meta.title).toBe("Test conversation");
-		expect(result!.meta.totalInputTokens).toBe(500);
-		expect(result!.meta.totalOutputTokens).toBe(300);
-		expect(result!.meta.totalCostUsd).toBe(0.02);
+		// Totals derived from messages, not read from line-1 metadata.
+		expect(result!.meta.totalInputTokens).toBe(300);
+		expect(result!.meta.totalOutputTokens).toBe(180);
 		expect(result!.meta.lastModel).toBe("claude-sonnet-4-5-20250929");
 		expect(result!.messageCount).toBe(5);
 		expect(result!.messages).toHaveLength(5);
@@ -181,9 +181,7 @@ describe("readConversation (event format)", () => {
 				runId,
 				model: "m1",
 				content: [{ type: "text", text: "I'll look it up." }],
-				inputTokens: 10,
-				outputTokens: 5,
-				cacheReadTokens: 0,
+				usage: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 0 },
 				llmMs: 100,
 			}),
 			JSON.stringify({
@@ -194,9 +192,7 @@ describe("readConversation (event format)", () => {
 				content: [
 					{ type: "tool-call", toolCallId: "t1", toolName: "search", input: { q: "foo" } },
 				],
-				inputTokens: 15,
-				outputTokens: 8,
-				cacheReadTokens: 0,
+				usage: { inputTokens: 15, outputTokens: 8, cacheReadTokens: 0 },
 				llmMs: 120,
 			}),
 			JSON.stringify({
@@ -215,9 +211,7 @@ describe("readConversation (event format)", () => {
 				runId,
 				model: "m1",
 				content: [{ type: "text", text: "Here's what I found." }],
-				inputTokens: 30,
-				outputTokens: 7,
-				cacheReadTokens: 0,
+				usage: { inputTokens: 30, outputTokens: 7, cacheReadTokens: 0 },
 				llmMs: 80,
 			}),
 			JSON.stringify({ ts: "2025-06-01T00:00:06.000Z", type: "run.done", runId, stopReason: "complete" }),
@@ -273,9 +267,7 @@ describe("readConversation (event format)", () => {
 				content: [
 					{ type: "tool-call", toolCallId: "t2", toolName: "patch_source", input: {} },
 				],
-				inputTokens: 5,
-				outputTokens: 2,
-				cacheReadTokens: 0,
+				usage: { inputTokens: 5, outputTokens: 2, cacheReadTokens: 0 },
 				llmMs: 50,
 			}),
 			JSON.stringify({
@@ -318,9 +310,7 @@ describe("readConversation (event format)", () => {
 						input: {},
 					},
 				],
-				inputTokens: 1,
-				outputTokens: 1,
-				cacheReadTokens: 0,
+				usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0 },
 				llmMs: 1,
 			}),
 			JSON.stringify({
@@ -353,9 +343,7 @@ describe("readConversation (event format)", () => {
 				runId,
 				model: "m1",
 				content: [{ type: "text", text: "partial" }],
-				inputTokens: 1,
-				outputTokens: 1,
-				cacheReadTokens: 0,
+				usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0 },
 				llmMs: 1,
 			}),
 			JSON.stringify({
@@ -382,9 +370,7 @@ describe("readConversation (event format)", () => {
 				runId,
 				model: "m1",
 				content: [{ type: "text", text: "before failure" }],
-				inputTokens: 1,
-				outputTokens: 1,
-				cacheReadTokens: 0,
+				usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0 },
 				llmMs: 1,
 			}),
 			JSON.stringify({

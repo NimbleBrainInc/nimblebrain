@@ -19,14 +19,14 @@ interface TokenBreakdown {
   input: number;
   output: number;
   cacheRead: number;
-  cacheCreation: number;
+  cacheWrite: number;
 }
 
 interface CostBreakdown {
   input: number;
   output: number;
   cacheRead: number;
-  cacheCreation: number;
+  cacheWrite: number;
   total: number;
 }
 
@@ -38,7 +38,8 @@ interface ModelUsage {
 }
 
 interface UsageReport {
-  period: { start: string; end: string };
+  // Mirrors UsageReport.period from src/conversation/usage-aggregator.ts.
+  period: { from: string; to: string };
   totals: {
     tokens: TokenBreakdown;
     cost: CostBreakdown;
@@ -168,7 +169,11 @@ function UsageTabInner() {
 
 function UsageBody({ report }: { report: UsageReport }) {
   const { tokens, cost } = report.totals;
-  const totalTokens = tokens.input + tokens.output + tokens.cacheRead;
+  // Sum all four cost-bearing buckets so the token total honestly
+  // accounts for cache writes too. Pre-fix: cache writes appeared in
+  // the cost panel but were invisible in the token total, so users
+  // saw "$0.50 cache write" with no matching token count.
+  const totalTokens = tokens.input + tokens.output + tokens.cacheRead + tokens.cacheWrite;
   const hasActivity = report.totals.llmCalls > 0;
 
   return (
@@ -184,7 +189,7 @@ function UsageBody({ report }: { report: UsageReport }) {
               <CostRow label="Input" value={formatUsdPrecise(cost.input)} />
               <CostRow label="Output" value={formatUsdPrecise(cost.output)} />
               <CostRow label="Cache read" value={formatUsdPrecise(cost.cacheRead)} />
-              <CostRow label="Cache write" value={formatUsdPrecise(cost.cacheCreation)} />
+              <CostRow label="Cache write" value={formatUsdPrecise(cost.cacheWrite)} />
             </div>
           </CardContent>
         </Card>
@@ -199,6 +204,7 @@ function UsageBody({ report }: { report: UsageReport }) {
               <CostRow label="Input" value={formatTokens(tokens.input)} />
               <CostRow label="Output" value={formatTokens(tokens.output)} />
               <CostRow label="Cache read" value={formatTokens(tokens.cacheRead)} />
+              <CostRow label="Cache write" value={formatTokens(tokens.cacheWrite)} />
             </div>
           </CardContent>
         </Card>
@@ -246,7 +252,9 @@ function UsageBody({ report }: { report: UsageReport }) {
                 <TableRow key={m.model}>
                   <TableCell className="font-mono text-xs">{shortModel(m.model)}</TableCell>
                   <TableCell className="text-right">
-                    {formatTokens(m.tokens.input + m.tokens.output + m.tokens.cacheRead)}
+                    {formatTokens(
+                      m.tokens.input + m.tokens.output + m.tokens.cacheRead + m.tokens.cacheWrite,
+                    )}
                   </TableCell>
                   <TableCell className="text-right">{formatUsdPrecise(m.cost.total)}</TableCell>
                   <TableCell className="text-right">{formatNumber(m.llmCalls)}</TableCell>
@@ -278,7 +286,9 @@ function UsageBody({ report }: { report: UsageReport }) {
                   <TableCell>{formatDateLabel(row.key)}</TableCell>
                   <TableCell className="text-right">{formatTokens(row.tokens.input)}</TableCell>
                   <TableCell className="text-right">{formatTokens(row.tokens.output)}</TableCell>
-                  <TableCell className="text-right">{formatTokens(row.tokens.cacheRead)}</TableCell>
+                  <TableCell className="text-right">
+                    {formatTokens(row.tokens.cacheRead + row.tokens.cacheWrite)}
+                  </TableCell>
                   <TableCell className="text-right">{formatUsdPrecise(row.cost.total)}</TableCell>
                   <TableCell className="text-right">{formatNumber(row.llmCalls)}</TableCell>
                 </TableRow>

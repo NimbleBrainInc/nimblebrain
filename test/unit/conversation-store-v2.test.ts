@@ -61,47 +61,43 @@ function storeV2Tests(
 			expect(conv.createdAt).toBeTruthy();
 			expect(conv.updatedAt).toBe(conv.createdAt);
 			expect(conv.title).toBeNull();
-			expect(conv.totalInputTokens).toBe(0);
-			expect(conv.totalOutputTokens).toBe(0);
-			expect(conv.totalCostUsd).toBe(0);
 			expect(conv.lastModel).toBeNull();
 		});
 
-		// --- append() with token accumulation ---
+		// --- append() preserves usage data; totals derive on read ---
 
-		it("append() with assistant message accumulates token counts", async () => {
+		it("append() preserves assistant usage so totals can be derived later", async () => {
 			const conv = await store.create();
 
 			await store.append(conv, msg("user", "Hello"));
 			await store.append(
 				conv,
 				assistantMsg("Hi there", {
-					inputTokens: 100,
-					outputTokens: 50,
-					costUsd: 0.005,
+					usage: { inputTokens: 100, outputTokens: 50 },
 					model: "claude-sonnet-4-5-20250929",
 				}),
 			);
-
-			expect(conv.totalInputTokens).toBe(100);
-			expect(conv.totalOutputTokens).toBe(50);
-			expect(conv.totalCostUsd).toBeCloseTo(0.005);
-			expect(conv.lastModel).toBe("claude-sonnet-4-5-20250929");
-
-			// Second assistant message accumulates further
 			await store.append(
 				conv,
 				assistantMsg("More", {
-					inputTokens: 200,
-					outputTokens: 75,
-					costUsd: 0.01,
+					usage: { inputTokens: 200, outputTokens: 75 },
 					model: "claude-sonnet-4-5-20250929",
 				}),
 			);
 
-			expect(conv.totalInputTokens).toBe(300);
-			expect(conv.totalOutputTokens).toBe(125);
-			expect(conv.totalCostUsd).toBeCloseTo(0.015);
+			// lastModel is the only display field still maintained on the
+			// Conversation; tokens are derived at read time (see the
+			// summary assertions below).
+			expect(conv.lastModel).toBe("claude-sonnet-4-5-20250929");
+
+			const result = await store.list();
+			const summary = result.conversations.find((c) => c.id === conv.id);
+			expect(summary).toBeDefined();
+			expect(summary!.totalInputTokens).toBe(300);
+			expect(summary!.totalOutputTokens).toBe(125);
+			// claude-sonnet-4-5: input $3/M, output $15/M
+			// 300 * $3/M + 125 * $15/M = $0.0009 + $0.001875 = $0.002775
+			expect(summary!.totalCostUsd).toBeCloseTo(0.002775, 5);
 		});
 
 		it("append() updates updatedAt from message timestamp", async () => {
@@ -121,12 +117,14 @@ function storeV2Tests(
 			expect(conv.updatedAt).not.toBe(originalUpdatedAt);
 		});
 
-		it("append() does not accumulate tokens from user messages", async () => {
+		it("user-only conversations show zero derived totals", async () => {
 			const conv = await store.create();
-			// User messages should not have metadata accumulated
 			await store.append(conv, msg("user", "Hello"));
-			expect(conv.totalInputTokens).toBe(0);
-			expect(conv.totalOutputTokens).toBe(0);
+			const result = await store.list();
+			const summary = result.conversations.find((c) => c.id === conv.id);
+			expect(summary!.totalInputTokens).toBe(0);
+			expect(summary!.totalOutputTokens).toBe(0);
+			expect(summary!.totalCostUsd).toBe(0);
 		});
 
 		// --- history() preserves metadata ---
@@ -147,8 +145,7 @@ function storeV2Tests(
 							ms: 42,
 						},
 					],
-					inputTokens: 100,
-					outputTokens: 50,
+					usage: { inputTokens: 100, outputTokens: 50 },
 					model: "claude-sonnet-4-5-20250929",
 				}),
 			);
@@ -158,7 +155,7 @@ function storeV2Tests(
 			expect(history[0]!.metadata).toBeDefined();
 			expect(history[0]!.metadata!.skill).toBe("test-skill");
 			expect(history[0]!.metadata!.toolCalls).toHaveLength(1);
-			expect(history[0]!.metadata!.inputTokens).toBe(100);
+			expect(history[0]!.metadata!.usage?.inputTokens).toBe(100);
 			expect(history[0]!.metadata!.model).toBe("claude-sonnet-4-5-20250929");
 		});
 
@@ -223,9 +220,7 @@ function storeV2Tests(
 			await store.append(
 				conv,
 				assistantMsg("Second", {
-					inputTokens: 100,
-					outputTokens: 50,
-					costUsd: 0.005,
+					usage: { inputTokens: 100, outputTokens: 50 },
 					model: "claude-sonnet-4-5-20250929",
 				}),
 			);
@@ -273,15 +268,13 @@ function storeV2Tests(
 			expect(result).toBeNull();
 		});
 
-		it("fork() re-accumulates token stats from copied messages", async () => {
+		it("fork() carries forward usage so derived totals match the slice", async () => {
 			const conv = await store.create();
 			await store.append(conv, msg("user", "Hello"));
 			await store.append(
 				conv,
 				assistantMsg("Reply 1", {
-					inputTokens: 100,
-					outputTokens: 50,
-					costUsd: 0.005,
+					usage: { inputTokens: 100, outputTokens: 50 },
 					model: "claude-sonnet-4-5-20250929",
 				}),
 			);
@@ -289,18 +282,19 @@ function storeV2Tests(
 			await store.append(
 				conv,
 				assistantMsg("Reply 2", {
-					inputTokens: 200,
-					outputTokens: 75,
-					costUsd: 0.01,
+					usage: { inputTokens: 200, outputTokens: 75 },
 					model: "claude-sonnet-4-5-20250929",
 				}),
 			);
 
-			// Fork with only first 2 messages (user + first assistant)
+			// Fork with only first 2 messages (user + first assistant). The
+			// totals come from re-deriving over the copied messages on read.
 			const forked = await store.fork(conv.id, 2);
-			expect(forked!.totalInputTokens).toBe(100);
-			expect(forked!.totalOutputTokens).toBe(50);
-			expect(forked!.totalCostUsd).toBeCloseTo(0.005);
+			const result = await store.list();
+			const summary = result.conversations.find((c) => c.id === forked!.id);
+			expect(summary).toBeDefined();
+			expect(summary!.totalInputTokens).toBe(100);
+			expect(summary!.totalOutputTokens).toBe(50);
 		});
 
 		// --- list() with search ---
@@ -364,10 +358,11 @@ describe("JsonlConversationStore (JSONL-specific)", () => {
 		expect(meta.createdAt).toBeTruthy();
 		expect(meta.updatedAt).toBe(meta.createdAt);
 		expect(meta.title).toBeNull();
-		expect(meta.totalInputTokens).toBe(0);
-		expect(meta.totalOutputTokens).toBe(0);
-		expect(meta.totalCostUsd).toBe(0);
 		expect(meta.lastModel).toBeNull();
+		// Token totals are no longer stored on Conversation; derived from
+		// messages at read time.
+		expect(meta.totalInputTokens).toBeUndefined();
+		expect(meta.totalCostUsd).toBeUndefined();
 	});
 
 	it("load() on old-format JSONL defaults missing fields", async () => {
@@ -391,13 +386,10 @@ describe("JsonlConversationStore (JSONL-specific)", () => {
 		expect(loaded!.id).toBe(id);
 		expect(loaded!.updatedAt).toBe("2024-06-01T00:00:00.000Z"); // falls back to createdAt
 		expect(loaded!.title).toBeNull();
-		expect(loaded!.totalInputTokens).toBe(0);
-		expect(loaded!.totalOutputTokens).toBe(0);
-		expect(loaded!.totalCostUsd).toBe(0);
 		expect(loaded!.lastModel).toBeNull();
 	});
 
-	it("append() re-writes line 1 atomically (verify file content)", async () => {
+	it("append() re-writes line 1 atomically with updated lastModel", async () => {
 		const store = new JsonlConversationStore(dir);
 		const conv = await store.create();
 
@@ -405,24 +397,22 @@ describe("JsonlConversationStore (JSONL-specific)", () => {
 		await store.append(
 			conv,
 			assistantMsg("Hi there", {
-				inputTokens: 150,
-				outputTokens: 60,
-				costUsd: 0.007,
+				usage: { inputTokens: 150, outputTokens: 60 },
 				model: "claude-sonnet-4-5-20250929",
 			}),
 		);
 
-		// Read the raw file and verify line 1 has updated metadata
+		// Read the raw file and verify line 1 reflects the new lastModel.
+		// Token totals are no longer stored on line 1 — they're derived
+		// from messages 2+ at read time.
 		const filePath = join(dir, `${conv.id}.jsonl`);
 		const content = readFileSync(filePath, "utf-8");
 		const lines = content.split("\n").filter(Boolean);
 
 		expect(lines).toHaveLength(3); // metadata + 2 messages
 		const meta = JSON.parse(lines[0]!);
-		expect(meta.totalInputTokens).toBe(150);
-		expect(meta.totalOutputTokens).toBe(60);
-		expect(meta.totalCostUsd).toBeCloseTo(0.007);
 		expect(meta.lastModel).toBe("claude-sonnet-4-5-20250929");
+		expect(meta.totalInputTokens).toBeUndefined();
 	});
 
 	it("append() does not leave temp files on success", async () => {

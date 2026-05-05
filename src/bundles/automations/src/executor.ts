@@ -36,10 +36,8 @@ export interface ChatFnResult {
   response: string;
   conversationId: string;
   toolCalls: Array<Record<string, unknown>>;
-  inputTokens: number;
-  outputTokens: number;
   stopReason: string;
-  usage: { iterations: number };
+  usage: { inputTokens: number; outputTokens: number; iterations: number };
 }
 
 /** A function that executes a chat turn. Injected by the caller. */
@@ -121,10 +119,10 @@ function mapResultToRun(
     completedAt: new Date().toISOString(),
     status,
     conversationId: data.conversationId,
-    inputTokens: data.inputTokens,
-    outputTokens: data.outputTokens,
+    inputTokens: data.usage.inputTokens,
+    outputTokens: data.usage.outputTokens,
     toolCalls: Array.isArray(data.toolCalls) ? data.toolCalls.length : 0,
-    iterations: data.usage?.iterations ?? 0,
+    iterations: data.usage.iterations,
     resultPreview: data.response ? data.response.slice(0, 500) : undefined,
     stopReason,
   };

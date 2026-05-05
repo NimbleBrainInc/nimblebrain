@@ -78,9 +78,17 @@ export class PostHogEventSink implements EventSink {
       if (metrics) {
         metrics.iterations++;
         metrics.llmMs += (data.llmMs as number) ?? 0;
-        metrics.cacheTokens += (data.cacheReadTokens as number) ?? 0;
-        metrics.inputTokens += (data.inputTokens as number) ?? 0;
-        metrics.outputTokens += (data.outputTokens as number) ?? 0;
+        // Token counts live under `data.usage` (canonical TokenUsage),
+        // not as flat siblings — mirrored from the engine's llm.done
+        // emission in src/engine/engine.ts.
+        const usage = (data.usage ?? {}) as {
+          inputTokens?: number;
+          outputTokens?: number;
+          cacheReadTokens?: number;
+        };
+        metrics.cacheTokens += usage.cacheReadTokens ?? 0;
+        metrics.inputTokens += usage.inputTokens ?? 0;
+        metrics.outputTokens += usage.outputTokens ?? 0;
       }
       return;
     }
@@ -117,6 +125,8 @@ export class PostHogEventSink implements EventSink {
       const metrics = runId ? this.runs.get(runId) : undefined;
       const totalMs = metrics ? Date.now() - metrics.startedAt : 0;
 
+      // run.done event carries no token counts (it never has) — read the
+      // run-level totals from the per-run metrics accumulator.
       this.telemetry.capture("agent.chat_completed", {
         iterations: metrics?.iterations ?? 0,
         tool_calls: metrics?.toolCalls ?? 0,
@@ -124,8 +134,9 @@ export class PostHogEventSink implements EventSink {
         llm_latency_ms: metrics?.llmMs ?? 0,
         tool_latency_ms: metrics?.toolMs ?? 0,
         total_ms: totalMs,
-        input_tokens: (data.inputTokens as number) ?? 0,
-        output_tokens: (data.outputTokens as number) ?? 0,
+        input_tokens: metrics?.inputTokens ?? 0,
+        output_tokens: metrics?.outputTokens ?? 0,
+        cache_tokens: metrics?.cacheTokens ?? 0,
       });
 
       if (runId) this.runs.delete(runId);

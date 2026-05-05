@@ -140,6 +140,7 @@ describe("Telemetry Privacy", () => {
         allowed: new Set([
           "iterations", "tool_calls", "stop_reason", "llm_latency_ms",
           "tool_latency_ms", "total_ms", "input_tokens", "output_tokens",
+          "cache_tokens",
           ...COMMON_KEYS,
         ]),
         engineType: "run.done",

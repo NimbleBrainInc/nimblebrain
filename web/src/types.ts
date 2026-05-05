@@ -64,15 +64,19 @@ export interface ChatRequest {
   appContext?: AppContext;
 }
 
-/** Token usage for a single chat turn. */
-export interface TurnUsage {
-  inputTokens: number;
-  outputTokens: number;
-  cacheReadTokens: number;
-  costUsd: number;
+/**
+ * Token usage for a single chat turn — the wire shape returned by
+ * `POST /v1/chat` and the SSE `done` event. Mirrors `TurnUsage` from
+ * the runtime (`src/runtime/types.ts`) plus `costUsd` which the API
+ * boundary computes from `(model, usage)`. Cache and reasoning fields
+ * are optional per the canonical `TokenUsage` shape.
+ */
+export interface TurnUsage extends UsageShape {
   model: string;
   llmMs: number;
   iterations: number;
+  /** Computed at the API boundary from (model, usage). Always present. */
+  costUsd: number;
 }
 
 /** Full chat result from POST /v1/chat and the final SSE "done" event. */
@@ -227,15 +231,24 @@ export interface StreamErrorEvent {
   retryAfter?: number;
 }
 
+/**
+ * Token usage carried on llm.done SSE events. Mirrors the runtime's
+ * canonical `TokenUsage` (src/usage/types.ts). Web is a separate package
+ * so the shape is duplicated rather than imported — keep in sync.
+ */
+export interface UsageShape {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+  reasoningTokens?: number;
+}
+
 export interface LlmDoneEvent {
   runId: string;
   model: string;
-  inputTokens: number;
-  outputTokens: number;
-  /** Reasoning-token subtotal (subset of outputTokens). 0 if absent. */
-  reasoningTokens?: number;
-  cacheReadTokens: number;
-  cacheCreationTokens: number;
+  /** Token usage for this single LLM call (canonical AI SDK V3 shape). */
+  usage: UsageShape;
   llmMs: number;
   /**
    * Per-call finish reason (AI SDK V3 unified). Optional for backward

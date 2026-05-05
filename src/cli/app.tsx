@@ -139,7 +139,7 @@ export function App({ runtime, eventSink, initialConversationId, confirmationGat
             type: "assistant",
             text: result.response,
             skill: result.skillName,
-            tokens: { input: result.inputTokens, output: result.outputTokens },
+            tokens: { input: result.usage.inputTokens, output: result.usage.outputTokens },
           },
         ]);
       } catch (err) {

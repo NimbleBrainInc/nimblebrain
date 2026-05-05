@@ -1,3 +1,6 @@
+import { estimateCost } from "../usage/cost.ts";
+import type { TokenUsage } from "../usage/types.ts";
+import { addUsage, emptyUsage } from "../usage/types.ts";
 import { canAccess } from "./index-cache.ts";
 import type {
   Conversation,
@@ -11,6 +14,26 @@ import type {
   StoredMessage,
 } from "./types.ts";
 
+/**
+ * Derive cumulative usage + cost from a flat list of stored messages.
+ * Used by the legacy (non-event-sourced) stores when building a
+ * ConversationSummary. Cost is computed at read time from the catalog;
+ * never stored.
+ */
+function deriveSummaryTotals(messages: StoredMessage[]): {
+  usage: TokenUsage;
+  costUsd: number;
+} {
+  const usage = emptyUsage();
+  let costUsd = 0;
+  for (const msg of messages) {
+    if (msg.role !== "assistant" || !msg.metadata?.usage || !msg.metadata.model) continue;
+    addUsage(usage, msg.metadata.usage);
+    costUsd += estimateCost(msg.metadata.model, msg.metadata.usage);
+  }
+  return { usage, costUsd };
+}
+
 export class InMemoryConversationStore implements ConversationStore {
   private conversations = new Map<string, Conversation>();
   private messages = new Map<string, StoredMessage[]>();
@@ -23,9 +46,6 @@ export class InMemoryConversationStore implements ConversationStore {
       createdAt: now,
       updatedAt: now,
       title: null,
-      totalInputTokens: 0,
-      totalOutputTokens: 0,
-      totalCostUsd: 0,
       lastModel: null,
       ...(options?.workspaceId ? { workspaceId: options.workspaceId } : {}),
       ...(options?.ownerId ? { ownerId: options.ownerId } : {}),
@@ -61,12 +81,10 @@ export class InMemoryConversationStore implements ConversationStore {
     const messages = this.messages.get(conversation.id);
     if (!messages) throw new Error(`Conversation ${conversation.id} not found`);
 
-    // Accumulate token stats from assistant messages with metadata
-    if (message.role === "assistant" && message.metadata) {
-      conversation.totalInputTokens += message.metadata.inputTokens ?? 0;
-      conversation.totalOutputTokens += message.metadata.outputTokens ?? 0;
-      conversation.totalCostUsd += message.metadata.costUsd ?? 0;
-      conversation.lastModel = message.metadata.model ?? conversation.lastModel;
+    // Track lastModel for display. Token totals are derived from message
+    // history at read time (deriveSummaryTotals), never stored.
+    if (message.role === "assistant" && message.metadata?.model) {
+      conversation.lastModel = message.metadata.model;
     }
 
     // Update updatedAt from message timestamp
@@ -116,6 +134,7 @@ export class InMemoryConversationStore implements ConversationStore {
         if (!titleMatch && !previewMatch) continue;
       }
 
+      const totals = deriveSummaryTotals(msgs);
       summaries.push({
         id: conversation.id,
         createdAt: conversation.createdAt,
@@ -123,9 +142,9 @@ export class InMemoryConversationStore implements ConversationStore {
         title: conversation.title,
         messageCount: msgs.length,
         preview,
-        totalInputTokens: conversation.totalInputTokens,
-        totalOutputTokens: conversation.totalOutputTokens,
-        totalCostUsd: conversation.totalCostUsd,
+        totalInputTokens: totals.usage.inputTokens,
+        totalOutputTokens: totals.usage.outputTokens,
+        totalCostUsd: totals.costUsd,
       });
     }
 
@@ -176,13 +195,10 @@ export class InMemoryConversationStore implements ConversationStore {
 
     const newConv = await this.create();
 
-    // Re-accumulate tokens from copied messages
+    // Track lastModel from copied messages. Token totals derive at read.
     for (const msg of messagesToCopy) {
-      if (msg.role === "assistant" && msg.metadata) {
-        newConv.totalInputTokens += msg.metadata.inputTokens ?? 0;
-        newConv.totalOutputTokens += msg.metadata.outputTokens ?? 0;
-        newConv.totalCostUsd += msg.metadata.costUsd ?? 0;
-        newConv.lastModel = msg.metadata.model ?? newConv.lastModel;
+      if (msg.role === "assistant" && msg.metadata?.model) {
+        newConv.lastModel = msg.metadata.model;
       }
     }
 

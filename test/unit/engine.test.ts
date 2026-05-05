@@ -114,8 +114,8 @@ describe("AgentEngine", () => {
     expect(result.toolCalls[0]!.output).toBe("Hello, World!");
     expect(result.toolCalls[0]!.ok).toBe(true);
     expect(result.iterations).toBe(2);
-    expect(result.inputTokens).toBe(130);
-    expect(result.outputTokens).toBe(30);
+    expect(result.usage.inputTokens).toBe(130);
+    expect(result.usage.outputTokens).toBe(30);
     expect(result.stopReason).toBe("complete");
   });
 
@@ -806,7 +806,8 @@ describe("AgentEngine", () => {
       const llmDone = events.find((e) => e.type === "llm.done");
       expect(llmDone).toBeDefined();
       const llmData = llmDone!.data as Record<string, unknown>;
-      expect(llmData.reasoningTokens).toBe(42);
+      const usage = llmData.usage as { reasoningTokens?: number };
+      expect(usage.reasoningTokens).toBe(42);
       const content = llmData.content as Array<{ type: string; text?: string }>;
       expect(content.find((c) => c.type === "reasoning")?.text).toBe(
         "Let me think about this carefully...",

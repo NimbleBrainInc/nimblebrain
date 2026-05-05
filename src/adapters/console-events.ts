@@ -20,11 +20,16 @@ export class ConsoleEventSink implements EventSink {
           `[engine] tool.done: ${event.data.name} (${event.data.ok ? "ok" : "error"}, ${Math.round(event.data.ms as number)}ms)`,
         );
         break;
-      case "llm.done":
+      case "llm.done": {
+        const usage = (event.data.usage ?? {}) as {
+          inputTokens?: number;
+          outputTokens?: number;
+        };
         console.error(
-          `[engine] llm.done: ${event.data.model} (${event.data.inputTokens} in, ${event.data.outputTokens} out, ${Math.round(event.data.llmMs as number)}ms)`,
+          `[engine] llm.done: ${event.data.model} (${usage.inputTokens ?? 0} in, ${usage.outputTokens ?? 0} out, ${Math.round(event.data.llmMs as number)}ms)`,
         );
         break;
+      }
       case "run.done":
         console.error(`[engine] run done: ${event.data.stopReason}`);
         break;

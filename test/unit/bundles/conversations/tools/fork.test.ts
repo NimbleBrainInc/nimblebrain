@@ -42,9 +42,7 @@ function makeMessages() {
 			content: "Hi! How can I help?",
 			timestamp: "2025-01-01T00:02:00.000Z",
 			metadata: {
-				inputTokens: 100,
-				outputTokens: 60,
-				costUsd: 0.005,
+				usage: { inputTokens: 100, outputTokens: 60 },
 				model: "claude-sonnet-4-5-20250929",
 			},
 		},
@@ -58,9 +56,7 @@ function makeMessages() {
 			content: "MCP stands for Model Context Protocol.",
 			timestamp: "2025-01-01T00:04:00.000Z",
 			metadata: {
-				inputTokens: 200,
-				outputTokens: 120,
-				costUsd: 0.015,
+				usage: { inputTokens: 200, outputTokens: 120 },
 				model: "claude-sonnet-4-5-20250929",
 			},
 		},

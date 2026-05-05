@@ -100,24 +100,71 @@ export class ActivityCollector {
 
       try {
         const content = await readFile(join(this.conversationsDir, filename), "utf-8");
-        const firstNewline = content.indexOf("\n");
-        const firstLine = firstNewline === -1 ? content : content.slice(0, firstNewline);
-        if (!firstLine.trim()) continue;
+        const lines = content.split("\n").filter(Boolean);
+        const firstLine = lines[0];
+        if (!firstLine?.trim()) continue;
 
         const meta = JSON.parse(firstLine) as Record<string, unknown>;
 
         const updatedAt = (meta.updatedAt as string) ?? "";
         if (updatedAt < since || updatedAt > until) continue;
 
+        // Token totals are derived from events at read time — they are no
+        // longer stored on the line-1 metadata. Walk events in this file
+        // and aggregate tokens + count messages + extract preview, mirroring
+        // the canonical derivation in src/conversation/index-cache.ts.
+        let inputTokens = 0;
+        let outputTokens = 0;
+        let messageCount = 0;
+        let preview = "";
+        for (let i = 1; i < lines.length; i++) {
+          try {
+            const entry = JSON.parse(lines[i]!) as {
+              type?: string;
+              role?: string;
+              content?: unknown;
+              usage?: { inputTokens?: number; outputTokens?: number };
+              metadata?: { usage?: { inputTokens?: number; outputTokens?: number } };
+            };
+            // Event-format file
+            if (entry.type === "llm.response" && entry.usage) {
+              inputTokens += entry.usage.inputTokens ?? 0;
+              outputTokens += entry.usage.outputTokens ?? 0;
+            } else if (entry.type === "user.message") {
+              messageCount++;
+              if (!preview && Array.isArray(entry.content)) {
+                const firstText = (entry.content as Array<{ type?: string; text?: string }>).find(
+                  (c) => c.type === "text",
+                );
+                preview = firstText?.text ?? "";
+              }
+            } else if (entry.type === "run.done") {
+              messageCount++;
+            } else if (entry.role) {
+              // Legacy message-format file
+              messageCount++;
+              if (!preview && entry.role === "user" && typeof entry.content === "string") {
+                preview = entry.content;
+              }
+              if (entry.role === "assistant" && entry.metadata?.usage) {
+                inputTokens += entry.metadata.usage.inputTokens ?? 0;
+                outputTokens += entry.metadata.usage.outputTokens ?? 0;
+              }
+            }
+          } catch {
+            // Skip malformed lines
+          }
+        }
+
         summaries.push({
           id: (meta.id as string) ?? filename.replace(".jsonl", ""),
           created_at: (meta.createdAt as string) ?? "",
           updated_at: updatedAt,
-          message_count: (meta.messageCount as number) ?? 0,
+          message_count: messageCount,
           tool_call_count: 0,
-          input_tokens: (meta.totalInputTokens as number) ?? 0,
-          output_tokens: (meta.totalOutputTokens as number) ?? 0,
-          preview: (meta.preview as string) ?? "",
+          input_tokens: inputTokens,
+          output_tokens: outputTokens,
+          preview,
           had_errors: false,
         });
       } catch {

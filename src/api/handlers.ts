@@ -16,6 +16,7 @@ import { coerceInputForSchema } from "../tools/coerce-input.ts";
 import type { HealthMonitor } from "../tools/health-monitor.ts";
 import type { ResourceData } from "../tools/types.ts";
 import { validateToolInput } from "../tools/validate-input.ts";
+import { estimateCost } from "../usage/cost.ts";
 import { bytesToBase64 } from "../util/base64.ts";
 import type { ConversationEventManager } from "./conversation-events.ts";
 import type { SseEventManager } from "./events.ts";
@@ -57,8 +58,17 @@ export async function handleChat(
 
   try {
     const result = await runtime.chat(parsed);
+    // Cost is derived at the boundary, never stored. Same wire shape as
+    // the streaming `done` event so clients see one consistent contract.
+    const wireUsage = {
+      ...result.usage,
+      costUsd: estimateCost(result.usage.model, result.usage),
+    };
     return json({
       ...result,
+      inputTokens: result.usage.inputTokens,
+      outputTokens: result.usage.outputTokens,
+      usage: wireUsage,
       ...(parsed.workspaceId ? { workspaceId: parsed.workspaceId } : {}),
     });
   } catch (err) {
@@ -176,16 +186,24 @@ export async function handleChatStream(
       runtime
         .chat(parsed, sink)
         .then((result) => {
+          // Cost is computed at the API boundary — never stored. The
+          // wire-format `usage.costUsd` is what clients display; deriving
+          // it here means there is exactly one place this number is
+          // produced for live responses.
+          const wireUsage = {
+            ...result.usage,
+            costUsd: estimateCost(result.usage.model, result.usage),
+          };
           const doneData = {
             response: result.response,
             conversationId: result.conversationId,
             ...(parsed.workspaceId ? { workspaceId: parsed.workspaceId } : {}),
             skillName: result.skillName,
             toolCalls: result.toolCalls,
-            inputTokens: result.inputTokens,
-            outputTokens: result.outputTokens,
+            inputTokens: result.usage.inputTokens,
+            outputTokens: result.usage.outputTokens,
             stopReason: result.stopReason,
-            usage: result.usage,
+            usage: wireUsage,
           };
           send("done", doneData);
           // Broadcast done to other participants

@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 import type { LanguageModelV3Content, LanguageModelV3Message } from "@ai-sdk/provider";
 import type { ContextAssembledSource, SkillsLoadedEntry } from "../engine/types.ts";
+import type { TokenUsage } from "../usage/types.ts";
 
 // Re-export so conversation-event consumers don't need to know these
 // originate in engine/types.ts. Engine emits them; conversation persists
@@ -100,15 +101,19 @@ export interface ConversationStore {
   removeParticipant(id: string, userId: string): Promise<Conversation | null>;
 }
 
-/** Conversation metadata — stored as line 1 of the JSONL file. */
+/**
+ * Conversation metadata — stored as line 1 of the JSONL file.
+ *
+ * No token totals or cost — those are derived from events at read time
+ * (see deriveUsageMetrics in event-reconstructor.ts and the index cache).
+ * Storing them invited drift bugs where the cached total didn't match
+ * what re-aggregating the events would produce.
+ */
 export interface Conversation {
   id: string;
   createdAt: string;
   updatedAt: string;
   title: string | null;
-  totalInputTokens: number;
-  totalOutputTokens: number;
-  totalCostUsd: number;
   lastModel: string | null;
   /** Workspace this conversation belongs to. */
   workspaceId?: string;
@@ -151,10 +156,8 @@ export type StoredMessage = LanguageModelV3Message & {
         description?: string;
       }>;
     }>;
-    inputTokens?: number;
-    outputTokens?: number;
-    cacheReadTokens?: number;
-    costUsd?: number;
+    /** Cumulative usage for the assistant turn. Cost is derived at read time. */
+    usage?: TokenUsage;
     model?: string;
     llmMs?: number;
     iterations?: number;
@@ -228,16 +231,8 @@ export interface LlmResponseEvent {
    * finishReason is what indicates a real empty turn.
    */
   content: LanguageModelV3Content[];
-  inputTokens: number;
-  outputTokens: number;
-  /**
-   * Reasoning-token subtotal (subset of `outputTokens`). 0 when the model
-   * emitted no reasoning. Useful for cost attribution and for diagnosing
-   * "why is outputTokens at the cap with empty visible content?".
-   */
-  reasoningTokens?: number;
-  cacheReadTokens: number;
-  cacheCreationTokens: number;
+  /** Token usage for this single LLM call (canonical AI SDK V3 shape). */
+  usage: TokenUsage;
   llmMs: number;
   /**
    * Per-call finish reason from the provider (AI SDK V3 unified value).

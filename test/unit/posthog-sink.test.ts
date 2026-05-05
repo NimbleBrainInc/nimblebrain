@@ -88,13 +88,12 @@ describe("PostHogEventSink", () => {
 			toolNames: ["tool_a"],
 		});
 
-		// iteration with LLM metrics
+		// iteration with LLM metrics — usage is nested under `usage` per
+		// the engine's llm.done emission (the canonical TokenUsage shape).
 		emit(sink, "llm.done", {
 			runId: "r1",
 			llmMs: 100,
-			inputTokens: 500,
-			outputTokens: 200,
-			cacheReadTokens: 50,
+			usage: { inputTokens: 500, outputTokens: 200, cacheReadTokens: 50 },
 		});
 
 		// tool call
@@ -109,16 +108,12 @@ describe("PostHogEventSink", () => {
 		emit(sink, "llm.done", {
 			runId: "r1",
 			llmMs: 80,
-			inputTokens: 600,
-			outputTokens: 150,
-			cacheReadTokens: 30,
+			usage: { inputTokens: 600, outputTokens: 150, cacheReadTokens: 30 },
 		});
 
 		emit(sink, "run.done", {
 			runId: "r1",
 			stopReason: "complete",
-			inputTokens: 1100,
-			outputTokens: 350,
 		});
 
 		// run.start + run.done = 2 captures (llm.done and tool.done don't emit)
@@ -131,6 +126,13 @@ describe("PostHogEventSink", () => {
 		expect(done!.properties.stop_reason).toBe("complete");
 		expect(done!.properties.llm_latency_ms).toBe(180); // 100 + 80
 		expect(done!.properties.tool_latency_ms).toBe(75);
+		// Token totals come from the per-run accumulator, not from any
+		// fields on the run.done event. Regression guard: if the sink ever
+		// reverts to reading flat fields off llm.done, these assertions go
+		// to zero (pre-fix behavior was a silent telemetry blackout).
+		expect(done!.properties.input_tokens).toBe(1100); // 500 + 600
+		expect(done!.properties.output_tokens).toBe(350); // 200 + 150
+		expect(done!.properties.cache_tokens).toBe(80); // 50 + 30
 	});
 
 	it("maps run.error to agent.error with type only", () => {

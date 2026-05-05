@@ -39,10 +39,7 @@ describe("Event-sourced integration", () => {
         runId: "r1",
         model: "claude-sonnet-4-5-20250929",
         content: [{ type: "text", text: "Hi there!" }],
-        inputTokens: 100,
-        outputTokens: 20,
-        cacheReadTokens: 50,
-        cacheCreationTokens: 0,
+        usage: { inputTokens: 100, outputTokens: 20, cacheReadTokens: 50, cacheWriteTokens: 0 },
         llmMs: 200,
       },
     });
@@ -70,8 +67,8 @@ describe("Event-sourced integration", () => {
     expect(messages[0].role).toBe("user");
     expect(messages[1].role).toBe("assistant");
     expect((messages[1].content as Array<{ type: string; text: string }>)[0].text).toBe("Hi there!");
-    expect(messages[1].metadata?.inputTokens).toBe(100);
-    expect(messages[1].metadata?.outputTokens).toBe(20);
+    expect(messages[1].metadata?.usage?.inputTokens).toBe(100);
+    expect(messages[1].metadata?.usage?.outputTokens).toBe(20);
     expect(messages[1].metadata?.model).toBe("claude-sonnet-4-5-20250929");
   });
 
@@ -191,10 +188,7 @@ describe("Event-sourced integration", () => {
         runId: "r1",
         model: "claude-sonnet-4-5-20250929",
         content: [{ type: "text", text: "Hello!" }],
-        inputTokens: 200,
-        outputTokens: 50,
-        cacheReadTokens: 100,
-        cacheCreationTokens: 0,
+        usage: { inputTokens: 200, outputTokens: 50, cacheReadTokens: 100, cacheWriteTokens: 0 },
         llmMs: 150,
       } as ConversationEvent,
       {
@@ -203,10 +197,7 @@ describe("Event-sourced integration", () => {
         runId: "r1",
         model: "claude-sonnet-4-5-20250929",
         content: [{ type: "text", text: "More text" }],
-        inputTokens: 300,
-        outputTokens: 80,
-        cacheReadTokens: 200,
-        cacheCreationTokens: 0,
+        usage: { inputTokens: 300, outputTokens: 80, cacheReadTokens: 200, cacheWriteTokens: 0 },
         llmMs: 200,
       } as ConversationEvent,
       {

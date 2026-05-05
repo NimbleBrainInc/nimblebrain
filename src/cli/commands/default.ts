@@ -123,8 +123,8 @@ async function runHeadless(
           conversationId: result.conversationId,
           skillName: result.skillName,
           toolCalls: result.toolCalls,
-          inputTokens: result.inputTokens,
-          outputTokens: result.outputTokens,
+          inputTokens: result.usage.inputTokens,
+          outputTokens: result.usage.outputTokens,
           stopReason: result.stopReason,
         };
         process.stdout.write(`${JSON.stringify(output)}\n`);
@@ -133,7 +133,7 @@ async function runHeadless(
       }
 
       log.info(
-        `[headless] → ${result.response.slice(0, 80)}${result.response.length > 80 ? "..." : ""} (${result.inputTokens + result.outputTokens} tokens)`,
+        `[headless] → ${result.response.slice(0, 80)}${result.response.length > 80 ? "..." : ""} (${result.usage.inputTokens + result.usage.outputTokens} tokens)`,
       );
     } catch (err) {
       hasError = true;

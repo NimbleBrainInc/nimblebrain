@@ -1,6 +1,5 @@
 import { describe, expect, it } from "bun:test";
 import {
-	estimateCost,
 	findProviderForModelId,
 	getAvailableModels,
 	getModel,
@@ -10,6 +9,7 @@ import {
 	listModels,
 	listProviders,
 } from "../../src/model/catalog.ts";
+import { estimateCost } from "../../src/usage/cost.ts";
 
 describe("Model Catalog", () => {
 	it("listProviders returns anthropic, openai, google", () => {

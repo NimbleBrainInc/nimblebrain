@@ -34,14 +34,14 @@ function makeMessages() {
 			role: "assistant",
 			content: "Hi! How can I help?",
 			timestamp: "2025-01-01T00:02:00.000Z",
-			metadata: { inputTokens: 100, outputTokens: 60, model: "claude-sonnet-4-5-20250929" },
+			metadata: { usage: { inputTokens: 100, outputTokens: 60 }, model: "claude-sonnet-4-5-20250929" },
 		},
 		{ role: "user", content: "What is MCP?", timestamp: "2025-01-01T00:03:00.000Z" },
 		{
 			role: "assistant",
 			content: "MCP stands for Model Context Protocol.",
 			timestamp: "2025-01-01T00:04:00.000Z",
-			metadata: { inputTokens: 200, outputTokens: 120, model: "claude-sonnet-4-5-20250929" },
+			metadata: { usage: { inputTokens: 200, outputTokens: 120 }, model: "claude-sonnet-4-5-20250929" },
 		},
 		{ role: "user", content: "Thanks!", timestamp: "2025-01-01T00:05:00.000Z" },
 	];

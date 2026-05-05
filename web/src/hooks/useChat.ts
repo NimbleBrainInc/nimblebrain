@@ -117,6 +117,8 @@ export interface ChatMessage {
     inputTokens: number;
     outputTokens: number;
     cacheReadTokens?: number;
+    cacheWriteTokens?: number;
+    reasoningTokens?: number;
     model: string;
     llmMs: number;
   };
@@ -391,8 +393,10 @@ export function useChat(initialConversationId?: string, currentUserId?: string):
               const evt = data as LlmDoneEvent;
               iterationRef.current = {
                 n: (iterationRef.current?.n ?? 0) + 1,
-                inputTokens: (iterationRef.current?.inputTokens ?? 0) + evt.inputTokens,
-                outputTokens: (iterationRef.current?.outputTokens ?? 0) + evt.outputTokens,
+                inputTokens:
+                  (iterationRef.current?.inputTokens ?? 0) + (evt.usage?.inputTokens ?? 0),
+                outputTokens:
+                  (iterationRef.current?.outputTokens ?? 0) + (evt.usage?.outputTokens ?? 0),
               };
               flushToMessage();
               break;
@@ -427,6 +431,8 @@ export function useChat(initialConversationId?: string, currentUserId?: string):
                     inputTokens: result.usage.inputTokens,
                     outputTokens: result.usage.outputTokens,
                     cacheReadTokens: result.usage.cacheReadTokens,
+                    cacheWriteTokens: result.usage.cacheWriteTokens,
+                    reasoningTokens: result.usage.reasoningTokens,
                     model: result.usage.model,
                     llmMs: result.usage.llmMs,
                   }
@@ -690,8 +696,9 @@ export function useChat(initialConversationId?: string, currentUserId?: string):
           const evt = data as LlmDoneEvent;
           iterationRef.current = {
             n: (iterationRef.current?.n ?? 0) + 1,
-            inputTokens: (iterationRef.current?.inputTokens ?? 0) + evt.inputTokens,
-            outputTokens: (iterationRef.current?.outputTokens ?? 0) + evt.outputTokens,
+            inputTokens: (iterationRef.current?.inputTokens ?? 0) + (evt.usage?.inputTokens ?? 0),
+            outputTokens:
+              (iterationRef.current?.outputTokens ?? 0) + (evt.usage?.outputTokens ?? 0),
           };
           flushToMessage();
           break;
@@ -725,6 +732,8 @@ export function useChat(initialConversationId?: string, currentUserId?: string):
                 inputTokens: result.usage.inputTokens,
                 outputTokens: result.usage.outputTokens,
                 cacheReadTokens: result.usage.cacheReadTokens,
+                cacheWriteTokens: result.usage.cacheWriteTokens,
+                reasoningTokens: result.usage.reasoningTokens,
                 model: result.usage.model,
                 llmMs: result.usage.llmMs,
               }

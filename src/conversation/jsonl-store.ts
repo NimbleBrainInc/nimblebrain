@@ -77,9 +77,6 @@ export class JsonlConversationStore implements ConversationStore {
       createdAt: now,
       updatedAt: now,
       title: null,
-      totalInputTokens: 0,
-      totalOutputTokens: 0,
-      totalCostUsd: 0,
       lastModel: null,
       ...(options?.workspaceId ? { workspaceId: options.workspaceId } : {}),
       ...(options?.ownerId ? { ownerId: options.ownerId } : {}),
@@ -111,9 +108,6 @@ export class JsonlConversationStore implements ConversationStore {
       createdAt: raw.createdAt as string,
       updatedAt: (raw.updatedAt as string) ?? (raw.createdAt as string),
       title: (raw.title as string | null) ?? null,
-      totalInputTokens: (raw.totalInputTokens as number) ?? 0,
-      totalOutputTokens: (raw.totalOutputTokens as number) ?? 0,
-      totalCostUsd: (raw.totalCostUsd as number) ?? 0,
       lastModel: (raw.lastModel as string | null) ?? null,
       ...(raw.workspaceId ? { workspaceId: raw.workspaceId as string } : {}),
       ...(raw.ownerId ? { ownerId: raw.ownerId as string } : {}),
@@ -138,12 +132,10 @@ export class JsonlConversationStore implements ConversationStore {
   async append(conversation: Conversation, message: StoredMessage): Promise<void> {
     const path = this.path(conversation.id);
 
-    // Accumulate token stats from assistant messages with metadata
-    if (message.role === "assistant" && message.metadata) {
-      conversation.totalInputTokens += message.metadata.inputTokens ?? 0;
-      conversation.totalOutputTokens += message.metadata.outputTokens ?? 0;
-      conversation.totalCostUsd += message.metadata.costUsd ?? 0;
-      conversation.lastModel = message.metadata.model ?? conversation.lastModel;
+    // Track lastModel for display. Token totals are derived from the
+    // message history at read time (see ConversationIndex), never stored.
+    if (message.role === "assistant" && message.metadata?.model) {
+      conversation.lastModel = message.metadata.model;
     }
 
     // Update updatedAt from message timestamp
@@ -236,13 +228,10 @@ export class JsonlConversationStore implements ConversationStore {
 
     // If there are messages to copy, rewrite the new file with them
     if (messagesToCopy.length > 0) {
-      // Re-accumulate tokens from the copied messages
+      // Token totals derive from messages at read time; carry lastModel.
       for (const msg of messagesToCopy) {
-        if (msg.role === "assistant" && msg.metadata) {
-          newConv.totalInputTokens += msg.metadata.inputTokens ?? 0;
-          newConv.totalOutputTokens += msg.metadata.outputTokens ?? 0;
-          newConv.totalCostUsd += msg.metadata.costUsd ?? 0;
-          newConv.lastModel = msg.metadata.model ?? newConv.lastModel;
+        if (msg.role === "assistant" && msg.metadata?.model) {
+          newConv.lastModel = msg.metadata.model;
         }
       }
       // Update updatedAt to last message timestamp

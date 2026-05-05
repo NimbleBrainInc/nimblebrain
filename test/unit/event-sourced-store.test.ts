@@ -28,12 +28,14 @@ describe("EventSourcedConversationStore", () => {
   it("creates conversations with format: events", async () => {
     const conv = await store.create();
     expect(conv.format).toBe("events");
-    expect(conv.totalInputTokens).toBe(0);
     expect(conv.id).toMatch(/^conv_/);
 
     const lines = readLines(join(dirs.dir, `${conv.id}.jsonl`));
     const meta = JSON.parse(lines[0]);
     expect(meta.format).toBe("events");
+    // Token totals are no longer stored on Conversation; they're derived
+    // from events at read time.
+    expect(meta.totalInputTokens).toBeUndefined();
   });
 
   it("emit() writes engine events to conversation file", async () => {
@@ -50,10 +52,7 @@ describe("EventSourcedConversationStore", () => {
         runId: "r1",
         model: "test-model",
         content: [{ type: "text", text: "Hello" }],
-        inputTokens: 100,
-        outputTokens: 20,
-        cacheReadTokens: 0,
-        cacheCreationTokens: 0,
+        usage: { inputTokens: 100, outputTokens: 20, cacheReadTokens: 0, cacheWriteTokens: 0 },
         llmMs: 50,
       },
     });
@@ -100,10 +99,7 @@ describe("EventSourcedConversationStore", () => {
       runId: "r1",
       model: "test-model",
       content: [{ type: "text", text: "Hello!" }],
-      inputTokens: 50,
-      outputTokens: 10,
-      cacheReadTokens: 0,
-      cacheCreationTokens: 0,
+      usage: { inputTokens: 50, outputTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0 },
       llmMs: 30,
     } as ConversationEvent);
 
@@ -253,10 +249,7 @@ describe("EventSourcedConversationStore", () => {
         content: [
           { type: "tool-call", toolCallId: "tc1", toolName: "files__read", input: "{}" },
         ],
-        inputTokens: 100,
-        outputTokens: 50,
-        cacheReadTokens: 0,
-        cacheCreationTokens: 0,
+        usage: { inputTokens: 100, outputTokens: 50, cacheReadTokens: 0, cacheWriteTokens: 0 },
         llmMs: 500,
       },
     });
@@ -271,10 +264,7 @@ describe("EventSourcedConversationStore", () => {
         runId: "r1",
         model: "test-model",
         content: [{ type: "text", text: "I read the file." }],
-        inputTokens: 200,
-        outputTokens: 30,
-        cacheReadTokens: 0,
-        cacheCreationTokens: 0,
+        usage: { inputTokens: 200, outputTokens: 30, cacheReadTokens: 0, cacheWriteTokens: 0 },
         llmMs: 400,
       },
     });
@@ -377,10 +367,7 @@ describe("EventSourcedConversationStore", () => {
         runId,
         model: "test",
         content: [{ type: "text", text: "response 1" }],
-        inputTokens: 10,
-        outputTokens: 5,
-        cacheReadTokens: 0,
-        cacheCreationTokens: 0,
+        usage: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: 0 },
         llmMs: 100,
       },
     });
@@ -398,10 +385,7 @@ describe("EventSourcedConversationStore", () => {
         runId: runId2,
         model: "test",
         content: [{ type: "text", text: "response 2" }],
-        inputTokens: 10,
-        outputTokens: 5,
-        cacheReadTokens: 0,
-        cacheCreationTokens: 0,
+        usage: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: 0 },
         llmMs: 100,
       },
     });
@@ -413,11 +397,11 @@ describe("EventSourcedConversationStore", () => {
     const loaded = await store.load(conv.id);
     expect(loaded).not.toBeNull();
     expect(loaded!.title).toBe("Generated Title");
-    // Both runs' tokens must be present — this is the core invariant
-    expect(loaded!.totalInputTokens).toBe(20);
-    expect(loaded!.totalOutputTokens).toBe(10);
 
-    // Verify at the file level: all event lines are present, line 1 untouched
+    // Verify at the file level: all event lines are present, line 1 untouched.
+    // Token totals are derived from events at read time, not stored on the
+    // Conversation, so the invariant is "both llm.response events are
+    // there" — see deriveUsageMetrics for the aggregation path.
     const path = join(dirs.dir, `${conv.id}.jsonl`);
     const lines = readLines(path);
     const events = lines.slice(1).map((l) => JSON.parse(l));
@@ -426,6 +410,13 @@ describe("EventSourcedConversationStore", () => {
     expect(types.filter((t: string) => t === "llm.response").length).toBe(2);
     expect(types.filter((t: string) => t === "run.done").length).toBe(2);
     expect(types).toContain("metadata.title");
+    // And the total tokens (10 + 10) are derivable from those events.
+    const llmResponseEvents = events.filter((e: { type: string }) => e.type === "llm.response");
+    const totalIn = llmResponseEvents.reduce(
+      (s: number, e: { usage?: { inputTokens: number } }) => s + (e.usage?.inputTokens ?? 0),
+      0,
+    );
+    expect(totalIn).toBe(20);
   });
 
   it("shareConversation appends events instead of rewriting line 1", async () => {
@@ -519,5 +510,63 @@ describe("EventSourcedConversationStore", () => {
     expect(loaded!.title).toBe("Old Title");
     expect(loaded!.visibility).toBe("shared");
     expect(loaded!.participants).toEqual(["user-1", "user-2"]);
+  });
+
+  it("fork() preserves assistant turns through history() round-trip", async () => {
+    // Regression: fork() previously wrote llm.response events without
+    // run.start/run.done bookends. The reconstructor only emits assistant
+    // messages inside an active run scope, so history() on a forked
+    // event-format conversation returned only the user turns. Assistant
+    // turns silently disappeared.
+    const conv = await store.create();
+    store.setActiveConversation(conv.id);
+
+    store.emit({ type: "run.start", data: { runId: "r1", model: "test-model" } });
+    store.emit({
+      type: "llm.done",
+      data: {
+        runId: "r1",
+        model: "test-model",
+        content: [{ type: "text", text: "First reply" }],
+        usage: { inputTokens: 10, outputTokens: 5 },
+        llmMs: 50,
+      },
+    });
+    store.emit({ type: "run.done", data: { runId: "r1", stopReason: "complete", totalMs: 50 } });
+
+    store.appendEvent(conv.id, {
+      ts: new Date().toISOString(),
+      type: "user.message",
+      content: [{ type: "text", text: "Follow up" }],
+    } as ConversationEvent);
+
+    store.emit({ type: "run.start", data: { runId: "r2", model: "test-model" } });
+    store.emit({
+      type: "llm.done",
+      data: {
+        runId: "r2",
+        model: "test-model",
+        content: [{ type: "text", text: "Second reply" }],
+        usage: { inputTokens: 20, outputTokens: 8 },
+        llmMs: 75,
+      },
+    });
+    store.emit({ type: "run.done", data: { runId: "r2", stopReason: "complete", totalMs: 75 } });
+
+    const sourceMessages = await store.history(conv);
+    const sourceAssistantCount = sourceMessages.filter((m) => m.role === "assistant").length;
+
+    const forked = await store.fork(conv.id);
+    expect(forked).not.toBeNull();
+    expect(forked!.id).not.toBe(conv.id);
+
+    const forkedMessages = await store.history(forked!);
+    const forkedAssistantCount = forkedMessages.filter((m) => m.role === "assistant").length;
+
+    // Forked conversation must have the same number of assistant turns
+    // as the source. Without the synthetic run.start/run.done bookends
+    // around each forked llm.response, this would be 0.
+    expect(forkedAssistantCount).toBe(sourceAssistantCount);
+    expect(forkedAssistantCount).toBeGreaterThan(0);
   });
 });

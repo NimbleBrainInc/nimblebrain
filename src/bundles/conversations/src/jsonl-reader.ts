@@ -94,6 +94,15 @@ export interface DisplayUsage {
   inputTokens: number;
   outputTokens: number;
   cacheReadTokens?: number;
+  /**
+   * Cache-write and reasoning subtotals carried through so fork() can
+   * round-trip them onto the new file. The chat UI doesn't currently
+   * render these per-message, but losing them here means a forked
+   * conversation would silently report lower cost than the original on
+   * cache-heavy or reasoning-heavy turns.
+   */
+  cacheWriteTokens?: number;
+  reasoningTokens?: number;
   /** Model of the last LLM call in the run (runs can switch models mid-turn). */
   model: string;
   llmMs: number;
@@ -140,15 +149,29 @@ interface RunStartEvent {
   runId: string;
 }
 
+/**
+ * Token usage shape mirrored from the runtime's canonical TokenUsage.
+ * This bundle is intentionally self-contained (no imports from runtime),
+ * so the shape is duplicated rather than imported. Keep in sync with
+ * src/usage/types.ts — verified at test time by
+ * `test/unit/bundles/conversations/usage-shape-sync.test.ts`.
+ */
+export interface UsageShape {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+  reasoningTokens?: number;
+}
+
 interface LlmResponseEvent {
   ts: string;
   type: "llm.response";
   runId: string;
   model: string;
   content: ContentPart[];
-  inputTokens: number;
-  outputTokens: number;
-  cacheReadTokens: number;
+  /** Absent on pre-unification legacy events. Reads must tolerate missing. */
+  usage?: UsageShape;
   llmMs: number;
 }
 
@@ -255,12 +278,30 @@ function deriveMetricsFromLines(lines: string[]): DerivedMetrics {
 
   for (const line of lines) {
     const evt = parseEventLine(line);
-    if (!evt) continue;
-    lastEventTs = evt.ts;
-    if (isLlmResponse(evt)) {
-      totalInputTokens += evt.inputTokens;
-      totalOutputTokens += evt.outputTokens;
-      lastModel = evt.model;
+    if (evt) {
+      lastEventTs = evt.ts;
+      if (isLlmResponse(evt)) {
+        totalInputTokens += evt.usage?.inputTokens ?? 0;
+        totalOutputTokens += evt.usage?.outputTokens ?? 0;
+        lastModel = evt.model;
+      }
+      continue;
+    }
+    // Legacy message-format line: read assistant metadata.usage. Mirrors
+    // the runtime's index-cache so both surfaces report the same totals
+    // for the same file.
+    try {
+      const msg = JSON.parse(line) as {
+        role?: string;
+        metadata?: { usage?: { inputTokens?: number; outputTokens?: number }; model?: string };
+      };
+      if (msg.role === "assistant" && msg.metadata?.usage && msg.metadata.model) {
+        totalInputTokens += msg.metadata.usage.inputTokens ?? 0;
+        totalOutputTokens += msg.metadata.usage.outputTokens ?? 0;
+        lastModel = msg.metadata.model;
+      }
+    } catch {
+      // Skip malformed lines.
     }
   }
 
@@ -268,11 +309,21 @@ function deriveMetricsFromLines(lines: string[]): DerivedMetrics {
 }
 
 function applyDerivedMetrics(meta: ConversationMeta, metrics: DerivedMetrics): void {
-  if (metrics.totalInputTokens > 0 || metrics.totalOutputTokens > 0) {
-    meta.totalInputTokens = metrics.totalInputTokens;
-    meta.totalOutputTokens = metrics.totalOutputTokens;
-    meta.lastModel = metrics.lastModel;
-  }
+  // Always overwrite with derived values — never fall back to the line-1
+  // totals stored on disk. The line-1 totals were a stored-derived field
+  // we deliberately stopped maintaining; preserving them here would
+  // produce different totals than the runtime's index-cache, which now
+  // always derives from events. Old conversations show zero totals.
+  meta.totalInputTokens = metrics.totalInputTokens;
+  meta.totalOutputTokens = metrics.totalOutputTokens;
+  // Reset cost too — without this, a pre-PR conversation with line-1
+  // `{ totalInputTokens: 1000, totalCostUsd: 5.50 }` would read back as
+  // `{ totalInputTokens: 0, totalCostUsd: 5.50 }`: incoherent. The
+  // bundle is intentionally pricing-decoupled (no model catalog), so 0
+  // is the honest answer here. Consumers that want a real cost compute
+  // it themselves from `(model, summed usage)`.
+  meta.totalCostUsd = 0;
+  meta.lastModel = metrics.lastModel;
   if (metrics.lastEventTs) meta.updatedAt = metrics.lastEventTs;
 }
 
@@ -439,7 +490,11 @@ function collectRun(
   let inputTokens = 0;
   let outputTokens = 0;
   let cacheReadTokens = 0;
+  let cacheWriteTokens = 0;
+  let reasoningTokens = 0;
   let hasCacheReads = false;
+  let hasCacheWrites = false;
+  let hasReasoning = false;
   let llmMs = 0;
   let model = "";
 
@@ -488,12 +543,27 @@ function collectRun(
       flatToolCalls.push(...tools);
     }
 
-    // Usage — aggregate across all llm.responses in the run.
-    inputTokens += llm.inputTokens;
-    outputTokens += llm.outputTokens;
-    if (typeof llm.cacheReadTokens === "number" && llm.cacheReadTokens > 0) {
+    // Usage — aggregate across all llm.responses in the run. `usage` is
+    // optional on the wire (absent on pre-unification legacy events); the
+    // run-level total just contributes zero in that case. cacheWrite and
+    // reasoning are carried so fork() can round-trip them; the chat UI
+    // doesn't render them per-message today.
+    inputTokens += llm.usage?.inputTokens ?? 0;
+    outputTokens += llm.usage?.outputTokens ?? 0;
+    const llmCacheRead = llm.usage?.cacheReadTokens ?? 0;
+    if (llmCacheRead > 0) {
       hasCacheReads = true;
-      cacheReadTokens += llm.cacheReadTokens;
+      cacheReadTokens += llmCacheRead;
+    }
+    const llmCacheWrite = llm.usage?.cacheWriteTokens ?? 0;
+    if (llmCacheWrite > 0) {
+      hasCacheWrites = true;
+      cacheWriteTokens += llmCacheWrite;
+    }
+    const llmReasoning = llm.usage?.reasoningTokens ?? 0;
+    if (llmReasoning > 0) {
+      hasReasoning = true;
+      reasoningTokens += llmReasoning;
     }
     llmMs += llm.llmMs;
     model = llm.model;
@@ -508,6 +578,8 @@ function collectRun(
     inputTokens,
     outputTokens,
     ...(hasCacheReads ? { cacheReadTokens } : {}),
+    ...(hasCacheWrites ? { cacheWriteTokens } : {}),
+    ...(hasReasoning ? { reasoningTokens } : {}),
     model,
     llmMs,
   };
@@ -654,14 +726,19 @@ function buildLegacyBlocks(content: string, tools: DisplayToolCall[] | undefined
 }
 
 function buildLegacyUsageFromMetadata(metadata: Record<string, unknown>): DisplayUsage | undefined {
-  const inputTokens = metadata.inputTokens;
-  const outputTokens = metadata.outputTokens;
-  if (inputTokens == null && outputTokens == null) return undefined;
+  const usage = metadata.usage as UsageShape | undefined;
+  if (!usage) return undefined;
   return {
-    inputTokens: typeof inputTokens === "number" ? inputTokens : 0,
-    outputTokens: typeof outputTokens === "number" ? outputTokens : 0,
-    ...(typeof metadata.cacheReadTokens === "number"
-      ? { cacheReadTokens: metadata.cacheReadTokens }
+    inputTokens: usage.inputTokens,
+    outputTokens: usage.outputTokens,
+    ...(typeof usage.cacheReadTokens === "number"
+      ? { cacheReadTokens: usage.cacheReadTokens }
+      : {}),
+    ...(typeof usage.cacheWriteTokens === "number"
+      ? { cacheWriteTokens: usage.cacheWriteTokens }
+      : {}),
+    ...(typeof usage.reasoningTokens === "number"
+      ? { reasoningTokens: usage.reasoningTokens }
       : {}),
     model: typeof metadata.model === "string" ? metadata.model : "unknown",
     llmMs: typeof metadata.llmMs === "number" ? metadata.llmMs : 0,

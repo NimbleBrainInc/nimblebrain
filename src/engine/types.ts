@@ -1,5 +1,6 @@
 import type { LanguageModelV3Message } from "@ai-sdk/provider";
 import type { ContentBlock, TextContent } from "@modelcontextprotocol/sdk/types.js";
+import type { TokenUsage } from "../usage/types.ts";
 
 export type { ContentBlock, TextContent };
 
@@ -272,8 +273,10 @@ export interface EngineResult {
   output: string;
   toolCalls: ToolCallRecord[];
   iterations: number;
-  inputTokens: number;
-  outputTokens: number;
+  /** Cumulative token usage across all LLM calls in this run. */
+  usage: TokenUsage;
+  /** Cumulative LLM latency across all calls in this run. */
+  llmMs: number;
   stopReason: StopReason;
   /** Final LLM call's finish reason. Useful for diagnosing why the loop ended. */
   finishReason?: FinishReason;

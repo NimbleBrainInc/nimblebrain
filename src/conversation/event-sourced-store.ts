@@ -91,6 +91,8 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
   private index = new ConversationIndex();
   private activeConversationId: string | null = null;
   private pendingWrites = new Set<Promise<unknown>>();
+  /** Flag for once-per-process logging when the usage fallback fires. */
+  private warnedMissingUsage = false;
 
   constructor(config: EventSourcedStoreConfig) {
     this.dir = config.dir;
@@ -132,9 +134,6 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
       createdAt: now,
       updatedAt: now,
       title: null,
-      totalInputTokens: 0,
-      totalOutputTokens: 0,
-      totalCostUsd: 0,
       lastModel: null,
       format: "events",
       ...(options?.workspaceId ? { workspaceId: options.workspaceId } : {}),
@@ -167,9 +166,6 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
       createdAt: raw.createdAt as string,
       updatedAt: (raw.updatedAt as string) ?? (raw.createdAt as string),
       title: (raw.title as string | null) ?? null,
-      totalInputTokens: (raw.totalInputTokens as number) ?? 0,
-      totalOutputTokens: (raw.totalOutputTokens as number) ?? 0,
-      totalCostUsd: (raw.totalCostUsd as number) ?? 0,
       lastModel: (raw.lastModel as string | null) ?? null,
       ...(raw.format ? { format: raw.format as "events" } : {}),
       ...(raw.workspaceId ? { workspaceId: raw.workspaceId as string } : {}),
@@ -183,10 +179,7 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
     if (lines.length > 1) {
       const events = safeParseLines<ConversationEvent>(lines.slice(1));
       const usage = deriveUsageMetrics(events);
-      if (usage.totalInputTokens > 0 || usage.totalOutputTokens > 0) {
-        conversation.totalInputTokens = usage.totalInputTokens;
-        conversation.totalOutputTokens = usage.totalOutputTokens;
-        conversation.totalCostUsd = usage.totalCostUsd;
+      if (usage.lastModel) {
         conversation.lastModel = usage.lastModel;
       }
       // Derive title, visibility, participants from metadata events
@@ -252,10 +245,10 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
           runId,
           model: message.metadata.model ?? "unknown",
           content: message.content as LlmResponseEvent["content"],
-          inputTokens: message.metadata.inputTokens ?? 0,
-          outputTokens: message.metadata.outputTokens ?? 0,
-          cacheReadTokens: message.metadata.cacheReadTokens ?? 0,
-          cacheCreationTokens: 0,
+          usage: message.metadata.usage ?? {
+            inputTokens: 0,
+            outputTokens: 0,
+          },
           llmMs: message.metadata.llmMs ?? 0,
         };
         const runDone: ConversationEvent = {
@@ -278,9 +271,6 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
     // Legacy format — same pattern as JsonlConversationStore
     const path = this.path(conversation.id);
     if (message.role === "assistant" && message.metadata) {
-      conversation.totalInputTokens += message.metadata.inputTokens ?? 0;
-      conversation.totalOutputTokens += message.metadata.outputTokens ?? 0;
-      conversation.totalCostUsd += message.metadata.costUsd ?? 0;
       conversation.lastModel = message.metadata.model ?? conversation.lastModel;
     }
     conversation.updatedAt = message.timestamp;
@@ -367,19 +357,24 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
     const newConv = await this.create();
 
     if (messagesToCopy.length > 0) {
+      // Token totals are derived from events; only carry lastModel forward.
       for (const msg of messagesToCopy) {
-        if (msg.role === "assistant" && msg.metadata) {
-          newConv.totalInputTokens += msg.metadata.inputTokens ?? 0;
-          newConv.totalOutputTokens += msg.metadata.outputTokens ?? 0;
-          newConv.totalCostUsd += msg.metadata.costUsd ?? 0;
-          newConv.lastModel = msg.metadata.model ?? newConv.lastModel;
+        if (msg.role === "assistant" && msg.metadata?.model) {
+          newConv.lastModel = msg.metadata.model;
         }
       }
       newConv.updatedAt =
         messagesToCopy[messagesToCopy.length - 1]?.timestamp ?? new Date().toISOString();
 
-      // Write as event-format: convert messages to events
+      // Write as event-format: convert messages to events.
+      //
+      // Each assistant turn must be wrapped in a synthetic
+      // run.start/run.done span — without it, reconstructMessages drops
+      // the turn (see event-reconstructor.ts: assistant messages are
+      // only emitted inside an active run scope). Pre-fix, history() on
+      // a forked event-format conversation returned only user messages.
       const eventLines: string[] = [];
+      let runCounter = 0;
       for (const msg of messagesToCopy) {
         if (msg.role === "user") {
           eventLines.push(
@@ -391,18 +386,27 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
             }),
           );
         } else if (msg.role === "assistant") {
+          const runId = `forked-${runCounter++}`;
+          const model = msg.metadata?.model ?? "unknown";
+          eventLines.push(JSON.stringify({ ts: msg.timestamp, type: "run.start", runId, model }));
           eventLines.push(
             JSON.stringify({
               ts: msg.timestamp,
               type: "llm.response",
-              runId: "forked",
-              model: msg.metadata?.model ?? "unknown",
+              runId,
+              model,
               content: msg.content,
-              inputTokens: msg.metadata?.inputTokens ?? 0,
-              outputTokens: msg.metadata?.outputTokens ?? 0,
-              cacheReadTokens: msg.metadata?.cacheReadTokens ?? 0,
-              cacheCreationTokens: 0,
+              usage: msg.metadata?.usage ?? { inputTokens: 0, outputTokens: 0 },
               llmMs: msg.metadata?.llmMs ?? 0,
+            }),
+          );
+          eventLines.push(
+            JSON.stringify({
+              ts: msg.timestamp,
+              type: "run.done",
+              runId,
+              stopReason: "complete",
+              totalMs: msg.metadata?.llmMs ?? 0,
             }),
           );
         }
@@ -518,19 +522,31 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
 
       case "llm.done": {
         const finishReason = d.finishReason as LlmResponseEvent["finishReason"];
-        const reasoningTokens = (d.reasoningTokens as number) ?? 0;
+        // Defensive default at the write boundary: a malformed emitter
+        // must not produce `usage: undefined` in the JSONL — that
+        // corrupts the file forever and crashes every downstream reader.
+        // The current engine always supplies `data.usage`, but this
+        // guard means a single bad code path can't poison the stream.
+        // Log once when the fallback fires so a regressed emitter isn't
+        // a silent telemetry blackout.
+        let usage = d.usage as LlmResponseEvent["usage"] | undefined;
+        if (!usage) {
+          if (!this.warnedMissingUsage) {
+            this.warnedMissingUsage = true;
+            process.stderr.write(
+              "[event-sourced-store] llm.done event arrived without `data.usage`; writing zeroed fallback. This indicates a regressed emitter — check the engine.\n",
+            );
+          }
+          usage = { inputTokens: 0, outputTokens: 0 };
+        }
         const e: LlmResponseEvent = {
           ts,
           type: "llm.response",
           runId,
           model: d.model as string,
           content: (d.content ?? []) as LlmResponseEvent["content"],
-          inputTokens: (d.inputTokens as number) ?? 0,
-          outputTokens: (d.outputTokens as number) ?? 0,
-          cacheReadTokens: (d.cacheReadTokens as number) ?? 0,
-          cacheCreationTokens: (d.cacheCreationTokens as number) ?? 0,
+          usage,
           llmMs: (d.llmMs as number) ?? 0,
-          ...(reasoningTokens > 0 ? { reasoningTokens } : {}),
           ...(finishReason !== undefined ? { finishReason } : {}),
         };
         return e;

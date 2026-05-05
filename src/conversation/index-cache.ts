@@ -1,7 +1,8 @@
 import { readdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { estimateCost } from "../engine/cost.ts";
+import { estimateCost } from "../usage/cost.ts";
+import type { TokenUsage } from "../usage/types.ts";
 import type {
   ConversationAccessContext,
   ConversationListResult,
@@ -15,9 +16,6 @@ interface ConversationMetadata {
   createdAt: string;
   updatedAt?: string;
   title?: string | null;
-  totalInputTokens?: number;
-  totalOutputTokens?: number;
-  totalCostUsd?: number;
   ownerId?: string;
   visibility?: "private" | "shared";
   participants?: string[];
@@ -222,11 +220,12 @@ function parseFileHeader(
   let preview = "";
   let messageCount = 0;
 
-  // Derived metrics (event-sourced format only)
+  // Derived metrics (from events for event-sourced files, from message
+  // metadata for legacy files). `lastModel` is on Conversation, not on
+  // ConversationSummary, so we don't track it here.
   let derivedInputTokens = 0;
   let derivedOutputTokens = 0;
   let derivedCostUsd = 0;
-  let derivedLastModel: string | null = null;
   let lastEventTs: string | null = null;
   let derivedTitle: string | null | undefined;
   let derivedVisibility: "private" | "shared" | undefined;
@@ -240,9 +239,7 @@ function parseFileHeader(
           type?: string;
           ts?: string;
           content?: unknown;
-          inputTokens?: number;
-          outputTokens?: number;
-          cacheReadTokens?: number;
+          usage?: TokenUsage;
           model?: string;
           title?: string | null;
           visibility?: "private" | "shared";
@@ -256,15 +253,10 @@ function parseFileHeader(
           }
         } else if (event.type === "run.done") {
           messageCount++;
-        } else if (event.type === "llm.response") {
-          derivedInputTokens += event.inputTokens ?? 0;
-          derivedOutputTokens += event.outputTokens ?? 0;
-          derivedLastModel = event.model ?? derivedLastModel;
-          derivedCostUsd += estimateCost(event.model ?? "", {
-            inputTokens: event.inputTokens ?? 0,
-            outputTokens: event.outputTokens ?? 0,
-            cacheReadTokens: event.cacheReadTokens ?? 0,
-          });
+        } else if (event.type === "llm.response" && event.usage && event.model) {
+          derivedInputTokens += event.usage.inputTokens;
+          derivedOutputTokens += event.usage.outputTokens;
+          derivedCostUsd += estimateCost(event.model, event.usage);
         } else if (event.type === "metadata.title") {
           derivedTitle = event.title;
         } else if (event.type === "metadata.visibility") {
@@ -277,7 +269,9 @@ function parseFileHeader(
       }
     }
   } else {
-    // Legacy format: scan for StoredMessage objects with role field
+    // Legacy (message-format) file. Derive totals from each assistant
+    // message's metadata.usage so the summary is consistent with what the
+    // event-format path produces. Messages without usage contribute zero.
     for (let i = 1; i < lines.length; i++) {
       try {
         const msg = JSON.parse(lines[i]!) as StoredMessage;
@@ -285,15 +279,20 @@ function parseFileHeader(
         if (!preview && msg.role === "user") {
           preview = typeof msg.content === "string" ? msg.content : "";
         }
+        if (msg.role === "assistant" && msg.metadata?.usage && msg.metadata.model) {
+          derivedInputTokens += msg.metadata.usage.inputTokens;
+          derivedOutputTokens += msg.metadata.usage.outputTokens;
+          derivedCostUsd += estimateCost(msg.metadata.model, msg.metadata.usage);
+        }
       } catch {
         // Skip malformed message lines
       }
     }
   }
 
-  // Use derived values from events when available, fall back to line 1 for legacy
-  const hasDerivedMetrics = derivedInputTokens > 0 || derivedOutputTokens > 0;
-
+  // Totals are always derived. Legacy line-1 metadata totals are
+  // intentionally ignored — old conversations show zero totals if their
+  // events don't carry usage. (See PR removing stored totals.)
   const effectiveVisibility = derivedVisibility ?? meta.visibility;
   const effectiveParticipants = derivedParticipants ?? meta.participants;
 
@@ -305,9 +304,9 @@ function parseFileHeader(
       title: derivedTitle ?? meta.title ?? null,
       messageCount,
       preview,
-      totalInputTokens: hasDerivedMetrics ? derivedInputTokens : (meta.totalInputTokens ?? 0),
-      totalOutputTokens: hasDerivedMetrics ? derivedOutputTokens : (meta.totalOutputTokens ?? 0),
-      totalCostUsd: hasDerivedMetrics ? derivedCostUsd : (meta.totalCostUsd ?? 0),
+      totalInputTokens: derivedInputTokens,
+      totalOutputTokens: derivedOutputTokens,
+      totalCostUsd: derivedCostUsd,
     },
     access: {
       ...(meta.ownerId ? { ownerId: meta.ownerId } : {}),
