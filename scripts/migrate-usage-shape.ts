@@ -63,7 +63,7 @@
  * this script and the .jsonl.bak files.
  */
 
-import { existsSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -119,8 +119,10 @@ const NOOP = (line: string): LineMigration => ({
  * Migrate a single line. Returns the (possibly rewritten) line text plus
  * one boolean per kind of change applied. Lines that fail to parse are
  * passed through unchanged with `malformed: true`.
+ *
+ * Exported for unit testing — see test/unit/scripts/migrate-usage-shape.test.ts.
  */
-function migrateLine(line: string): LineMigration {
+export function migrateLine(line: string): LineMigration {
   let parsed: Record<string, unknown>;
   try {
     parsed = JSON.parse(line);
@@ -302,6 +304,21 @@ function main(): void {
     process.exit(1);
   }
 
+  // Self-heal: a SIGKILL between writeFileSync(tmp) and renameSync(tmp, path)
+  // leaves an orphan `<file>.jsonl.tmp.<pid>.<ts>` that subsequent runs would
+  // accumulate. Sweep them at startup so the working directory stays clean.
+  // Pattern is anchored on the matching `.jsonl` suffix to avoid touching
+  // unrelated tmp files a user might have parked in the dir.
+  const orphans = readdirSync(args.dir).filter((f) => /\.jsonl\.tmp\.\d+\.\d+$/.test(f));
+  for (const f of orphans) {
+    try {
+      unlinkSync(join(args.dir, f));
+      if (args.verbose) console.error(`  · removed orphan tmp: ${f}`);
+    } catch {
+      // Best-effort — a concurrent run may have already cleaned it.
+    }
+  }
+
   const filenames = readdirSync(args.dir).filter((f) => f.endsWith(".jsonl"));
 
   console.error(`migrate-usage-shape: scanning ${filenames.length} files in ${args.dir}`);
@@ -376,4 +393,8 @@ function main(): void {
   }
 }
 
-main();
+// Only run when invoked as the CLI entry. Importing the module (e.g.
+// from a unit test of `migrateLine`) doesn't trigger the migration.
+if (import.meta.main) {
+  main();
+}

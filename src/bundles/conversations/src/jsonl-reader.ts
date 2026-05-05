@@ -316,6 +316,13 @@ function applyDerivedMetrics(meta: ConversationMeta, metrics: DerivedMetrics): v
   // always derives from events. Old conversations show zero totals.
   meta.totalInputTokens = metrics.totalInputTokens;
   meta.totalOutputTokens = metrics.totalOutputTokens;
+  // Reset cost too — without this, a pre-PR conversation with line-1
+  // `{ totalInputTokens: 1000, totalCostUsd: 5.50 }` would read back as
+  // `{ totalInputTokens: 0, totalCostUsd: 5.50 }`: incoherent. The
+  // bundle is intentionally pricing-decoupled (no model catalog), so 0
+  // is the honest answer here. Consumers that want a real cost compute
+  // it themselves from `(model, summed usage)`.
+  meta.totalCostUsd = 0;
   meta.lastModel = metrics.lastModel;
   if (metrics.lastEventTs) meta.updatedAt = metrics.lastEventTs;
 }
