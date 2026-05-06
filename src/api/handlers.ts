@@ -26,7 +26,7 @@ import type { SseEventManager } from "./events.ts";
 import { ChatRequestBody, ToolCallRequestEnvelope } from "./schemas/rest.ts";
 import { validateAgainst } from "./schemas/validate.ts";
 import { startSseHeartbeat } from "./sse-heartbeat.ts";
-import { apiError } from "./types.ts";
+import { apiError, asUploadedFile } from "./types.ts";
 
 const pkgPath = resolve(import.meta.dirname ?? __dirname, "../../package.json");
 const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as { version: string };
@@ -1198,17 +1198,12 @@ async function parseMultipartChatBody(
     }
   }
 
-  // Collect uploaded files — FormDataEntryValue is string | File in Bun.
-  // TypeScript without DOM lib doesn't know File, so we check via duck typing.
+  // Collect uploaded files — see `asUploadedFile` for why we don't annotate
+  // entries as `File` directly (Bun/undici vs DOM-lib type mismatch).
   const uploadedFiles: UploadedFile[] = [];
   for (const [_key, value] of formData.entries()) {
-    if (typeof value === "string") continue;
-    const entry = value as unknown as {
-      arrayBuffer(): Promise<ArrayBuffer>;
-      name?: string;
-      type?: string;
-    };
-    if (typeof entry.arrayBuffer !== "function") continue;
+    const entry = asUploadedFile(value);
+    if (!entry) continue;
     const buffer = Buffer.from(await entry.arrayBuffer());
     uploadedFiles.push({
       data: buffer,
@@ -1317,14 +1312,9 @@ export async function handleResourceUpload(
   const uploads: UploadedFile[] = [];
   try {
     for (const [key, value] of formData.entries()) {
-      if (typeof value === "string") continue;
       if (key !== "file" && key !== "files") continue;
-      const entry = value as unknown as {
-        arrayBuffer(): Promise<ArrayBuffer>;
-        name?: string;
-        type?: string;
-      };
-      if (typeof entry.arrayBuffer !== "function") continue;
+      const entry = asUploadedFile(value);
+      if (!entry) continue;
       uploads.push({
         data: Buffer.from(await entry.arrayBuffer()),
         filename: entry.name || "unnamed",
@@ -1433,22 +1423,13 @@ export async function handleBundleUpload(
     return apiError(400, "bad_request", "Expected multipart/form-data");
   }
 
-  const fileEntry = formData.get("file") ?? formData.get("bundle");
-  if (!fileEntry || typeof fileEntry === "string") {
+  const entry = asUploadedFile(formData.get("file") ?? formData.get("bundle"));
+  if (!entry) {
     return apiError(
       400,
       "bad_request",
       "No bundle file in request (use the 'file' or 'bundle' field)",
     );
-  }
-
-  const entry = fileEntry as unknown as {
-    arrayBuffer(): Promise<ArrayBuffer>;
-    name?: string;
-    type?: string;
-  };
-  if (typeof entry.arrayBuffer !== "function") {
-    return apiError(400, "bad_request", "Malformed file entry in multipart body");
   }
 
   const filename = entry.name || "bundle.mcpb";
