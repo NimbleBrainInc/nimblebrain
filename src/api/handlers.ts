@@ -1044,6 +1044,14 @@ export function sanitizeFilename(name: string): string {
 }
 
 /**
+ * Maximum byte size of an uploaded `.mcpb` archive. Shared with the
+ * route-level `bodyLimit(..., { multipart: MAX_BUNDLE_SIZE })` so the
+ * `Content-Length`-advisory check and the post-buffer authoritative check
+ * stay in lockstep.
+ */
+export const MAX_BUNDLE_SIZE = 200 * 1024 * 1024; // 200 MB
+
+/**
  * Resolve the safe on-disk filename for an uploaded `.mcpb` bundle.
  *
  * Two responsibilities:
@@ -1451,6 +1459,16 @@ export async function handleBundleUpload(
   const data = Buffer.from(await entry.arrayBuffer());
   if (data.length === 0) {
     return apiError(400, "bad_request", "Uploaded file is empty");
+  }
+  // Authoritative size check. The route-level `bodyLimit` middleware is
+  // advisory: it only rejects when the client sends a `Content-Length`
+  // header. Chunked transfer encoding, missing headers, or a lying client
+  // bypass it — we only know the real size after buffering.
+  if (data.length > MAX_BUNDLE_SIZE) {
+    return apiError(413, "payload_too_large", "Bundle exceeds maximum size", {
+      limit: MAX_BUNDLE_SIZE,
+      received: data.length,
+    });
   }
 
   // Validate-then-commit:
