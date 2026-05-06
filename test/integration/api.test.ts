@@ -503,7 +503,7 @@ describe("SSE Event Manager", () => {
 		// Emit a bundle.crashed event — SHOULD be forwarded
 		manager.emit({
 			type: "bundle.crashed",
-			data: { serverName: "weather", bundleName: "@test/weather" },
+			data: { wsId: "ws_test", serverName: "weather", bundleName: "@test/weather" },
 		});
 
 		const { value } = await reader.read();

@@ -113,7 +113,12 @@ function deferred<T>(): Deferred<T> {
  *   <workDir>/workspaces/<wsId>/credentials/mcp-oauth/<serverName>/
  *     ├── client.json    — DCR result (OAuthClientInformationFull)
  *     ├── tokens.json    — OAuthTokens (access + refresh)
- *     └── verifier.json  — PKCE verifier (ephemeral; deleted after finishAuth)
+ *     └── verifier.json  — PKCE verifier. Overwritten by `saveCodeVerifier`
+ *                          on the next flow; explicitly removed only when
+ *                          `invalidateCredentials("verifier" | "all")` is
+ *                          called. Persists at mode 0o600 between flows;
+ *                          read access is gated by the same filesystem
+ *                          ACL that protects `tokens.json` next to it.
  *
  * Directory is created with mode 0o700; files are written 0o600 via an
  * atomic rename pattern (write to tmp, chmod, rename). Same discipline as

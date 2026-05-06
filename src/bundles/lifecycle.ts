@@ -161,6 +161,7 @@ export class BundleLifecycleManager {
     this.eventSink.emit({
       type: "bundle.installed",
       data: {
+        wsId,
         serverName: sourceName,
         bundleName: name,
         version: instance.version,
@@ -219,6 +220,7 @@ export class BundleLifecycleManager {
     this.eventSink.emit({
       type: "bundle.installed",
       data: {
+        wsId,
         serverName: sourceName,
         bundleName: bundlePath,
         version: instance.version,
@@ -341,6 +343,7 @@ export class BundleLifecycleManager {
     this.eventSink.emit({
       type: "bundle.installed",
       data: {
+        wsId,
         serverName: sourceName,
         bundleName: url,
         version: instance.version,
@@ -502,7 +505,7 @@ export class BundleLifecycleManager {
     this.transition(instance, "crashed");
     this.eventSink.emit({
       type: "bundle.crashed",
-      data: { serverName, bundleName: instance.bundleName, wsId },
+      data: { wsId, serverName, bundleName: instance.bundleName },
     });
   }
 
@@ -516,7 +519,7 @@ export class BundleLifecycleManager {
     this.transition(instance, "running");
     this.eventSink.emit({
       type: "bundle.recovered",
-      data: { serverName, bundleName: instance.bundleName, wsId },
+      data: { wsId, serverName, bundleName: instance.bundleName },
     });
   }
 
@@ -530,7 +533,7 @@ export class BundleLifecycleManager {
     this.transition(instance, "dead");
     this.eventSink.emit({
       type: "bundle.dead",
-      data: { serverName, bundleName: instance.bundleName, wsId },
+      data: { wsId, serverName, bundleName: instance.bundleName },
     });
   }
 

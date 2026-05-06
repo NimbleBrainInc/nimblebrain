@@ -102,7 +102,12 @@ export interface HealthInfo {
 
 // --- SSE Event Types ---
 
+// All bundle.* events are workspace-scoped at the SSE layer (server filters
+// by wsId before fan-out). The wsId is included on the payload so consumers
+// can disambiguate when they hold state across multiple workspace sessions.
+
 export interface BundleInstalledEvent {
+  wsId: string;
   name: string;
   bundleName: string;
   status: BundleState;
@@ -110,19 +115,23 @@ export interface BundleInstalledEvent {
 }
 
 export interface BundleUninstalledEvent {
+  wsId: string;
   name: string;
 }
 
 export interface BundleCrashedEvent {
+  wsId: string;
   name: string;
   restartAttempt: number;
 }
 
 export interface BundleRecoveredEvent {
+  wsId: string;
   name: string;
 }
 
 export interface BundleDeadEvent {
+  wsId: string;
   name: string;
   message: string;
 }

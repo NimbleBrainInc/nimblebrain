@@ -717,6 +717,7 @@ describe("E2E: SSE event filtering — only bundle and data.changed events pass 
 		manager.emit({
 			type: "bundle.installed",
 			data: {
+				wsId: "ws_test",
 				serverName: "tasks",
 				bundleName: "@test/tasks",
 				version: "1.0.0",

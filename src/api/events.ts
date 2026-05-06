@@ -1,4 +1,4 @@
-import type { EngineEvent, EventSink } from "../engine/types.ts";
+import type { EngineEvent, EngineEventType, EventSink } from "../engine/types.ts";
 
 /** SSE client connection tracked by the event manager. */
 interface SseClient {
@@ -16,6 +16,61 @@ export interface BufferedEvent {
 }
 
 const encoder = new TextEncoder();
+
+/**
+ * Per-event-type rule for what `SseEventManager.emit()` does with an
+ * `EngineEvent`:
+ *
+ *   - `scope: "global"`   — broadcast to every connected client (e.g. shared
+ *                            config, skills library, workspace-agnostic events)
+ *   - `scope: "workspace"` — broadcast only to clients whose `workspaceId`
+ *                             matches `data[wsIdField]`. The named field MUST
+ *                             be present on the event's payload; if it's
+ *                             missing we drop the event rather than fan it
+ *                             out to every workspace (the alternative leaks
+ *                             one workspace's signals to its neighbors).
+ *
+ * Events with no entry are NOT forwarded — operational events like
+ * `tool.progress` / `tool.done` / `run.error` stay internal to the runtime.
+ *
+ * Adding a new SSE-bound event type is a one-line edit here. The
+ * `Partial<Record<EngineEventType, SseRoute>>` shape makes the key a
+ * compile-time check against `EngineEventType`, so a typo or a renamed
+ * event surfaces as a build error rather than silently no-routing.
+ */
+type SseRoute = { scope: "global" } | { scope: "workspace"; wsIdField: string };
+
+const SSE_ROUTES: Partial<Record<EngineEventType, SseRoute>> = {
+  // Bundle lifecycle — workspace-scoped. `wsId` is on every payload (added
+  // in lifecycle.ts when emitting); without it we can't safely scope, so the
+  // event drops at the boundary below.
+  "bundle.installed": { scope: "workspace", wsIdField: "wsId" },
+  "bundle.uninstalled": { scope: "workspace", wsIdField: "wsId" },
+  "bundle.crashed": { scope: "workspace", wsIdField: "wsId" },
+  "bundle.recovered": { scope: "workspace", wsIdField: "wsId" },
+  "bundle.dead": { scope: "workspace", wsIdField: "wsId" },
+  // Per-principal connection state — workspace-scoped. Drives the
+  // pending-auth banner; without forwarding here, the banner never auto-clears
+  // after a user completes interactive OAuth.
+  "connection.state_changed": { scope: "workspace", wsIdField: "wsId" },
+  // Tool dispatch fan-out used by Synapse `useDataSync`. The data-sync
+  // refresh path is workspace-bound at the bridge level (each iframe ships
+  // X-Workspace-Id), but the payload doesn't carry wsId today — keeping the
+  // existing "broadcast to all clients in this process" behavior to avoid
+  // silently breaking iframe refresh. Revisit when payload grows wsId.
+  "data.changed": { scope: "global" },
+  // Org-level config (model preferences, feature flags). Affects every
+  // workspace; broadcast to all.
+  "config.changed": { scope: "global" },
+  // Skills library — global state shared across workspaces.
+  "skill.created": { scope: "global" },
+  "skill.updated": { scope: "global" },
+  "skill.deleted": { scope: "global" },
+  // Bridge tool call/done — emitted by the iframe→/v1/tools/call shim.
+  // Field name is `workspaceId` (not `wsId`) — see handlers.ts emit sites.
+  "bridge.tool.call": { scope: "workspace", wsIdField: "workspaceId" },
+  "bridge.tool.done": { scope: "workspace", wsIdField: "workspaceId" },
+};
 
 /**
  * SSE Event Manager for the workspace-level event stream (PRODUCT_SPEC ss9.3).
@@ -87,27 +142,24 @@ export class SseEventManager implements EventSink {
   }
 
   /**
-   * EventSink implementation: forward relevant events to all SSE clients.
-   * Only forwards bundle.* and data.changed events.
+   * EventSink implementation: forward events to SSE clients per the
+   * `SSE_ROUTES` table at the top of this file. Events with no route entry
+   * are dropped (kept internal to the runtime); workspace-scoped events
+   * are filtered to clients with a matching workspace id.
    */
   emit(event: EngineEvent): void {
-    const type = event.type;
-    if (
-      type === "bundle.installed" ||
-      type === "bundle.uninstalled" ||
-      type === "bundle.crashed" ||
-      type === "bundle.recovered" ||
-      type === "bundle.dead" ||
-      type === "data.changed" ||
-      type === "config.changed" ||
-      type === "skill.created" ||
-      type === "skill.updated" ||
-      type === "skill.deleted" ||
-      type === "bridge.tool.call" ||
-      type === "bridge.tool.done"
-    ) {
-      this.broadcast(type, event.data);
+    const route = SSE_ROUTES[event.type];
+    if (!route) return;
+    if (route.scope === "global") {
+      this.broadcast(event.type, event.data);
+      return;
     }
+    // Workspace-scoped: extract the wsId from the declared field. A
+    // missing wsId is a payload bug — drop rather than fan out to every
+    // workspace, since that would leak one workspace's signals to others.
+    const wsId = event.data[route.wsIdField];
+    if (typeof wsId !== "string" || wsId.length === 0) return;
+    this.broadcast(event.type, event.data, wsId);
   }
 
   /** Broadcast an SSE event to connected clients, optionally filtered by workspace. */
