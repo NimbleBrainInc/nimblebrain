@@ -35,6 +35,7 @@
 - Top-level `/profile` route. Identity isn't a setting; un-nested from `/settings/*`.
 - Org-admin gate on `set_model_config` — backend now refuses non-org-admin writes (was UI-only via RouteGuard). Distinguishes "no identity" (cron, automations) from "wrong role" so debug logs make non-user code paths obvious.
 - HTTP proxy primitive (`_meta["ai.nimblebrain/http-proxy"]`). Bundles can expose a loopback HTTP server (e.g. `astro preview`, Jupyter kernel) through the platform at `/v1/ws/<wsId>/apps/<bundle>/<mount>/*`. Loopback-only target, credentials and `Accept-Encoding` stripped on forward, `Set-Cookie`/CSP/X-Frame-Options stripped on response, per-workspace kill switch via `Workspace.allowHttpProxy`. Bundles get `NB_WORKSPACE_ID`, `NB_PROXY_PREFIX`, `NB_PUBLIC_ORIGIN` in their env at spawn ([docs](https://docs.nimblebrain.ai/apps/http-proxy/)).
+- Upload custom `.mcpb` bundles from Settings → About. Multipart upload to `POST /v1/bundles/upload` validates the archive via `@nimblebrain/mpak-sdk` in a tempfile, then commits to the workspace bundles dir. `manage_app` gains a `path` parameter for file-based install — confined to the workspace bundles dir at install, uninstall, and startup re-hydration so a prompt-injected agent cannot spawn arbitrary `.mcpb` artifacts under workspace credentials. `.mcpb` paths persist in `workspace.json` and survive restart ([#170](https://github.com/NimbleBrainInc/nimblebrain/pull/170)).
 
 ### Changed
 
