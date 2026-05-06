@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { CallbackEventSink } from "../adapters/callback-events.ts";
 import { log } from "../cli/log.ts";
 import { isToolEnabled, isToolVisibleToRole, type ResolvedFeatures } from "../config/features.ts";
@@ -1041,6 +1041,20 @@ export function sanitizeFilename(name: string): string {
 }
 
 /**
+ * Resolve the safe on-disk filename for an uploaded `.mcpb` bundle.
+ *
+ * Strips every directory component via `path.basename`, so filenames like
+ * `../../etc/cron.daily/evil.mcpb` collapse to `evil.mcpb` and cannot escape
+ * the workspace bundles dir when joined onto it. `sanitizeFilename` only
+ * neutralizes Content-Disposition-breaking chars and is insufficient on its
+ * own — it would let `..` segments through and the upload would write
+ * outside `bundlesDir`. Exported so tests pin the contract.
+ */
+export function safeBundleFilename(filename: string): string {
+  return basename(filename);
+}
+
+/**
  * Regex for valid file IDs.
  *  - New scheme: `fl_<24 hex chars>` (randomBytes(12).hex).
  *  - Legacy scheme: `fl_<base36 timestamp>_<8 hex>` from the pre-unification
@@ -1426,7 +1440,7 @@ export async function handleBundleUpload(
   const bundlesDir = joinPath(runtime.getWorkspaceScopedDir(workspaceId), "bundles");
   mkdirSync(bundlesDir, { recursive: true });
 
-  const safeName = sanitizeFilename(filename);
+  const safeName = safeBundleFilename(filename);
   const bundlePath = joinPath(bundlesDir, safeName);
   writeFileSync(bundlePath, data, { mode: 0o600 });
 
