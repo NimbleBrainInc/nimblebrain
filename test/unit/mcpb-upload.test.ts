@@ -34,39 +34,37 @@ import { join } from "node:path";
 
 describe("Fix 1: path traversal in handleBundleUpload", () => {
 	it("safeBundleFilename strips traversal components", async () => {
-		const handlersModule = await import("../../src/api/handlers.ts");
-		const safeBundleFilename = (
-			handlersModule as unknown as { safeBundleFilename?: (s: string) => string }
-		).safeBundleFilename;
-
-		expect(typeof safeBundleFilename).toBe("function");
-		expect(safeBundleFilename!("../../etc/cron.daily/evil.mcpb")).toBe(
-			"evil.mcpb",
-		);
+		const { safeBundleFilename } = await import("../../src/api/handlers.ts");
+		const result = safeBundleFilename("../../etc/cron.daily/evil.mcpb");
+		// Random suffix appended before .mcpb to prevent collision; the
+		// stem is still derived from basename only, so traversal segments
+		// are stripped.
+		expect(result).toMatch(/^evil-[0-9a-f]{16}\.mcpb$/);
 	});
 
 	it("safeBundleFilename strips absolute path components", async () => {
-		const handlersModule = await import("../../src/api/handlers.ts");
-		const safeBundleFilename = (
-			handlersModule as unknown as { safeBundleFilename?: (s: string) => string }
-		).safeBundleFilename;
-
-		expect(typeof safeBundleFilename).toBe("function");
-		expect(safeBundleFilename!("/tmp/secrets/payload.mcpb")).toBe(
-			"payload.mcpb",
-		);
+		const { safeBundleFilename } = await import("../../src/api/handlers.ts");
+		const result = safeBundleFilename("/tmp/secrets/payload.mcpb");
+		expect(result).toMatch(/^payload-[0-9a-f]{16}\.mcpb$/);
 	});
 
 	it("joined path with safeBundleFilename stays inside bundlesDir", async () => {
-		const handlersModule = await import("../../src/api/handlers.ts");
-		const safeBundleFilename = (
-			handlersModule as unknown as { safeBundleFilename?: (s: string) => string }
-		).safeBundleFilename;
-
-		expect(typeof safeBundleFilename).toBe("function");
+		const { safeBundleFilename } = await import("../../src/api/handlers.ts");
 		const bundlesDir = "/home/.nimblebrain/workspaces/ws_dev/bundles";
-		const result = join(bundlesDir, safeBundleFilename!("../../evil.mcpb"));
+		const result = join(bundlesDir, safeBundleFilename("../../evil.mcpb"));
 		expect(result.startsWith(bundlesDir)).toBe(true);
+	});
+
+	it("safeBundleFilename returns a unique name on every call", async () => {
+		const { safeBundleFilename } = await import("../../src/api/handlers.ts");
+		// Two uploads with the same source filename must not produce the
+		// same on-disk path — otherwise the second clobbers the first
+		// silently and breaks any install pinned to that path.
+		const a = safeBundleFilename("bundle.mcpb");
+		const b = safeBundleFilename("bundle.mcpb");
+		expect(a).not.toBe(b);
+		expect(a).toMatch(/^bundle-[0-9a-f]{16}\.mcpb$/);
+		expect(b).toMatch(/^bundle-[0-9a-f]{16}\.mcpb$/);
 	});
 });
 

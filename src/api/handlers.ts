@@ -1046,15 +1046,28 @@ export function sanitizeFilename(name: string): string {
 /**
  * Resolve the safe on-disk filename for an uploaded `.mcpb` bundle.
  *
- * Strips every directory component via `path.basename`, so filenames like
- * `../../etc/cron.daily/evil.mcpb` collapse to `evil.mcpb` and cannot escape
- * the workspace bundles dir when joined onto it. `sanitizeFilename` only
- * neutralizes Content-Disposition-breaking chars and is insufficient on its
- * own — it would let `..` segments through and the upload would write
- * outside `bundlesDir`. Exported so tests pin the contract.
+ * Two responsibilities:
+ *
+ * 1. **Path traversal defense.** Strips every directory component via
+ *    `path.basename`, so filenames like `../../etc/cron.daily/evil.mcpb`
+ *    collapse to `evil.mcpb` and cannot escape the workspace bundles dir
+ *    when joined onto it. `sanitizeFilename` only neutralizes
+ *    Content-Disposition-breaking chars and is insufficient on its own.
+ *
+ * 2. **Collision avoidance.** Two uploads named `bundle.mcpb` would
+ *    otherwise clobber each other on disk, silently swapping the artifact
+ *    backing a running install (the path is the workspace.json key). A
+ *    64-bit random hex suffix is appended before the `.mcpb` extension so
+ *    every upload lands at a unique path. The frontend never sees this
+ *    name — bundle display name comes from the manifest, not the filename.
+ *
+ * Exported so tests pin the contract.
  */
 export function safeBundleFilename(filename: string): string {
-  return basename(filename);
+  const base = basename(filename);
+  const stem = base.endsWith(".mcpb") ? base.slice(0, -".mcpb".length) : base;
+  const suffix = randomBytes(8).toString("hex");
+  return `${stem}-${suffix}.mcpb`;
 }
 
 /**
