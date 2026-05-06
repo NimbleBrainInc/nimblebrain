@@ -1,5 +1,5 @@
 import { existsSync, realpathSync } from "node:fs";
-import { join, resolve, sep } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import type { BundleRef } from "./types.ts";
 
 /** Prefixes reserved for system tools — bundles must not use these as source names. */
@@ -113,6 +113,30 @@ export function resolveWorkspaceBundlesDir(workDir: string, wsId: string): strin
 }
 
 /**
+ * Canonicalize a path for prefix comparison. Realpaths the file when it
+ * exists; when it doesn't, walks up the parent chain to find the deepest
+ * existing ancestor, realpaths that, then re-attaches the missing tail.
+ *
+ * The naive `existsSync(p) ? realpathSync(p) : resolve(p)` form diverges on
+ * platforms where ancestors are symlinks (macOS `/var` → `/private/var`):
+ * the bundles dir realpaths to the canonical form, the missing file does
+ * not, and a guard comparing the two falsely rejects.
+ */
+function canonicalize(filePath: string): string {
+  const abs = resolve(filePath);
+  if (existsSync(abs)) return realpathSync(abs);
+  // Walk up to find the deepest existing ancestor.
+  let parent = dirname(abs);
+  let suffix = abs.slice(parent.length); // includes leading sep
+  while (parent !== dirname(parent) && !existsSync(parent)) {
+    suffix = parent.slice(dirname(parent).length) + suffix;
+    parent = dirname(parent);
+  }
+  if (!existsSync(parent)) return abs;
+  return realpathSync(parent) + suffix;
+}
+
+/**
  * Assert that `filePath` resolves inside `<workDir>/workspaces/<wsId>/bundles/`.
  * Throws otherwise.
  *
@@ -139,7 +163,12 @@ export function assertPathInWorkspaceBundlesDir(
   const canonicalBundlesDir = existsSync(bundlesDir)
     ? realpathSync(bundlesDir)
     : resolve(bundlesDir);
-  const canonicalFile = existsSync(filePath) ? realpathSync(filePath) : resolve(filePath);
+  // For a missing file, realpath the parent dir and re-attach the basename.
+  // Pure lexical resolve diverges from the bundles-dir canonicalization on
+  // platforms where ancestors are themselves symlinks (notably macOS, where
+  // /var → /private/var). Without this, an uninstall after manual deletion
+  // of a perfectly-valid bundle inside the dir would falsely fail the guard.
+  const canonicalFile = canonicalize(filePath);
   if (
     canonicalFile !== canonicalBundlesDir &&
     !canonicalFile.startsWith(canonicalBundlesDir + sep)
