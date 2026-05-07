@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import {
   type ConnectionCatalogEntry,
   disconnectConnection,
+  getAuthToken,
   getConnectionsCatalog,
   getInstalledConnections,
   type InstalledConnection,
@@ -9,6 +10,8 @@ import {
   installConnection,
 } from "../../api/client";
 import { Card, CardContent } from "../../components/ui/card";
+import { useWorkspaceContext } from "../../context/WorkspaceContext";
+import { useEvents } from "../../hooks/useEvents";
 import { EmptyState, RequireActiveWorkspace, SettingsListPage } from "./components";
 
 /**
@@ -47,9 +50,12 @@ function Inner() {
   const [installed, setInstalled] = useState<InstalledConnection[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const wsCtx = useWorkspaceContext();
 
-  const refresh = useCallback(async () => {
-    setLoading(true);
+  // Fetches catalog + installed. `silent` skips the loading flicker on
+  // SSE-driven refreshes — the user is already looking at populated data.
+  const refresh = useCallback(async (opts?: { silent?: boolean }) => {
+    if (!opts?.silent) setLoading(true);
     setError(null);
     try {
       const [cat, ins] = await Promise.all([getConnectionsCatalog(), getInstalledConnections()]);
@@ -58,13 +64,27 @@ function Inner() {
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setLoading(false);
+      if (!opts?.silent) setLoading(false);
     }
   }, []);
 
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  // Re-fetch on connection state transitions for this workspace. Critical
+  // for the OAuth round-trip case: the user is redirected back to this
+  // page while the code-exchange + tools/list is still running in the
+  // background. Without an SSE-driven refresh, the card sticks at
+  // "Connecting…" until the user reloads.
+  const token = getAuthToken() ?? "";
+  useEvents(token, wsCtx.activeWorkspace?.id, {
+    onConnectionStateChanged: (evt) => {
+      if (evt.wsId === wsCtx.activeWorkspace?.id) {
+        refresh({ silent: true });
+      }
+    },
+  });
 
   if (loading) {
     return (
