@@ -17,10 +17,13 @@ import { type AppContext, type AppEnv, apiError } from "../types.ts";
  *   POST /v1/connections/install      add a catalog entry to workspace.bundles + seed lifecycle
  *   POST /v1/connections/disconnect   revoke + clear tokens (RFC 7009) + tear down source
  *
- * All workspace-authed via per-handler middleware. The /install endpoint
- * is admin-only at the workspace level (writing workspace.json must
- * require admin perms — checked inline since the middleware doesn't
- * carry role context yet).
+ * All workspace-authed via per-handler middleware.
+ *
+ * `/install` accepts any authenticated workspace member: this matches
+ * the self-service intent, and the catalog allow-list (set by admins
+ * via `workspace.connectionsAllowList`) is the gate that constrains
+ * which services can be installed. Uninstall (when added) will gate
+ * to admins; install is collaborative.
  */
 export function connectionsRoutes(ctx: AppContext) {
   const app = new Hono<AppEnv>();
@@ -172,10 +175,11 @@ export function connectionsRoutes(ctx: AppContext) {
   //   - principalId defaults to the caller's user id for member-scope
   //   - admins can pass "_workspace" to disconnect a workspace-shared bundle
   //
-  // Calls WorkspaceOAuthProvider.revokeAndDeleteTokens — best-effort
-  // upstream revoke (RFC 7009) + always-delete-locally. Then removes
-  // the per-member entry from the MemberPoolSource so the next tool
-  // call returns pending_auth.
+  // Delegates to `lifecycle.disconnect` which: revokes upstream via RFC
+  // 7009 (best-effort), deletes local tokens, tears down the McpSource
+  // for both scopes, and transitions the Connection to
+  // `not_authenticated`. After return, a follow-up Connect from the UI
+  // re-runs the OAuth flow against a fresh source.
   app.post(
     "/v1/connections/disconnect",
     requireAuth(ctx.authOptions),
@@ -290,7 +294,22 @@ export function connectionsRoutes(ctx: AppContext) {
         });
       }
 
-      // Build the BundleRef from the catalog entry.
+      // Static-auth entries are not installable from the UI in v1: the
+      // catalog schema only carries the credential key for the
+      // clientSecret (and not the clientId), so an install at this stage
+      // would persist a half-formed `oauthClient` that fails confusingly
+      // at startAuth time. Block here with a clear message; operator
+      // setup (writing both clientId and secret) is a separate flow.
+      if (entry.auth === "static") {
+        return apiError(
+          409,
+          "operator_setup_required",
+          `Catalog entry "${catalogId}" requires operator setup. Configure ${entry.operatorSetup?.portalUrl ?? "the OAuth app"} and seed the credential before install.`,
+        );
+      }
+
+      // Build the BundleRef from the catalog entry. DCR-only — static-
+      // auth was rejected above.
       const ref: BundleRef = {
         url: entry.url,
         serverName,
@@ -298,19 +317,6 @@ export function connectionsRoutes(ctx: AppContext) {
         ...(entry.requiredScopes ? { scopes: entry.requiredScopes } : {}),
         ...(entry.additionalAuthorizationParams
           ? { additionalAuthorizationParams: entry.additionalAuthorizationParams }
-          : {}),
-        // Static-auth catalog entries reference an operator-set credential.
-        // The credential is per-workspace; the catalog only carries the key.
-        ...(entry.auth === "static" && entry.operatorSetup
-          ? {
-              oauthClient: {
-                // Catalog doesn't carry clientId — operator setup writes
-                // both clientId and secret to the credential store. We
-                // reference both keys; the provider resolves them.
-                clientId: "", // resolved via secondary credential lookup at startAuth time
-                clientSecret: { ref: "credential", key: entry.operatorSetup.credentialKey },
-              },
-            }
           : {}),
       };
 

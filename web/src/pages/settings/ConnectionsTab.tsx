@@ -182,7 +182,13 @@ function ConnectionCard({
   const conn =
     installed?.oauthScope === "member" ? installed.myConnection : installed?.workspaceConnection;
   const state = conn?.state ?? (installed ? "not_authenticated" : "not_installed");
-  const missingSetup = installed?.missingOperatorSetup === true;
+  // Static-auth (pre-registered OAuth apps: HubSpot, Gmail, Outlook, etc.)
+  // can't be installed from the UI in v1 — they need operator setup
+  // (registering the OAuth app, seeding clientId + clientSecret) before
+  // any user can connect. Surface the affordance up front so the user
+  // doesn't click Connect → 409.
+  const needsOperatorSetup =
+    installed?.missingOperatorSetup === true || (!installed && entry.auth === "static");
   const connected = state === "running";
   const reconnectable = state === "reauth_required" || state === "dead" || state === "crashed";
 
@@ -245,10 +251,20 @@ function ConnectionCard({
             {err && <p className="text-xs text-destructive mt-1">{err}</p>}
           </div>
           <div className="flex items-center gap-2">
-            {missingSetup ? (
-              <span className="text-xs text-amber-600">
-                Operator setup required ({entry.operatorSetup?.credentialKey})
-              </span>
+            {needsOperatorSetup ? (
+              <div className="flex flex-col items-end gap-0.5 text-right">
+                <span className="text-xs text-amber-600">Operator setup required</span>
+                {entry.operatorSetup?.portalUrl && (
+                  <a
+                    href={entry.operatorSetup.portalUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-[10px] text-muted-foreground underline"
+                  >
+                    {new URL(entry.operatorSetup.portalUrl).hostname}
+                  </a>
+                )}
+              </div>
             ) : connected ? (
               <button
                 type="button"

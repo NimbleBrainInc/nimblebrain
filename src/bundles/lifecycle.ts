@@ -917,8 +917,16 @@ export class BundleLifecycleManager {
       if (conn?.source) {
         try {
           await conn.source.stop();
-        } catch {
-          // best-effort
+        } catch (err) {
+          // Best-effort: a failing stop shouldn't block the teardown
+          // (we're going to drop the source anyway). Surface for
+          // operator visibility — a stuck-source pattern is worth
+          // catching even if individual occurrences are benign.
+          log.warn(
+            `[lifecycle] source.stop() failed for ${serverName}|${wsId}|${principalId}: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
         }
       }
       const registry = this.registriesByWs.get(wsId);
