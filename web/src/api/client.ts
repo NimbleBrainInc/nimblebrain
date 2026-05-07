@@ -102,7 +102,11 @@ function headers(extra?: Record<string, string>): Record<string, string> {
 // ---------------------------------------------------------------------------
 
 const refreshInterceptor = createFetchWithRefresh({
-  fetch: globalThis.fetch.bind(globalThis),
+  // Late-bind globalThis.fetch on each call so tests can swap in a mock; in
+  // production globalThis.fetch is stable so this is equivalent to .bind().
+  // Cast widens the call signature back to `typeof fetch` (the option type
+  // includes the static .preconnect method, which the interceptor never calls).
+  fetch: ((input, init) => globalThis.fetch(input, init)) as typeof fetch,
   refreshUrl: `${API_BASE}/v1/auth/refresh`,
   onAuthError: () => onAuthError?.(),
 });
@@ -516,6 +520,13 @@ export async function logout(): Promise<void> {
  * Try to bootstrap (unauthenticated-safe). Returns bootstrap data if
  * authenticated, null if 401 or network error. Used as the single auth check.
  *
+ * Routes through {@link fetchWithRefresh} so a returning user with an expired
+ * access-token cookie but a valid `nb_refresh` cookie is silently re-authed
+ * on cold load instead of being bounced to the login screen. `onAuthError`
+ * is null at this point in the App lifecycle (App.tsx wires it inside
+ * initFromBootstrap, after this call) so a failed refresh just leaves the
+ * 401 in place and we return null — same behavior as before.
+ *
  * `workspaceId` is the client's remembered last-active workspace — see
  * {@link getBootstrap} for the server-side contract.
  */
@@ -523,7 +534,7 @@ export async function tryBootstrap(workspaceId?: string): Promise<BootstrapRespo
   try {
     const extra: Record<string, string> = {};
     if (workspaceId) extra["X-Workspace-Id"] = workspaceId;
-    const res = await fetch(`${API_BASE}/v1/bootstrap`, {
+    const res = await fetchWithRefresh(`${API_BASE}/v1/bootstrap`, {
       credentials: "include",
       headers: {
         ...headers(),
