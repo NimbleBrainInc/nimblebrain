@@ -24,21 +24,28 @@ function sha256Hex(input: string): string {
 
 interface StubLifecycle {
   pendingAuthUrls: Map<string, string>; // key: "serverName|wsId|principalId"
+  instances: Map<string, { oauthScope?: "workspace" | "member" }>; // key: "serverName|wsId"
   getPendingAuthUrl(serverName: string, wsId: string, principalId: string): string | null;
   getPendingConnections(
     wsId: string,
   ): Array<{ serverName: string; bundleName: string; principalId: string }>;
+  getInstance(serverName: string, wsId: string): { oauthScope?: "workspace" | "member" } | null;
 }
 
 function makeStubLifecycle(): StubLifecycle {
   const pendingAuthUrls = new Map<string, string>();
+  const instances = new Map<string, { oauthScope?: "workspace" | "member" }>();
   return {
     pendingAuthUrls,
+    instances,
     getPendingAuthUrl(serverName, wsId, principalId) {
       return pendingAuthUrls.get(`${serverName}|${wsId}|${principalId}`) ?? null;
     },
     getPendingConnections() {
       return [];
+    },
+    getInstance(serverName, wsId) {
+      return instances.get(`${serverName}|${wsId}`) ?? null;
     },
   };
 }
@@ -119,7 +126,7 @@ describe("POST /v1/mcp-auth/initiate", () => {
     expect(res.headers.get("Set-Cookie")!).toContain("Secure");
   });
 
-  test("returns 404 with no cookie when no pending flow exists", async () => {
+  test("returns 404 with no cookie when bundle is not installed", async () => {
     const res = await app.request("http://localhost/v1/mcp-auth/initiate", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -128,7 +135,7 @@ describe("POST /v1/mcp-auth/initiate", () => {
 
     expect(res.status).toBe(404);
     const body = await res.json();
-    expect(body.error).toBe("not_pending_auth");
+    expect(body.error).toBe("bundle_not_found");
     // No cookie should be set when no flow exists.
     expect(res.headers.get("Set-Cookie")).toBeNull();
   });
