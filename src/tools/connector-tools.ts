@@ -396,12 +396,40 @@ async function handleInstall(
 
     const dup = ws.bundles.find((b) => "url" in b && b.url === entry.url);
     if (dup) {
+      const dupServerName = "serverName" in dup ? (dup.serverName ?? entry.id) : entry.id;
+      // Self-heal: if workspace.json has the entry but lifecycle lost
+      // track of the instance (e.g., a prior uninstall that didn't
+      // clean workspace.json), re-seed instead of reporting it as
+      // already-installed. Returning alreadyInstalled in that state
+      // would skip seedInstance and fail the next OAuth initiate.
+      if (!lifecycle.getInstance(dupServerName, wsId)) {
+        const wsRegistry = ctx.runtime.getRegistryForWorkspace(wsId);
+        lifecycle.seedInstance(
+          dupServerName,
+          entry.url,
+          dup,
+          undefined,
+          wsId,
+          undefined,
+          wsRegistry,
+        );
+        return {
+          content: textContent(`Reattached "${entry.name}" (recovered orphan entry).`),
+          structuredContent: {
+            ok: true,
+            alreadyInstalled: false,
+            serverName: dupServerName,
+            scope: "workspace",
+          },
+          isError: false,
+        };
+      }
       return {
         content: textContent(`"${entry.name}" already installed.`),
         structuredContent: {
           ok: true,
           alreadyInstalled: true,
-          serverName: "serverName" in dup ? (dup.serverName ?? entry.id) : entry.id,
+          serverName: dupServerName,
           scope: "workspace",
         },
         isError: false,
@@ -430,12 +458,28 @@ async function handleInstall(
   const existing = await userStore.get(callerId);
   const dup = existing?.bundles.find((b) => "url" in b && b.url === entry.url);
   if (dup) {
+    const dupServerName = "serverName" in dup ? (dup.serverName ?? entry.id) : entry.id;
+    // Self-heal symmetric to workspace scope: if user.json has the
+    // entry but lifecycle has no userInstance, re-seed.
+    if (!lifecycle.getUserInstance?.(dupServerName, callerId)) {
+      await lifecycle.seedUserInstance?.(dupServerName, dup, callerId);
+      return {
+        content: textContent(`Reattached "${entry.name}" (recovered orphan entry).`),
+        structuredContent: {
+          ok: true,
+          alreadyInstalled: false,
+          serverName: dupServerName,
+          scope: "user",
+        },
+        isError: false,
+      };
+    }
     return {
       content: textContent(`"${entry.name}" already installed for your account.`),
       structuredContent: {
         ok: true,
         alreadyInstalled: true,
-        serverName: "serverName" in dup ? (dup.serverName ?? entry.id) : entry.id,
+        serverName: dupServerName,
         scope: "user",
       },
       isError: false,
@@ -585,6 +629,24 @@ async function handleUninstall(
     try {
       const registry = ctx.runtime.getRegistryForWorkspace(wsId);
       await lifecycle.uninstall(serverName, registry, wsId);
+      // lifecycle.uninstall clears its own `instances` map and removes
+      // from the legacy global `nimblebrain.json`, but it does NOT
+      // touch `workspace.json#bundles[]` — that array was added later
+      // for catalog-installed connectors. Without this cleanup, a
+      // re-install attempt sees the leftover bundle, treats it as
+      // already-installed, skips seedInstance, and the next OAuth
+      // initiate fails with "Bundle X not installed."
+      const ws = await ctx.runtime.getWorkspaceStore().get(wsId);
+      if (ws) {
+        const filtered = ws.bundles.filter((b) => {
+          if (!("url" in b)) return true;
+          const sn = b.serverName ?? deriveServerName(b.url);
+          return sn !== serverName;
+        });
+        if (filtered.length !== ws.bundles.length) {
+          await ctx.runtime.getWorkspaceStore().update(wsId, { bundles: filtered });
+        }
+      }
       // Drop tool permissions for this connector — they have no meaning
       // once the bundle is gone.
       await ctx.runtime
@@ -600,8 +662,12 @@ async function handleUninstall(
     }
   }
 
-  // User scope — for now equivalent to disconnectUser since there's no
-  // separate "remove from user.json without revoke" flow today.
+  // User scope — symmetric to workspace. disconnectUser revokes
+  // tokens upstream and removes the per-user McpSource from every
+  // workspace pool. Then we have to remove the entry from
+  // `users/<id>/user.json` ourselves; lifecycle.disconnectUser doesn't
+  // touch that file (parallel to the workspace.json gap above), so
+  // skipping this leaves a stale ref that breaks reinstall.
   if (!callerId) return errResult("Authentication required.");
   try {
     const result = await lifecycle.disconnectUser?.(serverName, callerId, {
@@ -609,6 +675,20 @@ async function handleUninstall(
       allowInsecureRemotes: ctx.runtime.getAllowInsecureRemotes(),
     });
     if (!result) return errResult("User-scope uninstall not implemented.");
+
+    const userStore = ctx.runtime.getUserConnectorStore();
+    const record = await userStore.get(callerId);
+    if (record) {
+      const filtered = record.bundles.filter((b) => {
+        if (!("url" in b)) return true;
+        const sn = b.serverName ?? deriveServerName(b.url);
+        return sn !== serverName;
+      });
+      if (filtered.length !== record.bundles.length) {
+        await userStore.update(callerId, { bundles: filtered });
+      }
+    }
+
     await ctx.runtime
       .getPermissionStore()
       .deleteConnector({ scope: "user", userId: callerId }, serverName);
