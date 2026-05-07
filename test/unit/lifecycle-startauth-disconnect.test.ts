@@ -30,7 +30,7 @@ function seedInstance(
   lifecycle: BundleLifecycleManager,
   serverName: string,
   wsId: string,
-  oauthScope: "workspace" | "member" = "workspace",
+  oauthScope: "workspace" | "user" = "workspace",
   ref?: BundleRef,
 ): BundleInstance {
   const instance: BundleInstance = {
@@ -77,7 +77,7 @@ describe("BundleLifecycleManager.startAuth — validation & idempotence", () => 
     ).rejects.toThrow(/missing URL ref/);
   });
 
-  test("rejects when principal mismatches declared scope (workspace bundle, member principal)", async () => {
+  test("rejects when principal mismatches declared scope (workspace bundle, user principal)", async () => {
     seedInstance(lifecycle, "granola", "ws_test", "workspace", {
       url: "https://example.test/mcp",
     });
@@ -86,13 +86,13 @@ describe("BundleLifecycleManager.startAuth — validation & idempotence", () => 
     ).rejects.toThrow(/workspace-scoped/);
   });
 
-  test("rejects when principal mismatches declared scope (member bundle, _workspace principal)", async () => {
-    seedInstance(lifecycle, "granola", "ws_test", "member", {
+  test("rejects when principal mismatches declared scope (user bundle, _workspace principal)", async () => {
+    seedInstance(lifecycle, "granola", "ws_test", "user", {
       url: "https://example.test/mcp",
     });
     await expect(
       lifecycle.startAuth("granola", "ws_test", "_workspace", OPTS),
-    ).rejects.toThrow(/member-scoped/);
+    ).rejects.toThrow(/user-scoped/);
   });
 
   test("returns existing pending_auth URL without restarting (debounces double-click)", async () => {

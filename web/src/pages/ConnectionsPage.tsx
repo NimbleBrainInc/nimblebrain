@@ -8,40 +8,42 @@ import {
   type InstalledConnection,
   initiateMcpOAuth,
   installConnection,
-} from "../../api/client";
-import { Card, CardContent } from "../../components/ui/card";
-import { useWorkspaceContext } from "../../context/WorkspaceContext";
-import { useEvents } from "../../hooks/useEvents";
-import { EmptyState, RequireActiveWorkspace, SettingsListPage } from "./components";
+} from "../api/client";
+import { Card, CardContent } from "../components/ui/card";
+import { useWorkspaceContext } from "../context/WorkspaceContext";
+import { useEvents } from "../hooks/useEvents";
+import { EmptyState, RequireActiveWorkspace, SettingsListPage } from "./settings/components";
 
 /**
- * Settings → Connections page.
+ * Top-level Connections page (sibling of Conversations / Files).
  *
- * Two columns:
- *   - My Connections: oauthScope='member' bundles. Per-user "Connect"
- *     flows. Each row shows the caller's per-principal state +
- *     "Connected as <email>" when OIDC identity is captured.
- *   - Workspace Connections: oauthScope='workspace' bundles. Shared
- *     identity per workspace.
+ * Two stacked sections distinguish the two ownership shapes:
+ *   - "Personal" (user-scope): tokens stored under
+ *     `users/<userId>/credentials/...`, available across every workspace
+ *     the user is a member of.
+ *   - "Workspace" (workspace-scope): tokens stored under
+ *     `workspaces/<wsId>/credentials/...`, shared by every workspace
+ *     member.
  *
  * One-click install. Clicking Connect on an uninstalled catalog entry
- * runs `POST /v1/connections/install` (which adds the bundle to
- * workspace.json + seeds the lifecycle map) and then immediately
- * `POST /v1/mcp-auth/initiate` to start the OAuth dance. Failures at
- * either step surface inline on the card.
+ * calls the `manage_connections` tool with action `install` (catalog
+ * entry's `defaultScope` routes to the right storage tree), then
+ * `/v1/mcp-auth/initiate` to start the OAuth dance.
  *
  * State → button mapping:
  *   - running          → "Disconnect"
- *   - reauth_required  → "Reconnect" (prior tokens broke; user reconsents)
+ *   - reauth_required  → "Reconnect" (prior tokens broke; reconsent)
  *   - dead             → "Reconnect"
  *   - not_authenticated, not_installed, stopped → "Connect"
  *   - pending_auth, starting → busy spinner
  */
-export function ConnectionsTab() {
+export function ConnectionsPage() {
   return (
-    <RequireActiveWorkspace>
-      <Inner />
-    </RequireActiveWorkspace>
+    <div className="h-full overflow-y-auto p-4 md:p-6">
+      <RequireActiveWorkspace>
+        <Inner />
+      </RequireActiveWorkspace>
+    </div>
   );
 }
 
@@ -107,7 +109,7 @@ function Inner() {
 
   // Catalog entries without an installed counterpart: render with
   // "Not installed" affordance.
-  const memberCatalog = catalog.filter((e) => e.defaultScope === "member");
+  const userCatalog = catalog.filter((e) => e.defaultScope === "user");
   const workspaceCatalog = catalog.filter((e) => e.defaultScope === "workspace");
 
   // Plus any installed bundles whose URL doesn't match the catalog (custom URLs).
@@ -116,19 +118,19 @@ function Inner() {
   return (
     <SettingsListPage
       title="Connections"
-      description="Connect remote services. Personal connections (member-scoped) are private to you; workspace connections are shared across the team."
+      description="Connect remote services for the agent to use."
     >
-      <div className="grid gap-6 md:grid-cols-2">
+      <div className="flex flex-col gap-8">
         <ColumnSection
-          heading="My Connections"
-          subheading="Personal accounts — private to you"
-          entries={memberCatalog}
+          heading="Personal — Your account"
+          subheading="Available everywhere you sign in. Connect once, use in any workspace."
+          entries={userCatalog}
           installedByUrl={installedByUrl}
           onChanged={refresh}
         />
         <ColumnSection
-          heading="Workspace Connections"
-          subheading="Shared across all workspace members"
+          heading="Workspace — Shared with your team"
+          subheading="Tokens live with the workspace. Used by every workspace member."
           entries={workspaceCatalog}
           installedByUrl={installedByUrl}
           onChanged={refresh}
@@ -199,9 +201,7 @@ function ConnectionCard({
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  const conn =
-    installed?.oauthScope === "member" ? installed.myConnection : installed?.workspaceConnection;
-  const state = conn?.state ?? (installed ? "not_authenticated" : "not_installed");
+  const state = installed?.state ?? "not_installed";
   // Static-auth (pre-registered OAuth apps: HubSpot, Gmail, Outlook, etc.)
   // can't be installed from the UI in v1 — they need operator setup
   // (registering the OAuth app, seeding clientId + clientSecret) before
@@ -265,7 +265,7 @@ function ConnectionCard({
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2">
               <span className="font-medium text-sm">{entry.name}</span>
-              <StatusPill state={state} identity={installed?.myConnection?.identity} />
+              <StatusPill state={state} identity={installed?.identity} />
             </div>
             <p className="text-xs text-muted-foreground truncate">{entry.description}</p>
             {err && <p className="text-xs text-destructive mt-1">{err}</p>}
@@ -313,8 +313,7 @@ function ConnectionCard({
 
 function OrphanCard({ ins, onChanged }: { ins: InstalledConnection; onChanged: () => void }) {
   const [busy, setBusy] = useState(false);
-  const conn = ins.oauthScope === "member" ? ins.myConnection : ins.workspaceConnection;
-  const state = conn?.state ?? "not_connected";
+  const state = ins.state ?? "not_authenticated";
   return (
     <Card>
       <CardContent className="py-3 px-4">

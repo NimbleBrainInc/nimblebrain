@@ -57,7 +57,7 @@ export function loadCatalog(): ConnectionCatalogEntry[] {
  * Rules per entry:
  *   - id, name, description, iconUrl, url all required (string, non-empty)
  *   - auth ∈ {"dcr", "static"}
- *   - defaultScope ∈ {"workspace", "member"}
+ *   - defaultScope ∈ {"workspace", "user"}
  *   - id matches `[a-z0-9](?:[a-z0-9-]*[a-z0-9])?` (kebab, lowercase)
  *   - operatorSetup required + well-formed when auth === "static"
  *   - requiredScopes / additionalAuthorizationParams / tags optional;
@@ -119,7 +119,7 @@ export function validateCatalog(
       log.warn(`[catalog] ${tag} dropped — auth must be 'dcr' or 'static'`);
       continue;
     }
-    if (candidate.defaultScope !== "workspace" && candidate.defaultScope !== "member") {
+    if (candidate.defaultScope !== "workspace" && candidate.defaultScope !== "user") {
       log.warn(`[catalog] ${tag} dropped — defaultScope must be 'workspace' or 'member'`);
       continue;
     }

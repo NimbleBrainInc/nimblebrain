@@ -12,7 +12,7 @@ export const POOL_WORKSPACE_PRINCIPAL = "_workspace";
 
 /**
  * `ToolSource` adapter that holds N per-principal `McpSource`s under one
- * registry entry. Used for `oauthScope: "member"` URL bundles where each
+ * registry entry. Used for `oauthScope: "user"` URL bundles where each
  * workspace member authenticates independently and tool calls must route
  * to the calling member's tokens.
  *
@@ -42,7 +42,7 @@ export const POOL_WORKSPACE_PRINCIPAL = "_workspace";
  * largely user-independent for the services we care about — see
  * REMOTE_MCP_CONNECTIONS.md design § 4 for the rationale).
  */
-export class MemberPoolSource implements ToolSource {
+export class UserPoolSource implements ToolSource {
   readonly name: string;
   /** principalId → underlying McpSource. Lazily populated. */
   private readonly members = new Map<string, McpSource>();
@@ -133,7 +133,7 @@ export class MemberPoolSource implements ToolSource {
    * so we don't leak Clients on reconnect. Tool-list cache is left in
    * place — the new source's tools should match.
    */
-  async setMemberSource(principalId: string, source: McpSource): Promise<void> {
+  async setUserSource(principalId: string, source: McpSource): Promise<void> {
     const existing = this.members.get(principalId);
     if (existing) {
       try {
@@ -156,12 +156,12 @@ export class MemberPoolSource implements ToolSource {
   }
 
   /** Get the per-member McpSource, or undefined if the member isn't connected. */
-  getMemberSource(principalId: string): McpSource | undefined {
+  getUserSource(principalId: string): McpSource | undefined {
     return this.members.get(principalId);
   }
 
   /** Drop a member from the pool (e.g. on disconnect / member removal). */
-  async removeMember(principalId: string): Promise<void> {
+  async removeUser(principalId: string): Promise<void> {
     const src = this.members.get(principalId);
     if (!src) return;
     this.members.delete(principalId);

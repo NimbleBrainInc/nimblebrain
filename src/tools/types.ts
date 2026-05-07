@@ -43,7 +43,7 @@ export interface ToolSource {
    * `principalId` is the identity to authenticate as for member-scoped
    * remote MCP bundles — the conversation owner's user id for agent-loop
    * calls, the explicit caller for the REST `/v1/tools/call` path. Only
-   * `MemberPoolSource` reads it; single-principal sources (workspace-scope
+   * `UserPoolSource` reads it; single-principal sources (workspace-scope
    * MCP, in-process platform sources, stdio bundles) ignore the value.
    */
   execute(

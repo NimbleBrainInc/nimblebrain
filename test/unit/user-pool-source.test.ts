@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { MemberPoolSource, POOL_WORKSPACE_PRINCIPAL } from "../../src/tools/member-pool-source.ts";
+import { UserPoolSource, POOL_WORKSPACE_PRINCIPAL } from "../../src/tools/user-pool-source.ts";
 import type { ToolResult } from "../../src/tools/types.ts";
 import type { Tool } from "../../src/tools/types.ts";
 
 /**
  * Minimal McpSource stand-in for testing pool dispatch. Implements only
- * the surface MemberPoolSource calls into.
+ * the surface UserPoolSource calls into.
  */
 class FakeMcpSource {
   readonly name: string;
@@ -53,14 +53,14 @@ function tool(name: string, description = ""): Tool {
   };
 }
 
-describe("MemberPoolSource", () => {
+describe("UserPoolSource", () => {
   test("with no members connected, tools() returns []", async () => {
-    const pool = new MemberPoolSource("granola");
+    const pool = new UserPoolSource("granola");
     expect(await pool.tools()).toEqual([]);
   });
 
   test("execute without principalId returns structured error", async () => {
-    const pool = new MemberPoolSource("granola");
+    const pool = new UserPoolSource("granola");
     const result = await pool.execute("list_meetings", {});
     expect(result.isError).toBe(true);
     expect(result.content[0]).toMatchObject({ type: "text" });
@@ -70,13 +70,13 @@ describe("MemberPoolSource", () => {
   });
 
   test("execute with _workspace principal returns same error (member-scope rejects workspace caller)", async () => {
-    const pool = new MemberPoolSource("granola");
+    const pool = new UserPoolSource("granola");
     const result = await pool.execute("list_meetings", {}, undefined, POOL_WORKSPACE_PRINCIPAL);
     expect(result.isError).toBe(true);
   });
 
   test("execute for a non-connected member returns pending_auth structured error", async () => {
-    const pool = new MemberPoolSource("granola");
+    const pool = new UserPoolSource("granola");
     const result = await pool.execute("list_meetings", {}, undefined, "usr_alice");
     expect(result.isError).toBe(true);
     expect(result.structuredContent).toEqual({
@@ -85,13 +85,13 @@ describe("MemberPoolSource", () => {
   });
 
   test("execute routes to the right per-member source", async () => {
-    const pool = new MemberPoolSource("granola");
+    const pool = new UserPoolSource("granola");
     const aliceSrc = new FakeMcpSource("granola", [tool("granola__list_meetings")]);
     const bobSrc = new FakeMcpSource("granola", [tool("granola__list_meetings")]);
     // biome-ignore lint/suspicious/noExplicitAny: test fake stands in for McpSource
-    await pool.setMemberSource("usr_alice", aliceSrc as any);
+    await pool.setUserSource("usr_alice", aliceSrc as any);
     // biome-ignore lint/suspicious/noExplicitAny: test fake stands in for McpSource
-    await pool.setMemberSource("usr_bob", bobSrc as any);
+    await pool.setUserSource("usr_bob", bobSrc as any);
 
     const r1 = await pool.execute("list_meetings", { x: 1 }, undefined, "usr_alice");
     const r2 = await pool.execute("list_meetings", { x: 2 }, undefined, "usr_bob");
@@ -105,55 +105,55 @@ describe("MemberPoolSource", () => {
     expect(bobSrc.getCalls()).toEqual([{ toolName: "list_meetings", principalId: "usr_bob" }]);
   });
 
-  test("tools() caches from first connecting member; subsequent setMemberSource doesn't refresh cache", async () => {
-    const pool = new MemberPoolSource("granola");
+  test("tools() caches from first connecting member; subsequent setUserSource doesn't refresh cache", async () => {
+    const pool = new UserPoolSource("granola");
     const aliceSrc = new FakeMcpSource("granola", [tool("granola__list_meetings")]);
     const bobSrc = new FakeMcpSource("granola", [
       tool("granola__list_meetings"),
       tool("granola__archive"),
     ]);
     // biome-ignore lint/suspicious/noExplicitAny: test fake
-    await pool.setMemberSource("usr_alice", aliceSrc as any);
+    await pool.setUserSource("usr_alice", aliceSrc as any);
     expect((await pool.tools()).length).toBe(1);
 
     // biome-ignore lint/suspicious/noExplicitAny: test fake
-    await pool.setMemberSource("usr_bob", bobSrc as any);
+    await pool.setUserSource("usr_bob", bobSrc as any);
     // Cache still serves Alice's list — assumption: tool surface largely
     // user-independent. Acceptable trade-off documented in the source comment.
     expect((await pool.tools()).length).toBe(1);
   });
 
-  test("setMemberSource replaces an existing entry and stops the old one", async () => {
-    const pool = new MemberPoolSource("granola");
+  test("setUserSource replaces an existing entry and stops the old one", async () => {
+    const pool = new UserPoolSource("granola");
     const aliceV1 = new FakeMcpSource("granola");
     const aliceV2 = new FakeMcpSource("granola");
     // biome-ignore lint/suspicious/noExplicitAny: test fake
-    await pool.setMemberSource("usr_alice", aliceV1 as any);
+    await pool.setUserSource("usr_alice", aliceV1 as any);
     // biome-ignore lint/suspicious/noExplicitAny: test fake
-    await pool.setMemberSource("usr_alice", aliceV2 as any);
+    await pool.setUserSource("usr_alice", aliceV2 as any);
     expect(aliceV1.stopped).toBe(true);
     expect(aliceV2.stopped).toBe(false);
-    expect(pool.getMemberSource("usr_alice")).toBe(aliceV2 as unknown as never);
+    expect(pool.getUserSource("usr_alice")).toBe(aliceV2 as unknown as never);
   });
 
-  test("removeMember stops the source and clears the entry", async () => {
-    const pool = new MemberPoolSource("granola");
+  test("removeUser stops the source and clears the entry", async () => {
+    const pool = new UserPoolSource("granola");
     const aliceSrc = new FakeMcpSource("granola");
     // biome-ignore lint/suspicious/noExplicitAny: test fake
-    await pool.setMemberSource("usr_alice", aliceSrc as any);
-    await pool.removeMember("usr_alice");
+    await pool.setUserSource("usr_alice", aliceSrc as any);
+    await pool.removeUser("usr_alice");
     expect(aliceSrc.stopped).toBe(true);
-    expect(pool.getMemberSource("usr_alice")).toBeUndefined();
+    expect(pool.getUserSource("usr_alice")).toBeUndefined();
   });
 
   test("stop() tears down all member sources", async () => {
-    const pool = new MemberPoolSource("granola");
+    const pool = new UserPoolSource("granola");
     const a = new FakeMcpSource("granola");
     const b = new FakeMcpSource("granola");
     // biome-ignore lint/suspicious/noExplicitAny: test fake
-    await pool.setMemberSource("a", a as any);
+    await pool.setUserSource("a", a as any);
     // biome-ignore lint/suspicious/noExplicitAny: test fake
-    await pool.setMemberSource("b", b as any);
+    await pool.setUserSource("b", b as any);
     await pool.stop();
     expect(a.stopped).toBe(true);
     expect(b.stopped).toBe(true);
@@ -161,7 +161,7 @@ describe("MemberPoolSource", () => {
   });
 
   test("execute after stop returns a stopped-bundle error", async () => {
-    const pool = new MemberPoolSource("granola");
+    const pool = new UserPoolSource("granola");
     await pool.stop();
     const r = await pool.execute("list_meetings", {}, undefined, "usr_alice");
     expect(r.isError).toBe(true);

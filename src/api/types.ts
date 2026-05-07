@@ -3,6 +3,7 @@ import type { EventSink } from "../engine/types.ts";
 import type { IdentityProvider, UserIdentity } from "../identity/provider.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import type { HealthMonitor } from "../tools/health-monitor.ts";
+import type { UserConnectionStore } from "../users/user-connection-store.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
 import type { AuthMiddlewareOptions } from "./auth-middleware.ts";
 import type { ConversationEventManager } from "./conversation-events.ts";
@@ -67,6 +68,13 @@ export interface AppContext {
   authOptions: AuthMiddlewareOptions;
   provider: IdentityProvider;
   workspaceStore: WorkspaceStore;
+  /**
+   * Per-user storage for personal connections. Sits parallel to
+   * workspaceStore — `users/<userId>/user.json` for personal bundles +
+   * `users/<userId>/credentials/...` for the OAuth tokens those bundles
+   * authenticate against.
+   */
+  userConnectionStore: UserConnectionStore;
   healthMonitor: HealthMonitor;
   sseManager: SseEventManager;
   conversationEventManager: ConversationEventManager;

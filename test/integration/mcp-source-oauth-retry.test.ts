@@ -192,7 +192,7 @@ describe("McpSource — OAuth retry path", () => {
 
   it("401 → OAuth → 200: start() completes and tools() returns the server's tools", async () => {
     const provider = new WorkspaceOAuthProvider({
-      wsId: "ws_test",
+      owner: { type: "workspace", wsId: "ws_test" },
       serverName: "retry-test",
       workDir,
       callbackUrl: CALLBACK,

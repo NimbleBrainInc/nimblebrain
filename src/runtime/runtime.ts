@@ -64,6 +64,7 @@ import { McpSource } from "../tools/mcp-source.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
 import { createSystemTools } from "../tools/system-tools.ts";
 import type { ResourceData } from "../tools/types.ts";
+import { UserConnectionStore } from "../users/user-connection-store.ts";
 import { WorkspaceStore } from "../workspace/workspace-store.ts";
 import { RunInProgressError } from "./errors.ts";
 import { PlacementRegistry } from "./placement-registry.ts";
@@ -171,6 +172,7 @@ export class Runtime {
   private _instanceConfig: InstanceConfig | null;
   private _userStore: UserStore;
   private _workspaceStore: WorkspaceStore;
+  private _userConnectionStore: UserConnectionStore | null = null;
   private _identityProvider: IdentityProvider | null;
   /** Getter for the current request identity — reads from AsyncLocalStorage. */
   _getIdentity: () => UserIdentity | null = () => null;
@@ -544,18 +546,54 @@ export class Runtime {
     // each route having to thread the registry through.
     lifecycle.setWorkspaceRegistries(workspaceRegistries);
 
+    // User-scope install needs to know which workspaces a user is in
+    // to register their personal bundles into each workspace's tool
+    // registry. Closure-based to avoid an import cycle (lifecycle ←→
+    // workspaceStore would be circular).
+    lifecycle.setWorkspacesForUserResolver(async (userId: string) => {
+      const all = await workspaceStore.getWorkspacesForUser(userId);
+      return all.map((ws) => ws.id);
+    });
+
     // Seed lifecycle instances for workspace bundles (user-installed only)
     for (const entry of workspaceBundleEntries) {
       const { serverName: sn, bundle: ref, meta, wsId, dataDir } = entry;
       const label = "name" in ref ? ref.name : "url" in ref ? ref.url : ref.path;
       // Pass the per-workspace registry so seedInstance can register a
-      // MemberPoolSource for member-scoped URL bundles (Track B).
+      // UserPoolSource for user-scope URL bundles (used in workspace.json
+      // for the legacy "member" path; new user-scope installs flow
+      // through user.json + seedUserInstance below).
       const wsRegistry = workspaceRegistries.get(wsId);
       lifecycle.seedInstance(sn, label, ref, meta ?? undefined, wsId, dataDir, wsRegistry);
 
       const instance = lifecycle.getInstance(sn, wsId);
       if (instance?.ui?.placements && instance.ui.placements.length > 0) {
         placementRegistry.register(sn, instance.ui.placements, wsId);
+      }
+    }
+
+    // Boot pass for user-scope personal connections. Each user.json
+    // declares the bundles that user has personally installed; for each
+    // (user, bundle) pair we seed a user-scope BundleInstance and wire
+    // a UserPoolSource into every workspace registry the user is in.
+    // Errors here are isolated per-record so a single corrupt user.json
+    // doesn't prevent boot.
+    const userConnStore = rt.getUserConnectionStore();
+    const allUsers = await userConnStore.list();
+    for (const userRecord of allUsers) {
+      for (const ref of userRecord.bundles) {
+        if (!("url" in ref)) continue;
+        const sn =
+          ref.serverName ?? new URL(ref.url).hostname.replace(/[^a-z0-9]/gi, "-").toLowerCase();
+        try {
+          await lifecycle.seedUserInstance(sn, ref, userRecord.userId);
+        } catch (err) {
+          process.stderr.write(
+            `[runtime] Failed to seed user-scope "${sn}" for ${userRecord.userId}: ${
+              err instanceof Error ? err.message : String(err)
+            }\n`,
+          );
+        }
       }
     }
 
@@ -1319,6 +1357,19 @@ export class Runtime {
     return this._workspaceStore;
   }
 
+  /**
+   * Get the UserConnectionStore — per-user storage for personal connections.
+   * Lazily constructed on first access and cached. Mirrors the WorkspaceStore
+   * pattern but operates on `users/<userId>/user.json` instead of
+   * `workspaces/<wsId>/workspace.json`.
+   */
+  getUserConnectionStore(): UserConnectionStore {
+    if (!this._userConnectionStore) {
+      this._userConnectionStore = new UserConnectionStore(this.getWorkDir());
+    }
+    return this._userConnectionStore;
+  }
+
   /** Get the IdentityProvider (null in dev mode when no instance.json). */
   getIdentityProvider(): IdentityProvider | null {
     return this._identityProvider;
@@ -1762,7 +1813,7 @@ export class Runtime {
    * Whether the runtime allows OAuth flows / bundle URLs to target loopback
    * / RFC1918 / cloud-metadata hosts. Mirrors `config.allowInsecureRemotes`;
    * read by `/v1/mcp-auth/initiate` when constructing per-member providers
-   * for `oauthScope: "member"` URL bundles so the SSRF allowlist matches
+   * for `oauthScope: "user"` URL bundles so the SSRF allowlist matches
    * the boot-time provider's behavior.
    */
   getAllowInsecureRemotes(): boolean {

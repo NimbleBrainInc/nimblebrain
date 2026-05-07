@@ -118,7 +118,7 @@ export type BundleRef =
        *   connect get a structured `pending_auth` error when they (or the
        *   agent on their behalf) try to call a tool.
        */
-      oauthScope?: "workspace" | "member";
+      oauthScope?: "workspace" | "user";
       /**
        * Pre-registered OAuth client config. Required for vendors that don't
        * support Dynamic Client Registration (RFC 7591) — Gmail, Outlook,
@@ -335,7 +335,7 @@ export interface BundleInstance {
    * Step 3 — Step 1 always treats this as `"workspace"` regardless of
    * declared value. Undefined for non-URL bundles.
    */
-  oauthScope?: "workspace" | "member";
+  oauthScope?: "workspace" | "user";
   /**
    * Per-principal Connections for URL bundles. Each entry is one
    * (bundle, principal) tuple owning an McpSource and its OAuth state
@@ -354,7 +354,7 @@ export interface BundleInstance {
   /**
    * Original `BundleRef` for URL bundles, retained on the instance so
    * lifecycle can reconstruct per-member `McpSource`s on-demand for
-   * `oauthScope: "member"` (the URL, transport config, oauthClient and
+   * `oauthScope: "user"` (the URL, transport config, oauthClient and
    * scopes are all on the ref). Undefined for non-URL bundles —
    * named/local bundles don't need to spawn additional sources after
    * boot.

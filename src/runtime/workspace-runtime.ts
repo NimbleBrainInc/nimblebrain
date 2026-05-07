@@ -208,7 +208,7 @@ export async function startWorkspaceBundles(
     // so it appears in the workspace's installed list (catalog page +
     // /v1/connections/installed) and the lifecycle's seedInstance can
     // wire it up with an empty connections map.
-    if ("url" in entry.bundle && entry.bundle.oauthScope === "member") {
+    if ("url" in entry.bundle && entry.bundle.oauthScope === "user") {
       log.info(
         `[bundles] Skipping boot start for member-scoped URL bundle "${entry.serverName}" — connections created on-demand`,
       );

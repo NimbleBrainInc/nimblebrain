@@ -63,7 +63,7 @@ export interface ConnectionCatalogEntry {
    * (Granola, personal Gmail) → `member`; team / org services (org
    * Notion, team Slack, organizational HubSpot) → `workspace`.
    */
-  defaultScope: "workspace" | "member";
+  defaultScope: "workspace" | "user";
   /** Optional OAuth scopes the bundle requests. */
   requiredScopes?: string[];
   /** Optional extra authorize-URL params (e.g. Google's access_type=offline). */
@@ -130,7 +130,7 @@ export const DEFAULT_CONNECTION_CATALOG: ConnectionCatalogEntry[] = [
     iconUrl: "https://static.nimblebrain.ai/icons/gmail.svg",
     url: "https://gmailmcp.googleapis.com/mcp/v1",
     auth: "static",
-    defaultScope: "member",
+    defaultScope: "user",
     requiredScopes: [
       "https://www.googleapis.com/auth/gmail.readonly",
       "https://www.googleapis.com/auth/gmail.send",
@@ -153,7 +153,7 @@ export const DEFAULT_CONNECTION_CATALOG: ConnectionCatalogEntry[] = [
     iconUrl: "https://static.nimblebrain.ai/icons/granola.svg",
     url: "https://mcp.granola.ai/mcp",
     auth: "dcr",
-    defaultScope: "member",
+    defaultScope: "user",
     tags: ["meetings", "notes"],
   },
   {
@@ -163,7 +163,7 @@ export const DEFAULT_CONNECTION_CATALOG: ConnectionCatalogEntry[] = [
     iconUrl: "https://static.nimblebrain.ai/icons/hubspot.svg",
     url: "https://mcp.hubspot.com",
     auth: "static",
-    defaultScope: "member",
+    defaultScope: "user",
     operatorSetup: {
       portalUrl:
         "https://developers.hubspot.com/docs/apps/developer-platform/build-apps/integrate-with-the-remote-hubspot-mcp-server",
@@ -179,7 +179,7 @@ export const DEFAULT_CONNECTION_CATALOG: ConnectionCatalogEntry[] = [
     iconUrl: "https://static.nimblebrain.ai/icons/outlook.svg",
     url: "https://mcp.microsoft.com/mail",
     auth: "static",
-    defaultScope: "member",
+    defaultScope: "user",
     requiredScopes: [
       "https://graph.microsoft.com/Mail.ReadWrite",
       "https://graph.microsoft.com/Mail.Send",
@@ -200,7 +200,7 @@ export const DEFAULT_CONNECTION_CATALOG: ConnectionCatalogEntry[] = [
     iconUrl: "https://static.nimblebrain.ai/icons/zoom.svg",
     url: "https://mcp.zoom.us/mcp",
     auth: "static",
-    defaultScope: "member",
+    defaultScope: "user",
     requiredScopes: ["meeting:read", "recording:read"],
     operatorSetup: {
       portalUrl: "https://marketplace.zoom.us/develop/create",

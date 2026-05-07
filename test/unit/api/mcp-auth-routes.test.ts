@@ -25,8 +25,8 @@ function sha256Hex(input: string): string {
 interface StubLifecycle {
   /** Pre-canned URL the stub `startAuth` returns. Undefined ⇒ throws. */
   authUrls: Map<string, string>; // key: "serverName|wsId|principalId"
-  instances: Map<string, { oauthScope?: "workspace" | "member" }>; // key: "serverName|wsId"
-  getInstance(serverName: string, wsId: string): { oauthScope?: "workspace" | "member" } | null;
+  instances: Map<string, { oauthScope?: "workspace" | "user" }>; // key: "serverName|wsId"
+  getInstance(serverName: string, wsId: string): { oauthScope?: "workspace" | "user" } | null;
   startAuth(
     serverName: string,
     wsId: string,
@@ -37,7 +37,7 @@ interface StubLifecycle {
 
 function makeStubLifecycle(): StubLifecycle {
   const authUrls = new Map<string, string>();
-  const instances = new Map<string, { oauthScope?: "workspace" | "member" }>();
+  const instances = new Map<string, { oauthScope?: "workspace" | "user" }>();
   return {
     authUrls,
     instances,

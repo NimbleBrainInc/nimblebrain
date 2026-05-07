@@ -16,7 +16,7 @@ export interface ToolRouter {
    * `principalId` is the identity to authenticate as for member-scoped
    * remote MCP bundles — the conversation owner's user id for agent-loop
    * calls, the explicit caller for the REST `/v1/tools/call` path. Single-
-   * principal sources ignore it; only `MemberPoolSource` reads it.
+   * principal sources ignore it; only `UserPoolSource` reads it.
    */
   execute(call: ToolCall, signal?: AbortSignal, principalId?: string): Promise<ToolResult>;
 }

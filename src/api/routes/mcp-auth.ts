@@ -75,7 +75,7 @@ export function mcpAuthRoutes(ctx: AppContext) {
       // requires an authenticated identity to act as.
       const oauthScope = instance.oauthScope ?? "workspace";
       let principalId: string;
-      if (oauthScope === "member") {
+      if (oauthScope === "user") {
         const callerId = c.var.identity?.id;
         if (!callerId) {
           return apiError(

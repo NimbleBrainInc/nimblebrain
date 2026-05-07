@@ -22,7 +22,7 @@ function makeProvider(
   overrides: { serverName?: string; callbackUrl?: string; allowInsecureRemotes?: boolean } = {},
 ): WorkspaceOAuthProvider {
   return new WorkspaceOAuthProvider({
-    wsId: "ws_test",
+    owner: { type: "workspace", wsId: "ws_test" },
     serverName: overrides.serverName ?? "test-srv",
     workDir,
     callbackUrl: overrides.callbackUrl ?? CALLBACK,
@@ -165,7 +165,7 @@ describe("WorkspaceOAuthProvider — authorize redirect probe (interactive)", ()
       const authUrl = new URL(`http://localhost:${mockAuthServer.port}/authorize`);
       const callbackUrls: string[] = [];
       const p = new WorkspaceOAuthProvider({
-        wsId: "ws_test",
+        owner: { type: "workspace", wsId: "ws_test" },
         serverName: "test-srv",
         workDir,
         callbackUrl: CALLBACK,
@@ -209,7 +209,7 @@ describe("WorkspaceOAuthProvider — authorize redirect probe (interactive)", ()
       const authUrl = new URL(`http://localhost:${mockAuthServer.port}/authorize`);
       let captured: string | null = null;
       const p = new WorkspaceOAuthProvider({
-        wsId: "ws_test",
+        owner: { type: "workspace", wsId: "ws_test" },
         serverName: "test-srv",
         workDir,
         callbackUrl: CALLBACK,

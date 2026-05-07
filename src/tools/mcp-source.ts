@@ -809,7 +809,7 @@ export class McpSource implements ToolSource {
     signal?: AbortSignal,
     // McpSource is single-principal — tokens come from the bound
     // authProvider's persistence dir. Member-scope dispatch happens at the
-    // `MemberPoolSource` wrapper layer, which selects the right per-member
+    // `UserPoolSource` wrapper layer, which selects the right per-member
     // McpSource and calls its execute(). No-op here.
     _principalId?: string,
   ): Promise<ToolResult> {

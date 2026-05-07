@@ -535,72 +535,100 @@ export interface ConnectionCatalogEntry {
   iconUrl: string;
   url: string;
   auth: "dcr" | "static";
-  defaultScope: "workspace" | "member";
+  defaultScope: "workspace" | "user";
   requiredScopes?: string[];
   additionalAuthorizationParams?: Record<string, string>;
   operatorSetup?: { portalUrl: string; hint: string; credentialKey: string };
   tags?: string[];
 }
 
-/** Workspace-filtered catalog. */
-export async function getConnectionsCatalog(): Promise<{ catalog: ConnectionCatalogEntry[] }> {
-  return request<{ catalog: ConnectionCatalogEntry[] }>("/v1/connections/catalog");
-}
-
 /**
- * Per-workspace + per-principal installed view. The page joins this
- * with the catalog to render two columns.
+ * Per-(scope, principal) installed view. Both workspace-shared and the
+ * caller's personal connections are returned, distinguished by `scope`.
  */
 export interface InstalledConnection {
   catalogId: string | null;
   serverName: string;
   url: string;
-  oauthScope: "workspace" | "member";
+  scope: "workspace" | "user";
   catalog?: ConnectionCatalogEntry;
-  myConnection?: {
-    state: string;
-    authorizationUrl?: string;
-    identity?: { sub?: string; email?: string; name?: string };
-  };
-  workspaceConnection?: { state: string; authorizationUrl?: string };
+  state: string;
+  authorizationUrl?: string;
+  identity?: { sub?: string; email?: string; name?: string };
   missingOperatorSetup?: boolean;
 }
 
-export async function getInstalledConnections(): Promise<{ installed: InstalledConnection[] }> {
-  return request<{ installed: InstalledConnection[] }>("/v1/connections/installed");
+/**
+ * Connection management — all-in-one tool surface. The web shell calls
+ * `nb__manage_connections` (alias `manage_connections` on the `nb`
+ * source) for catalog browse, installed list, install, and disconnect.
+ * No dedicated REST routes — the platform's tool-call surface is the
+ * canonical first-party API.
+ *
+ * The OAuth flow itself stays on routes (`/v1/mcp-auth/initiate` +
+ * `/callback`) because it sets a session-bound state cookie and the
+ * callback is a browser redirect target — neither composes cleanly
+ * over `/v1/tools/call`.
+ */
+
+function unwrapStructured<T>(result: ToolCallResult, what: string): T {
+  if (result.isError) {
+    const text = result.content?.[0]?.type === "text" ? result.content[0].text : "";
+    throw new Error(text || `${what} failed.`);
+  }
+  return result.structuredContent as T;
+}
+
+export async function getConnectionsCatalog(): Promise<{ catalog: ConnectionCatalogEntry[] }> {
+  const result = await callTool("nb", "manage_connections", { action: "list_catalog" });
+  return unwrapStructured(result, "list_catalog");
+}
+
+export async function getInstalledConnections(opts?: {
+  scope?: "all" | "workspace" | "user";
+}): Promise<{ installed: InstalledConnection[] }> {
+  const result = await callTool("nb", "manage_connections", {
+    action: "list_installed",
+    scope: opts?.scope ?? "all",
+  });
+  return unwrapStructured(result, "list_installed");
 }
 
 export async function disconnectConnection(
   serverName: string,
-  principalId?: string,
+  scope?: "workspace" | "user",
 ): Promise<{
   ok: boolean;
+  scope: "workspace" | "user";
   revoked: { access?: boolean; refresh?: boolean };
   deletedLocal: boolean;
   revokeError?: string;
 }> {
-  return request("/v1/connections/disconnect", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(principalId ? { serverName, principalId } : { serverName }),
+  const result = await callTool("nb", "manage_connections", {
+    action: "disconnect",
+    serverName,
+    ...(scope ? { scope } : {}),
   });
+  return unwrapStructured(result, "disconnect");
 }
 
 /**
- * Install a catalog entry into the active workspace. Idempotent — if the
- * URL is already in `workspace.bundles[]`, returns `alreadyInstalled: true`.
- * Adds the entry to workspace.json and seeds the runtime lifecycle so
- * subsequent /initiate calls find it. Does NOT start OAuth — the caller
- * is expected to follow up with `initiateMcpOAuth(serverName)`.
+ * Install a catalog entry. Routes to user-scope or workspace-scope
+ * storage based on the catalog entry's `defaultScope`. Idempotent —
+ * if already installed, returns `alreadyInstalled: true`. Does NOT
+ * start OAuth — caller follows up with `initiateMcpOAuth(serverName)`.
  */
-export async function installConnection(
-  catalogId: string,
-): Promise<{ ok: boolean; alreadyInstalled: boolean; serverName: string }> {
-  return request("/v1/connections/install", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ catalogId }),
+export async function installConnection(catalogId: string): Promise<{
+  ok: boolean;
+  alreadyInstalled: boolean;
+  serverName: string;
+  scope: "workspace" | "user";
+}> {
+  const result = await callTool("nb", "manage_connections", {
+    action: "install",
+    catalogId,
   });
+  return unwrapStructured(result, "install");
 }
 
 /** Clear the server-side session cookie. Fails silently on error. */

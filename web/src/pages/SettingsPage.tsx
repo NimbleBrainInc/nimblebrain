@@ -75,13 +75,8 @@ const PLATFORM_SECTIONS: PlatformSection[] = [
     end: true,
     minRole: "ws_member",
   },
-  {
-    id: "ws-connections",
-    label: "Connections",
-    to: "/settings/workspace/connections",
-    group: "workspace",
-    minRole: "ws_member",
-  },
+  // Connections lives at top-level `/connections` (sibling to
+  // Conversations / Files), not in workspace settings.
   {
     id: "ws-skills",
     label: "Skills",

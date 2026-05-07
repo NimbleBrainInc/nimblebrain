@@ -38,28 +38,41 @@ export class InteractiveOAuthNotSupportedError extends Error {
   }
 }
 
+/**
+ * Discriminated union identifying who "owns" an OAuth connection — the
+ * thing whose tokens these are. Two top-level shapes:
+ *
+ *   - `{ type: "workspace", wsId }` — credentials shared by every member
+ *     of the workspace. One DCR'd client identity represents
+ *     "NimbleBrain on behalf of `<wsId>`". Tokens persist under
+ *     `<workDir>/workspaces/<wsId>/credentials/mcp-oauth/<server>/`.
+ *
+ *   - `{ type: "user", userId }` — credentials owned by a single user,
+ *     visible across every workspace they're a member of. The user's
+ *     personal Granola / Gmail / etc. Tokens persist under
+ *     `<workDir>/users/<userId>/credentials/mcp-oauth/<server>/` —
+ *     entirely outside the workspace tree, so leaving a workspace does
+ *     not orphan the credentials.
+ *
+ * Both shapes share the same on-disk file layout under their root:
+ * `client.json` (DCR client info), `tokens.json` (access + refresh),
+ * `verifier.json` (PKCE), `identity.json` (OIDC claims when issued).
+ */
+export type OAuthOwnerContext =
+  | { type: "workspace"; wsId: string }
+  | { type: "user"; userId: string };
+
 export interface WorkspaceOAuthProviderOptions {
-  wsId: string;
+  /**
+   * The principal whose tokens these are — either a workspace (shared)
+   * or a single user (personal). Drives both the credential storage
+   * path and the principal id used in connection state tracking.
+   */
+  owner: OAuthOwnerContext;
   serverName: string;
   workDir: string;
   /** Absolute callback URL — must match the /v1/mcp-auth/callback route. */
   callbackUrl: string;
-  /**
-   * Optional principal id when the bundle is `oauthScope: "member"`. When
-   * present, `tokens.json`, `verifier.json`, and `identity.json` resolve
-   * under `…/members/<memberId>/`. `client.json` (DCR registration) stays
-   * at the workspace level — one DCR'd client represents "NimbleBrain on
-   * behalf of `<wsId>`" and is shared across members; rotating it would
-   * force every member to re-consent.
-   *
-   * Must satisfy the same `safeKey` shape we use for credential keys
-   * (alphanumerics + `._-`, no path separators) so a member id can never
-   * traverse out of the credentials tree. Validated at construction.
-   *
-   * Omit (or `undefined`) for `oauthScope: "workspace"` — the legacy path
-   * where tokens live at the workspace level.
-   */
-  memberId?: string;
   /**
    * Whether loopback / RFC1918 / cloud-metadata hosts are acceptable targets
    * for the authorize chain. Mirrors the platform-level `allowInsecureRemotes`
@@ -349,18 +362,18 @@ function parseIdTokenClaims(
  * the platform's credential store uses so member ids and credential keys
  * have a single safe-name story.
  */
-const MEMBER_ID_RE = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/;
-function assertSafeMemberId(memberId: string): void {
+const OWNER_ID_RE = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/;
+function assertSafeOwnerId(ownerId: string): void {
   if (
-    typeof memberId !== "string" ||
-    memberId.length === 0 ||
-    memberId.length > 128 ||
-    !MEMBER_ID_RE.test(memberId) ||
-    memberId === "." ||
-    memberId === ".."
+    typeof ownerId !== "string" ||
+    ownerId.length === 0 ||
+    ownerId.length > 128 ||
+    !OWNER_ID_RE.test(ownerId) ||
+    ownerId === "." ||
+    ownerId === ".."
   ) {
     throw new Error(
-      `[workspace-oauth-provider] invalid memberId: "${memberId}". ` +
+      `[workspace-oauth-provider] invalid owner id: "${ownerId}". ` +
         "Must be 1-128 chars matching /^[A-Za-z0-9][A-Za-z0-9._-]*[A-Za-z0-9]$/.",
     );
   }
@@ -409,21 +422,18 @@ function deferred<T>(): Deferred<T> {
  * throw `InteractiveOAuthNotSupportedError` and fail fast.
  */
 export class WorkspaceOAuthProvider implements OAuthClientProvider {
-  private readonly wsId: string;
+  private readonly owner: OAuthOwnerContext;
   private readonly serverName: string;
-  private readonly memberId?: string;
   /**
-   * Workspace-shared directory for the DCR registration. `client.json`
-   * lives here regardless of scope — same NimbleBrain-as-a-client identity
-   * for every member of the workspace.
+   * Single root directory for all credential files for this (owner,
+   * server) tuple. `client.json`, `tokens.json`, `verifier.json`, and
+   * `identity.json` all live directly under this. The previous
+   * `clientDir` / `tokenDir` split (where workspace-shared `client.json`
+   * sat outside the per-member token dir) is gone — each owner manages
+   * its own DCR registration. For workspace-scope that's still one
+   * shared client per workspace; for user-scope it's per-user.
    */
-  private readonly clientDir: string;
-  /**
-   * Per-principal directory for tokens / verifier / identity. Equals
-   * `clientDir` for `oauthScope: "workspace"`; `${clientDir}/members/<memberId>/`
-   * for `oauthScope: "member"`. Member files never leak across principals.
-   */
-  private readonly tokenDir: string;
+  private readonly dataDir: string;
   private readonly callbackUrl: string;
   /** Canonical form of `callbackUrl` for self-match comparison. */
   private readonly canonicalCallback: string;
@@ -455,9 +465,8 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
   private currentState: string | null = null;
 
   constructor(opts: WorkspaceOAuthProviderOptions) {
-    this.wsId = opts.wsId;
+    this.owner = opts.owner;
     this.serverName = opts.serverName;
-    this.memberId = opts.memberId;
     this.callbackUrl = opts.callbackUrl;
     this.canonicalCallback = canonicalEndpoint(new URL(opts.callbackUrl));
     this.allowInsecureRemotes = opts.allowInsecureRemotes === true;
@@ -465,23 +474,25 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     this.staticClient = opts.staticClient;
     this.scopes = opts.scopes;
     // Validate at construction so a bad config fails fast — same boundary
-    // discipline as `assertSafeMemberId`.
+    // discipline as `assertSafeOwnerId`.
     validateAdditionalAuthorizationParams(opts.additionalAuthorizationParams);
     this.additionalAuthorizationParams = opts.additionalAuthorizationParams;
-    this.clientDir = join(
+
+    // Resolve the per-owner storage root. Both scopes use the same
+    // `<root>/<scope-dir>/<id>/credentials/mcp-oauth/<server>/` layout
+    // so consumers can swap owner contexts without learning a new
+    // directory shape.
+    const ownerSegment = opts.owner.type === "workspace" ? "workspaces" : "users";
+    const ownerId = opts.owner.type === "workspace" ? opts.owner.wsId : opts.owner.userId;
+    assertSafeOwnerId(ownerId);
+    this.dataDir = join(
       opts.workDir,
-      "workspaces",
-      opts.wsId,
+      ownerSegment,
+      ownerId,
       "credentials",
       "mcp-oauth",
       opts.serverName,
     );
-    if (opts.memberId !== undefined) {
-      assertSafeMemberId(opts.memberId);
-      this.tokenDir = join(this.clientDir, "members", opts.memberId);
-    } else {
-      this.tokenDir = this.clientDir;
-    }
   }
 
   // ── OAuthClientProvider interface ─────────────────────────────────
@@ -491,8 +502,10 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
   }
 
   get clientMetadata(): OAuthClientMetadata {
+    const ownerLabel =
+      this.owner.type === "workspace" ? this.owner.wsId : `user:${this.owner.userId}`;
     const meta: OAuthClientMetadata = {
-      client_name: `NimbleBrain (${this.wsId})`,
+      client_name: `NimbleBrain (${ownerLabel})`,
       redirect_uris: [this.callbackUrl],
       grant_types: ["authorization_code", "refresh_token"],
       response_types: ["code"],
@@ -523,12 +536,12 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
   }
 
   /**
-   * The principal id this provider represents — `memberId` for member-scope
-   * bundles, `undefined` for workspace-shared bundles. Read by the
+   * The owner this provider represents. Workspace-scoped: returns the
+   * workspace id. User-scoped: returns the user id. Read by the
    * disconnect route + connections snapshot to key per-principal records.
    */
-  getMemberId(): string | undefined {
-    return this.memberId;
+  getOwner(): OAuthOwnerContext {
+    return this.owner;
   }
 
   async clientInformation(): Promise<OAuthClientInformationMixed | undefined> {
@@ -550,7 +563,7 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     // DCR client info is workspace-shared regardless of scope — every
     // member of the workspace authenticates as the same NimbleBrain
     // OAuth client.
-    const data = await this.readJson<OAuthClientInformationFull>(this.clientDir, "client.json");
+    const data = await this.readJson<OAuthClientInformationFull>(this.dataDir, "client.json");
     if (data) this.cachedClientInfo = data;
     return data ?? undefined;
   }
@@ -568,19 +581,19 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
       return;
     }
     this.cachedClientInfo = info;
-    await this.writeJson(this.clientDir, "client.json", info);
+    await this.writeJson(this.dataDir, "client.json", info);
   }
 
   async tokens(): Promise<OAuthTokens | undefined> {
     if (this.cachedTokens) return this.cachedTokens;
-    const data = await this.readJson<OAuthTokens>(this.tokenDir, "tokens.json");
+    const data = await this.readJson<OAuthTokens>(this.dataDir, "tokens.json");
     if (data) this.cachedTokens = data;
     return data ?? undefined;
   }
 
   async saveTokens(tokens: OAuthTokens): Promise<void> {
     this.cachedTokens = tokens;
-    await this.writeJson(this.tokenDir, "tokens.json", tokens);
+    await this.writeJson(this.dataDir, "tokens.json", tokens);
     // OIDC identity capture (best-effort). When the AS returns an
     // id_token alongside the tokens — Google, Microsoft, and Zoom all
     // do; many other OAuth 2.1 servers do too — parse the JWT payload
@@ -595,7 +608,7 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
       try {
         const claims = parseIdTokenClaims(idToken);
         if (claims) {
-          await this.writeJson(this.tokenDir, "identity.json", claims);
+          await this.writeJson(this.dataDir, "identity.json", claims);
         }
       } catch (err) {
         log.debug(
@@ -614,17 +627,17 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
    */
   async identity(): Promise<{ sub?: string; email?: string; name?: string } | null> {
     return await this.readJson<{ sub?: string; email?: string; name?: string }>(
-      this.tokenDir,
+      this.dataDir,
       "identity.json",
     );
   }
 
   async saveCodeVerifier(codeVerifier: string): Promise<void> {
-    await this.writeJson(this.tokenDir, "verifier.json", { codeVerifier });
+    await this.writeJson(this.dataDir, "verifier.json", { codeVerifier });
   }
 
   async codeVerifier(): Promise<string> {
-    const data = await this.readJson<{ codeVerifier: string }>(this.tokenDir, "verifier.json");
+    const data = await this.readJson<{ codeVerifier: string }>(this.dataDir, "verifier.json");
     if (!data) throw new Error("PKCE code verifier missing — OAuth flow corrupted");
     return data.codeVerifier;
   }
@@ -752,7 +765,14 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
       `[oauth] interactive flow: ${this.serverName} registering state=${stateParam.slice(0, 8)}… url=${url.origin}…`,
     );
 
-    const registryPromise = registerInteractiveFlow(stateParam, this.wsId, this.serverName);
+    // Flow registry just needs an opaque owner key for diagnostics; either
+    // wsId or userId is fine (and they live in different keyspaces — no
+    // collision risk). Workspace owner uses the wsId; user owner uses
+    // a `user:` prefix so an operator reading registry state can tell
+    // them apart at a glance.
+    const ownerKey =
+      this.owner.type === "workspace" ? this.owner.wsId : `user:${this.owner.userId}`;
+    const registryPromise = registerInteractiveFlow(stateParam, ownerKey, this.serverName);
     this.pendingFlow = { promise: registryPromise };
 
     // Notify the lifecycle / UI so the bundle transitions to pending_auth
@@ -783,18 +803,18 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
   ): Promise<void> {
     if (scope === "all" || scope === "client") {
       this.cachedClientInfo = null;
-      await this.unlinkIfExists(this.clientDir, "client.json");
+      await this.unlinkIfExists(this.dataDir, "client.json");
     }
     if (scope === "all" || scope === "tokens") {
       this.cachedTokens = null;
-      await this.unlinkIfExists(this.tokenDir, "tokens.json");
+      await this.unlinkIfExists(this.dataDir, "tokens.json");
       // identity.json is bound 1:1 with tokens — when tokens go, the
       // captured identity is no longer meaningful (the user might
       // re-auth as someone else next time).
-      await this.unlinkIfExists(this.tokenDir, "identity.json");
+      await this.unlinkIfExists(this.dataDir, "identity.json");
     }
     if (scope === "all" || scope === "verifier") {
-      await this.unlinkIfExists(this.tokenDir, "verifier.json");
+      await this.unlinkIfExists(this.dataDir, "verifier.json");
     }
     // 'discovery' is SDK-internal metadata; we don't persist it.
   }

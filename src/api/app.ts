@@ -5,7 +5,6 @@ import { securityHeaders } from "./middleware/security-headers.ts";
 import { authRoutes } from "./routes/auth.ts";
 import { bootstrapRoutes } from "./routes/bootstrap.ts";
 import { chatRoutes } from "./routes/chat.ts";
-import { connectionsRoutes } from "./routes/connections.ts";
 import { conversationEventRoutes } from "./routes/conversation-events.ts";
 import { eventRoutes } from "./routes/events.ts";
 import { healthRoutes } from "./routes/health.ts";
@@ -59,7 +58,6 @@ export function createApp(
   app.route("/", resourceRoutes(ctx));
   app.route("/", eventRoutes(ctx));
   app.route("/", conversationEventRoutes(ctx));
-  app.route("/", connectionsRoutes(ctx));
 
   // 404 fallback
   app.notFound(() => apiError(404, "not_found", "Not found"));

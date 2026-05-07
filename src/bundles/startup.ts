@@ -248,8 +248,11 @@ export async function startBundleSource(
         };
       }
 
+      // Boot path is workspace-scope only — user-scope bundles aren't
+      // started at boot (they're loaded into a workspace's registry
+      // on-demand when their user enters the workspace, see lifecycle).
       authProvider = new WorkspaceOAuthProvider({
-        wsId: opts.wsId,
+        owner: { type: "workspace", wsId: opts.wsId },
         serverName,
         workDir,
         callbackUrl,

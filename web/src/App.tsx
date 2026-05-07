@@ -40,10 +40,10 @@ import { useEvents } from "./hooks/useEvents";
 import { useShell } from "./hooks/useShell";
 import { bootstrapWorkspacesToInfo } from "./lib/bootstrap";
 import { toSlug } from "./lib/workspace-slug";
+import { ConnectionsPage } from "./pages/ConnectionsPage";
 import { ProfilePage } from "./pages/ProfilePage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { AboutTab } from "./pages/settings/AboutTab";
-import { ConnectionsTab } from "./pages/settings/ConnectionsTab";
 import { ModelTab } from "./pages/settings/ModelTab";
 import { SettingsAppPanel } from "./pages/settings/SettingsAppPanel";
 import { SkillsTab } from "./pages/settings/SkillsTab";
@@ -318,6 +318,7 @@ function AuthenticatedAppContent({
             {/* Profile — top-level, identity-bound, NOT under /settings.
                 Renders inside the main shell with no inner settings nav. */}
             <Route path="/profile" element={<ProfilePage />} />
+            <Route path="/connections" element={<ConnectionsPage />} />
 
             {/* Settings routes — workspace + org scopes only (Profile lives at /profile) */}
             <Route path="/settings" element={<SettingsPage />}>
@@ -331,7 +332,10 @@ function AuthenticatedAppContent({
                 <Route path="usage" element={<UsageTab />} />
                 <Route path="apps" element={<WorkspaceAppsTab />} />
                 <Route path="apps/:serverName" element={<SettingsAppPanel />} />
-                <Route path="connections" element={<ConnectionsTab />} />
+                {/* /settings/workspace/connections moved to top-level
+                    /connections — the connections concern isn't a
+                    workspace-management setting (personal connections
+                    don't belong under workspace settings at all). */}
                 <Route path="skills" element={<SkillsTab />} />
               </Route>
 

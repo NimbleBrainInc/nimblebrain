@@ -47,7 +47,7 @@ describe("validateCatalog", () => {
 
   test("rejects static-auth entry missing operatorSetup", () => {
     const out = validateCatalog([
-      { id: "no-setup", name: "n", description: "d", iconUrl: "https://x.test/i.svg", url: "u", auth: "static", defaultScope: "member" } as unknown,
+      { id: "no-setup", name: "n", description: "d", iconUrl: "https://x.test/i.svg", url: "u", auth: "static", defaultScope: "user" } as unknown,
     ]);
     expect(out.length).toBe(0);
   });
@@ -61,7 +61,7 @@ describe("validateCatalog", () => {
         iconUrl: "https://x.test/i.svg",
         url: "u",
         auth: "static",
-        defaultScope: "member",
+        defaultScope: "user",
         operatorSetup: {
           portalUrl: "https://example.com",
           hint: "do this",

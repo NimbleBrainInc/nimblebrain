@@ -20,7 +20,7 @@ const CALLBACK = "http://localhost:27247/v1/mcp-auth/callback";
 
 function makeProvider(workDir: string, serverName = "test-srv"): WorkspaceOAuthProvider {
   return new WorkspaceOAuthProvider({
-    wsId: "ws_test",
+    owner: { type: "workspace", wsId: "ws_test" },
     serverName,
     workDir,
     callbackUrl: CALLBACK,
@@ -111,51 +111,50 @@ describe("WorkspaceOAuthProvider — file I/O roundtrips", () => {
   });
 });
 
-describe("WorkspaceOAuthProvider — member-scoped persistence", () => {
+describe("WorkspaceOAuthProvider — user-scoped persistence", () => {
   let workDir: string;
 
   beforeEach(() => {
-    workDir = mkdtempSync(join(tmpdir(), "nb-oauth-mem-"));
+    workDir = mkdtempSync(join(tmpdir(), "nb-oauth-user-"));
   });
 
-  function memberProvider(memberId: string, serverName = "test-srv"): WorkspaceOAuthProvider {
+  function userProvider(userId: string, serverName = "test-srv"): WorkspaceOAuthProvider {
     return new WorkspaceOAuthProvider({
-      wsId: "ws_test",
+      owner: { type: "user", userId },
       serverName,
       workDir,
       callbackUrl: CALLBACK,
-      memberId,
     });
   }
 
-  it("rejects malformed memberId at construction", () => {
-    expect(() => memberProvider("../escape")).toThrow(/invalid memberId/);
-    expect(() => memberProvider("with/slash")).toThrow(/invalid memberId/);
-    expect(() => memberProvider("..")).toThrow(/invalid memberId/);
-    expect(() => memberProvider(".")).toThrow(/invalid memberId/);
-    expect(() => memberProvider("")).toThrow(/invalid memberId/);
-    expect(() => memberProvider("a".repeat(129))).toThrow(/invalid memberId/);
+  it("rejects malformed user id at construction", () => {
+    expect(() => userProvider("../escape")).toThrow(/invalid owner id/);
+    expect(() => userProvider("with/slash")).toThrow(/invalid owner id/);
+    expect(() => userProvider("..")).toThrow(/invalid owner id/);
+    expect(() => userProvider(".")).toThrow(/invalid owner id/);
+    expect(() => userProvider("")).toThrow(/invalid owner id/);
+    expect(() => userProvider("a".repeat(129))).toThrow(/invalid owner id/);
   });
 
-  it("tokens land under members/<memberId>/ — never at workspace root", async () => {
-    const a = memberProvider("usr_alice", "granola");
+  it("tokens land under users/<userId>/ — entirely outside the workspaces tree", async () => {
+    const a = userProvider("usr_alice", "granola");
     const tokens: OAuthTokens = { access_token: "alice-token", token_type: "Bearer" };
     await a.saveTokens(tokens);
 
-    const memberPath = join(
+    const userPath = join(
       workDir,
-      "workspaces",
-      "ws_test",
+      "users",
+      "usr_alice",
       "credentials",
       "mcp-oauth",
       "granola",
-      "members",
-      "usr_alice",
       "tokens.json",
     );
-    expect(JSON.parse(readFileSync(memberPath, "utf-8"))).toEqual(tokens);
+    expect(JSON.parse(readFileSync(userPath, "utf-8"))).toEqual(tokens);
 
-    // Workspace-level tokens.json must NOT exist (no leakage to shared dir).
+    // Per-user tokens MUST NOT live under workspaces/. The whole point of
+    // user scope is "not workspace-bound" — leaking a tokens.json into
+    // the workspace tree would orphan it on workspace deletion.
     const workspaceLevelPath = join(
       workDir,
       "workspaces",
@@ -168,61 +167,77 @@ describe("WorkspaceOAuthProvider — member-scoped persistence", () => {
     expect(() => readFileSync(workspaceLevelPath)).toThrow();
   });
 
-  it("two members store tokens independently — neither sees the other's", async () => {
-    const a = memberProvider("usr_alice", "granola");
-    const b = memberProvider("usr_bob", "granola");
+  it("two users store tokens independently — neither sees the other's", async () => {
+    const a = userProvider("usr_alice", "granola");
+    const b = userProvider("usr_bob", "granola");
     await a.saveTokens({ access_token: "alice-token", token_type: "Bearer" });
     await b.saveTokens({ access_token: "bob-token", token_type: "Bearer" });
 
     // Fresh providers (no in-memory cache) read from disk.
-    const a2 = memberProvider("usr_alice", "granola");
-    const b2 = memberProvider("usr_bob", "granola");
+    const a2 = userProvider("usr_alice", "granola");
+    const b2 = userProvider("usr_bob", "granola");
     expect((await a2.tokens())?.access_token).toBe("alice-token");
     expect((await b2.tokens())?.access_token).toBe("bob-token");
   });
 
-  it("client.json is workspace-shared even when tokens are per-member", async () => {
-    // Member A saves DCR client info — should land at the workspace level
-    // (NimbleBrain registers as one client per workspace, regardless of
-    // which member happened to trigger DCR first).
-    const a = memberProvider("usr_alice", "granola");
-    const info: OAuthClientInformationFull = { client_id: "cid-shared", redirect_uris: [CALLBACK] };
-    await a.saveClientInformation(info);
+  it("client.json is per-user — each user's DCR registration is independent", async () => {
+    // Each user manages their own OAuth client identity ("Alice's
+    // NimbleBrain client", "Bob's NimbleBrain client") rather than
+    // sharing a workspace-level registration. This is correct OAuth
+    // semantics for personal-scope: my Granola is mine.
+    const a = userProvider("usr_alice", "granola");
+    const aliceInfo: OAuthClientInformationFull = {
+      client_id: "cid-alice",
+      redirect_uris: [CALLBACK],
+    };
+    await a.saveClientInformation(aliceInfo);
 
-    // Member B (different memberId) reads the same client.json.
-    const b = memberProvider("usr_bob", "granola");
-    expect(await b.clientInformation()).toEqual(info);
+    const b = userProvider("usr_bob", "granola");
+    const bobInfo: OAuthClientInformationFull = {
+      client_id: "cid-bob",
+      redirect_uris: [CALLBACK],
+    };
+    await b.saveClientInformation(bobInfo);
 
-    // And on disk, client.json is at the workspace level (no /members/ segment).
-    const workspaceClientPath = join(
+    // Each user's client.json is read back independently.
+    const a2 = userProvider("usr_alice", "granola");
+    const b2 = userProvider("usr_bob", "granola");
+    expect((await a2.clientInformation())?.client_id).toBe("cid-alice");
+    expect((await b2.clientInformation())?.client_id).toBe("cid-bob");
+
+    // On disk: each lives under its own user directory.
+    const aPath = join(
       workDir,
-      "workspaces",
-      "ws_test",
+      "users",
+      "usr_alice",
       "credentials",
       "mcp-oauth",
       "granola",
       "client.json",
     );
-    expect(JSON.parse(readFileSync(workspaceClientPath, "utf-8"))).toEqual(info);
+    expect(JSON.parse(readFileSync(aPath, "utf-8"))).toEqual(aliceInfo);
   });
 
-  it("invalidateCredentials('tokens') only clears the calling member's tokens", async () => {
-    const a = memberProvider("usr_alice", "granola");
-    const b = memberProvider("usr_bob", "granola");
+  it("invalidateCredentials('tokens') only clears the calling user's tokens", async () => {
+    const a = userProvider("usr_alice", "granola");
+    const b = userProvider("usr_bob", "granola");
     await a.saveTokens({ access_token: "alice-token", token_type: "Bearer" });
     await b.saveTokens({ access_token: "bob-token", token_type: "Bearer" });
 
     await a.invalidateCredentials("tokens");
 
-    const a2 = memberProvider("usr_alice", "granola");
-    const b2 = memberProvider("usr_bob", "granola");
+    const a2 = userProvider("usr_alice", "granola");
+    const b2 = userProvider("usr_bob", "granola");
     expect(await a2.tokens()).toBeUndefined();
     expect((await b2.tokens())?.access_token).toBe("bob-token");
   });
 
-  it("getMemberId returns memberId for member-scope and undefined for workspace-scope", () => {
-    expect(memberProvider("usr_alice").getMemberId()).toBe("usr_alice");
-    expect(makeProvider(workDir).getMemberId()).toBeUndefined();
+  it("getOwner returns the user-scope owner for user providers", () => {
+    expect(userProvider("usr_alice").getOwner()).toEqual({
+      type: "user",
+      userId: "usr_alice",
+    });
+    expect(makeProvider(workDir).getOwner()).toEqual({ type: "workspace", wsId: "ws_test" });
   });
 });
 
@@ -235,7 +250,7 @@ describe("WorkspaceOAuthProvider — Track A: pre-registered client + scopes + e
 
   it("clientInformation returns the static client when staticClient is set; saveClientInformation is a no-op", async () => {
     const p = new WorkspaceOAuthProvider({
-      wsId: "ws_test",
+      owner: { type: "workspace", wsId: "ws_test" },
       serverName: "hubspot",
       workDir,
       callbackUrl: CALLBACK,
@@ -275,7 +290,7 @@ describe("WorkspaceOAuthProvider — Track A: pre-registered client + scopes + e
 
   it("clientMetadata.scope reflects the configured scopes (space-joined per RFC 6749)", () => {
     const p = new WorkspaceOAuthProvider({
-      wsId: "ws_test",
+      owner: { type: "workspace", wsId: "ws_test" },
       serverName: "gmail",
       workDir,
       callbackUrl: CALLBACK,
@@ -291,7 +306,7 @@ describe("WorkspaceOAuthProvider — Track A: pre-registered client + scopes + e
 
   it("clientMetadata default token_endpoint_auth_method = 'none' (DCR PKCE-only) when no staticClient", () => {
     const p = new WorkspaceOAuthProvider({
-      wsId: "ws_test",
+      owner: { type: "workspace", wsId: "ws_test" },
       serverName: "granola",
       workDir,
       callbackUrl: CALLBACK,
@@ -301,7 +316,7 @@ describe("WorkspaceOAuthProvider — Track A: pre-registered client + scopes + e
 
   it("clientMetadata default token_endpoint_auth_method = 'client_secret_post' when secret provided without override", () => {
     const p = new WorkspaceOAuthProvider({
-      wsId: "ws_test",
+      owner: { type: "workspace", wsId: "ws_test" },
       serverName: "hubspot",
       workDir,
       callbackUrl: CALLBACK,
@@ -312,7 +327,7 @@ describe("WorkspaceOAuthProvider — Track A: pre-registered client + scopes + e
 
   it("explicit tokenEndpointAuthMethod override wins", () => {
     const p = new WorkspaceOAuthProvider({
-      wsId: "ws_test",
+      owner: { type: "workspace", wsId: "ws_test" },
       serverName: "weird-vendor",
       workDir,
       callbackUrl: CALLBACK,
@@ -329,7 +344,7 @@ describe("WorkspaceOAuthProvider — Track A: pre-registered client + scopes + e
     const make = (extras: Record<string, string>) =>
       () =>
         new WorkspaceOAuthProvider({
-          wsId: "ws_test",
+          owner: { type: "workspace", wsId: "ws_test" },
           serverName: "broken",
           workDir,
           callbackUrl: CALLBACK,
@@ -363,7 +378,7 @@ describe("WorkspaceOAuthProvider — Track A: pre-registered client + scopes + e
     }) as typeof fetch;
     try {
       const p = new WorkspaceOAuthProvider({
-        wsId: "ws_test",
+        owner: { type: "workspace", wsId: "ws_test" },
         serverName: "google",
         workDir,
         callbackUrl: CALLBACK,
@@ -421,7 +436,7 @@ describe("WorkspaceOAuthProvider — revokeAndDeleteTokens", () => {
 
   it("returns no-op result when no tokens are stored", async () => {
     const p = new WorkspaceOAuthProvider({
-      wsId: "ws_test",
+      owner: { type: "workspace", wsId: "ws_test" },
       serverName: "granola",
       workDir,
       callbackUrl: CALLBACK,
@@ -439,7 +454,7 @@ describe("WorkspaceOAuthProvider — revokeAndDeleteTokens", () => {
 
   it("revokes refresh + access via discovered endpoint, then deletes locally", async () => {
     const p = new WorkspaceOAuthProvider({
-      wsId: "ws_test",
+      owner: { type: "workspace", wsId: "ws_test" },
       serverName: "granola",
       workDir,
       callbackUrl: CALLBACK,
@@ -484,7 +499,7 @@ describe("WorkspaceOAuthProvider — revokeAndDeleteTokens", () => {
 
     // Verify local files are gone.
     const p2 = new WorkspaceOAuthProvider({
-      wsId: "ws_test",
+      owner: { type: "workspace", wsId: "ws_test" },
       serverName: "granola",
       workDir,
       callbackUrl: CALLBACK,
@@ -494,7 +509,7 @@ describe("WorkspaceOAuthProvider — revokeAndDeleteTokens", () => {
 
   it("deletes local tokens even when revocation endpoint discovery fails", async () => {
     const p = new WorkspaceOAuthProvider({
-      wsId: "ws_test",
+      owner: { type: "workspace", wsId: "ws_test" },
       serverName: "granola",
       workDir,
       callbackUrl: CALLBACK,
@@ -513,7 +528,7 @@ describe("WorkspaceOAuthProvider — revokeAndDeleteTokens", () => {
     expect(result.revoked).toEqual({});
 
     const p2 = new WorkspaceOAuthProvider({
-      wsId: "ws_test",
+      owner: { type: "workspace", wsId: "ws_test" },
       serverName: "granola",
       workDir,
       callbackUrl: CALLBACK,
@@ -523,7 +538,7 @@ describe("WorkspaceOAuthProvider — revokeAndDeleteTokens", () => {
 
   it("captures OIDC id_token claims to identity.json on saveTokens", async () => {
     const p = new WorkspaceOAuthProvider({
-      wsId: "ws_test",
+      owner: { type: "workspace", wsId: "ws_test" },
       serverName: "google",
       workDir,
       callbackUrl: CALLBACK,
@@ -558,7 +573,7 @@ describe("WorkspaceOAuthProvider — revokeAndDeleteTokens", () => {
 
   it("identity() returns null when no id_token was issued", async () => {
     const p = new WorkspaceOAuthProvider({
-      wsId: "ws_test",
+      owner: { type: "workspace", wsId: "ws_test" },
       serverName: "no-oidc",
       workDir,
       callbackUrl: CALLBACK,
@@ -569,7 +584,7 @@ describe("WorkspaceOAuthProvider — revokeAndDeleteTokens", () => {
 
   it("invalidateCredentials('tokens') also removes identity.json", async () => {
     const p = new WorkspaceOAuthProvider({
-      wsId: "ws_test",
+      owner: { type: "workspace", wsId: "ws_test" },
       serverName: "google",
       workDir,
       callbackUrl: CALLBACK,
@@ -589,7 +604,7 @@ describe("WorkspaceOAuthProvider — revokeAndDeleteTokens", () => {
 
   it("malformed id_token does not break saveTokens", async () => {
     const p = new WorkspaceOAuthProvider({
-      wsId: "ws_test",
+      owner: { type: "workspace", wsId: "ws_test" },
       serverName: "broken",
       workDir,
       callbackUrl: CALLBACK,
@@ -611,7 +626,7 @@ describe("WorkspaceOAuthProvider — revokeAndDeleteTokens", () => {
     // the AS origin; we then fetch the AS's authorization-server metadata
     // for the revocation_endpoint.
     const p = new WorkspaceOAuthProvider({
-      wsId: "ws_test",
+      owner: { type: "workspace", wsId: "ws_test" },
       serverName: "gmail",
       workDir,
       callbackUrl: CALLBACK,
@@ -649,7 +664,7 @@ describe("WorkspaceOAuthProvider — revokeAndDeleteTokens", () => {
 
   it("treats RFC 7009 invalid_token 400 as success", async () => {
     const p = new WorkspaceOAuthProvider({
-      wsId: "ws_test",
+      owner: { type: "workspace", wsId: "ws_test" },
       serverName: "granola",
       workDir,
       callbackUrl: CALLBACK,

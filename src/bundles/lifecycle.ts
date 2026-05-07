@@ -7,8 +7,8 @@ import type { EventSink } from "../engine/types.ts";
 import type { PlacementRegistry } from "../runtime/placement-registry.ts";
 import { FileCredentialStore } from "../tools/credential-store.ts";
 import { McpSource } from "../tools/mcp-source.ts";
-import { MemberPoolSource } from "../tools/member-pool-source.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
+import { UserPoolSource } from "../tools/user-pool-source.ts";
 import {
   validateAdditionalAuthorizationParams,
   WorkspaceOAuthProvider,
@@ -670,7 +670,7 @@ export class BundleLifecycleManager {
       throw new Error(`[lifecycle] missing URL ref for "${serverName}" — cannot construct source`);
     }
     const isWorkspaceScope = principalId === WORKSPACE_PRINCIPAL_ID;
-    const expectedScope = isWorkspaceScope ? "workspace" : "member";
+    const expectedScope = isWorkspaceScope ? "workspace" : "user";
     const declaredScope = instance.oauthScope ?? "workspace";
     if (declaredScope !== expectedScope) {
       throw new Error(
@@ -745,10 +745,9 @@ export class BundleLifecycleManager {
     authUrlPromise.catch(() => {});
 
     const provider = new WorkspaceOAuthProvider({
-      wsId,
+      owner: isWorkspaceScope ? { type: "workspace", wsId } : { type: "user", userId: principalId },
       serverName,
       workDir: opts.workDir,
-      ...(isWorkspaceScope ? {} : { memberId: principalId }),
       callbackUrl: opts.callbackUrl,
       allowInsecureRemotes: opts.allowInsecureRemotes === true,
       onInteractiveAuthRequired: (url) => {
@@ -784,13 +783,13 @@ export class BundleLifecycleManager {
         registry.addSource(source);
       }
     } else {
-      const pool = this.memberPools.get(`${serverName}|${wsId}`);
+      const pool = this.userPools.get(`${serverName}|${wsId}`);
       if (!pool) {
         throw new Error(
           `[lifecycle] member-pool not registered for "${serverName}" in ${wsId} — this is a boot-ordering bug`,
         );
       }
-      await pool.setMemberSource(principalId, source);
+      await pool.setUserSource(principalId, source);
     }
     this.recordConnectionStateChange(serverName, wsId, principalId, "starting", {
       source,
@@ -875,10 +874,9 @@ export class BundleLifecycleManager {
     const isWorkspaceScope = principalId === WORKSPACE_PRINCIPAL_ID;
 
     const provider = new WorkspaceOAuthProvider({
-      wsId,
+      owner: isWorkspaceScope ? { type: "workspace", wsId } : { type: "user", userId: principalId },
       serverName,
       workDir: opts.workDir,
-      ...(isWorkspaceScope ? {} : { memberId: principalId }),
       callbackUrl: "http://_/", // unused for revocation path
       allowInsecureRemotes: opts.allowInsecureRemotes === true,
     });
@@ -934,19 +932,19 @@ export class BundleLifecycleManager {
         await registry.removeSource(serverName);
       }
     } else {
-      const pool = this.memberPools.get(`${serverName}|${wsId}`);
-      await pool?.removeMember(principalId);
+      const pool = this.userPools.get(`${serverName}|${wsId}`);
+      await pool?.removeUser(principalId);
     }
   }
 
   /**
-   * Map of `(serverName|wsId)` → `MemberPoolSource` for member-scoped
+   * Map of `(serverName|wsId)` → `UserPoolSource` for member-scoped
    * bundles. Populated by `seedInstance`; consumed by `startAuth` and
    * `disconnect`. Kept here (rather than reaching into the per-workspace
    * ToolRegistry) so lifecycle has direct access without coupling to a
    * specific registry shape.
    */
-  private readonly memberPools = new Map<string, MemberPoolSource>();
+  private readonly userPools = new Map<string, UserPoolSource>();
 
   /**
    * Map of `wsId` → `ToolRegistry` for the workspace. Required so
@@ -958,8 +956,8 @@ export class BundleLifecycleManager {
   private readonly registriesByWs = new Map<string, ToolRegistry>();
 
   /** Lookup helper — returns the pool for diagnostic / testing use. */
-  getMemberPool(serverName: string, wsId: string): MemberPoolSource | undefined {
-    return this.memberPools.get(`${serverName}|${wsId}`);
+  getUserPool(serverName: string, wsId: string): UserPoolSource | undefined {
+    return this.userPools.get(`${serverName}|${wsId}`);
   }
 
   /**
@@ -971,6 +969,159 @@ export class BundleLifecycleManager {
   setWorkspaceRegistries(registries: Map<string, ToolRegistry>): void {
     this.registriesByWs.clear();
     for (const [wsId, registry] of registries) this.registriesByWs.set(wsId, registry);
+  }
+
+  /**
+   * Wire workspace-membership lookups so user-scope install + boot can
+   * find which workspaces a user belongs to. Lifecycle doesn't take
+   * `WorkspaceStore` directly to avoid an import cycle and to keep its
+   * dependency surface minimal — a single closure suffices.
+   *
+   * The closure returns workspace ids the user is a member of (any role
+   * — install permissions are gated upstream at the tool layer).
+   */
+  setWorkspacesForUserResolver(resolver: (userId: string) => Promise<string[]>): void {
+    this.workspacesForUser = resolver;
+  }
+
+  // ---- User-scope (personal connections) -----------------------------
+
+  /**
+   * Per-user `BundleInstance` map for personal connections. Keyed by
+   * `(serverName, userId)`. Populated by `seedUserInstance` (boot +
+   * install paths). Connection state on these instances tracks the
+   * user's own auth lifecycle; the per-workspace `userPools` provide
+   * the runtime tool dispatch surface.
+   */
+  private readonly userInstances = new Map<string, BundleInstance>();
+  private workspacesForUser: ((userId: string) => Promise<string[]>) | null = null;
+
+  /** Lookup helper for the user-scope BundleInstance map. */
+  getUserInstance(serverName: string, userId: string): BundleInstance | undefined {
+    return this.userInstances.get(`${serverName}|${userId}`);
+  }
+
+  /**
+   * Register a personal connection for a user. Adds a `BundleInstance`
+   * to the user-scope map and wires a `UserPoolSource` entry into every
+   * workspace registry the user is a member of, so any workspace's
+   * agent loop can dispatch tool calls through the user's source.
+   *
+   * Called from:
+   *   - The `manage_connections.install` tool action when a user
+   *     installs a personal bundle.
+   *   - Runtime boot, for every (user, bundle) pair discovered by
+   *     walking `users/<userId>/user.json` files.
+   */
+  async seedUserInstance(serverName: string, ref: BundleRef, userId: string): Promise<void> {
+    if (!("url" in ref)) {
+      throw new Error(`[lifecycle] seedUserInstance requires a URL ref for "${serverName}"`);
+    }
+    const key = `${serverName}|${userId}`;
+    let instance = this.userInstances.get(key);
+    if (!instance) {
+      instance = {
+        serverName,
+        bundleName: ref.url,
+        version: "remote",
+        state: "stopped",
+        trustScore: null,
+        ui: null,
+        briefing: null,
+        httpProxy: null,
+        protected: false,
+        type: "plain",
+        wsId: "_user", // synthetic — user-scope instances aren't in any workspace
+        oauthScope: "user",
+        ref: { ...ref },
+      };
+      this.userInstances.set(key, instance);
+    }
+
+    if (!this.workspacesForUser) return; // boot ordering — caller will retry
+    const wsIds = await this.workspacesForUser(userId);
+    for (const wsId of wsIds) {
+      const registry = this.registriesByWs.get(wsId);
+      if (!registry) continue;
+
+      // Each workspace gets one UserPoolSource per server name. The pool
+      // dispatches to the per-user McpSource by principalId at call time.
+      // Idempotent: existing pool is reused, only the user's slot is
+      // populated/replaced.
+      let pool = this.userPools.get(`${serverName}|${wsId}`);
+      if (!pool) {
+        pool = new UserPoolSource(serverName);
+        this.userPools.set(`${serverName}|${wsId}`, pool);
+        if (!registry.hasSource(serverName)) {
+          registry.addSource(pool);
+        }
+        void pool.start().catch(() => {
+          // Pool start is a no-op today; future-hook safe.
+        });
+      }
+      // The per-user McpSource is constructed lazily on first call from
+      // that user (via the tool router → pool.execute path) — we don't
+      // wire it eagerly because users may never invoke a tool from this
+      // bundle. The pool sees an empty entry until then.
+    }
+  }
+
+  /**
+   * Disconnect a user's personal connection. Revokes upstream tokens,
+   * deletes local credentials, and removes the user's source from
+   * every workspace pool they're registered in. The pool itself stays
+   * (other users may still have this bundle); only this user's slot is
+   * cleared. After disconnect, the bundle remains in the user's
+   * `user.json` (use the install tool's `uninstall` action — when added —
+   * to remove from the personal install list).
+   */
+  async disconnectUser(
+    serverName: string,
+    userId: string,
+    opts: { workDir: string; allowInsecureRemotes?: boolean },
+  ): Promise<{
+    revoked: { access?: boolean; refresh?: boolean };
+    deletedLocal: boolean;
+    revokeError?: string;
+  }> {
+    const instance = this.userInstances.get(`${serverName}|${userId}`);
+    if (!instance) {
+      throw new Error(`[lifecycle] user "${userId}" has no personal "${serverName}" installed`);
+    }
+    const ref = instance.ref;
+    if (!ref || !("url" in ref)) {
+      throw new Error(`[lifecycle] missing URL ref for user-scope "${serverName}"`);
+    }
+
+    const provider = new WorkspaceOAuthProvider({
+      owner: { type: "user", userId },
+      serverName,
+      workDir: opts.workDir,
+      callbackUrl: "http://_/", // unused for revocation path
+      allowInsecureRemotes: opts.allowInsecureRemotes === true,
+    });
+    const result = await provider.revokeAndDeleteTokens({ bundleUrl: ref.url });
+
+    // Remove from every workspace pool this user is in.
+    if (this.workspacesForUser) {
+      const wsIds = await this.workspacesForUser(userId);
+      for (const wsId of wsIds) {
+        const pool = this.userPools.get(`${serverName}|${wsId}`);
+        await pool?.removeUser(userId);
+      }
+    }
+
+    // Note: we don't update the BundleInstance's connections map here —
+    // user-scope state lives on `instance.connections.get(userId)`,
+    // which is only populated when the user authenticates. Disconnect
+    // before auth is a no-op for that map. After auth, recordConnectionStateChange
+    // would be called via the user-scope startAuth path.
+
+    return {
+      revoked: result.revoked,
+      deletedLocal: result.deletedLocal,
+      ...(result.error ? { revokeError: result.error } : {}),
+    };
   }
 
   // ---- Bundle-contributed automations -------------------------------------
@@ -1104,8 +1255,8 @@ export class BundleLifecycleManager {
    * Seed instances from the initial bundle startup (called by Runtime.start
    * after bundles are already running).
    *
-   * For URL bundles with `oauthScope: "member"`, an empty
-   * `MemberPoolSource` is constructed and registered in the supplied
+   * For URL bundles with `oauthScope: "user"`, an empty
+   * `UserPoolSource` is constructed and registered in the supplied
    * `registry` so the bundle's name appears in tool routing — even
    * before any member has connected. The pool itself returns `tools()
    * = []` until a member's per-principal source connects (Track B
@@ -1131,7 +1282,7 @@ export class BundleLifecycleManager {
       | undefined,
     wsId: string,
     dataDir?: string,
-    /** Per-workspace ToolRegistry — used to register the MemberPoolSource
+    /** Per-workspace ToolRegistry — used to register the UserPoolSource
      *  for member-scoped URL bundles. Optional for backward compat with
      *  test callers; production callers should always pass it. */
     registry?: ToolRegistry,
@@ -1184,15 +1335,15 @@ export class BundleLifecycleManager {
 
     // For URL bundles, derive the boot-time Connection state.
     if ("url" in ref) {
-      if (oauthScope === "member") {
-        // Construct + register the per-bundle MemberPoolSource so the
+      if (oauthScope === "user") {
+        // Construct + register the per-bundle UserPoolSource so the
         // bundle exists in the workspace registry from boot. Per-member
         // McpSources are added to the pool lazily as members connect
         // (`startMemberAuth` below). Without this registration the
         // bundle would be invisible to the agent's tool list until a
         // member connected — which is too late.
-        const pool = new MemberPoolSource(serverName);
-        this.memberPools.set(`${serverName}|${wsId}`, pool);
+        const pool = new UserPoolSource(serverName);
+        this.userPools.set(`${serverName}|${wsId}`, pool);
         // Pool's start() is a no-op; calling it for symmetry / future
         // hooks. Errors here are unrecoverable so we log + continue.
         void pool.start().catch((err) => {

@@ -1,6 +1,6 @@
 import { Download, FileText, Loader2 } from "lucide-react";
 import { useEffect, useState } from "react";
-import { ApiClientError, readResource, type ReadResourceContent } from "../api/client";
+import { ApiClientError, type ReadResourceContent, readResource } from "../api/client";
 
 export interface ResourceLinkViewProps {
   /** URI from the resource_link content block (e.g., `collateral://exports/exp_abc.pdf`). */
