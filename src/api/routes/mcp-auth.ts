@@ -205,9 +205,37 @@ export function mcpAuthRoutes(ctx: AppContext) {
     if (!ctx.isLocalhost) expireParts.push("Secure");
     c.header("Set-Cookie", expireParts.join("; "));
 
+    // Auto-redirect back to the Connections page. The user came from
+    // NimbleBrain and was navigated away to the OAuth provider in
+    // their existing tab — telling them to "close this tab" is wrong
+    // because they'd lose NimbleBrain entirely. We bring them home.
+    //
+    // Resolution order for the return URL:
+    //   1. NB_WEB_URL env (operator config — production should set this
+    //      to the platform's user-facing origin)
+    //   2. NB_API_URL env (in single-origin deployments the API and
+    //      SPA share a host)
+    //   3. The request origin (last-resort: callback hit us at ${origin},
+    //      so the SPA is *probably* on the same origin)
+    const fallbackOrigin = (() => {
+      try {
+        return new URL(c.req.url).origin;
+      } catch {
+        return "";
+      }
+    })();
+    const webBase = process.env.NB_WEB_URL ?? process.env.NB_API_URL ?? fallbackOrigin;
+    const returnUrl = `${webBase.replace(/\/+$/, "")}/settings/workspace/connections`;
+    const safeReturnUrl = escapeHtml(returnUrl);
     return c.html(
-      "<html><body><h3>Authorization complete.</h3>" +
-        "<p>You can close this tab and return to NimbleBrain.</p></body></html>",
+      `<!doctype html><html><head><meta charset="utf-8"><title>Authorization complete</title>
+        <meta http-equiv="refresh" content="1;url=${safeReturnUrl}"></head>
+        <body style="font-family:system-ui,sans-serif;padding:2rem;max-width:32rem;margin:0 auto">
+          <h3 style="margin:0 0 0.5rem">Authorization complete</h3>
+          <p style="color:#555">Returning to NimbleBrain…</p>
+          <p><a href="${safeReturnUrl}">Click here if you aren't redirected →</a></p>
+          <script>setTimeout(function(){location.replace(${JSON.stringify(returnUrl)});},800);</script>
+        </body></html>`,
     );
   });
 
