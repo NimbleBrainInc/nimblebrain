@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { BundleLifecycleManager } from "../../src/bundles/lifecycle.ts";
 import type { BundleRef } from "../../src/bundles/types.ts";
+import { getWorkspaceCredentials } from "../../src/config/workspace-credentials.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
 import { RegistryStore } from "../../src/registries/registry-store.ts";
 import type { Runtime } from "../../src/runtime/runtime.ts";
@@ -617,5 +618,245 @@ describe("manage_connectors.set_permissions", () => {
     expect(result.isError).toBe(true);
     const text = (result.content?.[0] as { text?: string } | undefined)?.text ?? "";
     expect(text).toContain("not installed");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// set_user_config / clear_user_config
+// ─────────────────────────────────────────────────────────────────────
+
+const STUB_BUNDLE_SERVER_NAME = "ipinfo-stub";
+const STUB_BUNDLE_NAME = "@nimblebraininc/ipinfo-stub";
+
+/**
+ * Write a minimal MCPB manifest into the mpak cache so
+ * `mpak.bundleCache.getBundleManifest(bundleName)` returns it on read.
+ * The cache layout is `<mpakHome>/cache/<safeName>/manifest.json`,
+ * where `safeName` strips the leading `@` and replaces `/` with `-`.
+ *
+ * Mirrors what `MpakBundleCache.loadBundle` produces in production —
+ * just the parts our handlers need (manifest with `user_config`).
+ */
+function seedManifestCache(
+  workDir: string,
+  bundleName: string,
+  manifest: Record<string, unknown>,
+): void {
+  const safeName = bundleName.replace(/^@/, "").replace(/\//g, "-");
+  const cacheDir = join(workDir, "apps", "cache", safeName);
+  mkdirSync(cacheDir, { recursive: true });
+  writeFileSync(join(cacheDir, "manifest.json"), JSON.stringify(manifest));
+}
+
+const STUB_MANIFEST = {
+  manifest_version: "0.4",
+  name: STUB_BUNDLE_NAME,
+  version: "1.0.0",
+  description: "Test stub for user_config flows",
+  server: {
+    type: "python",
+    entry_point: "ipinfo_stub.server",
+    mcp_config: { command: "python", args: ["-m", "ipinfo_stub.server"] },
+  },
+  user_config: {
+    api_key: {
+      type: "string",
+      title: "API Key",
+      description: "IPInfo API token",
+      sensitive: true,
+      required: true,
+    },
+    workspace_id: {
+      type: "string",
+      title: "Workspace",
+      description: "Workspace identifier",
+      required: false,
+    },
+  },
+};
+
+/**
+ * Seed a stdio bundle instance into the lifecycle so handlers find it
+ * via `getInstance(serverName, wsId)`. The credential-management
+ * handlers don't need a registry-registered ToolSource — only
+ * `list_installed` does — so we keep this lighter than the full source
+ * setup the production lifecycle does.
+ */
+function seedStdioBundle(h: Harness): void {
+  const ref: BundleRef = { name: STUB_BUNDLE_NAME };
+  h.lifecycle.seedInstance(
+    STUB_BUNDLE_SERVER_NAME,
+    STUB_BUNDLE_NAME,
+    ref,
+    {
+      manifestName: STUB_BUNDLE_NAME,
+      version: "1.0.0",
+      ui: null,
+      type: "plain",
+    },
+    h.wsId,
+  );
+  seedManifestCache(h.workDir, STUB_BUNDLE_NAME, STUB_MANIFEST);
+}
+
+describe("manage_connectors.set_user_config", () => {
+  let h: Harness;
+
+  beforeEach(async () => {
+    h = buildHarness();
+    await provisionWorkspace(h);
+    seedStdioBundle(h);
+  });
+
+  afterEach(() => {
+    rmSync(h.workDir, { recursive: true, force: true });
+  });
+
+  test("returns permission_denied when caller is not workspace admin", async () => {
+    const tool = buildTool(h, NON_ADMIN_USER);
+    const result = await tool.handler({
+      action: "set_user_config",
+      serverName: STUB_BUNDLE_SERVER_NAME,
+      fields: { api_key: "k1" },
+    });
+    expect(result.isError).toBe(true);
+    expect(structured(result).error).toBe("permission_denied");
+  });
+
+  test("admin save persists values + returns populated reflecting new state", async () => {
+    const tool = buildTool(h, ADMIN_USER);
+    const result = await tool.handler({
+      action: "set_user_config",
+      serverName: STUB_BUNDLE_SERVER_NAME,
+      fields: { api_key: "secret-1" },
+    });
+    expect(result.isError).toBe(false);
+    const sc = result.structuredContent as {
+      ok: boolean;
+      populated: Record<string, boolean>;
+    };
+    expect(sc.ok).toBe(true);
+    expect(sc.populated.api_key).toBe(true);
+    expect(sc.populated.workspace_id).toBe(false);
+
+    const stored = await getWorkspaceCredentials(h.wsId, STUB_BUNDLE_NAME, h.workDir);
+    expect(stored?.api_key).toBe("secret-1");
+  });
+
+  test("rejects unknown field names — default-deny", async () => {
+    const tool = buildTool(h, ADMIN_USER);
+    const result = await tool.handler({
+      action: "set_user_config",
+      serverName: STUB_BUNDLE_SERVER_NAME,
+      fields: { api_key: "ok", bogus_field: "nope" },
+    });
+    expect(result.isError).toBe(true);
+    const text = (result.content?.[0] as { text?: string } | undefined)?.text ?? "";
+    expect(text).toContain("bogus_field");
+    // Whole batch rejected — api_key should NOT have been written.
+    const stored = await getWorkspaceCredentials(h.wsId, STUB_BUNDLE_NAME, h.workDir);
+    expect(stored).toBeNull();
+  });
+
+  test("empty string clears that single field", async () => {
+    const tool = buildTool(h, ADMIN_USER);
+    await tool.handler({
+      action: "set_user_config",
+      serverName: STUB_BUNDLE_SERVER_NAME,
+      fields: { api_key: "k1", workspace_id: "ws-2" },
+    });
+    const result = await tool.handler({
+      action: "set_user_config",
+      serverName: STUB_BUNDLE_SERVER_NAME,
+      fields: { api_key: "" },
+    });
+    expect(result.isError).toBe(false);
+    const sc = result.structuredContent as { populated: Record<string, boolean> };
+    expect(sc.populated.api_key).toBe(false);
+    expect(sc.populated.workspace_id).toBe(true);
+  });
+
+  test("rejects when bundle is not installed in workspace", async () => {
+    const tool = buildTool(h, ADMIN_USER);
+    const result = await tool.handler({
+      action: "set_user_config",
+      serverName: "not-installed",
+      fields: { api_key: "k" },
+    });
+    expect(result.isError).toBe(true);
+  });
+
+  test("rejects when bundle declares no user_config in its manifest", async () => {
+    // Replace the seeded manifest with one that has no user_config
+    // block. The lifecycle still has the instance, so the handler
+    // gets past the install check and lands on the schema check.
+    const { user_config: _omit, ...without } = STUB_MANIFEST;
+    seedManifestCache(h.workDir, STUB_BUNDLE_NAME, without);
+
+    const tool = buildTool(h, ADMIN_USER);
+    const result = await tool.handler({
+      action: "set_user_config",
+      serverName: STUB_BUNDLE_SERVER_NAME,
+      fields: {},
+    });
+    expect(result.isError).toBe(true);
+    const text = (result.content?.[0] as { text?: string } | undefined)?.text ?? "";
+    expect(text).toContain("user_config");
+  });
+});
+
+describe("manage_connectors.clear_user_config", () => {
+  let h: Harness;
+
+  beforeEach(async () => {
+    h = buildHarness();
+    await provisionWorkspace(h);
+    seedStdioBundle(h);
+  });
+
+  afterEach(() => {
+    rmSync(h.workDir, { recursive: true, force: true });
+  });
+
+  test("returns permission_denied when caller is not workspace admin", async () => {
+    const tool = buildTool(h, NON_ADMIN_USER);
+    const result = await tool.handler({
+      action: "clear_user_config",
+      serverName: STUB_BUNDLE_SERVER_NAME,
+    });
+    expect(result.isError).toBe(true);
+    expect(structured(result).error).toBe("permission_denied");
+  });
+
+  test("admin clear wipes the credential file and returns all-false populated", async () => {
+    // Seed values first so we have something to clear.
+    const adminTool = buildTool(h, ADMIN_USER);
+    await adminTool.handler({
+      action: "set_user_config",
+      serverName: STUB_BUNDLE_SERVER_NAME,
+      fields: { api_key: "k1", workspace_id: "ws-2" },
+    });
+
+    const result = await adminTool.handler({
+      action: "clear_user_config",
+      serverName: STUB_BUNDLE_SERVER_NAME,
+    });
+    expect(result.isError).toBe(false);
+    const sc = result.structuredContent as { populated: Record<string, boolean> };
+    expect(sc.populated.api_key).toBe(false);
+    expect(sc.populated.workspace_id).toBe(false);
+
+    // File should be gone.
+    const stored = await getWorkspaceCredentials(h.wsId, STUB_BUNDLE_NAME, h.workDir);
+    expect(stored).toBeNull();
+  });
+
+  test("clearing when nothing was stored is idempotent (no error)", async () => {
+    const adminTool = buildTool(h, ADMIN_USER);
+    const result = await adminTool.handler({
+      action: "clear_user_config",
+      serverName: STUB_BUNDLE_SERVER_NAME,
+    });
+    expect(result.isError).toBe(false);
   });
 });
