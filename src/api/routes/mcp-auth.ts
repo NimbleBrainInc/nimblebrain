@@ -246,6 +246,15 @@ export function mcpAuthRoutes(ctx: AppContext) {
       returnUrl = "/settings/workspace/connectors";
     }
     const safeReturnUrl = escapeHtml(returnUrl);
+    // Inline-script injection guard. `JSON.stringify` produces a valid
+    // JS string literal but does NOT escape `</script>` or `<!--` —
+    // those sequences would break out of script context even though
+    // they don't contain HTML metacharacters that escapeHtml /
+    // protocol-allowlist catch. Encode `<` as `<` so any literal
+    // `</script>` / `<!--` in the URL becomes a benign string. The
+    // protocol allowlist above already covers `javascript:` / `data:`
+    // schemes; this closes the parallel script-context exit.
+    const safeJsReturnUrl = JSON.stringify(returnUrl).replace(/</g, "\\u003c");
     return c.html(
       `<!doctype html><html><head><meta charset="utf-8"><title>Authorization complete</title>
         <meta http-equiv="refresh" content="1;url=${safeReturnUrl}"></head>
@@ -253,7 +262,7 @@ export function mcpAuthRoutes(ctx: AppContext) {
           <h3 style="margin:0 0 0.5rem">Authorization complete</h3>
           <p style="color:#555">Returning to NimbleBrain…</p>
           <p><a href="${safeReturnUrl}">Click here if you aren't redirected →</a></p>
-          <script>setTimeout(function(){location.replace(${JSON.stringify(returnUrl)});},800);</script>
+          <script>setTimeout(function(){location.replace(${safeJsReturnUrl});},800);</script>
         </body></html>`,
     );
   });
