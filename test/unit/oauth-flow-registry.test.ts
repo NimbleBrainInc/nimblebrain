@@ -14,13 +14,13 @@ describe("oauth-flow-registry", () => {
   it("resolves a registered flow with the provided code", async () => {
     const p = register("state-abc", "ws_test", "srv");
     const matched = resolveWithCode("state-abc", "the-code");
-    expect(matched).toBe(true);
+    expect(matched).toEqual({ wsId: "ws_test", serverName: "srv" });
     await expect(p).resolves.toBe("the-code");
   });
 
-  it("returns false for unknown state on resolve", () => {
+  it("returns null for unknown state on resolve", () => {
     const matched = resolveWithCode("unknown-state", "code");
-    expect(matched).toBe(false);
+    expect(matched).toBeNull();
   });
 
   it("rejects a registered flow with the provided error", async () => {
@@ -32,8 +32,8 @@ describe("oauth-flow-registry", () => {
 
   it("removes the flow after resolve (second resolve is a no-op)", () => {
     register("state-1", "ws_test", "srv");
-    expect(resolveWithCode("state-1", "a")).toBe(true);
-    expect(resolveWithCode("state-1", "b")).toBe(false);
+    expect(resolveWithCode("state-1", "a")).toEqual({ wsId: "ws_test", serverName: "srv" });
+    expect(resolveWithCode("state-1", "b")).toBeNull();
   });
 
   it("rejects with a timeout error when TTL elapses without a callback", async () => {

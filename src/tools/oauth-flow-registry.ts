@@ -72,14 +72,17 @@ export function register(
   return promise;
 }
 
-/** Resolve a pending flow by state. Returns true if found. */
-export function resolveWithCode(state: string, code: string): boolean {
+/** Resolve a pending flow by state. Returns the matched flow's metadata, or null. */
+export function resolveWithCode(
+  state: string,
+  code: string,
+): { wsId: string; serverName: string } | null {
   const flow = flows.get(state);
-  if (!flow) return false;
+  if (!flow) return null;
   flows.delete(state);
   clearTimeout(flow.timeout);
   flow.resolve(code);
-  return true;
+  return { wsId: flow.wsId, serverName: flow.serverName };
 }
 
 /** Reject a pending flow by state. Returns true if found. */

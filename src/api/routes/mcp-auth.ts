@@ -193,6 +193,15 @@ export function mcpAuthRoutes(ctx: AppContext) {
       );
     }
 
+    // Determine which scoped Connectors page to land on. Bundle's
+    // oauthScope tells us which one — workspace bundles go to
+    // workspace; user-scope bundles go to personal. Fall back to
+    // workspace if the lookup fails (workspace-scope was the default
+    // before user-scope shipped, so it's the safer guess).
+    const lifecycle = ctx.runtime.getLifecycle();
+    const instance = lifecycle.getInstance(matched.serverName, matched.wsId);
+    const scope = instance?.oauthScope === "user" ? "user" : "workspace";
+
     // Clear the one-shot state cookie so a refresh of this page can't
     // be used as a replay vector.
     const expireParts = [
@@ -205,10 +214,11 @@ export function mcpAuthRoutes(ctx: AppContext) {
     if (!ctx.isLocalhost) expireParts.push("Secure");
     c.header("Set-Cookie", expireParts.join("; "));
 
-    // Auto-redirect back to the Connections page. The user came from
-    // NimbleBrain and was navigated away to the OAuth provider in
-    // their existing tab — telling them to "close this tab" is wrong
-    // because they'd lose NimbleBrain entirely. We bring them home.
+    // Auto-redirect back to the Connectors page (Personal or Workspace
+    // depending on the bundle's scope). The user came from NimbleBrain
+    // and was navigated away to the OAuth provider in their existing
+    // tab — telling them to "close this tab" is wrong because they'd
+    // lose NimbleBrain entirely. We bring them home.
     //
     // Resolution order for the return URL:
     //   1. NB_WEB_URL env (operator config — production should set this
@@ -225,7 +235,9 @@ export function mcpAuthRoutes(ctx: AppContext) {
       }
     })();
     const webBase = process.env.NB_WEB_URL ?? process.env.NB_API_URL ?? fallbackOrigin;
-    const returnUrl = `${webBase.replace(/\/+$/, "")}/settings/workspace/connections`;
+    const settingsPath =
+      scope === "user" ? "/settings/personal/connectors" : "/settings/workspace/connectors";
+    const returnUrl = `${webBase.replace(/\/+$/, "")}${settingsPath}`;
     const safeReturnUrl = escapeHtml(returnUrl);
     return c.html(
       `<!doctype html><html><head><meta charset="utf-8"><title>Authorization complete</title>
