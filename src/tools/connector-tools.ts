@@ -1,5 +1,13 @@
+import { join } from "node:path";
+import { getMpak } from "../bundles/mpak.ts";
 import { deriveServerName } from "../bundles/paths.ts";
-import type { BundleRef } from "../bundles/types.ts";
+import type { BundleManifest, BundleRef } from "../bundles/types.ts";
+import {
+  clearAllWorkspaceCredentials,
+  getWorkspaceCredentials,
+  saveWorkspaceCredential,
+  type UserConfigFieldDef,
+} from "../config/workspace-credentials.ts";
 import { loadCatalog } from "../connectors/load-catalog.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import type { ToolResult } from "../engine/types.ts";
@@ -62,6 +70,8 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
             "set_permissions",
             "setup_operator",
             "remove_operator_setup",
+            "set_user_config",
+            "clear_user_config",
           ],
           description: "Action to perform.",
         },
@@ -94,6 +104,12 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
           description:
             'For set_permissions: map of tool name → "allow" | "disallow". Tools omitted are unchanged.',
           additionalProperties: { type: "string", enum: ["allow", "disallow"] },
+        },
+        fields: {
+          type: "object",
+          description:
+            "For set_user_config: map of bundle user_config field name → string value. Empty string clears that field. Omitted fields are unchanged. Unknown field names are rejected (default-deny).",
+          additionalProperties: { type: "string" },
         },
       },
       required: ["action"],
@@ -165,6 +181,16 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
           );
         case "remove_operator_setup":
           return handleRemoveOperatorSetup(ctx, wsId, identity, String(input.catalogId ?? ""));
+        case "set_user_config":
+          return handleSetUserConfig(
+            ctx,
+            wsId,
+            identity,
+            String(input.serverName ?? ""),
+            (input.fields as Record<string, unknown>) ?? {},
+          );
+        case "clear_user_config":
+          return handleClearUserConfig(ctx, wsId, identity, String(input.serverName ?? ""));
         default:
           return errResult(`Unknown action "${action}".`);
       }
@@ -268,14 +294,69 @@ async function handleListInstalled(
     authorizationUrl?: string;
     identity?: { sub?: string; email?: string; name?: string };
     missingOperatorSetup?: boolean;
+    /**
+     * Per-workspace operator OAuth client config — present only for
+     * static-auth catalog entries the workspace has configured. Carries
+     * the public clientId, audit metadata, and a best-effort display
+     * label so the Configure page can render "Configured by Sarah" without
+     * a second API round-trip. Secret is never echoed.
+     */
+    operatorOAuth?: {
+      clientId: string;
+      configuredAt: string;
+      configuredBy: string;
+      configuredByLabel?: string;
+    };
+    /**
+     * Stdio bundle credential schema + per-field configured-state probe.
+     * Populated only when the bundle's manifest declares `user_config`.
+     * `populated[k]` is `true` when a non-empty value is currently
+     * stored — never the value itself. The Configure page's bundle-config
+     * section reads schema for field metadata and populated for
+     * configured/not-configured indicators.
+     */
+    userConfig?: {
+      schema: Record<string, UserConfigFieldDef>;
+      populated: Record<string, boolean>;
+    };
   };
   const installed: InstalledEntry[] = [];
+
+  // Resolve operator OAuth audit labels and bundle credential schemas
+  // lazily so the most common installed-list shape (no static-auth
+  // connectors, no stdio bundles with user_config) does no extra IO.
+  const userStore = ctx.runtime.getUserStore();
+  const userLabelCache = new Map<string, string | undefined>();
+  const resolveUserLabel = async (userId: string): Promise<string | undefined> => {
+    if (userLabelCache.has(userId)) return userLabelCache.get(userId);
+    let label: string | undefined;
+    try {
+      const u = await userStore.get(userId);
+      label = u?.displayName?.trim() || u?.email?.trim() || undefined;
+    } catch {
+      // best-effort; fall back to bare userId at the call site
+    }
+    userLabelCache.set(userId, label);
+    return label;
+  };
+  // Match the path BundleLifecycleManager is constructed with in
+  // runtime.ts so we read from the same singleton mpak cache the
+  // lifecycle populated at boot. Diverging here would either return
+  // stale-cached manifests or miss them entirely depending on which
+  // caller raced first.
+  const mpakHome = join(workDir, "apps");
+  const mpak = getMpak(mpakHome);
 
   // Workspace-scope entries: walk every bundle visible in the workspace
   // registry (includes local stdio, local URL, Synapse apps, and remote
   // OAuth). This is the same view the About tab uses via list_apps.
   if ((scope === "all" || scope === "workspace") && wsId) {
     const registry = ctx.runtime.getRegistryForWorkspace(wsId);
+    // One workspace fetch covers oauthOperatorApps lookups for every
+    // static-auth catalog match in this loop. Hoist out of the per-
+    // instance closure so a workspace with N installed connectors does
+    // one disk read for the workspace record, not N.
+    const ws = await ctx.runtime.getWorkspaceStore().get(wsId);
     for (const instance of ctx.runtime.getBundleInstancesForWorkspace(wsId)) {
       // Skip user-scope URL bundles seeded into the workspace registry
       // via UserPoolSource — those belong to the user-scope view.
@@ -323,7 +404,49 @@ async function handleListInstalled(
           const wrapped = await credStore.get(wsId, oauthClient.clientSecret.key);
           if (!wrapped) entry.missingOperatorSetup = true;
         }
+        // Operator OAuth client config (static-auth only). The Configure
+        // page reads this to render the "Configured by ... on ..." audit
+        // line + Edit affordance. clientId is public; the secret never
+        // leaves the credential store.
+        const op = cat?.auth === "static" ? ws?.oauthOperatorApps?.[cat.id] : undefined;
+        if (op) {
+          const label = await resolveUserLabel(op.configuredBy);
+          entry.operatorOAuth = {
+            clientId: op.clientId,
+            configuredAt: op.configuredAt,
+            configuredBy: op.configuredBy,
+            ...(label ? { configuredByLabel: label } : {}),
+          };
+        }
       }
+
+      // Stdio bundle credential schema + per-field configured probe.
+      // Driven entirely by the bundle's manifest `user_config` block;
+      // bundles that don't declare one (most remote URL connectors)
+      // skip this and the field is omitted from the response.
+      if (!isRemote) {
+        try {
+          const manifest = mpak.bundleCache.getBundleManifest(
+            instance.bundleName,
+          ) as BundleManifest | null;
+          const schema = manifest?.user_config;
+          if (schema && Object.keys(schema).length > 0) {
+            const stored =
+              (await getWorkspaceCredentials(wsId, instance.bundleName, workDir)) ?? {};
+            const populated: Record<string, boolean> = {};
+            for (const key of Object.keys(schema)) {
+              const v = stored[key];
+              populated[key] = typeof v === "string" && v.length > 0;
+            }
+            entry.userConfig = { schema, populated };
+          }
+        } catch {
+          // Manifest cache miss is best-effort cosmetic data — surface
+          // the connector without the bundle-config section rather than
+          // failing the whole list_installed call.
+        }
+      }
+
       installed.push(entry);
     }
   }
@@ -1103,6 +1226,186 @@ async function handleRemoveOperatorSetup(
   return {
     content: textContent(`Removed OAuth app config for "${entry.name}".`),
     structuredContent: { ok: true, catalogId },
+    isError: false,
+  };
+}
+
+/**
+ * Resolve the bundle manifest's `user_config` schema for a workspace-
+ * installed stdio bundle, with admin-gating built in. Returns the
+ * BundleInstance + schema on success, or a `ToolResult` error to forward.
+ *
+ * Centralizes the four checks every credential-write action must do
+ * (auth, ws context, admin role, bundle installed + schema present) so
+ * `set_user_config` / `clear_user_config` stay focused on their write
+ * step and don't drift in their guards.
+ */
+async function resolveBundleSchema(
+  ctx: ManageConnectorsContext,
+  wsId: string | null,
+  identity: UserIdentity | null,
+  serverName: string,
+): Promise<
+  | { ok: true; bundleName: string; schema: Record<string, UserConfigFieldDef> }
+  | { ok: false; result: ToolResult }
+> {
+  if (!wsId) return { ok: false, result: errResult("Workspace context required.") };
+  if (!serverName) return { ok: false, result: errResult("serverName is required.") };
+  if (!identity) return { ok: false, result: errResult("Authentication required.") };
+
+  const ws = await ctx.runtime.getWorkspaceStore().get(wsId);
+  if (!ws) return { ok: false, result: errResult(`Workspace "${wsId}" not found.`) };
+  if (!isWorkspaceAdmin(ws, identity)) {
+    return {
+      ok: false,
+      result: {
+        content: textContent("Workspace admin role required to manage bundle credentials."),
+        structuredContent: { error: "permission_denied" },
+        isError: true,
+      },
+    };
+  }
+
+  const lifecycle = ctx.runtime.getLifecycle();
+  const instance = lifecycle.getInstance(serverName, wsId);
+  if (!instance) {
+    return { ok: false, result: errResult(`Bundle "${serverName}" not installed in workspace.`) };
+  }
+
+  const mpakHome = join(ctx.runtime.getWorkDir(), "apps");
+  const mpak = getMpak(mpakHome);
+  const manifest = mpak.bundleCache.getBundleManifest(instance.bundleName) as BundleManifest | null;
+  const schema = manifest?.user_config;
+  if (!schema || Object.keys(schema).length === 0) {
+    return {
+      ok: false,
+      result: errResult(`Bundle "${serverName}" declares no user_config fields.`),
+    };
+  }
+  return { ok: true, bundleName: instance.bundleName, schema };
+}
+
+/**
+ * Probe the workspace credential file for which `user_config` fields
+ * currently have non-empty stored values. Returns `{ key: boolean }`
+ * keyed on the schema's field names — never the values themselves.
+ */
+async function probeUserConfigPopulated(
+  wsId: string,
+  bundleName: string,
+  workDir: string,
+  schema: Record<string, UserConfigFieldDef>,
+): Promise<Record<string, boolean>> {
+  const stored = (await getWorkspaceCredentials(wsId, bundleName, workDir)) ?? {};
+  const out: Record<string, boolean> = {};
+  for (const key of Object.keys(schema)) {
+    const v = stored[key];
+    out[key] = typeof v === "string" && v.length > 0;
+  }
+  return out;
+}
+
+/**
+ * Write or clear individual `user_config` fields on a stdio bundle's
+ * workspace credential file. Per-field semantics:
+ *
+ *   - Field present in `fields`, value non-empty → save.
+ *   - Field present in `fields`, value empty string → clear that one field.
+ *   - Field absent from `fields` → leave existing value untouched.
+ *
+ * Unknown field names (anything not in the manifest's `user_config`)
+ * are rejected up front (default-deny). Each individual save/clear is
+ * already atomic via `withFileLock`; running them in sequence within a
+ * single tool call is the simplest "no half-applied state" we can offer
+ * without restructuring the credential primitive's API. Sequential is
+ * safe because the lock serializes per-file.
+ *
+ * Admin-gated. Returns the post-write `populated` map so the UI can
+ * reflect new state without a follow-up list_installed round-trip.
+ */
+async function handleSetUserConfig(
+  ctx: ManageConnectorsContext,
+  wsId: string | null,
+  identity: UserIdentity | null,
+  serverName: string,
+  fieldsInput: Record<string, unknown>,
+): Promise<ToolResult> {
+  const resolved = await resolveBundleSchema(ctx, wsId, identity, serverName);
+  if (!resolved.ok) return resolved.result;
+  const { bundleName, schema } = resolved;
+  // Unsafe to assert inside the closure result type guard, but wsId is
+  // checked in resolveBundleSchema — re-narrow for the rest of the body.
+  if (!wsId) return errResult("Workspace context required.");
+
+  // Default-deny on unknown keys. Reject the whole batch — partial
+  // success on a typo would leave the writer guessing which fields took.
+  const unknown = Object.keys(fieldsInput).filter((k) => !(k in schema));
+  if (unknown.length > 0) {
+    return errResult(
+      `Unknown user_config field(s) for "${serverName}": ${unknown.join(", ")}. ` +
+        `Allowed: ${Object.keys(schema).join(", ")}.`,
+    );
+  }
+
+  // Type-coerce values. The JSON schema declares `string`, but defend
+  // against a misbehaving caller passing other primitives — anything
+  // non-string gets rejected explicitly rather than coerced silently.
+  const writes: Array<{ key: string; value: string }> = [];
+  for (const [key, raw] of Object.entries(fieldsInput)) {
+    if (typeof raw !== "string") {
+      return errResult(`Field "${key}" must be a string (got ${typeof raw}).`);
+    }
+    writes.push({ key, value: raw });
+  }
+
+  const workDir = ctx.runtime.getWorkDir();
+  for (const { key, value } of writes) {
+    if (value.length === 0) {
+      // Empty string = clear that single field. Re-implements the
+      // single-key clear path without an extra import; the credential
+      // primitive's `clearWorkspaceCredential` keeps the same lock so
+      // we'd duplicate logic if we used it from here.
+      await saveWorkspaceCredential(wsId, bundleName, key, "", workDir);
+    } else {
+      await saveWorkspaceCredential(wsId, bundleName, key, value, workDir);
+    }
+  }
+
+  const populated = await probeUserConfigPopulated(wsId, bundleName, workDir, schema);
+  return {
+    content: textContent(`Updated ${writes.length} field(s) for "${serverName}".`),
+    structuredContent: { ok: true, serverName, populated },
+    isError: false,
+  };
+}
+
+/**
+ * Drop the entire workspace credential file for a stdio bundle. After
+ * this returns, every field in the bundle's `user_config` schema reads
+ * as not-configured. Admin-gated.
+ */
+async function handleClearUserConfig(
+  ctx: ManageConnectorsContext,
+  wsId: string | null,
+  identity: UserIdentity | null,
+  serverName: string,
+): Promise<ToolResult> {
+  const resolved = await resolveBundleSchema(ctx, wsId, identity, serverName);
+  if (!resolved.ok) return resolved.result;
+  if (!wsId) return errResult("Workspace context required.");
+  const { bundleName, schema } = resolved;
+
+  const workDir = ctx.runtime.getWorkDir();
+  await clearAllWorkspaceCredentials(wsId, bundleName, workDir);
+
+  // After clearAll, every field reads as unpopulated. Build the map
+  // directly rather than re-probing — saves one filesystem stat that
+  // would always return null/empty here.
+  const populated: Record<string, boolean> = {};
+  for (const key of Object.keys(schema)) populated[key] = false;
+  return {
+    content: textContent(`Cleared all credentials for "${serverName}".`),
+    structuredContent: { ok: true, serverName, populated },
     isError: false,
   };
 }
