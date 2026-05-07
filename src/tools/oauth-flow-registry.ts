@@ -42,7 +42,7 @@ export function register(
   serverName: string,
   ttlMs: number = DEFAULT_FLOW_TTL_MS,
 ): Promise<string> {
-  return new Promise<string>((resolve, reject) => {
+  const promise = new Promise<string>((resolve, reject) => {
     const timeout = setTimeout(() => {
       // Only reject if we haven't already been resolved/rejected by the
       // callback. `flows.delete` before `reject` prevents the reject
@@ -61,6 +61,15 @@ export function register(
     timeout.unref?.();
     flows.set(state, { resolve, reject, wsId, serverName, timeout });
   });
+  // Defensive no-op rejection handler. A caller that awaits / .catches
+  // their own handle still observes rejections normally — multiple Promise
+  // handlers run independently. This keeps TTL timeouts, `_clearAll`, and
+  // `rejectFlow` paths from surfacing as unhandled rejections when a flow
+  // was registered but the registering code path didn't end up consuming
+  // the promise (e.g. provider's interactive branch threw UnauthorizedError
+  // before the SDK got a chance to `await` the deferred).
+  promise.catch(() => {});
+  return promise;
 }
 
 /** Resolve a pending flow by state. Returns true if found. */
