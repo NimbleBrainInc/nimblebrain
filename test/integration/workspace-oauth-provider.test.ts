@@ -187,8 +187,7 @@ describe("WorkspaceOAuthProvider — authorize redirect probe (interactive)", ()
       // Flow is registered with the registry; resolving via callback
       // resolves the awaitPendingFlow promise.
       const pending = p.awaitPendingFlow();
-      const resolved = resolveWithCode(state, "the-code-123");
-      expect(resolved).not.toBeNull();
+      expect(resolveWithCode(state, "the-code-123")).toBe(true);
       expect(await pending).toBe("the-code-123");
     } finally {
       mockAuthServer.stop(true);

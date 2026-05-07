@@ -184,8 +184,7 @@ export function mcpAuthRoutes(ctx: AppContext) {
       );
     }
 
-    const matched = resolveWithCode(state, code);
-    if (!matched) {
+    if (!resolveWithCode(state, code)) {
       return c.html(
         "<html><body><h3>Unknown or expired OAuth flow.</h3>" +
           "<p>Re-initiate the connection from NimbleBrain.</p></body></html>",
@@ -193,13 +192,11 @@ export function mcpAuthRoutes(ctx: AppContext) {
       );
     }
 
-    // Land on the workspace Connectors page. The user-scope UI is
-    // currently parked (no Personal Connectors page in v1); even
-    // user-scope bundles get redirected to the workspace page so the
-    // user has somewhere coherent to land. When Personal returns, this
-    // can dispatch on the bundle's oauthScope again — until then the
-    // matched flow's metadata isn't needed for routing.
-    void matched;
+    // Every connector lands on the workspace Connectors page. Personal
+    // Connectors UI is parked, so user-scope bundles share the same
+    // landing for now; when Personal returns, scope-aware dispatch
+    // here can read `lifecycle.getInstance(serverName, wsId).oauthScope`
+    // to branch.
 
     // Clear the one-shot state cookie so a refresh of this page can't
     // be used as a replay vector.

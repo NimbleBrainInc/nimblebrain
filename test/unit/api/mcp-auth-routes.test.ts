@@ -244,7 +244,7 @@ describe("GET /v1/mcp-auth/callback", () => {
     // outside — `resolveWithCode` returns true only if the flow is still
     // there.
     const { resolveWithCode } = await import("../../../src/tools/oauth-flow-registry.ts");
-    expect(resolveWithCode(state, "fallback")).not.toBeNull();
+    expect(resolveWithCode(state, "fallback")).toBe(true);
     await expect(flowPromise).resolves.toBe("fallback");
   });
 
@@ -266,7 +266,7 @@ describe("GET /v1/mcp-auth/callback", () => {
     expect(html).toContain("Authorization session mismatch");
 
     const { resolveWithCode } = await import("../../../src/tools/oauth-flow-registry.ts");
-    expect(resolveWithCode(state, "fallback")).not.toBeNull();
+    expect(resolveWithCode(state, "fallback")).toBe(true);
     await expect(flowPromise).resolves.toBe("fallback");
   });
 

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   type DirectoryEntry,
@@ -32,10 +32,6 @@ export function ConnectorBrowsePage({ scope }: { scope: "user" | "workspace" }) 
   const [busyId, setBusyId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [setupModalEntry, setSetupModalEntry] = useState<DirectoryEntry | null>(null);
-  // Operator-app state per catalog id, fetched once with the directory
-  // so we can pre-fill the Edit modal with the existing clientId
-  // without an extra round-trip on row click.
-  const [operatorApps, setOperatorApps] = useState<Record<string, { clientId: string }>>({});
 
   const role = useScopedRole();
   const isWsAdmin = roleAtLeast(role, "ws_admin");
@@ -44,65 +40,38 @@ export function ConnectorBrowsePage({ scope }: { scope: "user" | "workspace" }) 
     scope === "user" ? "/settings/personal/connectors" : "/settings/workspace/connectors";
   const configureBasePath = backPath;
 
-  const refresh = async () => {
-    try {
-      setLoading(true);
-      const [dirRes, insRes] = await Promise.all([
-        listDirectory(),
-        getInstalledConnectors({ scope }),
-      ]);
-      setEntries(dirRes.entries);
-      setErrors(dirRes.errors);
-      setInstalled(insRes.installed);
-      // Read operator-app config from any installed bundle's
-      // refsource for pre-fill — but installed bundles only carry the
-      // BundleRef.oauthClient.clientId post-install. For pre-install
-      // configured-but-not-installed cases, we'd need a separate fetch.
-      // Defer that to v2: in v1, Edit on a configured-but-not-installed
-      // row pre-fills empty (operator re-enters), and Edit on an
-      // installed row reads from the install record below.
-      const apps: Record<string, { clientId: string }> = {};
-      for (const ins of insRes.installed) {
-        if (ins.catalogId) {
-          // BundleRef carries oauthClient.clientId for static-auth
-          // installs, but list_installed doesn't currently echo it
-          // — extending that response is the right v2 move. For now,
-          // pre-fill stays empty and the operator re-enters.
-          apps[ins.catalogId] = { clientId: "" };
-        }
-      }
-      setOperatorApps(apps);
-    } catch (err) {
-      setLoadError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
+  // One fetcher for the page. Stable identity across renders via
+  // useCallback so we can wire it both to the mount effect (with
+  // cancellation) and the post-modal-save refresh from the same source.
+  const fetchDirectory = useCallback(
+    async (signal?: { cancelled: boolean }) => {
       try {
         setLoading(true);
         const [dirRes, insRes] = await Promise.all([
           listDirectory(),
           getInstalledConnectors({ scope }),
         ]);
-        if (!cancelled) {
-          setEntries(dirRes.entries);
-          setErrors(dirRes.errors);
-          setInstalled(insRes.installed);
-        }
+        if (signal?.cancelled) return;
+        setEntries(dirRes.entries);
+        setErrors(dirRes.errors);
+        setInstalled(insRes.installed);
       } catch (err) {
-        if (!cancelled) setLoadError(err instanceof Error ? err.message : String(err));
+        if (signal?.cancelled) return;
+        setLoadError(err instanceof Error ? err.message : String(err));
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!signal?.cancelled) setLoading(false);
       }
-    })();
+    },
+    [scope],
+  );
+
+  useEffect(() => {
+    const signal = { cancelled: false };
+    fetchDirectory(signal);
     return () => {
-      cancelled = true;
+      signal.cancelled = true;
     };
-  }, [scope]);
+  }, [fetchDirectory]);
 
   // Match installed bundles back to directory entries:
   //   - remote-oauth  → match by URL
@@ -253,12 +222,16 @@ export function ConnectorBrowsePage({ scope }: { scope: "user" | "workspace" }) 
       {setupModalEntry && (
         <OperatorSetupModal
           entry={setupModalEntry}
-          initialClientId={operatorApps[setupModalEntry.id]?.clientId}
+          // Pre-filling the existing clientId across renders is a v2
+          // concern — list_installed doesn't echo the clientId today
+          // (intentional: secret-or-not, surfacing identifiers from
+          // workspace.json deserves its own response shape). For now
+          // the operator re-enters on rotate.
           open={true}
           onClose={() => setSetupModalEntry(null)}
           onSaved={() => {
             setSetupModalEntry(null);
-            refresh();
+            fetchDirectory();
           }}
         />
       )}
