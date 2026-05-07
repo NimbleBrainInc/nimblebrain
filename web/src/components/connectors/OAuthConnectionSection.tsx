@@ -1,9 +1,5 @@
 import { useState } from "react";
-import {
-  disconnectConnector,
-  initiateMcpOAuth,
-  type InstalledConnector,
-} from "../../api/client";
+import { disconnectConnector, initiateMcpOAuth, type InstalledConnector } from "../../api/client";
 
 /**
  * The live OAuth connection lifecycle for a remote URL connector.
