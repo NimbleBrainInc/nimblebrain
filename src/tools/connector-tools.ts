@@ -209,20 +209,22 @@ async function handleListDirectory(
 ): Promise<ToolResult> {
   const aggregator = new DirectoryAggregator(ctx.runtime.getRegistryStore());
 
-  // Build the per-call context registries can use to compute
-  // workspace-aware fields (operatorConfigured, etc.). The lookup
-  // closure captures wsId once + a shared credential store handle so
-  // every static-auth entry can probe state in one round-trip per
-  // catalog id.
-  const isOperatorConfigured = wsId
-    ? async (catalogId: string, clientSecretKey: string): Promise<boolean> => {
-        const ws = await ctx.runtime.getWorkspaceStore().get(wsId);
-        if (!ws?.oauthOperatorApps?.[catalogId]?.clientId) return false;
-        const credStore = new FileCredentialStore(ctx.runtime.getWorkDir());
-        const secret = await credStore.get(wsId, clientSecretKey);
-        return secret !== null;
-      }
-    : undefined;
+  // Hoist the workspace fetch + credential-store handle out of the
+  // closure so the closure does at most one disk read per static-auth
+  // catalog entry. With it inlined the Browse page would fan out to
+  // ~10 sequential reads (one workspace.json + one credential probe
+  // per static-auth entry) on every load — N+1 and growing with the
+  // catalog.
+  const ws = wsId ? await ctx.runtime.getWorkspaceStore().get(wsId) : null;
+  const credStore = wsId ? new FileCredentialStore(ctx.runtime.getWorkDir()) : null;
+  const isOperatorConfigured =
+    wsId && ws && credStore
+      ? async (catalogId: string, clientSecretKey: string): Promise<boolean> => {
+          if (!ws.oauthOperatorApps?.[catalogId]?.clientId) return false;
+          const secret = await credStore.get(wsId, clientSecretKey);
+          return secret !== null;
+        }
+      : undefined;
 
   const result = await aggregator.list({
     ...(wsId ? { wsId } : {}),
@@ -908,6 +910,19 @@ async function handleSetPermissions(
   if (!serverName) return errResult("serverName is required.");
   const owner = resolvePermissionOwner(wsId, callerId, scopeHint);
   if (!owner) return errResult("Could not resolve permission owner — sign in or pick a workspace.");
+
+  // Reject unknown serverName up front. Permission entries for a
+  // non-existent connector would sit unused (the runtime gate keys on
+  // installed-source dispatch); failing fast here surfaces typos at
+  // write time instead of letting them rot in the store.
+  const lifecycle = ctx.runtime.getLifecycle();
+  const installedHere =
+    owner.scope === "workspace"
+      ? lifecycle.getInstance(serverName, owner.wsId) != null
+      : (lifecycle.getUserInstance?.(serverName, owner.userId) ?? null) != null;
+  if (!installedHere) {
+    return errResult(`Connector "${serverName}" is not installed in ${owner.scope} scope.`);
+  }
 
   const tools: Record<string, "allow" | "disallow"> = {};
   for (const [name, raw] of Object.entries(toolsInput)) {

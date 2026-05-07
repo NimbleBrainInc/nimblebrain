@@ -1,14 +1,16 @@
+import { WORKSPACE_PRINCIPAL_ID } from "../bundles/connection.ts";
 import { log } from "../cli/log.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import type { McpSource } from "./mcp-source.ts";
 import type { Tool, ToolResult, ToolSource } from "./types.ts";
 
 /**
- * Sentinel principal id used in `oauthScope: "workspace"` Connections —
- * exported here so callers don't have to depend on `bundles/connection.ts`
- * just for the constant. Mirrors `WORKSPACE_PRINCIPAL_ID` over there.
+ * Sentinel principal id used in `oauthScope: "workspace"` Connections.
+ * Re-exported under a pool-local alias so existing callers keep working,
+ * but sourced from `bundles/connection.ts` to prevent drift between the
+ * two constants.
  */
-export const POOL_WORKSPACE_PRINCIPAL = "_workspace";
+export const POOL_WORKSPACE_PRINCIPAL = WORKSPACE_PRINCIPAL_ID;
 
 /**
  * `ToolSource` adapter that holds N per-principal `McpSource`s under one

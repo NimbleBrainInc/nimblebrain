@@ -100,8 +100,7 @@ function isLocalhostHostname(hostname: string): boolean {
     return true;
   }
   // IPv4-mapped IPv6 loopback (dotted or hex form)
-  const mapped = extractMappedIpv4(bare);
-  return mapped !== null && mapped.startsWith("127.");
+  return extractMappedIpv4(bare)?.startsWith("127.") ?? false;
 }
 
 /**

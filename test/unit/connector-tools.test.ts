@@ -536,3 +536,29 @@ describe("manage_connectors.install (static-auth)", () => {
     });
   });
 });
+
+describe("manage_connectors.set_permissions", () => {
+  let h: Harness;
+
+  beforeEach(async () => {
+    h = buildHarness();
+    await provisionWorkspace(h);
+  });
+
+  afterEach(() => {
+    rmSync(h.workDir, { recursive: true, force: true });
+  });
+
+  test("rejects unknown serverName — fail-fast on typos", async () => {
+    const tool = buildTool(h, ADMIN_USER);
+    const result = await tool.handler({
+      action: "set_permissions",
+      serverName: "not-installed",
+      scope: "workspace",
+      tools: { read: "disallow" },
+    });
+    expect(result.isError).toBe(true);
+    const text = (result.content?.[0] as { text?: string } | undefined)?.text ?? "";
+    expect(text).toContain("not installed");
+  });
+});
