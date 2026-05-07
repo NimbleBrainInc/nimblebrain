@@ -96,12 +96,23 @@ export async function runDev(options: DevOptions): Promise<void> {
   }
   if (debug) apiArgs.push("--debug");
 
+  // Auto-derive NB_WEB_URL from NB_WEB_PORT so the API knows where to
+  // bounce the user back after an OAuth callback. Without this, the
+  // callback can only redirect to NB_API_URL (the API port), which
+  // doesn't serve the SPA in dev — the user lands on a workspace_error
+  // JSON page instead of the Connections tab.
+  const webPort = process.env.NB_WEB_PORT;
+  const devEnv: Record<string, string | undefined> = { ...process.env };
+  if (webPort && !devEnv.NB_WEB_URL) {
+    devEnv.NB_WEB_URL = `http://localhost:${webPort}`;
+  }
+
   log.info("[dev] Starting API server with file watching...");
   const apiProc = spawn({
     cmd: apiArgs,
     stdout: "pipe",
     stderr: "pipe",
-    env: { ...process.env },
+    env: devEnv,
   });
   children.push(apiProc);
 
