@@ -1,5 +1,6 @@
-import { createHash } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { Hono } from "hono";
+import { WORKSPACE_PRINCIPAL_ID } from "../../bundles/connection.ts";
 import { resolveWithCode } from "../../tools/oauth-flow-registry.ts";
 import { requireAuth } from "../middleware/auth.ts";
 import { requireWorkspace } from "../middleware/workspace.ts";
@@ -35,9 +36,12 @@ export function mcpAuthRoutes(ctx: AppContext) {
 
   // ── POST /v1/mcp-auth/initiate ────────────────────────────────────
   //
-  // Workspace-authed. Body: { serverName, principalId? }. principalId
-  // defaults to "_workspace" (the only mode in Step 1); Step 3 will let
-  // member-scoped bundles pass a real member id.
+  // Workspace-authed. Body: { serverName }. Step 1 is workspace-scope only,
+  // so the principal is always WORKSPACE_PRINCIPAL_ID — we deliberately
+  // do NOT read it from the request body. Step 3 will accept a validated
+  // `principalId` here, with the caller authenticated as that member and
+  // user-supplied "_"-prefixed values rejected (the underscore prefix is
+  // reserved for synthetic principals — see connection.ts:8-13).
   //
   // Auth + workspace middleware applied per-handler (not via .use("*"))
   // so the unauthenticated /callback below is unaffected. Hono's
@@ -49,7 +53,7 @@ export function mcpAuthRoutes(ctx: AppContext) {
     requireAuth(ctx.authOptions),
     requireWorkspace(ctx.workspaceStore),
     async (c) => {
-      let body: { serverName?: unknown; principalId?: unknown };
+      let body: { serverName?: unknown };
       try {
         body = await c.req.json();
       } catch {
@@ -59,10 +63,7 @@ export function mcpAuthRoutes(ctx: AppContext) {
       if (!serverName) {
         return apiError(400, "bad_request", "serverName is required.");
       }
-      const principalId =
-        typeof body.principalId === "string" && body.principalId.length > 0
-          ? body.principalId
-          : "_workspace";
+      const principalId = WORKSPACE_PRINCIPAL_ID;
 
       const wsId = c.var.workspaceId;
       const lifecycle = ctx.runtime.getLifecycle();
@@ -209,18 +210,15 @@ function sha256Hex(input: string): string {
 }
 
 /**
- * Constant-time hex string comparison. Avoids leaking timing info that
- * a naive `===` would expose if an attacker can probe the callback. Both
- * inputs are expected to be sha256 hex (64 chars); a length mismatch is
- * treated as inequality without revealing where the divergence is.
+ * Constant-time hex string comparison via Node's `crypto.timingSafeEqual`.
+ * Both inputs must be 64-char sha256 hex; anything else (malformed cookie,
+ * wrong length) is rejected up-front so the constant-time compare always
+ * runs on equal-length 32-byte buffers.
  */
+const SHA256_HEX_RE = /^[0-9a-f]{64}$/;
 function timingSafeEqualHex(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) {
-    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  }
-  return diff === 0;
+  if (!SHA256_HEX_RE.test(a) || !SHA256_HEX_RE.test(b)) return false;
+  return timingSafeEqual(Buffer.from(a, "hex"), Buffer.from(b, "hex"));
 }
 
 function readCookie(header: string | undefined, name: string): string | null {
