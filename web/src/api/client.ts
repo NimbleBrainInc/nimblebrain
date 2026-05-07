@@ -538,7 +538,7 @@ export interface ConnectorCatalogEntry {
   defaultScope: "workspace" | "user";
   requiredScopes?: string[];
   additionalAuthorizationParams?: Record<string, string>;
-  operatorSetup?: { portalUrl: string; hint: string; credentialKey: string };
+  operatorSetup?: { portalUrl: string; hint: string; clientSecretKey: string };
   tags?: string[];
   /** When true, the connector exposes a UI surface — render the "Interactive" badge. */
   interactive?: boolean;
@@ -682,6 +682,12 @@ export interface DirectoryEntry {
   iconUrl?: string;
   tags?: string[];
   defaultScope: "user" | "workspace";
+  /**
+   * Static-auth entries: true when the workspace has both clientId and
+   * client_secret configured. Undefined for entries where operator
+   * setup doesn't apply (DCR remote-oauth, mpak, direct-url).
+   */
+  operatorConfigured?: boolean;
   install:
     | {
         kind: "remote-oauth";
@@ -689,7 +695,7 @@ export interface DirectoryEntry {
         auth: "dcr" | "static";
         requiredScopes?: string[];
         additionalAuthorizationParams?: Record<string, string>;
-        operatorSetup?: { portalUrl: string; hint: string; credentialKey: string };
+        operatorSetup?: { portalUrl: string; hint: string; clientSecretKey: string };
       }
     | { kind: "mpak-bundle"; package: string; version?: string; mpakUrl?: string }
     | { kind: "direct-url"; url: string };
@@ -703,6 +709,35 @@ export interface DirectoryResult {
 export async function listDirectory(): Promise<DirectoryResult> {
   const result = await callTool("nb", "manage_connectors", { action: "list_directory" });
   return unwrapStructured(result, "list_directory");
+}
+
+/**
+ * Configure the workspace's OAuth app for a static-auth catalog
+ * connector. Upsert — calling this on an already-configured connector
+ * rotates both pieces. ws_admin gated.
+ */
+export async function setupConnectorOperator(
+  catalogId: string,
+  clientId: string,
+  clientSecret: string,
+): Promise<{ ok: boolean; catalogId: string; clientId: string }> {
+  const result = await callTool("nb", "manage_connectors", {
+    action: "setup_operator",
+    catalogId,
+    clientId,
+    clientSecret,
+  });
+  return unwrapStructured(result, "setup_operator");
+}
+
+export async function removeConnectorOperatorSetup(
+  catalogId: string,
+): Promise<{ ok: boolean; catalogId: string }> {
+  const result = await callTool("nb", "manage_connectors", {
+    action: "remove_operator_setup",
+    catalogId,
+  });
+  return unwrapStructured(result, "remove_operator_setup");
 }
 
 export interface RegistryConfig {

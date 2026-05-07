@@ -60,12 +60,23 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
             "uninstall",
             "get_permissions",
             "set_permissions",
+            "setup_operator",
+            "remove_operator_setup",
           ],
           description: "Action to perform.",
         },
         catalogId: {
           type: "string",
-          description: "Catalog entry id (required for install).",
+          description:
+            "Catalog entry id (required for install, setup_operator, remove_operator_setup).",
+        },
+        clientId: {
+          type: "string",
+          description: "OAuth client_id (setup_operator only).",
+        },
+        clientSecret: {
+          type: "string",
+          description: "OAuth client_secret (setup_operator only).",
         },
         serverName: {
           type: "string",
@@ -97,7 +108,7 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
         case "list_catalog":
           return handleListCatalog(ctx, wsId);
         case "list_directory":
-          return handleListDirectory(ctx);
+          return handleListDirectory(ctx, wsId);
         case "list_installed":
           return handleListInstalled(ctx, wsId, callerId, String(input.scope ?? "all"));
         case "list_tools":
@@ -143,6 +154,17 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
             input.scope ? String(input.scope) : undefined,
             (input.tools as Record<string, unknown>) ?? {},
           );
+        case "setup_operator":
+          return handleSetupOperator(
+            ctx,
+            wsId,
+            identity,
+            String(input.catalogId ?? ""),
+            String(input.clientId ?? ""),
+            String(input.clientSecret ?? ""),
+          );
+        case "remove_operator_setup":
+          return handleRemoveOperatorSetup(ctx, wsId, identity, String(input.catalogId ?? ""));
         default:
           return errResult(`Unknown action "${action}".`);
       }
@@ -181,9 +203,31 @@ async function handleListCatalog(
  * `connectorsAllowList` filters apply only to curated entries today
  * (mpak hasn't shipped its scoping primitive yet).
  */
-async function handleListDirectory(ctx: ManageConnectorsContext): Promise<ToolResult> {
+async function handleListDirectory(
+  ctx: ManageConnectorsContext,
+  wsId: string | null,
+): Promise<ToolResult> {
   const aggregator = new DirectoryAggregator(ctx.runtime.getRegistryStore());
-  const result = await aggregator.list();
+
+  // Build the per-call context registries can use to compute
+  // workspace-aware fields (operatorConfigured, etc.). The lookup
+  // closure captures wsId once + a shared credential store handle so
+  // every static-auth entry can probe state in one round-trip per
+  // catalog id.
+  const isOperatorConfigured = wsId
+    ? async (catalogId: string, clientSecretKey: string): Promise<boolean> => {
+        const ws = await ctx.runtime.getWorkspaceStore().get(wsId);
+        if (!ws?.oauthOperatorApps?.[catalogId]?.clientId) return false;
+        const credStore = new FileCredentialStore(ctx.runtime.getWorkDir());
+        const secret = await credStore.get(wsId, clientSecretKey);
+        return secret !== null;
+      }
+    : undefined;
+
+  const result = await aggregator.list({
+    ...(wsId ? { wsId } : {}),
+    ...(isOperatorConfigured ? { isOperatorConfigured } : {}),
+  });
   return {
     content: textContent(
       `Directory: ${result.entries.length} entries (${result.errors.length} registry errors).`,
@@ -367,14 +411,40 @@ async function handleInstall(
     }
   }
 
-  // Static-auth catalog entries can't be installed from the UI in v1 —
-  // operator setup (clientId + clientSecret in a developer portal) is
-  // required first. Surface clearly so the UI can render the "Configure"
-  // affordance instead of clicking through to a 409.
+  // Static-auth: must have operator setup (workspace.json#oauthOperatorApps
+  // for the public clientId + credential store for the secret) before any
+  // user can install. We resolve the operator config here and refuse early
+  // with a clear next-step message if either piece is missing — same
+  // shape as the missingOperatorSetup signal Browse uses to gate its
+  // affordance.
+  let staticOAuthClient: { clientId: string; clientSecretKey: string } | undefined;
   if (entry.auth === "static") {
-    return errResult(
-      `"${entry.name}" requires operator setup. Configure ${entry.operatorSetup?.portalUrl ?? "the OAuth app"} and seed the credential before install.`,
-    );
+    const setup = entry.operatorSetup;
+    if (!setup) {
+      return errResult(
+        `Catalog entry "${catalogId}" is malformed: static auth requires operatorSetup.`,
+      );
+    }
+    if (!wsId) return errResult("Workspace context required for static-auth install.");
+    const ws = await ctx.runtime.getWorkspaceStore().get(wsId);
+    if (!ws) return errResult(`Workspace "${wsId}" not found.`);
+    const operatorApp = ws.oauthOperatorApps?.[entry.id];
+    if (!operatorApp?.clientId) {
+      return errResult(
+        `"${entry.name}" needs operator setup before install. Configure the OAuth app at ${setup.portalUrl} and use Set up.`,
+      );
+    }
+    const credStore = new FileCredentialStore(ctx.runtime.getWorkDir());
+    const secret = await credStore.get(wsId, setup.clientSecretKey);
+    if (!secret) {
+      return errResult(
+        `Operator client_secret for "${entry.name}" is missing — re-run Set up to seed it.`,
+      );
+    }
+    staticOAuthClient = {
+      clientId: operatorApp.clientId,
+      clientSecretKey: setup.clientSecretKey,
+    };
   }
 
   const ref: BundleRef = {
@@ -384,6 +454,14 @@ async function handleInstall(
     ...(entry.requiredScopes ? { scopes: entry.requiredScopes } : {}),
     ...(entry.additionalAuthorizationParams
       ? { additionalAuthorizationParams: entry.additionalAuthorizationParams }
+      : {}),
+    ...(staticOAuthClient
+      ? {
+          oauthClient: {
+            clientId: staticOAuthClient.clientId,
+            clientSecret: { ref: "credential", key: staticOAuthClient.clientSecretKey },
+          },
+        }
       : {}),
   };
 
@@ -845,6 +923,167 @@ async function handleSetPermissions(
     structuredContent: { ok: true, scope: owner.scope, serverName },
     isError: false,
   };
+}
+
+/**
+ * Configure (or rotate) the OAuth app credentials a workspace will use
+ * to authenticate against a static-auth catalog connector. Two stores
+ * write together so the next install of this connector finds both
+ * pieces:
+ *
+ *   - workspace.json#oauthOperatorApps[catalogId] gets the public
+ *     `client_id` plus an audit trail (who configured it, when).
+ *   - The credential store gets the `client_secret` under the catalog
+ *     entry's declared `clientSecretKey`.
+ *
+ * Upsert semantics — calling this on an already-configured catalog
+ * entry rotates both credentials. The clientId can change (e.g.,
+ * operator rebuilt the OAuth app); the secret always rotates whenever
+ * the modal is submitted (the modal pre-fills the clientId for ease,
+ * but never the secret — security posture: don't echo secrets).
+ *
+ * Gated to workspace-admin and above. Workspace admins are the right
+ * principal because OAuth app config is workspace-level (each
+ * workspace creates its own OAuth app at the vendor's portal).
+ */
+async function handleSetupOperator(
+  ctx: ManageConnectorsContext,
+  wsId: string | null,
+  identity: UserIdentity | null,
+  catalogId: string,
+  clientId: string,
+  clientSecret: string,
+): Promise<ToolResult> {
+  if (!wsId) return errResult("Workspace context required.");
+  if (!catalogId) return errResult("catalogId is required.");
+  if (!clientId.trim()) return errResult("clientId is required.");
+  if (!clientSecret.trim()) return errResult("clientSecret is required.");
+
+  if (!identity) return errResult("Authentication required.");
+
+  const ws = await ctx.runtime.getWorkspaceStore().get(wsId);
+  if (!ws) return errResult(`Workspace "${wsId}" not found.`);
+  if (!isWorkspaceAdmin(ws, identity)) {
+    return {
+      content: textContent("Workspace admin role required to configure OAuth apps."),
+      structuredContent: { error: "permission_denied" },
+      isError: true,
+    };
+  }
+
+  const catalog = loadCatalog();
+  const entry = catalog.find((e) => e.id === catalogId);
+  if (!entry) return errResult(`Catalog entry "${catalogId}" not found.`);
+  if (entry.auth !== "static") {
+    return errResult(`"${entry.name}" is a DCR connector — operator setup not required.`);
+  }
+  const clientSecretKey = entry.operatorSetup?.clientSecretKey;
+  if (!clientSecretKey) {
+    return errResult(
+      `Catalog entry "${catalogId}" is malformed: missing operatorSetup.clientSecretKey.`,
+    );
+  }
+
+  // Persist secret first — if the credential store write fails, we
+  // haven't touched workspace.json yet, so there's nothing to roll back.
+  const credStore = new FileCredentialStore(ctx.runtime.getWorkDir());
+  await credStore.put(wsId, clientSecretKey, clientSecret.trim());
+
+  // Stamp the public clientId + audit trail into workspace.json.
+  const apps = { ...(ws.oauthOperatorApps ?? {}) };
+  apps[catalogId] = {
+    clientId: clientId.trim(),
+    configuredAt: new Date().toISOString(),
+    configuredBy: identity.id,
+  };
+  await ctx.runtime.getWorkspaceStore().update(wsId, { oauthOperatorApps: apps });
+
+  return {
+    content: textContent(`Configured OAuth app for "${entry.name}".`),
+    structuredContent: { ok: true, catalogId, clientId: apps[catalogId]?.clientId },
+    isError: false,
+  };
+}
+
+/**
+ * Drop a workspace's operator OAuth app config. Both halves removed in
+ * lockstep — workspace.json entry deleted and the credential store's
+ * client_secret cleared.
+ *
+ * Refuses to run while the connector is currently installed. The right
+ * mental model: operator setup is a *prerequisite* for install, not a
+ * peer of it. Removing setup while the bundle is live would orphan the
+ * BundleRef's credential pointer — the next OAuth round-trip would 404
+ * mid-flow. Caller uninstalls first, then removes setup.
+ */
+async function handleRemoveOperatorSetup(
+  ctx: ManageConnectorsContext,
+  wsId: string | null,
+  identity: UserIdentity | null,
+  catalogId: string,
+): Promise<ToolResult> {
+  if (!wsId) return errResult("Workspace context required.");
+  if (!catalogId) return errResult("catalogId is required.");
+  if (!identity) return errResult("Authentication required.");
+
+  const ws = await ctx.runtime.getWorkspaceStore().get(wsId);
+  if (!ws) return errResult(`Workspace "${wsId}" not found.`);
+  if (!isWorkspaceAdmin(ws, identity)) {
+    return {
+      content: textContent("Workspace admin role required to remove OAuth app config."),
+      structuredContent: { error: "permission_denied" },
+      isError: true,
+    };
+  }
+
+  const catalog = loadCatalog();
+  const entry = catalog.find((e) => e.id === catalogId);
+  if (!entry) return errResult(`Catalog entry "${catalogId}" not found.`);
+
+  // Guard: refuse if the connector is currently installed. Removing
+  // operator config out from under a live bundle leaves a dangling
+  // credential reference; force the operator through the explicit
+  // uninstall path first.
+  const installed = ws.bundles.some((b) => "url" in b && b.url === entry.url);
+  if (installed) {
+    return errResult(
+      `"${entry.name}" is installed — uninstall it first, then remove the OAuth app config.`,
+    );
+  }
+
+  const apps = { ...(ws.oauthOperatorApps ?? {}) };
+  if (!apps[catalogId]) {
+    return errResult(`No operator setup configured for "${entry.name}".`);
+  }
+  delete apps[catalogId];
+  await ctx.runtime.getWorkspaceStore().update(wsId, { oauthOperatorApps: apps });
+
+  const clientSecretKey = entry.operatorSetup?.clientSecretKey;
+  if (clientSecretKey) {
+    const credStore = new FileCredentialStore(ctx.runtime.getWorkDir());
+    await credStore.delete(wsId, clientSecretKey).catch(() => {});
+  }
+
+  return {
+    content: textContent(`Removed OAuth app config for "${entry.name}".`),
+    structuredContent: { ok: true, catalogId },
+    isError: false,
+  };
+}
+
+/**
+ * Workspace admin gate. Returns true if the identity is a workspace
+ * admin — explicitly via `members[].role === "admin"`, or implicitly
+ * because their org role (admin / owner) outranks any per-workspace
+ * gate. Workspace member without an admin role gets denied.
+ */
+function isWorkspaceAdmin(
+  ws: { members: Array<{ userId: string; role: string }> },
+  identity: UserIdentity,
+): boolean {
+  if (identity.orgRole === "admin" || identity.orgRole === "owner") return true;
+  const member = ws.members.find((m) => m.userId === identity.id);
+  return member?.role === "admin";
 }
 
 function errResult(msg: string): ToolResult {

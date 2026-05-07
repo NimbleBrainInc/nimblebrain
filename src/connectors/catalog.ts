@@ -17,9 +17,11 @@
  *      tenant sees on their Connectors page).
  *
  * Secrets stay OUT of the catalog. `auth: "static"` entries reference
- * the credential store via `operatorSetup.credentialKey` — the value
- * is set by `nb credential set <wsId> <key> <value>` and never lives in
- * the catalog ConfigMap.
+ * the credential store via `operatorSetup.clientSecretKey` — the value
+ * is set by the workspace admin via the Set up modal (writes through
+ * `manage_connectors.setup_operator`) or, for headless deployments,
+ * `nb credential set <wsId> <key> <value>`. Never lives in the catalog
+ * ConfigMap.
  *
  * Icons hosted at `https://static.nimblebrain.ai/icons/<id>.svg` —
  * existing repo. Self-host deployments behind firewalls can override
@@ -68,16 +70,19 @@ export interface ConnectorCatalogEntry {
   additionalAuthorizationParams?: Record<string, string>;
   /**
    * Required for `auth: "static"`. Tells the Connectors-page admin
-   * modal where to send the operator to create the app, what to
-   * paste, and which credential key to seed.
+   * modal where to send the operator to create the app, what to paste,
+   * and which key to seed in the workspace credential store. The
+   * matching public `client_id` lives in `workspace.json` under
+   * `oauthOperatorApps[<catalogId>].clientId` — set by the operator
+   * when they configure the OAuth app for this workspace.
    */
   operatorSetup?: {
     /** Vendor's developer portal URL where the app gets created. */
     portalUrl: string;
     /** One-paragraph instructions ("Create OAuth user app, add scopes ..."). */
     hint: string;
-    /** Argument to `nb credential set <wsId> <key> <value>`. */
-    credentialKey: string;
+    /** Workspace credential store key for the OAuth client_secret. */
+    clientSecretKey: string;
   };
   /** Optional tags for filter / search in the page. */
   tags?: string[];
@@ -120,7 +125,7 @@ export const DEFAULT_CONNECTOR_CATALOG: ConnectorCatalogEntry[] = [
     operatorSetup: {
       portalUrl: "https://app.asana.com/0/my-apps",
       hint: "Create an OAuth app in Asana developer portal, copy client_id + client_secret",
-      credentialKey: "asana.client_secret",
+      clientSecretKey: "asana.client_secret",
     },
     tags: ["tasks", "projects"],
   },
@@ -155,7 +160,7 @@ export const DEFAULT_CONNECTOR_CATALOG: ConnectorCatalogEntry[] = [
     operatorSetup: {
       portalUrl: "https://console.cloud.google.com/apis/credentials",
       hint: "Create an OAuth 2.0 Client ID (web application) in Google Cloud Console; add the NimbleBrain callback URL as an authorized redirect URI",
-      credentialKey: "google.client_secret",
+      clientSecretKey: "google.client_secret",
     },
     tags: ["email", "google"],
   },
@@ -181,7 +186,7 @@ export const DEFAULT_CONNECTOR_CATALOG: ConnectorCatalogEntry[] = [
       portalUrl:
         "https://developers.hubspot.com/docs/apps/developer-platform/build-apps/integrate-with-the-remote-hubspot-mcp-server",
       hint: "Create an MCP Auth App in HubSpot Developer Portal; copy client_id + client_secret",
-      credentialKey: "hubspot.client_secret",
+      clientSecretKey: "hubspot.client_secret",
     },
     tags: ["crm", "sales"],
   },
@@ -202,7 +207,7 @@ export const DEFAULT_CONNECTOR_CATALOG: ConnectorCatalogEntry[] = [
       portalUrl:
         "https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade",
       hint: "Register a multi-tenant app in Entra ID; add Microsoft Graph delegated permissions; copy client_id + client_secret",
-      credentialKey: "entra.client_secret",
+      clientSecretKey: "entra.client_secret",
     },
     tags: ["email", "microsoft"],
   },
@@ -218,7 +223,7 @@ export const DEFAULT_CONNECTOR_CATALOG: ConnectorCatalogEntry[] = [
     operatorSetup: {
       portalUrl: "https://marketplace.zoom.us/develop/create",
       hint: "Create an OAuth User-Managed app in Zoom Marketplace; add scopes; copy client_id + client_secret",
-      credentialKey: "zoom.client_secret",
+      clientSecretKey: "zoom.client_secret",
     },
     tags: ["meetings", "video"],
   },

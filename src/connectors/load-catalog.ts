@@ -130,10 +130,10 @@ export function validateCatalog(
         typeof setup !== "object" ||
         typeof setup.portalUrl !== "string" ||
         typeof setup.hint !== "string" ||
-        typeof setup.credentialKey !== "string"
+        typeof setup.clientSecretKey !== "string"
       ) {
         log.warn(
-          `[catalog] ${tag} dropped — auth='static' requires operatorSetup.{portalUrl,hint,credentialKey}`,
+          `[catalog] ${tag} dropped — auth='static' requires operatorSetup.{portalUrl,hint,clientSecretKey}`,
         );
         continue;
       }

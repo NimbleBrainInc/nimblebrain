@@ -8,6 +8,8 @@ import {
   installConnector,
   listDirectory,
 } from "../../api/client";
+import { OperatorSetupModal } from "../../components/connectors/OperatorSetupModal";
+import { roleAtLeast, useScopedRole } from "../../hooks/useScopedRole";
 
 /**
  * Connector directory — browse what's available to install across
@@ -28,10 +30,53 @@ export function ConnectorBrowsePage({ scope }: { scope: "user" | "workspace" }) 
   const [loadError, setLoadError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  const [setupModalEntry, setSetupModalEntry] = useState<DirectoryEntry | null>(null);
+  // Operator-app state per catalog id, fetched once with the directory
+  // so we can pre-fill the Edit modal with the existing clientId
+  // without an extra round-trip on row click.
+  const [operatorApps, setOperatorApps] = useState<Record<string, { clientId: string }>>({});
+
+  const role = useScopedRole();
+  const isWsAdmin = roleAtLeast(role, "ws_admin");
 
   const backPath =
     scope === "user" ? "/settings/personal/connectors" : "/settings/workspace/connectors";
   const configureBasePath = backPath;
+
+  const refresh = async () => {
+    try {
+      setLoading(true);
+      const [dirRes, insRes] = await Promise.all([
+        listDirectory(),
+        getInstalledConnectors({ scope }),
+      ]);
+      setEntries(dirRes.entries);
+      setErrors(dirRes.errors);
+      setInstalled(insRes.installed);
+      // Read operator-app config from any installed bundle's
+      // refsource for pre-fill — but installed bundles only carry the
+      // BundleRef.oauthClient.clientId post-install. For pre-install
+      // configured-but-not-installed cases, we'd need a separate fetch.
+      // Defer that to v2: in v1, Edit on a configured-but-not-installed
+      // row pre-fills empty (operator re-enters), and Edit on an
+      // installed row reads from the install record below.
+      const apps: Record<string, { clientId: string }> = {};
+      for (const ins of insRes.installed) {
+        if (ins.catalogId) {
+          // BundleRef carries oauthClient.clientId for static-auth
+          // installs, but list_installed doesn't currently echo it
+          // — extending that response is the right v2 move. For now,
+          // pre-fill stays empty and the operator re-enters.
+          apps[ins.catalogId] = { clientId: "" };
+        }
+      }
+      setOperatorApps(apps);
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -170,7 +215,9 @@ export function ConnectorBrowsePage({ scope }: { scope: "user" | "workspace" }) 
                   installed={undefined}
                   configureBasePath={configureBasePath}
                   busy={busyId === `${entry.registryId}::${entry.id}`}
+                  isWsAdmin={isWsAdmin}
                   onInstall={() => onInstall(entry)}
+                  onSetUp={() => setSetupModalEntry(entry)}
                 />
               ))}
             </div>
@@ -189,7 +236,9 @@ export function ConnectorBrowsePage({ scope }: { scope: "user" | "workspace" }) 
                     installed={ins}
                     configureBasePath={configureBasePath}
                     busy={false}
+                    isWsAdmin={isWsAdmin}
                     onInstall={() => onInstall(entry)}
+                    onSetUp={() => setSetupModalEntry(entry)}
                   />
                 ))}
               </div>
@@ -199,6 +248,19 @@ export function ConnectorBrowsePage({ scope }: { scope: "user" | "workspace" }) 
       )}
 
       <FutureSourcesNote />
+
+      {setupModalEntry && (
+        <OperatorSetupModal
+          entry={setupModalEntry}
+          initialClientId={operatorApps[setupModalEntry.id]?.clientId}
+          open={true}
+          onClose={() => setSetupModalEntry(null)}
+          onSaved={() => {
+            setSetupModalEntry(null);
+            refresh();
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -208,18 +270,22 @@ function DirectoryRow({
   installed,
   configureBasePath,
   busy,
+  isWsAdmin,
   onInstall,
+  onSetUp,
 }: {
   entry: DirectoryEntry;
   installed: InstalledConnector | undefined;
   configureBasePath: string;
   busy: boolean;
+  isWsAdmin: boolean;
   onInstall: () => void;
+  onSetUp: () => void;
 }) {
   const isInstalled = !!installed;
   const isMpak = entry.install.kind === "mpak-bundle";
-  const requiresOperatorSetup =
-    entry.install.kind === "remote-oauth" && entry.install.auth === "static";
+  const isStaticAuth = entry.install.kind === "remote-oauth" && entry.install.auth === "static";
+  const operatorReady = entry.operatorConfigured === true;
 
   return (
     <div className="flex items-center gap-3 py-3 border-b border-border">
@@ -245,9 +311,12 @@ function DirectoryRow({
         installed={installed}
         configureBasePath={configureBasePath}
         busy={busy}
-        onInstall={onInstall}
-        requiresOperatorSetup={requiresOperatorSetup}
+        isWsAdmin={isWsAdmin}
+        isStaticAuth={isStaticAuth}
+        operatorReady={operatorReady}
         isMpakStub={isMpak}
+        onInstall={onInstall}
+        onSetUp={onSetUp}
       />
     </div>
   );
@@ -258,17 +327,23 @@ function RowAction({
   installed,
   configureBasePath,
   busy,
-  onInstall,
-  requiresOperatorSetup,
+  isWsAdmin,
+  isStaticAuth,
+  operatorReady,
   isMpakStub,
+  onInstall,
+  onSetUp,
 }: {
   entry: DirectoryEntry;
   installed: InstalledConnector | undefined;
   configureBasePath: string;
   busy: boolean;
-  onInstall: () => void;
-  requiresOperatorSetup: boolean;
+  isWsAdmin: boolean;
+  isStaticAuth: boolean;
+  operatorReady: boolean;
   isMpakStub: boolean;
+  onInstall: () => void;
+  onSetUp: () => void;
 }) {
   if (installed) {
     return (
@@ -280,19 +355,71 @@ function RowAction({
       </Link>
     );
   }
-  if (requiresOperatorSetup && entry.install.kind === "remote-oauth") {
+  // Static-auth flow:
+  //   - not configured + admin   → Set up (opens modal)
+  //   - not configured + non-admin → "Operator setup required" + portal link
+  //   - configured + admin       → Install + small "Edit setup" link
+  //   - configured + non-admin   → Install
+  if (isStaticAuth && entry.install.kind === "remote-oauth") {
+    if (!operatorReady) {
+      if (isWsAdmin) {
+        return (
+          <div className="flex flex-col items-end gap-1 shrink-0">
+            <button
+              type="button"
+              onClick={onSetUp}
+              className="text-xs px-3 py-1.5 rounded bg-primary text-primary-foreground hover:bg-primary/90"
+            >
+              Set up
+            </button>
+            {entry.install.operatorSetup?.portalUrl && (
+              <a
+                href={entry.install.operatorSetup.portalUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[10px] text-muted-foreground underline"
+              >
+                {new URL(entry.install.operatorSetup.portalUrl).hostname}
+              </a>
+            )}
+          </div>
+        );
+      }
+      return (
+        <div className="flex flex-col items-end text-right shrink-0">
+          <span className="text-xs text-amber-600">Operator setup required</span>
+          {entry.install.operatorSetup?.portalUrl && (
+            <a
+              href={entry.install.operatorSetup.portalUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[10px] text-muted-foreground underline"
+            >
+              {new URL(entry.install.operatorSetup.portalUrl).hostname}
+            </a>
+          )}
+        </div>
+      );
+    }
+    // Configured: show Install with optional rotate link for admins.
     return (
-      <div className="flex flex-col items-end text-right shrink-0">
-        <span className="text-xs text-amber-600">Operator setup required</span>
-        {entry.install.operatorSetup?.portalUrl && (
-          <a
-            href={entry.install.operatorSetup.portalUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-[10px] text-muted-foreground underline"
+      <div className="flex flex-col items-end gap-0.5 shrink-0">
+        <button
+          type="button"
+          onClick={onInstall}
+          disabled={busy}
+          className="text-xs px-3 py-1.5 rounded bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
+        >
+          {busy ? "Installing…" : "Install"}
+        </button>
+        {isWsAdmin && (
+          <button
+            type="button"
+            onClick={onSetUp}
+            className="text-[10px] text-muted-foreground hover:underline underline-offset-4"
           >
-            {new URL(entry.install.operatorSetup.portalUrl).hostname}
-          </a>
+            Edit OAuth app
+          </button>
         )}
       </div>
     );

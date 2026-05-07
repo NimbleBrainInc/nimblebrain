@@ -1,7 +1,12 @@
 import { CuratedRegistry } from "./curated-registry.ts";
 import { MpakRegistry } from "./mpak-registry.ts";
 import type { RegistryStore } from "./registry-store.ts";
-import type { ConnectorRegistry, DirectoryEntry, RegistryConfig } from "./types.ts";
+import type {
+  ConnectorRegistry,
+  DirectoryEntry,
+  ListEntriesContext,
+  RegistryConfig,
+} from "./types.ts";
 
 /**
  * Builds the active registry list from configuration and aggregates
@@ -22,7 +27,7 @@ export interface AggregatedDirectory {
 export class DirectoryAggregator {
   constructor(private store: RegistryStore) {}
 
-  async list(): Promise<AggregatedDirectory> {
+  async list(ctx?: ListEntriesContext): Promise<AggregatedDirectory> {
     const configs = await this.store.list();
     const enabled = configs.filter((c) => c.enabled);
 
@@ -33,7 +38,7 @@ export class DirectoryAggregator {
       const registry = this.buildRegistry(cfg);
       if (!registry) continue;
       try {
-        const items = await registry.listEntries();
+        const items = await registry.listEntries(ctx);
         entries.push(...items);
       } catch (err) {
         errors.push({

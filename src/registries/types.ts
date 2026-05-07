@@ -56,6 +56,18 @@ export interface DirectoryEntry {
   /** Recommended scope. UI uses this to filter Personal vs Workspace browse. */
   defaultScope: "user" | "workspace";
   install: InstallAction;
+  /**
+   * For static-auth entries: whether the workspace has operator OAuth
+   * app credentials configured (both clientId in workspace.json and
+   * client_secret in the credential store). DCR / mpak / direct-url
+   * entries leave this undefined — operator setup doesn't apply.
+   *
+   * Browse uses this to flip the row affordance:
+   *   - undefined or true  → "Install" button
+   *   - false              → "Set up" (admin only) / "Operator setup
+   *     required" (non-admin)
+   */
+  operatorConfigured?: boolean;
 }
 
 /** How to install an entry — varies by source type. */
@@ -72,7 +84,7 @@ export interface RemoteOAuthInstall {
   auth: "dcr" | "static";
   requiredScopes?: string[];
   additionalAuthorizationParams?: Record<string, string>;
-  operatorSetup?: { portalUrl: string; hint: string; credentialKey: string };
+  operatorSetup?: { portalUrl: string; hint: string; clientSecretKey: string };
 }
 
 /**
@@ -99,9 +111,32 @@ export interface DirectUrlInstall {
   url: string;
 }
 
+/**
+ * Per-call context handed to a registry's `listEntries`. Carries the
+ * pieces a registry might need to compute workspace-aware fields
+ * (e.g. `operatorConfigured` on curated entries) without coupling the
+ * registry to the runtime singleton.
+ *
+ * Optional today — registries that don't need it (mpak stub) can
+ * ignore it. As more registries gain workspace-aware computation
+ * this becomes the seam for threading whatever they need.
+ */
+export interface ListEntriesContext {
+  /** The workspace whose state determines workspace-aware fields. */
+  wsId?: string;
+  /**
+   * Async lookup: does the workspace have valid operator OAuth app
+   * config (both clientId + client_secret) for this catalog id?
+   * Returns false if either piece is missing. Returns null if the
+   * caller didn't supply this resolver — registries treat that as
+   * "I can't compute this; leave the field undefined."
+   */
+  isOperatorConfigured?: (catalogId: string, clientSecretKey: string) => Promise<boolean>;
+}
+
 /** A registry implementation. */
 export interface ConnectorRegistry {
   readonly config: RegistryConfig;
   /** List entries this registry currently surfaces. May hit the network. */
-  listEntries(): Promise<DirectoryEntry[]>;
+  listEntries(ctx?: ListEntriesContext): Promise<DirectoryEntry[]>;
 }

@@ -136,7 +136,10 @@ export class WorkspaceStore {
   async update(
     id: string,
     patch: Partial<
-      Pick<Workspace, "name" | "bundles" | "agents" | "skillDirs" | "models" | "identity">
+      Pick<
+        Workspace,
+        "name" | "bundles" | "agents" | "skillDirs" | "models" | "identity" | "oauthOperatorApps"
+      >
     >,
   ): Promise<Workspace | null> {
     const ws = await this.get(id);

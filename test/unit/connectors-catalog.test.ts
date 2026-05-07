@@ -13,11 +13,11 @@ describe("DEFAULT_CONNECTOR_CATALOG", () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  test("static-auth entries all have operatorSetup with credentialKey", () => {
+  test("static-auth entries all have operatorSetup with clientSecretKey", () => {
     for (const entry of DEFAULT_CONNECTOR_CATALOG) {
       if (entry.auth === "static") {
         expect(entry.operatorSetup).toBeDefined();
-        expect(entry.operatorSetup?.credentialKey.length).toBeGreaterThan(0);
+        expect(entry.operatorSetup?.clientSecretKey.length).toBeGreaterThan(0);
         expect(entry.operatorSetup?.portalUrl.startsWith("http")).toBe(true);
       }
     }
@@ -65,7 +65,7 @@ describe("validateCatalog", () => {
         operatorSetup: {
           portalUrl: "https://example.com",
           hint: "do this",
-          credentialKey: "x.secret",
+          clientSecretKey: "x.secret",
         },
       },
     ]);
