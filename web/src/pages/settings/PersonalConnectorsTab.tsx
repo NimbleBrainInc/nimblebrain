@@ -1,5 +1,6 @@
+import { Link } from "react-router-dom";
 import { ConnectorList } from "../../components/connectors/ConnectorList";
-import { SettingsListPage } from "./components";
+import { SettingsPageHeader } from "./components";
 
 /**
  * Personal connectors tab — services tied to the signed-in user's
@@ -8,11 +9,20 @@ import { SettingsListPage } from "./components";
  */
 export function PersonalConnectorsTab() {
   return (
-    <SettingsListPage
-      title="Personal connectors"
-      description="Services tied to your account. Available everywhere you sign in — connect once, use in any workspace."
-    >
+    <div className="max-w-5xl mx-auto space-y-6">
+      <SettingsPageHeader
+        title="Personal connectors"
+        description="Services tied to your account. Available everywhere you sign in."
+        action={
+          <Link
+            to="/settings/personal/connectors/browse"
+            className="text-sm px-3 py-1.5 rounded border border-border hover:bg-muted whitespace-nowrap"
+          >
+            Browse
+          </Link>
+        }
+      />
       <ConnectorList scope="user" configureBasePath="/settings/personal/connectors" />
-    </SettingsListPage>
+    </div>
   );
 }

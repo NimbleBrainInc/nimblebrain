@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
-  disconnectConnector,
   getInstalledConnectors,
   initiateMcpOAuth,
   type InstalledConnector,
+  uninstallConnector,
 } from "../../api/client";
 import { ToolPermissionsTable } from "../../components/connectors/ToolPermissionsTable";
 
@@ -72,7 +72,7 @@ export function ConnectorDetailPage({ scope }: { scope: "user" | "workspace" }) 
     setActing("uninstall");
     setError(null);
     try {
-      await disconnectConnector(installed.serverName, scope);
+      await uninstallConnector(installed.serverName, scope);
       navigate(backPath);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -99,10 +99,14 @@ export function ConnectorDetailPage({ scope }: { scope: "user" | "workspace" }) 
   }
 
   const cat = installed.catalog;
+  // Reconnect is OAuth-flow specific. Local bundles can be in dead /
+  // crashed state too, but they need a different recovery path
+  // (restart, not OAuth re-init). Hide the button for non-remote.
   const reconnectable =
-    installed.state === "reauth_required" ||
-    installed.state === "dead" ||
-    installed.state === "crashed";
+    installed.type === "remote" &&
+    (installed.state === "reauth_required" ||
+      installed.state === "dead" ||
+      installed.state === "crashed");
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-6 md:px-6 md:py-8 flex flex-col gap-8">
@@ -159,6 +163,10 @@ export function ConnectorDetailPage({ scope }: { scope: "user" | "workspace" }) 
           )}
           <dl className="text-xs text-muted-foreground mt-3 flex flex-wrap gap-x-5 gap-y-1">
             <div>
+              <dt className="inline">Type: </dt>
+              <dd className="inline font-medium text-foreground">{installed.type}</dd>
+            </div>
+            <div>
               <dt className="inline">Scope: </dt>
               <dd className="inline font-medium text-foreground">{installed.scope}</dd>
             </div>
@@ -166,6 +174,14 @@ export function ConnectorDetailPage({ scope }: { scope: "user" | "workspace" }) 
               <dt className="inline">State: </dt>
               <dd className="inline font-medium text-foreground">{installed.state}</dd>
             </div>
+            {installed.version && installed.version !== "remote" && (
+              <div>
+                <dt className="inline">Version: </dt>
+                <dd className="inline font-medium text-foreground font-mono">
+                  {installed.version}
+                </dd>
+              </div>
+            )}
             {installed.identity?.email && (
               <div>
                 <dt className="inline">Connected as: </dt>

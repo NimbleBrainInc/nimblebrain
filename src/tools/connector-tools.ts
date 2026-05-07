@@ -55,6 +55,7 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
             "list_tools",
             "install",
             "disconnect",
+            "uninstall",
             "get_permissions",
             "set_permissions",
           ],
@@ -107,6 +108,14 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
           return handleInstall(ctx, wsId, callerId, String(input.catalogId ?? ""));
         case "disconnect":
           return handleDisconnect(
+            ctx,
+            wsId,
+            callerId,
+            String(input.serverName ?? ""),
+            input.scope ? String(input.scope) : undefined,
+          );
+        case "uninstall":
+          return handleUninstall(
             ctx,
             wsId,
             callerId,
@@ -170,71 +179,122 @@ async function handleListInstalled(
   const catalogByUrl = new Map(catalog.map((e) => [e.url, e]));
 
   type InstalledEntry = {
-    catalogId: string | null;
     serverName: string;
-    url: string;
-    scope: "workspace" | "user";
-    catalog?: (typeof catalog)[number];
+    bundleName: string;
+    version: string;
+    type: "remote" | "local";
     state: string;
+    scope: "workspace" | "user";
+    interactive: boolean;
+    toolCount: number;
+    trustScore: number | null;
+    // Optional — only populated for URL bundles / catalog-matched entries
+    url?: string;
+    catalogId?: string | null;
+    catalog?: (typeof catalog)[number];
     authorizationUrl?: string;
     identity?: { sub?: string; email?: string; name?: string };
     missingOperatorSetup?: boolean;
   };
   const installed: InstalledEntry[] = [];
 
-  // Workspace-scope entries
+  // Workspace-scope entries: walk every bundle visible in the workspace
+  // registry (includes local stdio, local URL, Synapse apps, and remote
+  // OAuth). This is the same view the About tab uses via list_apps.
   if ((scope === "all" || scope === "workspace") && wsId) {
-    const ws = await ctx.runtime.getWorkspaceStore().get(wsId);
-    if (ws) {
-      for (const ref of ws.bundles) {
-        if (!("url" in ref)) continue;
-        const declared = ref.oauthScope ?? "workspace";
-        if (declared !== "workspace") continue;
-        const serverName = ref.serverName ?? deriveServerName(ref.url);
-        const entry = await buildInstalledEntry({
-          ref,
-          serverName,
-          scope: "workspace",
-          catalogByUrl,
-          conn: lifecycle.getInstance(serverName, wsId)?.connections?.get("_workspace") ?? null,
-          credStore,
-          ownerIdForCreds: wsId,
-        });
-        installed.push(entry);
+    const registry = ctx.runtime.getRegistryForWorkspace(wsId);
+    for (const instance of ctx.runtime.getBundleInstancesForWorkspace(wsId)) {
+      // Skip user-scope URL bundles seeded into the workspace registry
+      // via UserPoolSource — those belong to the user-scope view.
+      if (instance.oauthScope === "user") continue;
+
+      const ref = instance.ref;
+      const isRemote = !!ref && "url" in ref;
+      const url = isRemote ? (ref as { url: string }).url : undefined;
+      const cat = url ? catalogByUrl.get(url) : undefined;
+
+      // Tool count + interactive — best-effort (a stopped source returns []).
+      let toolCount = 0;
+      try {
+        const src = registry.getSource(instance.serverName);
+        if (src) toolCount = (await src.tools()).length;
+      } catch {
+        // ignore
       }
+      const interactive =
+        cat?.interactive === true ||
+        (Array.isArray(instance.ui?.placements) && instance.ui.placements.length > 0);
+
+      const entry: InstalledEntry = {
+        serverName: instance.serverName,
+        bundleName: instance.bundleName,
+        version: instance.version,
+        type: isRemote ? "remote" : "local",
+        state: instance.state,
+        scope: "workspace",
+        interactive,
+        toolCount,
+        trustScore: instance.trustScore ?? null,
+      };
+
+      if (isRemote && url) {
+        entry.url = url;
+        entry.catalogId = cat?.id ?? null;
+        if (cat) entry.catalog = cat;
+        const conn = instance.connections?.get("_workspace") ?? null;
+        if (conn?.authorizationUrl) entry.authorizationUrl = conn.authorizationUrl;
+        // Static-auth missing-operator-setup probe.
+        const oauthClient = (ref as { oauthClient?: { clientSecret?: { key: string } } })
+          .oauthClient;
+        if (oauthClient?.clientSecret) {
+          const wrapped = await credStore.get(wsId, oauthClient.clientSecret.key);
+          if (!wrapped) entry.missingOperatorSetup = true;
+        }
+      }
+      installed.push(entry);
     }
   }
 
-  // User-scope entries (caller's own personal connectors)
+  // User-scope entries (caller's own personal connectors). User scope
+  // doesn't have a "local" path today — every user-scope bundle is a
+  // URL connector with OAuth.
   if ((scope === "all" || scope === "user") && callerId) {
     const userRecord = await ctx.runtime.getUserConnectorStore().get(callerId);
     if (userRecord) {
       for (const ref of userRecord.bundles) {
         if (!("url" in ref)) continue;
         const serverName = ref.serverName ?? deriveServerName(ref.url);
-        // For user-scope, BundleInstance lives in lifecycle keyed by
-        // (serverName, userId) — see lifecycle for the parallel map.
         const userInstance = lifecycle.getUserInstance?.(serverName, callerId) ?? null;
         const conn = userInstance?.connections?.get(callerId) ?? null;
-        const entry = await buildInstalledEntry({
-          ref,
+        const cat = catalogByUrl.get(ref.url);
+
+        const interactive =
+          cat?.interactive === true ||
+          (Array.isArray(ref.ui?.placements) && ref.ui.placements.length > 0);
+
+        const entry: InstalledEntry = {
           serverName,
+          bundleName: serverName,
+          version: userInstance?.version ?? "remote",
+          type: "remote",
+          state: conn?.state ?? userInstance?.state ?? "not_authenticated",
           scope: "user",
-          catalogByUrl,
-          conn,
-          credStore,
-          // Static-auth user-scope still resolves operator setup via
-          // workspace credential store (per-workspace operator app).
-          // For now, skip the operator-setup check for user scope.
-          ownerIdForCreds: null,
-        });
+          interactive,
+          toolCount: 0,
+          trustScore: userInstance?.trustScore ?? null,
+          url: ref.url,
+          catalogId: cat?.id ?? null,
+          ...(cat ? { catalog: cat } : {}),
+          ...(conn?.authorizationUrl ? { authorizationUrl: conn.authorizationUrl } : {}),
+        };
+
         // Read OIDC identity for the user's own provider, best-effort.
         try {
           const provider = new WorkspaceOAuthProvider({
             owner: { type: "user", userId: callerId },
             serverName,
             workDir,
-            callbackUrl: "http://_/", // placeholder — only reading files
+            callbackUrl: "http://_/",
           });
           const id = await provider.identity();
           if (id) entry.identity = id;
@@ -251,59 +311,6 @@ async function handleListInstalled(
     structuredContent: { installed },
     isError: false,
   };
-}
-
-async function buildInstalledEntry(args: {
-  ref: BundleRef & { url: string };
-  serverName: string;
-  scope: "workspace" | "user";
-  catalogByUrl: Map<string, ReturnType<typeof loadCatalog>[number]>;
-  conn: { state: string; authorizationUrl?: string } | null;
-  credStore: FileCredentialStore;
-  ownerIdForCreds: string | null;
-}): Promise<{
-  catalogId: string | null;
-  serverName: string;
-  url: string;
-  scope: "workspace" | "user";
-  catalog?: ReturnType<typeof loadCatalog>[number];
-  state: string;
-  authorizationUrl?: string;
-  identity?: { sub?: string; email?: string; name?: string };
-  missingOperatorSetup?: boolean;
-  interactive: boolean;
-}> {
-  const cat = args.catalogByUrl.get(args.ref.url);
-  // Interactive = bundle exposes UI placements (auto-mounted as sidebar
-  // entries). Either declared by the catalog entry or derived from the
-  // installed BundleRef's `ui.placements` — whichever exists. Catalog
-  // declaration wins so authors can opt in/out explicitly.
-  const refPlacements = args.ref.ui?.placements;
-  const interactive =
-    cat?.interactive === true || (Array.isArray(refPlacements) && refPlacements.length > 0);
-  const entry: ReturnType<typeof buildInstalledEntry> extends Promise<infer R> ? R : never = {
-    catalogId: cat?.id ?? null,
-    serverName: args.serverName,
-    url: args.ref.url,
-    scope: args.scope,
-    ...(cat ? { catalog: cat } : {}),
-    state: args.conn?.state ?? "not_authenticated",
-    ...(args.conn?.authorizationUrl ? { authorizationUrl: args.conn.authorizationUrl } : {}),
-    interactive,
-  };
-  // Static-auth missingOperatorSetup probe (workspace scope only — user
-  // scope doesn't currently use static client secrets at the per-user level).
-  // The ref is the URL variant by way of the caller's `"url" in ref` guard,
-  // but the BundleRef union doesn't narrow that far automatically.
-  const urlRef = args.ref as { url: string; oauthClient?: { clientSecret?: { key: string } } };
-  if (args.scope === "workspace" && args.ownerIdForCreds && urlRef.oauthClient?.clientSecret) {
-    const wrapped = await args.credStore.get(
-      args.ownerIdForCreds,
-      urlRef.oauthClient.clientSecret.key,
-    );
-    if (!wrapped) entry.missingOperatorSetup = true;
-  }
-  return entry;
 }
 
 async function handleInstall(
@@ -480,6 +487,107 @@ async function handleDisconnect(
     return {
       content: textContent(`Disconnected "${serverName}" from your account.`),
       structuredContent: { ok: true, scope: "user", ...result },
+      isError: false,
+    };
+  } catch (err) {
+    return errResult(err instanceof Error ? err.message : String(err));
+  }
+}
+
+/**
+ * Uninstall a connector — full removal. For OAuth-protected URL bundles
+ * we revoke tokens upstream first (so the user's grant in the vendor
+ * portal is cleaned up), then `lifecycle.uninstall` stops the source,
+ * removes the entry from `workspace.json`, clears credentials, and
+ * unregisters placements. For local bundles (stdio / non-OAuth URL),
+ * just `lifecycle.uninstall`.
+ *
+ * User-scope: disconnectUser revokes + tears down. There is no user
+ * equivalent of `lifecycle.uninstall` because user-scope bundles live
+ * in `users/<id>/user.json`, not workspace.json — disconnect is the
+ * uninstall.
+ */
+async function handleUninstall(
+  ctx: ManageConnectorsContext,
+  wsId: string | null,
+  callerId: string | null,
+  serverName: string,
+  scopeHint: string | undefined,
+): Promise<ToolResult> {
+  if (!serverName) return errResult("serverName is required.");
+  const lifecycle = ctx.runtime.getLifecycle();
+
+  let scope: "workspace" | "user" | undefined;
+  if (scopeHint === "workspace" || scopeHint === "user") {
+    scope = scopeHint;
+  } else if (wsId && lifecycle.getInstance(serverName, wsId)) {
+    scope = "workspace";
+  } else if (callerId && lifecycle.getUserInstance?.(serverName, callerId)) {
+    scope = "user";
+  }
+  if (!scope) {
+    return errResult(`Bundle "${serverName}" not installed.`);
+  }
+
+  if (scope === "workspace") {
+    if (!wsId) return errResult("Workspace context required.");
+    const instance = lifecycle.getInstance(serverName, wsId);
+    const ref = instance?.ref;
+    const isUrlBundle = !!ref && "url" in ref;
+    let revokeResult: { revoked?: { access?: boolean; refresh?: boolean }; revokeError?: string } =
+      {};
+
+    // Revoke OAuth tokens upstream first when applicable. Best-effort —
+    // a 4xx from the provider shouldn't block local cleanup, since the
+    // user's intent is "I want this gone."
+    if (isUrlBundle) {
+      try {
+        const r = await lifecycle.disconnect(serverName, wsId, "_workspace", {
+          workDir: ctx.runtime.getWorkDir(),
+          allowInsecureRemotes: ctx.runtime.getAllowInsecureRemotes(),
+        });
+        revokeResult = {
+          revoked: r.revoked,
+          ...(r.revokeError ? { revokeError: r.revokeError } : {}),
+        };
+      } catch (err) {
+        revokeResult = { revokeError: err instanceof Error ? err.message : String(err) };
+      }
+    }
+
+    try {
+      const registry = ctx.runtime.getRegistryForWorkspace(wsId);
+      await lifecycle.uninstall(serverName, registry, wsId);
+      // Drop tool permissions for this connector — they have no meaning
+      // once the bundle is gone.
+      await ctx.runtime
+        .getPermissionStore()
+        .deleteConnector({ scope: "workspace", wsId }, serverName);
+      return {
+        content: textContent(`Uninstalled "${serverName}" from workspace.`),
+        structuredContent: { ok: true, scope: "workspace", serverName, ...revokeResult },
+        isError: false,
+      };
+    } catch (err) {
+      return errResult(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  // User scope — for now equivalent to disconnectUser since there's no
+  // separate "remove from user.json without revoke" flow today.
+  if (!callerId) return errResult("Authentication required.");
+  try {
+    const result = await lifecycle.disconnectUser?.(serverName, callerId, {
+      workDir: ctx.runtime.getWorkDir(),
+      allowInsecureRemotes: ctx.runtime.getAllowInsecureRemotes(),
+    });
+    if (!result) return errResult("User-scope uninstall not implemented.");
+    await ctx.runtime
+      .getPermissionStore()
+      .deleteConnector({ scope: "user", userId: callerId }, serverName);
+    return {
+      content: textContent(`Uninstalled "${serverName}" from your account.`),
+      structuredContent: { ok: true, scope: "user", serverName, ...result },
       isError: false,
     };
   } catch (err) {

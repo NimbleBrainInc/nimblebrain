@@ -43,6 +43,7 @@ import { toSlug } from "./lib/workspace-slug";
 import { ProfilePage } from "./pages/ProfilePage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { AboutTab } from "./pages/settings/AboutTab";
+import { ConnectorBrowsePage } from "./pages/settings/ConnectorBrowsePage";
 import { ConnectorDetailPage } from "./pages/settings/ConnectorDetailPage";
 import { ModelTab } from "./pages/settings/ModelTab";
 import { PersonalConnectorsTab } from "./pages/settings/PersonalConnectorsTab";
@@ -337,6 +338,7 @@ function AuthenticatedAppContent({
               <Route path="personal">
                 <Route index element={<Navigate to="/settings/personal/connectors" replace />} />
                 <Route path="connectors" element={<PersonalConnectorsTab />} />
+                <Route path="connectors/browse" element={<ConnectorBrowsePage scope="user" />} />
                 <Route
                   path="connectors/:serverName"
                   element={<ConnectorDetailPage scope="user" />}
@@ -352,6 +354,10 @@ function AuthenticatedAppContent({
                 <Route path="apps" element={<WorkspaceAppsTab />} />
                 <Route path="apps/:serverName" element={<SettingsAppPanel />} />
                 <Route path="connectors" element={<WorkspaceConnectorsTab />} />
+                <Route
+                  path="connectors/browse"
+                  element={<ConnectorBrowsePage scope="workspace" />}
+                />
                 <Route
                   path="connectors/:serverName"
                   element={<ConnectorDetailPage scope="workspace" />}

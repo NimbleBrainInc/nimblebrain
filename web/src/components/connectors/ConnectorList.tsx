@@ -1,36 +1,20 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import {
-  type ConnectorCatalogEntry,
-  disconnectConnector,
-  getAuthToken,
-  getConnectorsCatalog,
-  getInstalledConnectors,
-  type InstalledConnector,
-  initiateMcpOAuth,
-  installConnector,
-} from "../../api/client";
+import { getAuthToken, getInstalledConnectors, type InstalledConnector } from "../../api/client";
 import { useWorkspaceContext } from "../../context/WorkspaceContext";
 import { useEvents } from "../../hooks/useEvents";
 import { EmptyState } from "../../pages/settings/components";
-import { Card, CardContent } from "../ui/card";
 
 /**
- * Renders a list of connectors filtered to a single scope. Used by both
- * the Personal and Workspace connectors tabs in Settings — they share
- * the same list shape but filter the catalog (and installed list) to
- * the scope they manage.
+ * Lists installed connectors for a single scope (Personal or
+ * Workspace). The list is intentionally minimal — icon, name, status
+ * dot when something needs attention, and a chevron link to Configure.
+ * Type / interactive / version metadata is deferred to the Configure
+ * page so the list stays scannable.
  *
- * - `scope: "user"`      → Personal tab. Catalog filtered to entries
- *   with `defaultScope: "user"`. Installed list scoped to the caller's
- *   own user-scope bundles.
- * - `scope: "workspace"` → Workspace tab. Catalog filtered to entries
- *   with `defaultScope: "workspace"`. Installed list scoped to the
- *   active workspace's bundles.
- *
- * Each row links to the Configure detail page (`/settings/<scope>/
- * connectors/:serverName`) for tool permissions, reauth, uninstall —
- * the shared management surface across scopes.
+ * Browsing for new connectors lives on a separate /browse page reached
+ * via the action in the page header — the list itself only shows
+ * what's already installed.
  */
 export function ConnectorList({
   scope,
@@ -39,10 +23,10 @@ export function ConnectorList({
   scope: "user" | "workspace";
   configureBasePath: string;
 }) {
-  const [catalog, setCatalog] = useState<ConnectorCatalogEntry[]>([]);
   const [installed, setInstalled] = useState<InstalledConnector[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
   const wsCtx = useWorkspaceContext();
 
   const refresh = useCallback(
@@ -50,11 +34,7 @@ export function ConnectorList({
       if (!opts?.silent) setLoading(true);
       setError(null);
       try {
-        const [cat, ins] = await Promise.all([
-          getConnectorsCatalog(),
-          getInstalledConnectors({ scope }),
-        ]);
-        setCatalog(cat.catalog);
+        const ins = await getInstalledConnectors({ scope });
         setInstalled(ins.installed);
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
@@ -69,10 +49,10 @@ export function ConnectorList({
     refresh();
   }, [refresh]);
 
-  // SSE-driven refresh: after the OAuth round-trip the user is redirected
-  // back here while the backend code-exchange + tools/list is still
-  // settling. Without a state-changed listener the card sticks at
-  // "Connecting…" until reload.
+  // SSE-driven refresh: after the OAuth round-trip the user is
+  // redirected back here while the backend code-exchange + tools/list
+  // is still settling. Without a state-changed listener the row sticks
+  // at "Connecting…" until reload.
   const token = getAuthToken() ?? "";
   useEvents(token, wsCtx.activeWorkspace?.id, {
     onConnectionStateChanged: () => {
@@ -80,243 +60,160 @@ export function ConnectorList({
     },
   });
 
+  const filtered = useMemo(() => {
+    if (!query.trim()) return installed;
+    const q = query.trim().toLowerCase();
+    return installed.filter((c) => {
+      const name = (c.catalog?.name ?? c.serverName).toLowerCase();
+      return name.includes(q) || c.bundleName.toLowerCase().includes(q);
+    });
+  }, [installed, query]);
+
   if (loading) {
     return <div className="text-sm text-muted-foreground">Loading…</div>;
   }
   if (error) {
     return <EmptyState message={`Unable to load connectors: ${error}. Reload to retry.`} />;
   }
+  if (installed.length === 0) {
+    return <EmptyState message="No connectors installed yet. Browse the directory to add one." />;
+  }
 
-  const installedByUrl = new Map<string, InstalledConnector>();
-  for (const ins of installed) installedByUrl.set(ins.url, ins);
-
-  const filteredCatalog = catalog.filter((e) => e.defaultScope === scope);
-  const orphanInstalled = installed.filter((ins) => !catalog.some((c) => c.url === ins.url));
+  // Show the search input only when there are enough rows for it to
+  // pull weight. Below that, the visual cost outweighs the benefit.
+  const showSearch = installed.length > 5;
 
   return (
-    <div className="flex flex-col gap-6">
-      {filteredCatalog.length === 0 ? (
-        <EmptyState message="No connectors available." />
-      ) : (
-        <div className="grid gap-2">
-          {filteredCatalog.map((entry) => (
-            <ConnectorCard
-              key={entry.id}
-              entry={entry}
-              installed={installedByUrl.get(entry.url)}
-              configureBasePath={configureBasePath}
-            />
-          ))}
-        </div>
+    <div className="flex flex-col gap-3">
+      {showSearch && (
+        <input
+          type="search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search connectors…"
+          className="w-full max-w-xs text-sm px-3 py-1.5 rounded border border-border bg-background placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+        />
       )}
 
-      {orphanInstalled.length > 0 && (
-        <div>
-          <h3 className="text-sm font-semibold mb-2">Custom URL bundles</h3>
-          <p className="text-xs text-muted-foreground mb-3">
-            Bundles installed via direct URL (not in the catalog).
-          </p>
-          <div className="grid gap-2">
-            {orphanInstalled.map((ins) => (
-              <OrphanCard key={ins.serverName} ins={ins} onChanged={refresh} />
-            ))}
-          </div>
-        </div>
-      )}
+      <div className="border-t border-border">
+        {filtered.map((ins) => (
+          <ConnectorRow
+            key={`${ins.scope}:${ins.serverName}`}
+            installed={ins}
+            configureBasePath={configureBasePath}
+          />
+        ))}
+        {filtered.length === 0 && query && (
+          <p className="text-xs text-muted-foreground py-3">No connectors match "{query}".</p>
+        )}
+      </div>
     </div>
   );
 }
 
-function ConnectorCard({
-  entry,
+/**
+ * One installed connector. The whole row is a link to Configure;
+ * status nudges only render when there's something the user should
+ * notice (reauth needed, crashed). A clean row stays clean.
+ */
+function ConnectorRow({
   installed,
   configureBasePath,
 }: {
-  entry: ConnectorCatalogEntry;
-  installed: InstalledConnector | undefined;
+  installed: InstalledConnector;
   configureBasePath: string;
 }) {
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-
-  const state = installed?.state ?? "not_installed";
-  const needsOperatorSetup =
-    installed?.missingOperatorSetup === true || (!installed && entry.auth === "static");
-  const isInstalled = !!installed;
-  const reconnectable = state === "reauth_required" || state === "dead" || state === "crashed";
-
-  const onConnect = async () => {
-    setBusy(true);
-    setErr(null);
-    try {
-      let serverName = installed?.serverName;
-      if (!installed) {
-        const installResult = await installConnector(entry.id);
-        serverName = installResult.serverName;
-      }
-      if (!serverName) {
-        throw new Error("Could not resolve serverName after install.");
-      }
-      const { authorizationUrl } = await initiateMcpOAuth(serverName);
-      window.location.assign(authorizationUrl);
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-      setBusy(false);
-    }
-  };
+  const name = installed.catalog?.name ?? installed.serverName;
+  const iconUrl = installed.catalog?.iconUrl;
+  const status = readableStatus(installed.state);
+  const showStatusText = status.show;
 
   return (
-    <Card>
-      <CardContent className="py-3 px-4">
-        <div className="flex items-center gap-3">
-          {entry.iconUrl && (
-            <img
-              src={entry.iconUrl}
-              alt=""
-              className="h-8 w-8 rounded"
-              onError={(e) => ((e.target as HTMLImageElement).style.visibility = "hidden")}
-            />
-          )}
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2">
-              <span className="font-medium text-sm">{entry.name}</span>
-              {(entry.interactive === true || installed?.interactive === true) && (
-                <InteractiveBadge />
-              )}
-              <StatusPill state={state} identity={installed?.identity} />
-            </div>
-            <p className="text-xs text-muted-foreground truncate">{entry.description}</p>
-            {err && <p className="text-xs text-destructive mt-1">{err}</p>}
-          </div>
-          <div className="flex items-center gap-2">
-            {needsOperatorSetup ? (
-              <div className="flex flex-col items-end gap-0.5 text-right">
-                <span className="text-xs text-amber-600">Operator setup required</span>
-                {entry.operatorSetup?.portalUrl && (
-                  <a
-                    href={entry.operatorSetup.portalUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-[10px] text-muted-foreground underline"
-                  >
-                    {new URL(entry.operatorSetup.portalUrl).hostname}
-                  </a>
-                )}
-              </div>
-            ) : isInstalled ? (
-              <div className="flex items-center gap-2">
-                {reconnectable && (
-                  <button
-                    type="button"
-                    onClick={onConnect}
-                    disabled={busy}
-                    className="text-xs px-3 py-1 rounded bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
-                  >
-                    {busy ? "Reconnecting…" : "Reconnect"}
-                  </button>
-                )}
-                <Link
-                  to={`${configureBasePath}/${installed.serverName}`}
-                  className="text-xs px-3 py-1 rounded border border-border hover:bg-muted"
-                >
-                  Configure
-                </Link>
-              </div>
-            ) : (
-              <button
-                type="button"
-                onClick={onConnect}
-                disabled={busy}
-                className="text-xs px-3 py-1 rounded bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
-              >
-                {busy ? "Connecting…" : "Connect"}
-              </button>
-            )}
-          </div>
-        </div>
-      </CardContent>
-    </Card>
+    <Link
+      to={`${configureBasePath}/${installed.serverName}`}
+      className="flex items-center gap-3 px-2 py-2.5 -mx-2 rounded hover:bg-muted/50 transition-colors border-b border-border"
+    >
+      <ConnectorIcon iconUrl={iconUrl} name={name} />
+      <div className="flex-1 min-w-0">
+        <div className="text-sm font-medium truncate">{name}</div>
+      </div>
+      {showStatusText && <span className={`text-xs ${status.color}`}>{status.label}</span>}
+      <span className="text-muted-foreground" aria-hidden>
+        ›
+      </span>
+    </Link>
   );
 }
 
-function OrphanCard({ ins, onChanged }: { ins: InstalledConnector; onChanged: () => void }) {
-  const [busy, setBusy] = useState(false);
-  const state = ins.state ?? "not_authenticated";
+/**
+ * Compact icon — uses the catalog's iconUrl when available, falls
+ * back to a colored initial for local bundles or anything without an
+ * icon. Square, ~28px, rounded — same visual weight regardless of
+ * source so the list reads uniformly.
+ */
+function ConnectorIcon({ iconUrl, name }: { iconUrl: string | undefined; name: string }) {
+  const [broken, setBroken] = useState(false);
+  if (iconUrl && !broken) {
+    return (
+      <img
+        src={iconUrl}
+        alt=""
+        onError={() => setBroken(true)}
+        className="h-7 w-7 rounded shrink-0"
+      />
+    );
+  }
+  // Stable hash → palette index so the same bundle always gets the
+  // same color. Keeps the list visually tidy when the user scans.
+  const palette = [
+    "bg-blue-200 text-blue-900",
+    "bg-green-200 text-green-900",
+    "bg-amber-200 text-amber-900",
+    "bg-purple-200 text-purple-900",
+    "bg-pink-200 text-pink-900",
+    "bg-teal-200 text-teal-900",
+  ];
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) | 0;
+  const color = palette[Math.abs(hash) % palette.length] ?? palette[0];
+  const initial = name.charAt(0).toUpperCase() || "•";
   return (
-    <Card>
-      <CardContent className="py-3 px-4">
-        <div className="flex items-center gap-3">
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2">
-              <span className="font-medium text-sm font-mono">{ins.serverName}</span>
-              <StatusPill state={state} />
-            </div>
-            <p className="text-xs text-muted-foreground truncate">{ins.url}</p>
-          </div>
-          {state === "running" && (
-            <button
-              type="button"
-              onClick={async () => {
-                setBusy(true);
-                try {
-                  await disconnectConnector(ins.serverName);
-                  onChanged();
-                } finally {
-                  setBusy(false);
-                }
-              }}
-              disabled={busy}
-              className="text-xs px-3 py-1 rounded border border-border hover:bg-muted disabled:opacity-60"
-            >
-              {busy ? "…" : "Disconnect"}
-            </button>
-          )}
-        </div>
-      </CardContent>
-    </Card>
+    <div
+      className={`h-7 w-7 rounded shrink-0 flex items-center justify-center text-xs font-semibold ${color}`}
+      aria-hidden
+    >
+      {initial}
+    </div>
   );
 }
 
-function InteractiveBadge() {
-  return (
-    <span className="text-[10px] px-1.5 py-0.5 rounded bg-accent/40 text-accent-foreground font-medium whitespace-nowrap">
-      Interactive
-    </span>
-  );
-}
-
-function StatusPill({
-  state,
-  identity,
-}: {
-  state: string;
-  identity?: { sub?: string; email?: string; name?: string };
-}) {
-  const variants: Record<string, string> = {
-    running: "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300",
-    pending_auth: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300",
-    starting: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300",
-    reauth_required: "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300",
-    crashed: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300",
-    dead: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300",
-    stopped: "bg-muted text-muted-foreground",
-    not_authenticated: "bg-muted text-muted-foreground",
-    not_installed: "bg-muted text-muted-foreground",
-  };
-  const labels: Record<string, string> = {
-    running: identity?.email ? `Connected as ${identity.email}` : "Connected",
-    pending_auth: "Connecting…",
-    starting: "Starting…",
-    reauth_required: "Reconnection needed",
-    crashed: "Crashed",
-    dead: "Failed",
-    stopped: "Stopped",
-    not_authenticated: "Not connected",
-    not_installed: "Not installed",
-  };
-  const cls = variants[state] ?? "bg-muted text-muted-foreground";
-  const label = labels[state] ?? state.replace(/_/g, " ");
-  return (
-    <span className={`text-[10px] px-2 py-0.5 rounded-full whitespace-nowrap ${cls}`}>{label}</span>
-  );
+/**
+ * Map raw connection states to a user-readable status. `show: false`
+ * means the row should render no status text at all — healthy rows
+ * stay quiet. Only states the user should act on (reauth, crashed,
+ * not connected, connecting) surface.
+ */
+function readableStatus(state: string): {
+  show: boolean;
+  label: string;
+  color: string;
+} {
+  switch (state) {
+    case "running":
+      return { show: false, label: "Connected", color: "" };
+    case "pending_auth":
+    case "starting":
+      return { show: true, label: "Connecting…", color: "text-muted-foreground" };
+    case "reauth_required":
+      return { show: true, label: "Reconnect needed", color: "text-amber-600" };
+    case "crashed":
+    case "dead":
+      return { show: true, label: "Failed", color: "text-destructive" };
+    case "stopped":
+      return { show: true, label: "Stopped", color: "text-muted-foreground" };
+    case "not_authenticated":
+      return { show: true, label: "Not connected", color: "text-muted-foreground" };
+    default:
+      return { show: false, label: state, color: "" };
+  }
 }

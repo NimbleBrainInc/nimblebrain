@@ -547,21 +547,29 @@ export interface ConnectorCatalogEntry {
 }
 
 /**
- * Per-(scope, principal) installed view. Both workspace-shared and the
- * caller's personal connectors are returned, distinguished by `scope`.
+ * Per-(scope, principal) installed view. Returns every bundle visible
+ * in the workspace (or user) — local stdio servers, local URL bundles,
+ * Synapse apps, and remote OAuth connectors. `type` distinguishes
+ * remote URL connectors from local in-process / subprocess bundles.
  */
 export interface InstalledConnector {
-  catalogId: string | null;
   serverName: string;
-  url: string;
-  scope: "workspace" | "user";
-  catalog?: ConnectorCatalogEntry;
+  bundleName: string;
+  version: string;
+  type: "remote" | "local";
   state: string;
+  scope: "workspace" | "user";
+  /** Whether this connector exposes a UI surface (auto-mounts a sidebar entry). */
+  interactive: boolean;
+  toolCount: number;
+  trustScore: number | null;
+  // ── Optional fields, only populated for URL bundles / catalog-matched ──
+  url?: string;
+  catalogId?: string | null;
+  catalog?: ConnectorCatalogEntry;
   authorizationUrl?: string;
   identity?: { sub?: string; email?: string; name?: string };
   missingOperatorSetup?: boolean;
-  /** Whether this installed connector exposes a UI surface (auto-mounts a sidebar entry). */
-  interactive: boolean;
 }
 
 /**
@@ -616,6 +624,23 @@ export async function disconnectConnector(
     ...(scope ? { scope } : {}),
   });
   return unwrapStructured(result, "disconnect");
+}
+
+/**
+ * Full uninstall — works for any bundle type. For OAuth connectors,
+ * revokes tokens upstream first; for local bundles, just removes from
+ * workspace.json. Drops tool permissions associated with the connector.
+ */
+export async function uninstallConnector(
+  serverName: string,
+  scope: "workspace" | "user",
+): Promise<{ ok: boolean; scope: "workspace" | "user"; serverName: string }> {
+  const result = await callTool("nb", "manage_connectors", {
+    action: "uninstall",
+    serverName,
+    scope,
+  });
+  return unwrapStructured(result, "uninstall");
 }
 
 /**
