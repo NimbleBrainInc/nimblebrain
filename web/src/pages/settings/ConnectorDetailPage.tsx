@@ -2,22 +2,32 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   getInstalledConnectors,
-  initiateMcpOAuth,
   type InstalledConnector,
   uninstallConnector,
 } from "../../api/client";
+import { BundleConfigSection } from "../../components/connectors/BundleConfigSection";
+import { OAuthConnectionSection } from "../../components/connectors/OAuthConnectionSection";
+import { OperatorOAuthSection } from "../../components/connectors/OperatorOAuthSection";
 import { ToolPermissionsTable } from "../../components/connectors/ToolPermissionsTable";
+import { roleAtLeast, useScopedRole } from "../../hooks/useScopedRole";
 
 /**
- * Per-connector Configure detail page. Reachable from both
- * /settings/personal/connectors/:serverName and
- * /settings/workspace/connectors/:serverName — the scope is determined
- * by the route prefix.
+ * Per-connector Configure detail page — the single canonical home for
+ * managing every credential lifecycle a connector exposes:
  *
- * Layout: centered single column, no card chrome — sections separated
- * by spacing alone. Top-right action bar holds the destructive
- * Uninstall plus an optional Docs link. Reauth and per-tool
- * permissions sit inline.
+ *   1. OAuth connection — live access/refresh tokens, Connect/Reconnect/Disconnect.
+ *   2. Operator OAuth client — workspace-level OAuth app (clientId + clientSecret)
+ *      for static-auth catalog entries (Asana, HubSpot, Gmail, Outlook, Zoom).
+ *   3. Bundle configuration — stdio bundle `user_config` fields declared in the manifest.
+ *
+ * Each lifecycle is its own section component, rendered conditionally
+ * based on what the connector actually has. Sections are pure
+ * composables: they receive the InstalledConnector + an `onChanged`
+ * callback. The page owns refresh — sections never fetch.
+ *
+ * Reachable from both `/settings/personal/connectors/:serverName` and
+ * `/settings/workspace/connectors/:serverName`; scope comes from the
+ * route prefix.
  */
 export function ConnectorDetailPage({ scope }: { scope: "user" | "workspace" }) {
   const { serverName = "" } = useParams<{ serverName: string }>();
@@ -29,6 +39,13 @@ export function ConnectorDetailPage({ scope }: { scope: "user" | "workspace" }) 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [acting, setActing] = useState<string | null>(null);
+
+  const role = useScopedRole();
+  // Workspace-scope edit gates ride on ws_admin (admin or org-level).
+  // User-scope (personal connectors) is always editable by the owner —
+  // it's their own account. Sections receive `canManage` and gate their
+  // own buttons; the page doesn't need to know which lifecycle that is.
+  const canManage = scope === "user" ? true : roleAtLeast(role, "ws_admin");
 
   const refresh = useCallback(async () => {
     setError(null);
@@ -46,19 +63,6 @@ export function ConnectorDetailPage({ scope }: { scope: "user" | "workspace" }) 
   useEffect(() => {
     refresh();
   }, [refresh]);
-
-  const onReauth = async () => {
-    if (!installed) return;
-    setActing("reauth");
-    setError(null);
-    try {
-      const { authorizationUrl } = await initiateMcpOAuth(installed.serverName);
-      window.location.assign(authorizationUrl);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-      setActing(null);
-    }
-  };
 
   const onUninstall = async () => {
     if (!installed) return;
@@ -95,14 +99,6 @@ export function ConnectorDetailPage({ scope }: { scope: "user" | "workspace" }) 
   }
 
   const cat = installed.catalog;
-  // Reconnect is OAuth-flow specific. Local bundles can be in dead /
-  // crashed state too, but they need a different recovery path
-  // (restart, not OAuth re-init). Hide the button for non-remote.
-  const reconnectable =
-    installed.type === "remote" &&
-    (installed.state === "reauth_required" ||
-      installed.state === "dead" ||
-      installed.state === "crashed");
 
   return (
     <div className="max-w-3xl mx-auto space-y-6">
@@ -122,14 +118,16 @@ export function ConnectorDetailPage({ scope }: { scope: "user" | "workspace" }) 
               Docs ↗
             </a>
           )}
-          <button
-            type="button"
-            onClick={onUninstall}
-            disabled={acting !== null}
-            className="text-xs text-destructive hover:underline disabled:opacity-60"
-          >
-            {acting === "uninstall" ? "Uninstalling…" : "Uninstall"}
-          </button>
+          {canManage && (
+            <button
+              type="button"
+              onClick={onUninstall}
+              disabled={acting !== null}
+              className="text-xs text-destructive hover:underline disabled:opacity-60"
+            >
+              {acting === "uninstall" ? "Uninstalling…" : "Uninstall"}
+            </button>
+          )}
         </div>
       </div>
 
@@ -166,10 +164,6 @@ export function ConnectorDetailPage({ scope }: { scope: "user" | "workspace" }) 
               <dt className="inline">Scope: </dt>
               <dd className="inline font-medium text-foreground">{installed.scope}</dd>
             </div>
-            <div>
-              <dt className="inline">State: </dt>
-              <dd className="inline font-medium text-foreground">{installed.state}</dd>
-            </div>
             {installed.version && installed.version !== "remote" && (
               <div>
                 <dt className="inline">Version: </dt>
@@ -178,29 +172,18 @@ export function ConnectorDetailPage({ scope }: { scope: "user" | "workspace" }) 
                 </dd>
               </div>
             )}
-            {installed.identity?.email && (
-              <div>
-                <dt className="inline">Connected as: </dt>
-                <dd className="inline font-medium text-foreground">{installed.identity.email}</dd>
-              </div>
-            )}
           </dl>
-          {reconnectable && (
-            <div className="mt-3">
-              <button
-                type="button"
-                onClick={onReauth}
-                disabled={acting !== null}
-                className="text-xs px-3 py-1.5 rounded bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
-              >
-                {acting === "reauth" ? "Reconnecting…" : "Reconnect"}
-              </button>
-            </div>
-          )}
         </div>
       </div>
 
       {error && <p className="text-xs text-destructive">{error}</p>}
+
+      {/* Section composition. Each section renders only when its
+          credential lifecycle is relevant — pure conditional wiring,
+          no feature flags. */}
+      <OAuthConnectionSection installed={installed} canManage={canManage} onChanged={refresh} />
+      <OperatorOAuthSection installed={installed} canManage={canManage} onChanged={refresh} />
+      <BundleConfigSection installed={installed} canManage={canManage} onChanged={refresh} />
 
       {/* Tool permissions */}
       <ToolPermissionsTable serverName={installed.serverName} scope={scope} />

@@ -547,6 +547,22 @@ export interface ConnectorCatalogEntry {
 }
 
 /**
+ * Bundle `user_config` field descriptor as declared in the bundle's
+ * manifest. Mirrors the server's `UserConfigFieldDef` — kept in sync by
+ * convention because the server forwards manifest declarations
+ * unchanged. Only `string` types appear in production today; the modal
+ * renders any unknown type as disabled with a console warning.
+ */
+export interface BundleUserConfigField {
+  type: string;
+  title?: string;
+  description?: string;
+  sensitive?: boolean;
+  required?: boolean;
+  default?: unknown;
+}
+
+/**
  * Per-(scope, principal) installed view. Returns every bundle visible
  * in the workspace (or user) — local stdio servers, local URL bundles,
  * Synapse apps, and remote OAuth connectors. `type` distinguishes
@@ -570,6 +586,31 @@ export interface InstalledConnector {
   authorizationUrl?: string;
   identity?: { sub?: string; email?: string; name?: string };
   missingOperatorSetup?: boolean;
+  /** Last connection error for crashed / dead / reauth_required states. */
+  lastError?: string;
+  /**
+   * Operator OAuth client config — present only for static-auth
+   * connectors the workspace has configured. The Configure page reads
+   * this to render the audit line + Edit affordance. Secret never
+   * appears here.
+   */
+  operatorOAuth?: {
+    clientId: string;
+    configuredAt: string;
+    configuredBy: string;
+    /** Best-effort display name/email for configuredBy. */
+    configuredByLabel?: string;
+  };
+  /**
+   * Stdio bundle credential schema + per-field populated probe. The
+   * Configure page's bundle-config section renders the schema and
+   * uses `populated` to display configured / not-configured per row.
+   * Values are never echoed.
+   */
+  userConfig?: {
+    schema: Record<string, BundleUserConfigField>;
+    populated: Record<string, boolean>;
+  };
 }
 
 /**
@@ -738,6 +779,38 @@ export async function removeConnectorOperatorSetup(
     catalogId,
   });
   return unwrapStructured(result, "remove_operator_setup");
+}
+
+/**
+ * Set or clear individual `user_config` fields on a stdio bundle. Empty
+ * string clears one field; absent fields are unchanged. Returns the
+ * post-write `populated` map so the caller can refresh UI state without
+ * a follow-up list_installed round-trip.
+ */
+export async function setBundleUserConfig(
+  serverName: string,
+  fields: Record<string, string>,
+): Promise<{ ok: boolean; serverName: string; populated: Record<string, boolean> }> {
+  const result = await callTool("nb", "manage_connectors", {
+    action: "set_user_config",
+    serverName,
+    fields,
+  });
+  return unwrapStructured(result, "set_user_config");
+}
+
+/**
+ * Drop the entire workspace credential file for a stdio bundle. Every
+ * declared field reverts to not-configured.
+ */
+export async function clearBundleUserConfig(
+  serverName: string,
+): Promise<{ ok: boolean; serverName: string; populated: Record<string, boolean> }> {
+  const result = await callTool("nb", "manage_connectors", {
+    action: "clear_user_config",
+    serverName,
+  });
+  return unwrapStructured(result, "clear_user_config");
 }
 
 export interface RegistryConfig {

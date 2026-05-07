@@ -375,27 +375,19 @@ function RowAction({
         </div>
       );
     }
-    // Configured: show Install with optional rotate link for admins.
+    // Configured: Install only. Rotation moved to Configure → OAuth
+    // client section now that the Configure page reads operator audit
+    // metadata and serves as the single canonical home for credential
+    // edits. Browse stays focused on discovery + first-time setup.
     return (
-      <div className="flex flex-col items-end gap-0.5 shrink-0">
-        <button
-          type="button"
-          onClick={onInstall}
-          disabled={busy}
-          className="text-xs px-3 py-1.5 rounded bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
-        >
-          {busy ? "Installing…" : "Install"}
-        </button>
-        {isWsAdmin && (
-          <button
-            type="button"
-            onClick={onSetUp}
-            className="text-[10px] text-muted-foreground hover:underline underline-offset-4"
-          >
-            Edit OAuth app
-          </button>
-        )}
-      </div>
+      <button
+        type="button"
+        onClick={onInstall}
+        disabled={busy}
+        className="text-xs px-3 py-1.5 rounded bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-60 shrink-0"
+      >
+        {busy ? "Installing…" : "Install"}
+      </button>
     );
   }
   if (isMpakStub) {

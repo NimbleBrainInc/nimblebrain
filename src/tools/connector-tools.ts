@@ -295,6 +295,14 @@ async function handleListInstalled(
     identity?: { sub?: string; email?: string; name?: string };
     missingOperatorSetup?: boolean;
     /**
+     * Last connection error for crashed / dead / reauth_required states.
+     * Pulled from the principal Connection — only present when the
+     * underlying OAuth or transport actually failed and recorded the
+     * error. UI uses this to render a red "Failed: <reason>" line on
+     * the OAuth connection section.
+     */
+    lastError?: string;
+    /**
      * Per-workspace operator OAuth client config — present only for
      * static-auth catalog entries the workspace has configured. Carries
      * the public clientId, audit metadata, and a best-effort display
@@ -397,6 +405,7 @@ async function handleListInstalled(
         if (cat) entry.catalog = cat;
         const conn = instance.connections?.get("_workspace") ?? null;
         if (conn?.authorizationUrl) entry.authorizationUrl = conn.authorizationUrl;
+        if (conn?.lastError) entry.lastError = conn.lastError;
         // Static-auth missing-operator-setup probe.
         const oauthClient = (ref as { oauthClient?: { clientSecret?: { key: string } } })
           .oauthClient;
