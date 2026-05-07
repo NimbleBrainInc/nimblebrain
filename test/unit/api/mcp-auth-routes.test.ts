@@ -23,29 +23,31 @@ function sha256Hex(input: string): string {
 }
 
 interface StubLifecycle {
-  pendingAuthUrls: Map<string, string>; // key: "serverName|wsId|principalId"
+  /** Pre-canned URL the stub `startAuth` returns. Undefined ⇒ throws. */
+  authUrls: Map<string, string>; // key: "serverName|wsId|principalId"
   instances: Map<string, { oauthScope?: "workspace" | "member" }>; // key: "serverName|wsId"
-  getPendingAuthUrl(serverName: string, wsId: string, principalId: string): string | null;
-  getPendingConnections(
-    wsId: string,
-  ): Array<{ serverName: string; bundleName: string; principalId: string }>;
   getInstance(serverName: string, wsId: string): { oauthScope?: "workspace" | "member" } | null;
+  startAuth(
+    serverName: string,
+    wsId: string,
+    principalId: string,
+    opts: { workDir: string; callbackUrl: string; allowInsecureRemotes?: boolean },
+  ): Promise<{ authorizationUrl: string }>;
 }
 
 function makeStubLifecycle(): StubLifecycle {
-  const pendingAuthUrls = new Map<string, string>();
+  const authUrls = new Map<string, string>();
   const instances = new Map<string, { oauthScope?: "workspace" | "member" }>();
   return {
-    pendingAuthUrls,
+    authUrls,
     instances,
-    getPendingAuthUrl(serverName, wsId, principalId) {
-      return pendingAuthUrls.get(`${serverName}|${wsId}|${principalId}`) ?? null;
-    },
-    getPendingConnections() {
-      return [];
-    },
     getInstance(serverName, wsId) {
       return instances.get(`${serverName}|${wsId}`) ?? null;
+    },
+    async startAuth(serverName, wsId, principalId) {
+      const url = authUrls.get(`${serverName}|${wsId}|${principalId}`);
+      if (!url) throw new Error(`stub: no canned URL for ${serverName}|${wsId}|${principalId}`);
+      return { authorizationUrl: url };
     },
   };
 }
@@ -54,6 +56,8 @@ function makeApp(lifecycle: StubLifecycle, isLocalhost = true): Hono<AppEnv> {
   const ctx = {
     runtime: {
       getLifecycle: () => lifecycle,
+      getWorkDir: () => "/tmp/nb-test",
+      getAllowInsecureRemotes: () => false,
     },
     // Dev-mode auth so requireAuth() passes through without an identity. No
     // identity → requireWorkspace() also passes through without setting
@@ -86,7 +90,8 @@ describe("POST /v1/mcp-auth/initiate", () => {
   test("sets session-bound state cookie and returns the authorization URL", async () => {
     const state = "abc-123-def";
     const authUrl = `https://granola.test/oauth/authorize?state=${state}&client_id=cid`;
-    lifecycle.pendingAuthUrls.set(`granola|${WS_ID}|_workspace`, authUrl);
+    lifecycle.instances.set(`granola|${WS_ID}`, { oauthScope: "workspace" });
+    lifecycle.authUrls.set(`granola|${WS_ID}|_workspace`, authUrl);
 
     const res = await app.request("http://localhost/v1/mcp-auth/initiate", {
       method: "POST",
@@ -110,7 +115,8 @@ describe("POST /v1/mcp-auth/initiate", () => {
   });
 
   test("adds Secure flag when not on localhost", async () => {
-    lifecycle.pendingAuthUrls.set(
+    lifecycle.instances.set(`granola|${WS_ID}`, { oauthScope: "workspace" });
+    lifecycle.authUrls.set(
       `granola|${WS_ID}|_workspace`,
       "https://granola.test/auth?state=s",
     );
@@ -164,7 +170,8 @@ describe("POST /v1/mcp-auth/initiate", () => {
   test("returns 500 when captured URL is missing the state parameter", async () => {
     // A URL without `?state=…` shouldn't reach this code path in production,
     // but the route guards against it explicitly.
-    lifecycle.pendingAuthUrls.set(
+    lifecycle.instances.set(`bad|${WS_ID}`, { oauthScope: "workspace" });
+    lifecycle.authUrls.set(
       `bad|${WS_ID}|_workspace`,
       "https://granola.test/auth?client_id=x",
     );

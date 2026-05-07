@@ -196,12 +196,30 @@ export type BundleState =
   | "dead"
   | "stopped"
   /**
-   * Remote URL bundle is waiting for the user to complete an interactive
-   * OAuth flow. The bundle's MCP source is constructed but not connected;
-   * tools are unavailable until the user completes auth via
-   * `POST /v1/mcp-auth/initiate` → AS → `GET /v1/mcp-auth/callback`.
+   * URL bundle is installed but no tokens exist for this principal. Initial
+   * state for a freshly-installed URL bundle, and the resting state after
+   * `disconnect`. UI shows "Connect" — clicking initiates the OAuth flow
+   * (transitioning to `pending_auth`).
    */
-  | "pending_auth";
+  | "not_authenticated"
+  /**
+   * URL bundle is actively in an OAuth flow. The user (or agent) clicked
+   * Connect; we've captured an authorization URL and are awaiting the
+   * browser callback. Tools are unavailable until the callback completes
+   * (transitions to `running`) or fails (transitions to `dead`).
+   */
+  | "pending_auth"
+  /**
+   * URL bundle was previously `running` but its refresh token failed (rotated,
+   * revoked, or AS rejected). Tools that need this connection will fail until
+   * the user reconnects. UI shows "Reconnect" — clicking initiates a fresh
+   * OAuth flow (transitioning to `pending_auth`).
+   *
+   * Distinct from `not_authenticated` so the UI can surface a stronger
+   * affordance ("your previously-working connection broke") and from
+   * `dead` so the UI knows reconnection is the recovery path.
+   */
+  | "reauth_required";
 
 /** MCP server config — how to spawn the process. */
 export interface McpConfig {

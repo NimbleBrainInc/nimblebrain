@@ -6,12 +6,13 @@ import {
   getInstalledConnections,
   type InstalledConnection,
   initiateMcpOAuth,
+  installConnection,
 } from "../../api/client";
 import { Card, CardContent } from "../../components/ui/card";
 import { EmptyState, RequireActiveWorkspace, SettingsListPage } from "./components";
 
 /**
- * Settings → Connections — Track C of REMOTE_MCP_CONNECTIONS.md.
+ * Settings → Connections page.
  *
  * Two columns:
  *   - My Connections: oauthScope='member' bundles. Per-user "Connect"
@@ -20,14 +21,18 @@ import { EmptyState, RequireActiveWorkspace, SettingsListPage } from "./componen
  *   - Workspace Connections: oauthScope='workspace' bundles. Shared
  *     identity per workspace.
  *
- * Catalog vs Installed:
- *   - The catalog (filtered by workspace allow-list) is the universe of
- *     services we know about. Each entry shows whether it's installed.
- *   - Installed bundles join the catalog by URL; catalog entries that
- *     match an installed bundle render as the connection card.
- *   - Catalog entries WITHOUT an installed bundle render as "Add to
- *     workspace" prompts (which currently send the operator to JSON
- *     editing — UI install is a v2 affordance).
+ * One-click install. Clicking Connect on an uninstalled catalog entry
+ * runs `POST /v1/connections/install` (which adds the bundle to
+ * workspace.json + seeds the lifecycle map) and then immediately
+ * `POST /v1/mcp-auth/initiate` to start the OAuth dance. Failures at
+ * either step surface inline on the card.
+ *
+ * State → button mapping:
+ *   - running          → "Disconnect"
+ *   - reauth_required  → "Reconnect" (prior tokens broke; user reconsents)
+ *   - dead             → "Reconnect"
+ *   - not_authenticated, not_installed, stopped → "Connect"
+ *   - pending_auth, starting → busy spinner
  */
 export function ConnectionsTab() {
   return (
@@ -176,18 +181,28 @@ function ConnectionCard({
 
   const conn =
     installed?.oauthScope === "member" ? installed.myConnection : installed?.workspaceConnection;
-  const state = conn?.state ?? (installed ? "not_connected" : "not_installed");
-  const connected = state === "running";
-  const pending = state === "pending_auth";
+  const state = conn?.state ?? (installed ? "not_authenticated" : "not_installed");
   const missingSetup = installed?.missingOperatorSetup === true;
+  const connected = state === "running";
+  const reconnectable = state === "reauth_required" || state === "dead" || state === "crashed";
 
+  // One-click install + connect. If the bundle isn't yet in
+  // workspace.bundles[], call /install to add it, then /initiate to
+  // start the OAuth dance. The /install endpoint is idempotent so a
+  // race (user double-clicks, two tabs) is safe.
   const onConnect = async () => {
     setBusy(true);
     setErr(null);
     try {
-      const { authorizationUrl } = await initiateMcpOAuth(
-        entry.url ? (installed?.serverName ?? "") : "",
-      );
+      let serverName = installed?.serverName;
+      if (!installed) {
+        const installResult = await installConnection(entry.id);
+        serverName = installResult.serverName;
+      }
+      if (!serverName) {
+        throw new Error("Could not resolve serverName after install.");
+      }
+      const { authorizationUrl } = await initiateMcpOAuth(serverName);
       window.location.assign(authorizationUrl);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -230,9 +245,7 @@ function ConnectionCard({
             {err && <p className="text-xs text-destructive mt-1">{err}</p>}
           </div>
           <div className="flex items-center gap-2">
-            {!installed ? (
-              <span className="text-xs text-muted-foreground">Not installed</span>
-            ) : missingSetup ? (
+            {missingSetup ? (
               <span className="text-xs text-amber-600">
                 Operator setup required ({entry.operatorSetup?.credentialKey})
               </span>
@@ -252,7 +265,7 @@ function ConnectionCard({
                 disabled={busy}
                 className="text-xs px-3 py-1 rounded bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
               >
-                {busy ? "Connecting…" : pending ? "Resume connect" : "Connect"}
+                {busy ? "Connecting…" : reconnectable ? "Reconnect" : "Connect"}
               </button>
             )}
           </div>
@@ -310,21 +323,28 @@ function StatusPill({
 }) {
   const variants: Record<string, string> = {
     running: "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300",
-    pending_auth: "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300",
+    pending_auth: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300",
     starting: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300",
+    reauth_required: "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300",
     crashed: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300",
     dead: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300",
     stopped: "bg-muted text-muted-foreground",
-    not_connected: "bg-muted text-muted-foreground",
+    not_authenticated: "bg-muted text-muted-foreground",
     not_installed: "bg-muted text-muted-foreground",
   };
+  const labels: Record<string, string> = {
+    running: identity?.email ? `Connected as ${identity.email}` : "Connected",
+    pending_auth: "Connecting…",
+    starting: "Starting…",
+    reauth_required: "Reconnection needed",
+    crashed: "Crashed",
+    dead: "Failed",
+    stopped: "Stopped",
+    not_authenticated: "Not connected",
+    not_installed: "Not installed",
+  };
   const cls = variants[state] ?? "bg-muted text-muted-foreground";
-  const label =
-    state === "running" && identity?.email
-      ? `Connected as ${identity.email}`
-      : state === "running"
-        ? "Connected"
-        : state.replace(/_/g, " ");
+  const label = labels[state] ?? state.replace(/_/g, " ");
   return (
     <span className={`text-[10px] px-2 py-0.5 rounded-full whitespace-nowrap ${cls}`}>{label}</span>
   );

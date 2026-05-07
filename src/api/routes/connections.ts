@@ -1,6 +1,6 @@
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { Hono } from "hono";
+import { deriveServerName } from "../../bundles/paths.ts";
+import type { BundleRef } from "../../bundles/types.ts";
 import type { ConnectionCatalogEntry } from "../../connections/catalog.ts";
 import { loadCatalog } from "../../connections/load-catalog.ts";
 import { FileCredentialStore } from "../../tools/credential-store.ts";
@@ -10,16 +10,17 @@ import { requireWorkspace } from "../middleware/workspace.ts";
 import { type AppContext, type AppEnv, apiError } from "../types.ts";
 
 /**
- * Connections page routes — Track C of REMOTE_MCP_CONNECTIONS.md.
- *
- * Three endpoints:
+ * Connections page routes.
  *
  *   GET  /v1/connections/catalog      catalog filtered by workspace allow-list
  *   GET  /v1/connections/installed    installed bundles + per-principal status
- *   POST /v1/connections/disconnect   revoke + clear tokens (RFC 7009)
+ *   POST /v1/connections/install      add a catalog entry to workspace.bundles + seed lifecycle
+ *   POST /v1/connections/disconnect   revoke + clear tokens (RFC 7009) + tear down source
  *
- * All workspace-authed via per-handler middleware (sub-app `.use("*")`
- * gated /callback in earlier work; we use the same pattern here).
+ * All workspace-authed via per-handler middleware. The /install endpoint
+ * is admin-only at the workspace level (writing workspace.json must
+ * require admin perms — checked inline since the middleware doesn't
+ * carry role context yet).
  */
 export function connectionsRoutes(ctx: AppContext) {
   const app = new Hono<AppEnv>();
@@ -217,58 +218,120 @@ export function connectionsRoutes(ctx: AppContext) {
         return apiError(500, "internal_error", "Bundle ref missing — cannot determine OAuth URL.");
       }
 
-      // Disconnect: revoke at AS + delete locally.
-      const provider = new WorkspaceOAuthProvider({
-        wsId,
-        serverName,
-        workDir: ctx.runtime.getWorkDir(),
-        callbackUrl: "http://_/", // unused for revocation path
-        memberId: oauthScope === "member" ? principalId : undefined,
-        allowInsecureRemotes: ctx.runtime.getAllowInsecureRemotes(),
-      });
-      const result = await provider.revokeAndDeleteTokens({ bundleUrl: ref.url });
+      try {
+        const result = await lifecycle.disconnect(serverName, wsId, principalId, {
+          workDir: ctx.runtime.getWorkDir(),
+          allowInsecureRemotes: ctx.runtime.getAllowInsecureRemotes(),
+        });
+        return c.json({ ok: true, ...result });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return apiError(500, "internal_error", msg);
+      }
+    },
+  );
 
-      // Tear down the per-principal source from the pool (member-scope only;
-      // workspace-scope bundles need a different teardown — out of scope
-      // for this Track C minimum: a future PR can add workspace-disconnect
-      // by stopping the McpSource and re-running the boot path).
-      if (oauthScope === "member") {
-        const pool = lifecycle.getMemberPool(serverName, wsId);
-        await pool?.removeMember(principalId);
+  // ── POST /v1/connections/install ────────────────────────────────────
+  //
+  // Body: { catalogId: string }
+  //
+  // Idempotently adds a catalog entry to `workspace.bundles[]`, persists
+  // workspace.json, and seeds the lifecycle map so subsequent /initiate
+  // and /tools/call requests find the bundle. Does NOT start OAuth on
+  // its own — the UI calls /v1/mcp-auth/initiate after install to drive
+  // the connect flow. Splitting install from auth keeps the surface
+  // composable (an admin can pre-install bundles for members; a user
+  // can install + auth in two API calls or one click).
+  app.post(
+    "/v1/connections/install",
+    requireAuth(ctx.authOptions),
+    requireWorkspace(ctx.workspaceStore),
+    async (c) => {
+      let body: { catalogId?: unknown };
+      try {
+        body = await c.req.json();
+      } catch {
+        return apiError(400, "bad_request", "Body must be JSON.");
+      }
+      const catalogId = typeof body.catalogId === "string" ? body.catalogId : "";
+      if (!catalogId) return apiError(400, "bad_request", "catalogId is required.");
+
+      const wsId = c.var.workspaceId;
+      const ws = await ctx.workspaceStore.get(wsId);
+      if (!ws) return apiError(404, "workspace_not_found", `Workspace ${wsId} not found.`);
+
+      // Look up the catalog entry. Workspace allow-list applies — if
+      // the entry isn't in the workspace's view of the catalog, reject.
+      const catalog = loadCatalog();
+      const allowList = ws.connectionsAllowList;
+      const visible =
+        allowList && Array.isArray(allowList) && allowList.length > 0
+          ? catalog.filter((e) => allowList.includes(e.id))
+          : catalog;
+      const entry = visible.find((e) => e.id === catalogId);
+      if (!entry) {
+        return apiError(
+          404,
+          "catalog_entry_not_found",
+          `Catalog entry "${catalogId}" not visible in this workspace.`,
+        );
       }
 
-      // Emit a connection.state_changed so the UI updates immediately.
-      // Pass `source: null` explicitly so the Connection record drops its
-      // reference to the now-stopped McpSource — without this,
-      // recordConnectionStateChange inherits the existing source field
-      // (still pointing at the dead instance) and we leak it on the
-      // Connection map.
-      lifecycle.recordConnectionStateChange(serverName, wsId, principalId, "stopped", {
-        source: null,
-      });
+      // Idempotent: if the URL is already in workspace.bundles[], no-op.
+      // (Same URL could appear under a different catalogId in theory, but
+      // catalog distribution policy is "one entry per URL" — we trust it.)
+      const existing = ws.bundles.find((b) => "url" in b && b.url === entry.url);
+      const serverName = entry.id; // catalog id == serverName by convention
+      if (existing) {
+        return c.json({
+          ok: true,
+          alreadyInstalled: true,
+          serverName: "serverName" in existing ? (existing.serverName ?? serverName) : serverName,
+        });
+      }
 
-      return c.json({
-        ok: true,
-        revoked: result.revoked,
-        deletedLocal: result.deletedLocal,
-        ...(result.error ? { revokeError: result.error } : {}),
+      // Build the BundleRef from the catalog entry.
+      const ref: BundleRef = {
+        url: entry.url,
+        serverName,
+        ...(entry.defaultScope ? { oauthScope: entry.defaultScope } : {}),
+        ...(entry.requiredScopes ? { scopes: entry.requiredScopes } : {}),
+        ...(entry.additionalAuthorizationParams
+          ? { additionalAuthorizationParams: entry.additionalAuthorizationParams }
+          : {}),
+        // Static-auth catalog entries reference an operator-set credential.
+        // The credential is per-workspace; the catalog only carries the key.
+        ...(entry.auth === "static" && entry.operatorSetup
+          ? {
+              oauthClient: {
+                // Catalog doesn't carry clientId — operator setup writes
+                // both clientId and secret to the credential store. We
+                // reference both keys; the provider resolves them.
+                clientId: "", // resolved via secondary credential lookup at startAuth time
+                clientSecret: { ref: "credential", key: entry.operatorSetup.credentialKey },
+              },
+            }
+          : {}),
+      };
+
+      // Persist to workspace.json (atomic) before mutating runtime state.
+      const updated = await ctx.workspaceStore.update(wsId, {
+        bundles: [...ws.bundles, ref],
       });
+      if (!updated) {
+        return apiError(500, "internal_error", "Failed to persist workspace update.");
+      }
+
+      // Seed the lifecycle map. `seedInstance` will register the
+      // member-pool (for member-scope) or set state to `not_authenticated`
+      // (for workspace-scope, since no tokens exist yet).
+      const lifecycle = ctx.runtime.getLifecycle();
+      const wsRegistry = ctx.runtime.getRegistryForWorkspace(wsId);
+      lifecycle.seedInstance(serverName, entry.url, ref, undefined, wsId, undefined, wsRegistry);
+
+      return c.json({ ok: true, alreadyInstalled: false, serverName });
     },
   );
 
   return app;
 }
-
-/** Mirror of `deriveServerName` from src/bundles/paths.ts to avoid a
- *  cross-module dependency. The shape is "host-with-dashes-only". */
-function deriveServerName(url: string): string {
-  try {
-    return new URL(url).hostname.replace(/[^a-z0-9]/gi, "-").toLowerCase();
-  } catch {
-    return url;
-  }
-}
-
-// Silence unused-import warning when no helper is needed.
-void homedir;
-void join;

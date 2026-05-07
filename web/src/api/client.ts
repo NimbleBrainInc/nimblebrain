@@ -587,18 +587,20 @@ export async function disconnectConnection(
 }
 
 /**
- * Snapshot of Connections in pending_auth for the active workspace.
- * The web banner fetches this on workspace render so it appears even if
- * the bundle entered pending_auth before the SSE stream connected
- * (typical for boot-time URL bundles). Subsequent state changes flow
- * through SSE.
+ * Install a catalog entry into the active workspace. Idempotent — if the
+ * URL is already in `workspace.bundles[]`, returns `alreadyInstalled: true`.
+ * Adds the entry to workspace.json and seeds the runtime lifecycle so
+ * subsequent /initiate calls find it. Does NOT start OAuth — the caller
+ * is expected to follow up with `initiateMcpOAuth(serverName)`.
  */
-export async function listPendingConnections(): Promise<{
-  connections: Array<{ serverName: string; bundleName: string; principalId: string }>;
-}> {
-  return request<{
-    connections: Array<{ serverName: string; bundleName: string; principalId: string }>;
-  }>("/v1/connections/pending");
+export async function installConnection(
+  catalogId: string,
+): Promise<{ ok: boolean; alreadyInstalled: boolean; serverName: string }> {
+  return request("/v1/connections/install", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ catalogId }),
+  });
 }
 
 /** Clear the server-side session cookie. Fails silently on error. */

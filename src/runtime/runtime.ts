@@ -539,6 +539,11 @@ export class Runtime {
     rt._workspaceRegistries = workspaceRegistries;
     rt._platformSources = platformSources;
 
+    // Wire the workspace registries into lifecycle so workspace-scope
+    // startAuth / disconnect / install can add+remove sources without
+    // each route having to thread the registry through.
+    lifecycle.setWorkspaceRegistries(workspaceRegistries);
+
     // Seed lifecycle instances for workspace bundles (user-installed only)
     for (const entry of workspaceBundleEntries) {
       const { serverName: sn, bundle: ref, meta, wsId, dataDir } = entry;

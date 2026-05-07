@@ -36,12 +36,11 @@ export function mcpAuthRoutes(ctx: AppContext) {
 
   // ── POST /v1/mcp-auth/initiate ────────────────────────────────────
   //
-  // Workspace-authed. Body: { serverName }. Step 1 is workspace-scope only,
-  // so the principal is always WORKSPACE_PRINCIPAL_ID — we deliberately
-  // do NOT read it from the request body. Step 3 will accept a validated
-  // `principalId` here, with the caller authenticated as that member and
-  // user-supplied "_"-prefixed values rejected (the underscore prefix is
-  // reserved for synthetic principals — see connection.ts:8-13).
+  // Workspace-authed. Body: { serverName }. Resolves the principal from
+  // the bundle's declared scope (workspace-scope → WORKSPACE_PRINCIPAL_ID;
+  // member-scope → calling user id). Calls `lifecycle.startAuth` which
+  // is idempotent on double-click and tears down stale sources (so
+  // disconnect → reconnect works without a process restart).
   //
   // Auth + workspace middleware applied per-handler (not via .use("*"))
   // so the unauthenticated /callback below is unaffected. Hono's
@@ -63,50 +62,46 @@ export function mcpAuthRoutes(ctx: AppContext) {
       if (!serverName) {
         return apiError(400, "bad_request", "serverName is required.");
       }
-      const principalId = WORKSPACE_PRINCIPAL_ID;
 
       const wsId = c.var.workspaceId;
       const lifecycle = ctx.runtime.getLifecycle();
 
-      // Resolve the authorization URL. Two paths:
-      //
-      // 1. Existing pending_auth Connection (workspace-scope at boot, or
-      //    member-scope after a previous /initiate kicked off the dance).
-      //    Reuse its URL so double-clicks debounce instead of starting
-      //    duplicate flows.
-      //
-      // 2. Member-scope, first connect for this principal: lifecycle
-      //    constructs the per-member McpSource + provider, kicks off
-      //    start() in the background, waits up to 15s for the provider's
-      //    interactive callback to fire, returns the captured URL.
-      let authorizationUrl = lifecycle.getPendingAuthUrl(serverName, wsId, principalId);
-      if (!authorizationUrl) {
-        const instance = lifecycle.getInstance(serverName, wsId);
-        if (!instance) {
-          return apiError(404, "bundle_not_found", `Bundle "${serverName}" not installed.`);
-        }
-        if (instance.oauthScope === "member" && principalId !== "_workspace") {
-          // First-connect path — start the flow.
-          try {
-            const apiBase = process.env.NB_API_URL ?? "http://localhost:27247";
-            const callbackUrl = `${apiBase.replace(/\/+$/, "")}/v1/mcp-auth/callback`;
-            const result = await lifecycle.startMemberAuth(serverName, wsId, principalId, {
-              workDir: ctx.runtime.getWorkDir(),
-              callbackUrl,
-              allowInsecureRemotes: ctx.runtime.getAllowInsecureRemotes(),
-            });
-            authorizationUrl = result.authorizationUrl;
-          } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            return apiError(500, "auth_start_failed", `Failed to start OAuth flow: ${msg}`);
-          }
-        } else {
+      const instance = lifecycle.getInstance(serverName, wsId);
+      if (!instance) {
+        return apiError(404, "bundle_not_found", `Bundle "${serverName}" not installed.`);
+      }
+
+      // Resolve the principal from the bundle's scope. Member-scope
+      // requires an authenticated identity to act as.
+      const oauthScope = instance.oauthScope ?? "workspace";
+      let principalId: string;
+      if (oauthScope === "member") {
+        const callerId = c.var.identity?.id;
+        if (!callerId) {
           return apiError(
-            404,
-            "not_pending_auth",
-            `No pending OAuth flow for serverName="${serverName}" in this workspace.`,
+            401,
+            "unauthenticated",
+            "Member-scope bundles require an authenticated user.",
           );
         }
+        principalId = callerId;
+      } else {
+        principalId = WORKSPACE_PRINCIPAL_ID;
+      }
+
+      let authorizationUrl: string;
+      try {
+        const apiBase = process.env.NB_API_URL ?? "http://localhost:27247";
+        const callbackUrl = `${apiBase.replace(/\/+$/, "")}/v1/mcp-auth/callback`;
+        const result = await lifecycle.startAuth(serverName, wsId, principalId, {
+          workDir: ctx.runtime.getWorkDir(),
+          callbackUrl,
+          allowInsecureRemotes: ctx.runtime.getAllowInsecureRemotes(),
+        });
+        authorizationUrl = result.authorizationUrl;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return apiError(500, "auth_start_failed", `Failed to start OAuth flow: ${msg}`);
       }
 
       // Extract `state` from the URL the SDK built. We bind the user's
@@ -143,25 +138,6 @@ export function mcpAuthRoutes(ctx: AppContext) {
       c.header("Set-Cookie", cookieParts.join("; "));
 
       return c.json({ authorizationUrl });
-    },
-  );
-
-  // ── GET /v1/connections/pending ────────────────────────────────────
-  //
-  // Workspace-authed snapshot of Connections in pending_auth. The web
-  // client fetches this once on workspace render to populate the banner
-  // — connection.state_changed SSE events only fire from connect time
-  // forward, so a client that connects after a bundle entered
-  // pending_auth would otherwise miss the signal until reload.
-  app.get(
-    "/v1/connections/pending",
-    requireAuth(ctx.authOptions),
-    requireWorkspace(ctx.workspaceStore),
-    (c) => {
-      const wsId = c.var.workspaceId;
-      const lifecycle = ctx.runtime.getLifecycle();
-      const pending = lifecycle.getPendingConnections(wsId);
-      return c.json({ connections: pending });
     },
   );
 

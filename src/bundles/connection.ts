@@ -18,15 +18,32 @@ export const WORKSPACE_PRINCIPAL_ID = "_workspace";
  * Client + Transport + auth provider.
  *
  * Transitions:
- *   starting   → running             (auth complete, client connected)
- *   starting   → pending_auth        (interactive OAuth required)
- *   pending_auth → running           (user completed auth, retry succeeded)
- *   pending_auth → dead              (auth timed out or refresh failed)
- *   running    → crashed             (transport error, may auto-recover)
- *   running    → pending_auth        (refresh failed mid-session)
- *   crashed    → running             (HealthMonitor recovered)
- *   crashed    → dead                (give up after retries)
- *   *          → stopped             (explicit stop / uninstall)
+ *   (init)              → not_authenticated   (URL bundle installed, no tokens)
+ *   (init)              → starting            (URL bundle has persisted tokens; attempting boot)
+ *   not_authenticated   → pending_auth        (user clicked Connect; OAuth flow in progress)
+ *   reauth_required     → pending_auth        (user clicked Reconnect after RT failure)
+ *   pending_auth        → running             (callback succeeded; tokens stored)
+ *   pending_auth        → dead                (callback failed or 15s timeout)
+ *   starting            → running             (boot succeeded with persisted tokens)
+ *   starting            → reauth_required     (boot failed; refresh token rejected)
+ *   starting            → dead                (other transport / network failure)
+ *   running             → reauth_required     (refresh failed mid-session)
+ *   running             → crashed             (transport error; HealthMonitor may recover)
+ *   running             → not_authenticated   (user clicked Disconnect)
+ *   crashed             → running             (HealthMonitor recovered)
+ *   crashed             → dead                (give up after retries)
+ *   *                   → stopped             (explicit uninstall — bundle removed)
+ *
+ * UI contract:
+ *   - `not_authenticated`: silent. Connections card shows "Connect" button.
+ *   - `pending_auth`: silent during normal flow (browser is being redirected). If we render anything, "Connecting…" + spinner.
+ *   - `running`: green pill, "Disconnect" button.
+ *   - `reauth_required`: amber pill "Reconnection needed", "Reconnect" button.
+ *   - `dead`: red pill "Failed", "Reconnect" button.
+ *   - `starting` / `crashed` / `stopped`: transient or end states; surfaced as needed.
+ *
+ * No global banner — surface state on the Connections page card and inline
+ * in chat when a tool call hits an unauthenticated bundle.
  */
 export type ConnectionState = BundleState;
 
@@ -58,14 +75,16 @@ export interface Connection {
 }
 
 /**
- * Compute a `BundleState` summary from a connection map. For Step 1
- * (workspace-scope only) the map has one entry and we return its state
- * directly. For Step 3 (member-scope), apply summary rules:
+ * Compute a `BundleState` summary from a connection map. The map has one
+ * entry for workspace-scope and N entries for member-scope (one per active
+ * member). Summary rules — most-functional state wins:
  *
- *   - Empty map → "stopped" (no principals have ever connected)
- *   - Any "running" → "running"
+ *   - Empty map → "stopped" (bundle exists but no principals have any state yet)
+ *   - Any "running" → "running" (at least one principal can use the bundle)
  *   - Else any "pending_auth" → "pending_auth"
  *   - Else any "starting" → "starting"
+ *   - Else any "reauth_required" → "reauth_required"
+ *   - Else any "not_authenticated" → "not_authenticated"
  *   - Else any "crashed" → "crashed"
  *   - Else (all "dead" or "stopped") → first state encountered
  *
@@ -81,6 +100,8 @@ export function summarizeConnectionState(connections: Map<string, Connection>): 
   if (states.includes("running")) return "running";
   if (states.includes("pending_auth")) return "pending_auth";
   if (states.includes("starting")) return "starting";
+  if (states.includes("reauth_required")) return "reauth_required";
+  if (states.includes("not_authenticated")) return "not_authenticated";
   if (states.includes("crashed")) return "crashed";
   return states[0]!;
 }
