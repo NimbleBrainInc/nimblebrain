@@ -96,14 +96,18 @@ export async function runDev(options: DevOptions): Promise<void> {
   }
   if (debug) apiArgs.push("--debug");
 
-  // Auto-derive NB_WEB_URL from NB_WEB_PORT so the API knows where to
-  // bounce the user back after an OAuth callback. Without this, the
-  // callback can only redirect to NB_API_URL (the API port), which
-  // doesn't serve the SPA in dev — the user lands on a workspace_error
-  // JSON page instead of the Connections tab.
-  const webPort = process.env.NB_WEB_PORT;
+  // Auto-derive NB_WEB_URL so the API knows where to bounce the user
+  // back after an OAuth callback. Without this, the callback can only
+  // redirect to NB_API_URL (the API port), which doesn't serve the SPA
+  // in dev — the user lands on a workspace_error JSON page instead of
+  // the Connections tab.
+  //
+  // Mirrors web/vite.config.ts: NB_WEB_PORT env if set, else default 27246.
+  // Operator-supplied NB_WEB_URL wins (the auto-derivation only fills
+  // in the unset case).
   const devEnv: Record<string, string | undefined> = { ...process.env };
-  if (webPort && !devEnv.NB_WEB_URL) {
+  if (!devEnv.NB_WEB_URL && !noWeb) {
+    const webPort = process.env.NB_WEB_PORT ?? "27246";
     devEnv.NB_WEB_URL = `http://localhost:${webPort}`;
   }
 
