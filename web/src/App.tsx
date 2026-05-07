@@ -40,16 +40,17 @@ import { useEvents } from "./hooks/useEvents";
 import { useShell } from "./hooks/useShell";
 import { bootstrapWorkspacesToInfo } from "./lib/bootstrap";
 import { toSlug } from "./lib/workspace-slug";
-import { ConnectionsPage } from "./pages/ConnectionsPage";
 import { ProfilePage } from "./pages/ProfilePage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { AboutTab } from "./pages/settings/AboutTab";
 import { ModelTab } from "./pages/settings/ModelTab";
+import { PersonalConnectorsTab } from "./pages/settings/PersonalConnectorsTab";
 import { SettingsAppPanel } from "./pages/settings/SettingsAppPanel";
 import { SkillsTab } from "./pages/settings/SkillsTab";
 import { UsageTab } from "./pages/settings/UsageTab";
 import { UsersTab } from "./pages/settings/UsersTab";
 import { WorkspaceAppsTab } from "./pages/settings/WorkspaceAppsTab";
+import { WorkspaceConnectorsTab } from "./pages/settings/WorkspaceConnectorsTab";
 import { WorkspaceDetailPage } from "./pages/settings/WorkspaceDetailPage";
 import { WorkspaceGeneralTab } from "./pages/settings/WorkspaceGeneralTab";
 import { WorkspaceMembersTab } from "./pages/settings/WorkspaceMembersTab";
@@ -318,11 +319,24 @@ function AuthenticatedAppContent({
             {/* Profile — top-level, identity-bound, NOT under /settings.
                 Renders inside the main shell with no inner settings nav. */}
             <Route path="/profile" element={<ProfilePage />} />
-            <Route path="/connections" element={<ConnectionsPage />} />
 
-            {/* Settings routes — workspace + org scopes only (Profile lives at /profile) */}
+            {/* /connections used to live at top-level; it's now split
+                into two scoped tabs under /settings (Personal +
+                Workspace). Redirect any old links to the personal tab. */}
+            <Route
+              path="/connections"
+              element={<Navigate to="/settings/personal/connectors" replace />}
+            />
+
+            {/* Settings routes — personal + workspace + org scopes (Profile lives at /profile) */}
             <Route path="/settings" element={<SettingsPage />}>
               <Route index element={<Navigate to="/settings/workspace/general" replace />} />
+
+              {/* Personal — the signed-in user's account-level settings */}
+              <Route path="personal">
+                <Route index element={<Navigate to="/settings/personal/connectors" replace />} />
+                <Route path="connectors" element={<PersonalConnectorsTab />} />
+              </Route>
 
               {/* This Workspace — the active workspace, scoped via header switcher */}
               <Route path="workspace">
@@ -332,10 +346,7 @@ function AuthenticatedAppContent({
                 <Route path="usage" element={<UsageTab />} />
                 <Route path="apps" element={<WorkspaceAppsTab />} />
                 <Route path="apps/:serverName" element={<SettingsAppPanel />} />
-                {/* /settings/workspace/connections moved to top-level
-                    /connections — the connections concern isn't a
-                    workspace-management setting (personal connections
-                    don't belong under workspace settings at all). */}
+                <Route path="connectors" element={<WorkspaceConnectorsTab />} />
                 <Route path="skills" element={<SkillsTab />} />
               </Route>
 

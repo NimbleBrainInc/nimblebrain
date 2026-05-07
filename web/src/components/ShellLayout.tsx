@@ -114,12 +114,6 @@ export const ShellLayout = memo(function ShellLayout({
                 wsSlug={wsSlug}
               />
             ))}
-
-            {/* Static top-level nav — Connections is a global concern
-                (personal + workspace) that doesn't fit the per-workspace
-                placement model. Pinned here so it's always discoverable
-                regardless of which workspace is active. */}
-            <NavItem to="/connections" icon="plug" label="Connections" collapsed={isCollapsed} />
           </div>
 
           {/* Bottom zone — identity only. The collapse toggle is rendered

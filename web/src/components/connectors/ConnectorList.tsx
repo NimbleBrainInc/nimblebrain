@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import {
   type ConnectorCatalogEntry,
   disconnectConnector,
@@ -8,138 +9,110 @@ import {
   type InstalledConnector,
   initiateMcpOAuth,
   installConnector,
-} from "../api/client";
-import { Card, CardContent } from "../components/ui/card";
-import { useWorkspaceContext } from "../context/WorkspaceContext";
-import { useEvents } from "../hooks/useEvents";
-import { EmptyState, RequireActiveWorkspace, SettingsListPage } from "./settings/components";
+} from "../../api/client";
+import { useWorkspaceContext } from "../../context/WorkspaceContext";
+import { useEvents } from "../../hooks/useEvents";
+import { EmptyState } from "../../pages/settings/components";
+import { Card, CardContent } from "../ui/card";
 
 /**
- * Top-level Connections page (sibling of Conversations / Files).
+ * Renders a list of connectors filtered to a single scope. Used by both
+ * the Personal and Workspace connectors tabs in Settings — they share
+ * the same list shape but filter the catalog (and installed list) to
+ * the scope they manage.
  *
- * Two stacked sections distinguish the two ownership shapes:
- *   - "Personal" (user-scope): tokens stored under
- *     `users/<userId>/credentials/...`, available across every workspace
- *     the user is a member of.
- *   - "Workspace" (workspace-scope): tokens stored under
- *     `workspaces/<wsId>/credentials/...`, shared by every workspace
- *     member.
+ * - `scope: "user"`      → Personal tab. Catalog filtered to entries
+ *   with `defaultScope: "user"`. Installed list scoped to the caller's
+ *   own user-scope bundles.
+ * - `scope: "workspace"` → Workspace tab. Catalog filtered to entries
+ *   with `defaultScope: "workspace"`. Installed list scoped to the
+ *   active workspace's bundles.
  *
- * One-click install. Clicking Connect on an uninstalled catalog entry
- * calls the `manage_connections` tool with action `install` (catalog
- * entry's `defaultScope` routes to the right storage tree), then
- * `/v1/mcp-auth/initiate` to start the OAuth dance.
- *
- * State → button mapping:
- *   - running          → "Disconnect"
- *   - reauth_required  → "Reconnect" (prior tokens broke; reconsent)
- *   - dead             → "Reconnect"
- *   - not_authenticated, not_installed, stopped → "Connect"
- *   - pending_auth, starting → busy spinner
+ * Each row links to the Configure detail page (`/settings/<scope>/
+ * connectors/:serverName`) for tool permissions, reauth, uninstall —
+ * the shared management surface across scopes.
  */
-export function ConnectionsPage() {
-  return (
-    <div className="h-full overflow-y-auto p-4 md:p-6">
-      <RequireActiveWorkspace>
-        <Inner />
-      </RequireActiveWorkspace>
-    </div>
-  );
-}
-
-function Inner() {
+export function ConnectorList({
+  scope,
+  configureBasePath,
+}: {
+  scope: "user" | "workspace";
+  configureBasePath: string;
+}) {
   const [catalog, setCatalog] = useState<ConnectorCatalogEntry[]>([]);
   const [installed, setInstalled] = useState<InstalledConnector[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const wsCtx = useWorkspaceContext();
 
-  // Fetches catalog + installed. `silent` skips the loading flicker on
-  // SSE-driven refreshes — the user is already looking at populated data.
-  const refresh = useCallback(async (opts?: { silent?: boolean }) => {
-    if (!opts?.silent) setLoading(true);
-    setError(null);
-    try {
-      const [cat, ins] = await Promise.all([getConnectorsCatalog(), getInstalledConnectors()]);
-      setCatalog(cat.catalog);
-      setInstalled(ins.installed);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      if (!opts?.silent) setLoading(false);
-    }
-  }, []);
+  const refresh = useCallback(
+    async (opts?: { silent?: boolean }) => {
+      if (!opts?.silent) setLoading(true);
+      setError(null);
+      try {
+        const [cat, ins] = await Promise.all([
+          getConnectorsCatalog(),
+          getInstalledConnectors({ scope }),
+        ]);
+        setCatalog(cat.catalog);
+        setInstalled(ins.installed);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        if (!opts?.silent) setLoading(false);
+      }
+    },
+    [scope],
+  );
 
   useEffect(() => {
     refresh();
   }, [refresh]);
 
-  // Re-fetch on connection state transitions for this workspace. Critical
-  // for the OAuth round-trip case: the user is redirected back to this
-  // page while the code-exchange + tools/list is still running in the
-  // background. Without an SSE-driven refresh, the card sticks at
-  // "Connecting…" until the user reloads.
+  // SSE-driven refresh: after the OAuth round-trip the user is redirected
+  // back here while the backend code-exchange + tools/list is still
+  // settling. Without a state-changed listener the card sticks at
+  // "Connecting…" until reload.
   const token = getAuthToken() ?? "";
   useEvents(token, wsCtx.activeWorkspace?.id, {
-    onConnectionStateChanged: (evt) => {
-      if (evt.wsId === wsCtx.activeWorkspace?.id) {
-        refresh({ silent: true });
-      }
+    onConnectionStateChanged: () => {
+      refresh({ silent: true });
     },
   });
 
   if (loading) {
-    return (
-      <SettingsListPage title="Connections" description="Loading…">
-        <div />
-      </SettingsListPage>
-    );
+    return <div className="text-sm text-muted-foreground">Loading…</div>;
   }
   if (error) {
-    return (
-      <SettingsListPage title="Connections" description={`Failed to load: ${error}`}>
-        <EmptyState message="Unable to load connections. Reload the page or check the server logs." />
-      </SettingsListPage>
-    );
+    return <EmptyState message={`Unable to load connectors: ${error}. Reload to retry.`} />;
   }
 
-  // Index installed by URL so catalog entries can find their installed counterpart.
   const installedByUrl = new Map<string, InstalledConnector>();
   for (const ins of installed) installedByUrl.set(ins.url, ins);
 
-  // Catalog entries without an installed counterpart: render with
-  // "Not installed" affordance.
-  const userCatalog = catalog.filter((e) => e.defaultScope === "user");
-  const workspaceCatalog = catalog.filter((e) => e.defaultScope === "workspace");
-
-  // Plus any installed bundles whose URL doesn't match the catalog (custom URLs).
+  const filteredCatalog = catalog.filter((e) => e.defaultScope === scope);
   const orphanInstalled = installed.filter((ins) => !catalog.some((c) => c.url === ins.url));
 
   return (
-    <SettingsListPage
-      title="Connections"
-      description="Connect remote services for the agent to use."
-    >
-      <div className="flex flex-col gap-8">
-        <ColumnSection
-          heading="Personal — Your account"
-          subheading="Available everywhere you sign in. Connect once, use in any workspace."
-          entries={userCatalog}
-          installedByUrl={installedByUrl}
-          onChanged={refresh}
-        />
-        <ColumnSection
-          heading="Workspace — Shared with your team"
-          subheading="Tokens live with the workspace. Used by every workspace member."
-          entries={workspaceCatalog}
-          installedByUrl={installedByUrl}
-          onChanged={refresh}
-        />
-      </div>
+    <div className="flex flex-col gap-6">
+      {filteredCatalog.length === 0 ? (
+        <EmptyState message="No connectors available." />
+      ) : (
+        <div className="grid gap-2">
+          {filteredCatalog.map((entry) => (
+            <ConnectorCard
+              key={entry.id}
+              entry={entry}
+              installed={installedByUrl.get(entry.url)}
+              configureBasePath={configureBasePath}
+            />
+          ))}
+        </div>
+      )}
 
       {orphanInstalled.length > 0 && (
-        <div className="mt-6">
-          <h3 className="text-sm font-semibold mb-2">Custom URL Bundles</h3>
+        <div>
+          <h3 className="text-sm font-semibold mb-2">Custom URL bundles</h3>
           <p className="text-xs text-muted-foreground mb-3">
             Bundles installed via direct URL (not in the catalog).
           </p>
@@ -150,72 +123,28 @@ function Inner() {
           </div>
         </div>
       )}
-    </SettingsListPage>
-  );
-}
-
-function ColumnSection({
-  heading,
-  subheading,
-  entries,
-  installedByUrl,
-  onChanged,
-}: {
-  heading: string;
-  subheading: string;
-  entries: ConnectorCatalogEntry[];
-  installedByUrl: Map<string, InstalledConnector>;
-  onChanged: () => void;
-}) {
-  return (
-    <div>
-      <h3 className="text-sm font-semibold">{heading}</h3>
-      <p className="text-xs text-muted-foreground mb-3">{subheading}</p>
-      {entries.length === 0 ? (
-        <EmptyState message="No services in this category." />
-      ) : (
-        <div className="grid gap-2">
-          {entries.map((entry) => (
-            <ConnectionCard
-              key={entry.id}
-              entry={entry}
-              installed={installedByUrl.get(entry.url)}
-              onChanged={onChanged}
-            />
-          ))}
-        </div>
-      )}
     </div>
   );
 }
 
-function ConnectionCard({
+function ConnectorCard({
   entry,
   installed,
-  onChanged,
+  configureBasePath,
 }: {
   entry: ConnectorCatalogEntry;
   installed: InstalledConnector | undefined;
-  onChanged: () => void;
+  configureBasePath: string;
 }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
   const state = installed?.state ?? "not_installed";
-  // Static-auth (pre-registered OAuth apps: HubSpot, Gmail, Outlook, etc.)
-  // can't be installed from the UI in v1 — they need operator setup
-  // (registering the OAuth app, seeding clientId + clientSecret) before
-  // any user can connect. Surface the affordance up front so the user
-  // doesn't click Connect → 409.
   const needsOperatorSetup =
     installed?.missingOperatorSetup === true || (!installed && entry.auth === "static");
-  const connected = state === "running";
+  const isInstalled = !!installed;
   const reconnectable = state === "reauth_required" || state === "dead" || state === "crashed";
 
-  // One-click install + connect. If the bundle isn't yet in
-  // workspace.bundles[], call /install to add it, then /initiate to
-  // start the OAuth dance. The /install endpoint is idempotent so a
-  // race (user double-clicks, two tabs) is safe.
   const onConnect = async () => {
     setBusy(true);
     setErr(null);
@@ -232,20 +161,6 @@ function ConnectionCard({
       window.location.assign(authorizationUrl);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
-      setBusy(false);
-    }
-  };
-
-  const onDisconnect = async () => {
-    if (!installed) return;
-    setBusy(true);
-    setErr(null);
-    try {
-      await disconnectConnector(installed.serverName);
-      onChanged();
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    } finally {
       setBusy(false);
     }
   };
@@ -285,15 +200,25 @@ function ConnectionCard({
                   </a>
                 )}
               </div>
-            ) : connected ? (
-              <button
-                type="button"
-                onClick={onDisconnect}
-                disabled={busy}
-                className="text-xs px-3 py-1 rounded border border-border hover:bg-muted disabled:opacity-60"
-              >
-                {busy ? "…" : "Disconnect"}
-              </button>
+            ) : isInstalled ? (
+              <div className="flex items-center gap-2">
+                {reconnectable && (
+                  <button
+                    type="button"
+                    onClick={onConnect}
+                    disabled={busy}
+                    className="text-xs px-3 py-1 rounded bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
+                  >
+                    {busy ? "Reconnecting…" : "Reconnect"}
+                  </button>
+                )}
+                <Link
+                  to={`${configureBasePath}/${installed.serverName}`}
+                  className="text-xs px-3 py-1 rounded border border-border hover:bg-muted"
+                >
+                  Configure
+                </Link>
+              </div>
             ) : (
               <button
                 type="button"
@@ -301,7 +226,7 @@ function ConnectionCard({
                 disabled={busy}
                 className="text-xs px-3 py-1 rounded bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
               >
-                {busy ? "Connecting…" : reconnectable ? "Reconnect" : "Connect"}
+                {busy ? "Connecting…" : "Connect"}
               </button>
             )}
           </div>
