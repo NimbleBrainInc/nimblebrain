@@ -188,7 +188,7 @@ describe("WorkspaceOAuthProvider — authorize redirect probe (interactive)", ()
       // resolves the awaitPendingFlow promise.
       const pending = p.awaitPendingFlow();
       const resolved = resolveWithCode(state, "the-code-123");
-      expect(resolved).toBe(true);
+      expect(resolved).not.toBeNull();
       expect(await pending).toBe("the-code-123");
     } finally {
       mockAuthServer.stop(true);

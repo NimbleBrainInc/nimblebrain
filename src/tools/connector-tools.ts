@@ -1076,13 +1076,19 @@ async function handleRemoveOperatorSetup(
  * admin — explicitly via `members[].role === "admin"`, or implicitly
  * because their org role (admin / owner) outranks any per-workspace
  * gate. Workspace member without an admin role gets denied.
+ *
+ * Defensive against a malformed workspace record (missing `members`
+ * array): an org admin / owner still gets through; otherwise we
+ * deny rather than throwing. The right "fail closed" posture for an
+ * authorization helper.
  */
 function isWorkspaceAdmin(
-  ws: { members: Array<{ userId: string; role: string }> },
+  ws: { members?: Array<{ userId: string; role: string }> },
   identity: UserIdentity,
 ): boolean {
   if (identity.orgRole === "admin" || identity.orgRole === "owner") return true;
-  const member = ws.members.find((m) => m.userId === identity.id);
+  const members = Array.isArray(ws.members) ? ws.members : [];
+  const member = members.find((m) => m.userId === identity.id);
   return member?.role === "admin";
 }
 
