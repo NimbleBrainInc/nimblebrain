@@ -148,13 +148,30 @@ export class ToolRegistry implements ToolRouter {
     // Permission gate: when configured, look up the per-tool policy
     // for the connector. User-scope sources (UserPoolSource) key on
     // the calling principal; everything else keys on workspace.
+    //
+    // Fail-closed posture: if the source needs a principal (user-scope)
+    // but none was passed, refuse rather than fall through. The
+    // UserPoolSource itself rejects principal-less calls anyway, but
+    // "couldn't identify the caller → skip policy" is the wrong
+    // default for a security gate.
     if (this.permissionStore) {
       const unwrapped = source instanceof SharedSourceRef ? source.unwrap() : source;
       const isUserScoped = unwrapped instanceof UserPoolSource;
+      if (isUserScoped && !principalId) {
+        return {
+          content: textContent(
+            `Tool "${prefix}__${localName}" is user-scoped but no principal was provided.`,
+          ),
+          isError: true,
+          structuredContent: {
+            error: "principal_required",
+            connector: prefix,
+            tool: localName,
+          },
+        };
+      }
       const owner = isUserScoped
-        ? principalId
-          ? ({ scope: "user", userId: principalId } as const)
-          : null
+        ? ({ scope: "user", userId: principalId as string } as const)
         : this.wsId
           ? ({ scope: "workspace", wsId: this.wsId } as const)
           : null;

@@ -7,6 +7,7 @@ import type { ToolResult } from "../../src/engine/types.ts";
 import { PermissionStore } from "../../src/permissions/permission-store.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
 import type { Tool, ToolSource } from "../../src/tools/types.ts";
+import { UserPoolSource } from "../../src/tools/user-pool-source.ts";
 
 /**
  * Tests the runtime permission gate inside `ToolRegistry.execute`. The
@@ -140,6 +141,30 @@ describe("ToolRegistry.execute permission gate", () => {
       expect(result.isError).toBe(false);
       expect(sourceB.callCount).toBe(1);
       expect(source.callCount).toBe(0);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("fail-closed: user-scope source called without principalId returns principal_required", async () => {
+    // Build a real UserPoolSource so the gate's `instanceof` check
+    // hits the user-scope branch. The pool starts empty — we never
+    // reach execute() because the gate short-circuits earlier.
+    const { registry, permStore, cleanup } = freshRegistry();
+    try {
+      const userPool = new UserPoolSource("personal");
+      registry.addSource(userPool);
+      registry.setPermissionContext("ws_test", permStore);
+      const result = await registry.execute({
+        name: "personal__some_tool",
+        input: {},
+      });
+      expect(result.isError).toBe(true);
+      expect(result.structuredContent).toMatchObject({
+        error: "principal_required",
+        connector: "personal",
+        tool: "some_tool",
+      });
     } finally {
       cleanup();
     }

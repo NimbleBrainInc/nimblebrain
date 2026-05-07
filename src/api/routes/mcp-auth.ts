@@ -1,6 +1,7 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { Hono } from "hono";
 import { WORKSPACE_PRINCIPAL_ID } from "../../bundles/connection.ts";
+import { log } from "../../cli/log.ts";
 import { resolveWithCode } from "../../tools/oauth-flow-registry.ts";
 import { requireAuth } from "../middleware/auth.ts";
 import { requireWorkspace } from "../middleware/workspace.ts";
@@ -100,8 +101,17 @@ export function mcpAuthRoutes(ctx: AppContext) {
         });
         authorizationUrl = result.authorizationUrl;
       } catch (err) {
+        // Don't leak SDK / DNS / TLS details in the response body.
+        // Workspace-authed callers, but the surface is wide and the
+        // body crosses trust boundaries (proxies, browser dev tools,
+        // HAR export). Log raw server-side; return a generic shape.
         const msg = err instanceof Error ? err.message : String(err);
-        return apiError(500, "auth_start_failed", `Failed to start OAuth flow: ${msg}`);
+        log.warn(`[mcp-auth] startAuth failed for ${serverName} in ${wsId}: ${msg}`);
+        return apiError(
+          500,
+          "auth_start_failed",
+          "Failed to start OAuth flow. Check server logs for details.",
+        );
       }
 
       // Extract `state` from the URL the SDK built. We bind the user's
