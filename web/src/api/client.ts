@@ -540,6 +540,8 @@ export interface ConnectorCatalogEntry {
   additionalAuthorizationParams?: Record<string, string>;
   operatorSetup?: { portalUrl: string; hint: string; credentialKey: string };
   tags?: string[];
+  /** When true, the connector exposes a UI surface — render the "Interactive" badge. */
+  interactive?: boolean;
 }
 
 /**
@@ -556,6 +558,8 @@ export interface InstalledConnector {
   authorizationUrl?: string;
   identity?: { sub?: string; email?: string; name?: string };
   missingOperatorSetup?: boolean;
+  /** Whether this installed connector exposes a UI surface (auto-mounts a sidebar entry). */
+  interactive: boolean;
 }
 
 /**

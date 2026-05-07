@@ -1,7 +1,9 @@
 import { textContent } from "../engine/content-helpers.ts";
 import type { ToolCall, ToolResult, ToolRouter, ToolSchema } from "../engine/types.ts";
+import type { PermissionStore } from "../permissions/permission-store.ts";
 import type { McpSource } from "./mcp-source.ts";
 import type { Tool, ToolSource } from "./types.ts";
+import { UserPoolSource } from "./user-pool-source.ts";
 
 /**
  * Structural check for "looks like an McpSource task-aware surface".
@@ -65,6 +67,21 @@ export class SharedSourceRef implements ToolSource {
  */
 export class ToolRegistry implements ToolRouter {
   private sources = new Map<string, ToolSource>();
+  /** Workspace this registry serves (set by Runtime when constructing per-workspace). */
+  private wsId: string | null = null;
+  /** Permission store for tool-level policy enforcement (set by Runtime). */
+  private permissionStore: PermissionStore | null = null;
+
+  /**
+   * Configure permission enforcement context. Called once when the
+   * registry is built per-workspace. Without this context, permission
+   * checks short-circuit to "allow" — for tests / CLI flows that don't
+   * route through the platform's per-workspace registries.
+   */
+  setPermissionContext(wsId: string, permissionStore: PermissionStore): void {
+    this.wsId = wsId;
+    this.permissionStore = permissionStore;
+  }
 
   addSource(source: ToolSource): void {
     if (this.sources.has(source.name)) {
@@ -126,6 +143,38 @@ export class ToolRegistry implements ToolRouter {
         ),
         isError: true,
       };
+    }
+
+    // Permission gate: when configured, look up the per-tool policy
+    // for the connector. User-scope sources (UserPoolSource) key on
+    // the calling principal; everything else keys on workspace.
+    if (this.permissionStore) {
+      const unwrapped = source instanceof SharedSourceRef ? source.unwrap() : source;
+      const isUserScoped = unwrapped instanceof UserPoolSource;
+      const owner = isUserScoped
+        ? principalId
+          ? ({ scope: "user", userId: principalId } as const)
+          : null
+        : this.wsId
+          ? ({ scope: "workspace", wsId: this.wsId } as const)
+          : null;
+      if (owner) {
+        const policy = await this.permissionStore.get(owner, prefix, localName);
+        if (policy === "disallow") {
+          return {
+            content: textContent(
+              `Tool "${prefix}__${localName}" is disabled by policy. Adjust in Settings → Connectors → ${prefix} → Configure.`,
+            ),
+            isError: true,
+            structuredContent: {
+              error: "tool_permission_denied",
+              connector: prefix,
+              tool: localName,
+              scope: owner.scope,
+            },
+          };
+        }
+      }
     }
 
     return source.execute(localName, call.input, signal, principalId);

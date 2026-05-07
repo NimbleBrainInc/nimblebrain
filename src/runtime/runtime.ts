@@ -43,6 +43,7 @@ import { DEV_IDENTITY } from "../identity/providers/dev.ts";
 import { UserStore } from "../identity/user.ts";
 import { InstructionsStore } from "../instructions/index.ts";
 import { buildModelResolver, resolveModelString } from "../model/registry.ts";
+import { PermissionStore } from "../permissions/permission-store.ts";
 import type { Layer3SkillEntry, PromptAppInfo } from "../prompt/compose.ts";
 import { composeSystemPrompt } from "../prompt/compose.ts";
 import {
@@ -173,6 +174,7 @@ export class Runtime {
   private _userStore: UserStore;
   private _workspaceStore: WorkspaceStore;
   private _userConnectorStore: UserConnectorStore | null = null;
+  private _permissionStore: PermissionStore | null = null;
   private _identityProvider: IdentityProvider | null;
   /** Getter for the current request identity — reads from AsyncLocalStorage. */
   _getIdentity: () => UserIdentity | null = () => null;
@@ -1328,6 +1330,9 @@ export class Runtime {
     }
 
     const wsRegistry = createWorkspaceRegistry(this._platformSources, this._systemSource);
+    // Wire permission context so the registry can gate disallowed tools
+    // before they reach the source.execute() path.
+    wsRegistry.setPermissionContext(wsId, this.getPermissionStore());
     this._workspaceRegistries.set(wsId, wsRegistry);
     return wsRegistry;
   }
@@ -1368,6 +1373,18 @@ export class Runtime {
       this._userConnectorStore = new UserConnectorStore(this.getWorkDir());
     }
     return this._userConnectorStore;
+  }
+
+  /**
+   * Get the PermissionStore — per-tool policy lookups for installed
+   * connectors. File-backed, scoped per (user × connector) and
+   * (workspace × connector). Lazy + cached.
+   */
+  getPermissionStore(): PermissionStore {
+    if (!this._permissionStore) {
+      this._permissionStore = new PermissionStore(this.getWorkDir());
+    }
+    return this._permissionStore;
   }
 
   /** Get the IdentityProvider (null in dev mode when no instance.json). */

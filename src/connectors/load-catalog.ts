@@ -179,6 +179,7 @@ export function validateCatalog(
       ...(Array.isArray(candidate.tags) && candidate.tags.every((t) => typeof t === "string")
         ? { tags: candidate.tags }
         : {}),
+      ...(typeof candidate.interactive === "boolean" ? { interactive: candidate.interactive } : {}),
     });
   }
 

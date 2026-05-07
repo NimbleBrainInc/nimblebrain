@@ -49,7 +49,15 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
       properties: {
         action: {
           type: "string",
-          enum: ["list_catalog", "list_installed", "install", "disconnect"],
+          enum: [
+            "list_catalog",
+            "list_installed",
+            "list_tools",
+            "install",
+            "disconnect",
+            "get_permissions",
+            "set_permissions",
+          ],
           description: "Action to perform.",
         },
         catalogId: {
@@ -58,13 +66,20 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
         },
         serverName: {
           type: "string",
-          description: "Bundle server name (required for disconnect).",
+          description:
+            "Bundle server name (required for disconnect, list_tools, get_permissions, set_permissions).",
         },
         scope: {
           type: "string",
           enum: ["workspace", "user", "all"],
           description:
-            "For list_installed: which scope to return (default 'all'). For disconnect: which scope's connector to revoke (auto-detected if omitted).",
+            "For list_installed: which scope to return (default 'all'). For disconnect / list_tools / get_permissions / set_permissions: which scope's connector to target (auto-detected for disconnect / list_tools when omitted; required for get/set permissions).",
+        },
+        tools: {
+          type: "object",
+          description:
+            'For set_permissions: map of tool name → "allow" | "disallow". Tools omitted are unchanged.',
+          additionalProperties: { type: "string", enum: ["allow", "disallow"] },
         },
       },
       required: ["action"],
@@ -80,6 +95,14 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
           return handleListCatalog(ctx, wsId);
         case "list_installed":
           return handleListInstalled(ctx, wsId, callerId, String(input.scope ?? "all"));
+        case "list_tools":
+          return handleListTools(
+            ctx,
+            wsId,
+            callerId,
+            String(input.serverName ?? ""),
+            input.scope ? String(input.scope) : undefined,
+          );
         case "install":
           return handleInstall(ctx, wsId, callerId, String(input.catalogId ?? ""));
         case "disconnect":
@@ -89,6 +112,23 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
             callerId,
             String(input.serverName ?? ""),
             input.scope ? String(input.scope) : undefined,
+          );
+        case "get_permissions":
+          return handleGetPermissions(
+            ctx,
+            wsId,
+            callerId,
+            String(input.serverName ?? ""),
+            input.scope ? String(input.scope) : undefined,
+          );
+        case "set_permissions":
+          return handleSetPermissions(
+            ctx,
+            wsId,
+            callerId,
+            String(input.serverName ?? ""),
+            input.scope ? String(input.scope) : undefined,
+            (input.tools as Record<string, unknown>) ?? {},
           );
         default:
           return errResult(`Unknown action "${action}".`);
@@ -231,8 +271,16 @@ async function buildInstalledEntry(args: {
   authorizationUrl?: string;
   identity?: { sub?: string; email?: string; name?: string };
   missingOperatorSetup?: boolean;
+  interactive: boolean;
 }> {
   const cat = args.catalogByUrl.get(args.ref.url);
+  // Interactive = bundle exposes UI placements (auto-mounted as sidebar
+  // entries). Either declared by the catalog entry or derived from the
+  // installed BundleRef's `ui.placements` — whichever exists. Catalog
+  // declaration wins so authors can opt in/out explicitly.
+  const refPlacements = args.ref.ui?.placements;
+  const interactive =
+    cat?.interactive === true || (Array.isArray(refPlacements) && refPlacements.length > 0);
   const entry: ReturnType<typeof buildInstalledEntry> extends Promise<infer R> ? R : never = {
     catalogId: cat?.id ?? null,
     serverName: args.serverName,
@@ -241,6 +289,7 @@ async function buildInstalledEntry(args: {
     ...(cat ? { catalog: cat } : {}),
     state: args.conn?.state ?? "not_authenticated",
     ...(args.conn?.authorizationUrl ? { authorizationUrl: args.conn.authorizationUrl } : {}),
+    interactive,
   };
   // Static-auth missingOperatorSetup probe (workspace scope only — user
   // scope doesn't currently use static client secrets at the per-user level).
@@ -436,6 +485,138 @@ async function handleDisconnect(
   } catch (err) {
     return errResult(err instanceof Error ? err.message : String(err));
   }
+}
+
+/**
+ * Read the live tools/list for an installed connector. Used by the
+ * Configure detail page to render the per-tool permission table —
+ * tool descriptors come from `tools/list` on the live MCP source, not
+ * from the catalog (catalog has no tool-level metadata).
+ *
+ * Workspace-scope routes through the workspace's principal connection;
+ * user-scope through the caller's own user-scope instance. Cross-user
+ * inspection is not supported (a user can't list someone else's
+ * connector tools).
+ */
+async function handleListTools(
+  ctx: ManageConnectorsContext,
+  wsId: string | null,
+  callerId: string | null,
+  serverName: string,
+  scopeHint: string | undefined,
+): Promise<ToolResult> {
+  if (!serverName) return errResult("serverName is required.");
+  const lifecycle = ctx.runtime.getLifecycle();
+
+  let scope: "workspace" | "user" | undefined;
+  if (scopeHint === "workspace" || scopeHint === "user") {
+    scope = scopeHint;
+  } else if (wsId && lifecycle.getInstance(serverName, wsId)) {
+    scope = "workspace";
+  } else if (callerId && lifecycle.getUserInstance?.(serverName, callerId)) {
+    scope = "user";
+  }
+  if (!scope) {
+    return errResult(`Bundle "${serverName}" not installed.`);
+  }
+
+  const principal = scope === "workspace" ? "_workspace" : callerId;
+  if (!principal) return errResult("Authentication required.");
+  const instance =
+    scope === "workspace"
+      ? wsId
+        ? lifecycle.getInstance(serverName, wsId)
+        : null
+      : (lifecycle.getUserInstance?.(serverName, callerId ?? "") ?? null);
+  const conn = instance?.connections?.get(principal);
+  const source = conn?.source;
+  if (!source) {
+    return errResult(
+      `Connector "${serverName}" has no live source (state: ${conn?.state ?? "unknown"}).`,
+    );
+  }
+
+  try {
+    const tools = await source.tools();
+    return {
+      content: textContent(`Tools: ${tools.length}`),
+      structuredContent: {
+        tools: tools.map((t) => ({
+          name: t.name,
+          description: t.description,
+          inputSchema: t.inputSchema,
+        })),
+      },
+      isError: false,
+    };
+  } catch (err) {
+    return errResult(err instanceof Error ? err.message : String(err));
+  }
+}
+
+/**
+ * Resolve a scope+owner pair for permission read/write. User scope reads
+ * the caller's own permissions; workspace scope reads the active
+ * workspace's. Returns null on missing context.
+ */
+function resolvePermissionOwner(
+  wsId: string | null,
+  callerId: string | null,
+  scopeHint: string | undefined,
+): { scope: "workspace"; wsId: string } | { scope: "user"; userId: string } | null {
+  const scope: "workspace" | "user" =
+    scopeHint === "workspace" || scopeHint === "user" ? scopeHint : "workspace";
+  if (scope === "workspace") {
+    return wsId ? { scope: "workspace", wsId } : null;
+  }
+  return callerId ? { scope: "user", userId: callerId } : null;
+}
+
+async function handleGetPermissions(
+  ctx: ManageConnectorsContext,
+  wsId: string | null,
+  callerId: string | null,
+  serverName: string,
+  scopeHint: string | undefined,
+): Promise<ToolResult> {
+  if (!serverName) return errResult("serverName is required.");
+  const owner = resolvePermissionOwner(wsId, callerId, scopeHint);
+  if (!owner) return errResult("Could not resolve permission owner — sign in or pick a workspace.");
+
+  const tools = await ctx.runtime.getPermissionStore().getConnector(owner, serverName);
+  return {
+    content: textContent(`Permissions: ${Object.keys(tools).length} non-default entries.`),
+    structuredContent: { scope: owner.scope, serverName, tools },
+    isError: false,
+  };
+}
+
+async function handleSetPermissions(
+  ctx: ManageConnectorsContext,
+  wsId: string | null,
+  callerId: string | null,
+  serverName: string,
+  scopeHint: string | undefined,
+  toolsInput: Record<string, unknown>,
+): Promise<ToolResult> {
+  if (!serverName) return errResult("serverName is required.");
+  const owner = resolvePermissionOwner(wsId, callerId, scopeHint);
+  if (!owner) return errResult("Could not resolve permission owner — sign in or pick a workspace.");
+
+  const tools: Record<string, "allow" | "disallow"> = {};
+  for (const [name, raw] of Object.entries(toolsInput)) {
+    if (raw === "allow" || raw === "disallow") {
+      tools[name] = raw;
+    } else {
+      return errResult(`Invalid policy for "${name}": must be "allow" or "disallow".`);
+    }
+  }
+  await ctx.runtime.getPermissionStore().setConnector(owner, serverName, tools);
+  return {
+    content: textContent(`Updated ${Object.keys(tools).length} tool policies.`),
+    structuredContent: { ok: true, scope: owner.scope, serverName },
+    isError: false,
+  };
 }
 
 function errResult(msg: string): ToolResult {

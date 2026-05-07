@@ -81,6 +81,14 @@ export interface ConnectorCatalogEntry {
   };
   /** Optional tags for filter / search in the page. */
   tags?: string[];
+  /**
+   * Marks the connector as exposing a UI surface (in addition to or
+   * instead of plain tools). Renders an "Interactive" badge on the
+   * connector card and — when installed — auto-mounts the bundle's
+   * UI placements as a sidebar entry. Most catalog entries are remote
+   * OAuth services with no UI; leave this unset for those.
+   */
+  interactive?: boolean;
 }
 
 /**

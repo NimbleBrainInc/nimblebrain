@@ -180,6 +180,9 @@ function ConnectorCard({
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2">
               <span className="font-medium text-sm">{entry.name}</span>
+              {(entry.interactive === true || installed?.interactive === true) && (
+                <InteractiveBadge />
+              )}
               <StatusPill state={state} identity={installed?.identity} />
             </div>
             <p className="text-xs text-muted-foreground truncate">{entry.description}</p>
@@ -271,6 +274,14 @@ function OrphanCard({ ins, onChanged }: { ins: InstalledConnector; onChanged: ()
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+function InteractiveBadge() {
+  return (
+    <span className="text-[10px] px-1.5 py-0.5 rounded bg-accent/40 text-accent-foreground font-medium whitespace-nowrap">
+      Interactive
+    </span>
   );
 }
 
