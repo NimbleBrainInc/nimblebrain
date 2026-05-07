@@ -253,19 +253,33 @@ describe("describeBatch", () => {
       call({ name: "get_source" }),
     ]);
     expect(b.verbPhrase).toBe("Edited the source");
-    expect(b.tone).toBe("ok");
+    expect(b.tone).toBe("neutral");
   });
 
-  it("switches to error phrasing when any call failed", () => {
+  it("stays neutral when a child call failed — children carry per-call truth", () => {
     const b = describeBatch([
       call({ name: "patch_source" }),
       call({ name: "patch_source", status: "error", ok: false }),
     ]);
-    expect(b.tone).toBe("error");
-    expect(b.verbPhrase).toBe("Couldn't edit the source");
+    // The batch header does NOT roll up child errors. It reports what was
+    // attempted; per-row error tones remain visible on expand.
+    expect(b.tone).toBe("neutral");
+    expect(b.verbPhrase).toBe("Edited the source");
+    expect(b.items[0]?.tone).toBe("ok");
+    expect(b.items[1]?.tone).toBe("error");
   });
 
-  it("reports running tone when any call is running, regardless of errors later", () => {
+  it("stays neutral when every child call failed — header does not claim failure", () => {
+    const b = describeBatch([
+      call({ name: "list_documents", status: "error", ok: false }),
+      call({ name: "list_documents", status: "error", ok: false }),
+    ]);
+    expect(b.tone).toBe("neutral");
+    expect(b.verbPhrase).toBe("Listed the documents");
+    expect(b.items.every((it) => it.tone === "error")).toBe(true);
+  });
+
+  it("reports running tone when any call is running, regardless of errors", () => {
     const b = describeBatch([
       call({ name: "patch_source", status: "error", ok: false }),
       call({ name: "get_source", status: "running" }),

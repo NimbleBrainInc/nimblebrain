@@ -1,14 +1,22 @@
 /**
  * ToolAccordion — the single surface for tool-call status, live and historical.
  *
- * It owns every state a tool call can be in:
+ * Header (batch chrome) reports what was attempted:
  *   - running → present-tense verb + spinner ("Researching Acme Corp")
- *   - done    → past-tense verb + duration ("Researched · 120ms")
- *   - error   → warn-colored phrasing       ("Couldn't edit the source")
+ *   - neutral → past-tense verb + duration   ("Researched · 120ms")
  *
- * There is no separate bottom "activity" indicator — the accordion is the
- * authoritative signal. `useMinDisplayTime` smooths the running→done flash so
- * very fast tools don't blink through their running state.
+ * The header is intentionally NOT a status reducer. It does not turn red
+ * when a child fails — per-call errors live on the rows below, where they
+ * are true. Turn-level success/failure is signaled separately at the
+ * message level (`msg.error` / `msg.stopReason` in MessageList).
+ *
+ * Rows (per-call chrome) carry the full per-call truth:
+ *   - running → spinner
+ *   - ok      → neutral dot
+ *   - error   → red AlertCircle + error text on expand
+ *
+ * `useMinDisplayTime` smooths the running→done flash so very fast tools
+ * don't blink through their running state.
  *
  * Interaction model:
  *   - 1 call  → expanding the headline jumps straight to Input / Result.
@@ -22,7 +30,7 @@ import type { ToolCallDisplay } from "../hooks/useChat";
 import type { VisualStatus } from "../hooks/useMinDisplayTime";
 import { useMinDisplayTime } from "../hooks/useMinDisplayTime";
 import { formatDuration } from "../lib/format";
-import type { DisplayDetail, Tone, ToolDescription } from "../lib/tool-display";
+import type { BatchTone, DisplayDetail, Tone, ToolDescription } from "../lib/tool-display";
 import { describeBatch } from "../lib/tool-display";
 
 interface ToolAccordionProps {
@@ -74,7 +82,7 @@ export const ToolAccordion = memo(function ToolAccordion({
         className="tool-accordion__head"
         aria-expanded={expanded}
       >
-        <ToneIcon tone={batch.tone} />
+        <BatchToneIcon tone={batch.tone} />
         <span className="tool-accordion__verb">{batch.verbPhrase}</span>
         {headSubject && <span className="tool-accordion__subject">· {headSubject}</span>}
         {!isSingle && <span className="tool-accordion__count">{batch.items.length} steps</span>}
@@ -254,6 +262,11 @@ function CopyButton({ content }: { content: string }) {
   );
 }
 
+/**
+ * Icon for a single tool call. Three states — `running`, `ok`, `error` —
+ * because per-call rows must show per-call truth (a failed call shows red
+ * here, on its own row).
+ */
 function ToneIcon({ tone }: { tone: Tone }) {
   if (tone === "running") {
     return (
@@ -267,6 +280,23 @@ function ToneIcon({ tone }: { tone: Tone }) {
     return (
       <AlertCircle
         className="tool-accordion__icon tool-accordion__icon--error"
+        style={{ width: 12, height: 12 }}
+      />
+    );
+  }
+  return <span className="tool-accordion__icon tool-accordion__icon--ok" aria-hidden />;
+}
+
+/**
+ * Icon for the batch header. Two states — `running` (spinner) and
+ * `neutral` (dot). The header never goes red: per-call errors don't roll
+ * up here, and turn-level failures render at the message level instead.
+ */
+function BatchToneIcon({ tone }: { tone: BatchTone }) {
+  if (tone === "running") {
+    return (
+      <Loader2
+        className="tool-accordion__icon tool-accordion__icon--running"
         style={{ width: 12, height: 12 }}
       />
     );

@@ -7,11 +7,19 @@
  */
 
 /**
- * Display tone for a tool call. `running` drives the present-tense verb and
- * the spinner icon; `ok` / `error` are the terminal states. The accordion
- * handles all three — there is no separate live-state surface.
+ * Display tone for a single tool call. `running` drives the present-tense
+ * verb and the spinner icon; `ok` / `error` are the terminal states.
  */
 export type Tone = "ok" | "running" | "error";
+
+/**
+ * Display tone for a batch (group) of tool calls. The batch is not a
+ * status reducer — it does not roll up child errors. It only signals
+ * whether work is in flight. Per-call errors live on the individual rows;
+ * turn-level success/failure is signaled at the message level
+ * (`msg.error` / `msg.stopReason` in MessageList).
+ */
+export type BatchTone = "running" | "neutral";
 
 export type DisplayDetail = "quiet" | "balanced" | "verbose";
 
@@ -60,7 +68,7 @@ export interface ToolDescription {
 export interface BatchDescription {
   /** Prose phrase with article (e.g. "Edited the document"). */
   verbPhrase: string;
-  tone: Tone;
+  tone: BatchTone;
   items: ToolDescription[];
   totalMs: number | null;
 }

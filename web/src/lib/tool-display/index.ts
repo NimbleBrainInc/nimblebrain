@@ -11,6 +11,7 @@ export type { ToolRenderer } from "./registry.ts";
 export { registerToolRenderer } from "./registry.ts";
 export type {
   BatchDescription,
+  BatchTone,
   DisplayDetail,
   InputField,
   Tone,

@@ -406,13 +406,18 @@
  * Tool accordion — inline tool-call display
  *
  * Structure:
- *   .tool-accordion                 wrapper (sets tone via data-tone)
+ *   .tool-accordion                 wrapper; data-tone is `running` | `neutral`
  *     .tool-accordion__head         clickable verb-phrase headline
  *     .tool-accordion__body         revealed on expand
- *       .tool-accordion__row        per-call row (multi-call mode)
+ *       .tool-accordion__row        per-call row; data-tone is `running` | `ok` | `error`
  *       .tool-accordion__section    Input / Result / Error subsection
  *         .tool-accordion__kv       key-value table for Input fields
  *         .tool-accordion__pre      long values / result text
+ *
+ * Tone separation: the wrapper carries a batch tone that signals only
+ * whether work is in flight. Per-call errors render on individual rows
+ * (icon + Error section). Turn-level success/failure is signaled at the
+ * message level (`msg.error` / `msg.stopReason` in MessageList).
  * ─────────────────────────────────────────────────────────────────────── */
 
 .tool-accordion {
@@ -440,8 +445,9 @@
   font-weight: 500;
   color: inherit;
 }
-.tool-accordion[data-tone="error"] .tool-accordion__verb { color: var(--warm); }
-.tool-accordion[data-tone="error"] .tool-accordion__head:hover .tool-accordion__verb { color: var(--warm-hover); }
+/* Header batch tone is `running` | `neutral` only — never `error`. Per-call
+   errors are rendered on individual rows; turn-level failures render at the
+   message level. See ToolAccordion.tsx and types.ts (`BatchTone`). */
 .tool-accordion[data-tone="running"] .tool-accordion__verb { color: var(--processing); }
 
 .tool-accordion__subject {

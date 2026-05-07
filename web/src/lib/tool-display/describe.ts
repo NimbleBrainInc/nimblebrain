@@ -13,7 +13,7 @@
 import type { ToolCallDisplay, ToolResultForUI } from "../../hooks/useChat.ts";
 import { stripServerPrefix } from "../format.ts";
 import { findRenderer } from "./registry.ts";
-import type { BatchDescription, InputField, Tone, ToolDescription } from "./types.ts";
+import type { BatchDescription, BatchTone, InputField, Tone, ToolDescription } from "./types.ts";
 import { dominantVerb, inferVerb, phraseFor } from "./verbs.ts";
 
 /** Max characters for an inline "short" value; longer values render as <pre>. */
@@ -56,7 +56,7 @@ export function describeCall(call: ToolCallDisplay): ToolDescription {
 /** Describe a batch of calls from a single assistant turn. */
 export function describeBatch(calls: ReadonlyArray<ToolCallDisplay>): BatchDescription {
   const items = calls.map(describeCall);
-  const tone = aggregateTone(items);
+  const tone: BatchTone = isBatchRunning(items) ? "running" : "neutral";
   const verbPhrase = batchPhrase(items, tone);
   const totalMs = sumDurations(items);
   return { verbPhrase, tone, items, totalMs };
@@ -102,29 +102,34 @@ function toneFromStatus(call: ToolCallDisplay): Tone {
 }
 
 /**
- * Aggregate per-call tones into a batch tone.
- *   any running → running  (the spinner wins — show live state)
- *   any error   → error    (honest failure signal)
- *   otherwise   → ok
+ * Is any call in this batch still running? The batch header shows a
+ * spinner while work is in flight; otherwise it's neutral chrome.
+ *
+ * The batch is intentionally NOT a status reducer. Per-call errors stay
+ * on the individual rows, where they're true. Turn-level success/failure
+ * is signaled at the message level (`msg.error` / `msg.stopReason` in
+ * MessageList) — not by rolling child errors up to the group header.
  */
-function aggregateTone(items: ReadonlyArray<ToolDescription>): Tone {
-  if (items.some((it) => it.tone === "running")) return "running";
-  if (items.some((it) => it.tone === "error")) return "error";
-  return "ok";
+function isBatchRunning(items: ReadonlyArray<ToolDescription>): boolean {
+  return items.some((it) => it.tone === "running");
 }
 
 /**
- * Pick the batch verb phrase. Use dominant verb across calls, pair with the
- * object from the first call that used that verb. On error tone, swap for
- * the "Couldn't X" phrasing.
+ * Pick the batch verb phrase. Use dominant verb across calls, pair with
+ * the object from the first call that used that verb. The phrase narrates
+ * what was attempted ("Listed the documents") — it does not claim success.
+ * It only switches between present-progressive (running) and past tense
+ * (neutral); the "Couldn't X" error phrasing is never used at the batch
+ * level.
  */
-function batchPhrase(items: ReadonlyArray<ToolDescription>, tone: Tone): string {
+function batchPhrase(items: ReadonlyArray<ToolDescription>, tone: BatchTone): string {
   if (items.length === 0) return "";
   const verbs = items.map((it) => it.verb);
   const verb = dominantVerb(verbs);
   const firstWithVerb = items.find((it) => it.verb === verb);
   const object = firstWithVerb?.object ?? "";
-  return phraseFor(verb, object, tone);
+  const phraseTone: Tone = tone === "running" ? "running" : "ok";
+  return phraseFor(verb, object, phraseTone);
 }
 
 function sumDurations(items: ReadonlyArray<ToolDescription>): number | null {
