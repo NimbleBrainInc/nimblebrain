@@ -234,7 +234,20 @@ export function mcpAuthRoutes(ctx: AppContext) {
       }
     })();
     const webBase = process.env.NB_WEB_URL ?? process.env.NB_API_URL ?? fallbackOrigin;
-    const returnUrl = `${webBase.replace(/\/+$/, "")}/settings/workspace/connectors`;
+    let returnUrl = `${webBase.replace(/\/+$/, "")}/settings/workspace/connectors`;
+    // Defense-in-depth: NB_WEB_URL / NB_API_URL are operator-controlled,
+    // but a malformed value with a `javascript:` / `data:` scheme would
+    // survive escapeHtml (which only escapes `&<>"'`) and execute when
+    // the meta-refresh fires. Validate the protocol; fall back to a
+    // same-origin relative path if anything looks off.
+    try {
+      const parsed = new URL(returnUrl);
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+        returnUrl = "/settings/workspace/connectors";
+      }
+    } catch {
+      returnUrl = "/settings/workspace/connectors";
+    }
     const safeReturnUrl = escapeHtml(returnUrl);
     return c.html(
       `<!doctype html><html><head><meta charset="utf-8"><title>Authorization complete</title>

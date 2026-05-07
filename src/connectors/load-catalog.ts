@@ -137,6 +137,16 @@ export function validateCatalog(
         );
         continue;
       }
+      // portalUrl renders as <a href> in the Setup modal AND has its
+      // hostname computed for display. Same threat model as iconUrl:
+      // a malicious / misconfigured catalog ConfigMap with
+      // `javascript:`, `data:`, etc. would either inject script
+      // execution or crash the modal at `new URL(...).hostname`.
+      // Allow only http(s) absolute URLs.
+      if (!isSafeIconUrl(setup.portalUrl)) {
+        log.warn(`[catalog] ${tag} dropped — operatorSetup.portalUrl must be http(s) absolute`);
+        continue;
+      }
     }
     // Defense-in-depth: reserved-key collisions in
     // additionalAuthorizationParams are caught at provider construction,

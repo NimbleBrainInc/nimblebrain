@@ -10,6 +10,7 @@ import {
 } from "../../api/client";
 import { OperatorSetupModal } from "../../components/connectors/OperatorSetupModal";
 import { roleAtLeast, useScopedRole } from "../../hooks/useScopedRole";
+import { safeHostname } from "../../lib/safe-url";
 
 /**
  * Connector directory — browse what's available to install across
@@ -379,7 +380,7 @@ function RowAction({
                 rel="noopener noreferrer"
                 className="text-[10px] text-muted-foreground underline"
               >
-                {new URL(entry.install.operatorSetup.portalUrl).hostname}
+                {safeHostname(entry.install.operatorSetup.portalUrl)}
               </a>
             )}
           </div>
@@ -395,7 +396,7 @@ function RowAction({
               rel="noopener noreferrer"
               className="text-[10px] text-muted-foreground underline"
             >
-              {new URL(entry.install.operatorSetup.portalUrl).hostname}
+              {safeHostname(entry.install.operatorSetup.portalUrl)}
             </a>
           )}
         </div>

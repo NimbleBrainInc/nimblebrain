@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { type DirectoryEntry, setupConnectorOperator } from "../../api/client";
+import { safeHostname } from "../../lib/safe-url";
 
 /**
  * Workspace operator OAuth app setup. The form is the same whether
@@ -115,7 +116,7 @@ export function OperatorSetupModal({
                 rel="noopener noreferrer"
                 className="text-primary hover:underline underline-offset-4"
               >
-                {new URL(operatorSetup.portalUrl).hostname} ↗
+                {safeHostname(operatorSetup.portalUrl)} ↗
               </a>
               .<span className="block text-muted-foreground mt-0.5">{operatorSetup.hint}</span>
             </span>

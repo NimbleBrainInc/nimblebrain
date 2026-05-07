@@ -93,12 +93,24 @@ export function createManageRegistriesTool(ctx: ManageRegistriesContext): InProc
             if (!url) return { content: textContent("`url` is required."), isError: true };
             // Cheap shape check — full URL parsing happens at registry
             // load time. This guards against pasting a server name
-            // without a scheme.
+            // without a scheme. Restrict to http(s) — registry URLs
+            // only ever contact remote endpoints; `javascript:` /
+            // `file:` / `data:` schemes have no business here, even
+            // org-admin gated.
+            let parsed: URL;
             try {
-              new URL(url);
+              parsed = new URL(url);
             } catch {
               return {
                 content: textContent(`Invalid URL: ${url}`),
+                isError: true,
+              };
+            }
+            if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+              return {
+                content: textContent(
+                  `Registry URL must use http or https — got "${parsed.protocol}".`,
+                ),
                 isError: true,
               };
             }
