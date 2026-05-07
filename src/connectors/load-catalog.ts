@@ -180,6 +180,9 @@ export function validateCatalog(
         ? { tags: candidate.tags }
         : {}),
       ...(typeof candidate.interactive === "boolean" ? { interactive: candidate.interactive } : {}),
+      ...(typeof candidate.docsUrl === "string" && isSafeIconUrl(candidate.docsUrl)
+        ? { docsUrl: candidate.docsUrl }
+        : {}),
     });
   }
 

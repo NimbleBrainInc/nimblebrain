@@ -89,6 +89,13 @@ export interface ConnectorCatalogEntry {
    * OAuth services with no UI; leave this unset for those.
    */
   interactive?: boolean;
+  /**
+   * Optional documentation URL — surfaced on the Configure detail
+   * page as a "Docs" link next to the action bar. Use this for
+   * connector-specific guides (e.g., how to scope HubSpot OAuth, what
+   * Granola tools do). When unset, the link is hidden.
+   */
+  docsUrl?: string;
 }
 
 /**

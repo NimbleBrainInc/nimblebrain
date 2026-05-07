@@ -542,6 +542,8 @@ export interface ConnectorCatalogEntry {
   tags?: string[];
   /** When true, the connector exposes a UI surface — render the "Interactive" badge. */
   interactive?: boolean;
+  /** Optional connector-specific docs URL surfaced on the Configure page. */
+  docsUrl?: string;
 }
 
 /**
