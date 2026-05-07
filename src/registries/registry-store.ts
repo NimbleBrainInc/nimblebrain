@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync } from "node:fs";
-import { readFile, rename, rm, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { writeJsonAtomic } from "../util/atomic-json.ts";
 import type { RegistryConfig } from "./types.ts";
 
 /**
@@ -26,11 +27,6 @@ import type { RegistryConfig } from "./types.ts";
  */
 
 const FILE_NAME = "registries.json";
-
-let tmpCounter = 0;
-function uniqueTmpSuffix(): string {
-  return `${Date.now()}.${++tmpCounter}`;
-}
 
 function defaultRegistries(): RegistryConfig[] {
   return [
@@ -139,18 +135,6 @@ export class RegistryStore {
   }
 
   private async save(record: PersistedRecord): Promise<void> {
-    const path = this.filePath();
-    const tmp = `${path}.${uniqueTmpSuffix()}.tmp`;
-    try {
-      await writeFile(tmp, JSON.stringify(record, null, 2), "utf-8");
-      await rename(tmp, path);
-    } catch (err) {
-      try {
-        await rm(tmp, { force: true });
-      } catch {
-        // best-effort
-      }
-      throw err;
-    }
+    await writeJsonAtomic(this.filePath(), record);
   }
 }

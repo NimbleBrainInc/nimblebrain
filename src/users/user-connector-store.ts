@@ -1,7 +1,8 @@
 import { existsSync, mkdirSync } from "node:fs";
-import { readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { readdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { BundleRef } from "../bundles/types.ts";
+import { writeJsonAtomic } from "../util/atomic-json.ts";
 
 /**
  * Per-user storage for personal connectors — the user-global
@@ -51,11 +52,6 @@ export interface UserConnectors {
   bundles: BundleRef[];
   createdAt: string;
   updatedAt: string;
-}
-
-let tmpCounter = 0;
-function uniqueTmpSuffix(): string {
-  return `${Date.now()}.${++tmpCounter}`;
 }
 
 export class UserConnectorStore {
@@ -187,11 +183,6 @@ export class UserConnectorStore {
   }
 
   private async atomicWrite(filePath: string, data: UserConnectors): Promise<void> {
-    const tmpPath = `${filePath}.tmp.${uniqueTmpSuffix()}`;
-    await writeFile(tmpPath, `${JSON.stringify(data, null, 2)}\n`, {
-      encoding: "utf-8",
-      mode: 0o600,
-    });
-    await rename(tmpPath, filePath);
+    await writeJsonAtomic(filePath, data);
   }
 }

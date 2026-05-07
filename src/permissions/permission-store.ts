@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync } from "node:fs";
-import { readFile, rename, rm, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { writeJsonAtomic } from "../util/atomic-json.ts";
 
 /**
  * Per-tool permission policies for installed connectors. Stored
@@ -34,11 +35,6 @@ export interface PermissionsRecord {
 }
 
 const ID_RE = /^[a-z0-9_-]{1,128}$/i;
-
-let tmpCounter = 0;
-function uniqueTmpSuffix(): string {
-  return `${Date.now()}.${++tmpCounter}`;
-}
 
 /**
  * File-backed permission store. One instance is shared across user-scope
@@ -132,21 +128,7 @@ export class PermissionStore {
     if (!path) throw new Error("Invalid permission owner");
     const dir = dirname(path);
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-    // Atomic write via tmp file + rename. Crash mid-write doesn't leave
-    // a partial file in place — readers either see the old version or
-    // the new one, never a half-flushed JSON.
-    const tmp = `${path}.${uniqueTmpSuffix()}.tmp`;
-    try {
-      await writeFile(tmp, JSON.stringify(record, null, 2), "utf-8");
-      await rename(tmp, path);
-    } catch (err) {
-      try {
-        await rm(tmp, { force: true });
-      } catch {
-        // best-effort cleanup
-      }
-      throw err;
-    }
+    await writeJsonAtomic(path, record);
   }
 
   private permissionPath(owner: PermissionOwner): string | null {

@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync } from "node:fs";
-import { readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { readdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { writeJsonAtomic } from "../util/atomic-json.ts";
 import { scaffoldWorkspace } from "./scaffold.ts";
 import type { Workspace, WorkspaceMember, WorkspaceRole } from "./types.ts";
 
@@ -48,13 +49,6 @@ export function slugify(name: string): string {
     .toLowerCase()
     .replace(/[\s-]+/g, "_")
     .replace(/[^a-z0-9_]/g, "");
-}
-
-// ── Atomic write helper ────────────────────────────────────────────
-
-let tmpCounter = 0;
-function uniqueTmpSuffix(): string {
-  return `${Date.now()}.${++tmpCounter}`;
 }
 
 // ── WorkspaceStore ─────────────────────────────────────────────────
@@ -222,11 +216,6 @@ export class WorkspaceStore {
   }
 
   private async atomicWrite(filePath: string, data: Workspace): Promise<void> {
-    const tmpPath = `${filePath}.tmp.${uniqueTmpSuffix()}`;
-    await writeFile(tmpPath, `${JSON.stringify(data, null, 2)}\n`, {
-      encoding: "utf-8",
-      mode: 0o600,
-    });
-    await rename(tmpPath, filePath);
+    await writeJsonAtomic(filePath, data);
   }
 }
