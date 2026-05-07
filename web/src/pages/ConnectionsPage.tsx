@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 import {
-  type ConnectionCatalogEntry,
-  disconnectConnection,
+  type ConnectorCatalogEntry,
+  disconnectConnector,
   getAuthToken,
-  getConnectionsCatalog,
-  getInstalledConnections,
-  type InstalledConnection,
+  getConnectorsCatalog,
+  getInstalledConnectors,
+  type InstalledConnector,
   initiateMcpOAuth,
-  installConnection,
+  installConnector,
 } from "../api/client";
 import { Card, CardContent } from "../components/ui/card";
 import { useWorkspaceContext } from "../context/WorkspaceContext";
@@ -48,8 +48,8 @@ export function ConnectionsPage() {
 }
 
 function Inner() {
-  const [catalog, setCatalog] = useState<ConnectionCatalogEntry[]>([]);
-  const [installed, setInstalled] = useState<InstalledConnection[]>([]);
+  const [catalog, setCatalog] = useState<ConnectorCatalogEntry[]>([]);
+  const [installed, setInstalled] = useState<InstalledConnector[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const wsCtx = useWorkspaceContext();
@@ -60,7 +60,7 @@ function Inner() {
     if (!opts?.silent) setLoading(true);
     setError(null);
     try {
-      const [cat, ins] = await Promise.all([getConnectionsCatalog(), getInstalledConnections()]);
+      const [cat, ins] = await Promise.all([getConnectorsCatalog(), getInstalledConnectors()]);
       setCatalog(cat.catalog);
       setInstalled(ins.installed);
     } catch (err) {
@@ -104,7 +104,7 @@ function Inner() {
   }
 
   // Index installed by URL so catalog entries can find their installed counterpart.
-  const installedByUrl = new Map<string, InstalledConnection>();
+  const installedByUrl = new Map<string, InstalledConnector>();
   for (const ins of installed) installedByUrl.set(ins.url, ins);
 
   // Catalog entries without an installed counterpart: render with
@@ -163,8 +163,8 @@ function ColumnSection({
 }: {
   heading: string;
   subheading: string;
-  entries: ConnectionCatalogEntry[];
-  installedByUrl: Map<string, InstalledConnection>;
+  entries: ConnectorCatalogEntry[];
+  installedByUrl: Map<string, InstalledConnector>;
   onChanged: () => void;
 }) {
   return (
@@ -194,8 +194,8 @@ function ConnectionCard({
   installed,
   onChanged,
 }: {
-  entry: ConnectionCatalogEntry;
-  installed: InstalledConnection | undefined;
+  entry: ConnectorCatalogEntry;
+  installed: InstalledConnector | undefined;
   onChanged: () => void;
 }) {
   const [busy, setBusy] = useState(false);
@@ -222,7 +222,7 @@ function ConnectionCard({
     try {
       let serverName = installed?.serverName;
       if (!installed) {
-        const installResult = await installConnection(entry.id);
+        const installResult = await installConnector(entry.id);
         serverName = installResult.serverName;
       }
       if (!serverName) {
@@ -241,7 +241,7 @@ function ConnectionCard({
     setBusy(true);
     setErr(null);
     try {
-      await disconnectConnection(installed.serverName);
+      await disconnectConnector(installed.serverName);
       onChanged();
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -311,7 +311,7 @@ function ConnectionCard({
   );
 }
 
-function OrphanCard({ ins, onChanged }: { ins: InstalledConnection; onChanged: () => void }) {
+function OrphanCard({ ins, onChanged }: { ins: InstalledConnector; onChanged: () => void }) {
   const [busy, setBusy] = useState(false);
   const state = ins.state ?? "not_authenticated";
   return (
@@ -331,7 +331,7 @@ function OrphanCard({ ins, onChanged }: { ins: InstalledConnection; onChanged: (
               onClick={async () => {
                 setBusy(true);
                 try {
-                  await disconnectConnection(ins.serverName);
+                  await disconnectConnector(ins.serverName);
                   onChanged();
                 } finally {
                   setBusy(false);

@@ -1,20 +1,20 @@
 import { describe, expect, test } from "bun:test";
-import { DEFAULT_CONNECTION_CATALOG } from "../../src/connections/catalog.ts";
-import { validateCatalog } from "../../src/connections/load-catalog.ts";
+import { DEFAULT_CONNECTOR_CATALOG } from "../../src/connectors/catalog.ts";
+import { validateCatalog } from "../../src/connectors/load-catalog.ts";
 
-describe("DEFAULT_CONNECTION_CATALOG", () => {
+describe("DEFAULT_CONNECTOR_CATALOG", () => {
   test("validates against the validator (sanity check)", () => {
-    const v = validateCatalog(DEFAULT_CONNECTION_CATALOG);
-    expect(v.length).toBe(DEFAULT_CONNECTION_CATALOG.length);
+    const v = validateCatalog(DEFAULT_CONNECTOR_CATALOG);
+    expect(v.length).toBe(DEFAULT_CONNECTOR_CATALOG.length);
   });
 
   test("all ids are unique", () => {
-    const ids = DEFAULT_CONNECTION_CATALOG.map((e) => e.id);
+    const ids = DEFAULT_CONNECTOR_CATALOG.map((e) => e.id);
     expect(new Set(ids).size).toBe(ids.length);
   });
 
   test("static-auth entries all have operatorSetup with credentialKey", () => {
-    for (const entry of DEFAULT_CONNECTION_CATALOG) {
+    for (const entry of DEFAULT_CONNECTOR_CATALOG) {
       if (entry.auth === "static") {
         expect(entry.operatorSetup).toBeDefined();
         expect(entry.operatorSetup?.credentialKey.length).toBeGreaterThan(0);

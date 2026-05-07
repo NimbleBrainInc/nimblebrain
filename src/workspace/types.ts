@@ -47,5 +47,5 @@ export interface Workspace {
    * bundle of the same name is installed is permitted; the bundle
    * stays running but won't appear in the catalog UI.
    */
-  connectionsAllowList?: string[];
+  connectorsAllowList?: string[];
 }

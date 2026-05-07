@@ -1,6 +1,6 @@
 import { deriveServerName } from "../bundles/paths.ts";
 import type { BundleRef } from "../bundles/types.ts";
-import { loadCatalog } from "../connections/load-catalog.ts";
+import { loadCatalog } from "../connectors/load-catalog.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import type { ToolResult } from "../engine/types.ts";
 import type { UserIdentity } from "../identity/provider.ts";
@@ -10,11 +10,10 @@ import type { InProcessTool } from "./in-process-app.ts";
 import { WorkspaceOAuthProvider } from "./workspace-oauth-provider.ts";
 
 /**
- * `manage_connections` tool — single surface for the Connections UI
- * (catalog browse, list installed, install, disconnect). Replaces the
- * previous `/v1/connections/*` REST routes; the platform's MCP-tool-call
- * surface is the canonical first-party API for the web shell, and
- * keeping one tool minimizes route bloat.
+ * `manage_connectors` tool — single surface for the Connectors UI
+ * (catalog browse, list installed, install, disconnect). The platform's
+ * MCP-tool-call surface is the canonical first-party API for the web
+ * shell, and keeping one tool minimizes route bloat.
  *
  * Two scopes are routed in a single tool by inspecting the catalog
  * entry's `defaultScope` (or, for `list_installed` / `disconnect`,
@@ -22,7 +21,7 @@ import { WorkspaceOAuthProvider } from "./workspace-oauth-provider.ts";
  *
  *   - `defaultScope: "workspace"` → `WorkspaceStore.bundles[]` +
  *     `workspaces/<wsId>/credentials/...` for tokens.
- *   - `defaultScope: "user"`      → `UserConnectionStore.bundles[]` +
+ *   - `defaultScope: "user"`      → `UserConnectorStore.bundles[]` +
  *     `users/<userId>/credentials/...` for tokens. Available across
  *     every workspace the user is a member of.
  *
@@ -32,7 +31,7 @@ import { WorkspaceOAuthProvider } from "./workspace-oauth-provider.ts";
  * deliver either.
  */
 
-export interface ManageConnectionsContext {
+export interface ManageConnectorsContext {
   runtime: Runtime;
   /** Returns the requesting user's identity, or null in non-authed contexts. */
   getIdentity: () => UserIdentity | null;
@@ -40,11 +39,11 @@ export interface ManageConnectionsContext {
   getWorkspaceId: () => string | null;
 }
 
-export function createManageConnectionsTool(ctx: ManageConnectionsContext): InProcessTool {
+export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProcessTool {
   return {
-    name: "manage_connections",
+    name: "manage_connectors",
     description:
-      "List, install, and disconnect remote MCP connections. Workspace connections are shared by all members; user connections are personal and follow you across workspaces.",
+      "List, install, and disconnect remote MCP connectors. Workspace connectors are shared by all members; user connectors are personal and follow you across workspaces.",
     inputSchema: {
       type: "object",
       properties: {
@@ -65,7 +64,7 @@ export function createManageConnectionsTool(ctx: ManageConnectionsContext): InPr
           type: "string",
           enum: ["workspace", "user", "all"],
           description:
-            "For list_installed: which scope to return (default 'all'). For disconnect: which scope's connection to revoke (auto-detected if omitted).",
+            "For list_installed: which scope to return (default 'all'). For disconnect: which scope's connector to revoke (auto-detected if omitted).",
         },
       },
       required: ["action"],
@@ -101,12 +100,12 @@ export function createManageConnectionsTool(ctx: ManageConnectionsContext): InPr
 // ── Action handlers ──────────────────────────────────────────────────
 
 async function handleListCatalog(
-  ctx: ManageConnectionsContext,
+  ctx: ManageConnectorsContext,
   wsId: string | null,
 ): Promise<ToolResult> {
   const catalog = loadCatalog();
   const ws = wsId ? await ctx.runtime.getWorkspaceStore().get(wsId) : null;
-  const allowList = ws?.connectionsAllowList;
+  const allowList = ws?.connectorsAllowList;
   const filtered =
     allowList && Array.isArray(allowList) && allowList.length > 0
       ? catalog.filter((entry) => allowList.includes(entry.id))
@@ -119,7 +118,7 @@ async function handleListCatalog(
 }
 
 async function handleListInstalled(
-  ctx: ManageConnectionsContext,
+  ctx: ManageConnectorsContext,
   wsId: string | null,
   callerId: string | null,
   scope: string,
@@ -166,9 +165,9 @@ async function handleListInstalled(
     }
   }
 
-  // User-scope entries (caller's own personal connections)
+  // User-scope entries (caller's own personal connectors)
   if ((scope === "all" || scope === "user") && callerId) {
-    const userRecord = await ctx.runtime.getUserConnectionStore().get(callerId);
+    const userRecord = await ctx.runtime.getUserConnectorStore().get(callerId);
     if (userRecord) {
       for (const ref of userRecord.bundles) {
         if (!("url" in ref)) continue;
@@ -259,7 +258,7 @@ async function buildInstalledEntry(args: {
 }
 
 async function handleInstall(
-  ctx: ManageConnectionsContext,
+  ctx: ManageConnectorsContext,
   wsId: string | null,
   callerId: string | null,
   catalogId: string,
@@ -277,7 +276,7 @@ async function handleInstall(
   // operator can constrain what services are even visible.
   if (wsId) {
     const ws = await ctx.runtime.getWorkspaceStore().get(wsId);
-    const allowList = ws?.connectionsAllowList;
+    const allowList = ws?.connectorsAllowList;
     if (allowList && Array.isArray(allowList) && allowList.length > 0) {
       if (!allowList.includes(entry.id)) {
         return errResult(`Catalog entry "${catalogId}" not visible in this workspace.`);
@@ -342,9 +341,9 @@ async function handleInstall(
 
   // User scope
   if (!callerId) {
-    return errResult("Authentication required to install personal connections.");
+    return errResult("Authentication required to install personal connectors.");
   }
-  const userStore = ctx.runtime.getUserConnectionStore();
+  const userStore = ctx.runtime.getUserConnectorStore();
   const existing = await userStore.get(callerId);
   const dup = existing?.bundles.find((b) => "url" in b && b.url === entry.url);
   if (dup) {
@@ -380,7 +379,7 @@ async function handleInstall(
 }
 
 async function handleDisconnect(
-  ctx: ManageConnectionsContext,
+  ctx: ManageConnectorsContext,
   wsId: string | null,
   callerId: string | null,
   serverName: string,

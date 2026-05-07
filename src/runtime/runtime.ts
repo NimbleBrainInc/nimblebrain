@@ -64,7 +64,7 @@ import { McpSource } from "../tools/mcp-source.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
 import { createSystemTools } from "../tools/system-tools.ts";
 import type { ResourceData } from "../tools/types.ts";
-import { UserConnectionStore } from "../users/user-connection-store.ts";
+import { UserConnectorStore } from "../users/user-connector-store.ts";
 import { WorkspaceStore } from "../workspace/workspace-store.ts";
 import { RunInProgressError } from "./errors.ts";
 import { PlacementRegistry } from "./placement-registry.ts";
@@ -172,7 +172,7 @@ export class Runtime {
   private _instanceConfig: InstanceConfig | null;
   private _userStore: UserStore;
   private _workspaceStore: WorkspaceStore;
-  private _userConnectionStore: UserConnectionStore | null = null;
+  private _userConnectorStore: UserConnectorStore | null = null;
   private _identityProvider: IdentityProvider | null;
   /** Getter for the current request identity — reads from AsyncLocalStorage. */
   _getIdentity: () => UserIdentity | null = () => null;
@@ -578,7 +578,7 @@ export class Runtime {
     // a UserPoolSource into every workspace registry the user is in.
     // Errors here are isolated per-record so a single corrupt user.json
     // doesn't prevent boot.
-    const userConnStore = rt.getUserConnectionStore();
+    const userConnStore = rt.getUserConnectorStore();
     const allUsers = await userConnStore.list();
     for (const userRecord of allUsers) {
       for (const ref of userRecord.bundles) {
@@ -1358,16 +1358,16 @@ export class Runtime {
   }
 
   /**
-   * Get the UserConnectionStore — per-user storage for personal connections.
+   * Get the UserConnectorStore — per-user storage for personal connections.
    * Lazily constructed on first access and cached. Mirrors the WorkspaceStore
    * pattern but operates on `users/<userId>/user.json` instead of
    * `workspaces/<wsId>/workspace.json`.
    */
-  getUserConnectionStore(): UserConnectionStore {
-    if (!this._userConnectionStore) {
-      this._userConnectionStore = new UserConnectionStore(this.getWorkDir());
+  getUserConnectorStore(): UserConnectorStore {
+    if (!this._userConnectorStore) {
+      this._userConnectorStore = new UserConnectorStore(this.getWorkDir());
     }
-    return this._userConnectionStore;
+    return this._userConnectorStore;
   }
 
   /** Get the IdentityProvider (null in dev mode when no instance.json). */

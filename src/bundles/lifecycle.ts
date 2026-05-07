@@ -1008,7 +1008,7 @@ export class BundleLifecycleManager {
    * agent loop can dispatch tool calls through the user's source.
    *
    * Called from:
-   *   - The `manage_connections.install` tool action when a user
+   *   - The `manage_connectors.install` tool action when a user
    *     installs a personal bundle.
    *   - Runtime boot, for every (user, bundle) pair discovered by
    *     walking `users/<userId>/user.json` files.

@@ -16,7 +16,7 @@ import type { EventSink, ToolResult } from "../engine/types.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import type { Skill } from "../skills/types.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
-import { createManageConnectionsTool } from "./connection-tools.ts";
+import { createManageConnectorsTool } from "./connector-tools.ts";
 import type { ManageConversationContext } from "./conversation-tools.ts";
 import { buildCoreResourceMap } from "./core-resources/index.ts";
 import { createCoreToolDefs } from "./core-source.ts";
@@ -255,14 +255,13 @@ export async function createSystemTools(
     systemToolDefs.push(createManageWorkspacesTool(mergedCtx));
   }
 
-  // Connections tool replaces the previous /v1/connections/* REST routes.
-  // Surface includes both workspace-scope and user-scope (personal)
-  // connections under one tool action surface — the right scope is
-  // chosen by the catalog entry's `defaultScope` for installs and by
-  // lookup for disconnects.
+  // Connectors tool. Surface includes both workspace-scope and
+  // user-scope (personal) connectors under one tool action surface —
+  // the right scope is chosen by the catalog entry's `defaultScope` for
+  // installs and by lookup for disconnects.
   if (runtime && manageWorkspacesCtx) {
     systemToolDefs.push(
-      createManageConnectionsTool({
+      createManageConnectorsTool({
         runtime,
         getIdentity: manageWorkspacesCtx.getIdentity,
         // Workspace id is per-call — pull from the runtime's current

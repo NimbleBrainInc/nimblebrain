@@ -1,22 +1,20 @@
 /**
- * Catalog of remote MCP connections NimbleBrain knows about. Surfaces
- * to the Settings → Connections page so users can install + connect
+ * Catalog of remote MCP connectors NimbleBrain knows about. Surfaces
+ * to the Settings → Connectors page so users can install + connect
  * services with one click rather than editing `workspace.json` directly.
  *
- * Distribution model (full design in
- * `nimblebrain-ops/research/REMOTE_MCP_CONNECTIONS.md` § Catalog
- * distribution):
+ * Distribution model:
  *
- *   1. `DEFAULT_CONNECTION_CATALOG` (this file) ships with the platform —
+ *   1. `DEFAULT_CONNECTOR_CATALOG` (this file) ships with the platform —
  *      curated by NimbleBrain, vetted entries, sensible scope hints.
  *   2. `NB_CATALOG_PATH` env var (optional) points at a JSON file
  *      (typically a Kubernetes ConfigMap) that **fully replaces** the
  *      default. Operators with custom needs ship their own catalog
  *      without an app release. Replace, not merge — see `load-catalog.ts`
  *      for the rationale.
- *   3. Per-workspace `connectionsAllowList` filter narrows the visible
+ *   3. Per-workspace `connectorsAllowList` filter narrows the visible
  *      set (admin reads `workspace.json` to control which services a
- *      tenant sees on their Connections page).
+ *      tenant sees on their Connectors page).
  *
  * Secrets stay OUT of the catalog. `auth: "static"` entries reference
  * the credential store via `operatorSetup.credentialKey` — the value
@@ -28,12 +26,12 @@
  * via the catalog's `iconUrl` field (any absolute URL works).
  */
 
-/** A single entry in the connections catalog. */
-export interface ConnectionCatalogEntry {
+/** A single entry in the connectors catalog. */
+export interface ConnectorCatalogEntry {
   /**
    * Stable slug-like id. Persists across catalog edits and is used as
-   * the primary key for `workspace.json#connectionsAllowList`,
-   * Connections-page UI keys, and the bundle's serverName. Must match
+   * the primary key for `workspace.json#connectorsAllowList`,
+   * Connectors-page UI keys, and the bundle's serverName. Must match
    * `[a-z0-9](?:[a-z0-9-]*[a-z0-9])?` (lowercase, kebab) so it can
    * compose into URLs and filesystem paths without escaping.
    */
@@ -58,9 +56,9 @@ export interface ConnectionCatalogEntry {
   auth: "dcr" | "static";
   /**
    * Recommended OAuth identity scope. Workspace admins can override per
-   * workspace (the Connections page exposes a toggle for that). Catalog
+   * workspace (the Connectors page exposes a toggle for that). Catalog
    * authors should pick the natural shape: per-user services
-   * (Granola, personal Gmail) → `member`; team / org services (org
+   * (Granola, personal Gmail) → `user`; team / org services (org
    * Notion, team Slack, organizational HubSpot) → `workspace`.
    */
   defaultScope: "workspace" | "user";
@@ -69,7 +67,7 @@ export interface ConnectionCatalogEntry {
   /** Optional extra authorize-URL params (e.g. Google's access_type=offline). */
   additionalAuthorizationParams?: Record<string, string>;
   /**
-   * Required for `auth: "static"`. Tells the Connections-page admin
+   * Required for `auth: "static"`. Tells the Connectors-page admin
    * modal where to send the operator to create the app, what to
    * paste, and which credential key to seed.
    */
@@ -92,9 +90,9 @@ export interface ConnectionCatalogEntry {
  * `load-catalog.ts`).
  *
  * Convention: keep ordering alphabetical by id within scope groupings
- * (workspace-shared first, member-scoped second) so diffs read clean.
+ * (workspace-shared first, user-scoped second) so diffs read clean.
  */
-export const DEFAULT_CONNECTION_CATALOG: ConnectionCatalogEntry[] = [
+export const DEFAULT_CONNECTOR_CATALOG: ConnectorCatalogEntry[] = [
   // ── Workspace-scoped (shared organizational identity) ──────────
   {
     id: "asana",

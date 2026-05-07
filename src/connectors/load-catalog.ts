@@ -1,14 +1,14 @@
 import { existsSync, readFileSync } from "node:fs";
 import { log } from "../cli/log.ts";
 import { validateAdditionalAuthorizationParams } from "../tools/workspace-oauth-provider.ts";
-import { type ConnectionCatalogEntry, DEFAULT_CONNECTION_CATALOG } from "./catalog.ts";
+import { type ConnectorCatalogEntry, DEFAULT_CONNECTOR_CATALOG } from "./catalog.ts";
 
 /**
- * Load the connection catalog. Resolution order:
+ * Load the connector catalog. Resolution order:
  *
  *   1. `NB_CATALOG_PATH` env var, when set + file exists. The JSON at
  *      that path **fully replaces** the default catalog.
- *   2. `DEFAULT_CONNECTION_CATALOG` (in code).
+ *   2. `DEFAULT_CONNECTOR_CATALOG` (in code).
  *
  * Why **replace** rather than merge by id:
  *
@@ -17,7 +17,7 @@ import { type ConnectionCatalogEntry, DEFAULT_CONNECTION_CATALOG } from "./catal
  *     of a single field?). Replace keeps the contract obvious — what
  *     the operator mounts is the entire catalog.
  *   - Operators who want to start from defaults can copy the default
- *     out of a running container (kubectl cp from src/connections/catalog.ts),
+ *     out of a running container (kubectl cp from src/connectors/catalog.ts),
  *     edit, and mount.
  *
  * Validation: malformed entries are dropped with a logged warning that
@@ -26,12 +26,12 @@ import { type ConnectionCatalogEntry, DEFAULT_CONNECTION_CATALOG } from "./catal
  * keeps). The whole catalog falls back to the default if the JSON is
  * unparseable or the top-level shape isn't an array.
  */
-export function loadCatalog(): ConnectionCatalogEntry[] {
+export function loadCatalog(): ConnectorCatalogEntry[] {
   const overridePath = process.env.NB_CATALOG_PATH;
-  if (!overridePath) return DEFAULT_CONNECTION_CATALOG;
+  if (!overridePath) return DEFAULT_CONNECTOR_CATALOG;
   if (!existsSync(overridePath)) {
     log.warn(`[catalog] NB_CATALOG_PATH=${overridePath} not found — using default catalog`);
-    return DEFAULT_CONNECTION_CATALOG;
+    return DEFAULT_CONNECTOR_CATALOG;
   }
   let raw: unknown;
   try {
@@ -40,11 +40,11 @@ export function loadCatalog(): ConnectionCatalogEntry[] {
     log.warn(
       `[catalog] failed to parse ${overridePath}: ${err instanceof Error ? err.message : String(err)} — using default catalog`,
     );
-    return DEFAULT_CONNECTION_CATALOG;
+    return DEFAULT_CONNECTOR_CATALOG;
   }
   if (!Array.isArray(raw)) {
     log.warn(`[catalog] ${overridePath} is not a JSON array — using default catalog`);
-    return DEFAULT_CONNECTION_CATALOG;
+    return DEFAULT_CONNECTOR_CATALOG;
   }
   return validateCatalog(raw as unknown[], overridePath);
 }
@@ -67,13 +67,13 @@ export function loadCatalog(): ConnectionCatalogEntry[] {
 export function validateCatalog(
   raw: unknown[],
   source: string = "<inline>",
-): ConnectionCatalogEntry[] {
+): ConnectorCatalogEntry[] {
   const ID_RE = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
-  const out: ConnectionCatalogEntry[] = [];
+  const out: ConnectorCatalogEntry[] = [];
   const seenIds = new Set<string>();
 
   for (let i = 0; i < raw.length; i++) {
-    const candidate = raw[i] as Partial<ConnectionCatalogEntry> | undefined;
+    const candidate = raw[i] as Partial<ConnectorCatalogEntry> | undefined;
     const tag = `${source}[${i}${candidate?.id ? `:${candidate.id}` : ""}]`;
 
     if (!candidate || typeof candidate !== "object") {
@@ -101,7 +101,7 @@ export function validateCatalog(
       log.warn(`[catalog] ${tag} dropped — iconUrl missing`);
       continue;
     }
-    // iconUrl renders as <img src=...> in the Connections page. React's
+    // iconUrl renders as <img src=...> in the Connectors page. React's
     // JSX doesn't sanitize <img src> — a malicious / misconfigured catalog
     // entry with `iconUrl: "javascript:..."` or
     // `iconUrl: "data:image/svg+xml;..."` (SVGs can carry <script>) is a
@@ -120,7 +120,7 @@ export function validateCatalog(
       continue;
     }
     if (candidate.defaultScope !== "workspace" && candidate.defaultScope !== "user") {
-      log.warn(`[catalog] ${tag} dropped — defaultScope must be 'workspace' or 'member'`);
+      log.warn(`[catalog] ${tag} dropped — defaultScope must be 'workspace' or 'user'`);
       continue;
     }
     if (candidate.auth === "static") {
@@ -189,7 +189,7 @@ export function validateCatalog(
  * iconUrl protocol allowlist: http(s) absolute or `/`-relative.
  * Rejects `javascript:`, `data:`, `file:`, `vbscript:`, etc. — anything
  * that could let a catalog ConfigMap inject script execution via the
- * Connections page's `<img src>`.
+ * Connectors page's `<img src>`.
  */
 function isSafeIconUrl(url: string): boolean {
   if (url.startsWith("/")) return true; // relative path served from same origin

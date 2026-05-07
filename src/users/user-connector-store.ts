@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { BundleRef } from "../bundles/types.ts";
 
 /**
- * Per-user storage for personal connections — the user-global
+ * Per-user storage for personal connectors — the user-global
  * counterpart to `WorkspaceStore` for workspace.json. Tracks which
  * personal MCP bundles a user has installed across every workspace
  * they're a member of.
@@ -15,7 +15,7 @@ import type { BundleRef } from "../bundles/types.ts";
  * Sits parallel to the workspace tree at <workDir>/workspaces/. The
  * separation matters: a user's personal Granola tokens follow the
  * USER, not the workspace. Leaving a workspace doesn't orphan personal
- * credentials. Joining a new workspace makes those personal connections
+ * credentials. Joining a new workspace makes those personal connectors
  * available there immediately.
  *
  * The OAuth tokens themselves live at
@@ -39,7 +39,7 @@ export class UserNotFoundError extends Error {
  */
 export const USER_ID_RE = /^[a-z0-9_]{1,128}$/i;
 
-export interface UserConnections {
+export interface UserConnectors {
   /** The user's id — same value used as the path segment. */
   userId: string;
   /**
@@ -58,7 +58,7 @@ function uniqueTmpSuffix(): string {
   return `${Date.now()}.${++tmpCounter}`;
 }
 
-export class UserConnectionStore {
+export class UserConnectorStore {
   private usersDir: string;
 
   constructor(workDir: string) {
@@ -68,13 +68,13 @@ export class UserConnectionStore {
     }
   }
 
-  /** Read a user's connection record. Returns null if it doesn't exist yet. */
-  async get(userId: string): Promise<UserConnections | null> {
+  /** Read a user's connector record. Returns null if it doesn't exist yet. */
+  async get(userId: string): Promise<UserConnectors | null> {
     if (!USER_ID_RE.test(userId)) return null;
     const filePath = this.userPath(userId);
     try {
       const content = await readFile(filePath, "utf-8");
-      return JSON.parse(content) as UserConnections;
+      return JSON.parse(content) as UserConnectors;
     } catch (err: unknown) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
       throw err;
@@ -86,7 +86,7 @@ export class UserConnectionStore {
    * member's personal bundles into the workspaces they're in. Cheap —
    * one directory listing + one file read per user.
    */
-  async list(): Promise<UserConnections[]> {
+  async list(): Promise<UserConnectors[]> {
     let entries: string[];
     try {
       entries = await readdir(this.usersDir);
@@ -94,7 +94,7 @@ export class UserConnectionStore {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
       throw err;
     }
-    const out: UserConnections[] = [];
+    const out: UserConnectors[] = [];
     for (const id of entries) {
       if (!USER_ID_RE.test(id)) continue;
       const record = await this.get(id);
@@ -109,14 +109,14 @@ export class UserConnectionStore {
    * we just need a place to store personal bundles when the user
    * actually installs one.
    */
-  async getOrCreate(userId: string): Promise<UserConnections> {
+  async getOrCreate(userId: string): Promise<UserConnectors> {
     if (!USER_ID_RE.test(userId)) {
       throw new Error(`[user-store] invalid userId "${userId}"`);
     }
     const existing = await this.get(userId);
     if (existing) return existing;
     const now = new Date().toISOString();
-    const record: UserConnections = {
+    const record: UserConnectors = {
       userId,
       bundles: [],
       createdAt: now,
@@ -131,11 +131,11 @@ export class UserConnectionStore {
   /** Update the user's record with a partial. Returns null if user not found. */
   async update(
     userId: string,
-    patch: Partial<Pick<UserConnections, "bundles">>,
-  ): Promise<UserConnections | null> {
+    patch: Partial<Pick<UserConnectors, "bundles">>,
+  ): Promise<UserConnectors | null> {
     const existing = await this.get(userId);
     if (!existing) return null;
-    const updated: UserConnections = {
+    const updated: UserConnectors = {
       ...existing,
       ...patch,
       updatedAt: new Date().toISOString(),
@@ -149,7 +149,7 @@ export class UserConnectionStore {
    * (same bundle URL twice → no-op return of existing record).
    * Auto-creates the user record on first install.
    */
-  async addBundle(userId: string, ref: BundleRef): Promise<UserConnections> {
+  async addBundle(userId: string, ref: BundleRef): Promise<UserConnectors> {
     const existing = await this.getOrCreate(userId);
     if ("url" in ref) {
       const dup = existing.bundles.find((b) => "url" in b && b.url === ref.url);
@@ -163,7 +163,7 @@ export class UserConnectionStore {
    * record. Throws if user doesn't exist (caller would've had to
    * create first to install).
    */
-  async removeBundle(userId: string, url: string): Promise<UserConnections> {
+  async removeBundle(userId: string, url: string): Promise<UserConnectors> {
     const existing = await this.get(userId);
     if (!existing) throw new UserNotFoundError(userId);
     return (await this.update(userId, {
@@ -186,7 +186,7 @@ export class UserConnectionStore {
     return join(this.usersDir, userId, "user.json");
   }
 
-  private async atomicWrite(filePath: string, data: UserConnections): Promise<void> {
+  private async atomicWrite(filePath: string, data: UserConnectors): Promise<void> {
     const tmpPath = `${filePath}.tmp.${uniqueTmpSuffix()}`;
     await writeFile(tmpPath, `${JSON.stringify(data, null, 2)}\n`, {
       encoding: "utf-8",

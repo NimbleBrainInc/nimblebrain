@@ -525,10 +525,10 @@ export async function initiateMcpOAuth(
 }
 
 /**
- * Connections catalog entry — one card on Settings → Connections.
- * Mirrors the server-side `ConnectionCatalogEntry` shape.
+ * Connectors catalog entry — one card on Settings → Connectors.
+ * Mirrors the server-side `ConnectorCatalogEntry` shape.
  */
-export interface ConnectionCatalogEntry {
+export interface ConnectorCatalogEntry {
   id: string;
   name: string;
   description: string;
@@ -544,14 +544,14 @@ export interface ConnectionCatalogEntry {
 
 /**
  * Per-(scope, principal) installed view. Both workspace-shared and the
- * caller's personal connections are returned, distinguished by `scope`.
+ * caller's personal connectors are returned, distinguished by `scope`.
  */
-export interface InstalledConnection {
+export interface InstalledConnector {
   catalogId: string | null;
   serverName: string;
   url: string;
   scope: "workspace" | "user";
-  catalog?: ConnectionCatalogEntry;
+  catalog?: ConnectorCatalogEntry;
   state: string;
   authorizationUrl?: string;
   identity?: { sub?: string; email?: string; name?: string };
@@ -559,8 +559,8 @@ export interface InstalledConnection {
 }
 
 /**
- * Connection management — all-in-one tool surface. The web shell calls
- * `nb__manage_connections` (alias `manage_connections` on the `nb`
+ * Connector management — all-in-one tool surface. The web shell calls
+ * `nb__manage_connectors` (alias `manage_connectors` on the `nb`
  * source) for catalog browse, installed list, install, and disconnect.
  * No dedicated REST routes — the platform's tool-call surface is the
  * canonical first-party API.
@@ -579,22 +579,22 @@ function unwrapStructured<T>(result: ToolCallResult, what: string): T {
   return result.structuredContent as T;
 }
 
-export async function getConnectionsCatalog(): Promise<{ catalog: ConnectionCatalogEntry[] }> {
-  const result = await callTool("nb", "manage_connections", { action: "list_catalog" });
+export async function getConnectorsCatalog(): Promise<{ catalog: ConnectorCatalogEntry[] }> {
+  const result = await callTool("nb", "manage_connectors", { action: "list_catalog" });
   return unwrapStructured(result, "list_catalog");
 }
 
-export async function getInstalledConnections(opts?: {
+export async function getInstalledConnectors(opts?: {
   scope?: "all" | "workspace" | "user";
-}): Promise<{ installed: InstalledConnection[] }> {
-  const result = await callTool("nb", "manage_connections", {
+}): Promise<{ installed: InstalledConnector[] }> {
+  const result = await callTool("nb", "manage_connectors", {
     action: "list_installed",
     scope: opts?.scope ?? "all",
   });
   return unwrapStructured(result, "list_installed");
 }
 
-export async function disconnectConnection(
+export async function disconnectConnector(
   serverName: string,
   scope?: "workspace" | "user",
 ): Promise<{
@@ -604,7 +604,7 @@ export async function disconnectConnection(
   deletedLocal: boolean;
   revokeError?: string;
 }> {
-  const result = await callTool("nb", "manage_connections", {
+  const result = await callTool("nb", "manage_connectors", {
     action: "disconnect",
     serverName,
     ...(scope ? { scope } : {}),
@@ -618,13 +618,13 @@ export async function disconnectConnection(
  * if already installed, returns `alreadyInstalled: true`. Does NOT
  * start OAuth — caller follows up with `initiateMcpOAuth(serverName)`.
  */
-export async function installConnection(catalogId: string): Promise<{
+export async function installConnector(catalogId: string): Promise<{
   ok: boolean;
   alreadyInstalled: boolean;
   serverName: string;
   scope: "workspace" | "user";
 }> {
-  const result = await callTool("nb", "manage_connections", {
+  const result = await callTool("nb", "manage_connectors", {
     action: "install",
     catalogId,
   });
