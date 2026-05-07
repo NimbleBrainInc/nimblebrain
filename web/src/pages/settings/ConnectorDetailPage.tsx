@@ -81,15 +81,11 @@ export function ConnectorDetailPage({ scope }: { scope: "user" | "workspace" }) 
   };
 
   if (loading) {
-    return (
-      <div className="mx-auto max-w-3xl px-4 py-6 md:px-6 md:py-8 text-sm text-muted-foreground">
-        Loading…
-      </div>
-    );
+    return <div className="max-w-3xl mx-auto text-sm text-muted-foreground">Loading…</div>;
   }
   if (!installed) {
     return (
-      <div className="mx-auto max-w-3xl px-4 py-6 md:px-6 md:py-8 flex flex-col gap-3">
+      <div className="max-w-3xl mx-auto space-y-3">
         <Link to={backPath} className="text-xs text-muted-foreground hover:underline">
           ← All connectors
         </Link>
@@ -109,7 +105,7 @@ export function ConnectorDetailPage({ scope }: { scope: "user" | "workspace" }) 
       installed.state === "crashed");
 
   return (
-    <div className="mx-auto max-w-3xl px-4 py-6 md:px-6 md:py-8 flex flex-col gap-8">
+    <div className="max-w-3xl mx-auto space-y-6">
       {/* Action bar — back link on the left, docs + uninstall on the right */}
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <Link to={backPath} className="text-xs text-muted-foreground hover:underline">

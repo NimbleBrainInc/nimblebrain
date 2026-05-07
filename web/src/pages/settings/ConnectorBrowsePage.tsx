@@ -117,7 +117,7 @@ export function ConnectorBrowsePage({ scope }: { scope: "user" | "workspace" }) 
   };
 
   return (
-    <div className="mx-auto max-w-3xl px-4 py-6 md:px-6 md:py-8 flex flex-col gap-6">
+    <div className="max-w-5xl mx-auto space-y-6">
       <div>
         <Link to={backPath} className="text-xs text-muted-foreground hover:underline">
           ← Installed connectors

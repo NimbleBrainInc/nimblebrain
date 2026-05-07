@@ -10,9 +10,14 @@ import type { PlacementEntry } from "../types";
 // ── Section + group schema ───────────────────────────────────────
 //
 // Settings nav is grouped by *scope*: what does this thing affect?
-//   personal      — the signed-in user (their personal connectors etc.)
 //   workspace     — the active workspace (its identity, members, app config)
 //   organization  — the org as a whole (manage all workspaces / users)
+//
+// A "personal" group is reserved for future per-user settings (personal
+// connectors, identity preferences) but isn't currently rendered — the
+// only personal page that previously existed (Personal Connectors) was
+// pulled because it was empty for nearly every user. It can come back
+// when there's a real reason for it.
 //
 // Profile is intentionally NOT in this nav — and it's also NOT under the
 // `/settings/*` tree at all. It lives at `/profile` (top-level) because
@@ -25,7 +30,7 @@ import type { PlacementEntry } from "../types";
 // filtering (defense in depth — the backend tools enforce the actual
 // security boundary on writes).
 
-type SectionGroup = "personal" | "workspace" | "organization";
+type SectionGroup = "workspace" | "organization";
 
 interface PlatformSection {
   id: string;
@@ -38,22 +43,11 @@ interface PlatformSection {
 }
 
 const GROUP_LABELS: Record<SectionGroup, string> = {
-  personal: "Personal",
   workspace: "This Workspace",
   organization: "Organization",
 };
 
 const PLATFORM_SECTIONS: PlatformSection[] = [
-  // Personal — connectors that follow the user across workspaces.
-  // No role gate; every signed-in user can manage their own account.
-  {
-    id: "personal-connectors",
-    label: "Connectors",
-    to: "/settings/personal/connectors",
-    group: "personal",
-    minRole: "ws_member",
-  },
-
   // This workspace — visible to any member; some sub-pages gate Save behind ws_admin.
   // Usage lives here because the backend scopes usage data per workspace
   // (`runtime.getWorkspaceScopedDir()`).
@@ -169,7 +163,6 @@ export function SettingsPage() {
 
   // Group sections for rendering with header labels.
   const grouped: Record<SectionGroup, PlatformSection[]> = {
-    personal: visibleSections.filter((s) => s.group === "personal"),
     workspace: visibleSections.filter((s) => s.group === "workspace"),
     organization: visibleSections.filter((s) => s.group === "organization"),
   };
@@ -215,7 +208,7 @@ export function SettingsPage() {
 
         {/* Desktop: grouped scoped nav with section labels */}
         <div className="hidden md:flex md:flex-col px-2 pb-3">
-          {(["personal", "workspace", "organization"] as const)
+          {(["workspace", "organization"] as const)
             .filter((g) => grouped[g].length > 0)
             .map((group, idx) => {
               const sections = grouped[group];

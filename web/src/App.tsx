@@ -47,7 +47,6 @@ import { ConnectorBrowsePage } from "./pages/settings/ConnectorBrowsePage";
 import { ConnectorDetailPage } from "./pages/settings/ConnectorDetailPage";
 import { ModelTab } from "./pages/settings/ModelTab";
 import { OrgRegistriesTab } from "./pages/settings/OrgRegistriesTab";
-import { PersonalConnectorsTab } from "./pages/settings/PersonalConnectorsTab";
 import { SettingsAppPanel } from "./pages/settings/SettingsAppPanel";
 import { SkillsTab } from "./pages/settings/SkillsTab";
 import { UsageTab } from "./pages/settings/UsageTab";
@@ -323,28 +322,36 @@ function AuthenticatedAppContent({
                 Renders inside the main shell with no inner settings nav. */}
             <Route path="/profile" element={<ProfilePage />} />
 
-            {/* /connections used to live at top-level; it's now split
-                into two scoped tabs under /settings (Personal +
-                Workspace). Redirect any old links to the personal tab. */}
+            {/* /connections used to live at top-level; redirect any
+                old links to the workspace connectors tab. (Personal
+                connectors UI is parked until there's a real reason for
+                a separate user-scope surface.) */}
             <Route
               path="/connections"
-              element={<Navigate to="/settings/personal/connectors" replace />}
+              element={<Navigate to="/settings/workspace/connectors" replace />}
             />
 
             {/* Settings routes — personal + workspace + org scopes (Profile lives at /profile) */}
             <Route path="/settings" element={<SettingsPage />}>
               <Route index element={<Navigate to="/settings/workspace/general" replace />} />
 
-              {/* Personal — the signed-in user's account-level settings */}
-              <Route path="personal">
-                <Route index element={<Navigate to="/settings/personal/connectors" replace />} />
-                <Route path="connectors" element={<PersonalConnectorsTab />} />
-                <Route path="connectors/browse" element={<ConnectorBrowsePage scope="user" />} />
-                <Route
-                  path="connectors/:serverName"
-                  element={<ConnectorDetailPage scope="user" />}
-                />
-              </Route>
+              {/* Personal connectors UI is parked. Backend user-scope
+                  pathways stay (UserConnectorStore, lifecycle, OAuth
+                  flow) so the abstraction is unbroken — only the UI
+                  surface goes away. Redirect any in-flight links to
+                  the workspace tab. */}
+              <Route
+                path="personal/connectors"
+                element={<Navigate to="/settings/workspace/connectors" replace />}
+              />
+              <Route
+                path="personal/connectors/browse"
+                element={<Navigate to="/settings/workspace/connectors/browse" replace />}
+              />
+              <Route
+                path="personal/connectors/:serverName"
+                element={<Navigate to="/settings/workspace/connectors" replace />}
+              />
 
               {/* This Workspace — the active workspace, scoped via header switcher */}
               <Route path="workspace">

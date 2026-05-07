@@ -193,14 +193,13 @@ export function mcpAuthRoutes(ctx: AppContext) {
       );
     }
 
-    // Determine which scoped Connectors page to land on. Bundle's
-    // oauthScope tells us which one — workspace bundles go to
-    // workspace; user-scope bundles go to personal. Fall back to
-    // workspace if the lookup fails (workspace-scope was the default
-    // before user-scope shipped, so it's the safer guess).
-    const lifecycle = ctx.runtime.getLifecycle();
-    const instance = lifecycle.getInstance(matched.serverName, matched.wsId);
-    const scope = instance?.oauthScope === "user" ? "user" : "workspace";
+    // Land on the workspace Connectors page. The user-scope UI is
+    // currently parked (no Personal Connectors page in v1); even
+    // user-scope bundles get redirected to the workspace page so the
+    // user has somewhere coherent to land. When Personal returns, this
+    // can dispatch on the bundle's oauthScope again — until then the
+    // matched flow's metadata isn't needed for routing.
+    void matched;
 
     // Clear the one-shot state cookie so a refresh of this page can't
     // be used as a replay vector.
@@ -235,9 +234,7 @@ export function mcpAuthRoutes(ctx: AppContext) {
       }
     })();
     const webBase = process.env.NB_WEB_URL ?? process.env.NB_API_URL ?? fallbackOrigin;
-    const settingsPath =
-      scope === "user" ? "/settings/personal/connectors" : "/settings/workspace/connectors";
-    const returnUrl = `${webBase.replace(/\/+$/, "")}${settingsPath}`;
+    const returnUrl = `${webBase.replace(/\/+$/, "")}/settings/workspace/connectors`;
     const safeReturnUrl = escapeHtml(returnUrl);
     return c.html(
       `<!doctype html><html><head><meta charset="utf-8"><title>Authorization complete</title>
