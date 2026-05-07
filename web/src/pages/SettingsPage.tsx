@@ -126,6 +126,13 @@ const PLATFORM_SECTIONS: PlatformSection[] = [
     group: "organization",
     minRole: "org_admin",
   },
+  {
+    id: "org-registries",
+    label: "Registries",
+    to: "/settings/org/registries",
+    group: "organization",
+    minRole: "org_admin",
+  },
 ];
 
 // Footer — rendered separately in the bottom-of-nav slot below About,

@@ -25,6 +25,7 @@ import { createDelegateTool } from "./delegate.ts";
 import { defineInProcessApp, type InProcessTool } from "./in-process-app.ts";
 import { McpSource } from "./mcp-source.ts";
 import type { ToolRegistry } from "./registry.ts";
+import { createManageRegistriesTool } from "./registry-tools.ts";
 import { createManageUsersTool, type ManageUsersContext } from "./user-tools.ts";
 import {
   createManageWorkspacesTool,
@@ -268,6 +269,12 @@ export async function createSystemTools(
         // workspace context (same source manage_app uses to know which
         // workspace's bundles[] to mutate).
         getWorkspaceId: () => runtime.getCurrentWorkspaceId(),
+      }),
+    );
+    systemToolDefs.push(
+      createManageRegistriesTool({
+        runtime,
+        getIdentity: manageWorkspacesCtx.getIdentity,
       }),
     );
   }

@@ -46,6 +46,7 @@ import { AboutTab } from "./pages/settings/AboutTab";
 import { ConnectorBrowsePage } from "./pages/settings/ConnectorBrowsePage";
 import { ConnectorDetailPage } from "./pages/settings/ConnectorDetailPage";
 import { ModelTab } from "./pages/settings/ModelTab";
+import { OrgRegistriesTab } from "./pages/settings/OrgRegistriesTab";
 import { PersonalConnectorsTab } from "./pages/settings/PersonalConnectorsTab";
 import { SettingsAppPanel } from "./pages/settings/SettingsAppPanel";
 import { SkillsTab } from "./pages/settings/SkillsTab";
@@ -397,6 +398,14 @@ function AuthenticatedAppContent({
                   element={
                     <RouteGuard role="org_admin">
                       <UsersTab />
+                    </RouteGuard>
+                  }
+                />
+                <Route
+                  path="registries"
+                  element={
+                    <RouteGuard role="org_admin">
+                      <OrgRegistriesTab />
                     </RouteGuard>
                   }
                 />

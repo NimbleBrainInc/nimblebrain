@@ -46,6 +46,7 @@ import { buildModelResolver, resolveModelString } from "../model/registry.ts";
 import { PermissionStore } from "../permissions/permission-store.ts";
 import type { Layer3SkillEntry, PromptAppInfo } from "../prompt/compose.ts";
 import { composeSystemPrompt } from "../prompt/compose.ts";
+import { RegistryStore } from "../registries/registry-store.ts";
 import {
   loadBuiltinSkills,
   loadCoreSkills,
@@ -175,6 +176,7 @@ export class Runtime {
   private _workspaceStore: WorkspaceStore;
   private _userConnectorStore: UserConnectorStore | null = null;
   private _permissionStore: PermissionStore | null = null;
+  private _registryStore: RegistryStore | null = null;
   private _identityProvider: IdentityProvider | null;
   /** Getter for the current request identity — reads from AsyncLocalStorage. */
   _getIdentity: () => UserIdentity | null = () => null;
@@ -1385,6 +1387,18 @@ export class Runtime {
       this._permissionStore = new PermissionStore(this.getWorkDir());
     }
     return this._permissionStore;
+  }
+
+  /**
+   * Get the RegistryStore — instance-level config of which connector
+   * registries (curated / mpak / future) are enabled. Auto-seeds with
+   * sensible defaults on first read.
+   */
+  getRegistryStore(): RegistryStore {
+    if (!this._registryStore) {
+      this._registryStore = new RegistryStore(this.getWorkDir());
+    }
+    return this._registryStore;
   }
 
   /** Get the IdentityProvider (null in dev mode when no instance.json). */

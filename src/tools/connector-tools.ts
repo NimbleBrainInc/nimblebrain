@@ -4,6 +4,7 @@ import { loadCatalog } from "../connectors/load-catalog.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import type { ToolResult } from "../engine/types.ts";
 import type { UserIdentity } from "../identity/provider.ts";
+import { DirectoryAggregator } from "../registries/aggregator.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import { FileCredentialStore } from "./credential-store.ts";
 import type { InProcessTool } from "./in-process-app.ts";
@@ -51,6 +52,7 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
           type: "string",
           enum: [
             "list_catalog",
+            "list_directory",
             "list_installed",
             "list_tools",
             "install",
@@ -94,6 +96,8 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
       switch (action) {
         case "list_catalog":
           return handleListCatalog(ctx, wsId);
+        case "list_directory":
+          return handleListDirectory(ctx);
         case "list_installed":
           return handleListInstalled(ctx, wsId, callerId, String(input.scope ?? "all"));
         case "list_tools":
@@ -162,6 +166,29 @@ async function handleListCatalog(
   return {
     content: textContent(`Catalog: ${filtered.length} entries.`),
     structuredContent: { catalog: filtered },
+    isError: false,
+  };
+}
+
+/**
+ * Aggregate every enabled registry's entries into a single browseable
+ * directory. Replaces the catalog-only `list_catalog` for the Browse
+ * page — Browse needs the unified shape so mpak bundles and curated
+ * remote services render side-by-side.
+ *
+ * Per-registry failures are isolated and surfaced in `errors` so the
+ * UI can show partial results with a "missing X" hint. Workspace
+ * `connectorsAllowList` filters apply only to curated entries today
+ * (mpak hasn't shipped its scoping primitive yet).
+ */
+async function handleListDirectory(ctx: ManageConnectorsContext): Promise<ToolResult> {
+  const aggregator = new DirectoryAggregator(ctx.runtime.getRegistryStore());
+  const result = await aggregator.list();
+  return {
+    content: textContent(
+      `Directory: ${result.entries.length} entries (${result.errors.length} registry errors).`,
+    ),
+    structuredContent: { entries: result.entries, errors: result.errors },
     isError: false,
   };
 }

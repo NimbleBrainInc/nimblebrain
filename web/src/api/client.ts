@@ -668,6 +668,76 @@ export interface ConnectorTool {
   inputSchema: Record<string, unknown>;
 }
 
+/**
+ * One row in the Browse directory — uniform shape across registry
+ * sources (curated, mpak, future). The `install` discriminator drives
+ * the install-button behavior in the UI.
+ */
+export interface DirectoryEntry {
+  id: string;
+  registryId: string;
+  registryType: "curated" | "mpak" | "directory" | "custom-url";
+  name: string;
+  description: string;
+  iconUrl?: string;
+  tags?: string[];
+  defaultScope: "user" | "workspace";
+  install:
+    | {
+        kind: "remote-oauth";
+        url: string;
+        auth: "dcr" | "static";
+        requiredScopes?: string[];
+        additionalAuthorizationParams?: Record<string, string>;
+        operatorSetup?: { portalUrl: string; hint: string; credentialKey: string };
+      }
+    | { kind: "mpak-bundle"; package: string; version?: string; mpakUrl?: string }
+    | { kind: "direct-url"; url: string };
+}
+
+export interface DirectoryResult {
+  entries: DirectoryEntry[];
+  errors: Array<{ registryId: string; message: string }>;
+}
+
+export async function listDirectory(): Promise<DirectoryResult> {
+  const result = await callTool("nb", "manage_connectors", { action: "list_directory" });
+  return unwrapStructured(result, "list_directory");
+}
+
+export interface RegistryConfig {
+  id: string;
+  name: string;
+  type: "curated" | "mpak" | "directory" | "custom-url";
+  enabled: boolean;
+  url?: string;
+  locked?: boolean;
+}
+
+export async function listRegistries(): Promise<{ registries: RegistryConfig[] }> {
+  const result = await callTool("nb", "manage_registries", { action: "list" });
+  return unwrapStructured(result, "list");
+}
+
+export async function setRegistryEnabled(
+  id: string,
+  enabled: boolean,
+): Promise<{ ok: boolean; registry: RegistryConfig }> {
+  const result = await callTool("nb", "manage_registries", {
+    action: enabled ? "enable" : "disable",
+    id,
+  });
+  return unwrapStructured(result, enabled ? "enable" : "disable");
+}
+
+export async function setRegistryUrl(
+  id: string,
+  url: string,
+): Promise<{ ok: boolean; registry: RegistryConfig }> {
+  const result = await callTool("nb", "manage_registries", { action: "set_url", id, url });
+  return unwrapStructured(result, "set_url");
+}
+
 export async function listConnectorTools(
   serverName: string,
   scope?: "workspace" | "user",

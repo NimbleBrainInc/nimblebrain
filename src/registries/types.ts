@@ -1,0 +1,107 @@
+/**
+ * A connector registry is a *source of installable connectors*. The
+ * platform aggregates entries from every enabled registry into a
+ * single browse experience — the user picks something to install,
+ * and the install action dispatches by entry type.
+ *
+ * Registries are configured at the instance level (Settings → Org →
+ * Registries). The two seeded defaults are:
+ *
+ *   - "curated"  — the hardcoded NimbleBrain catalog of remote OAuth
+ *     services (Granola, Notion, HubSpot, etc.). Always on, locked.
+ *   - "mpak"     — mpak.dev open MCP bundle registry. Default on; the
+ *     org admin can disable or point at a different mpak instance.
+ *
+ * Future registry types (planned, not implemented):
+ *   - "directory"  — JSON catalog mounted by an operator (per-org
+ *     curated list for SOC2-conscious tenants).
+ *   - "custom-url" — paste-a-URL flow for any remote MCP server
+ *     (advanced; bypasses curation).
+ */
+
+/** Stable registry kind, used for source-type-driven dispatch. */
+export type RegistryType = "curated" | "mpak" | "directory" | "custom-url";
+
+/** Persistable configuration for a registry. Stored in registries.json. */
+export interface RegistryConfig {
+  id: string;
+  name: string;
+  type: RegistryType;
+  enabled: boolean;
+  /** For type === "mpak" or "directory": the registry endpoint or path. */
+  url?: string;
+  /**
+   * Locked registries can't be disabled or removed by the admin UI —
+   * the curated registry is locked because it ships with the platform
+   * and removing it would leave first-time users with nothing.
+   */
+  locked?: boolean;
+}
+
+/**
+ * One row in the Browse directory. The shape is uniform across
+ * registry types so the UI doesn't have to special-case rendering;
+ * the install dispatch happens via the `install` discriminated
+ * union.
+ */
+export interface DirectoryEntry {
+  /** Unique within (registryId, id) — registries can repeat ids. */
+  id: string;
+  registryId: string;
+  registryType: RegistryType;
+  name: string;
+  description: string;
+  iconUrl?: string;
+  tags?: string[];
+  /** Recommended scope. UI uses this to filter Personal vs Workspace browse. */
+  defaultScope: "user" | "workspace";
+  install: InstallAction;
+}
+
+/** How to install an entry — varies by source type. */
+export type InstallAction = RemoteOAuthInstall | MpakBundleInstall | DirectUrlInstall;
+
+/**
+ * Curated remote OAuth service. The existing connector catalog flow:
+ * lifecycle.install adds the URL bundle to workspace.json, then
+ * /v1/mcp-auth/initiate kicks off the OAuth round-trip.
+ */
+export interface RemoteOAuthInstall {
+  kind: "remote-oauth";
+  url: string;
+  auth: "dcr" | "static";
+  requiredScopes?: string[];
+  additionalAuthorizationParams?: Record<string, string>;
+  operatorSetup?: { portalUrl: string; hint: string; credentialKey: string };
+}
+
+/**
+ * mpak bundle. v1 surfaces these as browseable but the install action
+ * is stubbed — the real mpak fetch + bundle registration lands when
+ * the mpak.dev API client is wired through.
+ */
+export interface MpakBundleInstall {
+  kind: "mpak-bundle";
+  /** Scoped package name, e.g., "@nimblebraininc/echo". */
+  package: string;
+  /** Optional pinned version; omitted = latest. */
+  version?: string;
+  /** mpak.dev URL for the bundle's detail page. */
+  mpakUrl?: string;
+}
+
+/**
+ * User pasted a remote MCP server URL directly. Future. Reserved here
+ * so the discriminated union is closed.
+ */
+export interface DirectUrlInstall {
+  kind: "direct-url";
+  url: string;
+}
+
+/** A registry implementation. */
+export interface ConnectorRegistry {
+  readonly config: RegistryConfig;
+  /** List entries this registry currently surfaces. May hit the network. */
+  listEntries(): Promise<DirectoryEntry[]>;
+}
