@@ -520,23 +520,30 @@ async function handleListTools(
     return errResult(`Bundle "${serverName}" not installed.`);
   }
 
-  const principal = scope === "workspace" ? "_workspace" : callerId;
-  if (!principal) return errResult("Authentication required.");
-  const instance =
-    scope === "workspace"
-      ? wsId
-        ? lifecycle.getInstance(serverName, wsId)
-        : null
-      : (lifecycle.getUserInstance?.(serverName, callerId ?? "") ?? null);
-  const conn = instance?.connections?.get(principal);
-  const source = conn?.source;
+  // Resolve the live source from the workspace registry. The registry
+  // owns the actual McpSource — workspace-scope bundles add it via
+  // startBundleSource at boot; user-scope bundles register a
+  // UserPoolSource at boot and per-user McpSources lazily. The
+  // connections map's `source` field is only populated on the user
+  // flow path (startAuth) and stays null for boot-restored bundles
+  // even though the bundle is fully running.
+  if (!wsId) return errResult("Workspace context required.");
+  const registry = ctx.runtime.getRegistryForWorkspace(wsId);
+  const source = registry.getSource(serverName);
   if (!source) {
+    const instance =
+      scope === "workspace"
+        ? lifecycle.getInstance(serverName, wsId)
+        : (lifecycle.getUserInstance?.(serverName, callerId ?? "") ?? null);
     return errResult(
-      `Connector "${serverName}" has no live source (state: ${conn?.state ?? "unknown"}).`,
+      `Connector "${serverName}" not registered (state: ${instance?.state ?? "unknown"}).`,
     );
   }
 
   try {
+    // For user-scope (UserPoolSource), tools() needs to resolve a per-
+    // user source. Fall through naturally: UserPoolSource.tools() picks
+    // any registered user's source as a representative.
     const tools = await source.tools();
     return {
       content: textContent(`Tools: ${tools.length}`),
