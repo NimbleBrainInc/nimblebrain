@@ -111,12 +111,12 @@ export type BundleRef =
        * - `"workspace"` (default): one identity per `(workspace, server)`. All
        *   members share the same OAuth tokens. Correct for shared
        *   integrations like a team Notion or org Slack.
-       * - `"member"`: each workspace member authenticates independently and
-       *   has their own tokens at `…/credentials/mcp-oauth/<server>/members/
-       *   <memberId>/`. Correct for personal-account services (Granola,
-       *   personal Gmail, personal Zoom). Opt-in per member: those who don't
-       *   connect get a structured `pending_auth` error when they (or the
-       *   agent on their behalf) try to call a tool.
+       * - `"user"`: each user authenticates independently and has their
+       *   own tokens at `<workDir>/users/<userId>/credentials/mcp-oauth/
+       *   <server>/`. Correct for personal-account services (Granola,
+       *   personal Gmail, personal Zoom). Opt-in per user: those who
+       *   don't connect get a structured `pending_auth` error when they
+       *   (or the agent on their behalf) try to call a tool.
        */
       oauthScope?: "workspace" | "user";
       /**
@@ -330,10 +330,11 @@ export interface BundleInstance {
   /** Absolute path to the entity data root (e.g., {wsDir}/data/{bundle}/apps/crm/data). Resolved at startup. */
   entityDataRoot?: string;
   /**
-   * OAuth identity scope for URL bundles. Defaults to "workspace".
-   * `"member"` is plumbed through types in Step 1 but only lights up in
-   * Step 3 — Step 1 always treats this as `"workspace"` regardless of
-   * declared value. Undefined for non-URL bundles.
+   * OAuth identity scope for URL bundles. Defaults to "workspace" —
+   * one shared identity per (workspace, server). `"user"` flips to
+   * per-user storage at `<workDir>/users/<userId>/credentials/...`,
+   * letting each user authenticate independently against the same
+   * remote service. Undefined for non-URL bundles.
    */
   oauthScope?: "workspace" | "user";
   /**

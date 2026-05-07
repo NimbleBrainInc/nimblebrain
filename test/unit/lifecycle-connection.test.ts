@@ -99,32 +99,6 @@ describe("BundleLifecycleManager — Connection state transitions", () => {
     expect(instance.connections!.get("_workspace")!.authorizationUrl).toBeUndefined();
   });
 
-  test("getPendingAuthUrl returns URL only while pending_auth", () => {
-    seedInstance(lifecycle, "granola", "ws_test");
-    expect(lifecycle.getPendingAuthUrl("granola", "ws_test", "_workspace")).toBeNull();
-
-    lifecycle.recordConnectionStateChange("granola", "ws_test", "_workspace", "pending_auth", {
-      authorizationUrl: "https://x.test/?state=s",
-    });
-    expect(lifecycle.getPendingAuthUrl("granola", "ws_test", "_workspace")).toBe("https://x.test/?state=s");
-
-    lifecycle.recordConnectionStateChange("granola", "ws_test", "_workspace", "running");
-    expect(lifecycle.getPendingAuthUrl("granola", "ws_test", "_workspace")).toBeNull();
-
-    lifecycle.recordConnectionStateChange("granola", "ws_test", "_workspace", "dead");
-    expect(lifecycle.getPendingAuthUrl("granola", "ws_test", "_workspace")).toBeNull();
-  });
-
-  test("getPendingAuthUrl returns null for unknown server / wsId / principal", () => {
-    seedInstance(lifecycle, "granola", "ws_test");
-    lifecycle.recordConnectionStateChange("granola", "ws_test", "_workspace", "pending_auth", {
-      authorizationUrl: "https://x.test/?state=s",
-    });
-    expect(lifecycle.getPendingAuthUrl("notexist", "ws_test", "_workspace")).toBeNull();
-    expect(lifecycle.getPendingAuthUrl("granola", "ws_other", "_workspace")).toBeNull();
-    expect(lifecycle.getPendingAuthUrl("granola", "ws_test", "other_member")).toBeNull();
-  });
-
   test("recordConnectionStateChange on missing instance is a no-op (no throw, no emit)", () => {
     lifecycle.recordConnectionStateChange("ghost", "ws_test", "_workspace", "pending_auth");
     expect(sink.events.length).toBe(0);

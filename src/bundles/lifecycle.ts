@@ -614,23 +614,6 @@ export class BundleLifecycleManager {
   }
 
   /**
-   * Lookup helper used by `/v1/mcp-auth/initiate` to find the
-   * authorization URL for a `(wsId, serverName, principalId)` tuple.
-   *
-   * Returns the URL only if the named Connection is in `pending_auth` —
-   * any other state means we have no business handing out a URL (would
-   * either be stale, a leak, or a bug). Caller should treat `null` as
-   * "this connection is not awaiting auth right now."
-   */
-  getPendingAuthUrl(serverName: string, wsId: string, principalId: string): string | null {
-    const instance = this.instances.get(`${serverName}|${wsId}`);
-    if (!instance?.connections) return null;
-    const conn = instance.connections.get(principalId);
-    if (!conn || conn.state !== "pending_auth" || !conn.authorizationUrl) return null;
-    return conn.authorizationUrl;
-  }
-
-  /**
    * Initiate (or restart) an OAuth flow for one (bundle, principal) tuple.
    *
    * Unified entry point — the route handler calls this for both
@@ -798,8 +781,9 @@ export class BundleLifecycleManager {
     // Background start. The provider's callback resolves `authUrlPromise`
     // when interactive auth is required. If start() succeeds without ever
     // hitting interactive (headless / pre-authenticated), we transition to
-    // running and reject the auth URL promise (caller wasn't expecting that
-    // path; they should call /v1/connections/installed to refresh state).
+    // running and reject the auth URL promise (caller wasn't expecting
+    // that path; they should re-list installed connectors to refresh
+    // state).
     void source
       .start()
       .then(() => {

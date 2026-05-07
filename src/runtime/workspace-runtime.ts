@@ -202,15 +202,16 @@ export async function startWorkspaceBundles(
     const wsRegistry = registries.get(wsId);
     if (!wsRegistry) return; // unreachable: registries is keyed by every wsId in byWorkspace
 
-    // Member-scoped URL bundles don't auto-start at boot — there's no
-    // member identity to authenticate as. Connections are created
-    // lazily on first call from each member. We still record the bundle
-    // so it appears in the workspace's installed list (catalog page +
-    // /v1/connections/installed) and the lifecycle's seedInstance can
-    // wire it up with an empty connections map.
+    // User-scoped URL bundles don't auto-start at boot — there's no
+    // user identity to authenticate as. Connections are created lazily
+    // on first call from each user. We still record the bundle so it
+    // appears in the workspace's installed list (Settings → Connectors
+    // surface, via `manage_connectors.list_installed`) and the
+    // lifecycle's seedInstance can wire it up with an empty
+    // connections map.
     if ("url" in entry.bundle && entry.bundle.oauthScope === "user") {
       log.info(
-        `[bundles] Skipping boot start for member-scoped URL bundle "${entry.serverName}" — connections created on-demand`,
+        `[bundles] Skipping boot start for user-scoped URL bundle "${entry.serverName}" — connections created on-demand`,
       );
       resultEntries[idx] = {
         ...entry,

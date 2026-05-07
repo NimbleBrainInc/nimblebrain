@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { readFile, rename, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 /**
  * Per-tool permission policies for installed connectors. Stored
@@ -130,7 +130,7 @@ export class PermissionStore {
   private async save(owner: PermissionOwner, record: PermissionsRecord): Promise<void> {
     const path = this.permissionPath(owner);
     if (!path) throw new Error("Invalid permission owner");
-    const dir = path.substring(0, path.lastIndexOf("/"));
+    const dir = dirname(path);
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
     // Atomic write via tmp file + rename. Crash mid-write doesn't leave
     // a partial file in place — readers either see the old version or

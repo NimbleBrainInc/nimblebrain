@@ -25,7 +25,16 @@ export class MpakRegistry implements ConnectorRegistry {
   constructor(public readonly config: RegistryConfig) {}
 
   async listEntries(): Promise<DirectoryEntry[]> {
-    const baseUrl = this.config.url ?? "https://mpak.dev";
+    // Canonicalize via URL.origin: rejects malformed values that
+    // somehow slipped past `manage_registries.set_url` validation,
+    // strips trailing slashes / paths, and gives every callsite a
+    // single shape to compose against.
+    let baseOrigin: string;
+    try {
+      baseOrigin = new URL(this.config.url ?? "https://mpak.dev").origin;
+    } catch {
+      baseOrigin = "https://mpak.dev";
+    }
     const samples: Array<{
       package: string;
       name: string;
@@ -76,7 +85,7 @@ export class MpakRegistry implements ConnectorRegistry {
       install: {
         kind: "mpak-bundle",
         package: s.package,
-        mpakUrl: `${baseUrl.replace(/\/$/, "")}/packages/${s.package}`,
+        mpakUrl: `${baseOrigin}/packages/${s.package}`,
       },
     }));
   }
