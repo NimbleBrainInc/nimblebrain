@@ -135,8 +135,9 @@ export function ToolPermissionsTable({
       <div className="border border-border rounded-md divide-y divide-border">
         {tools.map((tool) => {
           const policy = policyFor(tool.name);
+          const summary = summarizeToolDescription(tool.description);
           return (
-            <div key={tool.name} className="flex items-start justify-between gap-4 px-3 py-2.5">
+            <div key={tool.name} className="flex items-center justify-between gap-4 px-3 py-2">
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
                   <span className="font-mono text-xs">{tool.name}</span>
@@ -144,8 +145,13 @@ export function ToolPermissionsTable({
                     <span className="text-[10px] text-muted-foreground">saving…</span>
                   )}
                 </div>
-                {tool.description && (
-                  <p className="text-xs text-muted-foreground mt-0.5">{tool.description}</p>
+                {summary && (
+                  <p
+                    className="text-xs text-muted-foreground mt-0.5 truncate"
+                    title={tool.description}
+                  >
+                    {summary}
+                  </p>
                 )}
               </div>
               <div className="flex items-center gap-1 shrink-0">
@@ -167,6 +173,28 @@ export function ToolPermissionsTable({
       </div>
     </div>
   );
+}
+
+/**
+ * MCP tool descriptions are written for the LLM, not for humans —
+ * many run hundreds of words with embedded `<example>` blocks, JSON
+ * schemas, and bullet lists. For the Configure UI, render only the
+ * first sentence (or first line), strip XML-ish tags, and let the
+ * full description live in the row's `title` tooltip.
+ */
+function summarizeToolDescription(raw: string | undefined): string {
+  if (!raw) return "";
+  // Take the first paragraph (first blank line / first newline run).
+  const firstChunk = raw.split(/\n{2,}|\r\n\r\n/)[0]?.split(/\n/)[0] ?? "";
+  // Drop XML-ish tags so things like <example>...</example> don't leak.
+  const stripped = firstChunk
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  // First sentence — fall back to truncated chunk if no sentence break.
+  const sentenceMatch = stripped.match(/^.+?[.!?](?:\s|$)/);
+  const sentence = sentenceMatch ? sentenceMatch[0].trim() : stripped;
+  return sentence.length > 140 ? `${sentence.slice(0, 140).trimEnd()}…` : sentence;
 }
 
 function PolicyButton({

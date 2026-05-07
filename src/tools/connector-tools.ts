@@ -545,11 +545,17 @@ async function handleListTools(
     // user source. Fall through naturally: UserPoolSource.tools() picks
     // any registered user's source as a representative.
     const tools = await source.tools();
+    // Strip the connector prefix from tool names. McpSource adds it
+    // (`<serverName>__<bareName>`) for the registry's dispatch surface,
+    // but the Configure page only handles tools within one connector
+    // and the permission store keys on bare names. Normalize at the API
+    // boundary so consumers don't see a leak of the internal prefixing.
+    const prefix = `${serverName}__`;
     return {
       content: textContent(`Tools: ${tools.length}`),
       structuredContent: {
         tools: tools.map((t) => ({
-          name: t.name,
+          name: t.name.startsWith(prefix) ? t.name.slice(prefix.length) : t.name,
           description: t.description,
           inputSchema: t.inputSchema,
         })),
