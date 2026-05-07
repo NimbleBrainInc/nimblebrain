@@ -635,6 +635,52 @@ export async function installConnector(catalogId: string): Promise<{
   return unwrapStructured(result, "install");
 }
 
+export interface ConnectorTool {
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+}
+
+export async function listConnectorTools(
+  serverName: string,
+  scope?: "workspace" | "user",
+): Promise<{ tools: ConnectorTool[] }> {
+  const result = await callTool("nb", "manage_connectors", {
+    action: "list_tools",
+    serverName,
+    ...(scope ? { scope } : {}),
+  });
+  return unwrapStructured(result, "list_tools");
+}
+
+export type ToolPolicy = "allow" | "disallow";
+
+export async function getConnectorPermissions(
+  serverName: string,
+  scope: "workspace" | "user",
+): Promise<{ scope: "workspace" | "user"; serverName: string; tools: Record<string, ToolPolicy> }> {
+  const result = await callTool("nb", "manage_connectors", {
+    action: "get_permissions",
+    serverName,
+    scope,
+  });
+  return unwrapStructured(result, "get_permissions");
+}
+
+export async function setConnectorPermissions(
+  serverName: string,
+  scope: "workspace" | "user",
+  tools: Record<string, ToolPolicy>,
+): Promise<{ ok: boolean; scope: "workspace" | "user"; serverName: string }> {
+  const result = await callTool("nb", "manage_connectors", {
+    action: "set_permissions",
+    serverName,
+    scope,
+    tools,
+  });
+  return unwrapStructured(result, "set_permissions");
+}
+
 /** Clear the server-side session cookie. Fails silently on error. */
 export async function logout(): Promise<void> {
   try {
