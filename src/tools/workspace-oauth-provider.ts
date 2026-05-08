@@ -574,13 +574,55 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
       };
       return info;
     }
-    if (this.cachedClientInfo) return this.cachedClientInfo;
+    if (this.cachedClientInfo) {
+      if (this.isClientInfoUsable(this.cachedClientInfo)) return this.cachedClientInfo;
+      // Cached entry has stale redirect_uri (e.g. NB_API_URL changed
+      // between registration and now). Drop it so we re-register fresh
+      // below, then on disk so future reads agree.
+      this.cachedClientInfo = null;
+      await this.unlinkIfExists(this.dataDir, "client.json");
+    }
     // DCR client info is workspace-shared regardless of scope — every
     // member of the workspace authenticates as the same NimbleBrain
     // OAuth client.
     const data = await this.readJson<OAuthClientInformationFull>(this.dataDir, "client.json");
-    if (data) this.cachedClientInfo = data;
-    return data ?? undefined;
+    if (!data) return undefined;
+    if (!this.isClientInfoUsable(data)) {
+      // Drift detection: the platform's redirect_uri (derived from
+      // NB_API_URL) doesn't match what was registered with the
+      // authorization server when this client was DCR'd. Returning the
+      // stale entry here means the next /authorize sends a redirect_uri
+      // the AS doesn't recognize, surfacing as `invalid_redirect_uri`
+      // long after the user has clicked Connect. Drop the entry and
+      // let the SDK trigger a fresh DCR call with the current URI.
+      log.warn(
+        `[oauth] ${this.serverName} cached DCR client redirect_uri drift detected (registered=${
+          data.redirect_uris?.[0] ?? "<none>"
+        }, current=${this.callbackUrl}) — discarding cached client.json so the next flow re-registers`,
+      );
+      await this.unlinkIfExists(this.dataDir, "client.json");
+      return undefined;
+    }
+    this.cachedClientInfo = data;
+    return data;
+  }
+
+  /**
+   * Drift check for a DCR `client.json`. Returns true when the
+   * registered `redirect_uris` includes the current callbackUrl —
+   * i.e. the AS will accept what we send at /authorize and /token.
+   * Returns false when the registration is stale (the canonical
+   * NB_API_URL-changed-between-deploys case), so callers know to
+   * re-register rather than serve a doomed flow.
+   *
+   * Conservative: a missing or non-array `redirect_uris` is treated
+   * as drift (force re-register). That handles broken on-disk state
+   * the same as known drift.
+   */
+  private isClientInfoUsable(info: OAuthClientInformationFull): boolean {
+    const uris = info.redirect_uris;
+    if (!Array.isArray(uris) || uris.length === 0) return false;
+    return uris.includes(this.callbackUrl);
   }
 
   async saveClientInformation(info: OAuthClientInformationFull): Promise<void> {
@@ -1015,8 +1057,15 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     }
 
     // Always clear local state regardless of upstream revocation result.
-    await this.invalidateCredentials("tokens");
-    await this.invalidateCredentials("verifier");
+    // `all` is broader than the literal "tokens" the method name implies,
+    // and intentional: leaving the cached DCR `client.json` behind across
+    // a disconnect/reconnect is the well-trodden bug path. If `NB_API_URL`
+    // changes between a disconnect and the next reconnect, the AS still
+    // has the old `redirect_uri` registered to the cached `client_id`,
+    // and the next /authorize comes back as `Invalid redirect_uri`.
+    // Re-registering on reconnect costs one DCR roundtrip — cheap insurance
+    // against a confusing prod failure mode.
+    await this.invalidateCredentials("all");
     result.deletedLocal = true;
     return result;
   }

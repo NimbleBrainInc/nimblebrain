@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { log } from "../cli/log.ts";
@@ -441,6 +441,28 @@ export class BundleLifecycleManager {
         const msg = err instanceof Error ? err.message : String(err);
         process.stderr.write(
           `[lifecycle] Failed to clear credentials for ${instance.bundleName} in ${instance.wsId}: ${msg}\n`,
+        );
+      }
+      // Drop the OAuth state dir as defense-in-depth. URL bundles
+      // route through `disconnect` first (which now invalidates "all"
+      // including client.json) — but stdio bundles never had OAuth
+      // state, and any leftover from a partial earlier disconnect
+      // shouldn't survive an uninstall. Worst case the dir is already
+      // gone; rmSync with `force` is a no-op then.
+      try {
+        const oauthDir = join(
+          workDir,
+          "workspaces",
+          instance.wsId,
+          "credentials",
+          "mcp-oauth",
+          serverName,
+        );
+        rmSync(oauthDir, { recursive: true, force: true });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        process.stderr.write(
+          `[lifecycle] Failed to clear OAuth state for ${serverName} in ${instance.wsId}: ${msg}\n`,
         );
       }
     }

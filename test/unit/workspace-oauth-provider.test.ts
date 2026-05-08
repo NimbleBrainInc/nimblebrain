@@ -87,6 +87,68 @@ describe("WorkspaceOAuthProvider — file I/O roundtrips", () => {
     expect(await p2.clientInformation()).toBeDefined();
   });
 
+  it("clientInformation discards a cached client whose redirect_uri doesn't match the current callback", async () => {
+    // Simulate the operational case: a DCR client was registered when
+    // NB_API_URL was the dev default (or wrong), then the operator set
+    // NB_API_URL on the deploy and the provider's callbackUrl flipped.
+    // Returning the stale client.json would send the AS a redirect_uri
+    // the registered client doesn't allow, surfacing as
+    // `Invalid redirect_uri for OAuth client` after the user has
+    // already clicked Connect.
+    const stalePath = "http://localhost:27247/v1/mcp-auth/callback";
+    const livePath = "https://hq.platform.nimblebrain.ai/v1/mcp-auth/callback";
+
+    // Provider 1 writes a client with the stale redirect_uri.
+    const p1 = new WorkspaceOAuthProvider({
+      owner: { type: "workspace", wsId: "ws_test" },
+      serverName: "drift-srv",
+      workDir,
+      callbackUrl: stalePath,
+    });
+    await p1.saveClientInformation({ client_id: "cid-stale", redirect_uris: [stalePath] });
+    expect(await p1.clientInformation()).toBeDefined();
+
+    // Provider 2 (fresh process, current deploy) reads the same dir
+    // but with the live callback URL. The cached client is stale —
+    // expect undefined so the SDK re-registers.
+    const p2 = new WorkspaceOAuthProvider({
+      owner: { type: "workspace", wsId: "ws_test" },
+      serverName: "drift-srv",
+      workDir,
+      callbackUrl: livePath,
+    });
+    expect(await p2.clientInformation()).toBeUndefined();
+
+    // And the on-disk client.json should be gone — drift detection
+    // unlinks it so a subsequent saveClientInformation writes a fresh
+    // record matching the current redirect URI.
+    const p3 = new WorkspaceOAuthProvider({
+      owner: { type: "workspace", wsId: "ws_test" },
+      serverName: "drift-srv",
+      workDir,
+      callbackUrl: livePath,
+    });
+    expect(await p3.clientInformation()).toBeUndefined();
+  });
+
+  it("clientInformation accepts a cached client with multiple redirect_uris when one matches the current callback", async () => {
+    // Defensive — some authorization servers seed multiple URIs on a
+    // single client (test + prod). Don't false-positive drift when the
+    // current callback is on the list, just not first.
+    const cb = "https://hq.platform.nimblebrain.ai/v1/mcp-auth/callback";
+    const p = new WorkspaceOAuthProvider({
+      owner: { type: "workspace", wsId: "ws_test" },
+      serverName: "multi-uri",
+      workDir,
+      callbackUrl: cb,
+    });
+    await p.saveClientInformation({
+      client_id: "cid-multi",
+      redirect_uris: ["https://other.example.com/cb", cb],
+    });
+    expect(await p.clientInformation()).toBeDefined();
+  });
+
   it("files are written under <workDir>/workspaces/<wsId>/credentials/mcp-oauth/<serverName>/", async () => {
     const p = makeProvider(workDir, "my-server");
     const tokens: OAuthTokens = { access_token: "a", token_type: "Bearer" };
@@ -534,6 +596,10 @@ describe("WorkspaceOAuthProvider — revokeAndDeleteTokens", () => {
       callbackUrl: CALLBACK,
     });
     expect(await p2.tokens()).toBeUndefined();
+    // Disconnect MUST also drop the cached DCR client info — leaving
+    // it behind across a NB_API_URL change is the canonical
+    // `Invalid redirect_uri for OAuth client` foot-gun.
+    expect(await p2.clientInformation()).toBeUndefined();
   });
 
   it("captures OIDC id_token claims to identity.json on saveTokens", async () => {
