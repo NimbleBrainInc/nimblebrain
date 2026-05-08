@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { Hono } from "hono";
+import { securityHeaders } from "../../../src/api/middleware/security-headers.ts";
 import { mcpAuthRoutes } from "../../../src/api/routes/mcp-auth.ts";
 import type { AppContext, AppEnv } from "../../../src/api/types.ts";
 import { _clearAll, register as registerFlow } from "../../../src/tools/oauth-flow-registry.ts";
@@ -224,6 +225,59 @@ describe("GET /v1/mcp-auth/callback", () => {
 
     // Flow resolved with the code we sent
     await expect(flowPromise).resolves.toBe("auth-code-1");
+  });
+
+  test("success page CSP allowlists the inline <style> by sha256, and survives the platform default-CSP middleware", async () => {
+    // The platform default CSP is `default-src 'none'`, which blocks the
+    // success page's inline `<style>`. The route therefore must set its
+    // own CSP, and the security-headers middleware must respect it (per
+    // its `if (!c.res.headers.has(...)) set` precedent). This test wires
+    // the real middleware in front of the route and verifies both.
+    const ctx = {
+      runtime: {
+        getLifecycle: () => lifecycle,
+        getWorkDir: () => "/tmp/nb-test",
+        getAllowInsecureRemotes: () => false,
+      },
+      authOptions: { mode: { type: "dev" }, eventSink: { emit: () => {} } },
+      workspaceStore: {},
+      isLocalhost: true,
+    } as unknown as AppContext;
+    const wrapped = new Hono<AppEnv>();
+    wrapped.use("*", securityHeaders());
+    wrapped.use("*", async (c, next) => {
+      c.set("workspaceId", WS_ID);
+      await next();
+    });
+    wrapped.route("/", mcpAuthRoutes(ctx));
+
+    const state = "csp-state";
+    const flowPromise = registerFlow(state, WS_ID, "granola");
+    flowPromise.catch(() => {});
+    const cookie = `nb_oauth_state=${sha256Hex(state)}`;
+    const res = await wrapped.request(
+      `http://localhost/v1/mcp-auth/callback?code=auth-code-csp&state=${state}`,
+      { headers: { cookie } },
+    );
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    const csp = res.headers.get("Content-Security-Policy");
+    expect(csp).not.toBeNull();
+    // The route-level CSP — not the platform default — must be on the
+    // response. If this flips back to `default-src 'none'` with no
+    // style-src, the success page renders unstyled.
+    expect(csp!).toContain("style-src 'sha256-");
+    // Extract the inline style block from the served HTML and verify the
+    // CSP allowlists exactly its sha256. This pins the hash and the
+    // served bytes together: any drift (template edit without re-running
+    // tests) fails here before it ships as an unstyled page in prod.
+    const styleMatch = html.match(/<style>([\s\S]*?)<\/style>/);
+    expect(styleMatch).not.toBeNull();
+    const servedStyleHash = createHash("sha256")
+      .update(styleMatch![1])
+      .digest("base64");
+    expect(csp!).toContain(`'sha256-${servedStyleHash}'`);
+    await expect(flowPromise).resolves.toBe("auth-code-csp");
   });
 
   test("missing cookie → 400 session mismatch, flow NOT resolved", async () => {

@@ -8,6 +8,37 @@ import { requireWorkspace } from "../middleware/workspace.ts";
 import { type AppContext, type AppEnv, apiError } from "../types.ts";
 
 /**
+ * Inline CSS for the OAuth success page. Held in a module constant so the
+ * SHA-256 below is computed once over the same string the response embeds —
+ * the route's CSP allowlists exactly that hash, so any edit here that isn't
+ * paired with re-running tests will surface as an unstyled page (the hash
+ * stops matching, the browser blocks the <style>). Kept terse: this page is
+ * visible for one second before meta-refresh fires.
+ */
+const SUCCESS_PAGE_STYLE = `html,body{margin:0;height:100%}
+body{font-family:'Satoshi',system-ui,-apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f7;color:#171717;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;padding:1rem;box-sizing:border-box;-webkit-font-smoothing:antialiased}
+.h{font-family:'Erode',Georgia,serif;font-size:clamp(2.5rem,6.5vw,4.25rem);font-weight:500;letter-spacing:-0.02em;margin:0;animation:rise .35s ease-out both}
+.wm{margin-top:1.5rem;font-size:.7rem;letter-spacing:.2em;text-transform:uppercase;color:#737373;font-weight:700;display:flex;align-items:center;gap:.55rem;animation:rise .35s ease-out .08s both}
+.wm svg{width:.65rem;height:.65rem;display:block}
+.fb{position:fixed;bottom:1.25rem;font-size:.75rem;color:#525252;margin:0;font-weight:500}
+.fb a{color:#404040;text-decoration:none;border-bottom:1px dotted #a3a3a3}
+.fb a:hover{color:#d4620a;border-bottom-color:#d4620a}
+@keyframes rise{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+@media (prefers-color-scheme:dark){body{background:#0a0a09;color:#e5e5e5}.wm{color:#a3a3a3}.fb{color:#a3a3a3}.fb a{color:#d4d4d4;border-bottom-color:#525252}.fb a:hover{color:#f59542;border-bottom-color:#f59542}}
+@media (prefers-reduced-motion:reduce){.h,.wm{animation:none}}`;
+const SUCCESS_PAGE_STYLE_SHA256 = createHash("sha256").update(SUCCESS_PAGE_STYLE).digest("base64");
+/**
+ * CSP for the OAuth success page. The default platform CSP
+ * (`default-src 'none'`) blocks inline `<style>`, so the page would render
+ * unstyled in production without this override. We allowlist exactly the
+ * one inline style block we serve, by sha256, and nothing else: no scripts,
+ * no fonts, no images, no fetches. The dotted "go back" anchor needs no
+ * directive (CSP does not gate `<a href>`); the meta-refresh redirect
+ * needs no directive (CSP does not gate `http-equiv="refresh"`).
+ */
+const SUCCESS_PAGE_CSP = `default-src 'none'; style-src 'sha256-${SUCCESS_PAGE_STYLE_SHA256}'; frame-ancestors 'none'; base-uri 'none'`;
+
+/**
  * OAuth integration routes for outbound flows where NimbleBrain is the
  * client against a remote MCP server's authorization server.
  *
@@ -256,24 +287,22 @@ export function mcpAuthRoutes(ctx: AppContext) {
       returnUrl = "/settings/workspace/connectors";
     }
     const safeReturnUrl = escapeHtml(returnUrl);
-    // Inline-script injection guard. `JSON.stringify` produces a valid
-    // JS string literal but does NOT escape `</script>` or `<!--` —
-    // those sequences would break out of script context even though
-    // they don't contain HTML metacharacters that escapeHtml /
-    // protocol-allowlist catch. Encode `<` as `<` so any literal
-    // `</script>` / `<!--` in the URL becomes a benign string. The
-    // protocol allowlist above already covers `javascript:` / `data:`
-    // schemes; this closes the parallel script-context exit.
-    const safeJsReturnUrl = JSON.stringify(returnUrl).replace(/</g, "\\u003c");
+    // Override the platform-default CSP (`default-src 'none'`) for this
+    // response only. Without this the inline <style> below is blocked and
+    // the page renders unstyled in any deployment that doesn't override
+    // NB_CSP — i.e. all of them. The hash pins us to exactly the bytes
+    // we serve.
+    c.header("Content-Security-Policy", SUCCESS_PAGE_CSP);
     return c.html(
-      `<!doctype html><html><head><meta charset="utf-8"><title>Authorization complete</title>
-        <meta http-equiv="refresh" content="1;url=${safeReturnUrl}"></head>
-        <body style="font-family:system-ui,sans-serif;padding:2rem;max-width:32rem;margin:0 auto">
-          <h3 style="margin:0 0 0.5rem">Authorization complete</h3>
-          <p style="color:#555">Returning to NimbleBrain…</p>
-          <p><a href="${safeReturnUrl}">Click here if you aren't redirected →</a></p>
-          <script>setTimeout(function(){location.replace(${safeJsReturnUrl});},800);</script>
-        </body></html>`,
+      `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Authorization complete</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="refresh" content="1;url=${safeReturnUrl}">
+<style>${SUCCESS_PAGE_STYLE}</style></head>
+<body>
+<h1 class="h">You're in.</h1>
+<div class="wm"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 0L12 6L6 12L0 6Z" fill="#d4620a"/></svg>NimbleBrain</div>
+<p class="fb">not redirecting? <a href="${safeReturnUrl}">go back &rarr;</a></p>
+</body></html>`,
     );
   });
 
