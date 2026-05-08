@@ -1,27 +1,38 @@
 /**
- * Hardcoded curated stdio bundle list — the NimbleBrain-blessed set of
+ * Curated stdio bundle list — the NimbleBrain-blessed set of
  * `@nimblebraininc/*` mpak bundles surfaced on the Browse page.
  *
  * Why this exists separate from `catalog.ts`:
  *   - `catalog.ts` carries remote-OAuth services (Asana, HubSpot, ...).
  *     Different shape (URL + OAuth scopes) and different install path.
  *   - This file carries stdio bundles installed via the mpak SDK.
- *     They're presented in the same Browse list (as `mpak-bundle`-kind
+ *     They surface in the same Browse list (as `mpak-bundle`-kind
  *     `DirectoryEntry`s) and end up calling `lifecycle.installNamed`,
  *     which uses mpak's bundle cache + registry under the hood.
  *
- * The list is intentionally hand-curated rather than auto-discovered —
- * we want explicit control over what shows up in the UI (private
- * bundles excluded; deprecated entries can be cut without surprise).
+ * The bundled list is intentionally hand-curated rather than
+ * auto-discovered — explicit control over what shows up in the UI
+ * (private bundles excluded, deprecated entries can be cut without
+ * surprise).
  *
  * Add a new bundle by:
  *   1. Releasing it to mpak with the published name `@nimblebraininc/<id>`.
- *   2. Appending an entry below.
+ *   2. Appending an entry to `stdio-catalog.yaml`.
  *
  * Bundles published privately (e.g. tenant-specific Synapse apps) stay
  * out of this list — they install via the chat agent's `bundleManagement`
  * tool, not Browse.
+ *
+ * Distribution model mirrors the OAuth catalog:
+ *   1. `stdio-catalog.yaml` (this directory) ships with the platform.
+ *   2. `NB_STDIO_CATALOG_PATH` env var (optional) points at a YAML or
+ *      JSON file that **fully replaces** the default. Same Replace-not-
+ *      Merge semantics as the OAuth catalog.
  */
+
+import { existsSync, readFileSync } from "node:fs";
+import { extname, join } from "node:path";
+import { log } from "../cli/log.ts";
 
 export interface StdioBundleEntry {
   /** Stable id used as the catalog id and serverName at install time. */
@@ -38,267 +49,174 @@ export interface StdioBundleEntry {
   iconUrl?: string;
 }
 
-export const STDIO_BUNDLES: StdioBundleEntry[] = [
-  {
-    id: "abstract",
-    name: "Abstract",
-    description:
-      "Abstract API server with email validation, phone validation, IP geolocation, and more",
-    bundleName: "@nimblebraininc/abstract",
-    tags: ["mcp-server", "needs-config"],
-  },
-  {
-    id: "aws-ses",
-    name: "AWS SES",
-    description: "Send emails using AWS Simple Email Service (SES)",
-    bundleName: "@nimblebraininc/aws-ses",
-    tags: ["mcp-server", "needs-config"],
-  },
-  {
-    id: "bash",
-    name: "Bash",
-    description: "Execute bash commands via MCP",
-    bundleName: "@nimblebraininc/bash",
-    tags: ["mcp-server"],
-  },
-  {
-    id: "brave-search",
-    name: "Brave Search",
-    description: "Web search using the Brave Search API",
-    bundleName: "@nimblebraininc/brave-search",
-    tags: ["mcp-server", "needs-config"],
-  },
-  {
-    id: "clickhouse",
-    name: "ClickHouse",
-    description:
-      "ClickHouse database connectivity with read-only SQL queries, schema exploration, and chDB support",
-    bundleName: "@nimblebraininc/clickhouse",
-    tags: ["mcp-server", "needs-config"],
-  },
-  {
-    id: "deepl",
-    name: "DeepL",
-    description: "DeepL translation API with comprehensive translation tools",
-    bundleName: "@nimblebraininc/deepl",
-    tags: ["mcp-server", "needs-config"],
-  },
-  {
-    id: "echo",
-    name: "Echo",
-    description: "Echo server for testing and debugging MCP connections",
-    bundleName: "@nimblebraininc/echo",
-    tags: ["mcp-server"],
-  },
-  {
-    id: "finnhub",
-    name: "Finnhub",
-    description: "Financial market data and news MCP service powered by Finnhub API",
-    bundleName: "@nimblebraininc/finnhub",
-    tags: ["mcp-server", "needs-config"],
-  },
-  {
-    id: "folk",
-    name: "Folk",
-    description: "Folk CRM server for managing people, companies, notes, and reminders",
-    bundleName: "@nimblebraininc/folk",
-    tags: ["mcp-server", "needs-config"],
-  },
-  {
-    id: "git-worktree",
-    name: "Git Worktree",
-    description:
-      "Git worktree manager for isolated workspaces with branch lifecycle, risk classification, and merge control",
-    bundleName: "@nimblebraininc/git-worktree",
-    tags: ["mcp-server"],
-  },
-  {
-    id: "github",
-    name: "GitHub",
-    description:
-      "GitHub MCP server for repository management, issues, PRs, and workflow automation",
-    bundleName: "@nimblebraininc/github",
-    tags: ["mcp-server", "needs-config"],
-  },
-  {
-    id: "gohighlevel",
-    name: "GoHighLevel",
-    description: "MCP server for GoHighLevel CRM contact management",
-    bundleName: "@nimblebraininc/gohighlevel",
-    tags: ["mcp-server", "needs-config"],
-  },
-  {
-    id: "google-places",
-    name: "Google Places",
-    description:
-      "Google Places API MCP server — search businesses, extract websites, phone numbers, addresses, and Google Maps URLs",
-    bundleName: "@nimblebraininc/google-places",
-    tags: ["mcp-server", "needs-config"],
-  },
-  {
-    id: "hunter",
-    name: "Hunter",
-    description: "MCP server for Hunter.io — email discovery, verification, and enrichment",
-    bundleName: "@nimblebraininc/hunter",
-    tags: ["mcp-server", "needs-config"],
-  },
-  {
-    id: "ipinfo",
-    name: "IPInfo",
-    description: "IP intelligence server with geolocation, ASN, company, and privacy detection",
-    bundleName: "@nimblebraininc/ipinfo",
-    tags: ["mcp-server", "needs-config"],
-  },
-  {
-    id: "mcp-massive",
-    name: "Massive",
-    description:
-      "Financial market data, technical indicators, and SEC filings MCP service powered by Massive API",
-    bundleName: "@nimblebraininc/mcp-massive",
-    tags: ["mcp-server", "needs-config"],
-  },
-  {
-    id: "mcp-quiver",
-    name: "Quiver",
-    description: "Political and alternative financial data from Quiver Quantitative",
-    bundleName: "@nimblebraininc/mcp-quiver",
-    tags: ["mcp-server", "needs-config"],
-  },
-  {
-    id: "nationalparks",
-    name: "National Parks",
-    description:
-      "MCP server for National Parks Service API — search parks, get details, alerts, campgrounds, events, and visitor centers",
-    bundleName: "@nimblebraininc/nationalparks",
-    tags: ["mcp-server", "needs-config"],
-  },
-  {
-    id: "newsapi",
-    name: "NewsAPI",
-    description: "Search news articles and top headlines using the NewsAPI",
-    bundleName: "@nimblebraininc/newsapi",
-    tags: ["mcp-server", "needs-config"],
-  },
-  {
-    id: "openweathermap",
-    name: "OpenWeatherMap",
-    description: "OpenWeatherMap MCP Server for weather data, forecasts, alerts, and air quality",
-    bundleName: "@nimblebraininc/openweathermap",
-    tags: ["mcp-server", "needs-config"],
-  },
-  {
-    id: "pdfco",
-    name: "PDF.co",
-    description: "PDF.co MCP Server with comprehensive PDF manipulation and OpenAPI support",
-    bundleName: "@nimblebraininc/pdfco",
-    tags: ["mcp-server", "needs-config"],
-  },
-  {
-    id: "postgres",
-    name: "Postgres",
-    description:
-      "PostgreSQL MCP server with AI-powered tuning, index optimization, and database health analysis",
-    bundleName: "@nimblebraininc/postgres",
-    tags: ["mcp-server", "needs-config"],
-  },
-  {
-    id: "registry-tools",
-    name: "Registry Tools",
-    description: "Search and resolve MCP server packages from the mpak registry",
-    bundleName: "@nimblebraininc/registry-tools",
-    tags: ["mcp-server", "needs-config"],
-  },
-  {
-    id: "synapse-astro-editor",
-    name: "Astro Editor",
-    description:
-      "Natural-language editor for Astro websites. Point the agent at a GitHub repo; chat drives every edit (text, JSX, blog posts, image uploads).",
-    bundleName: "@nimblebraininc/synapse-astro-editor",
-    tags: ["synapse-app", "needs-config"],
-  },
-  {
-    id: "synapse-collateral",
-    name: "Collateral Studio",
-    description:
-      "Typst-powered document generation with brand-aware templates, live preview, and conversational iteration",
-    bundleName: "@nimblebraininc/synapse-collateral",
-    tags: ["synapse-app"],
-  },
-  {
-    id: "synapse-crm",
-    name: "CRM",
-    description:
-      "Lightweight contact and deal tracker with agent-driven follow-ups and pipeline reviews.",
-    bundleName: "@nimblebraininc/synapse-crm",
-    tags: ["synapse-app"],
-  },
-  {
-    id: "synapse-db-query",
-    name: "DB Query",
-    description: "Natural-language Postgres query app with dynamic Vega-Lite visualizations",
-    bundleName: "@nimblebraininc/synapse-db-query",
-    tags: ["synapse-app", "needs-config"],
-  },
-  {
-    id: "synapse-hello",
-    name: "Hello",
-    description: "Hello World MCP App for NimbleBrain Platform",
-    bundleName: "@nimblebraininc/synapse-hello",
-    tags: ["synapse-app"],
-  },
-  {
-    id: "synapse-mcp-dev-summit",
-    name: "MCP Dev Summit",
-    description:
-      "Conference companion for MCP Dev Summit NA 2026 — search sessions, build a personal schedule, capture notes, and get AI-powered recommendations",
-    bundleName: "@nimblebraininc/synapse-mcp-dev-summit",
-    tags: ["synapse-app"],
-  },
-  {
-    id: "synapse-research",
-    name: "Research",
-    description:
-      "Research runs powered by MCP tasks. Kick off long-running research and track progress in real time.",
-    bundleName: "@nimblebraininc/synapse-research",
-    tags: ["synapse-app", "needs-config"],
-  },
-  {
-    id: "synapse-signal-graph",
-    name: "Signal Graph",
-    description:
-      "Political-financial intelligence app that cross-references congressional trades, insider transactions, lobbying, and government contracts.",
-    bundleName: "@nimblebraininc/synapse-signal-graph",
-    tags: ["synapse-app"],
-  },
-  {
-    id: "synapse-todo-board",
-    name: "Todo Board",
-    description:
-      "Kanban-style task manager with board and table views, AI-powered triage, and daily reviews",
-    bundleName: "@nimblebraininc/synapse-todo-board",
-    tags: ["synapse-app"],
-  },
-  {
-    id: "text-utils",
-    name: "Text Utils",
-    description:
-      "Text manipulation toolkit with reverse, case conversion, slugify, URL extraction, truncation, and token counting",
-    bundleName: "@nimblebraininc/text-utils",
-    tags: ["mcp-server"],
-  },
-  {
-    id: "webfetch",
-    name: "WebFetch",
-    description: "Fetch web pages and answer questions about their content using Claude",
-    bundleName: "@nimblebraininc/webfetch",
-    tags: ["mcp-server", "needs-config"],
-  },
-  {
-    id: "workspace-tools",
-    name: "Workspace Tools",
-    description:
-      "Git-backed workspace tools for AI agents: file ops, commits, search, and skill validation",
-    bundleName: "@nimblebraininc/workspace-tools",
-    tags: ["mcp-server", "needs-config"],
-  },
-];
+let _defaultBundlesCache: StdioBundleEntry[] | undefined;
+
+/**
+ * Reads the bundled `stdio-catalog.yaml` next to this source file and
+ * returns the raw entries (top-level `bundles:` list). Validation
+ * happens in `loadStdioBundles()`.
+ */
+export function readDefaultStdioCatalogYaml(): unknown[] {
+  const path = join(import.meta.dir, "stdio-catalog.yaml");
+  const text = readFileSync(path, "utf-8");
+  const parsed = Bun.YAML.parse(text) as { bundles?: unknown };
+  if (!parsed || !Array.isArray(parsed.bundles)) {
+    throw new Error(`[stdio-catalog] ${path}: top-level 'bundles' must be a list`);
+  }
+  return parsed.bundles;
+}
+
+/**
+ * Resolution order:
+ *   1. `NB_STDIO_CATALOG_PATH` env var, when set + file exists. Fully
+ *      replaces the default. Accepts YAML or JSON (extension-sniffed).
+ *   2. The bundled `stdio-catalog.yaml` (cached after first read).
+ *
+ * Validation drops malformed entries with a logged warning; the
+ * surviving subset is returned in original order. Top-level shape
+ * errors fall back to the bundled default.
+ */
+export function loadStdioBundles(): StdioBundleEntry[] {
+  const overridePath = process.env.NB_STDIO_CATALOG_PATH;
+  if (overridePath) {
+    if (!existsSync(overridePath)) {
+      log.warn(
+        `[stdio-catalog] NB_STDIO_CATALOG_PATH=${overridePath} not found — using bundled catalog`,
+      );
+      return getDefaultBundles();
+    }
+    const raw = readOverride(overridePath);
+    if (raw === undefined) return getDefaultBundles();
+    return validateStdioBundles(raw, overridePath);
+  }
+  return getDefaultBundles();
+}
+
+function getDefaultBundles(): StdioBundleEntry[] {
+  if (_defaultBundlesCache) return _defaultBundlesCache;
+  _defaultBundlesCache = validateStdioBundles(
+    readDefaultStdioCatalogYaml(),
+    "<bundled stdio-catalog.yaml>",
+  );
+  return _defaultBundlesCache;
+}
+
+function readOverride(path: string): unknown[] | undefined {
+  let text: string;
+  try {
+    text = readFileSync(path, "utf-8");
+  } catch (err) {
+    log.warn(
+      `[stdio-catalog] failed to read ${path}: ${err instanceof Error ? err.message : String(err)} — using bundled catalog`,
+    );
+    return undefined;
+  }
+  let parsed: unknown;
+  try {
+    const ext = extname(path).toLowerCase();
+    if (ext === ".yaml" || ext === ".yml") {
+      const obj = Bun.YAML.parse(text) as { bundles?: unknown };
+      parsed = obj?.bundles;
+    } else {
+      parsed = JSON.parse(text);
+    }
+  } catch (err) {
+    log.warn(
+      `[stdio-catalog] failed to parse ${path}: ${err instanceof Error ? err.message : String(err)} — using bundled catalog`,
+    );
+    return undefined;
+  }
+  if (!Array.isArray(parsed)) {
+    log.warn(`[stdio-catalog] ${path} did not yield an array of entries — using bundled catalog`);
+    return undefined;
+  }
+  return parsed;
+}
+
+/**
+ * Validate a stdio-catalog candidate. Drops malformed entries (with
+ * logged warning) and rejects duplicate ids. Mirrors the shape of
+ * `validateCatalog` in `load-catalog.ts`.
+ *
+ * Rules per entry:
+ *   - id: kebab-case slug (matches `[a-z0-9](?:[a-z0-9-]*[a-z0-9])?`)
+ *   - name, description: non-empty strings
+ *   - bundleName: scoped npm-style name starting with `@`
+ *   - tags, iconUrl: optional, dropped silently when wrong shape
+ *   - iconUrl: when present, must be http(s) absolute or `/`-relative
+ */
+export function validateStdioBundles(
+  raw: unknown[],
+  source: string = "<inline>",
+): StdioBundleEntry[] {
+  const ID_RE = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
+  const out: StdioBundleEntry[] = [];
+  const seenIds = new Set<string>();
+
+  for (let i = 0; i < raw.length; i++) {
+    const candidate = raw[i] as Partial<StdioBundleEntry> | undefined;
+    const tag = `${source}[${i}${candidate?.id ? `:${candidate.id}` : ""}]`;
+
+    if (!candidate || typeof candidate !== "object") {
+      log.warn(`[stdio-catalog] ${tag} dropped — not an object`);
+      continue;
+    }
+    if (typeof candidate.id !== "string" || !ID_RE.test(candidate.id)) {
+      log.warn(`[stdio-catalog] ${tag} dropped — id missing or invalid (must match ${ID_RE})`);
+      continue;
+    }
+    if (seenIds.has(candidate.id)) {
+      log.warn(`[stdio-catalog] ${tag} dropped — duplicate id`);
+      continue;
+    }
+    if (typeof candidate.name !== "string" || candidate.name.length === 0) {
+      log.warn(`[stdio-catalog] ${tag} dropped — name missing`);
+      continue;
+    }
+    if (typeof candidate.description !== "string" || candidate.description.length === 0) {
+      log.warn(`[stdio-catalog] ${tag} dropped — description missing`);
+      continue;
+    }
+    if (typeof candidate.bundleName !== "string" || !candidate.bundleName.startsWith("@")) {
+      log.warn(
+        `[stdio-catalog] ${tag} dropped — bundleName must be a scoped package (e.g. "@org/name")`,
+      );
+      continue;
+    }
+    if (candidate.iconUrl !== undefined && !isSafeIconUrl(candidate.iconUrl)) {
+      log.warn(`[stdio-catalog] ${tag} dropped — iconUrl must be http(s) absolute or '/'-relative`);
+      continue;
+    }
+
+    seenIds.add(candidate.id);
+    out.push({
+      id: candidate.id,
+      name: candidate.name,
+      description: candidate.description,
+      bundleName: candidate.bundleName,
+      ...(Array.isArray(candidate.tags) && candidate.tags.every((t) => typeof t === "string")
+        ? { tags: candidate.tags }
+        : {}),
+      ...(typeof candidate.iconUrl === "string" ? { iconUrl: candidate.iconUrl } : {}),
+    });
+  }
+
+  return out;
+}
+
+/**
+ * iconUrl protocol allowlist: http(s) absolute or `/`-relative.
+ * Same threat model as the OAuth catalog — a malicious / misconfigured
+ * stdio ConfigMap entry could otherwise inject `javascript:` /
+ * `data:` URLs into the Browse page's `<img src>`.
+ */
+function isSafeIconUrl(url: string): boolean {
+  if (typeof url !== "string") return false;
+  if (url.startsWith("/")) return true;
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}

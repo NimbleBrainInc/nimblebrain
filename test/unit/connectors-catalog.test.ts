@@ -1,20 +1,30 @@
 import { describe, expect, test } from "bun:test";
-import { DEFAULT_CONNECTOR_CATALOG } from "../../src/connectors/catalog.ts";
-import { validateCatalog } from "../../src/connectors/load-catalog.ts";
+import { readDefaultCatalogYaml } from "../../src/connectors/catalog.ts";
+import { loadCatalog, validateCatalog } from "../../src/connectors/load-catalog.ts";
 
-describe("DEFAULT_CONNECTOR_CATALOG", () => {
-  test("validates against the validator (sanity check)", () => {
-    const v = validateCatalog(DEFAULT_CONNECTOR_CATALOG);
-    expect(v.length).toBe(DEFAULT_CONNECTOR_CATALOG.length);
+describe("bundled catalog.yaml", () => {
+  test("parses + validates with zero drops", () => {
+    const raw = readDefaultCatalogYaml();
+    const validated = validateCatalog(raw, "<test:bundled>");
+    expect(validated.length).toBe(raw.length);
+  });
+
+  test("loadCatalog() returns the bundled list when NB_CATALOG_PATH is unset", () => {
+    // Test runs without NB_CATALOG_PATH so this exercises the
+    // bundled-catalog code path end-to-end.
+    expect(process.env.NB_CATALOG_PATH).toBeUndefined();
+    const v = loadCatalog();
+    expect(v.length).toBeGreaterThan(0);
   });
 
   test("all ids are unique", () => {
-    const ids = DEFAULT_CONNECTOR_CATALOG.map((e) => e.id);
+    const v = loadCatalog();
+    const ids = v.map((e) => e.id);
     expect(new Set(ids).size).toBe(ids.length);
   });
 
   test("static-auth entries all have operatorSetup with clientSecretKey", () => {
-    for (const entry of DEFAULT_CONNECTOR_CATALOG) {
+    for (const entry of loadCatalog()) {
       if (entry.auth === "static") {
         expect(entry.operatorSetup).toBeDefined();
         expect(entry.operatorSetup?.clientSecretKey.length).toBeGreaterThan(0);

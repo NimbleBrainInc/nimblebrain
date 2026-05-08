@@ -1,5 +1,5 @@
 import { loadCatalog } from "../connectors/load-catalog.ts";
-import { STDIO_BUNDLES } from "../connectors/stdio-catalog.ts";
+import { loadStdioBundles } from "../connectors/stdio-catalog.ts";
 import type {
   ConnectorRegistry,
   DirectoryEntry,
@@ -68,8 +68,8 @@ export class CuratedRegistry implements ConnectorRegistry {
     // Curated stdio bundles. Workspace-default scope — every stdio
     // bundle is workspace-shared today (no per-user mpak install path
     // exists yet). The install dispatcher in connector-tools resolves
-    // by id to the same STDIO_BUNDLES list.
-    for (const s of STDIO_BUNDLES) {
+    // by id to the same bundle list.
+    for (const s of loadStdioBundles()) {
       out.push({
         id: s.id,
         registryId: this.config.id,

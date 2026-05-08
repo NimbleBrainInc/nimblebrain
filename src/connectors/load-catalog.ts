@@ -1,14 +1,18 @@
 import { existsSync, readFileSync } from "node:fs";
+import { extname } from "node:path";
 import { log } from "../cli/log.ts";
 import { validateAdditionalAuthorizationParams } from "../tools/workspace-oauth-provider.ts";
-import { type ConnectorCatalogEntry, DEFAULT_CONNECTOR_CATALOG } from "./catalog.ts";
+import { type ConnectorCatalogEntry, readDefaultCatalogYaml } from "./catalog.ts";
 
 /**
  * Load the connector catalog. Resolution order:
  *
- *   1. `NB_CATALOG_PATH` env var, when set + file exists. The JSON at
- *      that path **fully replaces** the default catalog.
- *   2. `DEFAULT_CONNECTOR_CATALOG` (in code).
+ *   1. `NB_CATALOG_PATH` env var, when set + file exists. The YAML or
+ *      JSON at that path **fully replaces** the bundled catalog. The
+ *      file format is sniffed from the extension (`.yaml` / `.yml` →
+ *      YAML, anything else → JSON). YAML files use the same top-level
+ *      shape as the bundled `catalog.yaml` (`connectors:` list).
+ *   2. The bundled `catalog.yaml` shipped with the platform.
  *
  * Why **replace** rather than merge by id:
  *
@@ -16,37 +20,74 @@ import { type ConnectorCatalogEntry, DEFAULT_CONNECTOR_CATALOG } from "./catalog
  *     `disabled: true` a valid override? what about partial overrides
  *     of a single field?). Replace keeps the contract obvious — what
  *     the operator mounts is the entire catalog.
- *   - Operators who want to start from defaults can copy the default
- *     out of a running container (kubectl cp from src/connectors/catalog.ts),
+ *   - Operators who want to start from defaults can copy the bundled
+ *     `src/connectors/catalog.yaml` out of the running container,
  *     edit, and mount.
  *
  * Validation: malformed entries are dropped with a logged warning that
  * names the entry id (or its index when no id is present). Duplicate
- * ids are rejected (second one wins a logged warning, first one
- * keeps). The whole catalog falls back to the default if the JSON is
- * unparseable or the top-level shape isn't an array.
+ * ids are rejected (first one keeps; second one warns + drops). The
+ * whole catalog falls back to the bundled default if the file is
+ * unparseable or the top-level shape isn't a list.
  */
 export function loadCatalog(): ConnectorCatalogEntry[] {
   const overridePath = process.env.NB_CATALOG_PATH;
-  if (!overridePath) return DEFAULT_CONNECTOR_CATALOG;
+  if (!overridePath) return getBundledCatalog();
   if (!existsSync(overridePath)) {
-    log.warn(`[catalog] NB_CATALOG_PATH=${overridePath} not found — using default catalog`);
-    return DEFAULT_CONNECTOR_CATALOG;
+    log.warn(`[catalog] NB_CATALOG_PATH=${overridePath} not found — using bundled catalog`);
+    return getBundledCatalog();
   }
-  let raw: unknown;
+  const raw = readOverride(overridePath);
+  if (raw === undefined) return getBundledCatalog();
+  return validateCatalog(raw, overridePath);
+}
+
+let _bundledCache: ConnectorCatalogEntry[] | undefined;
+
+function getBundledCatalog(): ConnectorCatalogEntry[] {
+  if (_bundledCache) return _bundledCache;
+  _bundledCache = validateCatalog(readDefaultCatalogYaml(), "<bundled catalog.yaml>");
+  return _bundledCache;
+}
+
+/**
+ * Read the override file and return the raw entry list. Returns
+ * `undefined` on any read / parse / shape failure (callers fall back
+ * to the bundled catalog and a warning is logged inline).
+ */
+function readOverride(path: string): unknown[] | undefined {
+  let text: string;
   try {
-    raw = JSON.parse(readFileSync(overridePath, "utf-8"));
+    text = readFileSync(path, "utf-8");
   } catch (err) {
     log.warn(
-      `[catalog] failed to parse ${overridePath}: ${err instanceof Error ? err.message : String(err)} — using default catalog`,
+      `[catalog] failed to read ${path}: ${err instanceof Error ? err.message : String(err)} — using bundled catalog`,
     );
-    return DEFAULT_CONNECTOR_CATALOG;
+    return undefined;
   }
-  if (!Array.isArray(raw)) {
-    log.warn(`[catalog] ${overridePath} is not a JSON array — using default catalog`);
-    return DEFAULT_CONNECTOR_CATALOG;
+  let parsed: unknown;
+  try {
+    const ext = extname(path).toLowerCase();
+    if (ext === ".yaml" || ext === ".yml") {
+      // YAML override matches the bundled file's shape: top-level
+      // `connectors:` list. JSON override is a bare array (back-compat
+      // with the original NB_CATALOG_PATH JSON contract).
+      const obj = Bun.YAML.parse(text) as { connectors?: unknown };
+      parsed = obj?.connectors;
+    } else {
+      parsed = JSON.parse(text);
+    }
+  } catch (err) {
+    log.warn(
+      `[catalog] failed to parse ${path}: ${err instanceof Error ? err.message : String(err)} — using bundled catalog`,
+    );
+    return undefined;
   }
-  return validateCatalog(raw as unknown[], overridePath);
+  if (!Array.isArray(parsed)) {
+    log.warn(`[catalog] ${path} did not yield an array of entries — using bundled catalog`);
+    return undefined;
+  }
+  return parsed;
 }
 
 /**

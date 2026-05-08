@@ -5,11 +5,12 @@
  *
  * Distribution model:
  *
- *   1. `DEFAULT_CONNECTOR_CATALOG` (this file) ships with the platform —
+ *   1. `catalog.yaml` (this directory) ships with the platform —
  *      curated by NimbleBrain, vetted entries, sensible scope hints.
- *   2. `NB_CATALOG_PATH` env var (optional) points at a JSON file
- *      (typically a Kubernetes ConfigMap) that **fully replaces** the
- *      default. Operators with custom needs ship their own catalog
+ *      Read at boot via `loadCatalog()` (see `load-catalog.ts`).
+ *   2. `NB_CATALOG_PATH` env var (optional) points at a YAML or JSON
+ *      file (typically a Kubernetes ConfigMap) that **fully replaces**
+ *      the default. Operators with custom needs ship their own catalog
  *      without an app release. Replace, not merge — see `load-catalog.ts`
  *      for the rationale.
  *   3. Per-workspace `connectorsAllowList` filter narrows the visible
@@ -27,6 +28,9 @@
  * existing repo. Self-host deployments behind firewalls can override
  * via the catalog's `iconUrl` field (any absolute URL works).
  */
+
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 /** A single entry in the connectors catalog. */
 export interface ConnectorCatalogEntry {
@@ -104,127 +108,21 @@ export interface ConnectorCatalogEntry {
 }
 
 /**
- * Default catalog shipped with the platform. Edit this list to add /
- * remove / update entries. Operators who want a smaller or larger set
- * mount their own catalog via `NB_CATALOG_PATH` (full replacement; see
- * `load-catalog.ts`).
+ * Reads the bundled `catalog.yaml` next to this source file and
+ * returns the raw entries. Validation happens in `load-catalog.ts`,
+ * which is the single entry point callers should use.
  *
- * Convention: keep ordering alphabetical by id within scope groupings
- * (workspace-shared first, user-scoped second) so diffs read clean.
+ * Kept as an exported function (rather than a top-level `const` array)
+ * so module load doesn't do filesystem I/O until something asks for
+ * the catalog — keeps test imports cheap and matches the override
+ * loader's lazy-read shape.
  */
-export const DEFAULT_CONNECTOR_CATALOG: ConnectorCatalogEntry[] = [
-  // ── Workspace-scoped (shared organizational identity) ──────────
-  {
-    id: "asana",
-    name: "Asana",
-    description: "Tasks, projects, and team workflows",
-    iconUrl: "https://static.nimblebrain.ai/icons/asana.svg",
-    url: "https://mcp.asana.com/v2/mcp",
-    auth: "static",
-    defaultScope: "workspace",
-    operatorSetup: {
-      portalUrl: "https://app.asana.com/0/my-apps",
-      hint: "Create an OAuth app in Asana developer portal, copy client_id + client_secret",
-      clientSecretKey: "asana.client_secret",
-    },
-    tags: ["tasks", "projects"],
-  },
-  {
-    id: "notion-org",
-    name: "Notion (org)",
-    description: "Read & write workspace pages — shared workspace identity",
-    iconUrl: "https://static.nimblebrain.ai/icons/notion.svg",
-    url: "https://mcp.notion.com/mcp",
-    auth: "dcr",
-    defaultScope: "workspace",
-    tags: ["docs", "knowledge"],
-  },
-
-  // ── Member-scoped (personal account per user) ─────────────────
-  {
-    id: "gmail",
-    name: "Gmail",
-    description: "Read, send, label your email",
-    iconUrl: "https://static.nimblebrain.ai/icons/gmail.svg",
-    url: "https://gmailmcp.googleapis.com/mcp/v1",
-    auth: "static",
-    defaultScope: "user",
-    requiredScopes: [
-      "https://www.googleapis.com/auth/gmail.readonly",
-      "https://www.googleapis.com/auth/gmail.send",
-    ],
-    additionalAuthorizationParams: {
-      access_type: "offline",
-      prompt: "consent",
-    },
-    operatorSetup: {
-      portalUrl: "https://console.cloud.google.com/apis/credentials",
-      hint: "Create an OAuth 2.0 Client ID (web application) in Google Cloud Console; add the NimbleBrain callback URL as an authorized redirect URI",
-      clientSecretKey: "google.client_secret",
-    },
-    tags: ["email", "google"],
-  },
-  {
-    id: "granola",
-    name: "Granola",
-    description: "Personal meeting notes and transcripts",
-    iconUrl: "https://static.nimblebrain.ai/icons/granola.svg",
-    url: "https://mcp.granola.ai/mcp",
-    auth: "dcr",
-    defaultScope: "user",
-    tags: ["meetings", "notes"],
-  },
-  {
-    id: "hubspot",
-    name: "HubSpot",
-    description: "CRM contacts, deals, and pipeline",
-    iconUrl: "https://static.nimblebrain.ai/icons/hubspot.svg",
-    url: "https://mcp.hubspot.com",
-    auth: "static",
-    defaultScope: "user",
-    operatorSetup: {
-      portalUrl:
-        "https://developers.hubspot.com/docs/apps/developer-platform/build-apps/integrate-with-the-remote-hubspot-mcp-server",
-      hint: "Create an MCP Auth App in HubSpot Developer Portal; copy client_id + client_secret",
-      clientSecretKey: "hubspot.client_secret",
-    },
-    tags: ["crm", "sales"],
-  },
-  {
-    id: "outlook",
-    name: "Outlook",
-    description: "Microsoft 365 mail",
-    iconUrl: "https://static.nimblebrain.ai/icons/outlook.svg",
-    url: "https://mcp.microsoft.com/mail",
-    auth: "static",
-    defaultScope: "user",
-    requiredScopes: [
-      "https://graph.microsoft.com/Mail.ReadWrite",
-      "https://graph.microsoft.com/Mail.Send",
-      "offline_access",
-    ],
-    operatorSetup: {
-      portalUrl:
-        "https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade",
-      hint: "Register a multi-tenant app in Entra ID; add Microsoft Graph delegated permissions; copy client_id + client_secret",
-      clientSecretKey: "entra.client_secret",
-    },
-    tags: ["email", "microsoft"],
-  },
-  {
-    id: "zoom",
-    name: "Zoom",
-    description: "Meetings, recordings, contacts",
-    iconUrl: "https://static.nimblebrain.ai/icons/zoom.svg",
-    url: "https://mcp.zoom.us/mcp",
-    auth: "static",
-    defaultScope: "user",
-    requiredScopes: ["meeting:read", "recording:read"],
-    operatorSetup: {
-      portalUrl: "https://marketplace.zoom.us/develop/create",
-      hint: "Create an OAuth User-Managed app in Zoom Marketplace; add scopes; copy client_id + client_secret",
-      clientSecretKey: "zoom.client_secret",
-    },
-    tags: ["meetings", "video"],
-  },
-];
+export function readDefaultCatalogYaml(): unknown[] {
+  const path = join(import.meta.dir, "catalog.yaml");
+  const text = readFileSync(path, "utf-8");
+  const parsed = Bun.YAML.parse(text) as { connectors?: unknown };
+  if (!parsed || !Array.isArray(parsed.connectors)) {
+    throw new Error(`[catalog] ${path}: top-level 'connectors' must be a list`);
+  }
+  return parsed.connectors;
+}
