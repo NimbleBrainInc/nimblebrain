@@ -1,4 +1,5 @@
 import { WORKSPACE_PRINCIPAL_ID } from "../bundles/connection.ts";
+import { log } from "../cli/log.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import type { ToolCall, ToolResult, ToolRouter, ToolSchema } from "../engine/types.ts";
 import type { PermissionStore } from "../permissions/permission-store.ts";
@@ -102,7 +103,27 @@ export class ToolRegistry implements ToolRouter {
   async availableTools(): Promise<ToolSchema[]> {
     const all: ToolSchema[] = [];
     for (const source of this.sources.values()) {
-      const tools = await source.tools();
+      // Per-source error containment. A connector in `starting` /
+      // `pending_auth` / `dead` state has `this.client === null` and
+      // throws `"<name>" not started` from McpSource.tools(). Without
+      // this guard, ONE stuck connector's enumeration error rejects
+      // the whole call and every chat turn fails — exactly the
+      // platform-level outage shape we don't want from one bad
+      // workspace source. Surface the failure in the source's own
+      // status (Configure page renders it from BundleInstance.state)
+      // and leave the chat usable.
+      let tools: Tool[];
+      try {
+        tools = await source.tools();
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        log.warn(
+          `[registry] availableTools: skipping source "${source.name}" — ${msg}. ` +
+            `The bundle's own state surface (Connectors page) reflects this; the chat list ` +
+            `omits its tools until the source recovers.`,
+        );
+        continue;
+      }
       for (const tool of tools) {
         all.push({
           name: tool.name,
