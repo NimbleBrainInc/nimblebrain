@@ -32,7 +32,13 @@ export function OAuthConnectionSection({
   if (installed.state !== "running") return null;
 
   const onDisconnect = async () => {
-    if (!confirm(`Disconnect "${installed.catalog?.name ?? installed.serverName}"?`)) return;
+    // No confirm() here. Disconnect is reversible — Connect re-runs
+    // the OAuth flow and re-establishes the session. Browsers also
+    // suppress window.confirm() after a few uses in a session, which
+    // makes the destructive-confirm pattern unreliable for buttons
+    // the user might click repeatedly. Uninstall keeps its confirm
+    // (that one drops credentials + permissions, not recoverable
+    // with a single click).
     setActing(true);
     setError(null);
     try {
