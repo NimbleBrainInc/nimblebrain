@@ -595,6 +595,67 @@ describe("manage_connectors.install (static-auth)", () => {
   });
 });
 
+// ─────────────────────────────────────────────────────────────────────
+// install — stdio (curated mpak bundle) dispatch
+// ─────────────────────────────────────────────────────────────────────
+
+describe("manage_connectors.install (stdio dispatch)", () => {
+  let h: Harness;
+
+  beforeEach(async () => {
+    h = buildHarness();
+    await provisionWorkspace(h);
+  });
+
+  afterEach(() => {
+    rmSync(h.workDir, { recursive: true, force: true });
+  });
+
+  test("unknown id falls through to not-found (no stdio nor remote-oauth match)", async () => {
+    const tool = buildTool(h, ADMIN_USER);
+    const result = await tool.handler({ action: "install", catalogId: "no-such-bundle-anywhere" });
+    expect(result.isError).toBe(true);
+    const text = (result.content?.[0] as { text?: string } | undefined)?.text ?? "";
+    expect(text).toContain("not found");
+  });
+
+  test("known stdio id reaches installBundleInWorkspace dispatch", async () => {
+    // We can't actually fetch + spawn a real mpak bundle in a unit test
+    // (no network, no subprocess), so the dispatch lands inside
+    // installBundleInWorkspace and surfaces a "Failed to install"
+    // error. The presence of that prefix is the contract — it proves
+    // we routed past the catalog-not-found gate into the stdio install
+    // path. The actual fetch+spawn is exercised by the smoke layer.
+    const tool = buildTool(h, ADMIN_USER);
+    const result = await tool.handler({ action: "install", catalogId: "echo" });
+    expect(result.isError).toBe(true);
+    const text = (result.content?.[0] as { text?: string } | undefined)?.text ?? "";
+    expect(text.toLowerCase()).toContain("failed to install");
+    expect(text).toContain("Echo");
+  });
+
+  test("connectorsAllowList blocks stdio entries not in the list", async () => {
+    // Restrict the workspace to one specific stdio entry, then attempt
+    // to install a different one. Both ids exist in STDIO_BUNDLES, so
+    // the rejection comes from the allow-list, not the catalog miss.
+    await h.workspaceStore.update(h.wsId, { connectorsAllowList: ["ipinfo"] });
+
+    const tool = buildTool(h, ADMIN_USER);
+    const result = await tool.handler({ action: "install", catalogId: "echo" });
+    expect(result.isError).toBe(true);
+    const text = (result.content?.[0] as { text?: string } | undefined)?.text ?? "";
+    expect(text).toContain("not visible in this workspace");
+  });
+
+  test("stdio install requires workspace context", async () => {
+    const tool = buildTool(h, ADMIN_USER, null);
+    const result = await tool.handler({ action: "install", catalogId: "echo" });
+    expect(result.isError).toBe(true);
+    const text = (result.content?.[0] as { text?: string } | undefined)?.text ?? "";
+    expect(text.toLowerCase()).toContain("workspace context required");
+  });
+});
+
 describe("manage_connectors.set_permissions", () => {
   let h: Harness;
 

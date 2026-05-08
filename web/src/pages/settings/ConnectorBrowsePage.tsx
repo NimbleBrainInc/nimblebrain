@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import {
   type DirectoryEntry,
   getInstalledConnectors,
@@ -35,6 +35,7 @@ export function ConnectorBrowsePage({ scope }: { scope: "user" | "workspace" }) 
 
   const role = useScopedRole();
   const isWsAdmin = roleAtLeast(role, "ws_admin");
+  const navigate = useNavigate();
 
   const backPath =
     scope === "user" ? "/settings/personal/connectors" : "/settings/workspace/connectors";
@@ -118,13 +119,23 @@ export function ConnectorBrowsePage({ scope }: { scope: "user" | "workspace" }) 
   }, [entries, scope, query, installedByKey]);
 
   const onInstall = async (entry: DirectoryEntry) => {
-    if (entry.install.kind !== "remote-oauth") return; // only remote-oauth supported in v1
     setBusyId(`${entry.registryId}::${entry.id}`);
     setLoadError(null);
     try {
       const res = await installConnector(entry.id);
-      const { authorizationUrl } = await initiateMcpOAuth(res.serverName);
-      window.location.assign(authorizationUrl);
+      // Remote OAuth: kick the user into the vendor's auth flow.
+      // Stdio (mpak-bundle): install completes in-process; route to
+      // Configure so the user can fill in any user_config fields.
+      if (entry.install.kind === "remote-oauth") {
+        const { authorizationUrl } = await initiateMcpOAuth(res.serverName);
+        window.location.assign(authorizationUrl);
+        return;
+      }
+      if (entry.install.kind === "mpak-bundle") {
+        navigate(`${configureBasePath}/${res.serverName}`);
+        return;
+      }
+      // direct-url not yet supported.
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : String(err));
       setBusyId(null);
@@ -391,16 +402,26 @@ function RowAction({
     );
   }
   if (isMpakStub) {
+    // Curated stdio bundles install in-process via the agent's mpak
+    // SDK fetch + spawn. The "coming soon" stub is gone; behavior is
+    // identical to remote-oauth Install except no browser redirect.
     const mpakUrl = entry.install.kind === "mpak-bundle" ? entry.install.mpakUrl : undefined;
     return (
-      <div className="flex flex-col items-end text-right shrink-0">
-        <span className="text-xs text-muted-foreground">Install via mpak — coming soon</span>
+      <div className="flex flex-col items-end gap-0.5 shrink-0">
+        <button
+          type="button"
+          onClick={onInstall}
+          disabled={busy}
+          className="text-xs px-3 py-1.5 rounded bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
+        >
+          {busy ? "Installing…" : "Install"}
+        </button>
         {mpakUrl && (
           <a
             href={mpakUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-[10px] text-muted-foreground underline"
+            className="text-[10px] text-muted-foreground underline underline-offset-4"
           >
             View on mpak.dev
           </a>

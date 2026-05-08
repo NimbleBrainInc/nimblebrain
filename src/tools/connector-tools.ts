@@ -2,6 +2,7 @@ import { join } from "node:path";
 import { getMpak } from "../bundles/mpak.ts";
 import { deriveServerName } from "../bundles/paths.ts";
 import type { BundleManifest, BundleRef } from "../bundles/types.ts";
+import { installBundleInWorkspace } from "../bundles/workspace-ops.ts";
 import {
   clearAllWorkspaceCredentials,
   getWorkspaceCredentials,
@@ -9,6 +10,7 @@ import {
   type UserConfigFieldDef,
 } from "../config/workspace-credentials.ts";
 import { loadCatalog } from "../connectors/load-catalog.ts";
+import { findStdioBundle, type StdioBundleEntry } from "../connectors/stdio-catalog.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import type { ToolResult } from "../engine/types.ts";
 import type { UserIdentity } from "../identity/provider.ts";
@@ -526,6 +528,17 @@ async function handleInstall(
 ): Promise<ToolResult> {
   if (!catalogId) return errResult("catalogId is required.");
 
+  // Stdio catalog is checked first: the remote-oauth catalog is shorter
+  // and more carefully curated, but stdio ids are used more frequently
+  // (every mpak bundle), and short-circuiting avoids a full loadCatalog
+  // scan on every stdio install. The two id namespaces are disjoint by
+  // construction (remote-oauth uses vendor names like "asana"; stdio
+  // uses bundle slugs like "ipinfo").
+  const stdioEntry = findStdioBundle(catalogId);
+  if (stdioEntry) {
+    return handleInstallStdio(ctx, wsId, stdioEntry);
+  }
+
   // Catalog-driven scope dispatch. Every catalog entry has a defaultScope;
   // we don't currently support overriding at install time (a possible
   // future feature: admin promotes a default-user entry to workspace).
@@ -712,6 +725,112 @@ async function handleInstall(
       alreadyInstalled: false,
       serverName: entry.id,
       scope: "user",
+    },
+    isError: false,
+  };
+}
+
+/**
+ * Install a curated stdio bundle (mpak package). Mirrors the chat
+ * agent's `bundleManagement` install path so both surfaces produce
+ * identical state:
+ *
+ *   1. `installBundleInWorkspace` — mpak bundle cache load (downloads
+ *      from the configured mpak registry on cache miss), spawn the
+ *      subprocess, register the McpSource in the workspace registry.
+ *   2. `lifecycle.seedInstance` — track the instance for queries +
+ *      lifecycle (`getInstance`, `getBundleInstancesForWorkspace`).
+ *   3. Append `{ name }` to `workspace.json#bundles` so the bundle is
+ *      restored on next boot. Idempotent — duplicate-named entries are
+ *      collapsed.
+ *
+ * Workspace-scope only. Stdio bundles are workspace-shared today; a
+ * future per-user mpak install path would need its own dispatcher.
+ */
+async function handleInstallStdio(
+  ctx: ManageConnectorsContext,
+  wsId: string | null,
+  entry: StdioBundleEntry,
+): Promise<ToolResult> {
+  if (!wsId) return errResult("Workspace context required for stdio install.");
+
+  // Allow-list applies regardless of install kind.
+  const ws = await ctx.runtime.getWorkspaceStore().get(wsId);
+  if (!ws) return errResult(`Workspace "${wsId}" not found.`);
+  const allowList = ws.connectorsAllowList;
+  if (allowList && Array.isArray(allowList) && allowList.length > 0) {
+    if (!allowList.includes(entry.id)) {
+      return errResult(`Catalog entry "${entry.id}" not visible in this workspace.`);
+    }
+  }
+
+  const lifecycle = ctx.runtime.getLifecycle();
+  const registry = ctx.runtime.getRegistryForWorkspace(wsId);
+
+  // Idempotency: already-installed returns the same shape as the
+  // remote-oauth install path so callers can trust `alreadyInstalled`.
+  const already = ws.bundles.find((b) => "name" in b && b.name === entry.bundleName);
+  if (already) {
+    const existingServerName = deriveServerName(entry.bundleName);
+    if (lifecycle.getInstance(existingServerName, wsId)) {
+      return {
+        content: textContent(`"${entry.name}" already installed.`),
+        structuredContent: {
+          ok: true,
+          alreadyInstalled: true,
+          serverName: existingServerName,
+          scope: "workspace",
+        },
+        isError: false,
+      };
+    }
+    // workspace.json says yes but lifecycle has no instance — fall
+    // through and let installBundleInWorkspace re-register the source.
+    // The `already` guard below stops us from double-writing the entry.
+  }
+
+  const ref: BundleRef = { name: entry.bundleName };
+  let inventoryEntry: Awaited<ReturnType<typeof installBundleInWorkspace>>;
+  try {
+    inventoryEntry = await installBundleInWorkspace(
+      wsId,
+      ref,
+      registry,
+      ctx.runtime.getEventSink(),
+      ctx.runtime.getConfigPath(),
+      {
+        allowInsecureRemotes: ctx.runtime.getAllowInsecureRemotes(),
+        workDir: ctx.runtime.getWorkDir(),
+      },
+    );
+  } catch (err) {
+    // Surface mpak fetch / spawn failures with a concrete next step
+    // instead of an opaque "Failed to install."
+    const msg = err instanceof Error ? err.message : String(err);
+    return errResult(`Failed to install "${entry.name}": ${msg}`);
+  }
+
+  lifecycle.seedInstance(
+    inventoryEntry.serverName,
+    entry.bundleName,
+    ref,
+    inventoryEntry.meta ?? undefined,
+    wsId,
+    inventoryEntry.dataDir,
+    registry,
+  );
+
+  if (!already) {
+    await ctx.runtime.getWorkspaceStore().update(wsId, { bundles: [...ws.bundles, ref] });
+  }
+
+  return {
+    content: textContent(`Installed "${entry.name}" in this workspace.`),
+    structuredContent: {
+      ok: true,
+      alreadyInstalled: false,
+      serverName: inventoryEntry.serverName,
+      scope: "workspace",
     },
     isError: false,
   };
