@@ -267,13 +267,29 @@ export function mcpAuthRoutes(ctx: AppContext) {
     const safeJsReturnUrl = JSON.stringify(returnUrl).replace(/</g, "\\u003c");
     return c.html(
       `<!doctype html><html><head><meta charset="utf-8"><title>Authorization complete</title>
-        <meta http-equiv="refresh" content="1;url=${safeReturnUrl}"></head>
-        <body style="font-family:system-ui,sans-serif;padding:2rem;max-width:32rem;margin:0 auto">
-          <h3 style="margin:0 0 0.5rem">Authorization complete</h3>
-          <p style="color:#555">Returning to NimbleBrain…</p>
-          <p><a href="${safeReturnUrl}">Click here if you aren't redirected →</a></p>
-          <script>setTimeout(function(){location.replace(${safeJsReturnUrl});},800);</script>
-        </body></html>`,
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="refresh" content="1;url=${safeReturnUrl}">
+<link rel="preconnect" href="https://api.fontshare.com" crossorigin>
+<link href="https://api.fontshare.com/v2/css?f[]=erode@500&f[]=satoshi@500,700&display=swap" rel="stylesheet">
+<style>
+html,body{margin:0;height:100%}
+body{font-family:'Satoshi',system-ui,-apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f7;color:#171717;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;padding:1rem;box-sizing:border-box;-webkit-font-smoothing:antialiased}
+.h{font-family:'Erode',Georgia,serif;font-size:clamp(2.5rem,6.5vw,4.25rem);font-weight:500;letter-spacing:-0.02em;margin:0;animation:rise .35s ease-out both}
+.wm{margin-top:1.5rem;font-size:.7rem;letter-spacing:.2em;text-transform:uppercase;color:#737373;font-weight:700;display:flex;align-items:center;gap:.55rem;animation:rise .35s ease-out .08s both}
+.wm svg{width:.65rem;height:.65rem;display:block}
+.fb{position:fixed;bottom:1.25rem;font-size:.75rem;color:#a3a3a3;margin:0;font-weight:500}
+.fb a{color:#737373;text-decoration:none;border-bottom:1px dotted #d4d4d4}
+.fb a:hover{color:#d4620a;border-bottom-color:#d4620a}
+@keyframes rise{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+@media (prefers-color-scheme:dark){body{background:#0a0a09;color:#e5e5e5}.wm{color:#a3a3a3}.fb{color:#525252}.fb a{color:#a3a3a3;border-bottom-color:#404040}.fb a:hover{color:#f59542;border-bottom-color:#f59542}}
+@media (prefers-reduced-motion:reduce){.h,.wm{animation:none}}
+</style></head>
+<body>
+<h1 class="h">You're in.</h1>
+<div class="wm"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 0L12 6L6 12L0 6Z" fill="#d4620a"/></svg>NimbleBrain</div>
+<p class="fb">not redirecting? <a href="${safeReturnUrl}">go back &rarr;</a></p>
+<script>setTimeout(function(){location.replace(${safeJsReturnUrl});},800);</script>
+</body></html>`,
     );
   });
 
