@@ -1021,6 +1021,20 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
       );
     }
 
+    if (!clientInfo) {
+      // `clientInformation()` returned undefined despite tokens being
+      // present — the canonical cause is drift detection unlinking
+      // `client.json` on this very call. Without a client_id we can't
+      // authenticate the RFC 7009 POST, so we skip upstream revoke and
+      // fall through to local cleanup. AS-side tokens stay valid until
+      // their natural expiry. Logged so operators reading audit trails
+      // understand why a particular disconnect didn't revoke.
+      log.warn(
+        `[oauth] ${this.serverName} skipping upstream revoke — no client info available ` +
+          `(likely DCR redirect_uri drift just discarded client.json). Local tokens still cleaned.`,
+      );
+    }
+
     if (revocationEndpoint && clientInfo) {
       try {
         // Revoke both tokens in sequence. RFC 7009 doesn't define an
