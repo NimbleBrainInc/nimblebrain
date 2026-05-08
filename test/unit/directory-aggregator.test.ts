@@ -20,14 +20,15 @@ function freshAggregator(): {
 }
 
 describe("DirectoryAggregator", () => {
-  test("aggregates entries from all enabled registries by default (curated + mpak)", async () => {
+  test("aggregates entries from enabled registries; curated populates today, mpak is a stub", async () => {
     const { aggregator, cleanup } = freshAggregator();
     try {
       const result = await aggregator.list();
       const fromCurated = result.entries.filter((e) => e.registryId === "curated");
-      const fromMpak = result.entries.filter((e) => e.registryId === "mpak");
+      // CuratedRegistry surfaces both the OAuth catalog and STDIO_BUNDLES.
       expect(fromCurated.length).toBeGreaterThan(0);
-      expect(fromMpak.length).toBeGreaterThan(0);
+      // MpakRegistry returns [] until real mpak.dev fetch is wired up;
+      // the aggregator runs without error.
       expect(result.errors).toEqual([]);
     } finally {
       cleanup();
@@ -67,38 +68,6 @@ describe("DirectoryAggregator", () => {
         const key = `${e.registryId}::${e.id}`;
         expect(keys.has(key)).toBe(false);
         keys.add(key);
-      }
-    } finally {
-      cleanup();
-    }
-  });
-
-  test("dedupes across registries on install target — curated wins over mpak for the same package", async () => {
-    // CuratedRegistry surfaces every @nimblebraininc/* bundle in
-    // STDIO_BUNDLES; MpakRegistry's stub also surfaces some of them
-    // (echo, ipinfo, ...). Without cross-registry dedup the user
-    // sees the same connector twice with different ids — and the
-    // mpak entry's id is the package name, which used to break the
-    // install handler's catalog lookup.
-    const { aggregator, cleanup } = freshAggregator();
-    try {
-      const result = await aggregator.list();
-      // Group by mpak install target.
-      const byPackage = new Map<string, string[]>();
-      for (const e of result.entries) {
-        if (e.install.kind !== "mpak-bundle") continue;
-        const list = byPackage.get(e.install.package) ?? [];
-        list.push(e.registryType);
-        byPackage.set(e.install.package, list);
-      }
-      // Every package surfaces at most once. When both curated and
-      // mpak listed it, only curated's row survives.
-      for (const [pkg, types] of byPackage) {
-        expect(types.length).toBe(1);
-        // Spot-check a known overlap: ipinfo is in both registries.
-        if (pkg === "@nimblebraininc/ipinfo") {
-          expect(types[0]).toBe("curated");
-        }
       }
     } finally {
       cleanup();

@@ -25,68 +25,30 @@ export class MpakRegistry implements ConnectorRegistry {
   constructor(public readonly config: RegistryConfig) {}
 
   async listEntries(): Promise<DirectoryEntry[]> {
-    // Canonicalize via URL.origin: rejects malformed values that
-    // somehow slipped past `manage_registries.set_url` validation,
-    // strips trailing slashes / paths, and gives every callsite a
-    // single shape to compose against.
-    let baseOrigin: string;
-    try {
-      baseOrigin = new URL(this.config.url ?? "https://mpak.dev").origin;
-    } catch {
-      baseOrigin = "https://mpak.dev";
-    }
-    const samples: Array<{
-      package: string;
-      name: string;
-      description: string;
-      tags?: string[];
-    }> = [
-      {
-        package: "@nimblebraininc/echo",
-        name: "Echo",
-        description: "Reference MCP server — echoes inputs for testing and demos.",
-        tags: ["dev", "testing"],
-      },
-      {
-        package: "@nimblebraininc/ipinfo",
-        name: "IPInfo",
-        description: "IP address geolocation and network metadata via ipinfo.io.",
-        tags: ["network", "geolocation"],
-      },
-      {
-        package: "@nimblebraininc/brave-search",
-        name: "Brave Search",
-        description: "Web search via Brave's independent index.",
-        tags: ["search", "web"],
-      },
-      {
-        package: "@nimblebraininc/finnhub",
-        name: "Finnhub",
-        description: "Real-time stock quotes, fundamentals, and market data.",
-        tags: ["finance", "markets"],
-      },
-      {
-        package: "@nimblebraininc/granola",
-        name: "Granola Tools",
-        description: "Local helper tools for the Granola desktop app.",
-        tags: ["meetings", "productivity"],
-      },
-    ];
-
-    return samples.map((s) => ({
-      id: s.package,
-      registryId: this.config.id,
-      registryType: "mpak",
-      name: s.name,
-      description: s.description,
-      iconUrl: `https://mpak.dev/icons/${encodeURIComponent(s.package)}.svg`,
-      tags: s.tags,
-      defaultScope: "workspace",
-      install: {
-        kind: "mpak-bundle",
-        package: s.package,
-        mpakUrl: `${baseOrigin}/packages/${s.package}`,
-      },
-    }));
+    // Returns nothing until real mpak.dev fetch is wired up. The
+    // hardcoded sample set this used to expose has been retired —
+    // every connector it advertised (echo, ipinfo, brave-search,
+    // finnhub, granola) is now surfaced by CuratedRegistry, either
+    // as a stdio bundle (STDIO_BUNDLES) or a remote-OAuth catalog
+    // entry. Keeping the stubs around caused two real bugs:
+    //
+    //   1. Duplicate Browse cards for connectors in both lists.
+    //      The cross-registry dedup catches identical install
+    //      targets (mpak-bundle for both registries), but granola
+    //      appears as remote-oauth in curated and mpak-bundle here,
+    //      so the dedup keys don't match — both rows survive.
+    //
+    //   2. Broken installs. Clicking the mpak card sends a catalogId
+    //      shaped like `@nimblebraininc/<name>`, which routes through
+    //      handleInstall. The OAuth catalog uses short ids; the
+    //      curated stdio catalog excludes anything also in the OAuth
+    //      catalog (granola). Result: "Catalog entry not found."
+    //
+    // Returning [] is the conservative answer until mpak.dev's
+    // search/registry API is plumbed through. The install path
+    // stays forward-compatible: handleInstall accepts any scoped
+    // package name, so once real entries flow through here they'll
+    // install correctly on day one.
+    return [];
   }
 }

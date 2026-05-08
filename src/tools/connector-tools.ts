@@ -12,11 +12,11 @@ import {
   type UserConfigFieldDef,
 } from "../config/workspace-credentials.ts";
 import { loadCatalog } from "../connectors/load-catalog.ts";
-import { findStdioBundle, type StdioBundleEntry } from "../connectors/stdio-catalog.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import type { ToolResult } from "../engine/types.ts";
 import type { UserIdentity } from "../identity/provider.ts";
 import { DirectoryAggregator } from "../registries/aggregator.ts";
+import type { DirectoryEntry } from "../registries/types.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import { FileCredentialStore } from "./credential-store.ts";
 import type { InProcessTool } from "./in-process-app.ts";
@@ -217,8 +217,12 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
         },
         catalogId: {
           type: "string",
+          description: "Catalog entry id (required for setup_operator, remove_operator_setup).",
+        },
+        entry: {
+          type: "object",
           description:
-            "Catalog entry id (required for install, setup_operator, remove_operator_setup).",
+            "DirectoryEntry to install (required for `install`). The same shape returned by list_directory — server dispatches by entry.install.kind. No id-to-action lookup; the registry that produced the entry is the source of truth for the install payload.",
         },
         clientId: {
           type: "string",
@@ -286,7 +290,7 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
             input.scope ? String(input.scope) : undefined,
           );
         case "install":
-          return handleInstall(ctx, wsId, callerId, String(input.catalogId ?? ""));
+          return handleInstall(ctx, wsId, callerId, input.entry as unknown);
         case "disconnect":
           return handleDisconnect(
             ctx,
@@ -746,57 +750,104 @@ async function handleGetInstalled(
   };
 }
 
+/**
+ * Install a connector. Takes the full `DirectoryEntry` the UI was
+ * already showing the user — server dispatches by `entry.install.kind`.
+ *
+ * No id-to-action lookup. The registry that produced the entry IS the
+ * source of truth for what to install; the install handler just runs
+ * the action. This means:
+ *
+ *   - Adding a new connector kind = add a case to the switch below
+ *     and a registry that emits it.
+ *   - No name-collision bugs between catalogs (the "Catalog entry not
+ *     found" class of error doesn't exist in this design).
+ *   - Forward-compat: when MpakRegistry's real implementation lands
+ *     and emits live mpak-bundle entries, they install on day one
+ *     without any change here.
+ *
+ * Cross-cutting checks (admin allow-list) apply to every install
+ * kind and live above the dispatch.
+ */
 async function handleInstall(
   ctx: ManageConnectorsContext,
   wsId: string | null,
   callerId: string | null,
-  catalogId: string,
+  rawEntry: unknown,
 ): Promise<ToolResult> {
-  if (!catalogId) return errResult("catalogId is required.");
+  const entry = parseDirectoryEntry(rawEntry);
+  if (!entry) return errResult("entry with install action is required.");
 
-  // Stdio catalog is checked first: the remote-oauth catalog is shorter
-  // and more carefully curated, but stdio ids are used more frequently
-  // (every mpak bundle), and short-circuiting avoids a full loadCatalog
-  // scan on every stdio install. The two id namespaces are disjoint by
-  // construction (remote-oauth uses vendor names like "asana"; stdio
-  // uses bundle slugs like "ipinfo").
-  const stdioEntry = findStdioBundle(catalogId);
-  if (stdioEntry) {
-    return handleInstallStdio(ctx, wsId, stdioEntry);
-  }
-
-  // Catalog-driven scope dispatch. Every catalog entry has a defaultScope;
-  // we don't currently support overriding at install time (a possible
-  // future feature: admin promotes a default-user entry to workspace).
-  const catalog = loadCatalog();
-  const entry = catalog.find((e) => e.id === catalogId);
-  if (!entry) return errResult(`Catalog entry "${catalogId}" not found.`);
-
-  // Workspace allow-list applies regardless of scope — the workspace
-  // operator can constrain what services are even visible.
+  // Workspace allow-list — the workspace operator can scope which
+  // catalog ids are installable. Applies to every install kind.
   if (wsId) {
     const ws = await ctx.runtime.getWorkspaceStore().get(wsId);
     const allowList = ws?.connectorsAllowList;
     if (allowList && Array.isArray(allowList) && allowList.length > 0) {
       if (!allowList.includes(entry.id)) {
-        return errResult(`Catalog entry "${catalogId}" not visible in this workspace.`);
+        return errResult(`Connector "${entry.id}" not visible in this workspace.`);
       }
     }
   }
 
-  // Static-auth: must have operator setup (workspace.json#oauthOperatorApps
-  // for the public clientId + credential store for the secret) before any
-  // user can install. We resolve the operator config here and refuse early
-  // with a clear next-step message if either piece is missing — same
-  // shape as the missingOperatorSetup signal Browse uses to gate its
-  // affordance.
+  switch (entry.install.kind) {
+    case "remote-oauth":
+      return handleInstallRemoteOAuth(ctx, wsId, callerId, entry);
+    case "mpak-bundle":
+      return handleInstallMpak(ctx, wsId, entry);
+    case "direct-url":
+      return errResult("direct-url install is not yet supported.");
+  }
+}
+
+/**
+ * Validate the wire payload as a `DirectoryEntry`. Tools/JSON arrive
+ * as `unknown` from the dispatcher; this is the parse step that
+ * either gives us a typed entry or refuses the call. Field-level
+ * validation only — we don't cross-check the entry against any
+ * catalog because the registry that emitted it already did.
+ */
+function parseDirectoryEntry(input: unknown): DirectoryEntry | null {
+  if (!input || typeof input !== "object") return null;
+  const e = input as Record<string, unknown>;
+  if (typeof e.id !== "string" || !e.id) return null;
+  if (typeof e.name !== "string") return null;
+  const install = e.install as { kind?: unknown } | undefined;
+  if (!install || typeof install !== "object") return null;
+  if (
+    install.kind !== "remote-oauth" &&
+    install.kind !== "mpak-bundle" &&
+    install.kind !== "direct-url"
+  ) {
+    return null;
+  }
+  return input as DirectoryEntry;
+}
+
+/**
+ * Remote OAuth install — workspace-scope or user-scope based on
+ * `entry.defaultScope`. For static-auth (Asana, HubSpot, etc.) the
+ * workspace must have operator OAuth client config persisted under
+ * `workspace.json#oauthOperatorApps[entry.id]` + the matching
+ * client_secret in the credential store before this can proceed.
+ */
+async function handleInstallRemoteOAuth(
+  ctx: ManageConnectorsContext,
+  wsId: string | null,
+  callerId: string | null,
+  entry: DirectoryEntry,
+): Promise<ToolResult> {
+  if (entry.install.kind !== "remote-oauth") {
+    return errResult("invariant violated: handleInstallRemoteOAuth requires remote-oauth entry");
+  }
+  const action = entry.install;
+
+  // Static-auth gating: operator clientId + secret must exist.
   let staticOAuthClient: { clientId: string; clientSecretKey: string } | undefined;
-  if (entry.auth === "static") {
-    const setup = entry.operatorSetup;
+  if (action.auth === "static") {
+    const setup = action.operatorSetup;
     if (!setup) {
-      return errResult(
-        `Catalog entry "${catalogId}" is malformed: static auth requires operatorSetup.`,
-      );
+      return errResult(`"${entry.name}" is static-auth but missing operatorSetup config.`);
     }
     if (!wsId) return errResult("Workspace context required for static-auth install.");
     const ws = await ctx.runtime.getWorkspaceStore().get(wsId);
@@ -821,12 +872,12 @@ async function handleInstall(
   }
 
   const ref: BundleRef = {
-    url: entry.url,
+    url: action.url,
     serverName: entry.id,
     oauthScope: entry.defaultScope,
-    ...(entry.requiredScopes ? { scopes: entry.requiredScopes } : {}),
-    ...(entry.additionalAuthorizationParams
-      ? { additionalAuthorizationParams: entry.additionalAuthorizationParams }
+    ...(action.requiredScopes ? { scopes: action.requiredScopes } : {}),
+    ...(action.additionalAuthorizationParams
+      ? { additionalAuthorizationParams: action.additionalAuthorizationParams }
       : {}),
     ...(staticOAuthClient
       ? {
@@ -845,19 +896,18 @@ async function handleInstall(
     const ws = await ctx.runtime.getWorkspaceStore().get(wsId);
     if (!ws) return errResult(`Workspace "${wsId}" not found.`);
 
-    const dup = ws.bundles.find((b) => "url" in b && b.url === entry.url);
+    const dup = ws.bundles.find((b) => "url" in b && b.url === action.url);
     if (dup) {
       const dupServerName = "serverName" in dup ? (dup.serverName ?? entry.id) : entry.id;
-      // Self-heal: if workspace.json has the entry but lifecycle lost
-      // track of the instance (e.g., a prior uninstall that didn't
-      // clean workspace.json), re-seed instead of reporting it as
-      // already-installed. Returning alreadyInstalled in that state
+      // Self-heal: workspace.json says yes but lifecycle lost the
+      // instance (prior uninstall that didn't clean workspace.json).
+      // Re-seed instead of reporting alreadyInstalled — the latter
       // would skip seedInstance and fail the next OAuth initiate.
       if (!lifecycle.getInstance(dupServerName, wsId)) {
         const wsRegistry = ctx.runtime.getRegistryForWorkspace(wsId);
         lifecycle.seedInstance(
           dupServerName,
-          entry.url,
+          action.url,
           dup,
           undefined,
           wsId,
@@ -888,7 +938,7 @@ async function handleInstall(
     }
     await ctx.runtime.getWorkspaceStore().update(wsId, { bundles: [...ws.bundles, ref] });
     const wsRegistry = ctx.runtime.getRegistryForWorkspace(wsId);
-    lifecycle.seedInstance(entry.id, entry.url, ref, undefined, wsId, undefined, wsRegistry);
+    lifecycle.seedInstance(entry.id, action.url, ref, undefined, wsId, undefined, wsRegistry);
     return {
       content: textContent(`Installed "${entry.name}" for this workspace.`),
       structuredContent: {
@@ -907,11 +957,10 @@ async function handleInstall(
   }
   const userStore = ctx.runtime.getUserConnectorStore();
   const existing = await userStore.get(callerId);
-  const dup = existing?.bundles.find((b) => "url" in b && b.url === entry.url);
+  const dup = existing?.bundles.find((b) => "url" in b && b.url === action.url);
   if (dup) {
     const dupServerName = "serverName" in dup ? (dup.serverName ?? entry.id) : entry.id;
-    // Self-heal symmetric to workspace scope: if user.json has the
-    // entry but lifecycle has no userInstance, re-seed.
+    // Self-heal symmetric to workspace scope.
     if (!lifecycle.getUserInstance?.(dupServerName, callerId)) {
       await lifecycle.seedUserInstance?.(dupServerName, dup, callerId);
       return {
@@ -937,10 +986,6 @@ async function handleInstall(
     };
   }
   await userStore.addBundle(callerId, ref);
-  // Seed the user-scope BundleInstance + register with every workspace
-  // registry the user is a member of. Done by lifecycle so the boot-time
-  // path (where we discover personal bundles for active members) and the
-  // install-time path (where we wire one new bundle in) share code.
   await lifecycle.seedUserInstance?.(entry.id, ref, callerId);
   return {
     content: textContent(
@@ -957,47 +1002,40 @@ async function handleInstall(
 }
 
 /**
- * Install a curated stdio bundle (mpak package). Mirrors the chat
- * agent's `bundleManagement` install path so both surfaces produce
- * identical state:
+ * Mpak (stdio) install. The bundle is fetched from whichever mpak
+ * registry the SDK is pointed at, spawned as a subprocess, and
+ * registered in the workspace registry. Same mechanics as the chat
+ * agent's `bundleManagement.install` so both UI surfaces produce
+ * identical state.
  *
- *   1. `installBundleInWorkspace` — mpak bundle cache load (downloads
- *      from the configured mpak registry on cache miss), spawn the
- *      subprocess, register the McpSource in the workspace registry.
- *   2. `lifecycle.seedInstance` — track the instance for queries +
- *      lifecycle (`getInstance`, `getBundleInstancesForWorkspace`).
- *   3. Append `{ name }` to `workspace.json#bundles` so the bundle is
- *      restored on next boot. Idempotent — duplicate-named entries are
- *      collapsed.
- *
- * Workspace-scope only. Stdio bundles are workspace-shared today; a
- * future per-user mpak install path would need its own dispatcher.
+ * Workspace-scope only — every stdio bundle is workspace-shared
+ * today. A future per-user mpak install would need its own
+ * dispatcher branch.
  */
-async function handleInstallStdio(
+async function handleInstallMpak(
   ctx: ManageConnectorsContext,
   wsId: string | null,
-  entry: StdioBundleEntry,
+  entry: DirectoryEntry,
 ): Promise<ToolResult> {
   if (!wsId) return errResult("Workspace context required for stdio install.");
+  if (entry.install.kind !== "mpak-bundle") {
+    return errResult("invariant violated: handleInstallMpak requires mpak-bundle entry");
+  }
+  const bundleName = entry.install.package;
 
-  // Allow-list applies regardless of install kind.
   const ws = await ctx.runtime.getWorkspaceStore().get(wsId);
   if (!ws) return errResult(`Workspace "${wsId}" not found.`);
-  const allowList = ws.connectorsAllowList;
-  if (allowList && Array.isArray(allowList) && allowList.length > 0) {
-    if (!allowList.includes(entry.id)) {
-      return errResult(`Catalog entry "${entry.id}" not visible in this workspace.`);
-    }
-  }
 
   const lifecycle = ctx.runtime.getLifecycle();
   const registry = ctx.runtime.getRegistryForWorkspace(wsId);
 
-  // Idempotency: already-installed returns the same shape as the
-  // remote-oauth install path so callers can trust `alreadyInstalled`.
-  const already = ws.bundles.find((b) => "name" in b && b.name === entry.bundleName);
+  // Idempotency: workspace.json already has this bundle. If the
+  // lifecycle still tracks it, surface alreadyInstalled. If not,
+  // fall through and let installBundleInWorkspace re-register —
+  // this self-heals the case where uninstall left a stale entry.
+  const already = ws.bundles.find((b) => "name" in b && b.name === bundleName);
   if (already) {
-    const existingServerName = deriveServerName(entry.bundleName);
+    const existingServerName = deriveServerName(bundleName);
     if (lifecycle.getInstance(existingServerName, wsId)) {
       return {
         content: textContent(`"${entry.name}" already installed.`),
@@ -1010,12 +1048,9 @@ async function handleInstallStdio(
         isError: false,
       };
     }
-    // workspace.json says yes but lifecycle has no instance — fall
-    // through and let installBundleInWorkspace re-register the source.
-    // The `already` guard below stops us from double-writing the entry.
   }
 
-  const ref: BundleRef = { name: entry.bundleName };
+  const ref: BundleRef = { name: bundleName };
   let inventoryEntry: Awaited<ReturnType<typeof installBundleInWorkspace>>;
   try {
     inventoryEntry = await installBundleInWorkspace(
@@ -1030,15 +1065,13 @@ async function handleInstallStdio(
       },
     );
   } catch (err) {
-    // Surface mpak fetch / spawn failures with a concrete next step
-    // instead of an opaque "Failed to install."
     const msg = err instanceof Error ? err.message : String(err);
     return errResult(`Failed to install "${entry.name}": ${msg}`);
   }
 
   lifecycle.seedInstance(
     inventoryEntry.serverName,
-    entry.bundleName,
+    bundleName,
     ref,
     inventoryEntry.meta ?? undefined,
     wsId,

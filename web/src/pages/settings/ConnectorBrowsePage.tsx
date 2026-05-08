@@ -111,7 +111,7 @@ export function ConnectorBrowsePage({ scope }: { scope: "user" | "workspace" }) 
     setBusyId(`${entry.registryId}::${entry.id}`);
     setLoadError(null);
     try {
-      const res = await installConnector(entry.id);
+      const res = await installConnector(entry);
       // Remote OAuth: kick the user into the vendor's auth flow.
       // Stdio (mpak-bundle): install completes in-process; route to
       // Configure so the user can fill in any user_config fields.

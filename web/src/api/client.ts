@@ -649,11 +649,6 @@ function unwrapStructured<T>(result: ToolCallResult, what: string): T {
   return result.structuredContent as T;
 }
 
-export async function getConnectorsCatalog(): Promise<{ catalog: ConnectorCatalogEntry[] }> {
-  const result = await callTool("nb", "manage_connectors", { action: "list_catalog" });
-  return unwrapStructured(result, "list_catalog");
-}
-
 export async function getInstalledConnectors(opts?: {
   scope?: "all" | "workspace" | "user";
 }): Promise<{ installed: InstalledConnector[] }> {
@@ -716,12 +711,13 @@ export async function uninstallConnector(
 }
 
 /**
- * Install a catalog entry. Routes to user-scope or workspace-scope
- * storage based on the catalog entry's `defaultScope`. Idempotent —
- * if already installed, returns `alreadyInstalled: true`. Does NOT
- * start OAuth — caller follows up with `initiateMcpOAuth(serverName)`.
+ * Install a connector. Pass the full `DirectoryEntry` the user
+ * clicked — server dispatches by `entry.install.kind`. Idempotent;
+ * already-installed connectors return `alreadyInstalled: true`.
+ * Does NOT start OAuth — caller follows up with
+ * `initiateMcpOAuth(serverName)` for remote-OAuth installs.
  */
-export async function installConnector(catalogId: string): Promise<{
+export async function installConnector(entry: DirectoryEntry): Promise<{
   ok: boolean;
   alreadyInstalled: boolean;
   serverName: string;
@@ -729,7 +725,7 @@ export async function installConnector(catalogId: string): Promise<{
 }> {
   const result = await callTool("nb", "manage_connectors", {
     action: "install",
-    catalogId,
+    entry,
   });
   return unwrapStructured(result, "install");
 }
@@ -769,7 +765,7 @@ export interface DirectoryEntry {
         additionalAuthorizationParams?: Record<string, string>;
         operatorSetup?: { portalUrl: string; hint: string; clientSecretKey: string };
       }
-    | { kind: "mpak-bundle"; package: string; version?: string; mpakUrl?: string }
+    | { kind: "mpak-bundle"; package: string }
     | { kind: "direct-url"; url: string };
 }
 
@@ -800,16 +796,6 @@ export async function setupConnectorOperator(
     clientSecret,
   });
   return unwrapStructured(result, "setup_operator");
-}
-
-export async function removeConnectorOperatorSetup(
-  catalogId: string,
-): Promise<{ ok: boolean; catalogId: string }> {
-  const result = await callTool("nb", "manage_connectors", {
-    action: "remove_operator_setup",
-    catalogId,
-  });
-  return unwrapStructured(result, "remove_operator_setup");
 }
 
 /**
@@ -896,31 +882,7 @@ export async function setRegistryUrl(
   return unwrapStructured(result, "set_url");
 }
 
-export async function listConnectorTools(
-  serverName: string,
-  scope?: "workspace" | "user",
-): Promise<{ tools: ConnectorTool[] }> {
-  const result = await callTool("nb", "manage_connectors", {
-    action: "list_tools",
-    serverName,
-    ...(scope ? { scope } : {}),
-  });
-  return unwrapStructured(result, "list_tools");
-}
-
 export type ToolPolicy = "allow" | "disallow";
-
-export async function getConnectorPermissions(
-  serverName: string,
-  scope: "workspace" | "user",
-): Promise<{ scope: "workspace" | "user"; serverName: string; tools: Record<string, ToolPolicy> }> {
-  const result = await callTool("nb", "manage_connectors", {
-    action: "get_permissions",
-    serverName,
-    scope,
-  });
-  return unwrapStructured(result, "get_permissions");
-}
 
 /**
  * Combined fetch — returns the connector's tool list AND the policy

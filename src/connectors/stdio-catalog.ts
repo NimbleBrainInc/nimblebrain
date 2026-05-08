@@ -32,10 +32,8 @@ export interface StdioBundleEntry {
   description: string;
   /** Scoped mpak package name; passed to `lifecycle.installNamed`. */
   bundleName: string;
-  /** Free-form tags. UI may render some as badges. */
+  /** Free-form tags. Currently search-matched in Browse; not rendered. */
   tags?: string[];
-  /** When true, installing this bundle adds a sidebar / placement UI. */
-  interactive?: boolean;
   /** Optional icon URL for the Browse row. */
   iconUrl?: string;
 }
@@ -48,7 +46,6 @@ export const STDIO_BUNDLES: StdioBundleEntry[] = [
       "Abstract API server with email validation, phone validation, IP geolocation, and more",
     bundleName: "@nimblebraininc/abstract",
     tags: ["mcp-server", "needs-config"],
-    interactive: false,
   },
   {
     id: "aws-ses",
@@ -56,7 +53,6 @@ export const STDIO_BUNDLES: StdioBundleEntry[] = [
     description: "Send emails using AWS Simple Email Service (SES)",
     bundleName: "@nimblebraininc/aws-ses",
     tags: ["mcp-server", "needs-config"],
-    interactive: false,
   },
   {
     id: "bash",
@@ -64,7 +60,6 @@ export const STDIO_BUNDLES: StdioBundleEntry[] = [
     description: "Execute bash commands via MCP",
     bundleName: "@nimblebraininc/bash",
     tags: ["mcp-server"],
-    interactive: false,
   },
   {
     id: "brave-search",
@@ -72,7 +67,6 @@ export const STDIO_BUNDLES: StdioBundleEntry[] = [
     description: "Web search using the Brave Search API",
     bundleName: "@nimblebraininc/brave-search",
     tags: ["mcp-server", "needs-config"],
-    interactive: false,
   },
   {
     id: "clickhouse",
@@ -81,7 +75,6 @@ export const STDIO_BUNDLES: StdioBundleEntry[] = [
       "ClickHouse database connectivity with read-only SQL queries, schema exploration, and chDB support",
     bundleName: "@nimblebraininc/clickhouse",
     tags: ["mcp-server", "needs-config"],
-    interactive: false,
   },
   {
     id: "deepl",
@@ -89,7 +82,6 @@ export const STDIO_BUNDLES: StdioBundleEntry[] = [
     description: "DeepL translation API with comprehensive translation tools",
     bundleName: "@nimblebraininc/deepl",
     tags: ["mcp-server", "needs-config"],
-    interactive: false,
   },
   {
     id: "echo",
@@ -97,7 +89,6 @@ export const STDIO_BUNDLES: StdioBundleEntry[] = [
     description: "Echo server for testing and debugging MCP connections",
     bundleName: "@nimblebraininc/echo",
     tags: ["mcp-server"],
-    interactive: false,
   },
   {
     id: "finnhub",
@@ -105,7 +96,6 @@ export const STDIO_BUNDLES: StdioBundleEntry[] = [
     description: "Financial market data and news MCP service powered by Finnhub API",
     bundleName: "@nimblebraininc/finnhub",
     tags: ["mcp-server", "needs-config"],
-    interactive: false,
   },
   {
     id: "folk",
@@ -113,7 +103,6 @@ export const STDIO_BUNDLES: StdioBundleEntry[] = [
     description: "Folk CRM server for managing people, companies, notes, and reminders",
     bundleName: "@nimblebraininc/folk",
     tags: ["mcp-server", "needs-config"],
-    interactive: false,
   },
   {
     id: "git-worktree",
@@ -122,7 +111,6 @@ export const STDIO_BUNDLES: StdioBundleEntry[] = [
       "Git worktree manager for isolated workspaces with branch lifecycle, risk classification, and merge control",
     bundleName: "@nimblebraininc/git-worktree",
     tags: ["mcp-server"],
-    interactive: false,
   },
   {
     id: "github",
@@ -131,7 +119,6 @@ export const STDIO_BUNDLES: StdioBundleEntry[] = [
       "GitHub MCP server for repository management, issues, PRs, and workflow automation",
     bundleName: "@nimblebraininc/github",
     tags: ["mcp-server", "needs-config"],
-    interactive: false,
   },
   {
     id: "gohighlevel",
@@ -139,7 +126,6 @@ export const STDIO_BUNDLES: StdioBundleEntry[] = [
     description: "MCP server for GoHighLevel CRM contact management",
     bundleName: "@nimblebraininc/gohighlevel",
     tags: ["mcp-server", "needs-config"],
-    interactive: false,
   },
   {
     id: "google-places",
@@ -148,7 +134,6 @@ export const STDIO_BUNDLES: StdioBundleEntry[] = [
       "Google Places API MCP server — search businesses, extract websites, phone numbers, addresses, and Google Maps URLs",
     bundleName: "@nimblebraininc/google-places",
     tags: ["mcp-server", "needs-config"],
-    interactive: false,
   },
   {
     id: "hunter",
@@ -156,7 +141,6 @@ export const STDIO_BUNDLES: StdioBundleEntry[] = [
     description: "MCP server for Hunter.io — email discovery, verification, and enrichment",
     bundleName: "@nimblebraininc/hunter",
     tags: ["mcp-server", "needs-config"],
-    interactive: false,
   },
   {
     id: "ipinfo",
@@ -164,7 +148,6 @@ export const STDIO_BUNDLES: StdioBundleEntry[] = [
     description: "IP intelligence server with geolocation, ASN, company, and privacy detection",
     bundleName: "@nimblebraininc/ipinfo",
     tags: ["mcp-server", "needs-config"],
-    interactive: false,
   },
   {
     id: "mcp-massive",
@@ -173,7 +156,6 @@ export const STDIO_BUNDLES: StdioBundleEntry[] = [
       "Financial market data, technical indicators, and SEC filings MCP service powered by Massive API",
     bundleName: "@nimblebraininc/mcp-massive",
     tags: ["mcp-server", "needs-config"],
-    interactive: false,
   },
   {
     id: "mcp-quiver",
@@ -181,7 +163,6 @@ export const STDIO_BUNDLES: StdioBundleEntry[] = [
     description: "Political and alternative financial data from Quiver Quantitative",
     bundleName: "@nimblebraininc/mcp-quiver",
     tags: ["mcp-server", "needs-config"],
-    interactive: false,
   },
   {
     id: "nationalparks",
@@ -190,7 +171,6 @@ export const STDIO_BUNDLES: StdioBundleEntry[] = [
       "MCP server for National Parks Service API — search parks, get details, alerts, campgrounds, events, and visitor centers",
     bundleName: "@nimblebraininc/nationalparks",
     tags: ["mcp-server", "needs-config"],
-    interactive: false,
   },
   {
     id: "newsapi",
@@ -198,7 +178,6 @@ export const STDIO_BUNDLES: StdioBundleEntry[] = [
     description: "Search news articles and top headlines using the NewsAPI",
     bundleName: "@nimblebraininc/newsapi",
     tags: ["mcp-server", "needs-config"],
-    interactive: false,
   },
   {
     id: "openweathermap",
@@ -206,7 +185,6 @@ export const STDIO_BUNDLES: StdioBundleEntry[] = [
     description: "OpenWeatherMap MCP Server for weather data, forecasts, alerts, and air quality",
     bundleName: "@nimblebraininc/openweathermap",
     tags: ["mcp-server", "needs-config"],
-    interactive: false,
   },
   {
     id: "pdfco",
@@ -214,7 +192,6 @@ export const STDIO_BUNDLES: StdioBundleEntry[] = [
     description: "PDF.co MCP Server with comprehensive PDF manipulation and OpenAPI support",
     bundleName: "@nimblebraininc/pdfco",
     tags: ["mcp-server", "needs-config"],
-    interactive: false,
   },
   {
     id: "postgres",
@@ -223,7 +200,6 @@ export const STDIO_BUNDLES: StdioBundleEntry[] = [
       "PostgreSQL MCP server with AI-powered tuning, index optimization, and database health analysis",
     bundleName: "@nimblebraininc/postgres",
     tags: ["mcp-server", "needs-config"],
-    interactive: false,
   },
   {
     id: "registry-tools",
@@ -231,7 +207,6 @@ export const STDIO_BUNDLES: StdioBundleEntry[] = [
     description: "Search and resolve MCP server packages from the mpak registry",
     bundleName: "@nimblebraininc/registry-tools",
     tags: ["mcp-server", "needs-config"],
-    interactive: false,
   },
   {
     id: "synapse-astro-editor",
@@ -240,7 +215,6 @@ export const STDIO_BUNDLES: StdioBundleEntry[] = [
       "Natural-language editor for Astro websites. Point the agent at a GitHub repo; chat drives every edit (text, JSX, blog posts, image uploads).",
     bundleName: "@nimblebraininc/synapse-astro-editor",
     tags: ["synapse-app", "needs-config"],
-    interactive: true,
   },
   {
     id: "synapse-collateral",
@@ -249,7 +223,6 @@ export const STDIO_BUNDLES: StdioBundleEntry[] = [
       "Typst-powered document generation with brand-aware templates, live preview, and conversational iteration",
     bundleName: "@nimblebraininc/synapse-collateral",
     tags: ["synapse-app"],
-    interactive: true,
   },
   {
     id: "synapse-crm",
@@ -258,7 +231,6 @@ export const STDIO_BUNDLES: StdioBundleEntry[] = [
       "Lightweight contact and deal tracker with agent-driven follow-ups and pipeline reviews.",
     bundleName: "@nimblebraininc/synapse-crm",
     tags: ["synapse-app"],
-    interactive: true,
   },
   {
     id: "synapse-db-query",
@@ -266,7 +238,6 @@ export const STDIO_BUNDLES: StdioBundleEntry[] = [
     description: "Natural-language Postgres query app with dynamic Vega-Lite visualizations",
     bundleName: "@nimblebraininc/synapse-db-query",
     tags: ["synapse-app", "needs-config"],
-    interactive: true,
   },
   {
     id: "synapse-hello",
@@ -274,7 +245,6 @@ export const STDIO_BUNDLES: StdioBundleEntry[] = [
     description: "Hello World MCP App for NimbleBrain Platform",
     bundleName: "@nimblebraininc/synapse-hello",
     tags: ["synapse-app"],
-    interactive: true,
   },
   {
     id: "synapse-mcp-dev-summit",
@@ -283,7 +253,6 @@ export const STDIO_BUNDLES: StdioBundleEntry[] = [
       "Conference companion for MCP Dev Summit NA 2026 — search sessions, build a personal schedule, capture notes, and get AI-powered recommendations",
     bundleName: "@nimblebraininc/synapse-mcp-dev-summit",
     tags: ["synapse-app"],
-    interactive: true,
   },
   {
     id: "synapse-research",
@@ -292,7 +261,6 @@ export const STDIO_BUNDLES: StdioBundleEntry[] = [
       "Research runs powered by MCP tasks. Kick off long-running research and track progress in real time.",
     bundleName: "@nimblebraininc/synapse-research",
     tags: ["synapse-app", "needs-config"],
-    interactive: true,
   },
   {
     id: "synapse-signal-graph",
@@ -301,7 +269,6 @@ export const STDIO_BUNDLES: StdioBundleEntry[] = [
       "Political-financial intelligence app that cross-references congressional trades, insider transactions, lobbying, and government contracts.",
     bundleName: "@nimblebraininc/synapse-signal-graph",
     tags: ["synapse-app"],
-    interactive: true,
   },
   {
     id: "synapse-todo-board",
@@ -310,7 +277,6 @@ export const STDIO_BUNDLES: StdioBundleEntry[] = [
       "Kanban-style task manager with board and table views, AI-powered triage, and daily reviews",
     bundleName: "@nimblebraininc/synapse-todo-board",
     tags: ["synapse-app"],
-    interactive: true,
   },
   {
     id: "text-utils",
@@ -319,7 +285,6 @@ export const STDIO_BUNDLES: StdioBundleEntry[] = [
       "Text manipulation toolkit with reverse, case conversion, slugify, URL extraction, truncation, and token counting",
     bundleName: "@nimblebraininc/text-utils",
     tags: ["mcp-server"],
-    interactive: false,
   },
   {
     id: "webfetch",
@@ -327,7 +292,6 @@ export const STDIO_BUNDLES: StdioBundleEntry[] = [
     description: "Fetch web pages and answer questions about their content using Claude",
     bundleName: "@nimblebraininc/webfetch",
     tags: ["mcp-server", "needs-config"],
-    interactive: false,
   },
   {
     id: "workspace-tools",
@@ -336,19 +300,5 @@ export const STDIO_BUNDLES: StdioBundleEntry[] = [
       "Git-backed workspace tools for AI agents: file ops, commits, search, and skill validation",
     bundleName: "@nimblebraininc/workspace-tools",
     tags: ["mcp-server", "needs-config"],
-    interactive: false,
   },
 ];
-
-/**
- * Look up a stdio bundle by either its short id (`"ipinfo"`) or its
- * scoped package name (`"@nimblebraininc/ipinfo"`). Browse passes
- * `entry.id` from a DirectoryEntry, which can be either form
- * depending on which registry surfaced the row — the curated stdio
- * registry uses the short id, the mpak.dev stub registry uses the
- * full package name. Accepting both keeps the install path robust
- * regardless of which card the user clicked.
- */
-export function findStdioBundle(idOrPackage: string): StdioBundleEntry | undefined {
-  return STDIO_BUNDLES.find((e) => e.id === idOrPackage || e.bundleName === idOrPackage);
-}
