@@ -136,6 +136,8 @@ export function OperatorSetupModal({
               value={clientId}
               onChange={(e) => setClientId(e.target.value)}
               autoComplete="off"
+              data-1p-ignore="true"
+              data-lpignore="true"
               spellCheck={false}
               disabled={busy}
               className="mt-1 w-full text-sm font-mono px-2.5 py-1.5 rounded border border-border bg-background focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-60"
@@ -148,6 +150,8 @@ export function OperatorSetupModal({
               value={clientSecret}
               onChange={(e) => setClientSecret(e.target.value)}
               autoComplete="off"
+              data-1p-ignore="true"
+              data-lpignore="true"
               spellCheck={false}
               disabled={busy}
               placeholder={isEdit ? "Paste new secret to rotate" : ""}

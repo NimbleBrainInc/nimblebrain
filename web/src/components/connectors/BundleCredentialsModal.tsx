@@ -270,6 +270,14 @@ function BundleField({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         autoComplete="off"
+        // Password-manager opt-outs. These fields are credential
+        // *entry* points (we're storing values into the app, not
+        // logging into a website), so password managers shouldn't
+        // offer autofill or warn about pasting. The two attributes
+        // cover 1Password and LastPass / Dashlane respectively;
+        // browsers ignore unknown data-* attributes.
+        data-1p-ignore="true"
+        data-lpignore="true"
         spellCheck={false}
         disabled={busy}
         placeholder={isPopulated ? "Leave blank to keep existing value" : ""}
