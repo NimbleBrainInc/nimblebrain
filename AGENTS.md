@@ -9,6 +9,7 @@ Self-hosted platform for MCP Apps and agent automations, built on Bun. Agentic l
 ```bash
 bun install                # Install dependencies
 bun run dev                # API (:27247) + Web (:27246) with watch/HMR
+bun run dev:worktree       # Run from any worktree against an isolated workdir on alt ports — see "Worktree dev" below
 bun run dev:api            # API only with auto-restart
 bun run verify             # Full CI parity — runs every subscript below
 bun run verify:static      # format:check + lint + check + check:cycles
@@ -31,6 +32,20 @@ bun run build:bundles      # Rebuild every src/bundles/*/ui (vite single-file)
 **`bun run dev` does NOT rebuild bundles.** The API serves each bundle from its pre-built `src/bundles/<name>/ui/dist/index.html`. After editing any file under `src/bundles/*/ui/src/`, run `bun run build:bundles` and restart the dev server (the API reads dist on iframe mount; it doesn't watch the file). Forgetting this means the iframe loads stale code while your changes look "live" in the source tree — a high-confusion failure mode.
 
 **Before opening a PR, run `bun run verify`.** It is the single command that mirrors CI, enforced by construction: `.github/workflows/ci.yml` invokes only `verify:*` subscripts (plus `test:integration` and `smoke`) — no inline check steps. To add or change a check, edit the matching subscript in `package.json`; CI picks it up automatically. If CI ever catches something `verify` didn't, the fix is to update the subscript, not the checklist. Tool-level parity is the gate; discipline-level rules are not.
+
+### Worktree dev
+
+`bun run dev:worktree` runs the platform from any git worktree against a worktree-local workdir, on alt ports, with no auth gate — for QA on a feature branch without disturbing your primary `~/.nimblebrain` dev or another worktree's state.
+
+| Setting | Value |
+|---|---|
+| Workdir | `<worktree>/.nimblebrain-worktree/` (auto-seeded; gitignored) |
+| Config | `<worktree>/.nimblebrain-worktree/nimblebrain.json` (auto-seeded on first run) |
+| API / Web ports | 27271 / 27270 (override via `NB_API_PORT` / `NB_WEB_PORT`) |
+| Auth | none (dev mode — no `instance.json`) |
+| LLM keys | `ANTHROPIC_API_KEY` (and friends) read from your shell environment |
+
+Each worktree gets its own isolated state, so two worktrees can run side-by-side without colliding. Reset with `rm -rf .nimblebrain-worktree && bun run dev:worktree`. Share state across worktrees with `NB_WORK_DIR=/abs/path bun run dev:worktree`. Suitable for Chrome DevTools-driven E2E tests against `/v1/*` (no login dance).
 
 ## Conventions
 
