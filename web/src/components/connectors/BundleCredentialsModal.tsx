@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   type BundleUserConfigField,
+  clearBundleUserConfig,
   type InstalledConnector,
   setBundleUserConfig,
 } from "../../api/client";
@@ -40,8 +41,11 @@ export function BundleCredentialsModal({
 
   const [values, setValues] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
+  const [clearing, setClearing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const firstFieldRef = useRef<HTMLInputElement | null>(null);
+
+  const anyPopulated = fieldKeys.some((k) => populated[k] === true);
 
   // Reset every time the modal opens so a previous edit's typing
   // never leaks into a fresh edit on the same connector.
@@ -69,6 +73,25 @@ export function BundleCredentialsModal({
     // returning null gracefully degrades if it does.
     return null;
   }
+
+  const onClear = async () => {
+    if (
+      !confirm(
+        `Clear all configured credentials for "${installed.catalog?.name ?? installed.serverName}"? This removes every saved field.`,
+      )
+    ) {
+      return;
+    }
+    setClearing(true);
+    setError(null);
+    try {
+      const res = await clearBundleUserConfig(installed.serverName);
+      onSaved(res.populated);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setClearing(false);
+    }
+  };
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -145,22 +168,40 @@ export function BundleCredentialsModal({
           ))}
           {error && <p className="text-xs text-destructive">{error}</p>}
 
-          <div className="flex items-center justify-end gap-2 pt-2">
-            <button
-              type="button"
-              onClick={onClose}
-              disabled={busy}
-              className="text-xs px-3 py-1.5 rounded border border-border hover:bg-muted disabled:opacity-60"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={busy}
-              className="text-xs px-3 py-1.5 rounded bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
-            >
-              {busy ? "Saving…" : "Save"}
-            </button>
+          <div className="flex items-center justify-between gap-3 pt-2">
+            {/* Clear lives inside the modal — the user is already in
+                context. Only renders when there's something to clear,
+                so a fresh first-time setup doesn't tempt them with a
+                no-op destructive link. */}
+            {anyPopulated ? (
+              <button
+                type="button"
+                onClick={onClear}
+                disabled={busy || clearing}
+                className="text-xs text-muted-foreground hover:text-destructive hover:underline underline-offset-4 disabled:opacity-60"
+              >
+                {clearing ? "Clearing…" : "Clear configuration"}
+              </button>
+            ) : (
+              <span />
+            )}
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={onClose}
+                disabled={busy || clearing}
+                className="text-xs px-3 py-1.5 rounded border border-border hover:bg-muted disabled:opacity-60"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={busy || clearing}
+                className="text-xs px-3 py-1.5 rounded bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
+              >
+                {busy ? "Saving…" : "Save"}
+              </button>
+            </div>
           </div>
         </form>
       </div>

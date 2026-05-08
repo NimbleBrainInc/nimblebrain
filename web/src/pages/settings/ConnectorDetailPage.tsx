@@ -5,7 +5,7 @@ import {
   type InstalledConnector,
   uninstallConnector,
 } from "../../api/client";
-import { BundleConfigSection } from "../../components/connectors/BundleConfigSection";
+import { BundleCredentialsModal } from "../../components/connectors/BundleCredentialsModal";
 import { ConnectorStatusHero } from "../../components/connectors/ConnectorStatusHero";
 import { OAuthConnectionSection } from "../../components/connectors/OAuthConnectionSection";
 import { OperatorOAuthSection } from "../../components/connectors/OperatorOAuthSection";
@@ -21,15 +21,17 @@ import { roleAtLeast, useScopedRole } from "../../hooks/useScopedRole";
  *     Set up OAuth / Connect / Reconnect) when status ≠ ready, and
  *     fades to just the title block when ready.
  *
- *   - Sections below the hero are *settings* surfaces — connection
- *     details when running, OAuth client audit when configured,
- *     bundle config when populated. Each renders only when its
- *     content is actually present; an empty Configure page reads as
- *     "everything's good, nothing to manage."
+ *   - The action bar (top-right) groups secondary management
+ *     affordances: Docs, Configure (when stdio bundle has a
+ *     `user_config` schema and status is ready — the hero owns
+ *     `needs_setup`), and Uninstall. Putting Configure here instead
+ *     of as another inline section keeps the page body focused on
+ *     status + connection state + tool permissions, with all
+ *     "manage this connector" entry points in one consistent place.
  *
- *   - Tool permissions live behind a collapse. They're useful but
- *     verbose (12+ rows for some bundles); making them the page's
- *     longest scroll context drowns the actual configuration state.
+ *   - Tool permissions render inline as the page's primary content
+ *     for any ready connector — that's what users come here for once
+ *     setup is past.
  *
  * Reachable from `/settings/{personal,workspace}/connectors/:serverName`;
  * scope comes from the route prefix.
@@ -44,6 +46,7 @@ export function ConnectorDetailPage({ scope }: { scope: "user" | "workspace" }) 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [acting, setActing] = useState<string | null>(null);
+  const [configureModalOpen, setConfigureModalOpen] = useState(false);
 
   const role = useScopedRole();
   // Workspace-scope edit gates ride on ws_admin. User-scope (personal
@@ -103,10 +106,22 @@ export function ConnectorDetailPage({ scope }: { scope: "user" | "workspace" }) 
 
   const cat = installed.catalog;
 
+  // Header-level Configure affordance. Visible when:
+  //   - the user can manage this connector
+  //   - the bundle declares a user_config schema (anything to set)
+  //   - the status isn't `needs_setup` — when it is, the hero owns
+  //     the primary CTA and a duplicate header button would
+  //     double-count the prompt
+  const showHeaderConfigure =
+    canManage &&
+    !!installed.userConfig &&
+    Object.keys(installed.userConfig.schema).length > 0 &&
+    installed.status !== "needs_setup";
+
   return (
     <div className="max-w-3xl mx-auto space-y-8">
-      {/* Action bar — back link / docs / uninstall. Stays minimal so
-          the hero is the first thing the eye lands on. */}
+      {/* Action bar — back link on the left, secondary management
+          affordances on the right (Docs / Configure / Uninstall). */}
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <Link to={backPath} className="text-xs text-muted-foreground hover:underline">
           ← All connectors
@@ -121,6 +136,15 @@ export function ConnectorDetailPage({ scope }: { scope: "user" | "workspace" }) 
             >
               Docs ↗
             </a>
+          )}
+          {showHeaderConfigure && (
+            <button
+              type="button"
+              onClick={() => setConfigureModalOpen(true)}
+              className="text-xs px-3 py-1.5 rounded border border-border bg-background hover:bg-muted"
+            >
+              Configure
+            </button>
           )}
           {canManage && (
             <button
@@ -143,17 +167,25 @@ export function ConnectorDetailPage({ scope }: { scope: "user" | "workspace" }) 
       {error && <p className="text-xs text-destructive">{error}</p>}
 
       {/* Settings surfaces. Each renders only when its content is
-          present. Tool permissions are inlined (not behind a
-          disclosure) — they're the page's primary content for any
-          ready connector, and tucking them away made the page read
-          as empty when the optional credential sections were
-          silent. */}
+          present. Bundle config is no longer a section — the
+          Configure button in the header above opens the same modal. */}
       <div className="space-y-6">
         <OAuthConnectionSection installed={installed} canManage={canManage} onChanged={refresh} />
         <OperatorOAuthSection installed={installed} canManage={canManage} onChanged={refresh} />
-        <BundleConfigSection installed={installed} canManage={canManage} onChanged={refresh} />
         <ToolPermissionsTable serverName={installed.serverName} scope={scope} />
       </div>
+
+      {configureModalOpen && (
+        <BundleCredentialsModal
+          installed={installed}
+          open={configureModalOpen}
+          onClose={() => setConfigureModalOpen(false)}
+          onSaved={() => {
+            setConfigureModalOpen(false);
+            refresh();
+          }}
+        />
+      )}
     </div>
   );
 }

@@ -73,7 +73,6 @@ const { act } = await import("react");
 
 const { OAuthConnectionSection } = await import("../components/connectors/OAuthConnectionSection");
 const { OperatorOAuthSection } = await import("../components/connectors/OperatorOAuthSection");
-const { BundleConfigSection } = await import("../components/connectors/BundleConfigSection");
 
 import type { InstalledConnector } from "../api/client";
 
@@ -358,94 +357,11 @@ describe("OperatorOAuthSection", () => {
   });
 });
 
-// ── BundleConfigSection ─────────────────────────────────────────────
-//
-// Refactored: compact summary form. Mirrors OperatorOAuthSection's
-// pattern — a one-line indicator + Edit button (admin-gated) that
-// opens BundleCredentialsModal. Renders ONLY when at least one field
-// is populated; the empty case is the hero's job, so this section
-// never repeats the "Not configured" prompt that the hero already
-// surfaces. The actual schema fields, hints, and sensitive inputs all
-// live inside the modal.
-
-describe("BundleConfigSection", () => {
-  test("renders nothing for connectors without a userConfig schema (DCR / static-auth)", async () => {
-    mounted = await mount(
-      <BundleConfigSection installed={dcrConnector()} canManage={true} onChanged={() => {}} />,
-    );
-    expect(mounted.container.textContent).toBe("");
-  });
-
-  test("renders nothing when schema exists but no fields are populated — hero owns the empty case", async () => {
-    mounted = await mount(
-      <BundleConfigSection installed={stdioBundle()} canManage={true} onChanged={() => {}} />,
-    );
-    expect(mounted.container.textContent).toBe("");
-  });
-
-  test("fully populated → 'Configured' + Edit + Clear (admin)", async () => {
-    mounted = await mount(
-      <BundleConfigSection
-        installed={stdioBundle({
-          userConfig: {
-            schema: {
-              api_key: { type: "string", title: "API Key", sensitive: true, required: true },
-            },
-            populated: { api_key: true },
-          },
-        })}
-        canManage={true}
-        onChanged={() => {}}
-      />,
-    );
-    expect(mounted.container.textContent).toContain("Bundle configuration");
-    expect(mounted.container.textContent).toContain("Configured");
-    expect(findButton(mounted.container, "Edit")).not.toBeNull();
-    expect(findButton(mounted.container, "Clear configuration")).not.toBeNull();
-  });
-
-  test("partially populated → 'X of N configured' + Edit + Clear", async () => {
-    // Two fields, one populated. The summary should show the partial
-    // state so the user knows there's still work to do.
-    mounted = await mount(
-      <BundleConfigSection
-        installed={stdioBundle({
-          userConfig: {
-            schema: {
-              api_key: { type: "string", title: "API Key", sensitive: true, required: true },
-              workspace_id: { type: "string", title: "Workspace", required: false },
-            },
-            populated: { api_key: true, workspace_id: false },
-          },
-        })}
-        canManage={true}
-        onChanged={() => {}}
-      />,
-    );
-    expect(mounted.container.textContent).toContain("1 of 2 configured");
-    expect(findButton(mounted.container, "Edit")).not.toBeNull();
-  });
-
-  test("populated + canManage=false hides Edit and Clear, keeps summary visible", async () => {
-    mounted = await mount(
-      <BundleConfigSection
-        installed={stdioBundle({
-          userConfig: {
-            schema: {
-              api_key: { type: "string", title: "API Key", sensitive: true, required: true },
-            },
-            populated: { api_key: true },
-          },
-        })}
-        canManage={false}
-        onChanged={() => {}}
-      />,
-    );
-    expect(mounted.container.textContent).toContain("Configured");
-    expect(findButton(mounted.container, "Edit")).toBeNull();
-    expect(findButton(mounted.container, "Clear configuration")).toBeNull();
-  });
-});
+// BundleConfigSection was deleted in the header-action redesign.
+// Bundle credentials are now triggered from a top-right Configure
+// button on ConnectorDetailPage that opens BundleCredentialsModal
+// directly. The modal owns its own Clear-configuration affordance,
+// so the inline section had no remaining job.
 
 // ── ConnectorStatusHero ─────────────────────────────────────────────
 //
