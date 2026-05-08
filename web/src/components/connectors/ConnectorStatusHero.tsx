@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { type DirectoryEntry, initiateMcpOAuth, type InstalledConnector } from "../../api/client";
 import { BundleCredentialsModal } from "./BundleCredentialsModal";
+import { ConnectorIcon } from "./ConnectorIcon";
 import { OperatorSetupModal } from "./OperatorSetupModal";
 
 /**
@@ -98,16 +99,16 @@ export function ConnectorStatusHero({
   return (
     <section className="space-y-5">
       {/* Identity row — icon + name + description. Always present;
-          the page's title block. */}
+          the page's title block. The icon falls back to a letter
+          avatar with a deterministic tint when no iconUrl is set
+          (or the URL 404s — Asana's vendor link does without auth),
+          matching the Browse cards' treatment. */}
       <div className="flex items-start gap-4">
-        {cat?.iconUrl && (
-          <img
-            src={cat.iconUrl}
-            alt=""
-            className="h-12 w-12 rounded shrink-0"
-            onError={(e) => ((e.target as HTMLImageElement).style.visibility = "hidden")}
-          />
-        )}
+        <ConnectorIcon
+          name={name}
+          iconUrl={cat?.iconUrl}
+          className="h-12 w-12 rounded-md text-base"
+        />
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <h1 className="text-xl font-semibold tracking-tight">{name}</h1>

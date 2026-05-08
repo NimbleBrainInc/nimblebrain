@@ -8,6 +8,7 @@ import {
   installConnector,
   listDirectory,
 } from "../../api/client";
+import { ConnectorIcon } from "../../components/connectors/ConnectorIcon";
 import { OperatorSetupModal } from "../../components/connectors/OperatorSetupModal";
 import { roleAtLeast, useScopedRole } from "../../hooks/useScopedRole";
 
@@ -278,63 +279,6 @@ function DirectoryCard({
       </div>
     </div>
   );
-}
-
-/**
- * Icon placeholder. When the catalog entry doesn't carry an iconUrl
- * — or the URL fails to load — fall back to a deterministic letter
- * avatar so every card has a visual anchor on the left edge. The
- * previous "hide on error" behavior left a blank 36px slot for
- * connectors with broken icon URLs (e.g., Asana's vendor link 404s
- * without auth).
- *
- * Tint is picked from a small fixed palette keyed on the connector's
- * display name, so the same connector renders the same color across
- * reloads. Light, low-saturation tints — meant to read as "branding
- * placeholder" not "loud accent."
- */
-function ConnectorIcon({ name, iconUrl }: { name: string; iconUrl?: string }) {
-  const [broken, setBroken] = useState(false);
-  const showImage = !!iconUrl && !broken;
-  if (showImage) {
-    return (
-      <img
-        src={iconUrl}
-        alt=""
-        className="h-9 w-9 rounded shrink-0"
-        onError={() => setBroken(true)}
-      />
-    );
-  }
-  const letter = (name.trim().charAt(0) || "?").toUpperCase();
-  const tint = pickTint(name);
-  return (
-    <div
-      className={`h-9 w-9 rounded shrink-0 flex items-center justify-center text-sm font-semibold ${tint}`}
-      aria-hidden
-    >
-      {letter}
-    </div>
-  );
-}
-
-const TINTS = [
-  "bg-blue-500/15 text-blue-600 dark:text-blue-400",
-  "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
-  "bg-amber-500/15 text-amber-600 dark:text-amber-400",
-  "bg-rose-500/15 text-rose-600 dark:text-rose-400",
-  "bg-violet-500/15 text-violet-600 dark:text-violet-400",
-  "bg-cyan-500/15 text-cyan-600 dark:text-cyan-400",
-  "bg-fuchsia-500/15 text-fuchsia-600 dark:text-fuchsia-400",
-  "bg-orange-500/15 text-orange-600 dark:text-orange-400",
-];
-
-/** Stable hash → tint index. Deterministic so reloads don't shuffle. */
-function pickTint(seed: string): string {
-  let h = 0;
-  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) | 0;
-  // biome-ignore lint/style/noNonNullAssertion: TINTS is a non-empty literal
-  return TINTS[Math.abs(h) % TINTS.length]!;
 }
 
 function CardAction({

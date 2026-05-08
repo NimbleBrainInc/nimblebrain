@@ -6,7 +6,6 @@ import {
   uninstallConnector,
 } from "../../api/client";
 import { BundleConfigSection } from "../../components/connectors/BundleConfigSection";
-import { CollapsibleSection } from "../../components/connectors/CollapsibleSection";
 import { ConnectorStatusHero } from "../../components/connectors/ConnectorStatusHero";
 import { OAuthConnectionSection } from "../../components/connectors/OAuthConnectionSection";
 import { OperatorOAuthSection } from "../../components/connectors/OperatorOAuthSection";
@@ -144,21 +143,16 @@ export function ConnectorDetailPage({ scope }: { scope: "user" | "workspace" }) 
       {error && <p className="text-xs text-destructive">{error}</p>}
 
       {/* Settings surfaces. Each renders only when its content is
-          present — an empty stack here means "nothing to tune." */}
+          present. Tool permissions are inlined (not behind a
+          disclosure) — they're the page's primary content for any
+          ready connector, and tucking them away made the page read
+          as empty when the optional credential sections were
+          silent. */}
       <div className="space-y-6">
         <OAuthConnectionSection installed={installed} canManage={canManage} onChanged={refresh} />
         <OperatorOAuthSection installed={installed} canManage={canManage} onChanged={refresh} />
         <BundleConfigSection installed={installed} canManage={canManage} onChanged={refresh} />
-
-        {/* Tool permissions — collapsed by default. Verbose enough
-            that always-rendering pushes everything else off-screen
-            on bundles with 10+ tools. */}
-        <CollapsibleSection
-          title="Tool permissions"
-          summary="Choose which tools the agent can call"
-        >
-          <ToolPermissionsTable serverName={installed.serverName} scope={scope} />
-        </CollapsibleSection>
+        <ToolPermissionsTable serverName={installed.serverName} scope={scope} />
       </div>
     </div>
   );

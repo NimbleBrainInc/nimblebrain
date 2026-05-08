@@ -8,15 +8,21 @@ import {
 } from "../../api/client";
 
 /**
- * Per-tool permission table for an installed connector. Shows every
- * tool the connector exposes (read live from `tools/list`) with a
- * binary Allow / Disallow toggle and bulk "Allow all" / "Disallow all"
- * controls at the top.
+ * Per-tool permission table for an installed connector. Reads every
+ * tool the connector exposes (live `tools/list`) and pairs each with
+ * a binary Allow / Disallow control. Bulk "Allow all" / "Disallow
+ * all" sit in the section header for the I-just-want-everything-on /
+ * everything-off cases.
  *
- * Defaults: tools without a recorded policy are treated as Allow. The
- * runtime gate at `ToolRegistry.execute` honors the same default,
- * so an empty permissions.json means "everything works." This matches
- * the trust-by-default posture; users tighten when needed.
+ * Defaults: tools without a recorded policy are treated as Allow.
+ * The runtime gate at `ToolRegistry.execute` honors the same default,
+ * so an empty permissions.json means "everything works." Trust-by-
+ * default; users tighten when needed.
+ *
+ * Visual treatment is intentionally light — no surrounding box, just
+ * row dividers — because this table is the longest scroll context on
+ * a Configure page with 10+ tools. A heavy border made the page feel
+ * walled off; lighter chrome lets it sit alongside the other sections.
  */
 export function ToolPermissionsTable({
   serverName,
@@ -63,12 +69,10 @@ export function ToolPermissionsTable({
     setSavingTool(toolName);
     setError(null);
     const prev = policyFor(toolName);
-    // Optimistic update
     setPolicies((p) => ({ ...p, [toolName]: next }));
     try {
       await setConnectorPermissions(serverName, scope, { [toolName]: next });
     } catch (err) {
-      // Roll back on failure
       setPolicies((p) => ({ ...p, [toolName]: prev }));
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -90,88 +94,180 @@ export function ToolPermissionsTable({
     }
   };
 
-  if (loading) {
-    return <div className="text-sm text-muted-foreground">Loading tools…</div>;
-  }
-  if (error) {
-    return <div className="text-sm text-destructive">Failed to load tools: {error}</div>;
-  }
-  if (tools.length === 0) {
-    return (
-      <div className="text-sm text-muted-foreground">
-        This connector exposes no tools. Reconnect or wait for it to finish starting.
+  // Stable header — present before / during / after load — so the
+  // section heading doesn't pop in late and shift layout.
+  const header = (
+    <div className="flex items-start justify-between gap-3 flex-wrap">
+      <div>
+        <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+          Tool permissions
+        </h2>
+        <p className="text-xs text-muted-foreground mt-1">Choose which tools the agent can call.</p>
       </div>
-    );
-  }
-
-  return (
-    <div className="flex flex-col gap-3">
-      <div className="flex items-center justify-between">
-        <div>
-          <h3 className="text-sm font-semibold">Tool permissions</h3>
-          <p className="text-xs text-muted-foreground">
-            Choose which tools your agent is allowed to call. Disallowed tools are blocked at the
-            platform; the agent sees a structured error.
-          </p>
-        </div>
-        <div className="flex gap-2">
+      {tools.length > 0 && (
+        <div className="flex items-center gap-3 text-xs text-muted-foreground">
           <button
             type="button"
             onClick={() => updateAll("allow")}
-            className="text-xs px-2 py-1 rounded border border-border hover:bg-muted"
+            className="hover:text-foreground hover:underline underline-offset-4"
           >
             Allow all
           </button>
+          <span aria-hidden>·</span>
           <button
             type="button"
             onClick={() => updateAll("disallow")}
-            className="text-xs px-2 py-1 rounded border border-border hover:bg-muted"
+            className="hover:text-foreground hover:underline underline-offset-4"
           >
             Disallow all
           </button>
         </div>
-      </div>
+      )}
+    </div>
+  );
 
-      <div className="border border-border rounded-md divide-y divide-border">
-        {tools.map((tool) => {
-          const policy = policyFor(tool.name);
-          const summary = summarizeToolDescription(tool.description);
-          return (
-            <div key={tool.name} className="flex items-center justify-between gap-4 px-3 py-2">
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <span className="font-mono text-xs">{tool.name}</span>
-                  {savingTool === tool.name && (
-                    <span className="text-[10px] text-muted-foreground">saving…</span>
+  return (
+    <section className="space-y-3">
+      {header}
+      {loading ? (
+        <p className="text-sm text-muted-foreground">Loading tools…</p>
+      ) : error ? (
+        <p className="text-sm text-destructive">Failed to load tools: {error}</p>
+      ) : tools.length === 0 ? (
+        <p className="text-sm text-muted-foreground">
+          This connector exposes no tools. Reconnect or wait for it to finish starting.
+        </p>
+      ) : (
+        <ul className="border-t border-border/60">
+          {tools.map((tool) => {
+            const policy = policyFor(tool.name);
+            const summary = summarizeToolDescription(tool.description);
+            return (
+              <li
+                key={tool.name}
+                className="flex items-center justify-between gap-4 py-2.5 border-b border-border/60"
+              >
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-mono">{tool.name}</span>
+                    {savingTool === tool.name && (
+                      <span className="text-[10px] text-muted-foreground">saving…</span>
+                    )}
+                  </div>
+                  {summary && (
+                    <p
+                      className="text-xs text-muted-foreground mt-0.5 truncate"
+                      title={tool.description}
+                    >
+                      {summary}
+                    </p>
                   )}
                 </div>
-                {summary && (
-                  <p
-                    className="text-xs text-muted-foreground mt-0.5 truncate"
-                    title={tool.description}
-                  >
-                    {summary}
-                  </p>
-                )}
-              </div>
-              <div className="flex items-center gap-1 shrink-0">
-                <PolicyButton
-                  active={policy === "allow"}
-                  onClick={() => updatePolicy(tool.name, "allow")}
-                  label="Allow"
+                <PolicyToggle
+                  policy={policy}
+                  onAllow={() => updatePolicy(tool.name, "allow")}
+                  onDisallow={() => updatePolicy(tool.name, "disallow")}
                 />
-                <PolicyButton
-                  active={policy === "disallow"}
-                  onClick={() => updatePolicy(tool.name, "disallow")}
-                  label="Disallow"
-                  variant="destructive"
-                />
-              </div>
-            </div>
-          );
-        })}
-      </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+/**
+ * Two icon buttons — Allow (✓) and Disallow (⊘) — with the active one
+ * filled. Replaces the previous Allow/Disallow word buttons; on a
+ * Configure page with 10+ tools the word version dominated the
+ * right edge and made every row scream "interactive." Icons are quiet
+ * by default and pop only when active.
+ */
+function PolicyToggle({
+  policy,
+  onAllow,
+  onDisallow,
+}: {
+  policy: ToolPolicy;
+  onAllow: () => void;
+  onDisallow: () => void;
+}) {
+  return (
+    <div className="flex items-center gap-1 shrink-0">
+      <PolicyButton
+        active={policy === "allow"}
+        onClick={onAllow}
+        ariaLabel="Allow"
+        variant="allow"
+      />
+      <PolicyButton
+        active={policy === "disallow"}
+        onClick={onDisallow}
+        ariaLabel="Disallow"
+        variant="disallow"
+      />
     </div>
+  );
+}
+
+function PolicyButton({
+  active,
+  onClick,
+  ariaLabel,
+  variant,
+}: {
+  active: boolean;
+  onClick: () => void;
+  ariaLabel: string;
+  variant: "allow" | "disallow";
+}) {
+  // Active states use the brand / destructive tints at low alpha so
+  // they read as "selected" without screaming. Inactive is a quiet
+  // outlined square that hovers to a muted fill — enough hint that
+  // it's clickable.
+  const activeCls =
+    variant === "allow"
+      ? "border-emerald-500/60 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+      : "border-rose-500/60 bg-rose-500/10 text-rose-600 dark:text-rose-400";
+  const inactiveCls = "border-border text-muted-foreground hover:bg-muted hover:text-foreground";
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={ariaLabel}
+      aria-pressed={active}
+      title={ariaLabel}
+      className={`h-7 w-7 flex items-center justify-center rounded border transition-colors ${
+        active ? activeCls : inactiveCls
+      }`}
+    >
+      {variant === "allow" ? <CheckIcon /> : <DenyIcon />}
+    </button>
+  );
+}
+
+function CheckIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden>
+      <path
+        d="M2.5 6.5L5 9L9.5 3.5"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        fill="none"
+      />
+    </svg>
+  );
+}
+
+function DenyIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden>
+      <circle cx="6" cy="6" r="4.5" stroke="currentColor" strokeWidth="1.4" fill="none" />
+      <path d="M3 9L9 3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+    </svg>
   );
 }
 
@@ -195,33 +291,4 @@ function summarizeToolDescription(raw: string | undefined): string {
   const sentenceMatch = stripped.match(/^.+?[.!?](?:\s|$)/);
   const sentence = sentenceMatch ? sentenceMatch[0].trim() : stripped;
   return sentence.length > 140 ? `${sentence.slice(0, 140).trimEnd()}…` : sentence;
-}
-
-function PolicyButton({
-  active,
-  onClick,
-  label,
-  variant,
-}: {
-  active: boolean;
-  onClick: () => void;
-  label: string;
-  variant?: "destructive";
-}) {
-  const base = "text-[11px] px-2 py-1 rounded border transition-colors";
-  const inactiveColor = "border-border text-muted-foreground hover:bg-muted";
-  const activeColor =
-    variant === "destructive"
-      ? "border-destructive bg-destructive/10 text-destructive"
-      : "border-primary bg-primary/10 text-primary";
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`${base} ${active ? activeColor : inactiveColor}`}
-      aria-pressed={active}
-    >
-      {label}
-    </button>
-  );
 }
