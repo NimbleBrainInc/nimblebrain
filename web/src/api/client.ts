@@ -664,6 +664,22 @@ export async function getInstalledConnectors(opts?: {
   return unwrapStructured(result, "list_installed");
 }
 
+/**
+ * Single-connector counterpart to {@link getInstalledConnectors}.
+ * Returns one entry by serverName, or null if not installed in the
+ * caller's scope. Saves the wire weight + server work of building
+ * entries for every other connector when you only need one.
+ */
+export async function getInstalledConnector(
+  serverName: string,
+): Promise<{ installed: InstalledConnector | null }> {
+  const result = await callTool("nb", "manage_connectors", {
+    action: "get_installed",
+    serverName,
+  });
+  return unwrapStructured(result, "get_installed");
+}
+
 export async function disconnectConnector(
   serverName: string,
   scope?: "workspace" | "user",
@@ -904,6 +920,29 @@ export async function getConnectorPermissions(
     scope,
   });
   return unwrapStructured(result, "get_permissions");
+}
+
+/**
+ * Combined fetch — returns the connector's tool list AND the policy
+ * map in one round-trip. Used by ToolPermissionsTable, which needs
+ * both on mount; the previous two-call shape doubled the page-load
+ * REST traffic for no benefit.
+ */
+export async function listConnectorToolsWithPermissions(
+  serverName: string,
+  scope?: "workspace" | "user",
+): Promise<{
+  scope: "workspace" | "user";
+  serverName: string;
+  tools: ConnectorTool[];
+  permissions: Record<string, ToolPolicy>;
+}> {
+  const result = await callTool("nb", "manage_connectors", {
+    action: "list_tools_with_permissions",
+    serverName,
+    ...(scope ? { scope } : {}),
+  });
+  return unwrapStructured(result, "list_tools_with_permissions");
 }
 
 export async function setConnectorPermissions(

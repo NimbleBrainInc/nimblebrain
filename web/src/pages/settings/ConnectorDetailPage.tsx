@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
-  getInstalledConnectors,
+  getInstalledConnector,
   type InstalledConnector,
   uninstallConnector,
 } from "../../api/client";
@@ -56,15 +56,19 @@ export function ConnectorDetailPage({ scope }: { scope: "user" | "workspace" }) 
   const refresh = useCallback(async () => {
     setError(null);
     try {
-      const res = await getInstalledConnectors({ scope });
-      const found = res.installed.find((i) => i.serverName === serverName) ?? null;
-      setInstalled(found);
+      // Targeted single-connector fetch — avoids building entries
+      // (and tools() round-trips) for every other installed bundle
+      // when we only render one. Note: scope is unused here; the
+      // server resolves scope from the serverName lookup, falling
+      // back to whichever scope the bundle is installed under.
+      const res = await getInstalledConnector(serverName);
+      setInstalled(res.installed);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading(false);
     }
-  }, [serverName, scope]);
+  }, [serverName]);
 
   useEffect(() => {
     refresh();

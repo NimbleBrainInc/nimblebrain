@@ -88,15 +88,26 @@ function buildHarness(opts: { adminId?: string } = {}): Harness {
     getRegistryStore: () => registryStore,
     getLifecycle: () => lifecycle,
     getRegistryForWorkspace: (_id: string) => workspaceRegistry,
-    // Minimal permission-store stub. The handlers only call
-    // deleteConnector on uninstall — recording the call is enough; the
-    // production store's persistence isn't under test here.
+    // Minimal stubs for the runtime services list_installed touches
+    // beyond the workspace store. Real instances aren't necessary —
+    // the production-shaped behavior is exercised by integration
+    // tests; here we just need the methods to exist with sane
+    // return shapes so the handler doesn't blow up looking up
+    // tangential metadata (user display names, user-scope bundles).
     getPermissionStore: () => ({
       deleteConnector: async (
         _owner: { scope: "workspace" | "user"; wsId?: string; userId?: string },
         _serverName: string,
       ): Promise<void> => {},
     }),
+    getUserStore: () => ({
+      get: async (_id: string) => null,
+    }),
+    getUserConnectorStore: () => ({
+      get: async (_id: string) => null,
+    }),
+    getBundleInstancesForWorkspace: (_wsId: string) => lifecycle.getInstances(),
+    getAllowInsecureRemotes: () => false,
   } as unknown as Runtime;
 
   return {
@@ -873,6 +884,36 @@ describe("manage_connectors.set_user_config", () => {
     expect(result.isError).toBe(true);
     const text = (result.content?.[0] as { text?: string } | undefined)?.text ?? "";
     expect(text).toContain("user_config");
+  });
+});
+
+describe("manage_connectors.get_installed", () => {
+  let h: Harness;
+
+  beforeEach(async () => {
+    h = buildHarness();
+    await provisionWorkspace(h);
+  });
+
+  afterEach(() => {
+    rmSync(h.workDir, { recursive: true, force: true });
+  });
+
+  test("returns { installed: null } when the bundle isn't installed in any scope", async () => {
+    const tool = buildTool(h, ADMIN_USER);
+    const result = await tool.handler({
+      action: "get_installed",
+      serverName: "no-such-bundle",
+    });
+    expect(result.isError).toBe(false);
+    const sc = result.structuredContent as { installed: unknown };
+    expect(sc.installed).toBeNull();
+  });
+
+  test("rejects empty serverName up front (catches typo'd routes)", async () => {
+    const tool = buildTool(h, ADMIN_USER);
+    const result = await tool.handler({ action: "get_installed", serverName: "" });
+    expect(result.isError).toBe(true);
   });
 });
 

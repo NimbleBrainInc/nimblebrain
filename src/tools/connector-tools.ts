@@ -152,7 +152,9 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
             "list_catalog",
             "list_directory",
             "list_installed",
+            "get_installed",
             "list_tools",
+            "list_tools_with_permissions",
             "install",
             "disconnect",
             "uninstall",
@@ -217,8 +219,18 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
           return handleListDirectory(ctx, wsId);
         case "list_installed":
           return handleListInstalled(ctx, wsId, callerId, String(input.scope ?? "all"));
+        case "get_installed":
+          return handleGetInstalled(ctx, wsId, callerId, String(input.serverName ?? ""));
         case "list_tools":
           return handleListTools(
+            ctx,
+            wsId,
+            callerId,
+            String(input.serverName ?? ""),
+            input.scope ? String(input.scope) : undefined,
+          );
+        case "list_tools_with_permissions":
+          return handleListToolsWithPermissions(
             ctx,
             wsId,
             callerId,
@@ -360,6 +372,14 @@ async function handleListInstalled(
   wsId: string | null,
   callerId: string | null,
   scope: string,
+  /**
+   * When set, only build the entry for this specific serverName.
+   * Used by `handleGetInstalled` to avoid running source.tools() and
+   * the manifest+credential probes for every other connector when
+   * the caller only needs one. Non-matching instances are skipped
+   * before any per-instance IO.
+   */
+  onlyServerName?: string,
 ): Promise<ToolResult> {
   const lifecycle = ctx.runtime.getLifecycle();
   const workDir = ctx.runtime.getWorkDir();
@@ -474,6 +494,10 @@ async function handleListInstalled(
       // Skip user-scope URL bundles seeded into the workspace registry
       // via UserPoolSource — those belong to the user-scope view.
       if (instance.oauthScope === "user") continue;
+      // Single-connector path: skip every non-matching instance
+      // before doing any per-instance IO (tools() round-trip,
+      // manifest probe, credential read).
+      if (onlyServerName && instance.serverName !== onlyServerName) continue;
 
       const ref = instance.ref;
       const isRemote = !!ref && "url" in ref;
@@ -585,6 +609,7 @@ async function handleListInstalled(
       for (const ref of userRecord.bundles) {
         if (!("url" in ref)) continue;
         const serverName = ref.serverName ?? deriveServerName(ref.url);
+        if (onlyServerName && serverName !== onlyServerName) continue;
         const userInstance = lifecycle.getUserInstance?.(serverName, callerId) ?? null;
         const conn = userInstance?.connections?.get(callerId) ?? null;
         const cat = catalogByUrl.get(ref.url);
@@ -638,6 +663,37 @@ async function handleListInstalled(
 
   return {
     content: textContent(`Installed: ${installed.length} entries.`),
+    structuredContent: { installed },
+    isError: false,
+  };
+}
+
+/**
+ * Single-connector counterpart to `list_installed`. Returns the same
+ * shape as one entry from that array, or `null` when the bundle
+ * isn't installed in the caller's scope. Used by the Configure
+ * detail page so it doesn't fetch all 15+ installed connectors just
+ * to render one.
+ *
+ * Internally reuses `handleListInstalled` with the `onlyServerName`
+ * filter so per-instance IO (tools() round-trips, manifest probes)
+ * is skipped for every non-matching connector.
+ */
+async function handleGetInstalled(
+  ctx: ManageConnectorsContext,
+  wsId: string | null,
+  callerId: string | null,
+  serverName: string,
+): Promise<ToolResult> {
+  if (!serverName) return errResult("serverName is required.");
+
+  const result = await handleListInstalled(ctx, wsId, callerId, "all", serverName);
+  if (result.isError) return result;
+  const sc = result.structuredContent as { installed?: unknown[] } | undefined;
+  const entries = sc?.installed ?? [];
+  const installed = entries[0] ?? null;
+  return {
+    content: textContent(installed ? `Installed: ${serverName}` : `Not installed: ${serverName}`),
     structuredContent: { installed },
     isError: false,
   };
@@ -1245,6 +1301,83 @@ async function handleListTools(
           description: t.description,
           inputSchema: t.inputSchema,
         })),
+      },
+      isError: false,
+    };
+  } catch (err) {
+    return errResult(err instanceof Error ? err.message : String(err));
+  }
+}
+
+/**
+ * Combined list_tools + get_permissions read. The Configure page's
+ * tool-permissions table needs both: the tool list (for descriptions
+ * and rendering) AND the policy map (for which switch is active).
+ * Two REST calls per page load was wasteful — they share scope
+ * resolution, instance lookup, and ownership checks. Merging them
+ * into one server-side action halves the round-trips.
+ *
+ * The two reads themselves run in parallel (`Promise.all`); a slow
+ * `tools/list` can't gate the permission read.
+ */
+async function handleListToolsWithPermissions(
+  ctx: ManageConnectorsContext,
+  wsId: string | null,
+  callerId: string | null,
+  serverName: string,
+  scopeHint: string | undefined,
+): Promise<ToolResult> {
+  if (!serverName) return errResult("serverName is required.");
+
+  const lifecycle = ctx.runtime.getLifecycle();
+  let scope: "workspace" | "user" | undefined;
+  if (scopeHint === "workspace" || scopeHint === "user") {
+    scope = scopeHint;
+  } else if (wsId && lifecycle.getInstance(serverName, wsId)) {
+    scope = "workspace";
+  } else if (callerId && lifecycle.getUserInstance?.(serverName, callerId)) {
+    scope = "user";
+  }
+  if (!scope) {
+    return errResult(`Bundle "${serverName}" not installed.`);
+  }
+  if (!wsId) return errResult("Workspace context required.");
+
+  const owner = resolvePermissionOwner(wsId, callerId, scope);
+  if (!owner) return errResult("Could not resolve permission owner — sign in or pick a workspace.");
+
+  const registry = ctx.runtime.getRegistryForWorkspace(wsId);
+  const source = registry.getSource(serverName);
+  if (!source) {
+    const instance =
+      scope === "workspace"
+        ? lifecycle.getInstance(serverName, wsId)
+        : (lifecycle.getUserInstance?.(serverName, callerId ?? "") ?? null);
+    return errResult(
+      `Connector "${serverName}" not registered (state: ${instance?.state ?? "unknown"}).`,
+    );
+  }
+
+  try {
+    // Run the two reads in parallel — they don't depend on each
+    // other and the permission store hits disk while tools/list may
+    // round-trip to the bundle subprocess.
+    const [tools, permissions] = await Promise.all([
+      source.tools(),
+      ctx.runtime.getPermissionStore().getConnector(owner, serverName),
+    ]);
+    const prefix = `${serverName}__`;
+    return {
+      content: textContent(`Tools: ${tools.length}, ${Object.keys(permissions).length} overrides.`),
+      structuredContent: {
+        scope: owner.scope,
+        serverName,
+        tools: tools.map((t) => ({
+          name: t.name.startsWith(prefix) ? t.name.slice(prefix.length) : t.name,
+          description: t.description,
+          inputSchema: t.inputSchema,
+        })),
+        permissions,
       },
       isError: false,
     };

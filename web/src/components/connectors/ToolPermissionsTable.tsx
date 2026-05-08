@@ -1,9 +1,8 @@
 import { useEffect, useState } from "react";
 import {
   type ConnectorTool,
-  getConnectorPermissions,
+  listConnectorToolsWithPermissions,
   type ToolPolicy,
-  listConnectorTools,
   setConnectorPermissions,
 } from "../../api/client";
 
@@ -43,13 +42,14 @@ export function ToolPermissionsTable({
       try {
         setLoading(true);
         setError(null);
-        const [toolsRes, permsRes] = await Promise.all([
-          listConnectorTools(serverName, scope),
-          getConnectorPermissions(serverName, scope),
-        ]);
+        // Single combined call replaces the previous two-call shape
+        // (list_tools + get_permissions). Server-side runs the two
+        // reads in parallel; this halves the page-load REST traffic
+        // for the table.
+        const res = await listConnectorToolsWithPermissions(serverName, scope);
         if (cancelled) return;
-        setTools(toolsRes.tools);
-        setPolicies(permsRes.tools);
+        setTools(res.tools);
+        setPolicies(res.permissions);
       } catch (err) {
         if (cancelled) return;
         setError(err instanceof Error ? err.message : String(err));
