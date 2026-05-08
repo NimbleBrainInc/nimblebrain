@@ -8,6 +8,7 @@ import type { BundleManifest, BundleRef } from "../bundles/types.ts";
 import { installBundleInWorkspace } from "../bundles/workspace-ops.ts";
 import {
   clearAllWorkspaceCredentials,
+  clearWorkspaceCredential,
   getWorkspaceCredentials,
   saveWorkspaceCredential,
   type UserConfigFieldDef,
@@ -292,12 +293,12 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
             input.scope ? String(input.scope) : undefined,
           );
         case "install":
-          return handleInstall(ctx, wsId, callerId, input.entry as unknown);
+          return handleInstall(ctx, wsId, identity, input.entry as unknown);
         case "disconnect":
           return handleDisconnect(
             ctx,
             wsId,
-            callerId,
+            identity,
             String(input.serverName ?? ""),
             input.scope ? String(input.scope) : undefined,
           );
@@ -305,7 +306,7 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
           return handleUninstall(
             ctx,
             wsId,
-            callerId,
+            identity,
             String(input.serverName ?? ""),
             input.scope ? String(input.scope) : undefined,
           );
@@ -796,15 +797,47 @@ async function handleGetInstalled(
 async function handleInstall(
   ctx: ManageConnectorsContext,
   wsId: string | null,
-  callerId: string | null,
+  identity: UserIdentity | null,
   rawEntry: unknown,
 ): Promise<ToolResult> {
   const entry = parseDirectoryEntry(rawEntry);
   if (!entry) return errResult("entry with install action is required.");
+  const callerId = identity?.id ?? null;
 
   // Workspace allow-list — the workspace operator can scope which
   // catalog ids are installable. Applies to every install kind.
-  if (wsId) {
+  // Workspace-scope installs additionally require admin role: the
+  // bundle joins the shared workspace surface (placements, tools,
+  // credentials inheritance), so a non-admin should not be able to
+  // unilaterally widen the workspace's tool/credential exposure.
+  // User-scope installs are self-targeted (per-user OAuth) and only
+  // require an authenticated identity, which the user-scope branches
+  // enforce inline.
+  const isWorkspaceScope =
+    entry.install.kind === "mpak-bundle" ||
+    (entry.install.kind === "remote-oauth" && entry.defaultScope === "workspace");
+  if (isWorkspaceScope) {
+    if (!wsId) return errResult("Workspace context required for workspace-scope install.");
+    if (!identity) return errResult("Authentication required.");
+    const ws = await ctx.runtime.getWorkspaceStore().get(wsId);
+    if (!ws) return errResult(`Workspace "${wsId}" not found.`);
+    if (!isWorkspaceAdmin(ws, identity)) {
+      return {
+        content: textContent("Workspace admin role required to install connectors."),
+        structuredContent: { error: "permission_denied" },
+        isError: true,
+      };
+    }
+    const allowList = ws.connectorsAllowList;
+    if (allowList && Array.isArray(allowList) && allowList.length > 0) {
+      if (!allowList.includes(entry.id)) {
+        return errResult(`Connector "${entry.id}" not visible in this workspace.`);
+      }
+    }
+  } else if (wsId) {
+    // User-scope path running with a workspace context still respects
+    // the allow-list — keeps the operator's curated set authoritative
+    // even for personal accounts.
     const ws = await ctx.runtime.getWorkspaceStore().get(wsId);
     const allowList = ws?.connectorsAllowList;
     if (allowList && Array.isArray(allowList) && allowList.length > 0) {
@@ -826,17 +859,34 @@ async function handleInstall(
 
 /**
  * Validate the wire payload as a `DirectoryEntry`. Tools/JSON arrive
- * as `unknown` from the dispatcher; this is the parse step that
- * either gives us a typed entry or refuses the call. Field-level
- * validation only — we don't cross-check the entry against any
- * catalog because the registry that emitted it already did.
+ * as `unknown` from the dispatcher and the entry came from a client,
+ * not the registry — anyone with API access can construct a payload.
+ * Same threat model as the catalog `iconUrl` allowlist (a malicious
+ * entry attempting to coerce the install path into an attacker-
+ * controlled package name or URL).
+ *
+ * Per-kind shape:
+ *   - mpak-bundle: `package` must be a scoped npm-style name
+ *     `@scope/name` (lowercase kebab on each segment) — the same
+ *     shape mpak's registry accepts.
+ *   - remote-oauth: `url` must parse as `http(s):` — protocol
+ *     allowlist mirrors the catalog's `iconUrl` rules so a malformed
+ *     entry can't slip a `javascript:` / `data:` / `file:` URL into
+ *     the bundle creation path.
+ *   - direct-url: parked behind an errResult in handleInstall today,
+ *     so no value-shape check yet.
+ *
+ * Workspace `connectorsAllowList` (when set) further narrows the
+ * accepted ids — but it's optional, so this is the always-on gate.
  */
+const SCOPED_PACKAGE_RE = /^@[a-z0-9][a-z0-9-]*\/[a-z0-9][a-z0-9-]*$/;
+
 function parseDirectoryEntry(input: unknown): DirectoryEntry | null {
   if (!input || typeof input !== "object") return null;
   const e = input as Record<string, unknown>;
   if (typeof e.id !== "string" || !e.id) return null;
   if (typeof e.name !== "string") return null;
-  const install = e.install as { kind?: unknown } | undefined;
+  const install = e.install as { kind?: unknown; package?: unknown; url?: unknown } | undefined;
   if (!install || typeof install !== "object") return null;
   if (
     install.kind !== "remote-oauth" &&
@@ -845,7 +895,26 @@ function parseDirectoryEntry(input: unknown): DirectoryEntry | null {
   ) {
     return null;
   }
+  if (install.kind === "mpak-bundle") {
+    if (typeof install.package !== "string" || !SCOPED_PACKAGE_RE.test(install.package)) {
+      return null;
+    }
+  }
+  if (install.kind === "remote-oauth") {
+    if (typeof install.url !== "string" || !isHttpUrl(install.url)) {
+      return null;
+    }
+  }
   return input as DirectoryEntry;
+}
+
+function isHttpUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -1128,11 +1197,12 @@ async function handleInstallMpak(
 async function handleDisconnect(
   ctx: ManageConnectorsContext,
   wsId: string | null,
-  callerId: string | null,
+  identity: UserIdentity | null,
   serverName: string,
   scopeHint: string | undefined,
 ): Promise<ToolResult> {
   if (!serverName) return errResult("serverName is required.");
+  const callerId = identity?.id ?? null;
   const lifecycle = ctx.runtime.getLifecycle();
 
   // Auto-detect scope unless caller specified. Workspace-scope wins on
@@ -1152,6 +1222,19 @@ async function handleDisconnect(
 
   if (scope === "workspace") {
     if (!wsId) return errResult("Workspace context required.");
+    if (!identity) return errResult("Authentication required.");
+    // Workspace-scope disconnect revokes OAuth tokens used by every
+    // member of the workspace. A non-admin shouldn't be able to log
+    // the whole workspace out of a shared connector.
+    const ws = await ctx.runtime.getWorkspaceStore().get(wsId);
+    if (!ws) return errResult(`Workspace "${wsId}" not found.`);
+    if (!isWorkspaceAdmin(ws, identity)) {
+      return {
+        content: textContent("Workspace admin role required to disconnect shared connectors."),
+        structuredContent: { error: "permission_denied" },
+        isError: true,
+      };
+    }
     try {
       const result = await lifecycle.disconnect(serverName, wsId, "_workspace", {
         workDir: ctx.runtime.getWorkDir(),
@@ -1201,11 +1284,12 @@ async function handleDisconnect(
 async function handleUninstall(
   ctx: ManageConnectorsContext,
   wsId: string | null,
-  callerId: string | null,
+  identity: UserIdentity | null,
   serverName: string,
   scopeHint: string | undefined,
 ): Promise<ToolResult> {
   if (!serverName) return errResult("serverName is required.");
+  const callerId = identity?.id ?? null;
   const lifecycle = ctx.runtime.getLifecycle();
 
   let scope: "workspace" | "user" | undefined;
@@ -1222,6 +1306,19 @@ async function handleUninstall(
 
   if (scope === "workspace") {
     if (!wsId) return errResult("Workspace context required.");
+    if (!identity) return errResult("Authentication required.");
+    // Workspace-scope uninstall removes a connector for every member
+    // of the workspace and clears the credential file. A non-admin
+    // shouldn't be able to remove a shared bundle other members rely on.
+    const ws = await ctx.runtime.getWorkspaceStore().get(wsId);
+    if (!ws) return errResult(`Workspace "${wsId}" not found.`);
+    if (!isWorkspaceAdmin(ws, identity)) {
+      return {
+        content: textContent("Workspace admin role required to uninstall shared connectors."),
+        structuredContent: { error: "permission_denied" },
+        isError: true,
+      };
+    }
     const instance = lifecycle.getInstance(serverName, wsId);
     const ref = instance?.ref;
     const isUrlBundle = !!ref && "url" in ref;
@@ -1882,11 +1979,12 @@ async function handleSetUserConfig(
   const workDir = ctx.runtime.getWorkDir();
   for (const { key, value } of writes) {
     if (value.length === 0) {
-      // Empty string = clear that single field. Re-implements the
-      // single-key clear path without an extra import; the credential
-      // primitive's `clearWorkspaceCredential` keeps the same lock so
-      // we'd duplicate logic if we used it from here.
-      await saveWorkspaceCredential(wsId, bundleName, key, "", workDir);
+      // Empty string = clear that single field. Use the dedicated
+      // primitive so the key is removed from the credential file
+      // (rather than persisted as `{ "key": "" }` which would still
+      // resolve as "configured" in shape probes that check
+      // key-presence).
+      await clearWorkspaceCredential(wsId, bundleName, key, workDir);
     } else {
       await saveWorkspaceCredential(wsId, bundleName, key, value, workDir);
     }

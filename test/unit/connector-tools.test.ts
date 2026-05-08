@@ -738,6 +738,52 @@ describe("manage_connectors.install", () => {
     const text = (result.content?.[0] as { text?: string } | undefined)?.text ?? "";
     expect(text.toLowerCase()).toContain("workspace context required");
   });
+
+  test("returns permission_denied when caller is not workspace admin (mpak)", async () => {
+    // Workspace-scope install widens the shared workspace surface
+    // (placements, tools, credential inheritance). Non-admin members
+    // can't unilaterally add bundles every other member then sees.
+    const tool = buildTool(h, NON_ADMIN_USER);
+    const result = await tool.handler({ action: "install", entry: mpakEntry() });
+    expect(result.isError).toBe(true);
+    expect(structured(result).error).toBe("permission_denied");
+  });
+
+  test("rejects mpak entry with non-scoped package name", async () => {
+    // Defense-in-depth at the wire boundary. The entry comes from
+    // tool input; not every caller is the curated registry.
+    const tool = buildTool(h, ADMIN_USER);
+    const result = await tool.handler({
+      action: "install",
+      entry: mpakEntry({ pkg: "not-a-scoped-package" }),
+    });
+    expect(result.isError).toBe(true);
+    const text = (result.content?.[0] as { text?: string } | undefined)?.text ?? "";
+    expect(text.toLowerCase()).toContain("install action is required");
+  });
+
+  test("rejects remote-oauth entry with non-http(s) URL", async () => {
+    const tool = buildTool(h, ADMIN_USER);
+    const result = await tool.handler({
+      action: "install",
+      entry: {
+        id: "evil",
+        registryId: "curated",
+        registryType: "curated",
+        name: "Evil",
+        description: "x",
+        defaultScope: "workspace",
+        install: {
+          kind: "remote-oauth",
+          url: "javascript:alert(1)",
+          auth: "dcr",
+        },
+      },
+    });
+    expect(result.isError).toBe(true);
+    const text = (result.content?.[0] as { text?: string } | undefined)?.text ?? "";
+    expect(text.toLowerCase()).toContain("install action is required");
+  });
 });
 
 describe("manage_connectors.set_permissions", () => {
@@ -1011,6 +1057,53 @@ describe("manage_connectors.uninstall (stdio)", () => {
 
     const wsAfter = await h.workspaceStore.get(h.wsId);
     expect(wsAfter?.bundles ?? []).toHaveLength(0);
+  });
+
+  test("returns permission_denied when caller is not workspace admin", async () => {
+    // Uninstall removes a bundle every workspace member relies on
+    // and clears the credential file. Non-admin can't unilaterally
+    // strip a shared connector.
+    const tool = buildTool(h, NON_ADMIN_USER);
+    const result = await tool.handler({
+      action: "uninstall",
+      serverName: STUB_BUNDLE_SERVER_NAME,
+      scope: "workspace",
+    });
+    expect(result.isError).toBe(true);
+    expect(structured(result).error).toBe("permission_denied");
+
+    // And the bundle is still in workspace.json — non-admin gate
+    // didn't accidentally tear down state before the check.
+    const wsAfter = await h.workspaceStore.get(h.wsId);
+    expect(wsAfter?.bundles ?? []).toHaveLength(1);
+  });
+});
+
+describe("manage_connectors.disconnect", () => {
+  let h: Harness;
+
+  beforeEach(async () => {
+    h = buildHarness();
+    await provisionWorkspace(h);
+    seedStdioBundle(h);
+  });
+
+  afterEach(() => {
+    rmSync(h.workDir, { recursive: true, force: true });
+  });
+
+  test("returns permission_denied when caller is not workspace admin", async () => {
+    // Workspace-scope disconnect revokes OAuth tokens used by every
+    // workspace member. Non-admin can't log the whole workspace out
+    // of a shared connector.
+    const tool = buildTool(h, NON_ADMIN_USER);
+    const result = await tool.handler({
+      action: "disconnect",
+      serverName: STUB_BUNDLE_SERVER_NAME,
+      scope: "workspace",
+    });
+    expect(result.isError).toBe(true);
+    expect(structured(result).error).toBe("permission_denied");
   });
 });
 
