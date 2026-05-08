@@ -611,6 +611,21 @@ export interface InstalledConnector {
     schema: Record<string, BundleUserConfigField>;
     populated: Record<string, boolean>;
   };
+  /**
+   * Generic, type-agnostic UI status. Derived server-side from the
+   * underlying BundleState + credential probes so list-page pills,
+   * detail-page hero, and any future surface read one value.
+   *
+   *   ready          — works
+   *   needs_setup    — admin must configure (operator OAuth or user_config)
+   *   needs_auth     — workspace member must (re)authenticate
+   *   connecting     — OAuth flow in flight
+   *   failed         — crashed / dead, no actionable next step
+   *   starting       — subprocess booting
+   */
+  status: "ready" | "needs_setup" | "needs_auth" | "connecting" | "failed" | "starting";
+  /** Human-readable detail for `status` (tooltip / banner copy). */
+  statusReason?: string;
 }
 
 /**

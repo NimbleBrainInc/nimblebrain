@@ -12,6 +12,7 @@ import type { Runtime } from "../../src/runtime/runtime.ts";
 import { FileCredentialStore } from "../../src/tools/credential-store.ts";
 import {
   createManageConnectorsTool,
+  deriveConnectorStatus,
   type ManageConnectorsContext,
 } from "../../src/tools/connector-tools.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
@@ -962,5 +963,116 @@ describe("manage_connectors.clear_user_config", () => {
       serverName: STUB_BUNDLE_SERVER_NAME,
     });
     expect(result.isError).toBe(false);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// deriveConnectorStatus — pure-function status taxonomy
+// ─────────────────────────────────────────────────────────────────────
+
+describe("deriveConnectorStatus", () => {
+  test("running + no probes outstanding → ready", () => {
+    expect(deriveConnectorStatus({ state: "running" })).toEqual({ status: "ready" });
+  });
+
+  test("missingOperatorSetup wins over every other signal — admin acts first", () => {
+    // Even with state=running and required user_config populated, an
+    // unconfigured operator OAuth client should mark the connector as
+    // needs_setup. Setup is the precondition.
+    const result = deriveConnectorStatus({
+      state: "running",
+      missingOperatorSetup: true,
+      userConfig: {
+        schema: { api_key: { type: "string", required: true } },
+        populated: { api_key: true },
+      },
+    });
+    expect(result.status).toBe("needs_setup");
+    expect(result.statusReason).toContain("OAuth app");
+  });
+
+  test("required user_config field unpopulated → needs_setup with field name in reason", () => {
+    const result = deriveConnectorStatus({
+      state: "running",
+      userConfig: {
+        schema: {
+          api_key: { type: "string", title: "Hunter.io API Key", required: true },
+          workspace_id: { type: "string", title: "Workspace", required: false },
+        },
+        populated: { api_key: false, workspace_id: false },
+      },
+    });
+    expect(result.status).toBe("needs_setup");
+    // Required field is named in the reason; optional one isn't.
+    expect(result.statusReason).toContain("Hunter.io API Key");
+    expect(result.statusReason).not.toContain("Workspace");
+  });
+
+  test("optional fields unpopulated → ready (only required fields gate)", () => {
+    const result = deriveConnectorStatus({
+      state: "running",
+      userConfig: {
+        schema: { workspace_id: { type: "string", required: false } },
+        populated: { workspace_id: false },
+      },
+    });
+    expect(result.status).toBe("ready");
+  });
+
+  test("reauth_required → needs_auth, prefers lastError over generic copy", () => {
+    expect(deriveConnectorStatus({ state: "reauth_required" }).status).toBe("needs_auth");
+    expect(
+      deriveConnectorStatus({ state: "reauth_required", lastError: "refresh token revoked" })
+        .statusReason,
+    ).toBe("refresh token revoked");
+  });
+
+  test("not_authenticated → needs_auth", () => {
+    expect(deriveConnectorStatus({ state: "not_authenticated" }).status).toBe("needs_auth");
+  });
+
+  test("pending_auth → connecting (no statusReason — wait state, no actionable copy)", () => {
+    const result = deriveConnectorStatus({ state: "pending_auth" });
+    expect(result.status).toBe("connecting");
+    expect(result.statusReason).toBeUndefined();
+  });
+
+  test("starting → starting (own state, distinct from connecting)", () => {
+    expect(deriveConnectorStatus({ state: "starting" }).status).toBe("starting");
+  });
+
+  test("crashed/dead/stopped → failed, lastError surfaces in reason when present", () => {
+    expect(deriveConnectorStatus({ state: "crashed" }).status).toBe("failed");
+    expect(deriveConnectorStatus({ state: "dead" }).status).toBe("failed");
+    expect(deriveConnectorStatus({ state: "stopped" }).status).toBe("failed");
+
+    const withErr = deriveConnectorStatus({ state: "crashed", lastError: "Out of memory" });
+    expect(withErr.statusReason).toBe("Out of memory");
+  });
+
+  test("setup priority outranks failed — config gap is the actionable cause", () => {
+    // A bundle in `crashed` because its required user_config wasn't set
+    // should surface as needs_setup (fixable), never as failed (looks
+    // unrecoverable).
+    const result = deriveConnectorStatus({
+      state: "crashed",
+      lastError: "Missing api_key",
+      userConfig: {
+        schema: { api_key: { type: "string", required: true } },
+        populated: { api_key: false },
+      },
+    });
+    expect(result.status).toBe("needs_setup");
+  });
+
+  test("setup priority outranks needs_auth — same logic, finer level", () => {
+    // A bundle in needs_auth state with missing operator setup should
+    // still surface as needs_setup; the user can't auth against an
+    // OAuth app that doesn't exist yet.
+    const result = deriveConnectorStatus({
+      state: "not_authenticated",
+      missingOperatorSetup: true,
+    });
+    expect(result.status).toBe("needs_setup");
   });
 });

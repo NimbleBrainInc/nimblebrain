@@ -51,6 +51,93 @@ export interface ManageConnectorsContext {
   getWorkspaceId: () => string | null;
 }
 
+/** Inputs to {@link deriveConnectorStatus}. Subset of InstalledEntry's
+ *  shape so the helper has a small, testable surface. */
+export interface StatusInputs {
+  /** BundleState as exposed by the lifecycle. */
+  state: string;
+  /** True when a static-auth catalog entry has no operator OAuth client configured. */
+  missingOperatorSetup?: boolean;
+  /** Stdio bundle's user_config probe — present only when the manifest declares one. */
+  userConfig?: {
+    schema: Record<string, UserConfigFieldDef>;
+    populated: Record<string, boolean>;
+  };
+  /** Last connection error from the principal Connection (crashed / dead / reauth_required). */
+  lastError?: string;
+}
+
+/**
+ * Collapse a connector's underlying flags into a generic, type-agnostic
+ * status for the UI. Six values:
+ *
+ *   ready          — works
+ *   needs_setup    — admin must configure something (operator OAuth client OR
+ *                     stdio user_config) before this is usable
+ *   needs_auth     — workspace member must (re)authenticate (Connect / Reconnect)
+ *   connecting     — OAuth flow in flight
+ *   failed         — bundle crashed / dead with no actionable next step
+ *   starting       — subprocess booting up
+ *
+ * Priority — setup blocks auth blocks usage. A stdio bundle that crashed
+ * because its api_key wasn't set surfaces as `needs_setup` (the actionable
+ * cause), never as `failed`. Same for static-auth bundles whose OAuth
+ * never succeeded because the operator clientSecret is missing.
+ *
+ * The connector-type detail — *which* credentials missing, *what* button
+ * label — is left to the UI, derived from the other InstalledConnector
+ * fields. This helper's job is the discriminator + a human-readable
+ * reason string for tooltips / banners.
+ */
+export function deriveConnectorStatus(input: StatusInputs): {
+  status: "ready" | "needs_setup" | "needs_auth" | "connecting" | "failed" | "starting";
+  statusReason?: string;
+} {
+  // 1. Setup gates everything. Operator OAuth missing → admin acts first.
+  if (input.missingOperatorSetup) {
+    return { status: "needs_setup", statusReason: "OAuth app not configured for this workspace." };
+  }
+  // 2. Required user_config field unpopulated → admin sets credentials.
+  if (input.userConfig) {
+    const missing = Object.entries(input.userConfig.schema)
+      .filter(([key, def]) => def.required && !input.userConfig?.populated[key])
+      .map(([key, def]) => def.title ?? key);
+    if (missing.length > 0) {
+      return {
+        status: "needs_setup",
+        statusReason: `Missing required configuration: ${missing.join(", ")}.`,
+      };
+    }
+  }
+  // 3. Auth lifecycle. Reconnect outranks first-time connect (a token
+  //    that just expired is more disruptive than one never used).
+  if (input.state === "reauth_required") {
+    return {
+      status: "needs_auth",
+      statusReason: input.lastError ?? "Sign in again to continue using this connector.",
+    };
+  }
+  if (input.state === "not_authenticated") {
+    return { status: "needs_auth", statusReason: "Connect to use this connector." };
+  }
+  // 4. Transient flows.
+  if (input.state === "pending_auth") {
+    return { status: "connecting" };
+  }
+  if (input.state === "starting") {
+    return { status: "starting" };
+  }
+  // 5. Terminal failures with no clear recovery path.
+  if (input.state === "crashed" || input.state === "dead" || input.state === "stopped") {
+    return {
+      status: "failed",
+      ...(input.lastError ? { statusReason: input.lastError } : {}),
+    };
+  }
+  // 6. Default — running, no missing config, no failed connection.
+  return { status: "ready" };
+}
+
 export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProcessTool {
   return {
     name: "manage_connectors",
@@ -330,6 +417,21 @@ async function handleListInstalled(
       schema: Record<string, UserConfigFieldDef>;
       populated: Record<string, boolean>;
     };
+    /**
+     * Generic, type-agnostic status the UI renders without re-deriving
+     * from the underlying BundleState + credential probes. Six values
+     * collapse what would otherwise be ~10 specific failure modes —
+     * the connector-type detail (which credentials missing, which
+     * action label) is derived in the UI from the other fields.
+     *
+     * Priority when multiple flags apply: setup blocks auth blocks
+     * usage. needs_setup > needs_auth > failed > connecting/starting >
+     * ready. A bundle that crashed because of missing user_config
+     * surfaces as `needs_setup` (the actionable cause), not `failed`.
+     */
+    status: "ready" | "needs_setup" | "needs_auth" | "connecting" | "failed" | "starting";
+    /** Human-readable detail for status. Surfaces in tooltips / banners. */
+    statusReason?: string;
   };
   const installed: InstalledEntry[] = [];
 
@@ -396,6 +498,11 @@ async function handleListInstalled(
         version: instance.version,
         type: isRemote ? "remote" : "local",
         state: instance.state,
+        // Provisional — overwritten by deriveConnectorStatus below
+        // once every probe (operatorOAuth, userConfig, lastError) has
+        // been resolved on the entry. Initial value satisfies the
+        // public InstalledConnector contract that `status` is required.
+        status: "ready",
         scope: "workspace",
         interactive,
         toolCount,
@@ -459,6 +566,12 @@ async function handleListInstalled(
         }
       }
 
+      // Derive the generic UI status last so it sees every populated
+      // probe (operatorOAuth gate, userConfig populated map, lastError).
+      const derived = deriveConnectorStatus(entry);
+      entry.status = derived.status;
+      if (derived.statusReason) entry.statusReason = derived.statusReason;
+
       installed.push(entry);
     }
   }
@@ -486,6 +599,8 @@ async function handleListInstalled(
           version: userInstance?.version ?? "remote",
           type: "remote",
           state: conn?.state ?? userInstance?.state ?? "not_authenticated",
+          // Provisional — overwritten by deriveConnectorStatus below.
+          status: "ready",
           scope: "user",
           interactive,
           toolCount: 0,
@@ -509,6 +624,13 @@ async function handleListInstalled(
         } catch {
           // best-effort cosmetic data
         }
+
+        // Same derivation as the workspace branch — keeps the two
+        // scopes producing the same shape for the UI.
+        const derived = deriveConnectorStatus(entry);
+        entry.status = derived.status;
+        if (derived.statusReason) entry.statusReason = derived.statusReason;
+
         installed.push(entry);
       }
     }
