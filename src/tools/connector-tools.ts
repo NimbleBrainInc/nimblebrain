@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { getMpak } from "../bundles/mpak.ts";
 import { deriveServerName } from "../bundles/paths.ts";
@@ -89,6 +90,53 @@ export interface StatusInputs {
  * fields. This helper's job is the discriminator + a human-readable
  * reason string for tooltips / banners.
  */
+/**
+ * Resolve a bundle's manifest from whichever path it actually lives at.
+ *
+ * Two install shapes coexist in the platform:
+ *
+ *   - Name-installed (`{ name: "@scope/bundle" }`): mpak fetches and
+ *     extracts the bundle into `<mpakHome>/cache/<safeName>/`. Manifest
+ *     reads via `mpak.bundleCache.getBundleManifest(name)`.
+ *
+ *   - Path-installed (`{ path: "/abs/path/to/bundle" }`): bundle lives
+ *     wherever the operator points to (e.g. `synapse-apps/synapse-db-query`
+ *     during local development). The manifest is at `<path>/manifest.json`.
+ *     The mpak cache has no entry; reading via `getBundleManifest` returns
+ *     null and any caller relying solely on the cache silently misses
+ *     `user_config`.
+ *
+ * `BundleInstance.configKey` carries the original ref's identity — the
+ * path string for path installs, the name string for name installs.
+ * That's the key we fall back to when the cache misses. Wrap both in
+ * try/catch so a stale config (path no longer exists, manifest moved)
+ * gracefully degrades to a missing-userConfig response instead of
+ * throwing.
+ */
+async function readBundleManifest(
+  mpak: ReturnType<typeof getMpak>,
+  instance: { bundleName: string; configKey?: string },
+): Promise<BundleManifest | null> {
+  try {
+    const cached = mpak.bundleCache.getBundleManifest(instance.bundleName) as BundleManifest | null;
+    if (cached) return cached;
+  } catch {
+    // Corrupt-cache errors fall through to the disk-read fallback.
+  }
+  // Path-install fallback. configKey can be either a name or a path;
+  // attempt the disk read regardless and let the file-not-found case
+  // settle to null.
+  if (instance.configKey) {
+    try {
+      const raw = await readFile(join(instance.configKey, "manifest.json"), "utf-8");
+      return JSON.parse(raw) as BundleManifest;
+    } catch {
+      // Not a valid path or file missing — manifest unavailable.
+    }
+  }
+  return null;
+}
+
 export function deriveConnectorStatus(input: StatusInputs): {
   status: "ready" | "needs_setup" | "needs_auth" | "connecting" | "failed" | "starting";
   statusReason?: string;
@@ -564,14 +612,13 @@ async function handleListInstalled(
       }
 
       // Stdio bundle credential schema + per-field configured probe.
-      // Driven entirely by the bundle's manifest `user_config` block;
-      // bundles that don't declare one (most remote URL connectors)
-      // skip this and the field is omitted from the response.
+      // Driven by the bundle's manifest `user_config` block. Manifest
+      // resolution handles both name-installed (mpak cache) and
+      // path-installed (read from disk) bundles — the latter is how
+      // every Synapse app under local-dev install ends up registered.
       if (!isRemote) {
         try {
-          const manifest = mpak.bundleCache.getBundleManifest(
-            instance.bundleName,
-          ) as BundleManifest | null;
+          const manifest = await readBundleManifest(mpak, instance);
           const schema = manifest?.user_config;
           if (schema && Object.keys(schema).length > 0) {
             const stored =
@@ -584,8 +631,8 @@ async function handleListInstalled(
             entry.userConfig = { schema, populated };
           }
         } catch {
-          // Manifest cache miss is best-effort cosmetic data — surface
-          // the connector without the bundle-config section rather than
+          // Read errors are best-effort cosmetic data — surface the
+          // connector without the bundle-config section rather than
           // failing the whole list_installed call.
         }
       }
@@ -1675,7 +1722,10 @@ async function resolveBundleSchema(
 
   const mpakHome = join(ctx.runtime.getWorkDir(), "apps");
   const mpak = getMpak(mpakHome);
-  const manifest = mpak.bundleCache.getBundleManifest(instance.bundleName) as BundleManifest | null;
+  // Same manifest-resolution rules as handleListInstalled — name-
+  // installed bundles read from the mpak cache, path-installed
+  // (Synapse apps in local dev) read from `<configKey>/manifest.json`.
+  const manifest = await readBundleManifest(mpak, instance);
   const schema = manifest?.user_config;
   if (!schema || Object.keys(schema).length === 0) {
     return {
