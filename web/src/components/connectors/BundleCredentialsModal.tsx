@@ -42,6 +42,7 @@ export function BundleCredentialsModal({
   const [values, setValues] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [clearing, setClearing] = useState(false);
+  const [confirmingClear, setConfirmingClear] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const firstFieldRef = useRef<HTMLInputElement | null>(null);
 
@@ -53,6 +54,7 @@ export function BundleCredentialsModal({
     if (open) {
       setValues({});
       setError(null);
+      setConfirmingClear(false);
       setTimeout(() => firstFieldRef.current?.focus(), 0);
     }
   }, [open]);
@@ -75,11 +77,11 @@ export function BundleCredentialsModal({
   }
 
   const onClear = async () => {
-    if (
-      !confirm(
-        `Clear all configured credentials for "${installed.catalog?.name ?? installed.serverName}"? This removes every saved field.`,
-      )
-    ) {
+    // Two-step inline confirm. `confirm()` is browser-suppressible
+    // (Chrome's "block dialogs" toggle silently swallows it) and the
+    // user has hit that no-op. First click arms; second click runs.
+    if (!confirmingClear) {
+      setConfirmingClear(true);
       return;
     }
     setClearing(true);
@@ -90,6 +92,7 @@ export function BundleCredentialsModal({
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setClearing(false);
+      setConfirmingClear(false);
     }
   };
 
@@ -178,9 +181,17 @@ export function BundleCredentialsModal({
                 type="button"
                 onClick={onClear}
                 disabled={busy || clearing}
-                className="text-xs text-muted-foreground hover:text-destructive hover:underline underline-offset-4 disabled:opacity-60"
+                className={
+                  confirmingClear
+                    ? "text-xs font-medium text-destructive hover:underline underline-offset-4 disabled:opacity-60"
+                    : "text-xs text-muted-foreground hover:text-destructive hover:underline underline-offset-4 disabled:opacity-60"
+                }
               >
-                {clearing ? "Clearing…" : "Clear configuration"}
+                {clearing
+                  ? "Clearing…"
+                  : confirmingClear
+                    ? "Click again to clear all credentials"
+                    : "Clear configuration"}
               </button>
             ) : (
               <span />
