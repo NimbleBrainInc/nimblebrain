@@ -9,11 +9,18 @@ let tmpCounter = 0;
 
 /**
  * Write JSON to disk atomically: write to a uniquely-named tmp file
- * alongside the target, fsync via the rename, then rename over the
- * target. Concurrent readers either see the old file or the new file,
- * never a half-flushed JSON. Crash mid-write leaves the tmp file
- * behind; this helper cleans up its own tmp on error so a partial
- * failure doesn't leak `*.tmp` artifacts.
+ * alongside the target, then `rename(2)` over the target. The rename
+ * is atomic on POSIX — concurrent readers either see the old file or
+ * the new file, never a half-flushed JSON. This is a *consistency*
+ * guarantee, not a *durability* one: there's no `fsync(2)` here, so a
+ * crash mid-write can still lose the just-written data even though
+ * readers never see torn content. That tradeoff is intentional for
+ * these stores (workspace.json, registry.json, permissions.json,
+ * credentials.json) — they're rewritten frequently, and the cost of
+ * fsyncing every update is not worth durability for state the user
+ * can re-supply on retry. Crash mid-write leaves the tmp file behind;
+ * this helper cleans up its own tmp on error so a partial failure
+ * doesn't leak `*.tmp` artifacts.
  *
  * Files are created with mode `0o600` — owner read/write only. Every
  * store this replaces was already scoped to a single platform UID at

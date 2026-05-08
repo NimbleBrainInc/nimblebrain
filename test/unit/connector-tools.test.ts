@@ -294,6 +294,63 @@ describe("manage_connectors.setup_operator", () => {
     });
     expect(result.isError).toBe(true);
   });
+
+  test("rolls back the credential write when workspace.json update fails (no prior secret)", async () => {
+    // Force the workspace update to fail after the credential write
+    // has landed. The handler must delete the orphaned credential so
+    // the two stores stay in lockstep.
+    const original = h.workspaceStore.update.bind(h.workspaceStore);
+    h.workspaceStore.update = async () => {
+      throw new Error("simulated workspace.json failure");
+    };
+    const tool = buildTool(h, ADMIN_USER);
+    await expect(
+      tool.handler({
+        action: "setup_operator",
+        catalogId: ASANA_ID,
+        clientId: "cid-orphan",
+        clientSecret: "sec-orphan",
+      }),
+    ).rejects.toThrow("simulated workspace.json failure");
+    h.workspaceStore.update = original;
+
+    const wrapped = await h.credStore.get(h.wsId, ASANA_SECRET_KEY);
+    expect(wrapped).toBeNull();
+  });
+
+  test("rotation: workspace.json failure does NOT clobber a pre-existing secret", async () => {
+    // Seed a working setup, then simulate failure on the rotate call.
+    // The rollback must be skipped — wiping a still-valid credential
+    // because the rotate's metadata write hiccupped is worse UX than
+    // leaving the prior secret in place.
+    const tool = buildTool(h, ADMIN_USER);
+    await tool.handler({
+      action: "setup_operator",
+      catalogId: ASANA_ID,
+      clientId: "cid-v1",
+      clientSecret: "sec-v1",
+    });
+
+    const original = h.workspaceStore.update.bind(h.workspaceStore);
+    h.workspaceStore.update = async () => {
+      throw new Error("simulated workspace.json failure on rotate");
+    };
+    await expect(
+      tool.handler({
+        action: "setup_operator",
+        catalogId: ASANA_ID,
+        clientId: "cid-v2",
+        clientSecret: "sec-v2",
+      }),
+    ).rejects.toThrow("simulated workspace.json failure on rotate");
+    h.workspaceStore.update = original;
+
+    // Credential store now holds the new secret (the put already
+    // landed before the failure) — but it's NOT been deleted, because
+    // there was a prior valid secret under the same key.
+    const wrapped = await h.credStore.get(h.wsId, ASANA_SECRET_KEY);
+    expect(wrapped?.reveal()).toBe("sec-v2");
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────
