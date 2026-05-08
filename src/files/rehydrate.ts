@@ -20,15 +20,18 @@ import type {
   LanguageModelV3TextPart,
 } from "@ai-sdk/provider";
 import type { StoredMessage, UserContentPart } from "../conversation/types.ts";
+import { IMAGE_TYPES } from "./ingest.ts";
 import type { FileStore } from "./store.ts";
 import { uriToFileId } from "./uri.ts";
 
 /**
- * Image MIME types we inline as vision content. `image/svg+xml` is
- * intentionally excluded — Anthropic's vision input is raster-only,
- * and SVG is best read by the model as text via `files__read`.
+ * MIME types we inline as vision content. Derived from the storage-side
+ * `IMAGE_TYPES` minus `image/svg+xml` — Anthropic's vision input is
+ * raster-only, and SVG is best read by the model as text via
+ * `files__read`. Coupling to `IMAGE_TYPES` prevents the storage and
+ * model-call sets from drifting; the SVG exclusion is the only delta.
  */
-const REHYDRATABLE_IMAGE_MIMES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
+const REHYDRATABLE_IMAGE_MIMES = new Set([...IMAGE_TYPES].filter((m) => m !== "image/svg+xml"));
 
 export async function rehydrateUserResources(
   messages: StoredMessage[],

@@ -30,11 +30,9 @@ const EXTRACTABLE_DOCS = new Set([
 ]);
 
 /**
- * Image MIME types accepted on upload. Exported because the rehydration
- * step (`src/files/rehydrate.ts`) needs the same set to decide which
- * `resource_link` blocks become inline `file` parts at the LLM-call
- * boundary. `image/svg+xml` is allowed here for storage but excluded
- * from rehydration — Anthropic's vision input is raster-only.
+ * Image MIME types accepted on upload. Exported so the rehydration
+ * step (`src/files/rehydrate.ts`) can derive its own (slightly narrower)
+ * vision-input set from a single source of truth.
  */
 export const IMAGE_TYPES = new Set([
   "image/png",
