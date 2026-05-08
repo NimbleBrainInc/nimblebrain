@@ -895,7 +895,16 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     deletedLocal: boolean;
     error?: string;
   }> {
-    const fetcher = opts.fetchImpl ?? fetch;
+    const baseFetcher = opts.fetchImpl ?? fetch;
+    // Thread `this.abortSignal` into every revoke-path fetch (AS metadata
+    // discovery + RFC 7009 POSTs) so an unresponsive server's TCP read
+    // can be cut by the same controller that guards the redirect probe.
+    // No caller in this path sets its own `init.signal`, so the spread
+    // is unambiguous.
+    const signal = this.abortSignal;
+    const fetcher: typeof fetch = signal
+      ? (((input, init) => baseFetcher(input, { ...init, signal })) as typeof fetch)
+      : baseFetcher;
     const tokens = await this.tokens();
     const clientInfo = await this.clientInformation();
     const result: {
