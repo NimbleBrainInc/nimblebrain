@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { getMpak } from "../bundles/mpak.ts";
 import { deriveServerName } from "../bundles/paths.ts";
+import { startBundleSource } from "../bundles/startup.ts";
 import type { BundleManifest, BundleRef } from "../bundles/types.ts";
 import { installBundleInWorkspace } from "../bundles/workspace-ops.ts";
 import {
@@ -959,6 +960,11 @@ async function handleUninstall(
 
     try {
       const registry = ctx.runtime.getRegistryForWorkspace(wsId);
+      // Capture the manifest name BEFORE lifecycle.uninstall — the
+      // instance reference is still valid afterwards but the lifecycle
+      // map drops it, and we need the name to strip the matching
+      // workspace.json entry.
+      const installedBundleName = instance?.bundleName;
       await lifecycle.uninstall(serverName, registry, wsId);
       // lifecycle.uninstall clears its own `instances` map and removes
       // from the legacy global `nimblebrain.json`, but it does NOT
@@ -966,13 +972,25 @@ async function handleUninstall(
       // for catalog-installed connectors. Without this cleanup, a
       // re-install attempt sees the leftover bundle, treats it as
       // already-installed, skips seedInstance, and the next OAuth
-      // initiate fails with "Bundle X not installed."
+      // initiate fails with "Bundle X not installed." For stdio entries
+      // (`{ name: "@org/bundle" }`), missing this cleanup means the
+      // bundle reseeds at next boot — looking uninstalled in the UI but
+      // back in the registry after restart.
       const ws = await ctx.runtime.getWorkspaceStore().get(wsId);
       if (ws) {
         const filtered = ws.bundles.filter((b) => {
-          if (!("url" in b)) return true;
-          const sn = b.serverName ?? deriveServerName(b.url);
-          return sn !== serverName;
+          if ("url" in b) {
+            const sn = b.serverName ?? deriveServerName(b.url);
+            return sn !== serverName;
+          }
+          if ("name" in b) {
+            // Match named entries by manifest name; the install path
+            // writes `{ name: bundleName }` so the same key is the
+            // authoritative match. Fall back to the install-time
+            // `{ name: serverName }` shape just in case.
+            return b.name !== installedBundleName && b.name !== serverName;
+          }
+          return true;
         });
         if (filtered.length !== ws.bundles.length) {
           await ctx.runtime.getWorkspaceStore().update(wsId, { bundles: filtered });
@@ -1499,10 +1517,18 @@ async function handleSetUserConfig(
     }
   }
 
+  // Mode 1 (env_inject) bundles only read user_config at spawn — env
+  // vars are baked in at fork time. Saving to the credential file is
+  // necessary but not sufficient; without a respawn the running
+  // subprocess keeps using whatever it was launched with. Mirror the
+  // chat agent's `configureBundle` pattern so both the chat path and
+  // the UI path produce identical post-write state.
+  const respawn = await respawnBundleAfterCredentialChange(ctx, wsId, bundleName, serverName);
+
   const populated = await probeUserConfigPopulated(wsId, bundleName, workDir, schema);
   return {
     content: textContent(`Updated ${writes.length} field(s) for "${serverName}".`),
-    structuredContent: { ok: true, serverName, populated },
+    structuredContent: { ok: true, serverName, populated, respawn },
     isError: false,
   };
 }
@@ -1511,6 +1537,23 @@ async function handleSetUserConfig(
  * Drop the entire workspace credential file for a stdio bundle. After
  * this returns, every field in the bundle's `user_config` schema reads
  * as not-configured. Admin-gated.
+ *
+ * Intentionally does NOT respawn the bundle subprocess. A respawn
+ * after clear would fail at `prepareServer` for any bundle with
+ * required fields, which leaves the workspace registry with no source
+ * — and `getBundleInstancesForWorkspace` filters the installed list
+ * by `wsRegistry.sourceNames()`. The connector would silently
+ * disappear from the UI (404 on the Configure page, gone from the
+ * Connectors list), with no way for the user to re-add credentials
+ * short of uninstall + reinstall.
+ *
+ * The behavior here is pragmatic: the credential file on disk is
+ * gone (next platform start spawns the bundle without those values),
+ * but the running subprocess keeps its launched env until restart.
+ * That's a small soundness gap for the rare "revoke without
+ * uninstall" case; users wanting full revocation should uninstall.
+ * Keep `respawn: { ok: true }` in the response so the UI surface is
+ * consistent with `set_user_config`.
  */
 async function handleClearUserConfig(
   ctx: ManageConnectorsContext,
@@ -1533,9 +1576,52 @@ async function handleClearUserConfig(
   for (const key of Object.keys(schema)) populated[key] = false;
   return {
     content: textContent(`Cleared all credentials for "${serverName}".`),
-    structuredContent: { ok: true, serverName, populated },
+    structuredContent: { ok: true, serverName, populated, respawn: { ok: true } },
     isError: false,
   };
+}
+
+/**
+ * Tear down + restart a stdio bundle's McpSource so a fresh subprocess
+ * picks up the just-written credentials from the workspace credential
+ * store. Called after `set_user_config` and `clear_user_config`.
+ *
+ * Why not just leave the bundle running? Mode 1 bundles read
+ * `user_config` once, at spawn, via `${user_config.foo}` placeholders
+ * resolved into env vars. The subprocess has no way to re-read after
+ * launch. Without this respawn the user updates a key in the UI,
+ * sees "✓ configured," then watches the next tool call fail with the
+ * old key — the bug the user hit before this fix.
+ *
+ * Best-effort by design: a respawn failure (e.g., required field still
+ * missing after a partial save) shouldn't roll back the credential
+ * write. The caller's structured response carries `{ respawn: { ok,
+ * error? } }` so the UI can surface the failure separately.
+ */
+async function respawnBundleAfterCredentialChange(
+  ctx: ManageConnectorsContext,
+  wsId: string,
+  bundleName: string,
+  serverName: string,
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const registry = ctx.runtime.getRegistryForWorkspace(wsId);
+    if (registry.hasSource(serverName)) {
+      await registry.removeSource(serverName);
+    }
+    // Pass `name` (the scoped manifest name) so startBundleSource hits
+    // the named-bundle path that resolves user_config from the
+    // workspace credential store. configDir is undefined — same as
+    // configureBundle's call site; named-bundle path doesn't need it.
+    await startBundleSource({ name: bundleName }, registry, ctx.runtime.getEventSink(), undefined, {
+      wsId,
+      workDir: ctx.runtime.getWorkDir(),
+      allowInsecureRemotes: ctx.runtime.getAllowInsecureRemotes(),
+    });
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
 }
 
 /**

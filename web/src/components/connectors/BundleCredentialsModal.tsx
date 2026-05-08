@@ -87,6 +87,18 @@ export function BundleCredentialsModal({
     setError(null);
     try {
       const res = await setBundleUserConfig(installed.serverName, fields);
+      // Credentials saved but bundle didn't respawn cleanly (e.g.,
+      // required field still missing). Surface the underlying error
+      // and keep the modal open — closing would hide the signal that
+      // the bundle is now in a degraded state. Saved values stay
+      // saved; the user can either fix the bad input or cancel.
+      if (!res.respawn.ok) {
+        setError(
+          `Saved, but the bundle failed to restart: ${res.respawn.error ?? "unknown error"}`,
+        );
+        setBusy(false);
+        return;
+      }
       onSaved(res.populated);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));

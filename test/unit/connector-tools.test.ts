@@ -87,6 +87,15 @@ function buildHarness(opts: { adminId?: string } = {}): Harness {
     getRegistryStore: () => registryStore,
     getLifecycle: () => lifecycle,
     getRegistryForWorkspace: (_id: string) => workspaceRegistry,
+    // Minimal permission-store stub. The handlers only call
+    // deleteConnector on uninstall — recording the call is enough; the
+    // production store's persistence isn't under test here.
+    getPermissionStore: () => ({
+      deleteConnector: async (
+        _owner: { scope: "workspace" | "user"; wsId?: string; userId?: string },
+        _serverName: string,
+      ): Promise<void> => {},
+    }),
   } as unknown as Runtime;
 
   return {
@@ -863,6 +872,40 @@ describe("manage_connectors.set_user_config", () => {
     expect(result.isError).toBe(true);
     const text = (result.content?.[0] as { text?: string } | undefined)?.text ?? "";
     expect(text).toContain("user_config");
+  });
+});
+
+describe("manage_connectors.uninstall (stdio)", () => {
+  let h: Harness;
+
+  beforeEach(async () => {
+    h = buildHarness();
+    await provisionWorkspace(h);
+    seedStdioBundle(h);
+    // Mirror what handleInstallStdio writes to workspace.json — the
+    // named-bundle entry the regression covers.
+    await h.workspaceStore.update(h.wsId, { bundles: [{ name: STUB_BUNDLE_NAME }] });
+  });
+
+  afterEach(() => {
+    rmSync(h.workDir, { recursive: true, force: true });
+  });
+
+  test("strips the named entry from workspace.json so it doesn't reseed at next boot", async () => {
+    const wsBefore = await h.workspaceStore.get(h.wsId);
+    expect(wsBefore?.bundles).toHaveLength(1);
+    expect((wsBefore?.bundles[0] as { name: string }).name).toBe(STUB_BUNDLE_NAME);
+
+    const tool = buildTool(h, ADMIN_USER);
+    const result = await tool.handler({
+      action: "uninstall",
+      serverName: STUB_BUNDLE_SERVER_NAME,
+      scope: "workspace",
+    });
+    expect(result.isError).toBe(false);
+
+    const wsAfter = await h.workspaceStore.get(h.wsId);
+    expect(wsAfter?.bundles ?? []).toHaveLength(0);
   });
 });
 

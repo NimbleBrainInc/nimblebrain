@@ -782,15 +782,33 @@ export async function removeConnectorOperatorSetup(
 }
 
 /**
+ * Result envelope for set/clear bundle user_config calls. The
+ * credential write itself is reported via `ok` + `populated`; the
+ * implicit subprocess respawn that picks up the new env is reported
+ * separately under `respawn` so the UI can surface a partial-success
+ * state (creds saved, but bundle didn't come back up).
+ */
+export interface BundleUserConfigResult {
+  ok: boolean;
+  serverName: string;
+  populated: Record<string, boolean>;
+  respawn: { ok: boolean; error?: string };
+}
+
+/**
  * Set or clear individual `user_config` fields on a stdio bundle. Empty
  * string clears one field; absent fields are unchanged. Returns the
  * post-write `populated` map so the caller can refresh UI state without
  * a follow-up list_installed round-trip.
+ *
+ * Saving credentials triggers an automatic subprocess respawn so the
+ * new env takes effect immediately — Mode 1 (env_inject) bundles
+ * otherwise need a platform restart to pick up new values.
  */
 export async function setBundleUserConfig(
   serverName: string,
   fields: Record<string, string>,
-): Promise<{ ok: boolean; serverName: string; populated: Record<string, boolean> }> {
+): Promise<BundleUserConfigResult> {
   const result = await callTool("nb", "manage_connectors", {
     action: "set_user_config",
     serverName,
@@ -801,11 +819,12 @@ export async function setBundleUserConfig(
 
 /**
  * Drop the entire workspace credential file for a stdio bundle. Every
- * declared field reverts to not-configured.
+ * declared field reverts to not-configured. Triggers an automatic
+ * subprocess respawn — the bundle typically lands in `crashed` after
+ * this since required fields are now unsatisfied, which is the
+ * intended user-visible signal that revocation took effect.
  */
-export async function clearBundleUserConfig(
-  serverName: string,
-): Promise<{ ok: boolean; serverName: string; populated: Record<string, boolean> }> {
+export async function clearBundleUserConfig(serverName: string): Promise<BundleUserConfigResult> {
   const result = await callTool("nb", "manage_connectors", {
     action: "clear_user_config",
     serverName,
