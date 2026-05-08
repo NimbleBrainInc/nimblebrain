@@ -10,18 +10,15 @@ import {
 } from "../../api/client";
 import { OperatorSetupModal } from "../../components/connectors/OperatorSetupModal";
 import { roleAtLeast, useScopedRole } from "../../hooks/useScopedRole";
-import { safeHostname } from "../../lib/safe-url";
 
 /**
- * Connector directory — browse what's available to install across
- * every enabled registry. v1 surfaces:
- *
- *   - Curated services (the platform's hand-vetted catalog)
- *   - mpak.dev (stub entries for now — install action pending the
- *     real mpak fetch + bundle install pipeline)
- *
- * Per-org admins control which registries are enabled at
- * Settings → Organization → Registries.
+ * Connector directory — what's available to install. The Browse page
+ * is intentionally focused on *discovery*: already-installed
+ * connectors are filtered out (they live on the Connectors list →
+ * Configure page now), and registry attribution is dropped from each
+ * card to reduce visual noise. Cards render in a two-column grid
+ * because the catalog is long enough that a single column wastes
+ * horizontal space.
  */
 export function ConnectorBrowsePage({ scope }: { scope: "user" | "workspace" }) {
   const [entries, setEntries] = useState<DirectoryEntry[]>([]);
@@ -74,48 +71,39 @@ export function ConnectorBrowsePage({ scope }: { scope: "user" | "workspace" }) 
     };
   }, [fetchDirectory]);
 
-  // Match installed bundles back to directory entries:
-  //   - remote-oauth  → match by URL
-  //   - mpak-bundle   → match by package name (== bundleName for now)
+  // Build install lookups so we can drop already-installed entries
+  // from the Browse list. remote-oauth matches on URL, mpak-bundle on
+  // package name (== InstalledConnector.bundleName).
   const installedByKey = useMemo(() => {
-    const byUrl = new Map<string, InstalledConnector>();
-    const byBundleName = new Map<string, InstalledConnector>();
+    const byUrl = new Set<string>();
+    const byBundleName = new Set<string>();
     for (const ins of installed) {
-      if (ins.url) byUrl.set(ins.url, ins);
-      byBundleName.set(ins.bundleName, ins);
+      if (ins.url) byUrl.add(ins.url);
+      byBundleName.add(ins.bundleName);
     }
     return { byUrl, byBundleName };
   }, [installed]);
 
-  function findInstalled(entry: DirectoryEntry): InstalledConnector | undefined {
-    if (entry.install.kind === "remote-oauth") return installedByKey.byUrl.get(entry.install.url);
+  function isInstalled(entry: DirectoryEntry): boolean {
+    if (entry.install.kind === "remote-oauth") return installedByKey.byUrl.has(entry.install.url);
     if (entry.install.kind === "mpak-bundle")
-      return installedByKey.byBundleName.get(entry.install.package);
-    return undefined;
+      return installedByKey.byBundleName.has(entry.install.package);
+    return false;
   }
 
-  // Filter to scope + search, then split installed vs not. Sort
-  // not-installed up top so users find new things first.
-  const groups = useMemo(() => {
-    const inScope = entries.filter((e) => e.defaultScope === scope);
-    const matched = !query.trim()
-      ? inScope
-      : inScope.filter((e) => {
-          const q = query.trim().toLowerCase();
-          return (
-            e.name.toLowerCase().includes(q) ||
-            e.description.toLowerCase().includes(q) ||
-            (e.tags ?? []).some((t) => t.toLowerCase().includes(q))
-          );
-        });
-    const notInstalled: DirectoryEntry[] = [];
-    const installedEntries: Array<{ entry: DirectoryEntry; installed: InstalledConnector }> = [];
-    for (const e of matched) {
-      const ins = findInstalled(e);
-      if (ins) installedEntries.push({ entry: e, installed: ins });
-      else notInstalled.push(e);
-    }
-    return { notInstalled, installedEntries };
+  // Filter to scope, drop installed, apply search.
+  const visibleEntries = useMemo(() => {
+    const inScope = entries.filter((e) => e.defaultScope === scope && !isInstalled(e));
+    if (!query.trim()) return inScope;
+    const q = query.trim().toLowerCase();
+    return inScope.filter(
+      (e) =>
+        e.name.toLowerCase().includes(q) ||
+        e.description.toLowerCase().includes(q) ||
+        (e.tags ?? []).some((t) => t.toLowerCase().includes(q)),
+    );
+    // installedByKey is captured by isInstalled via closure; re-running
+    // when it changes is what lets newly-installed connectors disappear.
   }, [entries, scope, query, installedByKey]);
 
   const onInstall = async (entry: DirectoryEntry) => {
@@ -181,54 +169,26 @@ export function ConnectorBrowsePage({ scope }: { scope: "user" | "workspace" }) 
         <p className="text-sm text-muted-foreground">Loading…</p>
       ) : loadError ? (
         <p className="text-sm text-destructive">{loadError}</p>
-      ) : groups.notInstalled.length === 0 && groups.installedEntries.length === 0 ? (
+      ) : visibleEntries.length === 0 ? (
         <p className="text-sm text-muted-foreground">
-          {query ? `No results for "${query}".` : "No connectors available in this scope."}
+          {query
+            ? `No results for "${query}".`
+            : "Everything available in this scope is already installed."}
         </p>
       ) : (
-        <>
-          {groups.notInstalled.length > 0 && (
-            <div className="border-t border-border">
-              {groups.notInstalled.map((entry) => (
-                <DirectoryRow
-                  key={`${entry.registryId}::${entry.id}`}
-                  entry={entry}
-                  installed={undefined}
-                  configureBasePath={configureBasePath}
-                  busy={busyId === `${entry.registryId}::${entry.id}`}
-                  isWsAdmin={isWsAdmin}
-                  onInstall={() => onInstall(entry)}
-                  onSetUp={() => setSetupModalEntry(entry)}
-                />
-              ))}
-            </div>
-          )}
-
-          {groups.installedEntries.length > 0 && (
-            <div className="mt-4">
-              <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
-                Already installed
-              </h2>
-              <div className="border-t border-border">
-                {groups.installedEntries.map(({ entry, installed: ins }) => (
-                  <DirectoryRow
-                    key={`${entry.registryId}::${entry.id}`}
-                    entry={entry}
-                    installed={ins}
-                    configureBasePath={configureBasePath}
-                    busy={false}
-                    isWsAdmin={isWsAdmin}
-                    onInstall={() => onInstall(entry)}
-                    onSetUp={() => setSetupModalEntry(entry)}
-                  />
-                ))}
-              </div>
-            </div>
-          )}
-        </>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {visibleEntries.map((entry) => (
+            <DirectoryCard
+              key={`${entry.registryId}::${entry.id}`}
+              entry={entry}
+              busy={busyId === `${entry.registryId}::${entry.id}`}
+              isWsAdmin={isWsAdmin}
+              onInstall={() => onInstall(entry)}
+              onSetUp={() => setSetupModalEntry(entry)}
+            />
+          ))}
+        </div>
       )}
-
-      <FutureSourcesNote />
 
       {setupModalEntry && (
         <OperatorSetupModal
@@ -250,67 +210,119 @@ export function ConnectorBrowsePage({ scope }: { scope: "user" | "workspace" }) 
   );
 }
 
-function DirectoryRow({
+/**
+ * One card in the Browse grid. Layout:
+ *
+ *   ┌────────────────────────────────────────────┐
+ *   │ [icon] Bundle name                         │
+ *   │        Short description, two lines max.   │
+ *   │                              [Install / …] │
+ *   └────────────────────────────────────────────┘
+ *
+ * Description is clamped to two lines to keep card heights uniform
+ * across the grid; longer text is the manifest's job to shorten.
+ */
+function DirectoryCard({
   entry,
-  installed,
-  configureBasePath,
   busy,
   isWsAdmin,
   onInstall,
   onSetUp,
 }: {
   entry: DirectoryEntry;
-  installed: InstalledConnector | undefined;
-  configureBasePath: string;
   busy: boolean;
   isWsAdmin: boolean;
   onInstall: () => void;
   onSetUp: () => void;
 }) {
-  const isInstalled = !!installed;
   const isMpak = entry.install.kind === "mpak-bundle";
   const isStaticAuth = entry.install.kind === "remote-oauth" && entry.install.auth === "static";
   const operatorReady = entry.operatorConfigured === true;
 
   return (
-    <div className="flex items-center gap-3 py-3 border-b border-border">
-      {entry.iconUrl ? (
-        <img
-          src={entry.iconUrl}
-          alt=""
-          className={`h-7 w-7 rounded shrink-0 ${isInstalled ? "opacity-60" : ""}`}
-          onError={(e) => ((e.target as HTMLImageElement).style.visibility = "hidden")}
-        />
-      ) : (
-        <div className="h-7 w-7 rounded bg-muted shrink-0" />
-      )}
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-medium truncate">{entry.name}</span>
-          <RegistryBadge type={entry.registryType} />
+    <div className="flex flex-col gap-3 p-4 border border-border/50 rounded-md bg-background">
+      <div className="flex items-start gap-3">
+        <ConnectorIcon name={entry.name} iconUrl={entry.iconUrl} />
+        <div className="flex-1 min-w-0">
+          <div className="text-sm font-medium truncate">{entry.name}</div>
+          <p className="text-xs text-muted-foreground line-clamp-2 mt-0.5">{entry.description}</p>
         </div>
-        <p className="text-xs text-muted-foreground truncate">{entry.description}</p>
       </div>
-      <RowAction
-        entry={entry}
-        installed={installed}
-        configureBasePath={configureBasePath}
-        busy={busy}
-        isWsAdmin={isWsAdmin}
-        isStaticAuth={isStaticAuth}
-        operatorReady={operatorReady}
-        isMpakStub={isMpak}
-        onInstall={onInstall}
-        onSetUp={onSetUp}
-      />
+      <div className="flex items-end justify-end">
+        <CardAction
+          entry={entry}
+          busy={busy}
+          isWsAdmin={isWsAdmin}
+          isStaticAuth={isStaticAuth}
+          operatorReady={operatorReady}
+          isMpakStub={isMpak}
+          onInstall={onInstall}
+          onSetUp={onSetUp}
+        />
+      </div>
     </div>
   );
 }
 
-function RowAction({
+/**
+ * Icon placeholder. When the catalog entry doesn't carry an iconUrl
+ * — or the URL fails to load — fall back to a deterministic letter
+ * avatar so every card has a visual anchor on the left edge. The
+ * previous "hide on error" behavior left a blank 36px slot for
+ * connectors with broken icon URLs (e.g., Asana's vendor link 404s
+ * without auth).
+ *
+ * Tint is picked from a small fixed palette keyed on the connector's
+ * display name, so the same connector renders the same color across
+ * reloads. Light, low-saturation tints — meant to read as "branding
+ * placeholder" not "loud accent."
+ */
+function ConnectorIcon({ name, iconUrl }: { name: string; iconUrl?: string }) {
+  const [broken, setBroken] = useState(false);
+  const showImage = !!iconUrl && !broken;
+  if (showImage) {
+    return (
+      <img
+        src={iconUrl}
+        alt=""
+        className="h-9 w-9 rounded shrink-0"
+        onError={() => setBroken(true)}
+      />
+    );
+  }
+  const letter = (name.trim().charAt(0) || "?").toUpperCase();
+  const tint = pickTint(name);
+  return (
+    <div
+      className={`h-9 w-9 rounded shrink-0 flex items-center justify-center text-sm font-semibold ${tint}`}
+      aria-hidden
+    >
+      {letter}
+    </div>
+  );
+}
+
+const TINTS = [
+  "bg-blue-500/15 text-blue-600 dark:text-blue-400",
+  "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
+  "bg-amber-500/15 text-amber-600 dark:text-amber-400",
+  "bg-rose-500/15 text-rose-600 dark:text-rose-400",
+  "bg-violet-500/15 text-violet-600 dark:text-violet-400",
+  "bg-cyan-500/15 text-cyan-600 dark:text-cyan-400",
+  "bg-fuchsia-500/15 text-fuchsia-600 dark:text-fuchsia-400",
+  "bg-orange-500/15 text-orange-600 dark:text-orange-400",
+];
+
+/** Stable hash → tint index. Deterministic so reloads don't shuffle. */
+function pickTint(seed: string): string {
+  let h = 0;
+  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) | 0;
+  // biome-ignore lint/style/noNonNullAssertion: TINTS is a non-empty literal
+  return TINTS[Math.abs(h) % TINTS.length]!;
+}
+
+function CardAction({
   entry,
-  installed,
-  configureBasePath,
   busy,
   isWsAdmin,
   isStaticAuth,
@@ -320,8 +332,6 @@ function RowAction({
   onSetUp,
 }: {
   entry: DirectoryEntry;
-  installed: InstalledConnector | undefined;
-  configureBasePath: string;
   busy: boolean;
   isWsAdmin: boolean;
   isStaticAuth: boolean;
@@ -330,139 +340,46 @@ function RowAction({
   onInstall: () => void;
   onSetUp: () => void;
 }) {
-  if (installed) {
-    return (
-      <Link
-        to={`${configureBasePath}/${installed.serverName}`}
-        className="text-xs px-3 py-1.5 rounded border border-border text-muted-foreground hover:bg-muted shrink-0"
-      >
-        Installed · Configure
-      </Link>
-    );
-  }
+  // Tailwind classes shared by every action button on the card. Outline
+  // style — the previous bold primary fill made the grid feel
+  // overstimulating with 30+ "Install" buttons stacked. The portal URL
+  // surfaces inside OperatorSetupModal, so the small `app.asana.com`
+  // hint that used to live under each Set up button is intentionally
+  // gone here.
+  const btnClass =
+    "text-xs px-3 py-1.5 rounded border border-border bg-background hover:bg-muted disabled:opacity-60";
+
   // Static-auth flow:
-  //   - not configured + admin   → Set up (opens modal)
-  //   - not configured + non-admin → "Operator setup required" + portal link
-  //   - configured + admin       → Install + small "Edit setup" link
-  //   - configured + non-admin   → Install
+  //   - not configured + admin     → Set up
+  //   - not configured + non-admin → "Operator setup required"
+  //   - configured                 → Install (rotation lives on Configure now)
   if (isStaticAuth && entry.install.kind === "remote-oauth") {
     if (!operatorReady) {
       if (isWsAdmin) {
         return (
-          <div className="flex flex-col items-end gap-1 shrink-0">
-            <button
-              type="button"
-              onClick={onSetUp}
-              className="text-xs px-3 py-1.5 rounded bg-primary text-primary-foreground hover:bg-primary/90"
-            >
-              Set up
-            </button>
-            {entry.install.operatorSetup?.portalUrl && (
-              <a
-                href={entry.install.operatorSetup.portalUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-[10px] text-muted-foreground underline"
-              >
-                {safeHostname(entry.install.operatorSetup.portalUrl)}
-              </a>
-            )}
-          </div>
+          <button type="button" onClick={onSetUp} className={btnClass}>
+            Set up
+          </button>
         );
       }
-      return (
-        <div className="flex flex-col items-end text-right shrink-0">
-          <span className="text-xs text-amber-600">Operator setup required</span>
-          {entry.install.operatorSetup?.portalUrl && (
-            <a
-              href={entry.install.operatorSetup.portalUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-[10px] text-muted-foreground underline"
-            >
-              {safeHostname(entry.install.operatorSetup.portalUrl)}
-            </a>
-          )}
-        </div>
-      );
+      return <span className="text-xs text-muted-foreground">Operator setup required</span>;
     }
-    // Configured: Install only. Rotation moved to Configure → OAuth
-    // client section now that the Configure page reads operator audit
-    // metadata and serves as the single canonical home for credential
-    // edits. Browse stays focused on discovery + first-time setup.
     return (
-      <button
-        type="button"
-        onClick={onInstall}
-        disabled={busy}
-        className="text-xs px-3 py-1.5 rounded bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-60 shrink-0"
-      >
+      <button type="button" onClick={onInstall} disabled={busy} className={btnClass}>
         {busy ? "Installing…" : "Install"}
       </button>
     );
   }
   if (isMpakStub) {
-    // Curated stdio bundles install in-process via the agent's mpak
-    // SDK fetch + spawn. The "coming soon" stub is gone; behavior is
-    // identical to remote-oauth Install except no browser redirect.
-    const mpakUrl = entry.install.kind === "mpak-bundle" ? entry.install.mpakUrl : undefined;
     return (
-      <div className="flex flex-col items-end gap-0.5 shrink-0">
-        <button
-          type="button"
-          onClick={onInstall}
-          disabled={busy}
-          className="text-xs px-3 py-1.5 rounded bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
-        >
-          {busy ? "Installing…" : "Install"}
-        </button>
-        {mpakUrl && (
-          <a
-            href={mpakUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-[10px] text-muted-foreground underline underline-offset-4"
-          >
-            View on mpak.dev
-          </a>
-        )}
-      </div>
+      <button type="button" onClick={onInstall} disabled={busy} className={btnClass}>
+        {busy ? "Installing…" : "Install"}
+      </button>
     );
   }
   return (
-    <button
-      type="button"
-      onClick={onInstall}
-      disabled={busy}
-      className="text-xs px-3 py-1.5 rounded bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-60 shrink-0"
-    >
+    <button type="button" onClick={onInstall} disabled={busy} className={btnClass}>
       {busy ? "Installing…" : "Install"}
     </button>
-  );
-}
-
-function RegistryBadge({ type }: { type: DirectoryEntry["registryType"] }) {
-  // Lowercase, subtle, no border — registry attribution is secondary
-  // information; the badge is only here for users who want to know
-  // where something came from.
-  const label = type === "curated" ? "Curated" : type === "mpak" ? "mpak.dev" : type;
-  return (
-    <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground whitespace-nowrap">
-      {label}
-    </span>
-  );
-}
-
-function FutureSourcesNote() {
-  return (
-    <div className="mt-4 pt-4 border-t border-border">
-      <p className="text-xs text-muted-foreground">
-        Configure registries at{" "}
-        <Link to="/settings/org/registries" className="underline-offset-4 hover:underline">
-          Settings → Organization → Registries
-        </Link>
-        .
-      </p>
-    </div>
   );
 }
