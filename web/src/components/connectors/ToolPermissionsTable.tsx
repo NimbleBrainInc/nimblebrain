@@ -126,6 +126,14 @@ export function ToolPermissionsTable({
     </div>
   );
 
+  // Don't render the section when there are no tools to show. A
+  // connector in `not_authenticated` (or any state without an
+  // active source) returns empty tools — the hero already conveys
+  // the "Sign-in required / Configure" prompt; an empty Tool
+  // permissions section adds noise. Same for genuine zero-tool
+  // bundles (rare). After load, only render with content.
+  if (!loading && !error && tools.length === 0) return null;
+
   return (
     <section className="space-y-3">
       {header}
@@ -133,10 +141,6 @@ export function ToolPermissionsTable({
         <p className="text-sm text-muted-foreground">Loading tools…</p>
       ) : error ? (
         <p className="text-sm text-destructive">Failed to load tools: {error}</p>
-      ) : tools.length === 0 ? (
-        <p className="text-sm text-muted-foreground">
-          This connector exposes no tools. Reconnect or wait for it to finish starting.
-        </p>
       ) : (
         <ul className="border-t border-border/60">
           {tools.map((tool) => {

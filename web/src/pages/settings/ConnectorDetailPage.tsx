@@ -47,6 +47,11 @@ export function ConnectorDetailPage({ scope }: { scope: "user" | "workspace" }) 
   const [error, setError] = useState<string | null>(null);
   const [acting, setActing] = useState<string | null>(null);
   const [configureModalOpen, setConfigureModalOpen] = useState(false);
+  // Two-step uninstall: first click arms the button (label changes
+  // to "Click again to confirm"), second click runs. Replaces
+  // window.confirm() — that gets suppressed by browsers after a
+  // few uses and silently makes destructive buttons no-op.
+  const [uninstallArmed, setUninstallArmed] = useState(false);
 
   const role = useScopedRole();
   // Workspace-scope edit gates ride on ws_admin. User-scope (personal
@@ -76,11 +81,11 @@ export function ConnectorDetailPage({ scope }: { scope: "user" | "workspace" }) 
 
   const onUninstall = async () => {
     if (!installed) return;
-    if (
-      !confirm(
-        `Uninstall "${installed.catalog?.name ?? installed.serverName}"? This removes credentials and tool permissions.`,
-      )
-    ) {
+    // First click arms; second click runs. Replaces window.confirm()
+    // (browsers suppress it after a few uses, silently no-op'ing
+    // destructive buttons).
+    if (!uninstallArmed) {
+      setUninstallArmed(true);
       return;
     }
     setActing("uninstall");
@@ -91,6 +96,7 @@ export function ConnectorDetailPage({ scope }: { scope: "user" | "workspace" }) 
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setActing(null);
+      setUninstallArmed(false);
     }
   };
 
@@ -154,10 +160,19 @@ export function ConnectorDetailPage({ scope }: { scope: "user" | "workspace" }) 
             <button
               type="button"
               onClick={onUninstall}
+              onBlur={() => setUninstallArmed(false)}
               disabled={acting !== null}
-              className="text-xs text-destructive hover:underline disabled:opacity-60"
+              className={`text-xs hover:underline disabled:opacity-60 ${
+                uninstallArmed
+                  ? "text-destructive font-semibold"
+                  : "text-destructive/80 hover:text-destructive"
+              }`}
             >
-              {acting === "uninstall" ? "Uninstalling…" : "Uninstall"}
+              {acting === "uninstall"
+                ? "Uninstalling…"
+                : uninstallArmed
+                  ? "Click again to confirm"
+                  : "Uninstall"}
             </button>
           )}
         </div>

@@ -542,7 +542,15 @@ async function handleListInstalled(
     // instance closure so a workspace with N installed connectors does
     // one disk read for the workspace record, not N.
     const ws = await ctx.runtime.getWorkspaceStore().get(wsId);
-    for (const instance of ctx.runtime.getBundleInstancesForWorkspace(wsId)) {
+    // Read directly from the lifecycle's instance map. The shorthand
+    // `getBundleInstancesForWorkspace` additionally filters by
+    // `wsRegistry.sourceNames()` — appropriate for the agent's app
+    // list (disconnected bundle = unusable for tool calls), wrong for
+    // the management UI. After Disconnect we tear down the McpSource
+    // intentionally; the bundle is still INSTALLED and the user
+    // needs to see it on this page to click Connect again.
+    for (const instance of lifecycle.getInstances()) {
+      if (instance.wsId !== wsId) continue;
       // Skip user-scope URL bundles seeded into the workspace registry
       // via UserPoolSource — those belong to the user-scope view.
       if (instance.oauthScope === "user") continue;
@@ -1353,13 +1361,16 @@ async function handleListTools(
   const registry = ctx.runtime.getRegistryForWorkspace(wsId);
   const source = registry.getSource(serverName);
   if (!source) {
-    const instance =
-      scope === "workspace"
-        ? lifecycle.getInstance(serverName, wsId)
-        : (lifecycle.getUserInstance?.(serverName, callerId ?? "") ?? null);
-    return errResult(
-      `Connector "${serverName}" not registered (state: ${instance?.state ?? "unknown"}).`,
-    );
+    // Bundle is installed but not currently running (e.g. URL bundle
+    // in `not_authenticated` after disconnect, stdio bundle whose
+    // respawn failed). No tools to enumerate. Return empty tools
+    // instead of throwing — this is a normal state, not an error.
+    // The hero already conveys the "needs auth / needs setup" prompt.
+    return {
+      content: textContent("Tools: 0 (connector not running)."),
+      structuredContent: { tools: [] },
+      isError: false,
+    };
   }
 
   try {
@@ -1429,13 +1440,17 @@ async function handleListToolsWithPermissions(
   const registry = ctx.runtime.getRegistryForWorkspace(wsId);
   const source = registry.getSource(serverName);
   if (!source) {
-    const instance =
-      scope === "workspace"
-        ? lifecycle.getInstance(serverName, wsId)
-        : (lifecycle.getUserInstance?.(serverName, callerId ?? "") ?? null);
-    return errResult(
-      `Connector "${serverName}" not registered (state: ${instance?.state ?? "unknown"}).`,
-    );
+    // Bundle installed but not running. Permissions still readable
+    // (they're persisted independently of the source); return them
+    // alongside an empty tools list so the UI can render the
+    // permissions surface as "no tools currently available" without
+    // a hard error.
+    const permissions = await ctx.runtime.getPermissionStore().getConnector(owner, serverName);
+    return {
+      content: textContent("Tools: 0 (connector not running)."),
+      structuredContent: { scope: owner.scope, serverName, tools: [], permissions },
+      isError: false,
+    };
   }
 
   try {
