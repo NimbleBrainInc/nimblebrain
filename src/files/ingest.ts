@@ -1,6 +1,7 @@
 import { extractText } from "./extract.ts";
 import type { FileStore } from "./store.ts";
 import type { ContentPart, FileConfig, FileEntry, FileReference, IngestResult } from "./types.ts";
+import { fileIdToUri } from "./uri.ts";
 
 /** A raw uploaded file from multipart form data. */
 export interface UploadedFile {
@@ -28,7 +29,14 @@ const EXTRACTABLE_DOCS = new Set([
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 ]);
 
-const IMAGE_TYPES = new Set([
+/**
+ * Image MIME types accepted on upload. Exported because the rehydration
+ * step (`src/files/rehydrate.ts`) needs the same set to decide which
+ * `resource_link` blocks become inline `file` parts at the LLM-call
+ * boundary. `image/svg+xml` is allowed here for storage but excluded
+ * from rehydration — Anthropic's vision input is raster-only.
+ */
+export const IMAGE_TYPES = new Set([
   "image/png",
   "image/jpeg",
   "image/gif",
@@ -158,23 +166,23 @@ export async function ingestFiles(
       }
     }
 
-    // Image files → vision content part
+    // Image files → MCP `resource_link` content part. The runtime rehydrates
+    // these to AI SDK V3 `file` parts (with bytes loaded from the FileStore)
+    // at the `model.doStream` boundary, so vision content survives through
+    // multi-turn agentic loops without the conversation log carrying the
+    // bytes inline.
     if (isImage(file.mimeType)) {
       contentParts.push({
-        type: "image",
-        image: new Uint8Array(file.data),
+        type: "resource_link",
+        uri: fileIdToUri(saved.id),
         mimeType: file.mimeType,
-      });
-    }
-
-    // Metadata notice (always, for all files)
-    if (isImage(file.mimeType)) {
-      contentParts.push({
-        type: "text",
-        text: `[File: ${file.filename} (${saved.id}) — ${humanSize(saved.size)}, ${file.mimeType}]`,
+        name: file.filename,
       });
     } else if (!extracted) {
-      // Non-extractable, non-image file
+      // Non-extractable, non-image file. Surface a text hint so the model
+      // knows what's attached and can call `files__read` if it needs the
+      // bytes. (Extractable files already inserted their content above;
+      // images are addressable via the `resource_link` block.)
       contentParts.push({
         type: "text",
         text: `--- Attached: ${file.filename} (${saved.id}, ${humanSize(saved.size)}) — binary file, use files__read to access ---`,

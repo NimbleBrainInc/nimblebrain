@@ -34,6 +34,8 @@ import type {
   SkillsLoadedPayload,
   ToolSchema,
 } from "../engine/types.ts";
+import { rehydrateUserResources } from "../files/rehydrate.ts";
+import { createFileStore } from "../files/store.ts";
 import { DEFAULT_FILE_CONFIG, type FileConfig } from "../files/types.ts";
 import type { InstanceConfig } from "../identity/instance.ts";
 import { loadInstanceConfig } from "../identity/instance.ts";
@@ -657,10 +659,19 @@ export class Runtime {
       conversation.metadata = request.metadata;
     }
 
-    // Build user message content: text + optional file content parts
+    // Build user message content: text + MCP `resource_link` blocks for
+    // attachments. Bytes for binary attachments live in the workspace
+    // FileStore (already persisted by `ingestFiles`); the conversation log
+    // carries only the URI. The runtime rehydrates image links to AI SDK
+    // `file` parts at the `model.doStream` boundary — see `rehydrateUserResources`.
     type TextPart = { type: "text"; text: string };
-    type FilePart = { type: "file"; data: Uint8Array; mediaType: string; filename?: string };
-    const userContent: Array<TextPart | FilePart> = [];
+    type ResourceLinkPart = {
+      type: "resource_link";
+      uri: string;
+      mimeType: string;
+      name: string;
+    };
+    const userContent: Array<TextPart | ResourceLinkPart> = [];
     if (request.message) {
       userContent.push({ type: "text", text: request.message });
     }
@@ -668,8 +679,13 @@ export class Runtime {
       for (const part of request.contentParts) {
         if (part.type === "text") {
           userContent.push({ type: "text", text: part.text });
-        } else if (part.type === "image") {
-          userContent.push({ type: "file", data: part.image, mediaType: part.mimeType });
+        } else if (part.type === "resource_link") {
+          userContent.push({
+            type: "resource_link",
+            uri: part.uri,
+            mimeType: part.mimeType,
+            name: part.name,
+          });
         }
       }
     }
@@ -832,7 +848,14 @@ export class Runtime {
       layer3Entries,
     );
 
-    const messages = await store.history(conversation);
+    // Load history and rehydrate any `resource_link` blocks (attached
+    // images persisted as URI references) into AI SDK V3 `file` parts
+    // with bytes loaded from the workspace FileStore. This is the seam
+    // where the storage shape (URI references) meets the model-call
+    // shape (inline bytes) — see `src/files/rehydrate.ts`.
+    const history = await store.history(conversation);
+    const fileStore = createFileStore(join(this.getWorkspaceScopedDir(wsId), "files"));
+    const messages = await rehydrateUserResources(history, fileStore);
 
     // Workspace model overrides are in the RequestContext — read via getModelSlot()
 

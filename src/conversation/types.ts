@@ -1,5 +1,10 @@
 import { resolve } from "node:path";
-import type { LanguageModelV3Content, LanguageModelV3Message } from "@ai-sdk/provider";
+import type {
+  LanguageModelV3Content,
+  LanguageModelV3Message,
+  LanguageModelV3TextPart,
+  SharedV3ProviderOptions,
+} from "@ai-sdk/provider";
 import type { ContextAssembledSource, SkillsLoadedEntry } from "../engine/types.ts";
 import type { TokenUsage } from "../usage/types.ts";
 
@@ -135,43 +140,83 @@ export interface ParticipantInfo {
   displayName?: string;
 }
 
-export type StoredMessage = LanguageModelV3Message & {
+/**
+ * MCP `resource_link` content block — references a workspace resource
+ * (typically `files://<id>`) by URI. The bytes live in the resource's
+ * owning store; the conversation log carries only the link.
+ *
+ * The runtime rehydrates image links to AI SDK V3 `file` parts at the
+ * `model.doStream` boundary so vision content reaches the model without
+ * the JSONL ever holding raw bytes.
+ */
+export interface ResourceLinkContentPart {
+  type: "resource_link";
+  uri: string;
+  mimeType: string;
+  name: string;
+}
+
+/**
+ * User-message content shape — text plus MCP `resource_link` blocks.
+ * Narrower than `LanguageModelV3UserMessage["content"]` (which also
+ * permits inline file parts): callers persist references, not bytes.
+ */
+export type UserContentPart = LanguageModelV3TextPart | ResourceLinkContentPart;
+
+interface StoredMessageMetadata {
+  skill?: string | null;
+  toolCalls?: Array<{
+    id: string;
+    name: string;
+    input: Record<string, unknown>;
+    output: string;
+    ok: boolean;
+    ms: number;
+    resourceUri?: string;
+    resourceLinks?: Array<{
+      uri: string;
+      name?: string;
+      mimeType?: string;
+      description?: string;
+    }>;
+  }>;
+  /** Cumulative usage for the assistant turn. Cost is derived at read time. */
+  usage?: TokenUsage;
+  model?: string;
+  llmMs?: number;
+  iterations?: number;
+  /** Per-call finish reason — surfaces length truncation etc. to the UI. */
+  finishReason?: "stop" | "length" | "content-filter" | "tool-calls" | "error" | "other";
+  files?: Array<{
+    id: string;
+    filename: string;
+    mimeType: string;
+    size: number;
+    extracted: boolean;
+  }>;
+}
+
+interface StoredMessageExtras {
   timestamp: string;
   /** User who sent this message (for multi-user conversations). */
   userId?: string;
-  metadata?: {
-    skill?: string | null;
-    toolCalls?: Array<{
-      id: string;
-      name: string;
-      input: Record<string, unknown>;
-      output: string;
-      ok: boolean;
-      ms: number;
-      resourceUri?: string;
-      resourceLinks?: Array<{
-        uri: string;
-        name?: string;
-        mimeType?: string;
-        description?: string;
-      }>;
-    }>;
-    /** Cumulative usage for the assistant turn. Cost is derived at read time. */
-    usage?: TokenUsage;
-    model?: string;
-    llmMs?: number;
-    iterations?: number;
-    /** Per-call finish reason — surfaces length truncation etc. to the UI. */
-    finishReason?: "stop" | "length" | "content-filter" | "tool-calls" | "error" | "other";
-    files?: Array<{
-      id: string;
-      filename: string;
-      mimeType: string;
-      size: number;
-      extracted: boolean;
-    }>;
-  };
-};
+  metadata?: StoredMessageMetadata;
+}
+
+/**
+ * In-memory message shape used by the runtime and event store.
+ *
+ * For non-user roles, this is `LanguageModelV3Message` plus the platform's
+ * timestamp/metadata extras. For user role we widen the content union to
+ * include `resource_link` blocks so attached images survive end-to-end as
+ * URI references; the runtime rehydrates them to AI SDK `file` parts before
+ * calling the model.
+ */
+export type StoredMessage = StoredMessageExtras &
+  (
+    | { role: "user"; content: UserContentPart[]; providerOptions?: SharedV3ProviderOptions }
+    | Exclude<LanguageModelV3Message, { role: "user" }>
+  );
 
 // ---------------------------------------------------------------------------
 // Event-sourced conversation events
@@ -195,7 +240,11 @@ export type ConversationEventType =
 export interface UserMessageEvent {
   ts: string;
   type: "user.message";
-  content: LanguageModelV3Content[];
+  /**
+   * Persisted content. Text + MCP `resource_link` blocks only — never
+   * inline bytes. See `UserContentPart`.
+   */
+  content: UserContentPart[];
   userId?: string;
   files?: Array<{
     id: string;

@@ -69,8 +69,8 @@ describe("Integration: upload text file → ingest → verify extracted content"
   });
 });
 
-describe("Integration: upload PNG image → ingest → verify image content part", () => {
-  test("image file produces image content part with correct mimeType", async () => {
+describe("Integration: upload PNG image → ingest → verify resource_link content part", () => {
+  test("image file produces a resource_link content part referencing the file store", async () => {
     const store = createFileStore(join(workDir, "files"));
     // Minimal PNG header bytes
     const pngHeader = Buffer.from([
@@ -85,18 +85,15 @@ describe("Integration: upload PNG image → ingest → verify image content part
     expect(result.fileRefs[0].extracted).toBe(false);
     expect(result.fileRefs[0].mimeType).toBe("image/png");
 
-    // Should have an image content part
-    const imagePart = result.contentParts.find((p) => p.type === "image");
-    expect(imagePart).toBeDefined();
-    if (imagePart && imagePart.type === "image") {
-      expect(imagePart.mimeType).toBe("image/png");
+    // Bytes are persisted in the FileStore; the message content carries
+    // an MCP `resource_link` block referencing them by `files://<id>` URI.
+    const linkPart = result.contentParts.find((p) => p.type === "resource_link");
+    expect(linkPart).toBeDefined();
+    if (linkPart && linkPart.type === "resource_link") {
+      expect(linkPart.uri).toBe(`files://${result.fileRefs[0].id}`);
+      expect(linkPart.mimeType).toBe("image/png");
+      expect(linkPart.name).toBe("screenshot.png");
     }
-
-    // Should have a metadata text part referencing the filename
-    const metaPart = result.contentParts.find(
-      (p) => p.type === "text" && p.text.includes("screenshot.png"),
-    );
-    expect(metaPart).toBeDefined();
   });
 });
 

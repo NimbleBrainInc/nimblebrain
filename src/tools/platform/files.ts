@@ -19,8 +19,14 @@ import { textContent } from "../../engine/content-helpers.ts";
 import type { EventSink, ToolResult } from "../../engine/types.ts";
 import { createFileStore, type FileStore } from "../../files/store.ts";
 import type { FileEntry } from "../../files/types.ts";
+import { fileIdToUri, uriToFileId } from "../../files/uri.ts";
 import type { Runtime } from "../../runtime/runtime.ts";
-import { defineInProcessApp, type InProcessTool } from "../in-process-app.ts";
+import {
+  type DynamicResourceEntry,
+  defineInProcessApp,
+  type InProcessResource,
+  type InProcessTool,
+} from "../in-process-app.ts";
 import type { McpSource } from "../mcp-source.ts";
 import { loadFilesUi } from "../platform-resources/files/browser.ts";
 import {
@@ -306,7 +312,43 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
     },
   ];
 
-  const resources = new Map([["ui://files/browser", { text: loadFilesUi, mimeType: "text/html" }]]);
+  const resources = new Map<string, InProcessResource>([
+    ["ui://files/browser", { text: loadFilesUi, mimeType: "text/html" }],
+  ]);
+
+  // Workspace files are exposed as MCP resources at `files://<id>`. Any
+  // MCP client (the agent loop, an iframe app via the bridge, an external
+  // tool like Claude Code) can list them via `resources/list` and fetch
+  // bytes via `resources/read`. The platform itself uses these URIs in
+  // the `resource_link` content blocks it persists in user messages —
+  // see `src/files/ingest.ts`.
+  const listResourcesFn = async (): Promise<DynamicResourceEntry[]> => {
+    const all = await getStore().readRegistry();
+    return all.map((entry) => ({
+      uri: fileIdToUri(entry.id),
+      name: entry.filename,
+      mimeType: entry.mimeType,
+    }));
+  };
+
+  const resourceHandler = async (uri: string): Promise<InProcessResource | null> => {
+    const id = uriToFileId(uri);
+    if (!id) return null;
+    try {
+      const read = await getStore().readFile(id);
+      // Text MIMEs return as `text` (utf-8 decoded); everything else returns
+      // as `blob` (base64 on the wire). This matches MCP's TextResourceContents
+      // / BlobResourceContents split — clients that want a string get one
+      // without round-tripping through base64.
+      if (isTextMime(read.mimeType)) {
+        return { text: read.data.toString("utf-8"), mimeType: read.mimeType };
+      }
+      return { blob: new Uint8Array(read.data), mimeType: read.mimeType };
+    } catch {
+      // Not found or tombstoned — surface as not-found to the client.
+      return null;
+    }
+  };
 
   return defineInProcessApp(
     {
@@ -314,6 +356,8 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
       version: "1.0.0",
       tools,
       resources,
+      listResources: listResourcesFn,
+      resourceHandler,
       placements: [
         {
           slot: "sidebar",
@@ -327,4 +371,21 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
     },
     eventSink,
   );
+}
+
+const TEXT_MIMES = new Set([
+  "text/plain",
+  "text/csv",
+  "text/markdown",
+  "text/html",
+  "text/xml",
+  "text/yaml",
+  "application/json",
+  "application/xml",
+  "application/yaml",
+]);
+
+function isTextMime(mimeType: string): boolean {
+  const bare = mimeType.split(";", 1)[0]?.trim().toLowerCase() ?? "";
+  return bare.startsWith("text/") || TEXT_MIMES.has(bare);
 }

@@ -71,7 +71,7 @@ describe("ingestFiles", () => {
     expect(extractedPart).toBeDefined();
   });
 
-  test("image file produces image content part + metadata notice", async () => {
+  test("image file produces a resource_link content part pointing to the file store", async () => {
     const store = createFileStore(join(workDir, "files"));
     const pngHeader = Buffer.from([
       0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
@@ -83,13 +83,18 @@ describe("ingestFiles", () => {
     expect(result.fileRefs).toHaveLength(1);
     expect(result.fileRefs[0].extracted).toBe(false);
 
-    const imagePart = result.contentParts.find((p) => p.type === "image");
-    expect(imagePart).toBeDefined();
+    // Bytes are persisted in the FileStore; the message content carries
+    // an MCP `resource_link` block referencing them by `files://<id>` URI.
+    const linkPart = result.contentParts.find((p) => p.type === "resource_link");
+    expect(linkPart).toBeDefined();
+    if (linkPart && linkPart.type === "resource_link") {
+      expect(linkPart.uri).toBe(`files://${result.fileRefs[0].id}`);
+      expect(linkPart.mimeType).toBe("image/png");
+      expect(linkPart.name).toBe("photo.png");
+    }
 
-    const metaPart = result.contentParts.find(
-      (p) => p.type === "text" && p.text.includes("photo.png"),
-    );
-    expect(metaPart).toBeDefined();
+    // No raw bytes leak into the message content array.
+    expect(result.contentParts.some((p) => "image" in (p as object))).toBe(false);
   });
 
   test("binary file (zip) produces metadata-only notice", async () => {

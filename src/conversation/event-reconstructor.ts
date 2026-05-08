@@ -9,7 +9,13 @@
 import type { LanguageModelV3Content, LanguageModelV3ReasoningPart } from "@ai-sdk/provider";
 import { normalizeForReplay } from "../model/inbound-fit.ts";
 import { estimateCost } from "../usage/cost.ts";
-import type { ConversationEvent, LlmResponseEvent, StoredMessage, ToolDoneEvent } from "./types.ts";
+import type {
+  ConversationEvent,
+  LlmResponseEvent,
+  StoredMessage,
+  ToolDoneEvent,
+  UserContentPart,
+} from "./types.ts";
 
 /**
  * Per-finishReason placeholder text for empty turns. The marker becomes
@@ -135,7 +141,7 @@ function buildMessagesFromEvents(events: readonly ConversationEvent[]): StoredMe
     if (event.type === "user.message") {
       const msg: StoredMessage = {
         role: "user",
-        content: event.content.map(toMessageContentPart).filter(isTextPart),
+        content: event.content.flatMap(toUserContentPart),
         timestamp: event.ts,
         ...(event.userId ? { userId: event.userId } : {}),
         ...(event.files ? { metadata: { files: event.files } } : {}),
@@ -449,11 +455,23 @@ export function deriveUsageMetrics(events: readonly ConversationEvent[]): UsageM
 // Helpers
 // ---------------------------------------------------------------------------
 
-function toMessageContentPart(c: LanguageModelV3Content): { type: "text"; text: string } | null {
-  if (c.type === "text") return { type: "text", text: c.text };
-  return null;
-}
-
-function isTextPart(p: { type: "text"; text: string } | null): p is { type: "text"; text: string } {
-  return p !== null;
+/**
+ * Pass-through projection for user-message content. Preserves text and
+ * MCP `resource_link` blocks; drops anything else (defensive — the
+ * persisted shape is `UserContentPart[]`, but JSONL is forgiving and a
+ * future schema migration shouldn't crash old logs).
+ */
+function toUserContentPart(c: UserContentPart): UserContentPart[] {
+  if (c.type === "text") return [{ type: "text", text: c.text }];
+  if (c.type === "resource_link") {
+    return [
+      {
+        type: "resource_link",
+        uri: c.uri,
+        mimeType: c.mimeType,
+        name: c.name,
+      },
+    ];
+  }
+  return [];
 }
