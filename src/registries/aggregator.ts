@@ -48,14 +48,45 @@ export class DirectoryAggregator {
       }
     }
 
-    // De-dupe on (registryId, id) — registries can repeat ids of
-    // their own so the composite key is the only safe primary.
-    const seen = new Set<string>();
-    const deduped: DirectoryEntry[] = [];
+    // Two-pass dedup:
+    //
+    //   Pass 1 — within-registry: a registry can occasionally repeat
+    //   its own ids (config error, duplicate in a fetched response).
+    //   Composite (registryId, id) keeps the first.
+    //
+    //   Pass 2 — cross-registry on the install target. CuratedRegistry
+    //   surfaces stdio bundles via STDIO_BUNDLES; MpakRegistry has its
+    //   own stub set with overlapping packages (echo, ipinfo, etc.).
+    //   Without this dedup the user sees the same connector twice with
+    //   different ids — and the mpak version's id is the package name,
+    //   so clicking it routes through `findStdioBundle(packageName)`.
+    //   We prefer the curated card (richer copy, stable id), and drop
+    //   the mpak duplicate.
+    const seenComposite = new Set<string>();
+    const passOne: DirectoryEntry[] = [];
     for (const e of entries) {
       const key = `${e.registryId}::${e.id}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
+      if (seenComposite.has(key)) continue;
+      seenComposite.add(key);
+      passOne.push(e);
+    }
+
+    // Stable order for the cross-registry pass: curated first so it
+    // wins when an mpak entry has the same package. The aggregator's
+    // input order isn't guaranteed, so sort explicitly.
+    const registryRank = (type: DirectoryEntry["registryType"]): number => {
+      if (type === "curated") return 0;
+      if (type === "mpak") return 1;
+      return 2;
+    };
+    passOne.sort((a, b) => registryRank(a.registryType) - registryRank(b.registryType));
+
+    const seenPackage = new Set<string>();
+    const deduped: DirectoryEntry[] = [];
+    for (const e of passOne) {
+      const installKey = installTarget(e);
+      if (installKey && seenPackage.has(installKey)) continue;
+      if (installKey) seenPackage.add(installKey);
       deduped.push(e);
     }
 
@@ -76,5 +107,25 @@ export class DirectoryAggregator {
       default:
         return null;
     }
+  }
+}
+
+/**
+ * The "thing this entry would actually install" — used for cross-
+ * registry dedup. Two entries that resolve to the same install
+ * target (mpak package name, remote URL, or direct URL) are
+ * duplicates regardless of which registry surfaced them. Returns
+ * `null` for kinds we don't dedupe on.
+ */
+function installTarget(entry: DirectoryEntry): string | null {
+  switch (entry.install.kind) {
+    case "mpak-bundle":
+      return `mpak:${entry.install.package}`;
+    case "remote-oauth":
+      return `url:${entry.install.url}`;
+    case "direct-url":
+      return `url:${entry.install.url}`;
+    default:
+      return null;
   }
 }

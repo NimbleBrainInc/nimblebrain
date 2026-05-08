@@ -58,7 +58,7 @@ describe("DirectoryAggregator", () => {
     }
   });
 
-  test("dedupes on (registryId, id) — same id from different registries both appear", async () => {
+  test("dedupes on (registryId, id) — within-registry duplicates are collapsed", async () => {
     const { aggregator, cleanup } = freshAggregator();
     try {
       const result = await aggregator.list();
@@ -67,6 +67,38 @@ describe("DirectoryAggregator", () => {
         const key = `${e.registryId}::${e.id}`;
         expect(keys.has(key)).toBe(false);
         keys.add(key);
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("dedupes across registries on install target — curated wins over mpak for the same package", async () => {
+    // CuratedRegistry surfaces every @nimblebraininc/* bundle in
+    // STDIO_BUNDLES; MpakRegistry's stub also surfaces some of them
+    // (echo, ipinfo, ...). Without cross-registry dedup the user
+    // sees the same connector twice with different ids — and the
+    // mpak entry's id is the package name, which used to break the
+    // install handler's catalog lookup.
+    const { aggregator, cleanup } = freshAggregator();
+    try {
+      const result = await aggregator.list();
+      // Group by mpak install target.
+      const byPackage = new Map<string, string[]>();
+      for (const e of result.entries) {
+        if (e.install.kind !== "mpak-bundle") continue;
+        const list = byPackage.get(e.install.package) ?? [];
+        list.push(e.registryType);
+        byPackage.set(e.install.package, list);
+      }
+      // Every package surfaces at most once. When both curated and
+      // mpak listed it, only curated's row survives.
+      for (const [pkg, types] of byPackage) {
+        expect(types.length).toBe(1);
+        // Spot-check a known overlap: ipinfo is in both registries.
+        if (pkg === "@nimblebraininc/ipinfo") {
+          expect(types[0]).toBe("curated");
+        }
       }
     } finally {
       cleanup();

@@ -340,7 +340,15 @@ export const STDIO_BUNDLES: StdioBundleEntry[] = [
   },
 ];
 
-/** Look up a stdio bundle by id. Returns undefined if no match. */
-export function findStdioBundle(id: string): StdioBundleEntry | undefined {
-  return STDIO_BUNDLES.find((e) => e.id === id);
+/**
+ * Look up a stdio bundle by either its short id (`"ipinfo"`) or its
+ * scoped package name (`"@nimblebraininc/ipinfo"`). Browse passes
+ * `entry.id` from a DirectoryEntry, which can be either form
+ * depending on which registry surfaced the row — the curated stdio
+ * registry uses the short id, the mpak.dev stub registry uses the
+ * full package name. Accepting both keeps the install path robust
+ * regardless of which card the user clicked.
+ */
+export function findStdioBundle(idOrPackage: string): StdioBundleEntry | undefined {
+  return STDIO_BUNDLES.find((e) => e.id === idOrPackage || e.bundleName === idOrPackage);
 }
