@@ -90,8 +90,14 @@ export interface RemoteOAuthInstall {
 /**
  * mpak bundle install. The package is fetched via mpak SDK and
  * spawned as a stdio subprocess. CuratedRegistry emits these from
- * STDIO_BUNDLES; future MpakRegistry implementations will emit
- * them from mpak.dev's search results.
+ * the bundled stdio-catalog.yaml; future MpakRegistry implementations
+ * will emit them from mpak.dev's search results.
+ *
+ * TODO(mpak-registry): when the live mpak.dev fetch lands, this type
+ * needs `version` (selected release) and `mpakUrl` (download href)
+ * back. Both fields existed in an earlier draft and were trimmed
+ * because CuratedRegistry doesn't need them — but the discriminated
+ * union has to widen again before MpakRegistry can do useful work.
  */
 export interface MpakBundleInstall {
   kind: "mpak-bundle";

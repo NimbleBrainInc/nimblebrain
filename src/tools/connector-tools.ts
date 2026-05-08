@@ -348,6 +348,14 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
         case "clear_user_config":
           return handleClearUserConfig(ctx, wsId, identity, String(input.serverName ?? ""));
         case "get_redirect_uri":
+          // The URL itself is effectively public (it's surfaced in
+          // every OAuth flow), so this gate is convention rather than
+          // confidentiality — every other action on this tool requires
+          // an authenticated identity and the unauthenticated outlier
+          // here was a maintenance trip-wire flagged in PR review.
+          if (!identity) {
+            return errResult("Authentication required.");
+          }
           return {
             content: textContent("OAuth callback URL."),
             structuredContent: { redirectUri: mcpAuthCallbackUrl() },

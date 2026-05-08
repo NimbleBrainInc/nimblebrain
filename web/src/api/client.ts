@@ -837,9 +837,16 @@ export async function setBundleUserConfig(
 /**
  * Drop the entire workspace credential file for a stdio bundle. Every
  * declared field reverts to not-configured. Triggers an automatic
- * subprocess respawn — the bundle typically lands in `crashed` after
- * this since required fields are now unsatisfied, which is the
- * intended user-visible signal that revocation took effect.
+ * Important caveat — the running subprocess is **not** restarted.
+ * Clearing on a bundle with required fields would orphan the
+ * connector (respawn would fail at prepareServer and the workspace
+ * registry would lose the source, taking the connector off the UI),
+ * so the server intentionally only zeroes the disk file. The bundle
+ * keeps serving requests with whatever env it was launched with
+ * until the next platform restart. Surface this to operators as
+ * "credential rotated, takes effect next deploy" — it's not the same
+ * as immediate revocation. (Active follow-up to give admins an
+ * explicit Stop affordance for hard-revocation cases.)
  */
 export async function clearBundleUserConfig(serverName: string): Promise<BundleUserConfigResult> {
   const result = await callTool("nb", "manage_connectors", {

@@ -150,11 +150,13 @@ function BootstrappedShell({
   onLogout: () => void;
 }) {
   const { activeWorkspace } = useWorkspaceContext();
-  const { loading, error, forSlot, mainRoutes, refresh: refreshShell } = useShell(
-    token,
-    activeWorkspace?.id,
-    initialShell,
-  );
+  const {
+    loading,
+    error,
+    forSlot,
+    mainRoutes,
+    refresh: refreshShell,
+  } = useShell(token, activeWorkspace?.id, initialShell);
 
   if (loading) {
     return (
