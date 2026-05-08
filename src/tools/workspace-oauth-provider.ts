@@ -131,6 +131,19 @@ export interface WorkspaceOAuthProviderOptions {
    * `scope`) are validated out at config-load time.
    */
   additionalAuthorizationParams?: Record<string, string>;
+  /**
+   * AbortSignal threaded into every outbound `fetch()` the provider
+   * makes — the redirect-probe loop in `redirectToAuthorization` and
+   * the revocation requests in `revokeAndDeleteTokens`. Lifecycle
+   * aborts this when its 15s `startAuth` timeout fires (or when the
+   * race resolves cleanly), so an unresponsive auth server's TCP
+   * read doesn't outlive the user's intent.
+   *
+   * Optional — flows started outside the lifecycle path (CLI utilities,
+   * tests) may not have a signal. fetches without one keep their
+   * default behavior (no cancellation).
+   */
+  abortSignal?: AbortSignal;
 }
 
 /**
@@ -442,6 +455,7 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
   private readonly staticClient?: WorkspaceOAuthProviderOptions["staticClient"];
   private readonly scopes?: string[];
   private readonly additionalAuthorizationParams?: Record<string, string>;
+  private readonly abortSignal?: AbortSignal;
   /** Cached DCR result + tokens to avoid redundant disk reads within a flow. */
   private cachedClientInfo: OAuthClientInformationFull | null = null;
   private cachedTokens: OAuthTokens | null = null;
@@ -477,6 +491,7 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     // discipline as `assertSafeOwnerId`.
     validateAdditionalAuthorizationParams(opts.additionalAuthorizationParams);
     this.additionalAuthorizationParams = opts.additionalAuthorizationParams;
+    this.abortSignal = opts.abortSignal;
 
     // Resolve the per-owner storage root. Both scopes use the same
     // `<root>/<scope-dir>/<id>/credentials/mcp-oauth/<server>/` layout
@@ -698,7 +713,13 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
           );
         }
 
-        const res = await fetch(current.toString(), { redirect: "manual" });
+        // Honor lifecycle's timeout: when the controller aborts, the
+        // in-flight TCP read terminates with an AbortError instead of
+        // running its full network timeout in the background.
+        const res = await fetch(current.toString(), {
+          redirect: "manual",
+          ...(this.abortSignal ? { signal: this.abortSignal } : {}),
+        });
         if (res.status < 300 || res.status >= 400) {
           // Non-redirect response — provider sent us a login page (200) or
           // an error (4xx/5xx). Not headless.
@@ -874,7 +895,16 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     deletedLocal: boolean;
     error?: string;
   }> {
-    const fetcher = opts.fetchImpl ?? fetch;
+    const baseFetcher = opts.fetchImpl ?? fetch;
+    // Thread `this.abortSignal` into every revoke-path fetch (AS metadata
+    // discovery + RFC 7009 POSTs) so an unresponsive server's TCP read
+    // can be cut by the same controller that guards the redirect probe.
+    // No caller in this path sets its own `init.signal`, so the spread
+    // is unambiguous.
+    const signal = this.abortSignal;
+    const fetcher: typeof fetch = signal
+      ? (((input, init) => baseFetcher(input, { ...init, signal })) as typeof fetch)
+      : baseFetcher;
     const tokens = await this.tokens();
     const clientInfo = await this.clientInformation();
     const result: {

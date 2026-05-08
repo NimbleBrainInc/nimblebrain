@@ -727,6 +727,13 @@ export class BundleLifecycleManager {
     // become an unhandled rejection.
     authUrlPromise.catch(() => {});
 
+    // Cancel the provider's outbound fetches when the 15s race resolves
+    // (either branch). Without this, an unresponsive auth server's
+    // redirect-probe TCP read keeps running for its full network
+    // timeout (often 30–60s) after we've already surfaced the timeout
+    // to the caller.
+    const providerAbort = new AbortController();
+
     const provider = new WorkspaceOAuthProvider({
       owner: isWorkspaceScope ? { type: "workspace", wsId } : { type: "user", userId: principalId },
       serverName,
@@ -745,6 +752,7 @@ export class BundleLifecycleManager {
       ...(ref.additionalAuthorizationParams
         ? { additionalAuthorizationParams: ref.additionalAuthorizationParams }
         : {}),
+      abortSignal: providerAbort.signal,
     });
     const source = new McpSource(
       serverName,
@@ -825,6 +833,12 @@ export class BundleLifecycleManager {
       return { authorizationUrl };
     } finally {
       if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
+      // Either branch resolved — cancel any provider fetches still in
+      // flight. Success path: redirect-probe was about to be torn down
+      // anyway. Timeout path: cuts an unresponsive server's TCP read
+      // instead of letting it run its full network timeout in the
+      // background.
+      providerAbort.abort();
     }
   }
 
