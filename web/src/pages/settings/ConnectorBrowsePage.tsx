@@ -216,11 +216,25 @@ export function ConnectorBrowsePage({ scope }: { scope: "user" | "workspace" }) 
  *   ┌────────────────────────────────────────────┐
  *   │ [icon] Bundle name                         │
  *   │        Short description, two lines max.   │
+ *   │                                            │
  *   │                              [Install / …] │
  *   └────────────────────────────────────────────┘
  *
- * Description is clamped to two lines to keep card heights uniform
- * across the grid; longer text is the manifest's job to shorten.
+ * Two invariants keep the grid visually consistent regardless of
+ * content length:
+ *
+ *   1. The description block reserves space for two lines (`min-h-8`,
+ *      = 2 × 16px line-height for text-xs). A one-line description
+ *      pads to the same height as a two-line one, so the action row's
+ *      vertical position never depends on copy length.
+ *
+ *   2. The action row uses `mt-auto`, pinning it to the bottom of the
+ *      card's flex column. If something later disturbs the math
+ *      (longer titles, an extra meta line), the button still sticks
+ *      to the bottom — the card just grows uniformly.
+ *
+ * Belt and suspenders. Either alone would work; together they're
+ * resilient to future content shifts.
  */
 function DirectoryCard({
   entry,
@@ -240,15 +254,17 @@ function DirectoryCard({
   const operatorReady = entry.operatorConfigured === true;
 
   return (
-    <div className="flex flex-col gap-3 p-4 border border-border/50 rounded-md bg-background">
+    <div className="flex flex-col gap-3 p-4 border border-border/50 rounded-md bg-background h-full">
       <div className="flex items-start gap-3">
         <ConnectorIcon name={entry.name} iconUrl={entry.iconUrl} />
         <div className="flex-1 min-w-0">
           <div className="text-sm font-medium truncate">{entry.name}</div>
-          <p className="text-xs text-muted-foreground line-clamp-2 mt-0.5">{entry.description}</p>
+          <p className="text-xs text-muted-foreground line-clamp-2 mt-0.5 min-h-8">
+            {entry.description}
+          </p>
         </div>
       </div>
-      <div className="flex items-end justify-end">
+      <div className="mt-auto flex items-end justify-end">
         <CardAction
           entry={entry}
           busy={busy}
