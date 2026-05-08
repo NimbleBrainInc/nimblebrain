@@ -155,6 +155,41 @@ describe("rehydrateUserResources", () => {
     ]);
   });
 
+  test("link-vs-store MIME drift: trust the store, fall back to text", async () => {
+    // The link claims image/png (passes the early-exit check) but the
+    // FileStore reports something non-rehydratable (e.g., a manual JSONL
+    // edit or a forward-compat MIME taxonomy migration). The store is
+    // the source of truth — fall back to a text marker rather than send
+    // a part with a media type that lies about the bytes.
+    const store = fakeStore({
+      fl_drift: { data: Buffer.from("<svg/>"), mimeType: "image/svg+xml", filename: "ghost.png" },
+    });
+
+    const messages: StoredMessage[] = [
+      {
+        role: "user",
+        content: [
+          {
+            type: "resource_link",
+            uri: "files://fl_drift",
+            mimeType: "image/png",
+            name: "ghost.png",
+          },
+        ],
+        timestamp: "2026-05-07T00:00:00.000Z",
+      },
+    ];
+
+    const out = await rehydrateUserResources(messages, store);
+    const msg = out[0]!;
+    expect(msg.role).toBe("user");
+    if (msg.role !== "user") return;
+    expect(msg.content[0]?.type).toBe("text");
+    if (msg.content[0]?.type !== "text") return;
+    // Text marker uses the store's MIME — that's what the bytes really are.
+    expect(msg.content[0].text).toContain("image/svg+xml");
+  });
+
   test("svg is not rehydrated (Anthropic vision is raster-only)", async () => {
     const store = fakeStore({
       fl_svg: { data: Buffer.from("<svg/>"), mimeType: "image/svg+xml", filename: "logo.svg" },

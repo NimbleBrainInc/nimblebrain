@@ -79,9 +79,20 @@ async function rehydratePart(
   }
   try {
     const read = await fileStore.readFile(id);
+    // The persisted link's MIME got us past the early-exit check; the
+    // FileStore is the source of truth for what the bytes actually are.
+    // If they disagree (manual JSONL edit, mid-flight schema migration),
+    // trust the store and fall back to a text marker rather than send a
+    // mis-typed part to the model.
+    if (!REHYDRATABLE_IMAGE_MIMES.has(read.mimeType)) {
+      return {
+        type: "text",
+        text: `[Attached: ${part.name} (${read.mimeType}) — call files__read to access]`,
+      };
+    }
     return {
       type: "file",
-      mediaType: part.mimeType,
+      mediaType: read.mimeType,
       data: new Uint8Array(read.data),
       filename: part.name,
     };
