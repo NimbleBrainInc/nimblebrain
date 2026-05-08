@@ -3,15 +3,18 @@ import { clearBundleUserConfig, type InstalledConnector } from "../../api/client
 import { BundleCredentialsModal } from "./BundleCredentialsModal";
 
 /**
- * Stdio bundle credentials section. Renders only when the bundle's
- * manifest declares `user_config`. Reads schema + per-field populated
- * boolean from the InstalledConnector — never from a separate fetch,
- * so the parent's refresh is the only source of truth.
+ * Bundle credentials — compact summary form. Mirrors
+ * `OperatorOAuthSection`'s pattern: show a one-line "Configured" /
+ * "X of N configured" indicator plus an Edit button (admin-gated)
+ * that opens the schema-driven modal. The actual fields, hints, and
+ * sensitive inputs all live in `BundleCredentialsModal` — never on
+ * the page surface.
  *
- * Admin-only edit + clear affordances. Non-admins see the same row
- * statuses (configured / not configured) but no buttons. The Edit
- * modal opens `BundleCredentialsModal`; Clear nukes the whole
- * credential file via `clearBundleUserConfig`.
+ * Renders only when at least one field is populated. The unpopulated
+ * case is the hero's job — its `needs_setup` CTA opens the same
+ * modal, so a fresh stdio install funnels there. Once the user has
+ * saved at least one field, this section appears as the "edit later"
+ * affordance.
  */
 export function BundleConfigSection({
   installed,
@@ -30,6 +33,13 @@ export function BundleConfigSection({
   const populated = installed.userConfig?.populated ?? {};
 
   if (!schema || Object.keys(schema).length === 0) return null;
+
+  // Renders only when something is configured. The hero handles the
+  // empty case; doubling it here adds noise to a settings surface
+  // that's already crowded for stdio bundles with multiple sections.
+  const fieldKeys = Object.keys(schema);
+  const populatedKeys = fieldKeys.filter((k) => populated[k]);
+  if (populatedKeys.length === 0) return null;
 
   const onClear = async () => {
     if (
@@ -51,67 +61,43 @@ export function BundleConfigSection({
     }
   };
 
-  // Schema declaration order is the rendering order — bundle authors
-  // intentionally put required fields first; sorting alphabetically
-  // would invert their authored sequence.
-  const fieldKeys = Object.keys(schema);
-  const anyPopulated = fieldKeys.some((k) => populated[k]);
+  // Summary copy matches the granularity of what's actually saved.
+  // "Configured" reads cleanest when every required field is set;
+  // "X of N configured" surfaces when a partial save left a gap
+  // (e.g. user filled in api_key but skipped optional workspace_id).
+  const summary =
+    populatedKeys.length === fieldKeys.length
+      ? "Configured"
+      : `${populatedKeys.length} of ${fieldKeys.length} configured`;
 
   return (
     <section className="space-y-2">
+      <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+        Bundle configuration
+      </h2>
       <div className="flex items-center justify-between gap-3 flex-wrap">
-        <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-          Bundle configuration
-        </h2>
+        <div className="text-sm text-muted-foreground">{summary}</div>
         {canManage && (
-          <button
-            type="button"
-            onClick={() => setEditing(true)}
-            className="text-xs px-3 py-1.5 rounded border border-border hover:bg-muted shrink-0"
-          >
-            Edit
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={onClear}
+              disabled={clearing}
+              className="text-xs text-muted-foreground hover:text-destructive hover:underline underline-offset-4 disabled:opacity-60"
+            >
+              {clearing ? "Clearing…" : "Clear configuration"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setEditing(true)}
+              className="text-xs px-3 py-1.5 rounded border border-border bg-background hover:bg-muted"
+            >
+              Edit
+            </button>
+          </div>
         )}
       </div>
-
-      <ul className="border border-border rounded divide-y divide-border">
-        {fieldKeys.map((key) => {
-          const field = schema[key];
-          if (!field) return null;
-          const isPopulated = populated[key] === true;
-          return (
-            <li key={key} className="flex items-center justify-between gap-3 px-3 py-2">
-              <div className="min-w-0">
-                <div className="text-sm font-medium truncate">{field.title ?? key}</div>
-                {field.description && (
-                  <div className="text-xs text-muted-foreground truncate">{field.description}</div>
-                )}
-              </div>
-              <span
-                className={`text-xs shrink-0 ${
-                  isPopulated ? "text-foreground" : "text-muted-foreground"
-                }`}
-              >
-                {isPopulated ? "✓ configured" : "Not configured"}
-              </span>
-            </li>
-          );
-        })}
-      </ul>
-
-      {canManage && anyPopulated && (
-        <button
-          type="button"
-          onClick={onClear}
-          disabled={clearing}
-          className="text-xs text-muted-foreground hover:text-destructive hover:underline underline-offset-4 disabled:opacity-60"
-        >
-          {clearing ? "Clearing…" : "Clear configuration"}
-        </button>
-      )}
-
       {error && <p className="text-xs text-destructive">{error}</p>}
-
       {editing && (
         <BundleCredentialsModal
           installed={installed}

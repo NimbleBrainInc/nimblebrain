@@ -6,28 +6,34 @@ import {
   uninstallConnector,
 } from "../../api/client";
 import { BundleConfigSection } from "../../components/connectors/BundleConfigSection";
+import { CollapsibleSection } from "../../components/connectors/CollapsibleSection";
+import { ConnectorStatusHero } from "../../components/connectors/ConnectorStatusHero";
 import { OAuthConnectionSection } from "../../components/connectors/OAuthConnectionSection";
 import { OperatorOAuthSection } from "../../components/connectors/OperatorOAuthSection";
 import { ToolPermissionsTable } from "../../components/connectors/ToolPermissionsTable";
 import { roleAtLeast, useScopedRole } from "../../hooks/useScopedRole";
 
 /**
- * Per-connector Configure detail page — the single canonical home for
- * managing every credential lifecycle a connector exposes:
+ * Per-connector Configure page. The visual hierarchy is driven by
+ * `installed.status` — a generic UI status the server derives from
+ * the underlying BundleState + credential probes:
  *
- *   1. OAuth connection — live access/refresh tokens, Connect/Reconnect/Disconnect.
- *   2. Operator OAuth client — workspace-level OAuth app (clientId + clientSecret)
- *      for static-auth catalog entries (Asana, HubSpot, Gmail, Outlook, Zoom).
- *   3. Bundle configuration — stdio bundle `user_config` fields declared in the manifest.
+ *   - The hero block carries the page's primary CTA (Configure /
+ *     Set up OAuth / Connect / Reconnect) when status ≠ ready, and
+ *     fades to just the title block when ready.
  *
- * Each lifecycle is its own section component, rendered conditionally
- * based on what the connector actually has. Sections are pure
- * composables: they receive the InstalledConnector + an `onChanged`
- * callback. The page owns refresh — sections never fetch.
+ *   - Sections below the hero are *settings* surfaces — connection
+ *     details when running, OAuth client audit when configured,
+ *     bundle config when populated. Each renders only when its
+ *     content is actually present; an empty Configure page reads as
+ *     "everything's good, nothing to manage."
  *
- * Reachable from both `/settings/personal/connectors/:serverName` and
- * `/settings/workspace/connectors/:serverName`; scope comes from the
- * route prefix.
+ *   - Tool permissions live behind a collapse. They're useful but
+ *     verbose (12+ rows for some bundles); making them the page's
+ *     longest scroll context drowns the actual configuration state.
+ *
+ * Reachable from `/settings/{personal,workspace}/connectors/:serverName`;
+ * scope comes from the route prefix.
  */
 export function ConnectorDetailPage({ scope }: { scope: "user" | "workspace" }) {
   const { serverName = "" } = useParams<{ serverName: string }>();
@@ -41,10 +47,8 @@ export function ConnectorDetailPage({ scope }: { scope: "user" | "workspace" }) 
   const [acting, setActing] = useState<string | null>(null);
 
   const role = useScopedRole();
-  // Workspace-scope edit gates ride on ws_admin (admin or org-level).
-  // User-scope (personal connectors) is always editable by the owner —
-  // it's their own account. Sections receive `canManage` and gate their
-  // own buttons; the page doesn't need to know which lifecycle that is.
+  // Workspace-scope edit gates ride on ws_admin. User-scope (personal
+  // connectors) is always editable by the owner — it's their account.
   const canManage = scope === "user" ? true : roleAtLeast(role, "ws_admin");
 
   const refresh = useCallback(async () => {
@@ -101,8 +105,9 @@ export function ConnectorDetailPage({ scope }: { scope: "user" | "workspace" }) 
   const cat = installed.catalog;
 
   return (
-    <div className="max-w-3xl mx-auto space-y-6">
-      {/* Action bar — back link on the left, docs + uninstall on the right */}
+    <div className="max-w-3xl mx-auto space-y-8">
+      {/* Action bar — back link / docs / uninstall. Stays minimal so
+          the hero is the first thing the eye lands on. */}
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <Link to={backPath} className="text-xs text-muted-foreground hover:underline">
           ← All connectors
@@ -131,62 +136,30 @@ export function ConnectorDetailPage({ scope }: { scope: "user" | "workspace" }) 
         </div>
       </div>
 
-      {/* Header — icon + name + metadata, no card chrome */}
-      <div className="flex items-start gap-4">
-        {cat?.iconUrl && (
-          <img
-            src={cat.iconUrl}
-            alt=""
-            className="h-12 w-12 rounded shrink-0"
-            onError={(e) => ((e.target as HTMLImageElement).style.visibility = "hidden")}
-          />
-        )}
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <h1 className="text-xl font-semibold tracking-tight">
-              {cat?.name ?? installed.serverName}
-            </h1>
-            {installed.interactive && (
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-accent/40 text-accent-foreground font-medium">
-                Interactive
-              </span>
-            )}
-          </div>
-          {cat?.description && (
-            <p className="text-sm text-muted-foreground mt-1">{cat.description}</p>
-          )}
-          <dl className="text-xs text-muted-foreground mt-3 flex flex-wrap gap-x-5 gap-y-1">
-            <div>
-              <dt className="inline">Type: </dt>
-              <dd className="inline font-medium text-foreground">{installed.type}</dd>
-            </div>
-            <div>
-              <dt className="inline">Scope: </dt>
-              <dd className="inline font-medium text-foreground">{installed.scope}</dd>
-            </div>
-            {installed.version && installed.version !== "remote" && (
-              <div>
-                <dt className="inline">Version: </dt>
-                <dd className="inline font-medium text-foreground font-mono">
-                  {installed.version}
-                </dd>
-              </div>
-            )}
-          </dl>
-        </div>
-      </div>
+      {/* Hero — title block plus a status row that absorbs the
+          primary CTA. Quiet when ready; anchored when there's
+          something to do. */}
+      <ConnectorStatusHero installed={installed} canManage={canManage} onChanged={refresh} />
 
       {error && <p className="text-xs text-destructive">{error}</p>}
 
-      {/* Section composition. Each section renders only when its
-          credential lifecycle is relevant — pure conditional wiring,
-          no feature flags. */}
-      <OAuthConnectionSection installed={installed} canManage={canManage} onChanged={refresh} />
-      <OperatorOAuthSection installed={installed} canManage={canManage} onChanged={refresh} />
-      <BundleConfigSection installed={installed} canManage={canManage} onChanged={refresh} />
+      {/* Settings surfaces. Each renders only when its content is
+          present — an empty stack here means "nothing to tune." */}
+      <div className="space-y-6">
+        <OAuthConnectionSection installed={installed} canManage={canManage} onChanged={refresh} />
+        <OperatorOAuthSection installed={installed} canManage={canManage} onChanged={refresh} />
+        <BundleConfigSection installed={installed} canManage={canManage} onChanged={refresh} />
 
-      {/* Tool permissions */}
-      <ToolPermissionsTable serverName={installed.serverName} scope={scope} />
+        {/* Tool permissions — collapsed by default. Verbose enough
+            that always-rendering pushes everything else off-screen
+            on bundles with 10+ tools. */}
+        <CollapsibleSection
+          title="Tool permissions"
+          summary="Choose which tools the agent can call"
+        >
+          <ToolPermissionsTable serverName={installed.serverName} scope={scope} />
+        </CollapsibleSection>
+      </div>
     </div>
   );
 }

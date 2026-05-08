@@ -219,6 +219,13 @@ function staticAuthConnector(over: Partial<InstalledConnector> = {}): InstalledC
 }
 
 // ── OAuthConnectionSection ──────────────────────────────────────────
+//
+// Refactored: this section is now ONLY the connection-details surface
+// for an established connection. The hero (ConnectorStatusHero) owns
+// every primary CTA (Connect / Reconnect / Configure / Set up). The
+// section renders only on the happy path: running + remote-OAuth.
+// Non-running states are handled by the hero with the right copy +
+// CTA, so duplicating them here would double-count the message.
 
 describe("OAuthConnectionSection", () => {
   test("renders nothing for stdio (non-remote) bundles", async () => {
@@ -226,6 +233,31 @@ describe("OAuthConnectionSection", () => {
       <OAuthConnectionSection installed={stdioBundle()} canManage={true} onChanged={() => {}} />,
     );
     expect(mounted.container.textContent).toBe("");
+  });
+
+  test("renders nothing for non-running states — hero owns those", async () => {
+    // The hero handles needs_auth (Connect), needs_auth+reauth_required
+    // (Reconnect), failed (Reconnect), and connecting (waiting state).
+    // Surfacing them here too would double-count.
+    for (const state of [
+      "not_authenticated",
+      "reauth_required",
+      "crashed",
+      "dead",
+      "pending_auth",
+      "starting",
+      "stopped",
+    ] as const) {
+      mounted?.unmount();
+      mounted = await mount(
+        <OAuthConnectionSection
+          installed={dcrConnector({ state })}
+          canManage={true}
+          onChanged={() => {}}
+        />,
+      );
+      expect(mounted.container.textContent).toBe("");
+    }
   });
 
   test("running + identity.email → 'Connected as ...' + Disconnect (admin)", async () => {
@@ -241,78 +273,28 @@ describe("OAuthConnectionSection", () => {
     expect(findButton(mounted.container, "Disconnect")).not.toBeNull();
   });
 
-  test("reauth_required → reconnection notice + Reconnect button", async () => {
+  test("running without identity → 'Connected' (no name) + Disconnect", async () => {
     mounted = await mount(
       <OAuthConnectionSection
-        installed={dcrConnector({ state: "reauth_required" })}
+        installed={dcrConnector({ state: "running" })}
         canManage={true}
         onChanged={() => {}}
       />,
     );
-    expect(mounted.container.textContent).toContain("Reconnection needed");
-    expect(findButton(mounted.container, "Reconnect")).not.toBeNull();
+    expect(mounted.container.textContent).toContain("Connected");
+    expect(findButton(mounted.container, "Disconnect")).not.toBeNull();
   });
 
-  test("crashed → 'Failed: <lastError>' + Reconnect button", async () => {
+  test("running + canManage=false hides Disconnect but keeps the connection label", async () => {
     mounted = await mount(
       <OAuthConnectionSection
-        installed={dcrConnector({ state: "crashed", lastError: "token revoked upstream" })}
-        canManage={true}
+        installed={dcrConnector({ state: "running", identity: { email: "you@example.com" } })}
+        canManage={false}
         onChanged={() => {}}
       />,
     );
-    expect(mounted.container.textContent).toContain("Failed: token revoked upstream");
-    expect(findButton(mounted.container, "Reconnect")).not.toBeNull();
-  });
-
-  test("not_authenticated → 'Not connected' + Connect button", async () => {
-    mounted = await mount(
-      <OAuthConnectionSection
-        installed={dcrConnector({ state: "not_authenticated" })}
-        canManage={true}
-        onChanged={() => {}}
-      />,
-    );
-    expect(mounted.container.textContent).toContain("Not connected");
-    expect(findButton(mounted.container, "Connect")).not.toBeNull();
-  });
-
-  test("pending_auth → 'Connecting…' with no actionable button", async () => {
-    mounted = await mount(
-      <OAuthConnectionSection
-        installed={dcrConnector({ state: "pending_auth" })}
-        canManage={true}
-        onChanged={() => {}}
-      />,
-    );
-    expect(mounted.container.textContent).toContain("Connecting");
-    // No Connect / Disconnect / Reconnect button while in-flight.
-    expect(findButton(mounted.container, "Connect")).toBeNull();
+    expect(mounted.container.textContent).toContain("Connected as");
     expect(findButton(mounted.container, "Disconnect")).toBeNull();
-    expect(findButton(mounted.container, "Reconnect")).toBeNull();
-  });
-
-  test("canManage=false hides every action button regardless of state", async () => {
-    // Non-admin: shouldn't see Disconnect on running, Reconnect on
-    // reauth_required, or Connect on not_authenticated.
-    for (const state of [
-      "running",
-      "reauth_required",
-      "crashed",
-      "dead",
-      "not_authenticated",
-    ] as const) {
-      mounted?.unmount();
-      mounted = await mount(
-        <OAuthConnectionSection
-          installed={dcrConnector({ state })}
-          canManage={false}
-          onChanged={() => {}}
-        />,
-      );
-      const buttonCount = mounted.container.getElementsByTagName("button").length;
-      expect(buttonCount).toBe(0);
-    }
   });
 });
 
@@ -377,6 +359,14 @@ describe("OperatorOAuthSection", () => {
 });
 
 // ── BundleConfigSection ─────────────────────────────────────────────
+//
+// Refactored: compact summary form. Mirrors OperatorOAuthSection's
+// pattern — a one-line indicator + Edit button (admin-gated) that
+// opens BundleCredentialsModal. Renders ONLY when at least one field
+// is populated; the empty case is the hero's job, so this section
+// never repeats the "Not configured" prompt that the hero already
+// surfaces. The actual schema fields, hints, and sensitive inputs all
+// live inside the modal.
 
 describe("BundleConfigSection", () => {
   test("renders nothing for connectors without a userConfig schema (DCR / static-auth)", async () => {
@@ -386,62 +376,57 @@ describe("BundleConfigSection", () => {
     expect(mounted.container.textContent).toBe("");
   });
 
-  test("renders schema-driven rows for stdio bundle with user_config", async () => {
+  test("renders nothing when schema exists but no fields are populated — hero owns the empty case", async () => {
     mounted = await mount(
       <BundleConfigSection installed={stdioBundle()} canManage={true} onChanged={() => {}} />,
+    );
+    expect(mounted.container.textContent).toBe("");
+  });
+
+  test("fully populated → 'Configured' + Edit + Clear (admin)", async () => {
+    mounted = await mount(
+      <BundleConfigSection
+        installed={stdioBundle({
+          userConfig: {
+            schema: {
+              api_key: { type: "string", title: "API Key", sensitive: true, required: true },
+            },
+            populated: { api_key: true },
+          },
+        })}
+        canManage={true}
+        onChanged={() => {}}
+      />,
     );
     expect(mounted.container.textContent).toContain("Bundle configuration");
-    expect(mounted.container.textContent).toContain("API Key");
-    expect(mounted.container.textContent).toContain("Not configured");
+    expect(mounted.container.textContent).toContain("Configured");
     expect(findButton(mounted.container, "Edit")).not.toBeNull();
-  });
-
-  test("populated field renders '✓ configured' instead of 'Not configured'", async () => {
-    mounted = await mount(
-      <BundleConfigSection
-        installed={stdioBundle({
-          userConfig: {
-            schema: {
-              api_key: { type: "string", title: "API Key", sensitive: true, required: true },
-            },
-            populated: { api_key: true },
-          },
-        })}
-        canManage={true}
-        onChanged={() => {}}
-      />,
-    );
-    expect(mounted.container.textContent).toContain("configured");
-    expect(mounted.container.textContent).not.toContain("Not configured");
-  });
-
-  test("Clear configuration link only appears when at least one field is populated", async () => {
-    // Nothing configured → no clear link.
-    mounted = await mount(
-      <BundleConfigSection installed={stdioBundle()} canManage={true} onChanged={() => {}} />,
-    );
-    expect(findButton(mounted.container, "Clear configuration")).toBeNull();
-    mounted.unmount();
-
-    // One field configured → clear link appears.
-    mounted = await mount(
-      <BundleConfigSection
-        installed={stdioBundle({
-          userConfig: {
-            schema: {
-              api_key: { type: "string", title: "API Key", sensitive: true, required: true },
-            },
-            populated: { api_key: true },
-          },
-        })}
-        canManage={true}
-        onChanged={() => {}}
-      />,
-    );
     expect(findButton(mounted.container, "Clear configuration")).not.toBeNull();
   });
 
-  test("canManage=false hides Edit + Clear (rows still rendered)", async () => {
+  test("partially populated → 'X of N configured' + Edit + Clear", async () => {
+    // Two fields, one populated. The summary should show the partial
+    // state so the user knows there's still work to do.
+    mounted = await mount(
+      <BundleConfigSection
+        installed={stdioBundle({
+          userConfig: {
+            schema: {
+              api_key: { type: "string", title: "API Key", sensitive: true, required: true },
+              workspace_id: { type: "string", title: "Workspace", required: false },
+            },
+            populated: { api_key: true, workspace_id: false },
+          },
+        })}
+        canManage={true}
+        onChanged={() => {}}
+      />,
+    );
+    expect(mounted.container.textContent).toContain("1 of 2 configured");
+    expect(findButton(mounted.container, "Edit")).not.toBeNull();
+  });
+
+  test("populated + canManage=false hides Edit and Clear, keeps summary visible", async () => {
     mounted = await mount(
       <BundleConfigSection
         installed={stdioBundle({
@@ -456,8 +441,174 @@ describe("BundleConfigSection", () => {
         onChanged={() => {}}
       />,
     );
-    expect(mounted.container.textContent).toContain("API Key");
+    expect(mounted.container.textContent).toContain("Configured");
     expect(findButton(mounted.container, "Edit")).toBeNull();
     expect(findButton(mounted.container, "Clear configuration")).toBeNull();
+  });
+});
+
+// ── ConnectorStatusHero ─────────────────────────────────────────────
+//
+// New component. Owns the page's primary CTA — the dispatcher between
+// status and the right next-action affordance. Status pill colors,
+// copy, and admin gating are pinned here so future regressions can't
+// strand a user with no recovery path.
+
+const { ConnectorStatusHero } = await import("../components/connectors/ConnectorStatusHero");
+
+describe("ConnectorStatusHero", () => {
+  test("status=ready → no status block + no CTA (page reads quiet)", async () => {
+    mounted = await mount(
+      <ConnectorStatusHero
+        installed={dcrConnector({ state: "running", status: "ready" })}
+        canManage={true}
+        onChanged={() => {}}
+      />,
+    );
+    // Title still present; status block hidden.
+    expect(mounted.container.textContent).toContain("Granola");
+    expect(mounted.container.textContent).not.toContain("Configuration required");
+    expect(mounted.container.textContent).not.toContain("Sign-in required");
+    // No status-block buttons (uninstall etc. live elsewhere).
+    expect(findButton(mounted.container, "Configure")).toBeNull();
+    expect(findButton(mounted.container, "Connect")).toBeNull();
+  });
+
+  test("status=needs_setup on stdio → 'Configure' CTA (admin)", async () => {
+    mounted = await mount(
+      <ConnectorStatusHero
+        installed={stdioBundle({
+          status: "needs_setup",
+          statusReason: "Missing required configuration: API Key.",
+        })}
+        canManage={true}
+        onChanged={() => {}}
+      />,
+    );
+    expect(mounted.container.textContent).toContain("Configuration required");
+    expect(mounted.container.textContent).toContain("API Key");
+    expect(findButton(mounted.container, "Configure")).not.toBeNull();
+  });
+
+  test("status=needs_setup + missingOperatorSetup → 'Set up OAuth' (admin)", async () => {
+    mounted = await mount(
+      <ConnectorStatusHero
+        installed={staticAuthConnector({
+          status: "needs_setup",
+          missingOperatorSetup: true,
+          operatorOAuth: undefined,
+          statusReason: "OAuth app not configured for this workspace.",
+        })}
+        canManage={true}
+        onChanged={() => {}}
+      />,
+    );
+    expect(mounted.container.textContent).toContain("Configuration required");
+    expect(findButton(mounted.container, "Set up OAuth")).not.toBeNull();
+  });
+
+  test("status=needs_auth + state=not_authenticated → 'Connect'", async () => {
+    mounted = await mount(
+      <ConnectorStatusHero
+        installed={dcrConnector({ status: "needs_auth", state: "not_authenticated" })}
+        canManage={true}
+        onChanged={() => {}}
+      />,
+    );
+    expect(mounted.container.textContent).toContain("Sign-in required");
+    expect(findButton(mounted.container, "Connect")).not.toBeNull();
+    expect(findButton(mounted.container, "Reconnect")).toBeNull();
+  });
+
+  test("status=needs_auth + state=reauth_required → 'Reconnect'", async () => {
+    mounted = await mount(
+      <ConnectorStatusHero
+        installed={dcrConnector({ status: "needs_auth", state: "reauth_required" })}
+        canManage={true}
+        onChanged={() => {}}
+      />,
+    );
+    expect(findButton(mounted.container, "Reconnect")).not.toBeNull();
+    expect(findButton(mounted.container, "Connect")).toBeNull();
+  });
+
+  test("status=connecting / starting → status block visible, no CTA", async () => {
+    for (const status of ["connecting", "starting"] as const) {
+      mounted?.unmount();
+      mounted = await mount(
+        <ConnectorStatusHero
+          installed={dcrConnector({ status, state: status })}
+          canManage={true}
+          onChanged={() => {}}
+        />,
+      );
+      // Status block is present (with the appropriate label) but no
+      // buttons — the user waits.
+      expect(mounted.container.getElementsByTagName("button").length).toBe(0);
+    }
+  });
+
+  test("status=failed on remote bundle → 'Reconnect' + statusReason", async () => {
+    mounted = await mount(
+      <ConnectorStatusHero
+        installed={dcrConnector({
+          status: "failed",
+          state: "crashed",
+          statusReason: "token revoked upstream",
+        })}
+        canManage={true}
+        onChanged={() => {}}
+      />,
+    );
+    expect(mounted.container.textContent).toContain("Failed");
+    expect(mounted.container.textContent).toContain("token revoked upstream");
+    expect(findButton(mounted.container, "Reconnect")).not.toBeNull();
+  });
+
+  test("status=failed on stdio bundle → status visible, no one-click CTA", async () => {
+    // No automated recovery path for a crashed local bundle. The
+    // statusReason explains; the admin diagnoses through other tools.
+    mounted = await mount(
+      <ConnectorStatusHero
+        installed={stdioBundle({
+          status: "failed",
+          state: "crashed",
+          statusReason: "Out of memory",
+        })}
+        canManage={true}
+        onChanged={() => {}}
+      />,
+    );
+    expect(mounted.container.textContent).toContain("Failed");
+    expect(mounted.container.textContent).toContain("Out of memory");
+    expect(findButton(mounted.container, "Reconnect")).toBeNull();
+    expect(findButton(mounted.container, "Configure")).toBeNull();
+  });
+
+  test("admin-gated CTAs hidden when canManage=false; member-actionable kept", async () => {
+    // Configure (admin) → hidden for non-admins.
+    mounted = await mount(
+      <ConnectorStatusHero
+        installed={stdioBundle({
+          status: "needs_setup",
+          statusReason: "Missing required configuration: API Key.",
+        })}
+        canManage={false}
+        onChanged={() => {}}
+      />,
+    );
+    expect(findButton(mounted.container, "Configure")).toBeNull();
+    mounted.unmount();
+
+    // Connect (member-actionable) → still visible for non-admins:
+    // a workspace member can authenticate their own session.
+    mounted = await mount(
+      <ConnectorStatusHero
+        installed={dcrConnector({ status: "needs_auth", state: "not_authenticated" })}
+        canManage={false}
+        onChanged={() => {}}
+      />,
+    );
+    expect(findButton(mounted.container, "Connect")).not.toBeNull();
   });
 });
