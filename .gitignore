@@ -36,6 +36,9 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 # local dev runtime state (conversations, logs, skills)
 .nimblebrain
 
+# per-worktree isolated workdir created by `bun run dev:worktree`
+.nimblebrain-worktree
+
 # environment fixture runtime state — config files are tracked, generated state is not
 .environments/*/conversations/
 .environments/*/logs/

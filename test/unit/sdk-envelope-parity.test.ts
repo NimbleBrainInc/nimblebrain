@@ -205,6 +205,54 @@ describe("Synapse SDK ⇄ host bridge schema parity", () => {
     expect(v.ok, `tools/call: ${v.reason}`).toBe(true);
   });
 
+  it("synapse.setVisibleState emits a schema-valid notification (no id)", async () => {
+    // Regression: the host previously required `id` on
+    // `ui/update-model-context`, dropping every `useVisibleState` push from
+    // every synapse-app. The SDK sends this as a JSON-RPC notification via
+    // `transport.send(...)` — no `id` field. Schema must admit that shape.
+    const { createSynapse } = await import("@nimblebrain/synapse");
+    const synapse = createSynapse({ name: "test-app", version: "1.0.0" });
+    await Promise.resolve();
+    completeHandshake();
+    await synapse.ready;
+
+    synapse.setVisibleState({ foo: "bar" }, "summary text");
+    // setVisibleState debounces by 250ms before flushing the envelope.
+    await new Promise((r) => setTimeout(r, 300));
+
+    const env = lastEnvelopeWithMethod("ui/update-model-context");
+    expect(env, "SDK must emit ui/update-model-context after setVisibleState").toBeDefined();
+    // Confirm the SDK is in fact sending the notification shape (no id).
+    expect("id" in (env as Record<string, unknown>)).toBe(false);
+    const v = validateAppToHostMessage(env);
+    expect(v.ok, `ui/update-model-context (notification): ${v.reason}`).toBe(true);
+  });
+
+  it("ui/update-model-context validates in both notification and request shapes", () => {
+    // Direct schema check: notification (no id) AND request (with id) both
+    // pass. The schema is intentionally broader than the SDK's current
+    // emission to avoid breaking any caller that opts to use the request
+    // form and await a response.
+    const baseParams = { structuredContent: { foo: "bar" } };
+
+    const notification = {
+      jsonrpc: "2.0",
+      method: "ui/update-model-context",
+      params: baseParams,
+    };
+    const notifResult = validateAppToHostMessage(notification);
+    expect(notifResult.ok, `notification: ${notifResult.reason}`).toBe(true);
+
+    const request = {
+      jsonrpc: "2.0",
+      id: "abc",
+      method: "ui/update-model-context",
+      params: baseParams,
+    };
+    const reqResult = validateAppToHostMessage(request);
+    expect(reqResult.ok, `request: ${reqResult.reason}`).toBe(true);
+  });
+
   it("synapse.action emits a schema-valid synapse/action envelope", async () => {
     const { createSynapse } = await import("@nimblebrain/synapse");
     const synapse = createSynapse({ name: "test-app", version: "1.0.0" });

@@ -1000,8 +1000,12 @@ async function handleSetupOperator(
   }
 
   // Persist secret first — if the credential store write fails, we
-  // haven't touched workspace.json yet, so there's nothing to roll back.
+  // haven't touched workspace.json yet, so there's nothing to roll
+  // back. The reverse case (workspace.json fails after the credential
+  // landed) needs explicit rollback so we don't leave an orphan
+  // secret pointing at a clientId that was never recorded.
   const credStore = new FileCredentialStore(ctx.runtime.getWorkDir());
+  const hadPriorSecret = (await credStore.get(wsId, clientSecretKey)) !== null;
   await credStore.put(wsId, clientSecretKey, clientSecret.trim());
 
   // Stamp the public clientId + audit trail into workspace.json.
@@ -1011,7 +1015,24 @@ async function handleSetupOperator(
     configuredAt: new Date().toISOString(),
     configuredBy: identity.id,
   };
-  await ctx.runtime.getWorkspaceStore().update(wsId, { oauthOperatorApps: apps });
+  try {
+    await ctx.runtime.getWorkspaceStore().update(wsId, { oauthOperatorApps: apps });
+  } catch (err) {
+    // Roll back the credential write so the two stores stay in
+    // lockstep. Best-effort: if the rollback itself fails (rare —
+    // same disk, same UID), the original write error wins. Skip
+    // rollback when an existing secret was already there for this
+    // key; clobbering a working credential on a workspace.json
+    // hiccup is a worse outcome than leaving a stale-but-valid one.
+    if (!hadPriorSecret) {
+      try {
+        await credStore.delete(wsId, clientSecretKey);
+      } catch {
+        // best-effort
+      }
+    }
+    throw err;
+  }
 
   return {
     content: textContent(`Configured OAuth app for "${entry.name}".`),
