@@ -562,6 +562,8 @@ When total tools ≤30, all are surfaced directly. Above 30 with no skill matche
 - **`JsonlConversationStore`** — default for CLI, files in `~/.nimblebrain/conversations/`. Line 1: `{ id, createdAt }` metadata. Lines 2+: `StoredMessage` objects.
 - **`EventSourcedConversationStore`** — persists engine events as JSONL. Append-only after creation. Token totals, cost, and last model derived at read time from `llm.response` events via `deriveUsageMetrics()`. Supports multi-user conversations with ownership, visibility (private/shared), and participant management.
 
+User-uploaded files are persisted in the workspace `FileStore` and referenced from `user.message` events as MCP `resource_link` blocks (`{type:"resource_link", uri:"files://<id>", mimeType, name}`) — the conversation log never carries inline bytes. At the `model.doStream` boundary the runtime rehydrates image links to AI SDK V3 `file` parts with bytes loaded from the store, so vision content survives across multi-turn agent loops without inflating the JSONL. Files are also addressable as MCP resources at `files://<id>` (any client can fetch via `resources/read`).
+
 ### Identity System
 
 Pluggable authentication via `IdentityProvider` interface (`src/identity/provider.ts`). Configured via `instance.json` in the work directory:

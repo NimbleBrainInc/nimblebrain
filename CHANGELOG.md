@@ -11,6 +11,7 @@
 
 ### Added
 
+- Workspace files are now first-class MCP resources at `files://<id>`. The `files` in-process source advertises every registry entry via `resources/list` and serves bytes via `resources/read` (text MIMEs as `text`, others as `blob`), reachable from any MCP client.
 - `compose__effective_context` debug tool — single-call answer to "what's in the system prompt for this conversation, with provenance per layer." Live mode returns the full traced composition; historical mode (`run_id` set) reads the recorded `skills.loaded` event for that run and verifies each layer-3 skill's `contentHash` against current source, with `_versions/` snapshot recovery on drift. Bundle filter narrows to one app's contributions ([#119](https://github.com/NimbleBrainInc/nimblebrain/issues/119)).
 - `skills.loaded` events now carry a `contentHash` (SHA-256 hex) per skill — telemetry foundation for the `compose__effective_context` debug tool. ~64 bytes per skill per turn.
 - Extended-thinking config (`thinking: off | adaptive | enabled` + `thinkingBudgetTokens`) in runtime config and Settings → Model; defaults to `adaptive` for catalog-flagged reasoning models, `off` otherwise ([#109](https://github.com/NimbleBrainInc/nimblebrain/pull/109)).
@@ -30,6 +31,7 @@
 
 ### Changed
 
+- Uploaded images are persisted in conversation JSONL as MCP `resource_link` blocks pointing to `files://<id>` instead of inline `Uint8Array` bytes. The runtime rehydrates them to AI SDK V3 `file` parts at the `model.doStream` boundary, so vision content is now stable across multi-turn agent loops (previously dropped on turn 2+). Existing JSONL files are read forward without migration; legacy `image` blocks are quietly omitted on reconstruction (same as the pre-fix behavior).
 - Apps list in the system prompt now surfaces each bundle's `initialize.instructions` inside `<app-instructions>` containment tags, so per-bundle guidance reaches the LLM.
 - Iframe bridge uses the MCP transport (`StreamableHTTPClientTransport` against `/mcp`) for `tools/call` and `resources/read`. `INTERNAL_APPS` authz still precedes transport selection. Bridge advertises `hostCapabilities.tasks` to iframes and forwards `notifications/tasks/status` on a per-bridge subscription.
 - Inline (non-task) `tools/call` handler on `/mcp` now preserves `structuredContent` (was dropping it).
@@ -58,6 +60,7 @@
 
 ### Fixed
 
+- Vision content is no longer dropped after the first turn of an agentic loop. Uploaded images survived turn 1 (the in-memory message still carried the bytes) but disappeared on turn 2+ — the user-message reconstructor filtered everything except text. Multi-turn flows like "extract from screenshot, then call a CRM tool" now work end-to-end.
 - `estimateCost` no longer double-bills reasoning tokens for models with a separate `cost.reasoning` rate. Reasoning is a subset of `outputTokens` per the V3 usage spec; the corrected formula splits rather than adds.
 - `estimateCost` no longer double-bills cache tokens. AI SDK V3's `inputTokens.total` is the grand total of all input-side tokens (including cache reads and cache writes); the prior formula charged the grand total at the full input rate AND charged the cache subsets again at their respective rates — a ~3x overcharge on cache-heavy turns. Fix subtracts cache subsets from the input total before applying the input rate. ([#140](https://github.com/NimbleBrainInc/nimblebrain/issues/140), [#151](https://github.com/NimbleBrainInc/nimblebrain/pull/151)).
 - Live per-turn `usage.costUsd` (returned via the `done` SSE event and `POST /v1/chat`) now correctly includes cache write and reasoning costs. Previously the runtime layer dropped these fields before computing cost, under-billing cache writes and mis-billing reasoning. Cost is now computed at the API boundary from the canonical `TokenUsage` struct, so the live wire-format value matches what the catalog math produces.
