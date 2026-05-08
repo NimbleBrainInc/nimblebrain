@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { type DirectoryEntry, setupConnectorOperator } from "../../api/client";
+import { type DirectoryEntry, getOAuthRedirectUri, setupConnectorOperator } from "../../api/client";
 import { safeHostname } from "../../lib/safe-url";
 
 /**
@@ -32,6 +32,8 @@ export function OperatorSetupModal({
   const [clientSecret, setClientSecret] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [redirectUri, setRedirectUri] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
   const firstFieldRef = useRef<HTMLInputElement | null>(null);
 
   // Reset form state every time the modal opens — the same component
@@ -42,11 +44,47 @@ export function OperatorSetupModal({
       setClientId(initialClientId ?? "");
       setClientSecret("");
       setError(null);
+      setCopied(false);
       // Auto-focus the first empty field. Defer one tick so the modal
       // is mounted before we try to focus.
       setTimeout(() => firstFieldRef.current?.focus(), 0);
     }
   }, [open, initialClientId]);
+
+  // Fetch the platform's OAuth redirect URI on open so the admin can
+  // register it with the vendor's OAuth app. Without this, the admin
+  // sets up the app, hits Connect, and gets a vendor-side
+  // `redirect_uri does not match` error long after they've left the
+  // platform.
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await getOAuthRedirectUri();
+        if (!cancelled) setRedirectUri(res.redirectUri);
+      } catch {
+        // Best-effort: if the endpoint fails the modal still works,
+        // the admin just won't see the URL hint.
+        if (!cancelled) setRedirectUri(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
+
+  const onCopyRedirectUri = async () => {
+    if (!redirectUri) return;
+    try {
+      await navigator.clipboard.writeText(redirectUri);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // navigator.clipboard can fail in non-https contexts or denied
+      // permissions; the user can still select-and-copy manually.
+    }
+  };
 
   // Esc closes; this is a transient overlay, not navigation.
   useEffect(() => {
@@ -121,8 +159,30 @@ export function OperatorSetupModal({
               .<span className="block text-muted-foreground mt-0.5">{operatorSetup.hint}</span>
             </span>
           </li>
+          {redirectUri && (
+            <li className="flex items-start gap-2">
+              <span className="font-semibold text-muted-foreground shrink-0">2.</span>
+              <span className="flex-1 min-w-0">
+                Add this redirect URI to the OAuth app's allowed redirect list:
+                <span className="mt-1 flex items-center gap-2">
+                  <code className="flex-1 min-w-0 truncate font-mono text-[11px] px-2 py-1 rounded border border-border bg-muted text-foreground">
+                    {redirectUri}
+                  </code>
+                  <button
+                    type="button"
+                    onClick={onCopyRedirectUri}
+                    className="text-[11px] px-2 py-1 rounded border border-border hover:bg-muted shrink-0"
+                  >
+                    {copied ? "Copied" : "Copy"}
+                  </button>
+                </span>
+              </span>
+            </li>
+          )}
           <li className="flex items-start gap-2">
-            <span className="font-semibold text-muted-foreground shrink-0">2.</span>
+            <span className="font-semibold text-muted-foreground shrink-0">
+              {redirectUri ? "3." : "2."}
+            </span>
             <span>Paste the credentials below and save.</span>
           </li>
         </ol>

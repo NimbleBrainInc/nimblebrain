@@ -32,6 +32,22 @@ import { type AppContext, type AppEnv, apiError } from "../types.ts";
  *   design — the user just came back from the AS and the platform's own
  *   session may not be present in this navigation context.
  */
+/**
+ * The redirect URI the platform sends to remote authorization servers
+ * for outbound OAuth flows. Operators must register this exact URL
+ * with the vendor (Asana developer console, Google Cloud console,
+ * etc.) — a mismatch yields the vendor-side `redirect_uri does not
+ * match` error long after the user has left the platform.
+ *
+ * Exposed to the web shell via the `manage_connectors.get_redirect_uri`
+ * tool action so OperatorSetupModal can show admins the value before
+ * they leave to set up the OAuth app.
+ */
+export function mcpAuthCallbackUrl(): string {
+  const apiBase = process.env.NB_API_URL ?? "http://localhost:27247";
+  return `${apiBase.replace(/\/+$/, "")}/v1/mcp-auth/callback`;
+}
+
 export function mcpAuthRoutes(ctx: AppContext) {
   const app = new Hono<AppEnv>();
 
@@ -92,8 +108,7 @@ export function mcpAuthRoutes(ctx: AppContext) {
 
       let authorizationUrl: string;
       try {
-        const apiBase = process.env.NB_API_URL ?? "http://localhost:27247";
-        const callbackUrl = `${apiBase.replace(/\/+$/, "")}/v1/mcp-auth/callback`;
+        const callbackUrl = mcpAuthCallbackUrl();
         const result = await lifecycle.startAuth(serverName, wsId, principalId, {
           workDir: ctx.runtime.getWorkDir(),
           callbackUrl,

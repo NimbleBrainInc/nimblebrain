@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { mcpAuthCallbackUrl } from "../api/routes/mcp-auth.ts";
 import { getMpak } from "../bundles/mpak.ts";
 import { deriveServerName } from "../bundles/paths.ts";
 import { startBundleSource } from "../bundles/startup.ts";
@@ -212,6 +213,7 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
             "remove_operator_setup",
             "set_user_config",
             "clear_user_config",
+            "get_redirect_uri",
           ],
           description: "Action to perform.",
         },
@@ -345,6 +347,12 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
           );
         case "clear_user_config":
           return handleClearUserConfig(ctx, wsId, identity, String(input.serverName ?? ""));
+        case "get_redirect_uri":
+          return {
+            content: textContent("OAuth callback URL."),
+            structuredContent: { redirectUri: mcpAuthCallbackUrl() },
+            isError: false,
+          };
         default:
           return errResult(`Unknown action "${action}".`);
       }

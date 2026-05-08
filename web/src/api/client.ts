@@ -849,6 +849,20 @@ export async function clearBundleUserConfig(serverName: string): Promise<BundleU
   return unwrapStructured(result, "clear_user_config");
 }
 
+/**
+ * The exact redirect URI the platform sends to vendor OAuth servers.
+ * OperatorSetupModal shows this to admins so they can register the
+ * same value in the vendor's OAuth app config; a mismatch yields a
+ * vendor-side `redirect_uri does not match` error after the user is
+ * already redirected away.
+ */
+export async function getOAuthRedirectUri(): Promise<{ redirectUri: string }> {
+  const result = await callTool("nb", "manage_connectors", {
+    action: "get_redirect_uri",
+  });
+  return unwrapStructured(result, "get_redirect_uri");
+}
+
 export interface RegistryConfig {
   id: string;
   name: string;
