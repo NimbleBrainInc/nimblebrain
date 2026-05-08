@@ -4,17 +4,18 @@ import { getAuthToken, getInstalledConnectors, type InstalledConnector } from ".
 import { useWorkspaceContext } from "../../context/WorkspaceContext";
 import { useEvents } from "../../hooks/useEvents";
 import { EmptyState } from "../../pages/settings/components";
+import { ConnectorIcon } from "./ConnectorIcon";
 
 /**
  * Lists installed connectors for a single scope (Personal or
  * Workspace). The list is intentionally minimal — icon, name, status
- * dot when something needs attention, and a chevron link to Configure.
- * Type / interactive / version metadata is deferred to the Configure
- * page so the list stays scannable.
+ * + action verb when something needs attention, chevron link to
+ * Configure. Type / interactive / version metadata is deferred to
+ * the Configure page so the list stays scannable.
  *
- * Browsing for new connectors lives on a separate /browse page reached
- * via the action in the page header — the list itself only shows
- * what's already installed.
+ * Browsing for new connectors lives on a separate /browse page
+ * reached via the action in the page header — the list itself only
+ * shows what's already installed.
  */
 export function ConnectorList({
   scope,
@@ -63,9 +64,9 @@ export function ConnectorList({
   const filtered = useMemo(() => {
     // Sort alphabetically by display name first, then filter — keeps
     // the rendered order stable regardless of whether the user is
-    // searching or not. localeCompare with `sensitivity: "base"` does
-    // the right thing for accented characters (É sorts with E) and
-    // ignores case ("github" / "GitHub" don't fight each other).
+    // searching. localeCompare with `sensitivity: "base"` does the
+    // right thing for accented chars (É sorts with E) and ignores
+    // case ("github" / "GitHub" don't fight each other).
     const displayName = (c: InstalledConnector): string => c.catalog?.name ?? c.serverName;
     const sorted = [...installed].sort((a, b) =>
       displayName(a).localeCompare(displayName(b), undefined, { sensitivity: "base" }),
@@ -122,8 +123,9 @@ export function ConnectorList({
 
 /**
  * One installed connector. The whole row is a link to Configure;
- * status nudges only render when there's something the user should
- * notice (reauth needed, crashed). A clean row stays clean.
+ * status + action verb only render when there's something the user
+ * should notice. A clean (ready) row shows just name + chevron — the
+ * chevron is the affordance, no extra noise.
  */
 function ConnectorRow({
   installed,
@@ -134,19 +136,23 @@ function ConnectorRow({
 }) {
   const name = installed.catalog?.name ?? installed.serverName;
   const iconUrl = installed.catalog?.iconUrl;
-  const status = readableStatus(installed.state);
-  const showStatusText = status.show;
+  const summary = listSummary(installed);
 
   return (
     <Link
       to={`${configureBasePath}/${installed.serverName}`}
       className="flex items-center gap-3 px-2 py-2.5 -mx-2 rounded hover:bg-muted/50 transition-colors border-b border-border"
     >
-      <ConnectorIcon iconUrl={iconUrl} name={name} />
+      <ConnectorIcon name={name} iconUrl={iconUrl} className="h-7 w-7 rounded text-xs" />
       <div className="flex-1 min-w-0">
         <div className="text-sm font-medium truncate">{name}</div>
       </div>
-      {showStatusText && <span className={`text-xs ${status.color}`}>{status.label}</span>}
+      {summary && (
+        <span className={`flex items-center gap-1.5 text-xs ${summary.tone}`}>
+          {summary.dot && <span className={`h-1.5 w-1.5 rounded-full ${summary.dotColor}`} />}
+          <span>{summary.label}</span>
+        </span>
+      )}
       <span className="text-muted-foreground" aria-hidden>
         ›
       </span>
@@ -155,74 +161,47 @@ function ConnectorRow({
 }
 
 /**
- * Compact icon — uses the catalog's iconUrl when available, falls
- * back to a colored initial for local bundles or anything without an
- * icon. Square, ~28px, rounded — same visual weight regardless of
- * source so the list reads uniformly.
+ * Per-row summary derived from the connector's status. Only renders
+ * something for non-ready states — clean rows stay clean (just name
+ * + chevron). Action verbs lead the user to the right next step:
+ *
+ *   needs_setup + missingOperatorSetup → "Set up"
+ *   needs_setup + unpopulated user_config → "Configure"
+ *   needs_auth + state=not_authenticated → "Connect"
+ *   needs_auth + state=reauth_required → "Reconnect"
+ *   failed → "Failed" (no verb — admin investigates on the detail page)
+ *   connecting / starting → "Connecting…" (no verb, no chevron action)
+ *
+ * Returns `null` for the ready state so the row renders without
+ * any status block — that's the visual signal "this one's fine,
+ * nothing to do."
  */
-function ConnectorIcon({ iconUrl, name }: { iconUrl: string | undefined; name: string }) {
-  const [broken, setBroken] = useState(false);
-  if (iconUrl && !broken) {
-    return (
-      <img
-        src={iconUrl}
-        alt=""
-        onError={() => setBroken(true)}
-        className="h-7 w-7 rounded shrink-0"
-      />
-    );
-  }
-  // Stable hash → palette index so the same bundle always gets the
-  // same color. Keeps the list visually tidy when the user scans.
-  const palette = [
-    "bg-blue-200 text-blue-900",
-    "bg-green-200 text-green-900",
-    "bg-amber-200 text-amber-900",
-    "bg-purple-200 text-purple-900",
-    "bg-pink-200 text-pink-900",
-    "bg-teal-200 text-teal-900",
-  ];
-  let hash = 0;
-  for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) | 0;
-  const color = palette[Math.abs(hash) % palette.length] ?? palette[0];
-  const initial = name.charAt(0).toUpperCase() || "•";
-  return (
-    <div
-      className={`h-7 w-7 rounded shrink-0 flex items-center justify-center text-xs font-semibold ${color}`}
-      aria-hidden
-    >
-      {initial}
-    </div>
-  );
-}
-
-/**
- * Map raw connection states to a user-readable status. `show: false`
- * means the row should render no status text at all — healthy rows
- * stay quiet. Only states the user should act on (reauth, crashed,
- * not connected, connecting) surface.
- */
-function readableStatus(state: string): {
-  show: boolean;
+function listSummary(installed: InstalledConnector): {
   label: string;
-  color: string;
-} {
-  switch (state) {
-    case "running":
-      return { show: false, label: "Connected", color: "" };
-    case "pending_auth":
+  tone: string;
+  dot: boolean;
+  dotColor: string;
+} | null {
+  switch (installed.status) {
+    case "ready":
+      return null;
+    case "needs_setup": {
+      const verb = installed.missingOperatorSetup ? "Set up" : "Configure";
+      return { label: verb, tone: "text-amber-600", dot: true, dotColor: "bg-amber-500" };
+    }
+    case "needs_auth": {
+      const verb = installed.state === "reauth_required" ? "Reconnect" : "Connect";
+      return { label: verb, tone: "text-amber-600", dot: true, dotColor: "bg-amber-500" };
+    }
+    case "connecting":
     case "starting":
-      return { show: true, label: "Connecting…", color: "text-muted-foreground" };
-    case "reauth_required":
-      return { show: true, label: "Reconnect needed", color: "text-amber-600" };
-    case "crashed":
-    case "dead":
-      return { show: true, label: "Failed", color: "text-destructive" };
-    case "stopped":
-      return { show: true, label: "Stopped", color: "text-muted-foreground" };
-    case "not_authenticated":
-      return { show: true, label: "Not connected", color: "text-muted-foreground" };
-    default:
-      return { show: false, label: state, color: "" };
+      return {
+        label: "Connecting…",
+        tone: "text-muted-foreground",
+        dot: true,
+        dotColor: "bg-blue-500 animate-pulse",
+      };
+    case "failed":
+      return { label: "Failed", tone: "text-destructive", dot: true, dotColor: "bg-rose-500" };
   }
 }
