@@ -150,7 +150,7 @@ function BootstrappedShell({
   onLogout: () => void;
 }) {
   const { activeWorkspace } = useWorkspaceContext();
-  const { loading, error, forSlot, mainRoutes } = useShell(
+  const { loading, error, forSlot, mainRoutes, refresh: refreshShell } = useShell(
     token,
     activeWorkspace?.id,
     initialShell,
@@ -187,6 +187,7 @@ function BootstrappedShell({
             token={token}
             forSlot={forSlot}
             mainRoutes={mainRoutes}
+            refreshShell={refreshShell}
             onLogout={onLogout}
           />
         </ChatPanelProvider>
@@ -207,11 +208,13 @@ function AuthenticatedAppContent({
   token,
   forSlot,
   mainRoutes,
+  refreshShell,
   onLogout,
 }: {
   token: string;
   forSlot: (slot: string) => PlacementEntry[];
   mainRoutes: () => PlacementEntry[];
+  refreshShell: () => Promise<void>;
   onLogout: () => void;
 }) {
   const config = useChatConfigContext();
@@ -221,6 +224,12 @@ function AuthenticatedAppContent({
   useEvents(token, wsCtx.activeWorkspace?.id, {
     onDataChanged,
     onConfigChanged: () => config.refreshConfig(),
+    // Bundle install / uninstall changes the placement set; refetch
+    // the shell so the sidebar's Apps group reflects the new state
+    // without a page reload.
+    onBundleLifecycleChanged: () => {
+      void refreshShell();
+    },
   });
 
   // Sync server-side theme preference to the client theme context

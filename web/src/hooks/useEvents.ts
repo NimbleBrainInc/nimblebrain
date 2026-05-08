@@ -16,6 +16,13 @@ export interface UseEventsOptions {
   onConfigChanged?: (event: ConfigChangedEvent) => void;
   /** Called when a per-Connection state transition fires (URL bundles). */
   onConnectionStateChanged?: (event: ConnectionStateChangedEvent) => void;
+  /**
+   * Called on bundle install / uninstall. Both events affect the shell
+   * (placements appear / disappear), so consumers typically wire this
+   * to a shell refetch. The two events share a callback because the
+   * downstream action is the same.
+   */
+  onBundleLifecycleChanged?: () => void;
 }
 
 /**
@@ -36,6 +43,8 @@ export function useEvents(
   onConfigChangedRef.current = options?.onConfigChanged;
   const onConnectionStateChangedRef = useRef(options?.onConnectionStateChanged);
   onConnectionStateChangedRef.current = options?.onConnectionStateChanged;
+  const onBundleLifecycleChangedRef = useRef(options?.onBundleLifecycleChanged);
+  onBundleLifecycleChangedRef.current = options?.onBundleLifecycleChanged;
 
   useEffect(() => {
     if (!token || !workspaceId) return;
@@ -52,6 +61,9 @@ export function useEvents(
         }
         if (type === "connection.state_changed") {
           onConnectionStateChangedRef.current?.(data as ConnectionStateChangedEvent);
+        }
+        if (type === "bundle.installed" || type === "bundle.uninstalled") {
+          onBundleLifecycleChangedRef.current?.();
         }
       },
     });

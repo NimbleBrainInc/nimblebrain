@@ -930,6 +930,7 @@ async function handleInstallRemoteOAuth(
           undefined,
           wsRegistry,
         );
+        lifecycle.notifyInstalled(dupServerName, wsId);
         return {
           content: textContent(`Reattached "${entry.name}" (recovered orphan entry).`),
           structuredContent: {
@@ -955,6 +956,7 @@ async function handleInstallRemoteOAuth(
     await ctx.runtime.getWorkspaceStore().update(wsId, { bundles: [...ws.bundles, ref] });
     const wsRegistry = ctx.runtime.getRegistryForWorkspace(wsId);
     lifecycle.seedInstance(entry.id, action.url, ref, undefined, wsId, undefined, wsRegistry);
+    lifecycle.notifyInstalled(entry.id, wsId);
     return {
       content: textContent(`Installed "${entry.name}" for this workspace.`),
       structuredContent: {
@@ -1094,6 +1096,10 @@ async function handleInstallMpak(
     inventoryEntry.dataDir,
     registry,
   );
+  // Register placements + emit bundle.installed so the web shell's
+  // sidebar refreshes without a reboot. seedInstance is intentionally
+  // state-only; the side effects live here.
+  lifecycle.notifyInstalled(inventoryEntry.serverName, wsId);
 
   if (!already) {
     await ctx.runtime.getWorkspaceStore().update(wsId, { bundles: [...ws.bundles, ref] });

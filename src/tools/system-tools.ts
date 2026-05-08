@@ -841,6 +841,10 @@ async function installBundleInWorkspaceViaCtx(
       wsId,
       entry.dataDir,
     );
+    // Register placements + emit bundle.installed so the web shell's
+    // sidebar refreshes without a reboot when the chat agent installs
+    // a bundle on the user's behalf.
+    lifecycle.notifyInstalled(entry.serverName, wsId);
 
     // Add bundle to workspace.json
     const ws = await ctx.workspaceStore.get(wsId);

@@ -1250,6 +1250,46 @@ export class BundleLifecycleManager {
   }
 
   /**
+   * Side-effect-only "I just installed this bundle" notification —
+   * registers UI placements with the platform's placement registry and
+   * fires the `bundle.installed` event so SSE-subscribed clients
+   * (e.g. the web shell's sidebar) refresh without a page reload.
+   *
+   * Separate from `seedInstance` because seedInstance is also called
+   * at boot for already-installed bundles, and we don't want boot to
+   * fire `bundle.installed` events (telemetry would double-count, and
+   * no SSE clients exist yet anyway). Install handlers call this
+   * explicitly after their seed; the boot path does not.
+   *
+   * No-op when the instance can't be found — defensive guard for
+   * mis-ordered call sites; logs at debug.
+   */
+  notifyInstalled(serverName: string, wsId: string): void {
+    const instance = this.instances.get(`${serverName}|${wsId}`);
+    if (!instance) {
+      log.debug(
+        "mcp",
+        `[lifecycle] notifyInstalled: no instance for ${serverName}|${wsId} — skipping`,
+      );
+      return;
+    }
+    this.registerPlacements(serverName, instance.ui, wsId);
+    this.eventSink.emit({
+      type: "bundle.installed",
+      data: {
+        wsId,
+        serverName,
+        bundleName: instance.bundleName,
+        version: instance.version,
+        type: instance.type,
+        trustScore: instance.trustScore,
+        ui: instance.ui,
+        placements: instance.ui?.placements ?? null,
+      },
+    });
+  }
+
+  /**
    * Seed instances from the initial bundle startup (called by Runtime.start
    * after bundles are already running).
    *

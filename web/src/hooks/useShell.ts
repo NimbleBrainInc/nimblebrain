@@ -10,6 +10,22 @@ export function useShell(_token: string, workspaceId?: string, initialShell?: Sh
   // When bootstrap data is provided, skip the first effect invocation
   const skipNext = useRef(!!initialShell);
 
+  /**
+   * Refetch the shell payload. Used by bundle lifecycle SSE events so
+   * newly-installed apps surface in the sidebar without a page reload.
+   * Keep the old shell visible during the swap (no loading flash) — same
+   * pattern as the workspace-switch refetch.
+   */
+  const refresh = useCallback(async () => {
+    try {
+      const data = await getShell();
+      setShell(data);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load shell");
+    }
+  }, []);
+
   // biome-ignore lint/correctness/useExhaustiveDependencies: workspaceId is a parameter that drives refetch
   useEffect(() => {
     if (skipNext.current) {
@@ -64,5 +80,5 @@ export function useShell(_token: string, workspaceId?: string, initialShell?: Sh
     );
   }, [shell]);
 
-  return { shell, loading, error, forSlot, mainRoutes };
+  return { shell, loading, error, forSlot, mainRoutes, refresh };
 }
