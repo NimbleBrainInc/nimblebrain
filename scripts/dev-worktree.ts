@@ -24,13 +24,21 @@
 
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
+// Anchor the worktree root from the script's location, not `process.cwd()`,
+// so `bun run scripts/dev-worktree.ts` from a subdirectory still resolves
+// the right place. The script lives at `<worktree>/scripts/dev-worktree.ts`,
+// so the parent of its containing directory is the worktree root.
+const WORKTREE_ROOT = dirname(import.meta.dir);
 const WORKDIR_NAME = ".nimblebrain-worktree";
-const WORKDIR = process.env.NB_WORK_DIR ?? join(process.cwd(), WORKDIR_NAME);
+// `||` (not `??`) so an accidentally-exported empty `NB_WORK_DIR=""` from a
+// misconfigured shell or direnv doesn't slip through and produce nonsense
+// paths. Same for the port vars below.
+const WORKDIR = process.env.NB_WORK_DIR || join(WORKTREE_ROOT, WORKDIR_NAME);
 const CONFIG_PATH = join(WORKDIR, "nimblebrain.json");
-const API_PORT = process.env.NB_API_PORT ?? "27271";
-const WEB_PORT = process.env.NB_WEB_PORT ?? "27270";
+const API_PORT = process.env.NB_API_PORT || "27271";
+const WEB_PORT = process.env.NB_WEB_PORT || "27270";
 
 function seedConfigIfMissing(): void {
   if (existsSync(CONFIG_PATH)) return;
@@ -41,12 +49,15 @@ function seedConfigIfMissing(): void {
     // `workDir` is relative to the config file; using the basename keeps the
     // workdir co-located with this config (matches the `.environments/*`
     // pattern). `NB_WORK_DIR` overrides at runtime regardless.
-    workDir: WORKDIR === join(process.cwd(), WORKDIR_NAME) ? WORKDIR_NAME : WORKDIR,
+    workDir: WORKDIR === join(WORKTREE_ROOT, WORKDIR_NAME) ? WORKDIR_NAME : WORKDIR,
     bundles: [],
+    // Defaults mirror the documented values in `AGENTS.md` § Defaults so
+    // dev:worktree starts in the same shape the rest of the platform's dev
+    // environments use.
     models: {
       default: "anthropic:claude-sonnet-4-6",
       fast: "anthropic:claude-haiku-4-5-20251001",
-      reasoning: "anthropic:claude-sonnet-4-6",
+      reasoning: "anthropic:claude-opus-4-6",
     },
   };
   writeFileSync(CONFIG_PATH, `${JSON.stringify(seed, null, 2)}\n`);
@@ -56,7 +67,7 @@ function seedConfigIfMissing(): void {
 seedConfigIfMissing();
 
 console.log("[dev:worktree] Starting");
-console.log(`[dev:worktree]   Worktree: ${process.cwd()}`);
+console.log(`[dev:worktree]   Worktree: ${WORKTREE_ROOT}`);
 console.log(`[dev:worktree]   Workdir:  ${WORKDIR}`);
 console.log(`[dev:worktree]   API:      http://localhost:${API_PORT}`);
 console.log(`[dev:worktree]   Web:      http://localhost:${WEB_PORT}`);
@@ -67,6 +78,7 @@ const child = spawn(
   ["run", "src/cli/index.ts", "dev", "--port", API_PORT, "--config", CONFIG_PATH],
   {
     stdio: "inherit",
+    cwd: WORKTREE_ROOT,
     env: {
       ...process.env,
       NB_API_PORT: API_PORT,
@@ -75,5 +87,10 @@ const child = spawn(
     },
   },
 );
+
+child.on("error", (err) => {
+  console.error(`[dev:worktree] Failed to spawn bun: ${err.message}`);
+  process.exit(1);
+});
 
 child.on("exit", (code) => process.exit(code ?? 0));
