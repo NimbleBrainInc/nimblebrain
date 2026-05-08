@@ -61,10 +61,19 @@ export function ConnectorList({
   });
 
   const filtered = useMemo(() => {
-    if (!query.trim()) return installed;
+    // Sort alphabetically by display name first, then filter — keeps
+    // the rendered order stable regardless of whether the user is
+    // searching or not. localeCompare with `sensitivity: "base"` does
+    // the right thing for accented characters (É sorts with E) and
+    // ignores case ("github" / "GitHub" don't fight each other).
+    const displayName = (c: InstalledConnector): string => c.catalog?.name ?? c.serverName;
+    const sorted = [...installed].sort((a, b) =>
+      displayName(a).localeCompare(displayName(b), undefined, { sensitivity: "base" }),
+    );
+    if (!query.trim()) return sorted;
     const q = query.trim().toLowerCase();
-    return installed.filter((c) => {
-      const name = (c.catalog?.name ?? c.serverName).toLowerCase();
+    return sorted.filter((c) => {
+      const name = displayName(c).toLowerCase();
       return name.includes(q) || c.bundleName.toLowerCase().includes(q);
     });
   }, [installed, query]);
