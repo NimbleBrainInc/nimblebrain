@@ -55,7 +55,7 @@ const setBundleUserConfig = mock(async () => ({
 }));
 const setupConnectorOperator = mock(async () => ({
   ok: true,
-  catalogId: "asana",
+  catalogId: "io.asana/mcp",
   clientId: "cid-rotated",
 }));
 
@@ -165,9 +165,9 @@ function dcrConnector(over: Partial<InstalledConnector> = {}): InstalledConnecto
     toolCount: 3,
     trustScore: null,
     url: "https://api.granola.test/mcp",
-    catalogId: "granola",
+    catalogId: "ai.granola/mcp",
     catalog: {
-      id: "granola",
+      id: "ai.granola/mcp",
       name: "Granola",
       description: "Meeting notes",
       iconUrl: "",
@@ -192,9 +192,9 @@ function staticAuthConnector(over: Partial<InstalledConnector> = {}): InstalledC
     toolCount: 8,
     trustScore: null,
     url: "https://app.asana.com/api/mcp",
-    catalogId: "asana",
+    catalogId: "io.asana/mcp",
     catalog: {
-      id: "asana",
+      id: "io.asana/mcp",
       name: "Asana",
       description: "Work mgmt",
       iconUrl: "",

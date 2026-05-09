@@ -37,6 +37,7 @@ import type {
   RegistryConfig,
 } from "../registries/types.ts";
 import { validateAdditionalAuthorizationParams } from "../tools/workspace-oauth-provider.ts";
+import { isHttpUrl } from "../util/url.ts";
 import {
   getNimbleBrainConnectorMeta,
   type ServerDetail,
@@ -217,15 +218,6 @@ function validateNimbleBrainSafety(s: ServerDetail): string | null {
     return `docsUrl must be http(s): "${meta.docsUrl}"`;
   }
   return null;
-}
-
-function isHttpUrl(url: string): boolean {
-  try {
-    const parsed = new URL(url);
-    return parsed.protocol === "http:" || parsed.protocol === "https:";
-  } catch {
-    return false;
-  }
 }
 
 function candidateName(c: unknown): string | undefined {

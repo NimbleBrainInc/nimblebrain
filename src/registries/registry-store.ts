@@ -49,6 +49,21 @@ export const BUNDLED_STATIC_CATALOG_PATH = join(
 );
 
 const BUNDLED_STATIC_ID = "bundled-static";
+const MPAK_ID = "mpak";
+
+/**
+ * Look up a seeded registry by id. Used by env-override paths so we
+ * don't pin behavior to the array order in `defaultRegistries()` —
+ * adding a new seeded registry above mpak would otherwise silently
+ * swap which entry is "the mpak default" or "the locked bundled-static."
+ */
+function defaultRegistryById(id: string): RegistryConfig {
+  const found = defaultRegistries().find((r) => r.id === id);
+  if (!found) {
+    throw new Error(`[registries] internal: missing seeded registry "${id}"`);
+  }
+  return found;
+}
 
 function defaultRegistries(): RegistryConfig[] {
   return [
@@ -61,7 +76,7 @@ function defaultRegistries(): RegistryConfig[] {
       url: BUNDLED_STATIC_CATALOG_PATH,
     },
     {
-      id: "mpak",
+      id: MPAK_ID,
       name: "mpak.dev",
       type: "mpak",
       enabled: true,
@@ -156,7 +171,7 @@ export class RegistryStore {
       // Ensure the locked bundled-static registry can't be removed by
       // hand-editing the file — re-add it if missing.
       if (!parsed.registries.some((r) => r.id === BUNDLED_STATIC_ID)) {
-        parsed.registries.unshift(defaultRegistries()[0] as RegistryConfig);
+        parsed.registries.unshift(defaultRegistryById(BUNDLED_STATIC_ID));
         await this.save(parsed);
       }
       return parsed;
@@ -193,7 +208,7 @@ function resolveEnvOverride(): RegistryConfig[] | null {
       // Always re-pin the bundled static registry as locked + first so
       // operator overrides can add registries without accidentally
       // dropping the platform default.
-      const bundled = defaultRegistries()[0] as RegistryConfig;
+      const bundled = defaultRegistryById(BUNDLED_STATIC_ID);
       const withoutBundled = validated.filter((r) => r.id !== bundled.id);
       return [bundled, ...withoutBundled];
     } catch (err) {
@@ -209,7 +224,7 @@ function resolveEnvOverride(): RegistryConfig[] | null {
       `[registries] NB_CATALOG_PATH is deprecated; switch to NB_REGISTRIES with a JSON array of {id,name,type,url}.`,
     );
     return [
-      defaultRegistries()[0] as RegistryConfig,
+      defaultRegistryById(BUNDLED_STATIC_ID),
       {
         id: "operator-static",
         name: "Operator catalog",
@@ -217,7 +232,7 @@ function resolveEnvOverride(): RegistryConfig[] | null {
         enabled: true,
         url: legacy.trim(),
       },
-      defaultRegistries()[1] as RegistryConfig,
+      defaultRegistryById(MPAK_ID),
     ];
   }
   return null;

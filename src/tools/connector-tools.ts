@@ -20,9 +20,13 @@ import type { UserIdentity } from "../identity/provider.ts";
 import { DirectoryAggregator } from "../registries/aggregator.ts";
 import type { DirectoryEntry } from "../registries/types.ts";
 import type { Runtime } from "../runtime/runtime.ts";
+import { isHttpUrl } from "../util/url.ts";
 import { FileCredentialStore } from "./credential-store.ts";
 import type { InProcessTool } from "./in-process-app.ts";
-import { WorkspaceOAuthProvider } from "./workspace-oauth-provider.ts";
+import {
+  validateAdditionalAuthorizationParams,
+  WorkspaceOAuthProvider,
+} from "./workspace-oauth-provider.ts";
 
 /**
  * `manage_connectors` tool — single surface for the Connectors UI
@@ -905,16 +909,32 @@ function parseDirectoryEntry(input: unknown): DirectoryEntry | null {
       return null;
     }
   }
-  return input as DirectoryEntry;
-}
-
-function isHttpUrl(value: string): boolean {
-  try {
-    const parsed = new URL(value);
-    return parsed.protocol === "http:" || parsed.protocol === "https:";
-  } catch {
-    return false;
+  // additionalAuthorizationParams flow into the OAuth handshake unchanged.
+  // Reject reserved keys (`client_id`, `redirect_uri`, `state`, ...) here at
+  // the parse boundary so a malicious aggregator can't smuggle them through
+  // — the lifecycle installer rejects them later, but failing here gives a
+  // source-tagged warning that names the offending entry rather than a
+  // generic install-time error.
+  const additionalParams = (e as { additionalAuthorizationParams?: unknown })
+    .additionalAuthorizationParams;
+  if (additionalParams !== undefined) {
+    if (
+      !additionalParams ||
+      typeof additionalParams !== "object" ||
+      Array.isArray(additionalParams) ||
+      !Object.values(additionalParams as Record<string, unknown>).every(
+        (v) => typeof v === "string",
+      )
+    ) {
+      return null;
+    }
+    try {
+      validateAdditionalAuthorizationParams(additionalParams as Record<string, string>);
+    } catch {
+      return null;
+    }
   }
+  return input as DirectoryEntry;
 }
 
 /**

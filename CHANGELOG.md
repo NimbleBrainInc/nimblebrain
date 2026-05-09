@@ -46,6 +46,12 @@
 
 ### Breaking
 
+- **Registries unified on upstream MCP `ServerDetail`** ([#195](https://github.com/NimbleBrainInc/nimblebrain/pull/195)). Operator-facing migrations:
+  - `RegistryType` values `"curated"` / `"directory"` renamed to `"static"` / `"mcp"`. Any `NB_REGISTRIES` JSON pinning the old strings must be re-typed; `registries.json` is auto-migrated on next read by re-seeding the locked default.
+  - The locked seeded registry id `"curated"` is now `"bundled-static"`. Existing `registries.json` rows are preserved; the new id is re-added if missing.
+  - Default mpak URL changed from `https://mpak.dev` to `https://registry.mpak.dev` (the dedicated `/v1/bundles` endpoint). Operators who pinned the old URL via `NB_REGISTRIES` should switch.
+  - `DirectoryEntry.id` (and `InstalledConnector.catalogId`) is now the reverse-DNS `ServerDetail.name` (e.g. `io.asana/mcp`) instead of bare slugs (`asana`). Catalog-keyed state — `workspace.json#oauthOperatorApps[<id>]` and the matching `<id>.client_secret` credential entries — must be rekeyed to the reverse-DNS form before existing static-auth connectors will resolve.
+  - `NB_CATALOG_PATH` is deprecated. Switch to `NB_REGISTRIES` (JSON array of `RegistryConfig`); the legacy env still mounts a single static registry but logs a deprecation warning at startup.
 - **Token-usage shape unified.** The runtime, engine, and conversation events now share a single `TokenUsage` struct (`{ inputTokens, outputTokens, cacheReadTokens?, cacheWriteTokens?, reasoningTokens? }`). Internal layers that exposed flat fields are restructured:
   - `EngineResult.inputTokens` / `outputTokens` → `EngineResult.usage`. `EngineResult` also gains `usage` and `llmMs` (the side-channel `RunMetricsCollector` is gone).
   - `TurnUsage` now extends `TokenUsage`. Top-level `inputTokens` / `outputTokens` / `cacheReadTokens` are still present (via the extension) but `costUsd` is **removed** — cost is computed at the API boundary from `(model, usage)`. Wire-format clients (`done` SSE event, `POST /v1/chat`) still see `usage.costUsd`.

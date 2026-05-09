@@ -51,8 +51,9 @@ export interface Workspace {
 
   /**
    * Per-workspace OAuth app configurations for static-auth catalog
-   * entries. Keyed by catalog id (e.g. "asana"), the value carries the
-   * operator-supplied public `client_id` plus an audit trail. The
+   * entries. Keyed by catalog id (the reverse-DNS `ServerDetail.name`,
+   * e.g. "io.asana/mcp"), the value carries the operator-supplied
+   * public `client_id` plus an audit trail. The
    * matching `client_secret` lives in the workspace credential store
    * under the catalog entry's `operatorSetup.clientSecretKey` — kept
    * separate so the secret never sits next to non-secret config and

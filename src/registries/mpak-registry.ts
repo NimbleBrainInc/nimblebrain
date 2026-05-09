@@ -1,5 +1,6 @@
 import { log } from "../cli/log.ts";
 import { type ServerDetail, validateServerDetail } from "../connectors/server-detail.ts";
+import { isHttpUrl } from "../util/url.ts";
 import { projectServerDetailToDirectoryEntry } from "./projection.ts";
 import type { ConnectorRegistry, DirectoryEntry, RegistryConfig } from "./types.ts";
 
@@ -137,13 +138,23 @@ export function bundleToServerDetail(raw: unknown): ServerDetail | null {
   if (b.icon && isHttpUrl(b.icon)) {
     detail.icons = [{ src: b.icon, sizes: ["any"] }];
   }
-  if (b.provenance?.repository) {
+  // `provenance.repository` is mpak-supplied. Constrain to the
+  // `<owner>/<repo>` shape before string-concatenating into a URL —
+  // junk like `evil.com/x` would yield `https://github.com/evil.com/x`,
+  // benign at GitHub but still attacker-influenced output.
+  if (
+    b.provenance?.repository &&
+    /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(b.provenance.repository)
+  ) {
     detail.repository = {
       url: `https://github.com/${b.provenance.repository}`,
       source: "github",
     };
   }
-  if (b.homepage) {
+  // Same scheme allowlist as `icon` — `homepage` becomes `websiteUrl`
+  // and could end up in a UI `<a href>` later. Defense-in-depth even
+  // though the projection currently doesn't render it.
+  if (b.homepage && isHttpUrl(b.homepage)) {
     detail.websiteUrl = b.homepage;
   }
 
@@ -195,13 +206,4 @@ function titleCase(s: string): string {
 function truncate(s: string, max: number): string {
   if (s.length <= max) return s;
   return `${s.slice(0, max - 1)}…`;
-}
-
-function isHttpUrl(url: string): boolean {
-  try {
-    const parsed = new URL(url);
-    return parsed.protocol === "http:" || parsed.protocol === "https:";
-  } catch {
-    return false;
-  }
 }
