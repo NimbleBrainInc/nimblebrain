@@ -57,6 +57,198 @@ servers:
         auth: dcr
         tags: [docs, knowledge]
 
+  - name: app.linear/mcp
+    title: Linear
+    description: Issues, projects, and product roadmaps
+    version: "1.0.0"
+    icons:
+      - src: https://static.nimblebrain.ai/icons/linear.png
+        sizes: ["any"]
+    remotes:
+      - type: streamable-http
+        url: https://mcp.linear.app/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        defaultScope: workspace
+        auth: dcr
+        tags: [issues, project-mgmt]
+
+  - name: com.canva/mcp
+    title: Canva
+    description: Design files and brand assets
+    version: "1.0.0"
+    icons:
+      - src: https://static.nimblebrain.ai/icons/canva.png
+        sizes: ["any"]
+    remotes:
+      - type: streamable-http
+        url: https://mcp.canva.com/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        defaultScope: workspace
+        auth: dcr
+        tags: [design, creative]
+
+  - name: com.cloudflare/mcp
+    title: Cloudflare
+    description: DNS, Workers, R2 storage, and account bindings
+    version: "1.0.0"
+    icons:
+      - src: https://static.nimblebrain.ai/icons/cloudflare.png
+        sizes: ["any"]
+    remotes:
+      - type: sse
+        url: https://bindings.mcp.cloudflare.com/sse
+    _meta:
+      ai.nimblebrain/connector:
+        defaultScope: workspace
+        auth: dcr
+        tags: [infra, devops]
+
+  - name: com.intercom/mcp
+    title: Intercom
+    description: Customer conversations and support tickets
+    version: "1.0.0"
+    icons:
+      - src: https://static.nimblebrain.ai/icons/intercom.png
+        sizes: ["any"]
+    remotes:
+      - type: streamable-http
+        url: https://mcp.intercom.com/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        defaultScope: workspace
+        auth: dcr
+        tags: [support, messaging]
+
+  - name: com.neon/mcp
+    title: Neon
+    description: Serverless Postgres branches and queries
+    version: "1.0.0"
+    icons:
+      - src: https://static.nimblebrain.ai/icons/neon.png
+        sizes: ["any"]
+    remotes:
+      - type: streamable-http
+        url: https://mcp.neon.tech/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        defaultScope: workspace
+        auth: dcr
+        tags: [database, postgres]
+
+  - name: com.paypal/mcp
+    title: PayPal
+    description: Payments, invoices, and merchant accounts
+    version: "1.0.0"
+    icons:
+      - src: https://static.nimblebrain.ai/icons/paypal.png
+        sizes: ["any"]
+    remotes:
+      - type: sse
+        url: https://mcp.paypal.com/sse
+    _meta:
+      ai.nimblebrain/connector:
+        defaultScope: workspace
+        auth: dcr
+        tags: [payments]
+
+  - name: com.sentry/mcp
+    title: Sentry
+    description: Errors, performance, and release tracking
+    version: "1.0.0"
+    icons:
+      - src: https://static.nimblebrain.ai/icons/sentry.png
+        sizes: ["any"]
+    remotes:
+      - type: streamable-http
+        url: https://mcp.sentry.dev/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        defaultScope: workspace
+        auth: dcr
+        tags: [observability, errors]
+
+  - name: com.stripe/mcp
+    title: Stripe
+    description: Payments, customers, and subscriptions
+    version: "1.0.0"
+    icons:
+      - src: https://static.nimblebrain.ai/icons/stripe.png
+        sizes: ["any"]
+    remotes:
+      - type: streamable-http
+        url: https://mcp.stripe.com/
+    _meta:
+      ai.nimblebrain/connector:
+        defaultScope: workspace
+        auth: dcr
+        tags: [payments, billing]
+
+  - name: com.supabase/mcp
+    title: Supabase
+    description: Postgres backend with auth, storage, and realtime
+    version: "1.0.0"
+    icons:
+      - src: https://static.nimblebrain.ai/icons/supabase.png
+        sizes: ["any"]
+    remotes:
+      - type: streamable-http
+        url: https://mcp.supabase.com/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        defaultScope: workspace
+        auth: dcr
+        tags: [database, backend]
+
+  - name: com.vercel/mcp
+    title: Vercel
+    description: Deployments, projects, and environment variables
+    version: "1.0.0"
+    icons:
+      - src: https://static.nimblebrain.ai/icons/vercel.png
+        sizes: ["any"]
+    remotes:
+      - type: streamable-http
+        url: https://mcp.vercel.com
+    _meta:
+      ai.nimblebrain/connector:
+        defaultScope: workspace
+        auth: dcr
+        tags: [hosting, devops]
+
+  - name: com.webflow/mcp
+    title: Webflow
+    description: Visual website builder and CMS
+    version: "1.0.0"
+    icons:
+      - src: https://static.nimblebrain.ai/icons/webflow.png
+        sizes: ["any"]
+    remotes:
+      - type: sse
+        url: https://mcp.webflow.com/sse
+    _meta:
+      ai.nimblebrain/connector:
+        defaultScope: workspace
+        auth: dcr
+        tags: [design, cms]
+
+  - name: com.wix/mcp
+    title: Wix
+    description: Website builder and online store platform
+    version: "1.0.0"
+    icons:
+      - src: https://static.nimblebrain.ai/icons/wix.png
+        sizes: ["any"]
+    remotes:
+      - type: sse
+        url: https://mcp.wix.com/sse
+    _meta:
+      ai.nimblebrain/connector:
+        defaultScope: workspace
+        auth: dcr
+        tags: [website, cms]
+
   # ── Member-scoped (personal account per user) ─────────────────
   - name: com.google.gmail/mcp
     title: Gmail
