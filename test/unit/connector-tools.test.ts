@@ -37,9 +37,14 @@ import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
  * `Runtime.start()` (which would pull in identity, model, transport, etc.).
  */
 
-const ASANA_ID = "asana";
+// Reverse-DNS form per upstream MCP registry's ServerDetail spec — matches
+// the `name` field of the Asana entry in src/connectors/catalog.yaml.
+const ASANA_ID = "io.asana/mcp";
 const ASANA_URL = "https://mcp.asana.com/v2/mcp";
 const ASANA_SECRET_KEY = "asana.client_secret";
+// DCR entry from the bundled static catalog — used to verify operator
+// setup is rejected for non-static-auth connectors.
+const NOTION_ID = "com.notion/mcp";
 
 /**
  * Build a DirectoryEntry shaped like what CuratedRegistry would emit
@@ -50,8 +55,8 @@ const ASANA_SECRET_KEY = "asana.client_secret";
 function asanaEntry(over: Partial<DirectoryEntry> = {}): DirectoryEntry {
   return {
     id: ASANA_ID,
-    registryId: "curated",
-    registryType: "curated",
+    registryId: "bundled-static",
+    registryType: "static",
     name: "Asana",
     description: "Tasks, projects, and team workflows",
     defaultScope: "workspace",
@@ -76,11 +81,13 @@ function asanaEntry(over: Partial<DirectoryEntry> = {}): DirectoryEntry {
  * scenarios (e.g. arbitrary scoped names).
  */
 function mpakEntry(over: { id?: string; pkg?: string; name?: string } = {}): DirectoryEntry {
-  const id = over.id ?? "echo";
+  // Default reverse-DNS id mirrors what `MpakRegistry` projects from
+  // mpak's legacy `/v1/bundles/...` shape — `dev.mpak.<scope>/<name>`.
+  const id = over.id ?? "dev.mpak.nimblebraininc/echo";
   return {
     id,
-    registryId: "curated",
-    registryType: "curated",
+    registryId: "mpak",
+    registryType: "mpak",
     name: over.name ?? "Echo",
     description: "Reference MCP server for testing",
     defaultScope: "workspace",
@@ -358,10 +365,10 @@ describe("manage_connectors.setup_operator", () => {
 
   test("rejects DCR (non-static-auth) entries — operator setup is meaningless there", async () => {
     const tool = buildTool(h, ADMIN_USER);
-    // notion-org is auth: "dcr" in the default catalog
+    // com.notion/mcp is auth: "dcr" in the default catalog
     const result = await tool.handler({
       action: "setup_operator",
-      catalogId: "notion-org",
+      catalogId: NOTION_ID,
       clientId: "x",
       clientSecret: "y",
     });
@@ -553,31 +560,31 @@ describe("manage_connectors.list_directory", () => {
     rmSync(h.workDir, { recursive: true, force: true });
   });
 
-  test("aggregates entries across enabled registries (curated + mpak by default)", async () => {
+  test("aggregates entries from the bundled-static registry by default", async () => {
+    // Disable mpak so the test doesn't require live network. The bundled
+    // static registry alone should yield > 0 entries.
+    await h.registryStore.update("mpak", { enabled: false });
     const tool = buildTool(h, ADMIN_USER);
     const result = await tool.handler({ action: "list_directory" });
     expect(result.isError).toBe(false);
     const entries = structured(result).entries ?? [];
-
-    const fromCurated = entries.filter((e) => e.registryId === "curated");
-    expect(fromCurated.length).toBeGreaterThan(0);
-    // mpak registry currently returns no entries by design (real
-    // mpak.dev fetch is pending). Either no entries, some entries
-    // (when implemented), or a recorded error are all valid; test
-    // just checks the aggregator runs without throwing.
+    const fromBundled = entries.filter((e) => e.registryId === "bundled-static");
+    expect(fromBundled.length).toBeGreaterThan(0);
   });
 
   test("static entry shows operatorConfigured: false before setup_operator runs", async () => {
+    await h.registryStore.update("mpak", { enabled: false });
     const tool = buildTool(h, ADMIN_USER);
     const result = await tool.handler({ action: "list_directory" });
     const asana = (structured(result).entries ?? []).find(
-      (e) => e.registryId === "curated" && e.id === ASANA_ID,
+      (e) => e.registryId === "bundled-static" && e.id === ASANA_ID,
     );
     expect(asana).toBeDefined();
     expect(asana?.operatorConfigured).toBe(false);
   });
 
   test("static entry shows operatorConfigured: true after setup_operator runs", async () => {
+    await h.registryStore.update("mpak", { enabled: false });
     const tool = buildTool(h, ADMIN_USER);
     await tool.handler({
       action: "setup_operator",
@@ -588,7 +595,7 @@ describe("manage_connectors.list_directory", () => {
 
     const result = await tool.handler({ action: "list_directory" });
     const asana = (structured(result).entries ?? []).find(
-      (e) => e.registryId === "curated" && e.id === ASANA_ID,
+      (e) => e.registryId === "bundled-static" && e.id === ASANA_ID,
     );
     expect(asana?.operatorConfigured).toBe(true);
   });
@@ -767,9 +774,9 @@ describe("manage_connectors.install", () => {
     const result = await tool.handler({
       action: "install",
       entry: {
-        id: "evil",
-        registryId: "curated",
-        registryType: "curated",
+        id: "io.evil/mcp",
+        registryId: "bundled-static",
+        registryType: "static",
         name: "Evil",
         description: "x",
         defaultScope: "workspace",

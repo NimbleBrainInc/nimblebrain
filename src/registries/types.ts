@@ -4,36 +4,46 @@
  * single browse experience — the user picks something to install,
  * and the install action dispatches by entry type.
  *
+ * Each registry returns upstream MCP `ServerDetail` shapes internally;
+ * the projection to `DirectoryEntry` (the UI's row contract) is one
+ * function (`projectServerDetailToDirectoryEntry`) shared across every
+ * registry implementation.
+ *
  * Registries are configured at the instance level (Settings → Org →
  * Registries). The two seeded defaults are:
  *
- *   - "curated"  — the hardcoded NimbleBrain catalog of remote OAuth
- *     services (Granola, Notion, HubSpot, etc.). Always on, locked.
- *   - "mpak"     — mpak.dev open MCP bundle registry. Default on; the
- *     org admin can disable or point at a different mpak instance.
+ *   - `static`  — bundled curated catalog of remote OAuth services
+ *     (Granola, Notion, HubSpot, etc.) shipped with the platform.
+ *     Locked. Operator overrides via `NB_REGISTRIES` JSON or the
+ *     deprecated `NB_CATALOG_PATH` env.
+ *   - `mpak`    — the mpak.dev open MCP bundle registry. Default on;
+ *     the operator can disable or point at a different mpak instance.
  *
  * Future registry types (planned, not implemented):
- *   - "directory"  — JSON catalog mounted by an operator (per-org
- *     curated list for SOC2-conscious tenants).
- *   - "custom-url" — paste-a-URL flow for any remote MCP server
+ *   - `mcp`        — upstream MCP registry (`/v1/servers/...`) once
+ *     the upstream service stabilizes.
+ *   - `custom-url` — paste-a-URL flow for any remote MCP server
  *     (advanced; bypasses curation).
  */
 
 /** Stable registry kind, used for source-type-driven dispatch. */
-export type RegistryType = "curated" | "mpak" | "directory" | "custom-url";
+export type RegistryType = "static" | "mpak" | "mcp" | "custom-url";
 
-/** Persistable configuration for a registry. Stored in registries.json. */
+/** Persistable configuration for a registry. Stored in `registries.json`. */
 export interface RegistryConfig {
   id: string;
   name: string;
   type: RegistryType;
   enabled: boolean;
-  /** For type === "mpak" or "directory": the registry endpoint or path. */
+  /**
+   * For `static`: filesystem path to the YAML/JSON `ServerDetail[]`
+   * file. For `mpak` / `mcp`: the registry HTTP base URL.
+   */
   url?: string;
   /**
    * Locked registries can't be disabled or removed by the admin UI —
-   * the curated registry is locked because it ships with the platform
-   * and removing it would leave first-time users with nothing.
+   * the bundled static registry is locked because it ships with the
+   * platform and removing it would leave first-time users with nothing.
    */
   locked?: boolean;
 }
@@ -45,7 +55,11 @@ export interface RegistryConfig {
  * union.
  */
 export interface DirectoryEntry {
-  /** Unique within (registryId, id) — registries can repeat ids. */
+  /**
+   * Stable identifier — the upstream `ServerDetail.name` (reverse-DNS
+   * form). Unique within `(registryId, id)`; registries can repeat ids
+   * across themselves.
+   */
   id: string;
   registryId: string;
   registryType: RegistryType;
@@ -89,19 +103,13 @@ export interface RemoteOAuthInstall {
 
 /**
  * mpak bundle install. The package is fetched via mpak SDK and
- * spawned as a stdio subprocess. CuratedRegistry emits these from
- * the bundled stdio-catalog.yaml; future MpakRegistry implementations
- * will emit them from mpak.dev's search results.
- *
- * TODO(mpak-registry): when the live mpak.dev fetch lands, this type
- * needs `version` (selected release) and `mpakUrl` (download href)
- * back. Both fields existed in an earlier draft and were trimmed
- * because CuratedRegistry doesn't need them — but the discriminated
- * union has to widen again before MpakRegistry can do useful work.
+ * spawned as a stdio subprocess. `MpakRegistry` emits these from
+ * mpak.dev's search results; `StaticRegistry` may also emit them when
+ * a curated `ServerDetail` declares a `packages[]` entry.
  */
 export interface MpakBundleInstall {
   kind: "mpak-bundle";
-  /** Scoped package name, e.g., "@nimblebraininc/echo". */
+  /** Scoped package name, e.g., `@nimblebraininc/echo`. */
   package: string;
 }
 
@@ -117,10 +125,10 @@ export interface DirectUrlInstall {
 /**
  * Per-call context handed to a registry's `listEntries`. Carries the
  * pieces a registry might need to compute workspace-aware fields
- * (e.g. `operatorConfigured` on curated entries) without coupling the
+ * (e.g. `operatorConfigured` on static entries) without coupling the
  * registry to the runtime singleton.
  *
- * Optional today — registries that don't need it (mpak stub) can
+ * Optional today — registries that don't need it (mpak fetch) can
  * ignore it. As more registries gain workspace-aware computation
  * this becomes the seam for threading whatever they need.
  */

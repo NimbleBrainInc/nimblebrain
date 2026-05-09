@@ -20,15 +20,15 @@ function freshAggregator(): {
 }
 
 describe("DirectoryAggregator", () => {
-  test("aggregates entries from enabled registries; curated populates today, mpak is a stub", async () => {
-    const { aggregator, cleanup } = freshAggregator();
+  test("aggregates entries from enabled registries; bundled-static populates today", async () => {
+    const { aggregator, store, cleanup } = freshAggregator();
     try {
+      // Disable mpak so the test doesn't depend on a live network. The
+      // bundled-static registry alone should yield > 0 entries.
+      await store.update("mpak", { enabled: false });
       const result = await aggregator.list();
-      const fromCurated = result.entries.filter((e) => e.registryId === "curated");
-      // CuratedRegistry surfaces both the OAuth catalog and STDIO_BUNDLES.
-      expect(fromCurated.length).toBeGreaterThan(0);
-      // MpakRegistry returns [] until real mpak.dev fetch is wired up;
-      // the aggregator runs without error.
+      const fromBundled = result.entries.filter((e) => e.registryId === "bundled-static");
+      expect(fromBundled.length).toBeGreaterThan(0);
       expect(result.errors).toEqual([]);
     } finally {
       cleanup();
@@ -47,12 +47,13 @@ describe("DirectoryAggregator", () => {
   });
 
   test("each entry carries registryId + registryType for attribution", async () => {
-    const { aggregator, cleanup } = freshAggregator();
+    const { aggregator, store, cleanup } = freshAggregator();
     try {
+      await store.update("mpak", { enabled: false });
       const result = await aggregator.list();
       for (const e of result.entries) {
         expect(e.registryId.length).toBeGreaterThan(0);
-        expect(["curated", "mpak"]).toContain(e.registryType);
+        expect(["static", "mpak"]).toContain(e.registryType);
       }
     } finally {
       cleanup();
@@ -60,8 +61,9 @@ describe("DirectoryAggregator", () => {
   });
 
   test("dedupes on (registryId, id) — within-registry duplicates are collapsed", async () => {
-    const { aggregator, cleanup } = freshAggregator();
+    const { aggregator, store, cleanup } = freshAggregator();
     try {
+      await store.update("mpak", { enabled: false });
       const result = await aggregator.list();
       const keys = new Set<string>();
       for (const e of result.entries) {
@@ -75,14 +77,15 @@ describe("DirectoryAggregator", () => {
   });
 
   test("operatorConfigured passed through from ListEntriesContext for static-auth entries", async () => {
-    const { aggregator, cleanup } = freshAggregator();
+    const { aggregator, store, cleanup } = freshAggregator();
     try {
-      // Stub: only "asana" reports configured; everything else returns false.
+      await store.update("mpak", { enabled: false });
+      // Stub: only "io.asana/mcp" reports configured; everything else returns false.
       const isOperatorConfigured = async (catalogId: string): Promise<boolean> =>
-        catalogId === "asana";
+        catalogId === "io.asana/mcp";
       const result = await aggregator.list({ wsId: "ws_test", isOperatorConfigured });
-      const asana = result.entries.find((e) => e.id === "asana");
-      const hubspot = result.entries.find((e) => e.id === "hubspot");
+      const asana = result.entries.find((e) => e.id === "io.asana/mcp");
+      const hubspot = result.entries.find((e) => e.id === "com.hubspot/mcp");
       expect(asana?.operatorConfigured).toBe(true);
       expect(hubspot?.operatorConfigured).toBe(false);
     } finally {
@@ -91,13 +94,14 @@ describe("DirectoryAggregator", () => {
   });
 
   test("DCR entries leave operatorConfigured undefined regardless of context", async () => {
-    const { aggregator, cleanup } = freshAggregator();
+    const { aggregator, store, cleanup } = freshAggregator();
     try {
-      // Resolver always returns true — but DCR entries (notion-org, granola)
+      await store.update("mpak", { enabled: false });
+      // Resolver always returns true — but DCR entries (Notion, Granola)
       // shouldn't read the field at all because operator setup doesn't apply.
       const isOperatorConfigured = async (): Promise<boolean> => true;
       const result = await aggregator.list({ wsId: "ws_test", isOperatorConfigured });
-      const granola = result.entries.find((e) => e.id === "granola");
+      const granola = result.entries.find((e) => e.id === "ai.granola/mcp");
       expect(granola?.operatorConfigured).toBeUndefined();
     } finally {
       cleanup();
@@ -105,8 +109,9 @@ describe("DirectoryAggregator", () => {
   });
 
   test("works without context — registries skip workspace-aware fields", async () => {
-    const { aggregator, cleanup } = freshAggregator();
+    const { aggregator, store, cleanup } = freshAggregator();
     try {
+      await store.update("mpak", { enabled: false });
       const result = await aggregator.list();
       // operatorConfigured should be undefined for everyone since we
       // gave the aggregator no resolver.

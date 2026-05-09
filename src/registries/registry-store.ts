@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { log } from "../cli/log.ts";
 import { writeJsonAtomic } from "../util/atomic-json.ts";
 import type { RegistryConfig } from "./types.ts";
 
@@ -10,17 +11,28 @@ import type { RegistryConfig } from "./types.ts";
  * work-dir root (alongside `nimblebrain.json`).
  *
  * Storage:
- *   <workDir>/registries.json
+ *   `<workDir>/registries.json`
  *
  * Schema:
- *   { registries: RegistryConfig[] }
+ *   `{ registries: RegistryConfig[] }`
  *
  * On first read with no file present, the store seeds two defaults:
  *
- *   - curated  — the in-process curated catalog. Locked (operator
- *     can't disable or remove it).
- *   - mpak     — mpak.dev. Default enabled; operator can disable
- *     entirely or point at a different mpak instance.
+ *   - `bundled-static` — a `StaticRegistry` pointing at the bundled
+ *     `src/connectors/catalog.yaml` shipped with the platform. Locked
+ *     (operator can't disable or remove it).
+ *   - `mpak`           — `MpakRegistry` against `https://registry.mpak.dev`.
+ *     Default enabled; operator can disable entirely or point at a
+ *     different mpak instance.
+ *
+ * Operator overrides at process start:
+ *
+ *   - `NB_REGISTRIES` — JSON array of `RegistryConfig`. When set, the
+ *     stored `registries.json` is *ignored* and the env value is used
+ *     verbatim (the bundled-static lock is preserved automatically).
+ *   - `NB_CATALOG_PATH` — DEPRECATED. When `NB_REGISTRIES` is unset and
+ *     this env points at a YAML/JSON file, a single static registry
+ *     pointing at that path is mounted. Logs a deprecation warning.
  *
  * Atomic writes via tmp-rename so a crash mid-write doesn't leave a
  * half-flushed JSON in place.
@@ -28,21 +40,32 @@ import type { RegistryConfig } from "./types.ts";
 
 const FILE_NAME = "registries.json";
 
+/** Absolute path to the bundled curated catalog YAML. */
+export const BUNDLED_STATIC_CATALOG_PATH = join(
+  import.meta.dir,
+  "..",
+  "connectors",
+  "catalog.yaml",
+);
+
+const BUNDLED_STATIC_ID = "bundled-static";
+
 function defaultRegistries(): RegistryConfig[] {
   return [
     {
-      id: "curated",
+      id: BUNDLED_STATIC_ID,
       name: "Curated services",
-      type: "curated",
+      type: "static",
       enabled: true,
       locked: true,
+      url: BUNDLED_STATIC_CATALOG_PATH,
     },
     {
       id: "mpak",
       name: "mpak.dev",
       type: "mpak",
       enabled: true,
-      url: "https://mpak.dev",
+      url: "https://registry.mpak.dev",
     },
   ];
 }
@@ -53,14 +76,18 @@ interface PersistedRecord {
 
 export class RegistryStore {
   private workDir: string;
+  /** Cached env-derived overrides. Computed once at construction. */
+  private envOverride: RegistryConfig[] | null;
 
   constructor(workDir: string) {
     this.workDir = workDir;
     if (!existsSync(workDir)) mkdirSync(workDir, { recursive: true });
+    this.envOverride = resolveEnvOverride();
   }
 
   /** Read all registries. Auto-seeds the file if absent. */
   async list(): Promise<RegistryConfig[]> {
+    if (this.envOverride) return this.envOverride;
     const record = await this.load();
     return record.registries;
   }
@@ -76,12 +103,21 @@ export class RegistryStore {
    * may have `enabled` updated only via the `force` escape hatch
    * (intentionally not exposed through the admin tool — kept here for
    * tests / future migration paths).
+   *
+   * When env overrides are active, persistent mutation is rejected —
+   * the env value is the source of truth and we don't want to silently
+   * shadow it with a `registries.json` write.
    */
   async update(
     id: string,
     patch: Partial<Pick<RegistryConfig, "enabled" | "url" | "name">>,
     opts: { force?: boolean } = {},
   ): Promise<RegistryConfig> {
+    if (this.envOverride) {
+      throw new Error(
+        `Registry mutation refused: NB_REGISTRIES is set; remove the env var before editing registries.`,
+      );
+    }
     const record = await this.load();
     const idx = record.registries.findIndex((r) => r.id === id);
     if (idx === -1) throw new Error(`Registry "${id}" not found`);
@@ -117,9 +153,9 @@ export class RegistryStore {
       if (!Array.isArray(parsed?.registries)) {
         return { registries: defaultRegistries() };
       }
-      // Ensure the locked curated registry can't be removed by hand-
-      // editing the file — re-add it if missing.
-      if (!parsed.registries.some((r) => r.id === "curated")) {
+      // Ensure the locked bundled-static registry can't be removed by
+      // hand-editing the file — re-add it if missing.
+      if (!parsed.registries.some((r) => r.id === BUNDLED_STATIC_ID)) {
         parsed.registries.unshift(defaultRegistries()[0] as RegistryConfig);
         await this.save(parsed);
       }
@@ -137,4 +173,96 @@ export class RegistryStore {
   private async save(record: PersistedRecord): Promise<void> {
     await writeJsonAtomic(this.filePath(), record);
   }
+}
+
+/**
+ * Resolve env-driven registry overrides, with a deprecation warning
+ * for the legacy `NB_CATALOG_PATH` shape. Returns null when no env
+ * override is in effect.
+ */
+function resolveEnvOverride(): RegistryConfig[] | null {
+  const raw = process.env.NB_REGISTRIES;
+  if (raw && raw.trim().length > 0) {
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      if (!Array.isArray(parsed)) {
+        log.warn(`[registries] NB_REGISTRIES did not parse as a JSON array — ignored`);
+        return null;
+      }
+      const validated = validateRegistryConfigs(parsed, "NB_REGISTRIES");
+      // Always re-pin the bundled static registry as locked + first so
+      // operator overrides can add registries without accidentally
+      // dropping the platform default.
+      const bundled = defaultRegistries()[0] as RegistryConfig;
+      const withoutBundled = validated.filter((r) => r.id !== bundled.id);
+      return [bundled, ...withoutBundled];
+    } catch (err) {
+      log.warn(
+        `[registries] NB_REGISTRIES parse error: ${err instanceof Error ? err.message : String(err)} — ignored`,
+      );
+      return null;
+    }
+  }
+  const legacy = process.env.NB_CATALOG_PATH;
+  if (legacy && legacy.trim().length > 0) {
+    log.warn(
+      `[registries] NB_CATALOG_PATH is deprecated; switch to NB_REGISTRIES with a JSON array of {id,name,type,url}.`,
+    );
+    return [
+      defaultRegistries()[0] as RegistryConfig,
+      {
+        id: "operator-static",
+        name: "Operator catalog",
+        type: "static",
+        enabled: true,
+        url: legacy.trim(),
+      },
+      defaultRegistries()[1] as RegistryConfig,
+    ];
+  }
+  return null;
+}
+
+/**
+ * Filter raw env input down to well-formed `RegistryConfig` entries.
+ * Drops anything missing required fields; logs each rejection so an
+ * operator with a typo gets a clear message at startup.
+ */
+function validateRegistryConfigs(raw: unknown[], source: string): RegistryConfig[] {
+  const out: RegistryConfig[] = [];
+  const seen = new Set<string>();
+  for (let i = 0; i < raw.length; i++) {
+    const c = raw[i] as Partial<RegistryConfig> | undefined;
+    const tag = `${source}[${i}${c?.id ? `:${c.id}` : ""}]`;
+    if (!c || typeof c !== "object") {
+      log.warn(`[registries] ${tag} dropped — not an object`);
+      continue;
+    }
+    if (typeof c.id !== "string" || c.id.length === 0) {
+      log.warn(`[registries] ${tag} dropped — id missing`);
+      continue;
+    }
+    if (seen.has(c.id)) {
+      log.warn(`[registries] ${tag} dropped — duplicate id`);
+      continue;
+    }
+    if (typeof c.name !== "string" || c.name.length === 0) {
+      log.warn(`[registries] ${tag} dropped — name missing`);
+      continue;
+    }
+    if (c.type !== "static" && c.type !== "mpak" && c.type !== "mcp" && c.type !== "custom-url") {
+      log.warn(`[registries] ${tag} dropped — type must be static|mpak|mcp|custom-url`);
+      continue;
+    }
+    seen.add(c.id);
+    out.push({
+      id: c.id,
+      name: c.name,
+      type: c.type,
+      enabled: c.enabled !== false,
+      ...(typeof c.url === "string" ? { url: c.url } : {}),
+      ...(c.locked === true ? { locked: true } : {}),
+    });
+  }
+  return out;
 }

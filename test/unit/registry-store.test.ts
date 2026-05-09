@@ -11,17 +11,19 @@ function freshStore(): { store: RegistryStore; dir: string; cleanup: () => void 
 }
 
 describe("RegistryStore", () => {
-  test("seeds curated + mpak defaults on first read", async () => {
+  test("seeds bundled-static + mpak defaults on first read", async () => {
     const { store, cleanup } = freshStore();
     try {
       const all = await store.list();
       expect(all.length).toBe(2);
-      const curated = all.find((r) => r.id === "curated");
+      const bundled = all.find((r) => r.id === "bundled-static");
       const mpak = all.find((r) => r.id === "mpak");
-      expect(curated?.enabled).toBe(true);
-      expect(curated?.locked).toBe(true);
+      expect(bundled?.enabled).toBe(true);
+      expect(bundled?.locked).toBe(true);
+      expect(bundled?.type).toBe("static");
+      expect(bundled?.url).toMatch(/connectors\/catalog\.yaml$/);
       expect(mpak?.enabled).toBe(true);
-      expect(mpak?.url).toBe("https://mpak.dev");
+      expect(mpak?.url).toBe("https://registry.mpak.dev");
     } finally {
       cleanup();
     }
@@ -42,9 +44,9 @@ describe("RegistryStore", () => {
   test("locked registry refuses to be disabled without force", async () => {
     const { store, cleanup } = freshStore();
     try {
-      await expect(store.update("curated", { enabled: false })).rejects.toThrow(/locked/i);
+      await expect(store.update("bundled-static", { enabled: false })).rejects.toThrow(/locked/i);
       const all = await store.list();
-      expect(all.find((r) => r.id === "curated")?.enabled).toBe(true);
+      expect(all.find((r) => r.id === "bundled-static")?.enabled).toBe(true);
     } finally {
       cleanup();
     }
@@ -53,8 +55,8 @@ describe("RegistryStore", () => {
   test("locked registry can still be renamed (lock applies to disable only)", async () => {
     const { store, cleanup } = freshStore();
     try {
-      await store.update("curated", { name: "Custom curated" });
-      const r = await store.get("curated");
+      await store.update("bundled-static", { name: "Custom curated" });
+      const r = await store.get("bundled-static");
       expect(r?.name).toBe("Custom curated");
     } finally {
       cleanup();
@@ -70,23 +72,23 @@ describe("RegistryStore", () => {
     }
   });
 
-  test("auto-restores curated registry if hand-edited out of the file", async () => {
+  test("auto-restores bundled-static registry if hand-edited out of the file", async () => {
     const { store, dir, cleanup } = freshStore();
     try {
       // First read seeds the file.
       await store.list();
-      // Hand-edit the file to remove curated (simulating operator
-      // mistake or migration). Next read should restore it.
+      // Hand-edit the file to remove the bundled-static entry (simulating
+      // operator mistake or a botched migration). Next read should restore it.
       const path = join(dir, "registries.json");
       const content = JSON.parse(readFileSync(path, "utf-8")) as {
         registries: Array<{ id: string }>;
       };
-      content.registries = content.registries.filter((r) => r.id !== "curated");
+      content.registries = content.registries.filter((r) => r.id !== "bundled-static");
       Bun.write(path, JSON.stringify(content));
       // New store instance reads + auto-restores.
       const second = new RegistryStore(dir);
       const all = await second.list();
-      expect(all.find((r) => r.id === "curated")).toBeDefined();
+      expect(all.find((r) => r.id === "bundled-static")).toBeDefined();
     } finally {
       cleanup();
     }

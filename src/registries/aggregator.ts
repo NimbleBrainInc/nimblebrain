@@ -1,4 +1,4 @@
-import { CuratedRegistry } from "./curated-registry.ts";
+import { StaticRegistry } from "../connectors/static-registry.ts";
 import { MpakRegistry } from "./mpak-registry.ts";
 import type { RegistryStore } from "./registry-store.ts";
 import type {
@@ -64,14 +64,16 @@ export class DirectoryAggregator {
   }
 
   /**
-   * Map a registry config to its implementation. Unknown types are
+   * Map a registry config to its implementation. Unknown types or
+   * missing required config (a static registry without a path) are
    * silently skipped — keeps a forward-compatible upgrade path when
    * future registry types ship.
    */
   private buildRegistry(cfg: RegistryConfig): ConnectorRegistry | null {
     switch (cfg.type) {
-      case "curated":
-        return new CuratedRegistry(cfg);
+      case "static":
+        if (!cfg.url) return null;
+        return new StaticRegistry(cfg, cfg.url);
       case "mpak":
         return new MpakRegistry(cfg);
       default:

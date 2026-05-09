@@ -13,7 +13,7 @@ import {
   saveWorkspaceCredential,
   type UserConfigFieldDef,
 } from "../config/workspace-credentials.ts";
-import { loadCatalog } from "../connectors/load-catalog.ts";
+import { loadStaticConnectorEntries } from "../connectors/static-source.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import type { ToolResult } from "../engine/types.ts";
 import type { UserIdentity } from "../identity/provider.ts";
@@ -375,7 +375,7 @@ async function handleListCatalog(
   ctx: ManageConnectorsContext,
   wsId: string | null,
 ): Promise<ToolResult> {
-  const catalog = loadCatalog();
+  const catalog = await loadStaticConnectorEntries(ctx.runtime.getRegistryStore());
   const ws = wsId ? await ctx.runtime.getWorkspaceStore().get(wsId) : null;
   const allowList = ws?.connectorsAllowList;
   const filtered =
@@ -453,7 +453,7 @@ async function handleListInstalled(
   const lifecycle = ctx.runtime.getLifecycle();
   const workDir = ctx.runtime.getWorkDir();
   const credStore = new FileCredentialStore(workDir);
-  const catalog = loadCatalog();
+  const catalog = await loadStaticConnectorEntries(ctx.runtime.getRegistryStore());
   const catalogByUrl = new Map(catalog.map((e) => [e.url, e]));
 
   type InstalledEntry = {
@@ -1724,7 +1724,7 @@ async function handleSetupOperator(
     };
   }
 
-  const catalog = loadCatalog();
+  const catalog = await loadStaticConnectorEntries(ctx.runtime.getRegistryStore());
   const entry = catalog.find((e) => e.id === catalogId);
   if (!entry) return errResult(`Catalog entry "${catalogId}" not found.`);
   if (entry.auth !== "static") {
@@ -1810,7 +1810,7 @@ async function handleRemoveOperatorSetup(
     };
   }
 
-  const catalog = loadCatalog();
+  const catalog = await loadStaticConnectorEntries(ctx.runtime.getRegistryStore());
   const entry = catalog.find((e) => e.id === catalogId);
   if (!entry) return errResult(`Catalog entry "${catalogId}" not found.`);
 
