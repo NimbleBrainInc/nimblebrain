@@ -119,7 +119,7 @@ export function bundleToServerDetail(raw: unknown): ServerDetail | null {
     name: reverseDnsName,
     description,
     version: b.latest_version,
-    title: b.display_name?.trim() || unscopedName(b.name),
+    title: b.display_name?.trim() || titleCase(unscopedName(b.name)),
     packages: [
       {
         registryType: "mpak",
@@ -130,7 +130,11 @@ export function bundleToServerDetail(raw: unknown): ServerDetail | null {
     ],
   };
 
-  if (b.icon) {
+  // Allow only http(s) icon URLs — `format: "uri"` accepts
+  // `javascript:` / `data:` / `file:` schemes that would XSS the
+  // Browse page's `<img src>`. A compromised mpak response shouldn't
+  // land script execution in the platform UI.
+  if (b.icon && isHttpUrl(b.icon)) {
     detail.icons = [{ src: b.icon, sizes: ["any"] }];
   }
   if (b.provenance?.repository) {
@@ -175,7 +179,29 @@ function unscopedName(npmName: string): string {
   return m?.[1] ?? npmName;
 }
 
+/**
+ * Capitalize each kebab-/space-separated segment so a fallback title
+ * looks like a display name rather than a raw package slug:
+ *   "national-parks" → "National Parks"
+ *   "echo"           → "Echo"
+ */
+function titleCase(s: string): string {
+  return s
+    .split(/[-\s]+/)
+    .map((part) => (part ? part[0]!.toUpperCase() + part.slice(1) : part))
+    .join(" ");
+}
+
 function truncate(s: string, max: number): string {
   if (s.length <= max) return s;
   return `${s.slice(0, max - 1)}…`;
+}
+
+function isHttpUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
 }

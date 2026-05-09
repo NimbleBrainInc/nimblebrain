@@ -105,6 +105,60 @@ describe("validateStaticServers", () => {
     expect(out.length).toBe(2);
   });
 
+  test("drops entries whose icon URL uses a non-http(s) scheme (XSS guard)", () => {
+    // The upstream ajv schema's `format: "uri"` accepts these, but the
+    // Browse page renders icons via `<img src>` — `javascript:` and
+    // `data:` SVGs would inject script execution from a malicious or
+    // misconfigured catalog ConfigMap.
+    const make = (src: string): unknown => ({ ...VALID_REMOTE, icons: [{ src, sizes: ["any"] }] });
+    expect(validateStaticServers([make("javascript:alert(1)")], "<test>")).toEqual([]);
+    expect(
+      validateStaticServers([make("data:image/svg+xml;<script>alert(1)</script>")], "<test>"),
+    ).toEqual([]);
+    expect(validateStaticServers([make("file:///etc/passwd")], "<test>")).toEqual([]);
+    expect(validateStaticServers([make("https://x.test/i.svg")], "<test>")).toHaveLength(1);
+  });
+
+  test("drops static-auth entries whose operatorSetup.portalUrl is non-http(s)", () => {
+    const evil = {
+      ...VALID_REMOTE,
+      _meta: {
+        "ai.nimblebrain/connector": {
+          defaultScope: "user",
+          auth: "static",
+          operatorSetup: {
+            portalUrl: "javascript:alert(1)",
+            hint: "x",
+            clientSecretKey: "x.client_secret",
+          },
+        },
+      },
+    };
+    expect(validateStaticServers([evil], "<test>")).toEqual([]);
+  });
+
+  test("drops entries with reserved keys in additionalAuthorizationParams", () => {
+    const make = (params: Record<string, string>): unknown => ({
+      ...VALID_REMOTE,
+      _meta: {
+        "ai.nimblebrain/connector": {
+          defaultScope: "workspace",
+          auth: "dcr",
+          additionalAuthorizationParams: params,
+        },
+      },
+    });
+    // Reserved OAuth params would let a catalog author silently override
+    // the OAuth flow at runtime — caught here instead of at install time.
+    expect(validateStaticServers([make({ client_id: "evil" })], "<test>")).toEqual([]);
+    expect(validateStaticServers([make({ state: "no" })], "<test>")).toEqual([]);
+    expect(validateStaticServers([make({ redirect_uri: "https://attacker" })], "<test>")).toEqual(
+      [],
+    );
+    // Non-reserved params survive.
+    expect(validateStaticServers([make({ access_type: "offline" })], "<test>")).toHaveLength(1);
+  });
+
   test("drops duplicates by name (first wins)", () => {
     const dup = { ...VALID_REMOTE, title: "Duplicate" };
     const out = validateStaticServers([VALID_REMOTE, dup], "<test>");

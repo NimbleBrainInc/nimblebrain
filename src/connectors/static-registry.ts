@@ -36,6 +36,7 @@ import type {
   ListEntriesContext,
   RegistryConfig,
 } from "../registries/types.ts";
+import { validateAdditionalAuthorizationParams } from "../tools/workspace-oauth-provider.ts";
 import {
   getNimbleBrainConnectorMeta,
   type ServerDetail,
@@ -150,7 +151,8 @@ export function validateStaticServers(parsed: unknown, source: string): ServerDe
   const seenNames = new Set<string>();
   for (let i = 0; i < raw.length; i++) {
     const candidate = raw[i];
-    const tag = `${source}[${i}${candidateName(candidate) ? `:${candidateName(candidate)}` : ""}]`;
+    const name = candidateName(candidate);
+    const tag = `${source}[${i}${name ? `:${name}` : ""}]`;
     const result = validateServerDetail(candidate);
     if (!result.valid) {
       log.warn(
@@ -163,10 +165,67 @@ export function validateStaticServers(parsed: unknown, source: string): ServerDe
       log.warn(`[static-registry] ${tag} dropped — duplicate name "${detail.name}"`);
       continue;
     }
+    // Defense-in-depth checks the upstream ajv schema doesn't perform:
+    //
+    //   - `format: "uri"` accepts any syntactically valid URI, including
+    //     `javascript:` / `vbscript:` / `file:` — those would XSS the
+    //     Browse page's `<img src>` or the Set-up modal's `<a href>` if a
+    //     malicious operator-supplied catalog landed.
+    //   - reserved OAuth params (`client_id`, `redirect_uri`, `state`, ...)
+    //     in `additionalAuthorizationParams` would let a catalog author
+    //     silently override the OAuth flow at runtime; the lifecycle
+    //     installer rejects them later, but failing here gives a clearer
+    //     source-tagged warning.
+    const safetyError = validateNimbleBrainSafety(detail);
+    if (safetyError) {
+      log.warn(`[static-registry] ${tag} dropped — ${safetyError}`);
+      continue;
+    }
     seenNames.add(detail.name);
     out.push(detail);
   }
   return out;
+}
+
+/**
+ * Run the safety checks the upstream schema can't (URL scheme allowlist
+ * for icon / portal URLs, reserved-key allowlist for additionalAuthorizationParams).
+ * Returns the first violation message, or null when the entry is safe.
+ */
+function validateNimbleBrainSafety(s: ServerDetail): string | null {
+  // Icons render as `<img src>` in Browse; allowing `javascript:` / `data:`
+  // SVGs / `file:` here is a script-injection vector via a malicious catalog.
+  for (const icon of s.icons ?? []) {
+    if (!isHttpUrl(icon.src)) {
+      return `icon src must be http(s): "${icon.src}"`;
+    }
+  }
+  const meta = getNimbleBrainConnectorMeta(s);
+  if (meta?.operatorSetup) {
+    if (!isHttpUrl(meta.operatorSetup.portalUrl)) {
+      return `operatorSetup.portalUrl must be http(s): "${meta.operatorSetup.portalUrl}"`;
+    }
+  }
+  if (meta?.additionalAuthorizationParams) {
+    try {
+      validateAdditionalAuthorizationParams(meta.additionalAuthorizationParams);
+    } catch (err) {
+      return err instanceof Error ? err.message : String(err);
+    }
+  }
+  if (meta?.docsUrl !== undefined && !isHttpUrl(meta.docsUrl)) {
+    return `docsUrl must be http(s): "${meta.docsUrl}"`;
+  }
+  return null;
+}
+
+function isHttpUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
 }
 
 function candidateName(c: unknown): string | undefined {

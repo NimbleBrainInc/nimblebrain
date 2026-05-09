@@ -1,8 +1,10 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   bundleToServerDetail,
   mechanicalReverseDnsName,
+  MpakRegistry,
 } from "../../src/registries/mpak-registry.ts";
+import type { RegistryConfig } from "../../src/registries/types.ts";
 
 describe("mechanicalReverseDnsName", () => {
   test("scoped npm name → dev.mpak.<scope>/<name> (per spec §1.1)", () => {
@@ -58,9 +60,34 @@ describe("bundleToServerDetail", () => {
     expect(mpakMeta.certification).toEqual({ level: 1 });
   });
 
-  test("falls back to unscoped name when display_name is null", () => {
-    const detail = bundleToServerDetail(bundle({ display_name: null }));
-    expect(detail?.title).toBe("echo");
+  test("falls back to title-cased unscoped name when display_name is null", () => {
+    expect(bundleToServerDetail(bundle({ display_name: null }))?.title).toBe("Echo");
+    expect(
+      bundleToServerDetail(bundle({ name: "@x/national-parks", display_name: null }))?.title,
+    ).toBe("National Parks");
+  });
+
+  test("drops icon when scheme is non-http(s) — no XSS via mpak-served icon URL", () => {
+    expect(bundleToServerDetail(bundle({ icon: "javascript:alert(1)" }))?.icons).toBeUndefined();
+    expect(
+      bundleToServerDetail(bundle({ icon: "data:image/svg+xml;<script>alert(1)</script>" }))?.icons,
+    ).toBeUndefined();
+    expect(bundleToServerDetail(bundle({ icon: "file:///etc/passwd" }))?.icons).toBeUndefined();
+    // http(s) icons survive.
+    expect(bundleToServerDetail(bundle({ icon: "https://x.test/i.svg" }))?.icons?.[0]?.src).toBe(
+      "https://x.test/i.svg",
+    );
+  });
+
+  test("composed ServerDetail validates against the upstream ajv schema (carries dev.mpak/registry meta)", async () => {
+    const { validateServerDetail } = await import("../../src/connectors/server-detail.ts");
+    const detail = bundleToServerDetail(bundle());
+    expect(detail).not.toBeNull();
+    const result = validateServerDetail(detail);
+    expect(result.valid).toBe(true);
+    // The mpak-side enrichment block survives the ajv pass — `_meta`
+    // accepts arbitrary reverse-DNS keys per spec §1.2.
+    expect(detail?._meta?.["dev.mpak/registry"]).toBeDefined();
   });
 
   test("returns null when required fields are missing (mpak-side bug)", () => {
@@ -79,5 +106,97 @@ describe("bundleToServerDetail", () => {
   test("omits icons when bundle.icon is null", () => {
     const detail = bundleToServerDetail(bundle({ icon: null }));
     expect(detail?.icons).toBeUndefined();
+  });
+});
+
+describe("MpakRegistry.listEntries", () => {
+  const cfg: RegistryConfig = {
+    id: "mpak",
+    name: "mpak.dev",
+    type: "mpak",
+    enabled: true,
+    url: "https://registry.example.test",
+  };
+
+  // Save and restore the global fetch so the mock doesn't leak across
+  // tests in the same process.
+  const originalFetch = globalThis.fetch;
+  let fetchMock: ((input: unknown, init?: unknown) => Promise<Response>) | null = null;
+  beforeEach(() => {
+    fetchMock = null;
+    globalThis.fetch = ((input: unknown, init?: unknown) =>
+      fetchMock
+        ? fetchMock(input, init)
+        : Promise.reject(new Error("fetch not stubbed"))) as typeof fetch;
+  });
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  test("projects each bundle in the search response to a DirectoryEntry", async () => {
+    fetchMock = async () =>
+      new Response(
+        JSON.stringify({
+          bundles: [
+            {
+              name: "@nimblebraininc/echo",
+              description: "Echo bundle",
+              latest_version: "1.0.0",
+              icon: "https://x.test/echo.svg",
+            },
+            {
+              name: "@nimblebraininc/ipinfo",
+              description: "IP intel",
+              latest_version: "0.3.0",
+            },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    const reg = new MpakRegistry(cfg);
+    const entries = await reg.listEntries();
+    expect(entries.length).toBe(2);
+    expect(entries[0]?.id).toBe("dev.mpak.nimblebraininc/echo");
+    expect(entries[0]?.install.kind).toBe("mpak-bundle");
+  });
+
+  test("throws on HTTP 5xx so the aggregator records a per-registry error", async () => {
+    fetchMock = async () => new Response("nope", { status: 503 });
+    const reg = new MpakRegistry(cfg);
+    await expect(reg.listEntries()).rejects.toThrow(/HTTP 503/);
+  });
+
+  test("throws on network failure (signal aborted, host unreachable)", async () => {
+    fetchMock = async () => {
+      throw new TypeError("fetch failed");
+    };
+    const reg = new MpakRegistry(cfg);
+    await expect(reg.listEntries()).rejects.toThrow(/mpak registry fetch failed/);
+  });
+
+  test("malformed payload (no `bundles` array) yields zero entries, no throw", async () => {
+    fetchMock = async () =>
+      new Response(JSON.stringify({ wrong: "shape" }), { status: 200 });
+    const reg = new MpakRegistry(cfg);
+    const entries = await reg.listEntries();
+    expect(entries).toEqual([]);
+  });
+
+  test("drops individual entries that fail ServerDetail validation, keeps the rest", async () => {
+    fetchMock = async () =>
+      new Response(
+        JSON.stringify({
+          bundles: [
+            { name: "@x/ok", description: "fine", latest_version: "1.0.0" },
+            { description: "missing name" },
+            { name: "@x/no-desc", latest_version: "1.0.0" },
+          ],
+        }),
+        { status: 200 },
+      );
+    const reg = new MpakRegistry(cfg);
+    const entries = await reg.listEntries();
+    expect(entries.length).toBe(1);
+    expect(entries[0]?.id).toBe("dev.mpak.x/ok");
   });
 });

@@ -156,4 +156,21 @@ describe("projectServerDetailToDirectoryEntry", () => {
     const e = projectServerDetailToDirectoryEntry(detail(), CTX);
     expect(e).toBeNull();
   });
+
+  test("derives remote-oauth install for SSE remote (legacy MCP-over-SSE profile)", () => {
+    // Upstream `RemoteTransport` allows either streamable-http or sse;
+    // we collapse both into the same `remote-oauth` install kind because
+    // the install dispatcher cares about the URL, not the transport
+    // variant.
+    const e = projectServerDetailToDirectoryEntry(
+      detail({
+        remotes: [{ type: "sse", url: "https://example.com/sse" }],
+      }),
+      CTX,
+    );
+    expect(e?.install.kind).toBe("remote-oauth");
+    if (e?.install.kind === "remote-oauth") {
+      expect(e.install.url).toBe("https://example.com/sse");
+    }
+  });
 });
