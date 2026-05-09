@@ -3,8 +3,8 @@ import {
   getNimbleBrainConnectorMeta,
   validateServerDetail,
 } from "../../src/connectors/server-detail.ts";
-import { readStaticServers } from "../../src/connectors/static-registry.ts";
 import { BUNDLED_STATIC_CATALOG_PATH } from "../../src/registries/registry-store.ts";
+import { readStaticServers } from "../../src/registries/static-source.ts";
 
 describe("bundled catalog.yaml", () => {
   test("parses + validates as ServerDetail with zero drops", () => {

@@ -1,89 +1,59 @@
 /**
- * `StaticRegistry` reads `ServerDetail[]` from a YAML or JSON file on
+ * `StaticSource` reads `ServerDetail[]` from a YAML or JSON file on
  * disk. It's the curated-services source we ship with the platform
- * (Asana, Notion, Granola, etc. — `catalog.yaml` next to this file)
- * and the operator-override registry (NB_REGISTRIES path entry, or the
+ * (Asana, Notion, Granola, etc. — `src/connectors/catalog.yaml`) and
+ * the operator-override source (NB_REGISTRIES path entry, or the
  * deprecated `NB_CATALOG_PATH` shim).
  *
- * Wire format is the upstream MCP registry's `ServerDetail` shape.
- * Every entry is ajv-validated against the upstream schema before it
- * leaves the registry. Invalid entries are dropped with a logged
- * warning naming the source path and the entry name (or index, when
- * `name` is missing); the surviving subset flows to the aggregator.
+ * The contract is just `fetch(): Promise<ServerDetail[]>`. Filtering,
+ * projection, error aggregation, and lookup tables live in
+ * `ConnectorDirectory` — this class is a pure file-to-validated-records
+ * adapter. Re-reads on every call so operator edits to a mounted
+ * ConfigMap take effect without a restart.
  *
- * Distinguishing this from `MpakRegistry`: static entries are
- * curator-authored and pinned at deploy time; mpak entries are pulled
- * live from a remote registry. They share one shape and one consumer
- * (`DirectoryAggregator`).
+ * Wire format is the upstream MCP registry's `ServerDetail` shape
+ * (see `src/connectors/server-detail.ts`). Every entry is ajv-validated
+ * before it leaves the source. Invalid entries are dropped with a
+ * logged warning naming the source path and the entry name (or index,
+ * when `name` is missing); the surviving subset flows up.
  *
  * Top-level YAML/JSON shape:
  *
  *   YAML:  { servers: [ ServerDetail, ... ] }
  *   JSON:  { servers: [ ServerDetail, ... ] }
  *
- * Bare-array JSON (legacy `NB_CATALOG_PATH` contract) is also accepted
- * — operators upgrading without rewriting their override file land in
- * the same code path.
+ * Bare-array JSON (legacy `NB_CATALOG_PATH` contract) is also
+ * accepted — operators upgrading without rewriting their override file
+ * land in the same code path.
  */
 
 import { existsSync, readFileSync } from "node:fs";
 import { extname } from "node:path";
 import { log } from "../cli/log.ts";
-import { projectServerDetailToDirectoryEntry } from "../registries/projection.ts";
-import type {
-  ConnectorRegistry,
-  DirectoryEntry,
-  ListEntriesContext,
-  RegistryConfig,
-} from "../registries/types.ts";
-import { validateAdditionalAuthorizationParams } from "../tools/workspace-oauth-provider.ts";
-import { isHttpUrl } from "../util/url.ts";
 import {
   getNimbleBrainConnectorMeta,
   type ServerDetail,
   validateServerDetail,
-} from "./server-detail.ts";
+} from "../connectors/server-detail.ts";
+import { validateAdditionalAuthorizationParams } from "../tools/workspace-oauth-provider.ts";
+import { isHttpUrl } from "../util/url.ts";
+import type { ConnectorSource } from "./types.ts";
 
-export class StaticRegistry implements ConnectorRegistry {
+export class StaticSource implements ConnectorSource {
   /**
-   * @param config Registry configuration carried into projected entries.
+   * @param id Stable source id (from `RegistryConfig.id`) — used by
+   *   the directory in error-tagged log lines.
    * @param path Absolute path to the YAML/JSON file holding the
-   *   `ServerDetail[]`. Read on every `listEntries()` call so operator
+   *   `ServerDetail[]`. Read on every `fetch()` call so operator
    *   edits to a mounted ConfigMap take effect without a restart.
    */
   constructor(
-    public readonly config: RegistryConfig,
+    public readonly id: string,
     private readonly path: string,
   ) {}
 
-  async listEntries(ctx?: ListEntriesContext): Promise<DirectoryEntry[]> {
-    const servers = readStaticServers(this.path);
-    const out: DirectoryEntry[] = [];
-    for (const s of servers) {
-      const entry = projectServerDetailToDirectoryEntry(s, {
-        registryId: this.config.id,
-        registryType: this.config.type,
-      });
-      if (!entry) {
-        log.warn(
-          `[static-registry] ${this.path} entry "${s.name}" dropped — no installable packages or remotes`,
-        );
-        continue;
-      }
-      // For static-auth entries, ask the caller's workspace whether
-      // the operator has configured the OAuth app yet. DCR entries
-      // (no operator setup needed) leave the field undefined so the
-      // UI doesn't render a meaningless badge.
-      const meta = getNimbleBrainConnectorMeta(s);
-      if (meta?.auth === "static" && meta.operatorSetup && ctx?.isOperatorConfigured) {
-        entry.operatorConfigured = await ctx.isOperatorConfigured(
-          entry.id,
-          meta.operatorSetup.clientSecretKey,
-        );
-      }
-      out.push(entry);
-    }
-    return out;
+  async fetch(): Promise<ServerDetail[]> {
+    return readStaticServers(this.path);
   }
 }
 
@@ -95,7 +65,7 @@ export class StaticRegistry implements ConnectorRegistry {
  */
 export function readStaticServers(path: string): ServerDetail[] {
   if (!existsSync(path)) {
-    log.warn(`[static-registry] ${path}: file not found — returning empty`);
+    log.warn(`[static-source] ${path}: file not found — returning empty`);
     return [];
   }
   let text: string;
@@ -103,7 +73,7 @@ export function readStaticServers(path: string): ServerDetail[] {
     text = readFileSync(path, "utf-8");
   } catch (err) {
     log.warn(
-      `[static-registry] failed to read ${path}: ${err instanceof Error ? err.message : String(err)}`,
+      `[static-source] failed to read ${path}: ${err instanceof Error ? err.message : String(err)}`,
     );
     return [];
   }
@@ -117,7 +87,7 @@ export function readStaticServers(path: string): ServerDetail[] {
     }
   } catch (err) {
     log.warn(
-      `[static-registry] failed to parse ${path}: ${err instanceof Error ? err.message : String(err)}`,
+      `[static-source] failed to parse ${path}: ${err instanceof Error ? err.message : String(err)}`,
     );
     return [];
   }
@@ -130,8 +100,7 @@ export function readStaticServers(path: string): ServerDetail[] {
  *   - `[ ... ]`                            (legacy NB_CATALOG_PATH contract)
  *
  * Returns only the entries that pass the upstream `ServerDetail` ajv
- * schema. Invalid entries are dropped with a logged warning naming the
- * source path and the entry's `name` (or index when `name` is absent).
+ * schema and the platform's defense-in-depth safety checks.
  */
 export function validateStaticServers(parsed: unknown, source: string): ServerDetail[] {
   let raw: unknown[];
@@ -144,7 +113,7 @@ export function validateStaticServers(parsed: unknown, source: string): ServerDe
   ) {
     raw = (parsed as { servers: unknown[] }).servers;
   } else {
-    log.warn(`[static-registry] ${source} did not yield a top-level 'servers' list or bare array`);
+    log.warn(`[static-source] ${source} did not yield a top-level 'servers' list or bare array`);
     return [];
   }
 
@@ -157,13 +126,13 @@ export function validateStaticServers(parsed: unknown, source: string): ServerDe
     const result = validateServerDetail(candidate);
     if (!result.valid) {
       log.warn(
-        `[static-registry] ${tag} dropped — invalid ServerDetail: ${result.errors.join("; ")}`,
+        `[static-source] ${tag} dropped — invalid ServerDetail: ${result.errors.join("; ")}`,
       );
       continue;
     }
     const detail = candidate as ServerDetail;
     if (seenNames.has(detail.name)) {
-      log.warn(`[static-registry] ${tag} dropped — duplicate name "${detail.name}"`);
+      log.warn(`[static-source] ${tag} dropped — duplicate name "${detail.name}"`);
       continue;
     }
     // Defense-in-depth checks the upstream ajv schema doesn't perform:
@@ -179,7 +148,7 @@ export function validateStaticServers(parsed: unknown, source: string): ServerDe
     //     source-tagged warning.
     const safetyError = validateNimbleBrainSafety(detail);
     if (safetyError) {
-      log.warn(`[static-registry] ${tag} dropped — ${safetyError}`);
+      log.warn(`[static-source] ${tag} dropped — ${safetyError}`);
       continue;
     }
     seenNames.add(detail.name);
@@ -194,8 +163,6 @@ export function validateStaticServers(parsed: unknown, source: string): ServerDe
  * Returns the first violation message, or null when the entry is safe.
  */
 function validateNimbleBrainSafety(s: ServerDetail): string | null {
-  // Icons render as `<img src>` in Browse; allowing `javascript:` / `data:`
-  // SVGs / `file:` here is a script-injection vector via a malicious catalog.
   for (const icon of s.icons ?? []) {
     if (!isHttpUrl(icon.src)) {
       return `icon src must be http(s): "${icon.src}"`;

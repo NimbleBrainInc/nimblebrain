@@ -271,6 +271,17 @@ function validateRegistryConfigs(raw: unknown[], source: string): RegistryConfig
       log.warn(`[registries] ${tag} dropped — type must be static|mpak|mcp|custom-url`);
       continue;
     }
+    let scopes: string[] | undefined;
+    if (c.scopes !== undefined) {
+      if (
+        !Array.isArray(c.scopes) ||
+        !c.scopes.every((s) => typeof s === "string" && s.length > 0)
+      ) {
+        log.warn(`[registries] ${tag} dropped — scopes must be an array of non-empty strings`);
+        continue;
+      }
+      scopes = c.scopes;
+    }
     seen.add(c.id);
     out.push({
       id: c.id,
@@ -278,6 +289,7 @@ function validateRegistryConfigs(raw: unknown[], source: string): RegistryConfig
       type: c.type,
       enabled: c.enabled !== false,
       ...(typeof c.url === "string" ? { url: c.url } : {}),
+      ...(scopes ? { scopes } : {}),
       ...(c.locked === true ? { locked: true } : {}),
     });
   }

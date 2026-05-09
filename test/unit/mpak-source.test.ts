@@ -1,34 +1,28 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import {
-  _resetMpakRegistryCache,
-  loadMpakServers,
-  MpakRegistry,
-} from "../../src/registries/mpak-registry.ts";
-import type { RegistryConfig } from "../../src/registries/types.ts";
+import { _resetMpakSourceCache, MpakSource } from "../../src/registries/mpak-source.ts";
 
 /**
- * MpakRegistry now passthrough-projects whatever `/v1/servers/search`
- * returns (mpak-side composer owns the canonical wire format). Tests
- * stub `globalThis.fetch` since the SDK uses it under the hood.
+ * `MpakSource.fetch()` returns the raw upstream `ServerDetail[]` from
+ * mpak's `/v1/servers/search`. The directory facade does projection,
+ * filtering, and aggregation on top — those concerns aren't tested
+ * here. This file pins the source's narrow contract:
  *
- * The module-level cache is reset between tests so a stale entry from
- * one test doesn't bleed into the next.
+ *   1. Calls the right URL (operator override or SDK default).
+ *   2. Returns ajv-valid ServerDetail[] only; drops malformed entries.
+ *   3. Caches successful fetches; doesn't cache failures.
+ *   4. Wraps backend errors with a `mpak registry fetch failed` prefix
+ *      so the directory's per-source error tag stays readable.
  */
 
-const cfg: RegistryConfig = {
-  id: "mpak",
-  name: "mpak.dev",
-  type: "mpak",
-  enabled: true,
-  url: "https://registry.example.test",
-};
+const SOURCE_ID = "mpak";
+const URL = "https://registry.example.test";
 
 const originalFetch = globalThis.fetch;
 let fetchMock: ((input: unknown, init?: unknown) => Promise<Response>) | null = null;
 
 beforeEach(() => {
   fetchMock = null;
-  _resetMpakRegistryCache();
+  _resetMpakSourceCache();
   globalThis.fetch = ((input: unknown, init?: unknown) =>
     fetchMock
       ? fetchMock(input, init)
@@ -39,8 +33,8 @@ afterEach(() => {
   globalThis.fetch = originalFetch;
 });
 
-describe("MpakRegistry.listEntries", () => {
-  test("projects each ServerDetail in the response to a DirectoryEntry with iconUrl", async () => {
+describe("MpakSource.fetch", () => {
+  test("returns ajv-valid ServerDetail[] from /v1/servers/search", async () => {
     fetchMock = async () =>
       new Response(
         JSON.stringify({
@@ -64,33 +58,32 @@ describe("MpakRegistry.listEntries", () => {
         }),
         { status: 200, headers: { "content-type": "application/json" } },
       );
-    const reg = new MpakRegistry(cfg);
-    const entries = await reg.listEntries();
-    expect(entries.length).toBe(1);
-    expect(entries[0]?.id).toBe("ai.nimblebrain/echo");
-    expect(entries[0]?.iconUrl).toBe("https://x.test/echo.svg");
-    expect(entries[0]?.install.kind).toBe("mpak-bundle");
+    const source = new MpakSource(SOURCE_ID, URL);
+    const servers = await source.fetch();
+    expect(servers.length).toBe(1);
+    expect(servers[0]?.name).toBe("ai.nimblebrain/echo");
+    expect(servers[0]?.icons?.[0]?.src).toBe("https://x.test/echo.svg");
   });
 
-  test("throws on HTTP 5xx so the aggregator records a per-registry error", async () => {
+  test("throws on HTTP 5xx so the directory records a per-source error", async () => {
     fetchMock = async () => new Response("nope", { status: 503 });
-    const reg = new MpakRegistry(cfg);
-    await expect(reg.listEntries()).rejects.toThrow(/mpak registry fetch failed/);
+    const source = new MpakSource(SOURCE_ID, URL);
+    await expect(source.fetch()).rejects.toThrow(/mpak registry fetch failed/);
   });
 
   test("throws on network failure (signal aborted, host unreachable)", async () => {
     fetchMock = async () => {
       throw new TypeError("fetch failed");
     };
-    const reg = new MpakRegistry(cfg);
-    await expect(reg.listEntries()).rejects.toThrow(/mpak registry fetch failed/);
+    const source = new MpakSource(SOURCE_ID, URL);
+    await expect(source.fetch()).rejects.toThrow(/mpak registry fetch failed/);
   });
 
   test("malformed payload (no `servers` array) yields zero entries, no throw", async () => {
     fetchMock = async () => new Response(JSON.stringify({ wrong: "shape" }), { status: 200 });
-    const reg = new MpakRegistry(cfg);
-    const entries = await reg.listEntries();
-    expect(entries).toEqual([]);
+    const source = new MpakSource(SOURCE_ID, URL);
+    const servers = await source.fetch();
+    expect(servers).toEqual([]);
   });
 
   test("drops individual entries that fail ServerDetail validation, keeps the rest", async () => {
@@ -117,31 +110,25 @@ describe("MpakRegistry.listEntries", () => {
         }),
         { status: 200 },
       );
-    const reg = new MpakRegistry(cfg);
-    const entries = await reg.listEntries();
-    expect(entries.length).toBe(1);
-    expect(entries[0]?.id).toBe("ai.nimblebrain/ok");
+    const source = new MpakSource(SOURCE_ID, URL);
+    const servers = await source.fetch();
+    expect(servers.length).toBe(1);
+    expect(servers[0]?.name).toBe("ai.nimblebrain/ok");
   });
 
-  test("undefined config.url falls through to SDK default — platform doesn't duplicate the constant", async () => {
+  test("undefined baseUrl falls through to SDK default — platform doesn't duplicate the constant", async () => {
     let observedUrl: string | undefined;
     fetchMock = async (input: unknown) => {
       observedUrl = String(input);
       return new Response(JSON.stringify({ servers: [] }), { status: 200 });
     };
-    const reg = new MpakRegistry({
-      id: "mpak",
-      name: "mpak.dev",
-      type: "mpak",
-      enabled: true,
-      // no url
-    });
-    await reg.listEntries();
+    const source = new MpakSource(SOURCE_ID, undefined);
+    await source.fetch();
     expect(observedUrl).toContain("https://registry.mpak.dev/v1/servers/search");
   });
 });
 
-describe("loadMpakServers caching", () => {
+describe("MpakSource caching", () => {
   test("second call within TTL hits cache — one fetch for repeated reads", async () => {
     let calls = 0;
     fetchMock = async () => {
@@ -167,9 +154,10 @@ describe("loadMpakServers caching", () => {
         { status: 200 },
       );
     };
-    await loadMpakServers("https://registry.example.test");
-    await loadMpakServers("https://registry.example.test");
-    await loadMpakServers("https://registry.example.test");
+    const source = new MpakSource(SOURCE_ID, URL);
+    await source.fetch();
+    await source.fetch();
+    await source.fetch();
     expect(calls).toBe(1);
   });
 
@@ -179,8 +167,9 @@ describe("loadMpakServers caching", () => {
       calls++;
       throw new TypeError("connection refused");
     };
-    await expect(loadMpakServers("https://registry.example.test")).rejects.toThrow();
-    await expect(loadMpakServers("https://registry.example.test")).rejects.toThrow();
+    const source = new MpakSource(SOURCE_ID, URL);
+    await expect(source.fetch()).rejects.toThrow();
+    await expect(source.fetch()).rejects.toThrow();
     expect(calls).toBe(2);
   });
 });

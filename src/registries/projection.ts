@@ -1,9 +1,30 @@
 /**
- * Project an upstream `ServerDetail` into the platform's
- * `DirectoryEntry` shape. Mechanical per spec §6.3 — every
- * `ConnectorRegistry` runs `ServerDetail` through this same function so
- * the Browse UI and install dispatch see one consistent contract.
+ * Project the canonical `ServerDetail` wire shape into the platform's
+ * row-shaped views. Two projections, one source of truth:
  *
+ *   - `projectServerDetailToDirectoryEntry` — the Browse-row contract.
+ *     Opaque-id + install-action discriminator. Used by every source
+ *     so Browse / install dispatch see one consistent shape.
+ *   - `serverDetailToCatalogEntry` — the flat catalog record the
+ *     Configure detail page renders for an *installed* connector
+ *     matched back to its catalog entry, plus the lookup shape the
+ *     setup_operator / remove_operator_setup tool actions consume.
+ *
+ * Both are pure functions over `ServerDetail` + its
+ * `_meta["ai.nimblebrain/connector"]` extension. The directory facade
+ * runs them once per call and caches the resulting maps; callers
+ * never invoke these directly.
+ */
+
+import { getNimbleBrainConnectorMeta, type ServerDetail } from "../connectors/server-detail.ts";
+import type { DirectoryEntry, RegistryType } from "./types.ts";
+
+export interface ProjectionContext {
+  registryId: string;
+  registryType: RegistryType;
+}
+
+/**
  * Source-of-truth for each output field:
  *
  *   - `id`            ← `ServerDetail.name` (reverse-DNS string)
@@ -16,17 +37,8 @@
  *
  * Returns null if the entry isn't installable (no packages, no remotes,
  * or unsupported transport — e.g. an SSE-only remote when we don't ship
- * an SSE installer). The aggregator drops nulls with a logged note.
+ * an SSE installer). The directory drops nulls with a logged note.
  */
-
-import { getNimbleBrainConnectorMeta, type ServerDetail } from "../connectors/server-detail.ts";
-import type { DirectoryEntry, RegistryType } from "./types.ts";
-
-export interface ProjectionContext {
-  registryId: string;
-  registryType: RegistryType;
-}
-
 export function projectServerDetailToDirectoryEntry(
   s: ServerDetail,
   ctx: ProjectionContext,
@@ -77,4 +89,63 @@ function deriveInstall(s: ServerDetail): DirectoryEntry["install"] | null {
     };
   }
   return null;
+}
+
+/**
+ * Flat per-entry record consumed by the platform's connector handlers.
+ * Mirrors the wire shape the web shell expects under
+ * `InstalledConnector.catalog`. Fields are derived mechanically from
+ * `ServerDetail` + its `_meta["ai.nimblebrain/connector"]` extension.
+ */
+export interface ConnectorCatalogEntry {
+  /** Stable identifier — upstream `ServerDetail.name` (reverse-DNS). */
+  id: string;
+  /** Display name from `title` (falling back to `name`). */
+  name: string;
+  description: string;
+  /** First icon src; the platform-bundled catalog ships at least one. */
+  iconUrl: string;
+  /** Remote MCP server URL — the value that goes into the bundle `url`. */
+  url: string;
+  auth: "dcr" | "static";
+  defaultScope: "workspace" | "user";
+  requiredScopes?: string[];
+  additionalAuthorizationParams?: Record<string, string>;
+  operatorSetup?: { portalUrl: string; hint: string; clientSecretKey: string };
+  tags?: string[];
+  interactive?: boolean;
+  docsUrl?: string;
+}
+
+/**
+ * Project one `ServerDetail` into the flat catalog entry shape.
+ * Returns null when the entry isn't a remote OAuth service (no
+ * `remotes[]`) or doesn't carry a renderable icon — those are the
+ * minimum fields the Configure page assumes, and surfacing a
+ * partial-shape catalog entry would break the call sites that
+ * dereference `cat.url` or `cat.iconUrl` unconditionally.
+ */
+export function serverDetailToCatalogEntry(s: ServerDetail): ConnectorCatalogEntry | null {
+  const remote = s.remotes?.[0];
+  if (!remote) return null;
+  const iconUrl = s.icons?.[0]?.src;
+  if (!iconUrl) return null;
+  const meta = getNimbleBrainConnectorMeta(s);
+  return {
+    id: s.name,
+    name: s.title ?? s.name,
+    description: s.description,
+    iconUrl,
+    url: remote.url,
+    auth: meta?.auth ?? "dcr",
+    defaultScope: meta?.defaultScope ?? "workspace",
+    ...(meta?.requiredScopes ? { requiredScopes: meta.requiredScopes } : {}),
+    ...(meta?.additionalAuthorizationParams
+      ? { additionalAuthorizationParams: meta.additionalAuthorizationParams }
+      : {}),
+    ...(meta?.operatorSetup ? { operatorSetup: meta.operatorSetup } : {}),
+    ...(meta?.tags ? { tags: meta.tags } : {}),
+    ...(typeof meta?.interactive === "boolean" ? { interactive: meta.interactive } : {}),
+    ...(meta?.docsUrl ? { docsUrl: meta.docsUrl } : {}),
+  };
 }

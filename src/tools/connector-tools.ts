@@ -13,11 +13,10 @@ import {
   saveWorkspaceCredential,
   type UserConfigFieldDef,
 } from "../config/workspace-credentials.ts";
-import { loadMpakConnectorIcons, loadStaticConnectorEntries } from "../connectors/static-source.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import type { ToolResult } from "../engine/types.ts";
 import type { UserIdentity } from "../identity/provider.ts";
-import { DirectoryAggregator } from "../registries/aggregator.ts";
+import type { ConnectorCatalogEntry } from "../registries/projection.ts";
 import type { DirectoryEntry } from "../registries/types.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import { isHttpUrl } from "../util/url.ts";
@@ -379,7 +378,7 @@ async function handleListCatalog(
   ctx: ManageConnectorsContext,
   wsId: string | null,
 ): Promise<ToolResult> {
-  const catalog = await loadStaticConnectorEntries(ctx.runtime.getRegistryStore());
+  const catalog = await ctx.runtime.getConnectorDirectory().catalogEntries();
   const ws = wsId ? await ctx.runtime.getWorkspaceStore().get(wsId) : null;
   const allowList = ws?.connectorsAllowList;
   const filtered =
@@ -408,7 +407,7 @@ async function handleListDirectory(
   ctx: ManageConnectorsContext,
   wsId: string | null,
 ): Promise<ToolResult> {
-  const aggregator = new DirectoryAggregator(ctx.runtime.getRegistryStore());
+  const directory = ctx.runtime.getConnectorDirectory();
 
   // Hoist the workspace fetch + credential-store handle out of the
   // closure so the closure does at most one disk read per static-auth
@@ -427,7 +426,7 @@ async function handleListDirectory(
         }
       : undefined;
 
-  const result = await aggregator.list({
+  const result = await directory.list({
     ...(wsId ? { wsId } : {}),
     ...(isOperatorConfigured ? { isOperatorConfigured } : {}),
   });
@@ -457,13 +456,18 @@ async function handleListInstalled(
   const lifecycle = ctx.runtime.getLifecycle();
   const workDir = ctx.runtime.getWorkDir();
   const credStore = new FileCredentialStore(workDir);
-  const catalog = await loadStaticConnectorEntries(ctx.runtime.getRegistryStore());
-  const catalogByUrl = new Map(catalog.map((e) => [e.url, e]));
+  // One directory instance per request — its memoized `servers()`
+  // means catalogByUrl + iconByPackage share a single fetch even
+  // though they're called separately. Reaching for the lookup tables
+  // (rather than the raw catalog list + manual map-build) keeps the
+  // construction concern inside the facade.
+  const directory = ctx.runtime.getConnectorDirectory();
+  const catalogByUrl = await directory.catalogByUrl();
   // Stdio bundles aren't keyable by URL — they're matched to their
   // mpak `ServerDetail` by the package identifier on the bundle
   // instance (`@scope/name`). Best-effort: a down mpak registry just
   // means stdio cards fall back to the deterministic letter avatar.
-  const mpakIcons = await loadMpakConnectorIcons(ctx.runtime.getRegistryStore());
+  const mpakIcons = await directory.iconByPackage();
 
   type InstalledEntry = {
     serverName: string;
@@ -487,7 +491,7 @@ async function handleListInstalled(
     // Optional — only populated for URL bundles / catalog-matched entries
     url?: string;
     catalogId?: string | null;
-    catalog?: (typeof catalog)[number];
+    catalog?: ConnectorCatalogEntry;
     authorizationUrl?: string;
     identity?: { sub?: string; email?: string; name?: string };
     missingOperatorSetup?: boolean;
@@ -1766,8 +1770,7 @@ async function handleSetupOperator(
     };
   }
 
-  const catalog = await loadStaticConnectorEntries(ctx.runtime.getRegistryStore());
-  const entry = catalog.find((e) => e.id === catalogId);
+  const entry = await ctx.runtime.getConnectorDirectory().catalogById(catalogId);
   if (!entry) return errResult(`Catalog entry "${catalogId}" not found.`);
   if (entry.auth !== "static") {
     return errResult(`"${entry.name}" is a DCR connector — operator setup not required.`);
@@ -1852,8 +1855,7 @@ async function handleRemoveOperatorSetup(
     };
   }
 
-  const catalog = await loadStaticConnectorEntries(ctx.runtime.getRegistryStore());
-  const entry = catalog.find((e) => e.id === catalogId);
+  const entry = await ctx.runtime.getConnectorDirectory().catalogById(catalogId);
   if (!entry) return errResult(`Catalog entry "${catalogId}" not found.`);
 
   // Guard: refuse if the connector is currently installed. Removing

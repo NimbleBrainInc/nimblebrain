@@ -7,6 +7,7 @@ import { BundleLifecycleManager } from "../../src/bundles/lifecycle.ts";
 import type { BundleRef } from "../../src/bundles/types.ts";
 import { getWorkspaceCredentials } from "../../src/config/workspace-credentials.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
+import { ConnectorDirectory } from "../../src/registries/directory.ts";
 import { RegistryStore } from "../../src/registries/registry-store.ts";
 import type { DirectoryEntry } from "../../src/registries/types.ts";
 import type { Runtime } from "../../src/runtime/runtime.ts";
@@ -144,6 +145,7 @@ function buildHarness(opts: { adminId?: string } = {}): Harness {
     getWorkDir: () => workDir,
     getWorkspaceStore: () => workspaceStore,
     getRegistryStore: () => registryStore,
+    getConnectorDirectory: () => new ConnectorDirectory(registryStore),
     getLifecycle: () => lifecycle,
     getRegistryForWorkspace: (_id: string) => workspaceRegistry,
     // Minimal stubs for the runtime services list_installed touches
