@@ -78,11 +78,17 @@ function defaultRegistries(): RegistryConfig[] {
     // No `url` — the mpak SDK owns its default registry host. Operators
     // self-hosting a private mpak instance set `url` via the admin UI
     // or `NB_REGISTRIES`; otherwise the SDK's built-in default is used.
+    //
+    // `scopes` defaults to `["nimblebraininc"]` so first-time installs
+    // see only NimbleBrain-curated bundles. Open mpak is one config
+    // edit away (drop or extend the scopes list) — narrow-by-default
+    // keeps the Browse list focused for the common case.
     {
       id: MPAK_ID,
       name: "mpak.dev",
       type: "mpak",
       enabled: true,
+      scopes: ["nimblebraininc"],
     },
   ];
 }

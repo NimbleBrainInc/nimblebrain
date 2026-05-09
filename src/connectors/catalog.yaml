@@ -26,7 +26,7 @@ servers:
     description: Tasks, projects, and team workflows
     version: "1.0.0"
     icons:
-      - src: https://static.nimblebrain.ai/icons/asana.svg
+      - src: https://static.nimblebrain.ai/icons/asana.png
         sizes: ["any"]
     remotes:
       - type: streamable-http
@@ -46,7 +46,7 @@ servers:
     description: Read & write workspace pages — shared workspace identity
     version: "1.0.0"
     icons:
-      - src: https://static.nimblebrain.ai/icons/notion.svg
+      - src: https://static.nimblebrain.ai/icons/notion.png
         sizes: ["any"]
     remotes:
       - type: streamable-http
@@ -63,7 +63,7 @@ servers:
     description: Read, send, label your email
     version: "1.0.0"
     icons:
-      - src: https://static.nimblebrain.ai/icons/gmail.svg
+      - src: https://static.nimblebrain.ai/icons/gmail.png
         sizes: ["any"]
     remotes:
       - type: streamable-http
@@ -89,7 +89,7 @@ servers:
     description: Personal meeting notes and transcripts
     version: "1.0.0"
     icons:
-      - src: https://static.nimblebrain.ai/icons/granola.svg
+      - src: https://static.nimblebrain.ai/icons/granola.png
         sizes: ["any"]
     remotes:
       - type: streamable-http
@@ -105,7 +105,7 @@ servers:
     description: CRM contacts, deals, and pipeline
     version: "1.0.0"
     icons:
-      - src: https://static.nimblebrain.ai/icons/hubspot.svg
+      - src: https://static.nimblebrain.ai/icons/hubspot.png
         sizes: ["any"]
     remotes:
       - type: streamable-http
@@ -125,7 +125,7 @@ servers:
     description: Microsoft 365 mail
     version: "1.0.0"
     icons:
-      - src: https://static.nimblebrain.ai/icons/outlook.svg
+      - src: https://static.nimblebrain.ai/icons/outlook.png
         sizes: ["any"]
     remotes:
       - type: streamable-http
@@ -149,7 +149,7 @@ servers:
     description: Meetings, recordings, contacts
     version: "1.0.0"
     icons:
-      - src: https://static.nimblebrain.ai/icons/zoom.svg
+      - src: https://static.nimblebrain.ai/icons/zoom.png
         sizes: ["any"]
     remotes:
       - type: streamable-http

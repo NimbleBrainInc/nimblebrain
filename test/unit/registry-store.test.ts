@@ -25,6 +25,9 @@ describe("RegistryStore", () => {
       expect(mpak?.enabled).toBe(true);
       // Seeded mpak row carries no `url` — the SDK owns its default host.
       expect(mpak?.url).toBeUndefined();
+      // Narrow-by-default: first install sees only NimbleBrain-curated
+      // bundles. Operators broaden by editing the row.
+      expect(mpak?.scopes).toEqual(["nimblebraininc"]);
     } finally {
       cleanup();
     }
