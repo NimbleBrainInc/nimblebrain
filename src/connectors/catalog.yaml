@@ -185,21 +185,11 @@ servers:
         auth: dcr
         tags: [payments, billing]
 
-  - name: com.supabase/mcp
-    title: Supabase
-    description: Postgres backend with auth, storage, and realtime
-    version: "1.0.0"
-    icons:
-      - src: https://static.nimblebrain.ai/icons/supabase.png
-        sizes: ["any"]
-    remotes:
-      - type: streamable-http
-        url: https://mcp.supabase.com/mcp
-    _meta:
-      ai.nimblebrain/connector:
-        defaultScope: workspace
-        auth: dcr
-        tags: [database, backend]
+  # Supabase: advertises OAuth metadata via WWW-Authenticate's
+  # resource_metadata header (RFC 9728 §3.1) at a non-default path
+  # (/.well-known/oauth-protected-resource/mcp). Platform's discovery
+  # only honors the well-known root today — install would fail. Re-add
+  # once issue #196 lands the WWW-Authenticate fallback.
 
   - name: com.vercel/mcp
     title: Vercel

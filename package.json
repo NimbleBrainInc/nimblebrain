@@ -57,6 +57,7 @@
     "smoke": "bun test test/smoke/",
     "check:cycles": "bun run scripts/check-cycles.ts",
     "check:bundle-transport": "bun run scripts/check-bundle-transport.ts",
+    "check:catalog": "bun run scripts/check-catalog-dcr.ts",
     "codegen": "bun run scripts/codegen-web-platform-schemas.ts",
     "check:codegen": "bun run codegen && git diff --exit-code web/src/_generated/",
     "verify": "bun run verify:static && bun run verify:test-unit && bun run test:integration && bun run smoke",
