@@ -35,11 +35,11 @@ export function OperatorOAuthSection({
     if (!cat || cat.auth !== "static" || !cat.operatorSetup) return null;
     return {
       id: cat.id,
-      registryId: "curated",
-      registryType: "curated",
+      registryId: "bundled-static",
+      registryType: "static",
       name: cat.name,
       description: cat.description,
-      iconUrl: cat.iconUrl,
+      ...(installed.iconUrl ? { iconUrl: installed.iconUrl } : {}),
       tags: cat.tags,
       defaultScope: cat.defaultScope,
       install: {
@@ -53,7 +53,7 @@ export function OperatorOAuthSection({
           : {}),
       },
     };
-  }, [cat]);
+  }, [cat, installed.iconUrl]);
 
   if (!cat || cat.auth !== "static" || !op || !directoryEntry) return null;
 

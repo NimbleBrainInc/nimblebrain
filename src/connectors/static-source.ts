@@ -20,6 +20,8 @@
  * setup).
  */
 
+import { log } from "../cli/log.ts";
+import { loadMpakServers } from "../registries/mpak-registry.ts";
 import type { RegistryStore } from "../registries/registry-store.ts";
 import { getNimbleBrainConnectorMeta, type ServerDetail } from "./server-detail.ts";
 import { readStaticServers } from "./static-registry.ts";
@@ -108,6 +110,49 @@ export async function loadStaticConnectorEntries(
   for (const s of servers) {
     const entry = serverDetailToCatalogEntry(s);
     if (entry) out.push(entry);
+  }
+  return out;
+}
+
+/**
+ * Build a `Map<packageName, iconUrl>` from every active mpak registry's
+ * `ServerDetail[]`, keyed by the package identifier (npm-style scoped
+ * name, e.g. `@nimblebraininc/echo`). Used by the installed-connector
+ * list to render brand icons for **stdio bundles** — they don't have a
+ * remote URL, so the static-catalog-by-url lookup misses them; the
+ * package identifier on the bundle instance matches mpak's
+ * `packages[].identifier` instead.
+ *
+ * Best-effort: a registry that throws is logged + skipped so a single
+ * down mpak doesn't strand every installed bundle's icon. Hits the
+ * `loadMpakServers` cache so this is free when the Browse page already
+ * fetched in the last 5 minutes.
+ */
+export async function loadMpakConnectorIcons(store: RegistryStore): Promise<Map<string, string>> {
+  const configs = await store.list();
+  const out = new Map<string, string>();
+  for (const cfg of configs) {
+    if (cfg.type !== "mpak" || !cfg.enabled) continue;
+    let servers: ServerDetail[];
+    try {
+      // `cfg.url` undefined → SDK default. Don't duplicate the URL constant.
+      servers = await loadMpakServers(cfg.url);
+    } catch (err) {
+      log.warn(
+        `[mpak-icons] ${cfg.id} skipped — ${err instanceof Error ? err.message : String(err)}`,
+      );
+      continue;
+    }
+    for (const s of servers) {
+      const iconUrl = s.icons?.[0]?.src;
+      if (!iconUrl) continue;
+      for (const pkg of s.packages ?? []) {
+        // First write wins — same package shouldn't appear twice across
+        // mpak registries, but if an operator points two registries at
+        // overlapping data, the iteration order pins the result.
+        if (!out.has(pkg.identifier)) out.set(pkg.identifier, iconUrl);
+      }
+    }
   }
   return out;
 }

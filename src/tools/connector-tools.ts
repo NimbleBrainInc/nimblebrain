@@ -13,7 +13,7 @@ import {
   saveWorkspaceCredential,
   type UserConfigFieldDef,
 } from "../config/workspace-credentials.ts";
-import { loadStaticConnectorEntries } from "../connectors/static-source.ts";
+import { loadMpakConnectorIcons, loadStaticConnectorEntries } from "../connectors/static-source.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import type { ToolResult } from "../engine/types.ts";
 import type { UserIdentity } from "../identity/provider.ts";
@@ -459,6 +459,11 @@ async function handleListInstalled(
   const credStore = new FileCredentialStore(workDir);
   const catalog = await loadStaticConnectorEntries(ctx.runtime.getRegistryStore());
   const catalogByUrl = new Map(catalog.map((e) => [e.url, e]));
+  // Stdio bundles aren't keyable by URL — they're matched to their
+  // mpak `ServerDetail` by the package identifier on the bundle
+  // instance (`@scope/name`). Best-effort: a down mpak registry just
+  // means stdio cards fall back to the deterministic letter avatar.
+  const mpakIcons = await loadMpakConnectorIcons(ctx.runtime.getRegistryStore());
 
   type InstalledEntry = {
     serverName: string;
@@ -470,6 +475,15 @@ async function handleListInstalled(
     interactive: boolean;
     toolCount: number;
     trustScore: number | null;
+    /**
+     * Brand icon URL. One field for both remote (catalog.iconUrl) and
+     * stdio bundles (mpak ServerDetail.icons[0].src by package name) so
+     * the UI doesn't fan out across two sources to render the same
+     * thing. Falls through to the deterministic letter avatar when
+     * unset (e.g. the bundle isn't in any active mpak registry, or
+     * the mpak fetch failed).
+     */
+    iconUrl?: string;
     // Optional — only populated for URL bundles / catalog-matched entries
     url?: string;
     catalogId?: string | null;
@@ -597,6 +611,12 @@ async function handleListInstalled(
         cat?.interactive === true ||
         (Array.isArray(instance.ui?.placements) && instance.ui.placements.length > 0);
 
+      // Resolve brand icon once: prefer the static catalog match (remote
+      // bundles), fall back to the mpak-by-package-name lookup (stdio).
+      // Either may be undefined; the UI handles the missing case with a
+      // deterministic letter avatar.
+      const iconUrl = cat?.iconUrl ?? mpakIcons.get(instance.bundleName);
+
       const entry: InstalledEntry = {
         serverName: instance.serverName,
         bundleName: instance.bundleName,
@@ -612,6 +632,7 @@ async function handleListInstalled(
         interactive,
         toolCount,
         trustScore: instance.trustScore ?? null,
+        ...(iconUrl ? { iconUrl } : {}),
       };
 
       if (isRemote && url) {
@@ -713,6 +734,7 @@ async function handleListInstalled(
           url: ref.url,
           catalogId: cat?.id ?? null,
           ...(cat ? { catalog: cat } : {}),
+          ...(cat?.iconUrl ? { iconUrl: cat.iconUrl } : {}),
           ...(conn?.authorizationUrl ? { authorizationUrl: conn.authorizationUrl } : {}),
         };
 

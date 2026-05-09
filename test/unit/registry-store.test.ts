@@ -23,7 +23,8 @@ describe("RegistryStore", () => {
       expect(bundled?.type).toBe("static");
       expect(bundled?.url).toMatch(/connectors\/catalog\.yaml$/);
       expect(mpak?.enabled).toBe(true);
-      expect(mpak?.url).toBe("https://registry.mpak.dev");
+      // Seeded mpak row carries no `url` — the SDK owns its default host.
+      expect(mpak?.url).toBeUndefined();
     } finally {
       cleanup();
     }

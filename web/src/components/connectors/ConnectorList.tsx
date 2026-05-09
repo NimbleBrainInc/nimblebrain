@@ -135,7 +135,7 @@ function ConnectorRow({
   configureBasePath: string;
 }) {
   const name = installed.catalog?.name ?? installed.serverName;
-  const iconUrl = installed.catalog?.iconUrl;
+  const iconUrl = installed.iconUrl;
   const summary = listSummary(installed);
 
   return (

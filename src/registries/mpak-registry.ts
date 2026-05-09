@@ -1,209 +1,117 @@
+import { MpakClient } from "@nimblebrain/mpak-sdk";
 import { log } from "../cli/log.ts";
 import { type ServerDetail, validateServerDetail } from "../connectors/server-detail.ts";
-import { isHttpUrl } from "../util/url.ts";
 import { projectServerDetailToDirectoryEntry } from "./projection.ts";
 import type { ConnectorRegistry, DirectoryEntry, RegistryConfig } from "./types.ts";
 
 /**
  * Surfaces mpak bundles in the connector directory.
  *
- * Adapter mode (today): the registry's HTTP API still returns mpak's
- * legacy `/v1/bundles/...` shape (per-bundle JSON with `name`,
- * `display_name`, `description`, `latest_version`, `icon`, ...). This
- * class fetches that shape, projects each entry to upstream
- * `ServerDetail` using the same composition rules mpak will eventually
- * run server-side (per spec §2), validates the result against the
- * upstream schema, and projects to `DirectoryEntry`.
- *
- * Passthrough mode (future): once mpak ships `/v1/servers/...`
- * returning native `ServerDetail`, the only change here is dropping
- * `bundleToServerDetail` — the validation + projection-to-DirectoryEntry
- * stays.
+ * Calls mpak's `/v1/servers/search` (the MCP-spec-aligned endpoint
+ * shipped with mpak SDK 0.8) and gets back native `ServerDetail[]`.
+ * The platform validates each entry against its local ajv schema and
+ * projects to `DirectoryEntry` via the same shared projection every
+ * registry uses. No client-side composition — mpak's server-side
+ * composer owns the canonical wire format.
  *
  * Failure modes are graceful: a network error or HTTP 4xx/5xx throws
  * to the aggregator so the per-registry error list shows a degraded
  * mpak rather than a silent zero-results state hiding the failure.
+ *
+ * Results are cached at module scope keyed by base URL with a 5-minute
+ * TTL so the Browse page and the installed-connector list (which uses
+ * the cache via {@link loadMpakServers} to resolve stdio-bundle icons)
+ * share one fetch. Errors are not cached — a down registry retries on
+ * the next call.
  */
 export class MpakRegistry implements ConnectorRegistry {
-  /** Hard cap on the per-page fetch; mpak's API tops out near this. */
-  private static readonly PAGE_LIMIT = 100;
-  /** Network call ceiling. The Browse page hangs while this resolves. */
-  private static readonly REQUEST_TIMEOUT_MS = 10_000;
-
   constructor(public readonly config: RegistryConfig) {}
 
   async listEntries(): Promise<DirectoryEntry[]> {
-    const baseUrl = this.config.url ?? "https://registry.mpak.dev";
-    const url = `${baseUrl.replace(/\/+$/, "")}/v1/bundles/search?limit=${MpakRegistry.PAGE_LIMIT}`;
-
-    let payload: { bundles?: unknown[] };
-    try {
-      const res = await fetch(url, {
-        headers: { Accept: "application/json" },
-        signal: AbortSignal.timeout(MpakRegistry.REQUEST_TIMEOUT_MS),
-      });
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status} ${res.statusText}`);
-      }
-      payload = (await res.json()) as { bundles?: unknown[] };
-    } catch (err) {
-      throw new Error(
-        `mpak registry fetch failed (${url}): ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
-
-    const bundles = Array.isArray(payload.bundles) ? payload.bundles : [];
+    const servers = await fetchServers(this.config.url);
     const out: DirectoryEntry[] = [];
-    for (const raw of bundles) {
-      const detail = bundleToServerDetail(raw);
-      if (!detail) continue;
-      const validation = validateServerDetail(detail);
-      if (!validation.valid) {
-        log.warn(
-          `[mpak-registry] entry "${detail.name}" dropped — invalid ServerDetail: ${validation.errors.join("; ")}`,
-        );
-        continue;
-      }
-      const entry = projectServerDetailToDirectoryEntry(detail, {
+    for (const s of servers) {
+      const entry = projectServerDetailToDirectoryEntry(s, {
         registryId: this.config.id,
         registryType: this.config.type,
       });
-      if (!entry) continue;
-      out.push(entry);
+      if (entry) out.push(entry);
     }
     return out;
   }
 }
 
-/** Shape of a single bundle in mpak's `/v1/bundles/search` response. */
-interface MpakBundle {
-  name: string;
-  display_name?: string | null;
-  description?: string | null;
-  latest_version?: string | null;
-  icon?: string | null;
-  homepage?: string | null;
-  downloads?: number;
-  published_at?: string;
-  certification_level?: number;
-  provenance?: {
-    schema_version?: number | string;
-    provider?: string;
-    repository?: string;
-    sha?: string;
-  };
+const PAGE_LIMIT = 100;
+const REQUEST_TIMEOUT_MS = 10_000;
+const CACHE_TTL_MS = 5 * 60 * 1000;
+/** Cache key sentinel for the SDK-default base URL (no operator override). */
+const DEFAULT_KEY = "<sdk-default>";
+
+interface CacheEntry {
+  servers: ServerDetail[];
+  expiresAt: number;
 }
+const cache = new Map<string, CacheEntry>();
 
 /**
- * Project mpak's legacy bundle JSON to upstream `ServerDetail`.
- * Per spec §1.1 the reverse-DNS `name` is mechanically derived from
- * the npm-style scoped name when no author override is recorded.
+ * Fetch + validate `ServerDetail[]` for an mpak instance.
+ * `baseUrl === undefined` means "use the SDK's built-in default" —
+ * the platform doesn't store or duplicate that constant. Returns the
+ * cached list when fresh; otherwise calls `/v1/servers/search` via
+ * the SDK and populates the cache on success. Errors propagate (no
+ * negative caching — an outage retries on the next call rather than
+ * masking the live state for 5 minutes).
  *
- * Returns null when the input doesn't carry the minimum fields the
- * upstream schema requires (name, description, version) — those are
- * registry-side bugs that shouldn't surface as broken cards.
+ * Exported so {@link loadMpakConnectorIcons}-style consumers can read
+ * the same canonical list the registry projection sees, without
+ * paying for a second HTTP round-trip.
  */
-export function bundleToServerDetail(raw: unknown): ServerDetail | null {
-  if (!raw || typeof raw !== "object") return null;
-  const b = raw as MpakBundle;
-  if (typeof b.name !== "string" || b.name.length === 0) return null;
-  if (typeof b.description !== "string" || b.description.length === 0) return null;
-  if (typeof b.latest_version !== "string" || b.latest_version.length === 0) return null;
+export async function loadMpakServers(baseUrl: string | undefined): Promise<ServerDetail[]> {
+  return fetchServers(baseUrl);
+}
 
-  const reverseDnsName = mechanicalReverseDnsName(b.name);
-  // Upstream schema constrains description to 1..100 chars. mpak today
-  // has no length cap, so truncate at the boundary rather than dropping
-  // an otherwise-valid entry. The full text remains in mpak.
-  const description = truncate(b.description, 100);
+async function fetchServers(baseUrl: string | undefined): Promise<ServerDetail[]> {
+  const now = Date.now();
+  const cacheKey = baseUrl ?? DEFAULT_KEY;
+  const cached = cache.get(cacheKey);
+  if (cached && cached.expiresAt > now) return cached.servers;
 
-  const detail: ServerDetail = {
-    name: reverseDnsName,
-    description,
-    version: b.latest_version,
-    title: b.display_name?.trim() || titleCase(unscopedName(b.name)),
-    packages: [
-      {
-        registryType: "mpak",
-        identifier: b.name,
-        version: b.latest_version,
-        transport: { type: "stdio" },
-      },
-    ],
-  };
-
-  // Allow only http(s) icon URLs — `format: "uri"` accepts
-  // `javascript:` / `data:` / `file:` schemes that would XSS the
-  // Browse page's `<img src>`. A compromised mpak response shouldn't
-  // land script execution in the platform UI.
-  if (b.icon && isHttpUrl(b.icon)) {
-    detail.icons = [{ src: b.icon, sizes: ["any"] }];
-  }
-  // `provenance.repository` is mpak-supplied. Constrain to the
-  // `<owner>/<repo>` shape before string-concatenating into a URL —
-  // junk like `evil.com/x` would yield `https://github.com/evil.com/x`,
-  // benign at GitHub but still attacker-influenced output.
-  if (
-    b.provenance?.repository &&
-    /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(b.provenance.repository)
-  ) {
-    detail.repository = {
-      url: `https://github.com/${b.provenance.repository}`,
-      source: "github",
+  const client = new MpakClient({
+    timeout: REQUEST_TIMEOUT_MS,
+    ...(baseUrl ? { registryUrl: baseUrl } : {}),
+  });
+  let response: { servers?: unknown[] };
+  try {
+    response = (await client.searchServers({ limit: PAGE_LIMIT })) as {
+      servers?: unknown[];
     };
-  }
-  // Same scheme allowlist as `icon` — `homepage` becomes `websiteUrl`
-  // and could end up in a UI `<a href>` later. Defense-in-depth even
-  // though the projection currently doesn't render it.
-  if (b.homepage && isHttpUrl(b.homepage)) {
-    detail.websiteUrl = b.homepage;
+  } catch (err) {
+    throw new Error(
+      `mpak registry fetch failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
 
-  // mpak-side enrichment carried under `dev.mpak/registry` per spec §2.
-  // The current shape mirrors what mpak's server-side composer will
-  // emit when it lands; consumers that key off these fields keep
-  // working unchanged at swap time.
-  const mpakMeta: Record<string, unknown> = {
-    npmName: b.name,
-  };
-  if (typeof b.downloads === "number") mpakMeta.downloads = b.downloads;
-  if (b.published_at) mpakMeta.published_at = b.published_at;
-  if (typeof b.certification_level === "number") {
-    mpakMeta.certification = { level: b.certification_level };
+  const candidates = Array.isArray(response.servers) ? response.servers : [];
+  const valid: ServerDetail[] = [];
+  for (const c of candidates) {
+    const result = validateServerDetail(c);
+    if (!result.valid) {
+      const name =
+        c && typeof c === "object" && typeof (c as { name?: unknown }).name === "string"
+          ? (c as { name: string }).name
+          : "<unnamed>";
+      log.warn(
+        `[mpak-registry] entry "${name}" dropped — invalid ServerDetail: ${result.errors.join("; ")}`,
+      );
+      continue;
+    }
+    valid.push(c as ServerDetail);
   }
-  if (b.provenance) mpakMeta.provenance = b.provenance;
-  detail._meta = { "dev.mpak/registry": mpakMeta };
-
-  return detail;
+  cache.set(cacheKey, { servers: valid, expiresAt: now + CACHE_TTL_MS });
+  return valid;
 }
 
-/** Per spec §1.1: `@scope/name` → `dev.mpak.<lowercased-scope>/<unscoped-name>`. */
-export function mechanicalReverseDnsName(npmName: string): string {
-  const m = /^@([^/]+)\/(.+)$/.exec(npmName);
-  if (!m) return `dev.mpak/${npmName.toLowerCase()}`;
-  const scope = (m[1] ?? "").toLowerCase();
-  const name = (m[2] ?? "").toLowerCase();
-  return `dev.mpak.${scope}/${name}`;
-}
-
-function unscopedName(npmName: string): string {
-  const m = /^@[^/]+\/(.+)$/.exec(npmName);
-  return m?.[1] ?? npmName;
-}
-
-/**
- * Capitalize each kebab-/space-separated segment so a fallback title
- * looks like a display name rather than a raw package slug:
- *   "national-parks" → "National Parks"
- *   "echo"           → "Echo"
- */
-function titleCase(s: string): string {
-  return s
-    .split(/[-\s]+/)
-    .map((part) => (part ? part[0]!.toUpperCase() + part.slice(1) : part))
-    .join(" ");
-}
-
-function truncate(s: string, max: number): string {
-  if (s.length <= max) return s;
-  return `${s.slice(0, max - 1)}…`;
+/** Drop every cached entry. Test helper — production callers rely on TTL expiry. */
+export function _resetMpakRegistryCache(): void {
+  cache.clear();
 }

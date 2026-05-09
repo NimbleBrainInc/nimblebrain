@@ -75,12 +75,14 @@ function defaultRegistries(): RegistryConfig[] {
       locked: true,
       url: BUNDLED_STATIC_CATALOG_PATH,
     },
+    // No `url` — the mpak SDK owns its default registry host. Operators
+    // self-hosting a private mpak instance set `url` via the admin UI
+    // or `NB_REGISTRIES`; otherwise the SDK's built-in default is used.
     {
       id: MPAK_ID,
       name: "mpak.dev",
       type: "mpak",
       enabled: true,
-      url: "https://registry.mpak.dev",
     },
   ];
 }

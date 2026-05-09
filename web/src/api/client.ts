@@ -579,6 +579,15 @@ export interface InstalledConnector {
   interactive: boolean;
   toolCount: number;
   trustScore: number | null;
+  /**
+   * Brand icon URL — one field for both remote (catalog.iconUrl) and
+   * stdio (mpak `ServerDetail.icons[0].src` matched by package name).
+   * Falls through to the deterministic letter avatar when unset
+   * (bundle isn't in any active mpak registry, or the mpak fetch
+   * failed). Replaces the old per-component fan-out across
+   * `catalog?.iconUrl` (which only ever populated for remote bundles).
+   */
+  iconUrl?: string;
   // ── Optional fields, only populated for URL bundles / catalog-matched ──
   url?: string;
   catalogId?: string | null;
@@ -738,13 +747,13 @@ export interface ConnectorTool {
 
 /**
  * One row in the Browse directory — uniform shape across registry
- * sources (curated, mpak, future). The `install` discriminator drives
+ * sources (static, mpak, future). The `install` discriminator drives
  * the install-button behavior in the UI.
  */
 export interface DirectoryEntry {
   id: string;
   registryId: string;
-  registryType: "curated" | "mpak" | "directory" | "custom-url";
+  registryType: "static" | "mpak" | "mcp" | "custom-url";
   name: string;
   description: string;
   iconUrl?: string;
