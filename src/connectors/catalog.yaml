@@ -268,7 +268,7 @@ servers:
 
   - name: ai.granola/mcp
     title: Granola
-    description: Personal meeting notes and transcripts
+    description: Meeting notes and transcripts
     version: "1.0.0"
     icons:
       - src: https://static.nimblebrain.ai/icons/granola.png
@@ -278,7 +278,7 @@ servers:
         url: https://mcp.granola.ai/mcp
     _meta:
       ai.nimblebrain/connector:
-        defaultScope: user
+        defaultScope: workspace
         auth: dcr
         tags: [meetings, notes]
 
