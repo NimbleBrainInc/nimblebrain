@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { mcpAuthCallbackUrl } from "../api/routes/mcp-auth.ts";
 import { getMpak } from "../bundles/mpak.ts";
-import { deriveServerName } from "../bundles/paths.ts";
+import { deriveServerName, slugifyServerName } from "../bundles/paths.ts";
 import { startBundleSource } from "../bundles/startup.ts";
 import type { BundleManifest, BundleRef } from "../bundles/types.ts";
 import { installBundleInWorkspace } from "../bundles/workspace-ops.ts";
@@ -1010,9 +1010,14 @@ async function handleInstallRemoteOAuth(
     };
   }
 
+  // serverName is the slugified canonical reverse-DNS form — opaque,
+  // URL-safe, filesystem-safe, collision-free by construction. See
+  // `slugifyServerName` for the rule. mpak install path mirrors this.
+  const serverName = slugifyServerName(entry.id);
+
   const ref: BundleRef = {
     url: action.url,
-    serverName: entry.id,
+    serverName,
     oauthScope: entry.defaultScope,
     ...(action.requiredScopes ? { scopes: action.requiredScopes } : {}),
     ...(action.additionalAuthorizationParams
@@ -1037,7 +1042,7 @@ async function handleInstallRemoteOAuth(
 
     const dup = ws.bundles.find((b) => "url" in b && b.url === action.url);
     if (dup) {
-      const dupServerName = "serverName" in dup ? (dup.serverName ?? entry.id) : entry.id;
+      const dupServerName = "serverName" in dup ? (dup.serverName ?? serverName) : serverName;
       // Self-heal: workspace.json says yes but lifecycle lost the
       // instance (prior uninstall that didn't clean workspace.json).
       // Re-seed instead of reporting alreadyInstalled — the latter
@@ -1078,14 +1083,14 @@ async function handleInstallRemoteOAuth(
     }
     await ctx.runtime.getWorkspaceStore().update(wsId, { bundles: [...ws.bundles, ref] });
     const wsRegistry = ctx.runtime.getRegistryForWorkspace(wsId);
-    lifecycle.seedInstance(entry.id, action.url, ref, undefined, wsId, undefined, wsRegistry);
-    lifecycle.notifyInstalled(entry.id, wsId);
+    lifecycle.seedInstance(serverName, action.url, ref, undefined, wsId, undefined, wsRegistry);
+    lifecycle.notifyInstalled(serverName, wsId);
     return {
       content: textContent(`Installed "${entry.name}" for this workspace.`),
       structuredContent: {
         ok: true,
         alreadyInstalled: false,
-        serverName: entry.id,
+        serverName,
         scope: "workspace",
       },
       isError: false,
@@ -1127,7 +1132,7 @@ async function handleInstallRemoteOAuth(
     };
   }
   await userStore.addBundle(callerId, ref);
-  await lifecycle.seedUserInstance?.(entry.id, ref, callerId);
+  await lifecycle.seedUserInstance?.(serverName, ref, callerId);
   return {
     content: textContent(
       `Installed "${entry.name}" for your account. Available in every workspace you're in.`,
@@ -1135,7 +1140,7 @@ async function handleInstallRemoteOAuth(
     structuredContent: {
       ok: true,
       alreadyInstalled: false,
-      serverName: entry.id,
+      serverName,
       scope: "user",
     },
     isError: false,
@@ -1174,9 +1179,13 @@ async function handleInstallMpak(
   // lifecycle still tracks it, surface alreadyInstalled. If not,
   // fall through and let installBundleInWorkspace re-register —
   // this self-heals the case where uninstall left a stale entry.
+  // Honors the persisted `serverName` (canonical reverse-DNS form,
+  // set at install time) so legacy short-slug installs and new
+  // canonical-form installs both resolve correctly.
   const already = ws.bundles.find((b) => "name" in b && b.name === bundleName);
   if (already) {
-    const existingServerName = deriveServerName(bundleName);
+    const existingServerName =
+      ("name" in already && already.serverName) || deriveServerName(bundleName);
     if (lifecycle.getInstance(existingServerName, wsId)) {
       return {
         content: textContent(`"${entry.name}" already installed.`),
@@ -1191,7 +1200,11 @@ async function handleInstallMpak(
     }
   }
 
-  const ref: BundleRef = { name: bundleName };
+  // Persist the slugified canonical reverse-DNS form as the BundleRef's
+  // serverName so this install — and every lookup that follows — uses
+  // the same opaque, URL-safe, collision-free identifier the catalog
+  // source emits. Matches the remote-OAuth path's slugify call.
+  const ref: BundleRef = { name: bundleName, serverName: slugifyServerName(entry.id) };
   let inventoryEntry: Awaited<ReturnType<typeof installBundleInWorkspace>>;
   try {
     inventoryEntry = await installBundleInWorkspace(

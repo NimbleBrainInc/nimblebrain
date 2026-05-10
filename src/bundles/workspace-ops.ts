@@ -23,11 +23,16 @@ export interface ProcessInventoryEntry {
 
 /**
  * Derive a server name from a BundleRef (handles name, path, and url variants).
+ *
+ * All three variants honor `ref.serverName` first when present — that's
+ * the canonical reverse-DNS form set at install time from the source
+ * `ServerDetail.name`. Falls back to `deriveServerName` derivation only
+ * for legacy refs that predate canonical-form persistence.
  */
 function serverNameFromRef(ref: BundleRef): string {
-  if ("name" in ref) return deriveServerName(ref.name);
-  if ("path" in ref) return deriveServerName(ref.path);
-  return (ref as { url: string; serverName?: string }).serverName ?? deriveServerName(ref.url);
+  if ("name" in ref) return ref.serverName ?? deriveServerName(ref.name);
+  if ("path" in ref) return ref.serverName ?? deriveServerName(ref.path);
+  return ref.serverName ?? deriveServerName(ref.url);
 }
 
 /**

@@ -660,7 +660,9 @@ describe("manage_connectors.install (static-auth)", () => {
     const result = await tool.handler({ action: "install", entry: asanaEntry() });
     expect(result.isError).toBe(false);
     expect(structured(result).ok).toBe(true);
-    expect(structured(result).serverName).toBe(ASANA_ID);
+    // serverName is the slug of the canonical reverse-DNS form
+    // (`io.asana/mcp` → `io-asana-mcp`) — opaque, URL-safe, route-safe.
+    expect(structured(result).serverName).toBe("io-asana-mcp");
 
     const ws = await h.workspaceStore.get(h.wsId);
     const installed = ws?.bundles.find(

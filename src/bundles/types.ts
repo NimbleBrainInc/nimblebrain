@@ -84,6 +84,14 @@ export interface RemoteTransportConfig {
 export type BundleRef =
   | {
       name: string;
+      /**
+       * Canonical reverse-DNS server name from the source `ServerDetail.name`
+       * (e.g. `dev.mpak.nimblebraininc/echo`). When present, used as the
+       * lifecycle / route key directly. When absent (legacy installs),
+       * `serverNameFromRef` falls back to `deriveServerName(name)` → short
+       * slug for backward compat.
+       */
+      serverName?: string;
       env?: Record<string, string>;
       allowedEnv?: string[];
       protected?: boolean;
@@ -92,6 +100,7 @@ export type BundleRef =
     }
   | {
       path: string;
+      serverName?: string;
       env?: Record<string, string>;
       allowedEnv?: string[];
       protected?: boolean;
