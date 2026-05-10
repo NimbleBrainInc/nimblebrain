@@ -80,6 +80,7 @@ function deriveInstall(s: ServerDetail): DirectoryEntry["install"] | null {
     return {
       kind: "remote-oauth",
       url: remote.url,
+      transportType: remote.type,
       auth: meta?.auth ?? "dcr",
       ...(meta?.requiredScopes ? { requiredScopes: meta.requiredScopes } : {}),
       ...(meta?.additionalAuthorizationParams

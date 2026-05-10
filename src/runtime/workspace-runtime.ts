@@ -6,7 +6,6 @@
  * Each workspace gets its own ToolRegistry with plain tool names (no compound keys).
  */
 
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { hasPersistedWorkspaceOAuthTokens } from "../bundles/oauth-tokens.ts";
 import { deriveServerName, resolveBundleDataDir } from "../bundles/paths.ts";
@@ -14,7 +13,6 @@ import { setPendingAuth } from "../bundles/pending-auth-buffer.ts";
 import { startBundleSource } from "../bundles/startup.ts";
 import type { BundleRef, LocalBundleMeta } from "../bundles/types.ts";
 import { log } from "../cli/log.ts";
-import { clearAllWorkspaceCredentials } from "../config/workspace-credentials.ts";
 import { ToolRegistry } from "../tools/registry.ts";
 import type { ToolSource } from "../tools/types.ts";
 import type { Workspace } from "../workspace/types.ts";
@@ -391,39 +389,4 @@ export async function installBundleInWorkspace(
     serverName: result.sourceName,
     meta: result.meta,
   };
-}
-
-/**
- * Uninstall a bundle from a specific workspace (hot — stops process and deregisters).
- *
- * Looks up the plain server name, stops the MCP source, and removes it from the registry.
- * Also clears the workspace-scoped credential file for the bundle (best-effort —
- * failures are logged but do not fail the uninstall). Data directories are
- * intentionally preserved.
- */
-export async function uninstallBundleFromWorkspace(
-  wsId: string,
-  bundleName: string,
-  registry: ToolRegistry,
-  opts?: { workDir?: string },
-): Promise<void> {
-  const serverName = deriveServerName(bundleName);
-
-  if (!registry.hasSource(serverName)) {
-    throw new Error(`No bundle "${serverName}" found in workspace "${wsId}"`);
-  }
-
-  await registry.removeSource(serverName);
-
-  // Best-effort credential cleanup — don't fail uninstall if it errors.
-  // Credentials are config, not data: they should not persist across uninstalls.
-  const workDir = opts?.workDir ?? process.env.NB_WORK_DIR ?? join(homedir(), ".nimblebrain");
-  try {
-    await clearAllWorkspaceCredentials(wsId, bundleName, workDir);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    process.stderr.write(
-      `[workspace-runtime] Failed to clear credentials for ${bundleName} in ${wsId}: ${msg}\n`,
-    );
-  }
 }

@@ -119,6 +119,15 @@ export type InstallAction = RemoteOAuthInstall | MpakBundleInstall | DirectUrlIn
 export interface RemoteOAuthInstall {
   kind: "remote-oauth";
   url: string;
+  /**
+   * Transport class the vendor advertises in `ServerDetail.remotes[].type`.
+   * Threaded into the BundleRef's `transport.type` at install so
+   * `createRemoteTransport` instantiates the right SDK client class.
+   * Without this, every install defaults to `streamable-http` and SSE-
+   * only servers (PayPal, Cloudflare Bindings, Webflow, Wix) would fail
+   * the handshake.
+   */
+  transportType: "streamable-http" | "sse";
   auth: "dcr" | "static";
   requiredScopes?: string[];
   additionalAuthorizationParams?: Record<string, string>;

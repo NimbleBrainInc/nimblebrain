@@ -887,7 +887,18 @@ async function uninstallBundleFromWorkspaceViaCtx(
   ctx: ManageBundleContext,
 ): Promise<ToolResult> {
   try {
-    const serverName = deriveServerName(name);
+    // Resolve serverName from the persisted BundleRef first — install
+    // (whether from Browse or `manage_app install`) writes the
+    // slugified canonical id (`slugifyServerName(entry.id)`) onto the
+    // ref. Deriving from `name` here would compute the OLD short slug
+    // and miss the registered source — exactly the regression that
+    // broke `manage_app uninstall` for any bundle installed via the
+    // catalog after #195.
+    const ws = await ctx.workspaceStore.get(wsId);
+    const persisted = ws?.bundles.find((b) => "name" in b && b.name === name);
+    const serverName =
+      (persisted && "name" in persisted ? persisted.serverName : undefined) ??
+      deriveServerName(name);
 
     // Protected check — pass wsId to look up the workspace-scoped instance
     const instance = lifecycle.getInstance(serverName, wsId);
@@ -898,7 +909,9 @@ async function uninstallBundleFromWorkspaceViaCtx(
     // Stop process and deregister from tool registry. Thread workDir so
     // the workspace credential file for this bundle is cleaned up as part
     // of uninstall (best-effort inside uninstallBundleFromWorkspace).
-    await uninstallBundleFromWorkspace(wsId, name, registry, { workDir: ctx.workDir });
+    await uninstallBundleFromWorkspace(wsId, name, serverName, registry, {
+      workDir: ctx.workDir,
+    });
 
     // Remove lifecycle instance tracking
     if (instance) {
@@ -907,7 +920,6 @@ async function uninstallBundleFromWorkspaceViaCtx(
     lifecycle.removeInstance(serverName, wsId);
 
     // Remove bundle from workspace.json
-    const ws = await ctx.workspaceStore.get(wsId);
     if (ws) {
       await ctx.workspaceStore.update(wsId, {
         bundles: ws.bundles.filter((b) => !("name" in b && b.name === name)),

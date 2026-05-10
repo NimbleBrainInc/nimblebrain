@@ -128,6 +128,36 @@ describe("projectServerDetailToDirectoryEntry", () => {
     }
   });
 
+  test("threads streamable-http transport type from remotes[0] to install action", () => {
+    const e = projectServerDetailToDirectoryEntry(
+      detail({
+        remotes: [{ type: "streamable-http", url: "https://example.com/mcp" }],
+      }),
+      CTX,
+    );
+    expect(e?.install.kind).toBe("remote-oauth");
+    if (e?.install.kind === "remote-oauth") {
+      expect(e.install.transportType).toBe("streamable-http");
+    }
+  });
+
+  test("threads SSE transport type from remotes[0] to install action — SSE-only servers (PayPal, Cloudflare, Webflow, Wix)", () => {
+    // Without this, handleInstallRemoteOAuth would build a default
+    // streamable-http transport against an SSE server and the
+    // handshake would fail. Pinning the transport at projection time
+    // is the only place the source's `remote.type` is in scope.
+    const e = projectServerDetailToDirectoryEntry(
+      detail({
+        remotes: [{ type: "sse", url: "https://example.com/sse" }],
+      }),
+      CTX,
+    );
+    expect(e?.install.kind).toBe("remote-oauth");
+    if (e?.install.kind === "remote-oauth") {
+      expect(e.install.transportType).toBe("sse");
+    }
+  });
+
   test("defaults defaultScope to 'workspace' when no NimbleBrain meta is present", () => {
     const e = projectServerDetailToDirectoryEntry(
       detail({

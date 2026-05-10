@@ -96,19 +96,25 @@ export async function installBundleInWorkspace(
 /**
  * Uninstall a bundle from a specific workspace (hot — stops process and deregisters).
  *
- * Looks up the plain server name, stops the MCP source, and removes it from the registry.
- * Also clears the workspace-scoped credential file for the bundle (best-effort —
- * failures are logged but do not fail the uninstall). Data directories are
- * intentionally preserved.
+ * Stops the MCP source, removes it from the registry, and clears the
+ * workspace-scoped credential file for the bundle (best-effort —
+ * failures are logged but do not fail the uninstall). Data directories
+ * are intentionally preserved.
+ *
+ * `serverName` is the resolved lifecycle key — caller is responsible
+ * for reading it from the persisted `BundleRef.serverName` (set at
+ * install time from `slugifyServerName(entry.id)`) with
+ * `deriveServerName(bundleName)` as a back-compat fallback for legacy
+ * refs. Passing the canonical name here would skip the slug and miss
+ * the registered source.
  */
 export async function uninstallBundleFromWorkspace(
   wsId: string,
   bundleName: string,
+  serverName: string,
   registry: ToolRegistry,
   opts?: { workDir?: string },
 ): Promise<void> {
-  const serverName = deriveServerName(bundleName);
-
   if (!registry.hasSource(serverName)) {
     throw new Error(`No bundle "${serverName}" found in workspace "${wsId}"`);
   }

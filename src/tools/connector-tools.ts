@@ -1018,6 +1018,11 @@ async function handleInstallRemoteOAuth(
   const ref: BundleRef = {
     url: action.url,
     serverName,
+    // Pin the transport class the source advertised. Default would be
+    // streamable-http (createRemoteTransport's fallback), which is wrong
+    // for vendors whose remote `type` is `sse` — PayPal / Cloudflare /
+    // Webflow / Wix in the bundled catalog today.
+    transport: { type: action.transportType },
     oauthScope: entry.defaultScope,
     ...(action.requiredScopes ? { scopes: action.requiredScopes } : {}),
     ...(action.additionalAuthorizationParams
