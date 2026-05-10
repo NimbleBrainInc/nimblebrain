@@ -1105,7 +1105,12 @@ async function handleInstallRemoteOAuth(
   const existing = await userStore.get(callerId);
   const dup = existing?.bundles.find((b) => "url" in b && b.url === action.url);
   if (dup) {
-    const dupServerName = "serverName" in dup ? (dup.serverName ?? entry.id) : entry.id;
+    // Mirror workspace branch (line 1045): fall back to the slugified
+    // serverName, never the raw `entry.id` — the latter is the
+    // canonical reverse-DNS form which contains `/` and would feed
+    // slashes into the lifecycle Map key, UserPoolSource name, and
+    // the structuredContent the web shell consumes as a route segment.
+    const dupServerName = "serverName" in dup ? (dup.serverName ?? serverName) : serverName;
     // Self-heal symmetric to workspace scope.
     if (!lifecycle.getUserInstance?.(dupServerName, callerId)) {
       await lifecycle.seedUserInstance?.(dupServerName, dup, callerId);

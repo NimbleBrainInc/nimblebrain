@@ -76,14 +76,16 @@ function asanaEntry(over: Partial<DirectoryEntry> = {}): DirectoryEntry {
 }
 
 /**
- * Build a DirectoryEntry for an mpak-bundle. The id and package name
- * default to what CuratedRegistry emits for echo (a STDIO_BUNDLES
- * entry); tests can override `id` / `package` to drive non-curated
- * scenarios (e.g. arbitrary scoped names).
+ * Build a DirectoryEntry for an mpak-bundle. The default id mirrors
+ * what `MpakSource` projects for `@nimblebraininc/echo` via mpak's
+ * mechanical reverse-DNS naming. Tests can override `id` / `package`
+ * to drive non-default scenarios.
  */
 function mpakEntry(over: { id?: string; pkg?: string; name?: string } = {}): DirectoryEntry {
-  // Default reverse-DNS id mirrors what `MpakRegistry` projects from
-  // mpak's legacy `/v1/bundles/...` shape — `dev.mpak.<scope>/<name>`.
+  // mpak's composer maps `@<scope>/<name>` → `dev.mpak.<scope>/<name>`
+  // for the unmapped default; nimblebraininc has a curated map to
+  // ai.nimblebrain. Either form is acceptable input here — tests
+  // pin the platform behavior, not mpak's naming choice.
   const id = over.id ?? "dev.mpak.nimblebraininc/echo";
   return {
     id,
@@ -717,10 +719,10 @@ describe("manage_connectors.install", () => {
   });
 
   test("any scoped package name installs (no curated-list lookup at install time)", async () => {
-    // Forward-compat for real mpak.dev fetch: an entry whose package
-    // isn't in our hardcoded STDIO_BUNDLES still reaches the install
-    // path. The registry that produced the entry is the source of
-    // truth; the install handler doesn't second-guess it.
+    // The install handler doesn't second-guess what the source emitted —
+    // an entry whose package the platform has never seen still reaches
+    // the install path. The registry that produced the DirectoryEntry
+    // is the source of truth.
     const tool = buildTool(h, ADMIN_USER);
     const result = await tool.handler({
       action: "install",
@@ -794,6 +796,53 @@ describe("manage_connectors.install", () => {
     expect(result.isError).toBe(true);
     const text = (result.content?.[0] as { text?: string } | undefined)?.text ?? "";
     expect(text.toLowerCase()).toContain("install action is required");
+  });
+
+  test("user-scope dup-fallback returns a slug, not the raw reverse-DNS id (regression for QA review)", async () => {
+    // The dup branch handles orphan recovery: workspace/user.json says
+    // the bundle is installed but lifecycle lost the instance. The
+    // recovered serverName must be the slug (route-safe, FS-safe), not
+    // entry.id raw (`com.canva/mcp` — slashes break the URL route, the
+    // UserPoolSource name, and the lifecycle Map key shape).
+    const dupBundle = {
+      url: "https://mcp.canva.com/mcp",
+      oauthScope: "user" as const,
+      // Intentionally NO `serverName` field — simulates a legacy
+      // user.json record from before #195's slugify-on-install.
+    };
+    const customRuntime = {
+      ...h.runtime,
+      getUserConnectorStore: () => ({
+        get: async () => ({ bundles: [dupBundle] }),
+      }),
+    } as unknown as typeof h.runtime;
+    const customH = { ...h, runtime: customRuntime };
+
+    const tool = buildTool(customH, ADMIN_USER);
+    const result = await tool.handler({
+      action: "install",
+      entry: {
+        id: "com.canva/mcp",
+        registryId: "bundled-static",
+        registryType: "static",
+        name: "Canva",
+        description: "x",
+        defaultScope: "user",
+        install: {
+          kind: "remote-oauth",
+          url: "https://mcp.canva.com/mcp",
+          auth: "dcr",
+        },
+      },
+    });
+    expect(result.isError).toBe(false);
+    const sn = (result.structuredContent as { serverName?: string }).serverName ?? "";
+    // Regardless of whether this hits the reattach or already-installed
+    // branch, the response serverName must be slug-shaped — never the
+    // raw reverse-DNS form.
+    expect(sn).not.toContain("/");
+    expect(sn).not.toContain(".");
+    expect(sn).toBe("com-canva-mcp");
   });
 });
 

@@ -111,8 +111,13 @@ async function fetchServers(baseUrl: string | undefined): Promise<ServerDetail[]
     cursor = response.metadata?.next_cursor;
     if (!cursor) break;
     if (pages >= MAX_PAGES) {
+      // Surface the URL so an operator looking at logs can correlate
+      // which registry got truncated — a deployment with multiple
+      // mpak rows (different scopes, self-hosted vs public, etc.)
+      // can't tell from a generic message alone.
+      const where = baseUrl ?? "<sdk-default>";
       log.warn(
-        `[mpak-source] page ceiling hit (${MAX_PAGES} × ${PAGE_LIMIT} = ${MAX_PAGES * PAGE_LIMIT} entries); remaining results truncated. Raise MAX_PAGES if this is a legitimate large registry.`,
+        `[mpak-source] page ceiling hit for ${where} (${MAX_PAGES} × ${PAGE_LIMIT} = ${MAX_PAGES * PAGE_LIMIT} entries); remaining results truncated. Raise MAX_PAGES if this is a legitimate large registry.`,
       );
       break;
     }
