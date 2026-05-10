@@ -2,8 +2,8 @@
  * `StaticSource` reads `ServerDetail[]` from a YAML or JSON file on
  * disk. It's the curated-services source we ship with the platform
  * (Asana, Notion, Granola, etc. — `src/connectors/catalog.yaml`) and
- * the operator-override source (NB_REGISTRIES path entry, or the
- * deprecated `NB_CATALOG_PATH` shim).
+ * any operator-override source mounted via `NB_REGISTRIES` with
+ * `type: "static"`.
  *
  * The contract is just `fetch(): Promise<ServerDetail[]>`. Filtering,
  * projection, error aggregation, and lookup tables live in
@@ -22,9 +22,8 @@
  *   YAML:  { servers: [ ServerDetail, ... ] }
  *   JSON:  { servers: [ ServerDetail, ... ] }
  *
- * Bare-array JSON (legacy `NB_CATALOG_PATH` contract) is also
- * accepted — operators upgrading without rewriting their override file
- * land in the same code path.
+ * Bare-array JSON (`[ ServerDetail, ... ]`) is also accepted for
+ * minimal override files.
  */
 
 import { existsSync, readFileSync } from "node:fs";
@@ -97,7 +96,7 @@ export function readStaticServers(path: string): ServerDetail[] {
 /**
  * Validate a parsed candidate. Accepts:
  *   - `{ servers: [ ... ] }`              (canonical YAML/JSON shape)
- *   - `[ ... ]`                            (legacy NB_CATALOG_PATH contract)
+ *   - `[ ... ]`                            (bare-array convenience shape)
  *
  * Returns only the entries that pass the upstream `ServerDetail` ajv
  * schema and the platform's defense-in-depth safety checks.

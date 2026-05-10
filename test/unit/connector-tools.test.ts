@@ -48,10 +48,10 @@ const ASANA_SECRET_KEY = "asana.client_secret";
 const NOTION_ID = "com.notion/mcp";
 
 /**
- * Build a DirectoryEntry shaped like what CuratedRegistry would emit
- * for Asana — used by install tests since the install API takes the
- * full entry, not an id. Field set matches the real registry output;
- * tests can override pieces (operatorSetup, defaultScope) per case.
+ * Build a DirectoryEntry shaped like what `StaticSource` projects for
+ * Asana — used by install tests since the install API takes the full
+ * entry, not an id. Field set matches the real source output; tests
+ * can override pieces (operatorSetup, defaultScope) per case.
  */
 function asanaEntry(over: Partial<DirectoryEntry> = {}): DirectoryEntry {
   return {

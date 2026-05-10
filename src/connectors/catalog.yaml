@@ -9,9 +9,8 @@
 #
 # Operators with custom curation needs override this list at runtime by
 # pointing `NB_REGISTRIES` at a JSON config that adds their own
-# `StaticRegistry` instance, or by setting the deprecated
-# `NB_CATALOG_PATH` env to a YAML/JSON file in the same shape (see
-# `static-registry.ts` for resolution rules).
+# `static`-type registry pointing at a `ServerDetail[]` YAML/JSON file
+# (see `src/registries/static-source.ts` for resolution rules).
 #
 # Convention: keep ordering alphabetical by name within scope groupings
 # (workspace-shared first, user-scoped second) so diffs read clean.

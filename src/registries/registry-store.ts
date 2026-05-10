@@ -30,9 +30,6 @@ import type { RegistryConfig } from "./types.ts";
  *   - `NB_REGISTRIES` — JSON array of `RegistryConfig`. When set, the
  *     stored `registries.json` is *ignored* and the env value is used
  *     verbatim (the bundled-static lock is preserved automatically).
- *   - `NB_CATALOG_PATH` — DEPRECATED. When `NB_REGISTRIES` is unset and
- *     this env points at a YAML/JSON file, a single static registry
- *     pointing at that path is mounted. Logs a deprecation warning.
  *
  * Atomic writes via tmp-rename so a crash mid-write doesn't leave a
  * half-flushed JSON in place.
@@ -199,51 +196,31 @@ export class RegistryStore {
 }
 
 /**
- * Resolve env-driven registry overrides, with a deprecation warning
- * for the legacy `NB_CATALOG_PATH` shape. Returns null when no env
+ * Resolve env-driven registry overrides. Returns null when no env
  * override is in effect.
  */
 function resolveEnvOverride(): RegistryConfig[] | null {
   const raw = process.env.NB_REGISTRIES;
-  if (raw && raw.trim().length > 0) {
-    try {
-      const parsed = JSON.parse(raw) as unknown;
-      if (!Array.isArray(parsed)) {
-        log.warn(`[registries] NB_REGISTRIES did not parse as a JSON array — ignored`);
-        return null;
-      }
-      const validated = validateRegistryConfigs(parsed, "NB_REGISTRIES");
-      // Always re-pin the bundled static registry as locked + first so
-      // operator overrides can add registries without accidentally
-      // dropping the platform default.
-      const bundled = defaultRegistryById(BUNDLED_STATIC_ID);
-      const withoutBundled = validated.filter((r) => r.id !== bundled.id);
-      return [bundled, ...withoutBundled];
-    } catch (err) {
-      log.warn(
-        `[registries] NB_REGISTRIES parse error: ${err instanceof Error ? err.message : String(err)} — ignored`,
-      );
+  if (!raw || raw.trim().length === 0) return null;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) {
+      log.warn(`[registries] NB_REGISTRIES did not parse as a JSON array — ignored`);
       return null;
     }
-  }
-  const legacy = process.env.NB_CATALOG_PATH;
-  if (legacy && legacy.trim().length > 0) {
+    const validated = validateRegistryConfigs(parsed, "NB_REGISTRIES");
+    // Always re-pin the bundled static registry as locked + first so
+    // operator overrides can add registries without accidentally
+    // dropping the platform default.
+    const bundled = defaultRegistryById(BUNDLED_STATIC_ID);
+    const withoutBundled = validated.filter((r) => r.id !== bundled.id);
+    return [bundled, ...withoutBundled];
+  } catch (err) {
     log.warn(
-      `[registries] NB_CATALOG_PATH is deprecated; switch to NB_REGISTRIES with a JSON array of {id,name,type,url}.`,
+      `[registries] NB_REGISTRIES parse error: ${err instanceof Error ? err.message : String(err)} — ignored`,
     );
-    return [
-      defaultRegistryById(BUNDLED_STATIC_ID),
-      {
-        id: "operator-static",
-        name: "Operator catalog",
-        type: "static",
-        enabled: true,
-        url: legacy.trim(),
-      },
-      defaultRegistryById(MPAK_ID),
-    ];
+    return null;
   }
-  return null;
 }
 
 /**

@@ -128,6 +128,97 @@ describe("MpakSource.fetch", () => {
   });
 });
 
+describe("MpakSource pagination", () => {
+  test("follows metadata.next_cursor across pages and concatenates results", async () => {
+    const pages = [
+      {
+        servers: [
+          {
+            name: "ai.x/one",
+            description: "first",
+            version: "1.0.0",
+            packages: [
+              {
+                registryType: "mpak",
+                identifier: "@x/one",
+                version: "1.0.0",
+                transport: { type: "stdio" },
+              },
+            ],
+          },
+        ],
+        metadata: { next_cursor: "cursor-page-2" },
+      },
+      {
+        servers: [
+          {
+            name: "ai.x/two",
+            description: "second",
+            version: "1.0.0",
+            packages: [
+              {
+                registryType: "mpak",
+                identifier: "@x/two",
+                version: "1.0.0",
+                transport: { type: "stdio" },
+              },
+            ],
+          },
+        ],
+        // No next_cursor — pagination terminates here.
+      },
+    ];
+    let pageIdx = 0;
+    fetchMock = async (input) => {
+      const url = String(input);
+      // Page 1: no cursor in URL. Page 2: cursor=cursor-page-2.
+      const expected = pageIdx === 0 ? false : url.includes("cursor=cursor-page-2");
+      if (pageIdx > 0 && !expected) {
+        throw new Error(`page ${pageIdx + 1} request did not carry expected cursor — saw ${url}`);
+      }
+      const body = pages[pageIdx];
+      pageIdx++;
+      return new Response(JSON.stringify(body), { status: 200 });
+    };
+    const source = new MpakSource(SOURCE_ID, URL);
+    const servers = await source.fetch();
+    expect(servers.map((s) => s.name).sort()).toEqual(["ai.x/one", "ai.x/two"]);
+    expect(pageIdx).toBe(2);
+  });
+
+  test("stops when next_cursor is absent — single-page registries don't loop", async () => {
+    let calls = 0;
+    fetchMock = async () => {
+      calls++;
+      return new Response(
+        JSON.stringify({
+          servers: [
+            {
+              name: "ai.x/only",
+              description: "lone",
+              version: "1.0.0",
+              packages: [
+                {
+                  registryType: "mpak",
+                  identifier: "@x/only",
+                  version: "1.0.0",
+                  transport: { type: "stdio" },
+                },
+              ],
+            },
+          ],
+          // metadata absent
+        }),
+        { status: 200 },
+      );
+    };
+    const source = new MpakSource(SOURCE_ID, URL);
+    const servers = await source.fetch();
+    expect(servers.length).toBe(1);
+    expect(calls).toBe(1);
+  });
+});
+
 describe("MpakSource caching", () => {
   test("second call within TTL hits cache — one fetch for repeated reads", async () => {
     let calls = 0;

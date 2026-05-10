@@ -22,8 +22,7 @@
  *
  *   - `static`  — bundled curated catalog of remote OAuth services
  *     (Granola, Notion, HubSpot, etc.) shipped with the platform.
- *     Locked. Operator overrides via `NB_REGISTRIES` JSON or the
- *     deprecated `NB_CATALOG_PATH` env.
+ *     Locked. Operator overrides via `NB_REGISTRIES` JSON.
  *   - `mpak`    — the mpak.dev open MCP bundle registry. Default on;
  *     operator can disable, scope, or point at a self-hosted instance.
  *
