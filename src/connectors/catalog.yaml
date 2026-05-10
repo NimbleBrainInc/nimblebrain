@@ -72,21 +72,11 @@ servers:
         auth: dcr
         tags: [issues, project-mgmt]
 
-  - name: com.canva/mcp
-    title: Canva
-    description: Design files and brand assets
-    version: "1.0.0"
-    icons:
-      - src: https://static.nimblebrain.ai/icons/canva.png
-        sizes: ["any"]
-    remotes:
-      - type: streamable-http
-        url: https://mcp.canva.com/mcp
-    _meta:
-      ai.nimblebrain/connector:
-        defaultScope: workspace
-        auth: dcr
-        tags: [design, creative]
+  # com.canva/mcp: dropped pending vendor host allowlisting. Canva's
+  # /authorize independently rejects non-allowlisted redirect URIs
+  # (DCR /register accepts but install fails at the browser redirect
+  # with "Invalid redirect URI. It must be from an allowed host.").
+  # Re-add once #200 outreach lands.
 
   - name: com.cloudflare/mcp
     title: Cloudflare
@@ -104,21 +94,10 @@ servers:
         auth: dcr
         tags: [infra, devops]
 
-  - name: com.intercom/mcp
-    title: Intercom
-    description: Customer conversations and support tickets
-    version: "1.0.0"
-    icons:
-      - src: https://static.nimblebrain.ai/icons/intercom.png
-        sizes: ["any"]
-    remotes:
-      - type: streamable-http
-        url: https://mcp.intercom.com/mcp
-    _meta:
-      ai.nimblebrain/connector:
-        defaultScope: workspace
-        auth: dcr
-        tags: [support, messaging]
+  # com.intercom/mcp: dropped pending vendor host allowlisting.
+  # Intercom rejects DCR /register itself with "Redirect URI ... is
+  # not in the allowlist, reach out to Intercom Customer Support if
+  # you believe we should support it." Re-add once #200 lands.
 
   - name: com.mercury/mcp
     title: Mercury
@@ -206,21 +185,10 @@ servers:
   # only honors the well-known root today — install would fail. Re-add
   # once issue #196 lands the WWW-Authenticate fallback.
 
-  - name: com.vercel/mcp
-    title: Vercel
-    description: Deployments, projects, and environment variables
-    version: "1.0.0"
-    icons:
-      - src: https://static.nimblebrain.ai/icons/vercel.png
-        sizes: ["any"]
-    remotes:
-      - type: streamable-http
-        url: https://mcp.vercel.com
-    _meta:
-      ai.nimblebrain/connector:
-        defaultScope: workspace
-        auth: dcr
-        tags: [hosting, devops]
+  # com.vercel/mcp: dropped pending vendor host allowlisting. Vercel
+  # rejects DCR /register with "The provided redirect URIs are not
+  # approved for use by this authorization server." Re-add once #200
+  # lands.
 
   - name: com.webflow/mcp
     title: Webflow
