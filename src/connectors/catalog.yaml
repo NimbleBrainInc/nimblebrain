@@ -254,6 +254,22 @@ servers:
         auth: dcr
         tags: [website, cms]
 
+  - name: ai.granola/mcp
+    title: Granola
+    description: Meeting notes and transcripts
+    version: "1.0.0"
+    icons:
+      - src: https://static.nimblebrain.ai/icons/granola.png
+        sizes: ["any"]
+    remotes:
+      - type: streamable-http
+        url: https://mcp.granola.ai/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        defaultScope: workspace
+        auth: dcr
+        tags: [meetings, notes]
+
   # ── Member-scoped (personal account per user) ─────────────────
   - name: com.google.gmail/mcp
     title: Gmail
@@ -280,22 +296,6 @@ servers:
           hint: Create an OAuth 2.0 Client ID (web application) in Google Cloud Console; add the NimbleBrain callback URL as an authorized redirect URI
           clientSecretKey: google.client_secret
         tags: [email, google]
-
-  - name: ai.granola/mcp
-    title: Granola
-    description: Meeting notes and transcripts
-    version: "1.0.0"
-    icons:
-      - src: https://static.nimblebrain.ai/icons/granola.png
-        sizes: ["any"]
-    remotes:
-      - type: streamable-http
-        url: https://mcp.granola.ai/mcp
-    _meta:
-      ai.nimblebrain/connector:
-        defaultScope: workspace
-        auth: dcr
-        tags: [meetings, notes]
 
   - name: com.hubspot/mcp
     title: HubSpot

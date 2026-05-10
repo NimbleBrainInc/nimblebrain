@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import type { BundleRef } from "./types.ts";
 
 /** Prefixes reserved for system tools — bundles must not use these as source names. */
 const RESERVED_TOOL_PREFIXES = new Set(["nb"]);
@@ -54,6 +55,33 @@ export function slugifyServerName(canonicalName: string): string {
     .replace(/[^a-z0-9-]/g, "-")
     .replace(/-+/g, "-")
     .replace(/^-|-$/g, "");
+}
+
+/**
+ * Resolve the lifecycle / registry key for a `BundleRef`. Single
+ * authority for the install / boot / uninstall paths so the
+ * registered source name matches what consumers later look up.
+ *
+ * All three ref variants honor `ref.serverName` first when present —
+ * that's the slugified canonical reverse-DNS form set at install time
+ * from `ServerDetail.name`. Falls back to `deriveServerName` only for
+ * legacy refs that predate canonical-form persistence (pre-#195).
+ */
+export function serverNameFromRef(ref: BundleRef): string {
+  if ("name" in ref) return ref.serverName ?? deriveServerName(ref.name);
+  if ("path" in ref) return ref.serverName ?? deriveServerName(ref.path);
+  return ref.serverName ?? deriveServerName(ref.url);
+}
+
+/**
+ * Derive the bundle-name string from a `BundleRef` (for data-dir
+ * resolution). Returns the npm-style scoped name for `name` refs, the
+ * filesystem path for `path` refs, the URL for `url` refs.
+ */
+export function bundleNameFromRef(ref: BundleRef): string {
+  if ("name" in ref) return ref.name;
+  if ("path" in ref) return ref.path;
+  return ref.url;
 }
 
 /**

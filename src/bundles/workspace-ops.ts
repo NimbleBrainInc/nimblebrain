@@ -8,7 +8,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { clearAllWorkspaceCredentials } from "../config/workspace-credentials.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
-import { deriveServerName, resolveBundleDataDir } from "./paths.ts";
+import { bundleNameFromRef, resolveBundleDataDir, serverNameFromRef } from "./paths.ts";
 import { startBundleSource } from "./startup.ts";
 import type { BundleRef } from "./types.ts";
 
@@ -19,29 +19,6 @@ export interface ProcessInventoryEntry {
   dataDir: string;
   serverName: string;
   meta?: import("./types.ts").LocalBundleMeta | null;
-}
-
-/**
- * Derive a server name from a BundleRef (handles name, path, and url variants).
- *
- * All three variants honor `ref.serverName` first when present — that's
- * the canonical reverse-DNS form set at install time from the source
- * `ServerDetail.name`. Falls back to `deriveServerName` derivation only
- * for legacy refs that predate canonical-form persistence.
- */
-function serverNameFromRef(ref: BundleRef): string {
-  if ("name" in ref) return ref.serverName ?? deriveServerName(ref.name);
-  if ("path" in ref) return ref.serverName ?? deriveServerName(ref.path);
-  return ref.serverName ?? deriveServerName(ref.url);
-}
-
-/**
- * Derive the bundle name string from a BundleRef (for data-dir resolution).
- */
-function bundleNameFromRef(ref: BundleRef): string {
-  if ("name" in ref) return ref.name;
-  if ("path" in ref) return ref.path;
-  return (ref as { url: string }).url;
 }
 
 /**

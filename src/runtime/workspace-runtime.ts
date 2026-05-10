@@ -8,7 +8,7 @@
 
 import { join } from "node:path";
 import { hasPersistedWorkspaceOAuthTokens } from "../bundles/oauth-tokens.ts";
-import { deriveServerName, resolveBundleDataDir } from "../bundles/paths.ts";
+import { bundleNameFromRef, resolveBundleDataDir, serverNameFromRef } from "../bundles/paths.ts";
 import { setPendingAuth } from "../bundles/pending-auth-buffer.ts";
 import { startBundleSource } from "../bundles/startup.ts";
 import type { BundleRef, LocalBundleMeta } from "../bundles/types.ts";
@@ -39,25 +39,6 @@ export interface ProcessInventoryEntry {
 // ---------------------------------------------------------------------------
 // Process inventory
 // ---------------------------------------------------------------------------
-
-/**
- * Derive a server name from a BundleRef (handles name, path, and url variants).
- */
-function serverNameFromRef(ref: BundleRef): string {
-  if ("name" in ref) return deriveServerName(ref.name);
-  if ("path" in ref) return deriveServerName(ref.path);
-  // url variant — use serverName override or derive from URL
-  return (ref as { url: string; serverName?: string }).serverName ?? deriveServerName(ref.url);
-}
-
-/**
- * Derive the bundle name string from a BundleRef (for data-dir resolution).
- */
-function bundleNameFromRef(ref: BundleRef): string {
-  if ("name" in ref) return ref.name;
-  if ("path" in ref) return ref.path;
-  return (ref as { url: string }).url;
-}
 
 /**
  * Build a flat process inventory from a list of workspaces.
@@ -336,57 +317,4 @@ export async function mapWithConcurrency<T>(
     }
   });
   await Promise.all(runners);
-}
-
-// ---------------------------------------------------------------------------
-// Hot install / uninstall within a workspace
-// ---------------------------------------------------------------------------
-
-/**
- * Install a bundle in a specific workspace (hot — no restart required).
- *
- * Spawns the bundle process with a workspace-scoped data directory
- * and registers it in the workspace's ToolRegistry with its plain server name.
- */
-export async function installBundleInWorkspace(
-  wsId: string,
-  bundleRef: BundleRef,
-  registry: ToolRegistry,
-  // Required. Threaded into the new McpSource so task-augmented tools'
-  // progress events reach the SSE broadcast layer (Synapse useDataSync).
-  eventSink: import("../engine/types.ts").EventSink,
-  configDir: string | undefined,
-  opts?: {
-    allowInsecureRemotes?: boolean;
-    workDir?: string;
-  },
-): Promise<ProcessInventoryEntry> {
-  const workDir = opts?.workDir ?? process.env.NB_WORK_DIR ?? "";
-  const serverName = serverNameFromRef(bundleRef);
-  const bundleName = bundleNameFromRef(bundleRef);
-  const wsPath = join(workDir, "workspaces", wsId);
-  const dataDir = resolveBundleDataDir(wsPath, bundleName);
-
-  // Check for existing registration
-  if (registry.hasSource(serverName)) {
-    throw new Error(`Bundle "${serverName}" is already running in workspace "${wsId}"`);
-  }
-
-  const result = await startBundleSource(bundleRef, registry, eventSink, configDir, {
-    allowInsecureRemotes: opts?.allowInsecureRemotes,
-    dataDir,
-    // Thread workspace id + work dir so the named-bundle path can resolve
-    // `user_config` from the workspace credential store before prepareServer
-    // validates it.
-    wsId,
-    workDir,
-  });
-
-  return {
-    wsId,
-    bundle: bundleRef,
-    dataDir,
-    serverName: result.sourceName,
-    meta: result.meta,
-  };
 }

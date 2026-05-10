@@ -294,4 +294,57 @@ describe("manage_app — workspace-aware install/uninstall", () => {
     // Cleanup
     await registry.removeSource(entry.serverName);
   }, 15_000);
+
+  it("install→uninstall slug roundtrip: ref.serverName is honored end-to-end", async () => {
+    // Pins the contract that pre-fix was broken on the named-bundle
+    // (and path-bundle) branches of `startBundleSource`: the persisted
+    // `ref.serverName` (set by the catalog install path from
+    // `slugifyServerName(entry.id)`) MUST be the name registered in
+    // the ToolRegistry, AND the lifecycle Map key, AND what
+    // `manage_app uninstall` resolves to. Pre-fix, install persisted
+    // the canonical slug but startup re-derived `deriveServerName(name)`
+    // — registry was keyed on the short slug, uninstall looked up by
+    // the canonical slug, miss, throw. The would-have-caught-#1 test.
+    const ws = await store.create("Engineering", "engineering");
+    const bundleDir = createEchoBundleOnDisk(join(workDir, "echo-roundtrip"));
+
+    // Catalog install would persist a slug like "dev-mpak-nb-echo".
+    // Use a clearly-different value from `deriveServerName(manifest.name)`
+    // (which would compute "echo") so a regression to the old behavior
+    // produces "echo" not "dev-mpak-nb-echo" and the assertion fails.
+    const canonicalSlug = "dev-mpak-nb-echo";
+    const bundleRef = {
+      path: bundleDir,
+      serverName: canonicalSlug,
+    } as import("../../src/bundles/types.ts").BundleRef;
+
+    const registry = new ToolRegistry();
+    const sink = makeEventCollector();
+    const lifecycle = new BundleLifecycleManager(registry, sink, undefined);
+
+    const entry = await installBundleInWorkspace(
+      ws.id,
+      bundleRef,
+      registry,
+      sink,
+      undefined,
+      { workDir },
+    );
+
+    // Install path returns the persisted slug, NOT the manifest-derived short slug.
+    expect(entry.serverName).toBe(canonicalSlug);
+    expect(entry.serverName).not.toBe(deriveServerName("@test/echo"));
+
+    // ToolRegistry source name agrees.
+    expect(registry.hasSource(canonicalSlug)).toBe(true);
+    expect(registry.hasSource("echo")).toBe(false);
+
+    // Lifecycle Map key agrees too.
+    lifecycle.seedInstance(entry.serverName, bundleDir, bundleRef, entry.meta ?? undefined, ws.id);
+    expect(lifecycle.getInstance(canonicalSlug, ws.id)).toBeDefined();
+    expect(lifecycle.getInstance("echo", ws.id)).toBeUndefined();
+
+    // Cleanup
+    await registry.removeSource(canonicalSlug);
+  }, 15_000);
 });
