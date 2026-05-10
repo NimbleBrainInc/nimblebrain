@@ -121,6 +121,22 @@ servers:
         auth: dcr
         tags: [support, messaging]
 
+  - name: com.mercury/mcp
+    title: Mercury
+    description: Banking accounts, transactions, and balances (read-only)
+    version: "1.0.0"
+    icons:
+      - src: https://static.nimblebrain.ai/icons/mercury.png
+        sizes: ["any"]
+    remotes:
+      - type: streamable-http
+        url: https://mcp.mercury.com/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        defaultScope: workspace
+        auth: dcr
+        tags: [banking, finance]
+
   - name: com.neon/mcp
     title: Neon
     description: Serverless Postgres branches and queries
