@@ -5,16 +5,17 @@
  * The platform stopped authoring its own discovery shape: a static
  * curated catalog now ships entries that conform to upstream
  * [`ServerDetail`](../../src/connectors/schemas/server.schema.json), and
- * the mpak adapter projects mpak's legacy `/v1/bundles/...` JSON to the
- * same shape. Consumers always see one type. The `_meta` extension
+ * `MpakSource` reads the same shape natively from mpak's `/v1/servers/...`
+ * via the SDK. Consumers always see one type. The `_meta` extension
  * `ai.nimblebrain/connector` carries our platform-specific fields
  * (defaultScope, auth, operatorSetup, etc.) without polluting
  * upstream-defined slots.
  *
- * Validation runs at every system boundary (per spec §1.3): every
- * `ServerDetail` produced by a registry is ajv-validated against the
- * upstream schema before it reaches the UI / agent. Invalid entries
- * are dropped with a logged warning naming source + entry name.
+ * Validated at every system boundary so an invalid entry is dropped
+ * at the source it came from, never reaching the UI / agent. Each
+ * `ServerDetail` is ajv-validated against the upstream JSON Schema
+ * before it leaves a `ConnectorSource`; invalid entries are dropped
+ * with a logged warning naming the source + entry name.
  */
 
 import { readFileSync } from "node:fs";
@@ -100,8 +101,9 @@ export interface Package {
  * fields that don't fit upstream slots: OAuth flow type, operator-setup
  * pointers, recommended scope, search tags, and UI hints.
  *
- * Authored on entries we curate (StaticRegistry) and absent on mpak
- * entries (the projection leaves it undefined).
+ * Authored on entries we curate (loaded by `StaticSource` from
+ * `catalog.yaml`) and absent on mpak entries (the projection leaves
+ * it undefined).
  */
 export interface NimbleBrainConnectorMeta {
   /** Recommended OAuth identity scope for the connector. */

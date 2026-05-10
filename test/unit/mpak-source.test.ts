@@ -186,6 +186,45 @@ describe("MpakSource pagination", () => {
     expect(pageIdx).toBe(2);
   });
 
+  test("MAX_PAGES ceiling truncates an infinite-cursor registry — guards against upstream loop bug", async () => {
+    // Defense against an upstream bug where the registry advertises
+    // a never-empty cursor (e.g. the cursor token is computed from
+    // page-number modulo something and never reaches the terminal
+    // condition). Without the ceiling Browse would hang forever.
+    let calls = 0;
+    fetchMock = async () => {
+      calls++;
+      return new Response(
+        JSON.stringify({
+          servers: [
+            {
+              name: `ai.x/page${calls}`,
+              description: "x",
+              version: "1.0.0",
+              packages: [
+                {
+                  registryType: "mpak",
+                  identifier: `@x/page${calls}`,
+                  version: "1.0.0",
+                  transport: { type: "stdio" },
+                },
+              ],
+            },
+          ],
+          // Always advertise a next cursor — never terminate.
+          metadata: { next_cursor: `infinite-${calls}` },
+        }),
+        { status: 200 },
+      );
+    };
+    const source = new MpakSource(SOURCE_ID, URL);
+    const servers = await source.fetch();
+    // MAX_PAGES = 10 (per src/registries/mpak-source.ts). Exceeding
+    // implementations should fail this and the next-asserted bound.
+    expect(calls).toBe(10);
+    expect(servers.length).toBe(10);
+  });
+
   test("stops when next_cursor is absent — single-page registries don't loop", async () => {
     let calls = 0;
     fetchMock = async () => {

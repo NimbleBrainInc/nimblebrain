@@ -18,12 +18,14 @@ import type { RegistryConfig } from "./types.ts";
  *
  * On first read with no file present, the store seeds two defaults:
  *
- *   - `bundled-static` — a `StaticRegistry` pointing at the bundled
+ *   - `bundled-static` — a `StaticSource` pointing at the bundled
  *     `src/connectors/catalog.yaml` shipped with the platform. Locked
  *     (operator can't disable or remove it).
- *   - `mpak`           — `MpakRegistry` against `https://registry.mpak.dev`.
- *     Default enabled; operator can disable entirely or point at a
- *     different mpak instance.
+ *   - `mpak`           — an `MpakSource` row with no persisted `url`;
+ *     the SDK owns the default registry host. Default enabled, scoped
+ *     to `["nimblebraininc"]` so first installs are NimbleBrain-curated.
+ *     Operator can disable, broaden the scope, or point `url` at a
+ *     self-hosted mpak instance.
  *
  * Operator overrides at process start:
  *

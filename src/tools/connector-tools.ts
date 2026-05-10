@@ -817,9 +817,14 @@ async function handleGetInstalled(
  *     and a registry that emits it.
  *   - No name-collision bugs between catalogs (the "Catalog entry not
  *     found" class of error doesn't exist in this design).
- *   - Forward-compat: when MpakRegistry's real implementation lands
- *     and emits live mpak-bundle entries, they install on day one
- *     without any change here.
+ *
+ * Defense-in-depth on the wire payload: `parseDirectoryEntry` re-runs
+ * the value-shape gate (`SCOPED_PACKAGE_RE` for mpak packages,
+ * `isHttpUrl` for remote URLs, reserved-OAuth-params for the install
+ * action). The entry came from a client over the tool surface, not
+ * directly from a trusted source instance, so trust-but-verify at the
+ * dispatch boundary catches a tampered payload regardless of which
+ * registry a well-formed analog originally came from.
  *
  * Cross-cutting checks (admin allow-list) apply to every install
  * kind and live above the dispatch.

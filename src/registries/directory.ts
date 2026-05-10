@@ -104,7 +104,16 @@ export class ConnectorDirectory {
         registryId: source.id,
         registryType: source.type,
       });
-      if (!entry) continue;
+      if (!entry) {
+        // Projection returned null = entry isn't installable (no
+        // packages, no remotes, or unsupported transport). Log so an
+        // operator debugging "why doesn't my entry appear in Browse?"
+        // sees the cause instead of silent omission.
+        log.warn(
+          `[connector-directory] [${source.id}] entry "${detail.name}" dropped — projection returned null (no installable packages or remotes)`,
+        );
+        continue;
+      }
       const key = `${entry.registryId}::${entry.id}`;
       if (seen.has(key)) continue;
       seen.add(key);
