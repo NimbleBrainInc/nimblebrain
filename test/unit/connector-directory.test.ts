@@ -415,3 +415,155 @@ describe("ConnectorDirectory lookup tables", () => {
     expect(icons.get("@nimblebraininc/echo")).toBe("https://x.test/echo.svg");
   });
 });
+
+describe("ConnectorDirectory safety scrub (mpak XSS via _meta extension URLs)", () => {
+  // Pre-fix only static-source ran the URL-scheme allowlist + reserved
+  // OAuth-param check. Mpak entries reached projection unchecked, so a
+  // non-curated mpak publisher could ship `_meta.docsUrl: "javascript:..."`
+  // and the Configure page would render it as a clickable `<a href>`
+  // (target="_blank" rel="noopener noreferrer" does NOT block javascript:
+  // URI execution). Hoisting the check into ConnectorDirectory.fetchAll
+  // means every source — mpak / static / future — is scrubbed at one
+  // boundary. These tests pin the protection from the mpak side, which
+  // was the gap.
+
+  function mpakServer(over: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      name: "io.evil/mcp",
+      description: "Evil",
+      version: "1.0.0",
+      remotes: [{ type: "streamable-http", url: "https://evil.test/mcp" }],
+      ...over,
+    };
+  }
+
+  test("drops mpak entry whose _meta.docsUrl carries a javascript: scheme", async () => {
+    const store = freshStore();
+    await configureRegistries(store, [
+      { id: "mpak", name: "mpak", type: "mpak", enabled: true },
+    ]);
+    fetchMock = async () =>
+      new Response(
+        JSON.stringify({
+          servers: [
+            mpakServer({
+              _meta: {
+                "ai.nimblebrain/connector": {
+                  defaultScope: "workspace",
+                  auth: "dcr",
+                  docsUrl: "javascript:alert(1)",
+                },
+              },
+            }),
+          ],
+        }),
+        { status: 200 },
+      );
+    const result = await new ConnectorDirectory(store).list();
+    expect(result.entries).toEqual([]);
+  });
+
+  test("drops mpak entry whose _meta.operatorSetup.portalUrl carries a non-http(s) scheme", async () => {
+    const store = freshStore();
+    await configureRegistries(store, [
+      { id: "mpak", name: "mpak", type: "mpak", enabled: true },
+    ]);
+    fetchMock = async () =>
+      new Response(
+        JSON.stringify({
+          servers: [
+            mpakServer({
+              _meta: {
+                "ai.nimblebrain/connector": {
+                  defaultScope: "workspace",
+                  auth: "static",
+                  operatorSetup: {
+                    portalUrl: "javascript:fetch('https://evil')",
+                    hint: "x",
+                    clientSecretKey: "x.client_secret",
+                  },
+                },
+              },
+            }),
+          ],
+        }),
+        { status: 200 },
+      );
+    const result = await new ConnectorDirectory(store).list();
+    expect(result.entries).toEqual([]);
+  });
+
+  test("drops mpak entry whose _meta.additionalAuthorizationParams contains a reserved OAuth key", async () => {
+    const store = freshStore();
+    await configureRegistries(store, [
+      { id: "mpak", name: "mpak", type: "mpak", enabled: true },
+    ]);
+    fetchMock = async () =>
+      new Response(
+        JSON.stringify({
+          servers: [
+            mpakServer({
+              _meta: {
+                "ai.nimblebrain/connector": {
+                  defaultScope: "workspace",
+                  auth: "dcr",
+                  additionalAuthorizationParams: { client_id: "attacker-controlled" },
+                },
+              },
+            }),
+          ],
+        }),
+        { status: 200 },
+      );
+    const result = await new ConnectorDirectory(store).list();
+    expect(result.entries).toEqual([]);
+  });
+
+  test("drops mpak entry whose icons[].src is a non-http(s) scheme", async () => {
+    const store = freshStore();
+    await configureRegistries(store, [
+      { id: "mpak", name: "mpak", type: "mpak", enabled: true },
+    ]);
+    fetchMock = async () =>
+      new Response(
+        JSON.stringify({
+          servers: [
+            mpakServer({
+              icons: [{ src: "data:image/svg+xml;<script>alert(1)</script>" }],
+            }),
+          ],
+        }),
+        { status: 200 },
+      );
+    const result = await new ConnectorDirectory(store).list();
+    expect(result.entries).toEqual([]);
+  });
+
+  test("safe mpak entries pass unmodified — scrub doesn't over-reject", async () => {
+    const store = freshStore();
+    await configureRegistries(store, [
+      { id: "mpak", name: "mpak", type: "mpak", enabled: true },
+    ]);
+    fetchMock = async () =>
+      new Response(
+        JSON.stringify({
+          servers: [
+            mpakServer({
+              name: "io.safe/mcp",
+              icons: [{ src: "https://x.test/safe.png" }],
+              _meta: {
+                "ai.nimblebrain/connector": {
+                  defaultScope: "workspace",
+                  auth: "dcr",
+                  docsUrl: "https://safe.example/docs",
+                },
+              },
+            }),
+          ],
+        }),
+        { status: 200 },
+      );
+    const result = await new ConnectorDirectory(store).list();
+    expect(result.entries.map((e) => e.id)).toEqual(["io.safe/mcp"]);
+  });
+});

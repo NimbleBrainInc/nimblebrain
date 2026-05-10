@@ -17,6 +17,8 @@
  */
 
 import { getNimbleBrainConnectorMeta, type ServerDetail } from "../connectors/server-detail.ts";
+import { validateAdditionalAuthorizationParams } from "../tools/workspace-oauth-provider.ts";
+import { isHttpUrl } from "../util/url.ts";
 import type { DirectoryEntry, RegistryType } from "./types.ts";
 
 export interface ProjectionContext {
@@ -149,4 +151,50 @@ export function serverDetailToCatalogEntry(s: ServerDetail): ConnectorCatalogEnt
     ...(typeof meta?.interactive === "boolean" ? { interactive: meta.interactive } : {}),
     ...(meta?.docsUrl ? { docsUrl: meta.docsUrl } : {}),
   };
+}
+
+/**
+ * Defense-in-depth safety check on a `ServerDetail` regardless of which
+ * source emitted it. Runs at the directory boundary so mpak-published
+ * entries are scrubbed identically to bundled-static / NB_REGISTRIES
+ * static entries — pre-fix only static-source ran this check, so a
+ * malicious mpak publisher (or any non-curated mpak scope) could ship
+ * `_meta.docsUrl: "javascript:..."` and the Configure page would render
+ * it as a clickable `<a href>`. `target="_blank" rel="noopener noreferrer"`
+ * does NOT block `javascript:` URI execution.
+ *
+ * Returns the first violation message, or null when the entry is safe.
+ * Caller drops on non-null + logs with the source-tagged registry id.
+ *
+ * Catches:
+ *   - icons[].src non-http(s) (would XSS the Browse `<img src>`)
+ *   - operatorSetup.portalUrl non-http(s) (clickable in Set-up modal)
+ *   - docsUrl non-http(s) (clickable in Configure page hero)
+ *   - additionalAuthorizationParams reserved-key smuggling (RFC 6749
+ *     params client_id, redirect_uri, state, etc. — would let a
+ *     catalog override OAuth-flow-critical parameters)
+ */
+export function validateServerDetailSafety(s: ServerDetail): string | null {
+  for (const icon of s.icons ?? []) {
+    if (!isHttpUrl(icon.src)) {
+      return `icon src must be http(s): "${icon.src}"`;
+    }
+  }
+  const meta = getNimbleBrainConnectorMeta(s);
+  if (meta?.operatorSetup) {
+    if (!isHttpUrl(meta.operatorSetup.portalUrl)) {
+      return `operatorSetup.portalUrl must be http(s): "${meta.operatorSetup.portalUrl}"`;
+    }
+  }
+  if (meta?.additionalAuthorizationParams) {
+    try {
+      validateAdditionalAuthorizationParams(meta.additionalAuthorizationParams);
+    } catch (err) {
+      return err instanceof Error ? err.message : String(err);
+    }
+  }
+  if (meta?.docsUrl !== undefined && !isHttpUrl(meta.docsUrl)) {
+    return `docsUrl must be http(s): "${meta.docsUrl}"`;
+  }
+  return null;
 }

@@ -826,6 +826,39 @@ describe("manage_connectors.install", () => {
     expect(text.toLowerCase()).toContain("install action is required");
   });
 
+  test("rejects remote-oauth entry whose install.additionalAuthorizationParams contains a reserved OAuth key", async () => {
+    // Defense-in-depth at the parse boundary. A malicious aggregator
+    // shipping `additionalAuthorizationParams: { client_id: "evil" }`
+    // would let the catalog override an OAuth-flow-critical parameter.
+    // The runtime gate in WorkspaceOAuthProvider's constructor still
+    // catches it later, but failing here gives a source-tagged warning
+    // that names the offending entry. Field lives on `install`, not
+    // top-level — pre-fix this gate read `entry.additionalAuthorizationParams`
+    // (always undefined per the projection's shape) and was a silent
+    // no-op (QA round 5b).
+    const tool = buildTool(h, ADMIN_USER);
+    const result = await tool.handler({
+      action: "install",
+      entry: {
+        id: "io.evil/mcp",
+        registryId: "bundled-static",
+        registryType: "static",
+        name: "Evil",
+        description: "x",
+        defaultScope: "workspace",
+        install: {
+          kind: "remote-oauth",
+          url: "https://mcp.evil.test/mcp",
+          auth: "dcr",
+          additionalAuthorizationParams: { client_id: "attacker-controlled" },
+        },
+      },
+    });
+    expect(result.isError).toBe(true);
+    const text = (result.content?.[0] as { text?: string } | undefined)?.text ?? "";
+    expect(text.toLowerCase()).toContain("install action is required");
+  });
+
   test("user-scope dup-fallback returns a slug, not the raw reverse-DNS id (regression for QA review)", async () => {
     // The dup branch handles orphan recovery: workspace/user.json says
     // the bundle is installed but lifecycle lost the instance. The

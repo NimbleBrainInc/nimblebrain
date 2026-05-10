@@ -29,13 +29,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { extname } from "node:path";
 import { log } from "../cli/log.ts";
-import {
-  getNimbleBrainConnectorMeta,
-  type ServerDetail,
-  validateServerDetail,
-} from "../connectors/server-detail.ts";
-import { validateAdditionalAuthorizationParams } from "../tools/workspace-oauth-provider.ts";
-import { isHttpUrl } from "../util/url.ts";
+import { type ServerDetail, validateServerDetail } from "../connectors/server-detail.ts";
 import type { ConnectorSource } from "./types.ts";
 
 export class StaticSource implements ConnectorSource {
@@ -134,56 +128,15 @@ export function validateStaticServers(parsed: unknown, source: string): ServerDe
       log.warn(`[static-source] ${tag} dropped — duplicate name "${detail.name}"`);
       continue;
     }
-    // Defense-in-depth checks the upstream ajv schema doesn't perform:
-    //
-    //   - `format: "uri"` accepts any syntactically valid URI, including
-    //     `javascript:` / `vbscript:` / `file:` — those would XSS the
-    //     Browse page's `<img src>` or the Set-up modal's `<a href>` if a
-    //     malicious operator-supplied catalog landed.
-    //   - reserved OAuth params (`client_id`, `redirect_uri`, `state`, ...)
-    //     in `additionalAuthorizationParams` would let a catalog author
-    //     silently override the OAuth flow at runtime; the lifecycle
-    //     installer rejects them later, but failing here gives a clearer
-    //     source-tagged warning.
-    const safetyError = validateNimbleBrainSafety(detail);
-    if (safetyError) {
-      log.warn(`[static-source] ${tag} dropped — ${safetyError}`);
-      continue;
-    }
+    // Defense-in-depth (URL scheme allowlist + reserved OAuth params)
+    // runs uniformly at the directory boundary in
+    // `validateServerDetailSafety` — every source is scrubbed there
+    // regardless of provenance, so non-curated mpak entries get the
+    // same protection static does.
     seenNames.add(detail.name);
     out.push(detail);
   }
   return out;
-}
-
-/**
- * Run the safety checks the upstream schema can't (URL scheme allowlist
- * for icon / portal URLs, reserved-key allowlist for additionalAuthorizationParams).
- * Returns the first violation message, or null when the entry is safe.
- */
-function validateNimbleBrainSafety(s: ServerDetail): string | null {
-  for (const icon of s.icons ?? []) {
-    if (!isHttpUrl(icon.src)) {
-      return `icon src must be http(s): "${icon.src}"`;
-    }
-  }
-  const meta = getNimbleBrainConnectorMeta(s);
-  if (meta?.operatorSetup) {
-    if (!isHttpUrl(meta.operatorSetup.portalUrl)) {
-      return `operatorSetup.portalUrl must be http(s): "${meta.operatorSetup.portalUrl}"`;
-    }
-  }
-  if (meta?.additionalAuthorizationParams) {
-    try {
-      validateAdditionalAuthorizationParams(meta.additionalAuthorizationParams);
-    } catch (err) {
-      return err instanceof Error ? err.message : String(err);
-    }
-  }
-  if (meta?.docsUrl !== undefined && !isHttpUrl(meta.docsUrl)) {
-    return `docsUrl must be http(s): "${meta.docsUrl}"`;
-  }
-  return null;
 }
 
 function candidateName(c: unknown): string | undefined {

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { uninstallBundleFromWorkspace } from "../../src/bundles/workspace-ops.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
+import { resolveBundleServerName } from "../../src/tools/system-tools.ts";
 import type { ToolSource } from "../../src/tools/types.ts";
 
 /**
@@ -74,5 +75,39 @@ describe("uninstallBundleFromWorkspace", () => {
     } finally {
       rmSync(workDir, { recursive: true, force: true });
     }
+  });
+});
+
+/**
+ * The helper above pins the contract once the resolved serverName is
+ * already in hand. These tests pin the *resolver* itself —
+ * `manage_app uninstall`'s lookup against `workspace.json` — so a
+ * future refactor that drops the resolver doesn't silently re-introduce
+ * the catalog-installed-bundle uninstall regression.
+ */
+describe("resolveBundleServerName", () => {
+  test("returns the persisted slug for a catalog-installed bundle (post-#195)", () => {
+    const ws = {
+      bundles: [{ name: "@x/echo", serverName: "dev-mpak-x-echo" }],
+    };
+    expect(resolveBundleServerName("@x/echo", ws)).toBe("dev-mpak-x-echo");
+  });
+
+  test("falls back to deriveServerName for legacy refs missing serverName (pre-#195)", () => {
+    const ws = {
+      bundles: [{ name: "@x/echo" }],
+    };
+    expect(resolveBundleServerName("@x/echo", ws)).toBe("echo");
+  });
+
+  test("falls back to deriveServerName when workspace is null", () => {
+    expect(resolveBundleServerName("@x/echo", null)).toBe("echo");
+  });
+
+  test("falls back to deriveServerName when bundle isn't in workspace.bundles", () => {
+    const ws = {
+      bundles: [{ name: "@y/other", serverName: "dev-mpak-y-other" }],
+    };
+    expect(resolveBundleServerName("@x/echo", ws)).toBe("echo");
   });
 });

@@ -31,6 +31,7 @@ import {
   type ConnectorCatalogEntry,
   projectServerDetailToDirectoryEntry,
   serverDetailToCatalogEntry,
+  validateServerDetailSafety,
 } from "./projection.ts";
 import type { RegistryStore } from "./registry-store.ts";
 import { StaticSource } from "./static-source.ts";
@@ -205,6 +206,20 @@ export class ConnectorDirectory {
       }
       const filtered = applyScopeFilter(raw, cfg.scopes);
       for (const detail of filtered) {
+        // Defense-in-depth: drop entries with javascript:/data:/file:
+        // URLs in icon/portal/docs slots OR reserved-key OAuth-param
+        // smuggling. Runs at the directory boundary so every source
+        // (mpak / static / future) is scrubbed identically — pre-fix
+        // only static-source ran this check, so non-curated mpak
+        // entries with `_meta.docsUrl: "javascript:..."` would render
+        // as a clickable `<a href>` in the Configure page.
+        const safetyError = validateServerDetailSafety(detail);
+        if (safetyError) {
+          log.warn(
+            `[connector-directory] [${cfg.id}] entry "${detail.name}" dropped — ${safetyError}`,
+          );
+          continue;
+        }
         out.servers.push({ source: cfg, detail });
       }
     }

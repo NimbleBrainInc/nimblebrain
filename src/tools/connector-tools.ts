@@ -940,8 +940,10 @@ function parseDirectoryEntry(input: unknown): DirectoryEntry | null {
   // the parse boundary so a malicious aggregator can't smuggle them through
   // — the lifecycle installer rejects them later, but failing here gives a
   // source-tagged warning that names the offending entry rather than a
-  // generic install-time error.
-  const additionalParams = (e as { additionalAuthorizationParams?: unknown })
+  // generic install-time error. Field lives at `install.additionalAuthorizationParams`
+  // per RemoteOAuthInstall (src/registries/types.ts), NOT at the top-level
+  // entry — pre-fix this gate read the wrong path and was a silent no-op.
+  const additionalParams = (install as { additionalAuthorizationParams?: unknown })
     .additionalAuthorizationParams;
   if (additionalParams !== undefined) {
     if (

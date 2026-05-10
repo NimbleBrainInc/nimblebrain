@@ -879,6 +879,29 @@ async function installBundleInWorkspaceViaCtx(
  * Uninstall a bundle from a workspace: stop process,
  * remove from workspace.json bundles, remove lifecycle instance.
  */
+/**
+ * Resolve the lifecycle key for a bundle being uninstalled.
+ *
+ * Catalog install (Browse / `manage_app install`) writes the
+ * slugified canonical id (`slugifyServerName(entry.id)`) onto the
+ * BundleRef. Re-deriving from `bundleName` here would compute the
+ * OLD short slug and miss the registered source — the exact
+ * regression that broke `manage_app uninstall` for any bundle
+ * installed via the catalog after #195.
+ *
+ * Reads `ref.serverName` first, falling back to
+ * `deriveServerName(bundleName)` only for legacy installs that
+ * predate `serverName`-on-ref persistence. Exported so the regression
+ * is unit-testable independently of the full uninstall stack.
+ */
+export function resolveBundleServerName(
+  bundleName: string,
+  ws: { bundles: Array<{ name?: string; serverName?: string }> } | null,
+): string {
+  const persisted = ws?.bundles.find((b) => b.name === bundleName);
+  return persisted?.serverName ?? deriveServerName(bundleName);
+}
+
 async function uninstallBundleFromWorkspaceViaCtx(
   name: string,
   wsId: string,
@@ -887,18 +910,8 @@ async function uninstallBundleFromWorkspaceViaCtx(
   ctx: ManageBundleContext,
 ): Promise<ToolResult> {
   try {
-    // Resolve serverName from the persisted BundleRef first — install
-    // (whether from Browse or `manage_app install`) writes the
-    // slugified canonical id (`slugifyServerName(entry.id)`) onto the
-    // ref. Deriving from `name` here would compute the OLD short slug
-    // and miss the registered source — exactly the regression that
-    // broke `manage_app uninstall` for any bundle installed via the
-    // catalog after #195.
     const ws = await ctx.workspaceStore.get(wsId);
-    const persisted = ws?.bundles.find((b) => "name" in b && b.name === name);
-    const serverName =
-      (persisted && "name" in persisted ? persisted.serverName : undefined) ??
-      deriveServerName(name);
+    const serverName = resolveBundleServerName(name, ws);
 
     // Protected check — pass wsId to look up the workspace-scoped instance
     const instance = lifecycle.getInstance(serverName, wsId);
