@@ -81,6 +81,13 @@ class FakeRuntime {
   loadConversationSkills() {
     return [];
   }
+  async reloadSkills(): Promise<void> {
+    // Production runtime rebuilds the SkillMatcher after a mutation
+    // so newly-created org/workspace skills match their triggers
+    // without a process restart. Tests don't exercise the matcher;
+    // a no-op satisfies the call site (`reloadBootSkills` in
+    // platform/skills.ts) without a TypeError under suite load.
+  }
 
   setMember(wsId: string, userId: string, role: "admin" | "member"): void {
     const ws = this.workspaces.get(wsId);
