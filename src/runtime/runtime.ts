@@ -48,6 +48,7 @@ import { buildModelResolver, resolveModelString } from "../model/registry.ts";
 import { PermissionStore } from "../permissions/permission-store.ts";
 import type { Layer3SkillEntry, PromptAppInfo } from "../prompt/compose.ts";
 import { composeSystemPrompt } from "../prompt/compose.ts";
+import { ConnectorDirectory } from "../registries/directory.ts";
 import { RegistryStore } from "../registries/registry-store.ts";
 import {
   loadBuiltinSkills,
@@ -1416,12 +1417,30 @@ export class Runtime {
    * Get the RegistryStore — instance-level config of which connector
    * registries (curated / mpak / future) are enabled. Auto-seeds with
    * sensible defaults on first read.
+   *
+   * Reserved for admin / mutation paths (the admin tool that updates
+   * `enabled` / `url` / `scopes`). Read-side callers should use
+   * `getConnectorDirectory()` instead — the directory facade owns the
+   * source-construction, scope filter, projection, and lookup tables
+   * uniformly.
    */
   getRegistryStore(): RegistryStore {
     if (!this._registryStore) {
       this._registryStore = new RegistryStore(this.getWorkDir());
     }
     return this._registryStore;
+  }
+
+  /**
+   * Build a fresh `ConnectorDirectory` — the single read-side seam for
+   * everything connector-catalog-shaped (Browse rows, raw
+   * `ServerDetail[]`, lookup tables for Configure / installed-list).
+   * Returns a new instance per call so per-instance memoization stays
+   * scoped to one tool invocation; the underlying source caches (mpak
+   * HTTP TTL, etc.) are still shared module-wide.
+   */
+  getConnectorDirectory(): ConnectorDirectory {
+    return new ConnectorDirectory(this.getRegistryStore());
   }
 
   /** Get the IdentityProvider (null in dev mode when no instance.json). */

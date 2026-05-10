@@ -6,15 +6,13 @@
  * Each workspace gets its own ToolRegistry with plain tool names (no compound keys).
  */
 
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { hasPersistedWorkspaceOAuthTokens } from "../bundles/oauth-tokens.ts";
-import { deriveServerName, resolveBundleDataDir } from "../bundles/paths.ts";
+import { bundleNameFromRef, resolveBundleDataDir, serverNameFromRef } from "../bundles/paths.ts";
 import { setPendingAuth } from "../bundles/pending-auth-buffer.ts";
 import { startBundleSource } from "../bundles/startup.ts";
 import type { BundleRef, LocalBundleMeta } from "../bundles/types.ts";
 import { log } from "../cli/log.ts";
-import { clearAllWorkspaceCredentials } from "../config/workspace-credentials.ts";
 import { ToolRegistry } from "../tools/registry.ts";
 import type { ToolSource } from "../tools/types.ts";
 import type { Workspace } from "../workspace/types.ts";
@@ -41,25 +39,6 @@ export interface ProcessInventoryEntry {
 // ---------------------------------------------------------------------------
 // Process inventory
 // ---------------------------------------------------------------------------
-
-/**
- * Derive a server name from a BundleRef (handles name, path, and url variants).
- */
-function serverNameFromRef(ref: BundleRef): string {
-  if ("name" in ref) return deriveServerName(ref.name);
-  if ("path" in ref) return deriveServerName(ref.path);
-  // url variant — use serverName override or derive from URL
-  return (ref as { url: string; serverName?: string }).serverName ?? deriveServerName(ref.url);
-}
-
-/**
- * Derive the bundle name string from a BundleRef (for data-dir resolution).
- */
-function bundleNameFromRef(ref: BundleRef): string {
-  if ("name" in ref) return ref.name;
-  if ("path" in ref) return ref.path;
-  return (ref as { url: string }).url;
-}
 
 /**
  * Build a flat process inventory from a list of workspaces.
@@ -338,92 +317,4 @@ export async function mapWithConcurrency<T>(
     }
   });
   await Promise.all(runners);
-}
-
-// ---------------------------------------------------------------------------
-// Hot install / uninstall within a workspace
-// ---------------------------------------------------------------------------
-
-/**
- * Install a bundle in a specific workspace (hot — no restart required).
- *
- * Spawns the bundle process with a workspace-scoped data directory
- * and registers it in the workspace's ToolRegistry with its plain server name.
- */
-export async function installBundleInWorkspace(
-  wsId: string,
-  bundleRef: BundleRef,
-  registry: ToolRegistry,
-  // Required. Threaded into the new McpSource so task-augmented tools'
-  // progress events reach the SSE broadcast layer (Synapse useDataSync).
-  eventSink: import("../engine/types.ts").EventSink,
-  configDir: string | undefined,
-  opts?: {
-    allowInsecureRemotes?: boolean;
-    workDir?: string;
-  },
-): Promise<ProcessInventoryEntry> {
-  const workDir = opts?.workDir ?? process.env.NB_WORK_DIR ?? "";
-  const serverName = serverNameFromRef(bundleRef);
-  const bundleName = bundleNameFromRef(bundleRef);
-  const wsPath = join(workDir, "workspaces", wsId);
-  const dataDir = resolveBundleDataDir(wsPath, bundleName);
-
-  // Check for existing registration
-  if (registry.hasSource(serverName)) {
-    throw new Error(`Bundle "${serverName}" is already running in workspace "${wsId}"`);
-  }
-
-  const result = await startBundleSource(bundleRef, registry, eventSink, configDir, {
-    allowInsecureRemotes: opts?.allowInsecureRemotes,
-    dataDir,
-    // Thread workspace id + work dir so the named-bundle path can resolve
-    // `user_config` from the workspace credential store before prepareServer
-    // validates it.
-    wsId,
-    workDir,
-  });
-
-  return {
-    wsId,
-    bundle: bundleRef,
-    dataDir,
-    serverName: result.sourceName,
-    meta: result.meta,
-  };
-}
-
-/**
- * Uninstall a bundle from a specific workspace (hot — stops process and deregisters).
- *
- * Looks up the plain server name, stops the MCP source, and removes it from the registry.
- * Also clears the workspace-scoped credential file for the bundle (best-effort —
- * failures are logged but do not fail the uninstall). Data directories are
- * intentionally preserved.
- */
-export async function uninstallBundleFromWorkspace(
-  wsId: string,
-  bundleName: string,
-  registry: ToolRegistry,
-  opts?: { workDir?: string },
-): Promise<void> {
-  const serverName = deriveServerName(bundleName);
-
-  if (!registry.hasSource(serverName)) {
-    throw new Error(`No bundle "${serverName}" found in workspace "${wsId}"`);
-  }
-
-  await registry.removeSource(serverName);
-
-  // Best-effort credential cleanup — don't fail uninstall if it errors.
-  // Credentials are config, not data: they should not persist across uninstalls.
-  const workDir = opts?.workDir ?? process.env.NB_WORK_DIR ?? join(homedir(), ".nimblebrain");
-  try {
-    await clearAllWorkspaceCredentials(wsId, bundleName, workDir);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    process.stderr.write(
-      `[workspace-runtime] Failed to clear credentials for ${bundleName} in ${wsId}: ${msg}\n`,
-    );
-  }
 }

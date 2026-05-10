@@ -374,7 +374,16 @@ export async function startBundleSource(
   let meta: LocalBundleMeta | null = null;
   let manifest: BundleManifest | null = null;
   if ("name" in ref) {
-    const serverName = deriveServerName(ref.name);
+    // Honor the canonical-form serverName persisted on the ref by the
+    // catalog install path (`slugifyServerName(entry.id)`); fall back
+    // to the legacy short slug (`deriveServerName(ref.name)`) for
+    // pre-#195 installs whose ref doesn't carry the field. Mirrors the
+    // URL-branch pattern below — without this the registered source
+    // name would diverge from what install persisted, breaking
+    // `manage_app uninstall` for every catalog-installed mpak bundle
+    // whose canonical id and package name produce different slugs
+    // (e.g. `dev.mpak.nimblebraininc/echo` vs `@nimblebraininc/echo`).
+    const serverName = ref.serverName ?? deriveServerName(ref.name);
     validateServerName(serverName);
     const sourceName = serverName;
 
@@ -506,6 +515,13 @@ function buildLocalSource(
     path: string;
     env?: Record<string, string>;
     allowedEnv?: string[];
+    /**
+     * Slugified canonical reverse-DNS form persisted at install time.
+     * When present, used as the source name so the registered key
+     * matches what `manage_app uninstall` looks up; falls back to
+     * `deriveServerName(manifest.name)` for legacy installs.
+     */
+    serverName?: string;
   },
   configDir: string | undefined,
   internalEnv: InternalBundleEnv | undefined,
@@ -527,7 +543,12 @@ function buildLocalSource(
   }
 
   const manifest = result.manifest;
-  const serverName = deriveServerName(manifest.name);
+  // Mirror the named-bundle branch: honor a persisted ref.serverName
+  // (slugified canonical id from install) before falling back to the
+  // legacy short slug. Keeps registered source name in lockstep with
+  // what consumers (manage_app uninstall, lifecycle Map, web routes)
+  // look up by.
+  const serverName = ref.serverName ?? deriveServerName(manifest.name);
   validateServerName(serverName);
   const mcpConfig = manifest.server.mcp_config;
 

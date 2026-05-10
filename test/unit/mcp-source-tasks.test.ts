@@ -115,6 +115,10 @@ function buildTaskAugmentedSource(sink: EventSink, opts: BuildOptions): McpSourc
         getTask: opts.getTaskImpl ?? (() => Promise.reject(new Error("getTask not mocked"))),
       },
     },
+    // McpSource.stop() awaits client.close(); without a no-op the stop()
+    // path that's exercised by the cleanup test (and any flush in
+    // afterEach under suite load) throws TypeError mid-teardown.
+    close: async () => {},
   };
 
   // Test-only: inject fake client + pre-seed the tool cache so findTool()

@@ -7,7 +7,8 @@ import { BundleLifecycleManager } from "../../src/bundles/lifecycle.ts";
 import type { BundleRef } from "../../src/bundles/types.ts";
 import { getWorkspaceCredentials } from "../../src/config/workspace-credentials.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
-import { RegistryStore } from "../../src/registries/registry-store.ts";
+import { ConnectorDirectory } from "../../src/registries/directory.ts";
+import { BUNDLED_STATIC_CATALOG_PATH, RegistryStore } from "../../src/registries/registry-store.ts";
 import type { DirectoryEntry } from "../../src/registries/types.ts";
 import type { Runtime } from "../../src/runtime/runtime.ts";
 import { FileCredentialStore } from "../../src/tools/credential-store.ts";
@@ -37,21 +38,26 @@ import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
  * `Runtime.start()` (which would pull in identity, model, transport, etc.).
  */
 
-const ASANA_ID = "asana";
+// Reverse-DNS form per upstream MCP registry's ServerDetail spec — matches
+// the `name` field of the Asana entry in src/connectors/catalog.yaml.
+const ASANA_ID = "io.asana/mcp";
 const ASANA_URL = "https://mcp.asana.com/v2/mcp";
 const ASANA_SECRET_KEY = "asana.client_secret";
+// DCR entry from the bundled static catalog — used to verify operator
+// setup is rejected for non-static-auth connectors.
+const NOTION_ID = "com.notion/mcp";
 
 /**
- * Build a DirectoryEntry shaped like what CuratedRegistry would emit
- * for Asana — used by install tests since the install API takes the
- * full entry, not an id. Field set matches the real registry output;
- * tests can override pieces (operatorSetup, defaultScope) per case.
+ * Build a DirectoryEntry shaped like what `StaticSource` projects for
+ * Asana — used by install tests since the install API takes the full
+ * entry, not an id. Field set matches the real source output; tests
+ * can override pieces (operatorSetup, defaultScope) per case.
  */
 function asanaEntry(over: Partial<DirectoryEntry> = {}): DirectoryEntry {
   return {
     id: ASANA_ID,
-    registryId: "curated",
-    registryType: "curated",
+    registryId: "bundled-static",
+    registryType: "static",
     name: "Asana",
     description: "Tasks, projects, and team workflows",
     defaultScope: "workspace",
@@ -70,17 +76,21 @@ function asanaEntry(over: Partial<DirectoryEntry> = {}): DirectoryEntry {
 }
 
 /**
- * Build a DirectoryEntry for an mpak-bundle. The id and package name
- * default to what CuratedRegistry emits for echo (a STDIO_BUNDLES
- * entry); tests can override `id` / `package` to drive non-curated
- * scenarios (e.g. arbitrary scoped names).
+ * Build a DirectoryEntry for an mpak-bundle. The default id mirrors
+ * what `MpakSource` projects for `@nimblebraininc/echo` via mpak's
+ * mechanical reverse-DNS naming. Tests can override `id` / `package`
+ * to drive non-default scenarios.
  */
 function mpakEntry(over: { id?: string; pkg?: string; name?: string } = {}): DirectoryEntry {
-  const id = over.id ?? "echo";
+  // mpak's composer maps `@<scope>/<name>` → `dev.mpak.<scope>/<name>`
+  // for the unmapped default; nimblebraininc has a curated map to
+  // ai.nimblebrain. Either form is acceptable input here — tests
+  // pin the platform behavior, not mpak's naming choice.
+  const id = over.id ?? "dev.mpak.nimblebraininc/echo";
   return {
     id,
-    registryId: "curated",
-    registryType: "curated",
+    registryId: "mpak",
+    registryType: "mpak",
     name: over.name ?? "Echo",
     description: "Reference MCP server for testing",
     defaultScope: "workspace",
@@ -129,6 +139,34 @@ function buildHarness(opts: { adminId?: string } = {}): Harness {
   const wsId = "ws_acme";
   const workspaceStore = new WorkspaceStore(workDir);
   const credStore = new FileCredentialStore(workDir);
+  // Pre-seed registries.json so RegistryStore.list() reads it instead of
+  // auto-seeding the production defaults. The bundled-static row is kept
+  // (tests look up real catalog ids like ASANA_ID), but mpak is DISABLED:
+  // otherwise ConnectorDirectory.servers() would call MpakSource.fetch
+  // which makes a live HTTP request to registry.mpak.dev. Under suite
+  // load that network call queues past the 5s test timeout — flake
+  // surfaced in QA round 4.
+  writeFileSync(
+    join(workDir, "registries.json"),
+    JSON.stringify({
+      registries: [
+        {
+          id: "bundled-static",
+          name: "Curated services",
+          type: "static",
+          enabled: true,
+          locked: true,
+          url: BUNDLED_STATIC_CATALOG_PATH,
+        },
+        {
+          id: "mpak",
+          name: "mpak.dev",
+          type: "mpak",
+          enabled: false,
+        },
+      ],
+    }),
+  );
   const registryStore = new RegistryStore(workDir);
   const lifecycle = new BundleLifecycleManager(new NoopEventSink(), undefined);
   const workspaceRegistry = new ToolRegistry();
@@ -137,6 +175,7 @@ function buildHarness(opts: { adminId?: string } = {}): Harness {
     getWorkDir: () => workDir,
     getWorkspaceStore: () => workspaceStore,
     getRegistryStore: () => registryStore,
+    getConnectorDirectory: () => new ConnectorDirectory(registryStore),
     getLifecycle: () => lifecycle,
     getRegistryForWorkspace: (_id: string) => workspaceRegistry,
     // Minimal stubs for the runtime services list_installed touches
@@ -358,10 +397,10 @@ describe("manage_connectors.setup_operator", () => {
 
   test("rejects DCR (non-static-auth) entries — operator setup is meaningless there", async () => {
     const tool = buildTool(h, ADMIN_USER);
-    // notion-org is auth: "dcr" in the default catalog
+    // com.notion/mcp is auth: "dcr" in the default catalog
     const result = await tool.handler({
       action: "setup_operator",
-      catalogId: "notion-org",
+      catalogId: NOTION_ID,
       clientId: "x",
       clientSecret: "y",
     });
@@ -553,31 +592,31 @@ describe("manage_connectors.list_directory", () => {
     rmSync(h.workDir, { recursive: true, force: true });
   });
 
-  test("aggregates entries across enabled registries (curated + mpak by default)", async () => {
+  test("aggregates entries from the bundled-static registry by default", async () => {
+    // Disable mpak so the test doesn't require live network. The bundled
+    // static registry alone should yield > 0 entries.
+    await h.registryStore.update("mpak", { enabled: false });
     const tool = buildTool(h, ADMIN_USER);
     const result = await tool.handler({ action: "list_directory" });
     expect(result.isError).toBe(false);
     const entries = structured(result).entries ?? [];
-
-    const fromCurated = entries.filter((e) => e.registryId === "curated");
-    expect(fromCurated.length).toBeGreaterThan(0);
-    // mpak registry currently returns no entries by design (real
-    // mpak.dev fetch is pending). Either no entries, some entries
-    // (when implemented), or a recorded error are all valid; test
-    // just checks the aggregator runs without throwing.
+    const fromBundled = entries.filter((e) => e.registryId === "bundled-static");
+    expect(fromBundled.length).toBeGreaterThan(0);
   });
 
   test("static entry shows operatorConfigured: false before setup_operator runs", async () => {
+    await h.registryStore.update("mpak", { enabled: false });
     const tool = buildTool(h, ADMIN_USER);
     const result = await tool.handler({ action: "list_directory" });
     const asana = (structured(result).entries ?? []).find(
-      (e) => e.registryId === "curated" && e.id === ASANA_ID,
+      (e) => e.registryId === "bundled-static" && e.id === ASANA_ID,
     );
     expect(asana).toBeDefined();
     expect(asana?.operatorConfigured).toBe(false);
   });
 
   test("static entry shows operatorConfigured: true after setup_operator runs", async () => {
+    await h.registryStore.update("mpak", { enabled: false });
     const tool = buildTool(h, ADMIN_USER);
     await tool.handler({
       action: "setup_operator",
@@ -588,7 +627,7 @@ describe("manage_connectors.list_directory", () => {
 
     const result = await tool.handler({ action: "list_directory" });
     const asana = (structured(result).entries ?? []).find(
-      (e) => e.registryId === "curated" && e.id === ASANA_ID,
+      (e) => e.registryId === "bundled-static" && e.id === ASANA_ID,
     );
     expect(asana?.operatorConfigured).toBe(true);
   });
@@ -651,7 +690,9 @@ describe("manage_connectors.install (static-auth)", () => {
     const result = await tool.handler({ action: "install", entry: asanaEntry() });
     expect(result.isError).toBe(false);
     expect(structured(result).ok).toBe(true);
-    expect(structured(result).serverName).toBe(ASANA_ID);
+    // serverName is the slug of the canonical reverse-DNS form
+    // (`io.asana/mcp` → `io-asana-mcp`) — opaque, URL-safe, route-safe.
+    expect(structured(result).serverName).toBe("io-asana-mcp");
 
     const ws = await h.workspaceStore.get(h.wsId);
     const installed = ws?.bundles.find(
@@ -706,10 +747,10 @@ describe("manage_connectors.install", () => {
   });
 
   test("any scoped package name installs (no curated-list lookup at install time)", async () => {
-    // Forward-compat for real mpak.dev fetch: an entry whose package
-    // isn't in our hardcoded STDIO_BUNDLES still reaches the install
-    // path. The registry that produced the entry is the source of
-    // truth; the install handler doesn't second-guess it.
+    // The install handler doesn't second-guess what the source emitted —
+    // an entry whose package the platform has never seen still reaches
+    // the install path. The registry that produced the DirectoryEntry
+    // is the source of truth.
     const tool = buildTool(h, ADMIN_USER);
     const result = await tool.handler({
       action: "install",
@@ -767,9 +808,9 @@ describe("manage_connectors.install", () => {
     const result = await tool.handler({
       action: "install",
       entry: {
-        id: "evil",
-        registryId: "curated",
-        registryType: "curated",
+        id: "io.evil/mcp",
+        registryId: "bundled-static",
+        registryType: "static",
         name: "Evil",
         description: "x",
         defaultScope: "workspace",
@@ -783,6 +824,86 @@ describe("manage_connectors.install", () => {
     expect(result.isError).toBe(true);
     const text = (result.content?.[0] as { text?: string } | undefined)?.text ?? "";
     expect(text.toLowerCase()).toContain("install action is required");
+  });
+
+  test("rejects remote-oauth entry whose install.additionalAuthorizationParams contains a reserved OAuth key", async () => {
+    // Defense-in-depth at the parse boundary. A malicious aggregator
+    // shipping `additionalAuthorizationParams: { client_id: "evil" }`
+    // would let the catalog override an OAuth-flow-critical parameter.
+    // The runtime gate in WorkspaceOAuthProvider's constructor still
+    // catches it later, but failing here gives a source-tagged warning
+    // that names the offending entry. Field lives on `install`, not
+    // top-level — pre-fix this gate read `entry.additionalAuthorizationParams`
+    // (always undefined per the projection's shape) and was a silent
+    // no-op (QA round 5b).
+    const tool = buildTool(h, ADMIN_USER);
+    const result = await tool.handler({
+      action: "install",
+      entry: {
+        id: "io.evil/mcp",
+        registryId: "bundled-static",
+        registryType: "static",
+        name: "Evil",
+        description: "x",
+        defaultScope: "workspace",
+        install: {
+          kind: "remote-oauth",
+          url: "https://mcp.evil.test/mcp",
+          auth: "dcr",
+          additionalAuthorizationParams: { client_id: "attacker-controlled" },
+        },
+      },
+    });
+    expect(result.isError).toBe(true);
+    const text = (result.content?.[0] as { text?: string } | undefined)?.text ?? "";
+    expect(text.toLowerCase()).toContain("install action is required");
+  });
+
+  test("user-scope dup-fallback returns a slug, not the raw reverse-DNS id (regression for QA review)", async () => {
+    // The dup branch handles orphan recovery: workspace/user.json says
+    // the bundle is installed but lifecycle lost the instance. The
+    // recovered serverName must be the slug (route-safe, FS-safe), not
+    // entry.id raw (`com.canva/mcp` — slashes break the URL route, the
+    // UserPoolSource name, and the lifecycle Map key shape).
+    const dupBundle = {
+      url: "https://mcp.canva.com/mcp",
+      oauthScope: "user" as const,
+      // Intentionally NO `serverName` field — simulates a legacy
+      // user.json record from before #195's slugify-on-install.
+    };
+    const customRuntime = {
+      ...h.runtime,
+      getUserConnectorStore: () => ({
+        get: async () => ({ bundles: [dupBundle] }),
+      }),
+    } as unknown as typeof h.runtime;
+    const customH = { ...h, runtime: customRuntime };
+
+    const tool = buildTool(customH, ADMIN_USER);
+    const result = await tool.handler({
+      action: "install",
+      entry: {
+        id: "com.canva/mcp",
+        registryId: "bundled-static",
+        registryType: "static",
+        name: "Canva",
+        description: "x",
+        defaultScope: "user",
+        install: {
+          kind: "remote-oauth",
+          url: "https://mcp.canva.com/mcp",
+          auth: "dcr",
+        },
+      },
+    });
+    expect(result.isError).toBe(false);
+    const sn = (result.structuredContent as { serverName?: string }).serverName ?? "";
+    // Regardless of whether this hits the reattach or already-installed
+    // branch, the response serverName must be slug-shaped — never the
+    // raw reverse-DNS form.
+    expect(sn).not.toContain("/");
+    expect(sn).not.toContain(".");
+    expect(sn).toBe("com-canva-mcp");
   });
 });
 

@@ -51,11 +51,11 @@ export function ConnectorStatusHero({
     if (!cat || cat.auth !== "static" || !cat.operatorSetup) return null;
     return {
       id: cat.id,
-      registryId: "curated",
-      registryType: "curated",
+      registryId: "bundled-static",
+      registryType: "static",
       name: cat.name,
       description: cat.description,
-      iconUrl: cat.iconUrl,
+      ...(installed.iconUrl ? { iconUrl: installed.iconUrl } : {}),
       tags: cat.tags,
       defaultScope: cat.defaultScope,
       install: {
@@ -69,7 +69,7 @@ export function ConnectorStatusHero({
           : {}),
       },
     };
-  }, [cat]);
+  }, [cat, installed.iconUrl]);
 
   const action = resolveAction(installed, !!directoryEntry);
 
@@ -106,7 +106,7 @@ export function ConnectorStatusHero({
       <div className="flex items-start gap-4">
         <ConnectorIcon
           name={name}
-          iconUrl={cat?.iconUrl}
+          iconUrl={installed.iconUrl}
           className="h-12 w-12 rounded-md text-base"
         />
         <div className="flex-1 min-w-0">

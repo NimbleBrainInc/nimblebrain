@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { mcpAuthCallbackUrl } from "../api/routes/mcp-auth.ts";
 import { getMpak } from "../bundles/mpak.ts";
-import { deriveServerName } from "../bundles/paths.ts";
+import { deriveServerName, slugifyServerName } from "../bundles/paths.ts";
 import { startBundleSource } from "../bundles/startup.ts";
 import type { BundleManifest, BundleRef } from "../bundles/types.ts";
 import { installBundleInWorkspace } from "../bundles/workspace-ops.ts";
@@ -13,16 +13,19 @@ import {
   saveWorkspaceCredential,
   type UserConfigFieldDef,
 } from "../config/workspace-credentials.ts";
-import { loadCatalog } from "../connectors/load-catalog.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import type { ToolResult } from "../engine/types.ts";
 import type { UserIdentity } from "../identity/provider.ts";
-import { DirectoryAggregator } from "../registries/aggregator.ts";
+import type { ConnectorCatalogEntry } from "../registries/projection.ts";
 import type { DirectoryEntry } from "../registries/types.ts";
 import type { Runtime } from "../runtime/runtime.ts";
+import { isHttpUrl } from "../util/url.ts";
 import { FileCredentialStore } from "./credential-store.ts";
 import type { InProcessTool } from "./in-process-app.ts";
-import { WorkspaceOAuthProvider } from "./workspace-oauth-provider.ts";
+import {
+  validateAdditionalAuthorizationParams,
+  WorkspaceOAuthProvider,
+} from "./workspace-oauth-provider.ts";
 
 /**
  * `manage_connectors` tool — single surface for the Connectors UI
@@ -375,7 +378,7 @@ async function handleListCatalog(
   ctx: ManageConnectorsContext,
   wsId: string | null,
 ): Promise<ToolResult> {
-  const catalog = loadCatalog();
+  const catalog = await ctx.runtime.getConnectorDirectory().catalogEntries();
   const ws = wsId ? await ctx.runtime.getWorkspaceStore().get(wsId) : null;
   const allowList = ws?.connectorsAllowList;
   const filtered =
@@ -404,7 +407,7 @@ async function handleListDirectory(
   ctx: ManageConnectorsContext,
   wsId: string | null,
 ): Promise<ToolResult> {
-  const aggregator = new DirectoryAggregator(ctx.runtime.getRegistryStore());
+  const directory = ctx.runtime.getConnectorDirectory();
 
   // Hoist the workspace fetch + credential-store handle out of the
   // closure so the closure does at most one disk read per static-auth
@@ -423,7 +426,7 @@ async function handleListDirectory(
         }
       : undefined;
 
-  const result = await aggregator.list({
+  const result = await directory.list({
     ...(wsId ? { wsId } : {}),
     ...(isOperatorConfigured ? { isOperatorConfigured } : {}),
   });
@@ -453,8 +456,18 @@ async function handleListInstalled(
   const lifecycle = ctx.runtime.getLifecycle();
   const workDir = ctx.runtime.getWorkDir();
   const credStore = new FileCredentialStore(workDir);
-  const catalog = loadCatalog();
-  const catalogByUrl = new Map(catalog.map((e) => [e.url, e]));
+  // One directory instance per request — its memoized `servers()`
+  // means catalogByUrl + iconByPackage share a single fetch even
+  // though they're called separately. Reaching for the lookup tables
+  // (rather than the raw catalog list + manual map-build) keeps the
+  // construction concern inside the facade.
+  const directory = ctx.runtime.getConnectorDirectory();
+  const catalogByUrl = await directory.catalogByUrl();
+  // Stdio bundles aren't keyable by URL — they're matched to their
+  // mpak `ServerDetail` by the package identifier on the bundle
+  // instance (`@scope/name`). Best-effort: a down mpak registry just
+  // means stdio cards fall back to the deterministic letter avatar.
+  const mpakIcons = await directory.iconByPackage();
 
   type InstalledEntry = {
     serverName: string;
@@ -466,10 +479,19 @@ async function handleListInstalled(
     interactive: boolean;
     toolCount: number;
     trustScore: number | null;
+    /**
+     * Brand icon URL. One field for both remote (catalog.iconUrl) and
+     * stdio bundles (mpak ServerDetail.icons[0].src by package name) so
+     * the UI doesn't fan out across two sources to render the same
+     * thing. Falls through to the deterministic letter avatar when
+     * unset (e.g. the bundle isn't in any active mpak registry, or
+     * the mpak fetch failed).
+     */
+    iconUrl?: string;
     // Optional — only populated for URL bundles / catalog-matched entries
     url?: string;
     catalogId?: string | null;
-    catalog?: (typeof catalog)[number];
+    catalog?: ConnectorCatalogEntry;
     authorizationUrl?: string;
     identity?: { sub?: string; email?: string; name?: string };
     missingOperatorSetup?: boolean;
@@ -593,6 +615,12 @@ async function handleListInstalled(
         cat?.interactive === true ||
         (Array.isArray(instance.ui?.placements) && instance.ui.placements.length > 0);
 
+      // Resolve brand icon once: prefer the static catalog match (remote
+      // bundles), fall back to the mpak-by-package-name lookup (stdio).
+      // Either may be undefined; the UI handles the missing case with a
+      // deterministic letter avatar.
+      const iconUrl = cat?.iconUrl ?? mpakIcons.get(instance.bundleName);
+
       const entry: InstalledEntry = {
         serverName: instance.serverName,
         bundleName: instance.bundleName,
@@ -608,6 +636,7 @@ async function handleListInstalled(
         interactive,
         toolCount,
         trustScore: instance.trustScore ?? null,
+        ...(iconUrl ? { iconUrl } : {}),
       };
 
       if (isRemote && url) {
@@ -709,6 +738,7 @@ async function handleListInstalled(
           url: ref.url,
           catalogId: cat?.id ?? null,
           ...(cat ? { catalog: cat } : {}),
+          ...(cat?.iconUrl ? { iconUrl: cat.iconUrl } : {}),
           ...(conn?.authorizationUrl ? { authorizationUrl: conn.authorizationUrl } : {}),
         };
 
@@ -787,9 +817,14 @@ async function handleGetInstalled(
  *     and a registry that emits it.
  *   - No name-collision bugs between catalogs (the "Catalog entry not
  *     found" class of error doesn't exist in this design).
- *   - Forward-compat: when MpakRegistry's real implementation lands
- *     and emits live mpak-bundle entries, they install on day one
- *     without any change here.
+ *
+ * Defense-in-depth on the wire payload: `parseDirectoryEntry` re-runs
+ * the value-shape gate (`SCOPED_PACKAGE_RE` for mpak packages,
+ * `isHttpUrl` for remote URLs, reserved-OAuth-params for the install
+ * action). The entry came from a client over the tool surface, not
+ * directly from a trusted source instance, so trust-but-verify at the
+ * dispatch boundary catches a tampered payload regardless of which
+ * registry a well-formed analog originally came from.
  *
  * Cross-cutting checks (admin allow-list) apply to every install
  * kind and live above the dispatch.
@@ -905,16 +940,34 @@ function parseDirectoryEntry(input: unknown): DirectoryEntry | null {
       return null;
     }
   }
-  return input as DirectoryEntry;
-}
-
-function isHttpUrl(value: string): boolean {
-  try {
-    const parsed = new URL(value);
-    return parsed.protocol === "http:" || parsed.protocol === "https:";
-  } catch {
-    return false;
+  // additionalAuthorizationParams flow into the OAuth handshake unchanged.
+  // Reject reserved keys (`client_id`, `redirect_uri`, `state`, ...) here at
+  // the parse boundary so a malicious aggregator can't smuggle them through
+  // — the lifecycle installer rejects them later, but failing here gives a
+  // source-tagged warning that names the offending entry rather than a
+  // generic install-time error. Field lives at `install.additionalAuthorizationParams`
+  // per RemoteOAuthInstall (src/registries/types.ts), NOT at the top-level
+  // entry — pre-fix this gate read the wrong path and was a silent no-op.
+  const additionalParams = (install as { additionalAuthorizationParams?: unknown })
+    .additionalAuthorizationParams;
+  if (additionalParams !== undefined) {
+    if (
+      !additionalParams ||
+      typeof additionalParams !== "object" ||
+      Array.isArray(additionalParams) ||
+      !Object.values(additionalParams as Record<string, unknown>).every(
+        (v) => typeof v === "string",
+      )
+    ) {
+      return null;
+    }
+    try {
+      validateAdditionalAuthorizationParams(additionalParams as Record<string, string>);
+    } catch {
+      return null;
+    }
   }
+  return input as DirectoryEntry;
 }
 
 /**
@@ -964,9 +1017,19 @@ async function handleInstallRemoteOAuth(
     };
   }
 
+  // serverName is the slugified canonical reverse-DNS form — opaque,
+  // URL-safe, filesystem-safe, collision-free by construction. See
+  // `slugifyServerName` for the rule. mpak install path mirrors this.
+  const serverName = slugifyServerName(entry.id);
+
   const ref: BundleRef = {
     url: action.url,
-    serverName: entry.id,
+    serverName,
+    // Pin the transport class the source advertised. Default would be
+    // streamable-http (createRemoteTransport's fallback), which is wrong
+    // for vendors whose remote `type` is `sse` — PayPal / Cloudflare /
+    // Webflow / Wix in the bundled catalog today.
+    transport: { type: action.transportType },
     oauthScope: entry.defaultScope,
     ...(action.requiredScopes ? { scopes: action.requiredScopes } : {}),
     ...(action.additionalAuthorizationParams
@@ -991,7 +1054,7 @@ async function handleInstallRemoteOAuth(
 
     const dup = ws.bundles.find((b) => "url" in b && b.url === action.url);
     if (dup) {
-      const dupServerName = "serverName" in dup ? (dup.serverName ?? entry.id) : entry.id;
+      const dupServerName = "serverName" in dup ? (dup.serverName ?? serverName) : serverName;
       // Self-heal: workspace.json says yes but lifecycle lost the
       // instance (prior uninstall that didn't clean workspace.json).
       // Re-seed instead of reporting alreadyInstalled — the latter
@@ -1032,14 +1095,14 @@ async function handleInstallRemoteOAuth(
     }
     await ctx.runtime.getWorkspaceStore().update(wsId, { bundles: [...ws.bundles, ref] });
     const wsRegistry = ctx.runtime.getRegistryForWorkspace(wsId);
-    lifecycle.seedInstance(entry.id, action.url, ref, undefined, wsId, undefined, wsRegistry);
-    lifecycle.notifyInstalled(entry.id, wsId);
+    lifecycle.seedInstance(serverName, action.url, ref, undefined, wsId, undefined, wsRegistry);
+    lifecycle.notifyInstalled(serverName, wsId);
     return {
       content: textContent(`Installed "${entry.name}" for this workspace.`),
       structuredContent: {
         ok: true,
         alreadyInstalled: false,
-        serverName: entry.id,
+        serverName,
         scope: "workspace",
       },
       isError: false,
@@ -1054,7 +1117,12 @@ async function handleInstallRemoteOAuth(
   const existing = await userStore.get(callerId);
   const dup = existing?.bundles.find((b) => "url" in b && b.url === action.url);
   if (dup) {
-    const dupServerName = "serverName" in dup ? (dup.serverName ?? entry.id) : entry.id;
+    // Mirror workspace branch (line 1045): fall back to the slugified
+    // serverName, never the raw `entry.id` — the latter is the
+    // canonical reverse-DNS form which contains `/` and would feed
+    // slashes into the lifecycle Map key, UserPoolSource name, and
+    // the structuredContent the web shell consumes as a route segment.
+    const dupServerName = "serverName" in dup ? (dup.serverName ?? serverName) : serverName;
     // Self-heal symmetric to workspace scope.
     if (!lifecycle.getUserInstance?.(dupServerName, callerId)) {
       await lifecycle.seedUserInstance?.(dupServerName, dup, callerId);
@@ -1081,7 +1149,7 @@ async function handleInstallRemoteOAuth(
     };
   }
   await userStore.addBundle(callerId, ref);
-  await lifecycle.seedUserInstance?.(entry.id, ref, callerId);
+  await lifecycle.seedUserInstance?.(serverName, ref, callerId);
   return {
     content: textContent(
       `Installed "${entry.name}" for your account. Available in every workspace you're in.`,
@@ -1089,7 +1157,7 @@ async function handleInstallRemoteOAuth(
     structuredContent: {
       ok: true,
       alreadyInstalled: false,
-      serverName: entry.id,
+      serverName,
       scope: "user",
     },
     isError: false,
@@ -1128,9 +1196,13 @@ async function handleInstallMpak(
   // lifecycle still tracks it, surface alreadyInstalled. If not,
   // fall through and let installBundleInWorkspace re-register —
   // this self-heals the case where uninstall left a stale entry.
+  // Honors the persisted `serverName` (canonical reverse-DNS form,
+  // set at install time) so legacy short-slug installs and new
+  // canonical-form installs both resolve correctly.
   const already = ws.bundles.find((b) => "name" in b && b.name === bundleName);
   if (already) {
-    const existingServerName = deriveServerName(bundleName);
+    const existingServerName =
+      ("name" in already && already.serverName) || deriveServerName(bundleName);
     if (lifecycle.getInstance(existingServerName, wsId)) {
       return {
         content: textContent(`"${entry.name}" already installed.`),
@@ -1145,7 +1217,11 @@ async function handleInstallMpak(
     }
   }
 
-  const ref: BundleRef = { name: bundleName };
+  // Persist the slugified canonical reverse-DNS form as the BundleRef's
+  // serverName so this install — and every lookup that follows — uses
+  // the same opaque, URL-safe, collision-free identifier the catalog
+  // source emits. Matches the remote-OAuth path's slugify call.
+  const ref: BundleRef = { name: bundleName, serverName: slugifyServerName(entry.id) };
   let inventoryEntry: Awaited<ReturnType<typeof installBundleInWorkspace>>;
   try {
     inventoryEntry = await installBundleInWorkspace(
@@ -1724,8 +1800,7 @@ async function handleSetupOperator(
     };
   }
 
-  const catalog = loadCatalog();
-  const entry = catalog.find((e) => e.id === catalogId);
+  const entry = await ctx.runtime.getConnectorDirectory().catalogById(catalogId);
   if (!entry) return errResult(`Catalog entry "${catalogId}" not found.`);
   if (entry.auth !== "static") {
     return errResult(`"${entry.name}" is a DCR connector — operator setup not required.`);
@@ -1810,8 +1885,7 @@ async function handleRemoveOperatorSetup(
     };
   }
 
-  const catalog = loadCatalog();
-  const entry = catalog.find((e) => e.id === catalogId);
+  const entry = await ctx.runtime.getConnectorDirectory().catalogById(catalogId);
   if (!entry) return errResult(`Catalog entry "${catalogId}" not found.`);
 
   // Guard: refuse if the connector is currently installed. Removing

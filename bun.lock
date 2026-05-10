@@ -10,7 +10,7 @@
         "@ai-sdk/openai": "^3.0.48",
         "@modelcontextprotocol/ext-apps": "^1.3.1",
         "@modelcontextprotocol/sdk": "^1.29.0",
-        "@nimblebrain/mpak-sdk": "0.6.0",
+        "@nimblebrain/mpak-sdk": "0.8.0",
         "@nimblebrain/synapse": "^0.8.0",
         "@sinclair/typebox": "^0.34.49",
         "@workos-inc/node": "^8.12.1",
@@ -83,9 +83,9 @@
 
     "@modelcontextprotocol/sdk": ["@modelcontextprotocol/sdk@1.29.0", "", { "dependencies": { "@hono/node-server": "^1.19.9", "ajv": "^8.17.1", "ajv-formats": "^3.0.1", "content-type": "^1.0.5", "cors": "^2.8.5", "cross-spawn": "^7.0.5", "eventsource": "^3.0.2", "eventsource-parser": "^3.0.0", "express": "^5.2.1", "express-rate-limit": "^8.2.1", "hono": "^4.11.4", "jose": "^6.1.3", "json-schema-typed": "^8.0.2", "pkce-challenge": "^5.0.0", "raw-body": "^3.0.0", "zod": "^3.25 || ^4.0", "zod-to-json-schema": "^3.25.1" }, "peerDependencies": { "@cfworker/json-schema": "^4.1.1" }, "optionalPeers": ["@cfworker/json-schema"] }, "sha512-zo37mZA9hJWpULgkRpowewez1y6ML5GsXJPY8FI0tBBCd77HEvza4jDqRKOXgHNn867PVGCyTdzqpz0izu5ZjQ=="],
 
-    "@nimblebrain/mpak-schemas": ["@nimblebrain/mpak-schemas@0.2.0", "", { "dependencies": { "zod": "^4.1.12" } }, "sha512-hGE6RV0krHrQr0wF2zi+0/DwzLwxDago4hyEZbUPbKlfmC2ZFT0hIrT60xcEVEAg3jRZewJX4FaCkvbIMVMStw=="],
+    "@nimblebrain/mpak-schemas": ["@nimblebrain/mpak-schemas@0.4.0", "", { "dependencies": { "zod": "^4.1.12" } }, "sha512-hg2KEixvHUz+ht1nPfz26LuGfiRoDJ7APsjcsd3WCJm7iyr55wE+UpGF+e/V3C1r61hLvP5ivGIxo4aPwhzViA=="],
 
-    "@nimblebrain/mpak-sdk": ["@nimblebrain/mpak-sdk@0.6.0", "", { "dependencies": { "@nimblebrain/mpak-schemas": "0.2.0", "yauzl": "^3.2.0", "zod": "^4.3.6" } }, "sha512-xH2fHc5OlBQmZUFr96yBIdM519yatq8lEaMQZSOM+6kRDviTsl15DBT39fkavfkp7VJIww7Ubftn8GC2trSzog=="],
+    "@nimblebrain/mpak-sdk": ["@nimblebrain/mpak-sdk@0.8.0", "", { "dependencies": { "@nimblebrain/mpak-schemas": "0.4.0", "yauzl": "^3.2.0", "zod": "^4.3.6" } }, "sha512-iSCf89/JjSe8mbb0JeoF5+usJ9eJ5Lhej0JCkoyTv6ZnBFNIuKzqWDWplL7nL4A/yTCV1llOV+qFJ4a5utzwRw=="],
 
     "@nimblebrain/synapse": ["@nimblebrain/synapse@0.8.0", "", { "peerDependencies": { "@modelcontextprotocol/ext-apps": "^1.3.1", "react": "^18.0.0 || ^19.0.0" }, "optionalPeers": ["react"], "bin": { "synapse": "dist/codegen/cli.js" } }, "sha512-he6+9AOZFsZwnQS6IGbBrkL5OoQ1AwTpjACNQnyyqXgljZ/BhXNCSG9CzzUtS+XorYcZ4EZIEadUXFXSafZkZw=="],
 

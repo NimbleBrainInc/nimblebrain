@@ -1,39 +1,73 @@
 /**
- * A connector registry is a *source of installable connectors*. The
- * platform aggregates entries from every enabled registry into a
- * single browse experience — the user picks something to install,
- * and the install action dispatches by entry type.
+ * The connector registry layer surfaces installable connectors from a
+ * configurable set of sources (curated YAML, mpak.dev, future MCP
+ * registry, etc.) through one facade — `ConnectorDirectory`. Clients
+ * never construct sources or aggregate them by hand; they ask the
+ * directory for `list()`, `catalogByUrl()`, `iconByPackage()`, etc.,
+ * and uniform behavior (scope filtering, error aggregation,
+ * projection, dedup) lives in one place.
  *
- * Registries are configured at the instance level (Settings → Org →
- * Registries). The two seeded defaults are:
+ * Source contracts are deliberately narrow: a `ConnectorSource` does
+ * one thing — `fetch()` returns the raw upstream `ServerDetail[]` for
+ * its instance. Caching is the source's private business; filtering,
+ * projection, and lookup tables live in the directory.
  *
- *   - "curated"  — the hardcoded NimbleBrain catalog of remote OAuth
- *     services (Granola, Notion, HubSpot, etc.). Always on, locked.
- *   - "mpak"     — mpak.dev open MCP bundle registry. Default on; the
- *     org admin can disable or point at a different mpak instance.
+ * Configuration drives which sources are loaded. Operators can
+ * configure multiple instances of the same source type with different
+ * `RegistryConfig` rows — e.g. one mpak instance scoped to
+ * `nimblebraininc/*` plus another pointing at a self-hosted mpak —
+ * because each row gets its own `ConnectorSource` instance.
+ *
+ * Seeded defaults (see `RegistryStore`):
+ *
+ *   - `static`  — bundled curated catalog of remote OAuth services
+ *     (Granola, Notion, HubSpot, etc.) shipped with the platform.
+ *     Locked. Operator overrides via `NB_REGISTRIES` JSON.
+ *   - `mpak`    — the mpak.dev open MCP bundle registry. Default on;
+ *     operator can disable, scope, or point at a self-hosted instance.
  *
  * Future registry types (planned, not implemented):
- *   - "directory"  — JSON catalog mounted by an operator (per-org
- *     curated list for SOC2-conscious tenants).
- *   - "custom-url" — paste-a-URL flow for any remote MCP server
+ *   - `mcp`        — upstream MCP registry (`/v1/servers/...`) once
+ *     the upstream service stabilizes.
+ *   - `custom-url` — paste-a-URL flow for any remote MCP server
  *     (advanced; bypasses curation).
  */
 
-/** Stable registry kind, used for source-type-driven dispatch. */
-export type RegistryType = "curated" | "mpak" | "directory" | "custom-url";
+import type { ServerDetail } from "../connectors/server-detail.ts";
 
-/** Persistable configuration for a registry. Stored in registries.json. */
+/** Stable registry kind, used for source-type-driven dispatch. */
+export type RegistryType = "static" | "mpak" | "mcp" | "custom-url";
+
+/** Persistable configuration for a registry. Stored in `registries.json`. */
 export interface RegistryConfig {
   id: string;
   name: string;
   type: RegistryType;
   enabled: boolean;
-  /** For type === "mpak" or "directory": the registry endpoint or path. */
+  /**
+   * For `static`: filesystem path to the YAML/JSON `ServerDetail[]`
+   * file. For `mpak` / `mcp`: registry HTTP base URL when the operator
+   * has overridden the SDK default; absent otherwise (the SDK owns its
+   * own default).
+   */
   url?: string;
   /**
+   * Restrict this registry's surfaced entries to one or more
+   * namespaces. Match is OR-of-prefixes against either:
+   *
+   *   - `ServerDetail.name` reverse-DNS prefix (e.g. `ai.nimblebrain`
+   *     matches `ai.nimblebrain/echo`), OR
+   *   - the npm scope of any `packages[].identifier` (e.g.
+   *     `nimblebraininc` matches `@nimblebraininc/echo`).
+   *
+   * Either match is sufficient. Empty / undefined = no filter.
+   * Applied uniformly by the facade across every source type.
+   */
+  scopes?: string[];
+  /**
    * Locked registries can't be disabled or removed by the admin UI —
-   * the curated registry is locked because it ships with the platform
-   * and removing it would leave first-time users with nothing.
+   * the bundled static registry is locked because it ships with the
+   * platform and removing it would leave first-time users with nothing.
    */
   locked?: boolean;
 }
@@ -45,7 +79,11 @@ export interface RegistryConfig {
  * union.
  */
 export interface DirectoryEntry {
-  /** Unique within (registryId, id) — registries can repeat ids. */
+  /**
+   * Stable identifier — the upstream `ServerDetail.name` (reverse-DNS
+   * form). Unique within `(registryId, id)`; registries can repeat ids
+   * across themselves.
+   */
   id: string;
   registryId: string;
   registryType: RegistryType;
@@ -81,6 +119,15 @@ export type InstallAction = RemoteOAuthInstall | MpakBundleInstall | DirectUrlIn
 export interface RemoteOAuthInstall {
   kind: "remote-oauth";
   url: string;
+  /**
+   * Transport class the vendor advertises in `ServerDetail.remotes[].type`.
+   * Threaded into the BundleRef's `transport.type` at install so
+   * `createRemoteTransport` instantiates the right SDK client class.
+   * Without this, every install defaults to `streamable-http` and SSE-
+   * only servers (PayPal, Cloudflare Bindings, Webflow, Wix) would fail
+   * the handshake.
+   */
+  transportType: "streamable-http" | "sse";
   auth: "dcr" | "static";
   requiredScopes?: string[];
   additionalAuthorizationParams?: Record<string, string>;
@@ -89,19 +136,13 @@ export interface RemoteOAuthInstall {
 
 /**
  * mpak bundle install. The package is fetched via mpak SDK and
- * spawned as a stdio subprocess. CuratedRegistry emits these from
- * the bundled stdio-catalog.yaml; future MpakRegistry implementations
- * will emit them from mpak.dev's search results.
- *
- * TODO(mpak-registry): when the live mpak.dev fetch lands, this type
- * needs `version` (selected release) and `mpakUrl` (download href)
- * back. Both fields existed in an earlier draft and were trimmed
- * because CuratedRegistry doesn't need them — but the discriminated
- * union has to widen again before MpakRegistry can do useful work.
+ * spawned as a stdio subprocess. `MpakSource` emits these from
+ * mpak.dev's search results; `StaticSource` may also emit them when
+ * a curated `ServerDetail` declares a `packages[]` entry.
  */
 export interface MpakBundleInstall {
   kind: "mpak-bundle";
-  /** Scoped package name, e.g., "@nimblebraininc/echo". */
+  /** Scoped package name, e.g., `@nimblebraininc/echo`. */
   package: string;
 }
 
@@ -115,14 +156,10 @@ export interface DirectUrlInstall {
 }
 
 /**
- * Per-call context handed to a registry's `listEntries`. Carries the
- * pieces a registry might need to compute workspace-aware fields
- * (e.g. `operatorConfigured` on curated entries) without coupling the
- * registry to the runtime singleton.
- *
- * Optional today — registries that don't need it (mpak stub) can
- * ignore it. As more registries gain workspace-aware computation
- * this becomes the seam for threading whatever they need.
+ * Per-call context handed to `ConnectorDirectory.list`. Carries the
+ * pieces a workspace-aware projection might need (e.g.
+ * `operatorConfigured` on static entries) without coupling the
+ * directory to the runtime singleton.
  */
 export interface ListEntriesContext {
   /** The workspace whose state determines workspace-aware fields. */
@@ -131,15 +168,26 @@ export interface ListEntriesContext {
    * Async lookup: does the workspace have valid operator OAuth app
    * config (both clientId + client_secret) for this catalog id?
    * Returns false if either piece is missing. Returns null if the
-   * caller didn't supply this resolver — registries treat that as
-   * "I can't compute this; leave the field undefined."
+   * caller didn't supply this resolver — the projection treats that
+   * as "I can't compute this; leave the field undefined."
    */
   isOperatorConfigured?: (catalogId: string, clientSecretKey: string) => Promise<boolean>;
 }
 
-/** A registry implementation. */
-export interface ConnectorRegistry {
-  readonly config: RegistryConfig;
-  /** List entries this registry currently surfaces. May hit the network. */
-  listEntries(ctx?: ListEntriesContext): Promise<DirectoryEntry[]>;
+/**
+ * A connector source. Narrowed to one method on purpose: returns the
+ * raw upstream `ServerDetail[]` for this source's instance. Caching,
+ * freshness strategy, and backend-specific quirks (HTTP vs file vs
+ * SDK) are private to the implementation — the directory doesn't see
+ * them. Filtering, projection, error aggregation, and lookup tables
+ * are the directory's job, not the source's.
+ *
+ * Implementations: `StaticSource`, `MpakSource`. Future: `McpSource`,
+ * `DirectUrlSource`.
+ */
+export interface ConnectorSource {
+  /** Stable id from the source's `RegistryConfig` — used in error tags. */
+  readonly id: string;
+  /** Backend-specific fetch. May throw on transport / parse errors. */
+  fetch(): Promise<ServerDetail[]>;
 }
