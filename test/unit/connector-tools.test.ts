@@ -8,7 +8,7 @@ import type { BundleRef } from "../../src/bundles/types.ts";
 import { getWorkspaceCredentials } from "../../src/config/workspace-credentials.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
 import { ConnectorDirectory } from "../../src/registries/directory.ts";
-import { RegistryStore } from "../../src/registries/registry-store.ts";
+import { BUNDLED_STATIC_CATALOG_PATH, RegistryStore } from "../../src/registries/registry-store.ts";
 import type { DirectoryEntry } from "../../src/registries/types.ts";
 import type { Runtime } from "../../src/runtime/runtime.ts";
 import { FileCredentialStore } from "../../src/tools/credential-store.ts";
@@ -139,6 +139,34 @@ function buildHarness(opts: { adminId?: string } = {}): Harness {
   const wsId = "ws_acme";
   const workspaceStore = new WorkspaceStore(workDir);
   const credStore = new FileCredentialStore(workDir);
+  // Pre-seed registries.json so RegistryStore.list() reads it instead of
+  // auto-seeding the production defaults. The bundled-static row is kept
+  // (tests look up real catalog ids like ASANA_ID), but mpak is DISABLED:
+  // otherwise ConnectorDirectory.servers() would call MpakSource.fetch
+  // which makes a live HTTP request to registry.mpak.dev. Under suite
+  // load that network call queues past the 5s test timeout — flake
+  // surfaced in QA round 4.
+  writeFileSync(
+    join(workDir, "registries.json"),
+    JSON.stringify({
+      registries: [
+        {
+          id: "bundled-static",
+          name: "Curated services",
+          type: "static",
+          enabled: true,
+          locked: true,
+          url: BUNDLED_STATIC_CATALOG_PATH,
+        },
+        {
+          id: "mpak",
+          name: "mpak.dev",
+          type: "mpak",
+          enabled: false,
+        },
+      ],
+    }),
+  );
   const registryStore = new RegistryStore(workDir);
   const lifecycle = new BundleLifecycleManager(new NoopEventSink(), undefined);
   const workspaceRegistry = new ToolRegistry();
