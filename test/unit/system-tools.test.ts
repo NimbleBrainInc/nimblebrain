@@ -286,6 +286,63 @@ describe("System Tools", () => {
 
 		expect(calls).toEqual(["use:test__greet", "release:test__greet"]);
 	});
+
+	it("use accepts exact tool names returned by search", async () => {
+		const registry = new ToolRegistry();
+		const source = await makeInProcessSource("test", [
+			{
+				name: "tool.with.dot",
+				description: "Dotted tool name",
+				inputSchema: { type: "object", properties: {} },
+				handler: async () => ({ content: textContent("ok"), isError: false }),
+			},
+		]);
+		registry.addSource(source);
+		const calls: string[] = [];
+		const toolPromotionCtx: ToolPromotionContext = {
+			addTool(toolName) {
+				calls.push(`use:${toolName}`);
+				return { ok: true, toolName, changed: true, message: `${toolName} added` };
+			},
+			removeTool(toolName) {
+				calls.push(`release:${toolName}`);
+				return { ok: true, toolName, changed: true, message: `${toolName} removed` };
+			},
+		};
+		const systemTools = await createSystemTools(
+			() => registry,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			toolPromotionCtx,
+		);
+
+		const searchResult = await systemTools.execute("search", {
+			scope: "tools",
+			query: "dotted",
+		});
+		expect(searchResult.isError).toBe(false);
+		expect(getStructured<{ tools?: Array<{ name: string }> }>(searchResult)?.tools).toEqual([
+			{ name: "test__tool.with.dot" },
+		]);
+
+		const useResult = await systemTools.execute("use", { tool_name: "test__tool.with.dot" });
+		expect(useResult.isError).toBe(false);
+		expect(calls).toEqual(["use:test__tool.with.dot"]);
+	});
 });
 
 describe("ConfirmationGate", () => {
