@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
+import { Upload } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { callTool, getPlatformVersion } from "../../api/client";
+import { callTool, getPlatformVersion, uploadBundle } from "../../api/client";
 import { parseToolResult } from "../../api/tool-result";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
@@ -61,6 +62,24 @@ export function AboutTab() {
   const [apps, setApps] = useState<AppInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [bundlesError, setBundlesError] = useState<string | null>(null);
+  // Two pieces of upload state, separated:
+  //
+  //   uploadPhase  — what the upload is doing right now ("validating" /
+  //                  "installing" / "idle"). Drives the button label and
+  //                  the disabled state. `isUploading` is derived from it.
+  //   uploadError  — error message to surface in the inline-error panel.
+  //                  Independent so we can show "validation failed" without
+  //                  string-equality-checking the phase.
+  //
+  // Previous shape used a single `uploadStatus: string | null` that doubled
+  // as both phase indicator and error message, requiring string-equality
+  // checks ("Validating..." / "Installing...") to decide whether the button
+  // should be disabled. That coupled the UI to specific status copy and
+  // would silently break if the strings were ever changed.
+  const [uploadPhase, setUploadPhase] = useState<"idle" | "validating" | "installing">("idle");
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const isUploading = uploadPhase !== "idle";
+  const fileRef = useRef<HTMLInputElement>(null);
 
   const fetchApps = useCallback(async () => {
     try {
@@ -71,11 +90,6 @@ export function AboutTab() {
         setApps(data.apps);
       }
     } catch (err) {
-      // Surface the failure rather than silently degrading to "no bundles
-      // installed" — the empty state would otherwise read as authoritative
-      // ("there are no bundles") when really the call failed and we don't
-      // know. The platform-version section is independent (read from
-      // bootstrap), so the page still renders useful content above.
       setBundlesError(err instanceof Error ? err.message : "Failed to load installed bundles.");
     } finally {
       setLoading(false);
@@ -85,6 +99,44 @@ export function AboutTab() {
   useEffect(() => {
     fetchApps();
   }, [fetchApps]);
+
+  const handleUpload = useCallback(
+    async (file: File) => {
+      if (!file.name.endsWith(".mcpb")) {
+        setUploadError("File must have .mcpb extension");
+        return;
+      }
+      setUploadError(null);
+      setUploadPhase("validating");
+      try {
+        const result = await uploadBundle(file);
+        setUploadPhase("installing");
+        const installResult = await callTool("nb", "manage_app", {
+          action: "install",
+          path: result.path,
+        });
+        if (installResult.isError) {
+          const msg =
+            installResult.content
+              ?.filter(
+                (c): c is { type: "text"; text: string } =>
+                  c.type === "text" && typeof c.text === "string",
+              )
+              .map((c) => c.text)
+              .join("") ?? "Install failed";
+          setUploadError(msg);
+          return;
+        }
+        setLoading(true);
+        fetchApps();
+      } catch (err: unknown) {
+        setUploadError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setUploadPhase("idle");
+      }
+    },
+    [fetchApps],
+  );
 
   return (
     <SettingsDashboardPage
@@ -100,9 +152,39 @@ export function AboutTab() {
         </dl>
       </Section>
 
-      <Section title="Installed Bundles">
+      <Section
+        title="Installed Bundles"
+        action={
+          <>
+            <input
+              ref={fileRef}
+              type="file"
+              accept=".mcpb"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) handleUpload(file);
+                e.target.value = "";
+              }}
+            />
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => fileRef.current?.click()}
+              disabled={isUploading}
+            >
+              <Upload className="mr-1 h-3.5 w-3.5" />
+              {uploadPhase === "validating"
+                ? "Validating..."
+                : uploadPhase === "installing"
+                  ? "Installing..."
+                  : "Upload"}
+            </Button>
+          </>
+        }
+      >
         <p className="text-xs text-muted-foreground mb-3">
-          Read-only view. Manage installed bundles in{" "}
+          Read-only view (apart from .mcpb upload). Manage installed bundles in{" "}
           <Link
             to="/settings/workspace/connectors"
             className="text-primary underline-offset-4 hover:underline"
@@ -111,6 +193,17 @@ export function AboutTab() {
           </Link>
           .
         </p>
+        {uploadError ? (
+          <InlineError
+            message={uploadError}
+            action={
+              <Button variant="outline" size="sm" onClick={() => setUploadError(null)}>
+                Dismiss
+              </Button>
+            }
+          />
+        ) : null}
+
         {loading ? (
           <p className="text-sm text-muted-foreground">Loading...</p>
         ) : bundlesError ? (

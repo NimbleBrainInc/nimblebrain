@@ -1,5 +1,8 @@
-import { readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { randomBytes } from "node:crypto";
+import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { basename, join, resolve } from "node:path";
+import { validateMcpb } from "@nimblebrain/mpak-sdk";
 import { CallbackEventSink } from "../adapters/callback-events.ts";
 import { log } from "../cli/log.ts";
 import { isToolEnabled, isToolVisibleToRole, type ResolvedFeatures } from "../config/features.ts";
@@ -23,7 +26,7 @@ import type { SseEventManager } from "./events.ts";
 import { ChatRequestBody, ToolCallRequestEnvelope } from "./schemas/rest.ts";
 import { validateAgainst } from "./schemas/validate.ts";
 import { startSseHeartbeat } from "./sse-heartbeat.ts";
-import { apiError } from "./types.ts";
+import { apiError, asUploadedFile } from "./types.ts";
 
 const pkgPath = resolve(import.meta.dirname ?? __dirname, "../../package.json");
 const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as { version: string };
@@ -1041,6 +1044,41 @@ export function sanitizeFilename(name: string): string {
 }
 
 /**
+ * Maximum byte size of an uploaded `.mcpb` archive. Shared with the
+ * route-level `bodyLimit(..., { multipart: MAX_BUNDLE_SIZE })` so the
+ * `Content-Length`-advisory check and the post-buffer authoritative check
+ * stay in lockstep.
+ */
+export const MAX_BUNDLE_SIZE = 200 * 1024 * 1024; // 200 MB
+
+/**
+ * Resolve the safe on-disk filename for an uploaded `.mcpb` bundle.
+ *
+ * Two responsibilities:
+ *
+ * 1. **Path traversal defense.** Strips every directory component via
+ *    `path.basename`, so filenames like `../../etc/cron.daily/evil.mcpb`
+ *    collapse to `evil.mcpb` and cannot escape the workspace bundles dir
+ *    when joined onto it. `sanitizeFilename` only neutralizes
+ *    Content-Disposition-breaking chars and is insufficient on its own.
+ *
+ * 2. **Collision avoidance.** Two uploads named `bundle.mcpb` would
+ *    otherwise clobber each other on disk, silently swapping the artifact
+ *    backing a running install (the path is the workspace.json key). A
+ *    64-bit random hex suffix is appended before the `.mcpb` extension so
+ *    every upload lands at a unique path. The frontend never sees this
+ *    name — bundle display name comes from the manifest, not the filename.
+ *
+ * Exported so tests pin the contract.
+ */
+export function safeBundleFilename(filename: string): string {
+  const base = basename(filename);
+  const stem = base.endsWith(".mcpb") ? base.slice(0, -".mcpb".length) : base;
+  const suffix = randomBytes(8).toString("hex");
+  return `${stem}-${suffix}.mcpb`;
+}
+
+/**
  * Regex for valid file IDs.
  *  - New scheme: `fl_<24 hex chars>` (randomBytes(12).hex).
  *  - Legacy scheme: `fl_<base36 timestamp>_<8 hex>` from the pre-unification
@@ -1160,17 +1198,12 @@ async function parseMultipartChatBody(
     }
   }
 
-  // Collect uploaded files — FormDataEntryValue is string | File in Bun.
-  // TypeScript without DOM lib doesn't know File, so we check via duck typing.
+  // Collect uploaded files — see `asUploadedFile` for why we don't annotate
+  // entries as `File` directly (Bun/undici vs DOM-lib type mismatch).
   const uploadedFiles: UploadedFile[] = [];
   for (const [_key, value] of formData.entries()) {
-    if (typeof value === "string") continue;
-    const entry = value as unknown as {
-      arrayBuffer(): Promise<ArrayBuffer>;
-      name?: string;
-      type?: string;
-    };
-    if (typeof entry.arrayBuffer !== "function") continue;
+    const entry = asUploadedFile(value);
+    if (!entry) continue;
     const buffer = Buffer.from(await entry.arrayBuffer());
     uploadedFiles.push({
       data: buffer,
@@ -1279,14 +1312,9 @@ export async function handleResourceUpload(
   const uploads: UploadedFile[] = [];
   try {
     for (const [key, value] of formData.entries()) {
-      if (typeof value === "string") continue;
       if (key !== "file" && key !== "files") continue;
-      const entry = value as unknown as {
-        arrayBuffer(): Promise<ArrayBuffer>;
-        name?: string;
-        type?: string;
-      };
-      if (typeof entry.arrayBuffer !== "function") continue;
+      const entry = asUploadedFile(value);
+      if (!entry) continue;
       uploads.push({
         data: Buffer.from(await entry.arrayBuffer()),
         filename: entry.name || "unnamed",
@@ -1373,4 +1401,123 @@ export async function handleResourceUpload(
     return apiError(400, "file_upload_error", "All uploads were rejected", { errors });
   }
   return json({ files: entries, ...(errors.length > 0 ? { errors } : {}) });
+}
+
+// ---------------------------------------------------------------------------
+// Bundle upload
+// ---------------------------------------------------------------------------
+
+export async function handleBundleUpload(
+  raw: Request,
+  runtime: Runtime,
+  workspaceId: string,
+): Promise<Response> {
+  // Inferred type rather than `FormData` annotation — Bun's Request.formData()
+  // returns the undici FormData, which has incompatible iterator types with
+  // the DOM-lib `FormData` resolved at the annotation site. They're shape-
+  // compatible at runtime; let TS infer to avoid the cross-type assignment.
+  let formData: Awaited<ReturnType<typeof raw.formData>>;
+  try {
+    formData = await raw.formData();
+  } catch {
+    return apiError(400, "bad_request", "Expected multipart/form-data");
+  }
+
+  const entry = asUploadedFile(formData.get("file") ?? formData.get("bundle"));
+  if (!entry) {
+    return apiError(
+      400,
+      "bad_request",
+      "No bundle file in request (use the 'file' or 'bundle' field)",
+    );
+  }
+
+  const filename = entry.name || "bundle.mcpb";
+  if (!filename.endsWith(".mcpb")) {
+    return apiError(400, "bad_request", "File must have .mcpb extension");
+  }
+
+  const data = Buffer.from(await entry.arrayBuffer());
+  if (data.length === 0) {
+    return apiError(400, "bad_request", "Uploaded file is empty");
+  }
+  // Authoritative size check. The route-level `bodyLimit` middleware is
+  // advisory: it only rejects when the client sends a `Content-Length`
+  // header. Chunked transfer encoding, missing headers, or a lying client
+  // bypass it — we only know the real size after buffering.
+  if (data.length > MAX_BUNDLE_SIZE) {
+    return apiError(413, "payload_too_large", "Bundle exceeds maximum size", {
+      limit: MAX_BUNDLE_SIZE,
+      received: data.length,
+    });
+  }
+
+  // Validate-then-commit:
+  //
+  // Write the upload to a tempfile under the OS temp dir first, run
+  // `validateMcpb` against it, and only `rename` into the workspace bundles
+  // dir on success. The previous order (write into the bundles dir, then
+  // validate, then unlink on failure) leaked partially-trusted artifacts:
+  // if unlink failed (perm/race) or the process crashed between write and
+  // unlink, an unvalidated `.mcpb` lingered in the bundles dir — a stale
+  // file the install path could later spawn. Tempfile + rename keeps the
+  // bundles dir to validated content only.
+  const bundlesDir = join(runtime.getWorkspaceScopedDir(workspaceId), "bundles");
+  mkdirSync(bundlesDir, { recursive: true });
+
+  const safeName = safeBundleFilename(filename);
+  const tempPath = join(tmpdir(), `nb-mcpb-${randomBytes(8).toString("hex")}.mcpb`);
+  const bundlePath = join(bundlesDir, safeName);
+
+  writeFileSync(tempPath, data, { mode: 0o600 });
+
+  let result: Awaited<ReturnType<typeof validateMcpb>>;
+  try {
+    result = await validateMcpb(tempPath);
+  } catch (err) {
+    try {
+      unlinkSync(tempPath);
+    } catch {
+      // best-effort cleanup
+    }
+    throw err;
+  }
+
+  if (!result.valid) {
+    try {
+      unlinkSync(tempPath);
+    } catch {
+      // best-effort cleanup
+    }
+    return apiError(400, "invalid_bundle", "Bundle validation failed", {
+      errors: result.errors,
+    });
+  }
+
+  // Validation passed — promote tempfile into the workspace bundles dir.
+  // `renameSync` is atomic when source and destination share a filesystem;
+  // when they don't (tmpdir on a separate fs), Node falls back to copy +
+  // unlink, which is good enough — we already hold a valid archive.
+  try {
+    renameSync(tempPath, bundlePath);
+  } catch (err) {
+    try {
+      unlinkSync(tempPath);
+    } catch {
+      // best-effort cleanup
+    }
+    throw err;
+  }
+
+  return json({
+    path: bundlePath,
+    manifest: {
+      name: result.manifest.name,
+      version: result.manifest.version,
+      description: result.manifest.description,
+      display_name: result.manifest.display_name ?? null,
+      server_type: result.manifest.server.type,
+      tools: result.manifest.tools ?? [],
+    },
+  });
 }

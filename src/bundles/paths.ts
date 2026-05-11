@@ -1,4 +1,5 @@
-import { join } from "node:path";
+import { existsSync, realpathSync } from "node:fs";
+import { dirname, join, resolve, sep } from "node:path";
 import type { BundleRef } from "./types.ts";
 
 /** Prefixes reserved for system tools — bundles must not use these as source names. */
@@ -101,4 +102,80 @@ export function deriveBundleDataDir(name: string): string {
  */
 export function resolveBundleDataDir(workspacePath: string, bundleName: string): string {
   return join(workspacePath, "data", deriveBundleDataDir(bundleName));
+}
+
+/**
+ * Resolve the absolute on-disk path of the workspace bundles directory —
+ * the only location an LLM-supplied `.mcpb` path is permitted to reference.
+ */
+export function resolveWorkspaceBundlesDir(workDir: string, wsId: string): string {
+  return join(workDir, "workspaces", wsId, "bundles");
+}
+
+/**
+ * Canonicalize a path for prefix comparison. Realpaths the file when it
+ * exists; when it doesn't, walks up the parent chain to find the deepest
+ * existing ancestor, realpaths that, then re-attaches the missing tail.
+ *
+ * The naive `existsSync(p) ? realpathSync(p) : resolve(p)` form diverges on
+ * platforms where ancestors are symlinks (macOS `/var` → `/private/var`):
+ * the bundles dir realpaths to the canonical form, the missing file does
+ * not, and a guard comparing the two falsely rejects.
+ */
+function canonicalize(filePath: string): string {
+  const abs = resolve(filePath);
+  if (existsSync(abs)) return realpathSync(abs);
+  // Walk up to find the deepest existing ancestor.
+  let parent = dirname(abs);
+  let suffix = abs.slice(parent.length); // includes leading sep
+  while (parent !== dirname(parent) && !existsSync(parent)) {
+    suffix = parent.slice(dirname(parent).length) + suffix;
+    parent = dirname(parent);
+  }
+  if (!existsSync(parent)) return abs;
+  return realpathSync(parent) + suffix;
+}
+
+/**
+ * Assert that `filePath` resolves inside `<workDir>/workspaces/<wsId>/bundles/`.
+ * Throws otherwise.
+ *
+ * Critical defense for the `manage_app({ path })` tool path. Without this
+ * guard, prompt-injected agent input can install any `.mcpb` the platform
+ * user can read — the spawned subprocess inherits workspace credentials and
+ * (for protected bundles) `NB_INTERNAL_TOKEN`. The same check runs at
+ * startup re-hydration so a tampered `workspace.json` cannot escape either.
+ *
+ * Both sides are realpath'd when possible so symlinks pointing outside the
+ * bundles dir are rejected. If the file does not exist (uninstall after
+ * manual deletion), falls back to a lexical resolve — workspace.json is
+ * written by trusted code, so a missing file is not a sign of tampering.
+ */
+export function assertPathInWorkspaceBundlesDir(
+  filePath: string,
+  workDir: string,
+  wsId: string,
+): void {
+  const bundlesDir = resolveWorkspaceBundlesDir(workDir, wsId);
+  // Realpath the bundles dir if it exists; otherwise fall back to a lexical
+  // resolve. The dir is created on first upload, so a missing dir means no
+  // bundle could possibly live inside it — a guard violation either way.
+  const canonicalBundlesDir = existsSync(bundlesDir)
+    ? realpathSync(bundlesDir)
+    : resolve(bundlesDir);
+  // For a missing file, realpath the parent dir and re-attach the basename.
+  // Pure lexical resolve diverges from the bundles-dir canonicalization on
+  // platforms where ancestors are themselves symlinks (notably macOS, where
+  // /var → /private/var). Without this, an uninstall after manual deletion
+  // of a perfectly-valid bundle inside the dir would falsely fail the guard.
+  const canonicalFile = canonicalize(filePath);
+  if (
+    canonicalFile !== canonicalBundlesDir &&
+    !canonicalFile.startsWith(canonicalBundlesDir + sep)
+  ) {
+    throw new Error(
+      `Bundle path must live inside the workspace bundles directory ` +
+        `(${canonicalBundlesDir}); got ${canonicalFile}`,
+    );
+  }
 }

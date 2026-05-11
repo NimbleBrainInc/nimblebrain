@@ -1,7 +1,7 @@
 import { NoopEventSink } from "../adapters/noop-events.ts";
 import type { BundleLifecycleManager } from "../bundles/lifecycle.ts";
 import { getMpak } from "../bundles/mpak.ts";
-import { deriveServerName } from "../bundles/paths.ts";
+import { assertPathInWorkspaceBundlesDir, deriveServerName } from "../bundles/paths.ts";
 import { startBundleSource } from "../bundles/startup.ts";
 import type { BundleManifest } from "../bundles/types.ts";
 import {
@@ -49,6 +49,38 @@ export interface ManageBundleContext {
 
 /** Callback that returns the current loaded skills from the runtime. */
 export type GetSkillsFn = () => { context: Skill[]; matchable: Skill[] };
+
+/**
+ * Target identifier used by the manage_app install/uninstall flow — exactly
+ * one of `name` / `path` is expected to be set at the call site.
+ */
+export interface BundleTarget {
+  name?: string;
+  path?: string;
+}
+
+/**
+ * Decide whether a `workspace.json` bundle entry matches the install /
+ * uninstall target. Each variant matches by its own discriminant — a
+ * `{ name }` target matches `{ name }` entries on string equality;
+ * a `{ path }` target matches `{ path }` entries on string equality.
+ *
+ * Used by both the install-side duplicate guard (`bundles.some`) and the
+ * uninstall-side removal filter (`bundles.filter(b => !match(b, t))`). The
+ * previous uninstall filter only inspected `"name" in b` and so left
+ * `{ path }` entries stranded in `workspace.json` after their tool source
+ * had been deregistered.
+ *
+ * Exported so unit tests pin the contract without re-implementing it.
+ */
+export function bundleEntryMatchesTarget(
+  entry: import("../bundles/types.ts").BundleRef,
+  target: BundleTarget,
+): boolean {
+  if (target.name && "name" in entry) return entry.name === target.name;
+  if (target.path && "path" in entry) return entry.path === target.path;
+  return false;
+}
 
 /**
  * Factory that creates the `nb` system source as an in-process MCP server.
@@ -165,7 +197,7 @@ export async function createSystemTools(
     {
       name: "manage_app",
       description:
-        "Install, uninstall, or configure an app. 'configure' prompts for API keys/credentials securely via the terminal. Requires user approval.",
+        "Install, uninstall, or configure an app. 'configure' prompts for API keys/credentials securely via the terminal. Requires user approval. For uploaded .mcpb bundles, pass 'path' instead of 'name'.",
       inputSchema: {
         type: "object",
         properties: {
@@ -178,12 +210,18 @@ export async function createSystemTools(
             type: "string",
             description: "Bundle name (e.g., @nimblebraininc/ipinfo)",
           },
+          path: {
+            type: "string",
+            description:
+              "Absolute path to a local .mcpb bundle file. Use instead of 'name' for uploaded bundles.",
+          },
         },
-        required: ["action", "name"],
+        required: ["action"],
       },
       handler: async (input): Promise<ToolResult> => {
         const action = String(input.action);
-        const name = String(input.name);
+        const name = input.name ? String(input.name) : undefined;
+        const path = input.path ? String(input.path) : undefined;
         if (!lifecycle || !manageBundleCtx) {
           return {
             content: textContent("Bundle management requires lifecycle context"),
@@ -198,8 +236,14 @@ export async function createSystemTools(
           };
         }
         if (action === "install") {
+          if (!name && !path) {
+            return {
+              content: textContent("Either 'name' or 'path' is required for install"),
+              isError: true,
+            };
+          }
           return await installBundleInWorkspaceViaCtx(
-            name,
+            { name, path },
             wsId,
             lifecycle,
             getRegistry(),
@@ -207,8 +251,14 @@ export async function createSystemTools(
           );
         }
         if (action === "uninstall") {
+          if (!name && !path) {
+            return {
+              content: textContent("Either 'name' or 'path' is required for uninstall"),
+              isError: true,
+            };
+          }
           return await uninstallBundleFromWorkspaceViaCtx(
-            name,
+            { name, path },
             wsId,
             lifecycle,
             getRegistry(),
@@ -216,6 +266,12 @@ export async function createSystemTools(
           );
         }
         if (action === "configure") {
+          if (!name) {
+            return {
+              content: textContent("'name' is required for configure"),
+              isError: true,
+            };
+          }
           return await configureBundle(
             name,
             getRegistry(),
@@ -810,16 +866,36 @@ async function configureBundle(
  * add to workspace.json bundles, seed lifecycle instance.
  */
 async function installBundleInWorkspaceViaCtx(
-  name: string,
+  target: { name?: string; path?: string },
   wsId: string,
   lifecycle: BundleLifecycleManager,
   registry: ToolRegistry,
   ctx: ManageBundleContext,
 ): Promise<ToolResult> {
-  try {
-    const bundleRef = { name } as import("../bundles/types.ts").BundleRef;
+  const label = target.name ?? target.path!;
 
-    // Spawn the bundle process with plain server name in workspace registry
+  // Confine LLM-supplied `path` to the workspace bundles dir — see
+  // `assertPathInWorkspaceBundlesDir`. Reject before constructing the ref so
+  // a malicious path never reaches `startBundleSource` (which would spawn a
+  // subprocess with workspace credentials).
+  if (target.path) {
+    try {
+      assertPathInWorkspaceBundlesDir(target.path, ctx.workDir, wsId);
+    } catch (err) {
+      return {
+        content: textContent(
+          `Failed to install ${label} in workspace ${wsId}: ${err instanceof Error ? err.message : String(err)}`,
+        ),
+        isError: true,
+      };
+    }
+  }
+
+  const bundleRef = (
+    target.name ? { name: target.name } : { path: target.path! }
+  ) as import("../bundles/types.ts").BundleRef;
+
+  try {
     const entry = await installBundleInWorkspace(
       wsId,
       bundleRef,
@@ -832,10 +908,9 @@ async function installBundleInWorkspaceViaCtx(
       },
     );
 
-    // Seed lifecycle instance so it can be tracked/queried
     lifecycle.seedInstance(
       entry.serverName,
-      name,
+      label,
       bundleRef,
       entry.meta ?? undefined,
       wsId,
@@ -846,13 +921,12 @@ async function installBundleInWorkspaceViaCtx(
     // a bundle on the user's behalf.
     lifecycle.notifyInstalled(entry.serverName, wsId);
 
-    // Add bundle to workspace.json
     const ws = await ctx.workspaceStore.get(wsId);
     if (ws) {
-      const already = ws.bundles.some((b) => "name" in b && b.name === name);
+      const already = ws.bundles.some((b) => bundleEntryMatchesTarget(b, target));
       if (!already) {
         await ctx.workspaceStore.update(wsId, {
-          bundles: [...ws.bundles, { name }],
+          bundles: [...ws.bundles, target.name ? { name: target.name } : { path: target.path! }],
         });
       }
     }
@@ -861,14 +935,14 @@ async function installBundleInWorkspaceViaCtx(
     const count = tools.filter((t) => t.name.startsWith(`${entry.serverName}__`)).length;
     return {
       content: textContent(
-        `Installed ${name} in workspace ${wsId}. ${count} tools now available from ${entry.serverName}.`,
+        `Installed ${label} in workspace ${wsId}. ${count} tools now available from ${entry.serverName}.`,
       ),
       isError: false,
     };
   } catch (err) {
     return {
       content: textContent(
-        `Failed to install ${name} in workspace ${wsId}: ${err instanceof Error ? err.message : String(err)}`,
+        `Failed to install ${label} in workspace ${wsId}: ${err instanceof Error ? err.message : String(err)}`,
       ),
       isError: true,
     };
@@ -903,15 +977,65 @@ export function resolveBundleServerName(
 }
 
 async function uninstallBundleFromWorkspaceViaCtx(
-  name: string,
+  target: { name?: string; path?: string },
   wsId: string,
   lifecycle: BundleLifecycleManager,
   registry: ToolRegistry,
   ctx: ManageBundleContext,
 ): Promise<ToolResult> {
+  const label = target.name ?? target.path!;
+
+  // Mirror the install-side guard. An attacker who can poison the agent's
+  // tool input could otherwise pass an arbitrary `path` to read its manifest
+  // (validateMcpb extracts and parses the archive). Confining to the
+  // workspace bundles dir bounds the surface to artifacts the workspace
+  // already accepted via upload.
+  if (target.path) {
+    try {
+      assertPathInWorkspaceBundlesDir(target.path, ctx.workDir, wsId);
+    } catch (err) {
+      return {
+        content: textContent(
+          `Failed to uninstall ${label} from workspace ${wsId}: ${err instanceof Error ? err.message : String(err)}`,
+        ),
+        isError: true,
+      };
+    }
+  }
+
   try {
+    // Resolve the bundle name. For .mcpb path uninstalls the manifest name
+    // lives inside the archive — peek via validateMcpb so the downstream
+    // lookups line up with what install registered. Otherwise deriveServerName
+    // (path) would produce "echo-mcpb" while the source is registered as
+    // "echo", and the protected check, registry deregister, and
+    // workspace.json filter all silently miss.
+    let bundleName: string;
+    if (target.name) {
+      bundleName = target.name;
+    } else if (target.path?.endsWith(".mcpb")) {
+      const { validateMcpb } = await import("@nimblebrain/mpak-sdk");
+      const validation = await validateMcpb(target.path);
+      if (!validation.valid || !validation.manifest) {
+        throw new Error(
+          `Cannot read manifest from ${target.path}: ${validation.errors?.join(", ") ?? "validation failed"}`,
+        );
+      }
+      bundleName = validation.manifest.name;
+    } else {
+      // Plain local-dir path (rare uninstall surface) — the path doubles as
+      // the bundle-name input. resolveBundleServerName + the {path} branch of
+      // the workspace.json filter both handle this shape.
+      bundleName = target.path!;
+    }
+
+    // Read the persisted slug-form `serverName` off the workspace entry
+    // (set at install time from `slugifyServerName(entry.id)`) with
+    // `deriveServerName(bundleName)` as the legacy fallback. Re-deriving
+    // here would compute the OLD short slug and miss any source registered
+    // under the post-#195 canonical-id slug.
     const ws = await ctx.workspaceStore.get(wsId);
-    const serverName = resolveBundleServerName(name, ws);
+    const serverName = resolveBundleServerName(bundleName, ws);
 
     // Protected check — pass wsId to look up the workspace-scoped instance
     const instance = lifecycle.getInstance(serverName, wsId);
@@ -922,7 +1046,7 @@ async function uninstallBundleFromWorkspaceViaCtx(
     // Stop process and deregister from tool registry. Thread workDir so
     // the workspace credential file for this bundle is cleaned up as part
     // of uninstall (best-effort inside uninstallBundleFromWorkspace).
-    await uninstallBundleFromWorkspace(wsId, name, serverName, registry, {
+    await uninstallBundleFromWorkspace(wsId, bundleName, serverName, registry, {
       workDir: ctx.workDir,
     });
 
@@ -932,10 +1056,14 @@ async function uninstallBundleFromWorkspaceViaCtx(
     }
     lifecycle.removeInstance(serverName, wsId);
 
-    // Remove bundle from workspace.json
+    // Remove bundle from workspace.json. Filter dispatches per-variant —
+    // {name} when uninstalling by name, {path} when uninstalling by path.
+    // The previous filter only checked "name" in b, so path-installed
+    // bundles became permanent residents of workspace.json even after
+    // their tool source was deregistered.
     if (ws) {
       await ctx.workspaceStore.update(wsId, {
-        bundles: ws.bundles.filter((b) => !("name" in b && b.name === name)),
+        bundles: ws.bundles.filter((b) => !bundleEntryMatchesTarget(b, target)),
       });
     }
 
@@ -946,7 +1074,7 @@ async function uninstallBundleFromWorkspaceViaCtx(
   } catch (err) {
     return {
       content: textContent(
-        `Failed to uninstall ${name} from workspace ${wsId}: ${err instanceof Error ? err.message : String(err)}`,
+        `Failed to uninstall ${label} from workspace ${wsId}: ${err instanceof Error ? err.message : String(err)}`,
       ),
       isError: true,
     };

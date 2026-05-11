@@ -4,6 +4,7 @@ import { corsMiddleware } from "./middleware/cors.ts";
 import { securityHeaders } from "./middleware/security-headers.ts";
 import { authRoutes } from "./routes/auth.ts";
 import { bootstrapRoutes } from "./routes/bootstrap.ts";
+import { bundleRoutes } from "./routes/bundles.ts";
 import { chatRoutes } from "./routes/chat.ts";
 import { conversationEventRoutes } from "./routes/conversation-events.ts";
 import { eventRoutes } from "./routes/events.ts";
@@ -56,6 +57,7 @@ export function createApp(
   app.route("/", chatRoutes(ctx));
   app.route("/", toolRoutes(ctx));
   app.route("/", resourceRoutes(ctx));
+  app.route("/", bundleRoutes(ctx));
   app.route("/", eventRoutes(ctx));
   app.route("/", conversationEventRoutes(ctx));
 

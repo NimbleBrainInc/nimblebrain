@@ -12,6 +12,39 @@ import type { McpServerHost } from "./mcp-server.ts";
 import type { LoginRateLimiter, RequestRateLimiter } from "./rate-limiter.ts";
 
 // ---------------------------------------------------------------------------
+// Multipart upload helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Minimal interface for an uploaded file pulled out of `Request.formData()`.
+ *
+ * Why this exists: Bun's `Request.formData()` returns the undici `FormData`,
+ * whose entries are undici `File` instances. The DOM-lib `File` resolved at
+ * an annotation site has incompatible iterator types, so a direct
+ * `value as File` cast produces a TS error. Every multipart handler had its
+ * own `value as unknown as { arrayBuffer(): Promise<ArrayBuffer>; ... }`
+ * cast inline; this interface centralizes the shape.
+ */
+export interface UploadedFileEntry {
+  arrayBuffer(): Promise<ArrayBuffer>;
+  name?: string;
+  type?: string;
+  size?: number;
+}
+
+/**
+ * Narrow a `FormData.get` / `FormData.entries` value to an
+ * `UploadedFileEntry`. Returns `null` for strings, missing values, or
+ * objects without an `arrayBuffer` method (which would fail at read time
+ * anyway). Centralises the cross-type cast so handlers don't repeat it.
+ */
+export function asUploadedFile(value: unknown): UploadedFileEntry | null {
+  if (!value || typeof value === "string") return null;
+  const entry = value as UploadedFileEntry;
+  return typeof entry.arrayBuffer === "function" ? entry : null;
+}
+
+// ---------------------------------------------------------------------------
 // Standardized API error response
 // ---------------------------------------------------------------------------
 

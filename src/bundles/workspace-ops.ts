@@ -22,6 +22,17 @@ export interface ProcessInventoryEntry {
 }
 
 /**
+ * True if this ref is a `.mcpb` archive — the only ref variant whose canonical
+ * server name and data-dir cannot be known until the manifest is peeked at
+ * startup. All other variants (name/url, plain local-dir paths) derive a stable
+ * name from `serverNameFromRef` directly. Callers must defer .mcpb registration
+ * to `startBundleSource`, which peeks the manifest and uses `result.sourceName`.
+ */
+function isMcpbRef(ref: BundleRef): ref is { path: string } & BundleRef {
+  return "path" in ref && ref.path.endsWith(".mcpb");
+}
+
+/**
  * Install a bundle in a specific workspace (hot — no restart required).
  *
  * Spawns the bundle process with a workspace-scoped data directory
@@ -41,25 +52,42 @@ export async function installBundleInWorkspace(
   },
 ): Promise<ProcessInventoryEntry> {
   const workDir = opts?.workDir ?? process.env.NB_WORK_DIR ?? "";
-  const serverName = serverNameFromRef(bundleRef);
-  const bundleName = bundleNameFromRef(bundleRef);
   const wsPath = join(workDir, "workspaces", wsId);
-  const dataDir = resolveBundleDataDir(wsPath, bundleName);
+  const isMcpb = isMcpbRef(bundleRef);
 
-  // Check for existing registration
-  if (registry.hasSource(serverName)) {
-    throw new Error(`Bundle "${serverName}" is already running in workspace "${wsId}"`);
+  // Pre-flight duplicate check + dataDir derivation only run for refs whose
+  // canonical name is knowable from the ref string itself. For .mcpb, the
+  // manifest-derived name lives inside the archive — startBundleSource peeks
+  // it. Pre-computing here would use the path-derived name ("echo-mcpb" for
+  // "/uploads/echo.mcpb") which won't match the actual registered name
+  // ("echo"). Skip and let startBundleSource own the registration; if the
+  // name is already registered, registry.addSource throws.
+  let preflightDataDir: string | undefined;
+  if (!isMcpb) {
+    const serverName = serverNameFromRef(bundleRef);
+    if (registry.hasSource(serverName)) {
+      throw new Error(`Bundle "${serverName}" is already running in workspace "${wsId}"`);
+    }
+    preflightDataDir = resolveBundleDataDir(wsPath, bundleNameFromRef(bundleRef));
   }
 
   const result = await startBundleSource(bundleRef, registry, eventSink, configDir, {
     allowInsecureRemotes: opts?.allowInsecureRemotes,
-    dataDir,
+    dataDir: preflightDataDir,
     // Thread workspace id + work dir so the named-bundle path can resolve
     // `user_config` from the workspace credential store before prepareServer
-    // validates it.
+    // validates it. Required for .mcpb too (workspace-scoped credentials).
     wsId,
     workDir,
   });
+
+  // For .mcpb, the manifest-derived name only became knowable after
+  // startBundleSource peeked the archive. Derive the canonical data-dir from
+  // it so re-uploads land in the same dir across restarts (matches the named
+  // branch convention).
+  const dataDir = isMcpb
+    ? resolveBundleDataDir(wsPath, result.sourceName)
+    : (preflightDataDir as string);
 
   return {
     wsId,
