@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import type { ToolPromotionControls } from "../engine/types.ts";
 import type { UserIdentity } from "../identity/provider.ts";
 import type { AgentProfile, ModelSlots } from "./types.ts";
 
@@ -21,6 +22,7 @@ export interface RequestContext {
    * rather than silently falling back to the wrong conversation.
    */
   conversationId?: string;
+  toolPromotion?: ToolPromotionControls;
 }
 
 const storage = new AsyncLocalStorage<RequestContext>();

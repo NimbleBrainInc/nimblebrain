@@ -12,7 +12,7 @@ import { isToolEnabled, type ResolvedFeatures } from "../config/features.ts";
 import type { ConfirmationGate } from "../config/privilege.ts";
 import { resolveUserConfig } from "../config/workspace-credentials.ts";
 import { textContent } from "../engine/content-helpers.ts";
-import type { EventSink, ToolResult } from "../engine/types.ts";
+import type { EventSink, ToolPromotionControls, ToolResult, ToolSchema } from "../engine/types.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import type { Skill } from "../skills/types.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
@@ -24,6 +24,7 @@ import type { DelegateContext } from "./delegate.ts";
 import { createDelegateTool } from "./delegate.ts";
 import { defineInProcessApp, type InProcessTool } from "./in-process-app.ts";
 import { McpSource } from "./mcp-source.ts";
+import { createUseReleaseToolDefs } from "./platform/use-release.ts";
 import type { ToolRegistry } from "./registry.ts";
 import { createManageRegistriesTool } from "./registry-tools.ts";
 import { createManageUsersTool, type ManageUsersContext } from "./user-tools.ts";
@@ -45,6 +46,12 @@ export interface ManageBundleContext {
   // manage_app install/configure flow spawns bundles the same way the
   // platform does at boot; both paths need the live runtime sink.
   eventSink: EventSink;
+}
+
+export type ToolPromotionContext = ToolPromotionControls;
+
+export interface ToolEligibilityContext {
+  isToolEligible(tool: ToolSchema): boolean;
 }
 
 /** Callback that returns the current loaded skills from the runtime. */
@@ -82,9 +89,12 @@ export async function createSystemTools(
   manageMembersCtx?: ManageMembersContext,
   manageConversationCtx?: ManageConversationContext,
   manageBundleCtx?: ManageBundleContext,
+  toolPromotionCtx?: ToolPromotionContext,
+  toolEligibilityCtx?: ToolEligibilityContext,
 ): Promise<McpSource> {
   // Core tools (always available, not feature-gated)
   const coreToolDefs: InProcessTool[] = runtime ? createCoreToolDefs(runtime) : [];
+  const useReleaseToolDefs: InProcessTool[] = createUseReleaseToolDefs(toolPromotionCtx);
 
   const systemToolDefs: InProcessTool[] = [
     {
@@ -145,7 +155,8 @@ export async function createSystemTools(
         // scope === "tools" (default)
         const q = query.toLowerCase();
         const all = (await getRegistry().availableTools()).filter(
-          (t) => !t.annotations?.["ai.nimblebrain/internal"],
+          (t) =>
+            toolEligibilityCtx?.isToolEligible(t) ?? !t.annotations?.["ai.nimblebrain/internal"],
         );
         if (!q) return groupToolsBySource(all);
         const matches = all.filter(
@@ -290,7 +301,7 @@ export async function createSystemTools(
     {
       name: "nb",
       version: "1.0.0",
-      tools: [...coreToolDefs, ...filteredSystemDefs],
+      tools: [...coreToolDefs, ...useReleaseToolDefs, ...filteredSystemDefs],
       resources: buildCoreResourceMap(),
     },
     eventSink ?? new NoopEventSink(),

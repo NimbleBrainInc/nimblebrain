@@ -10,7 +10,12 @@ import { deriveServerName } from "../bundles/paths.ts";
 import { setConnectionRunningHandler } from "../bundles/pending-auth-buffer.ts";
 import type { AppInfo, BundleInstance } from "../bundles/types.ts";
 import { log } from "../cli/log.ts";
-import { isToolVisibleToRole, type ResolvedFeatures, resolveFeatures } from "../config/features.ts";
+import {
+  isToolEnabled,
+  isToolVisibleToRole,
+  type ResolvedFeatures,
+  resolveFeatures,
+} from "../config/features.ts";
 import { deriveOverridePath } from "../config/overrides.ts";
 import { createPrivilegeHook, NoopConfirmationGate } from "../config/privilege.ts";
 import { generateTitle } from "../conversation/auto-title.ts";
@@ -32,6 +37,7 @@ import type {
   EngineHooks,
   EventSink,
   SkillsLoadedPayload,
+  ToolPromotionResult,
   ToolSchema,
 } from "../engine/types.ts";
 import { rehydrateUserResources } from "../files/rehydrate.ts";
@@ -457,6 +463,29 @@ export class Runtime {
       // live-update pipeline as boot-time bundle startup.
       eventSink: events,
     };
+    const noActiveToolPromotionRun = (toolName: string): ToolPromotionResult => ({
+      ok: false,
+      toolName,
+      changed: false,
+      reason: "no_active_run",
+      message: "Tool promotion tools can only be called during an active agent run.",
+    });
+    const toolPromotionCtx = {
+      addTool: (toolName: string) =>
+        getRequestContext()?.toolPromotion?.addTool(toolName) ?? noActiveToolPromotionRun(toolName),
+      removeTool: (toolName: string) =>
+        getRequestContext()?.toolPromotion?.removeTool(toolName) ??
+        noActiveToolPromotionRun(toolName),
+    };
+    const isToolEligibleForCurrentRequest = (tool: ToolSchema): boolean => {
+      const ctx = getRequestContext();
+      return (
+        isToolVisibleToRole(tool.name, ctx?.identity?.orgRole) &&
+        isToolEnabled(tool.name, features) &&
+        !tool.annotations?.["ai.nimblebrain/internal"]
+      );
+    };
+    const toolEligibilityCtx = { isToolEligible: isToolEligibleForCurrentRequest };
 
     // Create Runtime with empty workspace registries first — needed by system tools
     const rt = new Runtime(
@@ -508,6 +537,8 @@ export class Runtime {
       manageMembersCtx,
       manageConversationCtx,
       manageBundleCtx,
+      toolPromotionCtx,
+      toolEligibilityCtx,
     );
     rt._systemSource = systemTools;
 
@@ -972,6 +1003,18 @@ export class Runtime {
       workspaceAgents: workspace?.agents ?? null,
       workspaceModelOverride: workspace?.models ?? null,
       conversationId: conversation.id,
+    };
+    engineConfig.toolPromotion = {
+      isToolEligible: (tool) =>
+        isToolVisibleToRole(tool.name, reqCtx.identity?.orgRole) &&
+        isToolEnabled(tool.name, this._features) &&
+        !tool.annotations?.["ai.nimblebrain/internal"],
+      registerControls: (controls) => {
+        reqCtx.toolPromotion = controls;
+        return () => {
+          delete reqCtx.toolPromotion;
+        };
+      },
     };
 
     // Emit chat.start so the client knows the conversation ID immediately

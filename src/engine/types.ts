@@ -41,6 +41,19 @@ export interface ToolResult {
   isError: boolean;
 }
 
+export interface ToolPromotionResult {
+  ok: boolean;
+  toolName: string;
+  changed: boolean;
+  message: string;
+  reason?: string;
+}
+
+export interface ToolPromotionControls {
+  addTool(toolName: string): ToolPromotionResult;
+  removeTool(toolName: string): ToolPromotionResult;
+}
+
 /** Port 3: Observability event sink. */
 export interface EventSink {
   emit(event: EngineEvent): void;
@@ -56,6 +69,8 @@ export type EngineEventType =
   | "tool.start"
   | "tool.done"
   | "tool.progress"
+  | "tool.promoted"
+  | "tool.released"
   | "llm.done"
   | "run.done"
   | "run.error"
@@ -181,6 +196,10 @@ export interface EngineConfig {
    * this entirely.
    */
   principalId?: string;
+  toolPromotion?: {
+    isToolEligible(tool: ToolSchema): boolean;
+    registerControls(controls: ToolPromotionControls): () => void;
+  };
 }
 
 /**

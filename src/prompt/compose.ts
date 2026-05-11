@@ -513,7 +513,7 @@ function formatAppsSection(apps: PromptAppInfo[], hasProxiedTools?: boolean): st
   if (hasProxiedTools) {
     lines.push(
       "",
-      '**Important:** These apps have tools that are not in your direct tool list. To use an app\'s tools, call `nb__search` with `scope: "tools"` and a keyword (e.g., "contact", "invoice", "document") to discover the exact tool names. Tool names use the format `source__tool` (e.g., `synapse-crm__create_contact`). Never guess tool names — always discover them first.',
+      '**Important:** These apps have tools that are not in your direct tool list. To use an app\'s tools, call `nb__search` with `scope: "tools"` and a keyword (e.g., "contact", "invoice", "document") to discover exact tool names, then call `nb__use` with `{ "tool_name": "source__tool" }` before calling the discovered tool. Call `nb__release` with the same `tool_name` when you no longer need it. Tool names use the format `source__tool` (e.g., `synapse-crm__create_contact`). Never guess tool names — always discover them first.',
     );
   }
   return lines.join("\n");
@@ -523,11 +523,11 @@ const INTERACTION_RULES = `### Interaction Rules
 
 - When the user describes a change, identify which tool achieves it and call it directly. Do not ask for confirmation unless the action is destructive or ambiguous.
 - After making changes, briefly confirm what you did. The app view refreshes automatically — do not describe the UI.
-- If unsure which tool to use, call \`nb__search\` with \`scope: "tools"\` and a keyword.
+- If unsure which tool to use, call \`nb__search\` with \`scope: "tools"\` and a keyword. If the chosen tool is not currently callable, call \`nb__use\` with its \`tool_name\` before using it, then \`nb__release\` when done.
 - When the user says "undo" or "go back," check if the app has undo, snapshot, or history tools. If not, say undo is not available for this app.
 - When the user gives vague feedback ("I don't like it," "make it better"), ask ONE clarifying question about what specifically to change.
 - Messages may include an \`[App Context: ...]\` header with metadata from the app. Use it to understand what the user was looking at.
-- Other apps are still available via \`nb__search\` (scope: "tools") if the user's request spans apps.`;
+- Other apps are still available via \`nb__search\` (scope: "tools") if the user's request spans apps; use \`nb__use\` before calling a discovered tool.`;
 
 function formatFocusedAppSection(focusedApp: FocusedAppInfo): string {
   const safeName = sanitizeLineField(focusedApp.name);

@@ -268,6 +268,85 @@ export class AgentEngine {
     const directTools = [...tools];
     const directToolNames = new Set(directTools.map((t) => t.name));
 
+    const toolControls = {
+      addTool: (toolName: string) => {
+        if (directToolNames.has(toolName)) {
+          return {
+            ok: true,
+            toolName,
+            changed: false,
+            message: `${toolName} is already available in the active tool list.`,
+          };
+        }
+        const schema = allToolSchemaMap.get(toolName);
+        if (!schema) {
+          return {
+            ok: false,
+            toolName,
+            changed: false,
+            reason: "not_found",
+            message: `${toolName} was not found in the current tool registry.`,
+          };
+        }
+        if (schema.annotations?.["ai.nimblebrain/internal"]) {
+          return {
+            ok: false,
+            toolName,
+            changed: false,
+            reason: "internal_tool",
+            message: `${toolName} is an internal tool and cannot be added to the active tool list.`,
+          };
+        }
+        if (config.toolPromotion && !config.toolPromotion.isToolEligible(schema)) {
+          return {
+            ok: false,
+            toolName,
+            changed: false,
+            reason: "not_allowed",
+            message: `${toolName} is not available in the current run.`,
+          };
+        }
+        directTools.push(schema);
+        directToolNames.add(toolName);
+        this.events.emit({ type: "tool.promoted", data: { runId, toolName } });
+        return {
+          ok: true,
+          toolName,
+          changed: true,
+          message: `${toolName} is now available in the active tool list.`,
+        };
+      },
+      removeTool: (toolName: string) => {
+        if (toolName.startsWith("nb__")) {
+          return {
+            ok: false,
+            toolName,
+            changed: false,
+            reason: "system_tool",
+            message: `${toolName} is a system tool and cannot be released.`,
+          };
+        }
+        if (!directToolNames.has(toolName)) {
+          return {
+            ok: true,
+            toolName,
+            changed: false,
+            message: `${toolName} is not in the active tool list.`,
+          };
+        }
+        const idx = directTools.findIndex((t) => t.name === toolName);
+        if (idx >= 0) directTools.splice(idx, 1);
+        directToolNames.delete(toolName);
+        this.events.emit({ type: "tool.released", data: { runId, toolName } });
+        return {
+          ok: true,
+          toolName,
+          changed: true,
+          message: `${toolName} was removed from the active tool list.`,
+        };
+      },
+    };
+
     this.events.emit({
       type: "run.start",
       data: {
@@ -324,6 +403,7 @@ export class AgentEngine {
     // content filter, etc.) rather than always reporting "complete".
     let lastFinishReason: FinishReason | undefined;
 
+    const unregisterToolControls = config.toolPromotion?.registerControls(toolControls);
     try {
       while (iteration < maxIter) {
         const modelTools: LanguageModelV3FunctionTool[] = directTools.map((t) => ({
@@ -600,7 +680,6 @@ export class AgentEngine {
 
         for (const {
           toolCall,
-          gatedCall,
           result,
           ms,
           resourceUri: uri,
@@ -646,25 +725,6 @@ export class AgentEngine {
               ? { type: "error-text", value: llmText }
               : { type: "text", value: llmText },
           });
-
-          if (
-            gatedCall.name === "nb__search" &&
-            !result.isError &&
-            gatedCall.input.scope === "tools"
-          ) {
-            const structured = result.structuredContent as
-              | { tools?: Array<{ name?: string }> }
-              | undefined;
-            for (const { name } of structured?.tools ?? []) {
-              if (!name) continue;
-              if (directToolNames.has(name)) continue;
-              const schema = allToolSchemaMap.get(name);
-              if (!schema) continue;
-              if (schema.annotations?.["ai.nimblebrain/internal"]) continue;
-              directTools.push(schema);
-              directToolNames.add(name);
-            }
-          }
         }
 
         // 6. Feed results back as tool message
@@ -683,6 +743,8 @@ export class AgentEngine {
         },
       });
       throw err;
+    } finally {
+      unregisterToolControls?.();
     }
 
     const stopReason: StopReason =
