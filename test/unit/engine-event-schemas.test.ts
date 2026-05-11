@@ -19,6 +19,7 @@ import {
   SkillDeletedPayload,
   SkillsLoadedPayload,
   SkillUpdatedPayload,
+  ToolPromotionChangedPayload,
 } from "../../src/engine/schemas/events.ts";
 
 describe("event schemas — accept representative payloads", () => {
@@ -120,6 +121,12 @@ describe("event schemas — accept representative payloads", () => {
       }),
     ).toBe(true);
     expect(Value.Check(FileDeletedPayload, { id: "file-abc" })).toBe(true);
+  });
+
+  test("tool.promoted / tool.released — basic shape", () => {
+    expect(
+      Value.Check(ToolPromotionChangedPayload, { runId: "run-abc", toolName: "app__tool" }),
+    ).toBe(true);
   });
 });
 

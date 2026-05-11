@@ -9,6 +9,8 @@ import { createSystemTools } from "../../src/tools/system-tools.ts";
 import type {
 	GetSkillsFn,
 	ManageBundleContext,
+	ToolEligibilityContext,
+	ToolPromotionContext,
 } from "../../src/tools/system-tools.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
 import { textContent } from "../../src/engine/content-helpers.ts";
@@ -83,8 +85,8 @@ describe("System Tools", () => {
 		expect(result.isError).toBe(false);
 		expect(extractText(result.content)).toContain("test");
 		expect(extractText(result.content)).toContain("2 tools");
-		// Browse path must populate structuredContent so the engine can promote
-		// discovered tools into the direct callable set on the next iteration.
+		// Browse path returns machine-readable tool names so the agent can pass
+		// one directly to nb__use when it wants to make a discovered tool callable.
 		expect(getStructured<{ tools?: Array<{ name: string }> }>(result)?.tools).toEqual([
 			{ name: "test__greet" },
 			{ name: "test__farewell" },
@@ -134,6 +136,61 @@ describe("System Tools", () => {
 		]);
 	});
 
+	it("search with scope=tools excludes tools that are not eligible", async () => {
+		const registry = new ToolRegistry();
+		const source = await makeInProcessSource("test", [
+			{
+				name: "visible",
+				description: "Visible tool",
+				inputSchema: { type: "object", properties: {} },
+				handler: async () => ({ content: textContent("ok"), isError: false }),
+			},
+			{
+				name: "admin_only",
+				description: "Admin only tool",
+				inputSchema: { type: "object", properties: {} },
+				handler: async () => ({ content: textContent("ok"), isError: false }),
+			},
+		]);
+		registry.addSource(source);
+		const toolEligibilityCtx: ToolEligibilityContext = {
+			isToolEligible: (tool) => tool.name !== "test__admin_only",
+		};
+		const systemTools = await createSystemTools(
+			() => registry,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			toolEligibilityCtx,
+		);
+
+		const result = await systemTools.execute("search", {
+			scope: "tools",
+			query: "tool",
+		});
+		expect(result.isError).toBe(false);
+		const text = extractText(result.content);
+		expect(text).toContain("test__visible");
+		expect(text).not.toContain("test__admin_only");
+		expect(getStructured<{ tools?: Array<{ name: string }> }>(result)?.tools).toEqual([
+			{ name: "test__visible" },
+		]);
+	});
+
 	// `search with scope=registry` lives in test/smoke/system-tools-registry.test.ts.
 	// It hits the live mpak registry over the network, which makes it a smoke
 	// test by definition (CLAUDE.md: smoke tier owns "real MCP server spawns,
@@ -168,7 +225,66 @@ describe("System Tools", () => {
 		const tools = await systemTools.tools();
 		const names = tools.map((t) => t.name);
 		expect(names).toContain("nb__search");
+		expect(names).toContain("nb__use");
+		expect(names).toContain("nb__release");
 		expect(names).toContain("nb__manage_app");
+	});
+
+	it("use and release require an active agent run", async () => {
+		const registry = await makeRegistry();
+		const systemTools = await createSystemTools(() => registry);
+		const useResult = await systemTools.execute("use", { tool_name: "test__greet" });
+		expect(useResult.isError).toBe(true);
+		expect(extractText(useResult.content)).toContain("active agent run");
+
+		const releaseResult = await systemTools.execute("release", { tool_name: "test__greet" });
+		expect(releaseResult.isError).toBe(true);
+		expect(extractText(releaseResult.content)).toContain("active agent run");
+	});
+
+	it("use and release delegate to active run tool controls", async () => {
+		const registry = await makeRegistry();
+		const calls: string[] = [];
+		const toolPromotionCtx: ToolPromotionContext = {
+			addTool(toolName) {
+				calls.push(`use:${toolName}`);
+				return { ok: true, toolName, changed: true, message: `${toolName} added` };
+			},
+			removeTool(toolName) {
+				calls.push(`release:${toolName}`);
+				return { ok: true, toolName, changed: true, message: `${toolName} removed` };
+			},
+		};
+		const systemTools = await createSystemTools(
+			() => registry,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			toolPromotionCtx,
+		);
+
+		const useResult = await systemTools.execute("use", { tool_name: "test__greet" });
+		expect(useResult.isError).toBe(false);
+		expect(extractText(useResult.content)).toContain("added");
+
+		const releaseResult = await systemTools.execute("release", { tool_name: "test__greet" });
+		expect(releaseResult.isError).toBe(false);
+		expect(extractText(releaseResult.content)).toContain("removed");
+
+		expect(calls).toEqual(["use:test__greet", "release:test__greet"]);
 	});
 });
 
