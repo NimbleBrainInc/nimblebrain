@@ -21,7 +21,9 @@ import {
 	NoopConfirmationGate,
 } from "../../src/config/privilege.ts";
 import type { ConfirmationGate } from "../../src/config/privilege.ts";
+import { resolveFeatures } from "../../src/config/features.ts";
 import { getWorkspaceCredentials } from "../../src/config/workspace-credentials.ts";
+import { isToolEligibleForPromotion } from "../../src/runtime/tool-eligibility.ts";
 import { readSkill } from "../../src/skills/writer.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 
@@ -138,7 +140,7 @@ describe("System Tools", () => {
 
 	it("search with scope=tools excludes tools that are not eligible", async () => {
 		const registry = new ToolRegistry();
-		const source = await makeInProcessSource("test", [
+		const source = await makeInProcessSource("nb", [
 			{
 				name: "visible",
 				description: "Visible tool",
@@ -146,15 +148,16 @@ describe("System Tools", () => {
 				handler: async () => ({ content: textContent("ok"), isError: false }),
 			},
 			{
-				name: "admin_only",
-				description: "Admin only tool",
+				name: "manage_users",
+				description: "Manage users",
 				inputSchema: { type: "object", properties: {} },
 				handler: async () => ({ content: textContent("ok"), isError: false }),
 			},
 		]);
 		registry.addSource(source);
+		const features = resolveFeatures();
 		const toolEligibilityCtx: ToolEligibilityContext = {
-			isToolEligible: (tool) => tool.name !== "test__admin_only",
+			isToolEligible: (tool) => isToolEligibleForPromotion(tool, "member", features),
 		};
 		const systemTools = await createSystemTools(
 			() => registry,
@@ -184,10 +187,66 @@ describe("System Tools", () => {
 		});
 		expect(result.isError).toBe(false);
 		const text = extractText(result.content);
-		expect(text).toContain("test__visible");
-		expect(text).not.toContain("test__admin_only");
+		expect(text).toContain("nb__visible");
+		expect(text).not.toContain("nb__manage_users");
 		expect(getStructured<{ tools?: Array<{ name: string }> }>(result)?.tools).toEqual([
-			{ name: "test__visible" },
+			{ name: "nb__visible" },
+		]);
+	});
+
+	it("search with scope=tools excludes feature-disabled tools", async () => {
+		const registry = new ToolRegistry();
+		const source = await makeInProcessSource("nb", [
+			{
+				name: "visible",
+				description: "Visible tool",
+				inputSchema: { type: "object", properties: {} },
+				handler: async () => ({ content: textContent("ok"), isError: false }),
+			},
+			{
+				name: "manage_users",
+				description: "Manage users tool",
+				inputSchema: { type: "object", properties: {} },
+				handler: async () => ({ content: textContent("ok"), isError: false }),
+			},
+		]);
+		registry.addSource(source);
+		const features = resolveFeatures({ userManagement: false });
+		const toolEligibilityCtx: ToolEligibilityContext = {
+			isToolEligible: (tool) => isToolEligibleForPromotion(tool, "admin", features),
+		};
+		const systemTools = await createSystemTools(
+			() => registry,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			toolEligibilityCtx,
+		);
+
+		const result = await systemTools.execute("search", {
+			scope: "tools",
+			query: "tool",
+		});
+		expect(result.isError).toBe(false);
+		const text = extractText(result.content);
+		expect(text).toContain("nb__visible");
+		expect(text).not.toContain("nb__manage_users");
+		expect(getStructured<{ tools?: Array<{ name: string }> }>(result)?.tools).toEqual([
+			{ name: "nb__visible" },
 		]);
 	});
 

@@ -10,12 +10,7 @@ import { deriveServerName } from "../bundles/paths.ts";
 import { setConnectionRunningHandler } from "../bundles/pending-auth-buffer.ts";
 import type { AppInfo, BundleInstance } from "../bundles/types.ts";
 import { log } from "../cli/log.ts";
-import {
-  isToolEnabled,
-  isToolVisibleToRole,
-  type ResolvedFeatures,
-  resolveFeatures,
-} from "../config/features.ts";
+import { isToolVisibleToRole, type ResolvedFeatures, resolveFeatures } from "../config/features.ts";
 import { deriveOverridePath } from "../config/overrides.ts";
 import { createPrivilegeHook, NoopConfirmationGate } from "../config/privilege.ts";
 import { generateTitle } from "../conversation/auto-title.ts";
@@ -95,6 +90,7 @@ const DEFAULT_MODEL = "claude-sonnet-4-6";
 import { DEFAULT_MAX_INPUT_TOKENS, DEFAULT_MAX_ITERATIONS } from "../limits.ts";
 import { resolveMaxOutputTokens } from "./resolve-max-output-tokens.ts";
 import { resolveThinking } from "./resolve-thinking.ts";
+import { isToolEligibleForPromotion } from "./tool-eligibility.ts";
 
 const DEFAULT_MAX_HISTORY_MESSAGES = 40;
 
@@ -479,11 +475,7 @@ export class Runtime {
     };
     const isToolEligibleForCurrentRequest = (tool: ToolSchema): boolean => {
       const ctx = getRequestContext();
-      return (
-        isToolVisibleToRole(tool.name, ctx?.identity?.orgRole) &&
-        isToolEnabled(tool.name, features) &&
-        !tool.annotations?.["ai.nimblebrain/internal"]
-      );
+      return isToolEligibleForPromotion(tool, ctx?.identity?.orgRole, features);
     };
     const toolEligibilityCtx = { isToolEligible: isToolEligibleForCurrentRequest };
 
@@ -1006,9 +998,7 @@ export class Runtime {
     };
     engineConfig.toolPromotion = {
       isToolEligible: (tool) =>
-        isToolVisibleToRole(tool.name, reqCtx.identity?.orgRole) &&
-        isToolEnabled(tool.name, this._features) &&
-        !tool.annotations?.["ai.nimblebrain/internal"],
+        isToolEligibleForPromotion(tool, reqCtx.identity?.orgRole, this._features),
       registerControls: (controls) => {
         reqCtx.toolPromotion = controls;
         return () => {
