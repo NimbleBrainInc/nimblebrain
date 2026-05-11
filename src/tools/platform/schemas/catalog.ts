@@ -7,12 +7,17 @@ import * as Home from "./home.ts";
 import * as Instructions from "./instructions.ts";
 import * as Skills from "./skills.ts";
 import * as Usage from "./usage.ts";
+import * as UseRelease from "./use-release.ts";
 
 // Registry mapping (source, tool) → input schema. The web client and any
 // other typed caller reads this catalog to derive `callTool` argument
 // types end-to-end. New sources / tools added here automatically gain
 // compile-time enforcement at every call site.
 export const PlatformToolCatalog = {
+  nb: {
+    use: { input: UseRelease.UseToolInput },
+    release: { input: UseRelease.ReleaseToolInput },
+  },
   skills: {
     list: { input: Skills.SkillsListInput },
     read: { input: Skills.SkillsReadInput },
