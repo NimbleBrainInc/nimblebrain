@@ -1,30 +1,29 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
+import { log } from "../../src/cli/log.ts";
 import { toolSchemaForLlm } from "../../src/engine/tool-schema-for-llm.ts";
 
 /**
- * `toolSchemaForLlm` is the single boundary where MCP-spec JSON Schema
- * gets transformed into the narrower shape that OpenAI and Anthropic
- * both accept for tool input schemas:
+ * `toolSchemaForLlm` is the single boundary that translates MCP-spec
+ * tool inputSchemas into the shape OpenAI and Anthropic both accept:
+ * root `type: "object"` with explicit `properties`, no top-level
+ * composition (oneOf / anyOf / allOf / enum / not).
  *
- *   1. Root must be `type: "object"` with an explicit `properties` key.
- *   2. Root must NOT contain `oneOf` / `anyOf` / `allOf` / `enum` / `not`.
- *
- * MCP servers (Dropbox, etc.) routinely emit schemas that violate (1) or
- * (2). Anthropic's `tools.N.custom.input_schema` and OpenAI's
- * `tools[N].function.parameters` validators both reject them with the
- * same constraint set, so this is a universal LLM-tool-boundary concern,
- * not a per-provider quirk.
+ * MCP servers routinely emit shapes the spec allows but providers reject.
+ * The transform absorbs the contract gap at one place; downstream
+ * validation (Ajv over the original schema) backs every actual call, so
+ * the merge strategy can be permissive without compromising safety.
  */
 describe("toolSchemaForLlm", () => {
   describe("base shape", () => {
-    it("returns an empty object schema for non-object input", () => {
+    it("treats null/undefined as 'no input' (silent coerce)", () => {
+      const warnSpy = spyOn(log, "warn");
       expect(toolSchemaForLlm(undefined)).toEqual({ type: "object", properties: {} });
       expect(toolSchemaForLlm(null)).toEqual({ type: "object", properties: {} });
-      expect(toolSchemaForLlm("nope")).toEqual({ type: "object", properties: {} });
+      expect(warnSpy).not.toHaveBeenCalled();
+      warnSpy.mockRestore();
     });
 
     it("fills properties: {} when an object schema omits it", () => {
-      // Dropbox `get_usage_and_quota` ships this shape.
       expect(toolSchemaForLlm({ type: "object" })).toEqual({
         type: "object",
         properties: {},
@@ -48,18 +47,72 @@ describe("toolSchemaForLlm", () => {
     });
 
     it("does not mutate the input object", () => {
-      const original: Record<string, unknown> = { type: "object" };
+      const original: Record<string, unknown> = {
+        type: "object",
+        oneOf: [{ properties: { a: { type: "string" } } }],
+      };
+      const snapshot = JSON.parse(JSON.stringify(original));
       toolSchemaForLlm(original);
-      expect(original).toEqual({ type: "object" });
+      expect(original).toEqual(snapshot);
     });
   });
 
-  describe("top-level oneOf / anyOf — first-branch wins", () => {
-    it("collapses a top-level oneOf to its first branch", () => {
-      // Dropbox `list_folder`-style: model "either path or shared link"
-      // as a oneOf. Take the first branch — every valid call to the tool
-      // must satisfy ONE branch, and synthesizing a union schema would
-      // let the model emit invalid mix-and-match payloads.
+  describe("defensive coercion for malformed input", () => {
+    let warnSpy: ReturnType<typeof spyOn>;
+    beforeEach(() => {
+      warnSpy = spyOn(log, "warn").mockImplementation(() => {});
+    });
+    afterEach(() => {
+      warnSpy.mockRestore();
+    });
+
+    it("warns and coerces when input is a string", () => {
+      expect(toolSchemaForLlm("not-a-schema", "my_tool")).toEqual({
+        type: "object",
+        properties: {},
+      });
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      const msg = warnSpy.mock.calls[0]?.[0] as string;
+      expect(msg).toContain('"my_tool"');
+      expect(msg).toContain("string");
+    });
+
+    it("warns and coerces when input is an array", () => {
+      toolSchemaForLlm([], "list_tool");
+      const msg = warnSpy.mock.calls[0]?.[0] as string;
+      expect(msg).toContain("array");
+      expect(msg).toContain('"list_tool"');
+    });
+
+    it("warns and coerces when input is a number", () => {
+      toolSchemaForLlm(42);
+      const msg = warnSpy.mock.calls[0]?.[0] as string;
+      expect(msg).toContain("number");
+      expect(msg).toContain("<unknown>");
+    });
+
+    it("fixes properties: null defensively (no warning — schema itself is valid)", () => {
+      const result = toolSchemaForLlm({ type: "object", properties: null });
+      expect(result).toEqual({ type: "object", properties: {} });
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+
+    it("fixes properties: <non-object> defensively", () => {
+      const result = toolSchemaForLlm({ type: "object", properties: "nope" });
+      expect(result).toEqual({ type: "object", properties: {} });
+    });
+
+    it("fixes properties: <array> defensively", () => {
+      const result = toolSchemaForLlm({ type: "object", properties: [] });
+      expect(result).toEqual({ type: "object", properties: {} });
+    });
+  });
+
+  describe("top-level oneOf — union-merge with intersected required", () => {
+    it("unions properties across branches", () => {
+      // Dropbox `list_folder`-style: model 'path' or 'shared_link' as
+      // mutually-exclusive branches. We want the LLM to be able to call
+      // either; Ajv over the original schema gates the actual call.
       const result = toolSchemaForLlm({
         oneOf: [
           {
@@ -74,54 +127,104 @@ describe("toolSchemaForLlm", () => {
           },
         ],
       });
-      expect(result).toEqual({
-        type: "object",
-        properties: { path: { type: "string" } },
-        required: ["path"],
-      });
+      expect(result.type).toBe("object");
       expect((result as Record<string, unknown>).oneOf).toBeUndefined();
+      expect(result.properties).toEqual({
+        path: { type: "string" },
+        shared_link: { type: "string" },
+      });
+      // Intersection of [path] and [shared_link] is empty → no root required.
+      expect(result.required).toBeUndefined();
     });
 
-    it("collapses a top-level anyOf to its first branch", () => {
+    it("intersects required across oneOf branches", () => {
+      const result = toolSchemaForLlm({
+        oneOf: [
+          {
+            type: "object",
+            properties: { path: { type: "string" }, mode: { type: "string" } },
+            required: ["path", "mode"],
+          },
+          {
+            type: "object",
+            properties: { path: { type: "string" }, recursive: { type: "boolean" } },
+            required: ["path"],
+          },
+        ],
+      });
+      // path is required in BOTH branches → required.
+      // mode is required in only one branch → not universally required.
+      expect(result.required).toEqual(["path"]);
+    });
+
+    it("last branch wins on property-key collision", () => {
+      const result = toolSchemaForLlm({
+        oneOf: [
+          { type: "object", properties: { x: { type: "string" } } },
+          { type: "object", properties: { x: { type: "number" } } },
+        ],
+      });
+      expect(result.properties).toEqual({ x: { type: "number" } });
+    });
+
+    it("preserves root-level metadata (description, etc.)", () => {
+      const result = toolSchemaForLlm({
+        description: "Pick exactly one path style",
+        oneOf: [
+          { type: "object", properties: { a: { type: "string" } } },
+          { type: "object", properties: { b: { type: "string" } } },
+        ],
+      });
+      expect(result.description).toBe("Pick exactly one path style");
+      expect(result.properties).toEqual({
+        a: { type: "string" },
+        b: { type: "string" },
+      });
+    });
+
+    it("merges root-level properties with branch properties", () => {
+      const result = toolSchemaForLlm({
+        type: "object",
+        properties: { common: { type: "string" } },
+        oneOf: [
+          { properties: { a: { type: "string" } } },
+          { properties: { b: { type: "string" } } },
+        ],
+      });
+      expect(result.properties).toEqual({
+        common: { type: "string" },
+        a: { type: "string" },
+        b: { type: "string" },
+      });
+    });
+  });
+
+  describe("top-level anyOf — union-merge with intersected required", () => {
+    it("merges anyOf identically to oneOf", () => {
       const result = toolSchemaForLlm({
         anyOf: [
           { type: "object", properties: { a: { type: "string" } }, required: ["a"] },
           { type: "object", properties: { b: { type: "string" } } },
         ],
       });
-      expect(result).toEqual({
-        type: "object",
-        properties: { a: { type: "string" } },
-        required: ["a"],
+      expect(result.properties).toEqual({
+        a: { type: "string" },
+        b: { type: "string" },
       });
-    });
-
-    it("preserves root-level description/title when collapsing oneOf", () => {
-      const result = toolSchemaForLlm({
-        description: "Pick exactly one auth style",
-        oneOf: [
-          { type: "object", properties: { token: { type: "string" } }, required: ["token"] },
-          { type: "object", properties: { key: { type: "string" } } },
-        ],
-      });
-      expect(result).toEqual({
-        type: "object",
-        description: "Pick exactly one auth style",
-        properties: { token: { type: "string" } },
-        required: ["token"],
-      });
+      // Intersection of [a] and [] is empty.
+      expect(result.required).toBeUndefined();
+      expect((result as Record<string, unknown>).anyOf).toBeUndefined();
     });
   });
 
-  describe("top-level allOf — deep merge", () => {
-    it("merges allOf branch properties into a single object", () => {
+  describe("top-level allOf — union-merge with unioned required", () => {
+    it("unions both properties AND required (allOf means all hold)", () => {
       const result = toolSchemaForLlm({
         allOf: [
           { type: "object", properties: { a: { type: "string" } }, required: ["a"] },
           { type: "object", properties: { b: { type: "number" } }, required: ["b"] },
         ],
       });
-      expect(result.type).toBe("object");
       expect(result.properties).toEqual({
         a: { type: "string" },
         b: { type: "number" },
@@ -131,22 +234,26 @@ describe("toolSchemaForLlm", () => {
     });
   });
 
-  describe("top-level enum / not — dropped", () => {
+  describe("top-level enum / not — stripped", () => {
     it("drops a top-level enum, coercing to type: object", () => {
-      const result = toolSchemaForLlm({ enum: ["a", "b", "c"] });
-      expect(result).toEqual({ type: "object", properties: {} });
+      expect(toolSchemaForLlm({ enum: ["a", "b", "c"] })).toEqual({
+        type: "object",
+        properties: {},
+      });
     });
 
     it("drops a top-level not, coercing to type: object", () => {
-      const result = toolSchemaForLlm({ not: { type: "string" } });
-      expect(result).toEqual({ type: "object", properties: {} });
+      expect(toolSchemaForLlm({ not: { type: "string" } })).toEqual({
+        type: "object",
+        properties: {},
+      });
     });
   });
 
   describe("composition inside properties is preserved", () => {
     it("leaves nested oneOf inside a property untouched", () => {
-      // Anthropic's error message specifies "at the top level" — nested
-      // composition is fine and we must NOT walk into it (loses real info).
+      // Providers only restrict the top level; preserving nested
+      // composition is more informative than walking and flattening.
       const nested = {
         type: "object",
         properties: {

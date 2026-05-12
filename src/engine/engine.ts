@@ -331,7 +331,7 @@ export class AgentEngine {
           type: "function" as const,
           name: t.name,
           description: t.description,
-          inputSchema: toolSchemaForLlm(t.inputSchema) as JSONSchema7,
+          inputSchema: toolSchemaForLlm(t.inputSchema, t.name) as JSONSchema7,
         }));
 
         const toolSchemaMap = new Map<string, ToolSchema>();
