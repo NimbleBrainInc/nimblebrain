@@ -22,6 +22,7 @@ import {
   textContent,
 } from "./content-helpers.ts";
 import { withRetry } from "./retry.ts";
+import { toolSchemaForLlm } from "./tool-schema-for-llm.ts";
 import type {
   EngineConfig,
   EngineResult,
@@ -330,7 +331,7 @@ export class AgentEngine {
           type: "function" as const,
           name: t.name,
           description: t.description,
-          inputSchema: t.inputSchema as JSONSchema7,
+          inputSchema: toolSchemaForLlm(t.inputSchema) as JSONSchema7,
         }));
 
         const toolSchemaMap = new Map<string, ToolSchema>();
