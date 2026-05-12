@@ -167,4 +167,18 @@ describe("bouncer-config: value validation", () => {
     process.env.NB_TENANT_ID = VALID_TID;
     expect(() => getBouncerMode()).toThrow(/must decode to 32 bytes/);
   });
+
+  test("rejects all-zeros tenant key (placeholder pattern)", () => {
+    process.env.NB_OAUTH_BOUNCER_CALLBACK_URL = VALID_CALLBACK;
+    process.env.NB_OAUTH_BOUNCER_TENANT_KEY = Buffer.alloc(32, 0).toString("base64");
+    process.env.NB_TENANT_ID = VALID_TID;
+    expect(() => getBouncerMode()).toThrow(/placeholder pattern/);
+  });
+
+  test("rejects all-0xff tenant key (placeholder pattern)", () => {
+    process.env.NB_OAUTH_BOUNCER_CALLBACK_URL = VALID_CALLBACK;
+    process.env.NB_OAUTH_BOUNCER_TENANT_KEY = Buffer.alloc(32, 0xff).toString("base64");
+    process.env.NB_TENANT_ID = VALID_TID;
+    expect(() => getBouncerMode()).toThrow(/placeholder pattern/);
+  });
 });

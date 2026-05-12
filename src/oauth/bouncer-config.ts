@@ -42,7 +42,7 @@
  * attempt. Subsequent calls hit the cache and don't re-validate.
  */
 
-import { ALLOWED_TID_PATTERN } from "./envelope.ts";
+import { ALLOWED_TID_PATTERN, isUniformByte } from "./envelope.ts";
 
 export interface BouncerMode {
   /** Full URL registered at every vendor's OAuth Client. */
@@ -170,6 +170,15 @@ function readAndValidate(env: NodeJS.ProcessEnv): BouncerMode | null {
   if (tenantKey.length !== REQUIRED_KEY_BYTES) {
     throw new Error(
       `[oauth bouncer] ${TENANT_KEY_ENV} must decode to ${REQUIRED_KEY_BYTES} bytes (got ${tenantKey.length})`,
+    );
+  }
+  // Symmetric defense with the master-key check in `deriveTenantKey`.
+  // The blast radius is smaller here (one tenant, not all), but the
+  // operator failure mode is identical: a base64-encoded placeholder
+  // buffer lands in 1Password and passes the length check.
+  if (isUniformByte(tenantKey, 0) || isUniformByte(tenantKey, 0xff)) {
+    throw new Error(
+      `[oauth bouncer] ${TENANT_KEY_ENV} is a placeholder pattern (all 0x00 or all 0xff); ensure HKDF derivation ran during onboarding`,
     );
   }
 

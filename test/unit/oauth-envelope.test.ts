@@ -5,6 +5,7 @@ import {
   DEFAULT_TTL_SECONDS,
   EnvelopeError,
   ENVELOPE_VERSION,
+  MAX_INNER_LENGTH,
   deriveTenantKey,
   signEnvelope,
   verifyEnvelopeAsRouter,
@@ -201,18 +202,18 @@ describe("envelope expiration", () => {
 });
 
 describe("envelope payload boundary checks", () => {
-  test("accepts inner at the 512-char upper bound", () => {
-    const inner512 = "x".repeat(512);
-    const wire = signEnvelope({ tid: TID, inner: inner512, tenantKey: tenantKey() });
+  test("accepts inner at the MAX_INNER_LENGTH upper bound (ASCII)", () => {
+    const innerAtCap = "x".repeat(MAX_INNER_LENGTH);
+    const wire = signEnvelope({ tid: TID, inner: innerAtCap, tenantKey: tenantKey() });
     const payload = verifyEnvelopeAsTenant({ wire, tenantKey: tenantKey(), expectedTid: TID });
-    expect(payload.inner).toHaveLength(512);
+    expect(payload.inner).toHaveLength(MAX_INNER_LENGTH);
   });
 
-  test("signEnvelope rejects inner one character past the upper bound", () => {
+  test("signEnvelope rejects inner one character past MAX_INNER_LENGTH", () => {
     // Sign-side check keeps the contract symmetric with verify — a signer
     // should never produce wire bytes that every peer rejects.
     expectError(
-      () => signEnvelope({ tid: TID, inner: "x".repeat(513), tenantKey: tenantKey() }),
+      () => signEnvelope({ tid: TID, inner: "x".repeat(MAX_INNER_LENGTH + 1), tenantKey: tenantKey() }),
       "invalid_payload",
     );
   });
@@ -221,7 +222,12 @@ describe("envelope payload boundary checks", () => {
     // Belt-and-suspenders: even if a future signer regression slips an
     // oversize inner past the sign-side check, the verifier still catches it.
     const now = Math.floor(Date.now() / 1000);
-    const payload = { tid: TID, inner: "x".repeat(513), iat: now, exp: now + 900 };
+    const payload = {
+      tid: TID,
+      inner: "x".repeat(MAX_INNER_LENGTH + 1),
+      iat: now,
+      exp: now + 900,
+    };
     const payloadB64 = Buffer.from(JSON.stringify(payload)).toString("base64url");
     const signed = `v1.${payloadB64}`;
     const mac = createHmac("sha256", tenantKey()).update(signed).digest().toString("base64url");
@@ -240,7 +246,7 @@ describe("master key validation", () => {
   });
 
   test("deriveTenantKey accepts a 32-byte master key", () => {
-    const ok = Buffer.alloc(32);
+    const ok = randomBytes(32);
     expect(() => deriveTenantKey(ok, TID)).not.toThrow();
   });
 });
@@ -259,13 +265,62 @@ describe("HKDF key derivation", () => {
   });
 
   test("derived key is 32 bytes", () => {
-    expect(deriveTenantKey(MASTER, "tenant-a")).toHaveLength(32);
+    const key = deriveTenantKey(MASTER, "tenant-a");
+    expect(key).toHaveLength(32);
   });
 
   test("changing master changes all derived keys", () => {
     const m1 = randomBytes(32);
     const m2 = randomBytes(32);
-    expect(deriveTenantKey(m1, "tenant-a").equals(deriveTenantKey(m2, "tenant-a"))).toBe(false);
+    const k1 = deriveTenantKey(m1, "tenant-a");
+    const k2 = deriveTenantKey(m2, "tenant-a");
+    expect(k1.equals(k2)).toBe(false);
+  });
+});
+
+describe("master key entropy sanity checks", () => {
+  test("rejects all-zeros master key (placeholder pattern)", () => {
+    const zeros = Buffer.alloc(32, 0);
+    expect(() => deriveTenantKey(zeros, "tenant-a")).toThrow(/placeholder pattern/);
+  });
+
+  test("rejects all-0xff master key (placeholder pattern)", () => {
+    const ffs = Buffer.alloc(32, 0xff);
+    expect(() => deriveTenantKey(ffs, "tenant-a")).toThrow(/placeholder pattern/);
+  });
+
+  test("accepts a CSPRNG-generated master key with one byte differing", () => {
+    // Even a master key where 31/32 bytes are zero is acceptable — the
+    // check is for the obvious "Buffer.alloc(32)" foot-gun, not for
+    // measuring entropy in general.
+    const nearZero = Buffer.alloc(32, 0);
+    nearZero[7] = 0x42;
+    expect(() => deriveTenantKey(nearZero, "tenant-a")).not.toThrow();
+  });
+});
+
+describe("inner length is measured in UTF-8 bytes", () => {
+  test("signEnvelope accepts inner exactly at the byte boundary with multibyte chars", () => {
+    // "🙂" is 4 UTF-8 bytes and 2 UTF-16 code units. Pack the cap full.
+    const emojiCount = MAX_INNER_LENGTH / 4;
+    const inner = "🙂".repeat(emojiCount);
+    expect(Buffer.byteLength(inner, "utf8")).toBe(MAX_INNER_LENGTH);
+    expect(() => signEnvelope({ tid: TID, inner, tenantKey: tenantKey() })).not.toThrow();
+  });
+
+  test("signEnvelope rejects inner whose UTF-8 byte length exceeds the cap, even when UTF-16 length fits", () => {
+    // One emoji past the cap = MAX_INNER_LENGTH + 4 UTF-8 bytes, but the
+    // UTF-16 length stays at (MAX_INNER_LENGTH / 4 + 1) * 2, still under
+    // the cap if it were measured in code units. The pre-fix
+    // `inner.length` check would have allowed this; the byte-length
+    // check correctly rejects.
+    const inner = "🙂".repeat(MAX_INNER_LENGTH / 4 + 1);
+    expect(inner.length).toBeLessThan(MAX_INNER_LENGTH);
+    expect(Buffer.byteLength(inner, "utf8")).toBeGreaterThan(MAX_INNER_LENGTH);
+    expectError(
+      () => signEnvelope({ tid: TID, inner, tenantKey: tenantKey() }),
+      "invalid_payload",
+    );
   });
 });
 

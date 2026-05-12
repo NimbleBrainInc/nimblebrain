@@ -64,7 +64,7 @@ const MAX_PAYLOAD_BYTES = 1024;
  * inputs upfront rather than producing wire bytes that every peer
  * refuses to verify.
  */
-const MAX_INNER_LENGTH = 512;
+export const MAX_INNER_LENGTH = 512;
 
 /**
  * Tenant identifiers are interpolated into hostnames downstream by the
@@ -131,10 +131,33 @@ export function deriveTenantKey(masterKey: Buffer, tid: string): Buffer {
       `oauth envelope: master key must be at least ${MIN_MASTER_KEY_BYTES} bytes (got ${masterKey.length})`,
     );
   }
+  // Reject obvious placeholder values. All-zeros and all-0xff are never
+  // legitimate keys; allowing them means a misconfigured deployment can
+  // pass the length check, run, and have every "signed" state be a
+  // deterministic function of payload. Cheap sanity check; no false
+  // positives since no CSPRNG output matches these patterns.
+  if (isUniformByte(masterKey, 0) || isUniformByte(masterKey, 0xff)) {
+    throw new Error(
+      "oauth envelope: master key is a placeholder pattern (all 0x00 or all 0xff); generate with a CSPRNG",
+    );
+  }
   if (!ALLOWED_TID_PATTERN.test(tid)) {
     throw new EnvelopeError("invalid_tid");
   }
   return Buffer.from(hkdfSync("sha256", masterKey, Buffer.from(tid, "utf8"), HKDF_INFO, 32));
+}
+
+/**
+ * Detect placeholder/footgun key material. Exported so the same check
+ * can guard derived keys at config-load time (see `bouncer-config.ts`),
+ * keeping master-key and tenant-key defenses symmetric — one source of
+ * truth if the predicate ever grows to catch additional patterns.
+ */
+export function isUniformByte(buf: Buffer, byte: number): boolean {
+  for (let i = 0; i < buf.length; i++) {
+    if (buf[i] !== byte) return false;
+  }
+  return true;
 }
 
 export function signEnvelope(opts: SignOptions): string {
@@ -144,7 +167,10 @@ export function signEnvelope(opts: SignOptions): string {
   if (
     typeof opts.inner !== "string" ||
     opts.inner.length === 0 ||
-    opts.inner.length > MAX_INNER_LENGTH
+    // Compare UTF-8 bytes (not UTF-16 code units) to match the
+    // verify-side check in validatePayloadShape and to keep the
+    // intent — "limit bytes on wire" — accurate for non-ASCII inputs.
+    Buffer.byteLength(opts.inner, "utf8") > MAX_INNER_LENGTH
   ) {
     throw new EnvelopeError("invalid_payload");
   }
@@ -208,8 +234,14 @@ export function verifyEnvelopeAsRouter(opts: { wire: string; masterKey: Buffer; 
   // `peeked`. The check survives a future change to the parsing path
   // (streaming parser, different runtime, key-deduplication semantics)
   // that would otherwise silently let `peeked` and `payload.tid`
-  // diverge — turning a routing decision into an attacker-controlled
+  // diverge, turning a routing decision into an attacker-controlled
   // primitive. The cost is one comparison.
+  //
+  // No direct unit test: constructing a divergence requires the same
+  // parsing-path change this guard protects against. Removing the
+  // check should be paired with a different forward-compatibility
+  // story (e.g. a single-pass parser that returns both `tid` and the
+  // full payload).
   if (peeked !== payload.tid) {
     throw new EnvelopeError("invalid_tid");
   }
@@ -324,7 +356,11 @@ function validatePayloadShape(raw: unknown): EnvelopePayload {
   if (typeof r.tid !== "string" || !ALLOWED_TID_PATTERN.test(r.tid)) {
     throw new EnvelopeError("invalid_tid");
   }
-  if (typeof r.inner !== "string" || r.inner.length === 0 || r.inner.length > MAX_INNER_LENGTH) {
+  if (
+    typeof r.inner !== "string" ||
+    r.inner.length === 0 ||
+    Buffer.byteLength(r.inner, "utf8") > MAX_INNER_LENGTH
+  ) {
     throw new EnvelopeError("invalid_payload");
   }
   if (typeof r.iat !== "number" || !Number.isFinite(r.iat) || r.iat < 0) {
