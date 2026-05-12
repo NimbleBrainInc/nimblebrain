@@ -9,11 +9,14 @@
 export { describeBatch, describeCall } from "./describe.ts";
 export type { ToolRenderer } from "./registry.ts";
 export { registerToolRenderer } from "./registry.ts";
+export { describeTurn, groupTurn } from "./turn.ts";
 export type {
   BatchDescription,
   BatchTone,
   DisplayDetail,
   InputField,
+  TimelineEntry,
   Tone,
   ToolDescription,
+  TurnSummary,
 } from "./types.ts";

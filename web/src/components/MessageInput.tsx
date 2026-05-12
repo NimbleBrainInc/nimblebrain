@@ -1,7 +1,6 @@
 import { ArrowUp, Paperclip } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { PreparingTool, StreamingState } from "../hooks/useChat";
-import { stripServerPrefix } from "../lib/format";
+import type { StreamingState } from "../hooks/useChat";
 import { FileAttachmentChips } from "./FileAttachmentChips";
 
 const MAX_TEXTAREA_HEIGHT = 200;
@@ -10,8 +9,8 @@ interface MessageInputProps {
   onSend: (text: string, files?: File[]) => void;
   disabled: boolean;
   onNewConversation?: () => void;
+  /** Drives the ambient "breathing" border while a turn is in flight. */
   streamingState?: StreamingState;
-  preparingTool?: PreparingTool | null;
 }
 
 export function MessageInput({
@@ -19,7 +18,6 @@ export function MessageInput({
   disabled,
   onNewConversation,
   streamingState,
-  preparingTool,
 }: MessageInputProps) {
   const [text, setText] = useState("");
   const [isFocused, setIsFocused] = useState(false);
@@ -236,19 +234,8 @@ export function MessageInput({
         </div>
       </div>
 
-      {/* Shortcut hints + state label */}
+      {/* Shortcut hints — status copy lives on the TurnActivityPill, not here. */}
       <div className="flex items-center justify-center gap-3 mt-2 text-[10px] text-muted-foreground">
-        {isActive && (
-          <span className="text-processing font-mono font-medium">
-            {streamingState === "preparing" && preparingTool
-              ? `Calling ${stripServerPrefix(preparingTool.name)}...`
-              : streamingState === "working"
-                ? "Working..."
-                : streamingState === "analyzing"
-                  ? "Analyzing..."
-                  : "Thinking..."}
-          </span>
-        )}
         {onNewConversation && (
           <button
             type="button"

@@ -118,7 +118,7 @@ const VERB_DOMINANCE: ReadonlyArray<string> = [
  * "running". Every verb in VERB_ROOTS (and DEFAULT_VERB) must have an entry
  * here — contributors, update this table when adding a verb root.
  */
-const PRESENT_TENSE: Readonly<Record<string, string>> = {
+export const PRESENT_TENSE: Readonly<Record<string, string>> = {
   Read: "Reading",
   Rewrote: "Rewriting",
   Edited: "Editing",

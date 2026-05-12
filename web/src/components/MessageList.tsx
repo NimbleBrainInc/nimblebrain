@@ -2,14 +2,12 @@ import { AlertCircle, Check, ChevronDown, Copy, RotateCcw, Zap } from "lucide-re
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Streamdown } from "streamdown";
 import type { ChatMessage, PreparingTool, StreamingState } from "../hooks/useChat";
-import { stripServerPrefix } from "../lib/format";
 import { participantColor } from "../lib/participant-colors";
 import type { DisplayDetail } from "../lib/tool-display";
 import { FileAttachment } from "./FileAttachment";
 import { InlineAppView } from "./InlineAppView";
-import { ReasoningBlock } from "./ReasoningBlock";
 import { ResourceLinkView } from "./ResourceLinkView";
-import { ToolAccordion } from "./ToolAccordion";
+import { TurnActivityPill } from "./TurnActivityPill";
 
 function formatTokens(count: number): string {
   if (count >= 1000) return `${(count / 1000).toFixed(1)}k`;
@@ -274,20 +272,6 @@ export function MessageList({
       >
         <div className={`py-6 flex flex-col gap-10 ${compact ? "px-4" : "px-8 max-w-4xl mx-auto"}`}>
           {messages.map((msg, idx) => {
-            // Assistant placeholder with nothing to show yet — bridge the gap
-            // between user send and first output with an inline "Thinking".
-            // Tool spinners live on the accordion; this is only for the pre-
-            // first-output pause.
-            const isEmptyAssistant =
-              msg.role === "assistant" &&
-              !msg.content &&
-              (!msg.toolCalls || msg.toolCalls.length === 0);
-            const showThinkingPlaceholder =
-              isEmptyAssistant &&
-              isStreaming &&
-              idx === messages.length - 1 &&
-              (streamingState === "thinking" || streamingState === "working");
-
             const contextMatch = msg.role === "user" ? msg.content.match(APP_CONTEXT_RE) : null;
             const contextPrefix = contextMatch ? contextMatch[0].trim() : null;
             const displayContent = contextMatch
@@ -349,27 +333,24 @@ export function MessageList({
                   </div>
                 ) : (
                   <div className="w-full break-words min-w-0 overflow-hidden flex flex-col gap-3">
-                    {showThinkingPlaceholder && (
-                      <span className="text-xs font-mono text-muted-foreground/60 presence-thinking">
-                        Thinking
-                      </span>
-                    )}
-                    {/* Render content blocks in temporal order */}
+                    {/* Turn-level activity surface — anchors at the top of the
+                        assistant message. Single source of truth for status,
+                        tool grouping, and reasoning timeline. */}
+                    <TurnActivityPill
+                      blocks={msg.blocks}
+                      streamingState={streamingState}
+                      preparingTool={preparingTool ?? null}
+                      isCurrentTurn={isStreaming && idx === messages.length - 1}
+                      displayDetail={displayDetail}
+                    />
+                    {/* Render content blocks in temporal order. Reasoning is
+                        surfaced inside the pill; tool blocks emit only their
+                        widget/resource attachments here. */}
                     {msg.blocks ? (
                       msg.blocks.map((block, blockIdx) => {
                         if (block.type === "reasoning") {
-                          return (
-                            // biome-ignore lint/suspicious/noArrayIndexKey: blocks are append-only and don't reorder
-                            <ReasoningBlock
-                              key={blockIdx}
-                              text={block.text}
-                              streaming={
-                                isStreaming &&
-                                idx === messages.length - 1 &&
-                                blockIdx === msg.blocks!.length - 1
-                              }
-                            />
-                          );
+                          // Reasoning lives in the pill timeline now.
+                          return null;
                         }
                         if (block.type === "text" && block.text) {
                           return (
@@ -399,18 +380,12 @@ export function MessageList({
                               tc.resourceLinks &&
                               tc.resourceLinks.length > 0,
                           );
+                          if (blockWidgets.length === 0 && resourceLinkCalls.length === 0) {
+                            return null;
+                          }
                           return (
                             // biome-ignore lint/suspicious/noArrayIndexKey: blocks are append-only and don't reorder
                             <div key={blockIdx} className="flex flex-col gap-3">
-                              <ToolAccordion
-                                calls={block.toolCalls}
-                                displayDetail={displayDetail}
-                                pending={
-                                  streamingState === "analyzing" &&
-                                  idx === messages.length - 1 &&
-                                  blockIdx === msg.blocks!.length - 1
-                                }
-                              />
                               {blockWidgets.map((tc) => {
                                 // Pass the full ui:// URI through — InlineAppView strips the
                                 // scheme and forwards everything after as the resource path.
@@ -455,18 +430,6 @@ export function MessageList({
                         </Streamdown>
                       </div>
                     )}
-                    {/* "Calling X…" — the model has emitted a tool-call
-                        block (tool-input-start) but the engine hasn't
-                        executed it yet. Without this, the indicator
-                        goes dark for the entire tool-args streaming
-                        window (minutes for large inputs). */}
-                    {idx === messages.length - 1 &&
-                      streamingState === "preparing" &&
-                      preparingTool && (
-                        <span className="text-xs font-mono text-muted-foreground/60 presence-thinking">
-                          Calling {stripServerPrefix(preparingTool.name)}...
-                        </span>
-                      )}
                     {/* File attachments */}
                     {msg.files && msg.files.length > 0 && (
                       <div className="flex flex-wrap gap-2">
