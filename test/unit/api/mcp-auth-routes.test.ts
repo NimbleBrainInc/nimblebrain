@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { Hono } from "hono";
 import { securityHeaders } from "../../../src/api/middleware/security-headers.ts";
@@ -368,5 +368,143 @@ describe("GET /v1/mcp-auth/callback", () => {
     );
     expect(res.headers.get("Cache-Control")).toBe("no-store");
     expect(res.headers.get("Pragma")).toBe("no-cache");
+  });
+});
+
+describe("bouncer mode: state envelope wrap on initiate / unwrap on callback", () => {
+  const BOUNCER_CALLBACK = "https://connect.example.com/v1/mcp-auth/callback";
+  const TID = "tenant-a";
+  const TENANT_KEY_B64 = randomBytes(32).toString("base64");
+
+  const BOUNCER_ENV_VARS = [
+    "NB_OAUTH_BOUNCER_CALLBACK_URL",
+    "NB_OAUTH_BOUNCER_TENANT_KEY",
+    "NB_TENANT_ID",
+  ] as const;
+
+  let savedEnv: Record<string, string | undefined>;
+  let app: Hono<AppEnv>;
+  let lifecycle: StubLifecycle;
+
+  beforeEach(async () => {
+    savedEnv = Object.fromEntries(BOUNCER_ENV_VARS.map((k) => [k, process.env[k]]));
+    process.env.NB_OAUTH_BOUNCER_CALLBACK_URL = BOUNCER_CALLBACK;
+    process.env.NB_OAUTH_BOUNCER_TENANT_KEY = TENANT_KEY_B64;
+    process.env.NB_TENANT_ID = TID;
+    const { _resetBouncerModeForTest } = await import("../../../src/oauth/bouncer-config.ts");
+    _resetBouncerModeForTest();
+    lifecycle = makeStubLifecycle();
+    app = makeApp(lifecycle);
+  });
+
+  afterEach(async () => {
+    for (const k of BOUNCER_ENV_VARS) {
+      const v = savedEnv[k];
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    const { _resetBouncerModeForTest } = await import("../../../src/oauth/bouncer-config.ts");
+    _resetBouncerModeForTest();
+    _clearAll();
+  });
+
+  test("initiate wraps state in a v1 envelope and keeps the cookie keyed on inner", async () => {
+    const innerState = "sdk-generated-state-xyz";
+    const authUrl = `https://vendor.test/oauth/authorize?state=${innerState}&client_id=cid`;
+    lifecycle.instances.set(`granola|${WS_ID}`, { oauthScope: "workspace" });
+    lifecycle.authUrls.set(`granola|${WS_ID}|_workspace`, authUrl);
+
+    const res = await app.request("http://localhost/v1/mcp-auth/initiate", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ serverName: "granola" }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+
+    // The authorizationUrl returned to the client has the wrapped state
+    // in place of the SDK-generated inner state.
+    const parsed = new URL(body.authorizationUrl);
+    const wireState = parsed.searchParams.get("state");
+    expect(wireState).not.toBeNull();
+    expect(wireState).not.toBe(innerState);
+    expect(wireState!.startsWith("v1.")).toBe(true);
+
+    // The cookie is keyed on the INNER state — the existing CSRF check
+    // on /callback compares the cookie hash to the unwrapped inner.
+    const setCookie = res.headers.get("Set-Cookie");
+    expect(setCookie).not.toBeNull();
+    expect(setCookie!).toContain(`nb_oauth_state=${sha256Hex(innerState)}`);
+  });
+
+  test("callback unwraps the envelope, applies cookie binding, and resolves the flow", async () => {
+    const { signEnvelope } = await import("../../../src/oauth/envelope.ts");
+    const innerState = "inner-state-for-callback";
+    const wireState = signEnvelope({
+      tid: TID,
+      inner: innerState,
+      tenantKey: Buffer.from(TENANT_KEY_B64, "base64"),
+    });
+
+    const flowPromise = registerFlow(innerState, WS_ID, "granola");
+    flowPromise.catch(() => {});
+
+    const cookie = `nb_oauth_state=${sha256Hex(innerState)}`;
+    const res = await app.request(
+      `http://localhost/v1/mcp-auth/callback?code=auth-code-1&state=${encodeURIComponent(wireState)}`,
+      { headers: { cookie } },
+    );
+
+    expect(res.status).toBe(200);
+    await expect(flowPromise).resolves.toBe("auth-code-1");
+  });
+
+  test("callback rejects state that lacks the v1 envelope prefix", async () => {
+    // An attacker bypassing the bouncer to hit our direct hostname sends
+    // a non-wrapped state. Refuse rather than silently fall through.
+    const res = await app.request(
+      "http://localhost/v1/mcp-auth/callback?code=c&state=raw-state-no-envelope",
+    );
+    expect(res.status).toBe(400);
+    const html = await res.text();
+    expect(html).toContain("state envelope missing");
+  });
+
+  test("callback rejects an envelope signed with a different tenant key", async () => {
+    const { signEnvelope } = await import("../../../src/oauth/envelope.ts");
+    const wireState = signEnvelope({
+      tid: TID,
+      inner: "doesnt-matter",
+      tenantKey: randomBytes(32),
+    });
+    const res = await app.request(
+      `http://localhost/v1/mcp-auth/callback?code=c&state=${encodeURIComponent(wireState)}`,
+    );
+    expect(res.status).toBe(400);
+    const html = await res.text();
+    expect(html).toContain("Authorization session invalid");
+  });
+
+  test("callback rejects an envelope minted for a different tid", async () => {
+    const { signEnvelope, deriveTenantKey } = await import("../../../src/oauth/envelope.ts");
+    const otherTid = "tenant-b";
+    const otherKey = deriveTenantKey(randomBytes(32), otherTid);
+    const wireState = signEnvelope({
+      tid: otherTid,
+      inner: "doesnt-matter",
+      tenantKey: otherKey,
+    });
+    const res = await app.request(
+      `http://localhost/v1/mcp-auth/callback?code=c&state=${encodeURIComponent(wireState)}`,
+    );
+    expect(res.status).toBe(400);
+    const html = await res.text();
+    expect(html).toContain("Authorization session invalid");
+  });
+
+  test("mcpAuthCallbackUrl returns the bouncer URL when bouncer mode is enabled", async () => {
+    const { mcpAuthCallbackUrl } = await import("../../../src/api/routes/mcp-auth.ts");
+    expect(mcpAuthCallbackUrl()).toBe(BOUNCER_CALLBACK);
   });
 });
