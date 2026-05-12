@@ -94,6 +94,38 @@ servers:
         auth: dcr
         tags: [infra, devops]
 
+  # Dropbox advertises DCR but only honors it for a curated partner
+  # allowlist (Claude Desktop, Cursor, ChatGPT) — `/register` rejects
+  # everyone else with "Dynamic client registration is not supported."
+  # Wired here as `auth: static` so operators can bring their own
+  # OAuth app from the Dropbox App Console. Drop back to `auth: dcr`
+  # once #200 outreach lands.
+  - name: com.dropbox/mcp
+    title: Dropbox
+    description: Files, folders, and shared links
+    version: "1.0.0"
+    icons:
+      - src: https://static.nimblebrain.ai/icons/dropbox.png
+        sizes: ["any"]
+    remotes:
+      - type: streamable-http
+        url: https://mcp.dropbox.com/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        defaultScope: workspace
+        auth: static
+        requiredScopes:
+          - files.metadata.read
+          - files.content.read
+          - files.content.write
+          - sharing.write
+          - account_info.read
+        operatorSetup:
+          portalUrl: https://www.dropbox.com/developers/apps
+          hint: Create a Scoped Access app in the Dropbox App Console, enable the listed scopes, add the NimbleBrain redirect URI, then paste App key + App secret here
+          clientSecretKey: dropbox.client_secret
+        tags: [storage, files]
+
   # com.intercom/mcp: dropped pending vendor host allowlisting.
   # Intercom rejects DCR /register itself with "Redirect URI ... is
   # not in the allowlist, reach out to Intercom Customer Support if
