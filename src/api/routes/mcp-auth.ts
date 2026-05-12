@@ -2,6 +2,13 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { Hono } from "hono";
 import { WORKSPACE_PRINCIPAL_ID } from "../../bundles/connection.ts";
 import { log } from "../../cli/log.ts";
+import { getBouncerMode } from "../../oauth/bouncer-config.ts";
+import {
+  ENVELOPE_VERSION,
+  EnvelopeError,
+  signEnvelope,
+  verifyEnvelopeAsTenant,
+} from "../../oauth/envelope.ts";
 import { resolveWithCode } from "../../tools/oauth-flow-registry.ts";
 import { requireAuth } from "../middleware/auth.ts";
 import { requireWorkspace } from "../middleware/workspace.ts";
@@ -75,11 +82,25 @@ const SUCCESS_PAGE_CSP = `default-src 'none'; style-src 'sha256-${SUCCESS_PAGE_S
  * they leave to set up the OAuth app.
  */
 export function mcpAuthCallbackUrl(): string {
+  // In bouncer mode every vendor's OAuth Client is registered against
+  // the bouncer's single URL, not this tenant's host. The bouncer
+  // verifies the signed state envelope on the callback leg and 302s
+  // back to this tenant.
+  const bouncer = getBouncerMode();
+  if (bouncer) return bouncer.callbackUrl;
+
   const apiBase = process.env.NB_API_URL ?? "http://localhost:27247";
   return `${apiBase.replace(/\/+$/, "")}/v1/mcp-auth/callback`;
 }
 
 export function mcpAuthRoutes(ctx: AppContext) {
+  // Eagerly validate bouncer config (if any) so a misconfigured
+  // deployment fails at server startup with a precise error, rather
+  // than serving traffic until the first user clicks "connect" and
+  // hitting a generic 500. Idempotent: returns the cached value on
+  // subsequent calls in the route handlers below.
+  getBouncerMode();
+
   const app = new Hono<AppEnv>();
 
   // ── POST /v1/mcp-auth/initiate ────────────────────────────────────
@@ -178,6 +199,34 @@ export function mcpAuthRoutes(ctx: AppContext) {
         );
       }
 
+      // In bouncer mode, wrap the SDK-generated state in a signed
+      // envelope so the bouncer can route the callback back to this
+      // tenant. The inner state is what's bound to the cookie and what
+      // `oauth-flow-registry` is keyed on — both unchanged. The vendor
+      // sees only the wrapped value.
+      const bouncer = getBouncerMode();
+      if (bouncer) {
+        try {
+          const wrapped = signEnvelope({
+            tid: bouncer.tid,
+            inner: state,
+            tenantKey: bouncer.tenantKey,
+          });
+          urlObj.searchParams.set("state", wrapped);
+          authorizationUrl = urlObj.toString();
+        } catch (err) {
+          // signEnvelope rejects inputs that violate the envelope's
+          // own contract (oversize inner, invalid tid). Both are
+          // pre-validated above (tid at config load, inner from the
+          // SDK), so reaching here implies a regression elsewhere.
+          // Match the error posture of the startAuth catch above:
+          // log the cause, surface a generic 500.
+          const msg = err instanceof Error ? err.message : String(err);
+          log.warn(`[mcp-auth] envelope wrap failed for ${serverName} in ${wsId}: ${msg}`);
+          return apiError(500, "internal_error", "Failed to wrap OAuth state.");
+        }
+      }
+
       const stateHash = sha256Hex(state);
 
       // Cookie scoped to /v1/mcp-auth/callback so it's only sent on the
@@ -212,7 +261,7 @@ export function mcpAuthRoutes(ctx: AppContext) {
     c.header("Pragma", "no-cache");
 
     const code = c.req.query("code");
-    const state = c.req.query("state");
+    const wireState = c.req.query("state");
     const error = c.req.query("error");
 
     if (error) {
@@ -221,8 +270,49 @@ export function mcpAuthRoutes(ctx: AppContext) {
         400,
       );
     }
-    if (!code || !state) {
+    if (!code || !wireState) {
       return c.text("missing code or state", 400);
+    }
+
+    // In bouncer mode the URL state arrives wrapped — unwrap it to
+    // recover the inner state, which is what the cookie binding and
+    // flow registry are keyed on. In direct mode (single-instance
+    // self-hosts) the wire state is the inner state. We refuse to
+    // unwrap an inner-shaped state in bouncer mode: a callback that
+    // bypassed the bouncer is either a stale flow from before bouncer
+    // mode was enabled (rare, user should re-initiate) or an attacker
+    // probing the platform's direct hostname.
+    const bouncer = getBouncerMode();
+    let state: string;
+    if (bouncer) {
+      if (!wireState.startsWith(`${ENVELOPE_VERSION}.`)) {
+        return c.html(
+          "<html><body><h3>Authorization state envelope missing.</h3>" +
+            "<p>Re-initiate the connection from NimbleBrain.</p></body></html>",
+          400,
+        );
+      }
+      try {
+        const payload = verifyEnvelopeAsTenant({
+          wire: wireState,
+          tenantKey: bouncer.tenantKey,
+          expectedTid: bouncer.tid,
+        });
+        state = payload.inner;
+      } catch (err) {
+        // Log the specific failure code for ops, but show the user a
+        // generic message — leaking which check failed gives an attacker
+        // an oracle for probing the envelope format.
+        const code = err instanceof EnvelopeError ? err.code : "unknown";
+        log.warn(`[mcp-auth] bouncer envelope verification failed: ${code}`);
+        return c.html(
+          "<html><body><h3>Authorization session invalid.</h3>" +
+            "<p>Re-initiate the connection from NimbleBrain.</p></body></html>",
+          400,
+        );
+      }
+    } else {
+      state = wireState;
     }
 
     // Session-binding check: the cookie set by /initiate must match the
