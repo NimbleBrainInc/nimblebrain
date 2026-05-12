@@ -1,8 +1,8 @@
 /**
  * Generic describer — Tier 0.
  *
- * Transforms raw `ToolCallDisplay` data into `ToolDescription` / `BatchDescription`
- * shapes that the UI consumes. Pure, side-effect free, deterministic.
+ * Transforms raw `ToolCallDisplay` data into a `ToolDescription` shape that
+ * the UI consumes. Pure, side-effect free, deterministic.
  *
  * This is the fallback that runs for every tool call that doesn't have a
  * custom `ToolRenderer` registered. Apps opt into richer rendering by
@@ -13,8 +13,8 @@
 import type { ToolCallDisplay, ToolResultForUI } from "../../hooks/useChat.ts";
 import { stripServerPrefix } from "../format.ts";
 import { findRenderer } from "./registry.ts";
-import type { BatchDescription, BatchTone, InputField, Tone, ToolDescription } from "./types.ts";
-import { dominantVerb, inferVerb, phraseFor } from "./verbs.ts";
+import type { InputField, Tone, ToolDescription } from "./types.ts";
+import { inferVerb } from "./verbs.ts";
 
 /** Max characters for an inline "short" value; longer values render as <pre>. */
 const SHORT_VALUE_MAX = 80;
@@ -51,15 +51,6 @@ export function describeCall(call: ToolCallDisplay): ToolDescription {
   const custom = findRenderer(call.name);
   if (custom) return custom.describe(call);
   return genericDescribe(call);
-}
-
-/** Describe a batch of calls from a single assistant turn. */
-export function describeBatch(calls: ReadonlyArray<ToolCallDisplay>): BatchDescription {
-  const items = calls.map(describeCall);
-  const tone: BatchTone = isBatchRunning(items) ? "running" : "neutral";
-  const verbPhrase = batchPhrase(items, tone);
-  const totalMs = sumDurations(items);
-  return { verbPhrase, tone, items, totalMs };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -99,49 +90,6 @@ function toneFromStatus(call: ToolCallDisplay): Tone {
   if (call.status === "error" || call.ok === false) return "error";
   if (call.result?.isError) return "error";
   return "ok";
-}
-
-/**
- * Is any call in this batch still running? The batch header shows a
- * spinner while work is in flight; otherwise it's neutral chrome.
- *
- * The batch is intentionally NOT a status reducer. Per-call errors stay
- * on the individual rows, where they're true. Turn-level success/failure
- * is signaled at the message level (`msg.error` / `msg.stopReason` in
- * MessageList) — not by rolling child errors up to the group header.
- */
-function isBatchRunning(items: ReadonlyArray<ToolDescription>): boolean {
-  return items.some((it) => it.tone === "running");
-}
-
-/**
- * Pick the batch verb phrase. Use dominant verb across calls, pair with
- * the object from the first call that used that verb. The phrase narrates
- * what was attempted ("Listed the documents") — it does not claim success.
- * It only switches between present-progressive (running) and past tense
- * (neutral); the "Couldn't X" error phrasing is never used at the batch
- * level.
- */
-function batchPhrase(items: ReadonlyArray<ToolDescription>, tone: BatchTone): string {
-  if (items.length === 0) return "";
-  const verbs = items.map((it) => it.verb);
-  const verb = dominantVerb(verbs);
-  const firstWithVerb = items.find((it) => it.verb === verb);
-  const object = firstWithVerb?.object ?? "";
-  const phraseTone: Tone = tone === "running" ? "running" : "ok";
-  return phraseFor(verb, object, phraseTone);
-}
-
-function sumDurations(items: ReadonlyArray<ToolDescription>): number | null {
-  let hasAny = false;
-  let total = 0;
-  for (const it of items) {
-    if (typeof it.durationMs === "number") {
-      hasAny = true;
-      total += it.durationMs;
-    }
-  }
-  return hasAny ? total : null;
 }
 
 /**

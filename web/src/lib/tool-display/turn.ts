@@ -27,10 +27,15 @@ import { dominantVerb, PRESENT_TENSE } from "./verbs.ts";
 /**
  * Walk `blocks[]` and produce the turn's timeline. Text blocks render in the
  * message body (not here); only `reasoning` and `tool` blocks contribute.
+ *
+ * Buckets by full (prefixed) tool name, not the stripped form — two servers
+ * that each expose a `search` tool produce two distinct rows. The display
+ * uses the stripped form, so the user still sees "Searched ×N" per server
+ * group without the wire-name clutter.
  */
 export function groupTurn(blocks: ReadonlyArray<ContentBlock>): TimelineEntry[] {
   const entries: TimelineEntry[] = [];
-  // (mutable) tool-group buckets keyed by stripped name. We push placeholder
+  // (mutable) tool-group buckets keyed by *full* tool name. We push placeholder
   // entries into `entries` and accumulate calls into these arrays by reference.
   const buckets = new Map<string, ToolCallDisplay[]>();
 
@@ -40,14 +45,14 @@ export function groupTurn(blocks: ReadonlyArray<ContentBlock>): TimelineEntry[] 
       entries.push({ kind: "reasoning", text: block.text });
     } else if (block.type === "tool") {
       for (const call of block.toolCalls) {
-        const key = stripServerPrefix(call.name);
-        const bucket = buckets.get(key);
+        const bucketKey = call.name;
+        const bucket = buckets.get(bucketKey);
         if (bucket) {
           bucket.push(call);
         } else {
           const fresh: ToolCallDisplay[] = [call];
-          buckets.set(key, fresh);
-          entries.push({ kind: "tool", name: key, calls: fresh });
+          buckets.set(bucketKey, fresh);
+          entries.push({ kind: "tool", name: stripServerPrefix(call.name), calls: fresh });
         }
       }
     }

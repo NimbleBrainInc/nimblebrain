@@ -14,15 +14,6 @@ import type { ToolCallDisplay } from "../../hooks/useChat.ts";
  */
 export type Tone = "ok" | "running" | "error";
 
-/**
- * Display tone for a batch (group) of tool calls. The batch is not a
- * status reducer — it does not roll up child errors. It only signals
- * whether work is in flight. Per-call errors live on the individual rows;
- * turn-level success/failure is signaled at the message level
- * (`msg.error` / `msg.stopReason` in MessageList).
- */
-export type BatchTone = "running" | "neutral";
-
 export type DisplayDetail = "quiet" | "balanced" | "verbose";
 
 /** A single input arg prepared for display. */
@@ -64,15 +55,6 @@ export interface ToolDescription {
   /** Message for failed calls; null when successful. */
   errorText: string | null;
   durationMs: number | null;
-}
-
-/** A batch of tool calls (one assistant turn's worth), described for display. */
-export interface BatchDescription {
-  /** Prose phrase with article (e.g. "Edited the document"). */
-  verbPhrase: string;
-  tone: BatchTone;
-  items: ToolDescription[];
-  totalMs: number | null;
 }
 
 /**

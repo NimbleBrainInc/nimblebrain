@@ -6,13 +6,11 @@
  * let the generic (Tier 0) describer do its job.
  */
 
-export { describeBatch, describeCall } from "./describe.ts";
+export { describeCall } from "./describe.ts";
 export type { ToolRenderer } from "./registry.ts";
 export { registerToolRenderer } from "./registry.ts";
 export { describeTurn, groupTurn } from "./turn.ts";
 export type {
-  BatchDescription,
-  BatchTone,
   DisplayDetail,
   InputField,
   TimelineEntry,

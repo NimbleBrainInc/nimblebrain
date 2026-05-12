@@ -125,6 +125,33 @@ describe("TurnActivityPill cross-block grouping", () => {
 		expect(html).toContain("transactions");
 	});
 
+	it("does not collide same-named tools from different servers", () => {
+		// Two servers each expose a `search` tool. They must render as separate
+		// rows; folding them into one "Searched ×2" would misrepresent which
+		// server did what work.
+		const blocks: ContentBlock[] = [
+			toolBlock(doneCall("a", "notion__search")),
+			toolBlock(doneCall("b", "mercury__search")),
+			toolBlock(doneCall("c", "notion__search")),
+		];
+		const { container } = render(
+			<TurnActivityPill
+				blocks={blocks}
+				streamingState={null}
+				preparingTool={null}
+				isCurrentTurn={false}
+				displayDetail="balanced"
+			/>,
+		);
+		fireEvent.click(findHead(container));
+		const rowHeads = Array.from(container.getElementsByTagName("button")).filter((b) =>
+			(b.getAttribute("class") ?? "").split(/\s+/).includes("turn-pill__row-head"),
+		);
+		// Exactly two tool-group rows — notion ×2 and mercury ×1.
+		expect(rowHeads.length).toBe(2);
+		expect(container.innerHTML).toContain("×2");
+	});
+
 	it("counts total steps at the head across all groups", () => {
 		const blocks: ContentBlock[] = [
 			toolBlock(doneCall("a", "list_transactions")),
