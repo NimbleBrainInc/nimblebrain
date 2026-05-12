@@ -25,37 +25,44 @@ import { log } from "../cli/log.ts";
  * pass-through of the vendor-emitted schema; downstream consumers
  * (validation, audit, debugging) see the original.
  *
- *   - `oneOf` / `anyOf` at root → **union-merge** branch properties;
- *     intersect required arrays. The LLM sees every reachable field
- *     across all branches but is told to require only what every branch
- *     requires (i.e., nothing branch-specific).
+ * ### `oneOf` / `anyOf` at root → **first branch wins** (lossy, but only
+ * representable choice).
  *
- *     This is safe because the engine validates the LLM's emitted args
- *     against the *original* schema (see `engine.ts` call to
- *     `validateToolInput` — the schema map holds pre-transform Tools).
- *     Ajv compiles `oneOf` correctly: a payload matching 0 or >1 branches
- *     is rejected before the tool runs, the error is fed back, and the
- *     model self-corrects on the next iteration. So an invalid
- *     mix-and-match costs at most one wasted LLM turn — strictly better
- *     than picking a single branch and rendering the others unreachable
- *     (e.g. Dropbox `list_folder`'s `shared_link` branch).
+ * An earlier iteration tried union-merge ("show the LLM every reachable
+ * field; let Ajv-over-original reject invalid combos") on the theory that
+ * post-hoc validation would let the model self-correct. Empirically that
+ * fails — observed with Dropbox `list_folder` (which uses oneOf to model
+ * `path` vs `cursor` continuation): the model emits both fields together,
+ * Ajv rejects with `must NOT have additional properties; must match
+ * exactly one schema in oneOf`, and that error message gives the model
+ * no signal about *which* field to drop or *which* branch was nearest.
+ * The model loops with cosmetic variations until it hits the iteration
+ * cap.
  *
- *   - `allOf` at root → union-merge branch properties; **union** required
- *     arrays. `allOf` means all branches hold simultaneously, so anything
- *     required in any branch is universally required.
+ * The lesson: post-hoc validation only constitutes a recovery loop when
+ * its error messages are recoverable. JSON Schema `oneOf` errors are not.
  *
- *   - On property-key collision across branches: **last branch wins**.
- *     A vendor that reuses the same property name with different shapes
- *     across branches is already malformed; predictable spread-style
- *     last-wins beats inventing a property-level oneOf. The MCP server's
- *     own validation still gates the actual call.
+ * First-branch is the closest representable approximation we can hand
+ * the LLM: a schema it can satisfy on the first call. Alternative
+ * branches become unreachable; that loss is real but bounded (vendors
+ * order branches by canonical use — `path` is the 99% case for Dropbox).
+ * Operators are warned via `log.warn` so the loss is visible. The
+ * permanent fix lives upstream — vendor MCP servers should flatten
+ * top-level composition, since no LLM provider supports it.
  *
- *   - `enum` / `not` at root → stripped. Neither has a flat-object
- *     representation and the MCP spec doesn't anticipate them as root
- *     schemas for tool inputs.
+ * ### `allOf` at root → union-merge (semantically faithful).
  *
- *   - After all rewrites, `type: "object"` and a plain-object
- *     `properties` are guaranteed to exist.
+ * `allOf` means every branch holds simultaneously, so merging properties
+ * across branches and unioning required arrays is the truthful
+ * representation. No information is lost; the LLM sees the full schema.
+ *
+ * ### `enum` / `not` at root → stripped.
+ *
+ * Neither has a flat-object representation and the MCP spec doesn't
+ * anticipate them as root schemas for tool inputs.
+ *
+ * After all rewrites, `type: "object"` and a plain-object `properties`
+ * are guaranteed to exist.
  *
  * ## Input contract
  *
@@ -83,11 +90,11 @@ export function toolSchemaForLlm(raw: unknown, toolName?: string): Record<string
   let schema: Record<string, unknown> = { ...(raw as Record<string, unknown>) };
 
   if (Array.isArray(schema.oneOf) && schema.oneOf.length > 0) {
-    schema = mergeRootComposition(schema, "oneOf");
+    schema = collapseToFirstBranch(schema, "oneOf", toolName);
   } else if (Array.isArray(schema.anyOf) && schema.anyOf.length > 0) {
-    schema = mergeRootComposition(schema, "anyOf");
+    schema = collapseToFirstBranch(schema, "anyOf", toolName);
   } else if (Array.isArray(schema.allOf) && schema.allOf.length > 0) {
-    schema = mergeRootComposition(schema, "allOf");
+    schema = mergeAllOf(schema);
   }
 
   if ("enum" in schema) delete schema.enum;
@@ -108,19 +115,85 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * Merge a root-level `oneOf` / `anyOf` / `allOf` into a single object
- * schema. Properties union across branches (last-wins on collision);
- * `required` semantics differ per keyword (see top-level docstring).
+ * Replace the schema with branches[0]. Root-level keys that the branch
+ * doesn't define (description, title, $defs, etc.) are preserved; branch
+ * values win on conflict (branch is the source of truth for shape, root
+ * for documentation).
  *
- * Branches that aren't plain objects are skipped — JSON Schema permits
- * boolean schemas (`true`/`false`) as branches, but for tool input use
- * cases they carry no merge information.
+ * Surfaces the loss to operators when branches beyond the first carry
+ * properties the LLM will never see — that's the architectural cost of
+ * first-branch and they should be able to spot it in logs.
  */
-function mergeRootComposition(
+function collapseToFirstBranch(
   schema: Record<string, unknown>,
-  key: "oneOf" | "anyOf" | "allOf",
+  key: "oneOf" | "anyOf",
+  toolName?: string,
 ): Record<string, unknown> {
   const branches = (schema[key] as unknown[]).filter(isPlainObject);
+  if (branches.length === 0) {
+    const copy = { ...schema };
+    delete copy[key];
+    return copy;
+  }
+
+  if (branches.length > 1) {
+    warnDroppedBranches(branches, key, toolName);
+  }
+
+  const rootRest = { ...schema };
+  delete rootRest[key];
+  return { ...rootRest, ...branches[0] };
+}
+
+/**
+ * Emit one log line per tool listing properties that exist in dropped
+ * branches but not in the kept one — those are the fields no LLM call
+ * via this tool can ever set. If the dropped branches add no novel
+ * properties (e.g. they only re-shape kept ones with different types),
+ * the warning still fires but with an empty list, because the kept
+ * branch's shape still misrepresents the alternatives semantically.
+ */
+function warnDroppedBranches(
+  branches: Array<Record<string, unknown>>,
+  key: "oneOf" | "anyOf",
+  toolName?: string,
+): void {
+  const keptProps = isPlainObject(branches[0]?.properties)
+    ? new Set(Object.keys(branches[0].properties as Record<string, unknown>))
+    : new Set<string>();
+  const lostProps = new Set<string>();
+  for (let i = 1; i < branches.length; i++) {
+    const b = branches[i];
+    if (b && isPlainObject(b.properties)) {
+      for (const p of Object.keys(b.properties)) {
+        if (!keptProps.has(p)) lostProps.add(p);
+      }
+    }
+  }
+  const lostList =
+    lostProps.size > 0 ? [...lostProps].join(", ") : "(none — branches reshape kept properties)";
+  log.warn(
+    `[engine] toolSchemaForLlm: tool ${toolName ? `"${toolName}"` : "<unknown>"} ` +
+      `has a top-level ${key} with ${branches.length} branches; LLM providers don't ` +
+      `support top-level composition, so only the first branch is exposed. ` +
+      `Properties unreachable in dropped branches: ${lostList}. ` +
+      "The permanent fix is for the MCP source to flatten its tool schema.",
+  );
+}
+
+/**
+ * Merge every `allOf` branch into a single object schema. Properties union
+ * (last-wins on collision); required is the union of root + every
+ * branch's required. Semantically faithful — `allOf` means every branch
+ * must hold simultaneously, so anything required anywhere is universally
+ * required.
+ *
+ * Branches that aren't plain objects are skipped — JSON Schema permits
+ * boolean schemas (`true`/`false`) as branches but they carry no
+ * mergeable shape information for tool inputs.
+ */
+function mergeAllOf(schema: Record<string, unknown>): Record<string, unknown> {
+  const branches = (schema.allOf as unknown[]).filter(isPlainObject);
 
   const mergedProperties: Record<string, unknown> = {
     ...((schema.properties as Record<string, unknown> | undefined) ?? {}),
@@ -131,44 +204,21 @@ function mergeRootComposition(
     }
   }
 
-  const required = mergeRequired(schema, branches, key);
+  const rootRequired = readStringArray(schema.required);
+  const required = new Set(rootRequired);
+  for (const branch of branches) {
+    for (const r of readStringArray(branch.required)) required.add(r);
+  }
 
   const out = { ...schema };
-  delete out[key];
+  delete out.allOf;
   out.properties = mergedProperties;
-  if (required.length > 0) {
-    out.required = required;
+  if (required.size > 0) {
+    out.required = [...required];
   } else {
     delete out.required;
   }
   return out;
-}
-
-/**
- * `allOf`: every branch holds → required = root ∪ (∪ branch.required).
- * `oneOf` / `anyOf`: exactly one branch holds → a field is universally
- * required only if every branch requires it → root ∪ (∩ branch.required).
- */
-function mergeRequired(
-  schema: Record<string, unknown>,
-  branches: Array<Record<string, unknown>>,
-  key: "oneOf" | "anyOf" | "allOf",
-): string[] {
-  const rootRequired = readStringArray(schema.required);
-  const branchRequireds = branches.map((b) => readStringArray(b.required));
-
-  if (key === "allOf") {
-    const merged = new Set(rootRequired);
-    for (const r of branchRequireds) for (const f of r) merged.add(f);
-    return [...merged];
-  }
-
-  if (branchRequireds.length === 0) return rootRequired;
-  const intersected = branchRequireds.reduce<string[]>(
-    (acc, cur) => acc.filter((f) => cur.includes(f)),
-    branchRequireds[0] ?? [],
-  );
-  return [...new Set([...rootRequired, ...intersected])];
 }
 
 function readStringArray(value: unknown): string[] {

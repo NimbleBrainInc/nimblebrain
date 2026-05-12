@@ -8,10 +8,11 @@ import { toolSchemaForLlm } from "../../src/engine/tool-schema-for-llm.ts";
  * root `type: "object"` with explicit `properties`, no top-level
  * composition (oneOf / anyOf / allOf / enum / not).
  *
- * MCP servers routinely emit shapes the spec allows but providers reject.
- * The transform absorbs the contract gap at one place; downstream
- * validation (Ajv over the original schema) backs every actual call, so
- * the merge strategy can be permissive without compromising safety.
+ * Strategy summary (see docstring on the implementation for rationale):
+ *   - oneOf / anyOf → first-branch wins (lossy but recoverable for the LLM)
+ *   - allOf → union-merge (semantically faithful)
+ *   - enum / not → strip
+ *   - Always emit type: "object" with a plain-object properties block
  */
 describe("toolSchemaForLlm", () => {
   describe("base shape", () => {
@@ -108,11 +109,19 @@ describe("toolSchemaForLlm", () => {
     });
   });
 
-  describe("top-level oneOf — union-merge with intersected required", () => {
-    it("unions properties across branches", () => {
-      // Dropbox `list_folder`-style: model 'path' or 'shared_link' as
-      // mutually-exclusive branches. We want the LLM to be able to call
-      // either; Ajv over the original schema gates the actual call.
+  describe("top-level oneOf — first-branch wins", () => {
+    let warnSpy: ReturnType<typeof spyOn>;
+    beforeEach(() => {
+      warnSpy = spyOn(log, "warn").mockImplementation(() => {});
+    });
+    afterEach(() => {
+      warnSpy.mockRestore();
+    });
+
+    it("collapses a top-level oneOf to its first branch", () => {
+      // Dropbox `list_folder`-style: model 'path' vs 'cursor' continuation
+      // as mutually-exclusive branches. We pick the first; the LLM gets a
+      // schema it can satisfy in one shot.
       const result = toolSchemaForLlm({
         oneOf: [
           {
@@ -122,103 +131,94 @@ describe("toolSchemaForLlm", () => {
           },
           {
             type: "object",
-            properties: { shared_link: { type: "string" } },
-            required: ["shared_link"],
+            properties: { cursor: { type: "string" } },
+            required: ["cursor"],
           },
         ],
       });
-      expect(result.type).toBe("object");
+      expect(result).toEqual({
+        type: "object",
+        properties: { path: { type: "string" } },
+        required: ["path"],
+      });
       expect((result as Record<string, unknown>).oneOf).toBeUndefined();
-      expect(result.properties).toEqual({
-        path: { type: "string" },
-        shared_link: { type: "string" },
-      });
-      // Intersection of [path] and [shared_link] is empty → no root required.
-      expect(result.required).toBeUndefined();
     });
 
-    it("intersects required across oneOf branches", () => {
-      const result = toolSchemaForLlm({
-        oneOf: [
-          {
-            type: "object",
-            properties: { path: { type: "string" }, mode: { type: "string" } },
-            required: ["path", "mode"],
-          },
-          {
-            type: "object",
-            properties: { path: { type: "string" }, recursive: { type: "boolean" } },
-            required: ["path"],
-          },
-        ],
-      });
-      // path is required in BOTH branches → required.
-      // mode is required in only one branch → not universally required.
-      expect(result.required).toEqual(["path"]);
-    });
-
-    it("last branch wins on property-key collision", () => {
-      const result = toolSchemaForLlm({
-        oneOf: [
-          { type: "object", properties: { x: { type: "string" } } },
-          { type: "object", properties: { x: { type: "number" } } },
-        ],
-      });
-      expect(result.properties).toEqual({ x: { type: "number" } });
-    });
-
-    it("preserves root-level metadata (description, etc.)", () => {
+    it("preserves root metadata (description, etc.) when collapsing", () => {
       const result = toolSchemaForLlm({
         description: "Pick exactly one path style",
         oneOf: [
-          { type: "object", properties: { a: { type: "string" } } },
-          { type: "object", properties: { b: { type: "string" } } },
+          { type: "object", properties: { token: { type: "string" } }, required: ["token"] },
+          { type: "object", properties: { key: { type: "string" } } },
         ],
       });
       expect(result.description).toBe("Pick exactly one path style");
-      expect(result.properties).toEqual({
-        a: { type: "string" },
-        b: { type: "string" },
-      });
+      expect(result.properties).toEqual({ token: { type: "string" } });
+      expect(result.required).toEqual(["token"]);
     });
 
-    it("merges root-level properties with branch properties", () => {
-      const result = toolSchemaForLlm({
-        type: "object",
-        properties: { common: { type: "string" } },
+    it("does NOT warn when oneOf has only one branch (no loss)", () => {
+      toolSchemaForLlm({
+        oneOf: [{ type: "object", properties: { x: { type: "string" } } }],
+      });
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+
+    it("warns when oneOf has multiple branches, listing dropped property names", () => {
+      toolSchemaForLlm(
+        {
+          oneOf: [
+            { type: "object", properties: { path: { type: "string" } }, required: ["path"] },
+            { type: "object", properties: { cursor: { type: "string" } }, required: ["cursor"] },
+            { type: "object", properties: { shared_link: { type: "string" } } },
+          ],
+        },
+        "com-dropbox-mcp__list_folder",
+      );
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      const msg = warnSpy.mock.calls[0]?.[0] as string;
+      expect(msg).toContain('"com-dropbox-mcp__list_folder"');
+      expect(msg).toContain("3 branches");
+      expect(msg).toContain("cursor");
+      expect(msg).toContain("shared_link");
+      // The kept branch's property (path) should NOT appear in the lost list.
+      // (Substring check is fine; "path" isn't in cursor / shared_link.)
+      expect(msg).not.toMatch(/unreachable.*\bpath\b/);
+    });
+
+    it("warns with a placeholder when no novel properties exist in dropped branches", () => {
+      toolSchemaForLlm({
         oneOf: [
-          { properties: { a: { type: "string" } } },
-          { properties: { b: { type: "string" } } },
+          { type: "object", properties: { x: { type: "string" } } },
+          { type: "object", properties: { x: { type: "number" } } }, // same name, different shape
         ],
       });
-      expect(result.properties).toEqual({
-        common: { type: "string" },
-        a: { type: "string" },
-        b: { type: "string" },
-      });
+      const msg = warnSpy.mock.calls[0]?.[0] as string;
+      expect(msg).toContain("(none — branches reshape kept properties)");
     });
   });
 
-  describe("top-level anyOf — union-merge with intersected required", () => {
-    it("merges anyOf identically to oneOf", () => {
+  describe("top-level anyOf — first-branch wins (identical to oneOf)", () => {
+    it("collapses anyOf to its first branch", () => {
+      const warnSpy = spyOn(log, "warn").mockImplementation(() => {});
       const result = toolSchemaForLlm({
         anyOf: [
           { type: "object", properties: { a: { type: "string" } }, required: ["a"] },
           { type: "object", properties: { b: { type: "string" } } },
         ],
       });
-      expect(result.properties).toEqual({
-        a: { type: "string" },
-        b: { type: "string" },
+      expect(result).toEqual({
+        type: "object",
+        properties: { a: { type: "string" } },
+        required: ["a"],
       });
-      // Intersection of [a] and [] is empty.
-      expect(result.required).toBeUndefined();
       expect((result as Record<string, unknown>).anyOf).toBeUndefined();
+      warnSpy.mockRestore();
     });
   });
 
   describe("top-level allOf — union-merge with unioned required", () => {
-    it("unions both properties AND required (allOf means all hold)", () => {
+    it("unions properties AND required (allOf means all hold simultaneously)", () => {
       const result = toolSchemaForLlm({
         allOf: [
           { type: "object", properties: { a: { type: "string" } }, required: ["a"] },
