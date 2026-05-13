@@ -57,6 +57,17 @@ describe("extractText", () => {
     expect(Buffer.byteLength(beforeNotice, "utf-8")).toBeLessThanOrEqual(maxSize);
   });
 
+  test("custom truncation notice replaces files__read hint", async () => {
+    const result = await extractText(Buffer.from("x".repeat(300)), "text/plain", 200, {
+      truncatedSuffix: (kb) => `\n[... truncated at ${kb} KB]`,
+    });
+
+    expect(result).not.toBeNull();
+    expect(result!.truncated).toBe(true);
+    expect(result!.text).toContain("[... truncated at 0 KB]");
+    expect(result!.text).not.toContain("files__read");
+  });
+
   test("default maxSize truncates at 200KB", async () => {
     const size = 204_800 + 1000;
     const largeText = "a".repeat(size);

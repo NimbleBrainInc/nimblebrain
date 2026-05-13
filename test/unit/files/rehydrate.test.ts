@@ -50,7 +50,7 @@ function fakeStore(
 
 const PNG_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const PDF_BYTES = Buffer.from("%PDF-1.4");
-const DEFAULT_OPTIONS = { model: "anthropic:claude-sonnet-4-6" };
+const DEFAULT_OPTIONS = { model: "anthropic:claude-sonnet-4-6", maxExtractedTextSize: 1024 };
 
 function userMessage(content: StoredMessage["content"]): StoredMessage {
   return {
@@ -120,7 +120,7 @@ describe("rehydrateUserResources", () => {
       const out = await rehydrateUserResources(
         [userMessage([{ type: "resource_link", uri: "files://fl_pdf1", mimeType: "application/pdf", name: "doc.pdf" }])],
         store,
-        { model },
+        { model, maxExtractedTextSize: 1024 },
       );
 
       const msg = out[0]!;
@@ -130,7 +130,7 @@ describe("rehydrateUserResources", () => {
     }
   });
 
-  test("PDF resource_link on unsupported model -> text reference", async () => {
+  test("PDF resource_link on unsupported model -> safe text fallback", async () => {
     const store = fakeStore({
       fl_pdf1: { data: PDF_BYTES, mimeType: "application/pdf", filename: "doc.pdf" },
     });
@@ -138,7 +138,7 @@ describe("rehydrateUserResources", () => {
     const out = await rehydrateUserResources(
       [userMessage([{ type: "resource_link", uri: "files://fl_pdf1", mimeType: "application/pdf", name: "doc.pdf" }])],
       store,
-      { model: "openai:o3-mini" },
+      { model: "openai:o3-mini", maxExtractedTextSize: 1024 },
     );
 
     const msg = out[0]!;
@@ -147,8 +147,34 @@ describe("rehydrateUserResources", () => {
     expect(msg.content[0]?.type).toBe("text");
     if (msg.content[0]?.type !== "text") return;
     expect(msg.content[0].text).toContain("doc.pdf");
-    expect(msg.content[0].text).toContain("files__read");
-    expect(store.readFileCalls).toHaveLength(0);
+    expect(msg.content[0].text).not.toContain("files__read");
+    expect(store.readFileCalls).toEqual(["fl_pdf1"]);
+  });
+
+  test("historical PDF resource_link on supported model does not replay as native file", async () => {
+    const store = fakeStore({
+      fl_pdf1: { data: PDF_BYTES, mimeType: "application/pdf", filename: "old.pdf" },
+    });
+
+    const out = await rehydrateUserResources(
+      [
+        userMessage([{ type: "resource_link", uri: "files://fl_pdf1", mimeType: "application/pdf", name: "old.pdf" }]),
+        userMessage([{ type: "text", text: "next turn" }]),
+      ],
+      store,
+      DEFAULT_OPTIONS,
+    );
+
+    const historical = out[0]!;
+    const current = out[1]!;
+    expect(historical.role).toBe("user");
+    expect(current.role).toBe("user");
+    if (historical.role !== "user" || current.role !== "user") return;
+    expect(historical.content[0]?.type).toBe("text");
+    if (historical.content[0]?.type !== "text") return;
+    expect(historical.content[0].text).toContain("old.pdf");
+    expect(historical.content[0].text).not.toContain("files__read");
+    expect(current.content).toEqual([{ type: "text", text: "next turn" }]);
   });
 
   test("missing file -> text marker, no throw", async () => {
@@ -219,7 +245,7 @@ describe("rehydrateUserResources", () => {
     expect(msg.content[0]?.type).toBe("text");
   });
 
-  test("oversized PDF falls back without reading bytes", async () => {
+  test("oversized PDF falls back without files__read hint", async () => {
     const store = fakeStore({
       fl_big: {
         data: Buffer.from("tiny stub"),
@@ -239,7 +265,9 @@ describe("rehydrateUserResources", () => {
     expect(msg.role).toBe("user");
     if (msg.role !== "user") return;
     expect(msg.content[0]?.type).toBe("text");
-    expect(store.readFileCalls).toHaveLength(0);
+    if (msg.content[0]?.type !== "text") return;
+    expect(msg.content[0].text).not.toContain("files__read");
+    expect(store.readFileCalls).toEqual(["fl_big"]);
   });
 
   test("PDF total request budget falls back after budget is consumed", async () => {
@@ -267,7 +295,7 @@ describe("rehydrateUserResources", () => {
         ]),
       ],
       store,
-      { model: "openai:gpt-5" },
+      { model: "openai:gpt-5", maxExtractedTextSize: 1024 },
     );
 
     const msg = out[0]!;
@@ -275,6 +303,8 @@ describe("rehydrateUserResources", () => {
     if (msg.role !== "user") return;
     expect(msg.content[0]?.type).toBe("file");
     expect(msg.content[1]?.type).toBe("text");
-    expect(store.readFileCalls).toEqual(["fl_a"]);
+    if (msg.content[1]?.type !== "text") return;
+    expect(msg.content[1].text).not.toContain("files__read");
+    expect(store.readFileCalls).toEqual(["fl_a", "fl_b"]);
   });
 });
