@@ -876,6 +876,7 @@ export class Runtime {
     const fileStore = createFileStore(join(this.getWorkspaceScopedDir(wsId), "files"));
     const messages = await rehydrateUserResources(history, fileStore, {
       model: resolvedModelString,
+      maxExtractedTextSize: this.getFilesConfig().maxExtractedTextSize,
     });
 
     // Resolve maxOutputTokens FIRST — resolveThinking needs it to clamp the

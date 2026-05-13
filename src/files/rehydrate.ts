@@ -26,6 +26,7 @@ import {
   FILE_INPUT_MIMES,
   getFileInputPolicy,
 } from "../model/file-capabilities.ts";
+import { extractText } from "./extract.ts";
 import { IMAGE_TYPES, PDF_TYPES } from "./ingest.ts";
 import type { FileStore } from "./store.ts";
 import { uriToFileId } from "./uri.ts";
@@ -42,6 +43,7 @@ const REHYDRATABLE_IMAGE_MIMES = new Set([...IMAGE_TYPES].filter((m) => m !== "i
 // Internal runtime seam: callers must pass the resolved provider-qualified model.
 export interface RehydrateOptions {
   model: string;
+  maxExtractedTextSize: number;
 }
 
 interface PdfRehydrationBudget {
@@ -59,8 +61,10 @@ export async function rehydrateUserResources(
   const budget: PdfRehydrationBudget = {
     pdfRemainingBytes: policy.pdf?.maxTotalBytes ?? 0,
   };
+  const currentUserMessageIndex = findLastUserMessageIndex(messages);
   const out: LanguageModelV3Message[] = [];
-  for (const msg of messages) {
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i]!;
     if (msg.role !== "user") {
       // Strip the platform extras (timestamp, userId, metadata) so the
       // returned shape is exactly `LanguageModelV3Message` — what the
@@ -76,7 +80,12 @@ export async function rehydrateUserResources(
 
     const newContent: Array<LanguageModelV3TextPart | LanguageModelV3FilePart> = [];
     for (const part of msg.content) {
-      newContent.push(await rehydratePart(part, fileStore, policy, budget));
+      newContent.push(
+        await rehydratePart(part, fileStore, policy, budget, {
+          isCurrentUserMessage: i === currentUserMessageIndex,
+          maxExtractedTextSize: options.maxExtractedTextSize,
+        }),
+      );
     }
     out.push(
       msg.providerOptions
@@ -87,11 +96,19 @@ export async function rehydrateUserResources(
   return out;
 }
 
+function findLastUserMessageIndex(messages: StoredMessage[]): number {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i]?.role === "user") return i;
+  }
+  return -1;
+}
+
 async function rehydratePart(
   part: UserContentPart,
   fileStore: FileStore,
   policy: FileInputPolicy,
   budget: PdfRehydrationBudget,
+  options: { isCurrentUserMessage: boolean; maxExtractedTextSize: number },
 ): Promise<LanguageModelV3TextPart | LanguageModelV3FilePart> {
   if (part.type === "text") {
     return { type: "text", text: part.text };
@@ -101,7 +118,7 @@ async function rehydratePart(
     return rehydrateImagePart(part, fileStore);
   }
   if (PDF_TYPES.has(part.mimeType)) {
-    return rehydratePdfPart(part, fileStore, policy, budget);
+    return rehydratePdfPart(part, fileStore, policy, budget, options);
   }
   return textMarker(part.name, part.mimeType);
 }
@@ -143,11 +160,8 @@ async function rehydratePdfPart(
   fileStore: FileStore,
   policy: FileInputPolicy,
   budget: PdfRehydrationBudget,
+  options: { isCurrentUserMessage: boolean; maxExtractedTextSize: number },
 ): Promise<LanguageModelV3TextPart | LanguageModelV3FilePart> {
-  if (!acceptsFileMime(policy, FILE_INPUT_MIMES.pdf) || !policy.pdf) {
-    return textMarker(part.name, part.mimeType);
-  }
-
   const id = uriToFileId(part.uri);
   if (!id) {
     return { type: "text", text: `[Attached: ${part.name}]` };
@@ -161,28 +175,65 @@ async function rehydratePdfPart(
     if (!PDF_TYPES.has(entry.mimeType)) {
       return textMarker(part.name, entry.mimeType);
     }
-    if (entry.size > policy.pdf.maxFileBytes || entry.size > budget.pdfRemainingBytes) {
-      return textMarker(part.name, entry.mimeType);
-    }
+
+    const canInlineNativePdf =
+      options.isCurrentUserMessage &&
+      acceptsFileMime(policy, FILE_INPUT_MIMES.pdf) &&
+      policy.pdf &&
+      entry.size <= policy.pdf.maxFileBytes &&
+      entry.size <= budget.pdfRemainingBytes;
 
     const read = await fileStore.readFile(id);
     if (!PDF_TYPES.has(read.mimeType)) {
       return textMarker(part.name, read.mimeType);
     }
-    if (read.size > policy.pdf.maxFileBytes || read.size > budget.pdfRemainingBytes) {
-      return textMarker(part.name, read.mimeType);
+
+    if (
+      canInlineNativePdf &&
+      policy.pdf &&
+      read.size <= policy.pdf.maxFileBytes &&
+      read.size <= budget.pdfRemainingBytes
+    ) {
+      budget.pdfRemainingBytes -= read.size;
+      return {
+        type: "file",
+        mediaType: read.mimeType,
+        data: new Uint8Array(read.data),
+        filename: part.name,
+      };
     }
 
-    budget.pdfRemainingBytes -= read.size;
-    return {
-      type: "file",
-      mediaType: read.mimeType,
-      data: new Uint8Array(read.data),
-      filename: part.name,
-    };
+    return await pdfTextFallback(part.name, id, read, options.maxExtractedTextSize);
   } catch {
     return { type: "text", text: `[Attachment unavailable: ${part.name}]` };
   }
+}
+
+async function pdfTextFallback(
+  name: string,
+  id: string,
+  read: { data: Buffer; mimeType: string; size: number },
+  maxExtractedTextSize: number,
+): Promise<LanguageModelV3TextPart> {
+  const result = await extractText(read.data, read.mimeType, maxExtractedTextSize, {
+    truncatedSuffix: (kb) => `\n[... truncated at ${kb} KB]`,
+  });
+  if (!result) {
+    return {
+      type: "text",
+      text: `[Attached PDF: ${name} (${read.mimeType}). This model cannot receive the PDF bytes directly, and text extraction failed.]`,
+    };
+  }
+  return {
+    type: "text",
+    text: `--- Attached PDF: ${name} (${id}, ${humanSize(read.size)}) ---\n${result.text}`,
+  };
+}
+
+function humanSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1_048_576) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / 1_048_576).toFixed(1)} MB`;
 }
 
 function textMarker(name: string, mimeType: string): LanguageModelV3TextPart {

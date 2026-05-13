@@ -97,8 +97,8 @@ function humanSize(bytes: number): string {
 /**
  * Validate and ingest uploaded files into the workspace file store.
  *
- * For each valid file: stores it, registers metadata, extracts text,
- * and builds content parts for the LLM message.
+ * For each valid file: stores it, registers metadata, extracts text when
+ * applicable, and builds content parts for the LLM message.
  */
 export async function ingestFiles(
   files: UploadedFile[],
