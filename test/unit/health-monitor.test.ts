@@ -147,6 +147,72 @@ describe("HealthMonitor", () => {
     monitor.stop();
   });
 
+  it("includes boot-time start failures as dead entries in getStatus", async () => {
+    const sink = makeEventCollector();
+    const monitor = new HealthMonitor([], sink, {
+      checkIntervalMs: 60_000,
+      baseDelayMs: 1,
+      startFailures: [
+        { wsId: "ws_a", serverName: "broken", bundleName: "@nb/broken", error: "no manifest" },
+        { wsId: "ws_b", serverName: "remote-x", bundleName: "https://x", error: "ECONNREFUSED" },
+      ],
+    });
+
+    const status = monitor.getStatus();
+    expect(status).toHaveLength(2);
+
+    const broken = status.find((s) => s.name === "broken");
+    expect(broken?.state).toBe("dead");
+    expect(broken?.uptime).toBeNull();
+    expect(broken?.restartCount).toBe(0);
+
+    const remote = status.find((s) => s.name === "remote-x");
+    expect(remote?.state).toBe("dead");
+
+    monitor.stop();
+  });
+
+  it("does not attempt to restart boot-time failed bundles", async () => {
+    const sink = makeEventCollector();
+    const monitor = new HealthMonitor([], sink, {
+      checkIntervalMs: 60_000,
+      baseDelayMs: 1,
+      startFailures: [
+        { wsId: "ws_a", serverName: "broken", bundleName: "@nb/broken", error: "no manifest" },
+      ],
+    });
+
+    await monitor.check();
+
+    // No restart, no extra events — these never produced a source to restart.
+    expect(sink.events).toHaveLength(0);
+    const status = monitor.getStatus();
+    expect(status[0]!.state).toBe("dead");
+
+    monitor.stop();
+  });
+
+  it("merges live sources and start failures in getStatus", async () => {
+    const source = makeMockSource("live-one");
+    const sink = makeEventCollector();
+    const monitor = new HealthMonitor([source], sink, {
+      checkIntervalMs: 60_000,
+      baseDelayMs: 1,
+      startFailures: [
+        { wsId: "ws_a", serverName: "dead-one", bundleName: "@nb/dead", error: "boom" },
+      ],
+    });
+
+    const status = monitor.getStatus();
+    expect(status).toHaveLength(2);
+    const names = status.map((s) => s.name).sort();
+    expect(names).toEqual(["dead-one", "live-one"]);
+    expect(status.find((s) => s.name === "live-one")?.state).toBe("healthy");
+    expect(status.find((s) => s.name === "dead-one")?.state).toBe("dead");
+
+    monitor.stop();
+  });
+
   it("stop() clears the interval so no more checks run", async () => {
     const source = makeMockSource("interval-bundle");
     const sink = makeEventCollector();

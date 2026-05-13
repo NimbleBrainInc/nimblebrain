@@ -193,6 +193,13 @@ export class Runtime {
   /** Platform sources (home, conversations, files, etc.) — retained for JIT workspace registration. */
   private _platformSources: import("../tools/types.ts").ToolSource[] = [];
   /**
+   * Boot-time bundle startup failures recorded by `startWorkspaceBundles`.
+   * These never produced an McpSource; HealthMonitor reads this list at
+   * construction so `/v1/health` reports the failures as terminal `dead`
+   * entries rather than silently omitting them.
+   */
+  private _bundleStartFailures: import("./workspace-runtime.ts").BundleStartFailure[] = [];
+  /**
    * Domain-context getter for the automations bundle. Set by the
    * automations source factory; consumed by internal callers (CLI's
    * `nb automation pause/resume`, bundle lifecycle's
@@ -540,13 +547,24 @@ export class Runtime {
 
     // Phase 3: Start workspace bundles with per-workspace registries
     const configDir = config.configPath ? dirname(config.configPath) : undefined;
-    const { registries: workspaceRegistries, entries: workspaceBundleEntries } =
-      await startWorkspaceBundles(workspaceStore, platformSources, systemTools, events, configDir, {
+    const {
+      registries: workspaceRegistries,
+      entries: workspaceBundleEntries,
+      failures: bundleStartFailures,
+    } = await startWorkspaceBundles(
+      workspaceStore,
+      platformSources,
+      systemTools,
+      events,
+      configDir,
+      {
         workDir: resolveWorkDir(config),
         allowInsecureRemotes: config.allowInsecureRemotes,
-      });
+      },
+    );
     rt._workspaceRegistries = workspaceRegistries;
     rt._platformSources = platformSources;
+    rt._bundleStartFailures = bundleStartFailures;
 
     // Wire the workspace registries into lifecycle so workspace-scope
     // startAuth / disconnect / install can add+remove sources without
@@ -1081,6 +1099,14 @@ export class Runtime {
       for (const n of reg.sourceNames()) names.add(n);
     }
     return [...names];
+  }
+
+  /**
+   * Boot-time bundle startup failures. Read once at HealthMonitor
+   * construction so failed bundles appear as `dead` in `/v1/health`.
+   */
+  bundleStartFailures(): import("./workspace-runtime.ts").BundleStartFailure[] {
+    return this._bundleStartFailures;
   }
 
   /** Get MCP sources across all workspace registries (for health monitoring). */

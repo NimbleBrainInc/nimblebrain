@@ -67,6 +67,12 @@ export type EngineEventType =
   | "bundle.recovered"
   | "bundle.dead"
   /**
+   * Bundle failed to start at boot (no McpSource was ever produced).
+   * Distinct from `bundle.crashed`, which requires a running source that
+   * went away. Payload: { wsId, serverName, bundleName, error }.
+   */
+  | "bundle.start_failed"
+  /**
    * Per-principal connection state change for a remote URL bundle.
    * Payload: { wsId, serverName, principalId, state, authorizationUrl? }.
    * Workspace-scoped bundles emit one event stream (principalId = "_workspace");

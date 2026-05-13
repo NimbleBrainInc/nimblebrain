@@ -1,13 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BundleRef } from "../../../src/bundles/types.ts";
+import type { EngineEvent, EventSink } from "../../../src/engine/types.ts";
 import type { Workspace } from "../../../src/workspace/types.ts";
 import {
   buildProcessInventory,
   mapWithConcurrency,
   type ProcessInventoryEntry,
   resolveBundleStartConcurrency,
+  startWorkspaceBundles,
 } from "../../../src/runtime/workspace-runtime.ts";
+import type { WorkspaceStore } from "../../../src/workspace/workspace-store.ts";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -299,5 +304,125 @@ describe("mapWithConcurrency", () => {
         if (item === 2) throw err;
       }),
     ).rejects.toBe(err);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// startWorkspaceBundles — bundle.start_failed observability
+// ---------------------------------------------------------------------------
+
+function makeStore(workspaces: Workspace[]): WorkspaceStore {
+  return {
+    async list() {
+      return workspaces;
+    },
+  } as unknown as WorkspaceStore;
+}
+
+function makeEventCollector(): EventSink & { events: EngineEvent[] } {
+  const events: EngineEvent[] = [];
+  return {
+    events,
+    emit(event: EngineEvent) {
+      events.push(event);
+    },
+  };
+}
+
+describe("startWorkspaceBundles — bundle.start_failed", () => {
+  let workDir: string;
+
+  beforeEach(() => {
+    workDir = mkdtempSync(join(tmpdir(), "ws-runtime-test-"));
+  });
+
+  afterEach(() => {
+    rmSync(workDir, { recursive: true, force: true });
+  });
+
+  it("emits bundle.start_failed when a bundle fails to start", async () => {
+    // Path-based bundle pointing at a nonexistent directory: startBundleSource
+    // throws "Local bundle not found" from buildLocalSource. No fs setup needed.
+    const ws: Workspace = {
+      id: "ws_test",
+      name: "Test",
+      members: [],
+      bundles: [{ path: join(workDir, "does-not-exist") }],
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-01T00:00:00Z",
+    };
+    const sink = makeEventCollector();
+
+    const result = await startWorkspaceBundles(makeStore([ws]), [], null, sink, undefined, {
+      workDir,
+    });
+
+    // Catch path keeps siblings unaffected — registry exists, just no source registered.
+    expect(result.registries.get("ws_test")).toBeDefined();
+    expect(result.entries).toHaveLength(0);
+
+    const failedEvents = sink.events.filter((e) => e.type === "bundle.start_failed");
+    expect(failedEvents).toHaveLength(1);
+    const { data } = failedEvents[0]!;
+    expect(data.wsId).toBe("ws_test");
+    expect(data.serverName).toBe("does-not-exist");
+    expect(typeof data.error).toBe("string");
+    expect(data.error as string).toContain("Local bundle not found");
+  });
+
+  it("returns failures array alongside entries", async () => {
+    const ws: Workspace = {
+      id: "ws_test",
+      name: "Test",
+      members: [],
+      bundles: [{ path: join(workDir, "missing-bundle") }],
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-01T00:00:00Z",
+    };
+    const sink = makeEventCollector();
+
+    const result = await startWorkspaceBundles(makeStore([ws]), [], null, sink, undefined, {
+      workDir,
+    });
+
+    expect(result.failures).toBeDefined();
+    expect(result.failures).toHaveLength(1);
+    const failure = result.failures![0]!;
+    expect(failure.wsId).toBe("ws_test");
+    expect(failure.serverName).toBe("missing-bundle");
+    expect(failure.error).toContain("Local bundle not found");
+  });
+
+  it("a failed bundle does not abort siblings — workspace still gets a registry", async () => {
+    const ws1: Workspace = {
+      id: "ws_failing",
+      name: "Failing",
+      members: [],
+      bundles: [{ path: join(workDir, "broken") }],
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-01T00:00:00Z",
+    };
+    const ws2: Workspace = {
+      id: "ws_empty",
+      name: "Empty",
+      members: [],
+      bundles: [],
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-01T00:00:00Z",
+    };
+    const sink = makeEventCollector();
+
+    const result = await startWorkspaceBundles(
+      makeStore([ws1, ws2]),
+      [],
+      null,
+      sink,
+      undefined,
+      { workDir },
+    );
+
+    expect(result.registries.get("ws_failing")).toBeDefined();
+    expect(result.registries.get("ws_empty")).toBeDefined();
+    expect(result.failures).toHaveLength(1);
   });
 });

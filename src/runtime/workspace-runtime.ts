@@ -22,6 +22,19 @@ import type { WorkspaceStore } from "../workspace/workspace-store.ts";
 // Types
 // ---------------------------------------------------------------------------
 
+/**
+ * A boot-time bundle startup failure — recorded when `startBundleSource`
+ * throws. Surfaced via `bundle.start_failed` event (workspace log + SSE)
+ * and threaded into HealthMonitor so `/v1/health` reports the failed
+ * bundle as `state: "dead"` rather than omitting it entirely.
+ */
+export interface BundleStartFailure {
+  wsId: string;
+  serverName: string;
+  bundleName: string;
+  error: string;
+}
+
 /** A single entry in the process inventory — one per (workspace, bundle) pair. */
 export interface ProcessInventoryEntry {
   /** Workspace id (e.g., "ws_engineering"). */
@@ -133,7 +146,11 @@ export async function startWorkspaceBundles(
     allowInsecureRemotes?: boolean;
     workDir?: string;
   },
-): Promise<{ registries: Map<string, ToolRegistry>; entries: ProcessInventoryEntry[] }> {
+): Promise<{
+  registries: Map<string, ToolRegistry>;
+  entries: ProcessInventoryEntry[];
+  failures: BundleStartFailure[];
+}> {
   const workDir = opts?.workDir ?? join(process.env.NB_WORK_DIR ?? "", ".nimblebrain");
   const workspaces = await workspaceStore.list();
   const inventory = buildProcessInventory(workspaces, workDir);
@@ -174,6 +191,7 @@ export async function startWorkspaceBundles(
     wsEntries.map((entry) => ({ wsId, entry })),
   );
   const resultEntries: ProcessInventoryEntry[] = new Array(flat.length);
+  const failures: BundleStartFailure[] = [];
   const concurrency = resolveBundleStartConcurrency();
   const startMs = Date.now();
 
@@ -260,9 +278,18 @@ export async function startWorkspaceBundles(
       resultEntries[idx] = { ...entry, serverName: result.sourceName, meta: result.meta };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      const bundleName = bundleNameFromRef(entry.bundle);
       process.stderr.write(
         `[workspace-runtime] Failed to start ${entry.serverName} in ${wsId}: ${msg}\n`,
       );
+      // Persistent observability: workspace log (via WorkspaceLogSink) +
+      // SSE broadcast (via SseEventManager). Without this, operators have
+      // to grep container stderr to discover a failed boot.
+      eventSink.emit({
+        type: "bundle.start_failed",
+        data: { wsId, serverName: entry.serverName, bundleName, error: msg },
+      });
+      failures.push({ wsId, serverName: entry.serverName, bundleName, error: msg });
     }
   });
 
@@ -273,7 +300,7 @@ export async function startWorkspaceBundles(
       `[workspace-runtime] Started ${finalEntries.length}/${flat.length} bundles in ${elapsedMs}ms (concurrency=${concurrency})`,
     );
   }
-  return { registries, entries: finalEntries };
+  return { registries, entries: finalEntries, failures };
 }
 
 /**
