@@ -2,6 +2,7 @@ import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "nod
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { log } from "../cli/log.ts";
+import { deleteComposioConnectedAccount } from "../composio/sdk.ts";
 import { clearAllWorkspaceCredentials } from "../config/workspace-credentials.ts";
 import type { EventSink } from "../engine/types.ts";
 import type { PlacementRegistry } from "../runtime/placement-registry.ts";
@@ -14,6 +15,11 @@ import {
   WorkspaceOAuthProvider,
 } from "../tools/workspace-oauth-provider.ts";
 import { createAutomation, deleteAutomation } from "./automations/src/domain.ts";
+import {
+  deleteComposioConnection,
+  hasPersistedComposioConnection,
+  readComposioConnection,
+} from "./composio-connection.ts";
 import {
   type Connection,
   type ConnectionState,
@@ -893,6 +899,53 @@ export class BundleLifecycleManager {
     }
     const isWorkspaceScope = principalId === WORKSPACE_PRINCIPAL_ID;
 
+    // Composio-backed bundles use a parallel credential namespace —
+    // OAuth tokens live at Composio, not in our `mcp-oauth` directory.
+    // Run the SDK-side revoke (delete the connected account) AND
+    // clean up our own `connection.json` so a subsequent Connect
+    // can't short-circuit on a stale ACTIVE account.
+    let composioRevoked = { access: false, refresh: false };
+    let composioDeletedLocal = false;
+    let composioRevokeError: string | undefined;
+    if (ref.composio && isWorkspaceScope) {
+      const apiKey = process.env.COMPOSIO_API_KEY?.trim();
+      try {
+        const connection = await readComposioConnection(
+          opts.workDir,
+          wsId,
+          ref.composio.connectorId,
+        );
+        if (connection && apiKey) {
+          const deleted = await deleteComposioConnectedAccount({
+            apiKey,
+            connectedAccountId: connection.connectedAccountId,
+          });
+          composioRevoked = { access: deleted, refresh: deleted };
+        }
+      } catch (err) {
+        composioRevokeError = err instanceof Error ? err.message : String(err);
+      }
+      try {
+        composioDeletedLocal = await deleteComposioConnection(
+          opts.workDir,
+          wsId,
+          ref.composio.connectorId,
+        );
+      } catch (err) {
+        composioRevokeError = err instanceof Error ? err.message : String(err);
+      }
+      await this.teardownConnectionSource(serverName, wsId, principalId);
+      this.recordConnectionStateChange(serverName, wsId, principalId, "not_authenticated", {
+        source: null,
+        authorizationUrl: undefined,
+      });
+      return {
+        revoked: composioRevoked,
+        deletedLocal: composioDeletedLocal,
+        ...(composioRevokeError ? { revokeError: composioRevokeError } : {}),
+      };
+    }
+
     const provider = new WorkspaceOAuthProvider({
       owner: isWorkspaceScope ? { type: "workspace", wsId } : { type: "user", userId: principalId },
       serverName,
@@ -1440,7 +1493,17 @@ export class BundleLifecycleManager {
         });
       } else {
         const workDir = process.env.NB_WORK_DIR ?? join(homedir(), ".nimblebrain");
-        if (!hasPersistedWorkspaceOAuthTokens(workDir, wsId, serverName)) {
+        // Composio-backed connectors live in a parallel credential
+        // namespace — the user-presence signal is
+        // `credentials/composio/<connectorId>/connection.json`, not
+        // the mcp-oauth tokens.json. Bundles carry the catalog id
+        // forward on `ref.composio.connectorId` so this probe is
+        // local; we don't need the catalog to derive the path.
+        const hasAuth =
+          "composio" in ref && ref.composio
+            ? hasPersistedComposioConnection(workDir, wsId, ref.composio.connectorId)
+            : hasPersistedWorkspaceOAuthTokens(workDir, wsId, serverName);
+        if (!hasAuth) {
           this.recordConnectionStateChange(serverName, wsId, "_workspace", "not_authenticated");
         } else {
           this.recordConnectionStateChange(serverName, wsId, "_workspace", "running");

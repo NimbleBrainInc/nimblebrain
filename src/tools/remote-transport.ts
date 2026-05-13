@@ -5,6 +5,26 @@ import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { RemoteTransportConfig } from "../bundles/types.ts";
 
 /**
+ * Resolve `${ENV_VAR}` placeholders against `process.env`.
+ *
+ * Used so catalog entries (and runtime BundleRef values) can carry
+ * secret references like `${COMPOSIO_API_KEY}` without persisting the
+ * actual secret to `workspace.json`. Substitution happens at transport
+ * construction time so the resolved string is held only on the in-
+ * memory `Transport` instance.
+ *
+ * Variables are matched against `[A-Z_][A-Z0-9_]*` — the conventional
+ * shell env-var shape. Unknown / unset variables collapse to empty
+ * string (mirrors `substituteUserConfigFromEnv` in
+ * `src/bundles/startup.ts`); the underlying transport will surface a
+ * concrete auth error from the vendor rather than a generic host
+ * error, which is more actionable.
+ */
+function resolveEnvTemplate(value: string): string {
+  return value.replace(/\$\{([A-Z_][A-Z0-9_]*)\}/g, (_, key: string) => process.env[key] ?? "");
+}
+
+/**
  * Create a remote MCP transport from a URL and optional config.
  * Default transport: Streamable HTTP. Use type: "sse" for legacy SSE servers.
  *
@@ -22,9 +42,12 @@ export function createRemoteTransport(
   const headers: Record<string, string> = { ...(config?.headers ?? {}) };
 
   if (config?.auth?.type === "bearer") {
-    headers.Authorization = `Bearer ${config.auth.token}`;
+    headers.Authorization = `Bearer ${resolveEnvTemplate(config.auth.token)}`;
   } else if (config?.auth?.type === "header") {
-    headers[config.auth.name] = config.auth.value;
+    headers[config.auth.name] = resolveEnvTemplate(config.auth.value);
+  }
+  for (const [k, v] of Object.entries(headers)) {
+    headers[k] = resolveEnvTemplate(v);
   }
 
   // Only wire the OAuth provider if no static auth is configured. Static

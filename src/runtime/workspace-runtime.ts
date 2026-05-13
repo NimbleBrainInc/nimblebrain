@@ -7,6 +7,7 @@
  */
 
 import { join } from "node:path";
+import { hasPersistedComposioConnection } from "../bundles/composio-connection.ts";
 import { hasPersistedWorkspaceOAuthTokens } from "../bundles/oauth-tokens.ts";
 import { bundleNameFromRef, resolveBundleDataDir, serverNameFromRef } from "../bundles/paths.ts";
 import { setPendingAuth } from "../bundles/pending-auth-buffer.ts";
@@ -212,12 +213,17 @@ export async function startWorkspaceBundles(
     // keeps a fresh install silent — no surprise OAuth banner on a
     // bundle the user added but hasn't authenticated yet.
     // `seedInstance` consults the same token check to set state.
+    //
+    // Composio-backed bundles use a parallel credential namespace
+    // (`credentials/composio/<connectorId>/connection.json`) so the
+    // probe has to read the right artifact — mirrors the discriminator
+    // in `lifecycle.seedInstance`.
     if ("url" in entry.bundle) {
       const scope = entry.bundle.oauthScope ?? "workspace";
-      if (
-        scope === "workspace" &&
-        !hasPersistedWorkspaceOAuthTokens(workDir, entry.wsId, entry.serverName)
-      ) {
+      const hasAuth = entry.bundle.composio
+        ? hasPersistedComposioConnection(workDir, entry.wsId, entry.bundle.composio.connectorId)
+        : hasPersistedWorkspaceOAuthTokens(workDir, entry.wsId, entry.serverName);
+      if (scope === "workspace" && !hasAuth) {
         log.info(
           `[bundles] Skipping boot start for workspace-scope URL bundle "${entry.serverName}" — no tokens yet (state: not_authenticated)`,
         );
