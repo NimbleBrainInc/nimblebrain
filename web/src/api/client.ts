@@ -563,8 +563,8 @@ export interface ConnectorCatalogEntry {
   requiredScopes?: string[];
   additionalAuthorizationParams?: Record<string, string>;
   operatorSetup?: { portalUrl: string; hint: string; clientSecretKey: string };
-  /** Composio-backed connectors: toolkit slug + auth-config env var. */
-  composio?: { toolkit: string; authConfigEnv: string };
+  /** Composio-backed connectors: toolkit slug + auth-config env var + optional tool allowlist. */
+  composio?: { toolkit: string; authConfigEnv: string; tools?: string[] };
   tags?: string[];
   /** When true, the connector exposes a UI surface — render the "Interactive" badge. */
   interactive?: boolean;
@@ -799,7 +799,7 @@ export interface DirectoryEntry {
         requiredScopes?: string[];
         additionalAuthorizationParams?: Record<string, string>;
         operatorSetup?: { portalUrl: string; hint: string; clientSecretKey: string };
-        composio?: { toolkit: string; authConfigEnv: string };
+        composio?: { toolkit: string; authConfigEnv: string; tools?: string[] };
       }
     | { kind: "mpak-bundle"; package: string }
     | { kind: "direct-url"; url: string };

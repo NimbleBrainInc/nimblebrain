@@ -168,6 +168,17 @@ export class ConnectorDirectory {
   }
 
   /**
+   * Lookup table for installed-bundle loops that need a per-bundle
+   * catalog match keyed by the persisted composio connectorId.
+   * Symmetric to `catalogByUrl` — built once per call rather than
+   * re-scanning `catalogEntries()` per bundle inside a loop.
+   */
+  async catalogByIdMap(): Promise<Map<string, ConnectorCatalogEntry>> {
+    const entries = await this.catalogEntries();
+    return new Map(entries.map((e) => [e.id, e]));
+  }
+
+  /**
    * Lookup table for installed-stdio bundle icons. Keyed by package
    * identifier (npm-style scoped name, e.g. `@nimblebraininc/echo`)
    * since stdio bundles don't carry a remote URL — the directory's

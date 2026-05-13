@@ -391,6 +391,67 @@ describe("manage_connectors.install (composio-auth)", () => {
     expect(text.toLowerCase()).toContain("composio");
   });
 
+  test("(f) self-heal: orphan composio bundle (workspace.json row but no lifecycle instance) is reattached without re-running createComposioSession or duplicating", async () => {
+    process.env.COMPOSIO_API_KEY = "k_test";
+    process.env.COMPOSIO_GMAIL_AUTH_CONFIG_ID = "ac_gmail";
+
+    // Pre-seed an orphan: a persisted composio bundle whose `url` is
+    // the dynamic per-install Composio session URL (the realistic shape
+    // — not the catalog placeholder). No corresponding lifecycle
+    // instance, mimicking the state after a prior uninstall that
+    // didn't clean workspace.json.
+    const orphanRef: Extract<BundleRef, { url: string }> = {
+      url: "https://composio.test/mcp/session_orphaned",
+      serverName: "com-google-gmail",
+      transport: { type: "streamable-http" },
+      oauthScope: "workspace",
+      composio: { connectorId: GMAIL_ID },
+    };
+    await h.workspaceStore.update(h.wsId, { bundles: [orphanRef] });
+
+    // Track whether createComposioSession is invoked — self-heal must
+    // skip it (re-attach should not burn an upstream Composio session).
+    let createCalls = 0;
+    composioCalls.createImpl = async () => {
+      createCalls += 1;
+      return {
+        sessionId: "session_fresh",
+        mcp: { type: "http", url: "https://composio.test/mcp/session_fresh", headers: {} },
+      };
+    };
+
+    const tool = buildTool(h);
+    const result = await tool.handler({ action: "install", entry: gmailEntry() });
+
+    expect(result.isError).toBe(false);
+    const sc = result.structuredContent as {
+      ok: boolean;
+      alreadyInstalled: boolean;
+      serverName: string;
+      scope: string;
+    };
+    expect(sc.ok).toBe(true);
+    expect(sc.alreadyInstalled).toBe(false);
+    expect(sc.serverName).toBe("com-google-gmail");
+    expect(sc.scope).toBe("workspace");
+
+    // No duplicate row appended. The original orphan ref (with its
+    // existing session URL) is preserved untouched.
+    const ws = await h.workspaceStore.get(h.wsId);
+    expect(ws?.bundles).toHaveLength(1);
+    const persisted = ws?.bundles[0] as Extract<BundleRef, { url: string }>;
+    expect(persisted.url).toBe("https://composio.test/mcp/session_orphaned");
+
+    // Self-heal must not call back to Composio — re-attach reuses the
+    // existing connection. Calling create() again would burn a fresh
+    // upstream session and orphan the prior one.
+    expect(createCalls).toBe(0);
+
+    // Lifecycle instance was re-seeded so subsequent ops can resolve it.
+    const lifecycle = h.runtime.getLifecycle();
+    expect(lifecycle.getInstance("com-google-gmail", h.wsId)).not.toBeNull();
+  });
+
   test("install surfaces createComposioSession failures as errResult", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
     process.env.COMPOSIO_GMAIL_AUTH_CONFIG_ID = "ac_gmail";

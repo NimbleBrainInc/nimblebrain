@@ -464,6 +464,11 @@ async function handleListInstalled(
   // construction concern inside the facade.
   const directory = ctx.runtime.getConnectorDirectory();
   const catalogByUrl = await directory.catalogByUrl();
+  // O(1) catalog lookups for composio-backed bundles whose persisted
+  // `ref.url` is a per-install Composio session URL and therefore
+  // misses `catalogByUrl`. Built once per request, shared by the
+  // workspace and user-scope loops below.
+  const catalogById = await directory.catalogByIdMap();
   // Stdio bundles aren't keyable by URL — they're matched to their
   // mpak `ServerDetail` by the package identifier on the bundle
   // instance (`@scope/name`). Best-effort: a down mpak registry just
@@ -612,7 +617,7 @@ async function handleListInstalled(
           : undefined;
       let cat = url ? catalogByUrl.get(url) : undefined;
       if (!cat && composioConnectorId) {
-        cat = (await directory.catalogById(composioConnectorId)) ?? undefined;
+        cat = catalogById.get(composioConnectorId);
       }
 
       // Tool count + interactive — best-effort (a stopped source returns []).
@@ -735,7 +740,7 @@ async function handleListInstalled(
           ?.connectorId;
         let cat = catalogByUrl.get(ref.url);
         if (!cat && composioConnectorId) {
-          cat = (await directory.catalogById(composioConnectorId)) ?? undefined;
+          cat = catalogById.get(composioConnectorId);
         }
 
         const interactive =
@@ -1007,16 +1012,11 @@ async function handleInstallRemoteOAuth(
   }
   const action = entry.install;
 
-  // Composio-auth gating: only the platform-wide API key and the
-  // per-toolkit auth-config id are required. The MCP URL and any
-  // extra headers come from Composio's session API at install time
-  // — we don't pre-create or address an MCP server config. The
-  // x-api-key value is held as a `${...}` template so the actual
-  // secret never lands in workspace.json; `createRemoteTransport`
-  // resolves it from process.env at start time.
-  let composioWiring:
-    | { url: string; transport: import("../bundles/types.ts").RemoteTransportConfig }
-    | undefined;
+  // Cheap entry-shape validation up front (fail fast, no IO). The
+  // expensive remote work — Composio session create, operator
+  // credential read — is deferred until after the dedup check so a
+  // duplicate-install click doesn't burn an upstream Composio session
+  // or orphan the prior one.
   if (action.auth === "composio") {
     if (!action.composio) {
       return errResult(`"${entry.name}" is composio-auth but missing composio config block.`);
@@ -1037,45 +1037,66 @@ async function handleInstallRemoteOAuth(
           "the credential layout does not yet support user-scope.",
       );
     }
-    const { authConfigEnv, toolkit } = action.composio;
+    const { authConfigEnv } = action.composio;
     if (!process.env.COMPOSIO_API_KEY?.trim()) {
       return errResult(
         `"${entry.name}" requires COMPOSIO_API_KEY in the platform env. ` +
           "Set the platform-wide Composio API key and restart the API.",
       );
     }
-    const authConfigId = process.env[authConfigEnv]?.trim();
-    if (!authConfigId) {
+    if (!process.env[authConfigEnv]?.trim()) {
       return errResult(
         `"${entry.name}" requires ${authConfigEnv} in the platform env. ` +
           "Create the auth config in the Composio dashboard and set the env var.",
       );
     }
+  }
+  if (action.auth === "static" && !action.operatorSetup) {
+    return errResult(`"${entry.name}" is static-auth but missing operatorSetup config.`);
+  }
+
+  // serverName is the slugified canonical reverse-DNS form — opaque,
+  // URL-safe, filesystem-safe, collision-free by construction. See
+  // `slugifyServerName` for the rule. mpak install path mirrors this.
+  const serverName = slugifyServerName(entry.id);
+
+  // Inline factory for the composio MCP wiring (URL + transport +
+  // x-api-key template). Called only on the fresh-install branch
+  // below — gating it on dedup means a re-click on an already
+  // installed connector doesn't initiate a new upstream Composio
+  // session and orphan the prior one. The API-key template is held
+  // verbatim in workspace.json; `createRemoteTransport` resolves it
+  // from `process.env.COMPOSIO_API_KEY` at start time so the secret
+  // never sits at rest.
+  async function buildComposioWiring(): Promise<
+    | {
+        url: string;
+        transport: import("../bundles/types.ts").RemoteTransportConfig;
+      }
+    | { __err: string }
+  > {
+    if (action.auth !== "composio" || !action.composio || !wsId) {
+      // Unreachable — guards above ensure the shape. Typed for the
+      // caller's narrowing convenience.
+      return { __err: "composio wiring requested for non-composio install" };
+    }
     const userId = composioUserId(wsId);
     let sessionMcp: { type: "http" | "sse"; url: string; headers?: Record<string, string> };
     try {
       sessionMcp = await createComposioSession({
-        apiKey: process.env.COMPOSIO_API_KEY.trim(),
+        apiKey: (process.env.COMPOSIO_API_KEY ?? "").trim(),
         userId,
-        toolkit,
-        authConfigId,
+        toolkit: action.composio.toolkit,
+        authConfigId: (process.env[action.composio.authConfigEnv] ?? "").trim(),
         ...(action.composio.tools && action.composio.tools.length > 0
           ? { tools: action.composio.tools }
           : {}),
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      return errResult(`Composio session creation failed for "${entry.name}": ${msg}`);
+      return { __err: `Composio session creation failed for "${entry.name}": ${msg}` };
     }
-    // The x-api-key is the static auth signal — set it on
-    // `transport.auth` so `hasStaticAuth` in startBundleSource
-    // returns true and the MCP OAuth provider isn't attached.
-    // Any extra non-secret headers Composio returned (usually
-    // none) go into `transport.headers`. The api key itself is
-    // held as a template; `createRemoteTransport` resolves
-    // `${COMPOSIO_API_KEY}` from process.env at start time so
-    // the secret never sits in workspace.json.
-    const apiKey = process.env.COMPOSIO_API_KEY.trim();
+    const apiKey = (process.env.COMPOSIO_API_KEY ?? "").trim();
     const extraHeaders: Record<string, string> = {};
     for (const [k, v] of Object.entries(sessionMcp.headers ?? {})) {
       if (k.toLowerCase() === "x-api-key") continue;
@@ -1083,20 +1104,12 @@ async function handleInstallRemoteOAuth(
       // value (e.g. a future Composio response shape like
       // `Authorization: Bearer <api-key>`), substitute it with the
       // env template so the secret never lands in workspace.json.
-      // `replace` is the realistic shape — exact-equality would
-      // only catch a header whose ENTIRE value is the API key, which
-      // Composio doesn't return today and likely never will.
-      // `resolveEnvTemplate` re-expands the template at transport
-      // build time, preserving any surrounding prefix.
-      // `replaceAll` over `replace` because the stated defense is
-      // "every occurrence of the secret gets scrubbed" — a future
-      // shape that includes the key twice in one value (unlikely,
-      // but the whole reason for the check) wouldn't fully scrub
-      // with single-occurrence replace.
+      // `replaceAll` over `replace` so a future shape that repeats
+      // the key twice in one value still scrubs fully.
       // biome-ignore lint/suspicious/noTemplateCurlyInString: deliberate placeholder — resolved by `resolveEnvTemplate` at transport build time
       extraHeaders[k] = v.includes(apiKey) ? v.replaceAll(apiKey, "${COMPOSIO_API_KEY}") : v;
     }
-    composioWiring = {
+    return {
       url: sessionMcp.url,
       transport: {
         type: sessionMcp.type === "sse" ? "sse" : "streamable-http",
@@ -1111,66 +1124,70 @@ async function handleInstallRemoteOAuth(
     };
   }
 
-  // Static-auth gating: operator clientId + secret must exist.
-  let staticOAuthClient: { clientId: string; clientSecretKey: string } | undefined;
-  if (action.auth === "static") {
-    const setup = action.operatorSetup;
-    if (!setup) {
-      return errResult(`"${entry.name}" is static-auth but missing operatorSetup config.`);
+  // Static-auth gating moved post-dedup as well: a duplicate-install
+  // click shouldn't read the operator credential from disk.
+  async function loadStaticOAuthClient(): Promise<
+    { clientId: string; clientSecretKey: string } | { __err: string }
+  > {
+    if (action.auth !== "static" || !action.operatorSetup || !wsId) {
+      return { __err: "static-auth wiring requested for non-static install" };
     }
-    if (!wsId) return errResult("Workspace context required for static-auth install.");
+    const setup = action.operatorSetup;
     const ws = await ctx.runtime.getWorkspaceStore().get(wsId);
-    if (!ws) return errResult(`Workspace "${wsId}" not found.`);
+    if (!ws) return { __err: `Workspace "${wsId}" not found.` };
     const operatorApp = ws.oauthOperatorApps?.[entry.id];
     if (!operatorApp?.clientId) {
-      return errResult(
-        `"${entry.name}" needs operator setup before install. Configure the OAuth app at ${setup.portalUrl} and use Set up.`,
-      );
+      return {
+        __err: `"${entry.name}" needs operator setup before install. Configure the OAuth app at ${setup.portalUrl} and use Set up.`,
+      };
     }
     const credStore = new FileCredentialStore(ctx.runtime.getWorkDir());
     const secret = await credStore.get(wsId, setup.clientSecretKey);
     if (!secret) {
-      return errResult(
-        `Operator client_secret for "${entry.name}" is missing — re-run Set up to seed it.`,
-      );
+      return {
+        __err: `Operator client_secret for "${entry.name}" is missing — re-run Set up to seed it.`,
+      };
     }
-    staticOAuthClient = {
-      clientId: operatorApp.clientId,
-      clientSecretKey: setup.clientSecretKey,
-    };
+    return { clientId: operatorApp.clientId, clientSecretKey: setup.clientSecretKey };
   }
 
-  // serverName is the slugified canonical reverse-DNS form — opaque,
-  // URL-safe, filesystem-safe, collision-free by construction. See
-  // `slugifyServerName` for the rule. mpak install path mirrors this.
-  const serverName = slugifyServerName(entry.id);
-
-  const ref: BundleRef = {
-    url: composioWiring?.url ?? action.url,
-    serverName,
-    // Pin the transport class the source advertised. Default would be
-    // streamable-http (createRemoteTransport's fallback), which is wrong
-    // for vendors whose remote `type` is `sse` — PayPal / Cloudflare /
-    // Webflow / Wix in the bundled catalog today.
-    transport: composioWiring?.transport ?? { type: action.transportType },
-    oauthScope: entry.defaultScope,
-    ...(action.requiredScopes ? { scopes: action.requiredScopes } : {}),
-    ...(action.additionalAuthorizationParams
-      ? { additionalAuthorizationParams: action.additionalAuthorizationParams }
-      : {}),
-    ...(staticOAuthClient
-      ? {
-          oauthClient: {
-            clientId: staticOAuthClient.clientId,
-            clientSecret: { ref: "credential", key: staticOAuthClient.clientSecretKey },
-          },
-        }
-      : {}),
-    // Composio marker — carries the catalog id so the lifecycle's
-    // boot-time state derivation can probe the right `connection.json`
-    // path under `credentials/composio/<connectorId>/`.
-    ...(action.auth === "composio" ? { composio: { connectorId: entry.id } } : {}),
-  };
+  // Build the BundleRef from the resolved wiring (composio session URL
+  // + transport, or static client credentials). Constructed on the
+  // fresh-install branch only; the dedup branches re-use the existing
+  // persisted ref.
+  function buildRef(
+    composioWiring:
+      | { url: string; transport: import("../bundles/types.ts").RemoteTransportConfig }
+      | undefined,
+    staticOAuthClient: { clientId: string; clientSecretKey: string } | undefined,
+  ): BundleRef {
+    return {
+      url: composioWiring?.url ?? action.url,
+      serverName,
+      // Pin the transport class the source advertised. Default would be
+      // streamable-http (createRemoteTransport's fallback), which is wrong
+      // for vendors whose remote `type` is `sse` — PayPal / Cloudflare /
+      // Webflow / Wix in the bundled catalog today.
+      transport: composioWiring?.transport ?? { type: action.transportType },
+      oauthScope: entry.defaultScope,
+      ...(action.requiredScopes ? { scopes: action.requiredScopes } : {}),
+      ...(action.additionalAuthorizationParams
+        ? { additionalAuthorizationParams: action.additionalAuthorizationParams }
+        : {}),
+      ...(staticOAuthClient
+        ? {
+            oauthClient: {
+              clientId: staticOAuthClient.clientId,
+              clientSecret: { ref: "credential", key: staticOAuthClient.clientSecretKey },
+            },
+          }
+        : {}),
+      // Composio marker — carries the catalog id so the lifecycle's
+      // boot-time state derivation can probe the right `connection.json`
+      // path under `credentials/composio/<connectorId>/`.
+      ...(action.auth === "composio" ? { composio: { connectorId: entry.id } } : {}),
+    };
+  }
 
   const lifecycle = ctx.runtime.getLifecycle();
 
@@ -1179,7 +1196,19 @@ async function handleInstallRemoteOAuth(
     const ws = await ctx.runtime.getWorkspaceStore().get(wsId);
     if (!ws) return errResult(`Workspace "${wsId}" not found.`);
 
-    const dup = ws.bundles.find((b) => "url" in b && b.url === action.url);
+    // Dedup primarily on `serverName` — the canonical lifecycle key
+    // (workspace registry name + workspace.json index), derived from
+    // `entry.id` and stable across installs. Matching on `b.url` would
+    // miss composio-backed bundles whose persisted `b.url` is the
+    // per-install Composio session URL (set from `composioWiring.url`)
+    // and never equals the catalog placeholder `action.url`.
+    // Fall back to URL match for legacy bundles persisted before
+    // #195's slugify-on-install (no `serverName` field on disk).
+    const dup = ws.bundles.find((b) => {
+      if (!("url" in b)) return false;
+      if ("serverName" in b && b.serverName) return b.serverName === serverName;
+      return b.url === action.url;
+    });
     if (dup) {
       const dupServerName = "serverName" in dup ? (dup.serverName ?? serverName) : serverName;
       // Self-heal: workspace.json says yes but lifecycle lost the
@@ -1220,6 +1249,25 @@ async function handleInstallRemoteOAuth(
         isError: false,
       };
     }
+    // Fresh-install: resolve the wiring now that we know we're going
+    // to commit. Composio session create and operator-credential read
+    // are gated here so a duplicate-install click (caught above) never
+    // burns an upstream Composio session or reads the credential.
+    let composioWiring:
+      | { url: string; transport: import("../bundles/types.ts").RemoteTransportConfig }
+      | undefined;
+    if (action.auth === "composio") {
+      const wiring = await buildComposioWiring();
+      if ("__err" in wiring) return errResult(wiring.__err);
+      composioWiring = wiring;
+    }
+    let staticOAuthClient: { clientId: string; clientSecretKey: string } | undefined;
+    if (action.auth === "static") {
+      const client = await loadStaticOAuthClient();
+      if ("__err" in client) return errResult(client.__err);
+      staticOAuthClient = client;
+    }
+    const ref = buildRef(composioWiring, staticOAuthClient);
     await ctx.runtime.getWorkspaceStore().update(wsId, { bundles: [...ws.bundles, ref] });
     const wsRegistry = ctx.runtime.getRegistryForWorkspace(wsId);
     lifecycle.seedInstance(serverName, action.url, ref, undefined, wsId, undefined, wsRegistry);
@@ -1273,7 +1321,14 @@ async function handleInstallRemoteOAuth(
   }
   const userStore = ctx.runtime.getUserConnectorStore();
   const existing = await userStore.get(callerId);
-  const dup = existing?.bundles.find((b) => "url" in b && b.url === action.url);
+  // serverName-based dedup with legacy URL fallback — same rationale
+  // as the workspace branch above. Composio install is workspace-scope
+  // only today, but keeping both branches uniform avoids future drift.
+  const dup = existing?.bundles.find((b) => {
+    if (!("url" in b)) return false;
+    if ("serverName" in b && b.serverName) return b.serverName === serverName;
+    return b.url === action.url;
+  });
   if (dup) {
     // Mirror workspace branch (line 1045): fall back to the slugified
     // serverName, never the raw `entry.id` — the latter is the
@@ -1306,6 +1361,10 @@ async function handleInstallRemoteOAuth(
       isError: false,
     };
   }
+  // User-scope is DCR-only today (composio and static are enforced
+  // workspace-scope above), so no composio session create or operator
+  // credential read happens here — build the ref directly.
+  const ref = buildRef(undefined, undefined);
   await userStore.addBundle(callerId, ref);
   await lifecycle.seedUserInstance?.(serverName, ref, callerId);
   return {
