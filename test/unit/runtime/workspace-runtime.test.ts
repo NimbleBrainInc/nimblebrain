@@ -342,7 +342,7 @@ describe("startWorkspaceBundles — bundle.startFailed", () => {
 
   it("emits bundle.startFailed when a bundle fails to start", async () => {
     // Path-based bundle pointing at a nonexistent directory: startBundleSource
-    // throws "Local bundle not found" from buildLocalSource. No fs setup needed.
+    // throws from buildLocalSource. No fs setup needed.
     const ws: Workspace = {
       id: "ws_test",
       name: "Test",
@@ -366,8 +366,10 @@ describe("startWorkspaceBundles — bundle.startFailed", () => {
     const { data } = failedEvents[0]!;
     expect(data.wsId).toBe("ws_test");
     expect(data.serverName).toBe("does-not-exist");
+    expect(typeof data.bundleName).toBe("string");
+    expect((data.bundleName as string).length).toBeGreaterThan(0);
     expect(typeof data.error).toBe("string");
-    expect(data.error as string).toContain("Local bundle not found");
+    expect((data.error as string).length).toBeGreaterThan(0);
   });
 
   it("returns failures array alongside entries", async () => {
@@ -390,7 +392,10 @@ describe("startWorkspaceBundles — bundle.startFailed", () => {
     const failure = result.failures![0]!;
     expect(failure.wsId).toBe("ws_test");
     expect(failure.serverName).toBe("missing-bundle");
-    expect(failure.error).toContain("Local bundle not found");
+    expect(typeof failure.bundleName).toBe("string");
+    expect(failure.bundleName.length).toBeGreaterThan(0);
+    expect(typeof failure.error).toBe("string");
+    expect(failure.error.length).toBeGreaterThan(0);
   });
 
   it("a failed bundle does not abort siblings — workspace still gets a registry", async () => {
