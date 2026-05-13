@@ -160,6 +160,17 @@ describe("clearWorkspaceCredential", () => {
     const filePath = credentialPath(WS_A, BUNDLE, workDir);
     await expect(stat(filePath)).rejects.toMatchObject({ code: "ENOENT" });
   });
+
+  test("returns false (no-op) for a URL-shaped bundle name", async () => {
+    // Same rationale as clearAllWorkspaceCredentials — see that test.
+    const removed = await clearWorkspaceCredential(
+      WS_A,
+      "https://mcp.dropbox.com/mcp",
+      "any_key",
+      workDir,
+    );
+    expect(removed).toBe(false);
+  });
 });
 
 // ── clearAllWorkspaceCredentials ──────────────────────────────────
@@ -178,6 +189,28 @@ describe("clearAllWorkspaceCredentials", () => {
   test("returns false when the file does not exist", async () => {
     const removed = await clearAllWorkspaceCredentials(WS_A, BUNDLE, workDir);
     expect(removed).toBe(false);
+  });
+
+  test("returns false (no-op) for a URL-shaped bundle name", async () => {
+    // URL-installed remote bundles set `instance.bundleName` to the URL
+    // itself, which the slug validator rejects. Cleanup is by contract
+    // tolerant of names that couldn't have stored anything — URL bundles
+    // store nothing here (OAuth tokens live in mcp-oauth/<serverName>/).
+    // Surfaced operationally during the OAuth bouncer cutover for hq:
+    // disconnect-and-reconnect logged "Failed to clear credentials for
+    // https://mcp.dropbox.com/mcp ... invalid bundle name".
+    const removed = await clearAllWorkspaceCredentials(
+      WS_A,
+      "https://mcp.dropbox.com/mcp",
+      workDir,
+    );
+    expect(removed).toBe(false);
+  });
+
+  test("returns false for empty or path-traversal bundle names", async () => {
+    expect(await clearAllWorkspaceCredentials(WS_A, "", workDir)).toBe(false);
+    expect(await clearAllWorkspaceCredentials(WS_A, "..", workDir)).toBe(false);
+    expect(await clearAllWorkspaceCredentials(WS_A, "../etc/passwd", workDir)).toBe(false);
   });
 });
 

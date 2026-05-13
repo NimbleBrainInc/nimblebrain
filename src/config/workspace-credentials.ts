@@ -59,6 +59,18 @@ export function bundleSlug(bundleName: string): string {
   return slug;
 }
 
+/**
+ * Non-throwing predicate version of `bundleSlug`. Used by cleanup paths
+ * that need to silently no-op on names that couldn't have stored
+ * anything in the first place — see the comment on `clearAllWorkspaceCredentials`
+ * for the URL-bundle case this exists to handle.
+ */
+export function isSluggable(bundleName: unknown): bundleName is string {
+  if (typeof bundleName !== "string" || bundleName.length === 0) return false;
+  const slug = bundleName.replace(/^@/, "").replace(/[/\\]/g, "-");
+  return SLUG_RE.test(slug) && slug !== "." && slug !== "..";
+}
+
 /** Assert `wsId` matches the shape enforced by `WorkspaceStore`. */
 function assertValidWsId(wsId: string): void {
   if (typeof wsId !== "string" || !WORKSPACE_ID_RE.test(wsId)) {
@@ -283,6 +295,13 @@ export async function clearWorkspaceCredential(
   key: string,
   workDir: string,
 ): Promise<boolean> {
+  // Cleanup is by contract tolerant of names that couldn't have stored
+  // anything. URL-installed remote bundles set `instance.bundleName` to
+  // the URL itself, which fails the slug validator — but those bundles
+  // never write to this store anyway (OAuth tokens live in the
+  // `mcp-oauth/<serverName>/` tree). Return false (no-op) instead of
+  // throwing the validator error from the cleanup path.
+  if (!isSluggable(bundleName)) return false;
   const filePath = credentialPath(wsId, bundleName, workDir);
   return withFileLock(filePath, async () => {
     const existing = await getWorkspaceCredentials(wsId, bundleName, workDir);
@@ -316,6 +335,8 @@ export async function clearAllWorkspaceCredentials(
   bundleName: string,
   workDir: string,
 ): Promise<boolean> {
+  // See `clearWorkspaceCredential` for the unsluggable-name rationale.
+  if (!isSluggable(bundleName)) return false;
   const filePath = credentialPath(wsId, bundleName, workDir);
   return withFileLock(filePath, async () => {
     try {
