@@ -1106,7 +1106,7 @@ export class Runtime {
    * construction so failed bundles appear as `dead` in `/v1/health`.
    */
   bundleStartFailures(): import("./workspace-runtime.ts").BundleStartFailure[] {
-    return this._bundleStartFailures;
+    return [...this._bundleStartFailures];
   }
 
   /** Get MCP sources across all workspace registries (for health monitoring). */
