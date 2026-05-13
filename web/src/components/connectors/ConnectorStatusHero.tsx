@@ -1,5 +1,10 @@
 import { useMemo, useState } from "react";
-import { type DirectoryEntry, initiateMcpOAuth, type InstalledConnector } from "../../api/client";
+import {
+  type DirectoryEntry,
+  initiateComposioOAuth,
+  initiateMcpOAuth,
+  type InstalledConnector,
+} from "../../api/client";
 import { BundleCredentialsModal } from "./BundleCredentialsModal";
 import { ConnectorIcon } from "./ConnectorIcon";
 import { OperatorSetupModal } from "./OperatorSetupModal";
@@ -87,7 +92,14 @@ export function ConnectorStatusHero({
     if (action.kind === "oauth") {
       setActing(true);
       try {
-        const { authorizationUrl } = await initiateMcpOAuth(installed.serverName);
+        // Composio-backed connectors route through their own
+        // initiate endpoint (Composio holds the tokens; we just
+        // persist a connectedAccountId pointer). Native OAuth
+        // (dcr + static) still goes through /v1/mcp-auth/initiate.
+        const { authorizationUrl } =
+          cat?.auth === "composio"
+            ? await initiateComposioOAuth(cat.id)
+            : await initiateMcpOAuth(installed.serverName);
         window.location.assign(authorizationUrl);
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));

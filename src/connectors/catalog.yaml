@@ -131,6 +131,91 @@ servers:
   # not in the allowlist, reach out to Intercom Customer Support if
   # you believe we should support it." Re-add once #200 lands.
 
+  # Composio-backed Gmail. Stopgap until our own Google OAuth client
+  # passes restricted-scope verification — Composio holds the
+  # vendor's tokens and exposes the toolkit through a per-session
+  # MCP URL. The URL here is a placeholder: at install time the
+  # platform calls `composio.create(userId, { authConfigs: { gmail:
+  # <ac_…> } })` and replaces it with the returned `session.mcp.url`.
+  # The x-api-key header value is resolved at start time from
+  # process.env (never persisted to workspace.json).
+  - name: com.google/gmail
+    title: Gmail
+    description: Read, send, and draft mail (via Composio)
+    version: "0.1.0"
+    icons:
+      - src: https://static.nimblebrain.ai/icons/gmail.png
+        sizes: ["any"]
+    remotes:
+      - type: streamable-http
+        url: https://backend.composio.dev/v3/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        defaultScope: workspace
+        auth: composio
+        composio:
+          toolkit: gmail
+          authConfigEnv: COMPOSIO_GMAIL_AUTH_CONFIG_ID
+          # Curated working set. Composio's Gmail toolkit publishes
+          # ~60 tools; exposing all of them blows up the agent's
+          # tool-search context. Add to this list when a user need
+          # surfaces; default tight.
+          tools:
+            - GMAIL_SEND_EMAIL
+            - GMAIL_FETCH_EMAILS
+            - GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID
+            - GMAIL_FETCH_MESSAGE_BY_THREAD_ID
+            - GMAIL_LIST_THREADS
+            - GMAIL_LIST_LABELS
+            - GMAIL_CREATE_EMAIL_DRAFT
+            - GMAIL_SEND_DRAFT
+            - GMAIL_LIST_DRAFTS
+            - GMAIL_REPLY_TO_THREAD
+            - GMAIL_FORWARD_MESSAGE
+            - GMAIL_ADD_LABEL_TO_EMAIL
+            - GMAIL_MOVE_TO_TRASH
+            - GMAIL_SEARCH_PEOPLE
+            - GMAIL_GET_PROFILE
+        tags: [email, productivity, composio]
+
+  - name: com.microsoft/outlook
+    title: Outlook
+    description: Read, send, and draft mail (via Composio)
+    version: "0.1.0"
+    icons:
+      - src: https://static.nimblebrain.ai/icons/outlook.png
+        sizes: ["any"]
+    remotes:
+      - type: streamable-http
+        url: https://backend.composio.dev/v3/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        defaultScope: workspace
+        auth: composio
+        composio:
+          toolkit: outlook
+          authConfigEnv: COMPOSIO_OUTLOOK_AUTH_CONFIG_ID
+          # Outlook publishes ~280 tools — curate aggressively.
+          # Slugs verified against Composio's published catalog
+          # (see `nb__search outlook` output for the full set).
+          tools:
+            - OUTLOOK_SEND_EMAIL
+            - OUTLOOK_REPLY_EMAIL
+            - OUTLOOK_FORWARD_MESSAGE
+            - OUTLOOK_LIST_MESSAGES
+            - OUTLOOK_LIST_SENT_ITEMS_MESSAGES
+            - OUTLOOK_GET_MESSAGE
+            - OUTLOOK_DELETE_MESSAGE
+            - OUTLOOK_MOVE_MESSAGE
+            - OUTLOOK_CREATE_DRAFT
+            - OUTLOOK_SEND_DRAFT
+            - OUTLOOK_LIST_MAIL_FOLDERS
+            - OUTLOOK_LIST_EVENTS
+            - OUTLOOK_CALENDAR_CREATE_EVENT
+            - OUTLOOK_ACCEPT_EVENT
+            - OUTLOOK_GET_PROFILE
+        tags: [email, productivity, composio]
+
   - name: com.mercury/mcp
     title: Mercury
     description: Banking accounts, transactions, and balances (read-only)
