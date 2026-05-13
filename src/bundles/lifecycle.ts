@@ -1363,6 +1363,56 @@ export class BundleLifecycleManager {
    * No-op when the instance can't be found — defensive guard for
    * mis-ordered call sites; logs at debug.
    */
+  /**
+   * Ensure the workspace registry has a running source for
+   * `serverName`. No-op if one is already registered. Otherwise,
+   * reconstructs the source from the persisted `BundleRef` on the
+   * `BundleInstance` and starts it via `startBundleSource`.
+   *
+   * The use case: `disconnect()` calls `teardownConnectionSource`,
+   * which removes the source from the registry. On reconnect, the
+   * platform records a "running" state — but recording is a state
+   * mutation, not a source-lifecycle operation. Without this helper,
+   * the registry stays empty and tool calls fail with "source not
+   * started" until the next platform restart.
+   *
+   * The native OAuth reconnect path routes through `startAuth`,
+   * which already calls `startBundleSource` internally. The Composio
+   * reconnect path doesn't go through `startAuth` (different OAuth
+   * model — the dance happens server-side via Composio's API, not
+   * via the MCP SDK's OAuth provider), so it needs this helper.
+   *
+   * Throws when:
+   *   - The workspace has no registry yet (boot ordering bug — should
+   *     not happen in production code paths)
+   *   - The BundleInstance has no URL ref persisted (shouldn't happen
+   *     for any path that goes through install)
+   *
+   * `startBundleSource` itself can throw on transport / handshake
+   * failures; callers should decide whether to swallow or surface.
+   */
+  async ensureSourceRegistered(serverName: string, wsId: string, workDir: string): Promise<void> {
+    const wsRegistry = this.registriesByWs.get(wsId);
+    if (!wsRegistry) {
+      throw new Error(`[lifecycle] no registry for workspace "${wsId}"`);
+    }
+    if (wsRegistry.hasSource(serverName)) return;
+
+    const instance = this.instances.get(`${serverName}|${wsId}`);
+    const ref = instance?.ref;
+    if (!ref || !("url" in ref)) {
+      throw new Error(
+        `[lifecycle] cannot re-register source "${serverName}" in ${wsId} — no URL ref persisted`,
+      );
+    }
+
+    await startBundleSource(ref, wsRegistry, this.eventSink, undefined, {
+      allowInsecureRemotes: this.allowInsecureRemotes,
+      wsId,
+      workDir,
+    });
+  }
+
   notifyInstalled(serverName: string, wsId: string): void {
     const instance = this.instances.get(`${serverName}|${wsId}`);
     if (!instance) {

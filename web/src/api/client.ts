@@ -537,8 +537,8 @@ export async function initiateMcpOAuth(
  */
 export async function initiateComposioOAuth(
   connectorId: string,
-): Promise<{ authorizationUrl: string; pendingConnectedAccountId: string }> {
-  return request<{ authorizationUrl: string; pendingConnectedAccountId: string }>(
+): Promise<{ authorizationUrl: string; alreadyConnected?: boolean }> {
+  return request<{ authorizationUrl: string; alreadyConnected?: boolean }>(
     "/v1/composio-auth/initiate",
     {
       method: "POST",

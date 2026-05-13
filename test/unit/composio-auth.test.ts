@@ -100,6 +100,15 @@ function stubCtx(
       calls.recordConnectionStateChange.lastCall = { serverName, wsId, principalId, state };
       calls.recordConnectionStateChange.callCount++;
     },
+    // The reconnect path (callback + initiate adopt) calls
+    // `ensureSourceRegistered` before recording state to bring the
+    // McpSource back up after a prior disconnect's
+    // `teardownConnectionSource`. The stub no-ops; assertion-level
+    // tests for source recovery live in a future lifecycle-specific
+    // test file that needs the real registry.
+    async ensureSourceRegistered(): Promise<void> {
+      // intentional no-op for these tests
+    },
   };
   const runtime = {
     getConnectorDirectory() {
@@ -497,11 +506,9 @@ describe("POST /v1/composio-auth/initiate", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       authorizationUrl: string;
-      pendingConnectedAccountId: string;
       alreadyConnected?: boolean;
     };
     expect(body.authorizationUrl).toBe("https://connect.composio.dev/link/lk_42");
-    expect(body.pendingConnectedAccountId).toBe("ca_pending");
     expect(body.alreadyConnected).toBeUndefined();
 
     // Cookie shape: HttpOnly + SameSite=Lax + path-scoped to the
@@ -552,11 +559,9 @@ describe("POST /v1/composio-auth/initiate", () => {
       expect(res.status).toBe(200);
       const body = (await res.json()) as {
         authorizationUrl: string;
-        pendingConnectedAccountId: string;
         alreadyConnected?: boolean;
       };
       expect(body.alreadyConnected).toBe(true);
-      expect(body.pendingConnectedAccountId).toBe("ca_already_active");
 
       // connection.json landed on disk under the existing account id.
       const stored = await readComposioConnection(dir, WS_ID, "com.google/gmail");

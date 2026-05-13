@@ -196,21 +196,34 @@ export function composioAuthRoutes(ctx: AppContext) {
             status: existing.status,
           };
           await saveComposioConnection(ctx.runtime.getWorkDir(), wsId, connectorId, connection);
+          // Reconnect-after-disconnect needs to bring the MCP source
+          // back online — `disconnect()` calls `teardownConnectionSource`
+          // which removes the source from the workspace registry, and
+          // pure state mutations (recordConnectionStateChange) don't
+          // restart it. Without this, the bundle shows "running" but
+          // tool calls fail with "source not started" until restart.
+          // Install-path eager-start works for first connect because
+          // the source has never been torn down; this path handles
+          // every subsequent connect.
+          const serverName = slugifyServerName(connectorId);
           try {
-            const serverName = slugifyServerName(connectorId);
-            ctx.runtime
-              .getLifecycle()
-              .recordConnectionStateChange(serverName, wsId, WORKSPACE_PRINCIPAL_ID, "running");
+            const lifecycle = ctx.runtime.getLifecycle();
+            await lifecycle.ensureSourceRegistered(serverName, wsId, ctx.runtime.getWorkDir());
+            lifecycle.recordConnectionStateChange(
+              serverName,
+              wsId,
+              WORKSPACE_PRINCIPAL_ID,
+              "running",
+            );
           } catch (err) {
             log.warn(
-              `[composio-auth] adopt: state transition failed for ${connectorId} in ${wsId}: ${
+              `[composio-auth] adopt: source recovery / state transition failed for ${connectorId} in ${wsId}: ${
                 err instanceof Error ? err.message : String(err)
               }`,
             );
           }
           return c.json({
             authorizationUrl: composioSuccessRedirectUrl(c.req.url),
-            pendingConnectedAccountId: existing.id,
             alreadyConnected: true,
           });
         }
@@ -273,7 +286,6 @@ export function composioAuthRoutes(ctx: AppContext) {
 
       return c.json({
         authorizationUrl: initiateResponse.redirectUrl,
-        pendingConnectedAccountId: initiateResponse.connectedAccountId,
       });
     },
   );
@@ -346,20 +358,25 @@ export function composioAuthRoutes(ctx: AppContext) {
     // at boot when connection.json was absent) to `running`. Without
     // this the UI would keep showing "Sign-in required" until the
     // next platform restart, even though tools were already callable.
-    // The bundle's McpSource started successfully at install via
-    // static-auth (x-api-key) — what just landed is the user-presence
-    // signal, not the transport handshake.
+    //
+    // After a Disconnect → Connect cycle, `teardownConnectionSource`
+    // has already removed the source from the workspace registry —
+    // pure state mutation isn't enough to recover. `ensureSourceRegistered`
+    // brings the source back up from the persisted BundleRef if it's
+    // missing, no-ops if it's already there (first-connect path,
+    // where the install-eager-start already registered).
+    const serverName = slugifyServerName(cid);
     try {
-      const serverName = slugifyServerName(cid);
-      ctx.runtime
-        .getLifecycle()
-        .recordConnectionStateChange(serverName, wsId, WORKSPACE_PRINCIPAL_ID, "running");
+      const lifecycle = ctx.runtime.getLifecycle();
+      await lifecycle.ensureSourceRegistered(serverName, wsId, ctx.runtime.getWorkDir());
+      lifecycle.recordConnectionStateChange(serverName, wsId, WORKSPACE_PRINCIPAL_ID, "running");
     } catch (err) {
       // Non-fatal — the next boot will derive `running` from
-      // connection.json. Log and continue to the success page.
+      // connection.json and start the source from the persisted ref.
+      // Log and continue to the success page.
       const msg = err instanceof Error ? err.message : String(err);
       log.warn(
-        `[composio-auth] state transition failed for ${cid} in ${wsId} (will recover on restart): ${msg}`,
+        `[composio-auth] source recovery / state transition failed for ${cid} in ${wsId} (will recover on restart): ${msg}`,
       );
     }
 

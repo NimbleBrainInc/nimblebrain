@@ -1073,8 +1073,13 @@ async function handleInstallRemoteOAuth(
       // Composio doesn't return today and likely never will.
       // `resolveEnvTemplate` re-expands the template at transport
       // build time, preserving any surrounding prefix.
+      // `replaceAll` over `replace` because the stated defense is
+      // "every occurrence of the secret gets scrubbed" — a future
+      // shape that includes the key twice in one value (unlikely,
+      // but the whole reason for the check) wouldn't fully scrub
+      // with single-occurrence replace.
       // biome-ignore lint/suspicious/noTemplateCurlyInString: deliberate placeholder — resolved by `resolveEnvTemplate` at transport build time
-      extraHeaders[k] = v.includes(apiKey) ? v.replace(apiKey, "${COMPOSIO_API_KEY}") : v;
+      extraHeaders[k] = v.includes(apiKey) ? v.replaceAll(apiKey, "${COMPOSIO_API_KEY}") : v;
     }
     composioWiring = {
       url: sessionMcp.url,
