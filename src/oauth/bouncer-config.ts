@@ -32,16 +32,28 @@
  *     runtime, so plumbing both endpoints from one source eliminates
  *     a class of `bad_mac` mismatches from typos.
  *
- * Bouncer mode requires all three. Partial configuration of the two
- * `NB_OAUTH_BOUNCER_*` vars, a missing `NB_TENANT_ID` while bouncer
- * mode is requested, or any malformed value is a deploy-time error
- * that fails closed at the first call to `getBouncerMode()`. The
- * mcp-auth route module calls this at module load via `mcpAuthRoutes`,
- * so a misconfigured deployment crashes immediately at server startup
- * rather than serving traffic and failing on the first user OAuth
- * attempt. Subsequent calls hit the cache and don't re-validate.
+ * `NB_OAUTH_BOUNCER_CALLBACK_URL` is the mode signal — its presence,
+ * specifically, enables bouncer mode. When it is set, the key and the
+ * tenant id must also be set (and valid); a missing or malformed value
+ * in that state is a deploy-time error that fails closed at the first
+ * call to `getBouncerMode()`. The mcp-auth route module calls this at
+ * module load via `mcpAuthRoutes`, so a misconfigured deployment
+ * crashes immediately at server startup rather than serving traffic
+ * and failing on the first user OAuth attempt.
+ *
+ * The asymmetric case: `NB_OAUTH_BOUNCER_TENANT_KEY` set without the
+ * URL. This is the shape of a rolled-back tenant where the chart's
+ * `envFrom: secretRef` keeps injecting the key from `agent-secrets`
+ * even though `oauthBouncer.enabled: false`. Treat it as direct mode
+ * and log a single boot-time warning suggesting the cleanup step
+ * (drop the entry from the ExternalSecret). Crashing here would brick
+ * the pod for an issue that has no runtime consequence — the key
+ * just sits unused.
+ *
+ * Subsequent calls hit the cache and don't re-validate.
  */
 
+import { log } from "../cli/log.ts";
 import { ALLOWED_TID_PATTERN, isUniformByte } from "./envelope.ts";
 
 export interface BouncerMode {
@@ -77,6 +89,12 @@ let _cached: BouncerMode | null | undefined;
  * values.
  */
 export function getBouncerMode(): BouncerMode | null {
+  // The "warn once at boot" property for the stray-key path is a
+  // side-effect of this cache, not a separate hasWarned flag: the
+  // warning is emitted inside readAndValidate, and the cache prevents
+  // re-entry. If a future refactor introduces a non-test code path
+  // that clears the cache mid-process, the warning would re-fire on
+  // the next call — noisy but not incorrect.
   if (_cached !== undefined) return _cached;
   _cached = readAndValidate(process.env);
   return _cached;
@@ -95,24 +113,35 @@ function readAndValidate(env: NodeJS.ProcessEnv): BouncerMode | null {
   const tenantKeyB64 = env[TENANT_KEY_ENV];
   const tid = env[TENANT_ID_ENV];
 
-  const bouncerVarsPresent = [callbackUrl, tenantKeyB64].filter(
-    (v): v is string => typeof v === "string" && v.length > 0,
-  );
+  const hasUrl = typeof callbackUrl === "string" && callbackUrl.length > 0;
+  const hasKey = typeof tenantKeyB64 === "string" && tenantKeyB64.length > 0;
 
-  // Direct mode: neither bouncer-specific var is set. Don't care
-  // whether NB_TENANT_ID is set; other parts of the platform may use
-  // it for telemetry/logs without triggering bouncer mode.
-  if (bouncerVarsPresent.length === 0) return null;
+  // Direct mode. The URL is the authoritative mode signal; when it's
+  // unset, we run in direct mode regardless of the other vars.
+  //
+  // Asymmetric case: the key is present but the URL isn't. This is the
+  // shape left behind by a tenant that was rolled back from bouncer
+  // mode while the chart's `envFrom: secretRef` keeps injecting the
+  // key from `agent-secrets`. The key is harmless here — no code reads
+  // it — but the leak suggests an incomplete cleanup, so emit a
+  // one-time warning pointing the operator at the fix.
+  if (!hasUrl) {
+    if (hasKey) {
+      log.warn(
+        `[oauth bouncer] ${TENANT_KEY_ENV} is set but ${CALLBACK_URL_ENV} is not — running in direct mode. ` +
+          `This typically means the ExternalSecret still lists the key after a bouncer-mode rollback. ` +
+          `Drop the NB_OAUTH_BOUNCER_TENANT_KEY entry from the tenant's external-secret.yaml and kubectl apply to clean up.`,
+      );
+    }
+    return null;
+  }
 
-  // Partial config of the two bouncer vars is almost always a deploy
-  // mistake (operator wired one Helm value but not the other).
-  if (bouncerVarsPresent.length < 2) {
-    const missing = [
-      callbackUrl ? null : CALLBACK_URL_ENV,
-      tenantKeyB64 ? null : TENANT_KEY_ENV,
-    ].filter((v): v is string => v !== null);
+  // From here on, bouncer mode is requested. Everything must be valid.
+
+  if (!hasKey) {
     throw new Error(
-      `[oauth bouncer] Partial configuration. Set both ${CALLBACK_URL_ENV} and ${TENANT_KEY_ENV} together or neither. Missing: ${missing.join(", ")}`,
+      `[oauth bouncer] ${CALLBACK_URL_ENV} is set but ${TENANT_KEY_ENV} is missing. Bouncer mode needs both. ` +
+        `Run \`make derive-tenant-key CLIENT=<x> ENV=<env>\` to provision the per-tenant signing key.`,
     );
   }
 
@@ -125,7 +154,8 @@ function readAndValidate(env: NodeJS.ProcessEnv): BouncerMode | null {
     );
   }
 
-  // Narrow for TS. Both bouncer vars are non-empty strings at this point.
+  // Narrow for TS — the two hasUrl/hasKey checks above guarantee
+  // these are non-empty strings at this point.
   if (!callbackUrl || !tenantKeyB64) {
     throw new Error("[oauth bouncer] internal: presence check failed unexpectedly");
   }

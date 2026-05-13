@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { log } from "../../src/cli/log.ts";
 import { _resetBouncerModeForTest, getBouncerMode } from "../../src/oauth/bouncer-config.ts";
 
 const ENV_VARS = [
@@ -30,25 +31,31 @@ function restore(saved: Record<string, string | undefined>): void {
 
 describe("bouncer-config: presence", () => {
   let saved: Record<string, string | undefined>;
+  let warnSpy: ReturnType<typeof spyOn>;
   beforeEach(() => {
     saved = snapshot();
     for (const k of ENV_VARS) delete process.env[k];
     _resetBouncerModeForTest();
+    warnSpy = spyOn(log, "warn").mockImplementation(() => {});
   });
   afterEach(() => {
     restore(saved);
     _resetBouncerModeForTest();
+    warnSpy.mockRestore();
   });
 
-  test("returns null when no bouncer vars are set (direct mode)", () => {
+  test("returns null when no bouncer vars are set (direct mode), no warning", () => {
     expect(getBouncerMode()).toBeNull();
+    // Locks in "warning only on stray key, never on clean direct mode."
+    expect(warnSpy).not.toHaveBeenCalled();
   });
 
-  test("returns null even when NB_TENANT_ID is set alone (direct mode)", () => {
+  test("returns null even when NB_TENANT_ID is set alone (direct mode), no warning", () => {
     // NB_TENANT_ID is a general-purpose primitive; setting it without the
-    // OAuth-specific vars must NOT trip bouncer mode.
+    // OAuth-specific vars must NOT trip bouncer mode and must NOT warn.
     process.env.NB_TENANT_ID = VALID_TID;
     expect(getBouncerMode()).toBeNull();
+    expect(warnSpy).not.toHaveBeenCalled();
   });
 
   test("returns a populated config when both bouncer vars and NB_TENANT_ID are set", () => {
@@ -61,6 +68,7 @@ describe("bouncer-config: presence", () => {
     expect(cfg?.callbackUrl).toBe(VALID_CALLBACK);
     expect(cfg?.tid).toBe(VALID_TID);
     expect(cfg?.tenantKey).toHaveLength(32);
+    expect(warnSpy).not.toHaveBeenCalled();
   });
 
   test("caches the result — subsequent reads do not re-validate", () => {
@@ -75,38 +83,77 @@ describe("bouncer-config: presence", () => {
   });
 });
 
-describe("bouncer-config: partial configuration is rejected", () => {
+describe("bouncer-config: URL is the mode signal", () => {
   let saved: Record<string, string | undefined>;
+  let warnSpy: ReturnType<typeof spyOn>;
   beforeEach(() => {
     saved = snapshot();
     for (const k of ENV_VARS) delete process.env[k];
     _resetBouncerModeForTest();
+    warnSpy = spyOn(log, "warn").mockImplementation(() => {});
   });
   afterEach(() => {
     restore(saved);
     _resetBouncerModeForTest();
+    warnSpy.mockRestore();
   });
 
-  test("throws when only callback URL is set", () => {
+  test("URL set + KEY missing → fatal (operator clearly meant to enable bouncer)", () => {
     process.env.NB_OAUTH_BOUNCER_CALLBACK_URL = VALID_CALLBACK;
-    expect(() => getBouncerMode()).toThrow(/Partial configuration/);
+    // Key deliberately unset
+    expect(() => getBouncerMode()).toThrow(/NB_OAUTH_BOUNCER_TENANT_KEY is missing/);
+    // Fatal path, not the warn path — confirm we didn't also fire the warn.
+    expect(warnSpy).not.toHaveBeenCalled();
   });
 
-  test("throws when only tenant key is set", () => {
+  test("URL unset + KEY set → direct mode + warn (residue from rollback, not fatal)", () => {
+    // This is the shape after rolling back oauthBouncer.enabled: false:
+    // the chart's envFrom: secretRef keeps injecting the key from
+    // agent-secrets even though the URL is gone. The platform should
+    // treat this as direct mode, not crash. And it must WARN —
+    // otherwise the operator never knows there's leftover state.
     process.env.NB_OAUTH_BOUNCER_TENANT_KEY = VALID_KEY_B64;
-    expect(() => getBouncerMode()).toThrow(/Partial configuration/);
+    expect(getBouncerMode()).toBeNull();
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    const msg = warnSpy.mock.calls[0]?.[0] as string;
+    expect(msg).toMatch(
+      /NB_OAUTH_BOUNCER_TENANT_KEY is set but NB_OAUTH_BOUNCER_CALLBACK_URL is not/,
+    );
+    // Names the cleanup step explicitly — otherwise the warning is
+    // sympathetic noise that doesn't tell the operator what to do.
+    expect(msg).toMatch(/external-secret\.yaml/);
   });
 
-  test("error message names the missing bouncer variable", () => {
-    process.env.NB_OAUTH_BOUNCER_CALLBACK_URL = VALID_CALLBACK;
-    expect(() => getBouncerMode()).toThrow(/NB_OAUTH_BOUNCER_TENANT_KEY/);
+  test("URL unset + KEY set + TID set → direct mode + warn (still benign)", () => {
+    // NB_TENANT_ID is always injected by the chart (general primitive).
+    // Stray key + tid without URL is still just rollback residue.
+    process.env.NB_OAUTH_BOUNCER_TENANT_KEY = VALID_KEY_B64;
+    process.env.NB_TENANT_ID = VALID_TID;
+    expect(getBouncerMode()).toBeNull();
+    expect(warnSpy).toHaveBeenCalledTimes(1);
   });
 
-  test("throws when bouncer vars are set but NB_TENANT_ID is missing", () => {
+  test("warn fires only once across repeated getBouncerMode() calls (cache property)", () => {
+    // The "warn once at boot" property is a side-effect of the lazy
+    // cache: readAndValidate runs on the first call, the result is
+    // memoized, subsequent calls return the cached value without
+    // re-running validation. If a future refactor adds a code path
+    // that clears the cache mid-process, the warn would re-fire on
+    // the next call — which would be noisy but not incorrect. This
+    // test pins the once-at-boot behavior under the cache.
+    process.env.NB_OAUTH_BOUNCER_TENANT_KEY = VALID_KEY_B64;
+    expect(getBouncerMode()).toBeNull();
+    expect(getBouncerMode()).toBeNull();
+    expect(getBouncerMode()).toBeNull();
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+  });
+
+  test("Bouncer mode requires NB_TENANT_ID when URL+KEY are both set", () => {
     process.env.NB_OAUTH_BOUNCER_CALLBACK_URL = VALID_CALLBACK;
     process.env.NB_OAUTH_BOUNCER_TENANT_KEY = VALID_KEY_B64;
     // NB_TENANT_ID deliberately unset
     expect(() => getBouncerMode()).toThrow(/NB_TENANT_ID/);
+    expect(warnSpy).not.toHaveBeenCalled();
   });
 });
 
