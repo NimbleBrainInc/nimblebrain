@@ -1,15 +1,53 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Hono } from "hono";
+
+// ── @composio/core mock ─────────────────────────────────────────────
+//
+// Hoisted before the route file imports the SDK adapter — same
+// pattern as composio-sdk.test.ts. Tests rewire `sdkCalls.*Impl` to
+// drive specific behaviour. Without this, /initiate tests that
+// exercise the adopt-existing path or the fresh-flow path would hit
+// the real Composio API on a test run.
+interface SdkCalls {
+  listImpl: (q: unknown) => Promise<{ items?: Array<{ id?: unknown; status?: unknown }> }>;
+  initiateImpl: (...args: unknown[]) => Promise<unknown>;
+}
+const sdkCalls: SdkCalls = {
+  listImpl: async () => ({ items: [] }),
+  initiateImpl: async () => ({
+    redirectUrl: "https://connect.composio.dev/link/lk_default",
+    id: "ca_default",
+  }),
+};
+mock.module("@composio/core", () => ({
+  Composio: class {
+    connectedAccounts = {
+      list: (q: unknown) => sdkCalls.listImpl(q),
+      initiate: (...args: unknown[]) => sdkCalls.initiateImpl(...args),
+      delete: async () => undefined,
+    };
+    create = async () => ({
+      sessionId: "session_default",
+      mcp: { type: "http", url: "https://composio.test/mcp/x", headers: { "x-api-key": "k" } },
+    });
+  },
+}));
+
+import type { AppContext, AppEnv } from "../../src/api/types.ts";
 import { composioAuthRoutes } from "../../src/api/routes/composio-auth.ts";
-import { composioCallbackUrl, composioUserId } from "../../src/composio/sdk.ts";
 import {
   composioConnectionPath,
   readComposioConnection,
 } from "../../src/bundles/composio-connection.ts";
-import type { AppContext } from "../../src/api/types.ts";
+import {
+  _resetComposioConfigForTest,
+  composioCallbackUrl,
+  composioUserId,
+} from "../../src/composio/sdk.ts";
 
 function sha256Hex(input: string): string {
   return createHash("sha256").update(input).digest("hex");
@@ -23,10 +61,46 @@ function sha256Hex(input: string): string {
  * are unauthenticated by design; the initiate route is covered
  * separately by the helper-function tests).
  */
+/**
+ * Capturing record of the last `recordConnectionStateChange` call the
+ * stub lifecycle observed. Tests assert against `.lastCall` to verify
+ * the callback / initiate adopt paths actually flip the bundle's
+ * persisted state — previously the callback's `try { ctx.runtime
+ * .getLifecycle().recordConnectionStateChange(...) }` silently
+ * swallowed the throw from a stub-missing-method test (the call was
+ * never asserted, so a refactor dropping it would have gone
+ * unnoticed). The stub now succeeds AND records what was called.
+ */
+interface StubLifecycleCalls {
+  recordConnectionStateChange: {
+    lastCall: {
+      serverName: string;
+      wsId: string;
+      principalId: string;
+      state: string;
+    } | null;
+    callCount: number;
+  };
+}
+
 function stubCtx(
   workDir: string,
   catalogEntry: ReturnType<typeof composioEntry> | null,
-): AppContext {
+): AppContext & { __lifecycleCalls: StubLifecycleCalls } {
+  const calls: StubLifecycleCalls = {
+    recordConnectionStateChange: { lastCall: null, callCount: 0 },
+  };
+  const lifecycle = {
+    recordConnectionStateChange(
+      serverName: string,
+      wsId: string,
+      principalId: string,
+      state: string,
+    ): void {
+      calls.recordConnectionStateChange.lastCall = { serverName, wsId, principalId, state };
+      calls.recordConnectionStateChange.callCount++;
+    },
+  };
   const runtime = {
     getConnectorDirectory() {
       return {
@@ -37,6 +111,9 @@ function stubCtx(
     getWorkDir() {
       return workDir;
     },
+    getLifecycle() {
+      return lifecycle;
+    },
   } as unknown as AppContext["runtime"];
 
   return {
@@ -44,7 +121,8 @@ function stubCtx(
     workspaceStore: { get: async () => null } as unknown as AppContext["workspaceStore"],
     authOptions: {} as AppContext["authOptions"],
     isLocalhost: true,
-  } as unknown as AppContext;
+    __lifecycleCalls: calls,
+  } as unknown as AppContext & { __lifecycleCalls: StubLifecycleCalls };
 }
 
 function composioEntry(id: string) {
@@ -59,7 +137,6 @@ function composioEntry(id: string) {
     composio: {
       toolkit: "gmail",
       authConfigEnv: "COMPOSIO_GMAIL_AUTH_CONFIG_ID",
-      serverIdEnv: "COMPOSIO_GMAIL_SERVER_ID",
     },
   };
 }
@@ -160,11 +237,12 @@ describe("GET /v1/composio-auth/proxy", () => {
 });
 
 describe("GET /v1/composio-auth/callback", () => {
-  test("writes connection.json when the nonce cookie matches", async () => {
+  test("writes connection.json AND transitions lifecycle state when cookie matches", async () => {
     const { dir, cleanup } = freshDir();
     try {
       const entry = composioEntry("com.google/gmail");
-      const app = composioAuthRoutes(stubCtx(dir, entry));
+      const ctx = stubCtx(dir, entry);
+      const app = composioAuthRoutes(ctx);
       const nonce = "deadbeefdeadbeefdeadbeefdeadbeef";
       const wsId = "ws_test";
       const cid = "com.google/gmail";
@@ -185,6 +263,19 @@ describe("GET /v1/composio-auth/callback", () => {
       expect(stored?.connectedAccountId).toBe("ca_xyz");
       expect(stored?.toolkit).toBe("gmail");
       expect(stored?.status).toBe("ACTIVE");
+
+      // Lifecycle state transition is required — without it the UI
+      // shows "Sign-in required" until the next platform restart even
+      // though connection.json landed. Asserting the exact call shape
+      // catches a refactor that drops the transition silently (the
+      // route's `try/catch` would otherwise hide the regression).
+      expect(ctx.__lifecycleCalls.recordConnectionStateChange.callCount).toBe(1);
+      expect(ctx.__lifecycleCalls.recordConnectionStateChange.lastCall).toEqual({
+        serverName: "com-google-gmail",
+        wsId: "ws_test",
+        principalId: "_workspace",
+        state: "running",
+      });
 
       // Cookie cleared so refresh of the success page can't replay.
       const setCookie = res.headers.get("set-cookie") ?? "";
@@ -268,18 +359,329 @@ describe("GET /v1/composio-auth/callback", () => {
     }
   });
 
-  test("rejects malformed cid", async () => {
+  test("rejects malformed cid (path-traversal substring) before reading cookie", async () => {
+    // Bind a valid cookie hash for the malformed cid so the test fails
+    // at the cid validation step rather than the session-mismatch step.
+    // Without the cookie binding, this test would pass for the wrong
+    // reason — verifying nothing about cid validation specifically.
     const { dir, cleanup } = freshDir();
     try {
       const app = composioAuthRoutes(stubCtx(dir, composioEntry("com.google/gmail")));
+      const cid = "../escape";
+      const nonce = "n";
+      const wsId = "ws_test";
+      const cookieHash = sha256Hex(`${nonce}.${cid}.${wsId}`);
       const url =
         "http://nb.test/v1/composio-auth/callback?cid=" +
-        encodeURIComponent("../escape") +
-        "&ws=ws_test&n=x&connected_account_id=ca_xyz";
-      const res = await app.request(url);
+        encodeURIComponent(cid) +
+        `&ws=${wsId}&n=${nonce}&connected_account_id=ca_xyz`;
+      const res = await app.request(url, {
+        headers: { cookie: `nb_composio_state=${cookieHash}` },
+      });
       expect(res.status).toBe(400);
+      expect(await res.text()).toBe("invalid cid");
     } finally {
       cleanup();
     }
+  });
+
+  test("rejects cid containing `//` substring", async () => {
+    const { dir, cleanup } = freshDir();
+    try {
+      const app = composioAuthRoutes(stubCtx(dir, composioEntry("com.google/gmail")));
+      const cid = "com//google/gmail";
+      const nonce = "n";
+      const wsId = "ws_test";
+      const cookieHash = sha256Hex(`${nonce}.${cid}.${wsId}`);
+      const url =
+        "http://nb.test/v1/composio-auth/callback?cid=" +
+        encodeURIComponent(cid) +
+        `&ws=${wsId}&n=${nonce}&connected_account_id=ca_xyz`;
+      const res = await app.request(url, {
+        headers: { cookie: `nb_composio_state=${cookieHash}` },
+      });
+      expect(res.status).toBe(400);
+      expect(await res.text()).toBe("invalid cid");
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+// ── POST /v1/composio-auth/initiate ──────────────────────────────────
+//
+// Route-level tests for the initiate endpoint. Mirrors the
+// dev-mode-auth + workspace-injection pattern from
+// test/unit/api/mcp-auth-routes.test.ts so the route's CORS / cookie /
+// adopt-existing logic is covered without standing up the real auth
+// middleware. The Composio SDK is mocked at the module boundary
+// (top of this file) — tests rewire `sdkCalls.*Impl` to drive
+// list-returns-active vs list-empty behaviour.
+
+describe("POST /v1/composio-auth/initiate", () => {
+  const WS_ID = "ws_test";
+  const savedEnv: Record<string, string | undefined> = {};
+  const TRACKED = [
+    "COMPOSIO_API_KEY",
+    "COMPOSIO_API_BASE_URL",
+    "COMPOSIO_GMAIL_AUTH_CONFIG_ID",
+    "NB_TENANT_ID",
+    "NB_API_URL",
+    "NB_WEB_URL",
+  ];
+
+  beforeEach(() => {
+    for (const k of TRACKED) savedEnv[k] = process.env[k];
+    for (const k of TRACKED) delete process.env[k];
+    _resetComposioConfigForTest();
+    sdkCalls.listImpl = async () => ({ items: [] });
+    sdkCalls.initiateImpl = async () => ({
+      redirectUrl: "https://connect.composio.dev/link/lk_test",
+      id: "ca_test",
+    });
+  });
+
+  afterEach(() => {
+    for (const k of TRACKED) {
+      if (savedEnv[k] === undefined) delete process.env[k];
+      else process.env[k] = savedEnv[k];
+    }
+    _resetComposioConfigForTest();
+  });
+
+  /**
+   * Build a Hono app with workspace pre-set via a wrapping middleware
+   * (matches mcp-auth-routes.test.ts pattern). The route's own
+   * `requireAuth(authOptions)` + `requireWorkspace(workspaceStore)`
+   * middleware land after this and are no-ops in dev mode with our
+   * canned context.
+   */
+  function makeApp(catalogEntry: ReturnType<typeof composioEntry> | null): {
+    app: Hono<AppEnv>;
+    ctx: ReturnType<typeof stubCtx>;
+  } {
+    const ctx = stubCtx("/tmp/nb-initiate-test", catalogEntry);
+    // Override authOptions with a dev-mode shape so requireAuth passes
+    // through. The unknown cast is unavoidable — the AuthMiddlewareOptions
+    // type isn't exported broadly and the runtime check just needs
+    // `mode.type === "dev"`.
+    (ctx as unknown as { authOptions: unknown }).authOptions = {
+      mode: { type: "dev" },
+      eventSink: { emit: () => {} },
+    };
+    const app = new Hono<AppEnv>();
+    app.use("*", async (c, next) => {
+      c.set("workspaceId", WS_ID);
+      await next();
+    });
+    app.route("/", composioAuthRoutes(ctx));
+    return { app, ctx };
+  }
+
+  test("(a) happy path: fresh flow returns redirect URL + binds nonce cookie", async () => {
+    process.env.COMPOSIO_API_KEY = "k_test";
+    process.env.COMPOSIO_GMAIL_AUTH_CONFIG_ID = "ac_gmail_test";
+    sdkCalls.listImpl = async () => ({ items: [] }); // no existing connection
+    sdkCalls.initiateImpl = async () => ({
+      redirectUrl: "https://connect.composio.dev/link/lk_42",
+      id: "ca_pending",
+    });
+
+    const { app } = makeApp(composioEntry("com.google/gmail"));
+    const res = await app.request("http://nb.test/v1/composio-auth/initiate", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ connectorId: "com.google/gmail" }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      authorizationUrl: string;
+      pendingConnectedAccountId: string;
+      alreadyConnected?: boolean;
+    };
+    expect(body.authorizationUrl).toBe("https://connect.composio.dev/link/lk_42");
+    expect(body.pendingConnectedAccountId).toBe("ca_pending");
+    expect(body.alreadyConnected).toBeUndefined();
+
+    // Cookie shape: HttpOnly + SameSite=Lax + path-scoped to the
+    // callback. The actual hash value is sha256(nonce.cid.ws); we
+    // can't predict the nonce, so assert structural properties only.
+    const setCookie = res.headers.get("set-cookie") ?? "";
+    expect(setCookie.includes("nb_composio_state=")).toBe(true);
+    expect(setCookie.includes("HttpOnly")).toBe(true);
+    expect(setCookie.includes("SameSite=Lax")).toBe(true);
+    expect(setCookie.includes("Path=/v1/composio-auth/callback")).toBe(true);
+  });
+
+  test("(b) adopt-existing: short-circuits OAuth, writes connection.json, no nonce cookie", async () => {
+    process.env.COMPOSIO_API_KEY = "k_test";
+    process.env.COMPOSIO_GMAIL_AUTH_CONFIG_ID = "ac_gmail_test";
+    // Existing ACTIVE account at Composio (e.g. from the chat-side
+    // prompt flow or a prior install). Adopt path takes over.
+    sdkCalls.listImpl = async () => ({
+      items: [{ id: "ca_already_active", status: "ACTIVE" }],
+    });
+    // initiate should NEVER be called in this branch — fail the test
+    // loudly if it is, instead of silently passing.
+    sdkCalls.initiateImpl = async () => {
+      throw new Error("adopt-existing path should not call connectedAccounts.initiate");
+    };
+
+    // Spy on saveComposioConnection by inspecting the filesystem after.
+    const dir = mkdtempSync(join(tmpdir(), "nb-adopt-"));
+    try {
+      const ctx = stubCtx(dir, composioEntry("com.google/gmail"));
+      (ctx as unknown as { authOptions: unknown }).authOptions = {
+        mode: { type: "dev" },
+        eventSink: { emit: () => {} },
+      };
+      const app = new Hono<AppEnv>();
+      app.use("*", async (c, next) => {
+        c.set("workspaceId", WS_ID);
+        await next();
+      });
+      app.route("/", composioAuthRoutes(ctx));
+
+      const res = await app.request("http://nb.test/v1/composio-auth/initiate", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ connectorId: "com.google/gmail" }),
+      });
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        authorizationUrl: string;
+        pendingConnectedAccountId: string;
+        alreadyConnected?: boolean;
+      };
+      expect(body.alreadyConnected).toBe(true);
+      expect(body.pendingConnectedAccountId).toBe("ca_already_active");
+
+      // connection.json landed on disk under the existing account id.
+      const stored = await readComposioConnection(dir, WS_ID, "com.google/gmail");
+      expect(stored?.connectedAccountId).toBe("ca_already_active");
+      expect(stored?.toolkit).toBe("gmail");
+
+      // Lifecycle state was transitioned to running so the UI flips
+      // without waiting for restart. Captured by the stubCtx mock.
+      expect(ctx.__lifecycleCalls.recordConnectionStateChange.lastCall?.state).toBe("running");
+
+      // No fresh nonce cookie — there's no return-leg to verify.
+      const setCookie = res.headers.get("set-cookie") ?? "";
+      expect(setCookie.includes("nb_composio_state=")).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("(c) returns 500 when COMPOSIO_API_KEY is unset", async () => {
+    // No COMPOSIO_API_KEY in env. Per-toolkit env is set so we know
+    // the failure is API-key-specific, not env-config-specific.
+    process.env.COMPOSIO_GMAIL_AUTH_CONFIG_ID = "ac_gmail_test";
+
+    const { app } = makeApp(composioEntry("com.google/gmail"));
+    const res = await app.request("http://nb.test/v1/composio-auth/initiate", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ connectorId: "com.google/gmail" }),
+    });
+
+    expect(res.status).toBe(500);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("composio_unconfigured");
+  });
+
+  test("(d) returns 500 when per-toolkit auth-config env is unset", async () => {
+    process.env.COMPOSIO_API_KEY = "k_test";
+    // COMPOSIO_GMAIL_AUTH_CONFIG_ID intentionally unset.
+
+    const { app } = makeApp(composioEntry("com.google/gmail"));
+    const res = await app.request("http://nb.test/v1/composio-auth/initiate", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ connectorId: "com.google/gmail" }),
+    });
+
+    expect(res.status).toBe(500);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("composio_unconfigured");
+  });
+
+  test("(e) returns 400 wrong_auth_kind when catalog entry isn't composio-backed", async () => {
+    process.env.COMPOSIO_API_KEY = "k_test";
+    process.env.COMPOSIO_GMAIL_AUTH_CONFIG_ID = "ac_gmail_test";
+    // Catalog entry exists but its auth kind is `dcr` — the request
+    // is well-formed but the connector is the wrong type for this
+    // endpoint. /v1/mcp-auth/initiate is the right destination.
+    const entry = {
+      id: "com.example/native",
+      name: "Native",
+      description: "test",
+      iconUrl: "https://example.com/icon.png",
+      url: "https://mcp.example.com/mcp",
+      auth: "dcr" as const,
+      defaultScope: "workspace" as const,
+    };
+    const { app } = makeApp(entry as unknown as ReturnType<typeof composioEntry>);
+    const res = await app.request("http://nb.test/v1/composio-auth/initiate", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ connectorId: "com.example/native" }),
+    });
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("wrong_auth_kind");
+  });
+
+  test("(f) returns 400 bad_request when connectorId is malformed", async () => {
+    process.env.COMPOSIO_API_KEY = "k_test";
+    process.env.COMPOSIO_GMAIL_AUTH_CONFIG_ID = "ac_gmail_test";
+
+    const { app } = makeApp(composioEntry("com.google/gmail"));
+    // `..` substring rejected by isValidConnectorId — defense-in-depth
+    // against catalog ids carrying path-traversal markers even though
+    // connectorSlug would also disarm them downstream.
+    const res = await app.request("http://nb.test/v1/composio-auth/initiate", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ connectorId: "../escape" }),
+    });
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("bad_request");
+  });
+
+  test("returns 404 connector_not_found when catalog has no entry", async () => {
+    process.env.COMPOSIO_API_KEY = "k_test";
+    process.env.COMPOSIO_GMAIL_AUTH_CONFIG_ID = "ac_gmail_test";
+
+    const { app } = makeApp(null); // empty catalog
+    const res = await app.request("http://nb.test/v1/composio-auth/initiate", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ connectorId: "com.google/gmail" }),
+    });
+
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("connector_not_found");
+  });
+
+  test("returns 400 bad_request on non-JSON body", async () => {
+    process.env.COMPOSIO_API_KEY = "k_test";
+
+    const { app } = makeApp(composioEntry("com.google/gmail"));
+    const res = await app.request("http://nb.test/v1/composio-auth/initiate", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "not json",
+    });
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("bad_request");
   });
 });

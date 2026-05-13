@@ -1214,11 +1214,16 @@ async function handleInstallRemoteOAuth(
           wsId,
           workDir: ctx.runtime.getWorkDir(),
         });
-        // Source registered → flip state from the seedInstance default
-        // ("not_authenticated" or "running" depending on whether
-        // connection.json exists) to `running`. The state machine
-        // accepts the same-state transition as a no-op.
-        lifecycle.recordConnectionStateChange(serverName, wsId, "_workspace", "running");
+        // Source is now registered and `tools/list` works. State is NOT
+        // forced here — `seedInstance` (above) already derived the
+        // correct value: `not_authenticated` when no `connection.json`
+        // exists yet (first install — user still needs to OAuth), or
+        // `running` when one carries over from a prior session
+        // (reinstall without prior disconnect). Forcing `running` here
+        // would mask the auth-required signal on a fresh install if
+        // the user closes the OAuth tab before consenting, leaving the
+        // connector showing "Ready" with no Connect affordance and
+        // tool calls failing at Composio.
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         return errResult(`Failed to start Composio MCP source for "${entry.name}": ${msg}`);

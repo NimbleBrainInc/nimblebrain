@@ -69,8 +69,21 @@ body{font-family:'Satoshi',system-ui,-apple-system,BlinkMacSystemFont,sans-serif
 const SUCCESS_PAGE_STYLE_SHA256 = createHash("sha256").update(SUCCESS_PAGE_STYLE).digest("base64");
 const SUCCESS_PAGE_CSP = `default-src 'none'; style-src 'sha256-${SUCCESS_PAGE_STYLE_SHA256}'; frame-ancestors 'none'; base-uri 'none'`;
 
-/** Slug allowed in the `cid` query param. Matches our catalog id form. */
+/**
+ * Slug allowed in the `cid` query param. Matches our catalog id form
+ * (`<reverse-dns>/<name>`, e.g. `com.google/gmail`). Filesystem
+ * traversal is already defeated downstream by `connectorSlug`'s
+ * slash→dash replacement — this is defense-in-depth at the route
+ * boundary.
+ *
+ * Explicit `..` and `//` substring rejection on top of the char-class
+ * regex: no legitimate catalog id contains either, so rejecting them
+ * here surfaces malformed input earlier than the slug step.
+ */
 const CID_RE = /^[A-Za-z0-9._/-]{1,128}$/;
+function isValidConnectorId(cid: string): boolean {
+  return CID_RE.test(cid) && !cid.includes("..") && !cid.includes("//");
+}
 
 export function composioAuthRoutes(ctx: AppContext) {
   // Eager startup validation — same pattern as `getBouncerMode()` in
@@ -94,7 +107,7 @@ export function composioAuthRoutes(ctx: AppContext) {
         return apiError(400, "bad_request", "Body must be JSON.");
       }
       const connectorId = typeof body.connectorId === "string" ? body.connectorId : "";
-      if (!connectorId || !CID_RE.test(connectorId)) {
+      if (!connectorId || !isValidConnectorId(connectorId)) {
         return apiError(400, "bad_request", "connectorId is required and must be a catalog id.");
       }
 
@@ -276,7 +289,7 @@ export function composioAuthRoutes(ctx: AppContext) {
     if (!cid || !wsId || !nonce) {
       return c.text("missing cid, ws, or nonce", 400);
     }
-    if (!CID_RE.test(cid)) {
+    if (!isValidConnectorId(cid)) {
       return c.text("invalid cid", 400);
     }
     if (!connectedAccountId) {

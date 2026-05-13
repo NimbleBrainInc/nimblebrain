@@ -131,7 +131,14 @@ export function validateComposioConfig(): ComposioConfig {
   return _cachedConfig;
 }
 
-/** Test-only. Reset cached config between tests. */
+/**
+ * Test-only. Reset cached config between tests.
+ *
+ * Production code reads env once at process start and never re-reads —
+ * operators must restart the platform after changing
+ * `COMPOSIO_API_KEY`, `COMPOSIO_API_BASE_URL`, or `NB_TENANT_ID`.
+ * Mirrors the bouncer-config caching contract.
+ */
 export function _resetComposioConfigForTest(): void {
   _cachedConfig = undefined;
 }

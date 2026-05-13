@@ -20,7 +20,7 @@ import type { RemoteTransportConfig } from "../bundles/types.ts";
  * concrete auth error from the vendor rather than a generic host
  * error, which is more actionable.
  */
-function resolveEnvTemplate(value: string): string {
+export function resolveEnvTemplate(value: string): string {
   return value.replace(/\$\{([A-Z_][A-Z0-9_]*)\}/g, (_, key: string) => process.env[key] ?? "");
 }
 
@@ -33,6 +33,17 @@ function resolveEnvTemplate(value: string): string {
  * servers using API keys in headers don't trigger OAuth flows they might
  * not support. When attached, the MCP SDK handles discovery (RFC 9728),
  * dynamic client registration (RFC 7591), PKCE, and token refresh.
+ *
+ * **`${ENV_VAR}` template substitution** applies to every value in the
+ * outgoing header map — both `config.auth` (bearer token / header
+ * value) AND arbitrary entries in `config.headers`. Broad-scope by
+ * design: a Composio-style connector might want a custom header like
+ * `X-Vendor-Trace: ${NB_TENANT_ID}` resolved at transport build time,
+ * not just the API-key auth value. The regex (`[A-Z_][A-Z0-9_]*`)
+ * is narrow enough that literal `${...}` strings outside that shape
+ * pass through unchanged. Unset variables collapse to empty string;
+ * the underlying vendor surfaces a concrete error rather than a
+ * generic platform 500.
  */
 export function createRemoteTransport(
   url: URL,
@@ -42,10 +53,13 @@ export function createRemoteTransport(
   const headers: Record<string, string> = { ...(config?.headers ?? {}) };
 
   if (config?.auth?.type === "bearer") {
-    headers.Authorization = `Bearer ${resolveEnvTemplate(config.auth.token)}`;
+    headers.Authorization = `Bearer ${config.auth.token}`;
   } else if (config?.auth?.type === "header") {
-    headers[config.auth.name] = resolveEnvTemplate(config.auth.value);
+    headers[config.auth.name] = config.auth.value;
   }
+  // Single resolution pass over all headers (auth-derived + arbitrary).
+  // Drops the previous double-pass — the explicit auth-branch resolves
+  // above were just doing what this loop already does.
   for (const [k, v] of Object.entries(headers)) {
     headers[k] = resolveEnvTemplate(v);
   }
