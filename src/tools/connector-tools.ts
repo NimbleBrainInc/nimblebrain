@@ -1022,6 +1022,21 @@ async function handleInstallRemoteOAuth(
       return errResult(`"${entry.name}" is composio-auth but missing composio config block.`);
     }
     if (!wsId) return errResult("Workspace context required for composio-auth install.");
+    // Composio's state lives at workspace scope only:
+    // `credentials/composio/<connectorId>/connection.json` is under
+    // `workspaces/<wsId>/`, and `lifecycle.disconnect`'s composio
+    // cleanup branch gates on `isWorkspaceScope`. A user-scoped
+    // composio entry would silently bypass that cleanup and orphan
+    // the upstream Composio account on disconnect. Reject at
+    // install time rather than ship the latent footgun. Lift this
+    // when the credential-path layout grows a user-scope arm.
+    if (entry.defaultScope !== "workspace") {
+      return errResult(
+        `"${entry.name}" is composio-auth but defaultScope is "${entry.defaultScope}". ` +
+          "Composio-backed connectors are currently workspace-scoped only — " +
+          "the credential layout does not yet support user-scope.",
+      );
+    }
     const { authConfigEnv, toolkit } = action.composio;
     if (!process.env.COMPOSIO_API_KEY?.trim()) {
       return errResult(

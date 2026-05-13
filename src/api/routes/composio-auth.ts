@@ -8,7 +8,6 @@ import { WORKSPACE_PRINCIPAL_ID } from "../../bundles/connection.ts";
 import { slugifyServerName } from "../../bundles/paths.ts";
 import { log } from "../../cli/log.ts";
 import {
-  COMPOSIO_API_BASE,
   COMPOSIO_CALLBACK_PATH,
   composioCallbackUrl,
   composioSuccessRedirectUrl,
@@ -434,7 +433,13 @@ export function composioAuthRoutes(ctx: AppContext) {
   // the response body is empty, only the Location header matters.
   app.get("/v1/composio-auth/proxy", (c) => {
     c.header("Cache-Control", "no-store");
-    const apiBase = process.env.COMPOSIO_API_BASE_URL ?? COMPOSIO_API_BASE;
+    // Read from the validated cached config rather than re-reading
+    // `process.env.COMPOSIO_API_BASE_URL` each request. The cache
+    // value has already passed the http(s) protocol check at
+    // startup; reading process.env directly would bypass that
+    // guard if env mutated post-startup (unlikely in production
+    // but cheap defense-in-depth).
+    const apiBase = validateComposioConfig().baseUrl;
     const url = new URL(c.req.url);
     const target = `${apiBase.replace(/\/+$/, "")}${COMPOSIO_CALLBACK_PATH}${url.search}`;
     return c.redirect(target, 302);

@@ -122,7 +122,8 @@ export function validateComposioConfig(): ComposioConfig {
     throw new Error(
       "[composio] NB_TENANT_ID is required when running in bouncer (multi-tenant) mode. " +
         "Without a tenant prefix, Composio `user_id` collisions could leak connected " +
-        "accounts across tenants. The agent chart should inject this from .Values.tenant.id.",
+        "accounts across tenants. Set NB_TENANT_ID via the deployment env to a stable " +
+        "per-pod tenant identifier.",
     );
   }
 

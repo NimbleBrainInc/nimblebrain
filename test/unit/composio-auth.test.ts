@@ -168,13 +168,13 @@ describe("composioUserId", () => {
   });
 
   test("prefixes tenant id when NB_TENANT_ID is set", () => {
-    process.env.NB_TENANT_ID = "hq";
-    expect(composioUserId("ws_01abc")).toBe("hq:ws_01abc");
+    process.env.NB_TENANT_ID = "tenant-a";
+    expect(composioUserId("ws_01abc")).toBe("tenant-a:ws_01abc");
   });
 
   test("trims whitespace on NB_TENANT_ID", () => {
-    process.env.NB_TENANT_ID = "  bayze  ";
-    expect(composioUserId("ws_01abc")).toBe("bayze:ws_01abc");
+    process.env.NB_TENANT_ID = "  tenant-b  ";
+    expect(composioUserId("ws_01abc")).toBe("tenant-b:ws_01abc");
   });
 });
 
@@ -186,16 +186,16 @@ describe("composioCallbackUrl", () => {
   });
 
   test("uses NB_API_URL when set", () => {
-    process.env.NB_API_URL = "https://hq.platform.nimblebrain.ai";
+    process.env.NB_API_URL = "https://platform.example.test";
     expect(composioCallbackUrl()).toBe(
-      "https://hq.platform.nimblebrain.ai/v1/composio-auth/callback",
+      "https://platform.example.test/v1/composio-auth/callback",
     );
   });
 
   test("trims trailing slashes", () => {
-    process.env.NB_API_URL = "https://hq.platform.nimblebrain.ai//";
+    process.env.NB_API_URL = "https://platform.example.test//";
     expect(composioCallbackUrl()).toBe(
-      "https://hq.platform.nimblebrain.ai/v1/composio-auth/callback",
+      "https://platform.example.test/v1/composio-auth/callback",
     );
   });
 
@@ -206,13 +206,27 @@ describe("composioCallbackUrl", () => {
 });
 
 describe("GET /v1/composio-auth/proxy", () => {
+  // Proxy reads from `validateComposioConfig().baseUrl` (validated +
+  // cached at startup). For the override to kick in, both
+  // `COMPOSIO_API_KEY` and `COMPOSIO_API_BASE_URL` must be set —
+  // without the key, validate falls back to the default base URL
+  // because the integration is dormant. Reset the cache between
+  // tests so each case gets a fresh validate pass.
+  const origKey = process.env.COMPOSIO_API_KEY;
   const origBase = process.env.COMPOSIO_API_BASE_URL;
+  beforeEach(() => {
+    _resetComposioConfigForTest();
+  });
   afterEach(() => {
+    if (origKey === undefined) delete process.env.COMPOSIO_API_KEY;
+    else process.env.COMPOSIO_API_KEY = origKey;
     if (origBase === undefined) delete process.env.COMPOSIO_API_BASE_URL;
     else process.env.COMPOSIO_API_BASE_URL = origBase;
+    _resetComposioConfigForTest();
   });
 
   test("302s to backend.composio.dev with query params preserved", async () => {
+    process.env.COMPOSIO_API_KEY = "k_test";
     delete process.env.COMPOSIO_API_BASE_URL;
     const app = composioAuthRoutes(stubCtx("/tmp/work", null));
     const res = await app.request(
@@ -229,6 +243,7 @@ describe("GET /v1/composio-auth/proxy", () => {
   });
 
   test("honors COMPOSIO_API_BASE_URL override (e.g. for self-hosted shim)", async () => {
+    process.env.COMPOSIO_API_KEY = "k_test";
     process.env.COMPOSIO_API_BASE_URL = "https://composio.example.com";
     const app = composioAuthRoutes(stubCtx("/tmp/work", null));
     const res = await app.request("http://nb.test/v1/composio-auth/proxy?code=abc");
@@ -239,6 +254,7 @@ describe("GET /v1/composio-auth/proxy", () => {
   });
 
   test("does not cache the redirect response", async () => {
+    process.env.COMPOSIO_API_KEY = "k_test";
     const app = composioAuthRoutes(stubCtx("/tmp/work", null));
     const res = await app.request("http://nb.test/v1/composio-auth/proxy?code=abc");
     expect(res.headers.get("cache-control")).toBe("no-store");
