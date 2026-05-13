@@ -70,6 +70,17 @@ const SUCCESS_PAGE_STYLE_SHA256 = createHash("sha256").update(SUCCESS_PAGE_STYLE
 const SUCCESS_PAGE_CSP = `default-src 'none'; style-src 'sha256-${SUCCESS_PAGE_STYLE_SHA256}'; frame-ancestors 'none'; base-uri 'none'`;
 
 /**
+ * CSP for HTML error responses (auth-failed, session-mismatch). The
+ * default platform CSP doesn't apply automatically to error branches,
+ * and these pages render escaped attacker-influenced data inside a
+ * `<pre>` block — `escapeHtml` covers script injection, but the
+ * stricter posture matches the success page and is free
+ * defense-in-depth. No inline `<style>` here, so the policy can be
+ * tighter than the success page's (no style-src hash needed).
+ */
+const ERROR_PAGE_CSP = `default-src 'none'; frame-ancestors 'none'; base-uri 'none'`;
+
+/**
  * Slug allowed in the `cid` query param. Matches our catalog id form
  * (`<reverse-dns>/<name>`, e.g. `com.google/gmail`). Filesystem
  * traversal is already defeated downstream by `connectorSlug`'s
@@ -281,6 +292,7 @@ export function composioAuthRoutes(ctx: AppContext) {
     const nonce = c.req.query("n");
 
     if (error) {
+      c.header("Content-Security-Policy", ERROR_PAGE_CSP);
       return c.html(
         `<html><body><h3>Connection failed</h3><pre>${escapeHtml(error)}</pre></body></html>`,
         400,
@@ -299,6 +311,7 @@ export function composioAuthRoutes(ctx: AppContext) {
     const expected = sha256Hex(`${nonce}.${cid}.${wsId}`);
     const cookieValue = readCookie(c.req.header("cookie"), "nb_composio_state");
     if (!cookieValue || !timingSafeEqualHex(cookieValue, expected)) {
+      c.header("Content-Security-Policy", ERROR_PAGE_CSP);
       return c.html(
         "<html><body><h3>Authorization session mismatch.</h3>" +
           "<p>Re-initiate the connection from NimbleBrain.</p></body></html>",

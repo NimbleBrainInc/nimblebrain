@@ -2,7 +2,7 @@ import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "nod
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { log } from "../cli/log.ts";
-import { deleteComposioConnectedAccount } from "../composio/sdk.ts";
+import { cleanupComposioBundle } from "../composio/sdk.ts";
 import { clearAllWorkspaceCredentials } from "../config/workspace-credentials.ts";
 import type { EventSink } from "../engine/types.ts";
 import type { PlacementRegistry } from "../runtime/placement-registry.ts";
@@ -15,11 +15,7 @@ import {
   WorkspaceOAuthProvider,
 } from "../tools/workspace-oauth-provider.ts";
 import { createAutomation, deleteAutomation } from "./automations/src/domain.ts";
-import {
-  deleteComposioConnection,
-  hasPersistedComposioConnection,
-  readComposioConnection,
-} from "./composio-connection.ts";
+import { connectorSlug, hasPersistedComposioConnection } from "./composio-connection.ts";
 import {
   type Connection,
   type ConnectionState,
@@ -471,6 +467,51 @@ export class BundleLifecycleManager {
           `[lifecycle] Failed to clear OAuth state for ${serverName} in ${instance.wsId}: ${msg}\n`,
         );
       }
+      // Composio-backed bundles use a parallel credential namespace
+      // (`composio/<connectorId>/connection.json`) AND have upstream
+      // state at Composio (the connected account holding the
+      // vendor's OAuth tokens). The mcp-oauth rmSync above doesn't
+      // touch either. Without this block, uninstall-without-prior-
+      // disconnect (the realistic flow — users don't disconnect
+      // first) would leak local disk state and leave the upstream
+      // account ACTIVE forever. `cleanupComposioBundle` runs the
+      // same revoke-then-delete pair `disconnect` uses; the
+      // additional rmSync below removes the now-empty connector
+      // subdirectory to match the mcp-oauth posture.
+      const composioRef =
+        instance.ref && "composio" in instance.ref ? instance.ref.composio : undefined;
+      if (composioRef) {
+        try {
+          await cleanupComposioBundle({
+            workDir,
+            wsId: instance.wsId,
+            connectorId: composioRef.connectorId,
+          });
+        } catch (err) {
+          // cleanupComposioBundle never throws by contract; guard
+          // anyway so an SDK exception can't sink the uninstall.
+          const msg = err instanceof Error ? err.message : String(err);
+          process.stderr.write(
+            `[lifecycle] Failed to revoke Composio bundle "${serverName}" in ${instance.wsId}: ${msg}\n`,
+          );
+        }
+        try {
+          const composioDir = join(
+            workDir,
+            "workspaces",
+            instance.wsId,
+            "credentials",
+            "composio",
+            connectorSlug(composioRef.connectorId),
+          );
+          rmSync(composioDir, { recursive: true, force: true });
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          process.stderr.write(
+            `[lifecycle] Failed to clear composio dir for ${serverName} in ${instance.wsId}: ${msg}\n`,
+          );
+        }
+      }
     }
 
     // Step 5 — Emit event (data NOT deleted — step 6)
@@ -901,48 +942,31 @@ export class BundleLifecycleManager {
 
     // Composio-backed bundles use a parallel credential namespace —
     // OAuth tokens live at Composio, not in our `mcp-oauth` directory.
-    // Run the SDK-side revoke (delete the connected account) AND
-    // clean up our own `connection.json` so a subsequent Connect
-    // can't short-circuit on a stale ACTIVE account.
-    let composioRevoked = { access: false, refresh: false };
-    let composioDeletedLocal = false;
-    let composioRevokeError: string | undefined;
+    // `cleanupComposioBundle` runs the same two-step teardown that
+    // uninstall uses: revoke the Composio-side connected account
+    // (vendor OAuth tokens go with it) + delete the local
+    // `connection.json` so a subsequent Connect can't short-circuit
+    // on a stale ACTIVE account. Single helper, two callers.
+    //
+    // Composio doesn't differentiate access from refresh — one
+    // delete call revokes both at the upstream vendor. Reporting
+    // `{ access }` only (not faking `refresh`) keeps the return
+    // shape honest about what we know.
     if (ref.composio && isWorkspaceScope) {
-      const apiKey = process.env.COMPOSIO_API_KEY?.trim();
-      try {
-        const connection = await readComposioConnection(
-          opts.workDir,
-          wsId,
-          ref.composio.connectorId,
-        );
-        if (connection && apiKey) {
-          const deleted = await deleteComposioConnectedAccount({
-            apiKey,
-            connectedAccountId: connection.connectedAccountId,
-          });
-          composioRevoked = { access: deleted, refresh: deleted };
-        }
-      } catch (err) {
-        composioRevokeError = err instanceof Error ? err.message : String(err);
-      }
-      try {
-        composioDeletedLocal = await deleteComposioConnection(
-          opts.workDir,
-          wsId,
-          ref.composio.connectorId,
-        );
-      } catch (err) {
-        composioRevokeError = err instanceof Error ? err.message : String(err);
-      }
+      const { upstreamDeleted, localDeleted, lastError } = await cleanupComposioBundle({
+        workDir: opts.workDir,
+        wsId,
+        connectorId: ref.composio.connectorId,
+      });
       await this.teardownConnectionSource(serverName, wsId, principalId);
       this.recordConnectionStateChange(serverName, wsId, principalId, "not_authenticated", {
         source: null,
         authorizationUrl: undefined,
       });
       return {
-        revoked: composioRevoked,
-        deletedLocal: composioDeletedLocal,
-        ...(composioRevokeError ? { revokeError: composioRevokeError } : {}),
+        revoked: { access: upstreamDeleted },
+        deletedLocal: localDeleted,
+        ...(lastError ? { revokeError: lastError } : {}),
       };
     }
 

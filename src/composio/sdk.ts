@@ -238,6 +238,12 @@ async function withTimeout<T>(label: string, fn: () => Promise<T>): Promise<T> {
  * abort semantics to its lifetime, which we don't need.
  */
 function composioClient(apiKey: string): Composio {
+  // `validateComposioConfig` runs full validation on its first call
+  // (eagerly, at server startup, via `composioAuthRoutes`). Every
+  // subsequent call — including this one, on every SDK request —
+  // returns the cached `ComposioConfig` without re-reading env or
+  // re-validating. The "validate" in the name reflects the
+  // first-call semantics; here it's a fast cache hit.
   const cfg = validateComposioConfig();
   return new Composio({ apiKey, baseURL: cfg.baseUrl });
 }
@@ -346,6 +352,86 @@ export async function deleteComposioConnectedAccount(opts: {
   } catch {
     return false;
   }
+}
+
+/**
+ * Tear down everything a Composio-backed bundle owns: the upstream
+ * Composio connected account (so vendor OAuth tokens are revoked)
+ * AND the local `connection.json` (so the platform doesn't think
+ * the bundle is still authenticated).
+ *
+ * Idempotent and best-effort throughout: every step swallows its own
+ * errors and reports them in the return value. Safe to call from
+ * both `disconnect` (keep the bundle installed, drop credentials)
+ * and `uninstall` (full removal). Disconnect-only callers can read
+ * the return value to surface revoke status; uninstall just calls
+ * for side-effects.
+ *
+ * Reads `COMPOSIO_API_KEY` from `process.env`. If unset, the
+ * upstream-delete step is skipped (`upstreamDeleted: false`) — the
+ * local file still gets removed so platform state is consistent
+ * even when the SDK is unreachable. Operators following the
+ * `uninstall → revoke at Composio dashboard` flow are explicitly
+ * supported by this design.
+ *
+ * Why both layers in one function: the alternative is two function
+ * calls in every teardown path, each guarded by its own try/catch.
+ * That recipe got mis-followed once already (uninstall had only the
+ * `mcp-oauth` rmSync and missed composio entirely — see the QA
+ * review that prompted this helper). One function, one canonical
+ * cleanup recipe, two callers.
+ */
+export async function cleanupComposioBundle(opts: {
+  workDir: string;
+  wsId: string;
+  connectorId: string;
+}): Promise<{
+  upstreamDeleted: boolean;
+  localDeleted: boolean;
+  lastError?: string;
+}> {
+  // Dynamic import to avoid a top-of-file dependency from the SDK
+  // module on `src/bundles/composio-connection.ts`. The connection
+  // module sits in the bundle layer; pulling it eagerly here would
+  // create a cycle if a future refactor moves any of these helpers.
+  // Cleanup is rare (uninstall / disconnect), so the import cost is
+  // negligible vs. the architectural cleanliness.
+  const { readComposioConnection, deleteComposioConnection } = await import(
+    "../bundles/composio-connection.ts"
+  );
+
+  let upstreamDeleted = false;
+  let localDeleted = false;
+  let lastError: string | undefined;
+
+  const apiKey = process.env.COMPOSIO_API_KEY?.trim();
+
+  let connectedAccountId: string | undefined;
+  try {
+    const connection = await readComposioConnection(opts.workDir, opts.wsId, opts.connectorId);
+    connectedAccountId = connection?.connectedAccountId;
+  } catch (err) {
+    lastError = err instanceof Error ? err.message : String(err);
+  }
+
+  if (connectedAccountId && apiKey) {
+    upstreamDeleted = await deleteComposioConnectedAccount({
+      apiKey,
+      connectedAccountId,
+    });
+  }
+
+  try {
+    localDeleted = await deleteComposioConnection(opts.workDir, opts.wsId, opts.connectorId);
+  } catch (err) {
+    lastError = err instanceof Error ? err.message : String(err);
+  }
+
+  return {
+    upstreamDeleted,
+    localDeleted,
+    ...(lastError ? { lastError } : {}),
+  };
 }
 
 /**

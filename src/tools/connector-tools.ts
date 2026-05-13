@@ -1064,11 +1064,17 @@ async function handleInstallRemoteOAuth(
     const extraHeaders: Record<string, string> = {};
     for (const [k, v] of Object.entries(sessionMcp.headers ?? {})) {
       if (k.toLowerCase() === "x-api-key") continue;
-      // Replace any other header value that happens to equal the
-      // api key (shouldn't happen, but cheap insurance) with the
-      // template form so secrets never reach workspace.json.
+      // Defensive: if the API key appears anywhere inside a header
+      // value (e.g. a future Composio response shape like
+      // `Authorization: Bearer <api-key>`), substitute it with the
+      // env template so the secret never lands in workspace.json.
+      // `replace` is the realistic shape — exact-equality would
+      // only catch a header whose ENTIRE value is the API key, which
+      // Composio doesn't return today and likely never will.
+      // `resolveEnvTemplate` re-expands the template at transport
+      // build time, preserving any surrounding prefix.
       // biome-ignore lint/suspicious/noTemplateCurlyInString: deliberate placeholder — resolved by `resolveEnvTemplate` at transport build time
-      extraHeaders[k] = v === apiKey ? "${COMPOSIO_API_KEY}" : v;
+      extraHeaders[k] = v.includes(apiKey) ? v.replace(apiKey, "${COMPOSIO_API_KEY}") : v;
     }
     composioWiring = {
       url: sessionMcp.url,
