@@ -89,6 +89,7 @@ function deriveInstall(s: ServerDetail): DirectoryEntry["install"] | null {
         ? { additionalAuthorizationParams: meta.additionalAuthorizationParams }
         : {}),
       ...(meta?.operatorSetup ? { operatorSetup: meta.operatorSetup } : {}),
+      ...(meta?.composio ? { composio: meta.composio } : {}),
     };
   }
   return null;
@@ -110,11 +111,18 @@ export interface ConnectorCatalogEntry {
   iconUrl: string;
   /** Remote MCP server URL — the value that goes into the bundle `url`. */
   url: string;
-  auth: "dcr" | "static";
+  auth: "dcr" | "static" | "composio";
   defaultScope: "workspace" | "user";
   requiredScopes?: string[];
   additionalAuthorizationParams?: Record<string, string>;
   operatorSetup?: { portalUrl: string; hint: string; clientSecretKey: string };
+  /**
+   * Composio-specific config for `auth: "composio"` entries. The
+   * platform reads these to call `composio.create()` at install
+   * time and to look up the toolkit slug when persisting
+   * `connection.json`. Absent on dcr/static entries.
+   */
+  composio?: { toolkit: string; authConfigEnv: string; tools?: string[] };
   tags?: string[];
   interactive?: boolean;
   docsUrl?: string;
@@ -147,6 +155,7 @@ export function serverDetailToCatalogEntry(s: ServerDetail): ConnectorCatalogEnt
       ? { additionalAuthorizationParams: meta.additionalAuthorizationParams }
       : {}),
     ...(meta?.operatorSetup ? { operatorSetup: meta.operatorSetup } : {}),
+    ...(meta?.composio ? { composio: meta.composio } : {}),
     ...(meta?.tags ? { tags: meta.tags } : {}),
     ...(typeof meta?.interactive === "boolean" ? { interactive: meta.interactive } : {}),
     ...(meta?.docsUrl ? { docsUrl: meta.docsUrl } : {}),

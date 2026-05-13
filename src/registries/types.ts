@@ -128,10 +128,16 @@ export interface RemoteOAuthInstall {
    * the handshake.
    */
   transportType: "streamable-http" | "sse";
-  auth: "dcr" | "static";
+  auth: "dcr" | "static" | "composio";
   requiredScopes?: string[];
   additionalAuthorizationParams?: Record<string, string>;
   operatorSetup?: { portalUrl: string; hint: string; clientSecretKey: string };
+  /**
+   * Required for `auth: "composio"`. Names the Composio toolkit and
+   * the env var holding the auth-config id. See
+   * `NimbleBrainConnectorMeta.composio` for the canonical shape.
+   */
+  composio?: { toolkit: string; authConfigEnv: string; tools?: string[] };
 }
 
 /**
