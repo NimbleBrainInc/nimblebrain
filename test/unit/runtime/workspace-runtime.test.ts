@@ -308,7 +308,7 @@ describe("mapWithConcurrency", () => {
 });
 
 // ---------------------------------------------------------------------------
-// startWorkspaceBundles — bundle.start_failed observability
+// startWorkspaceBundles — bundle.startFailed observability
 // ---------------------------------------------------------------------------
 
 function makeStore(workspaces: Workspace[]): WorkspaceStore {
@@ -329,7 +329,7 @@ function makeEventCollector(): EventSink & { events: EngineEvent[] } {
   };
 }
 
-describe("startWorkspaceBundles — bundle.start_failed", () => {
+describe("startWorkspaceBundles — bundle.startFailed", () => {
   let workDir: string;
 
   beforeEach(() => {
@@ -340,7 +340,7 @@ describe("startWorkspaceBundles — bundle.start_failed", () => {
     rmSync(workDir, { recursive: true, force: true });
   });
 
-  it("emits bundle.start_failed when a bundle fails to start", async () => {
+  it("emits bundle.startFailed when a bundle fails to start", async () => {
     // Path-based bundle pointing at a nonexistent directory: startBundleSource
     // throws "Local bundle not found" from buildLocalSource. No fs setup needed.
     const ws: Workspace = {
@@ -361,7 +361,7 @@ describe("startWorkspaceBundles — bundle.start_failed", () => {
     expect(result.registries.get("ws_test")).toBeDefined();
     expect(result.entries).toHaveLength(0);
 
-    const failedEvents = sink.events.filter((e) => e.type === "bundle.start_failed");
+    const failedEvents = sink.events.filter((e) => e.type === "bundle.startFailed");
     expect(failedEvents).toHaveLength(1);
     const { data } = failedEvents[0]!;
     expect(data.wsId).toBe("ws_test");

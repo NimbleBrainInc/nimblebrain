@@ -91,7 +91,7 @@ describe("WorkspaceLogSink", () => {
       "bundle.crashed",
       "bundle.recovered",
       "bundle.dead",
-      "bundle.start_failed",
+      "bundle.startFailed",
       "data.changed",
       "config.changed",
       "skill.created",
@@ -114,10 +114,10 @@ describe("WorkspaceLogSink", () => {
     expect(lines).toHaveLength(workspaceTypes.length);
   });
 
-  it("writes bundle.start_failed event with error details", () => {
+  it("writes bundle.startFailed event with error details", () => {
     const sink = new WorkspaceLogSink({ dir });
     sink.emit(
-      makeEvent("bundle.start_failed", {
+      makeEvent("bundle.startFailed", {
         wsId: "ws_a",
         serverName: "broken",
         bundleName: "@nb/broken",
@@ -130,7 +130,7 @@ describe("WorkspaceLogSink", () => {
     expect(lines).toHaveLength(1);
 
     const record = JSON.parse(lines[0]!);
-    expect(record.event).toBe("bundle.start_failed");
+    expect(record.event).toBe("bundle.startFailed");
     expect(record.wsId).toBe("ws_a");
     expect(record.serverName).toBe("broken");
     expect(record.error).toBe("ENOENT: manifest.json missing");

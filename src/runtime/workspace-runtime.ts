@@ -24,7 +24,7 @@ import type { WorkspaceStore } from "../workspace/workspace-store.ts";
 
 /**
  * A boot-time bundle startup failure — recorded when `startBundleSource`
- * throws. Surfaced via `bundle.start_failed` event (workspace log + SSE)
+ * throws. Surfaced via `bundle.startFailed` event (workspace log + SSE)
  * and threaded into HealthMonitor so `/v1/health` reports the failed
  * bundle as `state: "dead"` rather than omitting it entirely.
  */
@@ -286,7 +286,7 @@ export async function startWorkspaceBundles(
       // SSE broadcast (via SseEventManager). Without this, operators have
       // to grep container stderr to discover a failed boot.
       eventSink.emit({
-        type: "bundle.start_failed",
+        type: "bundle.startFailed",
         data: { wsId, serverName: entry.serverName, bundleName, error: msg },
       });
       failures.push({ wsId, serverName: entry.serverName, bundleName, error: msg });

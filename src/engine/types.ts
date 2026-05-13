@@ -71,7 +71,7 @@ export type EngineEventType =
    * Distinct from `bundle.crashed`, which requires a running source that
    * went away. Payload: { wsId, serverName, bundleName, error }.
    */
-  | "bundle.start_failed"
+  | "bundle.startFailed"
   /**
    * Per-principal connection state change for a remote URL bundle.
    * Payload: { wsId, serverName, principalId, state, authorizationUrl? }.
