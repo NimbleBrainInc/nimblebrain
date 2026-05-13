@@ -581,7 +581,8 @@ function formatAppStateSection(appState: AppStateInfo): string | null {
     inner = `${stateJson.slice(0, MAX_STATE_TOKENS * 4)}\n[state truncated — ask user for details]`;
   }
 
-  return `## Current App State\nLast updated: ${appState.updatedAt}\n\n<app-state>\n${inner}\n</app-state>`;
+  const escaped = inner.replaceAll("</app-state>", "<\\/app-state>");
+  return `## Current App State\nLast updated: ${appState.updatedAt}\n\n<app-state>\n${escaped}\n</app-state>`;
 }
 
 function formatParticipantsSection(participants: ParticipantInfo[]): string {
