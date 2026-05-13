@@ -9,6 +9,12 @@ export interface BundleHealth {
   state: BundleState;
   uptime: number | null;
   restartCount: number;
+  /**
+   * Workspace id — populated only for boot-time start failures (live
+   * sources don't carry a wsId on `McpSource`). Lets `/v1/health`
+   * consumers distinguish same-named failed bundles across workspaces.
+   */
+  wsId?: string;
 }
 
 interface BundleRecord {
@@ -92,6 +98,7 @@ export class HealthMonitor {
       state: "dead" as const,
       uptime: null,
       restartCount: 0,
+      wsId: f.wsId,
     }));
     return [...live, ...dead];
   }

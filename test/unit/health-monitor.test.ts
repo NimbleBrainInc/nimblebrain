@@ -165,9 +165,11 @@ describe("HealthMonitor", () => {
     expect(broken?.state).toBe("dead");
     expect(broken?.uptime).toBeNull();
     expect(broken?.restartCount).toBe(0);
+    expect(broken?.wsId).toBe("ws_a");
 
     const remote = status.find((s) => s.name === "remote-x");
     expect(remote?.state).toBe("dead");
+    expect(remote?.wsId).toBe("ws_b");
 
     monitor.stop();
   });
@@ -208,7 +210,9 @@ describe("HealthMonitor", () => {
     const names = status.map((s) => s.name).sort();
     expect(names).toEqual(["dead-one", "live-one"]);
     expect(status.find((s) => s.name === "live-one")?.state).toBe("healthy");
+    expect(status.find((s) => s.name === "live-one")?.wsId).toBeUndefined();
     expect(status.find((s) => s.name === "dead-one")?.state).toBe("dead");
+    expect(status.find((s) => s.name === "dead-one")?.wsId).toBe("ws_a");
 
     monitor.stop();
   });
