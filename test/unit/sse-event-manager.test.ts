@@ -117,6 +117,26 @@ describe("SseEventManager — routing table", () => {
     expect(wsB.events).toEqual(["bundle.crashed"]);
   });
 
+  test("bundle.startFailed is forwarded to the matching workspace only", async () => {
+    const wsA = collect(mgr.addClient("ws_a"));
+    const wsB = collect(mgr.addClient("ws_b"));
+    released.push(wsA.release, wsB.release);
+
+    mgr.emit({
+      type: "bundle.startFailed",
+      data: {
+        wsId: "ws_a",
+        serverName: "broken",
+        bundleName: "@nb/broken",
+        error: "spawn failed",
+      },
+    });
+    await flush();
+
+    expect(wsA.events).toContain("bundle.startFailed");
+    expect(wsB.events).not.toContain("bundle.startFailed");
+  });
+
   test("workspace-scoped event with missing wsId is dropped (no global fan-out)", async () => {
     const wsA = collect(mgr.addClient("ws_a"));
     const wsB = collect(mgr.addClient("ws_b"));

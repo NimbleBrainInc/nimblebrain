@@ -91,6 +91,7 @@ describe("WorkspaceLogSink", () => {
       "bundle.crashed",
       "bundle.recovered",
       "bundle.dead",
+      "bundle.startFailed",
       "data.changed",
       "config.changed",
       "skill.created",
@@ -111,6 +112,28 @@ describe("WorkspaceLogSink", () => {
     const files = readdirSync(join(dir, "workspace"));
     const lines = readFileSync(join(dir, "workspace", files[0]), "utf-8").trim().split("\n");
     expect(lines).toHaveLength(workspaceTypes.length);
+  });
+
+  it("writes bundle.startFailed event with error details", () => {
+    const sink = new WorkspaceLogSink({ dir });
+    sink.emit(
+      makeEvent("bundle.startFailed", {
+        wsId: "ws_a",
+        serverName: "broken",
+        bundleName: "@nb/broken",
+        error: "ENOENT: manifest.json missing",
+      }),
+    );
+
+    const files = readdirSync(join(dir, "workspace"));
+    const lines = readFileSync(join(dir, "workspace", files[0]!), "utf-8").trim().split("\n");
+    expect(lines).toHaveLength(1);
+
+    const record = JSON.parse(lines[0]!);
+    expect(record.event).toBe("bundle.startFailed");
+    expect(record.wsId).toBe("ws_a");
+    expect(record.serverName).toBe("broken");
+    expect(record.error).toBe("ENOENT: manifest.json missing");
   });
 
   it("close() is a no-op", () => {

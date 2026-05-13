@@ -1,4 +1,5 @@
 import type { EventSink } from "../engine/types.ts";
+import type { BundleStartFailure } from "../runtime/workspace-runtime.ts";
 import type { McpSource } from "./mcp-source.ts";
 
 export type BundleState = "healthy" | "restarting" | "dead";
@@ -8,6 +9,12 @@ export interface BundleHealth {
   state: BundleState;
   uptime: number | null;
   restartCount: number;
+  /**
+   * Workspace id — populated only for boot-time start failures (live
+   * sources don't carry a wsId on `McpSource`). Lets `/v1/health`
+   * consumers distinguish same-named failed bundles across workspaces.
+   */
+  wsId?: string;
 }
 
 interface BundleRecord {
@@ -23,6 +30,13 @@ const DEFAULT_CHECK_INTERVAL_MS = 30_000;
 export interface HealthMonitorOptions {
   checkIntervalMs?: number;
   baseDelayMs?: number;
+  /**
+   * Boot-time start failures from `startWorkspaceBundles`. These never
+   * produced an `McpSource`, so they can't be restarted; we surface them
+   * as terminal `dead` entries in `getStatus()` so `/v1/health` reflects
+   * the failure instead of silently omitting the bundle.
+   */
+  startFailures?: BundleStartFailure[];
 }
 
 /**
@@ -31,6 +45,7 @@ export interface HealthMonitorOptions {
  */
 export class HealthMonitor {
   private records: BundleRecord[];
+  private startFailures: BundleStartFailure[];
   private timer: ReturnType<typeof setInterval> | null = null;
   private checkIntervalMs: number;
   private baseDelayMs: number;
@@ -47,6 +62,7 @@ export class HealthMonitor {
       state: "healthy" as BundleState,
       restartCount: 0,
     }));
+    this.startFailures = opts.startFailures ?? [];
   }
 
   /** Start the periodic health check loop. */
@@ -71,12 +87,20 @@ export class HealthMonitor {
 
   /** Get per-bundle health info. */
   getStatus(): BundleHealth[] {
-    return this.records.map((r) => ({
+    const live: BundleHealth[] = this.records.map((r) => ({
       name: r.source.name,
       state: r.state,
       uptime: r.source.uptime(),
       restartCount: r.restartCount,
     }));
+    const dead: BundleHealth[] = this.startFailures.map((f) => ({
+      name: f.serverName,
+      state: "dead" as const,
+      uptime: null,
+      restartCount: 0,
+      wsId: f.wsId,
+    }));
+    return [...live, ...dead];
   }
 
   private async checkOne(record: BundleRecord): Promise<void> {
