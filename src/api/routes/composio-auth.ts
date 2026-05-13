@@ -187,6 +187,39 @@ export function composioAuthRoutes(ctx: AppContext) {
           authConfigId,
         });
         if (existing) {
+          // Ordering matters: bring the source online BEFORE writing
+          // connection.json. `disconnect()` calls
+          // `teardownConnectionSource` which removes the source from
+          // the workspace registry — a reconnect must restart it.
+          // Install-path eager-start works for first connect because
+          // the source has never been torn down; this path handles
+          // every subsequent connect.
+          //
+          // The reordering matters when ensureSourceRegistered fails.
+          // Writing connection.json eagerly would leave the user with
+          // a "connected" state on disk (state derivation reads
+          // connection.json on next boot) while the source isn't
+          // running, plus a success page that contradicts the
+          // connector's actual state. By starting the source first,
+          // a failure leaves a clean slate: connection.json is absent,
+          // the user sees an honest error here, and a retry runs the
+          // same adopt-existing path with no half-written state to
+          // reconcile.
+          const serverName = slugifyServerName(connectorId);
+          const lifecycle = ctx.runtime.getLifecycle();
+          try {
+            await lifecycle.ensureSourceRegistered(serverName, wsId, ctx.runtime.getWorkDir());
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            log.warn(
+              `[composio-auth] adopt: source registration failed for ${connectorId} in ${wsId}: ${msg}`,
+            );
+            return apiError(
+              502,
+              "composio_adopt_source_start_failed",
+              "Reconnect failed: the existing Composio account was found but the MCP source could not start. Try Disconnect, then Connect again.",
+            );
+          }
           const connection: ComposioConnection = {
             connectedAccountId: existing.id,
             toolkit: entry.composio.toolkit,
@@ -195,32 +228,12 @@ export function composioAuthRoutes(ctx: AppContext) {
             status: existing.status,
           };
           await saveComposioConnection(ctx.runtime.getWorkDir(), wsId, connectorId, connection);
-          // Reconnect-after-disconnect needs to bring the MCP source
-          // back online — `disconnect()` calls `teardownConnectionSource`
-          // which removes the source from the workspace registry, and
-          // pure state mutations (recordConnectionStateChange) don't
-          // restart it. Without this, the bundle shows "running" but
-          // tool calls fail with "source not started" until restart.
-          // Install-path eager-start works for first connect because
-          // the source has never been torn down; this path handles
-          // every subsequent connect.
-          const serverName = slugifyServerName(connectorId);
-          try {
-            const lifecycle = ctx.runtime.getLifecycle();
-            await lifecycle.ensureSourceRegistered(serverName, wsId, ctx.runtime.getWorkDir());
-            lifecycle.recordConnectionStateChange(
-              serverName,
-              wsId,
-              WORKSPACE_PRINCIPAL_ID,
-              "running",
-            );
-          } catch (err) {
-            log.warn(
-              `[composio-auth] adopt: source recovery / state transition failed for ${connectorId} in ${wsId}: ${
-                err instanceof Error ? err.message : String(err)
-              }`,
-            );
-          }
+          lifecycle.recordConnectionStateChange(
+            serverName,
+            wsId,
+            WORKSPACE_PRINCIPAL_ID,
+            "running",
+          );
           return c.json({
             authorizationUrl: composioSuccessRedirectUrl(c.req.url),
             alreadyConnected: true,

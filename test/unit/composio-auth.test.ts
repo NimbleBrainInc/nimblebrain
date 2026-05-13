@@ -86,6 +86,7 @@ interface StubLifecycleCalls {
 function stubCtx(
   workDir: string,
   catalogEntry: ReturnType<typeof composioEntry> | null,
+  options: { ensureSourceRegisteredError?: Error } = {},
 ): AppContext & { __lifecycleCalls: StubLifecycleCalls } {
   const calls: StubLifecycleCalls = {
     recordConnectionStateChange: { lastCall: null, callCount: 0 },
@@ -103,11 +104,13 @@ function stubCtx(
     // The reconnect path (callback + initiate adopt) calls
     // `ensureSourceRegistered` before recording state to bring the
     // McpSource back up after a prior disconnect's
-    // `teardownConnectionSource`. The stub no-ops; assertion-level
-    // tests for source recovery live in a future lifecycle-specific
-    // test file that needs the real registry.
+    // `teardownConnectionSource`. The stub no-ops by default; pass
+    // `ensureSourceRegisteredError` to simulate a source-start
+    // failure for the adopt-failure-path test.
     async ensureSourceRegistered(): Promise<void> {
-      // intentional no-op for these tests
+      if (options.ensureSourceRegisteredError) {
+        throw options.ensureSourceRegisteredError;
+      }
     },
   };
   const runtime = {
@@ -591,6 +594,60 @@ describe("POST /v1/composio-auth/initiate", () => {
       // No fresh nonce cookie — there's no return-leg to verify.
       const setCookie = res.headers.get("set-cookie") ?? "";
       expect(setCookie.includes("nb_composio_state=")).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("(b2) adopt-existing: source-register failure returns 502 and leaves connection.json absent", async () => {
+    process.env.COMPOSIO_API_KEY = "k_test";
+    process.env.COMPOSIO_GMAIL_AUTH_CONFIG_ID = "ac_gmail_test";
+    sdkCalls.listImpl = async () => ({
+      items: [{ id: "ca_already_active", status: "ACTIVE" }],
+    });
+    sdkCalls.initiateImpl = async () => {
+      throw new Error("adopt-failure path should not call connectedAccounts.initiate");
+    };
+
+    const dir = mkdtempSync(join(tmpdir(), "nb-adopt-fail-"));
+    try {
+      // Force ensureSourceRegistered to throw so we exercise the
+      // failure path: contract is that connection.json must NOT be
+      // written (so the next retry runs a clean adopt-existing) and
+      // the SPA receives an honest error, not a misleading success.
+      const ctx = stubCtx(dir, composioEntry("com.google/gmail"), {
+        ensureSourceRegisteredError: new Error("startBundleSource refused"),
+      });
+      (ctx as unknown as { authOptions: unknown }).authOptions = {
+        mode: { type: "dev" },
+        eventSink: { emit: () => {} },
+      };
+      const app = new Hono<AppEnv>();
+      app.use("*", async (c, next) => {
+        c.set("workspaceId", WS_ID);
+        await next();
+      });
+      app.route("/", composioAuthRoutes(ctx));
+
+      const res = await app.request("http://nb.test/v1/composio-auth/initiate", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ connectorId: "com.google/gmail" }),
+      });
+
+      expect(res.status).toBe(502);
+      const body = (await res.json()) as { error: string };
+      expect(body.error).toBe("composio_adopt_source_start_failed");
+
+      // connection.json must NOT be on disk — that's the whole point
+      // of the reorder. A "connected" state marker without a running
+      // source is exactly the lie the previous code was telling.
+      const stored = await readComposioConnection(dir, WS_ID, "com.google/gmail");
+      expect(stored).toBeNull();
+
+      // recordConnectionStateChange must NOT have been called either
+      // (no lying about state in-memory, just as none on disk).
+      expect(ctx.__lifecycleCalls.recordConnectionStateChange.callCount).toBe(0);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

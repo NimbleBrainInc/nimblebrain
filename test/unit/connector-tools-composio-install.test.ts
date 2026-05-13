@@ -314,26 +314,39 @@ describe("manage_connectors.install (composio-auth)", () => {
     expect(JSON.stringify(installed).includes("secret-api-key")).toBe(false);
   });
 
-  test("(d) startBundleSource is invoked after install (verified via the error message it surfaces on the fake URL)", async () => {
+  test("(d) eager startBundleSource failure returns success with a warning, not a hard error", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
     process.env.COMPOSIO_GMAIL_AUTH_CONFIG_ID = "ac_gmail";
 
     const tool = buildTool(h);
     const result = await tool.handler({ action: "install", entry: gmailEntry() });
 
-    // startBundleSource was called — it failed on the fake URL —
-    // and the install path's try/catch wrapped the failure in our
-    // composio-specific errResult. If startBundleSource were skipped,
-    // we'd see a SUCCESS return here. The error message proves the
-    // call was made and reached the network step.
-    expect(result.isError).toBe(true);
+    // Eager-start fails on the fake `composio.test` URL, but the
+    // install itself has succeeded — the BundleRef is in workspace.json,
+    // seedInstance has run, and a subsequent Connect click will run
+    // the same `ensureSourceRegistered` path as a normal reconnect.
+    // Surfacing this as a hard error would say "install failed" while
+    // the bundle is in fact installed — misleading. Contract: return
+    // success with a `warning` field so the agent / UI can communicate
+    // "installed, click Connect to retry" honestly.
+    expect(result.isError).toBe(false);
+    const sc = result.structuredContent as {
+      ok: boolean;
+      alreadyInstalled: boolean;
+      serverName: string;
+      scope: string;
+      warning?: string;
+    };
+    expect(sc.ok).toBe(true);
+    expect(sc.alreadyInstalled).toBe(false);
+    expect(sc.warning).toBeTruthy();
+    // Human-readable text mentions the click-Connect recovery path so
+    // the user / agent knows what to do next.
     const text = (result.content?.[0] as { text?: string } | undefined)?.text ?? "";
-    expect(text).toContain("Failed to start Composio MCP source");
+    expect(text).toContain("Installed");
+    expect(text).toContain("Connect");
 
-    // BundleRef is still persisted (workspace.json write happens
-    // before the failed startBundleSource step). This is intentional
-    // — install state is committed; the failure is at the runtime
-    // boundary and recoverable by retry-after-fix.
+    // BundleRef persisted regardless — install state is committed.
     const ws = await h.workspaceStore.get(h.wsId);
     expect(ws?.bundles).toHaveLength(1);
   });

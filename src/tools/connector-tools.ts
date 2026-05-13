@@ -6,6 +6,7 @@ import { deriveServerName, slugifyServerName } from "../bundles/paths.ts";
 import { startBundleSource } from "../bundles/startup.ts";
 import type { BundleManifest, BundleRef } from "../bundles/types.ts";
 import { installBundleInWorkspace } from "../bundles/workspace-ops.ts";
+import { log } from "../cli/log.ts";
 import { composioUserId, createComposioSession } from "../composio/sdk.ts";
 import {
   clearAllWorkspaceCredentials,
@@ -1281,6 +1282,17 @@ async function handleInstallRemoteOAuth(
     // For static / dcr bundles, source.start() is bound to
     // `lifecycle.startAuth` (called from `/v1/mcp-auth/initiate`)
     // and shouldn't run here.
+    //
+    // Eager-start is a UX optimization (instant tool list). If it
+    // fails the install itself has still succeeded — the BundleRef
+    // is in workspace.json, seedInstance has run, the next Connect
+    // click runs the same `ensureSourceRegistered` path as a normal
+    // reconnect and will start the source. Surfacing this as a hard
+    // error to the user would say "install failed" while the bundle
+    // is in fact installed. Return success with a warning instead
+    // so the agent can communicate "installed, eager-start failed,
+    // click Connect" cleanly.
+    let startWarning: string | undefined;
     if (action.auth === "composio") {
       try {
         await startBundleSource(ref, wsRegistry, ctx.runtime.getEventSink(), undefined, {
@@ -1299,17 +1311,25 @@ async function handleInstallRemoteOAuth(
         // connector showing "Ready" with no Connect affordance and
         // tool calls failing at Composio.
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        return errResult(`Failed to start Composio MCP source for "${entry.name}": ${msg}`);
+        startWarning = err instanceof Error ? err.message : String(err);
+        log.warn(
+          `[connector-tools] composio eager-start failed for ${entry.name} in ${wsId} ` +
+            `(install succeeded; click Connect to retry): ${startWarning}`,
+        );
       }
     }
     return {
-      content: textContent(`Installed "${entry.name}" for this workspace.`),
+      content: textContent(
+        startWarning
+          ? `Installed "${entry.name}" for this workspace. Source eager-start failed (${startWarning}) — click Connect to retry.`
+          : `Installed "${entry.name}" for this workspace.`,
+      ),
       structuredContent: {
         ok: true,
         alreadyInstalled: false,
         serverName,
         scope: "workspace",
+        ...(startWarning ? { warning: startWarning } : {}),
       },
       isError: false,
     };
