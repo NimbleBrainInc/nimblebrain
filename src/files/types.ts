@@ -34,9 +34,9 @@ export interface IngestResult {
  *
  * Text and MCP `resource_link` only — bytes for binary attachments are
  * persisted in the workspace `FileStore` and referenced by URI. The
- * runtime rehydrates image resource_links into AI SDK V3 `file` parts at
- * the `model.doStream` boundary; non-image resource_links are surfaced
- * to the model as text references.
+ * runtime rehydrates supported resource_links into AI SDK V3 `file` parts
+ * at the `model.doStream` boundary; unsupported resource_links are
+ * surfaced to the model as text references.
  */
 export type ContentPart =
   | { type: "text"; text: string }

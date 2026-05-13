@@ -24,10 +24,11 @@ const EXTRACTABLE_TEXT = new Set([
 ]);
 
 const EXTRACTABLE_DOCS = new Set([
-  "application/pdf",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 ]);
+
+export const PDF_TYPES = new Set(["application/pdf"]);
 
 /**
  * Image MIME types accepted on upload. Exported so the rehydration
@@ -55,6 +56,7 @@ const BINARY_TYPES = new Set([
 const ALLOWED_MIMES = new Set([
   ...EXTRACTABLE_TEXT,
   ...EXTRACTABLE_DOCS,
+  ...PDF_TYPES,
   ...IMAGE_TYPES,
   ...BINARY_TYPES,
 ]);
@@ -80,6 +82,10 @@ function isExtractable(mimeType: string): boolean {
 
 function isImage(mimeType: string): boolean {
   return IMAGE_TYPES.has(normalizeMime(mimeType));
+}
+
+function isPdf(mimeType: string): boolean {
+  return PDF_TYPES.has(normalizeMime(mimeType));
 }
 
 function humanSize(bytes: number): string {
@@ -164,12 +170,12 @@ export async function ingestFiles(
       }
     }
 
-    // Image files → MCP `resource_link` content part. The runtime rehydrates
-    // these to AI SDK V3 `file` parts (with bytes loaded from the FileStore)
-    // at the `model.doStream` boundary, so vision content survives through
-    // multi-turn agentic loops without the conversation log carrying the
-    // bytes inline.
-    if (isImage(file.mimeType)) {
+    // Rehydratable files → MCP `resource_link` content part. The runtime
+    // turns supported resource links into AI SDK V3 `file` parts (with bytes
+    // loaded from the FileStore) at the `model.doStream` boundary, so binary
+    // content survives multi-turn agentic loops without the conversation log
+    // carrying bytes or extracted PDF text inline.
+    if (isImage(file.mimeType) || isPdf(file.mimeType)) {
       contentParts.push({
         type: "resource_link",
         uri: fileIdToUri(saved.id),

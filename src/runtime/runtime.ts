@@ -849,15 +849,6 @@ export class Runtime {
       layer3Entries,
     );
 
-    // Load history and rehydrate any `resource_link` blocks (attached
-    // images persisted as URI references) into AI SDK V3 `file` parts
-    // with bytes loaded from the workspace FileStore. This is the seam
-    // where the storage shape (URI references) meets the model-call
-    // shape (inline bytes) — see `src/files/rehydrate.ts`.
-    const history = await store.history(conversation);
-    const fileStore = createFileStore(join(this.getWorkspaceScopedDir(wsId), "files"));
-    const messages = await rehydrateUserResources(history, fileStore);
-
     // Workspace model overrides are in the RequestContext — read via getModelSlot()
 
     // Resolve model: support alias references (e.g., "alias:fast", "alias:reasoning")
@@ -875,6 +866,17 @@ export class Runtime {
     // options shape, log lines) reads `engineConfig.model` directly
     // and depends on it being qualified.
     resolvedModelString = resolveModelString(resolvedModelString);
+
+    // Load history and rehydrate any supported `resource_link` blocks
+    // (attached files persisted as URI references) into AI SDK V3 `file`
+    // parts with bytes loaded from the workspace FileStore. This is the seam
+    // where the storage shape (URI references) meets the model-call
+    // shape (inline bytes) — see `src/files/rehydrate.ts`.
+    const history = await store.history(conversation);
+    const fileStore = createFileStore(join(this.getWorkspaceScopedDir(wsId), "files"));
+    const messages = await rehydrateUserResources(history, fileStore, {
+      model: resolvedModelString,
+    });
 
     // Resolve maxOutputTokens FIRST — resolveThinking needs it to clamp the
     // thinking budget so visible-content headroom is always preserved.
