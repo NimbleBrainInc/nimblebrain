@@ -35,9 +35,8 @@ const VERSION = process.env.NB_VERSION || pkg.version;
 
 /**
  * Interval between SSE comment heartbeats on /v1/chat/stream. Chosen to sit
- * safely below AWS ALB idle-timeout (60s default, raised to 900s in
- * `deployments/agent-platform/*`) while staying quiet enough to be
- * invisible to the user.
+ * safely below a typical proxy/load-balancer idle-timeout (60s on AWS ALB
+ * by default) while staying quiet enough to be invisible to the user.
  */
 const HEARTBEAT_INTERVAL_MS = 20_000;
 
