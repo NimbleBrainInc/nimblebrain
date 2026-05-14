@@ -8,7 +8,9 @@ import type { PlacementDeclaration, RemoteTransportConfig } from "../bundles/typ
 import { log } from "../cli/log.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import type { ContentBlock, EventSink, ToolResult } from "../engine/types.ts";
+import { promoteHiddenErrors } from "./promote-hidden-errors.ts";
 import { createRemoteTransport } from "./remote-transport.ts";
+import { scrubArgsForDispatch } from "./scrub-args.ts";
 import {
   type ResourceData,
   TaskAlreadyTerminalError,
@@ -826,6 +828,22 @@ export class McpSource implements ToolSource {
     const tool = this.findTool(toolName);
     const taskSupport = tool?.execution?.taskSupport;
     const isTaskAugmented = taskSupport === "optional" || taskSupport === "required";
+
+    // Strip no-op values models routinely emit for optional fields (empty
+    // strings, nil UUIDs, empty arrays). Some upstream APIs treat these as
+    // real values and reject with HTTP 400. Equivalent to the model having
+    // omitted the field. Required fields pass through unchanged.
+    const scrubbed = tool?.inputSchema
+      ? scrubArgsForDispatch(input, tool.inputSchema)
+      : { args: input, stripped: [] };
+    if (scrubbed.stripped.length > 0) {
+      log.debug(
+        "mcp",
+        `scrub source=${this.name} tool=${toolName} stripped=${scrubbed.stripped.join(",")}`,
+      );
+    }
+    const dispatchArgs = scrubbed.args;
+
     // Answers: "why is this tool call going inline vs task-augmented?" and
     // "is the tool cache populated?". Covers the whole dispatch decision in
     // one line. (eventSink is required at construction, so always present.)
@@ -839,8 +857,8 @@ export class McpSource implements ToolSource {
 
     try {
       return isTaskAugmented
-        ? await this.callToolAsTask(toolName, input, signal)
-        : await this.callToolInline(toolName, input, signal);
+        ? await this.callToolAsTask(toolName, dispatchArgs, signal)
+        : await this.callToolInline(toolName, dispatchArgs, signal);
     } catch (err) {
       // Cancellation isn't a crash — the source is healthy, the client just
       // asked to stop. Emit a terminal tool.progress for task-augmented
@@ -966,13 +984,18 @@ export class McpSource implements ToolSource {
       signal ? { signal } : undefined,
     );
     if (!result) return { content: [], isError: true };
-    return {
+    const toolResult: ToolResult = {
       content: Array.isArray(result.content) ? (result.content as ContentBlock[]) : [],
       structuredContent: (result as Record<string, unknown>).structuredContent as
         | Record<string, unknown>
         | undefined,
       isError: Boolean(result.isError),
     };
+    const promoted = promoteHiddenErrors(toolResult);
+    if (promoted !== toolResult) {
+      log.debug("mcp", `lie-normalized source=${this.name} tool=${toolName} path=inline`);
+    }
+    return promoted;
   }
 
   /**
@@ -1011,13 +1034,18 @@ export class McpSource implements ToolSource {
       ownerContext: { workspaceId: `__agent__:${this.name}` },
     });
 
-    return {
+    const toolResult: ToolResult = {
       content: Array.isArray(callToolResult.content)
         ? (callToolResult.content as ContentBlock[])
         : [],
       structuredContent: callToolResult.structuredContent as Record<string, unknown> | undefined,
       isError: Boolean(callToolResult.isError),
     };
+    const promoted = promoteHiddenErrors(toolResult);
+    if (promoted !== toolResult) {
+      log.debug("mcp", `lie-normalized source=${this.name} tool=${toolName} path=task`);
+    }
+    return promoted;
   }
 
   /**
