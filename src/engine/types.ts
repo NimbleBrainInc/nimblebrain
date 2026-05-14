@@ -200,6 +200,14 @@ export interface EngineConfig {
     isToolEligible(tool: ToolSchema): boolean;
     registerControls(controls: ToolPromotionControls): () => void;
   };
+  /**
+   * Cap on the active tool list during this run, including agent-promoted
+   * tools. When `addTool` would push past this cap, the least-recently-used
+   * agent-promoted tool is evicted (initial tools passed to `run()` are
+   * never evicted). Defaults to `DEFAULT_MAX_DIRECT_TOOLS` from `limits.ts`
+   * — the same invariant `surfaceTools` enforces at run start.
+   */
+  maxActiveTools?: number;
 }
 
 /**

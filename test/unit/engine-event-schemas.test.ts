@@ -128,6 +128,16 @@ describe("event schemas — accept representative payloads", () => {
       Value.Check(ToolPromotionChangedPayload, { runId: "run-abc", toolName: "app__tool" }),
     ).toBe(true);
   });
+
+  test("tool.released — accepts optional reason for engine-driven evictions", () => {
+    expect(
+      Value.Check(ToolPromotionChangedPayload, {
+        runId: "run-abc",
+        toolName: "app__tool",
+        reason: "evicted",
+      }),
+    ).toBe(true);
+  });
 });
 
 describe("event schemas — reject malformed payloads", () => {

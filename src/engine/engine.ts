@@ -7,7 +7,7 @@ import type {
   LanguageModelV3ToolResultPart,
   SharedV3ProviderOptions,
 } from "@ai-sdk/provider";
-import { MAX_ITERATIONS, MAX_TOOL_RESULT_CHARS } from "../limits.ts";
+import { DEFAULT_MAX_DIRECT_TOOLS, MAX_ITERATIONS, MAX_TOOL_RESULT_CHARS } from "../limits.ts";
 import { getProviderFromModel, supportsEnabledThinking } from "../model/catalog.ts";
 import { normalizeForReplay } from "../model/inbound-fit.ts";
 import { callModel, type StreamResult } from "../model/stream.ts";
@@ -267,10 +267,22 @@ export class AgentEngine {
 
     const directTools = [...tools];
     const directToolNames = new Set(directTools.map((t) => t.name));
+    // LRU bookkeeping for agent-promoted tools. Initial tools (passed in
+    // `tools`) are NEVER tracked here, so the eviction loop can never
+    // touch them — they're operator-opted-in. Counter is monotonic so
+    // smaller stamp = older, regardless of clock skew or test parallelism.
+    const promotedLastUsed = new Map<string, number>();
+    let useCounter = 0;
+    const maxActiveTools = config.maxActiveTools ?? DEFAULT_MAX_DIRECT_TOOLS;
 
     const toolControls = {
       addTool: (toolName: string) => {
         if (directToolNames.has(toolName)) {
+          // Already-active tool counts as a "use" — refresh LRU stamp so
+          // re-promoting a recently-used tool doesn't make it look stale.
+          if (promotedLastUsed.has(toolName)) {
+            promotedLastUsed.set(toolName, ++useCounter);
+          }
           return {
             ok: true,
             toolName,
@@ -308,7 +320,31 @@ export class AgentEngine {
         }
         directTools.push(schema);
         directToolNames.add(toolName);
+        promotedLastUsed.set(toolName, ++useCounter);
         this.events.emit({ type: "tool.promoted", data: { runId, toolName } });
+
+        // Backstop: cap active tools by evicting LRU agent-promoted entries.
+        // Initial tools are exempt because they're not in `promotedLastUsed`.
+        // The just-added tool has the highest stamp so it's never the victim.
+        while (directTools.length > maxActiveTools && promotedLastUsed.size > 0) {
+          let oldestName: string | null = null;
+          let oldestStamp = Number.POSITIVE_INFINITY;
+          for (const [name, stamp] of promotedLastUsed) {
+            if (stamp < oldestStamp) {
+              oldestStamp = stamp;
+              oldestName = name;
+            }
+          }
+          if (!oldestName) break;
+          const idx = directTools.findIndex((t) => t.name === oldestName);
+          if (idx >= 0) directTools.splice(idx, 1);
+          directToolNames.delete(oldestName);
+          promotedLastUsed.delete(oldestName);
+          this.events.emit({
+            type: "tool.released",
+            data: { runId, toolName: oldestName, reason: "evicted" },
+          });
+        }
         return {
           ok: true,
           toolName,
@@ -337,6 +373,7 @@ export class AgentEngine {
         const idx = directTools.findIndex((t) => t.name === toolName);
         if (idx >= 0) directTools.splice(idx, 1);
         directToolNames.delete(toolName);
+        promotedLastUsed.delete(toolName);
         this.events.emit({ type: "tool.released", data: { runId, toolName } });
         return {
           ok: true,
@@ -620,6 +657,13 @@ export class AgentEngine {
                   isError: true,
                 };
               }
+            }
+
+            // LRU refresh: a promoted tool that's actively being called
+            // moves to the back of the eviction queue. Initial tools aren't
+            // in the map and are exempt from eviction either way.
+            if (promotedLastUsed.has(gatedCall.name)) {
+              promotedLastUsed.set(gatedCall.name, ++useCounter);
             }
 
             // Guard: reject oversized tool results before event emission or history accumulation
