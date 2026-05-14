@@ -2385,27 +2385,17 @@ async function handleClearUserConfig(
 async function respawnBundleAfterCredentialChange(
   ctx: ManageConnectorsContext,
   wsId: string,
-  bundleName: string,
+  _bundleName: string,
   serverName: string,
 ): Promise<{ ok: boolean; error?: string }> {
-  try {
-    const registry = ctx.runtime.getRegistryForWorkspace(wsId);
-    if (registry.hasSource(serverName)) {
-      await registry.removeSource(serverName);
-    }
-    // Pass `name` (the scoped manifest name) so startBundleSource hits
-    // the named-bundle path that resolves user_config from the
-    // workspace credential store. configDir is undefined — same as
-    // configureBundle's call site; named-bundle path doesn't need it.
-    await startBundleSource({ name: bundleName }, registry, ctx.runtime.getEventSink(), undefined, {
-      wsId,
-      workDir: ctx.runtime.getWorkDir(),
-      allowInsecureRemotes: ctx.runtime.getAllowInsecureRemotes(),
-    });
-    return { ok: true };
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
-  }
+  // Thin wrapper kept for backward-compatible structuredContent shape
+  // (callers assert on `respawn.ok`/`respawn.error`). The actual work
+  // lives in `lifecycle.respawnBundle`, which centralizes the per-
+  // (serverName, wsId) mutex and protected-bundle gating that this
+  // function previously lacked.
+  const registry = ctx.runtime.getRegistryForWorkspace(wsId);
+  const result = await ctx.runtime.getLifecycle().respawnBundle(serverName, wsId, registry);
+  return result.ok ? { ok: true } : { ok: false, error: result.error };
 }
 
 /**
