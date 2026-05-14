@@ -783,10 +783,10 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
             // into the right provider knobs here.
             const profile = runtime.getModelProfile("fast");
 
-            // Generate briefing with facets + activity
+            // Generate briefing with facets + activity. Model identity
+            // travels with the profile; HomeConfig only carries the
+            // user-facing presentation bits.
             const generator = new BriefingGenerator(profile, {
-              enabled: true,
-              model: profile.modelString,
               userName: homeConfig.userName,
               timezone: homeConfig.timezone,
               cacheTtlMinutes: homeConfig.cacheTtlMinutes,

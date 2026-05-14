@@ -65,6 +65,38 @@ function createTrackingModelV3(responseText: string): {
 	return { model, calls };
 }
 
+/** Model that returns successfully but with no text content block.
+ * Exercises the empty-response branch of attempt() — the model can
+ * "succeed" while producing nothing parseable. */
+function createEmptyContentModelV3(): {
+	model: LanguageModelV3;
+	getCalls: () => number;
+} {
+	let calls = 0;
+	const model: LanguageModelV3 = {
+		specificationVersion: "v3",
+		provider: "mock",
+		modelId: "mock-model",
+		supportedUrls: {},
+		async doGenerate() {
+			calls++;
+			return {
+				content: [],
+				finishReason: { unified: "stop", raw: undefined },
+				usage: {
+					inputTokens: { total: 100, noCache: undefined, cacheRead: undefined, cacheWrite: undefined },
+					outputTokens: { total: 0, text: undefined, reasoning: undefined },
+				},
+				warnings: [],
+			};
+		},
+		async doStream() {
+			throw new Error("Not implemented for this test");
+		},
+	};
+	return { model, getCalls: () => calls };
+}
+
 function createThrowingModelV3(err: Error): {
 	model: LanguageModelV3;
 	getCalls: () => number;
@@ -111,8 +143,6 @@ function createTruncatedModelV3(responseText: string): LanguageModelV3 {
 
 function makeConfig(overrides: Partial<HomeConfig> = {}): HomeConfig {
 	return {
-		enabled: true,
-		model: null,
 		userName: "Mat",
 		timezone: "Pacific/Honolulu",
 		cacheTtlMinutes: 15,
@@ -560,6 +590,31 @@ describe("briefing-generator", () => {
 			await gen.generate(activeActivity());
 
 			expect(getCalls()).toBe(2);
+		});
+
+		it("classifies non-auth 4xx as bad_request (not retryable)", async () => {
+			// 400 BadRequest / 422 Unprocessable — distinct from auth so
+			// operators don't chase credential issues that don't exist.
+			const err = Object.assign(new Error("Bad shape"), { statusCode: 400 });
+			const { model, getCalls } = createThrowingModelV3(err);
+			const gen = new BriefingGenerator(makeProfile(model), makeConfig());
+			const result = await gen.generate(activeActivity());
+
+			expect(getCalls()).toBe(1);
+			expect(result.degraded).toBe(true);
+		});
+
+		it("retries when model returns successfully but with no text content", async () => {
+			// "Success" with an empty content array is rare but real — some
+			// providers can emit only reasoning blocks or tool calls and
+			// produce no text. Should retry once like any other recoverable
+			// failure, then fall back to the heuristic.
+			const { model, getCalls } = createEmptyContentModelV3();
+			const gen = new BriefingGenerator(makeProfile(model), makeConfig());
+			const result = await gen.generate(activeActivity());
+
+			expect(getCalls()).toBe(2);
+			expect(result.degraded).toBe(true);
 		});
 	});
 

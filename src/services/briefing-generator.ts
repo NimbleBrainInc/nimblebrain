@@ -524,7 +524,15 @@ export class BriefingGenerator {
 // Failure classification + heuristic helpers
 // ---------------------------------------------------------------------------
 
-type FailureReason = "timeout" | "empty" | "parse" | "auth" | "rate_limit" | "server" | "unknown";
+type FailureReason =
+  | "timeout"
+  | "empty"
+  | "parse"
+  | "auth"
+  | "bad_request"
+  | "rate_limit"
+  | "server"
+  | "unknown";
 
 type AttemptResult =
   | { kind: "ok"; parsed: { lede: string; sections: BriefingSection[] } }
@@ -562,9 +570,10 @@ function classifyError(err: unknown): { reason: FailureReason; retryable: boolea
         return { reason: "server", retryable: true };
       }
       if (status >= 400) {
-        // Unhandled 4xx — likely a bad-request shape we shouldn't retry
-        // with the same payload.
-        return { reason: "auth", retryable: false };
+        // Other 4xx — 400 BadRequest, 422 Unprocessable, etc. Same
+        // retry decision as auth (don't retry with the same payload)
+        // but distinct in logs so operators triage the right thing.
+        return { reason: "bad_request", retryable: false };
       }
     }
   }

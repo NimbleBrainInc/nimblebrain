@@ -130,12 +130,18 @@ function callServerTool<T>(
       },
       "*",
     );
+    // 75s covers the briefing server budget (FIRST=30s + RETRY=20s +
+    // IPC/parent-message overhead) with margin. At 60s, a worst-case
+    // briefing — both LLM attempts ride the deadline before falling
+    // through to the heuristic — rejects iframe-side before the server
+    // can return the degraded payload, and the user sees the red error
+    // box instead of the amber retry banner.
     setTimeout(() => {
       if (_pending.has(id)) {
         _pending.delete(id);
         reject(new Error("Tool call timed out"));
       }
-    }, 60000);
+    }, 75000);
   });
 }
 

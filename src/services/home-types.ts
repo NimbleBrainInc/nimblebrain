@@ -111,10 +111,12 @@ export interface ErrorEntry {
   context?: string;
 }
 
-/** Home feature configuration from nimblebrain.json. */
+/** Home feature configuration from nimblebrain.json. Mirrors the shape
+ * returned by `Runtime.getHomeConfig()`. Feature gating (`enabled`) and
+ * model selection live elsewhere — model identity comes from the
+ * resolved ModelProfile, and the briefing tool's registration handles
+ * the feature flag at a higher level. */
 export interface HomeConfig {
-  enabled: boolean;
-  model: string | null;
   userName: string;
   timezone: string;
   cacheTtlMinutes: number;
