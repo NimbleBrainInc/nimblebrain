@@ -103,6 +103,31 @@ describe("promoteHiddenErrors — multi-block content", () => {
     };
     expect(promoteHiddenErrors(result).isError).toBe(true);
   });
+
+  it("matches an anchored pattern at the start of a non-first block", () => {
+    // Without the `m` flag, `^Request failed...` would only match if the
+    // text appeared at the very start of the joined string. A summary
+    // block followed by an error block should still trip.
+    const result: ToolResult = {
+      content: [
+        { type: "text", text: "Result summary: attempted to fetch ledger." },
+        { type: "text", text: "Request failed with status code 500" },
+      ],
+      isError: false,
+    };
+    expect(promoteHiddenErrors(result).isError).toBe(true);
+  });
+
+  it("matches an anchored 'Ran into an error' at the start of a later block", () => {
+    const result: ToolResult = {
+      content: [
+        { type: "text", text: "Pre-flight check OK." },
+        { type: "text", text: "Ran into an error: upstream timeout" },
+      ],
+      isError: false,
+    };
+    expect(promoteHiddenErrors(result).isError).toBe(true);
+  });
 });
 
 describe("promoteHiddenErrors — preserves shape", () => {

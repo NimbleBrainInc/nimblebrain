@@ -15,12 +15,17 @@ import type { ContentBlock, ToolResult } from "../engine/types.ts";
  * content blocks. Chosen to minimise false positives — phrases like
  * "AxiosError" or "Request failed with status code NNN" are effectively
  * never present in a legitimately successful tool response.
+ *
+ * Anchored patterns use the `m` flag so they match at the start of any
+ * block (the join is `\n`-delimited), not just the very first character.
+ * A vendor that emits `[{text:"Summary"}, {text:"Request failed..."}]`
+ * should still be caught.
  */
 const LIE_PATTERNS: readonly RegExp[] = [
-  /^Ran into an error[:\s]/,
+  /^Ran into an error[:\s]/m,
   /AxiosError/,
-  /^Request failed with status code \d{3}/,
-  /^Error[:\s].*status code \d{3}/i,
+  /^Request failed with status code \d{3}/m,
+  /^Error[:\s].*status code \d{3}/im,
 ] as const;
 
 export function promoteHiddenErrors(result: ToolResult): ToolResult {

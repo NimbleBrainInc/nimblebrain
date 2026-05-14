@@ -908,7 +908,12 @@ export class McpSource implements ToolSource {
       const restarted = await this.tryRestart();
       if (restarted) {
         try {
-          return await this.callToolInline(toolName, input, signal);
+          // Use scrubbed args on retry too — the original `input` still
+          // carries any no-op sentinels the upstream API will reject.
+          // Without this, a crash-restart retry bypasses the scrubber on
+          // exactly the code path that's most likely to hit
+          // deterministic-rejection bugs.
+          return await this.callToolInline(toolName, dispatchArgs, signal);
         } catch (retryErr) {
           return {
             content: textContent(
