@@ -61,6 +61,10 @@ export function useDataSync(): (event: DataChangedEvent) => void {
           },
         };
         debug("sync", `→ iframe[data-app="${appName}"] ${change.server}/${change.tool}`);
+        // Srcdoc iframes have the opaque "null" origin; `postMessage`'s
+        // targetOrigin can't address it (literal "null" throws). Until
+        // sandbox-proxy lands (iframe.ts TODO) this stays "*". The leak
+        // direction (iframe→parent) is hardened via hostContext.origin.
         iframe.contentWindow?.postMessage(message, "*");
       }
     }
