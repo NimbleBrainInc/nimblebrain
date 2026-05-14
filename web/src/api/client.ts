@@ -525,6 +525,30 @@ export async function initiateMcpOAuth(
 }
 
 /**
+ * Begin an OAuth flow for a Composio-backed connector. Parallel to
+ * {@link initiateMcpOAuth} but keyed on the catalog connector id
+ * (e.g. `com.google/gmail`) rather than the slugified server name,
+ * because Composio's auth is per-toolkit and the catalog entry's
+ * `_meta.composio` block is the authoritative source for the
+ * `auth_config_id` env var and toolkit slug.
+ *
+ * Returns the URL the browser should navigate to (Composio's hosted
+ * Connect Link, which 302s to the vendor's OAuth consent screen).
+ */
+export async function initiateComposioOAuth(
+  connectorId: string,
+): Promise<{ authorizationUrl: string; alreadyConnected?: boolean }> {
+  return request<{ authorizationUrl: string; alreadyConnected?: boolean }>(
+    "/v1/composio-auth/initiate",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ connectorId }),
+    },
+  );
+}
+
+/**
  * Connectors catalog entry — one card on Settings → Connectors.
  * Mirrors the server-side `ConnectorCatalogEntry` shape.
  */
@@ -534,11 +558,13 @@ export interface ConnectorCatalogEntry {
   description: string;
   iconUrl: string;
   url: string;
-  auth: "dcr" | "static";
+  auth: "dcr" | "static" | "composio";
   defaultScope: "workspace" | "user";
   requiredScopes?: string[];
   additionalAuthorizationParams?: Record<string, string>;
   operatorSetup?: { portalUrl: string; hint: string; clientSecretKey: string };
+  /** Composio-backed connectors: toolkit slug + auth-config env var + optional tool allowlist. */
+  composio?: { toolkit: string; authConfigEnv: string; tools?: string[] };
   tags?: string[];
   /** When true, the connector exposes a UI surface — render the "Interactive" badge. */
   interactive?: boolean;
@@ -769,10 +795,11 @@ export interface DirectoryEntry {
     | {
         kind: "remote-oauth";
         url: string;
-        auth: "dcr" | "static";
+        auth: "dcr" | "static" | "composio";
         requiredScopes?: string[];
         additionalAuthorizationParams?: Record<string, string>;
         operatorSetup?: { portalUrl: string; hint: string; clientSecretKey: string };
+        composio?: { toolkit: string; authConfigEnv: string; tools?: string[] };
       }
     | { kind: "mpak-bundle"; package: string }
     | { kind: "direct-url"; url: string };

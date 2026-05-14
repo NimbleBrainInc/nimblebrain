@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import {
   type DirectoryEntry,
   getInstalledConnectors,
+  initiateComposioOAuth,
   initiateMcpOAuth,
   type InstalledConnector,
   installConnector,
@@ -116,7 +117,13 @@ export function ConnectorBrowsePage({ scope }: { scope: "user" | "workspace" }) 
       // Stdio (mpak-bundle): install completes in-process; route to
       // Configure so the user can fill in any user_config fields.
       if (entry.install.kind === "remote-oauth") {
-        const { authorizationUrl } = await initiateMcpOAuth(res.serverName);
+        // Composio-backed connectors route through their own
+        // initiate endpoint (keyed on catalog id, not server name).
+        // Everything else (dcr + static) stays on /v1/mcp-auth.
+        const { authorizationUrl } =
+          entry.install.auth === "composio"
+            ? await initiateComposioOAuth(entry.id)
+            : await initiateMcpOAuth(res.serverName);
         window.location.assign(authorizationUrl);
         return;
       }

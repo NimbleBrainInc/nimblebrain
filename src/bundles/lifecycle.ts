@@ -2,6 +2,7 @@ import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "nod
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { log } from "../cli/log.ts";
+import { cleanupComposioBundle } from "../composio/sdk.ts";
 import { clearAllWorkspaceCredentials } from "../config/workspace-credentials.ts";
 import type { EventSink } from "../engine/types.ts";
 import type { PlacementRegistry } from "../runtime/placement-registry.ts";
@@ -14,6 +15,7 @@ import {
   WorkspaceOAuthProvider,
 } from "../tools/workspace-oauth-provider.ts";
 import { createAutomation, deleteAutomation } from "./automations/src/domain.ts";
+import { connectorSlug, hasPersistedComposioConnection } from "./composio-connection.ts";
 import {
   type Connection,
   type ConnectionState,
@@ -465,6 +467,51 @@ export class BundleLifecycleManager {
           `[lifecycle] Failed to clear OAuth state for ${serverName} in ${instance.wsId}: ${msg}\n`,
         );
       }
+      // Composio-backed bundles use a parallel credential namespace
+      // (`composio/<connectorId>/connection.json`) AND have upstream
+      // state at Composio (the connected account holding the
+      // vendor's OAuth tokens). The mcp-oauth rmSync above doesn't
+      // touch either. Without this block, uninstall-without-prior-
+      // disconnect (the realistic flow — users don't disconnect
+      // first) would leak local disk state and leave the upstream
+      // account ACTIVE forever. `cleanupComposioBundle` runs the
+      // same revoke-then-delete pair `disconnect` uses; the
+      // additional rmSync below removes the now-empty connector
+      // subdirectory to match the mcp-oauth posture.
+      const composioRef =
+        instance.ref && "composio" in instance.ref ? instance.ref.composio : undefined;
+      if (composioRef) {
+        try {
+          await cleanupComposioBundle({
+            workDir,
+            wsId: instance.wsId,
+            connectorId: composioRef.connectorId,
+          });
+        } catch (err) {
+          // cleanupComposioBundle never throws by contract; guard
+          // anyway so an SDK exception can't sink the uninstall.
+          const msg = err instanceof Error ? err.message : String(err);
+          process.stderr.write(
+            `[lifecycle] Failed to revoke Composio bundle "${serverName}" in ${instance.wsId}: ${msg}\n`,
+          );
+        }
+        try {
+          const composioDir = join(
+            workDir,
+            "workspaces",
+            instance.wsId,
+            "credentials",
+            "composio",
+            connectorSlug(composioRef.connectorId),
+          );
+          rmSync(composioDir, { recursive: true, force: true });
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          process.stderr.write(
+            `[lifecycle] Failed to clear composio dir for ${serverName} in ${instance.wsId}: ${msg}\n`,
+          );
+        }
+      }
     }
 
     // Step 5 — Emit event (data NOT deleted — step 6)
@@ -893,6 +940,36 @@ export class BundleLifecycleManager {
     }
     const isWorkspaceScope = principalId === WORKSPACE_PRINCIPAL_ID;
 
+    // Composio-backed bundles use a parallel credential namespace —
+    // OAuth tokens live at Composio, not in our `mcp-oauth` directory.
+    // `cleanupComposioBundle` runs the same two-step teardown that
+    // uninstall uses: revoke the Composio-side connected account
+    // (vendor OAuth tokens go with it) + delete the local
+    // `connection.json` so a subsequent Connect can't short-circuit
+    // on a stale ACTIVE account. Single helper, two callers.
+    //
+    // Composio doesn't differentiate access from refresh — one
+    // delete call revokes both at the upstream vendor. Reporting
+    // `{ access }` only (not faking `refresh`) keeps the return
+    // shape honest about what we know.
+    if (ref.composio && isWorkspaceScope) {
+      const { upstreamDeleted, localDeleted, lastError } = await cleanupComposioBundle({
+        workDir: opts.workDir,
+        wsId,
+        connectorId: ref.composio.connectorId,
+      });
+      await this.teardownConnectionSource(serverName, wsId, principalId);
+      this.recordConnectionStateChange(serverName, wsId, principalId, "not_authenticated", {
+        source: null,
+        authorizationUrl: undefined,
+      });
+      return {
+        revoked: { access: upstreamDeleted },
+        deletedLocal: localDeleted,
+        ...(lastError ? { revokeError: lastError } : {}),
+      };
+    }
+
     const provider = new WorkspaceOAuthProvider({
       owner: isWorkspaceScope ? { type: "workspace", wsId } : { type: "user", userId: principalId },
       serverName,
@@ -1286,6 +1363,56 @@ export class BundleLifecycleManager {
    * No-op when the instance can't be found — defensive guard for
    * mis-ordered call sites; logs at debug.
    */
+  /**
+   * Ensure the workspace registry has a running source for
+   * `serverName`. No-op if one is already registered. Otherwise,
+   * reconstructs the source from the persisted `BundleRef` on the
+   * `BundleInstance` and starts it via `startBundleSource`.
+   *
+   * The use case: `disconnect()` calls `teardownConnectionSource`,
+   * which removes the source from the registry. On reconnect, the
+   * platform records a "running" state — but recording is a state
+   * mutation, not a source-lifecycle operation. Without this helper,
+   * the registry stays empty and tool calls fail with "source not
+   * started" until the next platform restart.
+   *
+   * The native OAuth reconnect path routes through `startAuth`,
+   * which already calls `startBundleSource` internally. The Composio
+   * reconnect path doesn't go through `startAuth` (different OAuth
+   * model — the dance happens server-side via Composio's API, not
+   * via the MCP SDK's OAuth provider), so it needs this helper.
+   *
+   * Throws when:
+   *   - The workspace has no registry yet (boot ordering bug — should
+   *     not happen in production code paths)
+   *   - The BundleInstance has no URL ref persisted (shouldn't happen
+   *     for any path that goes through install)
+   *
+   * `startBundleSource` itself can throw on transport / handshake
+   * failures; callers should decide whether to swallow or surface.
+   */
+  async ensureSourceRegistered(serverName: string, wsId: string, workDir: string): Promise<void> {
+    const wsRegistry = this.registriesByWs.get(wsId);
+    if (!wsRegistry) {
+      throw new Error(`[lifecycle] no registry for workspace "${wsId}"`);
+    }
+    if (wsRegistry.hasSource(serverName)) return;
+
+    const instance = this.instances.get(`${serverName}|${wsId}`);
+    const ref = instance?.ref;
+    if (!ref || !("url" in ref)) {
+      throw new Error(
+        `[lifecycle] cannot re-register source "${serverName}" in ${wsId} — no URL ref persisted`,
+      );
+    }
+
+    await startBundleSource(ref, wsRegistry, this.eventSink, undefined, {
+      allowInsecureRemotes: this.allowInsecureRemotes,
+      wsId,
+      workDir,
+    });
+  }
+
   notifyInstalled(serverName: string, wsId: string): void {
     const instance = this.instances.get(`${serverName}|${wsId}`);
     if (!instance) {
@@ -1440,7 +1567,17 @@ export class BundleLifecycleManager {
         });
       } else {
         const workDir = process.env.NB_WORK_DIR ?? join(homedir(), ".nimblebrain");
-        if (!hasPersistedWorkspaceOAuthTokens(workDir, wsId, serverName)) {
+        // Composio-backed connectors live in a parallel credential
+        // namespace — the user-presence signal is
+        // `credentials/composio/<connectorId>/connection.json`, not
+        // the mcp-oauth tokens.json. Bundles carry the catalog id
+        // forward on `ref.composio.connectorId` so this probe is
+        // local; we don't need the catalog to derive the path.
+        const hasAuth =
+          "composio" in ref && ref.composio
+            ? hasPersistedComposioConnection(workDir, wsId, ref.composio.connectorId)
+            : hasPersistedWorkspaceOAuthTokens(workDir, wsId, serverName);
+        if (!hasAuth) {
           this.recordConnectionStateChange(serverName, wsId, "_workspace", "not_authenticated");
         } else {
           this.recordConnectionStateChange(serverName, wsId, "_workspace", "running");

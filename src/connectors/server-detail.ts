@@ -108,13 +108,53 @@ export interface Package {
 export interface NimbleBrainConnectorMeta {
   /** Recommended OAuth identity scope for the connector. */
   defaultScope?: "workspace" | "user";
-  /** OAuth flow type for remote services. */
-  auth?: "dcr" | "static";
+  /**
+   * OAuth flow type for remote services.
+   *
+   * - `dcr`: dynamic client registration (RFC 7591). Provider issues
+   *   a client at first use; no operator setup.
+   * - `static`: pre-registered OAuth client. Operator provides
+   *   `clientId` + `clientSecret` from the vendor's developer portal.
+   * - `composio`: Composio aggregator holds the vendor's tokens.
+   *   Platform persists only an opaque `connectedAccountId` per
+   *   workspace. Required: the `composio` block below.
+   */
+  auth?: "dcr" | "static" | "composio";
   /** Required for `auth: "static"`: where the operator creates the OAuth app. */
   operatorSetup?: {
     portalUrl: string;
     hint: string;
     clientSecretKey: string;
+  };
+  /**
+   * Required for `auth: "composio"`. Names the toolkit at Composio
+   * and the env var holding the operator-controlled auth-config id.
+   *
+   * - `toolkit`: Composio's slug for the upstream (`gmail`, `slack`,
+   *   `hubspot`, …). Passed as the `authConfigs` key when calling
+   *   `composio.create(userId, { authConfigs: { [toolkit]: ac_… } })`
+   *   at install time, and used as the directory name for the
+   *   per-workspace `connection.json`.
+   * - `authConfigEnv`: name of the env var holding Composio's
+   *   `auth_config_id` (e.g. `ac_…`). The catalog file is OSS and
+   *   shared across deployments; the actual id varies per Composio
+   *   account, hence the indirection.
+   *
+   * The MCP URL and headers are obtained from Composio's session API
+   * at install time — operators do not pre-create an MCP server
+   * config or specify a server id.
+   *
+   * `tools` is an optional allowlist of Composio tool slugs to expose
+   * on the MCP endpoint. Required in practice for any toolkit with
+   * more than ~20 tools: without it the agent's tool-discovery search
+   * dumps every matching tool's full description into the context
+   * (Outlook = 282 tools, ~225K tokens). Curate per connector to a
+   * working set. Omit / leave empty for small toolkits.
+   */
+  composio?: {
+    toolkit: string;
+    authConfigEnv: string;
+    tools?: string[];
   };
   /** Optional OAuth scopes the bundle requests. */
   requiredScopes?: string[];

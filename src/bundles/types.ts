@@ -171,6 +171,15 @@ export type BundleRef =
        * security-critical params the provider sets itself.
        */
       additionalAuthorizationParams?: Record<string, string>;
+      /**
+       * Composio-backed connectors carry the catalog id forward so the
+       * lifecycle's boot-time state check can probe the right
+       * `connection.json` (under `credentials/composio/<connectorId>/`
+       * rather than `credentials/mcp-oauth/<serverName>/tokens.json`).
+       * Set at install time by `handleInstallRemoteOAuth`'s composio
+       * branch. Undefined for dcr/static OAuth bundles.
+       */
+      composio?: { connectorId: string };
     };
 
 /**

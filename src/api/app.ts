@@ -5,6 +5,7 @@ import { securityHeaders } from "./middleware/security-headers.ts";
 import { authRoutes } from "./routes/auth.ts";
 import { bootstrapRoutes } from "./routes/bootstrap.ts";
 import { chatRoutes } from "./routes/chat.ts";
+import { composioAuthRoutes } from "./routes/composio-auth.ts";
 import { conversationEventRoutes } from "./routes/conversation-events.ts";
 import { eventRoutes } from "./routes/events.ts";
 import { healthRoutes } from "./routes/health.ts";
@@ -36,6 +37,10 @@ export function createApp(
   // reachable before any authenticated middleware; ordering alongside
   // authRoutes keeps that invariant obvious.
   app.route("/", mcpAuthRoutes(ctx));
+  // Composio-backed connectors. Parallel to mcpAuthRoutes — same
+  // unauthenticated-callback constraint applies. The /proxy endpoint
+  // is the white-label forwarder vendors call back to.
+  app.route("/", composioAuthRoutes(ctx));
 
   // MCP routes BEFORE other authenticated routes — prevents other sub-app
   // wildcard middleware from intercepting /mcp requests. Hono runs use("*")
