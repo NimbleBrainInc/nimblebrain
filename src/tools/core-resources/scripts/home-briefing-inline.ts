@@ -1,6 +1,13 @@
+import { IFRAME_BRIDGE_SCRIPT } from "../../../api/iframe-bridge-script.ts";
 import { BRIDGE_HELPER } from "./_bridge.ts";
 
+// The Synapse runtime + BRIDGE_HELPER already provides a `synapse` instance,
+// but this script needs the lightweight NBBridge helper too: the size-
+// notification path doesn't have a Synapse equivalent today, and we want
+// the validated outbound (host-origin targetOrigin) + validated inbound
+// (event.source + event.origin pinning) introduced for issue #99.
 export const HOME_BRIEFING_INLINE_SCRIPT =
+  IFRAME_BRIDGE_SCRIPT +
   BRIDGE_HELPER +
   `
 const app = document.getElementById("app");
@@ -56,25 +63,18 @@ function renderInline(data) {
   html += '</div>';
   app.innerHTML = html;
 
-  // Report height for auto-sizing
-  try {
-    var height = document.body.scrollHeight;
-    window.parent.postMessage({ method: "ui/notifications/size-changed", params: { height: height } }, "*");
-  } catch (_) {
-    // postMessage may fail if parent frame is detached — not actionable
-  }
+  // Report height for auto-sizing. NBBridge queues until handshake captures
+  // the host origin, then sends with the pinned origin as targetOrigin.
+  var height = document.body.scrollHeight;
+  window.NBBridge.send({ method: "ui/notifications/size-changed", params: { height: height } });
 }
 
-// Listen for tool result from host
-window.addEventListener("message", function(e) {
-  var msg = e.data;
-  if (!msg || typeof msg !== "object") return;
-
-  if (msg.method === "synapse/tool-result") {
-    var data = msg.params && msg.params.result;
-    if (data && typeof data === "object") {
-      renderInline(typeof data === "string" ? JSON.parse(data) : data);
-    }
+// Listen for tool result from host. NBBridge validates event.source and
+// event.origin before dispatching to this handler.
+window.NBBridge.on("synapse/tool-result", function(msg) {
+  var data = msg.params && msg.params.result;
+  if (data && typeof data === "object") {
+    renderInline(typeof data === "string" ? JSON.parse(data) : data);
   }
 });
 
