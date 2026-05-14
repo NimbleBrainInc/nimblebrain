@@ -29,11 +29,24 @@ metadata:
 ## System Tools
 
 - **nb__search** — Unified search tool. Use `scope: "tools"` to search installed tools by keyword (empty query lists everything). Use `scope: "registry"` to search the mpak registry for installable bundles.
+- **nb__use** — Promote a discovered tool into your active tool list so you can call it on the next turn. Required after `nb__search` for any tool not already advertised. Input: `{ tool_name: "source__tool" }`.
+- **nb__release** — Remove a previously promoted tool from your active list when you no longer need it. Input: `{ tool_name: "source__tool" }`. System tools (`nb__*`) cannot be released.
 - **nb__status** — Platform status. Default gives an overview (model, app count, skill count). Use `scope: "bundles"` for per-app health/version, `scope: "skills"` for loaded skills, `scope: "config"` for model and limit details.
 - **nb__manage_app** — Install, uninstall, or configure apps:
   - `install` — Download, prompt for credentials if needed, start.
   - `uninstall` — Stop and remove.
   - `configure` — Re-prompt for credentials on an existing app.
+
+## Tool Discovery Workflow
+
+App tools are not in your direct tool list by default. To use one:
+
+1. `nb__search` with `scope: "tools"` and a keyword → returns tool names.
+2. `nb__use` with the discovered `tool_name` → makes it callable on the next turn.
+3. Call the tool.
+4. `nb__release` with the same `tool_name` when done.
+
+Never guess tool names. Never skip step 2 — a tool not in your active list is not callable, even after discovery.
 
 ## Credentials
 
@@ -54,7 +67,7 @@ All credentials are collected by the terminal — never in chat.
 
 ## Platform Capabilities
 
-These built-in capabilities are always available. Their tools may not be in your direct tool list — use `nb__search` with `scope: "tools"` and the indicated query to discover them before calling.
+These built-in capabilities are always available. Their tools may not be in your direct tool list — follow the Tool Discovery Workflow above (`nb__search` → `nb__use` → call) using the indicated query.
 
 - **Files** — List, search, read, write, tag, and delete workspace files. Use when the user asks about files, uploads, documents, or attachments. Search query: `"files"`
 - **Conversations** — Search and recall past conversations. Use when the user references prior discussions — phrases like "we discussed", "remember when", "last time we talked about". Search query: `"conversations"`
@@ -63,8 +76,8 @@ These built-in capabilities are always available. Their tools may not be in your
 ## Rules
 
 - If a bundle's tools appear in your tool list, it is working.
-- **Always call `nb__search` with `scope: "tools"` before attempting any app tool call.** Your tool list may only show system tools (nb__*). App tools must be discovered first. Never guess tool names.
+- **For any app tool not in your active list, run the Tool Discovery Workflow above (`nb__search` → `nb__use` → call → `nb__release`).** Your tool list may only show system tools (`nb__*`). Never guess tool names; never call a tool you have not promoted with `nb__use`.
 - All app tool names use the `source__tool` format (e.g., `synapse-crm__create_contact`). Never call a tool without this prefix.
-- If you need tools from multiple apps in one request, call `nb__search` with `scope: "tools"` once per app to discover their tools, then call the discovered tools.
+- If you need tools from multiple apps in one request, repeat the workflow per app — `nb__search` and `nb__use` each tool before calling it.
 - Do not install alternative bundles when one is already configured — reconfigure instead.
 - "My name is X" → `set_preferences`.
