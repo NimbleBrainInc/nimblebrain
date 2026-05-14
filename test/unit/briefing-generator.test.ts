@@ -42,6 +42,27 @@ function createTrackingModelV3(responseText: string): {
 	return { model, calls };
 }
 
+function createThrowingModelV3(err: Error): {
+	model: LanguageModelV3;
+	getCalls: () => number;
+} {
+	let calls = 0;
+	const model: LanguageModelV3 = {
+		specificationVersion: "v3",
+		provider: "mock",
+		modelId: "mock-model",
+		supportedUrls: {},
+		async doGenerate() {
+			calls++;
+			throw err;
+		},
+		async doStream() {
+			throw new Error("Not implemented for this test");
+		},
+	};
+	return { model, getCalls: () => calls };
+}
+
 function createTruncatedModelV3(responseText: string): LanguageModelV3 {
 	return {
 		specificationVersion: "v3",
@@ -230,30 +251,47 @@ describe("briefing-generator", () => {
 			expect(result.sections).toHaveLength(1);
 		});
 
-		it("returns fallback on invalid JSON", async () => {
-			const model = createMockModelV3("This is not JSON at all");
+		it("returns degraded fallback on invalid JSON after retry", async () => {
+			const { model, calls } = createTrackingModelV3("This is not JSON at all");
 			const gen = new BriefingGenerator(model, makeConfig());
 			const result = await gen.generate(activeActivity());
 
 			expect(result.lede).toBe("Activity summary is available.");
 			expect(result.sections).toEqual([]);
 			expect(result.state).toBe("normal");
+			expect(result.degraded).toBe(true);
+			// Parse failures are retryable — should retry once before falling back.
+			expect(calls).toHaveLength(2);
 		});
 
-		it("returns fallback when JSON is missing lede", async () => {
+		it("returns degraded fallback when JSON is missing lede", async () => {
 			const model = createMockModelV3(JSON.stringify({ sections: [] }));
 			const gen = new BriefingGenerator(model, makeConfig());
 			const result = await gen.generate(activeActivity());
 
 			expect(result.lede).toBe("Activity summary is available.");
+			expect(result.degraded).toBe(true);
 		});
 
-		it("returns fallback when JSON is missing sections", async () => {
+		it("returns degraded fallback when JSON is missing sections", async () => {
 			const model = createMockModelV3(JSON.stringify({ lede: "Hi" }));
 			const gen = new BriefingGenerator(model, makeConfig());
 			const result = await gen.generate(activeActivity());
 
 			expect(result.lede).toBe("Activity summary is available.");
+			expect(result.degraded).toBe(true);
+		});
+
+		it("does not mark successful briefings as degraded", async () => {
+			const llmResponse = JSON.stringify({
+				lede: "All good.",
+				sections: [{ id: "x", text: "Yes.", type: "positive", category: "recent" }],
+			});
+			const model = createMockModelV3(llmResponse);
+			const gen = new BriefingGenerator(model, makeConfig());
+			const result = await gen.generate(activeActivity());
+
+			expect(result.degraded).toBeUndefined();
 		});
 
 		it("repairs truncated JSON when finishReason is length", async () => {
@@ -354,17 +392,70 @@ describe("briefing-generator", () => {
 	});
 
 	describe("model call parameters", () => {
-		it("passes maxOutputTokens 4000 and JSON response format with schema to model", async () => {
+		it("passes calibrated maxOutputTokens and JSON response format with schema to model", async () => {
 			const llmResponse = JSON.stringify({ lede: "Ok.", sections: [] });
 			const { model, calls } = createTrackingModelV3(llmResponse);
 			const gen = new BriefingGenerator(model, makeConfig());
 			await gen.generate(activeActivity());
 
 			expect(calls).toHaveLength(1);
-			expect(calls[0].maxOutputTokens).toBe(4000);
+			// First-attempt cap. The retry uses a smaller cap (covered separately).
+			expect(calls[0].maxOutputTokens).toBe(1500);
 			expect(calls[0].responseFormat?.type).toBe("json");
 			expect(calls[0].responseFormat).toHaveProperty("schema");
 			expect(calls[0].responseFormat).toHaveProperty("name", "briefing");
+		});
+
+		it("uses tighter token cap on retry", async () => {
+			const { model, calls } = createTrackingModelV3("not json");
+			const gen = new BriefingGenerator(model, makeConfig());
+			await gen.generate(activeActivity());
+
+			expect(calls).toHaveLength(2);
+			expect(calls[0].maxOutputTokens).toBe(1500);
+			expect(calls[1].maxOutputTokens).toBe(800);
+		});
+
+		it("disables Anthropic thinking on the short-call payload", async () => {
+			const llmResponse = JSON.stringify({ lede: "Ok.", sections: [] });
+			const { model, calls } = createTrackingModelV3(llmResponse);
+			const gen = new BriefingGenerator(model, makeConfig({ model: "anthropic:claude-sonnet-4-6" }));
+			await gen.generate(activeActivity());
+
+			expect(calls[0].providerOptions).toEqual({
+				anthropic: { thinking: { type: "disabled" } },
+			});
+		});
+
+		it("disables Gemini thinking budget for 2.5 series", async () => {
+			const llmResponse = JSON.stringify({ lede: "Ok.", sections: [] });
+			const { model, calls } = createTrackingModelV3(llmResponse);
+			const gen = new BriefingGenerator(model, makeConfig({ model: "google:gemini-2.5-flash" }));
+			await gen.generate(activeActivity());
+
+			expect(calls[0].providerOptions).toEqual({
+				google: { thinkingConfig: { thinkingBudget: 0 } },
+			});
+		});
+
+		it("sets reasoningEffort=minimal for OpenAI reasoning models", async () => {
+			const llmResponse = JSON.stringify({ lede: "Ok.", sections: [] });
+			const { model, calls } = createTrackingModelV3(llmResponse);
+			const gen = new BriefingGenerator(model, makeConfig({ model: "openai:gpt-5" }));
+			await gen.generate(activeActivity());
+
+			expect(calls[0].providerOptions).toEqual({
+				openai: { reasoningEffort: "minimal" },
+			});
+		});
+
+		it("omits providerOptions for non-reasoning models", async () => {
+			const llmResponse = JSON.stringify({ lede: "Ok.", sections: [] });
+			const { model, calls } = createTrackingModelV3(llmResponse);
+			const gen = new BriefingGenerator(model, makeConfig({ model: "openai:gpt-4o" }));
+			await gen.generate(activeActivity());
+
+			expect(calls[0].providerOptions).toBeUndefined();
 		});
 
 		it("uses config model when specified", async () => {
@@ -419,6 +510,164 @@ describe("briefing-generator", () => {
 			// BriefingGenerator doesn't pass tools to doGenerate
 			// (the V3 interface doesn't require tools)
 			expect(calls).toHaveLength(1);
+		});
+	});
+
+	describe("retry classification", () => {
+		it("retries on timeout error", async () => {
+			const err = new Error("The operation timed out.");
+			err.name = "TimeoutError";
+			const { model, getCalls } = createThrowingModelV3(err);
+			const gen = new BriefingGenerator(model, makeConfig());
+			const result = await gen.generate(activeActivity());
+
+			expect(getCalls()).toBe(2);
+			expect(result.degraded).toBe(true);
+		});
+
+		it("does not retry on auth error (401)", async () => {
+			const err = Object.assign(new Error("Unauthorized"), { statusCode: 401 });
+			const { model, getCalls } = createThrowingModelV3(err);
+			const gen = new BriefingGenerator(model, makeConfig());
+			const result = await gen.generate(activeActivity());
+
+			expect(getCalls()).toBe(1);
+			expect(result.degraded).toBe(true);
+		});
+
+		it("does not retry on model-not-found (404)", async () => {
+			const err = Object.assign(new Error("Not found"), { statusCode: 404 });
+			const { model, getCalls } = createThrowingModelV3(err);
+			const gen = new BriefingGenerator(model, makeConfig());
+			await gen.generate(activeActivity());
+
+			expect(getCalls()).toBe(1);
+		});
+
+		it("retries on rate limit (429)", async () => {
+			const err = Object.assign(new Error("Too many"), { statusCode: 429 });
+			const { model, getCalls } = createThrowingModelV3(err);
+			const gen = new BriefingGenerator(model, makeConfig());
+			await gen.generate(activeActivity());
+
+			expect(getCalls()).toBe(2);
+		});
+
+		it("retries on server error (500)", async () => {
+			const err = Object.assign(new Error("Boom"), { statusCode: 503 });
+			const { model, getCalls } = createThrowingModelV3(err);
+			const gen = new BriefingGenerator(model, makeConfig());
+			await gen.generate(activeActivity());
+
+			expect(getCalls()).toBe(2);
+		});
+	});
+
+	describe("heuristic fallback from facets", () => {
+		it("renders one section per facet with degraded=true when LLM fails", async () => {
+			const { model } = createThrowingModelV3(
+				Object.assign(new Error("Unauthorized"), { statusCode: 401 }),
+			);
+			const gen = new BriefingGenerator(model, makeConfig());
+			const facetContext = {
+				period: { since: "2026-03-24T00:00:00Z", until: "2026-03-25T00:00:00Z" },
+				facets: [
+					{
+						appName: "CRM",
+						serverName: "synapse-crm",
+						appRoute: "/apps/crm",
+						appCategory: undefined,
+						facet: {
+							name: "overdue",
+							label: "Overdue follow-ups",
+							type: "attention" as const,
+							entity: "interaction",
+						},
+						data: "3 matching interaction entities (12 total). Matching: [...]",
+						ok: true,
+					},
+					{
+						appName: "Tasks",
+						serverName: "synapse-tasks",
+						appRoute: "/apps/tasks",
+						appCategory: undefined,
+						facet: {
+							name: "due",
+							label: "Tasks due today",
+							type: "upcoming" as const,
+							entity: "task",
+						},
+						data: "2 matching task entities (8 total).",
+						ok: true,
+					},
+					{
+						appName: "Empty",
+						serverName: "empty",
+						appRoute: "/apps/empty",
+						appCategory: undefined,
+						facet: {
+							name: "none",
+							label: "Empty bucket",
+							type: "activity" as const,
+							entity: "thing",
+						},
+						data: "0 matching thing entities (0 total).",
+						ok: true,
+					},
+				],
+			};
+
+			const result = await gen.generate(activeActivity(), facetContext as never);
+
+			expect(result.degraded).toBe(true);
+			// Empty-data facet is skipped; we keep the two with content.
+			expect(result.sections).toHaveLength(2);
+			expect(result.sections[0].category).toBe("attention");
+			expect(result.sections[0].type).toBe("warning");
+			expect(result.sections[1].category).toBe("upcoming");
+			expect(result.sections[0].action).toEqual({
+				label: "Open CRM",
+				type: "navigate",
+				value: "/apps/crm",
+			});
+			// Lede mentions the attention count.
+			expect(result.lede.toLowerCase()).toContain("attention");
+			expect(result.state).toBe("attention");
+		});
+	});
+
+	describe("input bounding", () => {
+		it("truncates large facet data payloads", async () => {
+			const llmResponse = JSON.stringify({ lede: "Ok.", sections: [] });
+			const { model, calls } = createTrackingModelV3(llmResponse);
+			const gen = new BriefingGenerator(model, makeConfig());
+			const bigData = "x".repeat(5000);
+			const facetContext = {
+				period: { since: "2026-03-24T00:00:00Z", until: "2026-03-25T00:00:00Z" },
+				facets: [
+					{
+						appName: "App",
+						serverName: "app",
+						appRoute: "/app",
+						appCategory: undefined,
+						facet: {
+							name: "f",
+							label: "F",
+							type: "activity" as const,
+							entity: "thing",
+						},
+						data: bigData,
+						ok: true,
+					},
+				],
+			};
+
+			await gen.generate(activeActivity(), facetContext as never);
+
+			const userText = (calls[0].prompt[1].content as Array<{ type: string; text: string }>)[0].text;
+			const parsed = JSON.parse(userText);
+			expect(parsed.app_facets[0].data.length).toBeLessThan(bigData.length);
+			expect(parsed.app_facets[0].data).toContain("(truncated)");
 		});
 	});
 });

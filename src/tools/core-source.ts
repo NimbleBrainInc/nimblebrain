@@ -789,9 +789,14 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
             });
             const briefing: BriefingOutput = await generator.generate(activity, facetContext);
 
-            // Cache the result
-            const hash = createHash("md5").update(JSON.stringify(activity.totals)).digest("hex");
-            cache.set(briefing, hash);
+            // Cache only successful generations. A degraded briefing (LLM
+            // timeout, parse failure, etc.) is a transient signal — caching
+            // it would freeze the canned fallback in front of the user for
+            // the entire cache TTL window, even after the model recovers.
+            if (!briefing.degraded) {
+              const hash = createHash("md5").update(JSON.stringify(activity.totals)).digest("hex");
+              cache.set(briefing, hash);
+            }
 
             return {
               content: textContent("Briefing generated."),

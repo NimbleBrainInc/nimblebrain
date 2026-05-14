@@ -1,5 +1,7 @@
 import type { LanguageModelV3 } from "@ai-sdk/provider";
-import type { BriefingContext } from "./briefing-collector.ts";
+import { getProviderFromModel } from "../model/catalog.ts";
+import { shortCallProviderOptions } from "../model/short-call-options.ts";
+import type { BriefingContext, FacetResult } from "./briefing-collector.ts";
 import type {
   ActivityOutput,
   BriefingOutput,
@@ -7,6 +9,30 @@ import type {
   BriefingState,
   HomeConfig,
 } from "./home-types.ts";
+
+/**
+ * Per-attempt wall-clock cap. The first attempt is generous; the retry is
+ * tighter and uses a smaller token cap to favor latency over completeness.
+ * Worst-case total wait before the heuristic fallback is FIRST + RETRY.
+ */
+const BRIEFING_TIMEOUT_MS_FIRST = 30_000;
+const BRIEFING_TIMEOUT_MS_RETRY = 20_000;
+
+/**
+ * Output token caps. The prompt asks for "under 800 tokens" — 1500 gives
+ * headroom for a verbose run, 800 hard-caps the retry to prevent runaway
+ * generation when the first attempt already burned wall-clock budget.
+ */
+const BRIEFING_MAX_OUTPUT_TOKENS_FIRST = 1500;
+const BRIEFING_MAX_OUTPUT_TOKENS_RETRY = 800;
+
+/**
+ * Input bounds. A tenant with thousands of CRM rows shouldn't be able to
+ * blow up the LLM input — we send the highest-priority facets only and
+ * truncate each one's `data` payload.
+ */
+const BRIEFING_MAX_FACETS = 12;
+const BRIEFING_MAX_FACET_DATA_CHARS = 800;
 
 const BRIEFING_SYSTEM_PROMPT = `You are a daily briefing generator for a business workspace.
 
@@ -117,6 +143,14 @@ export class BriefingGenerator {
     return this.generateWithLlm(activity, greeting, date, now, facetContext);
   }
 
+  private get modelString(): string {
+    return this.config.model ?? "unknown";
+  }
+
+  private get providerName(): string {
+    return this.config.model ? getProviderFromModel(this.config.model) : "unknown";
+  }
+
   private buildGreeting(): string {
     const hour = this.getHourInTimezone();
     const name = this.config.userName;
@@ -176,38 +210,57 @@ export class BriefingGenerator {
     now: string,
     facetContext?: BriefingContext,
   ): Promise<BriefingOutput> {
-    try {
-      // Build the user message with facet context (primary) and activity (secondary)
-      const userPayload: Record<string, unknown> = {};
-      if (facetContext && facetContext.facets.length > 0) {
-        userPayload.app_facets = facetContext.facets.map((f) => ({
-          app: f.appName,
-          route: f.appRoute,
-          label: f.facet.label,
-          type: f.facet.type,
-          data: f.data,
-          ok: f.ok,
-        }));
-        userPayload.period = facetContext.period;
-      }
-      userPayload.system_activity = {
-        conversations: activity.totals.conversations,
-        tool_calls: activity.totals.tool_calls,
-        errors: activity.totals.errors,
-        error_rate:
-          activity.totals.tool_calls > 0
-            ? `${((activity.totals.errors / activity.totals.tool_calls) * 100).toFixed(1)}%`
-            : "0%",
-        bundle_events: activity.bundle_events,
-      };
+    const userPayload = this.buildUserPayload(activity, facetContext);
+    const userText = JSON.stringify(userPayload);
 
-      const abort = AbortSignal.timeout(15_000);
+    // First attempt — generous budget.
+    const first = await this.attempt(userText, 1, {
+      timeoutMs: BRIEFING_TIMEOUT_MS_FIRST,
+      maxOutputTokens: BRIEFING_MAX_OUTPUT_TOKENS_FIRST,
+    });
+    if (first.kind === "ok") {
+      return this.buildBriefing(greeting, date, now, first.parsed);
+    }
+
+    // Don't retry on terminal failures (auth, model-not-found, etc.).
+    if (!first.retryable) {
+      return this.buildHeuristicBriefing(greeting, date, now, facetContext);
+    }
+
+    // Single retry — tighter wall-clock and token cap.
+    const second = await this.attempt(userText, 2, {
+      timeoutMs: BRIEFING_TIMEOUT_MS_RETRY,
+      maxOutputTokens: BRIEFING_MAX_OUTPUT_TOKENS_RETRY,
+    });
+    if (second.kind === "ok") {
+      return this.buildBriefing(greeting, date, now, second.parsed);
+    }
+
+    return this.buildHeuristicBriefing(greeting, date, now, facetContext);
+  }
+
+  /**
+   * One LLM attempt. Returns a discriminated result so the caller can
+   * decide whether to retry without re-throwing. Recoverable failures
+   * (timeout, empty, parse, 5xx) carry retryable=true; terminal failures
+   * (4xx auth/model-not-found) carry retryable=false.
+   */
+  private async attempt(
+    userText: string,
+    attemptNumber: number,
+    opts: { timeoutMs: number; maxOutputTokens: number },
+  ): Promise<AttemptResult> {
+    const start = performance.now();
+    const providerOptions = this.config.model ? shortCallProviderOptions(this.config.model) : {};
+
+    try {
+      const abort = AbortSignal.timeout(opts.timeoutMs);
       const response = await this.model.doGenerate({
         prompt: [
           { role: "system", content: BRIEFING_SYSTEM_PROMPT },
           {
             role: "user",
-            content: [{ type: "text", text: JSON.stringify(userPayload) }],
+            content: [{ type: "text", text: userText }],
           },
         ],
         responseFormat: {
@@ -216,47 +269,111 @@ export class BriefingGenerator {
           name: "briefing",
           description: "Daily workspace briefing with sections",
         },
-        maxOutputTokens: 4000,
+        maxOutputTokens: opts.maxOutputTokens,
         abortSignal: abort,
+        ...(Object.keys(providerOptions).length > 0 ? { providerOptions } : {}),
       });
 
       const finishReason = response.finishReason?.unified ?? "unknown";
-      if (finishReason === "length") {
-        console.warn("[briefing] LLM response truncated (hit token limit)");
-      }
-
       const textBlock = response.content.find((b) => b.type === "text");
       if (!textBlock || textBlock.type !== "text") {
-        console.error("[briefing] no text block in LLM response");
-        return this.fallbackBriefing(greeting, date, now);
+        this.logFailure("empty", attemptNumber, start);
+        return { kind: "fail", reason: "empty", retryable: true };
       }
 
       const parsed = this.parseJson(textBlock.text, finishReason === "length");
       if (!parsed || typeof parsed.lede !== "string" || !Array.isArray(parsed.sections)) {
-        console.error(
-          "[briefing] failed to parse briefing JSON. finishReason=%s, first 500 chars: %s",
-          finishReason,
-          textBlock.text.slice(0, 500),
-        );
-        return this.fallbackBriefing(greeting, date, now);
+        this.logFailure("parse", attemptNumber, start, {
+          finish_reason: finishReason,
+          preview: textBlock.text.slice(0, 200),
+        });
+        return { kind: "fail", reason: "parse", retryable: true };
       }
 
-      const sections: BriefingSection[] = parsed.sections;
-      const state = this.deriveState(sections);
-
-      return {
-        greeting,
-        date,
-        lede: parsed.lede,
-        sections,
-        state,
-        generated_at: now,
-        cached: false,
-      };
+      return { kind: "ok", parsed };
     } catch (err) {
-      console.error("[briefing] LLM generation failed:", err instanceof Error ? err.message : err);
-      return this.fallbackBriefing(greeting, date, now);
+      const { reason, retryable } = classifyError(err);
+      this.logFailure(reason, attemptNumber, start, {
+        message: err instanceof Error ? err.message : String(err),
+      });
+      return { kind: "fail", reason, retryable };
     }
+  }
+
+  private logFailure(
+    reason: FailureReason,
+    attempt: number,
+    start: number,
+    extra: Record<string, unknown> = {},
+  ): void {
+    const elapsedMs = Math.round(performance.now() - start);
+    const fields = [
+      `reason=${reason}`,
+      `provider=${this.providerName}`,
+      `model=${this.modelString}`,
+      `attempt=${attempt}`,
+      `elapsed_ms=${elapsedMs}`,
+    ];
+    for (const [k, v] of Object.entries(extra)) {
+      const s = typeof v === "string" ? v : JSON.stringify(v);
+      // Inline single-line for grep-ability; truncate noisy strings.
+      fields.push(`${k}=${s.replace(/\s+/g, " ").slice(0, 200)}`);
+    }
+    console.warn(`[briefing] generation failed ${fields.join(" ")}`);
+  }
+
+  private buildUserPayload(
+    activity: ActivityOutput,
+    facetContext?: BriefingContext,
+  ): Record<string, unknown> {
+    const userPayload: Record<string, unknown> = {};
+    if (facetContext && facetContext.facets.length > 0) {
+      // Cap facet count and per-facet data size — tenants with very large
+      // entity stores (5k+ CRM contacts, etc.) can produce facet data
+      // strings that dominate input tokens and push first-token latency
+      // past the wall-clock cap.
+      const truncated = facetContext.facets.slice(0, BRIEFING_MAX_FACETS).map((f) => ({
+        app: f.appName,
+        route: f.appRoute,
+        label: f.facet.label,
+        type: f.facet.type,
+        data:
+          f.data.length > BRIEFING_MAX_FACET_DATA_CHARS
+            ? `${f.data.slice(0, BRIEFING_MAX_FACET_DATA_CHARS)}… (truncated)`
+            : f.data,
+        ok: f.ok,
+      }));
+      userPayload.app_facets = truncated;
+      userPayload.period = facetContext.period;
+    }
+    userPayload.system_activity = {
+      conversations: activity.totals.conversations,
+      tool_calls: activity.totals.tool_calls,
+      errors: activity.totals.errors,
+      error_rate:
+        activity.totals.tool_calls > 0
+          ? `${((activity.totals.errors / activity.totals.tool_calls) * 100).toFixed(1)}%`
+          : "0%",
+      bundle_events: activity.bundle_events,
+    };
+    return userPayload;
+  }
+
+  private buildBriefing(
+    greeting: string,
+    date: string,
+    now: string,
+    parsed: { lede: string; sections: BriefingSection[] },
+  ): BriefingOutput {
+    return {
+      greeting,
+      date,
+      lede: parsed.lede,
+      sections: parsed.sections,
+      state: this.deriveState(parsed.sections),
+      generated_at: now,
+      cached: false,
+    };
   }
 
   private parseJson(
@@ -375,15 +492,165 @@ export class BriefingGenerator {
     return "normal";
   }
 
-  private fallbackBriefing(greeting: string, date: string, now: string): BriefingOutput {
+  /**
+   * Best-effort briefing built without an LLM, used when both attempts
+   * fail or the failure is terminal. Walks `facetContext` and emits one
+   * section per facet with sensible category/type mapping. The result is
+   * marked `degraded: true` so it isn't cached and the UI can show a
+   * retry affordance.
+   */
+  private buildHeuristicBriefing(
+    greeting: string,
+    date: string,
+    now: string,
+    facetContext: BriefingContext | undefined,
+  ): BriefingOutput {
+    const sections = facetContext ? facetsToSections(facetContext.facets) : [];
+    const lede =
+      sections.length > 0 ? buildHeuristicLede(sections) : "Activity summary is available.";
+
     return {
       greeting,
       date,
-      lede: "Activity summary is available.",
-      sections: [],
-      state: "normal",
+      lede,
+      sections,
+      state: this.deriveState(sections),
       generated_at: now,
       cached: false,
+      degraded: true,
     };
   }
+}
+
+// ---------------------------------------------------------------------------
+// Failure classification + heuristic helpers
+// ---------------------------------------------------------------------------
+
+type FailureReason = "timeout" | "empty" | "parse" | "auth" | "rate_limit" | "server" | "unknown";
+
+type AttemptResult =
+  | { kind: "ok"; parsed: { lede: string; sections: BriefingSection[] } }
+  | { kind: "fail"; reason: FailureReason; retryable: boolean };
+
+/**
+ * Map a thrown error from `model.doGenerate` into a stable failure
+ * category and a retry decision. Keeps the structural decision (retry?)
+ * separate from the reporting decision (what to log).
+ *
+ * Most providers throw plain Errors with statusCode hints; AbortSignal
+ * timeouts surface as DOMException `TimeoutError` or an Error whose
+ * message contains "timed out" / "aborted". Treat anything we can't
+ * confidently classify as retryable to avoid permanently dead briefings
+ * on novel error shapes.
+ */
+function classifyError(err: unknown): { reason: FailureReason; retryable: boolean } {
+  if (err instanceof Error) {
+    const name = err.name;
+    const msg = err.message.toLowerCase();
+    if (name === "TimeoutError" || msg.includes("timed out") || msg.includes("aborted")) {
+      return { reason: "timeout", retryable: true };
+    }
+    const status =
+      (err as { statusCode?: number; status?: number }).statusCode ??
+      (err as { statusCode?: number; status?: number }).status;
+    if (typeof status === "number") {
+      if (status === 401 || status === 403 || status === 404) {
+        return { reason: "auth", retryable: false };
+      }
+      if (status === 429) {
+        return { reason: "rate_limit", retryable: true };
+      }
+      if (status >= 500) {
+        return { reason: "server", retryable: true };
+      }
+      if (status >= 400) {
+        // Unhandled 4xx — likely a bad-request shape we shouldn't retry
+        // with the same payload.
+        return { reason: "auth", retryable: false };
+      }
+    }
+  }
+  return { reason: "unknown", retryable: true };
+}
+
+/**
+ * Convert facet results into briefing sections deterministically. Used
+ * only for the heuristic fallback — the LLM path produces richer prose
+ * and tighter selection. Skips facets whose data string indicates an
+ * empty result ("0 matching", etc.) to match the prompt's "skip empty
+ * facets" rule.
+ */
+function facetsToSections(facets: FacetResult[]): BriefingSection[] {
+  const sections: BriefingSection[] = [];
+  for (const f of facets) {
+    if (!f.ok) continue;
+    if (isEmptyFacetData(f.data)) continue;
+
+    const summary = summarizeFacetData(f.data);
+    if (!summary) continue;
+
+    const category: BriefingSection["category"] =
+      f.facet.type === "attention"
+        ? "attention"
+        : f.facet.type === "upcoming"
+          ? "upcoming"
+          : "recent";
+
+    const type: BriefingSection["type"] = f.facet.type === "attention" ? "warning" : "neutral";
+
+    const section: BriefingSection = {
+      id: slugify(`${f.appName}-${f.facet.label}`),
+      text: `${f.facet.label}: ${summary}`,
+      type,
+      category,
+    };
+
+    if (f.appRoute) {
+      section.action = {
+        label: `Open ${f.appName}`,
+        type: "navigate",
+        value: f.appRoute,
+      };
+    }
+
+    sections.push(section);
+  }
+  return sections;
+}
+
+function buildHeuristicLede(sections: BriefingSection[]): string {
+  const attention = sections.filter((s) => s.category === "attention").length;
+  const upcoming = sections.filter((s) => s.category === "upcoming").length;
+  if (attention > 0) {
+    return `${attention} item${attention === 1 ? "" : "s"} need${attention === 1 ? "s" : ""} attention.`;
+  }
+  if (upcoming > 0) {
+    return `${upcoming} upcoming item${upcoming === 1 ? "" : "s"} on deck.`;
+  }
+  return `${sections.length} update${sections.length === 1 ? "" : "s"} from your apps.`;
+}
+
+function isEmptyFacetData(data: string): boolean {
+  // Entity facet output starts with "N matching ..." — pull out N to detect 0.
+  const match = data.match(/^(\d+)\s+matching/);
+  if (match && match[1] === "0") return true;
+  return data.length === 0;
+}
+
+function summarizeFacetData(data: string): string {
+  // Entity facet: "5 matching task entities (12 total). Matching: [...]"
+  // Take the prefix before "Matching:" or the first sentence.
+  const prefix = data.split(/\.\s*(?:Matching:|$)/)[0]?.trim() ?? "";
+  if (prefix.length > 0 && prefix.length <= 160) return prefix;
+  if (prefix.length > 160) return `${prefix.slice(0, 157)}…`;
+  // Tool/resource facet: take first 120 chars.
+  return data.slice(0, 120).trim();
+}
+
+function slugify(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 48);
 }

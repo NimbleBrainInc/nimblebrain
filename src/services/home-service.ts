@@ -33,9 +33,16 @@ export class HomeService {
     });
     const briefing = await this.generator.generate(activity);
 
-    // Cache the result
-    const hash = createHash("md5").update(JSON.stringify(activity.totals)).digest("hex");
-    this.cache.set(briefing, hash);
+    // Cache only successful generations. A degraded briefing (LLM
+    // timeout, parse failure, etc.) is a transient signal — caching
+    // it would freeze the canned fallback in front of the user for
+    // the entire cache TTL window, even after the model recovers.
+    // Mirrors the same rule in tools/core-source.ts so the two
+    // briefing paths stay consistent.
+    if (!briefing.degraded) {
+      const hash = createHash("md5").update(JSON.stringify(activity.totals)).digest("hex");
+      this.cache.set(briefing, hash);
+    }
 
     return briefing;
   }

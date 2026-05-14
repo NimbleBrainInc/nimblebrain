@@ -16,6 +16,10 @@ interface BriefingOutput {
   state: "empty" | "quiet" | "all-clear" | "normal" | "attention";
   generated_at: string;
   cached: boolean;
+  /** True when the briefing was produced by the heuristic fallback (LLM
+   * timeout, parse failure, etc.) rather than the model. Surface a retry
+   * affordance so the user knows the polish layer is offline. */
+  degraded?: boolean;
 }
 
 interface BriefingSection {
@@ -301,6 +305,14 @@ function Dashboard() {
       {/* Briefing content */}
       {briefing && (
         <>
+          {briefing.degraded && (
+            <div className="refresh-banner degraded-banner visible">
+              <span>Showing a fallback briefing — AI summary unavailable.</span>
+              <button type="button" onClick={() => loadBriefing(true)} disabled={loading}>
+                Retry
+              </button>
+            </div>
+          )}
           {briefing.lede && <p className="lede">{briefing.lede}</p>}
           {categories.map(({ key, label }) => (
             <SectionGroup

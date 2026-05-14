@@ -12,6 +12,14 @@ export interface BriefingOutput {
   state: BriefingState;
   generated_at: string;
   cached: boolean;
+  /**
+   * True when this briefing was produced by the heuristic fallback rather
+   * than the LLM (e.g. timeout, parse failure, provider error). Callers
+   * MUST NOT cache degraded briefings — a transient model hiccup would
+   * otherwise stick the user with a canned response for the cache TTL.
+   * The UI may also surface a "retry" affordance when this is set.
+   */
+  degraded?: boolean;
 }
 
 /** Dashboard state derived from briefing content. */

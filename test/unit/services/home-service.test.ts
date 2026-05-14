@@ -221,4 +221,27 @@ describe("HomeService", () => {
 
 		expect(svc.getBriefing()).rejects.toThrow("generator failure");
 	});
+
+	test("degraded briefing is not cached", async () => {
+		// Generator returns a degraded briefing (LLM failed, heuristic used).
+		const degradedGenerator = createMockGenerator({
+			...cannedBriefing,
+			degraded: true,
+		});
+		const svc = new HomeService(
+			collector as any,
+			degradedGenerator as any,
+			cache,
+			eventManager as any,
+		);
+
+		const first = await svc.getBriefing();
+		expect(first.degraded).toBe(true);
+		expect(first.cached).toBe(false);
+
+		// Second call should regenerate, not return a cached degraded result.
+		const second = await svc.getBriefing();
+		expect(second.cached).toBe(false);
+		expect(degradedGenerator.calls).toHaveLength(2);
+	});
 });
