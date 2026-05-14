@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { extractText, textContent } from "./content-helpers.ts";
+import { extractTextForModel, textContent } from "./content-helpers.ts";
 import type { ToolCall, ToolResult } from "./types.ts";
 
 /**
@@ -101,7 +101,7 @@ export function createRunSupervisor(config: SupervisorConfig = {}): RunSuperviso
   }
 
   function fingerprint(call: ToolCall, result: ToolResult): string {
-    const text = extractText(result.content).trim().slice(0, textCap);
+    const text = extractTextForModel(result.content).trim().slice(0, textCap);
     return createHash("sha1")
       .update(`${call.name}\0${result.isError ? "E" : "S"}\0${text}`)
       .digest("hex");
@@ -133,7 +133,7 @@ export function createRunSupervisor(config: SupervisorConfig = {}): RunSuperviso
       // tool is unusable" signal regardless of whether the upstream call
       // would now succeed — recovering from a stuck loop happens in a new
       // run, not mid-run.
-      const originalText = extractText(result.content).trim();
+      const originalText = extractTextForModel(result.content).trim();
       pendingNudge = true;
       return {
         type: "synth",
@@ -154,7 +154,7 @@ export function createRunSupervisor(config: SupervisorConfig = {}): RunSuperviso
     if (state.consecutiveRepeats >= maxRepeats) {
       state.tripped = true;
       pendingNudge = true;
-      const originalText = extractText(result.content).trim();
+      const originalText = extractTextForModel(result.content).trim();
       return {
         type: "synth",
         replacement: synthReplacement(call.name, originalText, state.consecutiveRepeats),

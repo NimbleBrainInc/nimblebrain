@@ -182,9 +182,9 @@ describe("scrubArgsForDispatch — pass-through cases", () => {
 });
 
 describe("scrubArgsForDispatch — Mercury listTransactions smoke test", () => {
-  // Fixture captured from the actual Mercury MCP schema dump on 2026-05-12.
-  // Only the properties relevant to the scrubber are included; the upstream
-  // schema is larger.
+  // Fixture matches a real-world OpenAPI-derived MCP schema (the
+  // listTransactions shape from Mercury's MCP). Only the properties
+  // relevant to the scrubber are included; the upstream schema is larger.
   const schema = {
     type: "object",
     properties: {
@@ -209,7 +209,9 @@ describe("scrubArgsForDispatch — Mercury listTransactions smoke test", () => {
     // required: null in the actual schema — no required fields
   };
 
-  // The exact input the model emitted in conv_f36bcd4469404626.
+  // Matches the args a model emits in practice for this schema shape:
+  // sentinel placeholders on every optional cursor/date/category field
+  // alongside the actually-meaningful status/search/limit/order.
   const modelInput = {
     status: ["sent"],
     search: "Wilson",
