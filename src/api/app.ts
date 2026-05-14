@@ -9,6 +9,7 @@ import { composioAuthRoutes } from "./routes/composio-auth.ts";
 import { conversationEventRoutes } from "./routes/conversation-events.ts";
 import { eventRoutes } from "./routes/events.ts";
 import { healthRoutes } from "./routes/health.ts";
+import { iframeBridgeRoutes } from "./routes/iframe-bridge.ts";
 import { mcpRoutes } from "./routes/mcp.ts";
 import { mcpAuthRoutes } from "./routes/mcp-auth.ts";
 import { proxyRoutes } from "./routes/proxy.ts";
@@ -31,6 +32,10 @@ export function createApp(
   // Route groups — well-known endpoints first (unauthenticated, no body limit needed)
   app.route("/", wellKnownRoutes(ctx));
   app.route("/", healthRoutes(ctx));
+  // Inline-HTML bundle bridge helper (issue #99) — served unauthenticated
+  // because iframes (some sandboxed, all null-origin) cannot reliably
+  // forward auth cookies/headers on a static script fetch.
+  app.route("/", iframeBridgeRoutes(ctx));
   app.route("/", authRoutes(ctx));
   // Outbound-OAuth callback for remote MCP servers. Unauthenticated by
   // design — state param guards against unsolicited codes. Must be
