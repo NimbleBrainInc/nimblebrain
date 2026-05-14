@@ -73,6 +73,7 @@ export class BundleLifecycleManager {
     private configPath: string | undefined,
     private allowInsecureRemotes = false,
     private mpakHome: string = join(homedir(), ".mpak"),
+    private workDir: string = join(homedir(), ".nimblebrain"),
   ) {}
 
   /** Set the PlacementRegistry (called by Runtime after construction). */
@@ -640,7 +641,10 @@ export class BundleLifecycleManager {
   ): Promise<{ ok: true } | { ok: false; error: string }> {
     const instance = this.instances.get(`${serverName}|${wsId}`);
     if (!instance) {
-      return { ok: false, error: `No bundle instance for "${serverName}" in workspace "${wsId}"` };
+      return {
+        ok: false,
+        error: `Bundle "${serverName}" is not installed in workspace "${wsId}". Install it first via manage_app install.`,
+      };
     }
     if (instance.protected) {
       return { ok: false, error: `Cannot respawn "${serverName}": bundle is protected` };
@@ -655,7 +659,6 @@ export class BundleLifecycleManager {
       if (registry.hasSource(serverName)) {
         await registry.removeSource(serverName);
       }
-      const nbWorkDir = process.env.NB_WORK_DIR ?? join(homedir(), ".nimblebrain");
       await startBundleSource(
         { name: instance.bundleName },
         registry,
@@ -663,7 +666,7 @@ export class BundleLifecycleManager {
         this.configPath ? dirname(this.configPath) : undefined,
         {
           wsId,
-          workDir: nbWorkDir,
+          workDir: this.workDir,
           allowInsecureRemotes: this.allowInsecureRemotes,
         },
       );
@@ -671,7 +674,7 @@ export class BundleLifecycleManager {
       return { ok: true };
     } catch (err) {
       // The old source is already removed and the new one failed to
-      // start. The instance is in `failed` state until the operator
+      // start. The instance is in `dead` state until the operator
       // fixes the underlying cause (typically a bad credential value)
       // and the next save retries the respawn.
       this.transition(instance, "dead");

@@ -316,12 +316,14 @@ export class Runtime {
 
     // Create placement registry and lifecycle manager
     const placementRegistry = new PlacementRegistry();
-    const mpakHome = join(resolve(resolveWorkDir(config)), "apps");
+    const resolvedWorkDir = resolve(workDir);
+    const mpakHome = join(resolvedWorkDir, "apps");
     const lifecycle = new BundleLifecycleManager(
       events,
       config.configPath,
       config.allowInsecureRemotes,
       mpakHome,
+      resolvedWorkDir,
     );
     lifecycle.setPlacementRegistry(placementRegistry);
 

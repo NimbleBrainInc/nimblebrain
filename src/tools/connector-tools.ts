@@ -2306,8 +2306,11 @@ async function handleSetUserConfig(
   // necessary but not sufficient; without a respawn the running
   // subprocess keeps using whatever it was launched with. Mirror the
   // chat agent's `configureBundle` pattern so both the chat path and
-  // the UI path produce identical post-write state.
-  const respawn = await respawnBundleAfterCredentialChange(ctx, wsId, bundleName, serverName);
+  // the UI path produce identical post-write state. `respawnBundle`
+  // owns the per-(serverName, wsId) mutex and protected-bundle gating.
+  const registry = ctx.runtime.getRegistryForWorkspace(wsId);
+  const respawnResult = await ctx.runtime.getLifecycle().respawnBundle(serverName, wsId, registry);
+  const respawn = respawnResult.ok ? { ok: true } : { ok: false, error: respawnResult.error };
 
   const populated = await probeUserConfigPopulated(wsId, bundleName, workDir, schema);
   return {
@@ -2363,39 +2366,6 @@ async function handleClearUserConfig(
     structuredContent: { ok: true, serverName, populated, respawn: { ok: true } },
     isError: false,
   };
-}
-
-/**
- * Tear down + restart a stdio bundle's McpSource so a fresh subprocess
- * picks up the just-written credentials from the workspace credential
- * store. Called after `set_user_config` and `clear_user_config`.
- *
- * Why not just leave the bundle running? Mode 1 bundles read
- * `user_config` once, at spawn, via `${user_config.foo}` placeholders
- * resolved into env vars. The subprocess has no way to re-read after
- * launch. Without this respawn the user updates a key in the UI,
- * sees "✓ configured," then watches the next tool call fail with the
- * old key — the bug the user hit before this fix.
- *
- * Best-effort by design: a respawn failure (e.g., required field still
- * missing after a partial save) shouldn't roll back the credential
- * write. The caller's structured response carries `{ respawn: { ok,
- * error? } }` so the UI can surface the failure separately.
- */
-async function respawnBundleAfterCredentialChange(
-  ctx: ManageConnectorsContext,
-  wsId: string,
-  _bundleName: string,
-  serverName: string,
-): Promise<{ ok: boolean; error?: string }> {
-  // Thin wrapper kept for backward-compatible structuredContent shape
-  // (callers assert on `respawn.ok`/`respawn.error`). The actual work
-  // lives in `lifecycle.respawnBundle`, which centralizes the per-
-  // (serverName, wsId) mutex and protected-bundle gating that this
-  // function previously lacked.
-  const registry = ctx.runtime.getRegistryForWorkspace(wsId);
-  const result = await ctx.runtime.getLifecycle().respawnBundle(serverName, wsId, registry);
-  return result.ok ? { ok: true } : { ok: false, error: result.error };
 }
 
 /**

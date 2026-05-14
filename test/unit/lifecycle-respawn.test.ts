@@ -93,7 +93,7 @@ describe("lifecycle.respawnBundle — guards", () => {
     const result = await lifecycle.respawnBundle("missing", wsId, registry);
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.error).toMatch(/No bundle instance for "missing"/);
+      expect(result.error).toMatch(/Bundle "missing" is not installed/);
     }
   });
 
