@@ -1,6 +1,4 @@
-import type { LanguageModelV3 } from "@ai-sdk/provider";
-import { getProviderFromModel } from "../model/catalog.ts";
-import { shortCallProviderOptions } from "../model/short-call-options.ts";
+import type { ModelProfile } from "../model/model-profile.ts";
 import type { BriefingContext, FacetResult } from "./briefing-collector.ts";
 import type {
   ActivityOutput,
@@ -115,7 +113,7 @@ const BRIEFING_RESPONSE_SCHEMA = {
 
 export class BriefingGenerator {
   constructor(
-    private model: LanguageModelV3,
+    private profile: ModelProfile,
     private config: HomeConfig,
   ) {}
 
@@ -144,11 +142,11 @@ export class BriefingGenerator {
   }
 
   private get modelString(): string {
-    return this.config.model ?? "unknown";
+    return this.profile.modelString;
   }
 
   private get providerName(): string {
-    return this.config.model ? getProviderFromModel(this.config.model) : "unknown";
+    return this.profile.provider;
   }
 
   private buildGreeting(): string {
@@ -251,11 +249,11 @@ export class BriefingGenerator {
     opts: { timeoutMs: number; maxOutputTokens: number },
   ): Promise<AttemptResult> {
     const start = performance.now();
-    const providerOptions = this.config.model ? shortCallProviderOptions(this.config.model) : {};
+    const providerOptions = this.profile.providerOptions;
 
     try {
       const abort = AbortSignal.timeout(opts.timeoutMs);
-      const response = await this.model.doGenerate({
+      const response = await this.profile.model.doGenerate({
         prompt: [
           { role: "system", content: BRIEFING_SYSTEM_PROMPT },
           {

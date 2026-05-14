@@ -1,8 +1,31 @@
 import { describe, expect, it } from "bun:test";
 import type { LanguageModelV3, LanguageModelV3CallOptions } from "@ai-sdk/provider";
+import {
+	buildSlotProviderOptions,
+	type ModelProfile,
+	type ModelSlotName,
+} from "../../src/model/model-profile.ts";
+import { getProviderFromModel } from "../../src/model/catalog.ts";
 import type { ActivityOutput, BriefingSection, HomeConfig } from "../../src/services/home-types.ts";
 import { BriefingGenerator } from "../../src/services/briefing-generator.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
+
+/** Build a model profile for tests. Defaults to the "fast" slot since
+ * the briefing call always uses it; tests that care about provider
+ * options pass a specific modelString. */
+function makeProfile(
+	model: LanguageModelV3,
+	modelString = "anthropic:claude-sonnet-4-6",
+	slot: ModelSlotName = "fast",
+): ModelProfile {
+	return {
+		slot,
+		model,
+		modelString,
+		provider: getProviderFromModel(modelString),
+		providerOptions: buildSlotProviderOptions(slot, modelString),
+	};
+}
 
 function createMockModelV3(responseText: string): LanguageModelV3 {
 	return createMockModel(() => ({
@@ -155,7 +178,7 @@ describe("briefing-generator", () => {
 	describe("empty activity", () => {
 		it("returns quiet state without calling the model", async () => {
 			const { model, calls } = createTrackingModelV3("should not be called");
-			const gen = new BriefingGenerator(model, makeConfig());
+			const gen = new BriefingGenerator(makeProfile(model), makeConfig());
 			const result = await gen.generate(emptyActivity());
 
 			expect(result.state).toBe("quiet");
@@ -169,7 +192,7 @@ describe("briefing-generator", () => {
 	describe("greeting", () => {
 		it("says good morning before noon", async () => {
 			const { model } = createTrackingModelV3("{}");
-			const gen = new BriefingGenerator(model, makeConfig({ timezone: "Pacific/Honolulu" }));
+			const gen = new BriefingGenerator(makeProfile(model), makeConfig({ timezone: "Pacific/Honolulu" }));
 			const result = await gen.generate(emptyActivity());
 
 			expect(result.greeting).toContain("Mat");
@@ -182,7 +205,7 @@ describe("briefing-generator", () => {
 
 		it("uses fallback when timezone is empty", async () => {
 			const { model } = createTrackingModelV3("{}");
-			const gen = new BriefingGenerator(model, makeConfig({ timezone: "" }));
+			const gen = new BriefingGenerator(makeProfile(model), makeConfig({ timezone: "" }));
 			const result = await gen.generate(emptyActivity());
 
 			expect(result.greeting).toContain("Mat");
@@ -190,7 +213,7 @@ describe("briefing-generator", () => {
 
 		it("uses fallback when timezone is invalid", async () => {
 			const { model } = createTrackingModelV3("{}");
-			const gen = new BriefingGenerator(model, makeConfig({ timezone: "Invalid/Zone" }));
+			const gen = new BriefingGenerator(makeProfile(model), makeConfig({ timezone: "Invalid/Zone" }));
 			const result = await gen.generate(emptyActivity());
 
 			expect(result.greeting).toContain("Mat");
@@ -200,7 +223,7 @@ describe("briefing-generator", () => {
 	describe("date formatting", () => {
 		it("formats date as weekday, month day, year", async () => {
 			const model = createMockModelV3("{}");
-			const gen = new BriefingGenerator(model, makeConfig());
+			const gen = new BriefingGenerator(makeProfile(model), makeConfig());
 			const result = await gen.generate(emptyActivity());
 
 			expect(result.date).toMatch(/^\w+, \w+ \d{1,2}, \d{4}$/);
@@ -221,7 +244,7 @@ describe("briefing-generator", () => {
 				],
 			});
 			const model = createMockModelV3(llmResponse);
-			const gen = new BriefingGenerator(model, makeConfig());
+			const gen = new BriefingGenerator(makeProfile(model), makeConfig());
 			const result = await gen.generate(activeActivity());
 
 			expect(result.lede).toBe("3 conversations with 5 tool calls yesterday.");
@@ -244,7 +267,7 @@ describe("briefing-generator", () => {
 			});
 			const llmResponse = `\`\`\`json\n${json}\n\`\`\``;
 			const model = createMockModelV3(llmResponse);
-			const gen = new BriefingGenerator(model, makeConfig());
+			const gen = new BriefingGenerator(makeProfile(model), makeConfig());
 			const result = await gen.generate(activeActivity());
 
 			expect(result.lede).toBe("All systems normal.");
@@ -253,7 +276,7 @@ describe("briefing-generator", () => {
 
 		it("returns degraded fallback on invalid JSON after retry", async () => {
 			const { model, calls } = createTrackingModelV3("This is not JSON at all");
-			const gen = new BriefingGenerator(model, makeConfig());
+			const gen = new BriefingGenerator(makeProfile(model), makeConfig());
 			const result = await gen.generate(activeActivity());
 
 			expect(result.lede).toBe("Activity summary is available.");
@@ -266,7 +289,7 @@ describe("briefing-generator", () => {
 
 		it("returns degraded fallback when JSON is missing lede", async () => {
 			const model = createMockModelV3(JSON.stringify({ sections: [] }));
-			const gen = new BriefingGenerator(model, makeConfig());
+			const gen = new BriefingGenerator(makeProfile(model), makeConfig());
 			const result = await gen.generate(activeActivity());
 
 			expect(result.lede).toBe("Activity summary is available.");
@@ -275,7 +298,7 @@ describe("briefing-generator", () => {
 
 		it("returns degraded fallback when JSON is missing sections", async () => {
 			const model = createMockModelV3(JSON.stringify({ lede: "Hi" }));
-			const gen = new BriefingGenerator(model, makeConfig());
+			const gen = new BriefingGenerator(makeProfile(model), makeConfig());
 			const result = await gen.generate(activeActivity());
 
 			expect(result.lede).toBe("Activity summary is available.");
@@ -288,7 +311,7 @@ describe("briefing-generator", () => {
 				sections: [{ id: "x", text: "Yes.", type: "positive", category: "recent" }],
 			});
 			const model = createMockModelV3(llmResponse);
-			const gen = new BriefingGenerator(model, makeConfig());
+			const gen = new BriefingGenerator(makeProfile(model), makeConfig());
 			const result = await gen.generate(activeActivity());
 
 			expect(result.degraded).toBeUndefined();
@@ -298,7 +321,7 @@ describe("briefing-generator", () => {
 			// Simulate a response cut off mid-section (token limit hit)
 			const truncated = `{"lede": "3 follow-ups overdue.", "sections": [{"id": "followups", "text": "3 follow-ups need attention in CRM.", "type": "warning", "category": "attention"}, {"id": "tasks", "text": "You have 1 high-priority task du`;
 			const model = createTruncatedModelV3(truncated);
-			const gen = new BriefingGenerator(model, makeConfig());
+			const gen = new BriefingGenerator(makeProfile(model), makeConfig());
 			const result = await gen.generate(activeActivity());
 
 			// Should recover the lede and the first complete section
@@ -316,7 +339,7 @@ describe("briefing-generator", () => {
 				]
 			}`;
 			const model = createMockModelV3(jsonWithTrailingCommas);
-			const gen = new BriefingGenerator(model, makeConfig());
+			const gen = new BriefingGenerator(makeProfile(model), makeConfig());
 			const result = await gen.generate(activeActivity());
 
 			expect(result.lede).toBe("3 items need attention.");
@@ -326,7 +349,7 @@ describe("briefing-generator", () => {
 		it("handles markdown-fenced JSON with trailing commas", async () => {
 			const fenced = '```json\n{"lede": "Ok.", "sections": [{"id": "x", "text": "Done.", "type": "positive", "category": "recent",},],}\n```';
 			const model = createMockModelV3(fenced);
-			const gen = new BriefingGenerator(model, makeConfig());
+			const gen = new BriefingGenerator(makeProfile(model), makeConfig());
 			const result = await gen.generate(activeActivity());
 
 			expect(result.lede).toBe("Ok.");
@@ -336,7 +359,7 @@ describe("briefing-generator", () => {
 		it("repairs truncated JSON wrapped in markdown fences", async () => {
 			const truncated = '```json\n{"lede": "All clear.", "sections": [{"id": "status", "text": "Running smoothly.", "type": "positive", "category": "recent"}';
 			const model = createTruncatedModelV3(truncated);
-			const gen = new BriefingGenerator(model, makeConfig());
+			const gen = new BriefingGenerator(makeProfile(model), makeConfig());
 			const result = await gen.generate(activeActivity());
 
 			expect(result.lede).toBe("All clear.");
@@ -354,7 +377,7 @@ describe("briefing-generator", () => {
 				],
 			});
 			const model = createMockModelV3(llmResponse);
-			const gen = new BriefingGenerator(model, makeConfig());
+			const gen = new BriefingGenerator(makeProfile(model), makeConfig());
 			const result = await gen.generate(activeActivity());
 
 			expect(result.state).toBe("all-clear");
@@ -369,7 +392,7 @@ describe("briefing-generator", () => {
 				],
 			});
 			const model = createMockModelV3(llmResponse);
-			const gen = new BriefingGenerator(model, makeConfig());
+			const gen = new BriefingGenerator(makeProfile(model), makeConfig());
 			const result = await gen.generate(activeActivity());
 
 			expect(result.state).toBe("attention");
@@ -384,7 +407,7 @@ describe("briefing-generator", () => {
 				],
 			});
 			const model = createMockModelV3(llmResponse);
-			const gen = new BriefingGenerator(model, makeConfig());
+			const gen = new BriefingGenerator(makeProfile(model), makeConfig());
 			const result = await gen.generate(activeActivity());
 
 			expect(result.state).toBe("normal");
@@ -395,7 +418,7 @@ describe("briefing-generator", () => {
 		it("passes calibrated maxOutputTokens and JSON response format with schema to model", async () => {
 			const llmResponse = JSON.stringify({ lede: "Ok.", sections: [] });
 			const { model, calls } = createTrackingModelV3(llmResponse);
-			const gen = new BriefingGenerator(model, makeConfig());
+			const gen = new BriefingGenerator(makeProfile(model), makeConfig());
 			await gen.generate(activeActivity());
 
 			expect(calls).toHaveLength(1);
@@ -408,7 +431,7 @@ describe("briefing-generator", () => {
 
 		it("uses tighter token cap on retry", async () => {
 			const { model, calls } = createTrackingModelV3("not json");
-			const gen = new BriefingGenerator(model, makeConfig());
+			const gen = new BriefingGenerator(makeProfile(model), makeConfig());
 			await gen.generate(activeActivity());
 
 			expect(calls).toHaveLength(2);
@@ -419,7 +442,7 @@ describe("briefing-generator", () => {
 		it("disables Anthropic thinking on the short-call payload", async () => {
 			const llmResponse = JSON.stringify({ lede: "Ok.", sections: [] });
 			const { model, calls } = createTrackingModelV3(llmResponse);
-			const gen = new BriefingGenerator(model, makeConfig({ model: "anthropic:claude-sonnet-4-6" }));
+			const gen = new BriefingGenerator(makeProfile(model, "anthropic:claude-sonnet-4-6"), makeConfig());
 			await gen.generate(activeActivity());
 
 			expect(calls[0].providerOptions).toEqual({
@@ -430,7 +453,7 @@ describe("briefing-generator", () => {
 		it("disables Gemini thinking budget for 2.5 series", async () => {
 			const llmResponse = JSON.stringify({ lede: "Ok.", sections: [] });
 			const { model, calls } = createTrackingModelV3(llmResponse);
-			const gen = new BriefingGenerator(model, makeConfig({ model: "google:gemini-2.5-flash" }));
+			const gen = new BriefingGenerator(makeProfile(model, "google:gemini-2.5-flash"), makeConfig());
 			await gen.generate(activeActivity());
 
 			expect(calls[0].providerOptions).toEqual({
@@ -441,7 +464,7 @@ describe("briefing-generator", () => {
 		it("sets reasoningEffort=minimal for OpenAI reasoning models", async () => {
 			const llmResponse = JSON.stringify({ lede: "Ok.", sections: [] });
 			const { model, calls } = createTrackingModelV3(llmResponse);
-			const gen = new BriefingGenerator(model, makeConfig({ model: "openai:gpt-5" }));
+			const gen = new BriefingGenerator(makeProfile(model, "openai:gpt-5"), makeConfig());
 			await gen.generate(activeActivity());
 
 			expect(calls[0].providerOptions).toEqual({
@@ -452,39 +475,16 @@ describe("briefing-generator", () => {
 		it("omits providerOptions for non-reasoning models", async () => {
 			const llmResponse = JSON.stringify({ lede: "Ok.", sections: [] });
 			const { model, calls } = createTrackingModelV3(llmResponse);
-			const gen = new BriefingGenerator(model, makeConfig({ model: "openai:gpt-4o" }));
+			const gen = new BriefingGenerator(makeProfile(model, "openai:gpt-4o"), makeConfig());
 			await gen.generate(activeActivity());
 
 			expect(calls[0].providerOptions).toBeUndefined();
 		});
 
-		it("uses config model when specified", async () => {
-			// BriefingGenerator no longer gets model string from the call;
-			// model selection happens before the LanguageModelV3 is created.
-			// This test is now a no-op for the model name check.
-			const llmResponse = JSON.stringify({ lede: "Ok.", sections: [] });
-			const { model, calls } = createTrackingModelV3(llmResponse);
-			const gen = new BriefingGenerator(model, makeConfig({ model: "claude-haiku-3" }));
-			await gen.generate(activeActivity());
-
-			// Verify model was called
-			expect(calls).toHaveLength(1);
-		});
-
-		it("falls back to claude-sonnet-4-5-20250929 when model is null", async () => {
-			const llmResponse = JSON.stringify({ lede: "Ok.", sections: [] });
-			const { model, calls } = createTrackingModelV3(llmResponse);
-			const gen = new BriefingGenerator(model, makeConfig({ model: null }));
-			await gen.generate(activeActivity());
-
-			// Verify model was called
-			expect(calls).toHaveLength(1);
-		});
-
 		it("sends activity as user message JSON", async () => {
 			const llmResponse = JSON.stringify({ lede: "Ok.", sections: [] });
 			const { model, calls } = createTrackingModelV3(llmResponse);
-			const gen = new BriefingGenerator(model, makeConfig());
+			const gen = new BriefingGenerator(makeProfile(model), makeConfig());
 			const activity = activeActivity();
 			await gen.generate(activity);
 
@@ -504,7 +504,7 @@ describe("briefing-generator", () => {
 		it("passes empty tools array", async () => {
 			const llmResponse = JSON.stringify({ lede: "Ok.", sections: [] });
 			const { model, calls } = createTrackingModelV3(llmResponse);
-			const gen = new BriefingGenerator(model, makeConfig());
+			const gen = new BriefingGenerator(makeProfile(model), makeConfig());
 			await gen.generate(activeActivity());
 
 			// BriefingGenerator doesn't pass tools to doGenerate
@@ -518,7 +518,7 @@ describe("briefing-generator", () => {
 			const err = new Error("The operation timed out.");
 			err.name = "TimeoutError";
 			const { model, getCalls } = createThrowingModelV3(err);
-			const gen = new BriefingGenerator(model, makeConfig());
+			const gen = new BriefingGenerator(makeProfile(model), makeConfig());
 			const result = await gen.generate(activeActivity());
 
 			expect(getCalls()).toBe(2);
@@ -528,7 +528,7 @@ describe("briefing-generator", () => {
 		it("does not retry on auth error (401)", async () => {
 			const err = Object.assign(new Error("Unauthorized"), { statusCode: 401 });
 			const { model, getCalls } = createThrowingModelV3(err);
-			const gen = new BriefingGenerator(model, makeConfig());
+			const gen = new BriefingGenerator(makeProfile(model), makeConfig());
 			const result = await gen.generate(activeActivity());
 
 			expect(getCalls()).toBe(1);
@@ -538,7 +538,7 @@ describe("briefing-generator", () => {
 		it("does not retry on model-not-found (404)", async () => {
 			const err = Object.assign(new Error("Not found"), { statusCode: 404 });
 			const { model, getCalls } = createThrowingModelV3(err);
-			const gen = new BriefingGenerator(model, makeConfig());
+			const gen = new BriefingGenerator(makeProfile(model), makeConfig());
 			await gen.generate(activeActivity());
 
 			expect(getCalls()).toBe(1);
@@ -547,7 +547,7 @@ describe("briefing-generator", () => {
 		it("retries on rate limit (429)", async () => {
 			const err = Object.assign(new Error("Too many"), { statusCode: 429 });
 			const { model, getCalls } = createThrowingModelV3(err);
-			const gen = new BriefingGenerator(model, makeConfig());
+			const gen = new BriefingGenerator(makeProfile(model), makeConfig());
 			await gen.generate(activeActivity());
 
 			expect(getCalls()).toBe(2);
@@ -556,7 +556,7 @@ describe("briefing-generator", () => {
 		it("retries on server error (500)", async () => {
 			const err = Object.assign(new Error("Boom"), { statusCode: 503 });
 			const { model, getCalls } = createThrowingModelV3(err);
-			const gen = new BriefingGenerator(model, makeConfig());
+			const gen = new BriefingGenerator(makeProfile(model), makeConfig());
 			await gen.generate(activeActivity());
 
 			expect(getCalls()).toBe(2);
@@ -568,7 +568,7 @@ describe("briefing-generator", () => {
 			const { model } = createThrowingModelV3(
 				Object.assign(new Error("Unauthorized"), { statusCode: 401 }),
 			);
-			const gen = new BriefingGenerator(model, makeConfig());
+			const gen = new BriefingGenerator(makeProfile(model), makeConfig());
 			const facetContext = {
 				period: { since: "2026-03-24T00:00:00Z", until: "2026-03-25T00:00:00Z" },
 				facets: [
@@ -640,7 +640,7 @@ describe("briefing-generator", () => {
 		it("truncates large facet data payloads", async () => {
 			const llmResponse = JSON.stringify({ lede: "Ok.", sections: [] });
 			const { model, calls } = createTrackingModelV3(llmResponse);
-			const gen = new BriefingGenerator(model, makeConfig());
+			const gen = new BriefingGenerator(makeProfile(model), makeConfig());
 			const bigData = "x".repeat(5000);
 			const facetContext = {
 				period: { since: "2026-03-24T00:00:00Z", until: "2026-03-25T00:00:00Z" },

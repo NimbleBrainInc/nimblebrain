@@ -775,14 +775,18 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
               until,
             });
 
-            // Resolve the model from the "fast" slot
-            const modelId = runtime.getModelSlot("fast");
-            const model = runtime.resolveModel(modelId);
+            // Resolve the "fast" slot to a full call profile. The profile
+            // carries provider-aware defaults (suppress thinking/reasoning)
+            // derived from the slot's semantic intent — operators declare
+            // "fast = use this model for low-latency calls" by picking the
+            // slot's model in tenant config; the runtime translates that
+            // into the right provider knobs here.
+            const profile = runtime.getModelProfile("fast");
 
             // Generate briefing with facets + activity
-            const generator = new BriefingGenerator(model, {
+            const generator = new BriefingGenerator(profile, {
               enabled: true,
-              model: modelId,
+              model: profile.modelString,
               userName: homeConfig.userName,
               timezone: homeConfig.timezone,
               cacheTtlMinutes: homeConfig.cacheTtlMinutes,
