@@ -22,6 +22,7 @@ import {
   textContent,
 } from "./content-helpers.ts";
 import { withRetry } from "./retry.ts";
+import { createRunSupervisor } from "./supervisor.ts";
 import { toolSchemaForLlm } from "./tool-schema-for-llm.ts";
 import type {
   EngineConfig,
@@ -320,6 +321,12 @@ export class AgentEngine {
 
     const runStart = performance.now();
 
+    // Per-run loop bounding. Watches tool-result repetition by fingerprint
+    // and replaces the Nth-repeat result with a synth-stop directive that
+    // tells the model to surface the error and end the run. See
+    // src/engine/supervisor.ts for the state machine.
+    const supervisor = createRunSupervisor();
+
     // Tracks the most recent LLM call's finish reason so the run-level
     // stop reason can reflect why the model actually exited (length cap,
     // content filter, etc.) rather than always reporting "complete".
@@ -356,6 +363,18 @@ export class AgentEngine {
             "\n\n[IMPORTANT: This is your final step. Do NOT call any more tools. " +
             "Summarize what you have accomplished so far and clearly list what " +
             "remains unfinished so the user can continue in a follow-up message.]";
+        }
+
+        // One-shot nudge after the supervisor tripped on the previous iteration.
+        // Pairs with the synth-stop replacement so the directive is unambiguous:
+        // the tool result tells the model what to say, the system-prompt nudge
+        // forecloses further tool calls.
+        if (supervisor.needsPromptNudge()) {
+          callPrompt +=
+            "\n\n[IMPORTANT: A tool was detected to be in a loop and has been disabled " +
+            "for the remainder of this run. Do NOT call any more tools. Produce a final " +
+            "response now per the instructions in the last tool result.]";
+          supervisor.consumeNudge();
         }
 
         const callProviderOptions = buildThinkingProviderOptions(config.model, config.thinking);
@@ -560,9 +579,17 @@ export class AgentEngine {
 
             const ms = performance.now() - start;
 
-            const finalResult = config.hooks?.afterToolCall
+            const hookedResult = config.hooks?.afterToolCall
               ? await config.hooks.afterToolCall(gatedCall, result)
               : result;
+
+            // Supervisor sees the post-hook, post-A.3-normalization result.
+            // On a trip, the replacement directive flows downstream in place
+            // of the original — the model sees the directive in its tool
+            // message and the engine appends a system-prompt nudge on the
+            // next iteration via `needsPromptNudge()`.
+            const verdict = supervisor.observe(gatedCall, hookedResult);
+            const finalResult = verdict.type === "synth" ? verdict.replacement : hookedResult;
 
             // Extract text output for persistence. The full structured result
             // is only attached when there's a resourceUri (inline UI), but the
@@ -586,6 +613,13 @@ export class AgentEngine {
                 output: outputText,
                 result: resourceUri ? finalResult : undefined,
                 ...(resourceLinks.length > 0 ? { resourceLinks } : {}),
+                ...(verdict.type === "synth"
+                  ? {
+                      supervisorTripped: true,
+                      trippedTool: verdict.trippedTool,
+                      consecutiveRepeats: verdict.consecutiveRepeats,
+                    }
+                  : {}),
               },
             });
 
