@@ -88,7 +88,7 @@ describe("System Tools", () => {
 		expect(extractText(result.content)).toContain("test");
 		expect(extractText(result.content)).toContain("2 tools");
 		// Browse path returns machine-readable tool names so the agent can pass
-		// one directly to nb__use when it wants to make a discovered tool callable.
+		// them directly to nb__manage_tools when it wants to make discovered tools callable.
 		expect(getStructured<{ tools?: Array<{ name: string }> }>(result)?.tools).toEqual([
 			{ name: "test__greet" },
 			{ name: "test__farewell" },
@@ -284,33 +284,40 @@ describe("System Tools", () => {
 		const tools = await systemTools.tools();
 		const names = tools.map((t) => t.name);
 		expect(names).toContain("nb__search");
-		expect(names).toContain("nb__use");
-		expect(names).toContain("nb__release");
+		expect(names).toContain("nb__manage_tools");
 		expect(names).toContain("nb__manage_app");
 	});
 
-	it("use and release require an active agent run", async () => {
+	it("manage_tools requires at least one of add or remove to be non-empty", async () => {
 		const registry = await makeRegistry();
 		const systemTools = await createSystemTools(() => registry);
-		const useResult = await systemTools.execute("use", { tool_name: "test__greet" });
-		expect(useResult.isError).toBe(true);
-		expect(extractText(useResult.content)).toContain("active agent run");
+		const empty = await systemTools.execute("manage_tools", {});
+		expect(empty.isError).toBe(true);
+		expect(extractText(empty.content)).toContain("at least one");
 
-		const releaseResult = await systemTools.execute("release", { tool_name: "test__greet" });
-		expect(releaseResult.isError).toBe(true);
-		expect(extractText(releaseResult.content)).toContain("active agent run");
+		const bothEmpty = await systemTools.execute("manage_tools", { add: [], remove: [] });
+		expect(bothEmpty.isError).toBe(true);
+		expect(extractText(bothEmpty.content)).toContain("at least one");
 	});
 
-	it("use and release delegate to active run tool controls", async () => {
+	it("manage_tools requires an active agent run", async () => {
+		const registry = await makeRegistry();
+		const systemTools = await createSystemTools(() => registry);
+		const result = await systemTools.execute("manage_tools", { add: ["test__greet"] });
+		expect(result.isError).toBe(true);
+		expect(extractText(result.content)).toContain("active agent run");
+	});
+
+	it("manage_tools delegates add and remove to active run tool controls", async () => {
 		const registry = await makeRegistry();
 		const calls: string[] = [];
 		const toolPromotionCtx: ToolPromotionContext = {
 			addTool(toolName) {
-				calls.push(`use:${toolName}`);
+				calls.push(`add:${toolName}`);
 				return { ok: true, toolName, changed: true, message: `${toolName} added` };
 			},
 			removeTool(toolName) {
-				calls.push(`release:${toolName}`);
+				calls.push(`remove:${toolName}`);
 				return { ok: true, toolName, changed: true, message: `${toolName} removed` };
 			},
 		};
@@ -335,18 +342,84 @@ describe("System Tools", () => {
 			toolPromotionCtx,
 		);
 
-		const useResult = await systemTools.execute("use", { tool_name: "test__greet" });
-		expect(useResult.isError).toBe(false);
-		expect(extractText(useResult.content)).toContain("added");
+		const result = await systemTools.execute("manage_tools", {
+			add: ["test__greet", "test__farewell"],
+			remove: ["test__stale"],
+		});
+		expect(result.isError).toBe(false);
+		expect(calls).toEqual(["add:test__greet", "add:test__farewell", "remove:test__stale"]);
 
-		const releaseResult = await systemTools.execute("release", { tool_name: "test__greet" });
-		expect(releaseResult.isError).toBe(false);
-		expect(extractText(releaseResult.content)).toContain("removed");
+		const text = extractText(result.content);
+		expect(text).toContain("Promoted 2/2");
+		expect(text).toContain("Released 1/1");
 
-		expect(calls).toEqual(["use:test__greet", "release:test__greet"]);
+		const structured = getStructured<{
+			promoted: Array<{ ok: boolean; toolName: string }>;
+			released: Array<{ ok: boolean; toolName: string }>;
+		}>(result);
+		expect(structured?.promoted).toHaveLength(2);
+		expect(structured?.released).toHaveLength(1);
 	});
 
-	it("use accepts exact tool names returned by search", async () => {
+	it("manage_tools surfaces per-item failures in structuredContent without failing the call", async () => {
+		const registry = await makeRegistry();
+		const toolPromotionCtx: ToolPromotionContext = {
+			addTool(toolName) {
+				if (toolName === "internal__secret") {
+					return {
+						ok: false,
+						toolName,
+						changed: false,
+						reason: "internal_tool",
+						message: `${toolName} is an internal tool and cannot be added.`,
+					};
+				}
+				return { ok: true, toolName, changed: true, message: `${toolName} added` };
+			},
+			removeTool(toolName) {
+				return { ok: true, toolName, changed: true, message: `${toolName} removed` };
+			},
+		};
+		const systemTools = await createSystemTools(
+			() => registry,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			toolPromotionCtx,
+		);
+
+		const result = await systemTools.execute("manage_tools", {
+			add: ["app__public", "internal__secret"],
+		});
+		// Per-item failure does not flip the call-level isError flag — the structured
+		// content is the source of truth so the agent can act on partial success.
+		expect(result.isError).toBe(false);
+		const text = extractText(result.content);
+		expect(text).toContain("Promoted 1/2");
+		expect(text).toContain("internal__secret");
+
+		const structured = getStructured<{
+			promoted: Array<{ ok: boolean; toolName: string; reason?: string }>;
+		}>(result);
+		expect(structured?.promoted[0]?.ok).toBe(true);
+		expect(structured?.promoted[1]?.ok).toBe(false);
+		expect(structured?.promoted[1]?.reason).toBe("internal_tool");
+	});
+
+	it("manage_tools accepts exact tool names returned by search", async () => {
 		const registry = new ToolRegistry();
 		const source = await makeInProcessSource("test", [
 			{
@@ -360,11 +433,11 @@ describe("System Tools", () => {
 		const calls: string[] = [];
 		const toolPromotionCtx: ToolPromotionContext = {
 			addTool(toolName) {
-				calls.push(`use:${toolName}`);
+				calls.push(`add:${toolName}`);
 				return { ok: true, toolName, changed: true, message: `${toolName} added` };
 			},
 			removeTool(toolName) {
-				calls.push(`release:${toolName}`);
+				calls.push(`remove:${toolName}`);
 				return { ok: true, toolName, changed: true, message: `${toolName} removed` };
 			},
 		};
@@ -398,9 +471,11 @@ describe("System Tools", () => {
 			{ name: "test__tool.with.dot" },
 		]);
 
-		const useResult = await systemTools.execute("use", { tool_name: "test__tool.with.dot" });
-		expect(useResult.isError).toBe(false);
-		expect(calls).toEqual(["use:test__tool.with.dot"]);
+		const result = await systemTools.execute("manage_tools", {
+			add: ["test__tool.with.dot"],
+		});
+		expect(result.isError).toBe(false);
+		expect(calls).toEqual(["add:test__tool.with.dot"]);
 	});
 });
 

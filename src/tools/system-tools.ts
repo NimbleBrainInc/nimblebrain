@@ -24,7 +24,7 @@ import type { DelegateContext } from "./delegate.ts";
 import { createDelegateTool } from "./delegate.ts";
 import { defineInProcessApp, type InProcessTool } from "./in-process-app.ts";
 import { McpSource } from "./mcp-source.ts";
-import { createUseReleaseToolDefs } from "./platform/use-release.ts";
+import { createManageToolsToolDefs } from "./platform/manage-tools.ts";
 import type { ToolRegistry } from "./registry.ts";
 import { createManageRegistriesTool } from "./registry-tools.ts";
 import { createManageUsersTool, type ManageUsersContext } from "./user-tools.ts";
@@ -94,7 +94,7 @@ export async function createSystemTools(
 ): Promise<McpSource> {
   // Core tools (always available, not feature-gated)
   const coreToolDefs: InProcessTool[] = runtime ? createCoreToolDefs(runtime) : [];
-  const useReleaseToolDefs: InProcessTool[] = createUseReleaseToolDefs(toolPromotionCtx);
+  const manageToolsToolDefs: InProcessTool[] = createManageToolsToolDefs(toolPromotionCtx);
 
   const systemToolDefs: InProcessTool[] = [
     {
@@ -301,7 +301,7 @@ export async function createSystemTools(
     {
       name: "nb",
       version: "1.0.0",
-      tools: [...coreToolDefs, ...useReleaseToolDefs, ...filteredSystemDefs],
+      tools: [...coreToolDefs, ...manageToolsToolDefs, ...filteredSystemDefs],
       resources: buildCoreResourceMap(),
     },
     eventSink ?? new NoopEventSink(),

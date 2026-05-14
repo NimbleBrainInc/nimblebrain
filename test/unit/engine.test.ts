@@ -197,7 +197,7 @@ describe("AgentEngine", () => {
     expect(result.output).toBe("Done!");
   });
 
-  it("allows explicit nb__use to promote a discovered tool for the next iteration", async () => {
+  it("nb__manage_tools add promotes a discovered tool for the next iteration", async () => {
     let callCount = 0;
     const seenToolLists: string[][] = [];
     const model = createMockModel((options) => {
@@ -226,9 +226,9 @@ describe("AgentEngine", () => {
           content: [
             {
               type: "tool-call",
-              toolCallId: "call_use",
-              toolName: "nb__use",
-              input: JSON.stringify({ tool_name: "newsapi__get_top_headlines" }),
+              toolCallId: "call_manage",
+              toolName: "nb__manage_tools",
+              input: JSON.stringify({ add: ["newsapi__get_top_headlines"] }),
             },
           ],
           inputTokens: 10,
@@ -261,7 +261,7 @@ describe("AgentEngine", () => {
 
     const toolSchemas: ToolSchema[] = [
       { name: "nb__search", description: "Search tools", inputSchema: { type: "object", properties: {} } },
-      { name: "nb__use", description: "Use a tool", inputSchema: { type: "object", properties: {} } },
+      { name: "nb__manage_tools", description: "Patch tool list", inputSchema: { type: "object", properties: {} } },
       {
         name: "newsapi__get_top_headlines",
         description: "Get top headlines",
@@ -281,10 +281,17 @@ describe("AgentEngine", () => {
             isError: false,
           };
         }
-        if (call.name === "nb__use") {
+        if (call.name === "nb__manage_tools") {
           expect(activeControls).not.toBeNull();
-          const mutation = activeControls!.addTool(String(call.input.tool_name));
-          return { content: textContent(mutation.message), structuredContent: mutation, isError: !mutation.ok };
+          const add = (call.input.add as string[] | undefined) ?? [];
+          const remove = (call.input.remove as string[] | undefined) ?? [];
+          const promoted = add.map((n) => activeControls!.addTool(n));
+          const released = remove.map((n) => activeControls!.removeTool(n));
+          return {
+            content: textContent("ok"),
+            structuredContent: { promoted, released },
+            isError: false,
+          };
         }
         if (call.name === "newsapi__get_top_headlines") {
           return { content: textContent("headline results"), isError: false };
@@ -312,17 +319,17 @@ describe("AgentEngine", () => {
       [toolSchemas[0]!, toolSchemas[1]!],
     );
 
-    expect(seenToolLists[0]).toEqual(["nb__search", "nb__use"]);
+    expect(seenToolLists[0]).toEqual(["nb__search", "nb__manage_tools"]);
     expect(seenToolLists[2]).toContain("newsapi__get_top_headlines");
     expect(result.toolCalls.map((c) => c.name)).toEqual([
       "nb__search",
-      "nb__use",
+      "nb__manage_tools",
       "newsapi__get_top_headlines",
     ]);
     expect(events.some((e) => e.type === "tool.promoted")).toBe(true);
   });
 
-  it("allows nb__release to remove a promoted tool for the next iteration", async () => {
+  it("nb__manage_tools combined add+remove patches in one call", async () => {
     let callCount = 0;
     const seenToolLists: string[][] = [];
     const model = createMockModel((options) => {
@@ -331,13 +338,14 @@ describe("AgentEngine", () => {
       seenToolLists.push(toolNames);
 
       if (callCount === 1) {
+        // Bootstrap: promote two tools so we can test removing one in the next call.
         return {
           content: [
             {
               type: "tool-call",
-              toolCallId: "call_use",
-              toolName: "nb__use",
-              input: JSON.stringify({ tool_name: "newsapi__get_top_headlines" }),
+              toolCallId: "call_init",
+              toolName: "nb__manage_tools",
+              input: JSON.stringify({ add: ["a__one", "b__two"] }),
             },
           ],
           inputTokens: 10,
@@ -346,14 +354,16 @@ describe("AgentEngine", () => {
       }
 
       if (callCount === 2) {
-        expect(toolNames).toContain("newsapi__get_top_headlines");
+        expect(toolNames).toContain("a__one");
+        expect(toolNames).toContain("b__two");
+        // Domain switch: drop a__one, add c__three, in one patch.
         return {
           content: [
             {
               type: "tool-call",
-              toolCallId: "call_release",
-              toolName: "nb__release",
-              input: JSON.stringify({ tool_name: "newsapi__get_top_headlines" }),
+              toolCallId: "call_swap",
+              toolName: "nb__manage_tools",
+              input: JSON.stringify({ add: ["c__three"], remove: ["a__one"] }),
             },
           ],
           inputTokens: 10,
@@ -362,7 +372,9 @@ describe("AgentEngine", () => {
       }
 
       if (callCount === 3) {
-        expect(toolNames).not.toContain("newsapi__get_top_headlines");
+        expect(toolNames).not.toContain("a__one");
+        expect(toolNames).toContain("b__two");
+        expect(toolNames).toContain("c__three");
         return {
           content: [{ type: "text", text: "Done!" }],
           inputTokens: 10,
@@ -372,17 +384,10 @@ describe("AgentEngine", () => {
     });
 
     const toolSchemas: ToolSchema[] = [
-      { name: "nb__use", description: "Use a tool", inputSchema: { type: "object", properties: {} } },
-      {
-        name: "nb__release",
-        description: "Release a tool",
-        inputSchema: { type: "object", properties: {} },
-      },
-      {
-        name: "newsapi__get_top_headlines",
-        description: "Get top headlines",
-        inputSchema: { type: "object", properties: {} },
-      },
+      { name: "nb__manage_tools", description: "Patch tool list", inputSchema: { type: "object", properties: {} } },
+      { name: "a__one", description: "Tool A", inputSchema: { type: "object", properties: {} } },
+      { name: "b__two", description: "Tool B", inputSchema: { type: "object", properties: {} } },
+      { name: "c__three", description: "Tool C", inputSchema: { type: "object", properties: {} } },
     ];
 
     const events: EngineEvent[] = [];
@@ -390,14 +395,17 @@ describe("AgentEngine", () => {
     const engine = new AgentEngine(
       model,
       new StaticToolRouter(toolSchemas, (call) => {
-        expect(activeControls).not.toBeNull();
-        if (call.name === "nb__use") {
-          const mutation = activeControls!.addTool(String(call.input.tool_name));
-          return { content: textContent(mutation.message), structuredContent: mutation, isError: !mutation.ok };
-        }
-        if (call.name === "nb__release") {
-          const mutation = activeControls!.removeTool(String(call.input.tool_name));
-          return { content: textContent(mutation.message), structuredContent: mutation, isError: !mutation.ok };
+        if (call.name === "nb__manage_tools") {
+          expect(activeControls).not.toBeNull();
+          const add = (call.input.add as string[] | undefined) ?? [];
+          const remove = (call.input.remove as string[] | undefined) ?? [];
+          const promoted = add.map((n) => activeControls!.addTool(n));
+          const released = remove.map((n) => activeControls!.removeTool(n));
+          return {
+            content: textContent("ok"),
+            structuredContent: { promoted, released },
+            isError: false,
+          };
         }
         return { content: textContent(""), isError: false };
       }),
@@ -418,19 +426,16 @@ describe("AgentEngine", () => {
         },
       },
       "",
-      [{ role: "user", content: [{ type: "text", text: "Use and release news" }] }],
-      [toolSchemas[0]!, toolSchemas[1]!],
+      [{ role: "user", content: [{ type: "text", text: "Patch tools" }] }],
+      [toolSchemas[0]!],
     );
 
-    expect(seenToolLists[0]).toEqual(["nb__use", "nb__release"]);
-    expect(seenToolLists[1]).toContain("newsapi__get_top_headlines");
-    expect(seenToolLists[2]).not.toContain("newsapi__get_top_headlines");
-    expect(result.toolCalls.map((c) => c.name)).toEqual(["nb__use", "nb__release"]);
-    expect(events.some((e) => e.type === "tool.promoted")).toBe(true);
-    expect(events.some((e) => e.type === "tool.released")).toBe(true);
+    expect(result.toolCalls.map((c) => c.name)).toEqual(["nb__manage_tools", "nb__manage_tools"]);
+    expect(events.filter((e) => e.type === "tool.promoted")).toHaveLength(3); // a__one, b__two, c__three
+    expect(events.filter((e) => e.type === "tool.released")).toHaveLength(1); // a__one
   });
 
-  it("rejects nb__use for internal tools", async () => {
+  it("nb__manage_tools rejects internal tools per-item without affecting other items", async () => {
     let callCount = 0;
     const seenToolLists: string[][] = [];
     const model = createMockModel((options) => {
@@ -443,9 +448,9 @@ describe("AgentEngine", () => {
           content: [
             {
               type: "tool-call",
-              toolCallId: "call_use_internal",
-              toolName: "nb__use",
-              input: JSON.stringify({ tool_name: "internal__secret" }),
+              toolCallId: "call_mixed",
+              toolName: "nb__manage_tools",
+              input: JSON.stringify({ add: ["app__public", "internal__secret"] }),
             },
           ],
           inputTokens: 10,
@@ -454,6 +459,7 @@ describe("AgentEngine", () => {
       }
 
       if (callCount === 2) {
+        expect(toolNames).toContain("app__public");
         expect(toolNames).not.toContain("internal__secret");
         return {
           content: [{ type: "text", text: "Done!" }],
@@ -464,7 +470,12 @@ describe("AgentEngine", () => {
     });
 
     const toolSchemas: ToolSchema[] = [
-      { name: "nb__use", description: "Use a tool", inputSchema: { type: "object", properties: {} } },
+      { name: "nb__manage_tools", description: "Patch tool list", inputSchema: { type: "object", properties: {} } },
+      {
+        name: "app__public",
+        description: "Public tool",
+        inputSchema: { type: "object", properties: {} },
+      },
       {
         name: "internal__secret",
         description: "Internal secret tool",
@@ -478,10 +489,15 @@ describe("AgentEngine", () => {
     const engine = new AgentEngine(
       model,
       new StaticToolRouter(toolSchemas, (call) => {
-        if (call.name === "nb__use") {
+        if (call.name === "nb__manage_tools") {
           expect(activeControls).not.toBeNull();
-          const mutation = activeControls!.addTool(String(call.input.tool_name));
-          return { content: textContent(mutation.message), structuredContent: mutation, isError: !mutation.ok };
+          const add = (call.input.add as string[] | undefined) ?? [];
+          const promoted = add.map((n) => activeControls!.addTool(n));
+          return {
+            content: textContent("ok"),
+            structuredContent: { promoted, released: [] },
+            isError: false,
+          };
         }
         return { content: textContent(""), isError: false };
       }),
@@ -502,18 +518,19 @@ describe("AgentEngine", () => {
         },
       },
       "",
-      [{ role: "user", content: [{ type: "text", text: "Use internal" }] }],
+      [{ role: "user", content: [{ type: "text", text: "Mixed batch" }] }],
       [toolSchemas[0]!],
     );
 
-    const useCall = result.toolCalls.find((c) => c.name === "nb__use");
-    expect(useCall?.ok).toBe(false);
-    expect(useCall?.output).toContain("internal tool");
-    expect(seenToolLists[1]).not.toContain("internal__secret");
-    expect(events.some((e) => e.type === "tool.promoted")).toBe(false);
+    const manageCall = result.toolCalls.find((c) => c.name === "nb__manage_tools");
+    expect(manageCall).toBeDefined();
+    // Per-item failure does not fail the whole call; structuredContent reports it.
+    expect(manageCall?.ok).toBe(true);
+    // Only the public tool was promoted; the internal one was rejected per-item.
+    expect(events.filter((e) => e.type === "tool.promoted")).toHaveLength(1);
   });
 
-  it("rejects nb__use for tools that are not eligible in the current run", async () => {
+  it("nb__manage_tools add rejects role/feature-ineligible tools per-item", async () => {
     let callCount = 0;
     const seenToolLists: string[][] = [];
     const model = createMockModel((options) => {
@@ -526,9 +543,9 @@ describe("AgentEngine", () => {
           content: [
             {
               type: "tool-call",
-              toolCallId: "call_use_admin",
-              toolName: "nb__use",
-              input: JSON.stringify({ tool_name: "nb__manage_users" }),
+              toolCallId: "call_admin",
+              toolName: "nb__manage_tools",
+              input: JSON.stringify({ add: ["nb__manage_users"] }),
             },
           ],
           inputTokens: 10,
@@ -547,7 +564,7 @@ describe("AgentEngine", () => {
     });
 
     const toolSchemas: ToolSchema[] = [
-      { name: "nb__use", description: "Use a tool", inputSchema: { type: "object", properties: {} } },
+      { name: "nb__manage_tools", description: "Patch tool list", inputSchema: { type: "object", properties: {} } },
       {
         name: "nb__manage_users",
         description: "Manage users",
@@ -560,10 +577,15 @@ describe("AgentEngine", () => {
     const engine = new AgentEngine(
       model,
       new StaticToolRouter(toolSchemas, (call) => {
-        if (call.name === "nb__use") {
+        if (call.name === "nb__manage_tools") {
           expect(activeControls).not.toBeNull();
-          const mutation = activeControls!.addTool(String(call.input.tool_name));
-          return { content: textContent(mutation.message), structuredContent: mutation, isError: !mutation.ok };
+          const add = (call.input.add as string[] | undefined) ?? [];
+          const promoted = add.map((n) => activeControls!.addTool(n));
+          return {
+            content: textContent("ok"),
+            structuredContent: { promoted, released: [] },
+            isError: false,
+          };
         }
         return { content: textContent(""), isError: false };
       }),
@@ -584,18 +606,16 @@ describe("AgentEngine", () => {
         },
       },
       "",
-      [{ role: "user", content: [{ type: "text", text: "Use admin tool" }] }],
+      [{ role: "user", content: [{ type: "text", text: "Try to promote admin tool" }] }],
       [toolSchemas[0]!],
     );
 
-    const useCall = result.toolCalls.find((c) => c.name === "nb__use");
-    expect(useCall?.ok).toBe(false);
-    expect(useCall?.output).toContain("not available");
+    expect(result.toolCalls.find((c) => c.name === "nb__manage_tools")).toBeDefined();
     expect(seenToolLists[1]).not.toContain("nb__manage_users");
     expect(events.some((e) => e.type === "tool.promoted")).toBe(false);
   });
 
-  it("refuses nb__release for system tools", async () => {
+  it("nb__manage_tools remove refuses system tools per-item", async () => {
     let callCount = 0;
     const seenToolLists: string[][] = [];
     const model = createMockModel((options) => {
@@ -608,9 +628,9 @@ describe("AgentEngine", () => {
           content: [
             {
               type: "tool-call",
-              toolCallId: "call_release_system",
-              toolName: "nb__release",
-              input: JSON.stringify({ tool_name: "nb__search" }),
+              toolCallId: "call_drop_search",
+              toolName: "nb__manage_tools",
+              input: JSON.stringify({ remove: ["nb__search"] }),
             },
           ],
           inputTokens: 10,
@@ -630,11 +650,7 @@ describe("AgentEngine", () => {
 
     const toolSchemas: ToolSchema[] = [
       { name: "nb__search", description: "Search tools", inputSchema: { type: "object", properties: {} } },
-      {
-        name: "nb__release",
-        description: "Release a tool",
-        inputSchema: { type: "object", properties: {} },
-      },
+      { name: "nb__manage_tools", description: "Patch tool list", inputSchema: { type: "object", properties: {} } },
     ];
 
     const events: EngineEvent[] = [];
@@ -642,10 +658,15 @@ describe("AgentEngine", () => {
     const engine = new AgentEngine(
       model,
       new StaticToolRouter(toolSchemas, (call) => {
-        if (call.name === "nb__release") {
+        if (call.name === "nb__manage_tools") {
           expect(activeControls).not.toBeNull();
-          const mutation = activeControls!.removeTool(String(call.input.tool_name));
-          return { content: textContent(mutation.message), structuredContent: mutation, isError: !mutation.ok };
+          const remove = (call.input.remove as string[] | undefined) ?? [];
+          const released = remove.map((n) => activeControls!.removeTool(n));
+          return {
+            content: textContent("ok"),
+            structuredContent: { promoted: [], released },
+            isError: false,
+          };
         }
         return { content: textContent(""), isError: false };
       }),
@@ -666,13 +687,11 @@ describe("AgentEngine", () => {
         },
       },
       "",
-      [{ role: "user", content: [{ type: "text", text: "Release search" }] }],
+      [{ role: "user", content: [{ type: "text", text: "Try to drop search" }] }],
       toolSchemas,
     );
 
-    const releaseCall = result.toolCalls.find((c) => c.name === "nb__release");
-    expect(releaseCall?.ok).toBe(false);
-    expect(releaseCall?.output).toContain("system tool");
+    expect(result.toolCalls.find((c) => c.name === "nb__manage_tools")).toBeDefined();
     expect(seenToolLists[1]).toContain("nb__search");
     expect(events.some((e) => e.type === "tool.released")).toBe(false);
   });

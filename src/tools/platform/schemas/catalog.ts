@@ -5,9 +5,9 @@ import * as Conversations from "./conversations.ts";
 import * as Files from "./files.ts";
 import * as Home from "./home.ts";
 import * as Instructions from "./instructions.ts";
+import * as ManageTools from "./manage-tools.ts";
 import * as Skills from "./skills.ts";
 import * as Usage from "./usage.ts";
-import * as UseRelease from "./use-release.ts";
 
 // Registry mapping (source, tool) → input schema. The web client and any
 // other typed caller reads this catalog to derive `callTool` argument
@@ -15,8 +15,7 @@ import * as UseRelease from "./use-release.ts";
 // compile-time enforcement at every call site.
 export const PlatformToolCatalog = {
   nb: {
-    use: { input: UseRelease.UseToolInput },
-    release: { input: UseRelease.ReleaseToolInput },
+    manage_tools: { input: ManageTools.ManageToolsInput },
   },
   skills: {
     list: { input: Skills.SkillsListInput },

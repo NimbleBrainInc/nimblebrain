@@ -5,14 +5,10 @@
 import type { Static, TSchema } from "@sinclair/typebox";
 export declare const PlatformToolCatalog: {
     readonly nb: {
-        readonly use: {
+        readonly manage_tools: {
             readonly input: import("@sinclair/typebox").TObject<{
-                tool_name: import("@sinclair/typebox").TString;
-            }>;
-        };
-        readonly release: {
-            readonly input: import("@sinclair/typebox").TObject<{
-                tool_name: import("@sinclair/typebox").TString;
+                add: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
+                remove: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
             }>;
         };
     };
