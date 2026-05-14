@@ -2,7 +2,6 @@ import { NoopEventSink } from "../adapters/noop-events.ts";
 import type { BundleLifecycleManager } from "../bundles/lifecycle.ts";
 import { getMpak } from "../bundles/mpak.ts";
 import { deriveServerName } from "../bundles/paths.ts";
-import { startBundleSource } from "../bundles/startup.ts";
 import type { BundleManifest } from "../bundles/types.ts";
 import {
   installBundleInWorkspace,
@@ -219,7 +218,7 @@ export async function createSystemTools(
           return await configureBundle(
             name,
             getRegistry(),
-            manageBundleCtx.eventSink,
+            lifecycle,
             wsId,
             manageBundleCtx.workDir,
             gate,
@@ -712,14 +711,12 @@ function formatUptime(ms: number): string {
 async function configureBundle(
   name: string,
   registry: ToolRegistry,
-  // Required — passed to the restarted McpSource so its task-augmented tool
-  // progress events reach SSE broadcasts (Synapse useDataSync). Without it,
-  // re-configuring a bundle's credentials silently breaks live updates for
-  // that bundle until the next full platform restart.
-  eventSink: EventSink,
+  lifecycle: BundleLifecycleManager,
   // Workspace id + work directory — required because credentials are stored
   // per-workspace (`{workDir}/workspaces/{wsId}/credentials/{bundle}.json`),
   // not globally in `~/.mpak/config.json`. Threaded from the manage_app handler.
+  // The respawn itself reads eventSink and workDir off the lifecycle manager;
+  // workDir here is used only by `resolveUserConfig` for the credential write.
   wsId: string,
   workDir: string,
   confirmGate?: ConfirmationGate,
@@ -771,26 +768,21 @@ async function configureBundle(
       forcePrompt: true,
     });
 
-    // Restart the bundle via the shared primitive — same construction path
-    // as boot-time / agent install. `startBundleSource` reads the values we
-    // just persisted above from the workspace credential store. If this
-    // function diverges from that primitive the rest of the app silently
-    // breaks (sink plumbing, PYTHONPATH, data-dir layout, user_config
-    // resolution). Delegate instead: pass `wsId`+`workDir` and let
-    // `startBundleSource` derive the workspace-scoped data dir itself —
-    // never compute it here, or it drifts from the install-time layout
-    // and Upjack entity state disappears across restarts.
+    // Re-spawn via the central lifecycle helper so this path gets the
+    // same per-(serverName, wsId) mutex + protected-bundle gating that
+    // the UI's `set_user_config` path uses. The helper reads the
+    // workspace credential store via `startBundleSource` → `prepareServer`,
+    // so the values we just persisted above land in the new subprocess.
     const serverName = deriveServerName(name);
-    if (registry.hasSource(serverName)) {
-      await registry.removeSource(serverName);
+    const respawn = await lifecycle.respawnBundle(serverName, wsId, registry);
+    if (!respawn.ok) {
+      return {
+        content: textContent(`Configured ${name} but restart failed: ${respawn.error}`),
+        isError: true,
+      };
     }
-    const result = await startBundleSource({ name }, registry, eventSink, undefined, {
-      wsId,
-      workDir,
-    });
-
     const tools = await registry.availableTools();
-    const count = tools.filter((t) => t.name.startsWith(`${result.sourceName}__`)).length;
+    const count = tools.filter((t) => t.name.startsWith(`${serverName}__`)).length;
     return {
       content: textContent(`Configured and restarted ${name}. ${count} tools available.`),
       isError: false,

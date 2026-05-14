@@ -106,7 +106,7 @@
           },
           "protected": {
             "type": "boolean",
-            "description": "Prevents uninstall via nb__manage_app."
+            "description": "Prevents tear-down operations: uninstall via nb__manage_app and respawn after credential change."
           },
           "trustScore": { "type": ["number", "null"], "description": "MTF trust score (0-100)." },
           "transport": {

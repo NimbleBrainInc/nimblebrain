@@ -334,7 +334,12 @@ export interface BundleInstance {
   briefing: BriefingBlock | null;
   /** HTTP proxy declaration from _meta["ai.nimblebrain/http-proxy"]. */
   httpProxy: HttpProxyConfig | null;
-  /** Whether the bundle is protected from uninstall. */
+  /**
+   * Whether the bundle is protected from tear-down operations: uninstall
+   * via `nb__manage_app` and respawn via `lifecycle.respawnBundle`. Both
+   * paths gate on this flag so platform-critical apps can't be torn down
+   * mid-call (e.g. an in-flight tool would lose its subprocess).
+   */
   protected: boolean;
   /** Whether this is an Upjack app or plain MCP server. */
   type: "upjack" | "plain";

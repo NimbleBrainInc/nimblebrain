@@ -49,6 +49,14 @@ export class BundleLifecycleManager {
   private instances = new Map<string, BundleInstance>();
   private placementRegistry: PlacementRegistry | null = null;
   /**
+   * Per-(serverName, wsId) lock chain serializing `respawnBundle` against
+   * concurrent callers (and against itself). Each pending respawn appends
+   * its promise to the chain; the next caller awaits the previous one
+   * before starting its own stop/start. Keys are dropped from the map
+   * when the last queued op resolves, so this doesn't grow unbounded.
+   */
+  private respawnLocks = new Map<string, Promise<unknown>>();
+  /**
    * Getter for a workspace-scoped automations domain context. Set by
    * Runtime after the automations platform source is constructed. Used
    * by `syncBundleAutomations` / `removeBundleAutomations` to bypass the
@@ -65,6 +73,7 @@ export class BundleLifecycleManager {
     private configPath: string | undefined,
     private allowInsecureRemotes = false,
     private mpakHome: string = join(homedir(), ".mpak"),
+    private workDir: string = join(homedir(), ".nimblebrain"),
   ) {}
 
   /** Set the PlacementRegistry (called by Runtime after construction). */
@@ -565,6 +574,115 @@ export class BundleLifecycleManager {
     }
 
     this.transition(instance, "stopped");
+  }
+
+  /**
+   * Stop the current bundle subprocess and re-spawn it under the same
+   * server name. The new subprocess inherits the platform process env
+   * AND re-reads workspace `user_config` from disk via the named-bundle
+   * path in `startBundleSource` → `mpak.prepareServer`. This is the
+   * canonical "user changed a credential, make the bundle use it" path,
+   * called from the credential-writing tool handlers
+   * (`set_user_config`, `configureBundle`).
+   *
+   * Concurrency: serialized per-(serverName, wsId) via `respawnLocks`.
+   * Concurrent respawns queue and execute in order; a respawn-in-flight
+   * blocks subsequent respawns for the same key until it completes
+   * (success or error). This prevents the half-state window where the
+   * old source is removed but the new one hasn't started.
+   *
+   * Tool calls dispatched during a respawn are NOT serialized by this
+   * lock — they target the registry, not the lifecycle map — but
+   * `registry.removeSource` waits for in-flight calls on the old source
+   * to drain before returning, and the new source is only registered
+   * after `startBundleSource` returns ready. So a tool call landing
+   * mid-respawn either completes against the old source (before
+   * removeSource finishes) or fails with "no source named X" (during
+   * the brief gap before the new source is registered). The caller
+   * (engine) treats both as transient and the LLM retries.
+   *
+   * Protected bundles refuse to respawn — that flag is the contract
+   * with platform-critical apps that must not be torn down mid-call.
+   *
+   * Scope: named bundles only today. URL bundles read OAuth credentials
+   * lazily via `WorkspaceOAuthProvider` and don't need respawn on
+   * credential change. Path bundles (dev-mode local installs) aren't
+   * exposed via the credential-writing tool surface.
+   */
+  async respawnBundle(
+    serverName: string,
+    wsId: string,
+    registry: ToolRegistry,
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
+    const key = `${serverName}|${wsId}`;
+    const prev = this.respawnLocks.get(key);
+    let resolveNext!: () => void;
+    const next = new Promise<unknown>((resolve) => {
+      resolveNext = () => resolve(undefined);
+    });
+    this.respawnLocks.set(key, next);
+    try {
+      if (prev) await prev;
+      return await this.runRespawn(serverName, wsId, registry);
+    } finally {
+      resolveNext();
+      // Only drop the chain head if no one queued behind us. If the
+      // chain advanced, leave it intact for the next waiter.
+      if (this.respawnLocks.get(key) === next) {
+        this.respawnLocks.delete(key);
+      }
+    }
+  }
+
+  private async runRespawn(
+    serverName: string,
+    wsId: string,
+    registry: ToolRegistry,
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
+    const instance = this.instances.get(`${serverName}|${wsId}`);
+    if (!instance) {
+      return {
+        ok: false,
+        error: `Bundle "${serverName}" is not installed in workspace "${wsId}". Install it first via manage_app install.`,
+      };
+    }
+    if (instance.protected) {
+      return { ok: false, error: `Cannot respawn "${serverName}": bundle is protected` };
+    }
+
+    // Named bundles re-spawn against `{ name: bundleName }`. The named-
+    // bundle path in `startBundleSource` re-reads user_config from the
+    // workspace credential store via `resolveUserConfig` — which is the
+    // whole point of this method.
+    this.transition(instance, "starting");
+    try {
+      if (registry.hasSource(serverName)) {
+        await registry.removeSource(serverName);
+      }
+      await startBundleSource(
+        { name: instance.bundleName },
+        registry,
+        this.eventSink,
+        this.configPath ? dirname(this.configPath) : undefined,
+        {
+          wsId,
+          workDir: this.workDir,
+          allowInsecureRemotes: this.allowInsecureRemotes,
+        },
+      );
+      this.transition(instance, "running");
+      return { ok: true };
+    } catch (err) {
+      // The old source is already removed and the new one failed to
+      // start. The instance is in `dead` state until the operator
+      // fixes the underlying cause (typically a bad credential value)
+      // and the next save retries the respawn.
+      this.transition(instance, "dead");
+      return {
+        ok: false,
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
   }
 
   // ---- State transitions -------------------------------------------------
