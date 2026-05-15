@@ -17,6 +17,7 @@ import type { BriefingBlock, BriefingFacet, BundleInstance } from "../bundles/ty
 import { McpSource } from "../tools/mcp-source.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
 import type { ToolSource } from "../tools/types.ts";
+import { debugBriefing } from "./briefing-debug.ts";
 
 /** Result of resolving a single facet. */
 export interface FacetResult {
@@ -171,22 +172,18 @@ function resolveEntityFacet(
   // facet payload — operators can re-enable visibility with
   // NB_DEBUG_BRIEFING for diagnostics.
   if (!existsSync(entityDataRoot)) {
-    if (process.env.NB_DEBUG_BRIEFING) {
-      console.log(
-        `[briefing-collector.debug] entity=${facet.entity} entityDataRoot missing: ${entityDataRoot}`,
-      );
-    }
+    debugBriefing(
+      () => `collector entity=${facet.entity} entityDataRoot missing: ${entityDataRoot}`,
+    );
     return `0 matching ${facet.entity} entities (0 total)`;
   }
 
   // Find the entity directory — try common pluralization
   const entityDir = findEntityDir(entityDataRoot, facet.entity!);
   if (!entityDir) {
-    if (process.env.NB_DEBUG_BRIEFING) {
-      console.log(
-        `[briefing-collector.debug] entity=${facet.entity} no matching plural dir under ${entityDataRoot}`,
-      );
-    }
+    debugBriefing(
+      () => `collector entity=${facet.entity} no matching plural dir under ${entityDataRoot}`,
+    );
     return `0 matching ${facet.entity} entities (0 total)`;
   }
 

@@ -11,14 +11,15 @@
  */
 import { describe, expect, it } from "bun:test";
 import type { LanguageModelV3 } from "@ai-sdk/provider";
+import { getProviderFromModel } from "../../src/model/catalog.ts";
+import {
+  buildSlotProviderOptions,
+  type ModelProfile,
+} from "../../src/model/model-profile.ts";
 import { buildModelResolver } from "../../src/model/registry.ts";
-import { BriefingGenerator } from "../../src/services/briefing-generator.ts";
 import type { BriefingContext } from "../../src/services/briefing-collector.ts";
-import type {
-  ActivityOutput,
-  BriefingOutput,
-  HomeConfig,
-} from "../../src/services/home-types.ts";
+import { BriefingGenerator } from "../../src/services/briefing-generator.ts";
+import type { ActivityOutput, BriefingOutput, HomeConfig } from "../../src/services/home-types.ts";
 
 // ---------------------------------------------------------------------------
 // Provider config
@@ -42,11 +43,22 @@ const PROVIDERS: ProviderSpec[] = [
 
 function makeConfig(): HomeConfig {
   return {
-    enabled: true,
-    model: null,
     userName: "Mat",
     timezone: "Pacific/Honolulu",
     cacheTtlMinutes: 15,
+  };
+}
+
+/** Wrap a resolved LanguageModelV3 + its modelString into the ModelProfile
+ * shape BriefingGenerator now consumes. Mirrors makeProfile() in the unit
+ * test so eval and unit tests build profiles the same way. */
+function makeProfile(model: LanguageModelV3, modelString: string): ModelProfile {
+  return {
+    slot: "fast",
+    model,
+    modelString,
+    provider: getProviderFromModel(modelString),
+    providerOptions: buildSlotProviderOptions("fast", modelString),
   };
 }
 
@@ -106,7 +118,7 @@ function richFacetContext(): BriefingContext {
     period: { since: "2026-04-13T00:00:00Z", until: "2026-04-14T00:00:00Z" },
     facets: [
       {
-        facet: { label: "Overdue follow-ups", type: "attention" as const },
+        facet: { name: "overdue_followups", label: "Overdue follow-ups", type: "attention" as const },
         appName: "CRM",
         serverName: "synapse-crm",
         appRoute: "@nimblebraininc/synapse-crm",
@@ -114,7 +126,7 @@ function richFacetContext(): BriefingContext {
         ok: true,
       },
       {
-        facet: { label: "Tasks due today", type: "upcoming" as const },
+        facet: { name: "tasks_due_today", label: "Tasks due today", type: "upcoming" as const },
         appName: "Tasks",
         serverName: "synapse-todo",
         appRoute: "@nimblebraininc/synapse-todo-board",
@@ -122,7 +134,7 @@ function richFacetContext(): BriefingContext {
         ok: true,
       },
       {
-        facet: { label: "Recent meetings", type: "activity" as const },
+        facet: { name: "recent_meetings", label: "Recent meetings", type: "activity" as const },
         appName: "Granola",
         serverName: "granola",
         appRoute: null,
@@ -197,7 +209,7 @@ describe("briefing structured output", () => {
         "generates valid briefing from rich activity + facets",
         async () => {
           const model = resolveModel(spec)!;
-          const gen = new BriefingGenerator(model, makeConfig());
+          const gen = new BriefingGenerator(makeProfile(model, spec.modelString), makeConfig());
           const briefing = await gen.generate(richActivity(), richFacetContext());
           assertValidBriefing(briefing, spec.name);
 
@@ -212,7 +224,7 @@ describe("briefing structured output", () => {
         "generates valid briefing from activity only (no facets)",
         async () => {
           const model = resolveModel(spec)!;
-          const gen = new BriefingGenerator(model, makeConfig());
+          const gen = new BriefingGenerator(makeProfile(model, spec.modelString), makeConfig());
           const briefing = await gen.generate(richActivity());
           assertValidBriefing(briefing, `${spec.name}/no-facets`);
         },

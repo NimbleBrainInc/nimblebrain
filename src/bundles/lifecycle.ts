@@ -1484,6 +1484,10 @@ export class BundleLifecycleManager {
     // tree instead of producing a flat one-segment dir. `dirname()` can't
     // walk back out of that — we have to anchor on the known
     // `workspaces/<wsId>/data/` prefix to find the workspace's data root.
+    // Safe to anchor on substring because `dataDir` is canonically constructed
+    // upstream as `join(workDir, "workspaces", wsId, "data", ...)`; the marker
+    // would only collide if a workDir itself contained an identical wsId-keyed
+    // workspace sub-tree, which the install path doesn't allow.
     //
     // The bundle itself writes data using its manifest name (e.g.
     // `@nimblebraininc/synapse-crm` → `nimblebraininc-synapse-crm`), so we

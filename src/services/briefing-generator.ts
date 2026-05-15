@@ -1,5 +1,6 @@
 import type { ModelProfile } from "../model/model-profile.ts";
 import type { BriefingContext, FacetResult } from "./briefing-collector.ts";
+import { debugBriefing } from "./briefing-debug.ts";
 import type {
   ActivityOutput,
   BriefingOutput,
@@ -211,19 +212,22 @@ export class BriefingGenerator {
     const userPayload = this.buildUserPayload(activity, facetContext);
     const userText = JSON.stringify(userPayload);
 
-    if (process.env.NB_DEBUG_BRIEFING) {
-      const facets = (userPayload.app_facets as Array<Record<string, unknown>> | undefined) ?? [];
-      // One line per facet: app | label | ok | first 160 chars of data.
-      // Tells us whether the collector found the data the user expects.
+    // Per-facet diagnostic log — what the collector actually produced
+    // for the LLM. Lazy-built, gated on NB_DEBUG_BRIEFING via the
+    // shared helper so all briefing-side debug output goes through
+    // one knob.
+    const facets = (userPayload.app_facets as Array<Record<string, unknown>> | undefined) ?? [];
+    if (facets.length === 0) {
+      debugBriefing(() => "no facets resolved");
+    } else {
       for (const f of facets) {
-        const data =
-          typeof f.data === "string" ? f.data.slice(0, 160) : JSON.stringify(f.data).slice(0, 160);
-        console.log(
-          `[briefing.debug] facet app=${f.app} label="${f.label}" ok=${f.ok} data="${data.replace(/\n/g, " ")}"`,
-        );
-      }
-      if (facets.length === 0) {
-        console.log("[briefing.debug] no facets resolved");
+        debugBriefing(() => {
+          const data =
+            typeof f.data === "string"
+              ? f.data.slice(0, 160)
+              : JSON.stringify(f.data).slice(0, 160);
+          return `facet app=${f.app} label="${f.label}" ok=${f.ok} data="${data.replace(/\n/g, " ")}"`;
+        });
       }
     }
 

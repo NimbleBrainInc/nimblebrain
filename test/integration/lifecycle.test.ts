@@ -631,6 +631,51 @@ describe("BundleLifecycleManager — instance tracking", () => {
 		const instance = lifecycle.getInstance("plain-srv", "ws_test")!;
 		expect(instance.entityDataRoot).toBeUndefined();
 	});
+
+	it("seedInstance rebuilds entityDataRoot from manifestName for path bundles", () => {
+		// Repro of the path-bundle bug fixed by 6e31dcf. `deriveBundleDataDir`
+		// only replaces the first `/`, so a `path:` install of
+		// `/Users/foo/Code/hq/synapse-apps/synapse-crm` produces a
+		// multi-segment broken dataDir like
+		// `<wsData>/-Users/foo/Code/hq/synapse-apps/synapse-crm`. The bundle
+		// process actually writes data using its manifest name, so
+		// seedInstance must anchor on `/workspaces/<ws>/data/` and rebuild
+		// entityDataRoot from the manifest name. Without this fix, the
+		// briefing collector reads from the junk path and reports "no data."
+		const sink = makeEventCollector();
+		const lifecycle = new BundleLifecycleManager(sink, undefined);
+
+		const brokenDataDir =
+			"/data/workspaces/ws_eng/data/-Users/foo/Code/hq/synapse-apps/synapse-crm";
+
+		lifecycle.seedInstance(
+			"synapse-crm",
+			"/Users/foo/Code/hq/synapse-apps/synapse-crm",
+			{ path: "/Users/foo/Code/hq/synapse-apps/synapse-crm" },
+			{
+				manifestName: "@nimblebraininc/synapse-crm",
+				version: "0.3.2",
+				ui: null,
+				briefing: {
+					facets: [
+						{ name: "deals", label: "Deals", type: "delta", entity: "deal" },
+					],
+				},
+				type: "upjack",
+				upjackNamespace: "apps/crm",
+			},
+			"ws_eng",
+			brokenDataDir,
+		);
+
+		const instance = lifecycle.getInstance("synapse-crm", "ws_eng")!;
+		expect(instance.entityDataRoot).toBe(
+			"/data/workspaces/ws_eng/data/nimblebraininc-synapse-crm/apps/crm/data",
+		);
+		// And critically NOT the broken path the install dataDir would
+		// have produced.
+		expect(instance.entityDataRoot).not.toContain("/-Users/");
+	});
 });
 
 // ---------------------------------------------------------------------------

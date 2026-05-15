@@ -60,8 +60,21 @@ export function buildSlotProviderOptions(
 
   const provider = getProviderFromModel(modelString);
   switch (provider) {
-    case "anthropic":
-      return { anthropic: { thinking: { type: "disabled" } } };
+    case "anthropic": {
+      // Gate on capabilities.reasoning for symmetry with the other
+      // providers. The Anthropic API has accepted
+      // `thinking: { type: "disabled" }` across all models historically
+      // (the engine emits it unconditionally for thinking-mode "off"),
+      // but only reasoning-capable Claude models actually expose the
+      // knob. Sending the option to older 3.x models is a no-op today;
+      // gating here keeps the wire shape symmetric across providers
+      // and removes a class of future SDK-tightening risk.
+      const model = getModelByString(modelString);
+      if (model?.capabilities.reasoning) {
+        return { anthropic: { thinking: { type: "disabled" } } };
+      }
+      return {};
+    }
     case "google": {
       const model = getModelByString(modelString);
       if (model?.capabilities.reasoning) {

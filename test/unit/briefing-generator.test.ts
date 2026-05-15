@@ -491,6 +491,20 @@ describe("briefing-generator", () => {
 			});
 		});
 
+		it("omits Anthropic thinking option for non-reasoning Claude models", async () => {
+			// Non-reasoning Anthropic models (3.x family) shouldn't receive
+			// the thinking knob — matches Google/OpenAI gating.
+			const llmResponse = JSON.stringify({ lede: "Ok.", sections: [] });
+			const { model, calls } = createTrackingModelV3(llmResponse);
+			const gen = new BriefingGenerator(
+				makeProfile(model, "anthropic:claude-3-5-haiku-latest"),
+				makeConfig(),
+			);
+			await gen.generate(activeActivity());
+
+			expect(calls[0].providerOptions).toBeUndefined();
+		});
+
 		it("sets reasoningEffort=minimal for OpenAI reasoning models", async () => {
 			const llmResponse = JSON.stringify({ lede: "Ok.", sections: [] });
 			const { model, calls } = createTrackingModelV3(llmResponse);
