@@ -161,15 +161,33 @@ function resolveEntityFacet(
   entityDataRoot: string,
   period: { since: string },
 ): string {
-  // Entity files live at {entityDataRoot}/{plural}/*.json
+  // Entity files live at {entityDataRoot}/{plural}/*.json.
+  // For missing-dir / missing-entity-dir cases we return the same
+  // "0 matching ... (0 total)" shape that an empty-but-present
+  // directory would produce. This lets both the LLM prompt rule
+  // ("skip empty or zero facets") and the heuristic fallback's
+  // `isEmptyFacetData` check treat all three cases uniformly without
+  // a separate code path. Absolute filesystem paths stay out of the
+  // facet payload — operators can re-enable visibility with
+  // NB_DEBUG_BRIEFING for diagnostics.
   if (!existsSync(entityDataRoot)) {
-    return `No data directory at ${entityDataRoot}`;
+    if (process.env.NB_DEBUG_BRIEFING) {
+      console.log(
+        `[briefing-collector.debug] entity=${facet.entity} entityDataRoot missing: ${entityDataRoot}`,
+      );
+    }
+    return `0 matching ${facet.entity} entities (0 total)`;
   }
 
   // Find the entity directory — try common pluralization
   const entityDir = findEntityDir(entityDataRoot, facet.entity!);
   if (!entityDir) {
-    return `No ${facet.entity} entities found`;
+    if (process.env.NB_DEBUG_BRIEFING) {
+      console.log(
+        `[briefing-collector.debug] entity=${facet.entity} no matching plural dir under ${entityDataRoot}`,
+      );
+    }
+    return `0 matching ${facet.entity} entities (0 total)`;
   }
 
   // Read all entity files

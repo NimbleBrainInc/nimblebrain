@@ -211,6 +211,22 @@ export class BriefingGenerator {
     const userPayload = this.buildUserPayload(activity, facetContext);
     const userText = JSON.stringify(userPayload);
 
+    if (process.env.NB_DEBUG_BRIEFING) {
+      const facets = (userPayload.app_facets as Array<Record<string, unknown>> | undefined) ?? [];
+      // One line per facet: app | label | ok | first 160 chars of data.
+      // Tells us whether the collector found the data the user expects.
+      for (const f of facets) {
+        const data =
+          typeof f.data === "string" ? f.data.slice(0, 160) : JSON.stringify(f.data).slice(0, 160);
+        console.log(
+          `[briefing.debug] facet app=${f.app} label="${f.label}" ok=${f.ok} data="${data.replace(/\n/g, " ")}"`,
+        );
+      }
+      if (facets.length === 0) {
+        console.log("[briefing.debug] no facets resolved");
+      }
+    }
+
     // First attempt — generous budget.
     const first = await this.attempt(userText, 1, {
       timeoutMs: BRIEFING_TIMEOUT_MS_FIRST,
