@@ -657,8 +657,27 @@ function buildHeuristicLede(sections: BriefingSection[]): string {
   return `${sections.length} update${sections.length === 1 ? "" : "s"} from your apps.`;
 }
 
+/**
+ * Decide whether a facet's resolved data string represents "no data
+ * worth surfacing." Used by the heuristic fallback (LLM-less) path to
+ * skip empty facets the same way the LLM prompt rule does.
+ *
+ * Canonical empty shape: `"0 matching ${entity} entities (0 total)"`
+ * — produced by `briefing-collector.ts::resolveEntityFacet` for both
+ * empty-but-present dirs and missing-dir cases. This contract is
+ * deliberately narrow: it catches only the entity-facet shape we
+ * control. Tool and resource facets render whatever their backing
+ * bundle returns (opaque to us), so we intentionally don't try to
+ * match arbitrary "no results"/"none"/"empty" phrasing — a loose
+ * regex would skip legitimate single-section briefings like
+ * "No further actions needed today."
+ *
+ * Contract for future facet producers: if your bundle emits a tool or
+ * resource facet that wants to be skipped on empty, return either a
+ * zero-prefixed entity-shape string ("0 matching X entities (0 total)")
+ * or an empty string. Anything else will render as a heuristic section.
+ */
 function isEmptyFacetData(data: string): boolean {
-  // Entity facet output starts with "N matching ..." — pull out N to detect 0.
   const match = data.match(/^(\d+)\s+matching/);
   if (match && match[1] === "0") return true;
   return data.length === 0;
