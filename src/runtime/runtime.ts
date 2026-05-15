@@ -386,6 +386,13 @@ export class Runtime {
       configMaxOutputTokens: config.maxOutputTokens,
       configThinking: config.thinking,
       configThinkingBudgetTokens: config.thinkingBudgetTokens,
+      // Per-engine isolation for tool promotion: child engines get their
+      // own controls installed in reqCtx (with save/restore) instead of
+      // inheriting the parent's via AsyncLocalStorage.
+      get toolPromotion() {
+        if (!rtHolder.rt) return undefined;
+        return rtHolder.rt.buildToolPromotionFactory();
+      },
     };
 
     // System tools (search, manage_app, bundle_status, delegate). Skill
@@ -996,16 +1003,7 @@ export class Runtime {
       workspaceModelOverride: workspace?.models ?? null,
       conversationId: conversation.id,
     };
-    engineConfig.toolPromotion = {
-      isToolEligible: (tool) =>
-        isToolEligibleForPromotion(tool, reqCtx.identity?.orgRole, this._features),
-      registerControls: (controls) => {
-        reqCtx.toolPromotion = controls;
-        return () => {
-          delete reqCtx.toolPromotion;
-        };
-      },
-    };
+    engineConfig.toolPromotion = this.buildToolPromotionFactory();
 
     // Emit chat.start so the client knows the conversation ID immediately
     // and conversation list UIs can refresh
@@ -1171,6 +1169,47 @@ export class Runtime {
   /** Get the resolved feature flags (needed by server.ts for HTTP gate in task 007). */
   getFeatures(): ResolvedFeatures {
     return this._features;
+  }
+
+  /**
+   * Build the engine-config `toolPromotion` factory for a single agent run.
+   * Both the top-level Runtime.chat() engine.run() AND any nested engine
+   * (e.g. delegate sub-agents) call this so each engine gets its OWN
+   * promotion controls installed in the request context for the lifetime
+   * of its run. The save/restore in `registerControls` lets nested engines
+   * stack: parent installs → child installs (saves parent) → child
+   * unregister restores parent → parent unregister deletes.
+   *
+   * Without this isolation, AsyncLocalStorage propagates the parent's
+   * `reqCtx.toolPromotion` into the child's frame; a sub-agent calling
+   * nb__manage_tools would silently mutate the parent's directTools and
+   * its own changes would never reach its own modelTools. See the
+   * regression test in test/unit/engine.test.ts.
+   */
+  buildToolPromotionFactory(): NonNullable<EngineConfig["toolPromotion"]> {
+    const features = this._features;
+    return {
+      isToolEligible: (tool) =>
+        isToolEligibleForPromotion(tool, getRequestContext()?.identity?.orgRole, features),
+      registerControls: (controls) => {
+        const ctx = getRequestContext();
+        if (!ctx) {
+          // No request context = no place to install controls. Caller's
+          // unregister becomes a no-op; their nb__manage_tools handler
+          // hits the "no_active_run" path. Acceptable degradation.
+          return () => {};
+        }
+        const prev = ctx.toolPromotion;
+        ctx.toolPromotion = controls;
+        return () => {
+          if (prev === undefined) {
+            delete ctx.toolPromotion;
+          } else {
+            ctx.toolPromotion = prev;
+          }
+        };
+      },
+    };
   }
 
   /** Scoped internal token for protected default bundles. Rotated on every restart. */
