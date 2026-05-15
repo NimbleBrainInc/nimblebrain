@@ -14,7 +14,7 @@ LABEL org.opencontainers.image.licenses="Apache-2.0"
 # fails with no clear cause.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl unzip git ca-certificates gnupg \
-    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && curl -fsSL https://bun.sh/install | BUN_INSTALL=/usr bash \
     && rm -rf /var/lib/apt/lists/*
