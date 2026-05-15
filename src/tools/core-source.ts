@@ -18,7 +18,7 @@ const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as {
 const VERSION = process.env.NB_VERSION || pkg.version;
 
 import { ActivityCollector } from "../services/activity-collector.ts";
-import { BriefingCache, maybeCacheBriefing } from "../services/briefing-cache.ts";
+import { BriefingCache } from "../services/briefing-cache.ts";
 import { collectBriefingFacets } from "../services/briefing-collector.ts";
 import { BriefingGenerator } from "../services/briefing-generator.ts";
 import type { BriefingOutput } from "../services/home-types.ts";
@@ -774,28 +774,22 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
               until,
             });
 
-            // Resolve the "fast" slot to a full call profile. The profile
-            // carries provider-aware defaults (suppress thinking/reasoning)
-            // derived from the slot's semantic intent — operators declare
-            // "fast = use this model for low-latency calls" by picking the
-            // slot's model in tenant config; the runtime translates that
-            // into the right provider knobs here.
-            const profile = runtime.getModelProfile("fast");
+            // Resolve the "fast" slot's model for the briefing call.
+            const modelString = runtime.getModelSlot("fast");
+            const model = runtime.resolveModel(modelString);
 
-            // Generate briefing with facets + activity. Model identity
-            // travels with the profile; HomeConfig only carries the
-            // user-facing presentation bits.
-            const generator = new BriefingGenerator(profile, {
+            const generator = new BriefingGenerator(model, modelString, {
               userName: homeConfig.userName,
               timezone: homeConfig.timezone,
               cacheTtlMinutes: homeConfig.cacheTtlMinutes,
             });
-            const briefing: BriefingOutput = await generator.generate(activity, facetContext);
 
-            // `maybeCacheBriefing` enforces the don't-cache-degraded
-            // contract (see briefing-cache.ts). Single test covers both
-            // sides so the rule survives future edits to either file.
-            maybeCacheBriefing(cache, briefing);
+            // generate() throws on LLM failure. The outer catch turns
+            // that into an isError tool result, which the home UI
+            // renders as a clear error state with a retry button.
+            // Cache writes only happen on the success path below.
+            const briefing: BriefingOutput = await generator.generate(activity, facetContext);
+            cache.set(briefing);
 
             return {
               content: textContent("Briefing generated."),

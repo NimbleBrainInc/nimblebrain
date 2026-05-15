@@ -44,12 +44,6 @@ import { createIdentityProvider } from "../identity/provider.ts";
 import { DEV_IDENTITY } from "../identity/providers/dev.ts";
 import { UserStore } from "../identity/user.ts";
 import { InstructionsStore } from "../instructions/index.ts";
-import { getProviderFromModel } from "../model/catalog.ts";
-import {
-  buildSlotProviderOptions,
-  type ModelProfile,
-  type ModelSlotName,
-} from "../model/model-profile.ts";
 import { buildModelResolver, resolveModelString } from "../model/registry.ts";
 import { PermissionStore } from "../permissions/permission-store.ts";
 import type { Layer3SkillEntry, PromptAppInfo } from "../prompt/compose.ts";
@@ -99,11 +93,8 @@ import { resolveThinking } from "./resolve-thinking.ts";
 const DEFAULT_MAX_HISTORY_MESSAGES = 40;
 
 /** Known model slot names. */
-const MODEL_SLOTS = [
-  "default",
-  "fast",
-  "reasoning",
-] as const satisfies ReadonlyArray<ModelSlotName>;
+const MODEL_SLOTS = ["default", "fast", "reasoning"] as const;
+type ModelSlot = (typeof MODEL_SLOTS)[number];
 
 const ALIAS_PREFIX = "alias:";
 
@@ -113,10 +104,10 @@ function isAliasRef(s: string): boolean {
 }
 
 /** Extract the slot name from an alias reference. Returns null if not a valid slot. */
-function parseAliasRef(s: string): ModelSlotName | null {
+function parseAliasRef(s: string): ModelSlot | null {
   if (!isAliasRef(s)) return null;
   const slot = s.slice(ALIAS_PREFIX.length);
-  return MODEL_SLOTS.includes(slot as ModelSlotName) ? (slot as ModelSlotName) : null;
+  return MODEL_SLOTS.includes(slot as ModelSlot) ? (slot as ModelSlot) : null;
 }
 
 function resolveWorkDir(config: RuntimeConfig): string {
@@ -1568,28 +1559,8 @@ export class Runtime {
   }
 
   /** Get the model ID for a named slot. */
-  getModelSlot(slot: ModelSlotName): string {
+  getModelSlot(slot: ModelSlot): string {
     return this.getModelSlots()[slot];
-  }
-
-  /**
-   * Resolve a slot to a full call profile: model instance, model string,
-   * provider, and slot-appropriate `providerOptions`. Use this instead of
-   * `getModelSlot` + `resolveModel` when a caller wants slot semantics
-   * to drive provider-specific defaults (e.g. "fast" → suppress
-   * reasoning/thinking). Operators express their intent through slot
-   * selection in tenant config; callers consume that intent here.
-   */
-  getModelProfile(slot: ModelSlotName): ModelProfile {
-    const modelString = this.getModelSlot(slot);
-    const model = this.resolveModelFn(modelString);
-    return {
-      slot,
-      model,
-      modelString,
-      provider: getProviderFromModel(modelString),
-      providerOptions: buildSlotProviderOptions(slot, modelString),
-    };
   }
 
   /** Get the default model ID (shorthand for models.default). */

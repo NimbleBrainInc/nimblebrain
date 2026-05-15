@@ -16,10 +16,6 @@ interface BriefingOutput {
   state: "empty" | "quiet" | "all-clear" | "normal" | "attention";
   generated_at: string;
   cached: boolean;
-  /** True when the briefing was produced by the heuristic fallback (LLM
-   * timeout, parse failure, etc.) rather than the model. Surface a retry
-   * affordance so the user knows the polish layer is offline. */
-  degraded?: boolean;
 }
 
 interface BriefingSection {
@@ -130,18 +126,16 @@ function callServerTool<T>(
       },
       "*",
     );
-    // 75s covers the briefing server budget (FIRST=30s + RETRY=20s +
-    // IPC/parent-message overhead) with margin. At 60s, a worst-case
-    // briefing — both LLM attempts ride the deadline before falling
-    // through to the heuristic — rejects iframe-side before the server
-    // can return the degraded payload, and the user sees the red error
-    // box instead of the amber retry banner.
+    // 60s covers the briefing server budget (45s LLM call + IPC and
+    // facet collection overhead) with margin. If the server takes
+    // longer than this the iframe surfaces a clear "Tool call timed
+    // out" error and the user can click Retry.
     setTimeout(() => {
       if (_pending.has(id)) {
         _pending.delete(id);
         reject(new Error("Tool call timed out"));
       }
-    }, 75000);
+    }, 60000);
   });
 }
 
@@ -311,14 +305,6 @@ function Dashboard() {
       {/* Briefing content */}
       {briefing && (
         <>
-          {briefing.degraded && (
-            <div className="refresh-banner degraded-banner visible">
-              <span>Showing a fallback briefing — AI summary unavailable.</span>
-              <button type="button" onClick={() => loadBriefing(true)} disabled={loading}>
-                Retry
-              </button>
-            </div>
-          )}
           {briefing.lede && <p className="lede">{briefing.lede}</p>}
           {categories.map(({ key, label }) => (
             <SectionGroup

@@ -12,14 +12,6 @@ export interface BriefingOutput {
   state: BriefingState;
   generated_at: string;
   cached: boolean;
-  /**
-   * True when this briefing was produced by the heuristic fallback rather
-   * than the LLM (e.g. timeout, parse failure, provider error). Callers
-   * MUST NOT cache degraded briefings — a transient model hiccup would
-   * otherwise stick the user with a canned response for the cache TTL.
-   * The UI may also surface a "retry" affordance when this is set.
-   */
-  degraded?: boolean;
 }
 
 /** Dashboard state derived from briefing content. */
@@ -116,9 +108,9 @@ export interface ErrorEntry {
 
 /** Home feature configuration from nimblebrain.json. Mirrors the shape
  * returned by `Runtime.getHomeConfig()`. Feature gating (`enabled`) and
- * model selection live elsewhere — model identity comes from the
- * resolved ModelProfile, and the briefing tool's registration handles
- * the feature flag at a higher level. */
+ * model selection live elsewhere — the model identity is passed to
+ * BriefingGenerator separately, and feature-flag gating happens at
+ * tool registration. */
 export interface HomeConfig {
   userName: string;
   timezone: string;

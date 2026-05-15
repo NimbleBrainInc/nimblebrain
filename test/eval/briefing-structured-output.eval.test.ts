@@ -11,11 +11,6 @@
  */
 import { describe, expect, it } from "bun:test";
 import type { LanguageModelV3 } from "@ai-sdk/provider";
-import { getProviderFromModel } from "../../src/model/catalog.ts";
-import {
-  buildSlotProviderOptions,
-  type ModelProfile,
-} from "../../src/model/model-profile.ts";
 import { buildModelResolver } from "../../src/model/registry.ts";
 import type { BriefingContext } from "../../src/services/briefing-collector.ts";
 import { BriefingGenerator } from "../../src/services/briefing-generator.ts";
@@ -46,19 +41,6 @@ function makeConfig(): HomeConfig {
     userName: "Mat",
     timezone: "Pacific/Honolulu",
     cacheTtlMinutes: 15,
-  };
-}
-
-/** Wrap a resolved LanguageModelV3 + its modelString into the ModelProfile
- * shape BriefingGenerator now consumes. Mirrors makeProfile() in the unit
- * test so eval and unit tests build profiles the same way. */
-function makeProfile(model: LanguageModelV3, modelString: string): ModelProfile {
-  return {
-    slot: "fast",
-    model,
-    modelString,
-    provider: getProviderFromModel(modelString),
-    providerOptions: buildSlotProviderOptions("fast", modelString),
   };
 }
 
@@ -209,7 +191,7 @@ describe("briefing structured output", () => {
         "generates valid briefing from rich activity + facets",
         async () => {
           const model = resolveModel(spec)!;
-          const gen = new BriefingGenerator(makeProfile(model, spec.modelString), makeConfig());
+          const gen = new BriefingGenerator(model, spec.modelString, makeConfig());
           const briefing = await gen.generate(richActivity(), richFacetContext());
           assertValidBriefing(briefing, spec.name);
 
@@ -224,7 +206,7 @@ describe("briefing structured output", () => {
         "generates valid briefing from activity only (no facets)",
         async () => {
           const model = resolveModel(spec)!;
-          const gen = new BriefingGenerator(makeProfile(model, spec.modelString), makeConfig());
+          const gen = new BriefingGenerator(model, spec.modelString, makeConfig());
           const briefing = await gen.generate(richActivity());
           assertValidBriefing(briefing, `${spec.name}/no-facets`);
         },

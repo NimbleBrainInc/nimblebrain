@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach } from "bun:test";
-import { BriefingCache, maybeCacheBriefing } from "../../../src/services/briefing-cache.ts";
+import { BriefingCache } from "../../../src/services/briefing-cache.ts";
 import type { BriefingOutput } from "../../../src/services/home-types.ts";
 
 function makeBriefing(overrides?: Partial<BriefingOutput>): BriefingOutput {
@@ -78,33 +78,3 @@ describe("BriefingCache", () => {
 	});
 });
 
-describe("maybeCacheBriefing", () => {
-	let cache: BriefingCache;
-
-	beforeEach(() => {
-		cache = new BriefingCache(30);
-	});
-
-	test("caches a successful briefing", () => {
-		const briefing = makeBriefing();
-		maybeCacheBriefing(cache, briefing);
-		const result = cache.get();
-		expect(result).not.toBeNull();
-		expect(result!.lede).toBe(briefing.lede);
-	});
-
-	test("skips cache when briefing.degraded is true", () => {
-		// The contract that justifies the heuristic-fallback path: a
-		// degraded briefing MUST NOT poison the cache or one transient
-		// LLM failure freezes the canned response for the TTL window.
-		const briefing = makeBriefing({ degraded: true });
-		maybeCacheBriefing(cache, briefing);
-		expect(cache.get()).toBeNull();
-	});
-
-	test("treats degraded=false the same as degraded=undefined", () => {
-		const briefing = makeBriefing({ degraded: false });
-		maybeCacheBriefing(cache, briefing);
-		expect(cache.get()).not.toBeNull();
-	});
-});

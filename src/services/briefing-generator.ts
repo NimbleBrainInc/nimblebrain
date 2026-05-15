@@ -1,5 +1,6 @@
-import type { ModelProfile } from "../model/model-profile.ts";
-import type { BriefingContext, FacetResult } from "./briefing-collector.ts";
+import type { LanguageModelV3, SharedV3ProviderOptions } from "@ai-sdk/provider";
+import { getModelByString, getProviderFromModel } from "../model/catalog.ts";
+import type { BriefingContext } from "./briefing-collector.ts";
 import { debugBriefing } from "./briefing-debug.ts";
 import type {
   ActivityOutput,
@@ -10,25 +11,20 @@ import type {
 } from "./home-types.ts";
 
 /**
- * Per-attempt wall-clock cap. The first attempt is generous; the retry is
- * tighter and uses a smaller token cap to favor latency over completeness.
- * Worst-case total wait before the heuristic fallback is FIRST + RETRY.
+ * Wall-clock cap for the LLM call. Covers realistic p99 across providers
+ * without burning user attention on a stuck request.
  */
-const BRIEFING_TIMEOUT_MS_FIRST = 30_000;
-const BRIEFING_TIMEOUT_MS_RETRY = 20_000;
+const BRIEFING_TIMEOUT_MS = 45_000;
 
 /**
- * Output token caps. The prompt asks for "under 800 tokens" — 1500 gives
- * headroom for a verbose run, 800 hard-caps the retry to prevent runaway
- * generation when the first attempt already burned wall-clock budget.
+ * Output token cap. The prompt asks for "under 800 tokens" — 1500 gives
+ * headroom for a verbose generation without allowing runaway output.
  */
-const BRIEFING_MAX_OUTPUT_TOKENS_FIRST = 1500;
-const BRIEFING_MAX_OUTPUT_TOKENS_RETRY = 800;
+const BRIEFING_MAX_OUTPUT_TOKENS = 1500;
 
 /**
  * Input bounds. A tenant with thousands of CRM rows shouldn't be able to
- * blow up the LLM input — we send the highest-priority facets only and
- * truncate each one's `data` payload.
+ * blow up the LLM input — cap facet count and per-facet data payload.
  */
 const BRIEFING_MAX_FACETS = 12;
 const BRIEFING_MAX_FACET_DATA_CHARS = 800;
@@ -112,9 +108,35 @@ const BRIEFING_RESPONSE_SCHEMA = {
   additionalProperties: false,
 };
 
+/**
+ * Provider-aware options for the short structured briefing call. Suppresses
+ * reasoning/thinking on every provider that exposes a knob (gated on the
+ * catalog's `capabilities.reasoning` so older models that don't expose
+ * the option get an empty options object). Inlined here rather than
+ * abstracted into a slot-profile because briefing is the only caller
+ * today; if a second caller appears, lift this into a shared helper.
+ */
+function shortCallProviderOptions(modelString: string | null): SharedV3ProviderOptions {
+  if (!modelString) return {};
+  const provider = getProviderFromModel(modelString);
+  const model = getModelByString(modelString);
+  if (!model?.capabilities.reasoning) return {};
+  switch (provider) {
+    case "anthropic":
+      return { anthropic: { thinking: { type: "disabled" } } };
+    case "google":
+      return { google: { thinkingConfig: { thinkingBudget: 0 } } };
+    case "openai":
+      return { openai: { reasoningEffort: "minimal" } };
+    default:
+      return {};
+  }
+}
+
 export class BriefingGenerator {
   constructor(
-    private profile: ModelProfile,
+    private model: LanguageModelV3,
+    private modelString: string | null,
     private config: HomeConfig,
   ) {}
 
@@ -139,15 +161,9 @@ export class BriefingGenerator {
       };
     }
 
+    // Throws on failure — caller (tools/core-source.ts) catches and
+    // renders a minimal "couldn't load" briefing without caching.
     return this.generateWithLlm(activity, greeting, date, now, facetContext);
-  }
-
-  private get modelString(): string {
-    return this.profile.modelString;
-  }
-
-  private get providerName(): string {
-    return this.profile.provider;
   }
 
   private buildGreeting(): string {
@@ -212,10 +228,11 @@ export class BriefingGenerator {
     const userPayload = this.buildUserPayload(activity, facetContext);
     const userText = JSON.stringify(userPayload);
 
-    // Per-facet diagnostic log — what the collector actually produced
-    // for the LLM. Lazy-built, gated on NB_DEBUG_BRIEFING via the
-    // shared helper so all briefing-side debug output goes through
-    // one knob.
+    // Per-facet diagnostic log gated on NB_DEBUG_BRIEFING — emits one
+    // line per facet showing what the collector resolved. The bug
+    // surface for this tool is "LLM said no data, but I have data";
+    // this log answers "what did the collector actually send?" in one
+    // pageload. Quiet by default.
     const facets = (userPayload.app_facets as Array<Record<string, unknown>> | undefined) ?? [];
     if (facets.length === 0) {
       debugBriefing(() => "no facets resolved");
@@ -231,113 +248,53 @@ export class BriefingGenerator {
       }
     }
 
-    // First attempt — generous budget.
-    const first = await this.attempt(userText, 1, {
-      timeoutMs: BRIEFING_TIMEOUT_MS_FIRST,
-      maxOutputTokens: BRIEFING_MAX_OUTPUT_TOKENS_FIRST,
-    });
-    if (first.kind === "ok") {
-      return this.buildBriefing(greeting, date, now, first.parsed);
-    }
-
-    // Don't retry on terminal failures (auth, model-not-found, etc.).
-    if (!first.retryable) {
-      return this.buildHeuristicBriefing(greeting, date, now, facetContext);
-    }
-
-    // Single retry — tighter wall-clock and token cap.
-    const second = await this.attempt(userText, 2, {
-      timeoutMs: BRIEFING_TIMEOUT_MS_RETRY,
-      maxOutputTokens: BRIEFING_MAX_OUTPUT_TOKENS_RETRY,
-    });
-    if (second.kind === "ok") {
-      return this.buildBriefing(greeting, date, now, second.parsed);
-    }
-
-    return this.buildHeuristicBriefing(greeting, date, now, facetContext);
-  }
-
-  /**
-   * One LLM attempt. Returns a discriminated result so the caller can
-   * decide whether to retry without re-throwing. Recoverable failures
-   * (timeout, empty, parse, 5xx) carry retryable=true; terminal failures
-   * (4xx auth/model-not-found) carry retryable=false.
-   */
-  private async attempt(
-    userText: string,
-    attemptNumber: number,
-    opts: { timeoutMs: number; maxOutputTokens: number },
-  ): Promise<AttemptResult> {
-    const start = performance.now();
-    const providerOptions = this.profile.providerOptions;
-
-    try {
-      const abort = AbortSignal.timeout(opts.timeoutMs);
-      const response = await this.profile.model.doGenerate({
-        prompt: [
-          { role: "system", content: BRIEFING_SYSTEM_PROMPT },
-          {
-            role: "user",
-            content: [{ type: "text", text: userText }],
-          },
-        ],
-        responseFormat: {
-          type: "json",
-          schema: BRIEFING_RESPONSE_SCHEMA,
-          name: "briefing",
-          description: "Daily workspace briefing with sections",
+    const providerOptions = shortCallProviderOptions(this.modelString);
+    const abort = AbortSignal.timeout(BRIEFING_TIMEOUT_MS);
+    const response = await this.model.doGenerate({
+      prompt: [
+        { role: "system", content: BRIEFING_SYSTEM_PROMPT },
+        {
+          role: "user",
+          content: [{ type: "text", text: userText }],
         },
-        maxOutputTokens: opts.maxOutputTokens,
-        abortSignal: abort,
-        ...(Object.keys(providerOptions).length > 0 ? { providerOptions } : {}),
-      });
+      ],
+      responseFormat: {
+        type: "json",
+        schema: BRIEFING_RESPONSE_SCHEMA,
+        name: "briefing",
+        description: "Daily workspace briefing with sections",
+      },
+      maxOutputTokens: BRIEFING_MAX_OUTPUT_TOKENS,
+      abortSignal: abort,
+      ...(Object.keys(providerOptions).length > 0 ? { providerOptions } : {}),
+    });
 
-      const finishReason = response.finishReason?.unified ?? "unknown";
-      const textBlock = response.content.find((b) => b.type === "text");
-      if (!textBlock || textBlock.type !== "text") {
-        this.logFailure("empty", attemptNumber, start);
-        return { kind: "fail", reason: "empty", retryable: true };
-      }
-
-      const parsed = this.parseJson(textBlock.text, finishReason === "length");
-      if (!parsed || typeof parsed.lede !== "string" || !Array.isArray(parsed.sections)) {
-        this.logFailure("parse", attemptNumber, start, {
-          finish_reason: finishReason,
-          preview: textBlock.text.slice(0, 200),
-        });
-        return { kind: "fail", reason: "parse", retryable: true };
-      }
-
-      return { kind: "ok", parsed };
-    } catch (err) {
-      const { reason, retryable } = classifyError(err);
-      this.logFailure(reason, attemptNumber, start, {
-        message: err instanceof Error ? err.message : String(err),
-      });
-      return { kind: "fail", reason, retryable };
+    const finishReason = response.finishReason?.unified ?? "unknown";
+    if (finishReason === "length") {
+      console.warn("[briefing] LLM response truncated (hit token limit)");
     }
-  }
 
-  private logFailure(
-    reason: FailureReason,
-    attempt: number,
-    start: number,
-    extra: Record<string, unknown> = {},
-  ): void {
-    const elapsedMs = Math.round(performance.now() - start);
-    const fields = [
-      `reason=${reason}`,
-      `provider=${this.providerName}`,
-      `model=${this.modelString}`,
-      `attempt=${attempt}`,
-      `elapsed_ms=${elapsedMs}`,
-    ];
-    for (const [k, v] of Object.entries(extra)) {
-      const s = typeof v === "string" ? v : JSON.stringify(v);
-      // Inline single-line for grep-ability; truncate noisy strings.
-      fields.push(`${k}=${s.replace(/\s+/g, " ").slice(0, 200)}`);
+    const textBlock = response.content.find((b) => b.type === "text");
+    if (!textBlock || textBlock.type !== "text") {
+      throw new Error("LLM returned no text content for briefing");
     }
-    console.warn(`[briefing] generation failed ${fields.join(" ")}`);
+
+    const parsed = this.parseJson(textBlock.text, finishReason === "length");
+    if (!parsed || typeof parsed.lede !== "string" || !Array.isArray(parsed.sections)) {
+      throw new Error(
+        `Failed to parse briefing JSON (finishReason=${finishReason}): ${textBlock.text.slice(0, 200)}`,
+      );
+    }
+
+    return {
+      greeting,
+      date,
+      lede: parsed.lede,
+      sections: parsed.sections,
+      state: this.deriveState(parsed.sections),
+      generated_at: now,
+      cached: false,
+    };
   }
 
   private buildUserPayload(
@@ -375,23 +332,6 @@ export class BriefingGenerator {
       bundle_events: activity.bundle_events,
     };
     return userPayload;
-  }
-
-  private buildBriefing(
-    greeting: string,
-    date: string,
-    now: string,
-    parsed: { lede: string; sections: BriefingSection[] },
-  ): BriefingOutput {
-    return {
-      greeting,
-      date,
-      lede: parsed.lede,
-      sections: parsed.sections,
-      state: this.deriveState(parsed.sections),
-      generated_at: now,
-      cached: false,
-    };
   }
 
   private parseJson(
@@ -509,199 +449,4 @@ export class BriefingGenerator {
     if (sections.every((s) => s.type === "positive")) return "all-clear";
     return "normal";
   }
-
-  /**
-   * Best-effort briefing built without an LLM, used when both attempts
-   * fail or the failure is terminal. Walks `facetContext` and emits one
-   * section per facet with sensible category/type mapping. The result is
-   * marked `degraded: true` so it isn't cached and the UI can show a
-   * retry affordance.
-   */
-  private buildHeuristicBriefing(
-    greeting: string,
-    date: string,
-    now: string,
-    facetContext: BriefingContext | undefined,
-  ): BriefingOutput {
-    const sections = facetContext ? facetsToSections(facetContext.facets) : [];
-    const lede =
-      sections.length > 0 ? buildHeuristicLede(sections) : "Activity summary is available.";
-
-    return {
-      greeting,
-      date,
-      lede,
-      sections,
-      state: this.deriveState(sections),
-      generated_at: now,
-      cached: false,
-      degraded: true,
-    };
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Failure classification + heuristic helpers
-// ---------------------------------------------------------------------------
-
-type FailureReason =
-  | "timeout"
-  | "empty"
-  | "parse"
-  | "auth"
-  | "bad_request"
-  | "rate_limit"
-  | "server"
-  | "unknown";
-
-type AttemptResult =
-  | { kind: "ok"; parsed: { lede: string; sections: BriefingSection[] } }
-  | { kind: "fail"; reason: FailureReason; retryable: boolean };
-
-/**
- * Map a thrown error from `model.doGenerate` into a stable failure
- * category and a retry decision. Keeps the structural decision (retry?)
- * separate from the reporting decision (what to log).
- *
- * Most providers throw plain Errors with statusCode hints; AbortSignal
- * timeouts surface as DOMException `TimeoutError` or an Error whose
- * message contains "timed out" / "aborted". Treat anything we can't
- * confidently classify as retryable to avoid permanently dead briefings
- * on novel error shapes.
- */
-function classifyError(err: unknown): { reason: FailureReason; retryable: boolean } {
-  if (err instanceof Error) {
-    const name = err.name;
-    const msg = err.message.toLowerCase();
-    if (name === "TimeoutError" || msg.includes("timed out") || msg.includes("aborted")) {
-      return { reason: "timeout", retryable: true };
-    }
-    const status =
-      (err as { statusCode?: number; status?: number }).statusCode ??
-      (err as { statusCode?: number; status?: number }).status;
-    if (typeof status === "number") {
-      if (status === 401 || status === 403 || status === 404) {
-        return { reason: "auth", retryable: false };
-      }
-      if (status === 429) {
-        return { reason: "rate_limit", retryable: true };
-      }
-      if (status >= 500) {
-        return { reason: "server", retryable: true };
-      }
-      if (status >= 400) {
-        // Other 4xx — 400 BadRequest, 422 Unprocessable, etc. Same
-        // retry decision as auth (don't retry with the same payload)
-        // but distinct in logs so operators triage the right thing.
-        return { reason: "bad_request", retryable: false };
-      }
-    }
-  }
-  return { reason: "unknown", retryable: true };
-}
-
-/**
- * Convert facet results into briefing sections deterministically. Used
- * only for the heuristic fallback — the LLM path produces richer prose
- * and tighter selection. Skips facets whose data string indicates an
- * empty result ("0 matching", etc.) to match the prompt's "skip empty
- * facets" rule.
- */
-function facetsToSections(facets: FacetResult[]): BriefingSection[] {
-  const sections: BriefingSection[] = [];
-  for (const f of facets) {
-    if (!f.ok) continue;
-    if (isEmptyFacetData(f.data)) continue;
-
-    const summary = summarizeFacetData(f.data);
-    if (!summary) continue;
-
-    const category: BriefingSection["category"] =
-      f.facet.type === "attention"
-        ? "attention"
-        : f.facet.type === "upcoming"
-          ? "upcoming"
-          : "recent";
-
-    const type: BriefingSection["type"] = f.facet.type === "attention" ? "warning" : "neutral";
-
-    const section: BriefingSection = {
-      id: slugify(`${f.appName}-${f.facet.label}`),
-      text: `${f.facet.label}: ${summary}`,
-      type,
-      category,
-    };
-
-    if (f.appRoute) {
-      // Wire shape MUST match the LLM schema (BRIEFING_RESPONSE_SCHEMA)
-      // and the host bridge — both expect `route` for navigate actions.
-      // The legacy `{ type: "navigate", value }` shape rendered a button
-      // that did nothing on click; surfacing degraded briefings without
-      // working buttons defeats the user-facing point of the retry path.
-      section.action = {
-        type: "navigate",
-        label: `Open ${f.appName}`,
-        route: f.appRoute,
-      };
-    }
-
-    sections.push(section);
-  }
-  return sections;
-}
-
-function buildHeuristicLede(sections: BriefingSection[]): string {
-  const attention = sections.filter((s) => s.category === "attention").length;
-  const upcoming = sections.filter((s) => s.category === "upcoming").length;
-  if (attention > 0) {
-    return `${attention} item${attention === 1 ? "" : "s"} need${attention === 1 ? "s" : ""} attention.`;
-  }
-  if (upcoming > 0) {
-    return `${upcoming} upcoming item${upcoming === 1 ? "" : "s"} on deck.`;
-  }
-  return `${sections.length} update${sections.length === 1 ? "" : "s"} from your apps.`;
-}
-
-/**
- * Decide whether a facet's resolved data string represents "no data
- * worth surfacing." Used by the heuristic fallback (LLM-less) path to
- * skip empty facets the same way the LLM prompt rule does.
- *
- * Canonical empty shape: `"0 matching ${entity} entities (0 total)"`
- * — produced by `briefing-collector.ts::resolveEntityFacet` for both
- * empty-but-present dirs and missing-dir cases. This contract is
- * deliberately narrow: it catches only the entity-facet shape we
- * control. Tool and resource facets render whatever their backing
- * bundle returns (opaque to us), so we intentionally don't try to
- * match arbitrary "no results"/"none"/"empty" phrasing — a loose
- * regex would skip legitimate single-section briefings like
- * "No further actions needed today."
- *
- * Contract for future facet producers: if your bundle emits a tool or
- * resource facet that wants to be skipped on empty, return either a
- * zero-prefixed entity-shape string ("0 matching X entities (0 total)")
- * or an empty string. Anything else will render as a heuristic section.
- */
-function isEmptyFacetData(data: string): boolean {
-  const match = data.match(/^(\d+)\s+matching/);
-  if (match && match[1] === "0") return true;
-  return data.length === 0;
-}
-
-function summarizeFacetData(data: string): string {
-  // Entity facet: "5 matching task entities (12 total). Matching: [...]"
-  // Take the prefix before "Matching:" or the first sentence.
-  const prefix = data.split(/\.\s*(?:Matching:|$)/)[0]?.trim() ?? "";
-  if (prefix.length > 0 && prefix.length <= 160) return prefix;
-  if (prefix.length > 160) return `${prefix.slice(0, 157)}…`;
-  // Tool/resource facet: take first 120 chars.
-  return data.slice(0, 120).trim();
-}
-
-function slugify(s: string): string {
-  return s
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, 48);
 }
