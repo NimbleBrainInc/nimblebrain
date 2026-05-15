@@ -59,8 +59,13 @@ export function createManageToolsToolDefs(
             isError: true,
           };
         }
-        const promoted = add.map((toolName) => toolPromotionCtx.addTool(toolName));
+        // Removes run BEFORE adds so an atomic domain-switch
+        // ({ add: [new tools], remove: [old tools] }) frees slots first
+        // and the new adds slot in cleanly without triggering LRU eviction
+        // of unrelated promoted tools as collateral. Do not swap the order
+        // without re-deriving the eviction interaction.
         const released = remove.map((toolName) => toolPromotionCtx.removeTool(toolName));
+        const promoted = add.map((toolName) => toolPromotionCtx.addTool(toolName));
         const batch: BatchResult = { promoted, released };
         return {
           content: textContent(summarize(batch)),

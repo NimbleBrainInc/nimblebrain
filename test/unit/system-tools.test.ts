@@ -347,7 +347,8 @@ describe("System Tools", () => {
 			remove: ["test__stale"],
 		});
 		expect(result.isError).toBe(false);
-		expect(calls).toEqual(["add:test__greet", "add:test__farewell", "remove:test__stale"]);
+		// Removes run before adds so atomic domain-switch frees slots first.
+		expect(calls).toEqual(["remove:test__stale", "add:test__greet", "add:test__farewell"]);
 
 		const text = extractText(result.content);
 		expect(text).toContain("Promoted 2/2");
