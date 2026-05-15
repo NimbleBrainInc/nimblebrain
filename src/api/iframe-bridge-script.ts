@@ -30,9 +30,7 @@
  * so the failure mode is visible during development. Routine drops
  * (non-parent source, handlers that throw) stay silent.
  *
- * Served verbatim at `GET /iframe-bridge.js`. Also inlined into the
- * platform's own core-resource scripts so they don't have to fetch over
- * the wire (and don't need a CSP relaxation for that fetch).
+ * Served verbatim at `GET /iframe-bridge.js`.
  */
 export const IFRAME_BRIDGE_SCRIPT = `(function () {
   if (typeof window === "undefined" || window.NBBridge) return;
