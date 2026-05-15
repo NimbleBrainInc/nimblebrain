@@ -274,6 +274,16 @@ export class AgentEngine {
     const promotedLastUsed = new Map<string, number>();
     let useCounter = 0;
     const maxActiveTools = config.maxActiveTools ?? DEFAULT_MAX_DIRECT_TOOLS;
+    if (directTools.length > maxActiveTools) {
+      // Operator-facing: initial tool set already exceeds the per-run cap,
+      // so the cap can't be enforced strictly for agent-driven additions.
+      // Surface the misconfiguration once at run start; behavior degrades
+      // to "cap is soft, agent additions stick on top." See addTool below.
+      console.warn(
+        `[engine] initial tools (${directTools.length}) exceed maxActiveTools (${maxActiveTools}); ` +
+          `cap will be soft for this run. Reduce the initial tool set or raise maxActiveTools.`,
+      );
+    }
 
     const toolControls = {
       addTool: (toolName: string) => {
@@ -325,7 +335,12 @@ export class AgentEngine {
 
         // Backstop: cap active tools by evicting LRU agent-promoted entries.
         // Initial tools are exempt because they're not in `promotedLastUsed`.
-        // The just-added tool has the highest stamp so it's never the victim.
+        // Defensive guard: if the just-added tool would be its own eviction
+        // victim (only possible when initial tools alone already exceed the
+        // cap, so promotedLastUsed has only this one entry), break out.
+        // Cap is "soft" in that pathological config — the alternative would
+        // be silently undoing the agent's intentional promotion, which is
+        // worse than letting the cap stretch by one.
         while (directTools.length > maxActiveTools && promotedLastUsed.size > 0) {
           let oldestName: string | null = null;
           let oldestStamp = Number.POSITIVE_INFINITY;
@@ -335,7 +350,7 @@ export class AgentEngine {
               oldestName = name;
             }
           }
-          if (!oldestName) break;
+          if (!oldestName || oldestName === toolName) break;
           const idx = directTools.findIndex((t) => t.name === oldestName);
           if (idx >= 0) directTools.splice(idx, 1);
           directToolNames.delete(oldestName);

@@ -15,6 +15,11 @@ import type {
   ToolSchema,
 } from "../../src/engine/types.ts";
 import { textContent } from "../../src/engine/content-helpers.ts";
+import {
+  getRequestContext,
+  runWithRequestContext,
+  type RequestContext,
+} from "../../src/runtime/request-context.ts";
 import type { LanguageModelV3, LanguageModelV3Message } from "@ai-sdk/provider";
 
 const defaultConfig: EngineConfig = {
@@ -832,9 +837,11 @@ describe("AgentEngine", () => {
     await engine.run(
       {
         ...defaultConfig,
-        // Cap=3: initial set already fills it. Each promotion immediately
-        // overflows and the just-added promoted tool is the only thing
-        // eligible to evict (initial tools aren't tracked).
+        // Cap=3: initial set already fills it. Each promotion overflows;
+        // initial tools are exempt from eviction; the just-added tool is
+        // also exempt (defensive self-eviction guard). Result: x is
+        // evictable when y is added (x is now older than the just-added y),
+        // y survives as the last-promoted entry.
         maxActiveTools: 3,
         toolPromotion: {
           isToolEligible: () => true,
@@ -858,11 +865,16 @@ describe("AgentEngine", () => {
           (e.data as { reason?: string }).reason === "evicted",
       )
       .map((e) => (e.data as { toolName: string }).toolName);
+    // Initial tools never evicted (they're not in promotedLastUsed).
     expect(evictedNames).not.toContain("initial__a");
     expect(evictedNames).not.toContain("initial__b");
     expect(evictedNames).not.toContain("nb__manage_tools");
+    // promoted__x is evicted when promoted__y arrives (x is older, y is
+    // the just-added and protected by the self-eviction guard).
     expect(evictedNames).toContain("promoted__x");
-    expect(evictedNames).toContain("promoted__y");
+    // promoted__y stays — it was the last-promoted entry and the guard
+    // refused to undo the agent's intentional addition.
+    expect(evictedNames).not.toContain("promoted__y");
   });
 
   it("LRU eviction: tool execution refreshes the eviction stamp", async () => {
@@ -969,6 +981,325 @@ describe("AgentEngine", () => {
       )
       .map((e) => (e.data as { toolName: string }).toolName);
     expect(evictedNames).toEqual(["app__b"]);
+  });
+
+  it("LRU eviction: when initial > cap, agent additions stick (cap goes soft)", async () => {
+    // Pathological config: 5 initial tools but cap=3. Without the defensive
+    // guard, the first addTool would push length=6, find the just-added
+    // tool as the only entry in promotedLastUsed, and self-evict — silently
+    // undoing the agent's intentional promotion. With the guard, the
+    // promotion sticks and the cap is "soft" for this run.
+    const toolSchemas: ToolSchema[] = [
+      { name: "nb__manage_tools", description: "Patch tool list", inputSchema: { type: "object", properties: {} } },
+      { name: "init__a", description: "A", inputSchema: { type: "object", properties: {} } },
+      { name: "init__b", description: "B", inputSchema: { type: "object", properties: {} } },
+      { name: "init__c", description: "C", inputSchema: { type: "object", properties: {} } },
+      { name: "init__d", description: "D", inputSchema: { type: "object", properties: {} } },
+      { name: "promoted__x", description: "X", inputSchema: { type: "object", properties: {} } },
+    ];
+
+    let callCount = 0;
+    let activeControls: ToolPromotionControls | null = null;
+    const events: EngineEvent[] = [];
+    const seenToolLists: string[][] = [];
+
+    const model = createMockModel((options) => {
+      seenToolLists.push((options.tools ?? []).map((t) => t.name));
+      callCount++;
+      if (callCount === 1) {
+        return {
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "p",
+              toolName: "nb__manage_tools",
+              input: JSON.stringify({ add: ["promoted__x"] }),
+            },
+          ],
+          inputTokens: 10,
+          outputTokens: 5,
+        };
+      }
+      return { content: [{ type: "text", text: "Done!" }], inputTokens: 10, outputTokens: 5 };
+    });
+
+    const engine = new AgentEngine(
+      model,
+      new StaticToolRouter(toolSchemas, (call) => {
+        if (call.name === "nb__manage_tools") {
+          const add = (call.input.add as string[] | undefined) ?? [];
+          const promoted = add.map((n) => activeControls!.addTool(n));
+          return {
+            content: textContent("ok"),
+            structuredContent: { promoted, released: [] },
+            isError: false,
+          };
+        }
+        return { content: textContent(""), isError: false };
+      }),
+      { emit: (event) => events.push(event) },
+    );
+
+    await engine.run(
+      {
+        ...defaultConfig,
+        maxActiveTools: 3, // 5 initial > cap=3
+        toolPromotion: {
+          isToolEligible: () => true,
+          registerControls: (controls) => {
+            activeControls = controls;
+            return () => {
+              activeControls = null;
+            };
+          },
+        },
+      },
+      "",
+      [{ role: "user", content: [{ type: "text", text: "Promote past initial" }] }],
+      [toolSchemas[0]!, toolSchemas[1]!, toolSchemas[2]!, toolSchemas[3]!, toolSchemas[4]!],
+    );
+
+    // Crucial: promoted__x is visible in the agent's tool list on iter 2.
+    // It was NOT silently self-evicted by the LRU loop.
+    expect(seenToolLists[1]).toContain("promoted__x");
+    // No tools were evicted — the only entry in promotedLastUsed (promoted__x
+    // itself) was protected by the self-eviction guard.
+    const evictedNames = events
+      .filter(
+        (e) =>
+          e.type === "tool.released" &&
+          (e.data as { reason?: string }).reason === "evicted",
+      )
+      .map((e) => (e.data as { toolName: string }).toolName);
+    expect(evictedNames).toHaveLength(0);
+  });
+
+  // ── Nested-engine isolation (delegate sub-agent regression) ──────
+
+  it("nested engine.run inside a parent run isolates promotion controls per engine", async () => {
+    // Regression: a sub-agent calling nb__manage_tools must mutate ITS OWN
+    // directTools, not the parent's. Without per-engine save/restore in
+    // registerControls, AsyncLocalStorage propagates the parent's
+    // reqCtx.toolPromotion into the child's frame and the child's
+    // promotions silently mutate the parent.
+
+    // Shared factory: same shape as Runtime.buildToolPromotionFactory.
+    // Save/restore is the load-bearing part — without it, child's
+    // unregister would leave reqCtx.toolPromotion === child controls
+    // (or undefined) instead of the parent's.
+    const toolPromotionFactory: NonNullable<EngineConfig["toolPromotion"]> = {
+      isToolEligible: () => true,
+      registerControls: (controls) => {
+        const ctx = getRequestContext();
+        if (!ctx) return () => {};
+        const prev = ctx.toolPromotion;
+        ctx.toolPromotion = controls;
+        return () => {
+          if (prev === undefined) {
+            delete ctx.toolPromotion;
+          } else {
+            ctx.toolPromotion = prev;
+          }
+        };
+      },
+    };
+
+    // Outer toolset: nb__manage_tools (promotable) + a "delegate" tool
+    // that, when called, spawns an inner engine.run().
+    const outerSchemas: ToolSchema[] = [
+      { name: "nb__manage_tools", description: "Patch tool list", inputSchema: { type: "object", properties: {} } },
+      { name: "spawn_child", description: "Run a child engine", inputSchema: { type: "object", properties: {} } },
+      { name: "outer__only", description: "Outer tool", inputSchema: { type: "object", properties: {} } },
+    ];
+
+    // Inner toolset: distinct from outer's. The inner agent will try to
+    // promote `inner__discovered`, which exists in the inner router but
+    // NOT in the outer's directTools. If isolation is broken, the outer's
+    // directTools would gain inner__discovered.
+    const innerSchemas: ToolSchema[] = [
+      { name: "nb__manage_tools", description: "Patch tool list", inputSchema: { type: "object", properties: {} } },
+      { name: "inner__discovered", description: "Inner-only tool", inputSchema: { type: "object", properties: {} } },
+    ];
+
+    const outerToolListsSeen: string[][] = [];
+    const innerToolListsSeen: string[][] = [];
+
+    // Inner model: iter 1 promotes inner__discovered; iter 2 verifies it's
+    // visible and emits Done.
+    let innerCallCount = 0;
+    const innerModel = createMockModel((options) => {
+      innerToolListsSeen.push((options.tools ?? []).map((t) => t.name));
+      innerCallCount++;
+      if (innerCallCount === 1) {
+        return {
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "inner_promote",
+              toolName: "nb__manage_tools",
+              input: JSON.stringify({ add: ["inner__discovered"] }),
+            },
+          ],
+          inputTokens: 5,
+          outputTokens: 5,
+        };
+      }
+      return { content: [{ type: "text", text: "inner done" }], inputTokens: 5, outputTokens: 5 };
+    });
+
+    // Outer model: iter 1 calls spawn_child; iter 2 emits Done.
+    let outerCallCount = 0;
+    const outerModel = createMockModel((options) => {
+      outerToolListsSeen.push((options.tools ?? []).map((t) => t.name));
+      outerCallCount++;
+      if (outerCallCount === 1) {
+        return {
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "spawn",
+              toolName: "spawn_child",
+              input: JSON.stringify({}),
+            },
+          ],
+          inputTokens: 5,
+          outputTokens: 5,
+        };
+      }
+      return { content: [{ type: "text", text: "outer done" }], inputTokens: 5, outputTokens: 5 };
+    });
+
+    // Build the inner engine inside the spawn_child handler. The inner
+    // engine uses the SAME factory (which is what production does via
+    // ctx.toolPromotion in delegate.ts). The save/restore in the factory
+    // pops the parent's controls back into reqCtx when inner's run
+    // finishes, so the outer can continue normally.
+    let activeOuterControls: ToolPromotionControls | null = null;
+    let activeInnerControls: ToolPromotionControls | null = null;
+    const events: EngineEvent[] = [];
+
+    const innerRouter = new StaticToolRouter(innerSchemas, (call) => {
+      if (call.name === "nb__manage_tools") {
+        const add = (call.input.add as string[] | undefined) ?? [];
+        // Inner's manage_tools handler reaches the controls in reqCtx.
+        // After the fix, reqCtx.toolPromotion is the inner's controls
+        // (because the inner engine.run installed them). The inner's
+        // controls mutate the inner engine's directTools.
+        const controls = getRequestContext()?.toolPromotion;
+        if (!controls) {
+          return { content: textContent("no controls"), isError: true };
+        }
+        const promoted = add.map((n) => controls.addTool(n));
+        return {
+          content: textContent("ok"),
+          structuredContent: { promoted, released: [] },
+          isError: false,
+        };
+      }
+      return { content: textContent(""), isError: false };
+    });
+
+    const outerRouter = new StaticToolRouter(outerSchemas, async (call) => {
+      if (call.name === "nb__manage_tools") {
+        // Same handler as inner, but in the OUTER call context. reqCtx.toolPromotion
+        // here is the outer's controls.
+        const add = (call.input.add as string[] | undefined) ?? [];
+        const controls = getRequestContext()?.toolPromotion;
+        if (!controls) return { content: textContent("no controls"), isError: true };
+        const promoted = add.map((n) => controls.addTool(n));
+        return {
+          content: textContent("ok"),
+          structuredContent: { promoted, released: [] },
+          isError: false,
+        };
+      }
+      if (call.name === "spawn_child") {
+        // This is the equivalent of nb__delegate: spawn a fresh engine.run
+        // INSIDE the parent's request context. Without the per-engine
+        // toolPromotion factory, child's manage_tools would leak into outer.
+        const innerEngine = new AgentEngine(innerModel, innerRouter, {
+          emit: (event) => events.push({ ...event, data: { ...event.data, scope: "inner" } }),
+        });
+        await innerEngine.run(
+          {
+            ...defaultConfig,
+            toolPromotion: {
+              ...toolPromotionFactory,
+              registerControls: (controls) => {
+                activeInnerControls = controls;
+                const release = toolPromotionFactory.registerControls(controls);
+                return () => {
+                  activeInnerControls = null;
+                  release();
+                };
+              },
+            },
+          },
+          "",
+          [{ role: "user", content: [{ type: "text", text: "child task" }] }],
+          [innerSchemas[0]!],
+        );
+        return { content: textContent("child done"), isError: false };
+      }
+      return { content: textContent(""), isError: false };
+    });
+
+    const outerEngine = new AgentEngine(outerModel, outerRouter, {
+      emit: (event) => events.push({ ...event, data: { ...event.data, scope: "outer" } }),
+    });
+
+    // Wrap the whole flow in a request context so reqCtx exists for the
+    // factory to install controls into.
+    const reqCtx: RequestContext = {
+      identity: null,
+      workspaceId: null,
+      workspaceAgents: null,
+      workspaceModelOverride: null,
+    };
+    await runWithRequestContext(reqCtx, async () => {
+      await outerEngine.run(
+        {
+          ...defaultConfig,
+          toolPromotion: {
+            ...toolPromotionFactory,
+            registerControls: (controls) => {
+              activeOuterControls = controls;
+              const release = toolPromotionFactory.registerControls(controls);
+              return () => {
+                activeOuterControls = null;
+                release();
+              };
+            },
+          },
+        },
+        "",
+        [{ role: "user", content: [{ type: "text", text: "delegate something" }] }],
+        [outerSchemas[0]!, outerSchemas[1]!, outerSchemas[2]!],
+      );
+    });
+
+    // Outer's tool list across iterations should NEVER include
+    // inner__discovered. If isolation is broken, the inner's promotion
+    // would have mutated the outer's directTools and inner__discovered
+    // would appear in outerToolListsSeen[1] or beyond.
+    for (const [i, toolList] of outerToolListsSeen.entries()) {
+      expect(toolList, `outer iteration ${i} tool list`).not.toContain("inner__discovered");
+    }
+
+    // Inner's iter 2 tool list MUST include inner__discovered — proves
+    // the inner's manage_tools call actually reached the inner's own
+    // directTools, not the outer's.
+    expect(innerToolListsSeen[1]).toContain("inner__discovered");
+
+    // After everything finishes, reqCtx.toolPromotion is restored to
+    // its pre-run state (undefined here since this test created the
+    // reqCtx fresh).
+    expect(reqCtx.toolPromotion).toBeUndefined();
+
+    // Sentinel: silence unused-var warnings; references are part of the
+    // test's documentation of which controls are which.
+    void activeOuterControls;
+    void activeInnerControls;
   });
 
   it("includes resourceUri in tool events when tool has UI annotations", async () => {
