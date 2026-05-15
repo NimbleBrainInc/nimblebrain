@@ -694,10 +694,13 @@ describe("briefing-generator", () => {
 			expect(result.sections[0].category).toBe("attention");
 			expect(result.sections[0].type).toBe("warning");
 			expect(result.sections[1].category).toBe("upcoming");
+			// Heuristic must emit `route` (matching the LLM schema and host
+			// bridge), not the legacy `value` shape — otherwise degraded
+			// briefings render buttons that do nothing on click.
 			expect(result.sections[0].action).toEqual({
-				label: "Open CRM",
 				type: "navigate",
-				value: "/apps/crm",
+				label: "Open CRM",
+				route: "/apps/crm",
 			});
 			// Lede mentions the attention count.
 			expect(result.lede.toLowerCase()).toContain("attention");

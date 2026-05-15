@@ -34,18 +34,21 @@ export interface BriefingSection {
   action?: BriefingAction;
 }
 
-/** Action attached to a briefing section. */
-export interface BriefingAction {
-  label: string;
-  type: "chat" | "navigate";
-  value: string;
-}
+/** Action attached to a briefing section. Discriminated by `type`:
+ * `navigate` carries a `route` consumed by the host bridge; `startChat`
+ * carries a `prompt` sent to the agent. The shape matches the LLM
+ * structured-output schema (BRIEFING_RESPONSE_SCHEMA) and the host
+ * bridge contract — three contracts in lockstep so a degraded
+ * (heuristic) briefing and an LLM-generated briefing render with the
+ * same handler logic. */
+export type BriefingAction =
+  | { type: "navigate"; label: string; route: string }
+  | { type: "startChat"; label: string; prompt: string };
 
 /** In-memory cache entry for a generated briefing. */
 export interface BriefingCacheEntry {
   briefing: BriefingOutput;
   generatedAt: number;
-  activityHash: string;
   invalidated: boolean;
 }
 

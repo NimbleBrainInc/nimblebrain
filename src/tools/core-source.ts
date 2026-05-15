@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { readFile, rename, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -19,7 +18,7 @@ const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as {
 const VERSION = process.env.NB_VERSION || pkg.version;
 
 import { ActivityCollector } from "../services/activity-collector.ts";
-import { BriefingCache } from "../services/briefing-cache.ts";
+import { BriefingCache, maybeCacheBriefing } from "../services/briefing-cache.ts";
 import { collectBriefingFacets } from "../services/briefing-collector.ts";
 import { BriefingGenerator } from "../services/briefing-generator.ts";
 import type { BriefingOutput } from "../services/home-types.ts";
@@ -793,14 +792,10 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
             });
             const briefing: BriefingOutput = await generator.generate(activity, facetContext);
 
-            // Cache only successful generations. A degraded briefing (LLM
-            // timeout, parse failure, etc.) is a transient signal — caching
-            // it would freeze the canned fallback in front of the user for
-            // the entire cache TTL window, even after the model recovers.
-            if (!briefing.degraded) {
-              const hash = createHash("md5").update(JSON.stringify(activity.totals)).digest("hex");
-              cache.set(briefing, hash);
-            }
+            // `maybeCacheBriefing` enforces the don't-cache-degraded
+            // contract (see briefing-cache.ts). Single test covers both
+            // sides so the rule survives future edits to either file.
+            maybeCacheBriefing(cache, briefing);
 
             return {
               content: textContent("Briefing generated."),

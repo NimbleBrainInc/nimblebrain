@@ -633,10 +633,15 @@ function facetsToSections(facets: FacetResult[]): BriefingSection[] {
     };
 
     if (f.appRoute) {
+      // Wire shape MUST match the LLM schema (BRIEFING_RESPONSE_SCHEMA)
+      // and the host bridge — both expect `route` for navigate actions.
+      // The legacy `{ type: "navigate", value }` shape rendered a button
+      // that did nothing on click; surfacing degraded briefings without
+      // working buttons defeats the user-facing point of the retry path.
       section.action = {
-        label: `Open ${f.appName}`,
         type: "navigate",
-        value: f.appRoute,
+        label: `Open ${f.appName}`,
+        route: f.appRoute,
       };
     }
 
