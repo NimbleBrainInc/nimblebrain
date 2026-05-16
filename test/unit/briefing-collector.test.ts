@@ -1,16 +1,14 @@
 /**
- * briefing-collector — covers the canonical empty-facet string contract
- * that the briefing-generator's `isEmptyFacetData` heuristic depends on.
+ * briefing-collector — covers the canonical empty-facet string contract.
  *
- * Background: `resolveEntityFacet` (private to briefing-collector.ts)
- * returns `"0 matching ${entity} entities (0 total)"` for both
- * missing-dir and missing-entity-dir cases. The LLM prompt rule
- * ("skip empty or zero facets") and the heuristic fallback's
- * `isEmptyFacetData` regex (`/^(\d+)\s+matching/`) both depend on
- * that exact string shape. If either side drifts the format,
- * missing-dir facets silently become content the briefing narrates
- * back to the user — the exact regression that triggered the
- * "no data yet" briefing on a workspace full of data.
+ * `resolveEntityFacet` (private to briefing-collector.ts) returns
+ * `"0 matching ${entity} entities (0 total)"` for missing-dir and
+ * missing-entity-dir cases — the same shape an empty-but-present
+ * directory produces, so the LLM's "skip empty or zero facets" prompt
+ * rule treats all three uniformly. If the format drifts, missing-dir
+ * facets become content the LLM narrates back to the user, which is
+ * the regression class that triggered the "no data yet" briefing on
+ * workspaces full of data.
  *
  * Tests go through `collectBriefingFacets` (the public API) rather
  * than poking the private resolver directly.
@@ -121,11 +119,11 @@ describe("briefing-collector empty-facet contract", () => {
 		expect(f!.data).toBe("0 matching wibblywobbly entities (0 total)");
 	});
 
-	it("matches the empty-facet pattern the heuristic skips", async () => {
-		// Ties the contract together: whatever string the collector
-		// returns for a missing dir must satisfy the generator's
-		// `isEmptyFacetData` regex (^(\d+)\s+matching with N=0), or
-		// the heuristic fallback will treat missing data as content.
+	it("emits the recognizable zero-count prefix", async () => {
+		// Locks the literal "0 matching ... " prefix the empty-facet
+		// string starts with. Downstream readers (LLM prompt rule, any
+		// future emptiness check) rely on a `^\d+ matching` shape with
+		// N=0 to recognize empty facets without parsing further.
 		const instance = makeInstance({
 			entityDataRoot: "/tmp/__nb_briefing_collector_does_not_exist__/data",
 		});

@@ -162,15 +162,13 @@ function resolveEntityFacet(
   entityDataRoot: string,
   period: { since: string },
 ): string {
-  // Entity files live at {entityDataRoot}/{plural}/*.json.
-  // For missing-dir / missing-entity-dir cases we return the same
-  // "0 matching ... (0 total)" shape that an empty-but-present
-  // directory would produce. This lets both the LLM prompt rule
-  // ("skip empty or zero facets") and the heuristic fallback's
-  // `isEmptyFacetData` check treat all three cases uniformly without
-  // a separate code path. Absolute filesystem paths stay out of the
-  // facet payload — operators can re-enable visibility with
-  // NB_DEBUG_BRIEFING for diagnostics.
+  // Entity files live at {entityDataRoot}/{plural}/*.json. For
+  // missing-dir / missing-entity-dir cases we return the same
+  // "0 matching ... (0 total)" shape an empty-but-present directory
+  // would produce, so the LLM's "skip empty or zero facets" prompt
+  // rule treats all three cases uniformly. Absolute filesystem paths
+  // stay out of the facet payload — operators can re-enable
+  // visibility with NB_DEBUG_BRIEFING for diagnostics.
   if (!existsSync(entityDataRoot)) {
     debugBriefing(
       () => `collector entity=${facet.entity} entityDataRoot missing: ${entityDataRoot}`,

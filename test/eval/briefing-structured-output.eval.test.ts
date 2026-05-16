@@ -149,11 +149,25 @@ function assertValidBriefing(briefing: BriefingOutput, label: string): void {
     expect(["positive", "neutral", "warning"]).toContain(section.type);
     expect(["recent", "upcoming", "attention"]).toContain(section.category);
 
-    // Action is optional (null or object)
+    // Action is optional (null or object). When present, the LLM must
+    // discriminate by `type`: navigate carries a route (prompt is
+    // null); startChat carries a prompt (route is null). This pins
+    // the wire contract the host bridge depends on — a future schema
+    // tweak that lets the LLM fabricate both fields would silently
+    // ship dead "Open …" buttons (the bug fixed by C1).
     if (section.action != null) {
       expect(typeof section.action).toBe("object");
-      expect(typeof section.action.type).toBe("string");
+      expect(["navigate", "startChat"]).toContain(section.action.type);
       expect(typeof section.action.label).toBe("string");
+      if (section.action.type === "navigate") {
+        expect(typeof section.action.route).toBe("string");
+        expect(section.action.route).not.toBe("");
+        expect(section.action.prompt).toBeNull();
+      } else if (section.action.type === "startChat") {
+        expect(typeof section.action.prompt).toBe("string");
+        expect(section.action.prompt).not.toBe("");
+        expect(section.action.route).toBeNull();
+      }
     }
   }
 

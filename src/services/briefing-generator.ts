@@ -43,9 +43,9 @@ Produce a JSON object with two fields:
    - "text": 1–2 sentences in business language. Use names, numbers, and specifics from the facet data.
    - "type": "positive" | "neutral" | "warning"
    - "category": "recent" | "upcoming" | "attention"
-   - "action" (optional): semantic action object, one of:
-     - { "type": "navigate", "route": "<route from facet>", "label": "Open CRM" }
-     - { "type": "startChat", "prompt": "<natural language prompt>", "label": "Ask about this" }
+   - "action" (optional): semantic action object. The shape includes both "route" and "prompt"; set the unused one to null based on the action type:
+     - navigate: { "type": "navigate", "route": "<route from facet>", "prompt": null, "label": "Open CRM" }
+     - startChat: { "type": "startChat", "route": null, "prompt": "<natural language prompt>", "label": "Ask about this" }
    Each facet includes a "route" field — use that exact value in navigate actions.
 
 Rules:
@@ -88,8 +88,18 @@ const BRIEFING_RESPONSE_SCHEMA = {
                 type: "object" as const,
                 properties: {
                   type: { type: "string" as const, enum: ["navigate", "startChat"] },
-                  route: { type: "string" as const, description: "Route for navigate actions" },
-                  prompt: { type: "string" as const, description: "Prompt for startChat actions" },
+                  // Discriminated payloads: navigate uses route, startChat uses prompt.
+                  // Both fields are listed in `required` (Anthropic structured-output
+                  // rule) but the unused one must be `null`, not a fabricated string.
+                  // The TS type (BriefingAction) matches this nullable wire shape.
+                  route: {
+                    anyOf: [{ type: "string" as const }, { type: "null" as const }],
+                    description: "Route for navigate actions; null on startChat",
+                  },
+                  prompt: {
+                    anyOf: [{ type: "string" as const }, { type: "null" as const }],
+                    description: "Prompt for startChat actions; null on navigate",
+                  },
                   label: { type: "string" as const },
                 },
                 required: ["type", "route", "prompt", "label"],

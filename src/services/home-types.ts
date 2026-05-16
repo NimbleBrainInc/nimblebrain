@@ -26,16 +26,20 @@ export interface BriefingSection {
   action?: BriefingAction;
 }
 
-/** Action attached to a briefing section. Discriminated by `type`:
- * `navigate` carries a `route` consumed by the host bridge; `startChat`
- * carries a `prompt` sent to the agent. The shape matches the LLM
- * structured-output schema (BRIEFING_RESPONSE_SCHEMA) and the host
- * bridge contract — three contracts in lockstep so a degraded
- * (heuristic) briefing and an LLM-generated briefing render with the
- * same handler logic. */
-export type BriefingAction =
-  | { type: "navigate"; label: string; route: string }
-  | { type: "startChat"; label: string; prompt: string };
+/** Action attached to a briefing section. `type` discriminates which
+ * field carries the payload — navigate uses `route`, startChat uses
+ * `prompt` — but both fields are present in the wire shape (nullable
+ * for the unused variant) because Anthropic structured-output requires
+ * all schema properties to appear in `required`. Consumers check
+ * `action.type` before reading the relevant field. */
+export interface BriefingAction {
+  type: "navigate" | "startChat";
+  label: string;
+  /** Set on navigate actions; null on startChat. */
+  route: string | null;
+  /** Set on startChat actions; null on navigate. */
+  prompt: string | null;
+}
 
 /** In-memory cache entry for a generated briefing. */
 export interface BriefingCacheEntry {
