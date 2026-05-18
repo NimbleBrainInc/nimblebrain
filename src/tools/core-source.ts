@@ -762,7 +762,10 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
             // Collect activity from workspace-scoped logs
             const logDir = join(wsDir, "logs");
             const store = runtime.getStore();
-            const collector = new ActivityCollector(logDir, store);
+            const collector = new ActivityCollector({
+              logDir,
+              conversations: { kind: "store", store },
+            });
             const activity = await collector.collect({ since });
 
             // Collect briefing facets — scoped to current workspace

@@ -63,6 +63,7 @@ export interface ActivityOutput {
   bundle_events: ActivityBundleEvent[];
   tool_usage: ToolUsageSummary[];
   errors: ErrorEntry[];
+  automations?: AutomationRunSummary;
   totals: {
     conversations: number;
     tool_calls: number;
@@ -70,6 +71,21 @@ export interface ActivityOutput {
     output_tokens: number;
     errors: number;
   };
+}
+
+/** Summary of automation runs for a time period. */
+export interface AutomationRunSummary {
+  total: number;
+  succeeded: number;
+  failed: number;
+  failures: AutomationFailure[];
+}
+
+/** A failed automation run with details. */
+export interface AutomationFailure {
+  name: string;
+  error?: string;
+  action: BriefingAction;
 }
 
 /** Conversation summary for activity reporting. */
