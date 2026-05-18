@@ -10,8 +10,10 @@ export interface UploadedFile {
   mimeType: string;
 }
 
-// MIME types we accept, grouped by category
-const EXTRACTABLE_TEXT = new Set([
+// MIME types we accept, grouped by category. Exported so other modules
+// (notably `src/tools/platform/files.ts::handleRead`) classify files
+// against the same source of truth instead of duplicating the lists.
+export const EXTRACTABLE_TEXT = new Set([
   "text/plain",
   "text/csv",
   "text/markdown",
@@ -23,7 +25,7 @@ const EXTRACTABLE_TEXT = new Set([
   "application/yaml",
 ]);
 
-const EXTRACTABLE_DOCS = new Set([
+export const EXTRACTABLE_DOCS = new Set([
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 ]);
@@ -75,7 +77,14 @@ export function isAllowedMime(mimeType: string): boolean {
   return ALLOWED_MIMES.has(normalizeMime(mimeType));
 }
 
-function isExtractable(mimeType: string): boolean {
+/**
+ * True if `extractText` knows how to surface a textual representation
+ * of bytes of this MIME type. PDF is excluded: `rehydrate.ts` and
+ * `handleRead` route PDFs through their own (capability-aware) policy,
+ * not the generic ingest extraction path, so the set stays focused on
+ * formats where the only useful surface to the model is extracted text.
+ */
+export function isExtractable(mimeType: string): boolean {
   const bare = normalizeMime(mimeType);
   return EXTRACTABLE_TEXT.has(bare) || EXTRACTABLE_DOCS.has(bare);
 }
