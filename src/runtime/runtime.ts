@@ -22,7 +22,7 @@ import type {
   ConversationStore,
   ParticipantInfo,
 } from "../conversation/types.ts";
-import { sliceHistory, windowMessages } from "../conversation/window.ts";
+import { sliceHistory, stripOlderReasoning, windowMessages } from "../conversation/window.ts";
 import { AgentEngine } from "../engine/engine.ts";
 import { estimateMessageTokens, estimateToolDescriptionTokens } from "../engine/token-estimate.ts";
 import type {
@@ -423,8 +423,13 @@ export class Runtime {
     const hooks: EngineHooks = {
       beforeToolCall: createPrivilegeHook(gate, events, features),
       transformContext: (messages) => {
+        // Order matters: slice by count first (cheap, deterministic), then
+        // strip older-turn reasoning (drops bytes we'd otherwise budget for),
+        // then window by token budget. Reasoning stripping runs before
+        // windowing so the budget reflects what the model actually sees.
         const sliced = sliceHistory(messages, maxHistoryMessages);
-        return windowMessages(sliced, maxInputTokens);
+        const reasoningStripped = stripOlderReasoning(sliced);
+        return windowMessages(reasoningStripped, maxInputTokens);
       },
     };
 
