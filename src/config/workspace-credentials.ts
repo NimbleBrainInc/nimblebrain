@@ -25,6 +25,16 @@ import type { ConfirmationGate } from "./privilege.ts";
  *     would otherwise escape the workspace tree. We don't trust the call site.
  *   - Credential values are never logged; only keys and paths appear in
  *     diagnostics.
+ *
+ * Class vs free functions:
+ *   - `WorkspaceCredentialStore` is the preferred API — constructed once with
+ *     `{ wsId, workDir }` and used through instance methods. It is owned by
+ *     `WorkspaceContext` (`src/workspace/context.ts`).
+ *   - The free-function exports (`getWorkspaceCredentials`,
+ *     `saveWorkspaceCredential`, `clearWorkspaceCredential`,
+ *     `clearAllWorkspaceCredentials`, `resolveUserConfig`) remain as thin
+ *     shims so call sites can migrate incrementally. They are scheduled for
+ *     removal once every site uses `WorkspaceContext.getCredentialStore()`.
  */
 
 // ── Path helpers ──────────────────────────────────────────────────
@@ -110,6 +120,9 @@ function uniqueTmpSuffix(): string {
  * previous one on the same file to settle, then runs, then extends the
  * chain. Since NimbleBrain runs as a single process, in-process serialization
  * is sufficient — we don't need flock / O_EXCL semantics across processes.
+ *
+ * The map is module-level so concurrent calls via either the class methods
+ * or the free-function shims serialize through the same chain.
  */
 const fileLocks = new Map<string, Promise<unknown>>();
 
@@ -179,23 +192,13 @@ async function ensureCredentialsDir(wsId: string, workDir: string): Promise<stri
   return dir;
 }
 
-// ── Read ──────────────────────────────────────────────────────────
+// ── Module-private operations ─────────────────────────────────────
+//
+// All the heavy lifting lives here as parameterized free functions so the
+// class methods and the deprecated free-function shims share one
+// implementation (and one `fileLocks` map). Public surfaces are below.
 
-/**
- * Read and parse the credential file for `bundleName` in workspace `wsId`.
- *
- * Returns `null` if the file does not exist (not an error — missing creds are
- * normal; the caller falls through to the next tier). If the file exists but
- * has a mode other than `0o600`, a warning is written to stderr.
- *
- * The permission check is advisory: we've already read the file by the time
- * we stat it, so refusing on a mode mismatch wouldn't prevent credential
- * disclosure to *us*. The check exists to nudge operators toward fixing the
- * permissions before the file leaks via backup/sync/other readers. Refusing
- * would also cause hard failures on legitimate upgrades where an older file
- * predates the explicit-chmod write path.
- */
-export async function getWorkspaceCredentials(
+async function readCredentials(
   wsId: string,
   bundleName: string,
   workDir: string,
@@ -210,8 +213,8 @@ export async function getWorkspaceCredentials(
     throw err;
   }
 
-  // Advisory permission check — see function docblock. Only the 9 mode bits
-  // are relevant; higher bits (setuid/setgid/sticky) and file-type bits
+  // Advisory permission check — see public-method docblock. Only the 9 mode
+  // bits are relevant; higher bits (setuid/setgid/sticky) and file-type bits
   // would never be set on our files.
   try {
     const st = await stat(filePath);
@@ -250,20 +253,7 @@ export async function getWorkspaceCredentials(
   }
 }
 
-// ── Write ─────────────────────────────────────────────────────────
-
-/**
- * Save a single `key=value` credential for `bundleName` in workspace `wsId`.
- *
- * Merges with any existing values in the file — other keys are preserved.
- * Parent directories are created as needed (`credentials/` with `0o700`) and
- * the credential file is written with `0o600` via an atomic temp + rename.
- *
- * The read-modify-write sequence is serialized per-file via `withFileLock`
- * so two concurrent saves on the same `{wsId, bundleName}` can't silently
- * drop either update's key.
- */
-export async function saveWorkspaceCredential(
+async function saveCredential(
   wsId: string,
   bundleName: string,
   key: string,
@@ -273,23 +263,13 @@ export async function saveWorkspaceCredential(
   const filePath = credentialPath(wsId, bundleName, workDir);
   await withFileLock(filePath, async () => {
     await ensureCredentialsDir(wsId, workDir);
-    const existing = (await getWorkspaceCredentials(wsId, bundleName, workDir)) ?? {};
+    const existing = (await readCredentials(wsId, bundleName, workDir)) ?? {};
     const merged: Record<string, string> = { ...existing, [key]: value };
     await atomicWriteFile(filePath, `${JSON.stringify(merged, null, 2)}\n`, 0o600);
   });
 }
 
-/**
- * Remove a single credential key for `bundleName` in workspace `wsId`.
- *
- * Returns `true` if the key was present (and was removed), `false` otherwise.
- * If removing the key leaves the file empty, the file is deleted.
- *
- * Read-modify-write is serialized per-file (same lock as `saveWorkspaceCredential`)
- * to prevent a concurrent save from being lost when this function rewrites
- * the trimmed map.
- */
-export async function clearWorkspaceCredential(
+async function clearCredential(
   wsId: string,
   bundleName: string,
   key: string,
@@ -304,7 +284,7 @@ export async function clearWorkspaceCredential(
   if (!isSluggable(bundleName)) return false;
   const filePath = credentialPath(wsId, bundleName, workDir);
   return withFileLock(filePath, async () => {
-    const existing = await getWorkspaceCredentials(wsId, bundleName, workDir);
+    const existing = await readCredentials(wsId, bundleName, workDir);
     if (!existing || !(key in existing)) return false;
 
     const { [key]: _removed, ...rest } = existing;
@@ -321,21 +301,11 @@ export async function clearWorkspaceCredential(
   });
 }
 
-/**
- * Remove the entire credential file for `bundleName` in workspace `wsId`.
- * Returns `true` if the file existed (and was removed), `false` otherwise.
- *
- * Serialized against concurrent save/clear operations on the same file so
- * an in-flight write can't race with the unlink (unlink-after-rename on
- * the same path would otherwise non-deterministically either remove the
- * new file or fail with ENOENT).
- */
-export async function clearAllWorkspaceCredentials(
+async function clearAllCredentials(
   wsId: string,
   bundleName: string,
   workDir: string,
 ): Promise<boolean> {
-  // See `clearWorkspaceCredential` for the unsluggable-name rationale.
   if (!isSluggable(bundleName)) return false;
   const filePath = credentialPath(wsId, bundleName, workDir);
   return withFileLock(filePath, async () => {
@@ -349,7 +319,7 @@ export async function clearAllWorkspaceCredentials(
   });
 }
 
-// ── Tier resolver ─────────────────────────────────────────────────
+// ── Tier resolver types ───────────────────────────────────────────
 
 /** Field descriptor from a bundle's `user_config` manifest section. */
 export interface UserConfigFieldDef {
@@ -361,8 +331,11 @@ export interface UserConfigFieldDef {
   default?: unknown;
 }
 
-/** Options for `resolveUserConfig`. */
-export interface ResolveUserConfigOpts {
+/**
+ * Options for the class method form (`WorkspaceCredentialStore.resolveUserConfig`).
+ * The workspace id is bound to the store and is intentionally absent here.
+ */
+export interface ResolveUserConfigInput {
   /** The bundle's canonical name (e.g. `@nimblebraininc/newsapi`). */
   bundleName: string;
   /**
@@ -371,10 +344,6 @@ export interface ResolveUserConfigOpts {
    * resolver returns `{}` immediately.
    */
   userConfigSchema: Record<string, UserConfigFieldDef> | null | undefined;
-  /** Workspace id. Required — everything is workspace-scoped. */
-  wsId: string;
-  /** Root work directory (e.g. `~/.nimblebrain`). */
-  workDir: string;
   /** Interactive gate used to prompt for values (TUI `configure` flow only). */
   gate?: ConfirmationGate;
   /**
@@ -385,38 +354,20 @@ export interface ResolveUserConfigOpts {
   forcePrompt?: boolean;
 }
 
-/**
- * Resolve `user_config` field values for a bundle from the workspace
- * credential store.
- *
- * This is the host-side half of a two-stage resolution. It returns a
- * **partial** map of whatever it found (or prompted for); the mpak SDK
- * then tries its own tiers — manifest-declared `mcp_config.env` aliases
- * and manifest defaults — and throws `MpakConfigError` if anything
- * required is still unresolved. Callers catch that at the SDK boundary
- * and translate to a `nb config set -w <wsId>` hint.
- *
- * Behavior:
- *
- *   - Default mode: read each field from `getWorkspaceCredentials`.
- *     Include any non-empty string values in the result. Absent/empty
- *     values fall through silently — the SDK decides whether that's an
- *     error based on `required` and its own tiers.
- *
- *   - `forcePrompt` + interactive gate: used by the TUI configure flow.
- *     Prompt every field via `gate.promptConfigValue`. Persist each
- *     returned value to the workspace store. Skipped responses are
- *     omitted — the SDK's missing-required check fires if appropriate.
- *
- * `null`/`undefined`/empty `userConfigSchema` short-circuits to `{}`.
- *
- * `~/.mpak/config.json` is intentionally not consulted here or anywhere
- * else in NimbleBrain — the workspace store is our persistence surface.
- */
-export async function resolveUserConfig(
-  opts: ResolveUserConfigOpts,
+/** Options for `resolveUserConfig` (free-function shim form). */
+export interface ResolveUserConfigOpts extends ResolveUserConfigInput {
+  /** Workspace id. Required — everything is workspace-scoped. */
+  wsId: string;
+  /** Root work directory (e.g. `~/.nimblebrain`). */
+  workDir: string;
+}
+
+async function resolveUserConfigImpl(
+  wsId: string,
+  workDir: string,
+  input: ResolveUserConfigInput,
 ): Promise<Record<string, string>> {
-  const { bundleName, userConfigSchema, wsId, workDir, gate, forcePrompt } = opts;
+  const { bundleName, userConfigSchema, gate, forcePrompt } = input;
 
   if (!userConfigSchema) return {};
   const fieldNames = Object.keys(userConfigSchema);
@@ -440,7 +391,7 @@ export async function resolveUserConfig(
         required: field.required,
       });
       if (typeof prompted === "string" && prompted.length > 0) {
-        await saveWorkspaceCredential(wsId, bundleName, key, prompted, workDir);
+        await saveCredential(wsId, bundleName, key, prompted, workDir);
         resolved[key] = prompted;
       }
     }
@@ -451,13 +402,181 @@ export async function resolveUserConfig(
   // handles mcp_config.env aliases, manifest defaults, and required-field
   // validation from here. See `mpak-sdk`'s `gatherUserConfig` for the rest
   // of the resolution chain.
-  const stored = (await getWorkspaceCredentials(wsId, bundleName, workDir)) ?? {};
+  const stored = (await readCredentials(wsId, bundleName, workDir)) ?? {};
   const resolved: Record<string, string> = {};
   for (const key of fieldNames) {
     const v = stored[key];
     if (typeof v === "string" && v.length > 0) resolved[key] = v;
   }
   return resolved;
+}
+
+// ── WorkspaceCredentialStore (preferred API) ──────────────────────
+
+/**
+ * Workspace-bound credential store. Constructed with `{ wsId, workDir }`;
+ * the workspace id is verified once at construction and bound for the
+ * lifetime of the instance. No instance method takes a `wsId` argument —
+ * the only way to read or write credentials for a different workspace is
+ * to construct a separate store.
+ *
+ * Owned by `WorkspaceContext`. Direct construction is supported but call
+ * sites should generally go through `workspaceContext.getCredentialStore()`
+ * so the binding is consistent across the rest of the workspace surface.
+ */
+export class WorkspaceCredentialStore {
+  readonly #wsId: string;
+  readonly #workDir: string;
+
+  constructor(opts: { wsId: string; workDir: string }) {
+    assertValidWsId(opts.wsId);
+    if (typeof opts.workDir !== "string" || opts.workDir.length === 0) {
+      throw new Error("[workspace-credentials] WorkspaceCredentialStore: workDir is required");
+    }
+    this.#wsId = opts.wsId;
+    this.#workDir = opts.workDir;
+  }
+
+  /** The workspace id this store is bound to. */
+  get workspaceId(): string {
+    return this.#wsId;
+  }
+
+  /** Absolute path to the credential file for `bundleName` in this workspace. */
+  credentialPath(bundleName: string): string {
+    return credentialPath(this.#wsId, bundleName, this.#workDir);
+  }
+
+  /**
+   * Read and parse the credential file for `bundleName`.
+   *
+   * Returns `null` if the file does not exist (not an error — missing creds
+   * are normal; the caller falls through to the next tier). If the file
+   * exists but has a mode other than `0o600`, a warning is written to
+   * stderr.
+   *
+   * The permission check is advisory: we've already read the file by the
+   * time we stat it, so refusing on a mode mismatch wouldn't prevent
+   * credential disclosure to *us*. The check exists to nudge operators
+   * toward fixing the permissions before the file leaks via
+   * backup/sync/other readers.
+   */
+  async get(bundleName: string): Promise<Record<string, string> | null> {
+    return readCredentials(this.#wsId, bundleName, this.#workDir);
+  }
+
+  /**
+   * Save a single `key=value` credential for `bundleName`.
+   *
+   * Merges with any existing values in the file — other keys are preserved.
+   * Parent directories are created as needed (`credentials/` with `0o700`)
+   * and the credential file is written with `0o600` via an atomic temp +
+   * rename. Read-modify-write is serialized per-file.
+   */
+  async save(bundleName: string, key: string, value: string): Promise<void> {
+    return saveCredential(this.#wsId, bundleName, key, value, this.#workDir);
+  }
+
+  /**
+   * Remove a single credential key for `bundleName`. Returns `true` if the
+   * key was present (and was removed), `false` otherwise. If removing the
+   * key leaves the file empty, the file is deleted.
+   */
+  async clear(bundleName: string, key: string): Promise<boolean> {
+    return clearCredential(this.#wsId, bundleName, key, this.#workDir);
+  }
+
+  /**
+   * Remove the entire credential file for `bundleName`. Returns `true` if
+   * the file existed (and was removed), `false` otherwise.
+   */
+  async clearAll(bundleName: string): Promise<boolean> {
+    return clearAllCredentials(this.#wsId, bundleName, this.#workDir);
+  }
+
+  /**
+   * Resolve `user_config` field values for a bundle from this workspace's
+   * credential store.
+   *
+   * This is the host-side half of a two-stage resolution. It returns a
+   * **partial** map of whatever it found (or prompted for); the mpak SDK
+   * then tries its own tiers — manifest-declared `mcp_config.env` aliases
+   * and manifest defaults — and throws `MpakConfigError` if anything
+   * required is still unresolved. Callers catch that at the SDK boundary
+   * and translate to a `nb config set -w <wsId>` hint.
+   *
+   * `~/.mpak/config.json` is intentionally not consulted here or anywhere
+   * else in NimbleBrain — the workspace store is our persistence surface.
+   */
+  async resolveUserConfig(input: ResolveUserConfigInput): Promise<Record<string, string>> {
+    return resolveUserConfigImpl(this.#wsId, this.#workDir, input);
+  }
+}
+
+// ── Free-function shims (deprecated) ──────────────────────────────
+//
+// These remain for incremental migration. Every call site outside this
+// module is being moved to `WorkspaceCredentialStore` (or its owner
+// `WorkspaceContext`) in Stage 0 of the delegation-model refactor; once
+// the audit grep returns zero, the shims are deleted.
+
+/**
+ * @deprecated Use `workspaceContext.getCredentialStore().get(bundleName)`.
+ * Kept for incremental migration; will be removed once all call sites are
+ * updated (see `.tasks/delegation-model/`).
+ */
+export async function getWorkspaceCredentials(
+  wsId: string,
+  bundleName: string,
+  workDir: string,
+): Promise<Record<string, string> | null> {
+  return new WorkspaceCredentialStore({ wsId, workDir }).get(bundleName);
+}
+
+/**
+ * @deprecated Use `workspaceContext.getCredentialStore().save(bundleName, key, value)`.
+ */
+export async function saveWorkspaceCredential(
+  wsId: string,
+  bundleName: string,
+  key: string,
+  value: string,
+  workDir: string,
+): Promise<void> {
+  return new WorkspaceCredentialStore({ wsId, workDir }).save(bundleName, key, value);
+}
+
+/**
+ * @deprecated Use `workspaceContext.getCredentialStore().clear(bundleName, key)`.
+ */
+export async function clearWorkspaceCredential(
+  wsId: string,
+  bundleName: string,
+  key: string,
+  workDir: string,
+): Promise<boolean> {
+  return new WorkspaceCredentialStore({ wsId, workDir }).clear(bundleName, key);
+}
+
+/**
+ * @deprecated Use `workspaceContext.getCredentialStore().clearAll(bundleName)`.
+ */
+export async function clearAllWorkspaceCredentials(
+  wsId: string,
+  bundleName: string,
+  workDir: string,
+): Promise<boolean> {
+  return new WorkspaceCredentialStore({ wsId, workDir }).clearAll(bundleName);
+}
+
+/**
+ * @deprecated Use `workspaceContext.getCredentialStore().resolveUserConfig({ ... })`.
+ */
+export async function resolveUserConfig(
+  opts: ResolveUserConfigOpts,
+): Promise<Record<string, string>> {
+  const { wsId, workDir, ...input } = opts;
+  return new WorkspaceCredentialStore({ wsId, workDir }).resolveUserConfig(input);
 }
 
 /**
