@@ -968,10 +968,17 @@ export class Runtime {
     const maxHistoryMessages = this.config.maxHistoryMessages ?? DEFAULT_MAX_HISTORY_MESSAGES;
     const perRequestHooks: EngineHooks = {
       ...this.hooks,
-      transformContext: (historyMessages) => {
+      transformContext: (historyMessages, opts) => {
+        // `overflowAttempt > 0` means the provider rejected the prior
+        // call for exceeding the model's context window. Halve the
+        // composed budget per attempt and re-window. The engine caps
+        // recovery at one attempt today so this scales at most by 1/2.
+        const attempt = opts?.overflowAttempt ?? 0;
+        const budget =
+          attempt > 0 ? Math.floor(messageBudget.budget / (1 << attempt)) : messageBudget.budget;
         const sliced = sliceHistory(historyMessages, maxHistoryMessages);
         const reasoningStripped = stripOlderReasoning(sliced);
-        return windowMessages(reasoningStripped, messageBudget.budget);
+        return windowMessages(reasoningStripped, budget);
       },
     };
 

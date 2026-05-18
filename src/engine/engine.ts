@@ -21,6 +21,7 @@ import {
   extractTextForModel,
   textContent,
 } from "./content-helpers.ts";
+import { isContextOverflowError } from "./context-overflow.ts";
 import { withRetry } from "./retry.ts";
 import { createRunSupervisor } from "./supervisor.ts";
 import { toolSchemaForLlm } from "./tool-schema-for-llm.ts";
@@ -486,12 +487,17 @@ export class AgentEngine {
           toolSchemaMap.set(t.name, t);
         }
 
-        // 1. Apply context/prompt hooks and call LLM
-        const windowed = config.hooks?.transformContext
-          ? config.hooks.transformContext([...history])
-          : history;
+        // 1. Apply context/prompt hooks and call LLM. The transformContext
+        //    hook is also re-invoked on a context-overflow recovery (see
+        //    the call loop below) with `overflowAttempt: 1` so the hook
+        //    can return more aggressively trimmed messages.
+        const runTransform = (attempt: number): LanguageModelV3Message[] =>
+          config.hooks?.transformContext
+            ? config.hooks.transformContext([...history], { overflowAttempt: attempt })
+            : history;
+        const windowed = runTransform(0);
         // Sanitize: filter out empty text content blocks that the API rejects
-        const callMessages = sanitizeMessages(windowed);
+        let callMessages = sanitizeMessages(windowed);
         let callPrompt = config.hooks?.transformPrompt
           ? config.hooks.transformPrompt(systemPrompt)
           : systemPrompt;
@@ -507,33 +513,72 @@ export class AgentEngine {
 
         const callProviderOptions = buildThinkingProviderOptions(config.model, config.thinking);
 
-        const llmStart = performance.now();
-        const response: StreamResult = await withRetry(() =>
-          callModel(
-            this.model,
-            {
-              prompt: [
-                {
-                  role: "system",
-                  content: callPrompt,
-                  providerOptions: {
-                    anthropic: { cacheControl: { type: "ephemeral" } },
+        const callOnce = (msgs: LanguageModelV3Message[]) =>
+          withRetry(() =>
+            callModel(
+              this.model,
+              {
+                prompt: [
+                  {
+                    role: "system",
+                    content: callPrompt,
+                    providerOptions: {
+                      anthropic: { cacheControl: { type: "ephemeral" } },
+                    },
                   },
+                  ...addCacheBreakpoint(msgs),
+                ],
+                tools: modelTools,
+                maxOutputTokens: config.maxOutputTokens,
+                ...(Object.keys(callProviderOptions).length > 0
+                  ? { providerOptions: callProviderOptions }
+                  : {}),
+              },
+              (text) => this.events.emit({ type: "text.delta", data: { runId, text } }),
+              (text) => this.events.emit({ type: "reasoning.delta", data: { runId, text } }),
+              (id, name) => this.events.emit({ type: "tool.preparing", data: { runId, id, name } }),
+              (id) => this.events.emit({ type: "tool.preparing.done", data: { runId, id } }),
+            ),
+          );
+
+        const llmStart = performance.now();
+        let response: StreamResult;
+        let overflowAttempt = 0;
+        while (true) {
+          try {
+            response = await callOnce(callMessages);
+            break;
+          } catch (err) {
+            // Reactive recovery for provider-reported context-window
+            // overflows. The pre-flight `resolveMessageBudget` should make
+            // this rare; when it fires, we re-window with the hook's
+            // own `overflowAttempt`-driven scaling (typically halves the
+            // budget) and retry once. A second overflow propagates the
+            // original error so the UI can surface a clear "conversation
+            // too long" message rather than silently looping.
+            if (
+              overflowAttempt === 0 &&
+              isContextOverflowError(err) &&
+              config.hooks?.transformContext
+            ) {
+              overflowAttempt = 1;
+              const previousMessageCount = callMessages.length;
+              const errorMessage = err instanceof Error ? err.message : String(err);
+              this.events.emit({
+                type: "context.overflow_recovery",
+                data: {
+                  runId,
+                  attempt: overflowAttempt,
+                  previousMessageCount,
+                  errorMessage,
                 },
-                ...addCacheBreakpoint(callMessages),
-              ],
-              tools: modelTools,
-              maxOutputTokens: config.maxOutputTokens,
-              ...(Object.keys(callProviderOptions).length > 0
-                ? { providerOptions: callProviderOptions }
-                : {}),
-            },
-            (text) => this.events.emit({ type: "text.delta", data: { runId, text } }),
-            (text) => this.events.emit({ type: "reasoning.delta", data: { runId, text } }),
-            (id, name) => this.events.emit({ type: "tool.preparing", data: { runId, id, name } }),
-            (id) => this.events.emit({ type: "tool.preparing.done", data: { runId, id } }),
-          ),
-        );
+              });
+              callMessages = sanitizeMessages(runTransform(overflowAttempt));
+              continue;
+            }
+            throw err;
+          }
+        }
         const llmMs = Math.round(performance.now() - llmStart);
 
         // Accumulate text output (add newline between turns if needed)

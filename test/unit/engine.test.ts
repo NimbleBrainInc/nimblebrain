@@ -3272,4 +3272,130 @@ describe("malformed tool call input", () => {
       expect(result.toolCalls[0]!.output).toContain("string");
     });
   });
+
+  describe("context-overflow recovery", () => {
+    it("re-invokes transformContext with overflowAttempt=1 and retries once on a context-overflow error", async () => {
+      let callCount = 0;
+      const recordedAttempts: Array<number | undefined> = [];
+      const events: EngineEvent[] = [];
+      const recordingSink: EventSink = {
+        emit(e: EngineEvent) {
+          events.push(e);
+        },
+      };
+
+      // First call throws an Anthropic-shaped overflow error; second succeeds.
+      const model = createMockModel(() => {
+        callCount += 1;
+        if (callCount === 1) {
+          throw Object.assign(
+            new Error("prompt is too long: 1257504 tokens > 1000000 maximum"),
+            { status: 400 },
+          );
+        }
+        return {
+          content: [{ type: "text", text: "recovered" }],
+        };
+      });
+
+      const engine = new AgentEngine(
+        model,
+        new StaticToolRouter([], () => ({ content: textContent(""), isError: false })),
+        recordingSink,
+      );
+
+      const result = await engine.run(
+        {
+          ...defaultConfig,
+          hooks: {
+            transformContext: (msgs, opts) => {
+              recordedAttempts.push(opts?.overflowAttempt);
+              return msgs;
+            },
+          },
+        },
+        "",
+        [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+        [],
+      );
+
+      // The model was called twice: once that overflowed, once that succeeded.
+      expect(callCount).toBe(2);
+
+      // transformContext got called twice — once at overflowAttempt=0
+      // (or undefined), once at overflowAttempt=1.
+      expect(recordedAttempts).toEqual([0, 1]);
+
+      // The recovery event was emitted exactly once with attempt=1.
+      const recoveryEvents = events.filter((e) => e.type === "context.overflow_recovery");
+      expect(recoveryEvents).toHaveLength(1);
+      expect(recoveryEvents[0]!.data).toMatchObject({ attempt: 1 });
+
+      // The run succeeded with the second call's output.
+      expect(result.output).toBe("recovered");
+      expect(result.stopReason).toBe("complete");
+    });
+
+    it("propagates the original overflow error after a single recovery attempt fails", async () => {
+      let callCount = 0;
+      const model = createMockModel(() => {
+        callCount += 1;
+        // Both calls overflow.
+        throw Object.assign(
+          new Error("prompt is too long: still too big"),
+          { status: 400 },
+        );
+      });
+
+      const engine = new AgentEngine(
+        model,
+        new StaticToolRouter([], () => ({ content: textContent(""), isError: false })),
+        new NoopEventSink(),
+      );
+
+      await expect(
+        engine.run(
+          {
+            ...defaultConfig,
+            hooks: { transformContext: (msgs) => msgs },
+          },
+          "",
+          [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+          [],
+        ),
+      ).rejects.toThrow(/prompt is too long/);
+
+      // Two model calls: the original + one recovery attempt.
+      expect(callCount).toBe(2);
+    });
+
+    it("does NOT retry on a non-overflow error (auth, unrelated 400, etc.)", async () => {
+      let callCount = 0;
+      const model = createMockModel(() => {
+        callCount += 1;
+        throw Object.assign(new Error("invalid api key"), { status: 401 });
+      });
+
+      const engine = new AgentEngine(
+        model,
+        new StaticToolRouter([], () => ({ content: textContent(""), isError: false })),
+        new NoopEventSink(),
+      );
+
+      await expect(
+        engine.run(
+          {
+            ...defaultConfig,
+            hooks: { transformContext: (msgs) => msgs },
+          },
+          "",
+          [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+          [],
+        ),
+      ).rejects.toThrow(/Authentication failed/);
+
+      // No recovery — the auth error is non-retryable and surfaces immediately.
+      expect(callCount).toBe(1);
+    });
+  });
 });
