@@ -26,9 +26,10 @@ import {
   FILE_INPUT_MIMES,
   getFileInputPolicy,
 } from "../model/file-capabilities.ts";
-import { extractText } from "./extract.ts";
+import { extractText, REHYDRATE_TRUNCATED_SUFFIX } from "./extract.ts";
 import { IMAGE_TYPES, PDF_TYPES } from "./ingest.ts";
 import type { FileStore } from "./store.ts";
+import type { ExtractedTextSidecar } from "./types.ts";
 import { uriToFileId } from "./uri.ts";
 
 /**
@@ -176,25 +177,30 @@ async function rehydratePdfPart(
       return textMarker(part.name, entry.mimeType);
     }
 
+    // Narrow the policy once. `acceptsFileMime` already gates on
+    // `policy.pdf` being defined, but we need the narrowed reference
+    // for the size + budget checks below.
+    const pdfPolicy =
+      options.isCurrentUserMessage && acceptsFileMime(policy, FILE_INPUT_MIMES.pdf)
+        ? policy.pdf
+        : undefined;
+
     const canInlineNativePdf =
-      options.isCurrentUserMessage &&
-      acceptsFileMime(policy, FILE_INPUT_MIMES.pdf) &&
-      policy.pdf &&
-      entry.size <= policy.pdf.maxFileBytes &&
+      pdfPolicy !== undefined &&
+      entry.size <= pdfPolicy.maxFileBytes &&
       entry.size <= budget.pdfRemainingBytes;
 
-    const read = await fileStore.readFile(id);
-    if (!PDF_TYPES.has(read.mimeType)) {
-      return textMarker(part.name, read.mimeType);
-    }
-
-    if (
-      canInlineNativePdf &&
-      policy.pdf &&
-      read.size <= policy.pdf.maxFileBytes &&
-      read.size <= budget.pdfRemainingBytes
-    ) {
+    if (canInlineNativePdf) {
+      // Native inline path: bytes go straight to the model. We also
+      // opportunistically populate the extracted-text sidecar so the
+      // next turn (when this PDF is historical) hits the cache instead
+      // of re-loading bytes and re-running unpdf.
+      const read = await fileStore.readFile(id);
+      if (!PDF_TYPES.has(read.mimeType)) {
+        return textMarker(part.name, read.mimeType);
+      }
       budget.pdfRemainingBytes -= read.size;
+      void ensureSidecar(fileStore, id, read.data, read.mimeType, options.maxExtractedTextSize);
       return {
         type: "file",
         mediaType: read.mimeType,
@@ -203,30 +209,114 @@ async function rehydratePdfPart(
       };
     }
 
-    return await pdfTextFallback(part.name, id, read, options.maxExtractedTextSize);
+    // Text fallback: try the cached sidecar first. On hit, no bytes
+    // are loaded off disk and unpdf is not invoked.
+    const sidecar = await readUsableSidecar(fileStore, id, options.maxExtractedTextSize);
+    if (sidecar) {
+      return formatPdfFallback(part.name, id, entry.size, sidecar.text);
+    }
+
+    // Cache miss — fall back to live extraction and persist the result
+    // so subsequent turns are cheap. This is the only path that loads
+    // bytes for a non-current PDF.
+    const read = await fileStore.readFile(id);
+    if (!PDF_TYPES.has(read.mimeType)) {
+      return textMarker(part.name, read.mimeType);
+    }
+    const extracted = await extractAndPersist(
+      fileStore,
+      id,
+      read.data,
+      read.mimeType,
+      options.maxExtractedTextSize,
+    );
+    if (!extracted) {
+      return {
+        type: "text",
+        text: `[Attached PDF: ${part.name} (${read.mimeType}). This model cannot receive the PDF bytes directly, and text extraction failed.]`,
+      };
+    }
+    return formatPdfFallback(part.name, id, read.size, extracted.text);
   } catch {
     return { type: "text", text: `[Attachment unavailable: ${part.name}]` };
   }
 }
 
-async function pdfTextFallback(
+/**
+ * Return a sidecar suitable for the current `maxExtractedTextSize`. A
+ * sidecar written with a smaller budget is treated as stale because the
+ * caller may now want more text; a sidecar written with a larger budget
+ * is still usable (its text is bounded by the larger limit and the
+ * extracted-truncation suffix is stable).
+ */
+async function readUsableSidecar(
+  fileStore: FileStore,
+  id: string,
+  maxExtractedTextSize: number,
+): Promise<ExtractedTextSidecar | null> {
+  const sidecar = await fileStore.readExtractedText(id);
+  if (!sidecar) return null;
+  if (sidecar.maxSize < maxExtractedTextSize) return null;
+  return sidecar;
+}
+
+async function extractAndPersist(
+  fileStore: FileStore,
+  id: string,
+  data: Buffer,
+  mimeType: string,
+  maxExtractedTextSize: number,
+): Promise<ExtractedTextSidecar | null> {
+  const result = await extractText(data, mimeType, maxExtractedTextSize, {
+    truncatedSuffix: REHYDRATE_TRUNCATED_SUFFIX,
+  });
+  if (!result) return null;
+  const sidecar: ExtractedTextSidecar = {
+    text: result.text,
+    maxSize: maxExtractedTextSize,
+    truncated: result.truncated,
+  };
+  try {
+    await fileStore.writeExtractedText(id, sidecar);
+  } catch {
+    // Sidecar persistence is an optimisation; failing to write should
+    // not fail the rehydration.
+  }
+  return sidecar;
+}
+
+/**
+ * Background sidecar population for the native-inline path. We've already
+ * loaded the bytes for the file part, so extraction is cheap relative to
+ * the model call. Running it without awaiting means the user-visible
+ * latency on this turn is unchanged; on the next turn (this PDF now
+ * historical) the cache will be warm.
+ */
+function ensureSidecar(
+  fileStore: FileStore,
+  id: string,
+  data: Buffer,
+  mimeType: string,
+  maxExtractedTextSize: number,
+): void {
+  void (async () => {
+    const existing = await fileStore.readExtractedText(id);
+    if (existing && existing.maxSize >= maxExtractedTextSize) return;
+    await extractAndPersist(fileStore, id, data, mimeType, maxExtractedTextSize);
+  })().catch(() => {
+    // Best effort; rehydrate's text-fallback path will retry on miss.
+  });
+}
+
+function formatPdfFallback(
   name: string,
   id: string,
-  read: { data: Buffer; mimeType: string; size: number },
-  maxExtractedTextSize: number,
-): Promise<LanguageModelV3TextPart> {
-  const result = await extractText(read.data, read.mimeType, maxExtractedTextSize, {
-    truncatedSuffix: (kb) => `\n[... truncated at ${kb} KB]`,
-  });
-  if (!result) {
-    return {
-      type: "text",
-      text: `[Attached PDF: ${name} (${read.mimeType}). This model cannot receive the PDF bytes directly, and text extraction failed.]`,
-    };
-  }
+  size: number,
+  text: string,
+): LanguageModelV3TextPart {
   return {
     type: "text",
-    text: `--- Attached PDF: ${name} (${id}, ${humanSize(read.size)}) ---\n${result.text}`,
+    text: `--- Attached PDF: ${name} (${id}, ${humanSize(size)}) ---\n${text}`,
   };
 }
 

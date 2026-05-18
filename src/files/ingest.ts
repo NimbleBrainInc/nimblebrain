@@ -1,4 +1,4 @@
-import { extractText } from "./extract.ts";
+import { extractText, REHYDRATE_TRUNCATED_SUFFIX } from "./extract.ts";
 import type { FileStore } from "./store.ts";
 import type { ContentPart, FileConfig, FileEntry, FileReference, IngestResult } from "./types.ts";
 import { fileIdToUri } from "./uri.ts";
@@ -166,6 +166,23 @@ export async function ingestFiles(
         contentParts.push({
           type: "text",
           text: `--- Attached: ${file.filename} (${saved.id}, ${humanSize(saved.size)}) ---\n${result.text}`,
+        });
+      }
+    } else if (isPdf(file.mimeType)) {
+      // Populate the extracted-text sidecar so rehydrate's text-fallback
+      // path (historical / unsupported-model / oversize) is O(text read)
+      // instead of O(reload bytes + re-run unpdf) on every turn. Uses the
+      // rehydrate-suffix variant so a cache hit at rehydrate time
+      // produces byte-identical content to a live extraction. Best-effort:
+      // a failed extraction here just means rehydrate will retry live.
+      const result = await extractText(file.data, file.mimeType, config.maxExtractedTextSize, {
+        truncatedSuffix: REHYDRATE_TRUNCATED_SUFFIX,
+      });
+      if (result) {
+        await store.writeExtractedText(saved.id, {
+          text: result.text,
+          maxSize: config.maxExtractedTextSize,
+          truncated: result.truncated,
         });
       }
     }

@@ -3,6 +3,16 @@ import { extractText as extractPdfText } from "unpdf";
 import * as XLSX from "xlsx";
 
 /**
+ * Truncation suffix used by callers that route extracted text into the
+ * rehydrate fallback path (i.e. the model already has the `files__read`
+ * tool surfaced separately, so the suffix should not nudge it to call).
+ * Centralised so ingest-time sidecar population and rehydrate-time live
+ * extraction produce byte-identical text — required for the FileStore
+ * extracted-text cache to be valid across paths.
+ */
+export const REHYDRATE_TRUNCATED_SUFFIX = (kb: number): string => `\n[... truncated at ${kb} KB]`;
+
+/**
  * Extract text from a file buffer based on MIME type.
  * Returns null for unsupported types or on extraction failure.
  */

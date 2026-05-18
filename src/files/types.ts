@@ -1,3 +1,17 @@
+/**
+ * Cached extracted-text sidecar for a stored file.
+ *
+ * Persisted next to the bytes (`${id}.extracted.json`) so derived text is
+ * computed once per file and reused on every rehydration. Invalidated by
+ * `maxSize` mismatch — if the runtime's `maxExtractedTextSize` changes,
+ * the cache is regenerated on next read.
+ */
+export interface ExtractedTextSidecar {
+  text: string;
+  maxSize: number;
+  truncated: boolean;
+}
+
 /** Workspace file entry stored in registry.jsonl */
 export interface FileEntry {
   id: string;

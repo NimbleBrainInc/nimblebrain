@@ -2,14 +2,36 @@ import { describe, expect, test } from "bun:test";
 import type { StoredMessage } from "../../../src/conversation/types.ts";
 import { rehydrateUserResources } from "../../../src/files/rehydrate.ts";
 import type { FileStore } from "../../../src/files/store.ts";
-import type { FileEntry } from "../../../src/files/types.ts";
+import type { ExtractedTextSidecar, FileEntry } from "../../../src/files/types.ts";
 
-function fakeStore(
-  byId: Record<string, { data: Buffer; mimeType: string; filename: string; size?: number }>,
-): FileStore & { readFileCalls: string[] } {
+interface FakeStoreEntry {
+  data: Buffer;
+  mimeType: string;
+  filename: string;
+  size?: number;
+  sidecar?: ExtractedTextSidecar;
+}
+
+interface FakeStore extends FileStore {
+  readFileCalls: string[];
+  readSidecarCalls: string[];
+  writeSidecarCalls: string[];
+  sidecars: Map<string, ExtractedTextSidecar>;
+}
+
+function fakeStore(byId: Record<string, FakeStoreEntry>): FakeStore {
   const readFileCalls: string[] = [];
+  const readSidecarCalls: string[] = [];
+  const writeSidecarCalls: string[] = [];
+  const sidecars = new Map<string, ExtractedTextSidecar>();
+  for (const [id, entry] of Object.entries(byId)) {
+    if (entry.sidecar) sidecars.set(id, entry.sidecar);
+  }
   return {
     readFileCalls,
+    readSidecarCalls,
+    writeSidecarCalls,
+    sidecars,
     saveFile: () => {
       throw new Error("not used");
     },
@@ -45,6 +67,14 @@ function fakeStore(
     appendTombstone: () => Promise.reject(new Error("not used")),
     deleteFile: () => Promise.reject(new Error("not used")),
     ensureFilesDir: () => Promise.reject(new Error("not used")),
+    readExtractedText: async (id) => {
+      readSidecarCalls.push(id);
+      return sidecars.get(id) ?? null;
+    },
+    writeExtractedText: async (id, sidecar) => {
+      writeSidecarCalls.push(id);
+      sidecars.set(id, sidecar);
+    },
   };
 }
 
@@ -306,5 +336,134 @@ describe("rehydrateUserResources", () => {
     if (msg.content[1]?.type !== "text") return;
     expect(msg.content[1].text).not.toContain("files__read");
     expect(store.readFileCalls).toEqual(["fl_a", "fl_b"]);
+  });
+
+  test("historical PDF cache hit reads sidecar without loading bytes or extracting", async () => {
+    const store = fakeStore({
+      fl_pdf1: {
+        data: Buffer.from("doesn't matter, should not be read"),
+        mimeType: "application/pdf",
+        filename: "doc.pdf",
+        sidecar: { text: "cached page text", maxSize: 1024, truncated: false },
+      },
+    });
+
+    const out = await rehydrateUserResources(
+      [
+        userMessage([{ type: "resource_link", uri: "files://fl_pdf1", mimeType: "application/pdf", name: "doc.pdf" }]),
+        userMessage([{ type: "text", text: "follow up" }]),
+      ],
+      store,
+      DEFAULT_OPTIONS,
+    );
+
+    const historical = out[0]!;
+    expect(historical.role).toBe("user");
+    if (historical.role !== "user") return;
+    expect(historical.content[0]?.type).toBe("text");
+    if (historical.content[0]?.type !== "text") return;
+    expect(historical.content[0].text).toContain("cached page text");
+    expect(historical.content[0].text).not.toContain("files__read");
+    expect(store.readFileCalls).toEqual([]); // bytes never loaded
+    expect(store.writeSidecarCalls).toEqual([]); // cache hit, no rewrite
+    expect(store.readSidecarCalls).toEqual(["fl_pdf1"]);
+  });
+
+  test("historical PDF cache miss live-extracts and persists the sidecar", async () => {
+    // Real PDF bytes here would be ideal, but unpdf rejects the stub and
+    // returns null — which exercises the extraction-failed branch. The
+    // important behaviour is: bytes loaded once, sidecar write attempted
+    // (or skipped on failure), and the next turn would hit the cache.
+    const store = fakeStore({
+      fl_pdf1: { data: Buffer.from("%PDF-1.4\n%%EOF"), mimeType: "application/pdf", filename: "doc.pdf" },
+    });
+
+    const out = await rehydrateUserResources(
+      [
+        userMessage([{ type: "resource_link", uri: "files://fl_pdf1", mimeType: "application/pdf", name: "doc.pdf" }]),
+        userMessage([{ type: "text", text: "follow up" }]),
+      ],
+      store,
+      DEFAULT_OPTIONS,
+    );
+
+    expect(store.readSidecarCalls).toEqual(["fl_pdf1"]); // sidecar checked first
+    expect(store.readFileCalls).toEqual(["fl_pdf1"]); // bytes loaded once on miss
+    const msg = out[0]!;
+    if (msg.role !== "user") return;
+    expect(msg.content[0]?.type).toBe("text");
+  });
+
+  test("sidecar with smaller maxSize than current config is invalidated", async () => {
+    const store = fakeStore({
+      fl_pdf1: {
+        data: Buffer.from("%PDF-1.4\n%%EOF"),
+        mimeType: "application/pdf",
+        filename: "doc.pdf",
+        sidecar: { text: "old cached text from smaller budget", maxSize: 512, truncated: true },
+      },
+    });
+
+    const out = await rehydrateUserResources(
+      [
+        userMessage([{ type: "resource_link", uri: "files://fl_pdf1", mimeType: "application/pdf", name: "doc.pdf" }]),
+        userMessage([{ type: "text", text: "follow up" }]),
+      ],
+      store,
+      { model: "anthropic:claude-sonnet-4-6", maxExtractedTextSize: 1024 },
+    );
+
+    // Stale sidecar is ignored; bytes loaded to live-extract.
+    expect(store.readSidecarCalls).toEqual(["fl_pdf1"]);
+    expect(store.readFileCalls).toEqual(["fl_pdf1"]);
+    const msg = out[0]!;
+    if (msg.role !== "user") return;
+    expect(msg.content[0]?.type).toBe("text");
+    if (msg.content[0]?.type !== "text") return;
+    expect(msg.content[0].text).not.toContain("old cached text");
+  });
+
+  test("registry entry missing on PDF path returns unavailable marker", async () => {
+    const store = fakeStore({});
+
+    const out = await rehydrateUserResources(
+      [userMessage([{ type: "resource_link", uri: "files://fl_gone", mimeType: "application/pdf", name: "ghost.pdf" }])],
+      store,
+      DEFAULT_OPTIONS,
+    );
+
+    const msg = out[0]!;
+    if (msg.role !== "user") return;
+    expect(msg.content[0]?.type).toBe("text");
+    if (msg.content[0]?.type !== "text") return;
+    expect(msg.content[0].text).toContain("unavailable");
+    expect(store.readFileCalls).toEqual([]); // never tried to load bytes
+  });
+
+  test("PDF link-vs-store MIME drift falls back to text marker without loading bytes", async () => {
+    // Link claims PDF but registry says the bytes are a docx. Trust the
+    // registry — emit a text marker, don't try to inline a mis-typed file.
+    const store = fakeStore({
+      fl_drift: {
+        data: Buffer.from("PK\x03\x04"),
+        mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        filename: "report.pdf",
+      },
+    });
+
+    const out = await rehydrateUserResources(
+      [userMessage([{ type: "resource_link", uri: "files://fl_drift", mimeType: "application/pdf", name: "report.pdf" }])],
+      store,
+      DEFAULT_OPTIONS,
+    );
+
+    const msg = out[0]!;
+    if (msg.role !== "user") return;
+    expect(msg.content[0]?.type).toBe("text");
+    if (msg.content[0]?.type !== "text") return;
+    expect(msg.content[0].text).toContain(
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    );
+    expect(store.readFileCalls).toEqual([]); // routing decided from metadata only
   });
 });
