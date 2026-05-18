@@ -244,6 +244,8 @@ Long-running entities can get orphaned if the bundle subprocess dies mid-run. Th
 
 `sanitizeLineField()` and XML containment tags in `compose.ts` are prompt injection mitigations. Do not remove without reviewing `test/unit/prompt-injection.test.ts`. The `DELEGATE_PREAMBLE` in `delegate.ts` prevents task-as-system-prompt injection.
 
+**Bundle trust is install-time, not per-prompt.** Do not add `trustScore >= N` gates on any path that injects bundle-authored content into the prompt (skills, app guides, app state, custom instructions). Once a bundle is active in the workspace its tools are already callable, so suppressing the workflow guidance that teaches the model how to use them safely makes the model less safe, not more — and tool descriptions, tool outputs, and `app://instructions` flow through ungated already. The defense is XML containment with `</tag>` escape in the body, the pattern used by `<app-state>`, `<app-guide>`, `<app-instructions>`, `<app-custom-instructions>`, and `<layer3-skill>`. Any new bundle-authored containment tag must escape its own closing form in the body the same way. `trustScore` fields on `FocusedAppInfo` / `AppStateInfo` / `PromptAppInfo` remain for display only.
+
 ## API Surfaces — Three Audiences
 
 The platform serves three audiences with three protocol surfaces. They are not tiers; they are distinct contracts for distinct callers, intentionally split.
