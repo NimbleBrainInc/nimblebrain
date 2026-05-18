@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { LanguageModelV3, LanguageModelV3CallOptions } from "@ai-sdk/provider";
-import type { ActivityOutput, BriefingSection, HomeConfig } from "../../src/services/home-types.ts";
+import type { ActivityOutput, HomeConfig } from "../../src/services/home-types.ts";
 import { BriefingGenerator } from "../../src/services/briefing-generator.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
 
@@ -17,7 +17,6 @@ function createTrackingModelV3(responseText: string): {
 	calls: LanguageModelV3CallOptions[];
 } {
 	const calls: LanguageModelV3CallOptions[] = [];
-	// Build a proper V3 model that tracks calls via doGenerate
 	const model: LanguageModelV3 = {
 		specificationVersion: "v3",
 		provider: "mock",
@@ -29,7 +28,12 @@ function createTrackingModelV3(responseText: string): {
 				content: [{ type: "text", text: responseText }],
 				finishReason: { unified: "stop", raw: undefined },
 				usage: {
-					inputTokens: { total: 100, noCache: undefined, cacheRead: undefined, cacheWrite: undefined },
+					inputTokens: {
+						total: 100,
+						noCache: undefined,
+						cacheRead: undefined,
+						cacheWrite: undefined,
+					},
 					outputTokens: { total: 50, text: undefined, reasoning: undefined },
 				},
 				warnings: [],
@@ -53,7 +57,12 @@ function createTruncatedModelV3(responseText: string): LanguageModelV3 {
 				content: [{ type: "text", text: responseText }],
 				finishReason: { unified: "length", raw: undefined },
 				usage: {
-					inputTokens: { total: 100, noCache: undefined, cacheRead: undefined, cacheWrite: undefined },
+					inputTokens: {
+						total: 100,
+						noCache: undefined,
+						cacheRead: undefined,
+						cacheWrite: undefined,
+					},
 					outputTokens: { total: 4000, text: undefined, reasoning: undefined },
 				},
 				warnings: [],
@@ -67,13 +76,20 @@ function createTruncatedModelV3(responseText: string): LanguageModelV3 {
 
 function makeConfig(overrides: Partial<HomeConfig> = {}): HomeConfig {
 	return {
-		enabled: true,
-		model: null,
 		userName: "Mat",
 		timezone: "Pacific/Honolulu",
 		cacheTtlMinutes: 15,
 		...overrides,
 	};
+}
+
+/** Build a generator with the simplified (model, modelString, config) ctor. */
+function makeGen(
+	model: LanguageModelV3,
+	modelString: string | null = "anthropic:claude-sonnet-4-6",
+	config: HomeConfig = makeConfig(),
+): BriefingGenerator {
+	return new BriefingGenerator(model, modelString, config);
 }
 
 function emptyActivity(): ActivityOutput {
@@ -134,7 +150,7 @@ describe("briefing-generator", () => {
 	describe("empty activity", () => {
 		it("returns quiet state without calling the model", async () => {
 			const { model, calls } = createTrackingModelV3("should not be called");
-			const gen = new BriefingGenerator(model, makeConfig());
+			const gen = makeGen(model);
 			const result = await gen.generate(emptyActivity());
 
 			expect(result.state).toBe("quiet");
@@ -146,30 +162,30 @@ describe("briefing-generator", () => {
 	});
 
 	describe("greeting", () => {
-		it("says good morning before noon", async () => {
+		it("greets the user by name", async () => {
 			const { model } = createTrackingModelV3("{}");
-			const gen = new BriefingGenerator(model, makeConfig({ timezone: "Pacific/Honolulu" }));
+			const gen = makeGen(model, null, makeConfig({ timezone: "Pacific/Honolulu" }));
 			const result = await gen.generate(emptyActivity());
 
 			expect(result.greeting).toContain("Mat");
 			expect(
 				result.greeting.startsWith("Good morning") ||
-				result.greeting.startsWith("Good afternoon") ||
-				result.greeting.startsWith("Good evening"),
+					result.greeting.startsWith("Good afternoon") ||
+					result.greeting.startsWith("Good evening"),
 			).toBe(true);
 		});
 
-		it("uses fallback when timezone is empty", async () => {
+		it("falls back when timezone is empty", async () => {
 			const { model } = createTrackingModelV3("{}");
-			const gen = new BriefingGenerator(model, makeConfig({ timezone: "" }));
+			const gen = makeGen(model, null, makeConfig({ timezone: "" }));
 			const result = await gen.generate(emptyActivity());
 
 			expect(result.greeting).toContain("Mat");
 		});
 
-		it("uses fallback when timezone is invalid", async () => {
+		it("falls back when timezone is invalid", async () => {
 			const { model } = createTrackingModelV3("{}");
-			const gen = new BriefingGenerator(model, makeConfig({ timezone: "Invalid/Zone" }));
+			const gen = makeGen(model, null, makeConfig({ timezone: "Invalid/Zone" }));
 			const result = await gen.generate(emptyActivity());
 
 			expect(result.greeting).toContain("Mat");
@@ -179,7 +195,7 @@ describe("briefing-generator", () => {
 	describe("date formatting", () => {
 		it("formats date as weekday, month day, year", async () => {
 			const model = createMockModelV3("{}");
-			const gen = new BriefingGenerator(model, makeConfig());
+			const gen = makeGen(model);
 			const result = await gen.generate(emptyActivity());
 
 			expect(result.date).toMatch(/^\w+, \w+ \d{1,2}, \d{4}$/);
@@ -200,7 +216,7 @@ describe("briefing-generator", () => {
 				],
 			});
 			const model = createMockModelV3(llmResponse);
-			const gen = new BriefingGenerator(model, makeConfig());
+			const gen = makeGen(model);
 			const result = await gen.generate(activeActivity());
 
 			expect(result.lede).toBe("3 conversations with 5 tool calls yesterday.");
@@ -223,47 +239,43 @@ describe("briefing-generator", () => {
 			});
 			const llmResponse = `\`\`\`json\n${json}\n\`\`\``;
 			const model = createMockModelV3(llmResponse);
-			const gen = new BriefingGenerator(model, makeConfig());
+			const gen = makeGen(model);
 			const result = await gen.generate(activeActivity());
 
 			expect(result.lede).toBe("All systems normal.");
 			expect(result.sections).toHaveLength(1);
 		});
 
-		it("returns fallback on invalid JSON", async () => {
+		it("throws on invalid JSON", async () => {
+			// Failures are no longer hidden by a heuristic fallback —
+			// generate() throws and the caller (core-source.ts) renders
+			// an error result the UI shows as a clear retry state.
 			const model = createMockModelV3("This is not JSON at all");
-			const gen = new BriefingGenerator(model, makeConfig());
-			const result = await gen.generate(activeActivity());
+			const gen = makeGen(model);
 
-			expect(result.lede).toBe("Activity summary is available.");
-			expect(result.sections).toEqual([]);
-			expect(result.state).toBe("normal");
+			await expect(gen.generate(activeActivity())).rejects.toThrow();
 		});
 
-		it("returns fallback when JSON is missing lede", async () => {
+		it("throws when JSON is missing lede", async () => {
 			const model = createMockModelV3(JSON.stringify({ sections: [] }));
-			const gen = new BriefingGenerator(model, makeConfig());
-			const result = await gen.generate(activeActivity());
+			const gen = makeGen(model);
 
-			expect(result.lede).toBe("Activity summary is available.");
+			await expect(gen.generate(activeActivity())).rejects.toThrow();
 		});
 
-		it("returns fallback when JSON is missing sections", async () => {
+		it("throws when JSON is missing sections", async () => {
 			const model = createMockModelV3(JSON.stringify({ lede: "Hi" }));
-			const gen = new BriefingGenerator(model, makeConfig());
-			const result = await gen.generate(activeActivity());
+			const gen = makeGen(model);
 
-			expect(result.lede).toBe("Activity summary is available.");
+			await expect(gen.generate(activeActivity())).rejects.toThrow();
 		});
 
 		it("repairs truncated JSON when finishReason is length", async () => {
-			// Simulate a response cut off mid-section (token limit hit)
 			const truncated = `{"lede": "3 follow-ups overdue.", "sections": [{"id": "followups", "text": "3 follow-ups need attention in CRM.", "type": "warning", "category": "attention"}, {"id": "tasks", "text": "You have 1 high-priority task du`;
 			const model = createTruncatedModelV3(truncated);
-			const gen = new BriefingGenerator(model, makeConfig());
+			const gen = makeGen(model);
 			const result = await gen.generate(activeActivity());
 
-			// Should recover the lede and the first complete section
 			expect(result.lede).toBe("3 follow-ups overdue.");
 			expect(result.sections.length).toBeGreaterThanOrEqual(1);
 			expect(result.sections[0].id).toBe("followups");
@@ -278,27 +290,18 @@ describe("briefing-generator", () => {
 				]
 			}`;
 			const model = createMockModelV3(jsonWithTrailingCommas);
-			const gen = new BriefingGenerator(model, makeConfig());
+			const gen = makeGen(model);
 			const result = await gen.generate(activeActivity());
 
 			expect(result.lede).toBe("3 items need attention.");
 			expect(result.sections).toHaveLength(2);
 		});
 
-		it("handles markdown-fenced JSON with trailing commas", async () => {
-			const fenced = '```json\n{"lede": "Ok.", "sections": [{"id": "x", "text": "Done.", "type": "positive", "category": "recent",},],}\n```';
-			const model = createMockModelV3(fenced);
-			const gen = new BriefingGenerator(model, makeConfig());
-			const result = await gen.generate(activeActivity());
-
-			expect(result.lede).toBe("Ok.");
-			expect(result.sections).toHaveLength(1);
-		});
-
 		it("repairs truncated JSON wrapped in markdown fences", async () => {
-			const truncated = '```json\n{"lede": "All clear.", "sections": [{"id": "status", "text": "Running smoothly.", "type": "positive", "category": "recent"}';
+			const truncated =
+				'```json\n{"lede": "All clear.", "sections": [{"id": "status", "text": "Running smoothly.", "type": "positive", "category": "recent"}';
 			const model = createTruncatedModelV3(truncated);
-			const gen = new BriefingGenerator(model, makeConfig());
+			const gen = makeGen(model);
 			const result = await gen.generate(activeActivity());
 
 			expect(result.lede).toBe("All clear.");
@@ -316,7 +319,7 @@ describe("briefing-generator", () => {
 				],
 			});
 			const model = createMockModelV3(llmResponse);
-			const gen = new BriefingGenerator(model, makeConfig());
+			const gen = makeGen(model);
 			const result = await gen.generate(activeActivity());
 
 			expect(result.state).toBe("all-clear");
@@ -331,7 +334,7 @@ describe("briefing-generator", () => {
 				],
 			});
 			const model = createMockModelV3(llmResponse);
-			const gen = new BriefingGenerator(model, makeConfig());
+			const gen = makeGen(model);
 			const result = await gen.generate(activeActivity());
 
 			expect(result.state).toBe("attention");
@@ -346,7 +349,7 @@ describe("briefing-generator", () => {
 				],
 			});
 			const model = createMockModelV3(llmResponse);
-			const gen = new BriefingGenerator(model, makeConfig());
+			const gen = makeGen(model);
 			const result = await gen.generate(activeActivity());
 
 			expect(result.state).toBe("normal");
@@ -354,71 +357,135 @@ describe("briefing-generator", () => {
 	});
 
 	describe("model call parameters", () => {
-		it("passes maxOutputTokens 4000 and JSON response format with schema to model", async () => {
+		it("passes calibrated maxOutputTokens, JSON response format, and timeout", async () => {
 			const llmResponse = JSON.stringify({ lede: "Ok.", sections: [] });
 			const { model, calls } = createTrackingModelV3(llmResponse);
-			const gen = new BriefingGenerator(model, makeConfig());
+			const gen = makeGen(model);
 			await gen.generate(activeActivity());
 
 			expect(calls).toHaveLength(1);
-			expect(calls[0].maxOutputTokens).toBe(4000);
+			expect(calls[0].maxOutputTokens).toBe(1500);
 			expect(calls[0].responseFormat?.type).toBe("json");
 			expect(calls[0].responseFormat).toHaveProperty("schema");
 			expect(calls[0].responseFormat).toHaveProperty("name", "briefing");
+			expect(calls[0].abortSignal).toBeDefined();
 		});
 
-		it("uses config model when specified", async () => {
-			// BriefingGenerator no longer gets model string from the call;
-			// model selection happens before the LanguageModelV3 is created.
-			// This test is now a no-op for the model name check.
+		it("disables Anthropic thinking for reasoning-capable Claude models", async () => {
 			const llmResponse = JSON.stringify({ lede: "Ok.", sections: [] });
 			const { model, calls } = createTrackingModelV3(llmResponse);
-			const gen = new BriefingGenerator(model, makeConfig({ model: "claude-haiku-3" }));
+			const gen = makeGen(model, "anthropic:claude-sonnet-4-6");
 			await gen.generate(activeActivity());
 
-			// Verify model was called
-			expect(calls).toHaveLength(1);
+			expect(calls[0].providerOptions).toEqual({
+				anthropic: { thinking: { type: "disabled" } },
+			});
 		});
 
-		it("falls back to claude-sonnet-4-5-20250929 when model is null", async () => {
+		it("omits Anthropic thinking option for non-reasoning Claude models", async () => {
 			const llmResponse = JSON.stringify({ lede: "Ok.", sections: [] });
 			const { model, calls } = createTrackingModelV3(llmResponse);
-			const gen = new BriefingGenerator(model, makeConfig({ model: null }));
+			const gen = makeGen(model, "anthropic:claude-3-5-haiku-latest");
 			await gen.generate(activeActivity());
 
-			// Verify model was called
-			expect(calls).toHaveLength(1);
+			expect(calls[0].providerOptions).toBeUndefined();
+		});
+
+		it("disables Gemini thinking budget for 2.5 series", async () => {
+			const llmResponse = JSON.stringify({ lede: "Ok.", sections: [] });
+			const { model, calls } = createTrackingModelV3(llmResponse);
+			const gen = makeGen(model, "google:gemini-2.5-flash");
+			await gen.generate(activeActivity());
+
+			expect(calls[0].providerOptions).toEqual({
+				google: { thinkingConfig: { thinkingBudget: 0 } },
+			});
+		});
+
+		it("sets reasoningEffort=minimal for OpenAI reasoning models", async () => {
+			const llmResponse = JSON.stringify({ lede: "Ok.", sections: [] });
+			const { model, calls } = createTrackingModelV3(llmResponse);
+			const gen = makeGen(model, "openai:gpt-5");
+			await gen.generate(activeActivity());
+
+			expect(calls[0].providerOptions).toEqual({
+				openai: { reasoningEffort: "minimal" },
+			});
+		});
+
+		it("omits providerOptions for non-reasoning models", async () => {
+			const llmResponse = JSON.stringify({ lede: "Ok.", sections: [] });
+			const { model, calls } = createTrackingModelV3(llmResponse);
+			const gen = makeGen(model, "openai:gpt-4o");
+			await gen.generate(activeActivity());
+
+			expect(calls[0].providerOptions).toBeUndefined();
+		});
+
+		it("omits providerOptions when modelString is null", async () => {
+			const llmResponse = JSON.stringify({ lede: "Ok.", sections: [] });
+			const { model, calls } = createTrackingModelV3(llmResponse);
+			const gen = makeGen(model, null);
+			await gen.generate(activeActivity());
+
+			expect(calls[0].providerOptions).toBeUndefined();
 		});
 
 		it("sends activity as user message JSON", async () => {
 			const llmResponse = JSON.stringify({ lede: "Ok.", sections: [] });
 			const { model, calls } = createTrackingModelV3(llmResponse);
-			const gen = new BriefingGenerator(model, makeConfig());
+			const gen = makeGen(model);
 			const activity = activeActivity();
 			await gen.generate(activity);
 
-			// V3: prompt includes system + user messages
 			const userMsgs = calls[0].prompt.filter((m) => m.role === "user");
 			expect(userMsgs).toHaveLength(1);
 			const userContent = userMsgs[0].content;
-			// V3 user content is an array of parts
 			expect(Array.isArray(userContent)).toBe(true);
-			const textPart = (userContent as Array<{ type: string; text: string }>).find((p) => p.type === "text");
+			const textPart = (userContent as Array<{ type: string; text: string }>).find(
+				(p) => p.type === "text",
+			);
 			const parsed = JSON.parse(textPart!.text);
 			expect(parsed).toHaveProperty("system_activity");
 			expect(parsed.system_activity.conversations).toBe(activity.totals.conversations);
 			expect(parsed.system_activity.tool_calls).toBe(activity.totals.tool_calls);
 		});
+	});
 
-		it("passes empty tools array", async () => {
+	describe("input bounding", () => {
+		it("truncates large facet data payloads", async () => {
 			const llmResponse = JSON.stringify({ lede: "Ok.", sections: [] });
 			const { model, calls } = createTrackingModelV3(llmResponse);
-			const gen = new BriefingGenerator(model, makeConfig());
-			await gen.generate(activeActivity());
+			const gen = makeGen(model);
+			const bigData = "x".repeat(5000);
+			const facetContext = {
+				period: { since: "2026-03-24T00:00:00Z", until: "2026-03-25T00:00:00Z" },
+				facets: [
+					{
+						appName: "App",
+						serverName: "app",
+						appRoute: "/app",
+						appCategory: undefined,
+						facet: {
+							name: "f",
+							label: "F",
+							type: "activity" as const,
+							entity: "thing",
+						},
+						data: bigData,
+						ok: true,
+					},
+				],
+			};
 
-			// BriefingGenerator doesn't pass tools to doGenerate
-			// (the V3 interface doesn't require tools)
-			expect(calls).toHaveLength(1);
+			await gen.generate(activeActivity(), facetContext as never);
+
+			const userText = (calls[0].prompt[1].content as Array<{ type: string; text: string }>)[0]
+				.text;
+			const parsed = JSON.parse(userText);
+			expect(parsed.app_facets[0].data.length).toBeLessThan(bigData.length);
+			expect(parsed.app_facets[0].data).toContain("(truncated)");
 		});
 	});
+
 });

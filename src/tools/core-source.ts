@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { readFile, rename, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -775,23 +774,22 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
               until,
             });
 
-            // Resolve the model from the "fast" slot
-            const modelId = runtime.getModelSlot("fast");
-            const model = runtime.resolveModel(modelId);
+            // Resolve the "fast" slot's model for the briefing call.
+            const modelString = runtime.getModelSlot("fast");
+            const model = runtime.resolveModel(modelString);
 
-            // Generate briefing with facets + activity
-            const generator = new BriefingGenerator(model, {
-              enabled: true,
-              model: modelId,
+            const generator = new BriefingGenerator(model, modelString, {
               userName: homeConfig.userName,
               timezone: homeConfig.timezone,
               cacheTtlMinutes: homeConfig.cacheTtlMinutes,
             });
-            const briefing: BriefingOutput = await generator.generate(activity, facetContext);
 
-            // Cache the result
-            const hash = createHash("md5").update(JSON.stringify(activity.totals)).digest("hex");
-            cache.set(briefing, hash);
+            // generate() throws on LLM failure. The outer catch turns
+            // that into an isError tool result, which the home UI
+            // renders as a clear error state with a retry button.
+            // Cache writes only happen on the success path below.
+            const briefing: BriefingOutput = await generator.generate(activity, facetContext);
+            cache.set(briefing);
 
             return {
               content: textContent("Briefing generated."),

@@ -1476,9 +1476,35 @@ export class BundleLifecycleManager {
   ): void {
     // Resolve entity data root from dataDir + upjack namespace at seed time.
     // This is the single source of truth — downstream consumers read it directly.
+    //
+    // Subtlety: for `path:` bundles, `dataDir` ends in a multi-segment broken
+    // slug because `deriveBundleDataDir` only replaces the first `/` (string
+    // replace, not regex). So `/Users/foo/bar` becomes `-Users/foo/bar`, and
+    // `join(wsData, that)` nests the install path into the workspace's data
+    // tree instead of producing a flat one-segment dir. `dirname()` can't
+    // walk back out of that — we have to anchor on the known
+    // `workspaces/<wsId>/data/` prefix to find the workspace's data root.
+    // Safe to anchor on substring because `dataDir` is canonically constructed
+    // upstream as `join(workDir, "workspaces", wsId, "data", ...)`; the marker
+    // would only collide if a workDir itself contained an identical wsId-keyed
+    // workspace sub-tree, which the install path doesn't allow.
+    //
+    // The bundle itself writes data using its manifest name (e.g.
+    // `@nimblebraininc/synapse-crm` → `nimblebraininc-synapse-crm`), so we
+    // re-derive the bundle-data parent from `manifestName` here. Registry
+    // installs are unaffected — their install name and manifest name
+    // produce identical slugs.
+    const bundleDataParent = ((): string | undefined => {
+      if (!manifestMeta?.manifestName || !dataDir) return dataDir;
+      const wsDataAnchor = `/workspaces/${wsId}/data/`;
+      const anchorIdx = dataDir.indexOf(wsDataAnchor);
+      if (anchorIdx < 0) return dataDir;
+      const wsDataRoot = dataDir.slice(0, anchorIdx + wsDataAnchor.length);
+      return join(wsDataRoot, deriveBundleDataDir(manifestMeta.manifestName));
+    })();
     const entityDataRoot =
-      dataDir && manifestMeta?.upjackNamespace
-        ? join(dataDir, manifestMeta.upjackNamespace, "data")
+      bundleDataParent && manifestMeta?.upjackNamespace
+        ? join(bundleDataParent, manifestMeta.upjackNamespace, "data")
         : undefined;
 
     // Resolve oauthScope for URL bundles. Member-scoped bundles seed with

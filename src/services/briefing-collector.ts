@@ -17,6 +17,7 @@ import type { BriefingBlock, BriefingFacet, BundleInstance } from "../bundles/ty
 import { McpSource } from "../tools/mcp-source.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
 import type { ToolSource } from "../tools/types.ts";
+import { debugBriefing } from "./briefing-debug.ts";
 
 /** Result of resolving a single facet. */
 export interface FacetResult {
@@ -161,15 +162,27 @@ function resolveEntityFacet(
   entityDataRoot: string,
   period: { since: string },
 ): string {
-  // Entity files live at {entityDataRoot}/{plural}/*.json
+  // Entity files live at {entityDataRoot}/{plural}/*.json. For
+  // missing-dir / missing-entity-dir cases we return the same
+  // "0 matching ... (0 total)" shape an empty-but-present directory
+  // would produce, so the LLM's "skip empty or zero facets" prompt
+  // rule treats all three cases uniformly. Absolute filesystem paths
+  // stay out of the facet payload — operators can re-enable
+  // visibility with NB_DEBUG_BRIEFING for diagnostics.
   if (!existsSync(entityDataRoot)) {
-    return `No data directory at ${entityDataRoot}`;
+    debugBriefing(
+      () => `collector entity=${facet.entity} entityDataRoot missing: ${entityDataRoot}`,
+    );
+    return `0 matching ${facet.entity} entities (0 total)`;
   }
 
   // Find the entity directory — try common pluralization
   const entityDir = findEntityDir(entityDataRoot, facet.entity!);
   if (!entityDir) {
-    return `No ${facet.entity} entities found`;
+    debugBriefing(
+      () => `collector entity=${facet.entity} no matching plural dir under ${entityDataRoot}`,
+    );
+    return `0 matching ${facet.entity} entities (0 total)`;
   }
 
   // Read all entity files

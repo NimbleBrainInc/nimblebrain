@@ -26,18 +26,25 @@ export interface BriefingSection {
   action?: BriefingAction;
 }
 
-/** Action attached to a briefing section. */
+/** Action attached to a briefing section. `type` discriminates which
+ * field carries the payload — navigate uses `route`, startChat uses
+ * `prompt` — but both fields are present in the wire shape (nullable
+ * for the unused variant) because Anthropic structured-output requires
+ * all schema properties to appear in `required`. Consumers check
+ * `action.type` before reading the relevant field. */
 export interface BriefingAction {
+  type: "navigate" | "startChat";
   label: string;
-  type: "chat" | "navigate";
-  value: string;
+  /** Set on navigate actions; null on startChat. */
+  route: string | null;
+  /** Set on startChat actions; null on navigate. */
+  prompt: string | null;
 }
 
 /** In-memory cache entry for a generated briefing. */
 export interface BriefingCacheEntry {
   briefing: BriefingOutput;
   generatedAt: number;
-  activityHash: string;
   invalidated: boolean;
 }
 
@@ -103,10 +110,12 @@ export interface ErrorEntry {
   context?: string;
 }
 
-/** Home feature configuration from nimblebrain.json. */
+/** Home feature configuration from nimblebrain.json. Mirrors the shape
+ * returned by `Runtime.getHomeConfig()`. Feature gating (`enabled`) and
+ * model selection live elsewhere — the model identity is passed to
+ * BriefingGenerator separately, and feature-flag gating happens at
+ * tool registration. */
 export interface HomeConfig {
-  enabled: boolean;
-  model: string | null;
   userName: string;
   timezone: string;
   cacheTtlMinutes: number;

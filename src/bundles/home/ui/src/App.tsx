@@ -126,6 +126,10 @@ function callServerTool<T>(
       },
       "*",
     );
+    // 60s covers the briefing server budget (45s LLM call + IPC and
+    // facet collection overhead) with margin. If the server takes
+    // longer than this the iframe surfaces a clear "Tool call timed
+    // out" error and the user can click Retry.
     setTimeout(() => {
       if (_pending.has(id)) {
         _pending.delete(id);

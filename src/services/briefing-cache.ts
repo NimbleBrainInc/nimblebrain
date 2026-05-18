@@ -4,7 +4,7 @@ export class BriefingCache {
   private entry: BriefingCacheEntry | null = null;
   private ttlMs: number;
 
-  constructor(ttlMinutes = 30) {
+  constructor(ttlMinutes: number) {
     this.ttlMs = ttlMinutes * 60 * 1000;
   }
 
@@ -15,11 +15,10 @@ export class BriefingCache {
     return { ...this.entry.briefing, cached: true };
   }
 
-  set(briefing: BriefingOutput, activityHash: string): void {
+  set(briefing: BriefingOutput): void {
     this.entry = {
       briefing,
       generatedAt: Date.now(),
-      activityHash,
       invalidated: false,
     };
   }

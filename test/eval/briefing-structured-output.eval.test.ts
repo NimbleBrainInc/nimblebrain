@@ -12,13 +12,9 @@
 import { describe, expect, it } from "bun:test";
 import type { LanguageModelV3 } from "@ai-sdk/provider";
 import { buildModelResolver } from "../../src/model/registry.ts";
-import { BriefingGenerator } from "../../src/services/briefing-generator.ts";
 import type { BriefingContext } from "../../src/services/briefing-collector.ts";
-import type {
-  ActivityOutput,
-  BriefingOutput,
-  HomeConfig,
-} from "../../src/services/home-types.ts";
+import { BriefingGenerator } from "../../src/services/briefing-generator.ts";
+import type { ActivityOutput, BriefingOutput, HomeConfig } from "../../src/services/home-types.ts";
 
 // ---------------------------------------------------------------------------
 // Provider config
@@ -42,8 +38,6 @@ const PROVIDERS: ProviderSpec[] = [
 
 function makeConfig(): HomeConfig {
   return {
-    enabled: true,
-    model: null,
     userName: "Mat",
     timezone: "Pacific/Honolulu",
     cacheTtlMinutes: 15,
@@ -106,7 +100,7 @@ function richFacetContext(): BriefingContext {
     period: { since: "2026-04-13T00:00:00Z", until: "2026-04-14T00:00:00Z" },
     facets: [
       {
-        facet: { label: "Overdue follow-ups", type: "attention" as const },
+        facet: { name: "overdue_followups", label: "Overdue follow-ups", type: "attention" as const },
         appName: "CRM",
         serverName: "synapse-crm",
         appRoute: "@nimblebraininc/synapse-crm",
@@ -114,7 +108,7 @@ function richFacetContext(): BriefingContext {
         ok: true,
       },
       {
-        facet: { label: "Tasks due today", type: "upcoming" as const },
+        facet: { name: "tasks_due_today", label: "Tasks due today", type: "upcoming" as const },
         appName: "Tasks",
         serverName: "synapse-todo",
         appRoute: "@nimblebraininc/synapse-todo-board",
@@ -122,7 +116,7 @@ function richFacetContext(): BriefingContext {
         ok: true,
       },
       {
-        facet: { label: "Recent meetings", type: "activity" as const },
+        facet: { name: "recent_meetings", label: "Recent meetings", type: "activity" as const },
         appName: "Granola",
         serverName: "granola",
         appRoute: null,
@@ -155,11 +149,25 @@ function assertValidBriefing(briefing: BriefingOutput, label: string): void {
     expect(["positive", "neutral", "warning"]).toContain(section.type);
     expect(["recent", "upcoming", "attention"]).toContain(section.category);
 
-    // Action is optional (null or object)
+    // Action is optional (null or object). When present, the LLM must
+    // discriminate by `type`: navigate carries a route (prompt is
+    // null); startChat carries a prompt (route is null). This pins
+    // the wire contract the host bridge depends on — a future schema
+    // tweak that lets the LLM fabricate both fields would silently
+    // ship dead "Open …" buttons (the bug fixed by C1).
     if (section.action != null) {
       expect(typeof section.action).toBe("object");
-      expect(typeof section.action.type).toBe("string");
+      expect(["navigate", "startChat"]).toContain(section.action.type);
       expect(typeof section.action.label).toBe("string");
+      if (section.action.type === "navigate") {
+        expect(typeof section.action.route).toBe("string");
+        expect(section.action.route).not.toBe("");
+        expect(section.action.prompt).toBeNull();
+      } else if (section.action.type === "startChat") {
+        expect(typeof section.action.prompt).toBe("string");
+        expect(section.action.prompt).not.toBe("");
+        expect(section.action.route).toBeNull();
+      }
     }
   }
 
@@ -197,7 +205,7 @@ describe("briefing structured output", () => {
         "generates valid briefing from rich activity + facets",
         async () => {
           const model = resolveModel(spec)!;
-          const gen = new BriefingGenerator(model, makeConfig());
+          const gen = new BriefingGenerator(model, spec.modelString, makeConfig());
           const briefing = await gen.generate(richActivity(), richFacetContext());
           assertValidBriefing(briefing, spec.name);
 
@@ -212,7 +220,7 @@ describe("briefing structured output", () => {
         "generates valid briefing from activity only (no facets)",
         async () => {
           const model = resolveModel(spec)!;
-          const gen = new BriefingGenerator(model, makeConfig());
+          const gen = new BriefingGenerator(model, spec.modelString, makeConfig());
           const briefing = await gen.generate(richActivity());
           assertValidBriefing(briefing, `${spec.name}/no-facets`);
         },

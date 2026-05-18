@@ -345,9 +345,10 @@ export class ActivityCollector {
               name: automationName,
               error: (run.error as string) ?? undefined,
               action: {
+                type: "startChat",
                 label: "View failed run",
-                type: "chat",
-                value: `Show me the failed ${automationName} automation run`,
+                route: null,
+                prompt: `Show me the failed ${automationName} automation run`,
               },
             });
           }

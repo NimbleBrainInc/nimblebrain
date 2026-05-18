@@ -2,6 +2,7 @@ import { describe, expect, it, afterAll } from "bun:test";
 import { mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import type { LanguageModelV3 } from "@ai-sdk/provider";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { runWithRequestContext } from "../../src/runtime/request-context.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
@@ -11,6 +12,31 @@ import { extractText } from "../../src/engine/content-helpers.ts";
 import { loadConfig } from "../../src/cli/config.ts";
 import { deriveOverridePath } from "../../src/config/overrides.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+
+/** Model adapter that throws on doGenerate, counting invocations. Used
+ * to exercise the briefing tool's cache-on-failure rule: when the LLM
+ * call fails, the tool should not cache the error result, so a
+ * subsequent call regenerates (and the model is called again). */
+function createThrowingModel(err: Error): {
+	model: LanguageModelV3;
+	getCalls: () => number;
+} {
+	let calls = 0;
+	const model: LanguageModelV3 = {
+		specificationVersion: "v3",
+		provider: "mock-throwing",
+		modelId: "mock-throwing-model",
+		supportedUrls: {},
+		async doGenerate() {
+			calls++;
+			throw err;
+		},
+		async doStream() {
+			throw new Error("Not implemented for this test");
+		},
+	};
+	return { model, getCalls: () => calls };
+}
 
 const testDir = join(tmpdir(), `nimblebrain-core-source-${Date.now()}`);
 
@@ -553,6 +579,66 @@ describe("Core Source", () => {
 			});
 			expect(result.isError).toBe(true);
 			expect(extractText(result.content)).toContain("No config override path");
+		} finally {
+			await runtime.shutdown();
+		}
+	});
+
+	// ----------------------------------------------------------------------
+	// Cache-on-failure contract
+	// ----------------------------------------------------------------------
+	//
+	// The central rule this PR enforces: when generator.generate() throws,
+	// the tool returns isError AND does not cache the failure. A future
+	// refactor that accidentally moves cache.set above the await (or
+	// inverts the conditional) would silently reintroduce the original
+	// "stuck cached canned string" bug. This test locks that wiring.
+	it("nb__briefing does not cache when the LLM call fails", async () => {
+		const workDir = join(testDir, `work-briefing-cache-${Date.now()}`);
+		mkdirSync(workDir, { recursive: true });
+		const { model, getCalls } = createThrowingModel(new Error("LLM down for test"));
+
+		const runtime = await Runtime.start({
+			model: { provider: "custom", adapter: model },
+			noDefaultBundles: true,
+			workDir,
+			logging: { disabled: true },
+		});
+		try {
+			await provisionTestWorkspace(runtime);
+			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
+
+			const ctx = {
+				identity: null,
+				workspaceId: TEST_WORKSPACE_ID,
+				workspaceAgents: null,
+				workspaceModelOverride: null,
+			};
+
+			// Seed a conversation so activity isn't empty — without this the
+			// generator short-circuits to a "quiet day" briefing and the
+			// model never gets invoked (the cache test would pass vacuously).
+			await runWithRequestContext(ctx, async () => {
+				const store = runtime.getStore();
+				await store.create();
+			});
+
+			// First call: model throws, tool returns isError.
+			const first = await runWithRequestContext(ctx, () =>
+				source.execute("briefing", {}),
+			);
+			expect(first.isError).toBe(true);
+			expect(getCalls()).toBe(1);
+
+			// Second call: if the first call had been cached, the tool would
+			// short-circuit before invoking the generator and the model
+			// counter would stay at 1. We expect it to climb to 2 — proving
+			// the failure path skipped cache.set.
+			const second = await runWithRequestContext(ctx, () =>
+				source.execute("briefing", {}),
+			);
+			expect(second.isError).toBe(true);
+			expect(getCalls()).toBe(2);
 		} finally {
 			await runtime.shutdown();
 		}

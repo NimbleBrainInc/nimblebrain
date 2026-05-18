@@ -26,18 +26,20 @@ export interface BriefingSection {
   action?: BriefingAction;
 }
 
-/** Action attached to a briefing section. */
+/** Action attached to a briefing section. Mirrors the canonical
+ * shape in src/services/home-types.ts so the bundle copy doesn't
+ * drift. Discriminated by `type`; the unused payload field is null. */
 export interface BriefingAction {
+  type: "navigate" | "startChat";
   label: string;
-  type: "chat" | "navigate";
-  value: string;
+  route: string | null;
+  prompt: string | null;
 }
 
 /** In-memory cache entry for a generated briefing. */
 export interface BriefingCacheEntry {
   briefing: BriefingOutput;
   generatedAt: number;
-  activityHash: string;
   invalidated: boolean;
 }
 
