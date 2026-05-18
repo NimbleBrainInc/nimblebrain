@@ -26,8 +26,11 @@ export interface ActivityCollectorOptions {
 }
 
 /**
- * Collects activity data from configured sources and returns a unified
- * ActivityOutput snapshot for the home dashboard and briefing tools.
+ * Unified activity collector for both runtime modes.
+ *
+ * In-process platform callers use the ConversationStore-backed source.
+ * The standalone home bundle server uses the JSONL-backed source because it
+ * runs outside Runtime and only has access to workspace files.
  */
 export class ActivityCollector {
   private logDir: string;
@@ -60,7 +63,9 @@ export class ActivityCollector {
             toolUsage: [] as ToolUsageSummary[],
             errors: [] as ErrorEntry[],
           }),
-      this.automationRunsDir ? this.collectAutomationRuns(since, until) : Promise.resolve(null),
+      !category && this.automationRunsDir
+        ? this.collectAutomationRuns(since, until)
+        : Promise.resolve(null),
     ]);
 
     let totalToolCalls = 0;

@@ -65,6 +65,26 @@ function writeLogFile(
 	writeFileSync(join(logDir, filename), content);
 }
 
+function writeAutomationRunFile(logDir: string): string {
+	const automationRunsDir = join(logDir, "automations", "runs");
+	mkdirSync(automationRunsDir, { recursive: true });
+	writeFileSync(
+		join(automationRunsDir, "daily-check.jsonl"),
+		[
+			JSON.stringify({
+				startedAt: "2025-01-01T10:00:00Z",
+				status: "success",
+			}),
+			JSON.stringify({
+				startedAt: "2025-01-01T11:00:00Z",
+				status: "failure",
+				error: "boom",
+			}),
+		].join("\n"),
+	);
+	return automationRunsDir;
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -595,22 +615,7 @@ describe("ActivityCollector", () => {
 	});
 
 	it("includes automation run summaries when configured", async () => {
-		const automationRunsDir = join(logDir, "automations", "runs");
-		mkdirSync(automationRunsDir, { recursive: true });
-		writeFileSync(
-			join(automationRunsDir, "daily-check.jsonl"),
-			[
-				JSON.stringify({
-					startedAt: "2025-01-01T10:00:00Z",
-					status: "success",
-				}),
-				JSON.stringify({
-					startedAt: "2025-01-01T11:00:00Z",
-					status: "failure",
-					error: "boom",
-				}),
-			].join("\n"),
-		);
+		const automationRunsDir = writeAutomationRunFile(logDir);
 
 		const collector = new ActivityCollector({
 			logDir,
@@ -640,6 +645,32 @@ describe("ActivityCollector", () => {
 				},
 			],
 		});
+	});
+
+	it("omits automation run summaries when category is filtered", async () => {
+		const automationRunsDir = writeAutomationRunFile(logDir);
+		writeLogFile(logDir, "2025-01-01", [
+			{
+				ts: "2025-01-01T10:00:00Z",
+				event: "run.done",
+				toolStats: { "test__tool": { count: 1, totalMs: 100 } },
+			},
+		]);
+
+		const collector = new ActivityCollector({
+			logDir,
+			conversations: { kind: "store", store: makeMockStore() },
+			automationRunsDir,
+		});
+
+		const result = await collector.collect({
+			since: "2025-01-01T00:00:00Z",
+			until: "2025-01-02T00:00:00Z",
+			category: "tools",
+		});
+
+		expect(result.tool_usage).toHaveLength(1);
+		expect(result.automations).toBeUndefined();
 	});
 
 	it("defaults to 24-hour window when no since/until provided", async () => {
