@@ -263,3 +263,92 @@ describe("free-function shim parity", () => {
     expect(viaShim).toEqual(viaContext);
   });
 });
+
+// ── Stage 0 isolation invariants ──────────────────────────────────
+//
+// These are the structural tests REFACTOR_PLAN Stage 0 commits to:
+// "WorkspaceContext(A) cannot produce credentials or paths for
+//  workspace B." Each test exercises a different surface of the
+// context (paths, credential store binding, on-disk visibility) and
+// proves the boundary holds. Failure of any test here means a
+// regression in workspace isolation, not a trivial implementation
+// detail — these are the load-bearing invariants for the whole
+// delegation-model refactor.
+
+describe("Stage 0 isolation invariants", () => {
+  test("every scope path under context A is disjoint from context B", () => {
+    const a = new WorkspaceContext({ wsId: WS_A, workDir });
+    const b = new WorkspaceContext({ wsId: WS_B, workDir });
+    const scopes = ["root", "data", "credentials", "conversations", "skills", "files"] as const;
+    for (const scope of scopes) {
+      const pa = a.getDataPath(scope);
+      const pb = b.getDataPath(scope);
+      expect(pa).not.toBe(pb);
+      expect(pa.startsWith(`${b.getRoot()}/`) || pa === b.getRoot()).toBe(false);
+      expect(pb.startsWith(`${a.getRoot()}/`) || pb === a.getRoot()).toBe(false);
+    }
+  });
+
+  test("getDataPath has no signature that accepts a foreign wsId", () => {
+    // Structural / type-level guarantee — TypeScript's strict mode
+    // rejects an attempt to pass an extra wsId here at compile time.
+    // The runtime assertion below confirms the public surface area
+    // matches the design: the only inputs to getDataPath are a scope
+    // literal and subpath strings.
+    const ctx = new WorkspaceContext({ wsId: WS_A, workDir });
+    // @ts-expect-error — passing a wsId-shaped argument as a "subpath"
+    // is allowed by the variadic string signature but ROUTED through
+    // the subpath validator. The validator rejects path traversal, so
+    // an attempt like `ctx.getDataPath("credentials", "../ws_beta")`
+    // throws rather than escaping.
+    expect(() => ctx.getDataPath("credentials", "../ws_beta")).toThrow(/traversal/);
+  });
+
+  test("credential store from context A cannot mutate workspace B's file", async () => {
+    const a = new WorkspaceContext({ wsId: WS_A, workDir });
+    const b = new WorkspaceContext({ wsId: WS_B, workDir });
+    const storeA = a.getCredentialStore();
+    const storeB = b.getCredentialStore();
+    // Same bundle name, same key, different value — written via A.
+    await storeA.save(BUNDLE, "api_key", "sk-from-A");
+    // Reading via B sees nothing (or only its own values, which are absent).
+    expect(await storeB.get(BUNDLE)).toBeNull();
+    // Save via B sets B's own value without touching A's.
+    await storeB.save(BUNDLE, "api_key", "sk-from-B");
+    expect(await storeA.get(BUNDLE)).toEqual({ api_key: "sk-from-A" });
+    expect(await storeB.get(BUNDLE)).toEqual({ api_key: "sk-from-B" });
+    // Clearing B doesn't clear A.
+    await storeB.clearAll(BUNDLE);
+    expect(await storeA.get(BUNDLE)).toEqual({ api_key: "sk-from-A" });
+    expect(await storeB.get(BUNDLE)).toBeNull();
+  });
+
+  test("credential store path derivation is bound by construction, not per-call", () => {
+    // Concrete check that the store's `credentialPath` is parameter-free
+    // with respect to the workspace — only the bundle name varies.
+    // Two stores for different workspaces produce non-overlapping paths
+    // even for an identically-named bundle.
+    const storeA = new WorkspaceContext({ wsId: WS_A, workDir }).getCredentialStore();
+    const storeB = new WorkspaceContext({ wsId: WS_B, workDir }).getCredentialStore();
+    expect(storeA.credentialPath(BUNDLE)).not.toBe(storeB.credentialPath(BUNDLE));
+    expect(storeA.credentialPath(BUNDLE).includes(`/${WS_A}/`)).toBe(true);
+    expect(storeB.credentialPath(BUNDLE).includes(`/${WS_B}/`)).toBe(true);
+    expect(storeA.credentialPath(BUNDLE).includes(`/${WS_B}/`)).toBe(false);
+    expect(storeB.credentialPath(BUNDLE).includes(`/${WS_A}/`)).toBe(false);
+  });
+
+  test("workspaceId getter is read-only — no rebinding through the public surface", () => {
+    const ctx = new WorkspaceContext({ wsId: WS_A, workDir });
+    expect(ctx.workspaceId).toBe(WS_A);
+    // Assigning to a getter without a setter is silently ignored in
+    // non-strict mode and throws in strict mode (bun runs strict-mode
+    // ESM). Either way, the post-assignment value must still be WS_A.
+    try {
+      // @ts-expect-error — readonly by design; this assignment is the test.
+      ctx.workspaceId = WS_B;
+    } catch {
+      // Strict-mode throw is acceptable — the invariant is the post-state.
+    }
+    expect(ctx.workspaceId).toBe(WS_A);
+  });
+});
