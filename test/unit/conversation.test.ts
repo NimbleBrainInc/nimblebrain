@@ -122,7 +122,11 @@ describe("JsonlConversationStore (persistence)", () => {
 
 describe("windowMessages", () => {
   function wmsg(role: "user" | "assistant", text: string): Message {
-    return { role, content: text };
+    // V3 shape: user/assistant content is an array of typed parts. Some
+    // older tests passed strings here, which fell through the legacy
+    // `chars/4` reducer; the part-aware `estimateMessageTokens` is strict
+    // about the V3 shape so all helpers below use the correct one.
+    return { role, content: [{ type: "text", text }] } as Message;
   }
 
   it("returns all messages when under budget", () => {

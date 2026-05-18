@@ -92,6 +92,7 @@ const DEFAULT_MODEL = "claude-sonnet-4-6";
 
 import { DEFAULT_MAX_INPUT_TOKENS, DEFAULT_MAX_ITERATIONS } from "../limits.ts";
 import { resolveMaxOutputTokens } from "./resolve-max-output-tokens.ts";
+import { resolveMessageBudget } from "./resolve-message-budget.ts";
 import { resolveThinking } from "./resolve-thinking.ts";
 import { isToolEligibleForPromotion } from "./tool-eligibility.ts";
 
@@ -345,8 +346,15 @@ export class Runtime {
 
     const gate = config.confirmationGate ?? new NoopConfirmationGate();
 
-    const maxInputTokens = config.maxInputTokens ?? DEFAULT_MAX_INPUT_TOKENS;
-    const maxHistoryMessages = config.maxHistoryMessages ?? DEFAULT_MAX_HISTORY_MESSAGES;
+    // Neither `maxInputTokens` nor `maxHistoryMessages` are composed at
+    // runtime startup anymore — they're read per-call from `this.config`
+    // in `chat()`. The per-call message budget comes from the resolved
+    // model's context window minus the static per-call overhead (system
+    // prompt + tools + reserved output + safety margin), capped by the
+    // operator's `config.maxInputTokens`. See `resolve-message-budget.ts`.
+    // The runtime-level hooks below carry only `beforeToolCall`;
+    // `transformContext` is built per-request so the budget reflects
+    // what the model actually sees on each call.
 
     // Build delegate context for nb__delegate tool
     // Use a late-bound getter for defaultModel so it reflects live config changes
@@ -387,7 +395,7 @@ export class Runtime {
       getRemainingIterations: () => delegateTracker.getRemainingIterations(),
       getParentRunId: () => delegateTracker.getParentRunId(),
       defaultModel: getDefaultModel(),
-      defaultMaxInputTokens: maxInputTokens,
+      defaultMaxInputTokens: config.maxInputTokens ?? DEFAULT_MAX_INPUT_TOKENS,
       // Raw operator config (may be undefined). Delegate resolves against
       // the child's model at execution time so the resolved values fit
       // the child's model rather than the parent's.
@@ -422,15 +430,11 @@ export class Runtime {
     const features = resolveFeatures(config.features);
     const hooks: EngineHooks = {
       beforeToolCall: createPrivilegeHook(gate, events, features),
-      transformContext: (messages) => {
-        // Order matters: slice by count first (cheap, deterministic), then
-        // strip older-turn reasoning (drops bytes we'd otherwise budget for),
-        // then window by token budget. Reasoning stripping runs before
-        // windowing so the budget reflects what the model actually sees.
-        const sliced = sliceHistory(messages, maxHistoryMessages);
-        const reasoningStripped = stripOlderReasoning(sliced);
-        return windowMessages(reasoningStripped, maxInputTokens);
-      },
+      // `transformContext` is intentionally NOT set here. It is composed
+      // per-request in `chat()` because the message budget depends on
+      // values only known at call time (the resolved model's context
+      // window, the per-call system prompt and tool set, and the
+      // resolved `maxOutputTokens`). See `resolveMessageBudget`.
     };
 
     const store = buildStore(config);
@@ -944,6 +948,33 @@ export class Runtime {
       maxOutputTokens: resolvedMaxOutputTokens,
     });
 
+    // Compose the per-call message budget from the model's actual context
+    // window minus the static per-call overhead. `configMaxInputTokens`
+    // is treated as a CAP — never a target. See
+    // `src/runtime/resolve-message-budget.ts`.
+    const configMaxInputTokens = this.config.maxInputTokens ?? DEFAULT_MAX_INPUT_TOKENS;
+    const messageBudget = resolveMessageBudget({
+      model: resolvedModelString,
+      configMaxInputTokens,
+      systemPrompt,
+      tools,
+      maxOutputTokens: resolvedMaxOutputTokens,
+    });
+
+    // Per-request hooks: inherit `beforeToolCall` from the runtime-level
+    // hooks; compose `transformContext` here so the windowing budget is
+    // the one we just resolved for THIS call. The order (slice → strip
+    // older reasoning → window by token budget) is preserved.
+    const maxHistoryMessages = this.config.maxHistoryMessages ?? DEFAULT_MAX_HISTORY_MESSAGES;
+    const perRequestHooks: EngineHooks = {
+      ...this.hooks,
+      transformContext: (historyMessages) => {
+        const sliced = sliceHistory(historyMessages, maxHistoryMessages);
+        const reasoningStripped = stripOlderReasoning(sliced);
+        return windowMessages(reasoningStripped, messageBudget.budget);
+      },
+    };
+
     // Build pre-emit run telemetry tied to the engine's runId. The engine fires
     // these immediately after `run.start` and before any LLM call so the conv
     // log records what the prompt looked like for this turn — even if the LLM
@@ -959,11 +990,15 @@ export class Runtime {
     const engineConfig: EngineConfig = {
       model: resolvedModelString,
       maxIterations: request.maxIterations ?? this.config.maxIterations ?? DEFAULT_MAX_ITERATIONS,
-      maxInputTokens: this.config.maxInputTokens ?? DEFAULT_MAX_INPUT_TOKENS,
+      // Surfaced on run.start telemetry. The actual budget enforcement
+      // happens inside `perRequestHooks.transformContext` above; this
+      // value is reported for observability so operators can see what
+      // the call was allotted vs. what it actually used.
+      maxInputTokens: messageBudget.budget,
       maxOutputTokens: resolvedMaxOutputTokens,
       ...(resolvedThinking ? { thinking: resolvedThinking } : {}),
       maxToolResultSize: this.config.maxToolResultSize,
-      hooks: this.hooks,
+      hooks: perRequestHooks,
       runMetadata: {
         skillsLoaded,
         contextAssembled,

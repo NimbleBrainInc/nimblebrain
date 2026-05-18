@@ -1,31 +1,19 @@
 import type { LanguageModelV3Message } from "@ai-sdk/provider";
+import { estimateMessageTokens } from "../engine/token-estimate.ts";
 
 /**
  * Estimate token count for a message.
- * Uses ~4 characters per token (rough but fast).
- * V3 messages: system has string content, user/assistant/tool have content as array of parts.
+ *
+ * Routed through the part-aware `estimateMessageTokens` (shared with the
+ * `context.assembled` telemetry path) so the windowing decision and the
+ * reported token count agree on the same numbers. The previous local
+ * `chars/4` heuristic over-counted by ~3 tokens per byte for any message
+ * carrying a rehydrated `file` part (a `Uint8Array` serialized as
+ * `{"0":n,"1":n,…}`), which caused excessive trimming when images were
+ * present even though the provider would charge the image ~1.5K tokens.
  */
 function estimateTokens(msg: LanguageModelV3Message): number {
-  if (typeof msg.content === "string") {
-    // system message
-    return Math.ceil(msg.content.length / 4);
-  }
-  // content is an array of parts — serialize each part's text/output
-  let length = 0;
-  for (const part of msg.content) {
-    if ("text" in part && typeof part.text === "string") {
-      length += part.text.length;
-    } else if ("input" in part) {
-      // tool-call part
-      length += JSON.stringify(part.input).length;
-    } else if ("output" in part) {
-      // tool-result part
-      length += JSON.stringify(part.output).length;
-    } else {
-      length += JSON.stringify(part).length;
-    }
-  }
-  return Math.ceil(length / 4);
+  return estimateMessageTokens(msg);
 }
 
 /**
