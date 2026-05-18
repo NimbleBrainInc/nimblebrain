@@ -326,8 +326,8 @@ Run `nb --help` or `nb <command> --help` for full usage. If you haven't run `bun
 |----------|---------|
 | `NB_WORK_DIR` | Override working directory (takes precedence over config and `--workdir`) |
 | `ALLOWED_ORIGINS` | Comma-separated allowed CORS origins (for cookie-based auth) |
-| `MCP_MAX_SESSIONS` | Max concurrent MCP sessions (default: 100) |
-| `MCP_SESSION_TTL_MS` | MCP session inactivity TTL in ms (default: 1800000) |
+| `MCP_MAX_SESSIONS` | Max concurrent MCP sessions before LRU eviction kicks in (default: 100) |
+| `MCP_SESSION_TTL_SECONDS` | MCP session idle TTL in seconds; drives both transport-map sweep and registry TTL (default: 28800, i.e. 8h) |
 | `NB_CHAT_RATE_LIMIT` | Chat requests per minute per user (default: 20) |
 | `NB_TOOL_RATE_LIMIT` | Tool calls per minute per user (default: 60) |
 | `NB_BUNDLE_START_CONCURRENCY` | Max bundle subprocesses spawned in parallel at boot (default: 4, set to 1 for sequential) |
@@ -598,7 +598,7 @@ Bundles can be installed per-workspace (tracked via `BundleInstance.wsId`). Each
 
 **CORS:** Dynamic. Dev mode: `Access-Control-Allow-Origin: *`. With auth: only `ALLOWED_ORIGINS` env var origins, with credentials support.
 
-**MCP endpoint (`/mcp`):** Streamable HTTP. The bundled web UI uses this endpoint to drive the platform, and external MCP clients (Claude Code, Claude Desktop, Cursor) can connect to the same endpoint. 100 concurrent sessions (env: `MCP_MAX_SESSIONS`), 30-minute TTL (env: `MCP_SESSION_TTL_MS`). When `authkitDomain` is configured, returns `WWW-Authenticate` header on 401 for automatic OAuth discovery by MCP clients. Full setup guide: [MCP Endpoint](https://docs.nimblebrain.ai/api/mcp-endpoint/) and [Connecting External Clients](https://docs.nimblebrain.ai/guide/mcp-connect/) on docs.nimblebrain.ai.
+**MCP endpoint (`/mcp`):** Streamable HTTP. The bundled web UI uses this endpoint to drive the platform, and external MCP clients (Claude Code, Claude Desktop, Cursor) can connect to the same endpoint. 100 concurrent sessions (env: `MCP_MAX_SESSIONS`, LRU-evicted at the cap rather than 429'd), 8-hour idle TTL (env: `MCP_SESSION_TTL_SECONDS`). When `authkitDomain` is configured, returns `WWW-Authenticate` header on 401 for automatic OAuth discovery by MCP clients. Full setup guide: [MCP Endpoint](https://docs.nimblebrain.ai/api/mcp-endpoint/) and [Connecting External Clients](https://docs.nimblebrain.ai/guide/mcp-connect/) on docs.nimblebrain.ai.
 
 **Deploying behind a TLS-terminating proxy:** OAuth discovery advertises its `resource` URL from `X-Forwarded-Proto`, falling back to the request scheme. Upstream proxies (AWS ALB, nginx, Cloudflare, etc.) must set that header to the client-facing scheme (`https`) for MCP OAuth to work. The bundled `nimblebrain-web` Caddy container already honors it via `trusted_proxies static private_ranges`; if you front it with an additional proxy, ensure that proxy also propagates `X-Forwarded-Proto`. Without this, `/.well-known/oauth-protected-resource` returns `resource: http://...` and modern MCP clients reject the response. See [MCP OAuth behind a reverse proxy](https://docs.nimblebrain.ai/deploy/security/#mcp-oauth-behind-a-reverse-proxy) for ALB / nginx / Caddy snippets.
 
