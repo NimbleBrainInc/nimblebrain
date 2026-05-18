@@ -90,7 +90,12 @@ export function bundleNameFromRef(ref: BundleRef): string {
  * Matches the mpak cache convention: @scope/name → scope-name
  */
 export function deriveBundleDataDir(name: string): string {
-  return name.replace("@", "").replace("/", "-");
+  return name
+    .replace(/^@/, "")
+    .replace(/[/.]/g, "-")
+    .replace(/[^a-z0-9-]/gi, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
 }
 
 /**

@@ -26,6 +26,16 @@ describe("resolveBundleDataDir", () => {
     expect(result).toBe("/home/user/.nimblebrain/workspaces/ws_abc/data/acme-tasks");
   });
 
+  it("keeps absolute path bundle refs inside one data directory", () => {
+    const result = resolveBundleDataDir(
+      "/home/user/.nimblebrain/workspaces/ws_abc",
+      "/Users/dev/Code/synapse-apps/synapse-crm",
+    );
+    expect(result).toBe(
+      "/home/user/.nimblebrain/workspaces/ws_abc/data/Users-dev-Code-synapse-apps-synapse-crm",
+    );
+  });
+
   it("default workspace resolves correctly for backward compat", () => {
     // Default workspace path is simply the workDir itself
     const workDir = "/home/user/.nimblebrain";
@@ -34,8 +44,8 @@ describe("resolveBundleDataDir", () => {
   });
 });
 
-describe("deriveBundleDataDir (unchanged)", () => {
-  it("strips @ and replaces / with -", () => {
+describe("deriveBundleDataDir", () => {
+  it("strips scoped-package @ and replaces slash with dash", () => {
     expect(deriveBundleDataDir("@nimblebraininc/crm")).toBe("nimblebraininc-crm");
   });
 
@@ -46,5 +56,21 @@ describe("deriveBundleDataDir (unchanged)", () => {
   it("handles @scope/name pattern", () => {
     expect(deriveBundleDataDir("@foo/tasks")).toBe("foo-tasks");
     expect(deriveBundleDataDir("@bar/tasks")).toBe("bar-tasks");
+  });
+
+  it("collapses absolute path bundle refs into one directory segment", () => {
+    expect(deriveBundleDataDir("/abs/path/with/slashes")).toBe("abs-path-with-slashes");
+  });
+
+  it("replaces reverse-DNS separators", () => {
+    expect(deriveBundleDataDir("com.example/app")).toBe("com-example-app");
+  });
+
+  it("preserves capitals while replacing dots", () => {
+    expect(deriveBundleDataDir("Name.With.Capitals/app")).toBe("Name-With-Capitals-app");
+  });
+
+  it("collapses unsafe characters and duplicate dashes", () => {
+    expect(deriveBundleDataDir("/a//b @ c")).toBe("a-b-c");
   });
 });
