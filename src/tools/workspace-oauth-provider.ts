@@ -14,6 +14,7 @@ import type {
 } from "@modelcontextprotocol/sdk/shared/auth.js";
 import { validateBundleUrl } from "../bundles/url-validator.ts";
 import { log } from "../cli/log.ts";
+import type { WorkspaceContext } from "../workspace/context.ts";
 import { register as registerInteractiveFlow } from "./oauth-flow-registry.ts";
 
 /**
@@ -59,8 +60,8 @@ export class InteractiveOAuthNotSupportedError extends Error {
  * `verifier.json` (PKCE), `identity.json` (OIDC claims when issued).
  */
 export type OAuthOwnerContext =
-  | { type: "workspace"; wsId: string }
-  | { type: "user"; userId: string };
+  | { readonly type: "workspace"; readonly wsId: string }
+  | { readonly type: "user"; readonly userId: string };
 
 export interface WorkspaceOAuthProviderOptions {
   /**
@@ -71,6 +72,23 @@ export interface WorkspaceOAuthProviderOptions {
   owner: OAuthOwnerContext;
   serverName: string;
   workDir: string;
+  /**
+   * Workspace-bound context to derive the on-disk path from. Optional;
+   * when present AND `owner.type === "workspace"`, the provider asserts
+   * `workspaceContext.workspaceId === owner.wsId` and resolves the
+   * credential directory through `workspaceContext.getDataPath(...)`
+   * instead of reconstructing `workspaces/{wsId}/credentials/mcp-oauth/...`
+   * from `workDir`. This is the preferred path for new construction sites
+   * — it removes one independent place that builds workspace-scoped paths.
+   * The classic `(owner, workDir)` construction remains valid for user-
+   * scoped owners and for legacy call sites pending migration in
+   * `.tasks/delegation-model/008-migrate-oauth-provider-construction.md`.
+   *
+   * Throws at construction when `owner.type === "user"` (the user-scope
+   * owner stores tokens under `users/{userId}/...`, outside any workspace
+   * — a workspace context would be a category error).
+   */
+  workspaceContext?: WorkspaceContext;
   /** Absolute callback URL — must match the /v1/mcp-auth/callback route. */
   callbackUrl: string;
   /**
@@ -493,21 +511,52 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     this.additionalAuthorizationParams = opts.additionalAuthorizationParams;
     this.abortSignal = opts.abortSignal;
 
-    // Resolve the per-owner storage root. Both scopes use the same
-    // `<root>/<scope-dir>/<id>/credentials/mcp-oauth/<server>/` layout
-    // so consumers can swap owner contexts without learning a new
-    // directory shape.
-    const ownerSegment = opts.owner.type === "workspace" ? "workspaces" : "users";
-    const ownerId = opts.owner.type === "workspace" ? opts.owner.wsId : opts.owner.userId;
-    assertSafeOwnerId(ownerId);
-    this.dataDir = join(
-      opts.workDir,
-      ownerSegment,
-      ownerId,
-      "credentials",
-      "mcp-oauth",
-      opts.serverName,
-    );
+    // Resolve the per-owner storage root. Two construction modes:
+    //
+    //   1. Workspace-scoped owner WITH a `workspaceContext`: the typed
+    //      handle owns the workspace's path layout. We assert the context
+    //      matches the declared owner (so a caller can't pair a context
+    //      bound to ws_A with `owner: {type: "workspace", wsId: ws_B}`)
+    //      and derive `dataDir` through `getDataPath` so the workspace
+    //      directory structure stays defined in one place.
+    //
+    //   2. Workspace-scoped owner WITHOUT a context, or user-scoped owner:
+    //      legacy `<workDir>/<scope-dir>/<id>/credentials/mcp-oauth/<server>/`
+    //      construction. Stays valid until Task 008 migrates the rest of
+    //      the construction sites.
+    //
+    // Owner-id and server-name pass through the same `assertSafeOwnerId`
+    // discipline in both modes — even when the workspace-context branch
+    // derives the path through the typed handle, the server-name component
+    // is still validated here so unsafe input fails at construction.
+    if (opts.workspaceContext) {
+      if (opts.owner.type !== "workspace") {
+        throw new Error(
+          "[workspace-oauth-provider] workspaceContext is only valid with workspace-typed owners; " +
+            "user-scoped tokens live outside any workspace.",
+        );
+      }
+      if (opts.workspaceContext.workspaceId !== opts.owner.wsId) {
+        throw new Error(
+          `[workspace-oauth-provider] owner/context mismatch: ` +
+            `owner.wsId="${opts.owner.wsId}" but workspaceContext.workspaceId="${opts.workspaceContext.workspaceId}".`,
+        );
+      }
+      assertSafeOwnerId(opts.owner.wsId);
+      this.dataDir = opts.workspaceContext.getDataPath("credentials", "mcp-oauth", opts.serverName);
+    } else {
+      const ownerSegment = opts.owner.type === "workspace" ? "workspaces" : "users";
+      const ownerId = opts.owner.type === "workspace" ? opts.owner.wsId : opts.owner.userId;
+      assertSafeOwnerId(ownerId);
+      this.dataDir = join(
+        opts.workDir,
+        ownerSegment,
+        ownerId,
+        "credentials",
+        "mcp-oauth",
+        opts.serverName,
+      );
+    }
   }
 
   // ── OAuthClientProvider interface ─────────────────────────────────
