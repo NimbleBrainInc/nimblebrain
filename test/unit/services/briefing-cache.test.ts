@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BundleInstance } from "../../../src/bundles/types.ts";
@@ -183,5 +183,20 @@ describe("computeBriefingFingerprint", () => {
 				instance("todo", "running", join(dir, "absent")),
 			]),
 		).not.toThrow();
+	});
+
+	test("a dangling symlink in a data dir does not crash the walk", () => {
+		const logDir = join(dir, "logs");
+		mkdirSync(logDir);
+		symlinkSync(join(dir, "does-not-exist"), join(logDir, "broken-link"));
+		expect(() => computeBriefingFingerprint(logDir, [])).not.toThrow();
+	});
+
+	test("a symlink to a directory is a stable leaf, not infinite recursion", () => {
+		const logDir = join(dir, "logs");
+		mkdirSync(logDir);
+		symlinkSync(dir, join(logDir, "self-link"));
+		const fp = computeBriefingFingerprint(logDir, []);
+		expect(fp).toBe(computeBriefingFingerprint(logDir, []));
 	});
 });
