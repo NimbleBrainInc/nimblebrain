@@ -70,6 +70,7 @@ import type { ToolRegistry } from "../tools/registry.ts";
 import { createSystemTools } from "../tools/system-tools.ts";
 import type { ResourceData } from "../tools/types.ts";
 import { UserConnectorStore } from "../users/user-connector-store.ts";
+import { WorkspaceContext } from "../workspace/context.ts";
 import { WorkspaceStore } from "../workspace/workspace-store.ts";
 import { RunInProgressError } from "./errors.ts";
 import { PlacementRegistry } from "./placement-registry.ts";
@@ -635,10 +636,9 @@ export class Runtime {
     // Resolve conversation store: always workspace-scoped.
     // JsonlConversationStore is stateless (each operation reads from disk),
     // so per-request instances are safe.
-    const workDir = resolveWorkDir(this.config);
-    const wsConvDir = join(workDir, "workspaces", wsId, "conversations");
+    const wsContext = this.getWorkspaceContext(wsId);
     const store: ConversationStore = new EventSourcedConversationStore({
-      dir: wsConvDir,
+      dir: wsContext.getDataPath("conversations"),
       logLevel: this.config.logging?.level ?? "normal",
     });
 
@@ -1366,9 +1366,9 @@ export class Runtime {
   /** Get a workspace-scoped ConversationStore. */
   getStore(wsId?: string): ConversationStore {
     const id = wsId ?? this.requireWorkspaceId();
-    const workDir = resolveWorkDir(this.config);
+    const ctx = this.getWorkspaceContext(id);
     return new EventSourcedConversationStore({
-      dir: join(workDir, "workspaces", id, "conversations"),
+      dir: ctx.getDataPath("conversations"),
       logLevel: this.config.logging?.level ?? "normal",
     });
   }
@@ -1479,17 +1479,34 @@ export class Runtime {
   }
 
   /**
+   * Construct a `WorkspaceContext` bound to `wsId` and the runtime's
+   * `workDir`. The context is the typed handle to workspace-scoped paths
+   * and the workspace credential store; call sites should prefer this to
+   * `getWorkspaceScopedDir(wsId)` + `join` because it routes through the
+   * single validation point (`WORKSPACE_ID_RE`) and forbids subpath
+   * traversal.
+   *
+   * Instances are constructed fresh per call — they are lightweight (one
+   * regex validation + a handful of field assignments) and immutable, so
+   * sharing them across requests is never a correctness problem and not
+   * sharing them avoids any cache-invalidation question when a workspace
+   * is removed.
+   */
+  getWorkspaceContext(wsId: string): WorkspaceContext {
+    return new WorkspaceContext({ wsId, workDir: resolveWorkDir(this.config) });
+  }
+
+  /**
    * Resolve the workspace-scoped data directory for the current request.
    * Returns `{workDir}/workspaces/{wsId}` when a workspace is active.
    * Dev mode (no identity provider) falls back to global workDir.
    */
   getWorkspaceScopedDir(wsId?: string | null): string {
     const id = wsId ?? this.getCurrentWorkspaceId();
-    const workDir = resolveWorkDir(this.config);
-    if (id) return join(workDir, "workspaces", id);
+    if (id) return this.getWorkspaceContext(id).getRoot();
 
     // Dev mode (no identity provider) — allow global fallback for local development
-    if (!this._identityProvider) return workDir;
+    if (!this._identityProvider) return resolveWorkDir(this.config);
 
     throw new Error("No workspace context — cannot resolve scoped directory.");
   }
@@ -1764,7 +1781,7 @@ export class Runtime {
     // Live org-tier dir, fresh every call.
     orgPool.push(...loadScopedSkills(join(workDir, "skills"), "org"));
 
-    const workspaceDir = join(workDir, "workspaces", wsId, "skills");
+    const workspaceDir = this.getWorkspaceContext(wsId).getDataPath("skills");
     const workspacePool = loadScopedSkills(workspaceDir, "workspace");
 
     const userPool: Skill[] = [];
