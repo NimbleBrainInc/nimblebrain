@@ -51,6 +51,7 @@ import type { Layer3SkillEntry, PromptAppInfo } from "../prompt/compose.ts";
 import { composeSystemPrompt } from "../prompt/compose.ts";
 import { ConnectorDirectory } from "../registries/directory.ts";
 import { RegistryStore } from "../registries/registry-store.ts";
+import { synthesizeBundleSkill } from "../skills/bundle-skills.ts";
 import {
   loadBuiltinSkills,
   loadCoreSkills,
@@ -849,12 +850,18 @@ export class Runtime {
     // Layer 3 selection — pick skills with `loading_strategy: always` and
     // `tool_affined` strategies based on the active tool set. The merged pool
     // includes platform / workspace / user tier skills (user > workspace >
-    // platform on name collisions).
+    // platform on name collisions). Bundle-exposed `skill://<name>/usage`
+    // resources are synthesized into the pool as `tool_affined` skills so a
+    // workspace-level chat picks them up whenever the bundle's tools are
+    // surfaced — no `appContext` scoping required (the prior path only fired
+    // under `appContext`, missing cross-app workflows).
     const userId = reqIdentity?.id ?? null;
     const layer3Pool = this.loadConversationSkills(wsId, userId);
+    const bundleSkills = await this.loadBundleSkills(wsId);
+    const mergedLayer3Pool: Skill[] = [...layer3Pool, ...bundleSkills];
     const activeToolNames = tools.map((t) => t.name);
     const selectedLayer3 = selectLayer3Skills({
-      skills: layer3Pool,
+      skills: mergedLayer3Pool,
       activeTools: activeToolNames,
     });
     const layer3Entries: Layer3SkillEntry[] = selectedLayer3.map((s) => ({
@@ -1262,6 +1269,41 @@ export class Runtime {
     } catch {
       return false;
     }
+  }
+
+  /**
+   * Probe every MCP source in `wsId`'s registry for a `skill://<name>/usage`
+   * resource and synthesize a Layer 3 `Skill` for any that responds. Each
+   * synthesized skill is `tool_affined` to `<name>__*`, so it loads via the
+   * standard `selectLayer3Skills` path whenever the bundle's tools are in
+   * the active toolset — no `appContext` required.
+   *
+   * Use case: a workspace-level chat where the model needs the bundle's
+   * workflow guidance but isn't "entered" into the app. Without this, the
+   * skill lived only on the `appContext`-scoped `<app-guide>` path and was
+   * invisible to cross-bundle chats.
+   *
+   * Resource fetches reuse `getAppSkillResource`'s 5-minute cache, so this
+   * stays cheap on warm requests. Per-source errors are swallowed (resource
+   * not found is the normal not-published case).
+   */
+  private async loadBundleSkills(wsId: string): Promise<Skill[]> {
+    const registry = this._workspaceRegistries.get(wsId);
+    if (!registry) return [];
+
+    const results: Skill[] = [];
+    for (const source of registry.getSources()) {
+      if (!(source instanceof McpSource)) continue;
+      try {
+        const body = await this.getAppSkillResource(source.name);
+        if (body) {
+          results.push(synthesizeBundleSkill({ serverName: source.name, body }));
+        }
+      } catch {
+        // Source crashed / stopped / no skill resource — skip silently.
+      }
+    }
+    return results;
   }
 
   /**
