@@ -1,7 +1,20 @@
+import { getModelByString } from "./catalog.ts";
+
 const PDF_MIME = "application/pdf";
 
-const ANTHROPIC_PDF_REQUEST_LIMIT_BYTES = 32 * 1024 * 1024;
-const OPENAI_PDF_REQUEST_LIMIT_BYTES = 50 * 1024 * 1024;
+// Per-provider PDF byte budgets. Per-file and per-request use the same
+// value: we keep one knob until the catalog grows a budget field.
+// Sources:
+//   - Anthropic: 32 MB request total (including all inputs).
+//   - OpenAI: 50 MB request total; per-file documented at 32 MB but the
+//     platform's `maxFileSize` upload cap (26 MB default) is what bounds
+//     per-file in practice.
+//   - Other providers fall through to a conservative default.
+const PROVIDER_PDF_LIMIT_BYTES: Record<string, number> = {
+  anthropic: 32 * 1024 * 1024,
+  openai: 50 * 1024 * 1024,
+};
+const DEFAULT_PDF_LIMIT_BYTES = 32 * 1024 * 1024;
 
 export interface FileInputPolicy {
   pdf?: {
@@ -10,42 +23,23 @@ export interface FileInputPolicy {
   };
 }
 
+/**
+ * Derive a provider-aware file-input policy for the resolved model from
+ * the model catalog (`src/model/catalog-data.json`). PDF support is read
+ * from `modalities.input` — one source of truth. Adding a new model or
+ * provider via `bun run sync-models` automatically picks up here; no
+ * second prefix list to keep in sync.
+ */
 export function getFileInputPolicy(modelString: string): FileInputPolicy {
-  const { provider, modelId } = parseResolvedModelString(modelString);
-
-  if (provider === "anthropic" && modelId.startsWith("claude-")) {
-    return {
-      pdf: {
-        maxFileBytes: ANTHROPIC_PDF_REQUEST_LIMIT_BYTES,
-        maxTotalBytes: ANTHROPIC_PDF_REQUEST_LIMIT_BYTES,
-      },
-    };
-  }
-
-  if (provider === "openai" && supportsOpenAiPdfInput(modelId)) {
-    return {
-      pdf: {
-        maxFileBytes: OPENAI_PDF_REQUEST_LIMIT_BYTES,
-        maxTotalBytes: OPENAI_PDF_REQUEST_LIMIT_BYTES,
-      },
-    };
-  }
-
-  return {};
+  const model = getModelByString(modelString);
+  if (!model) return {};
+  if (!model.modalities.input.includes("pdf")) return {};
+  const limit = PROVIDER_PDF_LIMIT_BYTES[model.provider] ?? DEFAULT_PDF_LIMIT_BYTES;
+  return { pdf: { maxFileBytes: limit, maxTotalBytes: limit } };
 }
 
 export function acceptsFileMime(policy: FileInputPolicy, mimeType: string): boolean {
   return mimeType === PDF_MIME && Boolean(policy.pdf);
-}
-
-function parseResolvedModelString(modelString: string): { provider: string; modelId: string } {
-  const idx = modelString.indexOf(":");
-  if (idx === -1) return { provider: "anthropic", modelId: modelString };
-  return { provider: modelString.slice(0, idx), modelId: modelString.slice(idx + 1) };
-}
-
-function supportsOpenAiPdfInput(modelId: string): boolean {
-  return modelId.startsWith("gpt-4o") || modelId.startsWith("gpt-5");
 }
 
 export const FILE_INPUT_MIMES = {

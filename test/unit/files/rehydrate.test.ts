@@ -142,7 +142,9 @@ describe("rehydrateUserResources", () => {
   });
 
   test("PDF resource_link -> AI SDK file part for supported OpenAI models", async () => {
-    for (const model of ["openai:gpt-4o", "openai:gpt-5", "openai:gpt-5.5"]) {
+    // gpt-5 base is intentionally excluded — the catalog reports
+    // `modalities.input: ["text","image"]` for it (no pdf).
+    for (const model of ["openai:gpt-4o", "openai:gpt-4.1", "openai:gpt-5.5"]) {
       const store = fakeStore({
         fl_pdf1: { data: PDF_BYTES, mimeType: "application/pdf", filename: "doc.pdf" },
       });
@@ -325,7 +327,7 @@ describe("rehydrateUserResources", () => {
         ]),
       ],
       store,
-      { model: "openai:gpt-5", maxExtractedTextSize: 1024 },
+      { model: "openai:gpt-4o", maxExtractedTextSize: 1024 },
     );
 
     const msg = out[0]!;
