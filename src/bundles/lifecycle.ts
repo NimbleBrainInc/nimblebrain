@@ -3,7 +3,6 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { log } from "../cli/log.ts";
 import { cleanupComposioBundle } from "../composio/sdk.ts";
-import { clearAllWorkspaceCredentials } from "../config/workspace-credentials.ts";
 import type { EventSink } from "../engine/types.ts";
 import type { PlacementRegistry } from "../runtime/placement-registry.ts";
 import { FileCredentialStore } from "../tools/credential-store.ts";
@@ -442,7 +441,9 @@ export class BundleLifecycleManager {
     if (instance) {
       const workDir = process.env.NB_WORK_DIR ?? join(homedir(), ".nimblebrain");
       try {
-        await clearAllWorkspaceCredentials(instance.wsId, instance.bundleName, workDir);
+        await new WorkspaceContext({ wsId: instance.wsId, workDir })
+          .getCredentialStore()
+          .clearAll(instance.bundleName);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         process.stderr.write(

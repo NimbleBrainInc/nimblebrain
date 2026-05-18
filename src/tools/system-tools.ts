@@ -10,11 +10,11 @@ import {
 } from "../bundles/workspace-ops.ts";
 import { isToolEnabled, type ResolvedFeatures } from "../config/features.ts";
 import type { ConfirmationGate } from "../config/privilege.ts";
-import { resolveUserConfig } from "../config/workspace-credentials.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import type { EventSink, ToolResult } from "../engine/types.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import type { Skill } from "../skills/types.ts";
+import { WorkspaceContext } from "../workspace/context.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
 import { createManageConnectorsTool } from "./connector-tools.ts";
 import type { ManageConversationContext } from "./conversation-tools.ts";
@@ -761,12 +761,11 @@ async function configureBundle(
     // re-prompts for every field so users can update existing credentials.
     // Prompted values are persisted to the workspace credential store at
     // `{workDir}/workspaces/{wsId}/credentials/{bundle-slug}.json` — no
-    // round-trip through `~/.mpak/config.json`.
-    await resolveUserConfig({
+    // round-trip through `~/.mpak/config.json`. Routed through
+    // `WorkspaceContext` so the store's wsId is bound and validated once.
+    await new WorkspaceContext({ wsId, workDir }).getCredentialStore().resolveUserConfig({
       bundleName: name,
       userConfigSchema: userConfig,
-      wsId,
-      workDir,
       gate: confirmGate,
       forcePrompt: true,
     });

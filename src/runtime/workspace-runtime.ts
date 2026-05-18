@@ -9,13 +9,14 @@
 import { join } from "node:path";
 import { hasPersistedComposioConnection } from "../bundles/composio-connection.ts";
 import { hasPersistedWorkspaceOAuthTokens } from "../bundles/oauth-tokens.ts";
-import { bundleNameFromRef, resolveBundleDataDir, serverNameFromRef } from "../bundles/paths.ts";
+import { bundleNameFromRef, deriveBundleDataDir, serverNameFromRef } from "../bundles/paths.ts";
 import { setPendingAuth } from "../bundles/pending-auth-buffer.ts";
 import { startBundleSource } from "../bundles/startup.ts";
 import type { BundleRef, LocalBundleMeta } from "../bundles/types.ts";
 import { log } from "../cli/log.ts";
 import { ToolRegistry } from "../tools/registry.ts";
 import type { ToolSource } from "../tools/types.ts";
+import { WorkspaceContext } from "../workspace/context.ts";
 import type { Workspace } from "../workspace/types.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
 
@@ -55,12 +56,12 @@ export function buildProcessInventory(
   const entries: ProcessInventoryEntry[] = [];
 
   for (const ws of workspaces) {
-    const wsPath = join(workDir, "workspaces", ws.id);
+    const wsContext = new WorkspaceContext({ wsId: ws.id, workDir });
 
     for (const bundle of ws.bundles) {
       const serverName = serverNameFromRef(bundle);
       const bundleName = bundleNameFromRef(bundle);
-      const dataDir = resolveBundleDataDir(wsPath, bundleName);
+      const dataDir = wsContext.getDataPath("data", deriveBundleDataDir(bundleName));
 
       entries.push({
         wsId: ws.id,

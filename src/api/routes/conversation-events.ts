@@ -8,7 +8,6 @@
  * Returns 404 for non-existent conversations (no existence leaks to unauthorized users).
  */
 
-import { join } from "node:path";
 import { Hono } from "hono";
 import { EventSourcedConversationStore } from "../../conversation/event-sourced-store.ts";
 import { canAccess } from "../../conversation/index-cache.ts";
@@ -27,9 +26,8 @@ export function conversationEventRoutes(ctx: AppContext) {
       const identity = c.var.identity;
       const workspaceId = c.var.workspaceId;
 
-      // Resolve workspace-scoped conversation store
-      const workDir = ctx.runtime.getWorkDir();
-      const wsConvDir = join(workDir, "workspaces", workspaceId, "conversations");
+      // Resolve workspace-scoped conversation store via the typed handle.
+      const wsConvDir = ctx.runtime.getWorkspaceContext(workspaceId).getDataPath("conversations");
       const store = new EventSourcedConversationStore({
         dir: wsConvDir,
         logLevel: "normal",

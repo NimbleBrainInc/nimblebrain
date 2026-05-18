@@ -1,14 +1,10 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import {
-  clearWorkspaceCredential,
-  getWorkspaceCredentials,
-  saveWorkspaceCredential,
-} from "../config/workspace-credentials.ts";
 import { loadCoreSkills, loadSkillDir, partitionSkills } from "../skills/loader.ts";
 import type { Skill } from "../skills/types.ts";
 import { TelemetryManager } from "../telemetry/manager.ts";
+import { WorkspaceContext } from "../workspace/context.ts";
 import { WorkspaceStore } from "../workspace/workspace-store.ts";
 
 const DEFAULT_CONFIG_FILE = "nimblebrain.json";
@@ -233,7 +229,8 @@ export async function configSet(
   const resolvedWorkDir = resolveCliWorkDir(workDir);
   if (!(await requireWorkspace(wsId, resolvedWorkDir))) return;
 
-  await saveWorkspaceCredential(wsId, bundleName, key, value, resolvedWorkDir);
+  const ctx = new WorkspaceContext({ wsId, workDir: resolvedWorkDir });
+  await ctx.getCredentialStore().save(bundleName, key, value);
   console.log(`Saved ${key} for ${bundleName} in workspace ${wsId}`);
 }
 
@@ -242,7 +239,8 @@ export async function configGet(bundleName: string, wsId: string, workDir?: stri
   const resolvedWorkDir = resolveCliWorkDir(workDir);
   if (!(await requireWorkspace(wsId, resolvedWorkDir))) return;
 
-  const creds = await getWorkspaceCredentials(wsId, bundleName, resolvedWorkDir);
+  const ctx = new WorkspaceContext({ wsId, workDir: resolvedWorkDir });
+  const creds = await ctx.getCredentials(bundleName);
   if (!creds || Object.keys(creds).length === 0) {
     console.log(`No config for ${bundleName} in workspace ${wsId}`);
     return;
@@ -263,7 +261,8 @@ export async function configClear(
   const resolvedWorkDir = resolveCliWorkDir(workDir);
   if (!(await requireWorkspace(wsId, resolvedWorkDir))) return;
 
-  const removed = await clearWorkspaceCredential(wsId, bundleName, key, resolvedWorkDir);
+  const ctx = new WorkspaceContext({ wsId, workDir: resolvedWorkDir });
+  const removed = await ctx.getCredentialStore().clear(bundleName, key);
   if (!removed) {
     console.log(`No config key '${key}' for ${bundleName} in workspace ${wsId}`);
     return;

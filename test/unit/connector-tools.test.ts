@@ -18,6 +18,7 @@ import {
   type ManageConnectorsContext,
 } from "../../src/tools/connector-tools.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
+import { WorkspaceContext } from "../../src/workspace/context.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 
 /**
@@ -174,6 +175,7 @@ function buildHarness(opts: { adminId?: string } = {}): Harness {
   const runtime = {
     getWorkDir: () => workDir,
     getWorkspaceStore: () => workspaceStore,
+    getWorkspaceContext: (id: string) => new WorkspaceContext({ wsId: id, workDir }),
     getRegistryStore: () => registryStore,
     getConnectorDirectory: () => new ConnectorDirectory(registryStore),
     getLifecycle: () => lifecycle,

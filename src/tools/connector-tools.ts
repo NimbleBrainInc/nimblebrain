@@ -8,13 +8,7 @@ import type { BundleManifest, BundleRef } from "../bundles/types.ts";
 import { installBundleInWorkspace } from "../bundles/workspace-ops.ts";
 import { log } from "../cli/log.ts";
 import { composioUserId, createComposioSession } from "../composio/sdk.ts";
-import {
-  clearAllWorkspaceCredentials,
-  clearWorkspaceCredential,
-  getWorkspaceCredentials,
-  saveWorkspaceCredential,
-  type UserConfigFieldDef,
-} from "../config/workspace-credentials.ts";
+import type { UserConfigFieldDef } from "../config/workspace-credentials.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import type { ToolResult } from "../engine/types.ts";
 import type { UserIdentity } from "../identity/provider.ts";
@@ -698,7 +692,8 @@ async function handleListInstalled(
           const schema = manifest?.user_config;
           if (schema && Object.keys(schema).length > 0) {
             const stored =
-              (await getWorkspaceCredentials(wsId, instance.bundleName, workDir)) ?? {};
+              (await ctx.runtime.getWorkspaceContext(wsId).getCredentials(instance.bundleName)) ??
+              {};
             const populated: Record<string, boolean> = {};
             for (const key of Object.keys(schema)) {
               const v = stored[key];
@@ -2220,12 +2215,12 @@ async function resolveBundleSchema(
  * keyed on the schema's field names — never the values themselves.
  */
 async function probeUserConfigPopulated(
+  runtime: Runtime,
   wsId: string,
   bundleName: string,
-  workDir: string,
   schema: Record<string, UserConfigFieldDef>,
 ): Promise<Record<string, boolean>> {
-  const stored = (await getWorkspaceCredentials(wsId, bundleName, workDir)) ?? {};
+  const stored = (await runtime.getWorkspaceContext(wsId).getCredentials(bundleName)) ?? {};
   const out: Record<string, boolean> = {};
   for (const key of Object.keys(schema)) {
     const v = stored[key];
@@ -2287,7 +2282,7 @@ async function handleSetUserConfig(
     writes.push({ key, value: raw });
   }
 
-  const workDir = ctx.runtime.getWorkDir();
+  const credentialStore = ctx.runtime.getWorkspaceContext(wsId).getCredentialStore();
   for (const { key, value } of writes) {
     if (value.length === 0) {
       // Empty string = clear that single field. Use the dedicated
@@ -2295,9 +2290,9 @@ async function handleSetUserConfig(
       // (rather than persisted as `{ "key": "" }` which would still
       // resolve as "configured" in shape probes that check
       // key-presence).
-      await clearWorkspaceCredential(wsId, bundleName, key, workDir);
+      await credentialStore.clear(bundleName, key);
     } else {
-      await saveWorkspaceCredential(wsId, bundleName, key, value, workDir);
+      await credentialStore.save(bundleName, key, value);
     }
   }
 
@@ -2309,7 +2304,7 @@ async function handleSetUserConfig(
   // the UI path produce identical post-write state.
   const respawn = await respawnBundleAfterCredentialChange(ctx, wsId, bundleName, serverName);
 
-  const populated = await probeUserConfigPopulated(wsId, bundleName, workDir, schema);
+  const populated = await probeUserConfigPopulated(ctx.runtime, wsId, bundleName, schema);
   return {
     content: textContent(`Updated ${writes.length} field(s) for "${serverName}".`),
     structuredContent: { ok: true, serverName, populated, respawn },
@@ -2350,8 +2345,7 @@ async function handleClearUserConfig(
   if (!wsId) return errResult("Workspace context required.");
   const { bundleName, schema } = resolved;
 
-  const workDir = ctx.runtime.getWorkDir();
-  await clearAllWorkspaceCredentials(wsId, bundleName, workDir);
+  await ctx.runtime.getWorkspaceContext(wsId).getCredentialStore().clearAll(bundleName);
 
   // After clearAll, every field reads as unpopulated. Build the map
   // directly rather than re-probing — saves one filesystem stat that
