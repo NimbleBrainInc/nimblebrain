@@ -33,32 +33,32 @@ function collect(events: EngineEvent[]): EventSink {
 
 describe("engine ↔ supervisor wiring", () => {
   it("emits supervisorTripped on the 3rd identical failure and stops the loop", async () => {
-    // Model behaviour: emit a `stuck` tool call every iteration UNLESS the
-    // supervisor's prompt nudge appears in the system prompt — then produce
-    // a final text response. This mirrors how a well-behaved real model
-    // responds to the synth-stop + nudge pair.
-    let prepostNudge: { before: number; after: number } = { before: 0, after: 0 };
+    // Model behaviour: emit a `stuck` tool call every iteration as long as
+    // it's in the toolset. Once the supervisor filters it out, the model has
+    // no tools to call and produces a final text response. This mirrors how
+    // a real model behaves under the affordance-level recovery: the tool
+    // literally isn't on the menu so it can't be picked.
+    const trace: { toolsOffered: number; sawStuck: boolean }[] = [];
     const model = createMockModel((opts) => {
-      const systemMsg = opts.prompt.find((m) => m.role === "system");
-      const systemText =
-        systemMsg && typeof systemMsg.content === "string" ? systemMsg.content : "";
-      const sawNudge = systemText.includes(
-        "A tool was detected to be in a loop",
+      const tools = opts.tools ?? [];
+      const sawStuck = tools.some(
+        (t) => (t as { name?: string }).name === "stuck",
       );
-      if (sawNudge) {
-        prepostNudge.after += 1;
+      trace.push({ toolsOffered: tools.length, sawStuck });
+      if (!sawStuck) {
         return {
-          content: [{ type: "text", text: "Stopping per the supervisor directive." }],
+          content: [
+            { type: "text", text: "Stopping — stuck tool is no longer available." },
+          ],
           inputTokens: 1,
           outputTokens: 1,
         };
       }
-      prepostNudge.before += 1;
       return {
         content: [
           {
             type: "tool-call",
-            toolCallId: `call-${prepostNudge.before}`,
+            toolCallId: `call-${trace.length}`,
             toolName: "stuck",
             input: JSON.stringify({}),
           },
@@ -92,15 +92,15 @@ describe("engine ↔ supervisor wiring", () => {
 
     // The tool was actually invoked exactly 3 times (the supervisor caught
     // the loop on the 3rd call). Subsequent iterations don't invoke the
-    // tool because the nudge stops the model from calling it again.
+    // tool because it's filtered out of modelTools.
     expect(toolCallCount).toBe(3);
 
     // Loop terminated cleanly, not via max_iterations.
     expect(result.stopReason).toBe("complete");
     expect(result.iterations).toBeLessThan(config.maxIterations);
 
-    // Final user-visible text came from the post-nudge model response.
-    expect(result.output).toContain("Stopping per the supervisor directive");
+    // Final user-visible text came from the model's no-tools response.
+    expect(result.output).toContain("stuck tool is no longer available");
 
     // Exactly one tool.done event carries supervisorTripped.
     const tripped = events.filter(
@@ -114,9 +114,12 @@ describe("engine ↔ supervisor wiring", () => {
     expect(trippedData.consecutiveRepeats).toBe(3);
     expect(trippedData.ok).toBe(false);
 
-    // The model saw the nudge exactly once (one post-trip iteration).
-    expect(prepostNudge.before).toBe(3);
-    expect(prepostNudge.after).toBe(1);
+    // Model saw `stuck` on the first 3 iterations, then no `stuck` after
+    // the supervisor tripped.
+    const withStuck = trace.filter((t) => t.sawStuck).length;
+    const withoutStuck = trace.filter((t) => !t.sawStuck).length;
+    expect(withStuck).toBe(3);
+    expect(withoutStuck).toBe(1);
   });
 
   it("does not trip when tool results vary across calls", async () => {

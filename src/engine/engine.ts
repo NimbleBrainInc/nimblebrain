@@ -507,18 +507,6 @@ export class AgentEngine {
             "remains unfinished so the user can continue in a follow-up message.]";
         }
 
-        // One-shot nudge after the supervisor tripped on the previous iteration.
-        // Pairs with the synth-stop replacement so the directive is unambiguous:
-        // the tool result tells the model what to say, the system-prompt nudge
-        // forecloses further tool calls.
-        if (supervisor.needsPromptNudge()) {
-          callPrompt +=
-            "\n\n[IMPORTANT: A tool was detected to be in a loop and has been disabled " +
-            "for the remainder of this run. Do NOT call any more tools. Produce a final " +
-            "response now per the instructions in the last tool result.]";
-          supervisor.consumeNudge();
-        }
-
         const callProviderOptions = buildThinkingProviderOptions(config.model, config.thinking);
 
         const llmStart = performance.now();
@@ -734,9 +722,10 @@ export class AgentEngine {
 
             // Supervisor sees the post-hook, post-A.3-normalization result.
             // On a trip, the replacement directive flows downstream in place
-            // of the original — the model sees the directive in its tool
-            // message and the engine appends a system-prompt nudge on the
-            // next iteration via `needsPromptNudge()`.
+            // of the original tool result. The tripped tool is filtered out
+            // of `modelTools` on subsequent iterations (see the top of the
+            // run loop), so the model can't call it again regardless of
+            // what the directive says.
             const verdict = supervisor.observe(gatedCall, hookedResult);
             const finalResult = verdict.type === "synth" ? verdict.replacement : hookedResult;
 

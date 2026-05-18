@@ -21,10 +21,11 @@ import type { ToolCall, ToolResult } from "./types.ts";
  * behaviour (a tool that fails once with error A, then once with error B,
  * then succeeds, never trips).
  *
- * Pairs with a one-shot system-prompt nudge consumed by the engine on the
- * iteration after a trip — see `needsPromptNudge` / `consumeNudge`. The
- * supervisor itself never aborts the run; the engine reads the verdict and
- * decides what to surface.
+ * The supervisor itself never aborts the run; the engine reads the verdict
+ * and decides what to surface. On a trip the engine also filters the
+ * tripped tool out of the model's toolset for the rest of the run, so the
+ * model can't call the broken tool again regardless of how it reads the
+ * synth directive.
  */
 
 export interface SupervisorConfig {
@@ -62,14 +63,6 @@ export interface RunSupervisor {
    * normalization). Returns the verdict the engine should act on.
    */
   observe(call: ToolCall, result: ToolResult): SupervisorVerdict;
-  /**
-   * True when a synth verdict was issued since the last `consumeNudge` —
-   * the engine should append a single-shot system-prompt nudge to the
-   * next iteration.
-   */
-  needsPromptNudge(): boolean;
-  /** Clear the nudge flag after the engine emits the nudge. */
-  consumeNudge(): void;
   /** Telemetry snapshot. */
   snapshot(): SupervisorSnapshot;
 }
@@ -89,7 +82,6 @@ export function createRunSupervisor(config: SupervisorConfig = {}): RunSuperviso
   const textCap = config.fingerprintTextCap ?? DEFAULT_FINGERPRINT_CAP;
 
   const states = new Map<string, ToolState>();
-  let pendingNudge = false;
 
   function getState(toolName: string): ToolState {
     let s = states.get(toolName);
@@ -137,12 +129,10 @@ export function createRunSupervisor(config: SupervisorConfig = {}): RunSuperviso
 
     if (state.tripped) {
       // Once tripped, every subsequent call to the same tool keeps getting
-      // the synthetic directive. The model receives an unambiguous "this
-      // tool is unusable" signal regardless of whether the upstream call
-      // would now succeed — recovering from a stuck loop happens in a new
-      // run, not mid-run.
+      // the synthetic directive. In practice the engine drops tripped tools
+      // from modelTools so the model can't call again — this branch is a
+      // belt-and-suspenders fallback if a caller invokes the tool anyway.
       const originalText = extractTextForModel(result.content).trim();
-      pendingNudge = true;
       return {
         type: "synth",
         replacement: synthReplacement(call.name, originalText, state.consecutiveRepeats),
@@ -161,7 +151,6 @@ export function createRunSupervisor(config: SupervisorConfig = {}): RunSuperviso
 
     if (state.consecutiveRepeats >= maxRepeats) {
       state.tripped = true;
-      pendingNudge = true;
       const originalText = extractTextForModel(result.content).trim();
       return {
         type: "synth",
@@ -176,10 +165,6 @@ export function createRunSupervisor(config: SupervisorConfig = {}): RunSuperviso
 
   return {
     observe,
-    needsPromptNudge: () => pendingNudge,
-    consumeNudge: () => {
-      pendingNudge = false;
-    },
     snapshot: () => ({
       trippedTools: [...states.entries()].filter(([, s]) => s.tripped).map(([name]) => name),
       callCounts: Object.fromEntries(
