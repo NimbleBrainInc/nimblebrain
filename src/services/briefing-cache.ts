@@ -4,7 +4,7 @@ export class BriefingCache {
   private entry: BriefingCacheEntry | null = null;
   private ttlMs: number;
 
-  constructor(ttlMinutes = 30) {
+  constructor(ttlMinutes: number) {
     this.ttlMs = ttlMinutes * 60 * 1000;
   }
 
