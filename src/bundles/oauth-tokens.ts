@@ -12,13 +12,23 @@
  * User-scope tokens live under `<workDir>/users/<userId>/credentials/...`
  * and are probed via the user-scope path inside the OAuth provider —
  * no parallel boot-time helper needed today.
+ *
+ * Path construction is routed through `WorkspaceContext` so the
+ * `workspaces/{wsId}/credentials/mcp-oauth/{server}/` layout has one
+ * source of truth (`src/workspace/context.ts`). The free-function
+ * signatures here are kept as the public API for incremental migration.
  */
 
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { WorkspaceContext } from "../workspace/context.ts";
 
 export function workspaceOAuthDir(workDir: string, wsId: string, serverName: string): string {
-  return join(workDir, "workspaces", wsId, "credentials", "mcp-oauth", serverName);
+  return new WorkspaceContext({ wsId, workDir }).getDataPath(
+    "credentials",
+    "mcp-oauth",
+    serverName,
+  );
 }
 
 /** True if a workspace-scope `tokens.json` exists for this (workspace, server). */

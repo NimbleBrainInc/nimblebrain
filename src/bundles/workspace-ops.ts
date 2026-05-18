@@ -6,9 +6,9 @@
 
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { clearAllWorkspaceCredentials } from "../config/workspace-credentials.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
-import { bundleNameFromRef, resolveBundleDataDir, serverNameFromRef } from "./paths.ts";
+import { WorkspaceContext } from "../workspace/context.ts";
+import { bundleNameFromRef, deriveBundleDataDir, serverNameFromRef } from "./paths.ts";
 import { startBundleSource } from "./startup.ts";
 import type { BundleRef } from "./types.ts";
 
@@ -40,11 +40,11 @@ export async function installBundleInWorkspace(
     workDir?: string;
   },
 ): Promise<ProcessInventoryEntry> {
-  const workDir = opts?.workDir ?? process.env.NB_WORK_DIR ?? "";
+  const workDir = opts?.workDir ?? process.env.NB_WORK_DIR ?? join(homedir(), ".nimblebrain");
+  const wsContext = new WorkspaceContext({ wsId, workDir });
   const serverName = serverNameFromRef(bundleRef);
   const bundleName = bundleNameFromRef(bundleRef);
-  const wsPath = join(workDir, "workspaces", wsId);
-  const dataDir = resolveBundleDataDir(wsPath, bundleName);
+  const dataDir = wsContext.getDataPath("data", deriveBundleDataDir(bundleName));
 
   // Check for existing registration
   if (registry.hasSource(serverName)) {
@@ -54,11 +54,10 @@ export async function installBundleInWorkspace(
   const result = await startBundleSource(bundleRef, registry, eventSink, configDir, {
     allowInsecureRemotes: opts?.allowInsecureRemotes,
     dataDir,
-    // Thread workspace id + work dir so the named-bundle path can resolve
+    // Thread the workspace context so the named-bundle path can resolve
     // `user_config` from the workspace credential store before prepareServer
     // validates it.
-    wsId,
-    workDir,
+    workspaceContext: wsContext,
   });
 
   return {
@@ -102,7 +101,7 @@ export async function uninstallBundleFromWorkspace(
   // Credentials are config, not data: they should not persist across uninstalls.
   const workDir = opts?.workDir ?? process.env.NB_WORK_DIR ?? join(homedir(), ".nimblebrain");
   try {
-    await clearAllWorkspaceCredentials(wsId, bundleName, workDir);
+    await new WorkspaceContext({ wsId, workDir }).getCredentialStore().clearAll(bundleName);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     process.stderr.write(

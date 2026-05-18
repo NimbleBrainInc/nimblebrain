@@ -24,6 +24,7 @@
 import { existsSync } from "node:fs";
 import { chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { WorkspaceContext } from "../workspace/context.ts";
 import { WORKSPACE_ID_RE } from "../workspace/workspace-store.ts";
 
 /**
@@ -91,7 +92,16 @@ function assertValidWsId(wsId: string): void {
 /** Absolute path to the per-connector composio credentials directory. */
 export function composioConnectorDir(workDir: string, wsId: string, connectorId: string): string {
   assertValidWsId(wsId);
-  return join(workDir, "workspaces", wsId, "credentials", "composio", connectorSlug(connectorId));
+  // Routed through WorkspaceContext so the `workspaces/{wsId}/credentials/`
+  // layout has exactly one definition site (see src/workspace/context.ts).
+  // `assertValidWsId` above stays for back-compat — the context constructor
+  // validates again, which is cheap and gives a consistent error message
+  // shape for either failure mode.
+  return new WorkspaceContext({ wsId, workDir }).getDataPath(
+    "credentials",
+    "composio",
+    connectorSlug(connectorId),
+  );
 }
 
 /** Absolute path to `connection.json` for a (workspace, connector). */
