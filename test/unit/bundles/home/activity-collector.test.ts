@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { ActivityCollector } from "../../../../src/bundles/home/src/services/activity-collector.ts";
+import { ActivityCollector } from "../../../../src/services/activity-collector.ts";
 
 /**
  * Regression coverage for the home-bundle activity collector's
@@ -91,7 +91,11 @@ describe("home ActivityCollector — conversation summaries", () => {
       { inputTokens: 200, outputTokens: 75 },
     ]);
 
-    const collector = new ActivityCollector(logDir, conversationsDir, workDir);
+    const collector = new ActivityCollector({
+      logDir,
+      conversations: { kind: "jsonl", conversationsDir },
+      automationRunsDir: join(workDir, "automations", "runs"),
+    });
     const result = await collector.collect({ limit: 10 });
 
     expect(result.conversations).toHaveLength(1);
@@ -112,7 +116,11 @@ describe("home ActivityCollector — conversation summaries", () => {
       model: "claude-sonnet-4-5-20250929",
     });
 
-    const collector = new ActivityCollector(logDir, conversationsDir, workDir);
+    const collector = new ActivityCollector({
+      logDir,
+      conversations: { kind: "jsonl", conversationsDir },
+      automationRunsDir: join(workDir, "automations", "runs"),
+    });
     const result = await collector.collect({ limit: 10 });
 
     expect(result.conversations).toHaveLength(1);
@@ -126,7 +134,11 @@ describe("home ActivityCollector — conversation summaries", () => {
     writeEventConv("conv_a", ts, [{ inputTokens: 100, outputTokens: 50 }]);
     writeEventConv("conv_b", ts, [{ inputTokens: 200, outputTokens: 80 }]);
 
-    const collector = new ActivityCollector(logDir, conversationsDir, workDir);
+    const collector = new ActivityCollector({
+      logDir,
+      conversations: { kind: "jsonl", conversationsDir },
+      automationRunsDir: join(workDir, "automations", "runs"),
+    });
     const result = await collector.collect({ limit: 10 });
 
     // ActivityOutput.totals aggregates from the per-conversation summaries.

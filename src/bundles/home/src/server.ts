@@ -24,8 +24,8 @@ import {
   ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 
+import { ActivityCollector } from "../../../services/activity-collector.ts";
 import { HomeActivityInput } from "../../../tools/platform/schemas/home.ts";
-import { ActivityCollector } from "./services/activity-collector.ts";
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -73,7 +73,11 @@ async function main(): Promise<void> {
   log(`Starting with work dir: ${WORK_DIR}`);
 
   // Create service instances (briefing generation moved to nb__briefing)
-  const collector = new ActivityCollector(LOG_DIR, CONVERSATIONS_DIR, WORK_DIR);
+  const collector = new ActivityCollector({
+    logDir: LOG_DIR,
+    conversations: { kind: "jsonl", conversationsDir: CONVERSATIONS_DIR },
+    automationRunsDir: join(WORK_DIR, "automations", "runs"),
+  });
 
   // Create MCP server
   const server = new Server(

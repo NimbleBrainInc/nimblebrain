@@ -1,8 +1,8 @@
 import { join } from "node:path";
-import { ActivityCollector } from "../../bundles/home/src/services/activity-collector.ts";
 import { textContent } from "../../engine/content-helpers.ts";
 import type { EventSink } from "../../engine/types.ts";
 import type { Runtime } from "../../runtime/runtime.ts";
+import { ActivityCollector } from "../../services/activity-collector.ts";
 import { defineInProcessApp, type InProcessTool } from "../in-process-app.ts";
 import type { McpSource } from "../mcp-source.ts";
 import { loadHomeUi } from "../platform-resources/home/dashboard.ts";
@@ -28,8 +28,13 @@ export function createHomeSource(runtime: Runtime, eventSink: EventSink): McpSou
         try {
           const wsDir = runtime.getWorkspaceScopedDir();
           const logDir = join(wsDir, "logs");
-          const conversationsDir = join(wsDir, "conversations");
-          const collector = new ActivityCollector(logDir, conversationsDir, wsDir);
+          const store = runtime.getStore();
+          const automationRunsDir = join(wsDir, "automations", "runs");
+          const collector = new ActivityCollector({
+            logDir,
+            conversations: { kind: "store", store },
+            automationRunsDir,
+          });
 
           const defaults = {
             since: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),

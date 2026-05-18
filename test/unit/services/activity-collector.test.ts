@@ -43,6 +43,18 @@ function makeLogDir(): string {
 	return mkdtempSync(join(tmpdir(), "activity-test-"));
 }
 
+function makeCollector(
+	logDir: string,
+	store: ConversationStore = makeMockStore(),
+	eventManager: SseEventManager = makeMockEventManager(),
+): ActivityCollector {
+	return new ActivityCollector({
+		logDir,
+		conversations: { kind: "store", store },
+		bundleEvents: { kind: "sse", eventManager },
+	});
+}
+
 function writeLogFile(
 	logDir: string,
 	date: string,
@@ -65,11 +77,7 @@ describe("ActivityCollector", () => {
 	});
 
 	it("returns zeroed output for empty workspace", async () => {
-		const collector = new ActivityCollector(
-			logDir,
-			makeMockStore(),
-			makeMockEventManager(),
-		);
+		const collector = makeCollector(logDir);
 
 		const result = await collector.collect({
 			since: "2025-01-01T00:00:00Z",
@@ -106,11 +114,7 @@ describe("ActivityCollector", () => {
 			},
 		]);
 
-		const collector = new ActivityCollector(
-			logDir,
-			store,
-			makeMockEventManager(),
-		);
+		const collector = makeCollector(logDir, store);
 
 		const result = await collector.collect({
 			since: "2025-01-01T00:00:00Z",
@@ -160,11 +164,7 @@ describe("ActivityCollector", () => {
 			},
 		]);
 
-		const collector = new ActivityCollector(
-			logDir,
-			store,
-			makeMockEventManager(),
-		);
+		const collector = makeCollector(logDir, store);
 
 		const result = await collector.collect({
 			since: "2025-01-01T00:00:00Z",
@@ -204,11 +204,7 @@ describe("ActivityCollector", () => {
 			},
 		]);
 
-		const collector = new ActivityCollector(
-			logDir,
-			makeMockStore(),
-			makeMockEventManager(),
-		);
+		const collector = makeCollector(logDir);
 
 		const result = await collector.collect({
 			since: "2025-01-01T00:00:00Z",
@@ -253,11 +249,7 @@ describe("ActivityCollector", () => {
 			},
 		]);
 
-		const collector = new ActivityCollector(
-			logDir,
-			makeMockStore(),
-			makeMockEventManager(),
-		);
+		const collector = makeCollector(logDir);
 
 		const result = await collector.collect({
 			since: "2025-01-01T00:00:00Z",
@@ -296,11 +288,7 @@ describe("ActivityCollector", () => {
 			},
 		];
 
-		const collector = new ActivityCollector(
-			logDir,
-			makeMockStore(),
-			makeMockEventManager(events),
-		);
+		const collector = makeCollector(logDir, makeMockStore(), makeMockEventManager(events));
 
 		const result = await collector.collect({
 			since: "2025-01-01T00:00:00Z",
@@ -347,7 +335,7 @@ describe("ActivityCollector", () => {
 			},
 		];
 
-		const collector = new ActivityCollector(logDir, store, makeMockEventManager(events));
+		const collector = makeCollector(logDir, store, makeMockEventManager(events));
 
 		const result = await collector.collect({
 			since: "2025-01-01T00:00:00Z",
@@ -372,11 +360,7 @@ describe("ActivityCollector", () => {
 			},
 		]);
 
-		const collector = new ActivityCollector(
-			logDir,
-			makeMockStore(),
-			makeMockEventManager(),
-		);
+		const collector = makeCollector(logDir);
 
 		const result = await collector.collect({
 			since: "2025-01-01T00:00:00Z",
@@ -405,11 +389,7 @@ describe("ActivityCollector", () => {
 			},
 		]);
 
-		const collector = new ActivityCollector(
-			logDir,
-			makeMockStore(),
-			makeMockEventManager(),
-		);
+		const collector = makeCollector(logDir);
 
 		const result = await collector.collect({
 			since: "2025-01-01T00:00:00Z",
@@ -453,11 +433,7 @@ describe("ActivityCollector", () => {
 			},
 		]);
 
-		const collector = new ActivityCollector(
-			logDir,
-			makeMockStore(),
-			makeMockEventManager(),
-		);
+		const collector = makeCollector(logDir);
 
 		const result = await collector.collect({
 			since: "2025-01-01T00:00:00Z",
@@ -494,11 +470,7 @@ describe("ActivityCollector", () => {
 			},
 		]);
 
-		const collector = new ActivityCollector(
-			logDir,
-			makeMockStore(),
-			makeMockEventManager(),
-		);
+		const collector = makeCollector(logDir);
 
 		const result = await collector.collect({
 			since: "2025-01-01T00:00:00Z",
@@ -537,11 +509,7 @@ describe("ActivityCollector", () => {
 			},
 		]);
 
-		const collector = new ActivityCollector(
-			logDir,
-			makeMockStore(),
-			makeMockEventManager(),
-		);
+		const collector = makeCollector(logDir);
 
 		const result = await collector.collect({
 			since: "2025-01-01T00:00:00Z",
@@ -556,11 +524,7 @@ describe("ActivityCollector", () => {
 	});
 
 	it("handles missing log directory gracefully", async () => {
-		const collector = new ActivityCollector(
-			"/tmp/nonexistent-log-dir-12345",
-			makeMockStore(),
-			makeMockEventManager(),
-		);
+		const collector = makeCollector("/tmp/nonexistent-log-dir-12345");
 
 		const result = await collector.collect({
 			since: "2025-01-01T00:00:00Z",
@@ -591,11 +555,7 @@ describe("ActivityCollector", () => {
 		].join("\n");
 		writeFileSync(join(logDir, filename), content);
 
-		const collector = new ActivityCollector(
-			logDir,
-			makeMockStore(),
-			makeMockEventManager(),
-		);
+		const collector = makeCollector(logDir);
 
 		const result = await collector.collect({
 			since: "2025-01-01T00:00:00Z",
@@ -623,11 +583,7 @@ describe("ActivityCollector", () => {
 			},
 		]);
 
-		const collector = new ActivityCollector(
-			logDir,
-			makeMockStore(),
-			makeMockEventManager(),
-		);
+		const collector = makeCollector(logDir);
 
 		const result = await collector.collect({
 			since: "2025-01-01T00:00:00Z",
@@ -638,12 +594,56 @@ describe("ActivityCollector", () => {
 		expect(result.tool_usage[0].call_count).toBe(3);
 	});
 
-	it("defaults to 24-hour window when no since/until provided", async () => {
-		const collector = new ActivityCollector(
-			logDir,
-			makeMockStore(),
-			makeMockEventManager(),
+	it("includes automation run summaries when configured", async () => {
+		const automationRunsDir = join(logDir, "automations", "runs");
+		mkdirSync(automationRunsDir, { recursive: true });
+		writeFileSync(
+			join(automationRunsDir, "daily-check.jsonl"),
+			[
+				JSON.stringify({
+					startedAt: "2025-01-01T10:00:00Z",
+					status: "success",
+				}),
+				JSON.stringify({
+					startedAt: "2025-01-01T11:00:00Z",
+					status: "failure",
+					error: "boom",
+				}),
+			].join("\n"),
 		);
+
+		const collector = new ActivityCollector({
+			logDir,
+			conversations: { kind: "store", store: makeMockStore() },
+			automationRunsDir,
+		});
+
+		const result = await collector.collect({
+			since: "2025-01-01T00:00:00Z",
+			until: "2025-01-02T00:00:00Z",
+		});
+
+		expect(result.automations).toEqual({
+			total: 2,
+			succeeded: 1,
+			failed: 1,
+			failures: [
+				{
+					name: "daily-check",
+					error: "boom",
+					action: {
+						label: "View failed run",
+						type: "startChat",
+						route: null,
+						prompt: "Show me the failed daily-check automation run",
+					},
+				},
+			],
+		});
+	});
+
+	it("defaults to 24-hour window when no since/until provided", async () => {
+		const collector = makeCollector(logDir);
 
 		const result = await collector.collect();
 
@@ -668,11 +668,7 @@ describe("ActivityCollector", () => {
 			},
 		]);
 
-		const collector = new ActivityCollector(
-			logDir,
-			makeMockStore(),
-			makeMockEventManager(),
-		);
+		const collector = makeCollector(logDir);
 
 		const result = await collector.collect({
 			since: "2025-01-01T00:00:00Z",
