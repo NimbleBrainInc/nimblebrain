@@ -10,6 +10,7 @@ import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { EngineEvent, EventSink } from "../engine/types.ts";
+import { assertNoBinaryPayloads } from "./binary-guard.ts";
 import {
   deriveConversationMeta,
   deriveUsageMetrics,
@@ -231,7 +232,11 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
         } as ConversationEvent;
         this.appendEventSync(conversation.id, event);
       } else if (message.role === "assistant" && message.metadata) {
-        // Create synthetic run bookends + llm.response from assistant metadata
+        // Create synthetic run bookends + llm.response from assistant metadata.
+        // Route through `appendEventSync` (three calls instead of one batched
+        // `appendFileSync`) so the binary-payload guard covers this path too.
+        // The three events are written in order, terminated by a trailing
+        // newline each — same on-disk shape as the previous batched write.
         const runId = `append_${Date.now()}`;
         const runStart: ConversationEvent = {
           ts: message.timestamp,
@@ -259,16 +264,15 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
           totalMs: message.metadata.llmMs ?? 0,
         } as ConversationEvent;
 
-        const path = this.path(conversation.id);
-        appendFileSync(
-          path,
-          `${JSON.stringify(runStart)}\n${JSON.stringify(llmResponse)}\n${JSON.stringify(runDone)}\n`,
-        );
+        this.appendEventSync(conversation.id, runStart);
+        this.appendEventSync(conversation.id, llmResponse);
+        this.appendEventSync(conversation.id, runDone);
       }
       return;
     }
 
     // Legacy format — same pattern as JsonlConversationStore
+    assertNoBinaryPayloads(message, `message(${message.role})`);
     const path = this.path(conversation.id);
     if (message.role === "assistant" && message.metadata) {
       conversation.lastModel = message.metadata.model ?? conversation.lastModel;
@@ -373,6 +377,14 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
       // the turn (see event-reconstructor.ts: assistant messages are
       // only emitted inside an active run scope). Pre-fix, history() on
       // a forked event-format conversation returned only user messages.
+      //
+      // Reconstructed messages should already be free of binary payloads
+      // (we read them out of the event log, which is guarded on write).
+      // Re-assert anyway so an in-memory source that somehow held bytes
+      // can't poison the forked file.
+      for (const msg of messagesToCopy) {
+        assertNoBinaryPayloads(msg, `fork.message(${msg.role})`);
+      }
       const eventLines: string[] = [];
       let runCounter = 0;
       for (const msg of messagesToCopy) {
@@ -666,6 +678,7 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
 
   /** Synchronously append an event line to a conversation file. */
   private appendEventSync(id: string, event: ConversationEvent): void {
+    assertNoBinaryPayloads(event, `event(${event.type})`);
     const path = this.path(id);
     appendFileSync(path, `${JSON.stringify(event)}\n`);
   }
