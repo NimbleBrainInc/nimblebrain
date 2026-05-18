@@ -87,7 +87,14 @@ export function bundleNameFromRef(ref: BundleRef): string {
 /**
  * Derive a safe directory name for per-bundle data isolation.
  * Uses the full scoped name to avoid collisions (e.g., @foo/tasks vs @bar/tasks).
- * Matches the mpak cache convention: @scope/name → scope-name
+ * Matches the mpak cache convention: @scope/name → scope-name.
+ *
+ * Case is preserved — the unsafe-char strip uses `/gi` and there is no
+ * `toLowerCase()`. This diverges intentionally from `slugifyServerName`
+ * above: server names are URL-routable identifiers and must be lowercase;
+ * dataDir slugs only need to round-trip on the filesystem, so preserving
+ * the caller's casing keeps `path:` bundle dirs visually traceable back
+ * to their source. Don't "consolidate" the two functions.
  */
 export function deriveBundleDataDir(name: string): string {
   return name
