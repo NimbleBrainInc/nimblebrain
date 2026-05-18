@@ -101,6 +101,12 @@ export function createRunSupervisor(config: SupervisorConfig = {}): RunSuperviso
   }
 
   function fingerprint(call: ToolCall, result: ToolResult): string {
+    // Known limitation: hashing only the first `textCap` chars can
+    // false-positive on tools that return a long stable preamble (e.g. a
+    // verbose header) followed by a short varying field. Two semantically
+    // distinct results may collapse to the same fingerprint and trip the
+    // supervisor early. Addressable later by hashing head+tail or
+    // structuredContent when present; out of scope here.
     const text = extractTextForModel(result.content).trim().slice(0, textCap);
     return createHash("sha1")
       .update(`${call.name}\0${result.isError ? "E" : "S"}\0${text}`)
@@ -108,15 +114,17 @@ export function createRunSupervisor(config: SupervisorConfig = {}): RunSuperviso
   }
 
   function synthReplacement(toolName: string, originalText: string, repeats: number): ToolResult {
+    // Wording note: this content persists in the conversation log across
+    // future runs, so the message is scoped to *this* tool and phrased as a
+    // record of what happened. No universal directives ("stop using tools",
+    // "end the run") — those rot when reread in a later turn where other
+    // tools are still callable.
     const directive =
-      `[NB supervisor] Tool \`${toolName}\` has returned the same result ${repeats} times in a row. ` +
-      `This is a loop. Stop calling this tool.\n\n` +
-      `Underlying tool output (last call):\n${originalText}\n\n` +
-      `Required action: produce a final response to the user that includes:\n` +
-      `1. What you were trying to accomplish.\n` +
-      `2. The literal error or output above so the user can act on it.\n` +
-      `3. One concrete suggestion (check the connection, narrow the question, try a different tool, etc.).\n\n` +
-      `Do not call any tools. End the run.`;
+      `[NB supervisor] Tool \`${toolName}\` returned the same result ${repeats} times in a row; ` +
+      `this tool has been disabled for the rest of this run.\n\n` +
+      `Underlying output (last call):\n${originalText}\n\n` +
+      `Other tools remain available. Consider an alternative approach or summarize current findings ` +
+      `if no path forward exists.`;
     return {
       content: textContent(directive),
       isError: true,
