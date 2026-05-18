@@ -20,7 +20,7 @@ const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as {
 const VERSION = process.env.NB_VERSION || pkg.version;
 
 import { ActivityCollector } from "../services/activity-collector.ts";
-import { BriefingCache } from "../services/briefing-cache.ts";
+import { BriefingCache, computeBriefingFingerprint } from "../services/briefing-cache.ts";
 import { collectBriefingFacets } from "../services/briefing-collector.ts";
 import { BriefingGenerator } from "../services/briefing-generator.ts";
 import type { BriefingOutput } from "../services/home-types.ts";
@@ -796,15 +796,25 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
               return generator.generate(activity, facetContext);
             };
 
+            // Fingerprint the data this briefing is built from — activity logs
+            // plus each running bundle's entity data. The cache serves a stored
+            // briefing only while this matches, so a data edit (a new todo, CRM
+            // row, note) misses the cache on the very next load instead of
+            // waiting out the TTL. See `computeBriefingFingerprint`.
+            const logDir = join(runtime.getWorkspaceScopedDir(wsId), "logs");
+            const instances = runtime.getBundleInstancesForWorkspace(wsId);
+            const fingerprint = computeBriefingFingerprint(logDir, instances);
+
             if (!input.force_refresh) {
-              // Fresh cache → instant.
-              const fresh = briefingCache.get();
+              // Fresh cache + unchanged data → instant.
+              const fresh = briefingCache.get(fingerprint);
               if (fresh) return ok(fresh, "Briefing retrieved from cache.");
 
-              // Stale-while-revalidate: serve the last (expired) briefing
-              // immediately and regenerate in the BACKGROUND, so the dashboard
-              // never waits on the LLM after the first generation. The bg task
-              // re-establishes the workspace request context (captured here) —
+              // Stale-while-revalidate: a TTL miss OR a fingerprint miss (the
+              // data moved on) serves the last briefing immediately and
+              // regenerates in the BACKGROUND, so the dashboard never waits on
+              // the LLM after the first generation. The bg task re-establishes
+              // the workspace request context (captured here) —
               // `collectBriefingFacets` dispatches facet tools via
               // `registry.execute`, which read `requireWorkspaceId()` / identity
               // from that context.
@@ -824,7 +834,7 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
                     },
                   };
                   void runWithRequestContext(bgCtx, runGeneration)
-                    .then((b) => briefingCache.set(b))
+                    .then((b) => briefingCache.set(b, fingerprint))
                     .catch((err) =>
                       log.warn(
                         `[briefing] background refresh failed for ${wsId}: ${
@@ -843,7 +853,7 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
             // failure → the outer catch turns it into an isError result, which
             // the home UI renders as a retry state.
             const briefing = await runGeneration();
-            briefingCache.set(briefing);
+            briefingCache.set(briefing, fingerprint);
             return ok(briefing, "Briefing generated.");
           } catch (err) {
             return {

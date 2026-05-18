@@ -19,7 +19,8 @@ export interface BriefingInput {
 export interface BriefingCacheEntry {
   briefing: BriefingOutput;
   generatedAt: number;
-  invalidated: boolean;
+  /** Fingerprint of the workspace data the briefing was built from. */
+  fingerprint: string;
 }
 
 /** Activity query input — passed to home__activity tool. */

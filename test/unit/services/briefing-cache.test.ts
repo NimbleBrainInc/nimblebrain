@@ -1,5 +1,9 @@
-import { describe, test, expect, beforeEach } from "bun:test";
-import { BriefingCache } from "../../../src/services/briefing-cache.ts";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { BundleInstance } from "../../../src/bundles/types.ts";
+import { BriefingCache, computeBriefingFingerprint } from "../../../src/services/briefing-cache.ts";
 import type { BriefingOutput } from "../../../src/services/home-types.ts";
 
 function makeBriefing(overrides?: Partial<BriefingOutput>): BriefingOutput {
@@ -22,45 +26,39 @@ describe("BriefingCache", () => {
 		cache = new BriefingCache(30); // 30 min TTL
 	});
 
-	test("initial state: get() returns null, isStale() returns true", () => {
-		expect(cache.get()).toBeNull();
-		expect(cache.isStale()).toBe(true);
+	test("initial state: get() returns null", () => {
+		expect(cache.get("fp-1")).toBeNull();
 	});
 
-	test("set() then get() returns briefing with cached: true", () => {
-		const briefing = makeBriefing();
-		cache.set(briefing);
-		const result = cache.get();
+	test("set() then get() with the same fingerprint returns the briefing", () => {
+		cache.set(makeBriefing(), "fp-1");
+		const result = cache.get("fp-1");
 		expect(result).not.toBeNull();
 		expect(result!.cached).toBe(true);
 		expect(result!.greeting).toBe("Good afternoon, Test");
 	});
 
-	test("invalidate() causes get() to return null", () => {
-		cache.set(makeBriefing());
-		cache.invalidate();
-		expect(cache.get()).toBeNull();
-		expect(cache.isStale()).toBe(true);
+	test("get() with a changed fingerprint returns null — the data moved on", () => {
+		cache.set(makeBriefing(), "fp-1");
+		expect(cache.get("fp-2")).toBeNull();
 	});
 
-	test("re-set after invalidation works", () => {
-		cache.set(makeBriefing());
-		cache.invalidate();
-		expect(cache.get()).toBeNull();
-		cache.set(makeBriefing({ lede: "Updated" }));
-		const result = cache.get();
+	test("re-set with a new fingerprint serves the fresh briefing", () => {
+		cache.set(makeBriefing(), "fp-1");
+		expect(cache.get("fp-2")).toBeNull();
+		cache.set(makeBriefing({ lede: "Updated" }), "fp-2");
+		const result = cache.get("fp-2");
 		expect(result).not.toBeNull();
 		expect(result!.lede).toBe("Updated");
 	});
 
-	test("expired cache returns null", () => {
+	test("expired cache returns null even when the fingerprint matches", () => {
 		const originalNow = Date.now;
 		try {
-			const cache31 = new BriefingCache(30);
 			Date.now = originalNow;
-			cache31.set(makeBriefing());
+			cache.set(makeBriefing(), "fp-1");
 			Date.now = () => originalNow() + 31 * 60 * 1000;
-			expect(cache31.get()).toBeNull();
+			expect(cache.get("fp-1")).toBeNull();
 		} finally {
 			Date.now = originalNow;
 		}
@@ -69,9 +67,9 @@ describe("BriefingCache", () => {
 	test("not expired within TTL", () => {
 		const originalNow = Date.now;
 		try {
-			cache.set(makeBriefing());
-			Date.now = () => originalNow() + 15 * 60 * 1000; // 15 minutes (within 30 min TTL)
-			expect(cache.get()).not.toBeNull();
+			cache.set(makeBriefing(), "fp-1");
+			Date.now = () => originalNow() + 15 * 60 * 1000; // within 30 min TTL
+			expect(cache.get("fp-1")).not.toBeNull();
 		} finally {
 			Date.now = originalNow;
 		}
@@ -80,9 +78,9 @@ describe("BriefingCache", () => {
 	test("getStale() returns an expired entry (stale-while-revalidate) while get() returns null", () => {
 		const originalNow = Date.now;
 		try {
-			cache.set(makeBriefing({ lede: "Stale but serviceable" }));
+			cache.set(makeBriefing({ lede: "Stale but serviceable" }), "fp-1");
 			Date.now = () => originalNow() + 31 * 60 * 1000; // past the 30 min TTL
-			expect(cache.get()).toBeNull(); // fresh check fails
+			expect(cache.get("fp-1")).toBeNull(); // fresh check fails
 			const stale = cache.getStale(); // but stale is still served
 			expect(stale).not.toBeNull();
 			expect(stale!.cached).toBe(true);
@@ -92,11 +90,19 @@ describe("BriefingCache", () => {
 		}
 	});
 
-	test("getStale() returns null when empty or invalidated", () => {
-		expect(cache.getStale()).toBeNull(); // empty
-		cache.set(makeBriefing());
-		cache.invalidate();
-		expect(cache.getStale()).toBeNull(); // invalidated is not served, even as stale
+	test("getStale() serves the last entry even after the fingerprint moves on", () => {
+		// getStale() is fingerprint-agnostic by design: get(fp) misses the
+		// moment data changes, then getStale() serves the prior briefing once
+		// while a fresh one regenerates in the background.
+		cache.set(makeBriefing({ lede: "Built from old data" }), "fp-1");
+		expect(cache.get("fp-2")).toBeNull(); // data moved on → fresh miss
+		const stale = cache.getStale();
+		expect(stale).not.toBeNull();
+		expect(stale!.lede).toBe("Built from old data");
+	});
+
+	test("getStale() returns null when there is no entry", () => {
+		expect(cache.getStale()).toBeNull();
 	});
 
 	test("beginRefresh() is a single-flight guard — blocks a second start until endRefresh()", () => {
@@ -107,3 +113,75 @@ describe("BriefingCache", () => {
 	});
 });
 
+/** Minimal BundleInstance — computeBriefingFingerprint reads only these fields. */
+function instance(bundleName: string, state: string, entityDataRoot?: string): BundleInstance {
+	return { bundleName, state, entityDataRoot } as unknown as BundleInstance;
+}
+
+describe("computeBriefingFingerprint", () => {
+	let dir: string;
+
+	beforeEach(() => {
+		dir = mkdtempSync(join(tmpdir(), "briefing-fp-"));
+	});
+
+	afterEach(() => {
+		rmSync(dir, { recursive: true, force: true });
+	});
+
+	test("is stable when nothing changes", () => {
+		const logDir = join(dir, "logs");
+		mkdirSync(logDir);
+		writeFileSync(join(logDir, "a.jsonl"), "line\n");
+		expect(computeBriefingFingerprint(logDir, [])).toBe(computeBriefingFingerprint(logDir, []));
+	});
+
+	test("changes when a log file is added", () => {
+		const logDir = join(dir, "logs");
+		mkdirSync(logDir);
+		writeFileSync(join(logDir, "a.jsonl"), "line\n");
+		const before = computeBriefingFingerprint(logDir, []);
+		writeFileSync(join(logDir, "b.jsonl"), "line\n");
+		expect(computeBriefingFingerprint(logDir, [])).not.toBe(before);
+	});
+
+	test("changes when a file's content changes", () => {
+		const logDir = join(dir, "logs");
+		mkdirSync(logDir);
+		const file = join(logDir, "a.jsonl");
+		writeFileSync(file, "line\n");
+		const before = computeBriefingFingerprint(logDir, []);
+		writeFileSync(file, "line one\nline two\n");
+		expect(computeBriefingFingerprint(logDir, [])).not.toBe(before);
+	});
+
+	test("reflects a running bundle's entity data — the issue's core case", () => {
+		const logDir = join(dir, "logs");
+		mkdirSync(logDir);
+		const entityRoot = join(dir, "todo-data");
+		mkdirSync(join(entityRoot, "tasks"), { recursive: true });
+		writeFileSync(join(entityRoot, "tasks", "t1.json"), "{}");
+
+		const before = computeBriefingFingerprint(logDir, [instance("todo", "running", entityRoot)]);
+		writeFileSync(join(entityRoot, "tasks", "t2.json"), "{}");
+		const after = computeBriefingFingerprint(logDir, [instance("todo", "running", entityRoot)]);
+		expect(after).not.toBe(before);
+	});
+
+	test("excludes bundles that are not running", () => {
+		const logDir = join(dir, "logs");
+		mkdirSync(logDir);
+		const withStopped = computeBriefingFingerprint(logDir, [
+			instance("todo", "stopped", join(dir, "todo-data")),
+		]);
+		expect(withStopped).toBe(computeBriefingFingerprint(logDir, []));
+	});
+
+	test("missing directories are tolerated, not crashes", () => {
+		expect(() =>
+			computeBriefingFingerprint(join(dir, "no-logs"), [
+				instance("todo", "running", join(dir, "absent")),
+			]),
+		).not.toThrow();
+	});
+});
