@@ -345,7 +345,7 @@ describe("startBundleSource — remote url entries", () => {
 				allowInsecureRemotes: true,
 				// wsId intentionally omitted
 			}),
-		).rejects.toThrow(/requires opts\.wsId/);
+		).rejects.toThrow(/requires opts\.workspaceContext.*opts\.wsId/);
 		expect(registry.hasSource("no-ws")).toBe(false);
 	}, 15_000);
 

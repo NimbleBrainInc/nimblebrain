@@ -4,7 +4,6 @@ import { join, resolve } from "node:path";
 import { log } from "../cli/log.ts";
 import {
   friendlyMpakConfigError,
-  resolveUserConfig,
   type UserConfigFieldDef,
 } from "../config/workspace-credentials.ts";
 import type { EventSink } from "../engine/types.ts";
@@ -16,16 +15,12 @@ import {
   WorkspaceOAuthProvider,
   type WorkspaceOAuthProviderOptions,
 } from "../tools/workspace-oauth-provider.ts";
+import { WorkspaceContext } from "../workspace/context.ts";
 import { extractBundleMeta } from "./defaults.ts";
 import { filterEnvForBundle } from "./env-filter.ts";
 import { validateManifest } from "./manifest.ts";
 import { getMpak } from "./mpak.ts";
-import {
-  deriveBundleDataDir,
-  deriveServerName,
-  resolveBundleDataDir,
-  validateServerName,
-} from "./paths.ts";
+import { deriveBundleDataDir, deriveServerName, validateServerName } from "./paths.ts";
 import { notifyConnectionRunning } from "./pending-auth-buffer.ts";
 import { resolveLocalBundle } from "./resolve.ts";
 import type {
@@ -101,6 +96,51 @@ export function resolvePublicOrigin(
   return env.NB_PUBLIC_ORIGIN ?? env.ALLOWED_ORIGINS?.split(",")[0]?.trim() ?? "";
 }
 
+/**
+ * Reconcile the three workspace-identity inputs `startBundleSource` accepts:
+ *
+ *   1. `workspaceContext` (preferred) — typed handle, owns wsId + workDir.
+ *   2. `wsId` + `workDir` (legacy) — separate fields the old callers pass.
+ *   3. Neither (URL/local-path bundles without OAuth and without user_config).
+ *
+ * Returns a single `WorkspaceContext` (or undefined when no workspace is
+ * in play). If both forms are passed, they must agree — otherwise we
+ * silently pick one and the credential boundary becomes ambiguous, which
+ * is the exact failure mode this whole refactor is meant to eliminate.
+ */
+function resolveWorkspaceContext(
+  opts:
+    | {
+        workspaceContext?: WorkspaceContext;
+        wsId?: string;
+        workDir?: string;
+      }
+    | undefined,
+): WorkspaceContext | undefined {
+  if (!opts) return undefined;
+  if (opts.workspaceContext) {
+    if (opts.wsId !== undefined && opts.wsId !== opts.workspaceContext.workspaceId) {
+      throw new Error(
+        `[bundles] startBundleSource opts.wsId="${opts.wsId}" disagrees with ` +
+          `opts.workspaceContext.workspaceId="${opts.workspaceContext.workspaceId}" — ` +
+          `pass workspaceContext alone, or drop wsId.`,
+      );
+    }
+    if (opts.workDir !== undefined && opts.workDir !== opts.workspaceContext.workDir) {
+      throw new Error(
+        `[bundles] startBundleSource opts.workDir disagrees with ` +
+          `opts.workspaceContext.workDir — pass one form or the other.`,
+      );
+    }
+    return opts.workspaceContext;
+  }
+  if (opts.wsId) {
+    const workDir = opts.workDir ?? process.env.NB_WORK_DIR ?? join(homedir(), ".nimblebrain");
+    return new WorkspaceContext({ wsId: opts.wsId, workDir });
+  }
+  return undefined;
+}
+
 /** Create and start a McpSource for a BundleRef, then add to registry.
  *  Returns manifest metadata and actual source name for local bundles. */
 export async function startBundleSource(
@@ -119,16 +159,30 @@ export async function startBundleSource(
     internalEnv?: InternalBundleEnv;
     dataDir?: string;
     /**
+     * Workspace context for credential resolution and on-disk path
+     * derivation. Preferred over the legacy `wsId` + `workDir` pair —
+     * carries both fields plus the credential store and is validated
+     * once at construction. When provided, `wsId` and `workDir` MUST be
+     * omitted or match (the function asserts consistency); the context
+     * wins.
+     */
+    workspaceContext?: WorkspaceContext;
+    /**
      * Workspace id for credential resolution. Required for named bundles — the
      * named-bundle path resolves `user_config` via `resolveUserConfig` which is
      * workspace-scoped by design. Unused for URL and local-path bundles, which
      * don't go through `prepareServer` for `user_config`.
+     *
+     * @deprecated Pass `workspaceContext` instead. Kept for incremental
+     * migration; see Task 007 in `.tasks/delegation-model/`.
      */
     wsId?: string;
     /**
      * Work directory for credential resolution. Defaults to `NB_WORK_DIR` or
      * `~/.nimblebrain` — the same default the named-bundle branch already uses
      * for `bundleDataDir`.
+     *
+     * @deprecated Pass `workspaceContext` instead.
      */
     workDir?: string;
     /**
@@ -141,6 +195,10 @@ export async function startBundleSource(
     onInteractiveAuthRequired?: (authorizationUrl: string) => void;
   },
 ): Promise<StartBundleResult> {
+  // Reconcile workspaceContext / wsId / workDir into a single context for
+  // the rest of this function. Callers may pass either form; once
+  // .tasks/delegation-model/007 lands, everyone passes workspaceContext.
+  const wsContext: WorkspaceContext | undefined = resolveWorkspaceContext(opts);
   if ("url" in ref) {
     const serverName = ref.serverName ?? deriveServerName(ref.url);
     validateServerName(serverName);
@@ -194,14 +252,16 @@ export async function startBundleSource(
     let authProvider: WorkspaceOAuthProvider | undefined;
     const hasStaticAuth = ref.transport?.auth && ref.transport.auth.type !== "none";
     if (!hasStaticAuth) {
-      if (!opts?.wsId) {
+      if (!wsContext) {
         throw new Error(
-          `[bundles] URL bundle "${sourceName}" without static auth requires opts.wsId — ` +
-            "OAuth credentials are workspace-scoped and silent defaults would cross tenants. " +
-            "Thread wsId through installRemote() or the caller that invoked startBundleSource().",
+          `[bundles] URL bundle "${sourceName}" without static auth requires opts.workspaceContext ` +
+            "(or the legacy opts.wsId) — OAuth credentials are workspace-scoped and silent defaults " +
+            "would cross tenants. Thread workspaceContext through installRemote() or the caller " +
+            "that invoked startBundleSource().",
         );
       }
-      const workDir = opts.workDir ?? process.env.NB_WORK_DIR ?? join(homedir(), ".nimblebrain");
+      const wsId = wsContext.workspaceId;
+      const workDir = wsContext.workDir;
       const apiBase = process.env.NB_API_URL;
       // Startup warning when a URL-ref bundle is being wired but NB_API_URL
       // isn't set. Default is only safe for local dev — in prod (NB behind a
@@ -230,11 +290,11 @@ export async function startBundleSource(
         let resolvedSecret: string | undefined;
         if (ref.oauthClient.clientSecret) {
           const secretStore = new FileCredentialStore(workDir);
-          const wrapped = await secretStore.get(opts.wsId, ref.oauthClient.clientSecret.key);
+          const wrapped = await secretStore.get(wsId, ref.oauthClient.clientSecret.key);
           if (!wrapped) {
             throw new Error(
               `[bundles] OAuth client_secret not found at credential key "${ref.oauthClient.clientSecret.key}" — ` +
-                `run \`nb credential set ${opts.wsId} ${ref.oauthClient.clientSecret.key} <value>\` to seed it`,
+                `run \`nb credential set ${wsId} ${ref.oauthClient.clientSecret.key} <value>\` to seed it`,
             );
           }
           resolvedSecret = wrapped.reveal();
@@ -252,11 +312,12 @@ export async function startBundleSource(
       // started at boot (they're loaded into a workspace's registry
       // on-demand when their user enters the workspace, see lifecycle).
       authProvider = new WorkspaceOAuthProvider({
-        owner: { type: "workspace", wsId: opts.wsId },
+        owner: { type: "workspace", wsId },
         serverName,
         workDir,
+        workspaceContext: wsContext,
         callbackUrl,
-        allowInsecureRemotes: opts.allowInsecureRemotes === true,
+        allowInsecureRemotes: opts?.allowInsecureRemotes === true,
         onInteractiveAuthRequired: wrappedCallback,
         ...(staticClient ? { staticClient } : {}),
         ...(ref.scopes ? { scopes: ref.scopes } : {}),
@@ -304,8 +365,8 @@ export async function startBundleSource(
         // `connection.state_changed` SSE event so the UI banner
         // clears. For headless bundles that succeeded without ever
         // hitting pending_auth, this is just a confirming update.
-        if (opts?.wsId) {
-          notifyConnectionRunning(opts.wsId, sourceName);
+        if (wsContext) {
+          notifyConnectionRunning(wsContext.workspaceId, sourceName);
         }
         log.info(`[bundles] ✓ ${sourceName} ready (${tools.length} tools, remote)`);
         return {
@@ -387,26 +448,26 @@ export async function startBundleSource(
     validateServerName(serverName);
     const sourceName = serverName;
 
-    // Named bundles are workspace-scoped. The caller must supply `wsId`;
-    // without it we have no workspace to resolve credentials against and
-    // no way to pick a consistent data dir. This throw is the end of the
-    // named-bundle path — the platform has a bug if a caller reaches here
-    // without a workspace context.
-    if (!opts?.wsId) {
+    // Named bundles are workspace-scoped. The caller must supply
+    // `workspaceContext` (or the legacy `wsId`); without it we have no
+    // workspace to resolve credentials against and no way to pick a
+    // consistent data dir. This throw is the end of the named-bundle
+    // path — the platform has a bug if a caller reaches here without a
+    // workspace context.
+    if (!wsContext) {
       throw new Error(
         `Cannot start ${ref.name}: a workspace ID is required (platform bug — please report).`,
       );
     }
 
-    const nbWorkDir = opts.workDir ?? process.env.NB_WORK_DIR ?? join(homedir(), ".nimblebrain");
-    // Data dir derives from wsId + workDir. Callers only pass `opts.dataDir`
-    // to override for test fixtures. This is the single source of truth for
-    // the layout — lifecycle.installNamed, workspace-ops, and workspace-
-    // runtime all produce paths matching this derivation, so there is no
-    // drift class between "where a bundle gets installed" and "where it
-    // spawns when restarted."
+    // Data dir derives from the workspace context. Callers only pass
+    // `opts.dataDir` to override for test fixtures. This is the single
+    // source of truth for the layout — lifecycle.installNamed,
+    // workspace-ops, and workspace-runtime all produce paths matching
+    // this derivation, so there is no drift class between "where a bundle
+    // gets installed" and "where it spawns when restarted."
     const bundleDataDir =
-      opts.dataDir ?? resolveBundleDataDir(join(nbWorkDir, "workspaces", opts.wsId), ref.name);
+      opts?.dataDir ?? wsContext.getDataPath("data", deriveBundleDataDir(ref.name));
 
     const mpakHome = process.env.MPAK_HOME ?? join(homedir(), ".mpak");
     const mpak = getMpak(mpakHome);
@@ -438,11 +499,9 @@ export async function startBundleSource(
     // NEWSAPI_API_KEY export) and manifest defaults. Any still-missing
     // required field surfaces as MpakConfigError, which we translate to
     // the familiar `nb config set -w <wsId>` hint.
-    const userConfig = await resolveUserConfig({
+    const userConfig = await wsContext.getCredentialStore().resolveUserConfig({
       bundleName: ref.name,
       userConfigSchema: cachedManifest?.user_config,
-      wsId: opts.wsId,
-      workDir: nbWorkDir,
     });
 
     let server: Awaited<ReturnType<typeof mpak.prepareServer>>;
@@ -455,11 +514,14 @@ export async function startBundleSource(
       // MpakConfigError (0.5.0+) carries envAliases per missing field,
       // so friendlyMpakConfigError can name `export ANTHROPIC_API_KEY`
       // hints without us threading the manifest through.
-      throw friendlyMpakConfigError(err, opts.wsId);
+      throw friendlyMpakConfigError(err, wsContext.workspaceId);
     }
 
+    // Subprocess env contract is unchanged: NB_WORKSPACE_ID is the
+    // bundle-visible workspace id. Derived through the context so the
+    // workspace's identity flows through one validated path.
     const platformEnv = buildPlatformEnv({
-      workspaceId: opts.wsId,
+      workspaceId: wsContext.workspaceId,
       serverName: sourceName,
       manifestMeta: cachedManifest?._meta as Record<string, unknown> | undefined,
       publicOrigin: resolvePublicOrigin(),
@@ -493,7 +555,7 @@ export async function startBundleSource(
       internalEnv,
       opts?.dataDir,
       eventSink,
-      opts?.wsId,
+      wsContext?.workspaceId,
     );
     source = result.source;
     meta = result.meta;

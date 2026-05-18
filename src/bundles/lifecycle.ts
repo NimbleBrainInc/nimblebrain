@@ -14,6 +14,7 @@ import {
   validateAdditionalAuthorizationParams,
   WorkspaceOAuthProvider,
 } from "../tools/workspace-oauth-provider.ts";
+import { WorkspaceContext } from "../workspace/context.ts";
 import { createAutomation, deleteAutomation } from "./automations/src/domain.ts";
 import { connectorSlug, hasPersistedComposioConnection } from "./composio-connection.ts";
 import {
@@ -136,16 +137,19 @@ export class BundleLifecycleManager {
 
     // Workspace-scoped data dir keeps two workspaces installing the same
     // bundle from stomping on each other's entity data. Matches the
-    // seedInstance layout used at platform boot.
+    // seedInstance layout used at platform boot. Routed through
+    // WorkspaceContext so the `workspaces/{wsId}/data/{slug}` layout has
+    // one definition site (see src/workspace/context.ts).
     const nbWorkDir = process.env.NB_WORK_DIR ?? join(homedir(), ".nimblebrain");
-    const bundleDataDir = join(nbWorkDir, "workspaces", wsId, "data", deriveBundleDataDir(name));
+    const wsContext = new WorkspaceContext({ wsId, workDir: nbWorkDir });
+    const bundleDataDir = wsContext.getDataPath("data", deriveBundleDataDir(name));
 
     const { sourceName, manifest } = await startBundleSource(
       { name, env },
       registry,
       this.eventSink,
       this.configPath ? dirname(this.configPath) : undefined,
-      { dataDir: bundleDataDir, wsId, workDir: nbWorkDir },
+      { dataDir: bundleDataDir, workspaceContext: wsContext },
     );
     if (!manifest) {
       // Named bundles always have a manifest — startBundleSource reads it
