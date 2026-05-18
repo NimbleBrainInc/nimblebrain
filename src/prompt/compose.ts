@@ -1,3 +1,4 @@
+import { MIN_TRUST_FOR_PROMPT_INJECTION } from "../bundles/trust-policy.ts";
 import type { ParticipantInfo } from "../conversation/types.ts";
 import { approxTokens } from "../skills/tokens.ts";
 import type { Skill } from "../skills/types.ts";
@@ -539,7 +540,7 @@ function formatFocusedAppSection(focusedApp: FocusedAppInfo): string {
   lines.push("");
   lines.push("### App Guide");
   lines.push("");
-  if (focusedApp.skillResource && focusedApp.trustScore >= 50) {
+  if (focusedApp.skillResource && focusedApp.trustScore >= MIN_TRUST_FOR_PROMPT_INJECTION) {
     lines.push(`<app-guide>\n${focusedApp.skillResource}\n</app-guide>`);
     if (focusedApp.referenceResourceUri) {
       lines.push("");
@@ -562,11 +563,10 @@ const MAX_STATE_TOKENS = 4096;
 
 /**
  * Format the app state section for injection into the system prompt.
- * Trust-gated: only apps with trustScore >= 50 get their state in the prompt.
+ * Trust-gated: see `MIN_TRUST_FOR_PROMPT_INJECTION`.
  */
 function formatAppStateSection(appState: AppStateInfo): string | null {
-  // Trust gating: score must be >= 50
-  if (appState.trustScore < 50) return null;
+  if (appState.trustScore < MIN_TRUST_FOR_PROMPT_INJECTION) return null;
 
   const stateJson = JSON.stringify(appState.state, null, 2);
   // Rough token estimate: 1 token ≈ 4 chars

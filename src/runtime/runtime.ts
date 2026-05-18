@@ -8,6 +8,7 @@ import { WorkspaceLogSink } from "../adapters/workspace-log-sink.ts";
 import { BundleLifecycleManager } from "../bundles/lifecycle.ts";
 import { deriveServerName } from "../bundles/paths.ts";
 import { setConnectionRunningHandler } from "../bundles/pending-auth-buffer.ts";
+import { MIN_TRUST_FOR_PROMPT_INJECTION } from "../bundles/trust-policy.ts";
 import type { AppInfo, BundleInstance } from "../bundles/types.ts";
 import { log } from "../cli/log.ts";
 import { isToolVisibleToRole, type ResolvedFeatures, resolveFeatures } from "../config/features.ts";
@@ -69,7 +70,7 @@ import { TelemetryManager } from "../telemetry/manager.ts";
 import { PostHogEventSink } from "../telemetry/posthog-sink.ts";
 import type { DelegateContext } from "../tools/delegate.ts";
 import { McpSource } from "../tools/mcp-source.ts";
-import type { ToolRegistry } from "../tools/registry.ts";
+import { SharedSourceRef, type ToolRegistry } from "../tools/registry.ts";
 import { createSystemTools } from "../tools/system-tools.ts";
 import type { ResourceData } from "../tools/types.ts";
 import { UserConnectorStore } from "../users/user-connector-store.ts";
@@ -213,7 +214,12 @@ export class Runtime {
   private _manageConversationCtx:
     | import("../tools/conversation-tools.ts").ManageConversationContext
     | null = null;
-  private skillResourceCache = new Map<string, { content: string; fetchedAt: number }>();
+  /**
+   * Cache for `skill://<bundle>/usage` resource fetches. A `null` body is a
+   * sentinel meaning "this bundle does not publish the resource" — without it,
+   * `loadBundleSkills` would re-probe every non-skill bundle on every chat.
+   */
+  private skillResourceCache = new Map<string, { content: string | null; fetchedAt: number }>();
   private static readonly SKILL_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
   /**
    * Conversation IDs with an in-flight chat() call. Prevents concurrent runs on
@@ -857,7 +863,9 @@ export class Runtime {
     // under `appContext`, missing cross-app workflows).
     const userId = reqIdentity?.id ?? null;
     const layer3Pool = this.loadConversationSkills(wsId, userId);
-    const bundleSkills = await this.loadBundleSkills(wsId);
+    const bundleSkills = await this.loadBundleSkills(wsId, {
+      appContextServerName: request.appContext?.serverName,
+    });
     const mergedLayer3Pool: Skill[] = [...layer3Pool, ...bundleSkills];
     const activeToolNames = tools.map((t) => t.name);
     const selectedLayer3 = selectLayer3Skills({
@@ -1225,7 +1233,18 @@ export class Runtime {
     return this._internalToken;
   }
 
-  /** Fetch the skill:// usage resource for an app's MCP server, with caching. */
+  /**
+   * Fetch the `skill://<serverName>/usage` resource for a bundle, with caching.
+   *
+   * Negative results (resource absent, source not MCP, transport error) are
+   * cached as a `null` sentinel — the common case is "this bundle has no skill
+   * resource," and re-issuing the read on every chat over a stable bundle set
+   * would N×-multiply the request-path latency.
+   *
+   * `SharedSourceRef`-wrapped sources are unwrapped before the `McpSource`
+   * check; protected default bundles arrive wrapped and would otherwise be
+   * silently invisible to this path.
+   */
   private async getAppSkillResource(serverName: string): Promise<string | null> {
     const cached = this.skillResourceCache.get(serverName);
     if (cached && Date.now() - cached.fetchedAt < Runtime.SKILL_CACHE_TTL) {
@@ -1238,27 +1257,28 @@ export class Runtime {
       source = reg.getSources().find((s) => s.name === serverName);
       if (source) break;
     }
-    if (!(source instanceof McpSource)) return null;
+    const unwrapped = source instanceof SharedSourceRef ? source.unwrap() : source;
+    if (!(unwrapped instanceof McpSource)) {
+      this.skillResourceCache.set(serverName, { content: null, fetchedAt: Date.now() });
+      return null;
+    }
 
+    let body: string | null = null;
     try {
-      const resource = await source.readResource(`skill://${serverName}/usage`);
+      const resource = await unwrapped.readResource(`skill://${serverName}/usage`);
       const content = resource?.text ?? null;
       if (content) {
         // Token budget: cap at ~3000 tokens (~12000 chars). Heading-aware
         // so we don't slice mid-sentence (production case: a "rules" appendix
         // at the end of a SKILL.md was lost mid-rule, breaking the model's
         // tool-selection logic).
-        const { body } = truncateMarkdownToBudget(content, 12000);
-        this.skillResourceCache.set(serverName, {
-          content: body,
-          fetchedAt: Date.now(),
-        });
-        return body;
+        body = truncateMarkdownToBudget(content, 12000).body;
       }
     } catch {
-      // Resource doesn't exist or read failed — skip silently
+      // Resource doesn't exist or read failed — fall through to negative cache.
     }
-    return null;
+    this.skillResourceCache.set(serverName, { content: body, fetchedAt: Date.now() });
+    return body;
   }
 
   /** Check if an MCP source exposes a specific resource URI. */
@@ -1287,23 +1307,48 @@ export class Runtime {
    * stays cheap on warm requests. Per-source errors are swallowed (resource
    * not found is the normal not-published case).
    */
-  private async loadBundleSkills(wsId: string): Promise<Skill[]> {
+  private async loadBundleSkills(
+    wsId: string,
+    options: { appContextServerName?: string } = {},
+  ): Promise<Skill[]> {
     const registry = this._workspaceRegistries.get(wsId);
     if (!registry) return [];
 
-    const results: Skill[] = [];
+    // Candidate sources: MCP-backed (unwrapping `SharedSourceRef` so protected
+    // default bundles are visible), and not the one already injected via
+    // `<app-guide>` in `appContext` chats — otherwise the same body lands
+    // twice in the prompt under two different framings.
+    //
+    // Trust default `?? 100` mirrors the focused-app path (line 799) so both
+    // routes apply the same policy: a bundle with no lifecycle entry (built-ins,
+    // test fixtures) is treated as fully trusted; a `null` trust score (fetch
+    // pending or failed) is permissive in the same way. Tightening to fail-
+    // closed is a separate policy decision that needs to land on both paths
+    // together.
+    const candidates: string[] = [];
     for (const source of registry.getSources()) {
-      if (!(source instanceof McpSource)) continue;
-      try {
-        const body = await this.getAppSkillResource(source.name);
-        if (body) {
-          results.push(synthesizeBundleSkill({ serverName: source.name, body }));
-        }
-      } catch {
-        // Source crashed / stopped / no skill resource — skip silently.
-      }
+      if (source.name === options.appContextServerName) continue;
+      const inner = source instanceof SharedSourceRef ? source.unwrap() : source;
+      if (!(inner instanceof McpSource)) continue;
+      const trustScore = this.lifecycle?.getInstance(source.name, wsId)?.trustScore ?? 100;
+      if (trustScore < MIN_TRUST_FOR_PROMPT_INJECTION) continue;
+      candidates.push(source.name);
     }
-    return results;
+
+    // Parallel fetch: serial probing N-times-multiplied the chat hot-path
+    // latency on workspaces with many non-skill bundles. `getAppSkillResource`
+    // caches both positive and negative results so steady-state cost is zero.
+    const synthesized = await Promise.all(
+      candidates.map(async (name) => {
+        try {
+          const body = await this.getAppSkillResource(name);
+          return body ? synthesizeBundleSkill({ serverName: name, body }) : null;
+        } catch {
+          return null;
+        }
+      }),
+    );
+    return synthesized.filter((s): s is Skill => s !== null);
   }
 
   /**

@@ -169,6 +169,31 @@ describe("bundle-skill adapter — end-to-end", () => {
     expect(bundleEntry?.reason).toContain("test__*");
   });
 
+  it("does NOT synthesize a Layer 3 skill when the bundle is already on the appContext path", async () => {
+    // When `appContext.serverName` is the bundle, its `skill://<name>/usage`
+    // body is already injected via `<app-guide>` by `getAppSkillResource` on
+    // the focused-app path. The Layer 3 adapter must skip that source or the
+    // same content lands in the prompt twice under two different framings.
+    const chat = await runtime.chat({
+      workspaceId: TEST_WORKSPACE_ID,
+      message: "scoped chat",
+      appContext: { appName: "test", serverName: "test" },
+      allowedTools: ["test__doit"],
+    });
+
+    const store = runtime.getStore(TEST_WORKSPACE_ID);
+    const events = await store.readEvents(chat.conversationId);
+    const skillsLoaded = events.find((e) => e.type === "skills.loaded");
+    expect(skillsLoaded).toBeDefined();
+
+    const payload = skillsLoaded as unknown as {
+      skills: Array<{ id: string }>;
+    };
+    const bundleEntry = payload.skills.find((s) => s.id === "skill://test/usage");
+    // The skill is gone from Layer 3 — `<app-guide>` is now its only home.
+    expect(bundleEntry).toBeUndefined();
+  });
+
   it("does NOT load the bundle skill when none of its tools are active", async () => {
     // No tools allowed → activeTools is empty after surfaceTools filters.
     // Bundle skill is `tool_affined` to test__* and must NOT load.
