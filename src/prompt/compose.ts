@@ -1,4 +1,3 @@
-import { MIN_TRUST_FOR_PROMPT_INJECTION } from "../bundles/trust-policy.ts";
 import type { ParticipantInfo } from "../conversation/types.ts";
 import { approxTokens } from "../skills/tokens.ts";
 import type { Skill } from "../skills/types.ts";
@@ -540,16 +539,24 @@ function formatFocusedAppSection(focusedApp: FocusedAppInfo): string {
   lines.push("");
   lines.push("### App Guide");
   lines.push("");
-  if (focusedApp.skillResource && focusedApp.trustScore >= MIN_TRUST_FOR_PROMPT_INJECTION) {
-    lines.push(`<app-guide>\n${focusedApp.skillResource}\n</app-guide>`);
+  // Trust is enforced at install time, not per-prompt: if a bundle is active
+  // in the workspace its tools are already callable, so suppressing the
+  // workflow guidance that teaches the model how to use them safely would
+  // make the situation worse, not better. Tool descriptions, tool outputs,
+  // and `app://instructions` flow through ungated already.
+  if (focusedApp.skillResource) {
+    // Escape any embedded `</app-guide>` so a bundle-authored skill body
+    // cannot break out of containment. Matches the pattern used for
+    // `<app-state>` (l. 584), `<app-instructions>` (l. 494), and
+    // `<layer3-skill>` (l. 632).
+    const safeGuide = focusedApp.skillResource.replaceAll("</app-guide>", "&lt;/app-guide>");
+    lines.push(`<app-guide>\n${safeGuide}\n</app-guide>`);
     if (focusedApp.referenceResourceUri) {
       lines.push("");
       lines.push(
         `For detailed tool guidance, error recovery, and reference material, read the \`${focusedApp.referenceResourceUri}\` resource.`,
       );
     }
-  } else if (focusedApp.skillResource) {
-    lines.push("App guide available but not injected — bundle trust score below threshold.");
   } else {
     lines.push("No app-specific guide available. Use the available tools to help the user.");
   }
@@ -563,11 +570,9 @@ const MAX_STATE_TOKENS = 4096;
 
 /**
  * Format the app state section for injection into the system prompt.
- * Trust-gated: see `MIN_TRUST_FOR_PROMPT_INJECTION`.
+ * See `<app-guide>` injection above for the trust-at-install rationale.
  */
 function formatAppStateSection(appState: AppStateInfo): string | null {
-  if (appState.trustScore < MIN_TRUST_FOR_PROMPT_INJECTION) return null;
-
   const stateJson = JSON.stringify(appState.state, null, 2);
   // Rough token estimate: 1 token ≈ 4 chars
   const estimatedTokens = Math.ceil(stateJson.length / 4);

@@ -8,7 +8,6 @@ import { WorkspaceLogSink } from "../adapters/workspace-log-sink.ts";
 import { BundleLifecycleManager } from "../bundles/lifecycle.ts";
 import { deriveServerName } from "../bundles/paths.ts";
 import { setConnectionRunningHandler } from "../bundles/pending-auth-buffer.ts";
-import { MIN_TRUST_FOR_PROMPT_INJECTION } from "../bundles/trust-policy.ts";
 import type { AppInfo, BundleInstance } from "../bundles/types.ts";
 import { log } from "../cli/log.ts";
 import { isToolVisibleToRole, type ResolvedFeatures, resolveFeatures } from "../config/features.ts";
@@ -1319,19 +1318,16 @@ export class Runtime {
     // `<app-guide>` in `appContext` chats — otherwise the same body lands
     // twice in the prompt under two different framings.
     //
-    // Trust default `?? 100` mirrors the focused-app path (line 799) so both
-    // routes apply the same policy: a bundle with no lifecycle entry (built-ins,
-    // test fixtures) is treated as fully trusted; a `null` trust score (fetch
-    // pending or failed) is permissive in the same way. Tightening to fail-
-    // closed is a separate policy decision that needs to land on both paths
-    // together.
+    // No trust-score gate: if a bundle is active its tools are callable, so
+    // suppressing the workflow guidance that teaches the model how to use them
+    // safely would make the situation worse, not better. Trust is enforced at
+    // install time. See `formatFocusedAppSection` for the matching policy on
+    // the `<app-guide>` path.
     const candidates: string[] = [];
     for (const source of registry.getSources()) {
       if (source.name === options.appContextServerName) continue;
       const inner = source instanceof SharedSourceRef ? source.unwrap() : source;
       if (!(inner instanceof McpSource)) continue;
-      const trustScore = this.lifecycle?.getInstance(source.name, wsId)?.trustScore ?? 100;
-      if (trustScore < MIN_TRUST_FOR_PROMPT_INJECTION) continue;
       candidates.push(source.name);
     }
 

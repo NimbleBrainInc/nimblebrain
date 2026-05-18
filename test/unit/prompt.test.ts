@@ -492,10 +492,15 @@ describe("composeSystemPrompt — user preferences", () => {
   });
 });
 
-describe("composeSystemPrompt — app guide trust gating", () => {
+describe("composeSystemPrompt — app guide injection", () => {
+  // Trust is enforced at install time, not per-prompt. The `<app-guide>` body
+  // ships regardless of MTF score because the bundle's tools are already
+  // callable and suppressing the workflow guidance would leave the model
+  // less safe, not more. These tests guard against re-introducing a per-turn
+  // trust gate.
   const guideText = "Use tasks__create to add items. Always set a due date.";
 
-  it("high trust (80): app guide is included", () => {
+  it("includes the app guide at high trust", () => {
     const focused: FocusedAppInfo = {
       name: "Tasks",
       tools: [],
@@ -508,7 +513,7 @@ describe("composeSystemPrompt — app guide trust gating", () => {
     expect(result).not.toContain("trust score below threshold");
   });
 
-  it("low trust (30): app guide is NOT included, fallback shown", () => {
+  it("includes the app guide at low trust (no per-turn gate)", () => {
     const focused: FocusedAppInfo = {
       name: "Tasks",
       tools: [],
@@ -516,37 +521,12 @@ describe("composeSystemPrompt — app guide trust gating", () => {
       trustScore: 30,
     };
     const result = composeSystemPrompt([], null, undefined, focused);
-    expect(result).not.toContain(guideText);
-    expect(result).not.toContain("<app-guide>");
-    expect(result).toContain("App guide available but not injected — bundle trust score below threshold.");
-  });
-
-  it("boundary: trustScore 50 includes guide", () => {
-    const focused: FocusedAppInfo = {
-      name: "Tasks",
-      tools: [],
-      skillResource: guideText,
-      trustScore: 50,
-    };
-    const result = composeSystemPrompt([], null, undefined, focused);
     expect(result).toContain(guideText);
     expect(result).toContain("<app-guide>");
+    expect(result).not.toContain("trust score below threshold");
   });
 
-  it("boundary: trustScore 49 excludes guide", () => {
-    const focused: FocusedAppInfo = {
-      name: "Tasks",
-      tools: [],
-      skillResource: guideText,
-      trustScore: 49,
-    };
-    const result = composeSystemPrompt([], null, undefined, focused);
-    expect(result).not.toContain(guideText);
-    expect(result).not.toContain("<app-guide>");
-    expect(result).toContain("trust score below threshold");
-  });
-
-  it("no skillResource: works regardless of trust score", () => {
+  it("emits the no-guide fallback only when skillResource is absent", () => {
     const focused: FocusedAppInfo = {
       name: "Tasks",
       tools: [],
