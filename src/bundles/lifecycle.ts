@@ -10,10 +10,8 @@ import { FileCredentialStore } from "../tools/credential-store.ts";
 import { McpSource } from "../tools/mcp-source.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
 import { UserPoolSource } from "../tools/user-pool-source.ts";
-import {
-  validateAdditionalAuthorizationParams,
-  WorkspaceOAuthProvider,
-} from "../tools/workspace-oauth-provider.ts";
+import { WorkspaceOAuthProvider } from "../tools/workspace-oauth-provider.ts";
+import { validateAdditionalAuthorizationParams } from "../util/oauth-params.ts";
 import { createAutomation, deleteAutomation } from "./automations/src/domain.ts";
 import { connectorSlug, hasPersistedComposioConnection } from "./composio-connection.ts";
 import {
