@@ -473,9 +473,7 @@ export class AgentEngine {
         // available so the run can recover.
         const trippedSet = new Set(supervisor.snapshot().trippedTools);
         const usableDirectTools =
-          trippedSet.size === 0
-            ? directTools
-            : directTools.filter((t) => !trippedSet.has(t.name));
+          trippedSet.size === 0 ? directTools : directTools.filter((t) => !trippedSet.has(t.name));
         const modelTools: LanguageModelV3FunctionTool[] = usableDirectTools.map((t) => ({
           type: "function" as const,
           name: t.name,
