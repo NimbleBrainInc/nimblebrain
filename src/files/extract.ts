@@ -3,6 +3,16 @@ import { extractText as extractPdfText } from "unpdf";
 import * as XLSX from "xlsx";
 
 /**
+ * Truncation suffix used by callers that route extracted text into the
+ * rehydrate fallback path (i.e. the model already has the `files__read`
+ * tool surfaced separately, so the suffix should not nudge it to call).
+ * Centralised so ingest-time sidecar population and rehydrate-time live
+ * extraction produce byte-identical text — required for the FileStore
+ * extracted-text cache to be valid across paths.
+ */
+export const REHYDRATE_TRUNCATED_SUFFIX = (kb: number): string => `\n[... truncated at ${kb} KB]`;
+
+/**
  * Extract text from a file buffer based on MIME type.
  * Returns null for unsupported types or on extraction failure.
  */
@@ -10,6 +20,7 @@ export async function extractText(
   data: Buffer,
   mimeType: string,
   maxSize: number = 204_800,
+  options: { truncatedSuffix?: (kb: number) => string } = {},
 ): Promise<{ text: string; truncated: boolean } | null> {
   // Normalize: callers may pass `text/plain;charset=utf-8` from a
   // browser upload. Exact-Set / equality checks against the raw value
@@ -17,19 +28,19 @@ export async function extractText(
   const bare = mimeType.split(";", 1)[0]?.trim().toLowerCase() ?? "";
   try {
     if (isTextMime(bare)) {
-      return truncate(data.toString("utf-8"), maxSize);
+      return truncate(data.toString("utf-8"), maxSize, options);
     }
 
     if (bare === "application/pdf") {
-      return await extractPdf(data, maxSize);
+      return await extractPdf(data, maxSize, options);
     }
 
     if (bare === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") {
-      return await extractDocx(data, maxSize);
+      return await extractDocx(data, maxSize, options);
     }
 
     if (bare === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") {
-      return extractXlsx(data, maxSize);
+      return extractXlsx(data, maxSize, options);
     }
 
     // Images and everything else: not extractable
@@ -56,7 +67,11 @@ function isTextMime(mimeType: string): boolean {
   return TEXT_MIME_TYPES.has(mimeType);
 }
 
-function truncate(text: string, maxSize: number): { text: string; truncated: boolean } {
+function truncate(
+  text: string,
+  maxSize: number,
+  options: { truncatedSuffix?: (kb: number) => string } = {},
+): { text: string; truncated: boolean } {
   const bytes = Buffer.byteLength(text, "utf-8");
   if (bytes <= maxSize) {
     return { text, truncated: false };
@@ -69,13 +84,16 @@ function truncate(text: string, maxSize: number): { text: string; truncated: boo
     truncated = truncated.slice(0, -1);
   }
   const kb = Math.round(maxSize / 1024);
-  truncated += `\n[... truncated at ${kb} KB — use files__read for full content]`;
+  truncated +=
+    options.truncatedSuffix?.(kb) ??
+    `\n[... truncated at ${kb} KB — use files__read for full content]`;
   return { text: truncated, truncated: true };
 }
 
 async function extractPdf(
   data: Buffer,
   maxSize: number,
+  options: { truncatedSuffix?: (kb: number) => string } = {},
 ): Promise<{ text: string; truncated: boolean } | null> {
   try {
     const result = await extractPdfText(new Uint8Array(data));
@@ -83,7 +101,7 @@ async function extractPdf(
       result.totalPages > 1
         ? result.text.map((page, i) => `--- Page ${i + 1} ---\n${page}`).join("\n\n")
         : (result.text[0] ?? "");
-    return truncate(text, maxSize);
+    return truncate(text, maxSize, options);
   } catch (err) {
     console.error("[files/extract] PDF extraction failed:", err);
     return null;
@@ -93,18 +111,23 @@ async function extractPdf(
 async function extractDocx(
   data: Buffer,
   maxSize: number,
+  options: { truncatedSuffix?: (kb: number) => string } = {},
 ): Promise<{ text: string; truncated: boolean } | null> {
   try {
     // biome-ignore lint/suspicious/noExplicitAny: mammoth types don't expose convertToMarkdown
     const result = await (mammoth as any).convertToMarkdown({ buffer: data });
-    return truncate(result.value, maxSize);
+    return truncate(result.value, maxSize, options);
   } catch (err) {
     console.error("[files/extract] DOCX extraction failed:", err);
     return null;
   }
 }
 
-function extractXlsx(data: Buffer, maxSize: number): { text: string; truncated: boolean } | null {
+function extractXlsx(
+  data: Buffer,
+  maxSize: number,
+  options: { truncatedSuffix?: (kb: number) => string } = {},
+): { text: string; truncated: boolean } | null {
   try {
     // Validate XLSX magic bytes (PK zip signature)
     if (data.length < 4 || data[0] !== 0x50 || data[1] !== 0x4b) {
@@ -116,7 +139,7 @@ function extractXlsx(data: Buffer, maxSize: number): { text: string; truncated: 
     const sheet = workbook.Sheets[firstSheetName];
     if (!sheet) return null;
     const csv = XLSX.utils.sheet_to_csv(sheet);
-    return truncate(csv, maxSize);
+    return truncate(csv, maxSize, options);
   } catch (err) {
     console.error("[files/extract] XLSX extraction failed:", err);
     return null;

@@ -97,6 +97,29 @@ describe("Integration: upload PNG image → ingest → verify resource_link cont
   });
 });
 
+describe("Integration: upload PDF → ingest → verify resource_link without extracted text", () => {
+  test("PDF file produces a resource_link content part and skips prompt text extraction", async () => {
+    const store = createFileStore(join(workDir, "files"));
+    const files = [makeFile(Buffer.from("%PDF-1.4\n%%EOF"), "report.pdf", "application/pdf")];
+
+    const result = await ingestFiles(files, "conv_int_pdf", store, DEFAULT_CONFIG);
+
+    expect(result.errors).toHaveLength(0);
+    expect(result.fileRefs).toHaveLength(1);
+    expect(result.fileRefs[0].extracted).toBe(false);
+    expect(result.fileRefs[0].mimeType).toBe("application/pdf");
+    expect(result.contentParts.filter((p) => p.type === "text")).toHaveLength(0);
+
+    const linkPart = result.contentParts.find((p) => p.type === "resource_link");
+    expect(linkPart).toBeDefined();
+    if (linkPart && linkPart.type === "resource_link") {
+      expect(linkPart.uri).toBe(`files://${result.fileRefs[0].id}`);
+      expect(linkPart.mimeType).toBe("application/pdf");
+      expect(linkPart.name).toBe("report.pdf");
+    }
+  });
+});
+
 describe("Integration: backward compat — no files → empty result", () => {
   test("empty files array returns empty contentParts, fileRefs, and no errors", async () => {
     const store = createFileStore(join(workDir, "files"));
