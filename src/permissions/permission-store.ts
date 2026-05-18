@@ -2,6 +2,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { writeJsonAtomic } from "../util/atomic-json.ts";
+import { WorkspaceContext } from "../workspace/context.ts";
 
 /**
  * Per-tool permission policies for installed connectors. Stored
@@ -136,8 +137,13 @@ export class PermissionStore {
       if (!ID_RE.test(owner.userId)) return null;
       return join(this.workDir, "users", owner.userId, "permissions.json");
     }
+    // Validate up-front so an invalid wsId returns null (existing contract)
+    // rather than throwing through the WorkspaceContext constructor.
     if (!ID_RE.test(owner.wsId)) return null;
-    return join(this.workDir, "workspaces", owner.wsId, "permissions.json");
+    return new WorkspaceContext({ wsId: owner.wsId, workDir: this.workDir }).getDataPath(
+      "root",
+      "permissions.json",
+    );
   }
 }
 

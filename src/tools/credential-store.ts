@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { WORKSPACE_ID_RE } from "../api/auth-middleware.ts";
+import { WorkspaceContext } from "../workspace/context.ts";
 import { Redacted } from "./redacted.ts";
 
 /**
@@ -76,7 +77,14 @@ export class FileCredentialStore implements CredentialStore {
 
   private dir(wsId: string): string {
     assertValidWsId(wsId);
-    return join(this.workDir, "workspaces", wsId, "credentials", "secrets");
+    // Routed through WorkspaceContext so the `workspaces/{wsId}/credentials/`
+    // layout has exactly one definition site (`src/workspace/context.ts`).
+    // `assertValidWsId` above stays for back-compat — the context constructor
+    // validates again (cheap, identical regex).
+    return new WorkspaceContext({ wsId, workDir: this.workDir }).getDataPath(
+      "credentials",
+      "secrets",
+    );
   }
 
   private filePath(wsId: string, key: string): string {

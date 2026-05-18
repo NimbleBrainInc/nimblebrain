@@ -1164,7 +1164,7 @@ function scopeDir(runtime: Runtime, scope: WritableScope): string {
   if (scope === "org") return join(workDir, "skills");
   if (scope === "workspace") {
     const wsId = runtime.requireWorkspaceId();
-    return join(workDir, "workspaces", wsId, "skills");
+    return runtime.getWorkspaceContext(wsId).getDataPath("skills");
   }
   // user
   const identity = runtime.getCurrentIdentity();

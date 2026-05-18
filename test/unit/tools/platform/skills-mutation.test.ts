@@ -25,6 +25,7 @@ import { EventSourcedConversationStore } from "../../../../src/conversation/even
 import type { EngineEvent, EventSink } from "../../../../src/engine/types.ts";
 import { McpSource } from "../../../../src/tools/mcp-source.ts";
 import { createSkillsSource } from "../../../../src/tools/platform/skills.ts";
+import { WorkspaceContext } from "../../../../src/workspace/context.ts";
 
 interface FakeIdentity {
   id: string;
@@ -63,6 +64,12 @@ class FakeRuntime {
   requireWorkspaceId(): string {
     if (!this.wsId) throw new Error("no workspace");
     return this.wsId;
+  }
+  getWorkspaceContext(wsId: string): WorkspaceContext {
+    // Production: `Runtime.getWorkspaceContext` constructs a `WorkspaceContext`
+    // bound to `{wsId, workDir}`. The fake mirrors that closely enough for
+    // tests that just want a typed handle for path derivation.
+    return new WorkspaceContext({ wsId, workDir: this.workDir });
   }
   getConversationStore(): EventSourcedConversationStore {
     return this._store;
