@@ -62,6 +62,7 @@ import {
 import { SkillMatcher } from "../skills/matcher.ts";
 import { selectLayer3Skills } from "../skills/select.ts";
 import { approxTokens } from "../skills/tokens.ts";
+import { truncateMarkdownToBudget } from "../skills/truncate.ts";
 import type { Skill } from "../skills/types.ts";
 import { TelemetryManager } from "../telemetry/manager.ts";
 import { PostHogEventSink } from "../telemetry/posthog-sink.ts";
@@ -1236,14 +1237,16 @@ export class Runtime {
       const resource = await source.readResource(`skill://${serverName}/usage`);
       const content = resource?.text ?? null;
       if (content) {
-        // Token budget: cap at ~3000 tokens (~12000 chars)
-        const truncated =
-          content.length > 12000 ? `${content.slice(0, 12000)}\n\n[truncated]` : content;
+        // Token budget: cap at ~3000 tokens (~12000 chars). Heading-aware
+        // so we don't slice mid-sentence (production case: a "rules" appendix
+        // at the end of a SKILL.md was lost mid-rule, breaking the model's
+        // tool-selection logic).
+        const { body } = truncateMarkdownToBudget(content, 12000);
         this.skillResourceCache.set(serverName, {
-          content: truncated,
+          content: body,
           fetchedAt: Date.now(),
         });
-        return truncated;
+        return body;
       }
     } catch {
       // Resource doesn't exist or read failed — skip silently
