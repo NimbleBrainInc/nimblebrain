@@ -76,6 +76,12 @@ export type EngineEventType =
   | "run.error"
   | "skills.loaded"
   | "context.assembled"
+  /**
+   * Emitted when a model call is rejected for exceeding the context window
+   * and the engine re-windows history with a tighter budget before retrying.
+   * Payload: { runId, attempt, previousMessageCount, errorMessage }.
+   */
+  | "context.overflow_recovery"
   | "bundle.installed"
   | "bundle.uninstalled"
   | "bundle.crashed"
@@ -117,8 +123,19 @@ export interface EngineEvent {
 
 /** Hooks for intercepting the engine loop at 4 strategic points. */
 export interface EngineHooks {
-  /** Modify messages before LLM call (e.g., windowing, context injection). */
-  transformContext?: (messages: LanguageModelV3Message[]) => LanguageModelV3Message[];
+  /**
+   * Modify messages before LLM call (e.g., windowing, context injection).
+   *
+   * `opts.overflowAttempt` is set by the engine when re-invoking after a
+   * provider-reported context-overflow error. `0` (or undefined) is the
+   * first attempt; positive values are recovery retries — the hook is
+   * expected to return more aggressively trimmed messages each step.
+   * Hooks that don't care about recovery can ignore the second argument.
+   */
+  transformContext?: (
+    messages: LanguageModelV3Message[],
+    opts?: { overflowAttempt?: number },
+  ) => LanguageModelV3Message[];
 
   /** Gate or modify tool calls before execution. Return null to skip the tool. */
   beforeToolCall?: (call: ToolCall) => ToolCall | null | Promise<ToolCall | null>;
