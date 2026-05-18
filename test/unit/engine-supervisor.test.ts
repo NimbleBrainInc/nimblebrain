@@ -180,4 +180,105 @@ describe("engine ↔ supervisor wiring", () => {
     );
     expect(tripped.length).toBe(0);
   });
+
+  it("drops the tripped tool from modelTools while keeping other tools available", async () => {
+    // Two tools: `stuck` always errors identically (trips on 3rd call);
+    // `other` is a fallback the model can still pick after the trip.
+    const otherSchema: ToolSchema = {
+      name: "other",
+      description: "Works fine.",
+      inputSchema: { type: "object", properties: {} },
+    };
+
+    type ToolSnapshot = { names: string[]; iteration: number };
+    const offered: ToolSnapshot[] = [];
+    let iter = 0;
+    const model = createMockModel((opts) => {
+      iter += 1;
+      const names = (opts.tools ?? []).map((t) => (t as { name?: string }).name ?? "");
+      offered.push({ names, iteration: iter });
+
+      // While `stuck` is offered, keep calling it (drives the trip).
+      if (names.includes("stuck")) {
+        return {
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: `call-${iter}`,
+              toolName: "stuck",
+              input: JSON.stringify({}),
+            },
+          ],
+          inputTokens: 1,
+          outputTokens: 1,
+        };
+      }
+
+      // `stuck` is gone but `other` is still available — call it once.
+      if (names.includes("other") && offered.filter((o) => !o.names.includes("stuck")).length === 1) {
+        return {
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: `call-${iter}`,
+              toolName: "other",
+              input: JSON.stringify({}),
+            },
+          ],
+          inputTokens: 1,
+          outputTokens: 1,
+        };
+      }
+
+      // Done.
+      return {
+        content: [{ type: "text", text: "Fell back to other tool successfully." }],
+        inputTokens: 1,
+        outputTokens: 1,
+      };
+    });
+
+    const stuckCalls: number[] = [];
+    const otherCalls: number[] = [];
+    const handler = (call: ToolCall): ToolResult => {
+      if (call.name === "stuck") {
+        stuckCalls.push(stuckCalls.length + 1);
+        return { content: textContent("Request failed with status code 400"), isError: true };
+      }
+      otherCalls.push(otherCalls.length + 1);
+      return { content: textContent("ok"), isError: false };
+    };
+
+    const events: EngineEvent[] = [];
+    const engine = new AgentEngine(
+      model,
+      new StaticToolRouter([stuckToolSchema, otherSchema], handler),
+      collect(events),
+    );
+
+    const result = await engine.run(
+      config,
+      "system",
+      [{ role: "user", content: [{ type: "text", text: "go" }] }],
+      [stuckToolSchema, otherSchema],
+    );
+
+    expect(result.stopReason).toBe("complete");
+
+    // `stuck` was called exactly 3 times (trip threshold) and never again.
+    expect(stuckCalls.length).toBe(3);
+    // `other` was invoked after the trip, proving the rest of the toolset
+    // remains available.
+    expect(otherCalls.length).toBe(1);
+
+    // First 3 model invocations had `stuck` in the toolset; later ones
+    // did not — but `other` always remained.
+    const withStuck = offered.filter((o) => o.names.includes("stuck"));
+    const withoutStuck = offered.filter((o) => !o.names.includes("stuck"));
+    expect(withStuck.length).toBe(3);
+    expect(withoutStuck.length).toBeGreaterThan(0);
+    for (const snap of withoutStuck) {
+      expect(snap.names).toContain("other");
+    }
+  });
 });
