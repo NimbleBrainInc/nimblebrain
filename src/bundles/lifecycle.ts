@@ -812,6 +812,12 @@ export class BundleLifecycleManager {
       owner: isWorkspaceScope ? { type: "workspace", wsId } : { type: "user", userId: principalId },
       serverName,
       workDir: opts.workDir,
+      // Workspace-scoped tokens route the credential directory through
+      // the typed handle; user-scoped tokens stay on the legacy
+      // workDir-derivation path (no workspace owns them).
+      ...(isWorkspaceScope
+        ? { workspaceContext: new WorkspaceContext({ wsId, workDir: opts.workDir }) }
+        : {}),
       callbackUrl: opts.callbackUrl,
       allowInsecureRemotes: opts.allowInsecureRemotes === true,
       onInteractiveAuthRequired: (url) => {
@@ -979,6 +985,9 @@ export class BundleLifecycleManager {
       owner: isWorkspaceScope ? { type: "workspace", wsId } : { type: "user", userId: principalId },
       serverName,
       workDir: opts.workDir,
+      ...(isWorkspaceScope
+        ? { workspaceContext: new WorkspaceContext({ wsId, workDir: opts.workDir }) }
+        : {}),
       callbackUrl: "http://_/", // unused for revocation path
       allowInsecureRemotes: opts.allowInsecureRemotes === true,
     });
