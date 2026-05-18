@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { assertNoBinaryPayloads } from "./binary-guard.ts";
 import { ConversationIndex, canAccess } from "./index-cache.ts";
 import {
   type Conversation,
@@ -130,6 +131,7 @@ export class JsonlConversationStore implements ConversationStore {
   }
 
   async append(conversation: Conversation, message: StoredMessage): Promise<void> {
+    assertNoBinaryPayloads(message, `message(${message.role})`);
     const path = this.path(conversation.id);
 
     // Track lastModel for display. Token totals are derived from the
@@ -238,6 +240,12 @@ export class JsonlConversationStore implements ConversationStore {
       newConv.updatedAt =
         messagesToCopy[messagesToCopy.length - 1]?.timestamp ?? new Date().toISOString();
 
+      // Defence-in-depth: rebuilt-from-history shouldn't carry bytes,
+      // but assert before stringify so an in-memory source that does
+      // can't poison the forked file.
+      for (const msg of messagesToCopy) {
+        assertNoBinaryPayloads(msg, `fork.message(${msg.role})`);
+      }
       const lines = [JSON.stringify(newConv)];
       for (const msg of messagesToCopy) {
         lines.push(JSON.stringify(msg));
