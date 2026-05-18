@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { type Dirent, existsSync, lstatSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import type { BundleInstance } from "../bundles/types.ts";
 import type { BriefingCacheEntry, BriefingOutput } from "./home-types.ts";
@@ -65,6 +65,14 @@ export function computeBriefingFingerprint(logDir: string, instances: BundleInst
  * Compact signature of a directory tree — file count, newest mtime, and
  * total size. Catches additions, deletions, and content edits (any write
  * advances mtime). `"absent"` for a missing directory.
+ *
+ * Resilient to a churning tree: `readdirSync` only descends into real
+ * directories (a symlink Dirent reports `isDirectory() === false`), so the
+ * recursion can't cycle. Entries are measured with `lstatSync` — it never
+ * follows a symlink (so a dangling link is sized, not a thrown `ENOENT`)
+ * and a symlink is counted as a leaf rather than its target. Any entry
+ * that vanishes between `readdir` and `lstat` (concurrent delete) is
+ * skipped; the next briefing call re-fingerprints the settled tree.
  */
 function dirSignature(dir: string): string {
   if (!existsSync(dir)) return "absent";
@@ -72,16 +80,26 @@ function dirSignature(dir: string): string {
   let newestMtimeMs = 0;
   let totalSize = 0;
   const walk = (current: string): void => {
-    for (const entry of readdirSync(current, { withFileTypes: true })) {
+    let entries: Dirent[];
+    try {
+      entries = readdirSync(current, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
       const full = join(current, entry.name);
       if (entry.isDirectory()) {
         walk(full);
         continue;
       }
-      const stat = statSync(full);
-      count++;
-      totalSize += stat.size;
-      if (stat.mtimeMs > newestMtimeMs) newestMtimeMs = stat.mtimeMs;
+      try {
+        const stat = lstatSync(full);
+        count++;
+        totalSize += stat.size;
+        if (stat.mtimeMs > newestMtimeMs) newestMtimeMs = stat.mtimeMs;
+      } catch {
+        // Entry removed between readdir and lstat — skip it.
+      }
     }
   };
   walk(dir);
