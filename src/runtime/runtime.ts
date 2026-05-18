@@ -24,6 +24,7 @@ import type {
 } from "../conversation/types.ts";
 import { sliceHistory, windowMessages } from "../conversation/window.ts";
 import { AgentEngine } from "../engine/engine.ts";
+import { estimateMessageTokens, estimateToolDescriptionTokens } from "../engine/token-estimate.ts";
 import type {
   ContextAssembledPayload,
   ContextAssembledSource,
@@ -2222,19 +2223,36 @@ function stampDerivedScope(workDir: string, skill: Skill): Skill {
  * set + history + Layer 3 skills counted in `skills.loaded`. The snapshot
  * carries counts and tokens only — never content (the bodies are already
  * in the conversation log via earlier source events / message history).
+ *
+ * Exported for tests — the regression we care about (image attachments not
+ * inflating history tokens by 100×) is the integration between this builder
+ * and `estimateMessageTokens`. Direct test access keeps the regression
+ * verifiable without spinning a full Runtime.
  */
-function buildContextAssembledPayload(input: {
+export function buildContextAssembledPayload(input: {
   systemPrompt: string;
   activeTools: ToolSchema[];
   messages: LanguageModelV3Message[];
   skillsLoaded: SkillsLoadedPayload;
 }): ContextAssembledPayload {
   const promptTokens = approxTokens(input.systemPrompt);
+  // Tool descriptions: name + description + input schema. Routed through
+  // `estimateToolDescriptionTokens` (not `approxTokens(JSON.stringify(t))`)
+  // so we never hand a future object that could carry a `Uint8Array` to
+  // `JSON.stringify` — the bug we just fixed on the history path.
   const toolDescTokens = input.activeTools.reduce(
-    (sum, t) => sum + approxTokens(`${t.name}\n${t.description}\n${JSON.stringify(t.inputSchema)}`),
+    (sum, t) => sum + estimateToolDescriptionTokens(t),
     0,
   );
-  const historyTokens = input.messages.reduce((sum, m) => sum + approxTokens(JSON.stringify(m)), 0);
+  // History tokens: walk content parts with `estimateMessageTokens`.
+  //
+  // The previous formula was `approxTokens(JSON.stringify(m))`, which for any
+  // user message carrying a `file` part with `data: Uint8Array(<bytes>)`
+  // (rehydrated images — see `src/files/rehydrate.ts`) inflated by 30-100×:
+  // `JSON.stringify(Uint8Array)` expands to `{"0":n,"1":n,…}` (~12 chars/byte)
+  // and the chars/4 heuristic over-counted by ~3 tokens per image byte. Two
+  // ~700KB PNGs landed at 2.8M+ phantom tokens for a 51K-token call.
+  const historyTokens = input.messages.reduce((sum, m) => sum + estimateMessageTokens(m), 0);
   const sources: ContextAssembledSource[] = [
     { kind: "system_prompt", tokens: promptTokens },
     { kind: "tool_descriptions", count: input.activeTools.length, tokens: toolDescTokens },
