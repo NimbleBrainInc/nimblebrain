@@ -339,7 +339,7 @@ describe("Tier 1: Composition Integrity — prompt injection via untrusted field
       };
       const result = composeSystemPrompt([], null, undefined, undefined, appState);
 
-      expect(result).toContain("<\\/app-state>");
+      expect(result).toContain("&lt;/app-state>");
       expect(result).not.toContain("foo</app-state>\n\n## System");
       const closeTags = result.match(/<\/app-state>/g) ?? [];
       expect(closeTags.length).toBe(1);
@@ -378,7 +378,7 @@ describe("Tier 1: Composition Integrity — prompt injection via untrusted field
       };
       const result = composeSystemPrompt([], null, undefined, undefined, appState);
 
-      expect(result).toContain("<\\/app-state>");
+      expect(result).toContain("&lt;/app-state>");
       expect(result).not.toContain("summary</app-state>\n\n## System");
       const closeTags = result.match(/<\/app-state>/g) ?? [];
       expect(closeTags.length).toBe(1);
