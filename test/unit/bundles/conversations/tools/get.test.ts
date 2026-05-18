@@ -3,7 +3,11 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { ConversationIndex } from "../../../../../src/bundles/conversations/src/index-cache.ts";
-import { handleGet } from "../../../../../src/bundles/conversations/src/tools/get.ts";
+import {
+	DEFAULT_GET_CHAR_CAP,
+	DEFAULT_GET_LIMIT,
+	handleGet,
+} from "../../../../../src/bundles/conversations/src/tools/get.ts";
 
 function tempDir(): string {
 	const dir = join(tmpdir(), `nb-get-test-${crypto.randomUUID()}`);
@@ -205,5 +209,133 @@ describe("conversations__get", () => {
 		expect(assistantMsg.usage!.outputTokens).toBe(80);
 		expect(assistantMsg.usage!.model).toBe("claude-sonnet-4-5-20250929");
 		expect(assistantMsg.usage!.llmMs).toBe(1200);
+	});
+
+	it('expand:"metadata" returns metadata only — no messages', async () => {
+		const ts = "2025-01-15T10:00:00.000Z";
+		writeConversation(dir, "conv-meta-only", {
+			title: "Metadata only",
+			messages: [
+				{ role: "user", content: "u1", timestamp: ts },
+				{ role: "assistant", content: "a1", timestamp: ts },
+				{ role: "user", content: "u2", timestamp: ts },
+				{ role: "assistant", content: "a2", timestamp: ts },
+			],
+		});
+		await index.build(dir);
+
+		const result = (await handleGet(
+			{ id: "conv-meta-only", expand: "metadata" },
+			index,
+		)) as {
+			metadata: Record<string, unknown>;
+			messages: unknown[];
+			totalMessages: number;
+		};
+
+		expect(result.metadata.id).toBe("conv-meta-only");
+		expect(result.metadata.title).toBe("Metadata only");
+		expect(result.messages).toEqual([]);
+		expect(result.totalMessages).toBe(4);
+	});
+
+	it("defaults to returning the last DEFAULT_GET_LIMIT messages when there are more", async () => {
+		const ts = "2025-01-15T10:00:00.000Z";
+		const totalMsgs = DEFAULT_GET_LIMIT + 5;
+		const messages = Array.from({ length: totalMsgs }, (_, i) => ({
+			role: (i % 2 === 0 ? "user" : "assistant") as "user" | "assistant",
+			content: `msg-${i}`,
+			timestamp: ts,
+		}));
+		writeConversation(dir, "conv-many", { messages });
+		await index.build(dir);
+
+		const result = (await handleGet({ id: "conv-many" }, index)) as {
+			messages: Array<{ content: string }>;
+			totalMessages: number;
+			truncated?: boolean;
+		};
+
+		expect(result.totalMessages).toBe(totalMsgs);
+		expect(result.messages).toHaveLength(DEFAULT_GET_LIMIT);
+		// Most recent message preserved at the end.
+		expect(result.messages.at(-1)!.content).toBe(`msg-${totalMsgs - 1}`);
+		// First returned is the (totalMsgs - DEFAULT_GET_LIMIT)-th message.
+		expect(result.messages[0]!.content).toBe(`msg-${totalMsgs - DEFAULT_GET_LIMIT}`);
+		// No char-cap truncation when messages are small.
+		expect(result.truncated).toBeUndefined();
+	});
+
+	it('expand:"full" returns every message regardless of the char cap', async () => {
+		const ts = "2025-01-15T10:00:00.000Z";
+		const bigContent = "X".repeat(Math.floor(DEFAULT_GET_CHAR_CAP / 4));
+		const messages = Array.from({ length: 10 }, (_, i) => ({
+			role: (i % 2 === 0 ? "user" : "assistant") as "user" | "assistant",
+			content: `${bigContent}-${i}`,
+			timestamp: ts,
+		}));
+		writeConversation(dir, "conv-full", { messages });
+		await index.build(dir);
+
+		const result = (await handleGet({ id: "conv-full", expand: "full" }, index)) as {
+			messages: unknown[];
+			totalMessages: number;
+			truncated?: boolean;
+		};
+
+		expect(result.messages).toHaveLength(10);
+		expect(result.totalMessages).toBe(10);
+		expect(result.truncated).toBeUndefined();
+	});
+
+	it("default mode truncates the older end of the window when the char cap is hit and surfaces a hint", async () => {
+		const ts = "2025-01-15T10:00:00.000Z";
+		const bigContent = "X".repeat(Math.floor(DEFAULT_GET_CHAR_CAP / 4));
+		const messages = Array.from({ length: 10 }, (_, i) => ({
+			role: (i % 2 === 0 ? "user" : "assistant") as "user" | "assistant",
+			content: `${bigContent}-${i}`,
+			timestamp: ts,
+		}));
+		writeConversation(dir, "conv-bigwindow", { messages });
+		await index.build(dir);
+
+		const result = (await handleGet({ id: "conv-bigwindow" }, index)) as {
+			messages: Array<{ content: string }>;
+			totalMessages: number;
+			truncated?: boolean;
+			droppedOlderMessages?: number;
+			truncationHint?: string;
+		};
+
+		expect(result.totalMessages).toBe(10);
+		expect(result.truncated).toBe(true);
+		expect(result.droppedOlderMessages).toBeGreaterThan(0);
+		expect(result.messages.length).toBeLessThan(10);
+		// Newest survives.
+		expect(result.messages.at(-1)!.content).toBe(`${bigContent}-9`);
+		expect(result.truncationHint).toContain("budget");
+	});
+
+	it("always returns at least the single most recent message even if it exceeds the cap", async () => {
+		const ts = "2025-01-15T10:00:00.000Z";
+		const overCap = "Y".repeat(DEFAULT_GET_CHAR_CAP * 2);
+		writeConversation(dir, "conv-onehuge", {
+			messages: [
+				{ role: "user", content: "small", timestamp: ts },
+				{ role: "assistant", content: overCap, timestamp: ts },
+			],
+		});
+		await index.build(dir);
+
+		const result = (await handleGet({ id: "conv-onehuge" }, index)) as {
+			messages: Array<{ content: string }>;
+			totalMessages: number;
+			truncated?: boolean;
+		};
+
+		// Single most recent message kept even though it alone exceeds cap.
+		expect(result.messages).toHaveLength(1);
+		expect(result.messages[0]!.content).toBe(overCap);
+		expect(result.truncated).toBe(true);
 	});
 });

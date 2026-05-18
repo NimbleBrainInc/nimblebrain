@@ -92,7 +92,7 @@ export async function createConversationsSource(
     {
       name: "get",
       description:
-        "Load a conversation's full message history including metadata, message content, tool calls, and token usage per message.",
+        'Load a conversation by ID. Returns metadata plus, by default, the most recent ~20 messages (capped to a 50 KB response budget). Use expand:"metadata" for just the metadata or expand:"full" when you actually need the entire transcript — long conversations can run hundreds of thousands of tokens and full reads are recorded in tool history.',
       inputSchema: ConversationsGetInput,
       handler: withErrorHandling(async (input) => {
         const { index } = await getIndex();
