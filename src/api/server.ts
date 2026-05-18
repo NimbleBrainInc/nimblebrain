@@ -169,10 +169,14 @@ export function startServer(options: ServerOptions): ServerHandle {
   // session-metadata registry is either supplied by the caller (production
   // bootstrap building a Redis registry from config) or defaulted to an
   // in-memory store using the runtime's configured TTL.
+  const sessionTtlMs = runtime.getSessionStoreTtlMs();
   const sessionRegistry: SessionRegistry =
-    options.sessionRegistry ??
-    new InMemorySessionRegistry({ ttlMs: runtime.getSessionStoreTtlMs() });
-  const mcpHost = new McpServerHost({ registry: sessionRegistry });
+    options.sessionRegistry ?? new InMemorySessionRegistry({ ttlMs: sessionTtlMs });
+  // The host's idle-eviction TTL mirrors the registry's TTL: both layers
+  // reclaim the same logical session on the same schedule, with the host's
+  // sweep being what actually frees the JS heap. The registry TTL is a
+  // backstop on the metadata layer for the cluster-shared view.
+  const mcpHost = new McpServerHost({ registry: sessionRegistry, idleTtlMs: sessionTtlMs });
 
   // Build shared context for all route groups
   const ctx: AppContext = {

@@ -279,15 +279,25 @@ If none of those apply, write a tool action. A simple JSON read like "what's the
 
 Two-layer state model for `/mcp`. Don't merge them.
 
-- **Transport map** (`McpServerHost.transports`): per-process `Map<sessionId, transport>`. Owns the live `WebStandardStreamableHTTPServerTransport`, the SDK `Server` instance, and in-flight JSON-RPC state. Process-bound — never serialize, never share across processes.
+- **Transport map** (`McpServerHost.transports`): per-process `Map<sessionId, TransportEntry>`. Owns the live `WebStandardStreamableHTTPServerTransport`, the SDK `Server` instance, in-flight JSON-RPC state, and the `lastAccessedAt` timestamp used by reclamation. Process-bound — never serialize, never share across processes.
 - **`SessionRegistry`** (`src/api/session-store/`): pluggable cluster-shared metadata. Stores `{sessionId, identityId, workspaceId, createdAt, lastAccessedAt}` only. **No pod / instance / owner fields** — adding any would leak deployment vocabulary into a metadata interface. Implementations: `InMemorySessionRegistry` (default) and `RedisSessionRegistry`.
 
 Routing requests to the process owning a session's transport is the **load balancer's** job (ALB `lb_cookie` stickiness or header-hash on `Mcp-Session-Id`). The registry doesn't route; it can't move transports.
+
+**Reclamation policy on the transport map** (`McpServerHost`):
+
+- **Idle TTL** — `setInterval` sweep closes transports past `idleTtlMs`. Uses the same TTL value as the registry (threaded in from `Runtime.getSessionStoreTtlMs()`), so both layers reclaim on the same schedule. The host's sweep is what actually frees the JS heap; the registry's TTL becomes redundant safety on the metadata layer.
+- **LRU on capacity** — the transport `Map` is re-inserted on every touch so iteration order is LRU. When `transports.size >= MAX_MCP_SESSIONS`, a new initialize evicts the oldest entry before being admitted. **Capacity overflow is not a client error.** No 429 is returned for "too many sessions"; well-formed initializes always succeed.
+- Both paths funnel through `evict(sid, reason)`, which removes the entry from the map *before* calling `close()` to prevent a concurrent request from dispatching into a half-dead transport.
+
+Eviction emits `[mcp] evicting transport reason=idle|pressure sessionId=… idleMs=…` log lines. A spike in `reason=pressure` indicates the tenant's natural concurrency exceeds `MAX_MCP_SESSIONS` and the cap should be raised — it's a memory-budget knob, not a feature gate.
 
 **Session-miss `error.data.reason`** has exactly two values:
 
 - `not_found` — registry has no entry (idle-TTL eviction or never created).
 - `unavailable` — registry has an entry; this process doesn't have the transport. Don't try to distinguish process-restart from sticky-miss in the response — operators do that via deploy timing + `transport-count vs registry-size` divergence.
+
+During eviction there's a small window where the local map has removed the entry but the registry-side delete (via the `onclose` cascade) hasn't landed yet; a request that races into that window sees `reason=unavailable` instead of `not_found`. Not a bug.
 
 **Prerequisites for `platform.replicas > 1`** (all four required):
 
@@ -296,7 +306,7 @@ Routing requests to the process owning a session's transport is the **load balan
 3. `sessionStore.type: "redis"`. Each tenant gets its own Redis instance in its own namespace (see `infra/CLAUDE.md` per-tenant Redis pattern). Default `nb:mcp:session:` keyPrefix is correct under that model.
 4. `platform.strategy.type: RollingUpdate`. Only after (1).
 
-**TTL units: seconds at the surface, ms internally.** Operator-facing: `MCP_SESSION_TTL_SECONDS` env (highest priority) > `sessionStore.ttlSeconds` config > 8h default. Conversion to ms happens in `Runtime.getSessionStoreTtlMs()` only — registry constructors and sweep math take ms. Don't add mixed-unit code elsewhere.
+**TTL units: seconds at the surface, ms internally.** Operator-facing: `MCP_SESSION_TTL_SECONDS` env (highest priority) > `sessionStore.ttlSeconds` config > 8h default. Conversion to ms happens in `Runtime.getSessionStoreTtlMs()` only — registry constructors, the host's idle sweep, and any other sweep math take ms. Don't add mixed-unit code elsewhere.
 
 ## MCP App Bridge Rules
 

@@ -44,7 +44,7 @@ describe("McpServerHost — session-miss classification", () => {
 
 	beforeEach(() => {
 		registry = new InMemorySessionRegistry({ ttlMs: 60_000 });
-		host = new McpServerHost({ registry });
+		host = new McpServerHost({ registry, idleTtlMs: 60_000 });
 		toolRegistry = new ToolRegistry();
 	});
 
@@ -105,7 +105,7 @@ describe("McpServerHost — session-miss classification", () => {
 			sweepExpired: async () => {},
 			shutdown: async () => {},
 		};
-		const flakyHost = new McpServerHost({ registry: flakyRegistry });
+		const flakyHost = new McpServerHost({ registry: flakyRegistry, idleTtlMs: 60_000 });
 
 		const res = await flakyHost.handle(postRequest(SAMPLE_SID), toolRegistry, FAKE_FEATURES, {
 			registry: toolRegistry,
