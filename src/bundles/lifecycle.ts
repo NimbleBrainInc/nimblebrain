@@ -457,14 +457,10 @@ export class BundleLifecycleManager {
       // shouldn't survive an uninstall. Worst case the dir is already
       // gone; rmSync with `force` is a no-op then.
       try {
-        const oauthDir = join(
+        const oauthDir = new WorkspaceContext({
+          wsId: instance.wsId,
           workDir,
-          "workspaces",
-          instance.wsId,
-          "credentials",
-          "mcp-oauth",
-          serverName,
-        );
+        }).getDataPath("credentials", "mcp-oauth", serverName);
         rmSync(oauthDir, { recursive: true, force: true });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -501,14 +497,10 @@ export class BundleLifecycleManager {
           );
         }
         try {
-          const composioDir = join(
+          const composioDir = new WorkspaceContext({
+            wsId: instance.wsId,
             workDir,
-            "workspaces",
-            instance.wsId,
-            "credentials",
-            "composio",
-            connectorSlug(composioRef.connectorId),
-          );
+          }).getDataPath("credentials", "composio", connectorSlug(composioRef.connectorId));
           rmSync(composioDir, { recursive: true, force: true });
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
