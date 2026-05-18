@@ -55,6 +55,14 @@ export interface BundleSkillInput {
  * Pure function — no I/O, no caching. The caller (runtime) handles fetch +
  * cache via `getAppSkillResource`. Keeping the synthesis pure means it's
  * trivial to unit-test the manifest shape without spinning up a registry.
+ *
+ * Observability contract: when this skill is selected by
+ * `selectLayer3Skills`, `buildSkillsLoadedPayload` will emit it on the
+ * `skills.loaded` event with `id = skill://<name>/usage`, `scope = "bundle"`,
+ * `loadedBy = "tool_affinity"`. Downstream consumers (SkillsPopover,
+ * `skills__active_for`, `skills__loading_log`) already handle that shape —
+ * the synthesized skill is byte-identical in payload structure to any
+ * filesystem-sourced Layer 3 skill with the same scope / strategy.
  */
 export function synthesizeBundleSkill(input: BundleSkillInput): Skill {
   const { serverName, body } = input;
