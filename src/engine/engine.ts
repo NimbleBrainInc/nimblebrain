@@ -466,7 +466,17 @@ export class AgentEngine {
     const unregisterToolControls = config.toolPromotion?.registerControls(toolControls);
     try {
       while (iteration < maxIter) {
-        const modelTools: LanguageModelV3FunctionTool[] = directTools.map((t) => ({
+        // Filter out any tool the supervisor has tripped this run. Removing
+        // the tool from the model's toolset is more reliable than telling
+        // the model "do not call this tool" via prose — the model literally
+        // can't call a tool that isn't in its list. Other tools remain
+        // available so the run can recover.
+        const trippedSet = new Set(supervisor.snapshot().trippedTools);
+        const usableDirectTools =
+          trippedSet.size === 0
+            ? directTools
+            : directTools.filter((t) => !trippedSet.has(t.name));
+        const modelTools: LanguageModelV3FunctionTool[] = usableDirectTools.map((t) => ({
           type: "function" as const,
           name: t.name,
           description: t.description,
@@ -474,7 +484,7 @@ export class AgentEngine {
         }));
 
         const toolSchemaMap = new Map<string, ToolSchema>();
-        for (const t of directTools) {
+        for (const t of usableDirectTools) {
           toolSchemaMap.set(t.name, t);
         }
 
