@@ -556,10 +556,21 @@ export async function handleRun(args: Record<string, unknown>, ctx: ToolContext)
   // Race the run against a sync-wait deadline. Quick automations finish
   // inside the window and return their full run record; longer ones get
   // a "dispatched" envelope so the agent can poll instead of seeing a
-  // false -32001 failure. `Scheduler.dispatchRun` synthesizes a failure
-  // record for any executor throw and returns it — runNow never rejects
-  // in practice, so no unhandled-rejection guard is needed here.
+  // false -32001 failure.
+  //
+  // `Scheduler.dispatchRun` synthesizes a failure record for any
+  // executor throw and returns it — so the EXECUTOR side never rejects.
+  // BUT `updateAfterRun` (called from `dispatchRun` after the executor
+  // settles) does filesystem I/O — `appendRun` + `saveDefinitions` — and
+  // can reject on disk-full, EBUSY, or permission flaps. In the
+  // synchronous-completion path the rejection surfaces through
+  // Promise.race and our outer catch handles it; in the dispatched path
+  // the run keeps going in the background and an `updateAfterRun` throw
+  // would become an unhandled rejection. The `.catch(noop)` swallows
+  // exactly that case — the scheduler's own logging is the right place
+  // for filesystem diagnostics, not the MCP request frame.
   const runPromise = ctx.runNow(automation.id);
+  runPromise.catch(() => {});
 
   const waitMs = ctx.handleRunSyncWaitMs ?? HANDLE_RUN_SYNC_WAIT_MS;
   const PENDING = Symbol("pending");

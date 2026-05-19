@@ -208,22 +208,40 @@ export function createAutomationCommand(): Command {
       let runtime: Runtime | undefined;
       try {
         runtime = await startHeadlessRuntime(globals.config);
-        const data = (await callTool(runtime, "automations__run", { name })) as {
-          run: {
-            id: string;
-            status: string;
-            startedAt: string;
-            completedAt?: string;
-            iterations: number;
-            toolCalls: number;
-            error?: string;
-            resultPreview?: string;
-          };
-        };
+        // `automations__run` returns one of two shapes:
+        //   { run: AutomationRun }                          (synchronous completion)
+        //   { status: "dispatched", automationId, message } (run outlasted the
+        //                                                    handler's sync-wait
+        //                                                    and is still in flight)
+        // Both indicate the dispatch succeeded; only an error response indicates
+        // failure to dispatch.
+        type RunResponse =
+          | {
+              run: {
+                id: string;
+                status: string;
+                startedAt: string;
+                completedAt?: string;
+                iterations: number;
+                toolCalls: number;
+                error?: string;
+                resultPreview?: string;
+              };
+            }
+          | {
+              status: "dispatched";
+              automationId: string;
+              message: string;
+            };
+
+        const data = (await callTool(runtime, "automations__run", { name })) as RunResponse;
 
         if (globals.json) {
           process.stdout.write(`${JSON.stringify(data)}\n`);
-        } else {
+        } else if ("status" in data && data.status === "dispatched") {
+          console.log(data.message);
+          console.log(`Poll: nb automation status ${data.automationId}`);
+        } else if ("run" in data) {
           const r = data.run;
           console.log(`Run ${r.id}: ${r.status}`);
           console.log(`  Started:    ${r.startedAt}`);
