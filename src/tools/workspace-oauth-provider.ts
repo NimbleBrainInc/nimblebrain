@@ -525,10 +525,14 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     //      construction. Stays valid until Task 008 migrates the rest of
     //      the construction sites.
     //
-    // Owner-id and server-name pass through the same `assertSafeOwnerId`
-    // discipline in both modes — even when the workspace-context branch
-    // derives the path through the typed handle, the server-name component
-    // is still validated here so unsafe input fails at construction.
+    // Owner-id and server-name both pass through `assertSafeOwnerId` in
+    // both branches. In the workspaceContext branch the server-name is
+    // additionally validated by `getDataPath`'s subpath check; in the
+    // legacy branch we explicitly validate it here so the two modes
+    // share the same defense (callers pre-validate via
+    // `validateServerName` / `slugifyServerName`, but this is the
+    // security-critical path component — verify in depth).
+    assertSafeOwnerId(opts.serverName);
     if (opts.workspaceContext) {
       if (opts.owner.type !== "workspace") {
         throw new Error(

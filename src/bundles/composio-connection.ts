@@ -25,7 +25,6 @@ import { existsSync } from "node:fs";
 import { chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { WorkspaceContext } from "../workspace/context.ts";
-import { WORKSPACE_ID_RE } from "../workspace/workspace-store.ts";
 
 /**
  * Persisted state for one (workspace, connector) Composio connection.
@@ -81,22 +80,12 @@ export function connectorSlug(connectorId: string): string {
   return slug;
 }
 
-function assertValidWsId(wsId: string): void {
-  if (typeof wsId !== "string" || !WORKSPACE_ID_RE.test(wsId)) {
-    throw new Error(
-      `[composio-connection] invalid wsId: "${wsId}". Must match /^ws_[a-z0-9_]{1,64}$/i.`,
-    );
-  }
-}
-
 /** Absolute path to the per-connector composio credentials directory. */
 export function composioConnectorDir(workDir: string, wsId: string, connectorId: string): string {
-  assertValidWsId(wsId);
   // Routed through WorkspaceContext so the `workspaces/{wsId}/credentials/`
   // layout has exactly one definition site (see src/workspace/context.ts).
-  // `assertValidWsId` above stays for back-compat — the context constructor
-  // validates again, which is cheap and gives a consistent error message
-  // shape for either failure mode.
+  // The context constructor validates `wsId` against `WORKSPACE_ID_RE`,
+  // so no local `assertValidWsId` is needed.
   return new WorkspaceContext({ wsId, workDir }).getDataPath(
     "credentials",
     "composio",

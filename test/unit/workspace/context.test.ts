@@ -289,18 +289,14 @@ describe("Stage 0 isolation invariants", () => {
     }
   });
 
-  test("getDataPath has no signature that accepts a foreign wsId", () => {
-    // Structural / type-level guarantee — TypeScript's strict mode
-    // rejects an attempt to pass an extra wsId here at compile time.
-    // The runtime assertion below confirms the public surface area
-    // matches the design: the only inputs to getDataPath are a scope
-    // literal and subpath strings.
+  test("getDataPath rejects a foreign-wsId-shaped subpath via the traversal guard", () => {
+    // The most plausible bypass attempt at runtime is smuggling a
+    // foreign wsId into a `getDataPath` call as a subpath segment
+    // (`ctx.getDataPath("credentials", "../ws_beta")`). The variadic
+    // string signature would let that compile, so the subpath
+    // validator is the load-bearing defense — it rejects `..`
+    // components before they reach the filesystem.
     const ctx = new WorkspaceContext({ wsId: WS_A, workDir });
-    // @ts-expect-error — passing a wsId-shaped argument as a "subpath"
-    // is allowed by the variadic string signature but ROUTED through
-    // the subpath validator. The validator rejects path traversal, so
-    // an attempt like `ctx.getDataPath("credentials", "../ws_beta")`
-    // throws rather than escaping.
     expect(() => ctx.getDataPath("credentials", "../ws_beta")).toThrow(/traversal/);
   });
 
