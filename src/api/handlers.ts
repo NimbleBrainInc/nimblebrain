@@ -738,10 +738,45 @@ export async function handleBootstrap(
       ? requested
       : userWorkspaces[0]!.id;
 
-  // 3. Shell placements for the active workspace (ambient + scoped, merged).
+  // 3. Identify the user's personal workspace. Stage 1 invariant:
+  //    every user has exactly one personal workspace where
+  //    `isPersonal === true && ownerUserId === identity.id`. If for any
+  //    reason there are multiple (data corruption — shouldn't happen),
+  //    pick the earliest-created and log a warning so operators notice.
+  //    If there are zero (pre-migration deployment), `personalWorkspaceId`
+  //    is `null` — the UI can fall back to `activeWorkspace`.
+  const personalCandidates = userWorkspaces.filter(
+    (ws) => ws.isPersonal === true && ws.ownerUserId === identity.id,
+  );
+  let personalWorkspaceId: string | null = null;
+  if (personalCandidates.length === 1) {
+    personalWorkspaceId = personalCandidates[0]!.id;
+  } else if (personalCandidates.length > 1) {
+    // Earliest by createdAt — list() already sorts ascending, but be
+    // explicit so a future change to list ordering doesn't silently
+    // change which workspace counts as "the" personal one.
+    const earliest = personalCandidates
+      .slice()
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0]!;
+    personalWorkspaceId = earliest.id;
+    console.warn(
+      `[bootstrap] user ${identity.id} has ${personalCandidates.length} personal workspaces; ` +
+        `picking earliest-created ${earliest.id}. This is data corruption — investigate.`,
+    );
+  } else {
+    // Zero personal workspaces. Soft-warn; the client can still
+    // function using activeWorkspace, and the next login through
+    // `ensureUserWorkspace` will create one.
+    console.warn(
+      `[bootstrap] user ${identity.id} has no personal workspace. ` +
+        `Run \`bun run migrate:personal-workspaces\` or trigger a re-login.`,
+    );
+  }
+
+  // 4. Shell placements for the active workspace (ambient + scoped, merged).
   const placements = runtime.getPlacementRegistry().forWorkspace(activeWorkspace);
 
-  // 4. Config
+  // 5. Config
   const models = runtime.getModelSlots();
   const configuredProviders = runtime.getConfiguredProviders();
   const maxIterations = runtime.getMaxIterations();
@@ -763,10 +798,10 @@ export async function handleBootstrap(
       memberCount: ws.members.length,
       bundleCount: ws.bundles.length,
       // `isPersonal` defaults to `false` on disk for pre-Stage-1 workspaces;
-      // backfilled eagerly by the personal-workspace migration. The
-      // top-level `personalWorkspaceId` field is added in Task 007.
+      // backfilled eagerly by the personal-workspace migration.
       isPersonal: ws.isPersonal === true,
     })),
+    personalWorkspaceId,
     activeWorkspace,
     shell: {
       placements,
