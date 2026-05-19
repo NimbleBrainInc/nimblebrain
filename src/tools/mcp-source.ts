@@ -1376,17 +1376,29 @@ export class McpSource implements ToolSource {
             const isAborted = handle.abortController.signal.aborted;
 
             // Defense in depth: the upstream MCP SDK's task stream emits
-            // `type: 'error'` with this exact `"Task <id> failed"` shape
-            // whenever the server-side task status is `failed` — AND
-            // discards the server's `tasks/result` payload along the
-            // way. A bundle that misclassified its own terminal status
-            // (e.g., a post-result exception flipping COMPLETED→FAILED
-            // while a usable payload already existed in the store)
-            // would surface to the agent as a useless string with the
-            // real output gone. Try one extra fetch before settling for
-            // the generic error.
+            // `type: 'error'` with an `McpError(InternalError, "Task <id>
+            // failed")` whenever the server-side task status is `failed`,
+            // AND discards the server's `tasks/result` payload along the
+            // way. A bundle that misclassified its own terminal status —
+            // e.g., a post-result exception flipping COMPLETED→FAILED
+            // while a usable payload already existed in the store — would
+            // surface to the agent as a useless string with the real
+            // output gone. Try one extra fetch before settling for the
+            // generic error.
+            //
+            // Discriminator: `endsWith` on the known `handle.taskId`,
+            // NOT a regex on the bare message. McpError's constructor
+            // wraps the message as `"MCP error <code>: <message>"` (see
+            // node_modules/@modelcontextprotocol/sdk/.../types.js), so
+            // the production `error.message` is "MCP error -32603:
+            // Task <id> failed" — anchored regexes against the bare
+            // form silently fail to match and the recovery is a no-op.
+            // Using the taskId as the discriminator also tightens
+            // specificity: we won't accidentally recover on a bundle-
+            // authored error that happens to mention a different task.
             let recoveredResult: CallToolResult | null = null;
-            if (!isAborted && this.client && /^Task .+ failed$/.test(errMessage)) {
+            const isGenericTaskFailed = errMessage.endsWith(`Task ${handle.taskId} failed`);
+            if (!isAborted && this.client && isGenericTaskFailed) {
               try {
                 recoveredResult = await this.client.experimental.tasks.getTaskResult(
                   handle.taskId,
@@ -1407,6 +1419,12 @@ export class McpSource implements ToolSource {
               isError: true,
             };
             handle.terminal = { result: callToolResult };
+            // Contract: even when we recover a payload, `latestTask.status`
+            // reflects what the SERVER reported (`failed`/`cancelled`).
+            // The recovery only salvages the agent-visible content; we
+            // don't rewrite the server's terminal verdict. Status
+            // consumers (UI progress, postmortem inspection) see the
+            // honest server state; the agent sees the actual output.
             handle.latestTask = {
               ...handle.latestTask,
               status: isAborted ? "cancelled" : "failed",

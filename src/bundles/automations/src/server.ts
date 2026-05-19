@@ -556,13 +556,10 @@ export async function handleRun(args: Record<string, unknown>, ctx: ToolContext)
   // Race the run against a sync-wait deadline. Quick automations finish
   // inside the window and return their full run record; longer ones get
   // a "dispatched" envelope so the agent can poll instead of seeing a
-  // false -32001 failure. The scheduler keeps the run going either way.
+  // false -32001 failure. `Scheduler.dispatchRun` synthesizes a failure
+  // record for any executor throw and returns it — runNow never rejects
+  // in practice, so no unhandled-rejection guard is needed here.
   const runPromise = ctx.runNow(automation.id);
-  // Attach a no-op catch so a still-in-flight promise can't surface as
-  // an unhandled rejection after this handler returns — dispatchRun
-  // already captures all errors into the run log; there's nothing
-  // useful to do with a rejection here.
-  runPromise.catch(() => {});
 
   const waitMs = ctx.handleRunSyncWaitMs ?? HANDLE_RUN_SYNC_WAIT_MS;
   const PENDING = Symbol("pending");
