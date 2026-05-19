@@ -37,8 +37,13 @@ export function conversationEventRoutes(ctx: AppContext) {
         return apiError(404, "not_found", "Conversation not found");
       }
 
-      // Create SSE stream for this subscriber
-      const stream = ctx.conversationEventManager.addSubscriber(conversationId, identity.id);
+      // Create SSE stream for this subscriber. The first frame
+      // (event: subscribed) carries the server-generated subscriberId
+      // so the client can pass it back as `X-Origin-Subscriber-Id` on
+      // any chat-stream POST it originates — that prevents the
+      // chat-stream's broadcast from echoing back to this same
+      // subscription.
+      const { stream } = ctx.conversationEventManager.addSubscriber(conversationId, identity.id);
 
       return new Response(stream, {
         headers: {

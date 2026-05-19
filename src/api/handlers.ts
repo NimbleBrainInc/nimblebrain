@@ -120,6 +120,15 @@ export async function handleChatStream(
     return runInProgressResponse(parsed.conversationId);
   }
 
+  // The sender's own /v1/conversations/:id/events subscription (if any)
+  // is indistinguishable from peer-tab subscriptions by userId post-
+  // Stage-1. The client passes its subscription's `subscriberId` here
+  // so the broadcast skips it and the sender's tab doesn't double-
+  // process the event (once via this chat-stream response, once via
+  // its conv-events subscription). Optional — clients that aren't
+  // subscribed get full fan-out, which is correct.
+  const originSubscriberId = request.headers.get("x-origin-subscriber-id") ?? undefined;
+
   const convId = parsed.conversationId;
 
   const sink = new CallbackEventSink();
@@ -163,12 +172,17 @@ export async function handleChatStream(
         if (userMessageBroadcast) return;
         userMessageBroadcast = true;
         if (convId && conversationEventManager && identity) {
-          conversationEventManager.broadcastToConversation(convId, "user.message", {
-            userId: identity.id,
-            displayName: identity.displayName,
-            content: parsed.message,
-            timestamp: new Date().toISOString(),
-          });
+          conversationEventManager.broadcastToConversation(
+            convId,
+            "user.message",
+            {
+              userId: identity.id,
+              displayName: identity.displayName,
+              content: parsed.message,
+              timestamp: new Date().toISOString(),
+            },
+            originSubscriberId,
+          );
         }
       };
 
@@ -188,16 +202,16 @@ export async function handleChatStream(
             broadcastUserMessageOnce();
           }
           send(event.type, event.data);
-          // Same-user cross-tab broadcast — see block comment above.
-          // Stage 1 single-owner: every subscriber on a conversation IS
-          // the owner, so no recipient filter — the sender's own tab
-          // already receives the event via the `/v1/chat/stream` reply
-          // it initiated; the broadcast feeds peer tabs.
+          // Same-user cross-tab broadcast. The exclude key is the
+          // sender's own subscriber id (if any) — see the
+          // `originSubscriberId` block above for why subscriber-keyed
+          // exclusion is correct and userId-keyed exclusion isn't.
           if (convId && conversationEventManager && identity) {
             conversationEventManager.broadcastToConversation(
               convId,
               event.type,
               event.data as Record<string, unknown>,
+              originSubscriberId,
             );
           }
         }
@@ -230,8 +244,8 @@ export async function handleChatStream(
             usage: wireUsage,
           };
           send("done", doneData);
-          // Same-user cross-tab broadcast (Stage 1 single-owner). No
-          // recipient filter — see broadcastToConversation docblock.
+          // Same-user cross-tab broadcast (Stage 1 single-owner).
+          // Subscriber-keyed exclude — see docblock.
           if (conversationEventManager && identity) {
             const broadcastConvId = convId ?? result.conversationId;
             if (broadcastConvId) {
@@ -239,6 +253,7 @@ export async function handleChatStream(
                 broadcastConvId,
                 "done",
                 doneData as Record<string, unknown>,
+                originSubscriberId,
               );
             }
           }
