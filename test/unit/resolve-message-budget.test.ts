@@ -18,19 +18,27 @@ function tool(name: string, description: string): ToolSchema {
 
 describe("resolveMessageBudget", () => {
   it("uses model context window minus overhead when headroom is the binding constraint", () => {
+    const systemPrompt = "you are a helpful assistant";
     const result = resolveMessageBudget({
       model: "anthropic:claude-opus-4-7", // 1M context
       configMaxInputTokens: 5_000_000, // far above headroom
-      systemPrompt: "you are a helpful assistant",
+      systemPrompt,
       tools: [],
       maxOutputTokens: 16_384,
     });
 
     expect(result.breakdown.modelContextWindow).toBe(1_000_000);
     expect(result.breakdown.boundedByModel).toBe(true);
-    // budget = 1M − sysTokens − 0 − 16384 − 8192 ≈ 975K
-    expect(result.budget).toBeGreaterThan(900_000);
-    expect(result.budget).toBeLessThan(1_000_000);
+    // Deterministic: budget = 1M − ceil(sysLen/4) − 0 − maxOutput − safety.
+    // Asserting the exact number so any silent change to the formula or the
+    // safety-margin constant fails this test rather than slipping through.
+    const expected =
+      1_000_000 -
+      Math.ceil(systemPrompt.length / 4) -
+      0 -
+      16_384 -
+      DEFAULT_BUDGET_SAFETY_MARGIN_TOKENS;
+    expect(result.budget).toBe(expected);
   });
 
   it("uses configMaxInputTokens when it's lower than the model headroom", () => {

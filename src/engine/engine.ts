@@ -7,6 +7,7 @@ import type {
   LanguageModelV3ToolResultPart,
   SharedV3ProviderOptions,
 } from "@ai-sdk/provider";
+import { log } from "../cli/log.ts";
 import { DEFAULT_MAX_DIRECT_TOOLS, MAX_ITERATIONS, MAX_TOOL_RESULT_CHARS } from "../limits.ts";
 import { getProviderFromModel, supportsEnabledThinking } from "../model/catalog.ts";
 import { normalizeForReplay } from "../model/inbound-fit.ts";
@@ -564,6 +565,16 @@ export class AgentEngine {
               overflowAttempt = 1;
               const previousMessageCount = callMessages.length;
               const errorMessage = err instanceof Error ? err.message : String(err);
+              // Always-on stderr line so a frequency uptick is visible in
+              // operator logs without flipping a debug flag. Recovery
+              // firing means the pre-flight budget composition disagreed
+              // with the provider's tokenizer — actionable signal for
+              // tuning DEFAULT_BUDGET_SAFETY_MARGIN_TOKENS or the
+              // estimator. Per-conversation correlation via runId; the
+              // aggregate is what drives action.
+              log.warn(
+                `[engine] context overflow recovery runId=${runId} attempt=${overflowAttempt} previousMessages=${previousMessageCount} model=${config.model} error="${errorMessage}"`,
+              );
               this.events.emit({
                 type: "context.overflow_recovery",
                 data: {

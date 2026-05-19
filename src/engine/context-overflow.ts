@@ -29,7 +29,13 @@ function getStatus(err: ErrorLike): number | undefined {
 function getMessages(err: ErrorLike): string[] {
   const messages: string[] = [];
   if (typeof err.message === "string") messages.push(err.message);
-  if (typeof err.responseBody === "string") messages.push(err.responseBody);
+  if (typeof err.responseBody === "string") {
+    messages.push(err.responseBody);
+  } else if (err.responseBody && typeof err.responseBody === "object") {
+    // Some SDK versions pre-parse the body before throwing; stringify so
+    // the phrase match below still has something to scan. Mirrors `data`.
+    messages.push(JSON.stringify(err.responseBody));
+  }
   if (err.data && typeof err.data === "object") {
     messages.push(JSON.stringify(err.data));
   }

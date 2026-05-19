@@ -1,3 +1,4 @@
+import { log } from "../cli/log.ts";
 import { estimateToolDescriptionTokens } from "../engine/token-estimate.ts";
 import type { ToolSchema } from "../engine/types.ts";
 import { getModelByString } from "../model/catalog.ts";
@@ -94,8 +95,18 @@ export function resolveMessageBudget(input: ResolveMessageBudgetInput): ResolveM
   };
 
   if (modelCtx === null) {
-    // Catalog miss. Fall back to config cap so the call still ships;
-    // operators see model-not-in-catalog warnings elsewhere.
+    // Catalog miss. Fall back to the config cap so the call still ships,
+    // but warn loudly: this is the only path where `configMaxInputTokens`
+    // re-acquires its old "target" semantics (no overhead subtracted), so
+    // a typo'd model id or a brand-new model that's ahead of the vendored
+    // catalog can still overflow on the first call. The engine's reactive
+    // recovery (one retry, halved budget) is the safety net; operators
+    // tuning catalog sync should see this in stderr aggregates.
+    log.warn(
+      `[runtime] resolveMessageBudget: model "${input.model}" not in catalog; ` +
+        `falling back to configMaxInputTokens=${input.configMaxInputTokens} as budget. ` +
+        `Per-call overhead is NOT subtracted on this path — the call may overflow and rely on engine recovery.`,
+    );
     return {
       budget: input.configMaxInputTokens,
       breakdown: { ...baseBreakdown, boundedByModel: false },

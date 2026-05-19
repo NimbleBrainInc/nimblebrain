@@ -38,6 +38,17 @@ describe("isContextOverflowError", () => {
     expect(isContextOverflowError(err)).toBe(true);
   });
 
+  it("matches when responseBody is a pre-parsed object (some SDK versions)", () => {
+    const err = {
+      status: 400,
+      message: "Bad Request",
+      responseBody: {
+        error: { message: "prompt is too long: 1.5M tokens > 1M maximum", type: "invalid_request_error" },
+      },
+    };
+    expect(isContextOverflowError(err)).toBe(true);
+  });
+
   it("unwraps nested causes (Vercel AI SDK pattern)", () => {
     const inner = Object.assign(new Error("prompt is too long: 1.2M tokens > 1M maximum"), {
       status: 400,
