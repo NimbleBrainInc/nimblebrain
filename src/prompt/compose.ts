@@ -198,12 +198,6 @@ export function composeSystemPrompt(
   appState?: AppStateInfo,
   userPrefs?: UserPrefs,
   hasProxiedTools?: boolean,
-  /**
-   * @deprecated Stage 1 is single-owner; participants are gone. Slot
-   * preserved so call sites still compile; passes through to the traced
-   * variant which ignores it. Stage 4 reintroduces with policy.
-   */
-  _participantsRemoved?: undefined,
   workspaceContext?: WorkspaceContext,
   overlays?: OverlayLayers,
   layer3Skills?: Layer3SkillEntry[],
@@ -216,7 +210,6 @@ export function composeSystemPrompt(
     appState,
     userPrefs,
     hasProxiedTools,
-    undefined,
     workspaceContext,
     overlays,
     layer3Skills,
@@ -244,8 +237,6 @@ export function composeSystemPromptTraced(
   appState?: AppStateInfo,
   userPrefs?: UserPrefs,
   hasProxiedTools?: boolean,
-  /** @deprecated See `composeSystemPrompt`. */
-  _participantsRemoved?: undefined,
   workspaceContext?: WorkspaceContext,
   overlays?: OverlayLayers,
   layer3Skills?: Layer3SkillEntry[],

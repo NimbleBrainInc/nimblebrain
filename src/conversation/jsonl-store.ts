@@ -99,7 +99,7 @@ export class JsonlConversationStore implements ConversationStore {
     const raw = JSON.parse(firstLine) as Record<string, unknown>;
     if (typeof raw.ownerId !== "string" || raw.ownerId.length === 0) {
       throw new Error(
-        `[conversation] missing ownerId in ${id} — run \`bun run migrate:conversations-to-top-level\``,
+        `[conversation] missing ownerId in ${id} — operator must back-fill ownerId on legacy conversations`,
       );
     }
     const conversation: Conversation = {

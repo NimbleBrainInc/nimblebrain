@@ -245,9 +245,7 @@ async function stampNonPersonal(
   // bogus state has it set, strip it.
   delete (updated as { ownerUserId?: string }).ownerUserId;
 
-  const workDir = (store as unknown as { workspacesDir: string }).workspacesDir
-    .replace(/\/workspaces$/, "");
-  const wsPath = join(workDir, "workspaces", ws.id, "workspace.json");
+  const wsPath = join(store.getWorkspacesDir(), ws.id, "workspace.json");
   await writeJsonAtomic(wsPath, updated);
   return true;
 }

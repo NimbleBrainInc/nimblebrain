@@ -97,6 +97,17 @@ export class WorkspaceStore {
     }
   }
 
+  /**
+   * Absolute path to the `workspaces/` directory. Exposed for migration
+   * scripts that need to address per-workspace files directly (e.g.,
+   * rewriting `workspace.json` outside the patchable surface of
+   * `update()`). Not for general use — `get` / `list` / `update` are
+   * the canonical surfaces.
+   */
+  getWorkspacesDir(): string {
+    return this.workspacesDir;
+  }
+
   async get(id: string): Promise<Workspace | null> {
     if (!WORKSPACE_ID_RE.test(id)) return null;
     const filePath = this.wsPath(id);

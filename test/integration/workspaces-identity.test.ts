@@ -73,17 +73,17 @@ describe("UC-W1: Private work with shared tools", () => {
     const matConv = await store.create({
       workspaceId: eng.id,
       ownerId: mat.id,
-      visibility: "private",
     });
 
-    // Kai lists conversations -> Mat's private convo NOT visible
-    const kaiAccess: ConversationAccessContext = { userId: kai.id, workspaceRole: "member" };
+    // Kai lists conversations -> Mat's conversation NOT visible.
+    // Stage 1: workspace role doesn't grant access; only ownership does.
+    const kaiAccess: ConversationAccessContext = { userId: kai.id };
     const kaiList = await store.list(undefined, kaiAccess);
     const kaiIds = kaiList.conversations.map((c) => c.id);
     expect(kaiIds).not.toContain(matConv.id);
 
-    // Mat lists conversations -> his private convo IS visible
-    const matAccess: ConversationAccessContext = { userId: mat.id, workspaceRole: "admin" };
+    // Mat lists conversations -> his own conversation IS visible.
+    const matAccess: ConversationAccessContext = { userId: mat.id };
     const matList = await store.list(undefined, matAccess);
     const matIds = matList.conversations.map((c) => c.id);
     expect(matIds).toContain(matConv.id);

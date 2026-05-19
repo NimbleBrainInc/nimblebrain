@@ -1388,7 +1388,7 @@ describe("Tier 3: Boundary Probes — known injection patterns", () => {
     });
 
     it("no Participants section is ever emitted (removed in Stage 1)", () => {
-      const result = composeSystemPrompt([], null, undefined, undefined, undefined, undefined, undefined, undefined);
+      const result = composeSystemPrompt([], null);
       expect(result).not.toContain("## Participants");
     });
 
