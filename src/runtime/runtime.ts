@@ -2175,21 +2175,6 @@ export class Runtime {
     return this.config.allowInsecureRemotes === true;
   }
 
-  /**
-   * No-op as of Stage 1. The event manager was originally injected so
-   * `manage_conversation`'s share/unshare/participant actions could
-   * evict subscribers; those actions are gone, and the chat-handler
-   * broadcast (`handleChatStream`) receives the manager directly from
-   * the route factory rather than via the runtime. Kept as a no-op so
-   * the `server.ts` wiring doesn't need to change in this PR; remove
-   * once a future stage rationalizes the broadcast plumbing.
-   */
-  setConversationEventManager(
-    _manager: import("../api/conversation-events.ts").ConversationEventManager,
-  ): void {
-    // intentionally empty — see docblock
-  }
-
   /** Get the file context configuration with defaults applied. */
   getFilesConfig(): FileConfig {
     return { ...DEFAULT_FILE_CONFIG, ...this.config.files };

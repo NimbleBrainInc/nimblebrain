@@ -248,4 +248,32 @@ describe("ConversationIndex", () => {
 		expect(result.conversations[0]!.id).toBe("conv_match");
 		expect(result.totalCount).toBe(1);
 	});
+
+	it("excludes legacy files missing ownerId from list()", async () => {
+		// Strict single-owner invariant: an ownerless on-disk file
+		// predates Stage 1 and has no defensible owner, so the index
+		// drops it rather than synthesizing one. Pair to load()'s throw
+		// at conversation-metadata.test.ts:52-64.
+		writeConversation(dir, "conv_valid", { title: "Owned" });
+		const legacyMeta = JSON.stringify({
+			id: "conv_legacy",
+			createdAt: "2024-06-01T00:00:00.000Z",
+			updatedAt: "2024-06-01T00:00:00.000Z",
+			title: "Ownerless",
+		});
+		const legacyMsg = JSON.stringify({
+			role: "user",
+			content: "no owner",
+			timestamp: "2024-06-01T00:00:00.000Z",
+		});
+		writeFileSync(join(dir, "conv_legacy.jsonl"), `${legacyMeta}\n${legacyMsg}\n`);
+
+		await index.populate(dir);
+
+		expect(index.get("conv_valid")).toBeDefined();
+		expect(index.get("conv_legacy")).toBeUndefined();
+		const listed = index.list();
+		expect(listed.conversations).toHaveLength(1);
+		expect(listed.conversations[0]!.id).toBe("conv_valid");
+	});
 });

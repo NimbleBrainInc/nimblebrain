@@ -790,10 +790,13 @@ export async function handleBootstrap(
         `picking earliest-created ${earliest.id}. This is data corruption — investigate.`,
     );
   } else {
-    // Zero personal workspaces. Soft-warn; the client can still
-    // function using activeWorkspace, and the next login through
-    // `ensureUserWorkspace` will create one.
-    console.warn(
+    // Zero personal workspaces. Expected for legacy tenants in the
+    // pre-migration window — `ensureUserWorkspace` creates one on the
+    // next login, or the operator runs `migrate:personal-workspaces`.
+    // Per-login bootstrap is high-volume; `log.info` (dim, greppable)
+    // is enough — `console.warn` would create alarming yellow noise
+    // for an expected pre-migration state.
+    log.info(
       `[bootstrap] user ${identity.id} has no personal workspace. ` +
         `Run \`bun run migrate:personal-workspaces\` or trigger a re-login.`,
     );
