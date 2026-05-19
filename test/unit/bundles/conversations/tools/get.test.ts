@@ -338,4 +338,45 @@ describe("conversations__get", () => {
 		expect(result.messages[0]!.content).toBe(overCap);
 		expect(result.truncated).toBe(true);
 	});
+
+	it("the bounded result fits under MAX_TOOL_RESULT_CHARS once pretty-printed and wrapped", async () => {
+		// The platform serializes tool results via JSON.stringify(result, null, 2)
+		// (see src/tools/platform/conversations.ts), then the engine's per-result
+		// cap (`MAX_TOOL_RESULT_CHARS = 50_000`) slices the resulting text from
+		// the end if it overshoots. This test guards against drift between
+		// DEFAULT_GET_CHAR_CAP and the actual budget the engine measures —
+		// the cap must be sized so the pretty-printed wrapper stays under
+		// 50,000 chars in the worst case (truncation firing on the windowed
+		// slice). Bug history: DEFAULT_GET_CHAR_CAP = 50_000 originally, but
+		// pretty-print inflation pushed the serialized result over the engine
+		// cap, which then sliced away the `truncationHint` field.
+		const MAX_TOOL_RESULT_CHARS = 50_000;
+
+		const ts = "2025-01-15T10:00:00.000Z";
+		// Worst case: many messages, each fat enough that the char-cap fires
+		// inside the windowed slice. Force the cap path to do work.
+		const fatChunk = "Z".repeat(2_000);
+		const messages = Array.from({ length: DEFAULT_GET_LIMIT * 2 }, (_, i) => ({
+			role: (i % 2 === 0 ? "user" : "assistant") as "user" | "assistant",
+			content: `${fatChunk}-${i}`,
+			timestamp: ts,
+			// Realistic message shape: nested usage / blocks add pretty-print overhead.
+			blocks: [{ type: "text", text: `${fatChunk}-${i}` }],
+			usage: { inputTokens: 100, outputTokens: 50, model: "claude-sonnet-4-6", llmMs: 1200 },
+		}));
+		writeConversation(dir, "conv-fits-under-engine-cap", { messages });
+		await index.build(dir);
+
+		const result = await handleGet({ id: "conv-fits-under-engine-cap" }, index);
+		const serialized = JSON.stringify(result, null, 2);
+		expect(serialized.length).toBeLessThan(MAX_TOOL_RESULT_CHARS);
+
+		// And the truncation flags must precede `messages` in the serialized
+		// output, so an end-slice would lose messages first (not the flags).
+		const truncatedAt = serialized.indexOf('"truncated"');
+		const messagesAt = serialized.indexOf('"messages"');
+		expect(truncatedAt).toBeGreaterThan(-1);
+		expect(messagesAt).toBeGreaterThan(-1);
+		expect(truncatedAt).toBeLessThan(messagesAt);
+	});
 });

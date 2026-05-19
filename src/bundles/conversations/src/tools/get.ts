@@ -23,15 +23,21 @@ export interface GetInput {
 export const DEFAULT_GET_LIMIT = 20;
 
 /**
- * Hard cap on the serialized size of returned messages in "messages" mode.
- * If the selected window exceeds this, older messages are dropped from
- * the response (most-recent-wins) and a truncation note is emitted.
+ * Soft cap on the serialized size of returned messages in "messages" mode,
+ * measured against compact `JSON.stringify(msg).length` summed across
+ * messages. If the selected window exceeds this, older messages are
+ * dropped from the response (most-recent-wins) and a truncation note is
+ * emitted.
  *
- * Matches the engine's per-result cap (`MAX_TOOL_RESULT_CHARS`) so a
- * single `conversations__get` call can never produce a tool result that
- * would itself be truncated by the engine's downstream guard.
+ * Sized to stay under the engine's `MAX_TOOL_RESULT_CHARS` (50,000) after
+ * (a) the wrapper object is added, and (b) the final result is serialized
+ * with `JSON.stringify(result, null, 2)` — pretty-print typically inflates
+ * a nested message array by 30–50%. 30k of compact messages → ~40–45 KB
+ * pretty-printed total, comfortably under the engine cap. The result shape
+ * below puts `truncated` / `droppedOlderMessages` / `truncationHint` ahead
+ * of `messages` so the flags survive even if the engine ever does slice.
  */
-export const DEFAULT_GET_CHAR_CAP = 50_000;
+export const DEFAULT_GET_CHAR_CAP = 30_000;
 
 interface GetMessagesResult {
   messages: unknown[];
@@ -112,9 +118,13 @@ export async function handleGet(input: GetInput, index: ConversationIndex): Prom
     DEFAULT_GET_CHAR_CAP,
   );
 
+  // Field order matters: small flags first, large `messages` last. The
+  // engine's per-result cap (`MAX_TOOL_RESULT_CHARS`) slices the
+  // pretty-printed JSON from the END if anything ever overshoots, so
+  // putting `truncated` / `droppedOlderMessages` / `truncationHint` ahead
+  // of `messages` keeps the diagnostic flags intact in the worst case.
   return {
     metadata,
-    messages,
     totalMessages: conversation.messageCount,
     ...(truncated
       ? {
@@ -123,5 +133,6 @@ export async function handleGet(input: GetInput, index: ConversationIndex): Prom
           truncationHint: `Returned ${messages.length} of the requested ${windowed.length} trailing messages; the older ${droppedOlderMessages} exceeded the ${DEFAULT_GET_CHAR_CAP}-char response budget. Use expand:"full" only if you genuinely need the entire transcript, or narrow the limit and request specific ranges.`,
         }
       : {}),
+    messages,
   };
 }
