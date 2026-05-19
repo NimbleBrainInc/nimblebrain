@@ -55,11 +55,13 @@ export function slugify(name: string): string {
  * Canonical id of `userId`'s personal workspace.
  *
  * **Single source of truth for this format.** No other code site in
- * `src/` may build a personal workspace id by hand — enforced by the
- * `check:personal-workspace-id` CI lint. Code that needs "user X's
- * personal workspace" constructs the id here and looks it up via
- * `WorkspaceStore.get(...)`. Code that needs the reverse ("who owns
- * this workspace?") reads `Workspace.ownerUserId` — never parse the id.
+ * `src/` may build a personal workspace id by hand — this convention
+ * will be enforced by the `check:personal-workspace-id` AST lint
+ * that Task 010 adds (not yet in this PR; until then, discipline-only).
+ * Code that needs "user X's personal workspace" constructs the id here
+ * and looks it up via `WorkspaceStore.get(...)`. Code that needs the
+ * reverse ("who owns this workspace?") reads `Workspace.ownerUserId`
+ * — never parse the id.
  *
  * Format: `ws_user_` + `userId`. The full user id is preserved
  * (including any provider-prefixed `user_` / `usr_` segment) — the

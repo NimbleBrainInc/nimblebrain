@@ -8,7 +8,7 @@ import { ingestFiles, isAllowedMime, type UploadedFile } from "../files/ingest.t
 import { createFileStore } from "../files/store.ts";
 import type { FileEntry } from "../files/types.ts";
 import type { IdentityProvider, UserIdentity } from "../identity/provider.ts";
-import { RunInProgressError } from "../runtime/errors.ts";
+import { ConversationAccessDeniedError, RunInProgressError } from "../runtime/errors.ts";
 import { type RequestContext, runWithRequestContext } from "../runtime/request-context.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import type { ChatRequest } from "../runtime/types.ts";
@@ -79,6 +79,9 @@ export async function handleChat(
     if (err instanceof RunInProgressError) {
       return runInProgressResponse(err.conversationId);
     }
+    if (err instanceof ConversationAccessDeniedError) {
+      return conversationAccessDeniedResponse(err.conversationId);
+    }
     throw err;
   }
 }
@@ -88,6 +91,15 @@ function runInProgressResponse(conversationId: string): Response {
     409,
     "run_in_progress",
     "This conversation already has an active response. Wait for it to finish before sending another message.",
+    { conversationId },
+  );
+}
+
+function conversationAccessDeniedResponse(conversationId: string): Response {
+  return apiError(
+    403,
+    "conversation_access_denied",
+    "You do not have access to this conversation.",
     { conversationId },
   );
 }
@@ -239,6 +251,14 @@ export async function handleChatStream(
             send("error", {
               error: "run_in_progress",
               message: "This conversation already has an active response.",
+            });
+            finish();
+            return;
+          }
+          if (err instanceof ConversationAccessDeniedError) {
+            send("error", {
+              error: "conversation_access_denied",
+              message: "You do not have access to this conversation.",
             });
             finish();
             return;

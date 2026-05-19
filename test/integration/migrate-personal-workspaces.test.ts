@@ -287,7 +287,7 @@ describe("migrate-personal-workspaces", () => {
     expect(existsSync(join(workDir, "workspaces", "ws_user_user_alice"))).toBe(false);
   });
 
-  test("aborts rename when the target id already exists", async () => {
+  test("logs an ORPHANED warning when both legacy and new ids exist", async () => {
     await seedUser("user_alice", "alice@example.com", "Alice");
     // Both legacy and new id exist — data corruption scenario.
     await seedWorkspace({
@@ -304,12 +304,15 @@ describe("migrate-personal-workspaces", () => {
     });
 
     const { exitCode, stderr } = await runMigrate();
-    // The new-id workspace exists, so the user's personal lookup
-    // succeeds at the new id — the legacy `ws_alice` is left as-is.
+    // Exit is still 0 — the migration didn't fail, the new-id workspace
+    // is canonical and the operator owns the cleanup decision.
     expect(exitCode).toBe(0);
-    // No fatal collision in this case — the script correctly resolves
-    // the user to the new-id workspace and ignores the legacy one.
+    // But the orphan MUST surface in the log so operators don't miss it.
+    expect(stderr).toContain("ORPHANED legacy workspace at ws_alice");
+    expect(stderr).toContain("Operator action required");
+    // No rename happened.
     expect(stderr).not.toContain("renaming ws_alice");
+    // Both directories still exist; operator decides.
     expect(existsSync(join(workDir, "workspaces", "ws_alice"))).toBe(true);
     expect(existsSync(join(workDir, "workspaces", "ws_user_user_alice"))).toBe(true);
   });

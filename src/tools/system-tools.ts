@@ -17,7 +17,6 @@ import type { Skill } from "../skills/types.ts";
 import { WorkspaceContext } from "../workspace/context.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
 import { createManageConnectorsTool } from "./connector-tools.ts";
-import type { ManageConversationContext } from "./conversation-tools.ts";
 import { buildCoreResourceMap } from "./core-resources/index.ts";
 import { createCoreToolDefs } from "./core-source.ts";
 import type { DelegateContext } from "./delegate.ts";
@@ -87,7 +86,6 @@ export async function createSystemTools(
   manageUsersCtx?: ManageUsersContext,
   manageWorkspacesCtx?: ManageWorkspacesContext,
   manageMembersCtx?: ManageMembersContext,
-  manageConversationCtx?: ManageConversationContext,
   manageBundleCtx?: ManageBundleContext,
   toolPromotionCtx?: ToolPromotionContext,
   toolEligibilityCtx?: ToolEligibilityContext,
@@ -253,16 +251,13 @@ export async function createSystemTools(
   }
 
   if (manageWorkspacesCtx) {
-    // Merge member and conversation contexts into the workspace tool
+    // Merge member context into the workspace tool. The conversation
+    // context was removed in Stage 1's schema purge (share/unshare/
+    // participant actions are gone — `manage_workspaces` no longer
+    // needs a conversation store).
     const mergedCtx = {
       ...manageWorkspacesCtx,
       ...(manageMembersCtx ? { userStore: manageMembersCtx.userStore } : {}),
-      ...(manageConversationCtx
-        ? {
-            conversationStore: manageConversationCtx.conversationStore,
-            conversationEventManager: manageConversationCtx.conversationEventManager,
-          }
-        : {}),
     };
     systemToolDefs.push(createManageWorkspacesTool(mergedCtx));
   }
