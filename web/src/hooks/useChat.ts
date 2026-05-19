@@ -543,7 +543,11 @@ export function useChat(initialConversationId?: string, currentUserId?: string):
   const loadConversation = useCallback(async (id: string) => {
     setError(null);
     try {
-      const res = await callTool("conversations", "get", { id });
+      // expand:"full" — the shell is rendering the entire chat, not
+      // sampling for an LLM. The bounded default (`expand:"messages"`,
+      // last 20) exists to keep agent tool-results small; the trusted
+      // web shell needs every turn or the UI silently shows only the tail.
+      const res = await callTool("conversations", "get", { id, expand: "full" });
       if (res.isError) {
         const errText = res.content
           ?.map((b) => b.text ?? "")

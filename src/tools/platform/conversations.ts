@@ -92,7 +92,7 @@ export async function createConversationsSource(
     {
       name: "get",
       description:
-        'Load a conversation by ID. Returns metadata plus, by default, the most recent ~20 messages (capped to a 50 KB response budget). Use expand:"metadata" for just the metadata or expand:"full" when you actually need the entire transcript — long conversations can run hundreds of thousands of tokens and full reads are recorded in tool history.',
+        'Load a conversation by ID. Returns metadata plus, by default, the most recent ~20 messages (with the message payload capped to ~30 KB; the full pretty-printed response stays under ~50 KB). Use expand:"metadata" for just the metadata or expand:"full" when you actually need the entire transcript — long conversations can run hundreds of thousands of tokens and full reads are recorded in tool history.',
       inputSchema: ConversationsGetInput,
       handler: withErrorHandling(async (input) => {
         const { index } = await getIndex();
