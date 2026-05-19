@@ -32,6 +32,7 @@ import {
 	handleStatus,
 	type ToolContext,
 } from "../../src/bundles/automations/src/server.ts";
+import type { AutomationsRunOutput } from "../../src/tools/platform/schemas/automations.ts";
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -65,22 +66,14 @@ function defaultExecutorResult(auto: Automation): AutomationRun {
 let scheduler: Scheduler;
 
 /**
- * `handleRun` returns one of two shapes depending on whether the run
- * finished inside the handler's sync-wait deadline. Integration tests
- * using the fast in-process executor always expect the synchronous
- * shape; this helper narrows + asserts that explicitly so a future
- * test with a slow executor doesn't silently drop into the "dispatched"
- * branch and pass on undefined dereferences.
+ * `handleRun` returns a discriminated union — see `AutomationsRunOutput`.
+ * Integration tests using the fast in-process executor always expect
+ * the synchronous `{ run }` shape; this helper narrows + asserts that
+ * explicitly so a future test with a slow executor doesn't silently
+ * drop into the "dispatched" branch and pass on undefined dereferences.
  */
-function expectSyncRun(result: unknown): AutomationRun {
-	if (
-		result &&
-		typeof result === "object" &&
-		"run" in result &&
-		(result as { run: unknown }).run
-	) {
-		return (result as { run: AutomationRun }).run;
-	}
+function expectSyncRun(result: AutomationsRunOutput): AutomationRun {
+	if ("run" in result) return result.run;
 	throw new Error(
 		`expected handleRun to return synchronously with { run }, got ${JSON.stringify(result)}`,
 	);
@@ -151,6 +144,8 @@ describe("automation e2e: create -> run -> verify", () => {
 
 		// Step 2: Trigger via run handler
 		const run = expectSyncRun(await handleRun({ name: "Daily Summary" }, ctx));
+		// `handleRun` is typed as AutomationsRunOutput; expectSyncRun narrows
+		// to the synchronous-completion shape for this fast-executor test.
 
 		expect(run.status).toBe("success");
 		expect(run.automationId).toBe("daily-summary");
