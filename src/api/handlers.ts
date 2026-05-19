@@ -762,6 +762,10 @@ export async function handleBootstrap(
       role: ws.members.find((m) => m.userId === identity.id)!.role,
       memberCount: ws.members.length,
       bundleCount: ws.bundles.length,
+      // `isPersonal` defaults to `false` on disk for pre-Stage-1 workspaces;
+      // backfilled eagerly by the personal-workspace migration. The
+      // top-level `personalWorkspaceId` field is added in Task 007.
+      isPersonal: ws.isPersonal === true,
     })),
     activeWorkspace,
     shell: {

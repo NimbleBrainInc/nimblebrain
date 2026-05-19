@@ -51,6 +51,40 @@ export function slugify(name: string): string {
     .replace(/[^a-z0-9_]/g, "");
 }
 
+/**
+ * Canonical id of `userId`'s personal workspace.
+ *
+ * **Single source of truth for this format.** No other code site in
+ * `src/` may build a personal workspace id by hand — enforced by the
+ * `check:personal-workspace-id` CI lint. Code that needs "user X's
+ * personal workspace" constructs the id here and looks it up via
+ * `WorkspaceStore.get(...)`. Code that needs the reverse ("who owns
+ * this workspace?") reads `Workspace.ownerUserId` — never parse the id.
+ *
+ * Format: `ws_user_` + `userId`. The full user id is preserved
+ * (including any provider-prefixed `user_` / `usr_` segment) — the
+ * helper is a dumb concat and does NOT strip prefixes. Stripping would
+ * couple the helper to identity-provider conventions and create a
+ * class of subtle bugs across providers. The doubled-prefix form
+ * (`ws_user_user_abc123` for `user_abc123`) is correct, even if it
+ * looks awkward in logs.
+ *
+ * The corresponding `slug` passed into `WorkspaceStore.create` is the
+ * id with `ws_` stripped — i.e. `user_` + `userId` — which `create`
+ * re-prefixes with `ws_` to produce the same id.
+ */
+export function personalWorkspaceIdFor(userId: string): string {
+  if (typeof userId !== "string" || userId.length === 0) {
+    throw new Error("[workspace-store] personalWorkspaceIdFor: userId is required");
+  }
+  return `ws_user_${userId}`;
+}
+
+/** The slug form (id without the `ws_` prefix) for `userId`'s personal workspace. */
+export function personalWorkspaceSlugFor(userId: string): string {
+  return personalWorkspaceIdFor(userId).slice(3);
+}
+
 // ── WorkspaceStore ─────────────────────────────────────────────────
 
 export class WorkspaceStore {
@@ -95,12 +129,34 @@ export class WorkspaceStore {
     return workspaces;
   }
 
-  async create(name: string, slug?: string): Promise<Workspace> {
+  async create(
+    name: string,
+    slug?: string,
+    opts?: {
+      /** Mark this as the personal workspace of `ownerUserId` (which must also be set). */
+      isPersonal?: boolean;
+      /** Required when `isPersonal: true`; forbidden otherwise. */
+      ownerUserId?: string;
+      /** Short human-readable description; defaults to `null`. */
+      about?: string | null;
+    },
+  ): Promise<Workspace> {
     const derivedSlug = slug ?? slugify(name);
     const id = `ws_${derivedSlug}`;
 
     if (!WORKSPACE_ID_RE.test(id)) {
       throw new Error(`Invalid workspace ID format: "${id}"`);
+    }
+
+    // Co-required invariant. A personal workspace MUST declare its owner;
+    // a shared workspace MUST NOT carry an ownerUserId. These two fields
+    // travel together — see `Workspace.isPersonal` / `ownerUserId` in types.
+    const isPersonal = opts?.isPersonal === true;
+    if (isPersonal && !opts?.ownerUserId) {
+      throw new Error("[workspace-store] create: isPersonal=true requires ownerUserId");
+    }
+    if (!isPersonal && opts?.ownerUserId) {
+      throw new Error("[workspace-store] create: ownerUserId is only valid with isPersonal=true");
     }
 
     // Slug collision detection
@@ -117,6 +173,9 @@ export class WorkspaceStore {
       bundles: [],
       createdAt: now,
       updatedAt: now,
+      isPersonal,
+      ...(opts?.ownerUserId ? { ownerUserId: opts.ownerUserId } : {}),
+      about: opts?.about ?? null,
     };
 
     const wsDir = join(this.workspacesDir, id);
@@ -132,16 +191,34 @@ export class WorkspaceStore {
     patch: Partial<
       Pick<
         Workspace,
-        "name" | "bundles" | "agents" | "skillDirs" | "models" | "identity" | "oauthOperatorApps"
+        | "name"
+        | "bundles"
+        | "agents"
+        | "skillDirs"
+        | "models"
+        | "identity"
+        | "oauthOperatorApps"
+        | "about"
       >
     >,
   ): Promise<Workspace | null> {
     const ws = await this.get(id);
     if (!ws) return null;
 
+    // Runtime guard for the type-level Pick: `isPersonal` and `ownerUserId`
+    // are identity-bound at create time and not patchable. A caller that
+    // casts through the type system (`as unknown as { name: string }`)
+    // would otherwise bypass the Pick — strip the disallowed keys
+    // explicitly so the invariant holds at runtime too.
+    const {
+      isPersonal: _isPersonal,
+      ownerUserId: _ownerUserId,
+      ...safePatch
+    } = patch as Partial<Workspace>;
+
     const updated: Workspace = {
       ...ws,
-      ...patch,
+      ...safePatch,
       updatedAt: new Date().toISOString(),
     };
 

@@ -7,9 +7,11 @@ import type { AgentProfile } from "../../../src/runtime/types.ts";
 import type { Workspace } from "../../../src/workspace/types.ts";
 import {
   MemberConflictError,
+  personalWorkspaceIdFor,
+  personalWorkspaceSlugFor,
+  slugify,
   WorkspaceConflictError,
   WorkspaceStore,
-  slugify,
 } from "../../../src/workspace/workspace-store.ts";
 
 let workDir: string;
@@ -267,5 +269,100 @@ describe("WorkspaceStore file permissions", () => {
     const filePath = join(workDir, "workspaces", ws.id, "workspace.json");
     const mode = statSync(filePath).mode & 0o777;
     expect(mode).toBe(0o600);
+  });
+});
+
+// ── Personal workspace helper + co-required invariant ─────────────
+
+describe("personalWorkspaceIdFor / personalWorkspaceSlugFor", () => {
+  test("constructs ws_user_<userId> with the full user id preserved", () => {
+    // The full user id (including the provider prefix) is concatenated
+    // verbatim. This is the "dumb concat" rule — see the helper's
+    // docblock for why we don't strip prefixes.
+    expect(personalWorkspaceIdFor("user_abc123")).toBe("ws_user_user_abc123");
+    expect(personalWorkspaceIdFor("usr_default")).toBe("ws_user_usr_default");
+  });
+
+  test("slug form is the id without the ws_ prefix — round-trips through create", async () => {
+    const slug = personalWorkspaceSlugFor("user_alice");
+    expect(slug).toBe("user_user_alice");
+
+    const ws = await store.create("Alice", slug, {
+      isPersonal: true,
+      ownerUserId: "user_alice",
+    });
+    expect(ws.id).toBe(personalWorkspaceIdFor("user_alice"));
+  });
+
+  test("rejects empty / non-string userId", () => {
+    expect(() => personalWorkspaceIdFor("")).toThrow(/userId is required/);
+    expect(() => personalWorkspaceIdFor(undefined as unknown as string)).toThrow(/userId is required/);
+  });
+});
+
+describe("WorkspaceStore.create: isPersonal/ownerUserId invariants", () => {
+  test("defaults isPersonal to false and ownerUserId to undefined", async () => {
+    const ws = await store.create("Shared");
+    expect(ws.isPersonal).toBe(false);
+    expect(ws.ownerUserId).toBeUndefined();
+    expect(ws.about).toBeNull();
+  });
+
+  test("persists isPersonal + ownerUserId when supplied together", async () => {
+    const ws = await store.create("Alice", "user_user_alice", {
+      isPersonal: true,
+      ownerUserId: "user_alice",
+    });
+    expect(ws.isPersonal).toBe(true);
+    expect(ws.ownerUserId).toBe("user_alice");
+
+    // Round-trip through disk.
+    const readBack = await store.get(ws.id);
+    expect(readBack?.isPersonal).toBe(true);
+    expect(readBack?.ownerUserId).toBe("user_alice");
+  });
+
+  test("rejects isPersonal=true without ownerUserId", async () => {
+    await expect(
+      store.create("Bad", "user_user_x", { isPersonal: true }),
+    ).rejects.toThrow(/isPersonal=true requires ownerUserId/);
+  });
+
+  test("rejects ownerUserId without isPersonal=true", async () => {
+    await expect(
+      store.create("Bad", "shared", { ownerUserId: "user_alice" }),
+    ).rejects.toThrow(/ownerUserId is only valid with isPersonal=true/);
+  });
+
+  test("persists about when supplied; defaults to null otherwise", async () => {
+    const a = await store.create("With About", "with_about", { about: "Hello" });
+    const b = await store.create("Without About", "without_about");
+    expect(a.about).toBe("Hello");
+    expect(b.about).toBeNull();
+  });
+});
+
+describe("WorkspaceStore.update", () => {
+  test("allows patching about", async () => {
+    const ws = await store.create("Patch", "patch");
+    const updated = await store.update(ws.id, { about: "new description" });
+    expect(updated?.about).toBe("new description");
+  });
+
+  test("ignores attempted writes to isPersonal and ownerUserId (Pick excludes them)", async () => {
+    const ws = await store.create("Alice", "user_user_alice", {
+      isPersonal: true,
+      ownerUserId: "user_alice",
+    });
+    // Cast to bypass the Pick<> at the type level — runtime should still
+    // preserve the original fields because update spreads only the allowed
+    // keys it accepted in the Pick. (TypeScript catches misuse at compile;
+    // this asserts the runtime contract too.)
+    const updated = await store.update(ws.id, {
+      isPersonal: false,
+      ownerUserId: "user_evil",
+    } as unknown as { name: string });
+    expect(updated?.isPersonal).toBe(true);
+    expect(updated?.ownerUserId).toBe("user_alice");
   });
 });
