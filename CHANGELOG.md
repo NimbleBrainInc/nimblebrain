@@ -103,6 +103,7 @@
 - `InlineSource`, `ResourceReader`, `isResourceReader`. External callers should switch to `defineInProcessApp` (returns an `McpSource`); `InlineToolDef` becomes `InProcessTool` with the same shape.
 - `bridgeUseMcp` feature flag and its scaffolding (`web/src/features.ts`, `getBridgeUseMcp` / `setBridgeUseMcp`, the schema entry, the resolver field). The MCP transport is the only path; legacy REST branches in the bridge are deleted.
 - Skill create/edit form no longer surfaces "Loading strategy" and "Tool affinity (comma-separated globs)" inputs. These fields exist on the on-disk `SkillManifest` but were never in the LLM-facing tool schema and were silently dropped by `skills__create` / `skills__update`. Operators who need them today should edit the skill markdown file directly under `~/.nimblebrain/{skills,workspaces/<wsId>/skills,users/<userId>/skills}/`; a future operator-only API may surface them.
+- Registry URL editing on the Org → Registries settings page (and the `manage_registries set_url` action). URL overrides (e.g. self-hosted mpak) are deployment config — set via `NB_REGISTRIES` or `registries.json`. The UI now shows the configured URL or "(using default)" as read-only.
 
 ### Operator notes
 

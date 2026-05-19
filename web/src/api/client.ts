@@ -931,14 +931,6 @@ export async function setRegistryEnabled(
   return unwrapStructured(result, enabled ? "enable" : "disable");
 }
 
-export async function setRegistryUrl(
-  id: string,
-  url: string,
-): Promise<{ ok: boolean; registry: RegistryConfig }> {
-  const result = await callTool("nb", "manage_registries", { action: "set_url", id, url });
-  return unwrapStructured(result, "set_url");
-}
-
 export type ToolPolicy = "allow" | "disallow";
 
 /**
