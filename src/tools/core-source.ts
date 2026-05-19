@@ -18,7 +18,7 @@ const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as {
 const VERSION = process.env.NB_VERSION || pkg.version;
 
 import { ActivityCollector } from "../services/activity-collector.ts";
-import { BriefingCache } from "../services/briefing-cache.ts";
+import { BriefingCache, computeBriefingFingerprint } from "../services/briefing-cache.ts";
 import { collectBriefingFacets } from "../services/briefing-collector.ts";
 import { BriefingGenerator } from "../services/briefing-generator.ts";
 import type { BriefingOutput } from "../services/home-types.ts";
@@ -744,9 +744,18 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
               caches.set(wsId, cache);
             }
 
+            const logDir = join(wsDir, "logs");
+            const instances = runtime.getBundleInstancesForWorkspace(wsId);
+
+            // Fingerprint the data this briefing is built from (activity logs
+            // + bundle entity data). The cache serves a stored briefing only
+            // while the fingerprint matches — when the underlying data
+            // changes, the cache misses and the briefing regenerates.
+            const fingerprint = computeBriefingFingerprint(logDir, instances);
+
             // Check cache first
             if (!input.force_refresh) {
-              const cached = cache.get();
+              const cached = cache.get(fingerprint);
               if (cached) {
                 return {
                   content: textContent("Briefing retrieved from cache."),
@@ -760,7 +769,6 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
             const until = new Date().toISOString();
 
             // Collect activity from workspace-scoped logs
-            const logDir = join(wsDir, "logs");
             const store = runtime.getStore();
             const collector = new ActivityCollector({
               logDir,
@@ -770,7 +778,6 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
 
             // Collect briefing facets — scoped to current workspace
             const registry = runtime.getRegistryForCurrentWorkspace();
-            const instances = runtime.getBundleInstancesForWorkspace(wsId);
 
             const facetContext = await collectBriefingFacets(instances, registry, {
               since,
@@ -792,7 +799,7 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
             // renders as a clear error state with a retry button.
             // Cache writes only happen on the success path below.
             const briefing: BriefingOutput = await generator.generate(activity, facetContext);
-            cache.set(briefing);
+            cache.set(briefing, fingerprint);
 
             return {
               content: textContent("Briefing generated."),
