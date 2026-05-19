@@ -39,23 +39,10 @@ export function conversationEventRoutes(ctx: AppContext) {
         return apiError(404, "not_found", "Conversation not found");
       }
 
-      // Determine workspace role for the requesting user
-      const workspace = await ctx.workspaceStore.get(workspaceId);
-      const member = workspace?.members.find((m) => m.userId === identity.id);
-      const workspaceRole = member?.role === "admin" ? ("admin" as const) : ("member" as const);
-
-      // Check conversation access
-      const accessMeta = {
-        ownerId: conversation.ownerId,
-        visibility: conversation.visibility,
-        participants: conversation.participants,
-      };
-      if (
-        !canAccess(accessMeta, {
-          userId: identity.id,
-          workspaceRole,
-        })
-      ) {
+      // Stage 1 access check — single-owner. The conversation is
+      // accessible iff the caller is its owner. Workspace-admin
+      // overrides return in Stage 4 with explicit policy.
+      if (!canAccess({ ownerId: conversation.ownerId }, { userId: identity.id })) {
         // Return 404 to avoid leaking conversation existence
         return apiError(404, "not_found", "Conversation not found");
       }

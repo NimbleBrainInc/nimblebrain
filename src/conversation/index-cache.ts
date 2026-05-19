@@ -17,8 +17,6 @@ interface ConversationMetadata {
   updatedAt?: string;
   title?: string | null;
   ownerId?: string;
-  visibility?: "private" | "shared";
-  participants?: string[];
 }
 
 /**
@@ -27,11 +25,13 @@ interface ConversationMetadata {
  * Lazily populates by reading only line 1 (metadata) and the first user
  * message (preview) from each JSONL file — never loads full history.
  */
-/** Access-control metadata stored alongside each summary in the index. */
+/**
+ * Access-control metadata stored alongside each summary in the index.
+ * Stage 1: single-owner only — `ownerId` is the entire authorization
+ * surface. Stage 4 reintroduces sharing via explicit policy.
+ */
 interface IndexedAccessMeta {
   ownerId?: string;
-  visibility?: "private" | "shared";
-  participants?: string[];
 }
 
 export class ConversationIndex {
@@ -133,35 +133,23 @@ export class ConversationIndex {
 }
 
 /**
- * Check if a user can access a conversation based on its access metadata.
+ * Check if a user can access a conversation.
  *
- * Rules:
- * - Admins can see everything
- * - Legacy conversations (no ownerId/visibility) are visible to all (backward compat)
- * - Owner always sees their own conversations
- * - Shared conversations are visible to participants
- * - Private conversations are only visible to their owner
+ * Stage 1: single-owner. A conversation is accessible iff the caller
+ * is its owner. Workspace-admin overrides and shared-with-participants
+ * semantics are gone — Stage 4 reintroduces them with explicit policy
+ * gates and audit trails.
+ *
+ * A `meta` of `undefined` or one without `ownerId` is treated as
+ * inaccessible — Stage 1 enforces "every conversation has an owner"
+ * at write time, so unset means the index hasn't caught up.
  */
 export function canAccess(
   meta: IndexedAccessMeta | undefined,
   access: ConversationAccessContext,
 ): boolean {
-  // Admins see everything
-  if (access.workspaceRole === "admin") return true;
-
-  // Legacy conversations without access metadata are visible to all
-  if (!meta?.ownerId && !meta?.visibility) return true;
-
-  // Owner always has access
-  if (meta?.ownerId === access.userId) return true;
-
-  // Shared conversations visible to participants
-  if (meta?.visibility === "shared") {
-    return meta.participants?.includes(access.userId) ?? false;
-  }
-
-  // Private (default) — only owner (already handled above)
-  return false;
+  if (!meta?.ownerId) return false;
+  return meta.ownerId === access.userId;
 }
 
 /**
@@ -228,8 +216,6 @@ function parseFileHeader(
   let derivedCostUsd = 0;
   let lastEventTs: string | null = null;
   let derivedTitle: string | null | undefined;
-  let derivedVisibility: "private" | "shared" | undefined;
-  let derivedParticipants: string[] | undefined;
 
   if (eventFormat) {
     // Event-sourced format: scan for events
@@ -242,8 +228,6 @@ function parseFileHeader(
           usage?: TokenUsage;
           model?: string;
           title?: string | null;
-          visibility?: "private" | "shared";
-          participants?: string[];
         };
         if (event.ts) lastEventTs = event.ts;
         if (event.type === "user.message") {
@@ -259,10 +243,6 @@ function parseFileHeader(
           derivedCostUsd += estimateCost(event.model, event.usage);
         } else if (event.type === "metadata.title") {
           derivedTitle = event.title;
-        } else if (event.type === "metadata.visibility") {
-          derivedVisibility = event.visibility;
-        } else if (event.type === "metadata.participants") {
-          derivedParticipants = event.participants;
         }
       } catch {
         // Skip malformed event lines
@@ -293,9 +273,11 @@ function parseFileHeader(
   // Totals are always derived. Legacy line-1 metadata totals are
   // intentionally ignored — old conversations show zero totals if their
   // events don't carry usage. (See PR removing stored totals.)
-  const effectiveVisibility = derivedVisibility ?? meta.visibility;
-  const effectiveParticipants = derivedParticipants ?? meta.participants;
 
+  // Stage 1 invariant: every conversation has an ownerId. Older files
+  // without one are pre-migration data; we leave `ownerId` unset on the
+  // summary so the access check rejects them. The migration script is
+  // the authoritative fix.
   return {
     summary: {
       id: meta.id,
@@ -307,11 +289,10 @@ function parseFileHeader(
       totalInputTokens: derivedInputTokens,
       totalOutputTokens: derivedOutputTokens,
       totalCostUsd: derivedCostUsd,
+      ownerId: meta.ownerId ?? "",
     },
     access: {
       ...(meta.ownerId ? { ownerId: meta.ownerId } : {}),
-      ...(effectiveVisibility ? { visibility: effectiveVisibility } : {}),
-      ...(effectiveParticipants ? { participants: effectiveParticipants } : {}),
     },
   };
 }

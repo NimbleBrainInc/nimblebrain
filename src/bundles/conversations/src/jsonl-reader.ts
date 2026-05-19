@@ -26,8 +26,6 @@ export interface ConversationMeta {
   totalCostUsd: number;
   lastModel: string | null;
   ownerId?: string;
-  visibility?: "private" | "shared";
-  participants?: string[];
 }
 
 /**
@@ -258,8 +256,6 @@ function parseMeta(raw: Record<string, unknown>): ConversationMeta | null {
     totalCostUsd: (raw.totalCostUsd as number) ?? 0,
     lastModel: (raw.lastModel as string | null) ?? null,
     ...(raw.ownerId ? { ownerId: raw.ownerId as string } : {}),
-    ...(raw.visibility ? { visibility: raw.visibility as "private" | "shared" } : {}),
-    ...(Array.isArray(raw.participants) ? { participants: raw.participants as string[] } : {}),
   };
 }
 

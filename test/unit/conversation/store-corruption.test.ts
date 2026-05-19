@@ -26,6 +26,7 @@ function makeMetadataLine(id: string): string {
     id,
     createdAt: "2026-04-14T00:00:00Z",
     format: "events",
+    ownerId: "user_test",
   });
 }
 

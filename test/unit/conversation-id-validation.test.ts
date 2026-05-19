@@ -16,7 +16,7 @@ function storeTests(name: string, makeStore: () => ConversationStore) {
 
     it("accepts a valid conversation id format", async () => {
       // create() generates a valid ID internally — load should not throw on format
-      const conv = await store.create();
+      const conv = await store.create({ ownerId: "user_test" });
       const loaded = await store.load(conv.id);
       expect(loaded).not.toBeNull();
       expect(loaded!.id).toBe(conv.id);

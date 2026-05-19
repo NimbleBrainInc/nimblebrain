@@ -4,13 +4,9 @@ import type { UserIdentity } from "../identity/provider.ts";
 import { ORG_ADMIN_ROLES } from "../identity/types.ts";
 import type { UserStore } from "../identity/user.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
-import {
-  canManageConversation,
-  handleAddParticipant,
-  handleRemoveParticipant,
-  handleShareConversation,
-  handleUnshareConversation,
-} from "./conversation-tools.ts";
+// conversation-tools.ts retains only `canManageConversation` after
+// Stage 1's schema purge. Share/unshare/participant actions return in
+// Stage 4 with policy-gated primitives.
 import type { InProcessTool } from "./in-process-app.ts";
 
 // ── Types ─────────────────────────────────────────────────────────
@@ -51,7 +47,7 @@ export function createManageWorkspacesTool(ctx: ManageWorkspacesContext): InProc
   return {
     name: "manage_workspaces",
     description:
-      "Manage workspaces, their members, and conversation sharing. Workspace CRUD requires org admin. Member management requires workspace or org admin. Conversation sharing requires conversation owner or workspace admin.",
+      "Manage workspaces and their members. Workspace CRUD requires org admin. Member management requires workspace or org admin. Conversation sharing was removed in Stage 1 of the delegation-model refactor and returns in Stage 4 with policy-gated primitives.",
     inputSchema: {
       type: "object",
       properties: {
@@ -66,10 +62,6 @@ export function createManageWorkspacesTool(ctx: ManageWorkspacesContext): InProc
             "remove_member",
             "update_member",
             "list_members",
-            "share_conversation",
-            "unshare_conversation",
-            "add_participant",
-            "remove_participant",
           ],
           description: "Action to perform.",
         },
@@ -98,16 +90,12 @@ export function createManageWorkspacesTool(ctx: ManageWorkspacesContext): InProc
         },
         userId: {
           type: "string",
-          description: "User ID (for member and participant actions).",
+          description: "User ID (for member actions).",
         },
         role: {
           type: "string",
           enum: ["admin", "member"],
           description: "Workspace role (for add_member, update_member).",
-        },
-        conversationId: {
-          type: "string",
-          description: "Conversation ID (for conversation sharing actions).",
         },
       },
       required: ["action"],
@@ -153,48 +141,6 @@ export function createManageWorkspacesTool(ctx: ManageWorkspacesContext): InProc
             return handleUpdateMember(ctx as ManageMembersContext, workspaceId, input);
           case "list_members":
             return handleListMembers(ctx as ManageMembersContext, workspaceId);
-        }
-      }
-
-      // Conversation sharing — requires conversation owner or workspace admin
-      if (
-        [
-          "share_conversation",
-          "unshare_conversation",
-          "add_participant",
-          "remove_participant",
-        ].includes(action)
-      ) {
-        if (!ctx.conversationStore) {
-          return { content: textContent("Conversation management not available."), isError: true };
-        }
-        const identity = ctx.getIdentity();
-        if (!identity) {
-          return { content: textContent("Authentication required."), isError: true };
-        }
-        const conversationId = input.conversationId ? String(input.conversationId) : undefined;
-        if (!conversationId) {
-          return { content: textContent("conversationId is required."), isError: true };
-        }
-        const convCtx = {
-          getIdentity: ctx.getIdentity,
-          conversationStore: ctx.conversationStore,
-          workspaceStore: ctx.workspaceStore,
-          conversationEventManager: ctx.conversationEventManager,
-        };
-        const check = await canManageConversation(convCtx, conversationId, identity);
-        if (!check.allowed) {
-          return { content: textContent(check.reason!), isError: false };
-        }
-        switch (action) {
-          case "share_conversation":
-            return handleShareConversation(convCtx, conversationId, identity);
-          case "unshare_conversation":
-            return handleUnshareConversation(convCtx, conversationId, identity);
-          case "add_participant":
-            return handleAddParticipant(convCtx, conversationId, input);
-          case "remove_participant":
-            return handleRemoveParticipant(convCtx, conversationId, input);
         }
       }
 

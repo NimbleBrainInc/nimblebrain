@@ -33,9 +33,19 @@ export function validateConversationId(id: string, dir: string): void {
   }
 }
 
-/** Access context for filtering conversations by user identity and role. */
+/**
+ * Access context for filtering conversations by user identity.
+ *
+ * Stage 1: single-owner only. A conversation is accessible iff the
+ * caller's `userId` matches the conversation's `ownerId`. The
+ * `workspaceRole` field is kept on the type as a no-op slot because
+ * the broader plumbing (chat handler middleware) still passes it; the
+ * authorization function in `index-cache.ts::canAccess` ignores it.
+ * Stage 4 reintroduces workspace-admin overrides with explicit policy.
+ */
 export interface ConversationAccessContext {
   userId: string;
+  /** @deprecated Unused in Stage 1; reintroduced in Stage 4 with policy. */
   workspaceRole?: "admin" | "member";
 }
 
@@ -54,12 +64,17 @@ export interface ConversationListResult {
   totalCount: number;
 }
 
-/** Options for creating a new conversation. */
+/**
+ * Options for creating a new conversation.
+ *
+ * Stage 1: single-owner. `ownerId` is required — the conversation is
+ * owned by exactly one user at all times. `workspaceId` is optional
+ * and informs which workspace's tools the chat in this conversation
+ * has access to at run time; it does NOT scope ownership.
+ */
 export interface CreateConversationOptions {
   workspaceId?: string;
-  ownerId?: string;
-  visibility?: "private" | "shared";
-  participants?: string[];
+  ownerId: string;
   metadata?: Record<string, unknown>;
 }
 
@@ -78,14 +93,12 @@ export interface ConversationSummary {
   totalInputTokens: number;
   totalOutputTokens: number;
   totalCostUsd: number;
-  ownerId?: string;
-  visibility?: "private" | "shared";
+  ownerId: string;
   workspaceId?: string;
-  participants?: string[];
 }
 
 export interface ConversationStore {
-  create(options?: CreateConversationOptions): Promise<Conversation>;
+  create(options: CreateConversationOptions): Promise<Conversation>;
   load(id: string, access?: ConversationAccessContext): Promise<Conversation | null>;
   append(conversation: Conversation, message: StoredMessage): Promise<void>;
   history(conversation: Conversation, limit?: number): Promise<StoredMessage[]>;
@@ -96,18 +109,16 @@ export interface ConversationStore {
   update(id: string, patch: ConversationPatch): Promise<Conversation | null>;
   /** Fork a conversation, optionally truncating at a specific message index. */
   fork(id: string, atMessage?: number): Promise<Conversation | null>;
-  /** Change visibility from private to shared. Only the owner (or admin) may call this. */
-  shareConversation(id: string, ownerId: string): Promise<Conversation | null>;
-  /** Change visibility back to private. Removes all participants except the owner. */
-  unshareConversation(id: string, ownerId: string): Promise<Conversation | null>;
-  /** Add a participant to a shared conversation. */
-  addParticipant(id: string, userId: string): Promise<Conversation | null>;
-  /** Remove a participant from a shared conversation. Cannot remove the owner. */
-  removeParticipant(id: string, userId: string): Promise<Conversation | null>;
 }
 
 /**
  * Conversation metadata — stored as line 1 of the JSONL file.
+ *
+ * Stage 1: single-owner. The conversation belongs to exactly one user
+ * (`ownerId`); workspace is a tool-scoping concern, not an ownership
+ * one. Sharing and multi-participant semantics are deferred to Stage 4+
+ * with explicit policy gates; the previous `visibility` / `participants`
+ * fields are gone.
  *
  * No token totals or cost — those are derived from events at read time
  * (see deriveUsageMetrics in event-reconstructor.ts and the index cache).
@@ -120,24 +131,19 @@ export interface Conversation {
   updatedAt: string;
   title: string | null;
   lastModel: string | null;
-  /** Workspace this conversation belongs to. */
+  /** User who owns this conversation. The single authorization principal. */
+  ownerId: string;
+  /**
+   * Workspace whose tools the chat in this conversation has access to
+   * at run time. Tool-scoping, not ownership — the conversation lives
+   * top-level regardless. May change across messages if Stage 2's
+   * multi-workspace tool aggregation lands.
+   */
   workspaceId?: string;
-  /** User who created this conversation. */
-  ownerId?: string;
-  /** Visibility: private (default) or shared within workspace. */
-  visibility?: "private" | "shared";
-  /** User IDs participating in this conversation. */
-  participants?: string[];
   /** Arbitrary caller-provided metadata. Stored in JSONL first line, never validated. */
   metadata?: Record<string, unknown>;
   /** File format discriminator. "events" for event-sourced files. Absent for legacy message format. */
   format?: "events";
-}
-
-/** Participant info for system prompt injection in shared conversations. */
-export interface ParticipantInfo {
-  userId: string;
-  displayName?: string;
 }
 
 /**
@@ -233,9 +239,7 @@ export type ConversationEventType =
   | "run.error"
   | "skills.loaded"
   | "context.assembled"
-  | "metadata.title"
-  | "metadata.visibility"
-  | "metadata.participants";
+  | "metadata.title";
 
 export interface UserMessageEvent {
   ts: string;
@@ -343,18 +347,6 @@ export interface TitleChangeEvent {
   title: string | null;
 }
 
-export interface VisibilityChangeEvent {
-  ts: string;
-  type: "metadata.visibility";
-  visibility: "private" | "shared";
-}
-
-export interface ParticipantsChangeEvent {
-  ts: string;
-  type: "metadata.participants";
-  participants: string[];
-}
-
 export interface SkillsLoadedEvent {
   ts: string;
   type: "skills.loaded";
@@ -386,6 +378,4 @@ export type ConversationEvent =
   | RunErrorEvent
   | SkillsLoadedEvent
   | ContextAssembledEvent
-  | TitleChangeEvent
-  | VisibilityChangeEvent
-  | ParticipantsChangeEvent;
+  | TitleChangeEvent;

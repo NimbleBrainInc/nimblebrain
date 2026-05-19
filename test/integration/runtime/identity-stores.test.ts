@@ -149,9 +149,12 @@ describe("Runtime identity stores wiring", () => {
     expect(typeof convStore.create).toBe("function");
     expect(typeof store.create).toBe("function");
     // Verify they can both create conversations in the same workspace
-    const conv = await convStore.create({ workspaceId: TEST_WORKSPACE_ID });
+    const conv = await convStore.create({
+      workspaceId: TEST_WORKSPACE_ID,
+      ownerId: "user_test",
+    });
     const loaded = await store.load(conv.id);
     expect(loaded).not.toBeNull();
-    expect(loaded!.id).toBe(conv.id);
+    expect(loaded?.id).toBe(conv.id);
   });
 });

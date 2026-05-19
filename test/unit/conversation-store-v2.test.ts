@@ -56,7 +56,7 @@ function storeV2Tests(
 		// --- create() ---
 
 		it("create() produces conversation with full enriched metadata", async () => {
-			const conv = await store.create();
+			const conv = await store.create({ ownerId: "user_test" });
 			expect(conv.id).toMatch(/^conv_/);
 			expect(conv.createdAt).toBeTruthy();
 			expect(conv.updatedAt).toBe(conv.createdAt);
@@ -67,7 +67,7 @@ function storeV2Tests(
 		// --- append() preserves usage data; totals derive on read ---
 
 		it("append() preserves assistant usage so totals can be derived later", async () => {
-			const conv = await store.create();
+			const conv = await store.create({ ownerId: "user_test" });
 
 			await store.append(conv, msg("user", "Hello"));
 			await store.append(
@@ -101,7 +101,7 @@ function storeV2Tests(
 		});
 
 		it("append() updates updatedAt from message timestamp", async () => {
-			const conv = await store.create();
+			const conv = await store.create({ ownerId: "user_test" });
 			const originalUpdatedAt = conv.updatedAt;
 
 			const laterTimestamp = new Date(
@@ -118,7 +118,7 @@ function storeV2Tests(
 		});
 
 		it("user-only conversations show zero derived totals", async () => {
-			const conv = await store.create();
+			const conv = await store.create({ ownerId: "user_test" });
 			await store.append(conv, msg("user", "Hello"));
 			const result = await store.list();
 			const summary = result.conversations.find((c) => c.id === conv.id);
@@ -130,7 +130,7 @@ function storeV2Tests(
 		// --- history() preserves metadata ---
 
 		it("history() preserves metadata on messages", async () => {
-			const conv = await store.create();
+			const conv = await store.create({ ownerId: "user_test" });
 			await store.append(
 				conv,
 				assistantMsg("Result", {
@@ -162,7 +162,7 @@ function storeV2Tests(
 		// --- delete() ---
 
 		it("delete() removes conversation and returns true", async () => {
-			const conv = await store.create();
+			const conv = await store.create({ ownerId: "user_test" });
 			await store.append(conv, msg("user", "Hello"));
 
 			const result = await store.delete(conv.id);
@@ -178,7 +178,7 @@ function storeV2Tests(
 		});
 
 		it("second delete() returns false", async () => {
-			const conv = await store.create();
+			const conv = await store.create({ ownerId: "user_test" });
 			expect(await store.delete(conv.id)).toBe(true);
 			expect(await store.delete(conv.id)).toBe(false);
 		});
@@ -186,7 +186,7 @@ function storeV2Tests(
 		// --- update() ---
 
 		it("update() changes title in metadata", async () => {
-			const conv = await store.create();
+			const conv = await store.create({ ownerId: "user_test" });
 			expect(conv.title).toBeNull();
 
 			const updated = await store.update(conv.id, {
@@ -205,7 +205,7 @@ function storeV2Tests(
 		});
 
 		it("update() persists title on reload", async () => {
-			const conv = await store.create();
+			const conv = await store.create({ ownerId: "user_test" });
 			await store.update(conv.id, { title: "Persisted Title" });
 
 			const loaded = await store.load(conv.id);
@@ -215,7 +215,7 @@ function storeV2Tests(
 		// --- fork() ---
 
 		it("fork() creates new conversation with all messages", async () => {
-			const conv = await store.create();
+			const conv = await store.create({ ownerId: "user_test" });
 			await store.append(conv, msg("user", "First"));
 			await store.append(
 				conv,
@@ -238,7 +238,7 @@ function storeV2Tests(
 		});
 
 		it("fork() with atMessage truncates messages", async () => {
-			const conv = await store.create();
+			const conv = await store.create({ ownerId: "user_test" });
 			await store.append(conv, msg("user", "First"));
 			await store.append(conv, msg("assistant", "Second"));
 			await store.append(conv, msg("user", "Third"));
@@ -253,7 +253,7 @@ function storeV2Tests(
 		});
 
 		it("fork() with atMessage=0 creates empty conversation", async () => {
-			const conv = await store.create();
+			const conv = await store.create({ ownerId: "user_test" });
 			await store.append(conv, msg("user", "First"));
 
 			const forked = await store.fork(conv.id, 0);
@@ -269,7 +269,7 @@ function storeV2Tests(
 		});
 
 		it("fork() carries forward usage so derived totals match the slice", async () => {
-			const conv = await store.create();
+			const conv = await store.create({ ownerId: "user_test" });
 			await store.append(conv, msg("user", "Hello"));
 			await store.append(
 				conv,
@@ -300,11 +300,11 @@ function storeV2Tests(
 		// --- list() with search ---
 
 		it("list() with search returns matching conversations", async () => {
-			const conv1 = await store.create();
+			const conv1 = await store.create({ ownerId: "user_test" });
 			await store.update(conv1.id, { title: "Deploy Pipeline" });
 			await store.append(conv1, msg("user", "Deploy stuff"));
 
-			const conv2 = await store.create();
+			const conv2 = await store.create({ ownerId: "user_test" });
 			await store.update(conv2.id, { title: "Budget Review" });
 			await store.append(conv2, msg("user", "Review budget"));
 
@@ -346,7 +346,7 @@ describe("JsonlConversationStore (JSONL-specific)", () => {
 
 	it("create() writes JSONL with enriched line 1", async () => {
 		const store = new JsonlConversationStore(dir);
-		const conv = await store.create();
+		const conv = await store.create({ ownerId: "user_test" });
 
 		const filePath = join(dir, `${conv.id}.jsonl`);
 		const content = readFileSync(filePath, "utf-8");
@@ -365,12 +365,15 @@ describe("JsonlConversationStore (JSONL-specific)", () => {
 		expect(meta.totalCostUsd).toBeUndefined();
 	});
 
-	it("load() on old-format JSONL defaults missing fields", async () => {
-		// Write an old-format file with only id and createdAt
+	it("load() on old-format JSONL defaults missing fields (post-migration ownerId stamp)", async () => {
+		// Stage 1 requires ownerId; the migration script stamps it. This
+		// test simulates a post-migration legacy file: minimal metadata
+		// plus the stamped ownerId.
 		const id = "conv_01d4f0000000000a";
 		const meta = JSON.stringify({
 			id,
 			createdAt: "2024-06-01T00:00:00.000Z",
+			ownerId: "user_test",
 		});
 		const userMsg = JSON.stringify({
 			role: "user",
@@ -383,15 +386,16 @@ describe("JsonlConversationStore (JSONL-specific)", () => {
 		const loaded = await store.load(id);
 
 		expect(loaded).not.toBeNull();
-		expect(loaded!.id).toBe(id);
-		expect(loaded!.updatedAt).toBe("2024-06-01T00:00:00.000Z"); // falls back to createdAt
-		expect(loaded!.title).toBeNull();
-		expect(loaded!.lastModel).toBeNull();
+		expect(loaded?.id).toBe(id);
+		expect(loaded?.updatedAt).toBe("2024-06-01T00:00:00.000Z"); // falls back to createdAt
+		expect(loaded?.title).toBeNull();
+		expect(loaded?.lastModel).toBeNull();
+		expect(loaded?.ownerId).toBe("user_test");
 	});
 
 	it("append() re-writes line 1 atomically with updated lastModel", async () => {
 		const store = new JsonlConversationStore(dir);
-		const conv = await store.create();
+		const conv = await store.create({ ownerId: "user_test" });
 
 		await store.append(conv, msg("user", "Hello"));
 		await store.append(
@@ -417,7 +421,7 @@ describe("JsonlConversationStore (JSONL-specific)", () => {
 
 	it("append() does not leave temp files on success", async () => {
 		const store = new JsonlConversationStore(dir);
-		const conv = await store.create();
+		const conv = await store.create({ ownerId: "user_test" });
 		await store.append(conv, msg("user", "Hello"));
 
 		const files = require("node:fs")
@@ -428,7 +432,7 @@ describe("JsonlConversationStore (JSONL-specific)", () => {
 
 	it("update() changes title in the actual JSONL file", async () => {
 		const store = new JsonlConversationStore(dir);
-		const conv = await store.create();
+		const conv = await store.create({ ownerId: "user_test" });
 		await store.append(conv, msg("user", "Hello"));
 
 		await store.update(conv.id, { title: "My Chat" });
@@ -446,10 +450,10 @@ describe("JsonlConversationStore (JSONL-specific)", () => {
 	it("list() delegates to ConversationIndex", async () => {
 		const store = new JsonlConversationStore(dir);
 
-		const conv1 = await store.create();
+		const conv1 = await store.create({ ownerId: "user_test" });
 		await store.append(conv1, msg("user", "First conversation"));
 
-		const conv2 = await store.create();
+		const conv2 = await store.create({ ownerId: "user_test" });
 		await store.append(conv2, msg("user", "Second conversation"));
 
 		const result = await store.list();
@@ -461,21 +465,21 @@ describe("JsonlConversationStore (JSONL-specific)", () => {
 		const store = new JsonlConversationStore(dir);
 
 		// Create 3 conversations with distinct timestamps
-		const conv1 = await store.create();
+		const conv1 = await store.create({ ownerId: "user_test" });
 		await store.append(conv1, {
 			role: "user",
 			content: "First",
 			timestamp: "2025-01-01T00:00:00.000Z",
 		});
 
-		const conv2 = await store.create();
+		const conv2 = await store.create({ ownerId: "user_test" });
 		await store.append(conv2, {
 			role: "user",
 			content: "Second",
 			timestamp: "2025-02-01T00:00:00.000Z",
 		});
 
-		const conv3 = await store.create();
+		const conv3 = await store.create({ ownerId: "user_test" });
 		await store.append(conv3, {
 			role: "user",
 			content: "Third",
@@ -497,7 +501,7 @@ describe("JsonlConversationStore (JSONL-specific)", () => {
 
 	it("delete() removes the JSONL file", async () => {
 		const store = new JsonlConversationStore(dir);
-		const conv = await store.create();
+		const conv = await store.create({ ownerId: "user_test" });
 		const filePath = join(dir, `${conv.id}.jsonl`);
 
 		expect(existsSync(filePath)).toBe(true);
@@ -507,7 +511,7 @@ describe("JsonlConversationStore (JSONL-specific)", () => {
 
 	it("fork() creates a new JSONL file", async () => {
 		const store = new JsonlConversationStore(dir);
-		const conv = await store.create();
+		const conv = await store.create({ ownerId: "user_test" });
 		await store.append(conv, msg("user", "Original"));
 		await store.append(conv, msg("assistant", "Reply"));
 
@@ -539,7 +543,7 @@ describe("JsonlConversationStore flush()", () => {
 
 	it("flush() resolves after background write completes", async () => {
 		const store = new JsonlConversationStore(dir);
-		const conv = await store.create();
+		const conv = await store.create({ ownerId: "user_test" });
 
 		// Fire-and-forget update (simulates what runtime does for auto-title)
 		void store.update(conv.id, { title: "Background Title" });
@@ -564,7 +568,7 @@ describe("JsonlConversationStore flush()", () => {
 
 	it("flush() is safe to call concurrently", async () => {
 		const store = new JsonlConversationStore(dir);
-		const conv = await store.create();
+		const conv = await store.create({ ownerId: "user_test" });
 
 		// Fire a background write
 		void store.update(conv.id, { title: "Concurrent Title" });
@@ -581,7 +585,7 @@ describe("JsonlConversationStore flush()", () => {
 
 	it("reading after flush() sees all committed data", async () => {
 		const store = new JsonlConversationStore(dir);
-		const conv = await store.create();
+		const conv = await store.create({ ownerId: "user_test" });
 
 		// Simulate runtime auto-title: fire and forget
 		void store.update(conv.id, { title: "Auto Title" });

@@ -620,7 +620,7 @@ describe("Core Source", () => {
 			// model never gets invoked (the cache test would pass vacuously).
 			await runWithRequestContext(ctx, async () => {
 				const store = runtime.getStore();
-				await store.create();
+				await store.create({ ownerId: "user_test" });
 			});
 
 			// First call: model throws, tool returns isError.
