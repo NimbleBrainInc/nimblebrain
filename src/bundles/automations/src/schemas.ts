@@ -65,7 +65,7 @@ export const TOOL_SCHEMAS: ToolSchema[] = [
   {
     name: "run",
     description:
-      "Trigger an immediate execution of an automation, bypassing schedule and backoff. Waits for completion and returns the run result.",
+      "Trigger an immediate execution of an automation, bypassing schedule and backoff. Returns the full run record when the run completes within ~30s; longer runs return {status: 'dispatched', automationId, message} and continue in the background — poll automations__runs to observe completion. Both shapes indicate the run was kicked off successfully; only an error response indicates failure to dispatch.",
     inputSchema: AutomationsRunInput,
   },
   {

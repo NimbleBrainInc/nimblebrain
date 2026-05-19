@@ -64,6 +64,28 @@ function defaultExecutorResult(auto: Automation): AutomationRun {
 
 let scheduler: Scheduler;
 
+/**
+ * `handleRun` returns one of two shapes depending on whether the run
+ * finished inside the handler's sync-wait deadline. Integration tests
+ * using the fast in-process executor always expect the synchronous
+ * shape; this helper narrows + asserts that explicitly so a future
+ * test with a slow executor doesn't silently drop into the "dispatched"
+ * branch and pass on undefined dereferences.
+ */
+function expectSyncRun(result: unknown): AutomationRun {
+	if (
+		result &&
+		typeof result === "object" &&
+		"run" in result &&
+		(result as { run: unknown }).run
+	) {
+		return (result as { run: AutomationRun }).run;
+	}
+	throw new Error(
+		`expected handleRun to return synchronously with { run }, got ${JSON.stringify(result)}`,
+	);
+}
+
 function createHarness(): ToolContext {
 	executorCalls = [];
 	executorResult = defaultExecutorResult;
@@ -128,13 +150,10 @@ describe("automation e2e: create -> run -> verify", () => {
 		expect(createResult.automation.id).toBe("daily-summary");
 
 		// Step 2: Trigger via run handler
-		const runResult = (await handleRun({ name: "Daily Summary" }, ctx)) as {
-			run: AutomationRun;
-		};
+		const run = expectSyncRun(await handleRun({ name: "Daily Summary" }, ctx));
 
-		expect(runResult.run).toBeDefined();
-		expect(runResult.run.status).toBe("success");
-		expect(runResult.run.automationId).toBe("daily-summary");
+		expect(run.status).toBe("success");
+		expect(run.automationId).toBe("daily-summary");
 
 		// Step 3: Verify run history
 		const runsResult = handleRuns(
@@ -259,14 +278,12 @@ describe("automation e2e: run records metrics", () => {
 			ctx,
 		);
 
-		const result = (await handleRun({ name: "Multi Tool Job" }, ctx)) as {
-			run: AutomationRun;
-		};
+		const run = expectSyncRun(await handleRun({ name: "Multi Tool Job" }, ctx));
 
-		expect(result.run.toolCalls).toBe(7);
-		expect(result.run.iterations).toBe(4);
-		expect(result.run.inputTokens).toBe(500);
-		expect(result.run.outputTokens).toBe(200);
+		expect(run.toolCalls).toBe(7);
+		expect(run.iterations).toBe(4);
+		expect(run.inputTokens).toBe(500);
+		expect(run.outputTokens).toBe(200);
 	});
 
 	test("status shows updated runCount and lastRunStatus after run", async () => {

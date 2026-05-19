@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 import type { CallToolResult, Task } from "@modelcontextprotocol/sdk/types.js";
 import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
@@ -97,6 +98,8 @@ interface BuildOptions {
   driver?: StreamDriver;
   /** Fake `client.experimental.tasks.getTask` return value. */
   getTaskImpl?: (taskId: string) => Promise<Task>;
+  /** Fake `client.experimental.tasks.getTaskResult` return value. */
+  getTaskResultImpl?: (taskId: string) => Promise<CallToolResult>;
   onTryRestart?: () => Promise<boolean>;
 }
 
@@ -113,6 +116,9 @@ function buildTaskAugmentedSource(sink: EventSink, opts: BuildOptions): McpSourc
         callToolStream: (_req: unknown, _o: unknown, _r: unknown) =>
           opts.driver ? opts.driver.stream : (opts.stream?.() ?? emptyStream()),
         getTask: opts.getTaskImpl ?? (() => Promise.reject(new Error("getTask not mocked"))),
+        getTaskResult:
+          opts.getTaskResultImpl ??
+          (() => Promise.reject(new Error("getTaskResult not mocked"))),
       },
     },
     // McpSource.stop() awaits client.close(); without a no-op the stop()
@@ -217,6 +223,145 @@ describe("McpSource agent-loop (callToolAsTask wrapper)", () => {
     expect((result.content[0] as { text: string }).text).toMatch(/research failed/);
     expect(restartCalled).toBe(false);
     expect(runErrorEvents(events).length).toBe(0);
+  });
+
+  it("recovers tasks/result content when SDK reports generic `Task <id> failed`", async () => {
+    // Regression: the upstream SDK's task stream emits an
+    // `McpError(InternalError, "Task <id> failed")` whenever the server-
+    // side task status is `failed`, discarding the server's
+    // `tasks/result` payload. A bundle that misclassified its own
+    // terminal status (post-result exception flipping COMPLETED→FAILED
+    // while a usable payload was already stored — the synapse-research
+    // production failure mode) would otherwise surface to the agent as
+    // a useless string with the real output gone. The engine now tries
+    // one extra fetch.
+    //
+    // CRITICAL: this test must construct a real `McpError` instance —
+    // NOT a plain `{ message: "Task <id> failed" }` object. McpError's
+    // constructor wraps the message as `"MCP error <code>: <message>"`,
+    // so a plain-object mock matches a broken implementation that
+    // anchors to the bare message and silently fails in production.
+    let getResultCalledFor: string | null = null;
+    const { sink } = recordingSink();
+    const source = buildTaskAugmentedSource(sink, {
+      stream: async function* () {
+        yield {
+          type: "taskCreated",
+          task: makeTask({ taskId: "t-recover", status: "working" }),
+        };
+        yield {
+          type: "error",
+          error: new McpError(ErrorCode.InternalError, "Task t-recover failed"),
+        };
+      },
+      getTaskResultImpl: async (taskId) => {
+        getResultCalledFor = taskId;
+        return {
+          content: [{ type: "text", text: "the real report content" }],
+          isError: false,
+        };
+      },
+    });
+
+    const result = await source.execute("do_work", {});
+
+    expect(getResultCalledFor).toBe("t-recover");
+    expect(result.isError).toBe(false);
+    expect((result.content[0] as { text: string }).text).toBe("the real report content");
+  });
+
+  it("falls back to generic error when tasks/result fetch also fails", async () => {
+    // Best-effort recovery: when the server genuinely has no result
+    // for the failed task, we surface the SDK's original wrapped
+    // error string rather than masking the real failure.
+    const { sink } = recordingSink();
+    const source = buildTaskAugmentedSource(sink, {
+      stream: async function* () {
+        yield {
+          type: "taskCreated",
+          task: makeTask({ taskId: "t-norecover", status: "working" }),
+        };
+        yield {
+          type: "error",
+          error: new McpError(ErrorCode.InternalError, "Task t-norecover failed"),
+        };
+      },
+      getTaskResultImpl: async () => {
+        throw new Error("not available");
+      },
+    });
+
+    const result = await source.execute("do_work", {});
+
+    expect(result.isError).toBe(true);
+    // McpError wraps the message; the engine surfaces the wrapped form.
+    expect((result.content[0] as { text: string }).text).toBe(
+      "MCP error -32603: Task t-norecover failed",
+    );
+  });
+
+  it("does NOT attempt recovery when error message is bundle-specific (not generic SDK shape)", async () => {
+    // The recovery path keys off the SDK's exact generic format
+    // `Task <id> failed` (with or without the McpError wrapping
+    // prefix) — anything else carries real information from the
+    // bundle and should be surfaced verbatim, not overridden.
+    let getResultCalled = false;
+    const { sink } = recordingSink();
+    const source = buildTaskAugmentedSource(sink, {
+      stream: async function* () {
+        yield {
+          type: "taskCreated",
+          task: makeTask({ taskId: "t-specific", status: "working" }),
+        };
+        yield {
+          type: "error",
+          error: new McpError(ErrorCode.InternalError, "upstream API returned 503"),
+        };
+      },
+      getTaskResultImpl: async () => {
+        getResultCalled = true;
+        return { content: [{ type: "text", text: "should not appear" }], isError: false };
+      },
+    });
+
+    const result = await source.execute("do_work", {});
+
+    expect(getResultCalled).toBe(false);
+    expect(result.isError).toBe(true);
+    expect((result.content[0] as { text: string }).text).toBe(
+      "MCP error -32603: upstream API returned 503",
+    );
+  });
+
+  it("does NOT recover when generic-failed shape names a DIFFERENT task id", async () => {
+    // Pathological: the SDK message ends with "Task <some-id> failed"
+    // but the id doesn't match handle.taskId. Shouldn't happen in
+    // practice (the SDK builds the message from the current task's id),
+    // but the discriminator must be specific to THIS task or we'd
+    // recover against a stale/wrong payload.
+    let getResultCalled = false;
+    const { sink } = recordingSink();
+    const source = buildTaskAugmentedSource(sink, {
+      stream: async function* () {
+        yield {
+          type: "taskCreated",
+          task: makeTask({ taskId: "t-mine", status: "working" }),
+        };
+        yield {
+          type: "error",
+          error: new McpError(ErrorCode.InternalError, "Task t-someone-else failed"),
+        };
+      },
+      getTaskResultImpl: async () => {
+        getResultCalled = true;
+        return { content: [{ type: "text", text: "wrong task's payload" }], isError: false };
+      },
+    });
+
+    const result = await source.execute("do_work", {});
+
+    expect(getResultCalled).toBe(false);
+    expect(result.isError).toBe(true);
   });
 
   it("abort mid-stream emits terminal tool.progress(status=cancelled) and does NOT restart", async () => {
