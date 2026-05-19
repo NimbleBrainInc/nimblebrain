@@ -55,6 +55,7 @@
     "test:web": "cd web && bun test",
     "eval": "bun test test/eval/",
     "smoke": "bun test test/smoke/",
+    "migrate:personal-workspaces": "bun run scripts/migrate-personal-workspaces.ts",
     "check:cycles": "bun run scripts/check-cycles.ts",
     "check:bundle-transport": "bun run scripts/check-bundle-transport.ts",
     "check:workspace-paths": "bun run scripts/check-workspace-paths.ts",
