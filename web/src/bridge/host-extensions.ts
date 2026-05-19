@@ -23,9 +23,20 @@ export type WorkspaceForHostContext = { id: string; name: string } | null;
  * Non-spec extension keys to merge into the `ui/initialize` hostContext
  * response. Bridge merges these alongside theme/styles; spec fields win
  * on key collisions.
+ *
+ * `forceRefresh` is delivered only here (initialize), never in
+ * `host-context-changed`, so an app reads it once at handshake and treats
+ * later workspace switches as normal cache-backed loads.
  */
-export function buildHostExtensions(workspace: WorkspaceForHostContext): Record<string, unknown> {
-  return workspace ? { workspace: { id: workspace.id, name: workspace.name } } : {};
+export function buildHostExtensions(
+  workspace: WorkspaceForHostContext,
+  forceRefresh = false,
+): Record<string, unknown> {
+  const ext: Record<string, unknown> = workspace
+    ? { workspace: { id: workspace.id, name: workspace.name } }
+    : {};
+  if (forceRefresh) ext.forceRefresh = true;
+  return ext;
 }
 
 /**

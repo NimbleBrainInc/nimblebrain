@@ -4,7 +4,7 @@ import {
   useHostContext,
   useSynapse,
 } from "@nimblebrain/synapse/react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 /* ---------- types ---------- */
 
@@ -201,8 +201,15 @@ function Dashboard() {
   // refetches the (workspace-scoped) briefing without remounting this iframe.
   // Narrow to both id and name even though only id drives refetch — keeps
   // future briefing copy ("Switched to Acme") cheap to wire up.
-  const { workspace } = useHostContext<{ workspace?: { id: string; name: string } }>();
+  // `forceRefresh` arrives in the `ui/initialize` host context when the
+  // host-shell URL carried `?force=1`. Consumed once by the briefing effect
+  // below — a one-shot cache-bust, not a persistent mode.
+  const { workspace, forceRefresh } = useHostContext<{
+    workspace?: { id: string; name: string };
+    forceRefresh?: boolean;
+  }>();
   const workspaceId = workspace?.id;
+  const forceConsumedRef = useRef(false);
   const [briefing, setBriefing] = useState<BriefingOutput | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -237,10 +244,15 @@ function Dashboard() {
   // `useHostContext` value lands on the next render after the handshake
   // resolves. Without the guard we'd fire one wasted briefing fetch in the
   // handshake-window, then immediately fire again with the real id.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: workspaceId is the refetch trigger; loadBriefing is stable
+  // biome-ignore lint/correctness/useExhaustiveDependencies: workspaceId is the refetch trigger; loadBriefing is stable; forceRefresh is read once and must not retrigger
   useEffect(() => {
     if (!workspaceId) return;
-    loadBriefing();
+    // `?force=1` is a one-shot cache-bust: honor it on the first briefing
+    // fetch, then fall back to the cache for later workspace switches even
+    // if the host keeps the flag in context.
+    const force = forceRefresh === true && !forceConsumedRef.current;
+    if (force) forceConsumedRef.current = true;
+    loadBriefing(force);
   }, [workspaceId]);
 
   // Show refresh banner on data changes
