@@ -848,12 +848,6 @@ export class Runtime {
       locale: reqIdentity?.preferences?.locale ?? "en-US",
     };
 
-    // Stage 1 is single-owner: no participants list is threaded into the
-    // prompt. Stage 4 reintroduces shared-conversation participants
-    // through policy-gated sharing primitives; until then, the prompt
-    // composer receives `undefined` and skips the participants section.
-    const participants: undefined = undefined;
-
     const workspaceContext = workspace ? { id: workspace.id, name: workspace.name } : { id: wsId };
 
     // Build per-request context skills with workspace identity override
@@ -898,7 +892,6 @@ export class Runtime {
       appState,
       prefs,
       proxied.length > 0,
-      participants,
       workspaceContext,
       liveOverlays,
       layer3Entries,

@@ -618,7 +618,6 @@ describe("composeSystemPrompt — org / workspace overlays", () => {
       undefined,
       undefined,
       undefined,
-      undefined,
       overlays,
     );
     expect(result).toContain("## Organization Instructions");
@@ -632,7 +631,6 @@ describe("composeSystemPrompt — org / workspace overlays", () => {
     const result = composeSystemPrompt(
       [],
       null,
-      undefined,
       undefined,
       undefined,
       undefined,
@@ -683,7 +681,6 @@ describe("composeSystemPrompt — org / workspace overlays", () => {
       undefined,
       undefined,
       undefined,
-      undefined,
       overlays,
     );
     expect(result).toContain("&lt;/org-instructions>");
@@ -705,7 +702,6 @@ describe("composeSystemPrompt — org / workspace overlays", () => {
       testSkill,
       apps,
       focused,
-      undefined,
       undefined,
       undefined,
       undefined,
@@ -754,7 +750,6 @@ describe("composeSystemPrompt — Layer 3 skills (Phase 2)", () => {
       undefined,
       undefined,
       undefined,
-      undefined,
       entries,
     );
     expect(result).toContain("## Skills");
@@ -773,7 +768,6 @@ describe("composeSystemPrompt — Layer 3 skills (Phase 2)", () => {
     const result = composeSystemPrompt(
       [],
       null,
-      undefined,
       undefined,
       undefined,
       undefined,
@@ -802,7 +796,6 @@ describe("composeSystemPrompt — Layer 3 skills (Phase 2)", () => {
       undefined,
       undefined,
       undefined,
-      undefined,
       [a, b],
     );
     expect(result.indexOf("### voice-a")).toBeLessThan(result.indexOf("### voice-b"));
@@ -812,7 +805,6 @@ describe("composeSystemPrompt — Layer 3 skills (Phase 2)", () => {
     const result = composeSystemPrompt(
       [],
       null,
-      undefined,
       undefined,
       undefined,
       undefined,
@@ -839,7 +831,6 @@ describe("composeSystemPrompt — Layer 3 skills (Phase 2)", () => {
       undefined,
       undefined,
       undefined,
-      undefined,
       [empty, real],
     );
     expect(result).toContain("### real");
@@ -856,7 +847,6 @@ describe("composeSystemPrompt — Layer 3 skills (Phase 2)", () => {
       [soul],
       null,
       apps,
-      undefined,
       undefined,
       undefined,
       undefined,
@@ -1010,7 +1000,6 @@ describe("composeSystemPromptTraced", () => {
       undefined,
       undefined,
       undefined,
-      undefined,
       [bundleAffined, standalone],
     );
     const section = traced.layers.find((l) => l.kind === "layer3_skills");
@@ -1055,7 +1044,6 @@ describe("composeSystemPromptTraced", () => {
       undefined,
       undefined,
       undefined,
-      undefined,
       { workspace: "" },
     );
     expect(tracedEmpty.layers.find((l) => l.kind === "workspace_overlay")).toBeUndefined();
@@ -1063,7 +1051,6 @@ describe("composeSystemPromptTraced", () => {
     const tracedSet = composeSystemPromptTraced(
       [makeContextSkill("soul", 0, "I am.")],
       null,
-      undefined,
       undefined,
       undefined,
       undefined,

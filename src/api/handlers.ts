@@ -131,10 +131,16 @@ export async function handleChatStream(
         controller.close();
       };
 
-      // Defer the cross-participant user.message broadcast until the engine
-      // confirms the run actually started (first chat.start). If the call
-      // rejects with RunInProgressError, no broadcast fires and other
-      // participants never see a phantom message with no assistant reply.
+      // Cross-subscriber broadcast: streams chat-stream events to other
+      // SSE subscribers on /v1/conversations/:id/events. After Stage 1's
+      // single-owner cutover, the only legitimate consumer is the same
+      // user across browser tabs / devices (no "other participants" — the
+      // sharing primitives are gone). The broadcast survives as
+      // same-user cross-tab sync; Stage 4 reintroduces sharing with
+      // policy gates and a real multi-user audience.
+      //
+      // Deferred until chat.start so RunInProgressError doesn't produce a
+      // phantom user.message broadcast with no assistant reply.
       let userMessageBroadcast = false;
       const broadcastUserMessageOnce = () => {
         if (userMessageBroadcast) return;
@@ -170,7 +176,7 @@ export async function handleChatStream(
             broadcastUserMessageOnce();
           }
           send(event.type, event.data);
-          // Broadcast to other participants watching this conversation
+          // Same-user cross-tab broadcast — see block comment above.
           if (convId && conversationEventManager && identity) {
             conversationEventManager.broadcastToConversation(
               convId,
@@ -205,7 +211,7 @@ export async function handleChatStream(
             usage: wireUsage,
           };
           send("done", doneData);
-          // Broadcast done to other participants
+          // Same-user cross-tab broadcast (Stage 1 single-owner).
           if (conversationEventManager && identity) {
             const broadcastConvId = convId ?? result.conversationId;
             if (broadcastConvId) {

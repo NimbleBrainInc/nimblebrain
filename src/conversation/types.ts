@@ -37,16 +37,15 @@ export function validateConversationId(id: string, dir: string): void {
  * Access context for filtering conversations by user identity.
  *
  * Stage 1: single-owner only. A conversation is accessible iff the
- * caller's `userId` matches the conversation's `ownerId`. The
- * `workspaceRole` field is kept on the type as a no-op slot because
- * the broader plumbing (chat handler middleware) still passes it; the
- * authorization function in `index-cache.ts::canAccess` ignores it.
- * Stage 4 reintroduces workspace-admin overrides with explicit policy.
+ * caller's `userId` matches the conversation's `ownerId`.
+ *
+ * Stage 4 reintroduces sharing primitives with policy gating and will
+ * extend this context (workspace-admin override, sharing claims, etc.).
+ * Defining them now would be a no-op slot — the type tracks what
+ * Stage 1 actually uses.
  */
 export interface ConversationAccessContext {
   userId: string;
-  /** @deprecated Unused in Stage 1; reintroduced in Stage 4 with policy. */
-  workspaceRole?: "admin" | "member";
 }
 
 /** Options for listing conversations. */

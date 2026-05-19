@@ -267,7 +267,6 @@ async function composeLive(runtime: Runtime, convId: string): Promise<ComposeRes
         }
       : undefined,
     proxied.length > 0,
-    undefined, // participants — request-scoped
     workspaceContext,
     overlays,
     layer3Entries,

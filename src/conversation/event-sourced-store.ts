@@ -158,11 +158,12 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
     const raw = JSON.parse(lines[0]!) as Record<string, unknown>;
     if (typeof raw.ownerId !== "string" || raw.ownerId.length === 0) {
       // Stage 1 invariant: every conversation has an ownerId. A file
-      // without one is pre-migration data and unreadable by this code.
-      // Surface loudly — the migration script is the authoritative fix.
+      // without one is pre-Stage-1 data and unreadable by this code.
+      // Surface loudly — operator must back-fill `ownerId` (the
+      // conversation-to-top-level migration script lands as
+      // delegation-model Stage 1 Task 004).
       throw new Error(
-        `[conversation] missing ownerId in ${id} — run \`bun run migrate:conversations-to-top-level\` ` +
-          `to stamp ownerId on legacy conversations.`,
+        `[conversation] missing ownerId in ${id} — operator must back-fill ownerId on legacy conversations.`,
       );
     }
     const conversation: Conversation = {
