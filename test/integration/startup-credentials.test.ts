@@ -606,4 +606,24 @@ main();
     },
     20_000,
   );
+
+  test(
+    "throws if a path-bundle caller forgets to pass dataDir (canary on the helper-routing contract)",
+    async () => {
+      // `buildLocalSource` asserts `dataDir` is supplied because every
+      // production caller now routes through `resolveBundleDataDirForRef`.
+      // If a future change reintroduces the silent workspace-agnostic
+      // fallback, this test fails — it's the only thing protecting that
+      // contract from regressing.
+      const registry = new ToolRegistry();
+      let caught: Error | null = null;
+      try {
+        await startBundleSource({ path: bundleDir }, registry, new NoopEventSink());
+      } catch (err) {
+        caught = err instanceof Error ? err : new Error(String(err));
+      }
+      expect(caught).not.toBeNull();
+      expect(caught?.message).toMatch(/dataDir override required/i);
+    },
+  );
 });

@@ -20,7 +20,12 @@ import { extractBundleMeta } from "./defaults.ts";
 import { filterEnvForBundle } from "./env-filter.ts";
 import { validateManifest } from "./manifest.ts";
 import { getMpak } from "./mpak.ts";
-import { deriveBundleDataDir, deriveServerName, validateServerName } from "./paths.ts";
+import {
+  defaultWorkDir,
+  deriveBundleDataDir,
+  deriveServerName,
+  validateServerName,
+} from "./paths.ts";
 import { notifyConnectionRunning } from "./pending-auth-buffer.ts";
 import { resolveLocalBundle } from "./resolve.ts";
 import type {
@@ -135,7 +140,7 @@ function resolveWorkspaceContext(
     return opts.workspaceContext;
   }
   if (opts.wsId) {
-    const workDir = opts.workDir ?? process.env.NB_WORK_DIR ?? join(homedir(), ".nimblebrain");
+    const workDir = opts.workDir ?? defaultWorkDir();
     return new WorkspaceContext({ wsId: opts.wsId, workDir });
   }
   return undefined;

@@ -4,11 +4,9 @@
  * These are consumed by system tools for hot bundle management within workspaces.
  */
 
-import { homedir } from "node:os";
-import { join } from "node:path";
 import type { ToolRegistry } from "../tools/registry.ts";
 import { WorkspaceContext } from "../workspace/context.ts";
-import { resolveBundleDataDirForRef, serverNameFromRef } from "./paths.ts";
+import { defaultWorkDir, resolveBundleDataDirForRef, serverNameFromRef } from "./paths.ts";
 import { startBundleSource } from "./startup.ts";
 import type { BundleRef } from "./types.ts";
 
@@ -47,7 +45,7 @@ export async function installBundleInWorkspace(
   // entry point. A caller that explicitly passes `workDir: ""` now
   // hits the `WorkspaceContext` constructor's empty-string rejection
   // (deliberate — relative paths in this code path were never correct).
-  const workDir = opts?.workDir ?? process.env.NB_WORK_DIR ?? join(homedir(), ".nimblebrain");
+  const workDir = opts?.workDir ?? defaultWorkDir();
   const wsContext = new WorkspaceContext({ wsId, workDir });
   const serverName = serverNameFromRef(bundleRef);
   // Slug source is `manifest.name`, resolved via the canonical helper so the
@@ -107,7 +105,7 @@ export async function uninstallBundleFromWorkspace(
 
   // Best-effort credential cleanup — don't fail uninstall if it errors.
   // Credentials are config, not data: they should not persist across uninstalls.
-  const workDir = opts?.workDir ?? process.env.NB_WORK_DIR ?? join(homedir(), ".nimblebrain");
+  const workDir = opts?.workDir ?? defaultWorkDir();
   try {
     await new WorkspaceContext({ wsId, workDir }).getCredentialStore().clearAll(bundleName);
   } catch (err) {

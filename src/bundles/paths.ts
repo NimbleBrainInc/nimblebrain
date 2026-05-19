@@ -1,9 +1,26 @@
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
 import { log } from "../cli/log.ts";
 import { WorkspaceContext } from "../workspace/context.ts";
 import { resolveLocalBundle } from "./resolve.ts";
 import type { BundleRef } from "./types.ts";
+
+/**
+ * Resolved default workDir for callers that don't have the RuntimeConfig in
+ * hand. Reads `NB_WORK_DIR` from env, falls back to `~/.nimblebrain`, then
+ * `resolve()`s the result so the value crossing a process boundary (as
+ * `MPAK_WORKSPACE` / `UPJACK_ROOT`) is absolute and cwd-independent.
+ *
+ * The cli config-load path absolutizes its workDir at the same boundary;
+ * this is the env-only fallback for the bundle lifecycle methods that
+ * don't receive the config-derived value. Keep them aligned: if a future
+ * change shifts the contract (e.g. relative paths get a different anchor),
+ * change both sites.
+ */
+export function defaultWorkDir(): string {
+  return resolve(process.env.NB_WORK_DIR ?? join(homedir(), ".nimblebrain"));
+}
 
 /** Prefixes reserved for system tools — bundles must not use these as source names. */
 const RESERVED_TOOL_PREFIXES = new Set(["nb"]);
@@ -143,24 +160,36 @@ function readBundleSlugSource(ref: BundleRef, configDir: string | undefined): st
   if ("name" in ref) return ref.name;
   if ("path" in ref) {
     const bundleDir = resolveLocalBundle(ref.path, configDir);
-    if (bundleDir) {
-      try {
-        const raw = JSON.parse(readFileSync(join(bundleDir, "manifest.json"), "utf-8")) as {
-          name?: unknown;
-        };
-        if (typeof raw.name === "string" && raw.name.length > 0) return raw.name;
-      } catch (err) {
-        log.warn(
-          `[bundles] Failed to read manifest from ${ref.path}: ${
+    if (!bundleDir) {
+      // Bundle path doesn't resolve at all (missing / moved / typo). Distinct
+      // failure mode from "found the dir but its manifest is broken", so it
+      // gets its own single message — no double-warn.
+      log.warn(
+        `[bundles] Local bundle path not found: ${ref.path} ` +
+          `(falling back to path-derived dataDir slug — subprocess will fail to start)`,
+      );
+      return ref.path;
+    }
+    try {
+      const raw = JSON.parse(readFileSync(join(bundleDir, "manifest.json"), "utf-8")) as {
+        name?: unknown;
+      };
+      if (typeof raw.name === "string" && raw.name.length > 0) return raw.name;
+      log.warn(
+        `[bundles] Manifest at ${ref.path} has no usable "name" field — ` +
+          `falling back to path-derived dataDir slug`,
+      );
+    } catch (err) {
+      // Single, fully-attributed message: include the error AND the
+      // fallback decision in one line so the operator gets the whole story
+      // without scanning two adjacent warns to correlate them.
+      log.warn(
+        `[bundles] Failed to read manifest from ${ref.path} — ` +
+          `falling back to path-derived dataDir slug (bundle subprocess will likely fail to start): ${
             err instanceof Error ? err.message : String(err)
           }`,
-        );
-      }
+      );
     }
-    log.warn(
-      `[bundles] Falling back to path-derived dataDir slug for ${ref.path} ` +
-        `(manifest unreadable — bundle subprocess will likely fail to start)`,
-    );
     return ref.path;
   }
   return ref.serverName ?? ref.url;
