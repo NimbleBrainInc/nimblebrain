@@ -1,4 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BundleRef } from "../../../src/bundles/types.ts";
 import type { Workspace } from "../../../src/workspace/types.ts";
@@ -8,6 +10,25 @@ import {
   type ProcessInventoryEntry,
   resolveBundleStartConcurrency,
 } from "../../../src/runtime/workspace-runtime.ts";
+
+const tmpFixtures: string[] = [];
+afterAll(() => {
+  for (const dir of tmpFixtures) {
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {
+      /* ignore */
+    }
+  }
+});
+
+function makeBundleFixture(manifestName: string): string {
+  const dir = mkdtempSync(join(tmpdir(), "nb-ws-runtime-bundle-"));
+  tmpFixtures.push(dir);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "manifest.json"), JSON.stringify({ name: manifestName, version: "0.0.0" }));
+  return dir;
+}
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -94,13 +115,29 @@ describe("buildProcessInventory", () => {
     expect(entries[1].dataDir).toContain("ws_sales");
   });
 
-  it("handles path-based bundle refs", () => {
-    const bundles: BundleRef[] = [{ path: "../mcp-servers/echo" }];
-    const ws = makeWorkspace("ws_dev", "Dev", bundles);
+  it("path bundle: dataDir slug comes from manifest.name on disk, NOT from the path", () => {
+    const fixture = makeBundleFixture("@nimblebraininc/synapse-crm");
+    const ws = makeWorkspace("ws_dev", "Dev", [{ path: fixture }]);
 
     const entries = buildProcessInventory([ws], WORK_DIR);
     expect(entries).toHaveLength(1);
-    expect(entries[0].serverName).toBe("echo");
+    // Regression: the launch-path dataDir used to slug the path string
+    // (`Users-...-synapse-crm`), while seedInstance / the briefing collector
+    // slugged the manifest name (`nimblebraininc-synapse-crm`). They MUST
+    // agree now — both go through `resolveBundleDataDirForRef`.
+    expect(entries[0].dataDir).toBe(
+      join(WORK_DIR, "workspaces", "ws_dev", "data", "nimblebraininc-synapse-crm"),
+    );
+  });
+
+  it("path bundle + name bundle with the same manifest.name produce the same dataDir", () => {
+    const fixture = makeBundleFixture("@nimblebraininc/synapse-crm");
+    const wsPath = makeWorkspace("ws_dev", "Dev", [{ path: fixture }]);
+    const wsName = makeWorkspace("ws_dev", "Dev", [{ name: "@nimblebraininc/synapse-crm" }]);
+
+    const [pathEntry] = buildProcessInventory([wsPath], WORK_DIR);
+    const [nameEntry] = buildProcessInventory([wsName], WORK_DIR);
+    expect(pathEntry.dataDir).toBe(nameEntry.dataDir);
   });
 
   it("handles url-based bundle refs with explicit serverName", () => {

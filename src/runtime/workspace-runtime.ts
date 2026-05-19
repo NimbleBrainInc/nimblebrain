@@ -9,14 +9,13 @@
 import { join } from "node:path";
 import { hasPersistedComposioConnection } from "../bundles/composio-connection.ts";
 import { hasPersistedWorkspaceOAuthTokens } from "../bundles/oauth-tokens.ts";
-import { bundleNameFromRef, deriveBundleDataDir, serverNameFromRef } from "../bundles/paths.ts";
+import { resolveBundleDataDirForRef, serverNameFromRef } from "../bundles/paths.ts";
 import { setPendingAuth } from "../bundles/pending-auth-buffer.ts";
 import { startBundleSource } from "../bundles/startup.ts";
 import type { BundleRef, LocalBundleMeta } from "../bundles/types.ts";
 import { log } from "../cli/log.ts";
 import { ToolRegistry } from "../tools/registry.ts";
 import type { ToolSource } from "../tools/types.ts";
-import { WorkspaceContext } from "../workspace/context.ts";
 import type { Workspace } from "../workspace/types.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
 
@@ -47,21 +46,23 @@ export interface ProcessInventoryEntry {
  *
  * For each workspace, iterates its declared bundles and produces one
  * ProcessInventoryEntry per (workspace, bundle) pair. The `dataDir`
- * is workspace-scoped via `WorkspaceContext.getDataPath("data", ...)`.
+ * is workspace-scoped via `resolveBundleDataDirForRef` (which keys the
+ * slug on `manifest.name`, reading it from disk for path bundles).
  */
 export function buildProcessInventory(
   workspaces: Workspace[],
   workDir: string,
+  configDir?: string,
 ): ProcessInventoryEntry[] {
   const entries: ProcessInventoryEntry[] = [];
 
   for (const ws of workspaces) {
-    const wsContext = new WorkspaceContext({ wsId: ws.id, workDir });
-
     for (const bundle of ws.bundles) {
       const serverName = serverNameFromRef(bundle);
-      const bundleName = bundleNameFromRef(bundle);
-      const dataDir = wsContext.getDataPath("data", deriveBundleDataDir(bundleName));
+      // Slug is keyed on `manifest.name` (read here for path bundles) so the
+      // launch-path data dir and the seedInstance / briefing reader-path
+      // data dir cannot disagree.
+      const dataDir = resolveBundleDataDirForRef(workDir, ws.id, bundle, configDir);
 
       entries.push({
         wsId: ws.id,
@@ -138,7 +139,7 @@ export async function startWorkspaceBundles(
 ): Promise<{ registries: Map<string, ToolRegistry>; entries: ProcessInventoryEntry[] }> {
   const workDir = opts?.workDir ?? join(process.env.NB_WORK_DIR ?? "", ".nimblebrain");
   const workspaces = await workspaceStore.list();
-  const inventory = buildProcessInventory(workspaces, workDir);
+  const inventory = buildProcessInventory(workspaces, workDir, configDir);
 
   // Group inventory by workspace
   const byWorkspace = new Map<string, ProcessInventoryEntry[]>();

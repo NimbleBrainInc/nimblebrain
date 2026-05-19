@@ -24,7 +24,7 @@ import {
 } from "./connection.ts";
 import { getMpak } from "./mpak.ts";
 import { hasPersistedWorkspaceOAuthTokens } from "./oauth-tokens.ts";
-import { deriveBundleDataDir, deriveServerName } from "./paths.ts";
+import { defaultWorkDir, deriveServerName, resolveBundleDataDirForRef } from "./paths.ts";
 import { consumePendingAuth } from "./pending-auth-buffer.ts";
 import { startBundleSource } from "./startup.ts";
 import type {
@@ -135,13 +135,13 @@ export class BundleLifecycleManager {
     await mpak.bundleCache.loadBundle(name);
 
     // Workspace-scoped data dir keeps two workspaces installing the same
-    // bundle from stomping on each other's entity data. Matches the
-    // seedInstance layout used at platform boot. Routed through
-    // WorkspaceContext so the `workspaces/{wsId}/data/{slug}` layout has
-    // one definition site (see src/workspace/context.ts).
-    const nbWorkDir = process.env.NB_WORK_DIR ?? join(homedir(), ".nimblebrain");
+    // bundle from stomping on each other's entity data. Slug source is
+    // `manifest.name` via `resolveBundleDataDirForRef` — same call used by
+    // the boot-time inventory and the JIT install path, so all three agree.
+    const nbWorkDir = defaultWorkDir();
     const wsContext = new WorkspaceContext({ wsId, workDir: nbWorkDir });
-    const bundleDataDir = wsContext.getDataPath("data", deriveBundleDataDir(name));
+    const configDir = this.configPath ? dirname(this.configPath) : undefined;
+    const bundleDataDir = resolveBundleDataDirForRef(nbWorkDir, wsId, { name }, configDir);
 
     const { sourceName, manifest } = await startBundleSource(
       { name, env },
@@ -157,7 +157,7 @@ export class BundleLifecycleManager {
     }
 
     const isUpjack = manifest._meta?.["ai.nimblebrain/upjack"] != null;
-    const instance = createInstance(sourceName, name, manifest, isUpjack, wsId);
+    const instance = createInstance(sourceName, name, manifest, isUpjack, wsId, bundleDataDir);
     instance.configKey = name;
     this.transition(instance, "running");
 
@@ -203,11 +203,26 @@ export class BundleLifecycleManager {
     wsId: string,
     env?: Record<string, string>,
   ): Promise<BundleInstance> {
+    // Workspace-scoped data dir computed up-front via the canonical helper
+    // (slug = manifest.name) so the subprocess's MPAK_WORKSPACE and the
+    // seedInstance / briefing reader path agree on a single location.
+    // Without this override `buildLocalSource`'s fallback would compose a
+    // `<nbWorkDir>/data/<slug>` path that bypasses the workspace prefix
+    // and uses a path-derived slug.
+    const nbWorkDir = defaultWorkDir();
+    const configDir = this.configPath ? dirname(this.configPath) : undefined;
+    const bundleDataDir = resolveBundleDataDirForRef(
+      nbWorkDir,
+      wsId,
+      { path: bundlePath },
+      configDir,
+    );
     const { sourceName, manifest } = await startBundleSource(
       { path: bundlePath, env },
       registry,
       this.eventSink,
-      this.configPath ? dirname(this.configPath) : undefined,
+      configDir,
+      { dataDir: bundleDataDir },
     );
     if (!manifest) {
       // Local bundles always have a manifest.json on disk; startBundleSource
@@ -218,7 +233,14 @@ export class BundleLifecycleManager {
 
     const isUpjack = manifest._meta?.["ai.nimblebrain/upjack"] != null;
     // Use manifest.name (scoped name) as bundleName, not the filesystem path.
-    const instance = createInstance(sourceName, manifest.name, manifest, isUpjack, wsId);
+    const instance = createInstance(
+      sourceName,
+      manifest.name,
+      manifest,
+      isUpjack,
+      wsId,
+      bundleDataDir,
+    );
     instance.configKey = bundlePath; // config entry uses the filesystem path
     this.transition(instance, "running");
 
@@ -279,7 +301,7 @@ export class BundleLifecycleManager {
     ui?: BundleUiMeta | null,
     trustScore?: number | null,
   ): Promise<BundleInstance> {
-    const nbWorkDir = process.env.NB_WORK_DIR ?? join(homedir(), ".nimblebrain");
+    const nbWorkDir = defaultWorkDir();
 
     // Pre-register the instance + Connection BEFORE startBundleSource so
     // the interactive-auth callback (fired during source.start()) can find
@@ -439,7 +461,7 @@ export class BundleLifecycleManager {
     // Credentials are config, not data — they should not persist across
     // uninstalls. Data directories are preserved (step 6).
     if (instance) {
-      const workDir = process.env.NB_WORK_DIR ?? join(homedir(), ".nimblebrain");
+      const workDir = defaultWorkDir();
       try {
         await new WorkspaceContext({ wsId: instance.wsId, workDir })
           .getCredentialStore()
@@ -1480,37 +1502,14 @@ export class BundleLifecycleManager {
      *  test callers; production callers should always pass it. */
     registry?: ToolRegistry,
   ): void {
-    // Resolve entity data root from dataDir + upjack namespace at seed time.
-    // This is the single source of truth — downstream consumers read it directly.
-    //
-    // Subtlety: for `path:` bundles, `dataDir` ends in a multi-segment broken
-    // slug because `deriveBundleDataDir` only replaces the first `/` (string
-    // replace, not regex). So `/Users/foo/bar` becomes `-Users/foo/bar`, and
-    // `join(wsData, that)` nests the install path into the workspace's data
-    // tree instead of producing a flat one-segment dir. `dirname()` can't
-    // walk back out of that — we have to anchor on the known
-    // `workspaces/<wsId>/data/` prefix to find the workspace's data root.
-    // Safe to anchor on substring because `dataDir` is canonically constructed
-    // upstream as `join(workDir, "workspaces", wsId, "data", ...)`; the marker
-    // would only collide if a workDir itself contained an identical wsId-keyed
-    // workspace sub-tree, which the install path doesn't allow.
-    //
-    // The bundle itself writes data using its manifest name (e.g.
-    // `@nimblebraininc/synapse-crm` → `nimblebraininc-synapse-crm`), so we
-    // re-derive the bundle-data parent from `manifestName` here. Registry
-    // installs are unaffected — their install name and manifest name
-    // produce identical slugs.
-    const bundleDataParent = ((): string | undefined => {
-      if (!manifestMeta?.manifestName || !dataDir) return dataDir;
-      const wsDataAnchor = `/workspaces/${wsId}/data/`;
-      const anchorIdx = dataDir.indexOf(wsDataAnchor);
-      if (anchorIdx < 0) return dataDir;
-      const wsDataRoot = dataDir.slice(0, anchorIdx + wsDataAnchor.length);
-      return join(wsDataRoot, deriveBundleDataDir(manifestMeta.manifestName));
-    })();
+    // Resolve entity data root from dataDir + upjack namespace. `dataDir` is
+    // already the canonical bundle-data parent (slug = manifest.name) thanks
+    // to `resolveBundleDataDirForRef` at every caller — buildProcessInventory,
+    // installLocal, installNamed, installBundleInWorkspace. No re-derivation
+    // here: launcher and reader agree by construction.
     const entityDataRoot =
-      bundleDataParent && manifestMeta?.upjackNamespace
-        ? join(bundleDataParent, manifestMeta.upjackNamespace, "data")
+      dataDir && manifestMeta?.upjackNamespace
+        ? join(dataDir, manifestMeta.upjackNamespace, "data")
         : undefined;
 
     // Resolve oauthScope for URL bundles. Member-scoped bundles seed with
@@ -1598,7 +1597,7 @@ export class BundleLifecycleManager {
           authorizationUrl: pendingAuthUrl,
         });
       } else {
-        const workDir = process.env.NB_WORK_DIR ?? join(homedir(), ".nimblebrain");
+        const workDir = defaultWorkDir();
         // Composio-backed connectors live in a parallel credential
         // namespace — the user-presence signal is
         // `credentials/composio/<connectorId>/connection.json`, not
@@ -1651,7 +1650,17 @@ function createInstance(
   manifest: BundleManifest,
   isUpjack: boolean,
   wsId: string,
+  dataDir: string,
 ): BundleInstance {
+  // Mirror the entityDataRoot composition `seedInstance` does at boot so
+  // JIT installs (installLocal / installNamed) leave the BundleInstance in
+  // the same shape as a boot-seeded one. Without this, briefing facets
+  // pointed at a freshly-installed upjack bundle would find
+  // `instance.entityDataRoot === undefined` and silently report nothing.
+  const upjackMeta = manifest._meta?.["ai.nimblebrain/upjack"] as
+    | { namespace?: string }
+    | undefined;
+  const namespace = upjackMeta?.namespace;
   return {
     serverName,
     bundleName,
@@ -1665,6 +1674,7 @@ function createInstance(
     protected: false,
     type: isUpjack ? "upjack" : "plain",
     wsId,
+    ...(namespace ? { entityDataRoot: join(dataDir, namespace, "data") } : {}),
   };
 }
 
