@@ -92,6 +92,12 @@ export interface ConversationSummary {
   totalInputTokens: number;
   totalOutputTokens: number;
   totalCostUsd: number;
+  /**
+   * Owner of the conversation. Required: Stage 1 invariant says every
+   * conversation has an owner. Files lacking `ownerId` are excluded
+   * from the index entirely (see `parseFileHeader`), and direct
+   * `load()` calls on such files throw.
+   */
   ownerId: string;
   workspaceId?: string;
 }

@@ -274,10 +274,17 @@ function parseFileHeader(
   // intentionally ignored — old conversations show zero totals if their
   // events don't carry usage. (See PR removing stored totals.)
 
-  // Stage 1 invariant: every conversation has an ownerId. Older files
-  // without one are pre-migration data; we leave `ownerId` unset on the
-  // summary so the access check rejects them. The migration script is
-  // the authoritative fix.
+  // Stage 1 invariant: every conversation has an ownerId. A file
+  // without one is pre-migration data — load() already throws when
+  // it encounters such a file directly, and the index honors the same
+  // invariant by EXCLUDING ownerless entries entirely. Including them
+  // with an absent / empty ownerId would be a category error: the
+  // application's view of "conversations that exist" would include
+  // entries that load() can't actually return. Operators see
+  // ownerless files via filesystem inspection or the migration
+  // script's report, not via the index.
+  if (!meta.ownerId) return null;
+
   return {
     summary: {
       id: meta.id,
@@ -289,10 +296,10 @@ function parseFileHeader(
       totalInputTokens: derivedInputTokens,
       totalOutputTokens: derivedOutputTokens,
       totalCostUsd: derivedCostUsd,
-      ownerId: meta.ownerId ?? "",
+      ownerId: meta.ownerId,
     },
     access: {
-      ...(meta.ownerId ? { ownerId: meta.ownerId } : {}),
+      ownerId: meta.ownerId,
     },
   };
 }

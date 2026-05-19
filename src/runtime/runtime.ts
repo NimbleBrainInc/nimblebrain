@@ -18,6 +18,7 @@ import { EventSourcedConversationStore } from "../conversation/event-sourced-sto
 import { JsonlConversationStore } from "../conversation/jsonl-store.ts";
 import { InMemoryConversationStore } from "../conversation/memory-store.ts";
 import type {
+  Conversation,
   ConversationListResult,
   ConversationStore,
   CreateConversationOptions,
@@ -76,7 +77,7 @@ import type { ResourceData } from "../tools/types.ts";
 import { UserConnectorStore } from "../users/user-connector-store.ts";
 import { WorkspaceContext } from "../workspace/context.ts";
 import { WorkspaceStore } from "../workspace/workspace-store.ts";
-import { RunInProgressError } from "./errors.ts";
+import { ConversationAccessDeniedError, RunInProgressError } from "./errors.ts";
 import { PlacementRegistry } from "./placement-registry.ts";
 import {
   getRequestContext,
@@ -213,9 +214,6 @@ export class Runtime {
     | null = null;
   /** Getter for current workspace ID (set per-request). */
   private _currentWorkspaceId: (() => string | null) | null = null;
-  private _manageConversationCtx:
-    | import("../tools/conversation-tools.ts").ManageConversationContext
-    | null = null;
   /**
    * Cache for `skill://<bundle>/usage` resource fetches. A `null` body is a
    * sentinel meaning "this bundle does not publish the resource" — without it,
@@ -467,12 +465,6 @@ export class Runtime {
     const manageUsersCtx = { getIdentity, userStore, provider: identityProvider };
     const manageWorkspacesCtx = { getIdentity, workspaceStore };
     const manageMembersCtx = { getIdentity, workspaceStore, userStore };
-    const manageConversationCtx: import("../tools/conversation-tools.ts").ManageConversationContext =
-      {
-        getIdentity,
-        conversationStore: store,
-        workspaceStore,
-      };
     const manageBundleCtx = {
       getWorkspaceId,
       workspaceStore,
@@ -531,7 +523,6 @@ export class Runtime {
     rtHolder.rt = rt;
     rt._getIdentity = getIdentity;
     rt._getWorkspaceId = getWorkspaceId;
-    rt._manageConversationCtx = manageConversationCtx;
 
     // Register the `nb` system source. Built as an in-process MCP server
     // — `createSystemTools` returns it already-started so it's ready to
@@ -552,7 +543,6 @@ export class Runtime {
       manageUsersCtx,
       manageWorkspacesCtx,
       manageMembersCtx,
-      manageConversationCtx,
       manageBundleCtx,
       toolPromotionCtx,
       toolEligibilityCtx,
@@ -692,22 +682,62 @@ export class Runtime {
     // Load workspace config once per request for agents/models overrides.
     const workspace = await this._workspaceStore.get(wsId);
 
-    // Stage 1 invariant: every conversation has an owner. Production:
-    // `request.identity` is set by the auth middleware. Dev / tests:
-    // fall back to the dev-provider identity (`usr_default`) so a
-    // bypass-the-middleware call still produces a valid conversation.
-    // The fallback exists for the test surface; production traffic
-    // always carries identity by the time it reaches `runtime.chat`.
-    const ownerId = request.identity?.id ?? "usr_default";
+    // Stage 1 invariant: every conversation has an owner. Production
+    // path: the HTTP auth middleware sets `request.identity` before
+    // `runtime.chat` runs.
+    //
+    // Dev-mode fallback: when the runtime has no identity provider
+    // configured (`bun run dev:worktree`, raw `Runtime.start({ model,
+    // noDefaultBundles: true })` in tests), `usr_default` becomes the
+    // owner. This is GATED on `!this._identityProvider` so a
+    // production deployment with auth misconfigured throws loudly
+    // instead of silently defaulting every request to a sentinel
+    // user — the previous unconditional fallback would have made
+    // every conversation in such a deployment owned by `usr_default`,
+    // bypassing the single-owner invariant.
+    let ownerId: string;
+    if (request.identity?.id) {
+      ownerId = request.identity.id;
+    } else if (!this._identityProvider) {
+      ownerId = "usr_default";
+    } else {
+      throw new Error(
+        "[runtime.chat] no identity on request — the auth middleware must populate " +
+          "request.identity before runtime.chat runs. A misconfigured production " +
+          "deployment with an identity provider but missing middleware would " +
+          "otherwise default every conversation to a sentinel user.",
+      );
+    }
     const createOpts: CreateConversationOptions = {
       ownerId,
       workspaceId: wsId,
       ...(request.metadata ? { metadata: request.metadata } : {}),
     };
 
-    const conversation = request.conversationId
-      ? ((await store.load(request.conversationId)) ?? (await store.create(createOpts)))
-      : await store.create(createOpts);
+    // Resume an existing conversation only if the caller owns it.
+    // Stage 1 single-owner invariant: a conversation's ownerId must
+    // match the requesting identity. Today this is implicitly
+    // workspace-bounded because the store dir is per-wsId, but Task 005
+    // collapses every conversation onto a top-level store — at which
+    // point this owner check is the ONLY barrier between users and
+    // each other's conversations. Enforce it now, in the load-bearing
+    // chat path, so the invariant doesn't have a window of being
+    // workspace-discipline-only.
+    //
+    // The disambiguation between "doesn't exist" (→ create new) and
+    // "exists but isn't yours" (→ throw) matters: silently creating a
+    // new conversation when the caller passes a foreign id would mask
+    // a takeover attempt as a normal flow.
+    let conversation: Conversation;
+    if (request.conversationId) {
+      const existing = await store.load(request.conversationId);
+      if (existing && existing.ownerId !== ownerId) {
+        throw new ConversationAccessDeniedError(request.conversationId, ownerId);
+      }
+      conversation = existing ?? (await store.create(createOpts));
+    } else {
+      conversation = await store.create(createOpts);
+    }
 
     // Preserve metadata on resumed conversations (don't overwrite)
     if (request.metadata && !conversation.metadata) {
@@ -2139,13 +2169,19 @@ export class Runtime {
     return this.config.allowInsecureRemotes === true;
   }
 
-  /** Inject the per-conversation event manager for participant eviction on removal/unshare. */
+  /**
+   * No-op as of Stage 1. The event manager was originally injected so
+   * `manage_conversation`'s share/unshare/participant actions could
+   * evict subscribers; those actions are gone, and the chat-handler
+   * broadcast (`handleChatStream`) receives the manager directly from
+   * the route factory rather than via the runtime. Kept as a no-op so
+   * the `server.ts` wiring doesn't need to change in this PR; remove
+   * once a future stage rationalizes the broadcast plumbing.
+   */
   setConversationEventManager(
-    manager: import("../api/conversation-events.ts").ConversationEventManager,
+    _manager: import("../api/conversation-events.ts").ConversationEventManager,
   ): void {
-    if (this._manageConversationCtx) {
-      this._manageConversationCtx.conversationEventManager = manager;
-    }
+    // intentionally empty — see docblock
   }
 
   /** Get the file context configuration with defaults applied. */

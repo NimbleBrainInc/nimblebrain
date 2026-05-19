@@ -4,9 +4,6 @@ import type { UserIdentity } from "../identity/provider.ts";
 import { ORG_ADMIN_ROLES } from "../identity/types.ts";
 import type { UserStore } from "../identity/user.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
-// conversation-tools.ts retains only `canManageConversation` after
-// Stage 1's schema purge. Share/unshare/participant actions return in
-// Stage 4 with policy-gated primitives.
 import type { InProcessTool } from "./in-process-app.ts";
 
 // ── Types ─────────────────────────────────────────────────────────
@@ -17,10 +14,6 @@ export interface ManageWorkspacesContext {
   workspaceStore: WorkspaceStore;
   /** Required for member management (user validation, display name enrichment). */
   userStore?: UserStore;
-  /** Required for conversation management (load, share, participant ops). */
-  conversationStore?: import("../conversation/types.ts").ConversationStore;
-  /** Per-conversation event manager — evict subscribers on participant removal. */
-  conversationEventManager?: import("../api/conversation-events.ts").ConversationEventManager;
 }
 
 /** @deprecated Use ManageWorkspacesContext instead — members are now managed via manage_workspaces. */

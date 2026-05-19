@@ -304,6 +304,24 @@ async function main(): Promise<void> {
             `[migrate] ${user.id} → ${newId}: stamped identity fields`,
           );
         }
+
+        // Surface the both-exist data-corruption case. The user's
+        // personal workspace at the new id is canonical, but if a
+        // legacy-shaped workspace ALSO exists for them at the old id,
+        // it's now orphaned (no rename target). Operators should
+        // decide what to do with it (delete? merge? archive?) —
+        // log loudly so it doesn't sit silently in `workspaces/`.
+        if (oldId !== newId) {
+          const atOldStrayed = await wsStore.get(oldId);
+          if (atOldStrayed && isPersonalWorkspaceOf(atOldStrayed, user.id)) {
+            console.warn(
+              `[migrate] ${user.id}: ORPHANED legacy workspace at ${oldId} — ` +
+                `${newId} already exists; the legacy workspace is left in place. ` +
+                `Operator action required: inspect and decide whether to delete / merge / archive ${oldId}.`,
+            );
+          }
+        }
+
         stats.personalAtNewId++;
         continue;
       }
