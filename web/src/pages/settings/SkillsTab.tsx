@@ -18,45 +18,19 @@ import { RequireActiveWorkspace } from "./components/RequireActiveWorkspace";
 // is acceptable here since these are stable contract types and any drift
 // surfaces immediately in the UI.
 
-type Layer = 1 | 3;
 type Scope = "org" | "workspace" | "user" | "bundle";
 type Status = "active" | "draft" | "disabled" | "archived";
 
-interface ListedSkill {
-  id: string;
-  name: string;
-  layer: Layer;
-  scope: Scope;
-  status: Status;
-  type?: string;
-  tokens: number;
-  source: { bundle?: string; bundleVersion?: string; path?: string; uri?: string };
-  description?: string;
-  modifiedAt?: string;
-  loadingStrategy?: string;
-  appliesToTools?: string[];
-  priority?: number;
-}
-
-interface ReadSkill {
-  id: string;
-  content: string;
-  layer: Layer;
-  scope: Scope;
-  source: ListedSkill["source"];
-  metadata: {
-    name: string;
-    description?: string;
-    type?: string;
-    priority?: number;
-    loadingStrategy?: string;
-    appliesToTools?: string[];
-    status?: string;
-    overrides?: Array<{ bundle?: string; skill?: string; reason: string }>;
-    derivedFrom?: string;
-  };
-  modifiedAt?: string;
-}
+// `ListedSkill` / `ReadSkill` were duplicated declarations of the
+// server-side shapes from `src/tools/platform/skills.ts`. Both sides
+// now import the canonical types from `schemas/skills.ts` via the
+// generated platform-schemas tree, so a future shape change in one
+// place can't silently drift from the other.
+import type {
+  SkillDetail as ReadSkill,
+  SkillSummary as ListedSkill,
+} from "../../_generated/platform-schemas/skills";
+export type { ListedSkill, ReadSkill };
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 

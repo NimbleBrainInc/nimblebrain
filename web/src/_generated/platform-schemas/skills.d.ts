@@ -81,3 +81,87 @@ export declare const SkillsMoveScopeInput: import("@sinclair/typebox").TObject<{
     target_scope: import("@sinclair/typebox").TUnsafe<"user" | "org" | "workspace">;
 }>;
 export type SkillsMoveScopeInput = Static<typeof SkillsMoveScopeInput>;
+/** Tier a skill lives in. */
+export type SkillScope = "org" | "workspace" | "user" | "bundle";
+/** Skill layer per the loading-strategy spec. */
+export type SkillLayer = 1 | 3;
+/** Per-skill lifecycle status. */
+export type SkillStatus = "active" | "draft" | "disabled" | "archived";
+/**
+ * Source provenance for a skill — where it came from on disk or via
+ * a bundle. Optional fields; at least one is populated.
+ */
+export interface SkillSource {
+    bundle?: string;
+    bundleVersion?: string;
+    path?: string;
+    uri?: string;
+}
+/**
+ * Row returned per skill by `skills__list`. The summary surface for the
+ * settings UI and the agent's `skills__list` enumeration.
+ */
+export interface SkillSummary {
+    id: string;
+    name: string;
+    layer: SkillLayer;
+    scope: SkillScope;
+    status: SkillStatus;
+    type?: string;
+    tokens: number;
+    source: SkillSource;
+    description?: string;
+    modifiedAt?: string;
+    loadingStrategy?: string;
+    appliesToTools?: string[];
+    priority?: number;
+}
+export interface SkillsListOutput {
+    skills: SkillSummary[];
+}
+/**
+ * Full skill detail returned by `skills__read` — includes the markdown
+ * body and the full manifest metadata block.
+ */
+export interface SkillDetail {
+    id: string;
+    content: string;
+    layer: SkillLayer;
+    scope: SkillScope;
+    source: SkillSource;
+    metadata: {
+        name: string;
+        description?: string;
+        type?: string;
+        priority?: number;
+        loadingStrategy?: string;
+        appliesToTools?: string[];
+        status?: string;
+        overrides?: Array<{
+            bundle?: string;
+            skill?: string;
+            reason: string;
+        }>;
+        derivedFrom?: string;
+    };
+    modifiedAt?: string;
+}
+/** `SkillsReadOutput` is the detail itself — no wrapper envelope. */
+export type SkillsReadOutput = SkillDetail;
+/**
+ * Single entry in the `skills__active_for` response — one currently-
+ * active layer-3 skill for the named conversation, with provenance for
+ * why it loaded.
+ */
+export interface ActiveSkillEntry {
+    id: string;
+    layer: 3;
+    scope: SkillScope;
+    tokens: number;
+    loadedBy: "always" | "tool_affinity";
+    reason: string;
+}
+export interface SkillsActiveForOutput {
+    active: ActiveSkillEntry[];
+    conversationId: string;
+}

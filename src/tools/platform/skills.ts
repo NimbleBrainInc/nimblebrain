@@ -43,6 +43,7 @@ import { validateSkill } from "../../skills/validator.ts";
 import { deleteSkill, updateSkill, writeSkill } from "../../skills/writer.ts";
 import { defineInProcessApp, type InProcessTool } from "../in-process-app.ts";
 import type { McpSource } from "../mcp-source.ts";
+import type { ActiveSkillEntry, SkillDetail, SkillSummary } from "./schemas/skills.ts";
 import {
   SkillsActivateInput,
   SkillsActiveForInput,
@@ -434,41 +435,11 @@ interface ListInput {
   modified_since?: string;
 }
 
-interface ListedSkill {
-  id: string;
-  name: string;
-  layer: 1 | 3;
-  scope: "org" | "workspace" | "user" | "bundle";
-  status: "active" | "draft" | "disabled" | "archived";
-  type?: string;
-  tokens: number;
-  source: { bundle?: string; bundleVersion?: string; path?: string; uri?: string };
-  description?: string;
-  modifiedAt?: string;
-  loadingStrategy?: string;
-  appliesToTools?: string[];
-  priority?: number;
-}
-
-interface ReadResult {
-  id: string;
-  content: string;
-  layer: 1 | 3;
-  scope: "org" | "workspace" | "user" | "bundle";
-  source: { bundle?: string; bundleVersion?: string; path?: string; uri?: string };
-  metadata: {
-    name: string;
-    description?: string;
-    type?: string;
-    priority?: number;
-    loadingStrategy?: string;
-    appliesToTools?: string[];
-    status?: string;
-    overrides?: Array<{ bundle?: string; skill?: string; reason: string }>;
-    derivedFrom?: string;
-  };
-  modifiedAt?: string;
-}
+// Local aliases for the canonical output shapes from `schemas/skills.ts`.
+// Server and web both import from there — this alias just keeps the
+// historical local name in this file's body so the diff stays small.
+type ListedSkill = SkillSummary;
+type ReadResult = SkillDetail;
 
 function skillToListed(skill: Skill): ListedSkill {
   const m = skill.manifest;
@@ -834,14 +805,8 @@ function inferScopeFromPath(
   return "bundle";
 }
 
-interface ActiveForEntry {
-  id: string;
-  layer: 3;
-  scope: "org" | "workspace" | "user" | "bundle";
-  tokens: number;
-  loadedBy: "always" | "tool_affinity";
-  reason: string;
-}
+// Local alias for the canonical shape from `schemas/skills.ts`.
+type ActiveForEntry = ActiveSkillEntry;
 
 /**
  * Find the most recent `skills.loaded` event for the conversation and

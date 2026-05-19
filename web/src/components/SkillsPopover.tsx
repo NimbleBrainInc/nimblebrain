@@ -3,17 +3,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { callTool } from "../api/client";
 import { parseToolResponse } from "../lib/tool-response";
-
-// ── Types ────────────────────────────────────────────────────────────────
-
-interface ActiveSkill {
-  id: string;
-  layer: 3;
-  scope: "org" | "workspace" | "user" | "bundle";
-  tokens: number;
-  loadedBy: "always" | "tool_affinity";
-  reason: string;
-}
+// Canonical shape from `src/tools/platform/schemas/skills.ts`; mirrored
+// here via codegen so server + web can't drift.
+import type { ActiveSkillEntry as ActiveSkill } from "../_generated/platform-schemas/skills";
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
