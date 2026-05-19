@@ -40,6 +40,13 @@ export async function installBundleInWorkspace(
     workDir?: string;
   },
 ): Promise<ProcessInventoryEntry> {
+  // workDir default matches the sibling `uninstallBundleFromWorkspace`
+  // below — previously this function fell through to `""` and emitted
+  // relative paths from cwd (a latent bug). The new default routes
+  // through `~/.nimblebrain`, matching every other workspace-scoped
+  // entry point. A caller that explicitly passes `workDir: ""` now
+  // hits the `WorkspaceContext` constructor's empty-string rejection
+  // (deliberate — relative paths in this code path were never correct).
   const workDir = opts?.workDir ?? process.env.NB_WORK_DIR ?? join(homedir(), ".nimblebrain");
   const wsContext = new WorkspaceContext({ wsId, workDir });
   const serverName = serverNameFromRef(bundleRef);

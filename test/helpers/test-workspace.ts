@@ -11,9 +11,12 @@ export const TEST_WORKSPACE_ID = "ws_test";
 
 /**
  * Construct a `WorkspaceContext` for unit tests that don't have a full
- * `Runtime` available. Mirrors `Runtime.getWorkspaceContext(wsId)` but
- * accepts a bare `workDir` (typically `mkdtempSync(...)`) so tests can
- * stand up a context without bootstrapping the whole platform.
+ * `Runtime` available. Produces the same `WorkspaceContext` instance
+ * type as `Runtime.getWorkspaceContext(wsId)`, but the signature
+ * intentionally differs: the runtime form takes only `wsId` (the
+ * runtime owns the workDir), while this helper takes `(workDir, wsId)`
+ * so tests can point at a `mkdtempSync(...)` directory without
+ * bootstrapping the whole platform.
  *
  * Use this anywhere a test fixture previously passed `(wsId, workDir)`
  * pairs to free functions — the resulting context is the same
