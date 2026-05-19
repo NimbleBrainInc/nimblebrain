@@ -670,14 +670,13 @@ export class Runtime {
     }
     const wsId = request.workspaceId;
 
-    // Resolve conversation store: always workspace-scoped.
-    // JsonlConversationStore is stateless (each operation reads from disk),
-    // so per-request instances are safe.
-    const wsContext = this.getWorkspaceContext(wsId);
-    const store: ConversationStore = new EventSourcedConversationStore({
-      dir: wsContext.getDataPath("conversations"),
-      logLevel: this.config.logging?.level ?? "normal",
-    });
+    // Resolve conversation store: top-level, user-scoped. Stage 1
+    // collapsed conversations onto a single store at `{workDir}/
+    // conversations/`; `workspaceId` on the request still scopes
+    // tools / registry / file storage, but the conversation file
+    // itself lives at the user level. Per-call instances remain safe
+    // — `EventSourcedConversationStore` is stateless w.r.t. its dir.
+    const store: ConversationStore = this.findConversationStore();
 
     // Load workspace config once per request for agents/models overrides.
     const workspace = await this._workspaceStore.get(wsId);
@@ -1617,24 +1616,34 @@ export class Runtime {
   }
 
   /**
-   * @deprecated Workspace-scoped conversation lookup is going away in
-   * Task 005. New code should use `getUserConversationStore()` and look
-   * up conversations by `convId` only. Kept here so the Task 002 commit
-   * is mechanical-add-only; Task 005 deletes this and updates every
-   * caller.
+   * The canonical store handle for conversation reads and writes. Alias
+   * for `getUserConversationStore()` — `find*` is the read-side framing
+   * (`findConversation` returns a single conversation by id;
+   * `findConversationStore` returns the store you'd use to enumerate or
+   * mutate). Both forms point at the same top-level store; keep them
+   * as siblings until usage settles and one form clearly wins.
    */
-  getStore(wsId?: string): ConversationStore {
-    const id = wsId ?? this.requireWorkspaceId();
-    const ctx = this.getWorkspaceContext(id);
-    return new EventSourcedConversationStore({
-      dir: ctx.getDataPath("conversations"),
-      logLevel: this.config.logging?.level ?? "normal",
-    });
+  findConversationStore(): ConversationStore {
+    return this.getUserConversationStore();
   }
 
-  /** @deprecated See `getStore`. */
-  getConversationStore(wsId?: string): ConversationStore {
-    return this.getStore(wsId);
+  /**
+   * Locate a conversation by id from the top-level store. Returns the
+   * `Conversation` metadata, or `null` if the file doesn't exist. The
+   * single source of truth for "give me this conversation" — every
+   * conversation-touching call site reads through this.
+   *
+   * Pass `access` to gate the read by ownership at the store layer.
+   * Without `access` the caller is asserting "I am the ownership
+   * boundary" (e.g. `runtime.chat` after its own owner check, or a
+   * trusted internal caller); with it, the store returns `null` for
+   * existence-but-not-yours, matching `load()`'s posture.
+   */
+  async findConversation(
+    convId: string,
+    access?: import("../conversation/types.ts").ConversationAccessContext,
+  ): Promise<Conversation | null> {
+    return this.findConversationStore().load(convId, access);
   }
 
   /** Get the UserStore instance. */
@@ -2207,12 +2216,20 @@ export class Runtime {
     return apps;
   }
 
-  /** List conversations (workspace-scoped). */
+  /**
+   * List conversations from the top-level store. Pass `access` to filter
+   * by ownership; without it the caller asserts trusted enumeration
+   * scope (CLI, admin tools). The `wsId` parameter is gone — every
+   * conversation lives at the user level, and tool/workspace scoping
+   * is a concern for the conversation's runtime context, not for
+   * enumeration. To filter by workspace, list and filter on
+   * `Conversation.workspaceId` at the call site.
+   */
   async listConversations(
     options?: import("../conversation/types.ts").ListOptions,
-    wsId?: string,
+    access?: import("../conversation/types.ts").ConversationAccessContext,
   ): Promise<ConversationListResult> {
-    return this.getStore(wsId).list(options);
+    return this.findConversationStore().list(options, access);
   }
 
   /**

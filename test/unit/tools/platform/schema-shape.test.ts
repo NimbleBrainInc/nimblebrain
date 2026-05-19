@@ -43,7 +43,7 @@ function makeRuntimeStub(workDir: string): unknown {
     getIdentityProvider: () => null,
     requireWorkspaceId: () => "_dev",
     getCurrentWorkspaceId: () => "_dev",
-    getConversationStore: () => ({}),
+    findConversationStore: () => ({}),
     getInstructionsStore: () => ({
       read: async () => "",
       write: async () => ({ updated_at: new Date().toISOString() }),

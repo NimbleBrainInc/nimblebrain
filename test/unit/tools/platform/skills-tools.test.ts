@@ -65,11 +65,11 @@ class FakeRuntime {
     if (!this.wsId) throw new Error("no workspace");
     return this.wsId;
   }
-  getConversationStore(): EventSourcedConversationStore {
+  findConversationStore(): EventSourcedConversationStore {
     return this._store;
   }
-  getStore(): EventSourcedConversationStore {
-    return this._store;
+  async findConversation(id: string): Promise<unknown> {
+    return this._store.load(id);
   }
   getWorkspaceStore() {
     // Tests that exercise the cross-workspace path supply this directly

@@ -149,16 +149,23 @@ export class InMemoryConversationStore implements ConversationStore {
     return { conversations: page, nextCursor, totalCount };
   }
 
-  async delete(id: string): Promise<boolean> {
-    if (!this.conversations.has(id)) return false;
+  async delete(id: string, access?: ConversationAccessContext): Promise<boolean> {
+    const conv = this.conversations.get(id);
+    if (!conv) return false;
+    if (access && conv.ownerId !== access.userId) return false;
     this.conversations.delete(id);
     this.messages.delete(id);
     return true;
   }
 
-  async update(id: string, patch: ConversationPatch): Promise<Conversation | null> {
+  async update(
+    id: string,
+    patch: ConversationPatch,
+    access?: ConversationAccessContext,
+  ): Promise<Conversation | null> {
     const conversation = this.conversations.get(id);
     if (!conversation) return null;
+    if (access && conversation.ownerId !== access.userId) return null;
 
     if (patch.title !== undefined) {
       conversation.title = patch.title;
@@ -167,9 +174,14 @@ export class InMemoryConversationStore implements ConversationStore {
     return { ...conversation };
   }
 
-  async fork(id: string, atMessage?: number): Promise<Conversation | null> {
+  async fork(
+    id: string,
+    atMessage?: number,
+    access?: ConversationAccessContext,
+  ): Promise<Conversation | null> {
     const source = this.conversations.get(id);
     if (!source) return null;
+    if (access && source.ownerId !== access.userId) return null;
 
     const sourceMessages = this.messages.get(id) ?? [];
     const messagesToCopy =

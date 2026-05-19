@@ -6,7 +6,7 @@
  */
 
 import { readFile, rename, writeFile } from "node:fs/promises";
-import type { ConversationIndex } from "../index-cache.ts";
+import type { AccessContext, ConversationIndex } from "../index-cache.ts";
 import type { ConversationMeta } from "../jsonl-reader.ts";
 
 export interface UpdateInput {
@@ -14,8 +14,12 @@ export interface UpdateInput {
   title: string;
 }
 
-export async function handleUpdate(input: UpdateInput, index: ConversationIndex): Promise<object> {
-  const entry = index.get(input.id);
+export async function handleUpdate(
+  input: UpdateInput,
+  index: ConversationIndex,
+  access?: AccessContext,
+): Promise<object> {
+  const entry = index.get(input.id, access);
   if (!entry) {
     throw new Error(`Conversation not found: ${input.id}`);
   }

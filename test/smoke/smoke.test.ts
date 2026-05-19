@@ -307,8 +307,8 @@ describe("Smoke: Conversation persistence", () => {
     });
     await provisionTestWorkspace(runtime);
 
-    const store = runtime.getStore(TEST_WORKSPACE_ID) as JsonlConversationStore;
-    const wsConvDir = join(convWorkDir, "workspaces", TEST_WORKSPACE_ID, "conversations");
+    const store = runtime.findConversationStore() as JsonlConversationStore;
+    const topConvDir = join(convWorkDir, "conversations");
 
     const result = await runtime.chat({ message: "Smoke test message", workspaceId: TEST_WORKSPACE_ID });
     expect(result.conversationId).toMatch(/^conv_/);
@@ -316,7 +316,7 @@ describe("Smoke: Conversation persistence", () => {
 
     await store.flush();
 
-    const files = readdirSync(wsConvDir).filter((f) => f.endsWith(".jsonl"));
+    const files = readdirSync(topConvDir).filter((f) => f.endsWith(".jsonl"));
     expect(files.length).toBe(1);
 
     const result2 = await runtime.chat({
@@ -325,7 +325,7 @@ describe("Smoke: Conversation persistence", () => {
       workspaceId: TEST_WORKSPACE_ID,
     });
     expect(result2.conversationId).toBe(result.conversationId);
-    expect(readdirSync(wsConvDir).filter((f) => f.endsWith(".jsonl")).length).toBe(1);
+    expect(readdirSync(topConvDir).filter((f) => f.endsWith(".jsonl")).length).toBe(1);
 
     await runtime.shutdown();
     await store.flush();

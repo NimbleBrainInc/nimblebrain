@@ -932,15 +932,9 @@ async function loadingLog(
 }
 
 /**
- * Read raw conversation events for the given id from the active store.
- *
- * Resolves through `runtime.getConversationStore()` when possible (the
- * Phase 1 abstraction); falls back to instantiating an
- * EventSourcedConversationStore on the workspace conversation dir when the
- * runtime hasn't bound one (e.g. the legacy global path during tests).
- *
- * Returns `null` for not-found, `[]` for legacy (message-format)
- * conversations.
+ * Read raw conversation events for the given id from the top-level
+ * conversation store. Returns `null` for not-found, `[]` for legacy
+ * (message-format) conversations.
  */
 async function readConvEvents(
   runtime: Runtime,
@@ -953,12 +947,11 @@ async function readConvEvents(
 }
 
 function getEventStore(runtime: Runtime): EventSourcedConversationStore | null {
-  // The runtime exposes a `ConversationStore` interface; for Phase 2 the
-  // event-sourced store is the only one with `readEvents`. Returns null
-  // when the store is missing (no workspace context) or is some other
-  // shape (e.g. an in-memory test double).
+  // The runtime exposes a `ConversationStore` interface; only the
+  // event-sourced store has `readEvents`. Returns null when the store
+  // is some other shape (e.g. an in-memory test double).
   try {
-    const raw = runtime.getConversationStore();
+    const raw = runtime.findConversationStore();
     return raw instanceof EventSourcedConversationStore ? raw : null;
   } catch {
     return null;

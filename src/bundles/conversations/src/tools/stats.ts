@@ -5,7 +5,7 @@
  * Reads full JSONL files to extract per-message model and tool data.
  */
 
-import type { ConversationIndex } from "../index-cache.ts";
+import type { AccessContext, ConversationIndex } from "../index-cache.ts";
 import { readConversation } from "../jsonl-reader.ts";
 
 export interface StatsInput {
@@ -52,6 +52,7 @@ function periodToSince(period: "day" | "week" | "month" | "all", now: Date): Dat
 export async function handleStats(
   input: StatsInput,
   index: ConversationIndex,
+  access?: AccessContext,
 ): Promise<StatsResult> {
   const period = input.period ?? "week";
   const now = new Date();
@@ -60,13 +61,18 @@ export async function handleStats(
   const sinceIso = since?.toISOString() ?? "";
   const untilIso = now.toISOString();
 
-  // Get all conversations matching the date range using the index
-  const listResult = index.list({
-    limit: 999999,
-    dateFrom: sinceIso || undefined,
-    dateTo: untilIso,
-    sortBy: "created",
-  });
+  // Get all conversations matching the date range using the index;
+  // `access` filters to the caller's owned set so stats reflect their
+  // usage, not the global tenant.
+  const listResult = index.list(
+    {
+      limit: 999999,
+      dateFrom: sinceIso || undefined,
+      dateTo: untilIso,
+      sortBy: "created",
+    },
+    access,
+  );
 
   let totalInputTokens = 0;
   let totalOutputTokens = 0;

@@ -619,7 +619,7 @@ describe("Core Source", () => {
 			// generator short-circuits to a "quiet day" briefing and the
 			// model never gets invoked (the cache test would pass vacuously).
 			await runWithRequestContext(ctx, async () => {
-				const store = runtime.getStore();
+				const store = runtime.findConversationStore();
 				await store.create({ ownerId: "user_test" });
 			});
 

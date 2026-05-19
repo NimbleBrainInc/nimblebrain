@@ -759,9 +759,11 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
             const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
             const until = new Date().toISOString();
 
-            // Collect activity from workspace-scoped logs
+            // Collect activity from workspace-scoped logs; conversations
+            // themselves live at the user level post-Stage 1, so the
+            // activity collector reads through the top-level store.
             const logDir = join(wsDir, "logs");
-            const store = runtime.getStore();
+            const store = runtime.findConversationStore();
             const collector = new ActivityCollector({
               logDir,
               conversations: { kind: "store", store },
