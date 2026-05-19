@@ -555,7 +555,7 @@ async function readConvEvents(
   );
   let store: InstanceType<typeof EventSourcedConversationStore> | null = null;
   try {
-    const raw = runtime.getConversationStore();
+    const raw = runtime.findConversationStore();
     store = raw instanceof EventSourcedConversationStore ? raw : null;
   } catch {
     /* no store in scope — fall through to null */

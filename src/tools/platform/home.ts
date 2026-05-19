@@ -28,7 +28,12 @@ export function createHomeSource(runtime: Runtime, eventSink: EventSink): McpSou
         try {
           const wsDir = runtime.getWorkspaceScopedDir();
           const logDir = join(wsDir, "logs");
-          const store = runtime.getStore();
+          // Conversations live at the user level post-Stage 1; the
+          // activity collector reads through the top-level store.
+          // Workspace-scoping for the activity view (when relevant)
+          // happens at the conversation-metadata layer, not at the
+          // store-construction layer.
+          const store = runtime.findConversationStore();
           const automationRunsDir = join(wsDir, "automations", "runs");
           const collector = new ActivityCollector({
             logDir,

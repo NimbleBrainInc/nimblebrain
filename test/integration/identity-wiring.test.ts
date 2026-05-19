@@ -159,24 +159,26 @@ describe("Chat with workspace context", () => {
     expect(result.conversationId).toMatch(/^conv_/);
     expect(result.workspaceId).toBe(ws.id);
 
-    // Verify conversation file is in the workspace directory
-    const wsConvDir = join(workDir, "workspaces", ws.id, "conversations");
-    const convFile = join(wsConvDir, `${result.conversationId}.jsonl`);
+    // Stage 1 Task 005: conversations live at the top-level user dir;
+    // the workspaceId stays on metadata for tool scoping but is not a
+    // path concern.
+    const convFile = join(workDir, "conversations", `${result.conversationId}.jsonl`);
     expect(existsSync(convFile)).toBe(true);
 
-    // Verify conversation metadata has ownerId
     const content = readFileSync(convFile, "utf-8");
     const metadataLine = JSON.parse(content.split("\n")[0]!);
     expect(metadataLine.ownerId).toBe("usr_alice");
     expect(metadataLine.workspaceId).toBe(ws.id);
 
-    // Should NOT be in global conversations dir
-    const globalConvFile = join(
+    // Nothing was written under the workspace dir.
+    const wsConvFile = join(
       workDir,
+      "workspaces",
+      ws.id,
       "conversations",
       `${result.conversationId}.jsonl`,
     );
-    expect(existsSync(globalConvFile)).toBe(false);
+    expect(existsSync(wsConvFile)).toBe(false);
 
     await runtime.shutdown();
   });
@@ -223,9 +225,8 @@ describe("Chat without workspace (workspaceId is now required)", () => {
     expect(result.conversationId).toMatch(/^conv_/);
     expect(result.workspaceId).toBe(TEST_WORKSPACE_ID);
 
-    // Conversation file should be in the workspace conversations dir
-    const wsConvDir = join(workDir, "workspaces", TEST_WORKSPACE_ID, "conversations");
-    const convFile = join(wsConvDir, `${result.conversationId}.jsonl`);
+    // Top-level conversation dir (Stage 1 Task 005).
+    const convFile = join(workDir, "conversations", `${result.conversationId}.jsonl`);
     expect(existsSync(convFile)).toBe(true);
 
     await runtime.shutdown();

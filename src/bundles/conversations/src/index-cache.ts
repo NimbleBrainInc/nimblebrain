@@ -26,6 +26,13 @@ export interface IndexEntry {
   lastModel: string | null;
   preview: string;
   filePath: string;
+  /**
+   * Single-owner principal. Stage 1 requires every conversation to
+   * carry an `ownerId`; legacy files written before the migration may
+   * lack one — the index keeps `null` for those rather than guessing,
+   * and the dispatcher treats `null` as inaccessible (no synthesis).
+   */
+  ownerId: string | null;
 }
 
 export interface ListOptions {
@@ -35,6 +42,15 @@ export interface ListOptions {
   sortBy?: "created" | "updated";
   dateFrom?: string; // ISO 8601
   dateTo?: string; // ISO 8601
+}
+
+/**
+ * Access context for ownership-gated reads. When supplied, list/search/
+ * stats filter to entries owned by `userId`; get/update/fork/export
+ * refuse mismatched owners with a "not found" — no existence leak.
+ */
+export interface AccessContext {
+  userId: string;
 }
 
 export interface ListResult {
@@ -103,8 +119,14 @@ export class ConversationIndex {
   }
 
   /** List conversations with pagination, sorting, date filtering, search. */
-  list(options?: ListOptions): ListResult {
+  list(options?: ListOptions, access?: AccessContext): ListResult {
     let items = [...this.entries.values()];
+
+    // Ownership filter — applied before other filters so totalCount
+    // reflects the caller's visible set, not the global one.
+    if (access) {
+      items = items.filter((e) => e.ownerId === access.userId);
+    }
 
     // Search filter: case-insensitive substring on title + preview
     if (options?.search) {
@@ -147,9 +169,17 @@ export class ConversationIndex {
     return { conversations: page, nextCursor, totalCount };
   }
 
-  /** Get a single entry by ID. */
-  get(id: string): IndexEntry | undefined {
-    return this.entries.get(id);
+  /**
+   * Get a single entry by ID. With `access` supplied, returns
+   * `undefined` for both "not found" AND "exists but not yours" — same
+   * shape, no existence leak. Without `access`, the caller is asserting
+   * trusted scope.
+   */
+  get(id: string, access?: AccessContext): IndexEntry | undefined {
+    const entry = this.entries.get(id);
+    if (!entry) return undefined;
+    if (access && entry.ownerId !== access.userId) return undefined;
+    return entry;
   }
 
   /** Total conversation count. */
@@ -176,6 +206,7 @@ export class ConversationIndex {
       lastModel: header.meta.lastModel,
       preview: header.preview,
       filePath,
+      ownerId: header.meta.ownerId ?? null,
     };
 
     this.entries.set(entry.id, entry);
@@ -207,6 +238,7 @@ export class ConversationIndex {
           lastModel: header.meta.lastModel,
           preview: header.preview,
           filePath,
+          ownerId: header.meta.ownerId ?? null,
         };
         this.entries.set(entry.id, entry);
         this.fileToId.set(filename, entry.id);

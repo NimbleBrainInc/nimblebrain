@@ -8,7 +8,7 @@
 
 import { rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import type { ConversationIndex } from "../index-cache.ts";
+import type { AccessContext, ConversationIndex } from "../index-cache.ts";
 import type { ConversationMeta } from "../jsonl-reader.ts";
 import { readConversation } from "../jsonl-reader.ts";
 
@@ -17,8 +17,12 @@ export interface ForkInput {
   atMessage?: number;
 }
 
-export async function handleFork(input: ForkInput, index: ConversationIndex): Promise<object> {
-  const entry = index.get(input.id);
+export async function handleFork(
+  input: ForkInput,
+  index: ConversationIndex,
+  access?: AccessContext,
+): Promise<object> {
+  const entry = index.get(input.id, access);
   if (!entry) {
     throw new Error(`Conversation not found: ${input.id}`);
   }
@@ -75,6 +79,11 @@ export async function handleFork(input: ForkInput, index: ConversationIndex): Pr
     totalOutputTokens,
     totalCostUsd,
     lastModel,
+    // The fork inherits the source's owner. Stage 1 requires ownerId
+    // on every conversation file — without this stamp the new file
+    // would be unloadable by `EventSourcedConversationStore.load`
+    // (which throws on missing ownerId post-purge).
+    ...(conversation.meta.ownerId ? { ownerId: conversation.meta.ownerId } : {}),
   };
 
   // Build JSONL content: metadata line + message lines.

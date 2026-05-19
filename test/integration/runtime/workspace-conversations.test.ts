@@ -1,3 +1,14 @@
+/**
+ * Conversation persistence tests.
+ *
+ * Post-Stage-1 (Task 005) every conversation lives at
+ * `{workDir}/conversations/{convId}.jsonl` — the workspace-scoped
+ * layout under `workspaces/<wsId>/conversations/` is gone.
+ * `workspaceId` is still stamped on the metadata line so each
+ * conversation knows which workspace it runs against for tool scoping,
+ * but it's not a path concern.
+ */
+
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -20,7 +31,15 @@ async function createWorkspace(runtime: Runtime, name: string): Promise<string> 
   return ws.id;
 }
 
-describe("workspace-scoped conversations", () => {
+function topLevelConvPath(workDir: string, convId: string): string {
+  return join(workDir, "conversations", `${convId}.jsonl`);
+}
+
+function workspaceConvPath(workDir: string, wsId: string, convId: string): string {
+  return join(workDir, "workspaces", wsId, "conversations", `${convId}.jsonl`);
+}
+
+describe("conversation persistence — top-level layout", () => {
   it("chat without workspaceId throws", async () => {
     const workDir = join(testDir, "global");
     mkdirSync(workDir, { recursive: true });
@@ -40,7 +59,7 @@ describe("workspace-scoped conversations", () => {
     }
   });
 
-  it("chat with explicit workspaceId creates conversation in workspace dir", async () => {
+  it("chat with explicit workspaceId creates conversation at top-level (not under workspaces/)", async () => {
     const workDir = join(testDir, "explicit-ws");
     mkdirSync(workDir, { recursive: true });
 
@@ -59,15 +78,19 @@ describe("workspace-scoped conversations", () => {
     expect(result.conversationId).toMatch(/^conv_/);
     expect(result.workspaceId).toBe(TEST_WORKSPACE_ID);
 
-    const wsConvDir = join(workDir, "workspaces", TEST_WORKSPACE_ID, "conversations");
-    const convFile = join(wsConvDir, `${result.conversationId}.jsonl`);
-    expect(existsSync(convFile)).toBe(true);
+    // Conversation file lives at the top-level dir.
+    expect(existsSync(topLevelConvPath(workDir, result.conversationId))).toBe(true);
+    // And NOT under workspaces/<wsId>/conversations/. Stage 1 Task 005
+    // deleted that path entirely.
+    expect(
+      existsSync(workspaceConvPath(workDir, TEST_WORKSPACE_ID, result.conversationId)),
+    ).toBe(false);
 
     await runtime.shutdown();
   });
 
-  it("chat with workspaceId creates conversation in workspace directory", async () => {
-    const workDir = join(testDir, "ws-scoped");
+  it("chat across multiple workspaces shares one top-level conversations directory", async () => {
+    const workDir = join(testDir, "multi-ws-one-dir");
     mkdirSync(workDir, { recursive: true });
 
     const runtime = await Runtime.start({
@@ -85,20 +108,14 @@ describe("workspace-scoped conversations", () => {
 
     expect(result.conversationId).toMatch(/^conv_/);
     expect(result.workspaceId).toBe(wsId);
-
-    // Conversation file should be in the workspace-scoped dir
-    const wsConvDir = join(workDir, "workspaces", wsId, "conversations");
-    const convFile = join(wsConvDir, `${result.conversationId}.jsonl`);
-    expect(existsSync(convFile)).toBe(true);
-
-    // Should NOT be in a different workspace dir
-    const otherConvFile = join(workDir, "workspaces", TEST_WORKSPACE_ID, "conversations", `${result.conversationId}.jsonl`);
-    expect(existsSync(otherConvFile)).toBe(false);
+    expect(existsSync(topLevelConvPath(workDir, result.conversationId))).toBe(true);
+    // No per-workspace conversation dir created for either ws.
+    expect(existsSync(workspaceConvPath(workDir, wsId, result.conversationId))).toBe(false);
 
     await runtime.shutdown();
   });
 
-  it("conversation metadata includes ownerId and workspaceId", async () => {
+  it("conversation metadata includes ownerId and workspaceId at the top-level file", async () => {
     const workDir = join(testDir, "ws-meta");
     mkdirSync(workDir, { recursive: true });
 
@@ -116,9 +133,10 @@ describe("workspace-scoped conversations", () => {
       identity: { id: "user_alice", email: "alice@example.com" },
     });
 
-    // Read the JSONL file and check the metadata line
-    const wsConvDir = join(workDir, "workspaces", wsId, "conversations");
-    const convFile = join(wsConvDir, `${result.conversationId}.jsonl`);
+    // Read the JSONL file and check the metadata line. workspaceId
+    // survives on the metadata (tool scoping) even though the file
+    // itself is at top-level (user-owned).
+    const convFile = topLevelConvPath(workDir, result.conversationId);
     const content = readFileSync(convFile, "utf-8");
     const metadataLine = JSON.parse(content.split("\n")[0]!);
 
@@ -146,9 +164,7 @@ describe("workspace-scoped conversations", () => {
       identity: { id: "user_bob", email: "bob@example.com" },
     });
 
-    // Read the JSONL file and find the user.message event
-    const wsConvDir = join(workDir, "workspaces", wsId, "conversations");
-    const convFile = join(wsConvDir, `${result.conversationId}.jsonl`);
+    const convFile = topLevelConvPath(workDir, result.conversationId);
     const content = readFileSync(convFile, "utf-8");
     const lines = content.split("\n").filter(Boolean);
     // Line 0 = metadata, lines 1+ = events (user.message, run.start, llm.response, run.done)
@@ -160,7 +176,7 @@ describe("workspace-scoped conversations", () => {
     await runtime.shutdown();
   });
 
-  it("resuming a conversation loads from correct workspace path", async () => {
+  it("resuming a conversation loads from the top-level path", async () => {
     const workDir = join(testDir, "ws-resume");
     mkdirSync(workDir, { recursive: true });
 
@@ -172,17 +188,17 @@ describe("workspace-scoped conversations", () => {
 
     const wsId = await createWorkspace(runtime, "Resume Test");
 
-    // First message creates the conversation in workspace dir
+    // First message creates the conversation in the top-level dir.
     const result1 = await runtime.chat({
       message: "first message",
       workspaceId: wsId,
       identity: { id: "user_carol", email: "carol@example.com" },
     });
 
-    // Wait briefly for fire-and-forget title generation to settle
+    // Wait briefly for fire-and-forget title generation to settle.
     await new Promise((resolve) => setTimeout(resolve, 100));
 
-    // Second message resumes the same conversation
+    // Second message resumes the same conversation.
     const result2 = await runtime.chat({
       message: "second message",
       conversationId: result1.conversationId,
@@ -190,21 +206,17 @@ describe("workspace-scoped conversations", () => {
       identity: { id: "user_carol", email: "carol@example.com" },
     });
 
-    // The conversation ID is the same, proving it was loaded (not recreated)
     expect(result2.conversationId).toBe(result1.conversationId);
 
-    // Verify the conversation file is in the workspace dir (not global)
-    const wsConvDir = join(workDir, "workspaces", wsId, "conversations");
-    const convFile = join(wsConvDir, `${result1.conversationId}.jsonl`);
+    const convFile = topLevelConvPath(workDir, result1.conversationId);
     expect(existsSync(convFile)).toBe(true);
 
-    // Wait for any pending writes (title generation + metadata cache)
+    // Wait for any pending writes (title generation + metadata cache).
     await new Promise((resolve) => setTimeout(resolve, 200));
 
     const content = readFileSync(convFile, "utf-8");
     const lines = content.split("\n").filter(Boolean);
-    // Event format: metadata (1) + user.message + run.start + llm.response + run.done per turn × 2
-    // At least 5 lines (metadata + events from 2 turns)
+    // Event format: metadata (1) + user.message + run.start + llm.response + run.done per turn × 2.
     expect(lines.length).toBeGreaterThanOrEqual(5);
 
     await runtime.shutdown();
@@ -222,14 +234,13 @@ describe("workspace-scoped conversations", () => {
 
     await provisionTestWorkspace(runtime);
 
-    // Chat with explicit workspaceId but no identity
+    // Chat with explicit workspaceId but no identity.
     const result = await runtime.chat({
       message: "no identity",
       workspaceId: TEST_WORKSPACE_ID,
     });
 
-    // Conversation is in the provisioned workspace dir
-    const convFile = join(workDir, "workspaces", TEST_WORKSPACE_ID, "conversations", `${result.conversationId}.jsonl`);
+    const convFile = topLevelConvPath(workDir, result.conversationId);
     const content = readFileSync(convFile, "utf-8");
     const lines = content.split("\n").filter(Boolean);
     const userEvent = lines.slice(1).map((l) => JSON.parse(l)).find((e: Record<string, unknown>) => e.type === "user.message");

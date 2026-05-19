@@ -6,7 +6,7 @@
  */
 
 import { readFile } from "node:fs/promises";
-import type { ConversationIndex } from "../index-cache.ts";
+import type { AccessContext, ConversationIndex } from "../index-cache.ts";
 
 export interface SearchInput {
   query: string;
@@ -39,7 +39,11 @@ function extractSnippet(text: string, matchStart: number, queryLength: number): 
   return snippet;
 }
 
-export async function handleSearch(input: SearchInput, index: ConversationIndex): Promise<object> {
+export async function handleSearch(
+  input: SearchInput,
+  index: ConversationIndex,
+  access?: AccessContext,
+): Promise<object> {
   const query = input.query?.trim();
   if (!query) {
     throw new Error("query is required and cannot be empty");
@@ -48,7 +52,7 @@ export async function handleSearch(input: SearchInput, index: ConversationIndex)
   const limit = input.limit ?? DEFAULT_LIMIT;
   const queryLower = query.toLowerCase();
 
-  const allConversations = index.list({ limit: index.size || 1 });
+  const allConversations = index.list({ limit: index.size || 1 }, access);
   const results: SearchResult[] = [];
 
   for (const entry of allConversations.conversations) {

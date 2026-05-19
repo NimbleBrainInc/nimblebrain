@@ -80,7 +80,7 @@ async function getLatestRunId(
       workspaceModelOverride: null,
     },
     async () => {
-      const store = runtime.getConversationStore();
+      const store = runtime.findConversationStore();
       if (!(store instanceof EventSourcedConversationStore)) return null;
       const events = await store.readEvents(convId);
       for (let i = events.length - 1; i >= 0; i--) {

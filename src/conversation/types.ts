@@ -108,12 +108,34 @@ export interface ConversationStore {
   append(conversation: Conversation, message: StoredMessage): Promise<void>;
   history(conversation: Conversation, limit?: number): Promise<StoredMessage[]>;
   list(options?: ListOptions, access?: ConversationAccessContext): Promise<ConversationListResult>;
-  /** Delete a conversation and its backing store. Returns true if found. */
-  delete(id: string): Promise<boolean>;
-  /** Update conversation metadata. Returns updated conversation or null if not found. */
-  update(id: string, patch: ConversationPatch): Promise<Conversation | null>;
-  /** Fork a conversation, optionally truncating at a specific message index. */
-  fork(id: string, atMessage?: number): Promise<Conversation | null>;
+  /**
+   * Delete a conversation and its backing store. Returns true if the
+   * conversation existed AND the caller is allowed to delete it. When
+   * `access` is supplied, a non-owner gets `false` (same shape as "not
+   * found") — the caller can't distinguish existence-but-not-yours from
+   * doesn't-exist, which is the right posture at the store layer.
+   */
+  delete(id: string, access?: ConversationAccessContext): Promise<boolean>;
+  /**
+   * Update conversation metadata. Returns the updated conversation, or
+   * `null` if the conversation doesn't exist OR — when `access` is
+   * supplied — the caller isn't the owner.
+   */
+  update(
+    id: string,
+    patch: ConversationPatch,
+    access?: ConversationAccessContext,
+  ): Promise<Conversation | null>;
+  /**
+   * Fork a conversation, optionally truncating at a specific message
+   * index. Returns the new conversation, or `null` if the source doesn't
+   * exist OR — when `access` is supplied — the caller isn't the owner.
+   */
+  fork(
+    id: string,
+    atMessage?: number,
+    access?: ConversationAccessContext,
+  ): Promise<Conversation | null>;
 }
 
 /**

@@ -329,7 +329,14 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
     return this.index.list(options, access);
   }
 
-  async delete(id: string): Promise<boolean> {
+  async delete(id: string, access?: ConversationAccessContext): Promise<boolean> {
+    // Access check happens before existence check so we don't leak
+    // existence-but-not-yours to non-owners — `false` for both shapes.
+    if (access) {
+      const conv = await this.load(id);
+      if (!conv) return false;
+      if (conv.ownerId !== access.userId) return false;
+    }
     const path = this.path(id);
     if (!existsSync(path)) return false;
     await unlink(path);
@@ -337,13 +344,27 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
     return true;
   }
 
-  update(id: string, patch: ConversationPatch): Promise<Conversation | null> {
+  async update(
+    id: string,
+    patch: ConversationPatch,
+    access?: ConversationAccessContext,
+  ): Promise<Conversation | null> {
+    if (access) {
+      const existing = await this.load(id);
+      if (!existing) return null;
+      if (existing.ownerId !== access.userId) return null;
+    }
     return this.trackWrite(this._update(id, patch));
   }
 
-  async fork(id: string, atMessage?: number): Promise<Conversation | null> {
+  async fork(
+    id: string,
+    atMessage?: number,
+    access?: ConversationAccessContext,
+  ): Promise<Conversation | null> {
     const source = await this.load(id);
     if (!source) return null;
+    if (access && source.ownerId !== access.userId) return null;
 
     const allMessages = await this.history(source);
     const messagesToCopy = atMessage !== undefined ? allMessages.slice(0, atMessage) : allMessages;
