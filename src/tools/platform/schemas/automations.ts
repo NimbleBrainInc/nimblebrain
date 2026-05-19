@@ -191,10 +191,12 @@ export type AutomationsCancelInput = Static<typeof AutomationsCancelInput>;
 // emits .d.ts files for the web package with `rootDir` pinned to
 // `schemas/`. Cross-tree imports break that boundary. Drift between
 // these types and the canonical `Automation` / `AutomationRun` is
-// guarded by `test/unit/tools/platform/automations-output-types.test.ts`,
-// which asserts structural compatibility at unit-test time. When you
-// change `Automation` or `AutomationRun`, run that test — failures point
-// at the field that drifted.
+// guarded at COMPILE time by
+// `src/bundles/automations/src/output-types-drift-guard.ts`, which
+// `bun run check` validates as part of the standard CI gate. When you
+// change `Automation` or `AutomationRun`, that file's type-level
+// constraints fail to compile against the corresponding mirror here —
+// the build error points at the field that drifted.
 //
 // When you change a handler return shape, update the matching output
 // type here in the same commit. The output type is the contract.
