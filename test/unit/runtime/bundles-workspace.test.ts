@@ -1,46 +1,85 @@
-import { describe, expect, it } from "bun:test";
+import { afterAll, describe, expect, it } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { deriveBundleDataDir, resolveBundleDataDir } from "../../../src/bundles/paths.ts";
+import { deriveBundleDataDir, resolveBundleDataDirForRef } from "../../../src/bundles/paths.ts";
 
-describe("resolveBundleDataDir", () => {
-  it("combines workspace path with derived bundle data dir", () => {
-    const result = resolveBundleDataDir("workspaces/ws_eng", "@nimblebraininc/crm");
-    expect(result).toBe(join("workspaces/ws_eng", "data", "nimblebraininc-crm"));
+const tmpRoots: string[] = [];
+afterAll(() => {
+  for (const dir of tmpRoots) {
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {
+      /* ignore */
+    }
+  }
+});
+
+function makeBundleDir(manifestName: string): string {
+  const dir = mkdtempSync(join(tmpdir(), "nb-bundle-fixture-"));
+  tmpRoots.push(dir);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "manifest.json"), JSON.stringify({ name: manifestName, version: "0.0.0" }));
+  return dir;
+}
+
+describe("resolveBundleDataDirForRef", () => {
+  const workDir = "/home/user/.nimblebrain";
+
+  it("named ref: slug from ref.name (which is the canonical manifest name)", () => {
+    const dir = resolveBundleDataDirForRef(workDir, "ws_eng", { name: "@nimblebraininc/crm" });
+    expect(dir).toBe(`${workDir}/workspaces/ws_eng/data/nimblebraininc-crm`);
+  });
+
+  it("path ref: slug from manifest.name on disk, NOT from the path string", () => {
+    const bundleDir = makeBundleDir("@nimblebraininc/synapse-crm");
+    const dir = resolveBundleDataDirForRef(workDir, "ws_mat", { path: bundleDir });
+    expect(dir).toBe(`${workDir}/workspaces/ws_mat/data/nimblebraininc-synapse-crm`);
+  });
+
+  it(
+    "regression: a path ref and a name ref for the SAME bundle produce the SAME slug " +
+      "(this is the contract that keeps the launch-write path aligned with the seedInstance / " +
+      "briefing-read path; before this it diverged because the launch path slugified the " +
+      "filesystem path while the reader slugified the manifest name)",
+    () => {
+      const bundleDir = makeBundleDir("@nimblebraininc/synapse-crm");
+      const fromPath = resolveBundleDataDirForRef(workDir, "ws_mat", { path: bundleDir });
+      const fromName = resolveBundleDataDirForRef(workDir, "ws_mat", {
+        name: "@nimblebraininc/synapse-crm",
+      });
+      expect(fromPath).toBe(fromName);
+    },
+  );
+
+  it("url ref: slug from persisted ref.serverName (the install-time canonical slug)", () => {
+    const dir = resolveBundleDataDirForRef(workDir, "ws_eng", {
+      url: "https://mcp.example.com/sse",
+      serverName: "example-mcp",
+    });
+    expect(dir).toBe(`${workDir}/workspaces/ws_eng/data/example-mcp`);
+  });
+
+  it("url ref without serverName: falls back to deriving the slug from the URL", () => {
+    const dir = resolveBundleDataDirForRef(workDir, "ws_eng", { url: "https://mcp.example.com/sse" });
+    expect(dir.startsWith(`${workDir}/workspaces/ws_eng/data/`)).toBe(true);
   });
 
   it("two workspaces with the same bundle get separate directories", () => {
-    const ws1 = resolveBundleDataDir("/home/user/.nimblebrain/workspaces/ws_eng", "@nimblebraininc/crm");
-    const ws2 = resolveBundleDataDir("/home/user/.nimblebrain/workspaces/ws_sales", "@nimblebraininc/crm");
+    const ws1 = resolveBundleDataDirForRef(workDir, "ws_eng", { name: "@nimblebraininc/crm" });
+    const ws2 = resolveBundleDataDirForRef(workDir, "ws_sales", { name: "@nimblebraininc/crm" });
     expect(ws1).not.toBe(ws2);
-    expect(ws1).toBe("/home/user/.nimblebrain/workspaces/ws_eng/data/nimblebraininc-crm");
-    expect(ws2).toBe("/home/user/.nimblebrain/workspaces/ws_sales/data/nimblebraininc-crm");
   });
 
-  it("handles unscoped bundle names", () => {
-    const result = resolveBundleDataDir("/workspaces/default", "simple-bundle");
-    expect(result).toBe("/workspaces/default/data/simple-bundle");
-  });
-
-  it("handles absolute workspace paths", () => {
-    const result = resolveBundleDataDir("/home/user/.nimblebrain/workspaces/ws_abc", "@acme/tasks");
-    expect(result).toBe("/home/user/.nimblebrain/workspaces/ws_abc/data/acme-tasks");
-  });
-
-  it("keeps absolute path bundle refs inside one data directory", () => {
-    const result = resolveBundleDataDir(
-      "/home/user/.nimblebrain/workspaces/ws_abc",
-      "/Users/dev/Code/synapse-apps/synapse-crm",
-    );
-    expect(result).toBe(
-      "/home/user/.nimblebrain/workspaces/ws_abc/data/Users-dev-Code-synapse-apps-synapse-crm",
-    );
-  });
-
-  it("default workspace resolves correctly for backward compat", () => {
-    // Default workspace path is simply the workDir itself
-    const workDir = "/home/user/.nimblebrain";
-    const result = resolveBundleDataDir(workDir, "@nimblebraininc/crm");
-    expect(result).toBe(join(workDir, "data", "nimblebraininc-crm"));
+  it("path ref with a broken manifest: falls back to path-derived slug + warn (bundle will fail to start anyway)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "nb-bundle-fixture-broken-"));
+    tmpRoots.push(dir);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "manifest.json"), "{ not valid json");
+    const out = resolveBundleDataDirForRef(workDir, "ws_eng", { path: dir });
+    // Fallback slug is path-derived — the exact form doesn't matter for callers, only that
+    // it's a string (not a throw) so inventory build proceeds.
+    expect(out.startsWith(`${workDir}/workspaces/ws_eng/data/`)).toBe(true);
   });
 });
 

@@ -24,6 +24,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
+import { resolveBundleDataDirForRef } from "../../src/bundles/paths.ts";
 import { startBundleSource } from "../../src/bundles/startup.ts";
 import { saveWorkspaceCredential } from "../../src/config/workspace-credentials.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
@@ -411,6 +412,8 @@ describe("startBundleSource — local-path credential resolution", () => {
           { path: bundleDir },
           registry,
           new NoopEventSink(),
+          undefined,
+          { dataDir: resolveBundleDataDirForRef(rootDir, "ws_test", { path: bundleDir }) },
         );
         expect(result.sourceName).toBe(LOCAL_BUNDLE_SLUG);
 
@@ -448,6 +451,8 @@ describe("startBundleSource — local-path credential resolution", () => {
           { path: bundleDir },
           registry,
           new NoopEventSink(),
+          undefined,
+          { dataDir: resolveBundleDataDirForRef(rootDir, "ws_test", { path: bundleDir }) },
         );
 
         const callResult = await registry.execute({
@@ -485,6 +490,8 @@ describe("startBundleSource — local-path credential resolution", () => {
           { path: bundleDir },
           registry,
           new NoopEventSink(),
+          undefined,
+          { dataDir: resolveBundleDataDirForRef(rootDir, "ws_test", { path: bundleDir }) },
         );
 
         const callResult = await registry.execute({
@@ -575,6 +582,10 @@ main();
           { path: misconfiguredDir },
           registry,
           new NoopEventSink(),
+          undefined,
+          {
+            dataDir: resolveBundleDataDirForRef(rootDir, "ws_test", { path: misconfiguredDir }),
+          },
         );
 
         const callResult = await registry.execute({

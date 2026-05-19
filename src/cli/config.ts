@@ -182,8 +182,18 @@ export function loadConfig(flags: CliFlags = {}): RuntimeConfig {
     // Pass config path for bundle install/uninstall persistence
     configPath,
     configOverridePath,
-    workDir:
-      process.env.NB_WORK_DIR ?? (fileConfig.workDir as string | undefined) ?? flags.defaultWorkDir,
+    // Absolutize at load so the value can be passed across process boundaries
+    // (e.g. as `MPAK_WORKSPACE` to bundle subprocesses with a different cwd)
+    // without the two ends resolving against different bases. The undefined
+    // case is preserved — `resolveWorkDir(config)` in runtime.ts falls back to
+    // `DEFAULT_WORK_DIR`, which is already absolute.
+    workDir: ((): string | undefined => {
+      const raw =
+        process.env.NB_WORK_DIR ??
+        (fileConfig.workDir as string | undefined) ??
+        flags.defaultWorkDir;
+      return raw === undefined ? undefined : resolve(raw);
+    })(),
     telemetry: fileConfig.telemetry as RuntimeConfig["telemetry"],
   };
 

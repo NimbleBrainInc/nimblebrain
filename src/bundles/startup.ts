@@ -641,12 +641,22 @@ function buildLocalSource(
     spawnEnv.NB_HOST_URL = internalEnv.NB_HOST_URL;
   }
 
-  // Per-bundle data isolation — each bundle gets its own directory under data/
-  const nbWorkDir = process.env.NB_WORK_DIR ?? join(homedir(), ".nimblebrain");
-  const bundleDataDir =
-    dataDirOverride ?? join(nbWorkDir, "data", deriveBundleDataDir(manifest.name));
-  spawnEnv.MPAK_WORKSPACE = bundleDataDir;
-  spawnEnv.UPJACK_ROOT = bundleDataDir;
+  // Per-bundle data isolation. Callers (lifecycle install*, workspace-ops,
+  // buildProcessInventory) always pass `dataDir` via
+  // `resolveBundleDataDirForRef`, which keys the slug on `manifest.name` and
+  // anchors on the workspace prefix — the single source of truth that keeps
+  // the subprocess's write location aligned with what the briefing collector
+  // and seedInstance read from. A missing override here means a new caller
+  // skipped the helper; fail loudly rather than silently splitting onto a
+  // workspace-agnostic fallback.
+  if (!dataDirOverride) {
+    throw new Error(
+      `[bundles] buildLocalSource: dataDir override required for bundle ${manifest.name} ` +
+        `(missing caller — route through resolveBundleDataDirForRef)`,
+    );
+  }
+  spawnEnv.MPAK_WORKSPACE = dataDirOverride;
+  spawnEnv.UPJACK_ROOT = dataDirOverride;
 
   Object.assign(
     spawnEnv,

@@ -8,7 +8,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ToolRegistry } from "../tools/registry.ts";
 import { WorkspaceContext } from "../workspace/context.ts";
-import { bundleNameFromRef, deriveBundleDataDir, serverNameFromRef } from "./paths.ts";
+import { resolveBundleDataDirForRef, serverNameFromRef } from "./paths.ts";
 import { startBundleSource } from "./startup.ts";
 import type { BundleRef } from "./types.ts";
 
@@ -50,8 +50,9 @@ export async function installBundleInWorkspace(
   const workDir = opts?.workDir ?? process.env.NB_WORK_DIR ?? join(homedir(), ".nimblebrain");
   const wsContext = new WorkspaceContext({ wsId, workDir });
   const serverName = serverNameFromRef(bundleRef);
-  const bundleName = bundleNameFromRef(bundleRef);
-  const dataDir = wsContext.getDataPath("data", deriveBundleDataDir(bundleName));
+  // Slug source is `manifest.name`, resolved via the canonical helper so the
+  // launch-path data dir agrees with the seedInstance / briefing reader path.
+  const dataDir = resolveBundleDataDirForRef(workDir, wsId, bundleRef, configDir);
 
   // Check for existing registration
   if (registry.hasSource(serverName)) {

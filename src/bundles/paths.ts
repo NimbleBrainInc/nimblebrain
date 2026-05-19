@@ -1,4 +1,8 @@
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { log } from "../cli/log.ts";
+import { WorkspaceContext } from "../workspace/context.ts";
+import { resolveLocalBundle } from "./resolve.ts";
 import type { BundleRef } from "./types.ts";
 
 /** Prefixes reserved for system tools — bundles must not use these as source names. */
@@ -74,17 +78,6 @@ export function serverNameFromRef(ref: BundleRef): string {
 }
 
 /**
- * Derive the bundle-name string from a `BundleRef` (for data-dir
- * resolution). Returns the npm-style scoped name for `name` refs, the
- * filesystem path for `path` refs, the URL for `url` refs.
- */
-export function bundleNameFromRef(ref: BundleRef): string {
-  if ("name" in ref) return ref.name;
-  if ("path" in ref) return ref.path;
-  return ref.url;
-}
-
-/**
  * Derive a safe directory name for per-bundle data isolation.
  * Uses the full scoped name to avoid collisions (e.g., @foo/tasks vs @bar/tasks).
  * Matches the mpak cache convention: @scope/name → scope-name.
@@ -106,11 +99,69 @@ export function deriveBundleDataDir(name: string): string {
 }
 
 /**
- * Resolve the absolute data directory for a bundle within a workspace.
- * Combines the workspace path with the derived bundle directory name.
- * E.g., resolveBundleDataDir("workspaces/ws_eng", "@nimblebraininc/crm")
- *   → "workspaces/ws_eng/data/nimblebraininc-crm"
+ * Canonical entry point for the bundle-data-dir contract:
+ *
+ *   <workDir>/workspaces/<wsId>/data/<slug-of-manifest.name>/
+ *
+ * The slug source is ALWAYS the bundle's manifest name — its stable
+ * identity, not the way you happen to be locating its source code
+ * (filesystem path, npm-scoped registry name, or URL). Every call site
+ * that needs to know where a bundle's data lives must route through
+ * here, so the launch path (which sets `MPAK_WORKSPACE` for the
+ * subprocess) and the reader path (briefing collector, lifecycle
+ * seeding, etc.) cannot drift onto different slugs for the same bundle.
+ *
+ * Resolution per ref shape:
+ *   - `name:`  → `ref.name` is the canonical manifest name by contract.
+ *                No disk read needed.
+ *   - `path:`  → reads `<path>/manifest.json` and uses `manifest.name`.
+ *                Falls back to a path-derived slug + warn only when the
+ *                manifest can't be read (bundle source missing/broken).
+ *   - `url:`   → uses persisted `ref.serverName` (the slugified
+ *                canonical name set at install time from
+ *                `ServerDetail.name`). Remote bundles have no on-disk
+ *                manifest; this is the stable identity we hold.
+ *
+ * Synchronous on purpose: path-bundle manifests are local files and
+ * boot already does a lot of sync fs work. Making this async would
+ * push `Promise<>` through the inventory build for no real win.
  */
-export function resolveBundleDataDir(workspacePath: string, bundleName: string): string {
-  return join(workspacePath, "data", deriveBundleDataDir(bundleName));
+export function resolveBundleDataDirForRef(
+  workDir: string,
+  wsId: string,
+  ref: BundleRef,
+  configDir?: string,
+): string {
+  const slugSource = readBundleSlugSource(ref, configDir);
+  return new WorkspaceContext({ wsId, workDir }).getDataPath(
+    "data",
+    deriveBundleDataDir(slugSource),
+  );
+}
+
+function readBundleSlugSource(ref: BundleRef, configDir: string | undefined): string {
+  if ("name" in ref) return ref.name;
+  if ("path" in ref) {
+    const bundleDir = resolveLocalBundle(ref.path, configDir);
+    if (bundleDir) {
+      try {
+        const raw = JSON.parse(readFileSync(join(bundleDir, "manifest.json"), "utf-8")) as {
+          name?: unknown;
+        };
+        if (typeof raw.name === "string" && raw.name.length > 0) return raw.name;
+      } catch (err) {
+        log.warn(
+          `[bundles] Failed to read manifest from ${ref.path}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
+    log.warn(
+      `[bundles] Falling back to path-derived dataDir slug for ${ref.path} ` +
+        `(manifest unreadable — bundle subprocess will likely fail to start)`,
+    );
+    return ref.path;
+  }
+  return ref.serverName ?? ref.url;
 }

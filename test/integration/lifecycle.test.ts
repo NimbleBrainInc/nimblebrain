@@ -632,21 +632,19 @@ describe("BundleLifecycleManager — instance tracking", () => {
 		expect(instance.entityDataRoot).toBeUndefined();
 	});
 
-	it("seedInstance rebuilds entityDataRoot from manifestName for path bundles", () => {
-		// Repro of the path-bundle bug fixed by 6e31dcf. `deriveBundleDataDir`
-		// only replaces the first `/`, so a `path:` install of
-		// `/Users/foo/Code/hq/synapse-apps/synapse-crm` produces a
-		// multi-segment broken dataDir like
-		// `<wsData>/-Users/foo/Code/hq/synapse-apps/synapse-crm`. The bundle
-		// process actually writes data using its manifest name, so
-		// seedInstance must anchor on `/workspaces/<ws>/data/` and rebuild
-		// entityDataRoot from the manifest name. Without this fix, the
-		// briefing collector reads from the junk path and reports "no data."
+	it("seedInstance composes entityDataRoot by trusting the caller's dataDir (no re-derivation)", () => {
+		// The previous incarnation of this test locked in a workaround:
+		// seedInstance used to receive a wrong `dataDir` (a path-bundle slug
+		// produced by `bundleNameFromRef(ref.path)`) and silently rebuild
+		// `entityDataRoot` from `manifestName` to compensate. That workaround
+		// is gone — every caller now routes through `resolveBundleDataDirForRef`,
+		// which keys the slug on `manifest.name` directly, so the input dataDir
+		// is already correct. The contract here is just: append the upjack
+		// namespace and `data/` to whatever the caller passed. No magic.
 		const sink = makeEventCollector();
 		const lifecycle = new BundleLifecycleManager(sink, undefined);
 
-		const brokenDataDir =
-			"/data/workspaces/ws_eng/data/-Users/foo/Code/hq/synapse-apps/synapse-crm";
+		const correctDataDir = "/data/workspaces/ws_eng/data/nimblebraininc-synapse-crm";
 
 		lifecycle.seedInstance(
 			"synapse-crm",
@@ -665,16 +663,13 @@ describe("BundleLifecycleManager — instance tracking", () => {
 				upjackNamespace: "apps/crm",
 			},
 			"ws_eng",
-			brokenDataDir,
+			correctDataDir,
 		);
 
 		const instance = lifecycle.getInstance("synapse-crm", "ws_eng")!;
 		expect(instance.entityDataRoot).toBe(
 			"/data/workspaces/ws_eng/data/nimblebraininc-synapse-crm/apps/crm/data",
 		);
-		// And critically NOT the broken path the install dataDir would
-		// have produced.
-		expect(instance.entityDataRoot).not.toContain("/-Users/");
 	});
 });
 
