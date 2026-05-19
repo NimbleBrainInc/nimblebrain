@@ -97,6 +97,8 @@ interface BuildOptions {
   driver?: StreamDriver;
   /** Fake `client.experimental.tasks.getTask` return value. */
   getTaskImpl?: (taskId: string) => Promise<Task>;
+  /** Fake `client.experimental.tasks.getTaskResult` return value. */
+  getTaskResultImpl?: (taskId: string) => Promise<CallToolResult>;
   onTryRestart?: () => Promise<boolean>;
 }
 
@@ -113,6 +115,9 @@ function buildTaskAugmentedSource(sink: EventSink, opts: BuildOptions): McpSourc
         callToolStream: (_req: unknown, _o: unknown, _r: unknown) =>
           opts.driver ? opts.driver.stream : (opts.stream?.() ?? emptyStream()),
         getTask: opts.getTaskImpl ?? (() => Promise.reject(new Error("getTask not mocked"))),
+        getTaskResult:
+          opts.getTaskResultImpl ??
+          (() => Promise.reject(new Error("getTaskResult not mocked"))),
       },
     },
     // McpSource.stop() awaits client.close(); without a no-op the stop()
@@ -217,6 +222,92 @@ describe("McpSource agent-loop (callToolAsTask wrapper)", () => {
     expect((result.content[0] as { text: string }).text).toMatch(/research failed/);
     expect(restartCalled).toBe(false);
     expect(runErrorEvents(events).length).toBe(0);
+  });
+
+  it("recovers tasks/result content when SDK reports generic `Task <id> failed`", async () => {
+    // Regression: the upstream SDK's task stream emits a generic
+    // `Task <id> failed` McpError whenever the server-side task status
+    // is `failed`, discarding the server's `tasks/result` payload. A
+    // bundle that misclassified its own terminal status (post-result
+    // exception flipping COMPLETED→FAILED while a usable payload was
+    // already stored — the synapse-research production failure mode)
+    // would otherwise surface to the agent as a useless string with the
+    // real output gone. The engine now tries one extra fetch.
+    let getResultCalledFor: string | null = null;
+    const { sink } = recordingSink();
+    const source = buildTaskAugmentedSource(sink, {
+      stream: async function* () {
+        yield {
+          type: "taskCreated",
+          task: makeTask({ taskId: "t-recover", status: "working" }),
+        };
+        yield { type: "error", error: { message: "Task t-recover failed" } };
+      },
+      getTaskResultImpl: async (taskId) => {
+        getResultCalledFor = taskId;
+        return {
+          content: [{ type: "text", text: "the real report content" }],
+          isError: false,
+        };
+      },
+    });
+
+    const result = await source.execute("do_work", {});
+
+    expect(getResultCalledFor).toBe("t-recover");
+    expect(result.isError).toBe(false);
+    expect((result.content[0] as { text: string }).text).toBe("the real report content");
+  });
+
+  it("falls back to generic error when tasks/result fetch also fails", async () => {
+    // The recovery is best-effort: when the server genuinely has no
+    // result for the failed task, we surface the original generic
+    // error rather than masking the real failure.
+    const { sink } = recordingSink();
+    const source = buildTaskAugmentedSource(sink, {
+      stream: async function* () {
+        yield {
+          type: "taskCreated",
+          task: makeTask({ taskId: "t-norecover", status: "working" }),
+        };
+        yield { type: "error", error: { message: "Task t-norecover failed" } };
+      },
+      getTaskResultImpl: async () => {
+        throw new Error("not available");
+      },
+    });
+
+    const result = await source.execute("do_work", {});
+
+    expect(result.isError).toBe(true);
+    expect((result.content[0] as { text: string }).text).toBe("Task t-norecover failed");
+  });
+
+  it("does NOT attempt recovery when error message is bundle-specific (not generic SDK shape)", async () => {
+    // The recovery path keys off the SDK's exact generic format
+    // `Task <id> failed` — anything else carries real information from
+    // the bundle and should be surfaced verbatim, not overridden.
+    let getResultCalled = false;
+    const { sink } = recordingSink();
+    const source = buildTaskAugmentedSource(sink, {
+      stream: async function* () {
+        yield {
+          type: "taskCreated",
+          task: makeTask({ taskId: "t-specific", status: "working" }),
+        };
+        yield { type: "error", error: { message: "upstream API returned 503" } };
+      },
+      getTaskResultImpl: async () => {
+        getResultCalled = true;
+        return { content: [{ type: "text", text: "should not appear" }], isError: false };
+      },
+    });
+
+    const result = await source.execute("do_work", {});
+
+    expect(getResultCalled).toBe(false);
+    expect(result.isError).toBe(true);
+    expect((result.content[0] as { text: string }).text).toBe("upstream API returned 503");
   });
 
   it("abort mid-stream emits terminal tool.progress(status=cancelled) and does NOT restart", async () => {

@@ -271,6 +271,13 @@ export interface ToolContext {
   currentUserId?: string;
   /** Current workspace ID (for setting automation workspace scope at creation time). */
   currentWorkspaceId?: string;
+  /**
+   * Override the `handleRun` sync-wait deadline (ms). Production callers
+   * leave this unset and get the default `HANDLE_RUN_SYNC_WAIT_MS`; tests
+   * use it to exercise the "dispatched, still running" envelope without
+   * having to wait 30s. Has no effect outside `handleRun`.
+   */
+  handleRunSyncWaitMs?: number;
 }
 
 /**
@@ -520,6 +527,17 @@ export function handleRuns(args: Record<string, unknown>, ctx: ToolContext): obj
   return { runs, total: runs.length };
 }
 
+/**
+ * Maximum time `handleRun` will hold the MCP request awaiting completion
+ * before returning a "dispatched, still running" envelope. Sized well
+ * below the SDK's 60s default request timeout — without this cap, any
+ * automation that takes longer than ~60s collides with the timeout and
+ * the agent sees `-32001 Request timed out` while the run is healthy
+ * and proceeding in the background. The scheduler continues to track
+ * the run; callers can poll `automations__runs` for the final record.
+ */
+const HANDLE_RUN_SYNC_WAIT_MS = 30_000;
+
 export async function handleRun(args: Record<string, unknown>, ctx: ToolContext): Promise<object> {
   const name = args.name as string;
   if (!name) throw new Error("Missing required field: name");
@@ -535,8 +553,35 @@ export async function handleRun(args: Record<string, unknown>, ctx: ToolContext)
 
   log(`handleRun: found "${name}" (id=${automation.id}), dispatching via runNow...`);
 
-  const run = await ctx.runNow(automation.id);
-  if (!run) {
+  // Race the run against a sync-wait deadline. Quick automations finish
+  // inside the window and return their full run record; longer ones get
+  // a "dispatched" envelope so the agent can poll instead of seeing a
+  // false -32001 failure. The scheduler keeps the run going either way.
+  const runPromise = ctx.runNow(automation.id);
+  // Attach a no-op catch so a still-in-flight promise can't surface as
+  // an unhandled rejection after this handler returns — dispatchRun
+  // already captures all errors into the run log; there's nothing
+  // useful to do with a rejection here.
+  runPromise.catch(() => {});
+
+  const waitMs = ctx.handleRunSyncWaitMs ?? HANDLE_RUN_SYNC_WAIT_MS;
+  const PENDING = Symbol("pending");
+  const timeoutPromise = new Promise<typeof PENDING>((resolve) =>
+    setTimeout(() => resolve(PENDING), waitMs),
+  );
+  const outcome = await Promise.race([runPromise, timeoutPromise]);
+
+  if (outcome === PENDING) {
+    return {
+      status: "dispatched",
+      automationId: automation.id,
+      message:
+        `Started "${name}" — still running after ${waitMs / 1000}s. ` +
+        `Use automations__runs to check completion.`,
+    };
+  }
+
+  if (!outcome) {
     // Debug: dump scheduler state to understand why runNow returned null
     const schedulerDefs = ctx.definitions();
     const ids = Array.from(schedulerDefs.keys());
@@ -548,7 +593,7 @@ export async function handleRun(args: Record<string, unknown>, ctx: ToolContext)
     );
   }
 
-  return { run };
+  return { run: outcome };
 }
 
 export function handleCancel(args: Record<string, unknown>, ctx: ToolContext): object {

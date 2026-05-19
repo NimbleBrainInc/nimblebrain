@@ -605,6 +605,37 @@ describe("handleRun", () => {
 			"Automation not found",
 		);
 	});
+
+	test("returns 'dispatched' envelope when run outlasts the sync-wait window", async () => {
+		// Regression for the production failure where `automations__run` on a
+		// multi-minute automation collided with the SDK's 60s MCP request
+		// timeout and surfaced to the agent as a false -32001 failure. With
+		// the bounded sync-wait, long-running calls return a dispatched
+		// envelope instead of hanging the request.
+		const slowCtx = makeCtx({
+			handleRunSyncWaitMs: 20,
+			runNow: () =>
+				new Promise<AutomationRun | null>((resolve) => {
+					setTimeout(() => resolve(null), 5_000);
+				}),
+		});
+		handleCreate(
+			createArgs("Slow", "Takes forever", { type: "interval", intervalMs: 60_000 }),
+			slowCtx,
+		);
+
+		const result = (await handleRun({ name: "Slow" }, slowCtx)) as {
+			status?: string;
+			automationId?: string;
+			message?: string;
+			run?: AutomationRun;
+		};
+
+		expect(result.status).toBe("dispatched");
+		expect(result.automationId).toBe("slow");
+		expect(result.run).toBeUndefined();
+		expect(result.message).toContain("still running");
+	});
 });
 
 // ---------------------------------------------------------------------------

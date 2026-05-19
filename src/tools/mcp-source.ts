@@ -4,6 +4,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { CallToolResult, CreateTaskResult, Task } from "@modelcontextprotocol/sdk/types.js";
+import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
 import type { PlacementDeclaration, RemoteTransportConfig } from "../bundles/types.ts";
 import { log } from "../cli/log.ts";
 import { textContent } from "../engine/content-helpers.ts";
@@ -1373,7 +1374,36 @@ export class McpSource implements ToolSource {
               return;
             }
             const isAborted = handle.abortController.signal.aborted;
-            const callToolResult: CallToolResult = {
+
+            // Defense in depth: the upstream MCP SDK's task stream emits
+            // `type: 'error'` with this exact `"Task <id> failed"` shape
+            // whenever the server-side task status is `failed` — AND
+            // discards the server's `tasks/result` payload along the
+            // way. A bundle that misclassified its own terminal status
+            // (e.g., a post-result exception flipping COMPLETED→FAILED
+            // while a usable payload already existed in the store)
+            // would surface to the agent as a useless string with the
+            // real output gone. Try one extra fetch before settling for
+            // the generic error.
+            let recoveredResult: CallToolResult | null = null;
+            if (!isAborted && this.client && /^Task .+ failed$/.test(errMessage)) {
+              try {
+                const fetched = await this.client.experimental.tasks.getTaskResult(
+                  handle.taskId,
+                  CallToolResultSchema,
+                );
+                recoveredResult = fetched as CallToolResult;
+                log.debug(
+                  "mcp",
+                  `recovered tasks/result for failed task ${handle.taskId} on ${this.name}`,
+                );
+              } catch {
+                // No result genuinely available — fall through to the
+                // generic-error path below.
+              }
+            }
+
+            const callToolResult: CallToolResult = recoveredResult ?? {
               content: [{ type: "text", text: errMessage }],
               isError: true,
             };

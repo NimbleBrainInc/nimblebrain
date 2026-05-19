@@ -821,6 +821,39 @@ describe("Scheduler — runNow", () => {
 		resolve(makeSuccessRun(auto.id));
 		scheduler.stop();
 	});
+
+	it("failure record carries real dispatch time, not the catch-clause instant", async () => {
+		// Regression for the production diagnostic gap: when the executor
+		// hung for 300s, the synthesized failure record had
+		// startedAt == completedAt to the millisecond — operators couldn't
+		// tell a 5-minute hang from a 5-millisecond setup crash.
+		const auto = makeAutomation({
+			nextRunAt: new Date(Date.now() - 1000).toISOString(),
+		});
+		const defs = new Map<string, Automation>();
+		defs.set(auto.id, auto);
+		saveDefinitions(defs, tmpDir);
+
+		const SLEEP_MS = 50;
+		const executor: Executor = mock(
+			async (_auto: Automation, _signal: AbortSignal): Promise<AutomationRun> => {
+				await new Promise((r) => setTimeout(r, SLEEP_MS));
+				throw new Error("Automation slow timed out after 1s");
+			},
+		) as Executor;
+		const scheduler = new Scheduler(executor, { storeDir: tmpDir });
+		scheduler.start();
+
+		const run = await scheduler.runNow(auto.id);
+
+		expect(run).not.toBeNull();
+		expect(run!.status).toBe("timeout");
+		const elapsedMs =
+			new Date(run!.completedAt!).getTime() - new Date(run!.startedAt).getTime();
+		expect(elapsedMs).toBeGreaterThanOrEqual(SLEEP_MS - 5); // tolerance for clock granularity
+
+		scheduler.stop();
+	});
 });
 
 // ---------------------------------------------------------------------------
