@@ -11,6 +11,7 @@ import type {
   PlacementEntry,
   ToolCallResult,
 } from "../types";
+import { getConversationSubscriberId } from "./conversation-sse";
 import { createFetchWithRefresh } from "./fetch-with-refresh";
 
 // ---------------------------------------------------------------------------
@@ -380,10 +381,18 @@ async function consumeSSEStream(res: Response, onEvent: ChatStreamCallback): Pro
 
 /** Streaming chat via SSE. Calls onEvent for each event, resolves when done. */
 export async function streamChat(req: ChatRequest, onEvent: ChatStreamCallback): Promise<void> {
+  // If a conv-events SSE subscription is open for this conversation,
+  // pass its server-issued subscriber id so the broadcast suppresses
+  // self-echo. Without this, the sender's own tab double-processes
+  // every event (once via the streamed HTTP response below, once via
+  // its conv-events subscription).
+  const originSubId = req.conversationId
+    ? getConversationSubscriberId(req.conversationId)
+    : undefined;
   const res = await fetchWithRefresh(`${API_BASE}/v1/chat/stream`, {
     method: "POST",
     credentials: "include",
-    headers: headers(),
+    headers: headers(originSubId ? { "X-Origin-Subscriber-Id": originSubId } : undefined),
     body: JSON.stringify(req),
   });
 
@@ -428,6 +437,12 @@ export async function streamChatMultipart(
   }
   if (activeWorkspaceId) {
     h["X-Workspace-Id"] = activeWorkspaceId;
+  }
+  // Suppress self-echo on the conv-events subscription — see
+  // `streamChat` above for why this matters.
+  if (req.conversationId) {
+    const originSubId = getConversationSubscriberId(req.conversationId);
+    if (originSubId) h["X-Origin-Subscriber-Id"] = originSubId;
   }
 
   const res = await fetchWithRefresh(`${API_BASE}/v1/chat/stream`, {

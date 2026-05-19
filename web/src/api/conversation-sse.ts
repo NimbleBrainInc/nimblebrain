@@ -11,6 +11,35 @@
 
 import { refreshSession } from "./client";
 
+/**
+ * Per-conversation `subscriberId` registry.
+ *
+ * The server-issued subscriber id arrives in the first SSE frame
+ * (`event: subscribed`) once a conversation event stream opens. We
+ * stash it here so the chat-stream POST path can pick it up via
+ * `getConversationSubscriberId(convId)` and forward it as
+ * `X-Origin-Subscriber-Id` — that makes the broadcast skip this
+ * tab's own conv-events subscription and prevents the sender from
+ * double-handling every event (once via the chat-stream HTTP
+ * response, once via the broadcast hitting its own subscription).
+ *
+ * Cleared on stream cancel / close to avoid stale ids leaking into
+ * a future stream attempt for the same conv.
+ */
+const conversationSubscriberIds = new Map<string, string>();
+
+export function getConversationSubscriberId(conversationId: string): string | undefined {
+  return conversationSubscriberIds.get(conversationId);
+}
+
+function setConversationSubscriberId(conversationId: string, subscriberId: string): void {
+  conversationSubscriberIds.set(conversationId, subscriberId);
+}
+
+function clearConversationSubscriberId(conversationId: string): void {
+  conversationSubscriberIds.delete(conversationId);
+}
+
 /** Options for connecting to a conversation event stream. */
 export interface ConversationSseOptions {
   conversationId: string;
@@ -125,7 +154,18 @@ export function connectConversationEvents(
           } else if (line.startsWith("data: ") && currentEvent) {
             try {
               const data = JSON.parse(line.slice(6));
-              onEvent(currentEvent, data);
+              if (currentEvent === "subscribed") {
+                // Server-issued subscriber id — record it so the
+                // chat-stream POST can suppress self-echo. We
+                // deliberately don't surface this event to onEvent;
+                // it's plumbing, not a chat event.
+                const subscriberId = (data as { subscriberId?: unknown })?.subscriberId;
+                if (typeof subscriberId === "string") {
+                  setConversationSubscriberId(conversationId, subscriberId);
+                }
+              } else {
+                onEvent(currentEvent, data);
+              }
             } catch {
               // Skip malformed data lines
             }
@@ -185,6 +225,11 @@ export function connectConversationEvents(
         abortController.abort();
         abortController = null;
       }
+      // Drop the cached subscriber id — the next subscription gets a
+      // fresh server-issued id, so a stale entry would mislead the
+      // chat-stream POST into excluding a subscriber that no longer
+      // exists.
+      clearConversationSubscriberId(conversationId);
     },
   };
 }
