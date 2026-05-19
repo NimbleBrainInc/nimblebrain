@@ -72,7 +72,6 @@ export function startServer(options: ServerOptions): ServerHandle {
   // Per-conversation event manager — streams chat events to conversation participants
   const conversationEventManager = new ConversationEventManager();
   conversationEventManager.start();
-  runtime.setConversationEventManager(conversationEventManager);
 
   // Login rate limiter — per-IP brute-force protection
   const rateLimiter = new LoginRateLimiter();
