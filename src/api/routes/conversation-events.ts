@@ -3,38 +3,56 @@
  *
  * GET /v1/conversations/:id/events
  *
- * Security: requireAuth → conversation access check via store-layer
- * access context. Access is re-validated on every subscription (not
- * cached from page load). Returns 404 for non-existent OR
- * not-owned conversations — no existence leaks to unauthorized users.
+ * Security: requireAuth → optionalWorkspace → ownership check.
  *
- * `requireWorkspace` middleware is intentionally absent: conversations
- * live at the user level post-Stage 1 and don't need an
- * `X-Workspace-Id` header to be located. The route still requires auth.
+ * Workspace is *optional* (Task 006): conversations are user-owned
+ * post-Stage-1, so a conversation read is authorized by ownership, not
+ * workspace membership. If `X-Workspace-Id` is sent, we still validate
+ * it (malformed → 400, non-member → 403) so a chat-UI client that
+ * sends the header on every call doesn't need to special-case this
+ * route.
+ *
+ * Response shape:
+ *  - Conversation doesn't exist → 404 `not_found`.
+ *  - Conversation exists but the caller isn't the owner → 403
+ *    `conversation_access_denied`. The caller has authenticated and
+ *    supplied a specific id; leaking existence vs not is fine in that
+ *    posture (matches the `ConversationAccessDeniedError` mapping on
+ *    the chat path). Content does not leak.
+ *  - Conversation exists and the caller is the owner → 200 SSE.
  */
 
 import { Hono } from "hono";
 import { requireAuth } from "../middleware/auth.ts";
 import { errorLog } from "../middleware/error-log.ts";
+import { optionalWorkspace } from "../middleware/workspace.ts";
 import { type AppContext, type AppEnv, apiError } from "../types.ts";
 
 export function conversationEventRoutes(ctx: AppContext) {
   return new Hono<AppEnv>()
     .use("*", requireAuth(ctx.authOptions))
+    .use("*", optionalWorkspace(ctx.workspaceStore))
     .use("*", errorLog(ctx))
     .get("/v1/conversations/:id/events", async (c) => {
       const conversationId = c.req.param("id");
       const identity = c.var.identity;
 
-      // Stage 1 access check happens inline at the store layer:
-      // `findConversation` with an access context returns null for
-      // both "doesn't exist" and "exists but not yours". One branch,
-      // same 404 — no existence leak.
-      const conversation = await ctx.runtime.findConversation(conversationId, {
-        userId: identity.id,
-      });
+      // Two-step lookup so we can return 403 (not-yours) distinctly
+      // from 404 (doesn't exist). Pass no access ctx to `findConversation`
+      // — we want raw existence, then evaluate ownership ourselves.
+      const conversation = await ctx.runtime.findConversation(conversationId);
       if (!conversation) {
         return apiError(404, "not_found", "Conversation not found");
+      }
+      if (conversation.ownerId !== identity.id) {
+        return apiError(
+          403,
+          "conversation_access_denied",
+          "You do not have access to this conversation.",
+          {
+            conversationId,
+          },
+        );
       }
 
       // Create SSE stream for this subscriber. The first frame

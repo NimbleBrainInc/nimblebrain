@@ -154,6 +154,78 @@ describe("/v1/conversations/:id/events — workspace-optional", () => {
       headers: { Authorization: `Bearer ${API_KEY}` },
     });
     expect(res.status).toBe(404);
+    const body = await res.json();
+    expect(body.error).toBe("not_found");
+  });
+
+  test("returns 403 conversation_access_denied when the conversation exists but isn't the caller's", async () => {
+    // Seed a conversation owned by SOMEONE ELSE (not the test user
+    // the auth adapter returns). The events route should refuse with
+    // 403 — distinct from 404 so the caller can tell "exists but not
+    // yours" from "doesn't exist". Leaking that distinction is fine
+    // when the caller has authenticated and supplied a specific id;
+    // content does not leak.
+    const seed = await runtime.chat({
+      message: "alice's private",
+      workspaceId: TEST_WORKSPACE_ID,
+      identity: { id: "usr_alice", email: "alice@example.com" },
+    });
+    const res = await fetch(`${baseUrl}/v1/conversations/${seed.conversationId}/events`, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${API_KEY}` },
+    });
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body.error).toBe("conversation_access_denied");
+    expect(body.details?.conversationId).toBe(seed.conversationId);
+  });
+
+  test("X-Workspace-Id is honored when sent (valid workspace + member)", async () => {
+    // The chat UI sends `X-Workspace-Id` on every call; the events
+    // route accepts it without requiring it. Validation must still
+    // happen — see the malformed / non-member tests below.
+    const res = await fetch(`${baseUrl}/v1/conversations/${convId}/events`, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${API_KEY}`,
+        "X-Workspace-Id": TEST_WORKSPACE_ID,
+      },
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Content-Type")).toMatch(/text\/event-stream/);
+    await res.body?.cancel();
+  });
+
+  test("returns 400 when X-Workspace-Id is malformed", async () => {
+    const res = await fetch(`${baseUrl}/v1/conversations/${convId}/events`, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${API_KEY}`,
+        "X-Workspace-Id": "not a valid ws id!!",
+      },
+    });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toBe("workspace_error");
+  });
+
+  test("returns 403 when X-Workspace-Id names a workspace the caller is not a member of", async () => {
+    // Create a second workspace that the test user isn't a member of.
+    // The middleware should refuse with 403 rather than silently
+    // ignoring the header — silent acceptance would let a malicious
+    // client probe workspace ids by membership.
+    const wsStore = runtime.getWorkspaceStore();
+    const otherWs = await wsStore.create("Other workspace", "ws_other_test");
+    const res = await fetch(`${baseUrl}/v1/conversations/${convId}/events`, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${API_KEY}`,
+        "X-Workspace-Id": otherWs.id,
+      },
+    });
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body.error).toBe("workspace_error");
   });
 
   test("teardown", async () => {
