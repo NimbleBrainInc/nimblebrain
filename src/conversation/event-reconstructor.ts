@@ -75,32 +75,29 @@ function parseToolInput(input: unknown): Record<string, unknown> {
 /** Mutable conversation metadata derived from append-only metadata events. */
 export interface DerivedConversationMeta {
   title: string | null;
-  visibility: "private" | "shared" | undefined;
-  participants: string[] | undefined;
 }
 
 /**
  * Derive mutable conversation metadata from metadata events.
- * Scans for metadata.title, metadata.visibility, and metadata.participants events.
- * Falls back to `defaults` (from line 1) for backward compat with old files.
+ * Scans for `metadata.title` events; falls back to `defaults` (from line 1)
+ * when none are present.
+ *
+ * Stage 1 simplification: the previous `metadata.visibility` and
+ * `metadata.participants` event types are gone — single-owner only.
  */
 export function deriveConversationMeta(
   events: readonly ConversationEvent[],
   defaults: DerivedConversationMeta,
 ): DerivedConversationMeta {
-  let { title, visibility, participants } = defaults;
+  let { title } = defaults;
 
   for (const event of events) {
     if (event.type === "metadata.title") {
       title = event.title;
-    } else if (event.type === "metadata.visibility") {
-      visibility = event.visibility;
-    } else if (event.type === "metadata.participants") {
-      participants = event.participants;
     }
   }
 
-  return { title, visibility, participants };
+  return { title };
 }
 
 /** Aggregate usage metrics derived from llm.response events. */

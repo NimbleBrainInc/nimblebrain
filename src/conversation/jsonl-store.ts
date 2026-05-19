@@ -70,7 +70,7 @@ export class JsonlConversationStore implements ConversationStore {
     return p;
   }
 
-  async create(options?: CreateConversationOptions): Promise<Conversation> {
+  async create(options: CreateConversationOptions): Promise<Conversation> {
     const id = `conv_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`;
     const now = new Date().toISOString();
     const conversation: Conversation = {
@@ -79,14 +79,8 @@ export class JsonlConversationStore implements ConversationStore {
       updatedAt: now,
       title: null,
       lastModel: null,
-      ...(options?.workspaceId ? { workspaceId: options.workspaceId } : {}),
-      ...(options?.ownerId ? { ownerId: options.ownerId } : {}),
-      visibility: options?.ownerId ? (options.visibility ?? "private") : options?.visibility,
-      ...(options?.ownerId
-        ? { participants: options.participants ?? [options.ownerId] }
-        : options?.participants
-          ? { participants: options.participants }
-          : {}),
+      ownerId: options.ownerId,
+      ...(options.workspaceId ? { workspaceId: options.workspaceId } : {}),
     };
     const path = this.path(id);
     await writeFile(path, `${JSON.stringify(conversation)}\n`);
@@ -103,28 +97,24 @@ export class JsonlConversationStore implements ConversationStore {
     if (!firstLine) return null;
 
     const raw = JSON.parse(firstLine) as Record<string, unknown>;
-    // Default missing fields for backward compat with old JSONL files
+    if (typeof raw.ownerId !== "string" || raw.ownerId.length === 0) {
+      throw new Error(
+        `[conversation] missing ownerId in ${id} — run \`bun run migrate:conversations-to-top-level\``,
+      );
+    }
     const conversation: Conversation = {
       id: raw.id as string,
       createdAt: raw.createdAt as string,
       updatedAt: (raw.updatedAt as string) ?? (raw.createdAt as string),
       title: (raw.title as string | null) ?? null,
       lastModel: (raw.lastModel as string | null) ?? null,
+      ownerId: raw.ownerId,
       ...(raw.workspaceId ? { workspaceId: raw.workspaceId as string } : {}),
-      ...(raw.ownerId ? { ownerId: raw.ownerId as string } : {}),
-      ...(raw.visibility ? { visibility: raw.visibility as "private" | "shared" } : {}),
-      ...(raw.participants ? { participants: raw.participants as string[] } : {}),
       ...(raw.metadata ? { metadata: raw.metadata as Record<string, unknown> } : {}),
     };
 
-    // Enforce access control when context is provided
-    if (access) {
-      const meta = {
-        ownerId: conversation.ownerId,
-        visibility: conversation.visibility,
-        participants: conversation.participants,
-      };
-      if (!canAccess(meta, access)) return null;
+    if (access && !canAccess({ ownerId: conversation.ownerId }, access)) {
+      return null;
     }
 
     return conversation;
@@ -226,7 +216,10 @@ export class JsonlConversationStore implements ConversationStore {
     const messagesToCopy = atMessage !== undefined ? allMessages.slice(0, atMessage) : allMessages;
 
     // Create a new conversation
-    const newConv = await this.create();
+    const newConv = await this.create({
+      ownerId: source.ownerId,
+      ...(source.workspaceId ? { workspaceId: source.workspaceId } : {}),
+    });
 
     // If there are messages to copy, rewrite the new file with them
     if (messagesToCopy.length > 0) {
@@ -260,76 +253,6 @@ export class JsonlConversationStore implements ConversationStore {
     }
 
     return newConv;
-  }
-
-  async shareConversation(id: string, ownerId: string): Promise<Conversation | null> {
-    const conversation = await this.load(id);
-    if (!conversation) return null;
-    if (conversation.ownerId && conversation.ownerId !== ownerId) return null;
-
-    conversation.visibility = "shared";
-    // Ensure owner is in participants
-    if (!conversation.participants) {
-      conversation.participants = [ownerId];
-    } else if (!conversation.participants.includes(ownerId)) {
-      conversation.participants = [ownerId, ...conversation.participants];
-    }
-
-    await this.rewriteMetadata(id, conversation);
-    return conversation;
-  }
-
-  async unshareConversation(id: string, ownerId: string): Promise<Conversation | null> {
-    const conversation = await this.load(id);
-    if (!conversation) return null;
-    if (conversation.ownerId && conversation.ownerId !== ownerId) return null;
-
-    conversation.visibility = "private";
-    // Keep only the owner in participants
-    conversation.participants = conversation.ownerId ? [conversation.ownerId] : [];
-
-    await this.rewriteMetadata(id, conversation);
-    return conversation;
-  }
-
-  async addParticipant(id: string, userId: string): Promise<Conversation | null> {
-    const conversation = await this.load(id);
-    if (!conversation) return null;
-
-    if (!conversation.participants) {
-      conversation.participants = [userId];
-    } else if (!conversation.participants.includes(userId)) {
-      conversation.participants = [...conversation.participants, userId];
-    }
-
-    await this.rewriteMetadata(id, conversation);
-    return conversation;
-  }
-
-  async removeParticipant(id: string, userId: string): Promise<Conversation | null> {
-    const conversation = await this.load(id);
-    if (!conversation) return null;
-    // Cannot remove the owner
-    if (conversation.ownerId === userId) return null;
-
-    if (conversation.participants) {
-      conversation.participants = conversation.participants.filter((p) => p !== userId);
-    }
-
-    await this.rewriteMetadata(id, conversation);
-    return conversation;
-  }
-
-  /** Atomically rewrite the metadata line (line 1) for a conversation. */
-  private async rewriteMetadata(id: string, conversation: Conversation): Promise<void> {
-    const path = this.path(id);
-    const content = await readFile(path, "utf-8");
-    const lines = content.split("\n").filter(Boolean);
-    lines[0] = JSON.stringify(conversation);
-    const tmpPath = `${path}.tmp.${uniqueTmpSuffix()}`;
-    await writeFile(tmpPath, lines.map((l) => `${l}\n`).join(""));
-    await rename(tmpPath, path);
-    this.index.invalidate();
   }
 
   private path(id: string): string {

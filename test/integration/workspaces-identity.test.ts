@@ -94,14 +94,19 @@ describe("UC-W1: Private work with shared tools", () => {
 // UC-W2: Collaborative conversation
 // ---------------------------------------------------------------------------
 
-describe("UC-W2: Collaborative conversation", () => {
+describe("UC-W2: Single-owner conversation (Stage 1)", () => {
   let workDir: string;
 
   afterEach(() => {
     if (workDir) rmSync(workDir, { recursive: true, force: true });
   });
 
-  test("shared conversation is accessible by both participants with userId on messages", async () => {
+  // Stage 1 removed share/participant primitives. The collaborative-
+  // conversation use case (multi-user access to one conversation) is
+  // deferred to Stage 4 where it returns with policy gating. The
+  // surviving invariant in Stage 1: a conversation is owned by exactly
+  // one user; non-owners cannot read it.
+  test("only the owner can load a conversation; other workspace members cannot", async () => {
     workDir = makeTmpDir();
 
     const userStore = new UserStore(workDir);
@@ -117,44 +122,16 @@ describe("UC-W2: Collaborative conversation", () => {
     const convDir = join(workDir, "workspaces", eng.id, "conversations");
     const store = new JsonlConversationStore(convDir);
 
-    // Mat starts a shared conversation
-    const conv = await store.create({
-      workspaceId: eng.id,
-      ownerId: mat.id,
-      visibility: "shared",
-      participants: [mat.id],
-    });
+    const conv = await store.create({ workspaceId: eng.id, ownerId: mat.id });
 
-    // Add Kai as participant
-    await store.addParticipant(conv.id, kai.id);
-
-    // Both can load the conversation
-    const matAccess: ConversationAccessContext = { userId: mat.id };
-    const kaiAccess: ConversationAccessContext = { userId: kai.id };
-    const matLoaded = await store.load(conv.id, matAccess);
-    const kaiLoaded = await store.load(conv.id, kaiAccess);
+    // Mat (owner) can load it.
+    const matLoaded = await store.load(conv.id, { userId: mat.id });
     expect(matLoaded).not.toBeNull();
-    expect(kaiLoaded).not.toBeNull();
 
-    // Messages from each include userId
-    const now = new Date().toISOString();
-    await store.append(matLoaded!, {
-      role: "user",
-      content: [{ type: "text", text: "Hello from Mat" }],
-      timestamp: now,
-      userId: mat.id,
-    });
-    await store.append(matLoaded!, {
-      role: "user",
-      content: [{ type: "text", text: "Hello from Kai" }],
-      timestamp: now,
-      userId: kai.id,
-    });
-
-    const history = await store.history(matLoaded!);
-    expect(history).toHaveLength(2);
-    expect(history[0]!.userId).toBe(mat.id);
-    expect(history[1]!.userId).toBe(kai.id);
+    // Kai (workspace member, not owner) cannot. No workspace-admin
+    // override in Stage 1 — sharing returns in Stage 4 with policy.
+    const kaiLoaded = await store.load(conv.id, { userId: kai.id });
+    expect(kaiLoaded).toBeNull();
   });
 });
 

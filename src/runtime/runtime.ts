@@ -20,7 +20,7 @@ import { InMemoryConversationStore } from "../conversation/memory-store.ts";
 import type {
   ConversationListResult,
   ConversationStore,
-  ParticipantInfo,
+  CreateConversationOptions,
 } from "../conversation/types.ts";
 import { sliceHistory, stripOlderReasoning, windowMessages } from "../conversation/window.ts";
 import { AgentEngine } from "../engine/engine.ts";
@@ -692,8 +692,15 @@ export class Runtime {
     // Load workspace config once per request for agents/models overrides.
     const workspace = await this._workspaceStore.get(wsId);
 
-    const createOpts = {
-      ownerId: request.identity?.id,
+    // Stage 1 invariant: every conversation has an owner. Production:
+    // `request.identity` is set by the auth middleware. Dev / tests:
+    // fall back to the dev-provider identity (`usr_default`) so a
+    // bypass-the-middleware call still produces a valid conversation.
+    // The fallback exists for the test surface; production traffic
+    // always carries identity by the time it reaches `runtime.chat`.
+    const ownerId = request.identity?.id ?? "usr_default";
+    const createOpts: CreateConversationOptions = {
+      ownerId,
       workspaceId: wsId,
       ...(request.metadata ? { metadata: request.metadata } : {}),
     };
@@ -841,18 +848,11 @@ export class Runtime {
       locale: reqIdentity?.preferences?.locale ?? "en-US",
     };
 
-    // Build participants for shared conversations
-    let participants: ParticipantInfo[] | undefined;
-    if (conversation.visibility === "shared" && conversation.participants?.length) {
-      participants = [];
-      for (const userId of conversation.participants) {
-        const user = await this._userStore.get(userId);
-        participants.push({
-          userId,
-          displayName: user?.displayName ?? userId,
-        });
-      }
-    }
+    // Stage 1 is single-owner: no participants list is threaded into the
+    // prompt. Stage 4 reintroduces shared-conversation participants
+    // through policy-gated sharing primitives; until then, the prompt
+    // composer receives `undefined` and skips the participants section.
+    const participants: undefined = undefined;
 
     const workspaceContext = workspace ? { id: workspace.id, name: workspace.name } : { id: wsId };
 

@@ -1,4 +1,5 @@
-import type { ParticipantInfo } from "../conversation/types.ts";
+// `ParticipantInfo` was the participants-section input; gone post Stage 1.
+// Stage 4 reintroduces a participants concept with policy gating.
 import { approxTokens } from "../skills/tokens.ts";
 import type { Skill } from "../skills/types.ts";
 
@@ -48,7 +49,6 @@ export type TracedLayerKind =
   | "core_skill"
   | "user_context_skill"
   | "user_prefs"
-  | "participants"
   | "workspace_context"
   | "org_overlay"
   | "workspace_overlay"
@@ -198,7 +198,12 @@ export function composeSystemPrompt(
   appState?: AppStateInfo,
   userPrefs?: UserPrefs,
   hasProxiedTools?: boolean,
-  participants?: ParticipantInfo[],
+  /**
+   * @deprecated Stage 1 is single-owner; participants are gone. Slot
+   * preserved so call sites still compile; passes through to the traced
+   * variant which ignores it. Stage 4 reintroduces with policy.
+   */
+  _participantsRemoved?: undefined,
   workspaceContext?: WorkspaceContext,
   overlays?: OverlayLayers,
   layer3Skills?: Layer3SkillEntry[],
@@ -211,7 +216,7 @@ export function composeSystemPrompt(
     appState,
     userPrefs,
     hasProxiedTools,
-    participants,
+    undefined,
     workspaceContext,
     overlays,
     layer3Skills,
@@ -239,7 +244,8 @@ export function composeSystemPromptTraced(
   appState?: AppStateInfo,
   userPrefs?: UserPrefs,
   hasProxiedTools?: boolean,
-  participants?: ParticipantInfo[],
+  /** @deprecated See `composeSystemPrompt`. */
+  _participantsRemoved?: undefined,
   workspaceContext?: WorkspaceContext,
   overlays?: OverlayLayers,
   layer3Skills?: Layer3SkillEntry[],
@@ -307,17 +313,8 @@ export function composeSystemPromptTraced(
     tokens: approxTokens(prefsText),
   });
 
-  // Layer 1.6: Participants section (shared conversations only).
-  if (participants && participants.length > 0) {
-    const participantsText = formatParticipantsSection(participants);
-    layers.push({
-      kind: "participants",
-      id: "nb:participants",
-      source: "runtime — shared conversation participants",
-      text: participantsText,
-      tokens: approxTokens(participantsText),
-    });
-  }
+  // Layer 1.6: Participants section — removed in Stage 1 (single-owner
+  // conversations). Returns in Stage 4 with policy-gated sharing.
 
   // Layer 1.7: Workspace context.
   if (workspaceContext) {
@@ -588,20 +585,6 @@ function formatAppStateSection(appState: AppStateInfo): string | null {
 
   const escaped = inner.replaceAll("</app-state>", "&lt;/app-state>");
   return `## Current App State\nLast updated: ${appState.updatedAt}\n\n<app-state>\n${escaped}\n</app-state>`;
-}
-
-function formatParticipantsSection(participants: ParticipantInfo[]): string {
-  const lines = [
-    "## Participants",
-    "",
-    "This is a shared conversation with the following participants:",
-  ];
-  for (const p of participants) {
-    const safeName = p.displayName ? sanitizeLineField(p.displayName) : undefined;
-    const label = safeName ? `${safeName} (${p.userId})` : p.userId;
-    lines.push(`- ${label}`);
-  }
-  return lines.join("\n");
 }
 
 /**

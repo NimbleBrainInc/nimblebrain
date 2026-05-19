@@ -86,8 +86,6 @@ export async function handleGet(input: GetInput, index: ConversationIndex): Prom
     totalOutputTokens: conversation.meta.totalOutputTokens,
     lastModel: conversation.meta.lastModel,
     ...(conversation.meta.ownerId ? { ownerId: conversation.meta.ownerId } : {}),
-    ...(conversation.meta.visibility ? { visibility: conversation.meta.visibility } : {}),
-    ...(conversation.meta.participants ? { participants: conversation.meta.participants } : {}),
   };
 
   const expand = input.expand ?? "messages";

@@ -26,7 +26,7 @@ describe("EventSourcedConversationStore", () => {
   });
 
   it("creates conversations with format: events", async () => {
-    const conv = await store.create();
+    const conv = await store.create({ ownerId: "user_test" });
     expect(conv.format).toBe("events");
     expect(conv.id).toMatch(/^conv_/);
 
@@ -39,7 +39,7 @@ describe("EventSourcedConversationStore", () => {
   });
 
   it("emit() writes engine events to conversation file", async () => {
-    const conv = await store.create();
+    const conv = await store.create({ ownerId: "user_test" });
     store.setActiveConversation(conv.id);
 
     store.emit({
@@ -76,7 +76,7 @@ describe("EventSourcedConversationStore", () => {
   });
 
   it("history() reconstructs messages from events", async () => {
-    const conv = await store.create();
+    const conv = await store.create({ ownerId: "user_test" });
 
     // Write user message event
     store.appendEvent(conv.id, {
@@ -129,6 +129,7 @@ describe("EventSourcedConversationStore", () => {
       totalOutputTokens: 0,
       totalCostUsd: 0,
       lastModel: null,
+      ownerId: "user_test",
     };
     const userMsg: StoredMessage = {
       role: "user",
@@ -155,7 +156,7 @@ describe("EventSourcedConversationStore", () => {
   });
 
   it("skips non-conversation events", async () => {
-    const conv = await store.create();
+    const conv = await store.create({ ownerId: "user_test" });
     store.setActiveConversation(conv.id);
 
     store.emit({ type: "text.delta", data: { runId: "r1", text: "hi" } });
@@ -172,7 +173,7 @@ describe("EventSourcedConversationStore", () => {
       ...dirs,
       logLevel: "debug",
     });
-    const conv = await debugStore.create();
+    const conv = await debugStore.create({ ownerId: "user_test" });
     debugStore.setActiveConversation(conv.id);
 
     debugStore.emit({
@@ -203,7 +204,7 @@ describe("EventSourcedConversationStore", () => {
   });
 
   it("normal logging strips verbose fields but keeps tool output", async () => {
-    const conv = await store.create();
+    const conv = await store.create({ ownerId: "user_test" });
     store.setActiveConversation(conv.id);
 
     store.emit({
@@ -236,7 +237,7 @@ describe("EventSourcedConversationStore", () => {
   });
 
   it("tool output survives the full round-trip: emit → persist → reconstruct → history", async () => {
-    const conv = await store.create();
+    const conv = await store.create({ ownerId: "user_test" });
     store.setActiveConversation(conv.id);
 
     // Simulate a complete run with a tool call that produces output
@@ -288,8 +289,8 @@ describe("EventSourcedConversationStore", () => {
   });
 
   it("routes events to the correct conversation", async () => {
-    const conv1 = await store.create();
-    const conv2 = await store.create();
+    const conv1 = await store.create({ ownerId: "user_test" });
+    const conv2 = await store.create({ ownerId: "user_test" });
 
     store.setActiveConversation(conv1.id);
     store.emit({
@@ -314,7 +315,7 @@ describe("EventSourcedConversationStore", () => {
   });
 
   it("load() and delete() work", async () => {
-    const conv = await store.create();
+    const conv = await store.create({ ownerId: "user_test" });
     const loaded = await store.load(conv.id);
     expect(loaded).not.toBeNull();
     expect(loaded!.id).toBe(conv.id);
@@ -327,7 +328,7 @@ describe("EventSourcedConversationStore", () => {
   });
 
   it("update() patches title", async () => {
-    const conv = await store.create();
+    const conv = await store.create({ ownerId: "user_test" });
     const updated = await store.update(conv.id, { title: "New Title" });
     expect(updated).not.toBeNull();
     expect(updated!.title).toBe("New Title");
@@ -337,7 +338,7 @@ describe("EventSourcedConversationStore", () => {
   });
 
   it("update() appends metadata event instead of rewriting line 1", async () => {
-    const conv = await store.create();
+    const conv = await store.create({ ownerId: "user_test" });
     const path = join(dirs.dir, `${conv.id}.jsonl`);
 
     const linesBefore = readLines(path);
@@ -355,7 +356,7 @@ describe("EventSourcedConversationStore", () => {
   });
 
   it("interleaved appends and title update preserves all events", async () => {
-    const conv = await store.create();
+    const conv = await store.create({ ownerId: "user_test" });
     store.setActiveConversation(conv.id);
 
     // Turn 1
@@ -419,48 +420,12 @@ describe("EventSourcedConversationStore", () => {
     expect(totalIn).toBe(20);
   });
 
-  it("shareConversation appends events instead of rewriting line 1", async () => {
-    const conv = await store.create({ ownerId: "user-1", visibility: "private" });
-    const path = join(dirs.dir, `${conv.id}.jsonl`);
-    const line1Before = readLines(path)[0]!;
-
-    await store.shareConversation(conv.id, "user-1");
-
-    const linesAfter = readLines(path);
-    // Line 1 unchanged
-    expect(linesAfter[0]).toBe(line1Before);
-    // Metadata events appended
-    const events = linesAfter.slice(1).map((l) => JSON.parse(l));
-    const types = events.map((e: { type: string }) => e.type);
-    expect(types).toContain("metadata.visibility");
-    expect(types).toContain("metadata.participants");
-
-    // Behavioral correctness
-    const loaded = await store.load(conv.id);
-    expect(loaded!.visibility).toBe("shared");
-    expect(loaded!.participants).toContain("user-1");
-  });
-
-  it("addParticipant and removeParticipant append events", async () => {
-    const conv = await store.create({ ownerId: "owner", visibility: "shared", participants: ["owner"] });
-
-    await store.addParticipant(conv.id, "user-2");
-    const afterAdd = await store.load(conv.id);
-    expect(afterAdd!.participants).toEqual(["owner", "user-2"]);
-
-    await store.removeParticipant(conv.id, "user-2");
-    const afterRemove = await store.load(conv.id);
-    expect(afterRemove!.participants).toEqual(["owner"]);
-
-    // Verify events at file level
-    const path = join(dirs.dir, `${conv.id}.jsonl`);
-    const events = readLines(path).slice(1).map((l) => JSON.parse(l));
-    const participantEvents = events.filter((e: { type: string }) => e.type === "metadata.participants");
-    expect(participantEvents.length).toBe(2);
-  });
+  // Stage 1 removed share/unshare/addParticipant/removeParticipant —
+  // see delegation-model/REFACTOR_PLAN Stage 1. Sharing returns in
+  // Stage 4 with policy-gated primitives.
 
   it("list() reflects title from metadata events", async () => {
-    const conv = await store.create();
+    const conv = await store.create({ ownerId: "user_test" });
     await store.update(conv.id, { title: "Event-Derived Title" });
 
     const result = await store.list();
@@ -469,24 +434,21 @@ describe("EventSourcedConversationStore", () => {
     expect(summary!.title).toBe("Event-Derived Title");
   });
 
-  it("list() reflects visibility from metadata events for access filtering", async () => {
-    const conv = await store.create({ ownerId: "owner", visibility: "private" });
+  it("list() filters by ownerId — non-owner cannot see another user's conversation", async () => {
+    const conv = await store.create({ ownerId: "owner" });
 
-    // Not visible to non-owner when private
-    const beforeShare = await store.list(undefined, { userId: "other-user" });
-    expect(beforeShare.conversations.find((c) => c.id === conv.id)).toBeUndefined();
+    // Owner sees their conversation.
+    const ownerView = await store.list(undefined, { userId: "owner" });
+    expect(ownerView.conversations.find((c) => c.id === conv.id)).toBeDefined();
 
-    // Share it
-    await store.shareConversation(conv.id, "owner");
-    await store.addParticipant(conv.id, "other-user");
-
-    // Now visible to participant
-    const afterShare = await store.list(undefined, { userId: "other-user" });
-    expect(afterShare.conversations.find((c) => c.id === conv.id)).toBeDefined();
+    // Non-owner does not.
+    const otherView = await store.list(undefined, { userId: "other-user" });
+    expect(otherView.conversations.find((c) => c.id === conv.id)).toBeUndefined();
   });
 
   it("backward compat: old files with title in line 1 still work", async () => {
-    // Simulate an old-format file with title baked into line 1
+    // Simulate an old-format file with title baked into line 1 — but
+    // ownerId is required post-Stage-1 (the migration script stamps it).
     const id = "conv_1e9ac4c0000000a1";
     const path = join(dirs.dir, `${id}.jsonl`);
     const meta = {
@@ -500,16 +462,13 @@ describe("EventSourcedConversationStore", () => {
       lastModel: null,
       format: "events",
       ownerId: "user-1",
-      visibility: "shared",
-      participants: ["user-1", "user-2"],
     };
     writeFileSync(path, `${JSON.stringify(meta)}\n`);
 
     const loaded = await store.load(id);
     expect(loaded).not.toBeNull();
-    expect(loaded!.title).toBe("Old Title");
-    expect(loaded!.visibility).toBe("shared");
-    expect(loaded!.participants).toEqual(["user-1", "user-2"]);
+    expect(loaded?.title).toBe("Old Title");
+    expect(loaded?.ownerId).toBe("user-1");
   });
 
   it("fork() preserves assistant turns through history() round-trip", async () => {
@@ -518,7 +477,7 @@ describe("EventSourcedConversationStore", () => {
     // messages inside an active run scope, so history() on a forked
     // event-format conversation returned only the user turns. Assistant
     // turns silently disappeared.
-    const conv = await store.create();
+    const conv = await store.create({ ownerId: "user_test" });
     store.setActiveConversation(conv.id);
 
     store.emit({ type: "run.start", data: { runId: "r1", model: "test-model" } });
