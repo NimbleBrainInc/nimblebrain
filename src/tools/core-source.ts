@@ -761,12 +761,23 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
 
             // Collect activity from workspace-scoped logs; conversations
             // themselves live at the user level post-Stage 1, so the
-            // activity collector reads through the top-level store.
+            // activity collector reads through the top-level store with
+            // an ownership filter to keep the briefing scoped to the
+            // caller. Without the filter, the briefing would aggregate
+            // every user's conversations in the deployment.
+            const identity = runtime.getCurrentIdentity();
+            if (!identity) {
+              return {
+                content: textContent("Briefing requires an authenticated identity."),
+                isError: true,
+              };
+            }
             const logDir = join(wsDir, "logs");
             const store = runtime.findConversationStore();
             const collector = new ActivityCollector({
               logDir,
               conversations: { kind: "store", store },
+              access: { userId: identity.id },
             });
             const activity = await collector.collect({ since });
 

@@ -15,6 +15,7 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { extractText } from "../../src/engine/content-helpers.ts";
+import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { runWithRequestContext } from "../../src/runtime/request-context.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
@@ -34,7 +35,11 @@ async function callTool(
   const registry = runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID);
   const result = await runWithRequestContext(
     {
-      identity: null,
+      // Match the dev-fallback ownerId minted by `runtime.chat()`
+      // when no identity is passed. Stage 1's per-conversation
+      // ownership gate on skills__active_for / loading_log requires
+      // a real identity in the request context.
+      identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
       workspaceAgents: null,
       workspaceModelOverride: null,

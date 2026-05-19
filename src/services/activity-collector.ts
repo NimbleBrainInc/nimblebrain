@@ -23,6 +23,17 @@ export interface ActivityCollectorOptions {
   conversations: ConversationSource;
   bundleEvents?: BundleEventSource;
   automationRunsDir?: string;
+  /**
+   * Caller's identity context for ownership filtering. REQUIRED for
+   * in-process callers post-Stage 1 — the top-level conversation
+   * store holds every user's conversations, so an unfiltered
+   * `store.list()` would leak peer conversations into the activity
+   * summary. Omit only for trusted internal callers operating outside
+   * a request context (e.g. CLI background tasks); the standalone
+   * home bundle server uses the `jsonl` source and gets workspace
+   * isolation from the file layout it sees.
+   */
+  access?: import("../conversation/types.ts").ConversationAccessContext;
 }
 
 /**
@@ -37,12 +48,14 @@ export class ActivityCollector {
   private conversations: ConversationSource;
   private bundleEvents: BundleEventSource;
   private automationRunsDir?: string;
+  private access?: import("../conversation/types.ts").ConversationAccessContext;
 
   constructor(options: ActivityCollectorOptions) {
     this.logDir = options.logDir;
     this.conversations = options.conversations;
     this.bundleEvents = options.bundleEvents ?? { kind: "none" };
     this.automationRunsDir = options.automationRunsDir;
+    this.access = options.access;
   }
 
   async collect(input: ActivityInput = {}): Promise<ActivityOutput> {
@@ -120,10 +133,17 @@ export class ActivityCollector {
     until: string,
     limit: number,
   ): Promise<ActivityConversationSummary[]> {
-    const result = await store.list({
-      sortBy: "updatedAt",
-      limit,
-    });
+    const result = await store.list(
+      {
+        sortBy: "updatedAt",
+        limit,
+      },
+      // Ownership filter — the top-level store holds every user's
+      // conversations; without this every caller would see peer
+      // activity. `undefined` keeps the legacy "trusted scope"
+      // behavior for callers that haven't been migrated yet.
+      this.access,
+    );
 
     const summaries: ActivityConversationSummary[] = [];
     for (const c of result.conversations) {

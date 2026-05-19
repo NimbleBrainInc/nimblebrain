@@ -68,8 +68,11 @@ class FakeRuntime {
   findConversationStore(): EventSourcedConversationStore {
     return this._store;
   }
-  async findConversation(id: string): Promise<unknown> {
-    return this._store.load(id);
+  async findConversation(
+    id: string,
+    access?: { userId: string },
+  ): Promise<unknown> {
+    return this._store.load(id, access);
   }
   getWorkspaceStore() {
     // Tests that exercise the cross-workspace path supply this directly
@@ -137,6 +140,12 @@ let source: McpSource | undefined;
 beforeEach(() => {
   workDir = mkdtempSync(join(tmpdir(), "skills-tools-test-"));
   runtime = new FakeRuntime(workDir);
+  // Default identity matches the `ownerId: "user_test"` used by every
+  // `runtime.store().create({...})` call in this file. Stage 1 single-
+  // owner means tools that read conversation events require the caller
+  // to own the conversation; this seeds that match for the happy path.
+  // Tests that need to assert ownership-mismatch should override.
+  runtime.identity = { id: "user_test" };
 });
 
 afterEach(async () => {

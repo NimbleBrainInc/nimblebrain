@@ -19,15 +19,7 @@
  * next implementer registers them in the right place.
  */
 
-import {
-  copyFileSync,
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  realpathSync,
-  statSync,
-} from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { EventSourcedConversationStore } from "../../conversation/event-sourced-store.ts";
 import type { ConversationEvent, SkillsLoadedEvent } from "../../conversation/types.ts";
@@ -837,6 +829,15 @@ async function activeForConversation(
   runtime: Runtime,
   convId: string,
 ): Promise<ActiveForEntry[] | null> {
+  // Stage 1 single-owner: verify the caller owns the requested
+  // conversation before reading its events. `findConversation(id,
+  // access)` returns null for both not-found and foreign-owner —
+  // same shape as the unauthenticated branch, no existence leak.
+  const identity = runtime.getCurrentIdentity();
+  if (!identity) return null;
+  const owned = await runtime.findConversation(convId, { userId: identity.id });
+  if (!owned) return null;
+
   const events = await readConvEvents(runtime, convId);
   if (events === null) return null;
 
@@ -884,11 +885,26 @@ async function loadingLog(
 ): Promise<LoadingLogEntry[]> {
   const filter = input as LoadingLogInput;
 
+  // Stage 1 single-owner: every conversation read here must belong to
+  // the caller. Without an identity we refuse rather than scan — the
+  // top-level store holds every user's conversations and an
+  // unauthenticated scan would leak peer skills.loaded events.
+  const identity = runtime.getCurrentIdentity();
+  if (!identity) {
+    throw new Error("skills__loading_log requires an authenticated identity");
+  }
+  const access = { userId: identity.id };
+
   const convIds: string[] = [];
   if (filter.conversation_id) {
+    // Explicit-id branch: verify ownership before reading events.
+    // `findConversation(id, access)` returns null for both not-found
+    // and foreign-owner, so we treat them the same: no entries.
+    const owned = await runtime.findConversation(filter.conversation_id, access);
+    if (!owned) return [];
     convIds.push(filter.conversation_id);
   } else {
-    convIds.push(...listWorkspaceConversationIds(runtime));
+    convIds.push(...(await listOwnedConversationIds(runtime, access)));
   }
 
   const out: LoadingLogEntry[] = [];
@@ -951,18 +967,29 @@ function conversationFileExists(store: EventSourcedConversationStore, convId: st
   }
 }
 
-function listWorkspaceConversationIds(runtime: Runtime): string[] {
-  const store = getEventStore(runtime);
-  if (!store) return [];
-  const dir = store.getDir();
-  if (!existsSync(dir)) return [];
-  try {
-    return readdirSync(dir)
-      .filter((f) => f.endsWith(".jsonl"))
-      .map((f) => f.slice(0, -".jsonl".length));
-  } catch {
-    return [];
+/**
+ * List conversation ids owned by the caller. Goes through the store's
+ * `list(opts, access)` which applies the same ownership filter the
+ * platform conversation tools use. Walks paginated results so a tenant
+ * with many owned conversations is covered.
+ */
+async function listOwnedConversationIds(
+  runtime: Runtime,
+  access: { userId: string },
+): Promise<string[]> {
+  const store = runtime.findConversationStore();
+  const ids: string[] = [];
+  let cursor: string | undefined;
+  // Fixed page size; enough that a normal tenant gets one page.
+  // The store's `list` is in-memory after `populate`, so paging is
+  // cheap. Loop until the store reports no more.
+  while (true) {
+    const page = await store.list({ limit: 200, ...(cursor ? { cursor } : {}) }, access);
+    for (const c of page.conversations) ids.push(c.id);
+    if (!page.nextCursor) break;
+    cursor = page.nextCursor;
   }
+  return ids;
 }
 
 function errorResult(err: unknown): ToolResult {
