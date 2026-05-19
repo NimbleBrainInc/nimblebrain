@@ -612,29 +612,43 @@ describe("handleRun", () => {
 		// timeout and surfaced to the agent as a false -32001 failure. With
 		// the bounded sync-wait, long-running calls return a dispatched
 		// envelope instead of hanging the request.
+		//
+		// The runNow mock returns a promise we control explicitly so the
+		// test cleans up its own timer instead of leaving a long setTimeout
+		// pending past the assertion. Pattern matters — copy-pasted tests
+		// with leaked timers add up.
+		let resolveRun: ((value: AutomationRun | null) => void) | undefined;
+		const runPromise = new Promise<AutomationRun | null>((resolve) => {
+			resolveRun = resolve;
+		});
 		const slowCtx = makeCtx({
 			handleRunSyncWaitMs: 20,
-			runNow: () =>
-				new Promise<AutomationRun | null>((resolve) => {
-					setTimeout(() => resolve(null), 5_000);
-				}),
+			runNow: () => runPromise,
 		});
 		handleCreate(
 			createArgs("Slow", "Takes forever", { type: "interval", intervalMs: 60_000 }),
 			slowCtx,
 		);
 
-		const result = (await handleRun({ name: "Slow" }, slowCtx)) as {
-			status?: string;
-			automationId?: string;
-			message?: string;
-			run?: AutomationRun;
-		};
+		try {
+			const result = (await handleRun({ name: "Slow" }, slowCtx)) as {
+				status?: string;
+				automationId?: string;
+				message?: string;
+				run?: AutomationRun;
+			};
 
-		expect(result.status).toBe("dispatched");
-		expect(result.automationId).toBe("slow");
-		expect(result.run).toBeUndefined();
-		expect(result.message).toContain("still running");
+			expect(result.status).toBe("dispatched");
+			expect(result.automationId).toBe("slow");
+			expect(result.run).toBeUndefined();
+			expect(result.message).toContain("still running");
+		} finally {
+			// Drain the pending runNow promise so it doesn't sit live past
+			// the test (handleRun no longer awaits it after the sync-wait
+			// times out, and Bun's runner doesn't pin the suite on it, but
+			// hygiene matters when the file grows).
+			resolveRun?.(null);
+		}
 	});
 });
 
