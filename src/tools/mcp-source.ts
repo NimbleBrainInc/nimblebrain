@@ -1388,11 +1388,10 @@ export class McpSource implements ToolSource {
             let recoveredResult: CallToolResult | null = null;
             if (!isAborted && this.client && /^Task .+ failed$/.test(errMessage)) {
               try {
-                const fetched = await this.client.experimental.tasks.getTaskResult(
+                recoveredResult = await this.client.experimental.tasks.getTaskResult(
                   handle.taskId,
                   CallToolResultSchema,
                 );
-                recoveredResult = fetched as CallToolResult;
                 log.debug(
                   "mcp",
                   `recovered tasks/result for failed task ${handle.taskId} on ${this.name}`,

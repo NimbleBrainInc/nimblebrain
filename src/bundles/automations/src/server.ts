@@ -566,10 +566,20 @@ export async function handleRun(args: Record<string, unknown>, ctx: ToolContext)
 
   const waitMs = ctx.handleRunSyncWaitMs ?? HANDLE_RUN_SYNC_WAIT_MS;
   const PENDING = Symbol("pending");
-  const timeoutPromise = new Promise<typeof PENDING>((resolve) =>
-    setTimeout(() => resolve(PENDING), waitMs),
-  );
-  const outcome = await Promise.race([runPromise, timeoutPromise]);
+  // Track the timer so we can clear it when the run wins the race —
+  // otherwise the pending timeout pins the event loop for up to waitMs
+  // past handleRun returning. Quick automations + bursty traffic would
+  // accumulate live timers under load and delay clean process shutdown.
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<typeof PENDING>((resolve) => {
+    timer = setTimeout(() => resolve(PENDING), waitMs);
+  });
+  let outcome: AutomationRun | null | typeof PENDING;
+  try {
+    outcome = await Promise.race([runPromise, timeoutPromise]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 
   if (outcome === PENDING) {
     return {
