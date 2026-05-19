@@ -18,6 +18,14 @@ import {
   ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { Cron } from "croner";
+import type {
+  AutomationSummary,
+  AutomationsCancelOutput,
+  AutomationsListOutput,
+  AutomationsRunOutput,
+  AutomationsRunsOutput,
+  AutomationsStatusOutput,
+} from "../../../tools/platform/schemas/automations.ts";
 import { createAutomation, deleteAutomation, updateAutomation } from "./domain.ts";
 import { executeHttp } from "./executor.ts";
 import { Scheduler } from "./scheduler.ts";
@@ -430,7 +438,7 @@ export function handleDelete(args: Record<string, unknown>, ctx: ToolContext): o
   return deleteAutomation(name, ctx);
 }
 
-export function handleList(args: Record<string, unknown>, ctx: ToolContext): object {
+export function handleList(args: Record<string, unknown>, ctx: ToolContext): AutomationsListOutput {
   const defs = ctx.definitions();
   const now = Date.now();
 
@@ -444,7 +452,7 @@ export function handleList(args: Record<string, unknown>, ctx: ToolContext): obj
     automations = automations.filter((a) => a.source === args.source);
   }
 
-  const summaries = automations.map((a) => ({
+  const summaries: AutomationSummary[] = automations.map((a) => ({
     id: a.id,
     name: a.name,
     description: a.description,
@@ -466,7 +474,10 @@ export function handleList(args: Record<string, unknown>, ctx: ToolContext): obj
   };
 }
 
-export function handleStatus(args: Record<string, unknown>, ctx: ToolContext): object {
+export function handleStatus(
+  args: Record<string, unknown>,
+  ctx: ToolContext,
+): AutomationsStatusOutput {
   const name = args.name as string;
   if (!name) throw new Error("Missing required field: name");
 
@@ -510,7 +521,7 @@ export function handleStatus(args: Record<string, unknown>, ctx: ToolContext): o
   };
 }
 
-export function handleRuns(args: Record<string, unknown>, ctx: ToolContext): object {
+export function handleRuns(args: Record<string, unknown>, ctx: ToolContext): AutomationsRunsOutput {
   const automationId = args.automationId as string | undefined;
   const status = args.status as AutomationRun["status"] | undefined;
   const since = args.since as string | undefined;
@@ -538,7 +549,10 @@ export function handleRuns(args: Record<string, unknown>, ctx: ToolContext): obj
  */
 const HANDLE_RUN_SYNC_WAIT_MS = 30_000;
 
-export async function handleRun(args: Record<string, unknown>, ctx: ToolContext): Promise<object> {
+export async function handleRun(
+  args: Record<string, unknown>,
+  ctx: ToolContext,
+): Promise<AutomationsRunOutput> {
   const name = args.name as string;
   if (!name) throw new Error("Missing required field: name");
 
@@ -614,7 +628,10 @@ export async function handleRun(args: Record<string, unknown>, ctx: ToolContext)
   return { run: outcome };
 }
 
-export function handleCancel(args: Record<string, unknown>, ctx: ToolContext): object {
+export function handleCancel(
+  args: Record<string, unknown>,
+  ctx: ToolContext,
+): AutomationsCancelOutput {
   const name = args.name as string;
   if (!name) throw new Error("Missing required field: name");
 

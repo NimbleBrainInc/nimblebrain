@@ -156,6 +156,110 @@ on-disk formats, etc.), do that in the storage layer (`writer.ts`,
 
 ---
 
+## 2.1. Handler output types are shared, named, and the handler's return type
+
+Inputs have a strong shared-type story: TypeBox schemas in
+`src/tools/platform/schemas/`, derived static types via `Static<typeof X>`,
+codegen to web. Outputs need the same shape. **The handler's TypeScript
+return type IS the contract; the schemas file is where it's declared so
+every consumer (CLI, integration tests, web client, future bundles) imports
+the same name.**
+
+Why this matters: until this rule was enforced, every consumer redeclared
+response shapes inline with `as { … }`. The `automations__run` handler
+gained a `{ status: "dispatched" }` branch; the CLI was casting blindly to
+`{ run }` and crashed on every run that outlasted the 30 s sync-wait. Five
+review rounds on the same PR each surfaced one more drifted surface
+(regex, schema description, CLI cast, integration test, PR body). The fix
+is structural, not procedural: the type system enforces the contract.
+
+DO:
+
+```ts
+// src/tools/platform/schemas/automations.ts — named, exported, type-only OK
+export type AutomationsRunOutput =
+  | { run: AutomationRun }
+  | { status: "dispatched"; automationId: string; message: string };
+
+// src/bundles/automations/src/server.ts — handler return type is the contract
+export async function handleRun(
+  args: Record<string, unknown>,
+  ctx: ToolContext,
+): Promise<AutomationsRunOutput> { ... }
+
+// src/cli/commands/automation.ts — consumer imports the same name
+import type { AutomationsRunOutput } from "../../tools/platform/schemas/automations.ts";
+const data = (await callTool(runtime, "automations__run", { name })) as AutomationsRunOutput;
+if ("status" in data && data.status === "dispatched") { ... } else if ("run" in data) { ... }
+```
+
+DO NOT:
+
+```ts
+// Inline cast — re-declares the shape, drifts the first time the handler changes.
+const data = (await callTool(runtime, "automations__run", { name })) as {
+  run: { id: string; status: string; /* ... */ };
+};
+const r = data.run;  // crashes on dispatched envelope
+```
+
+DO NOT use `as { run }` against a typed-discriminated handler. That narrows
+the union without runtime evidence and bypasses the only check that would
+catch a future shape change. Narrow via `"run" in data` (or `data.status ===
+"dispatched"`) — the type system then forces every consumer to handle every
+branch.
+
+### Output schemas vs input schemas
+
+Output types are typically **type-only** exports — no TypeBox runtime
+schema. We don't validate outputs at the MCP boundary; the handler's
+TypeScript return type already constrains it. If you ever need wire
+validation on a specific output (e.g. a particularly user-visible API),
+add the TypeBox version then — but the type-only export is the floor.
+
+When you change a handler's return shape, update the matching output type
+in `schemas/` **in the same commit**. Treat it like a database migration:
+shape moves and consumers move together, not separately.
+
+### Tests must use the shared types too
+
+Integration tests and consumer-pattern unit tests import the same
+`AutomationsXxxOutput` names. Inline `as { … }` in tests has the same
+drift problem as in production code — and is harder to find because tests
+that pass are easy to assume correct.
+
+For discriminated unions, tests MUST narrow before dereferencing:
+
+```ts
+// Good — narrowing makes the dispatched branch a compile error if you
+// forget to handle it.
+const result = await handleRun({ name: "Foo" }, ctx);
+if (!("run" in result)) throw new Error(`expected sync shape, got ${JSON.stringify(result)}`);
+expect(result.run.toolCalls).toBe(3);
+
+// Bad — `as { run }` narrows without runtime evidence; future regressions
+// (handler returns dispatched envelope under load) pass with undefined
+// dereferences.
+const result = (await handleRun({ name: "Foo" }, ctx)) as { run: AutomationRun };
+expect(result.run.toolCalls).toBe(3);
+```
+
+### Known gap: tests aren't type-checked by CI today
+
+`tsconfig.json` only includes `src/**`. `bun run check` does not validate
+test files. The shared-types convention still applies to tests — it's a
+code-reading signal and turns into a compile gate the moment a future PR
+adds `test/**` to the typecheck scope. Worth doing; ~1000 existing type
+errors in tests are the cleanup pricetag, so it's a separate effort.
+
+For SDK boundary tests in particular (anything that mocks an `McpError`,
+`Task`, `CallToolResult`, etc.), construct **real instances of the
+production types**. Plain `{ message: "..." }` mocks of an `McpError`
+masked a no-op recovery regex through one full review cycle — the test
+passed, production stayed broken. Match the production type strictly.
+
+---
+
 ## 3. Anti-patterns
 
 | Anti-pattern | Why it's wrong |
@@ -168,6 +272,10 @@ on-disk formats, etc.), do that in the storage layer (`writer.ts`,
 | Multiple casings accepted in handler | Hides the contract; one casing won, document it |
 | Defensive `validateAutomationFields(args)` after schema validation | Validator already ran; redundant code that drifts from the schema |
 | Storing config in `manifest` AND a flat field at root | Two sources of truth; one will get out of sync |
+| Inline `as { … }` on a `callTool(...)` / `handleX(...)` return | Re-declares the contract; drifts the first time the handler changes. Import the named output type from `schemas/` (§2.1). |
+| Handler typed as `Promise<object>` / `: object` | The return type IS the contract — give it a name. `: AutomationsRunOutput` catches drift at compile time across every consumer. |
+| `as { run }` on a discriminated-union return | Narrows without runtime evidence; bypasses the only check that would catch a new branch. Narrow via `"run" in data` / `data.status === "..."` instead. |
+| Test mocks plain `{ message: "..." }` for an `McpError` | SDK constructs real `McpError` instances; plain objects don't match the production wire shape and mask bugs. Use `new McpError(code, message)`. |
 
 ---
 
@@ -178,16 +286,29 @@ on-disk formats, etc.), do that in the storage layer (`writer.ts`,
    automations' schedule), pull into a top-of-file const so create + update
    reference the same definition.
 2. **Define `interface XxxInput`.** Match the schema 1:1.
-3. **Write the handler.** Cast input via `as unknown as XxxInput` at the
-   top. No defensive validation, no coercion, no flat-field plucking.
-4. **Add a unit test.** One happy path. One validator rejection (schema
+3. **Define output types.** Named `XxxOutput` exports in the same
+   `schemas/<source>.ts` file (§2.1). Discriminated unions for handlers
+   that return multiple shapes. Type-only is the floor; add TypeBox only
+   if you need wire validation.
+4. **Write the handler.** Cast input via `as unknown as XxxInput` at the
+   top. **Annotate the return type** with the named `XxxOutput` — that's
+   what makes consumer drift a compile error. No `: object`.
+5. **Add a unit test.** One happy path. One validator rejection (schema
    should reject malformed input before the handler runs). Test direct
-   handler calls — not the full MCP roundtrip — for speed.
-5. **Run the lint.** `bun test test/unit/tools/platform/schema-shape.test.ts`
+   handler calls — not the full MCP roundtrip — for speed. For
+   discriminated-union outputs, narrow via `"key" in result` rather than
+   `as { … }`.
+6. **Run the lint.** `bun test test/unit/tools/platform/schema-shape.test.ts`
    should still pass. New sources need to be registered in the lint's
    `SOURCES` array; new tools on existing sources are auto-detected via
    `tools/list`.
-6. **Run `bun run verify`.** Mirrors CI.
+7. **Run `bun run verify`.** Mirrors CI.
+
+When changing an existing handler's return shape, treat it like a database
+migration: update the `XxxOutput` type in `schemas/` and every consumer
+(CLI, tests, web client, tool description) in the same commit. The TypeBox
+catalog covers inputs; §2.1 output types cover the other half. Search-and-
+update by grep is the discipline; the type system is the safety net.
 
 ---
 
@@ -197,6 +318,10 @@ on-disk formats, etc.), do that in the storage layer (`writer.ts`,
   source's `tools/list` and rejects bare object/array shapes.
 - **Type system**: typed `interface XxxInput` per handler — drift between
   the schema and the type surfaces at compile.
+- **Type system, output side (§2.1)**: handler return types are the named
+  `XxxOutput` exports from `schemas/`; consumers import and narrow. Once
+  tests are added to typecheck scope, every consumer drift surfaces at
+  compile.
 - **Code review**: section 3 (anti-patterns) — flag in PRs explicitly.
 
 If you're tempted to violate any of section 1, ask whether the underlying

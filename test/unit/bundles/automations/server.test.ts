@@ -590,11 +590,16 @@ describe("handleRun", () => {
 			ctx,
 		);
 
-		const result = (await handleRun({ name: "Immediate" }, ctx)) as {
-			run: AutomationRun;
-		};
+		const result = await handleRun({ name: "Immediate" }, ctx);
 
-		expect(result.run).toBeDefined();
+		// Narrow the discriminated union explicitly. `as { run }` is the
+		// anti-pattern that masked the dispatched-envelope branch — see
+		// `AutomationsRunOutput` in src/tools/platform/schemas/automations.ts.
+		if (!("run" in result)) {
+			throw new Error(
+				`expected sync run shape, got ${JSON.stringify(result)}`,
+			);
+		}
 		expect(result.run.automationId).toBe("immediate");
 		expect(result.run.status).toBe("success");
 	});
@@ -631,16 +636,18 @@ describe("handleRun", () => {
 		);
 
 		try {
-			const result = (await handleRun({ name: "Slow" }, slowCtx)) as {
-				status?: string;
-				automationId?: string;
-				message?: string;
-				run?: AutomationRun;
-			};
+			const result = await handleRun({ name: "Slow" }, slowCtx);
 
+			// Narrow to the "dispatched" branch of the union — if the
+			// handler ever stops emitting this branch (regression to a
+			// blocking handleRun), this test fails to compile.
+			if (!("status" in result)) {
+				throw new Error(
+					`expected dispatched envelope, got ${JSON.stringify(result)}`,
+				);
+			}
 			expect(result.status).toBe("dispatched");
 			expect(result.automationId).toBe("slow");
-			expect(result.run).toBeUndefined();
 			expect(result.message).toContain("still running");
 		} finally {
 			// Drain the pending runNow promise so it doesn't sit live past

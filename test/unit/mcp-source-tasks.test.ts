@@ -37,6 +37,28 @@ function runErrorEvents(events: EngineEvent[]) {
 }
 
 /**
+ * The four message shapes the SDK's task stream yields, per
+ * `node_modules/@modelcontextprotocol/sdk/.../experimental/tasks/client.js`
+ * and `shared/protocol.js`. The error variant is specifically an `McpError`
+ * INSTANCE — the SDK constructs `new McpError(InternalError, "Task <id>
+ * failed")`, whose `.message` is the wrapped form `"MCP error -32603:
+ * Task <id> failed"`.
+ *
+ * Forbidding plain-object error mocks (`{ message: "Task X failed" }`)
+ * at this seam is load-bearing: a previous test wrote that shape and
+ * masked the fact that the engine's recovery regex couldn't match the
+ * real wrapped production message. The fix shipped, the test passed
+ * anyway, and recovery was a no-op in production. Match the production
+ * type strictly here and that whole class of test-fixture-vs-production
+ * drift becomes a compile error.
+ */
+type TaskStreamMessage =
+  | { type: "taskCreated"; task: Task }
+  | { type: "taskStatus"; task: Task }
+  | { type: "result"; result: CallToolResult }
+  | { type: "error"; error: McpError };
+
+/**
  * Test-only stream driver. Resolves `next()` with the messages pushed via
  * `emit(...)` in order; `throwNext()` makes the next `next()` reject. This
  * lets a test step through the SDK's guarantee that the generator ends with
@@ -44,13 +66,17 @@ function runErrorEvents(events: EngineEvent[]) {
  */
 interface StreamDriver {
   stream: AsyncGenerator<unknown, void, void>;
-  emit(message: unknown): void;
+  emit(message: TaskStreamMessage): void;
   throwNext(err: Error): void;
   end(): void;
 }
 
 function streamDriver(): StreamDriver {
-  const queue: Array<{ kind: "value"; value: unknown } | { kind: "error"; error: Error } | { kind: "end" }> = [];
+  const queue: Array<
+    | { kind: "value"; value: TaskStreamMessage }
+    | { kind: "error"; error: Error }
+    | { kind: "end" }
+  > = [];
   let resolveNext: (() => void) | null = null;
 
   async function* gen(): AsyncGenerator<unknown, void, void> {
@@ -76,7 +102,7 @@ function streamDriver(): StreamDriver {
 
   return {
     stream: gen(),
-    emit(message: unknown) {
+    emit(message: TaskStreamMessage) {
       queue.push({ kind: "value", value: message });
       wake();
     },
@@ -92,8 +118,13 @@ function streamDriver(): StreamDriver {
 }
 
 interface BuildOptions {
-  /** Fire-once scripted stream (legacy). Use `driver` for interactive control. */
-  stream?: () => AsyncGenerator<unknown>;
+  /**
+   * Fire-once scripted stream (legacy). Use `driver` for interactive
+   * control. Typed against `TaskStreamMessage` so plain-object error
+   * mocks fail to compile — they must construct real `McpError`
+   * instances.
+   */
+  stream?: () => AsyncGenerator<TaskStreamMessage>;
   /** Drives the stream one message at a time so tests can interleave calls. */
   driver?: StreamDriver;
   /** Fake `client.experimental.tasks.getTask` return value. */
