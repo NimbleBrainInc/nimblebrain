@@ -84,9 +84,12 @@ export interface WorkspaceOAuthProviderOptions {
    * scoped owners and for legacy call sites pending migration in
    * `.tasks/delegation-model/008-migrate-oauth-provider-construction.md`.
    *
-   * Throws at construction when `owner.type === "user"` (the user-scope
-   * owner stores tokens under `users/{userId}/...`, outside any workspace
-   * — a workspace context would be a category error).
+   * When `workspaceContext` is provided AND `owner.type !== "workspace"`,
+   * construction throws — user-scope owners store tokens under
+   * `users/{userId}/...`, outside any workspace, so pairing them with a
+   * workspace context is a category error. Construction with a
+   * user-scoped owner and no `workspaceContext` is fine (the legacy
+   * `workDir`-derivation path applies).
    */
   workspaceContext?: WorkspaceContext;
   /** Absolute callback URL — must match the /v1/mcp-auth/callback route. */

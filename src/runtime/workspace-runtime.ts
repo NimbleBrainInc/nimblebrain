@@ -47,7 +47,7 @@ export interface ProcessInventoryEntry {
  *
  * For each workspace, iterates its declared bundles and produces one
  * ProcessInventoryEntry per (workspace, bundle) pair. The `dataDir`
- * is workspace-scoped via `resolveBundleDataDir`.
+ * is workspace-scoped via `WorkspaceContext.getDataPath("data", ...)`.
  */
 export function buildProcessInventory(
   workspaces: Workspace[],
