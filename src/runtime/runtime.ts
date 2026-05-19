@@ -1572,7 +1572,34 @@ export class Runtime {
     return wsRegistry;
   }
 
-  /** Get a workspace-scoped ConversationStore. */
+  /**
+   * Get the **user-scoped** (top-level) ConversationStore.
+   *
+   * As of Stage 1, conversations are user-owned entities stored at
+   * `{workDir}/conversations/{convId}.jsonl`, not workspace-scoped. This
+   * is the canonical conversation store; every read and write of a
+   * conversation routes through it.
+   *
+   * Per-call instances are intentional: `EventSourcedConversationStore`
+   * is stateless w.r.t. its dir (each operation reads from disk), so
+   * sharing instances across requests would add no benefit and force
+   * a lifecycle concern (when does it die?). The directory is created
+   * on first use.
+   */
+  getUserConversationStore(): ConversationStore {
+    return new EventSourcedConversationStore({
+      dir: join(resolveWorkDir(this.config), "conversations"),
+      logLevel: this.config.logging?.level ?? "normal",
+    });
+  }
+
+  /**
+   * @deprecated Workspace-scoped conversation lookup is going away in
+   * Task 005. New code should use `getUserConversationStore()` and look
+   * up conversations by `convId` only. Kept here so the Task 002 commit
+   * is mechanical-add-only; Task 005 deletes this and updates every
+   * caller.
+   */
   getStore(wsId?: string): ConversationStore {
     const id = wsId ?? this.requireWorkspaceId();
     const ctx = this.getWorkspaceContext(id);
@@ -1582,7 +1609,7 @@ export class Runtime {
     });
   }
 
-  /** Alias for getStore() — clearer name for conversation-specific usage. */
+  /** @deprecated See `getStore`. */
   getConversationStore(wsId?: string): ConversationStore {
     return this.getStore(wsId);
   }

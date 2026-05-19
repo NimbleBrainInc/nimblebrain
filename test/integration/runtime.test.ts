@@ -109,6 +109,71 @@ describe("Runtime", () => {
     await runtime.shutdown();
   });
 
+  it("getUserConversationStore() creates and uses {workDir}/conversations/", async () => {
+    const workDir = join(testDir, "user-conv-store-fresh-dir");
+    mkdirSync(workDir, { recursive: true });
+
+    const runtime = await Runtime.start({
+      model: { provider: "custom", adapter: createEchoModel() },
+      noDefaultBundles: true,
+      workDir,
+    });
+
+    const store = runtime.getUserConversationStore();
+    const conv = await store.create({ ownerId: "user_alice" });
+
+    // The conversation lives at {workDir}/conversations/{convId}.jsonl
+    // — not under any workspace.
+    const topLevelDir = join(workDir, "conversations");
+    expect(existsSync(topLevelDir)).toBe(true);
+    expect(existsSync(join(topLevelDir, `${conv.id}.jsonl`))).toBe(true);
+
+    // The conversation's owner round-trips.
+    const loaded = await store.load(conv.id);
+    expect(loaded?.ownerId).toBe("user_alice");
+
+    await runtime.shutdown();
+  });
+
+  it("user-scoped and workspace-scoped stores produce independent files", async () => {
+    const workDir = join(testDir, "user-vs-workspace-stores");
+    mkdirSync(workDir, { recursive: true });
+
+    const runtime = await Runtime.start({
+      model: { provider: "custom", adapter: createEchoModel() },
+      noDefaultBundles: true,
+      workDir,
+    });
+    await provisionTestWorkspace(runtime);
+
+    const userStore = runtime.getUserConversationStore();
+    const wsStore = runtime.getStore(TEST_WORKSPACE_ID);
+
+    const userConv = await userStore.create({ ownerId: "user_alice" });
+    const wsConv = await wsStore.create({ ownerId: "user_alice", workspaceId: TEST_WORKSPACE_ID });
+
+    expect(userConv.id).not.toBe(wsConv.id);
+    expect(
+      existsSync(join(workDir, "conversations", `${userConv.id}.jsonl`)),
+    ).toBe(true);
+    expect(
+      existsSync(
+        join(workDir, "workspaces", TEST_WORKSPACE_ID, "conversations", `${wsConv.id}.jsonl`),
+      ),
+    ).toBe(true);
+    // Each conversation lives only in its own store's dir.
+    expect(
+      existsSync(join(workDir, "conversations", `${wsConv.id}.jsonl`)),
+    ).toBe(false);
+    expect(
+      existsSync(
+        join(workDir, "workspaces", TEST_WORKSPACE_ID, "conversations", `${userConv.id}.jsonl`),
+      ),
+    ).toBe(false);
+
+    await runtime.shutdown();
+  });
+
   it("uses JSONL store when configured", async () => {
     const workDir = join(testDir, "jsonl-store");
     mkdirSync(workDir, { recursive: true });
