@@ -88,16 +88,26 @@ export class ConversationEventManager {
   /**
    * Broadcast an event to all subscribers of a specific conversation.
    *
+   * Stage 1 single-owner: every legitimate subscriber to a given
+   * conversation is the same user (the owner) connected from another
+   * tab/device. Pre-Stage-1 this method took an `excludeUserId` to
+   * avoid echoing back to the sender, but with single-owner that
+   * filter would skip *every* subscriber — the recipient set is
+   * always the owner, including the sender's other tabs. The
+   * sender's own tab gets its events from the `/v1/chat/stream`
+   * response it initiated; the broadcast feeds peer tabs.
+   *
+   * Stage 4 will reintroduce multi-participant semantics with
+   * explicit policy gates; until then, no caller-side filtering.
+   *
    * @param conversationId - Target conversation
    * @param eventType - SSE event type (e.g. "text.delta", "user.message")
    * @param data - Event data payload
-   * @param excludeUserId - Optional user to exclude (prevents echo for the sender)
    */
   broadcastToConversation(
     conversationId: string,
     eventType: string,
     data: Record<string, unknown>,
-    excludeUserId?: string,
   ): void {
     const message = `event: ${eventType}\ndata: ${JSON.stringify(data)}\n\n`;
     const encoded = encoder.encode(message);
@@ -108,38 +118,11 @@ export class ConversationEventManager {
         continue;
       }
       if (sub.conversationId !== conversationId) continue;
-      if (excludeUserId && sub.userId === excludeUserId) continue;
 
       try {
         sub.controller.enqueue(encoded);
       } catch (err) {
         console.warn("[conversation-events] SSE write failed:", err);
-        this.closeSub(sub);
-        this.subscribers.delete(id);
-      }
-    }
-  }
-
-  /**
-   * Remove a specific user from a conversation's subscribers.
-   * Used when a participant is removed — closes their stream immediately.
-   */
-  removeUserFromConversation(conversationId: string, userId: string): void {
-    for (const [id, sub] of this.subscribers) {
-      if (sub.conversationId === conversationId && sub.userId === userId) {
-        this.closeSub(sub);
-        this.subscribers.delete(id);
-      }
-    }
-  }
-
-  /**
-   * Remove all subscribers for a conversation.
-   * Used when a conversation is unshared.
-   */
-  removeAllForConversation(conversationId: string): void {
-    for (const [id, sub] of this.subscribers) {
-      if (sub.conversationId === conversationId) {
         this.closeSub(sub);
         this.subscribers.delete(id);
       }

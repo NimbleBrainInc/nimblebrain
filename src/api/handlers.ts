@@ -158,17 +158,12 @@ export async function handleChatStream(
         if (userMessageBroadcast) return;
         userMessageBroadcast = true;
         if (convId && conversationEventManager && identity) {
-          conversationEventManager.broadcastToConversation(
-            convId,
-            "user.message",
-            {
-              userId: identity.id,
-              displayName: identity.displayName,
-              content: parsed.message,
-              timestamp: new Date().toISOString(),
-            },
-            identity.id,
-          );
+          conversationEventManager.broadcastToConversation(convId, "user.message", {
+            userId: identity.id,
+            displayName: identity.displayName,
+            content: parsed.message,
+            timestamp: new Date().toISOString(),
+          });
         }
       };
 
@@ -189,12 +184,15 @@ export async function handleChatStream(
           }
           send(event.type, event.data);
           // Same-user cross-tab broadcast — see block comment above.
+          // Stage 1 single-owner: every subscriber on a conversation IS
+          // the owner, so no recipient filter — the sender's own tab
+          // already receives the event via the `/v1/chat/stream` reply
+          // it initiated; the broadcast feeds peer tabs.
           if (convId && conversationEventManager && identity) {
             conversationEventManager.broadcastToConversation(
               convId,
               event.type,
               event.data as Record<string, unknown>,
-              identity.id,
             );
           }
         }
@@ -223,7 +221,8 @@ export async function handleChatStream(
             usage: wireUsage,
           };
           send("done", doneData);
-          // Same-user cross-tab broadcast (Stage 1 single-owner).
+          // Same-user cross-tab broadcast (Stage 1 single-owner). No
+          // recipient filter — see broadcastToConversation docblock.
           if (conversationEventManager && identity) {
             const broadcastConvId = convId ?? result.conversationId;
             if (broadcastConvId) {
@@ -231,7 +230,6 @@ export async function handleChatStream(
                 broadcastConvId,
                 "done",
                 doneData as Record<string, unknown>,
-                identity.id,
               );
             }
           }

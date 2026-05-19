@@ -17,6 +17,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { EventSourcedConversationStore } from "../../src/conversation/event-sourced-store.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { runWithRequestContext } from "../../src/runtime/request-context.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { hashSkillBody } from "../../src/runtime/skills-loaded-payload.ts";
@@ -74,7 +75,12 @@ async function getLatestRunId(
 ): Promise<string | null> {
   return runWithRequestContext(
     {
-      identity: null,
+      // Match the dev-fallback ownerId minted by `runtime.chat` when
+      // no `request.identity` is passed and no identity provider is
+      // configured. Without this, the in-context store reads in
+      // `compose__effective_context` refuse the read as a foreign-
+      // owner access (Stage 1 single-owner gate).
+      identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
       workspaceAgents: null,
       workspaceModelOverride: null,
@@ -102,7 +108,7 @@ async function callCompose(
   const registry = runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID);
   const result = await runWithRequestContext(
     {
-      identity: null,
+      identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
       workspaceAgents: null,
       workspaceModelOverride: null,
