@@ -4,6 +4,7 @@ import { textContent } from "../engine/content-helpers.ts";
 import type { ToolCall, ToolResult, ToolRouter, ToolSchema } from "../engine/types.ts";
 import type { PermissionStore } from "../permissions/permission-store.ts";
 import type { McpSource } from "./mcp-source.ts";
+import { rankToolSearchResults } from "./search-ranking.ts";
 import type { Tool, ToolSource } from "./types.ts";
 import { UserPoolSource } from "./user-pool-source.ts";
 
@@ -228,12 +229,10 @@ export class ToolRegistry implements ToolRouter {
     return source.execute(localName, call.input, signal, principalId);
   }
 
-  /** Search all tools by keyword (substring match on name + description). */
+  /** Search all tools by natural-language terms over name + description. */
   private async searchTools(query: string): Promise<Array<{ name: string; description: string }>> {
-    const q = query.toLowerCase();
     const all = await this.availableTools();
-    return all
-      .filter((t) => t.name.toLowerCase().includes(q) || t.description.toLowerCase().includes(q))
+    return rankToolSearchResults(all, query)
       .slice(0, 5)
       .map((t) => ({ name: t.name, description: t.description }));
   }

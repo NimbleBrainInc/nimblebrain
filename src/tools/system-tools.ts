@@ -27,6 +27,7 @@ import { McpSource } from "./mcp-source.ts";
 import { createManageToolsToolDefs } from "./platform/manage-tools.ts";
 import type { ToolRegistry } from "./registry.ts";
 import { createManageRegistriesTool } from "./registry-tools.ts";
+import { rankToolSearchResults } from "./search-ranking.ts";
 import { createManageUsersTool, type ManageUsersContext } from "./user-tools.ts";
 import {
   createManageWorkspacesTool,
@@ -112,7 +113,7 @@ export async function createSystemTools(
           query: {
             type: "string",
             description:
-              "Search query (substring match on name + description). Optional — omit to list everything in scope.",
+              "Search query (natural-language terms over name + description). Optional — omit to list everything in scope.",
           },
         },
         required: ["scope"],
@@ -153,15 +154,13 @@ export async function createSystemTools(
         }
 
         // scope === "tools" (default)
-        const q = query.toLowerCase();
+        const q = query.toLowerCase().trim();
         const all = (await getRegistry().availableTools()).filter(
           (t) =>
             toolEligibilityCtx?.isToolEligible(t) ?? !t.annotations?.["ai.nimblebrain/internal"],
         );
         if (!q) return groupToolsBySource(all);
-        const matches = all.filter(
-          (t) => t.name.toLowerCase().includes(q) || t.description.toLowerCase().includes(q),
-        );
+        const matches = rankToolSearchResults(all, q);
         if (matches.length === 0)
           return { content: textContent(`No tools matched "${query}".`), isError: false };
         const lines = [`Found ${matches.length} tool(s) for "${query}":\n`];
