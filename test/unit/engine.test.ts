@@ -3398,4 +3398,134 @@ describe("malformed tool call input", () => {
       expect(callCount).toBe(1);
     });
   });
+
+  describe("cancellation via config.signal", () => {
+    it("aborts the loop between iterations when config.signal fires after a tool call", async () => {
+      // Regression for the orphan-and-write bug: before this PR, the
+      // engine only forwarded `config.signal` to `tools.execute`. A
+      // run whose signal aborted mid-flight would let the current tool
+      // call honor it (good) but still proceed to the NEXT LLM call,
+      // wasting a model round-trip and generating downstream tool
+      // calls the caller no longer wants. The fix is a check at the
+      // top of every iteration; this test exercises that check
+      // end-to-end.
+      const controller = new AbortController();
+      let modelCalls = 0;
+      const model = createMockModel(() => {
+        modelCalls++;
+        // Iteration 1: return a tool call.
+        if (modelCalls === 1) {
+          return {
+            content: [
+              {
+                type: "tool-call",
+                toolCallId: "call_1",
+                toolName: "test__noop",
+                input: JSON.stringify({}),
+              },
+            ],
+            inputTokens: 10,
+            outputTokens: 5,
+          };
+        }
+        // Iteration 2 onward would yield text completion; but we
+        // should never reach this because the abort check at the top
+        // of iteration 2 throws first.
+        return {
+          content: [{ type: "text", text: "should not appear" }],
+          inputTokens: 10,
+          outputTokens: 5,
+        };
+      });
+
+      let toolCallCount = 0;
+      const engine = makeEngine(model, {
+        schemas: [
+          {
+            name: "test__noop",
+            description: "noop",
+            inputSchema: { type: "object", properties: {} },
+          },
+        ],
+        handler: () => {
+          toolCallCount++;
+          // Fire the signal right after the tool finishes. The engine's
+          // iteration-boundary check should observe it before the next
+          // LLM call. (Aborting BEFORE the tool runs would surface as
+          // a tool-side abort; we deliberately abort post-tool to
+          // exercise the between-iteration check the PR added.)
+          controller.abort();
+          return { content: textContent("noop"), isError: false };
+        },
+      });
+
+      await expect(
+        engine.run(
+          { ...defaultConfig, signal: controller.signal },
+          "",
+          [{ role: "user", content: [{ type: "text", text: "go" }] }],
+          [],
+        ),
+      ).rejects.toMatchObject({ name: "AbortError" });
+
+      // Iteration 1 ran (model called once, tool called once) but
+      // iteration 2's LLM call did NOT — the abort check stopped the
+      // loop before the next round-trip.
+      expect(modelCalls).toBe(1);
+      expect(toolCallCount).toBe(1);
+    });
+
+    it("throws immediately when signal is already aborted on entry", async () => {
+      // Pre-aborted signals should fail-fast on the first iteration's
+      // boundary check, before any model call. Important for the
+      // executor's cancellation contract: when the scheduler aborts a
+      // run before it really starts, no LLM spend should accrue.
+      const controller = new AbortController();
+      controller.abort();
+
+      let modelCalls = 0;
+      const model = createMockModel(() => {
+        modelCalls++;
+        return {
+          content: [{ type: "text", text: "should not run" }],
+          inputTokens: 10,
+          outputTokens: 5,
+        };
+      });
+      const engine = makeEngine(model);
+
+      await expect(
+        engine.run(
+          { ...defaultConfig, signal: controller.signal },
+          "",
+          [{ role: "user", content: [{ type: "text", text: "go" }] }],
+          [],
+        ),
+      ).rejects.toMatchObject({ name: "AbortError" });
+
+      expect(modelCalls).toBe(0);
+    });
+
+    it("propagates a custom abort reason as the thrown error", async () => {
+      // When the executor aborts with a specific Error (e.g. timeout),
+      // the engine surfaces that reason through the throw — so the
+      // scheduler can classify the failure correctly (timeout vs
+      // generic cancel). Drift here would silently collapse all
+      // cancellations into the same status.
+      const controller = new AbortController();
+      const customReason = new Error("Automation foo timed out after 600s");
+      controller.abort(customReason);
+
+      const engine = makeEngine();
+
+      await expect(
+        engine.run(
+          { ...defaultConfig, signal: controller.signal },
+          "",
+          [{ role: "user", content: [{ type: "text", text: "go" }] }],
+          [],
+        ),
+      ).rejects.toThrow(/timed out after 600s/);
+    });
+  });
 });

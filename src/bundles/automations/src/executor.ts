@@ -204,6 +204,7 @@ export function createDirectExecutor(
     // doing all the work.
     const runController = new AbortController();
     let timedOut = false;
+    let externallyAborted = false;
     const timeoutTimer = setTimeout(() => {
       timedOut = true;
       runController.abort();
@@ -212,9 +213,13 @@ export function createDirectExecutor(
     let onExternalAbort: (() => void) | undefined;
     if (externalSignal) {
       if (externalSignal.aborted) {
+        externallyAborted = true;
         runController.abort(externalSignal.reason);
       } else {
-        onExternalAbort = () => runController.abort(externalSignal.reason);
+        onExternalAbort = () => {
+          externallyAborted = true;
+          runController.abort(externalSignal.reason);
+        };
         externalSignal.addEventListener("abort", onExternalAbort, { once: true });
       }
     }
@@ -227,10 +232,14 @@ export function createDirectExecutor(
       return mapResultToRun(automation, startedAt, data);
     } catch (err) {
       // Preserve the canonical "timed out after Ns" wording so
-      // `Scheduler.dispatchRun` classifies this as `timeout` and not
-      // generic `failure`. External-cancel paths preserve the original
-      // AbortError so they classify as `cancelled`.
-      if (timedOut) {
+      // `Scheduler.dispatchRun` classifies this as `timeout`. If
+      // BOTH the external abort AND the timeout fire (narrow race
+      // when chatFn takes a beat to honor cancel near the timeout
+      // boundary), external-cancel wins — the operator-meaningful
+      // cause is "I cancelled", not "the clock ran out at the same
+      // moment". Drift here would silently restamp a cancel as a
+      // timeout in the run record.
+      if (timedOut && !externallyAborted) {
         throw new Error(
           `Automation ${automation.id} timed out after ${Math.round(timeoutMs / 1000)}s`,
         );

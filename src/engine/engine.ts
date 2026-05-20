@@ -477,6 +477,17 @@ export class AgentEngine {
         // we don't preempt the current tool, but we don't start new work
         // either. The runtime catch translates AbortError into the
         // appropriate `run.error` event for SSE consumers.
+        //
+        // Gap acknowledged: an IN-FLIGHT LLM stream (`callModel` →
+        // `model.doStream`) is not signal-aware. The current step
+        // through this check blocks on the stream until it completes
+        // before the next iteration's abort check fires. For tool-call-
+        // dominated runs (the morning-brief case this fix targets) the
+        // gap is small. For long completions / reasoning-heavy runs
+        // it's a real cancellation lag — fix is to plumb `signal`
+        // through `callModel` to `model.doStream({ abortSignal })`,
+        // tracked separately so this PR stays scoped to the
+        // architectural plumbing.
         if (config.signal?.aborted) {
           throw config.signal.reason instanceof Error
             ? config.signal.reason

@@ -592,4 +592,43 @@ describe("createDirectExecutor — recursive-call guard", () => {
 		await expect(runPromise).rejects.toThrow();
 		expect(chatSawAbort).toBe(true);
 	});
+
+	test("external-cancel wins the race when timeout fires concurrently — no false 'timeout' status", async () => {
+		// Race regression: external abort + timeout firing in the same
+		// tick. Without the `externallyAborted` flag, `timedOut` flips
+		// true under both paths and the catch rewrites the error to
+		// "timed out after Ns" — so the scheduler stamps `status:
+		// "timeout"` on what was really a cancel. Narrow window, but
+		// the whole point of the PR is honest status records.
+		const chatFn: ChatFn = async (req) => {
+			await new Promise<void>((resolve) => {
+				req.signal?.addEventListener("abort", () => resolve(), { once: true });
+				setTimeout(resolve, 5000);
+			});
+			throw new DOMException("The operation was aborted.", "AbortError");
+		};
+
+		const executor = createDirectExecutor(chatFn, () => ({ workspaceId: "ws_test" }));
+		const externalController = new AbortController();
+		// Make the timeout extremely tight so it fires very close to the
+		// external cancel — exercises the race the flag is meant to
+		// disambiguate.
+		const automation = makeAutomation({ maxRunDurationMs: 5 });
+
+		const runPromise = executor(automation, externalController.signal);
+		// Cancel externally in the same tick — both abort sources fire
+		// near-simultaneously.
+		externalController.abort();
+
+		// External cancel must dominate: the error must NOT be the
+		// timeout-shape that `Scheduler.dispatchRun` keys off via
+		// `errorMsg.includes("timed out")`.
+		let caughtMessage = "";
+		try {
+			await runPromise;
+		} catch (e) {
+			caughtMessage = e instanceof Error ? e.message : String(e);
+		}
+		expect(caughtMessage).not.toMatch(/timed out after/);
+	});
 });
