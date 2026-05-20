@@ -53,6 +53,35 @@ async function makeRegistry(): Promise<ToolRegistry> {
 	return registry;
 }
 
+async function makeTodoSearchRegistry(): Promise<ToolRegistry> {
+	const registry = new ToolRegistry();
+	const todoSource = await makeInProcessSource("synapse-todo-board", [
+		{
+			name: "create_board_task",
+			description: "Create a task on a specific board",
+			inputSchema: { type: "object", properties: {} },
+			handler: async () => ({ content: textContent("ok"), isError: false }),
+		},
+		{
+			name: "list_boards",
+			description: "List available boards",
+			inputSchema: { type: "object", properties: {} },
+			handler: async () => ({ content: textContent("ok"), isError: false }),
+		},
+	]);
+	const genericSource = await makeInProcessSource("scratch", [
+		{
+			name: "create_task_template",
+			description: "Create a reusable task template",
+			inputSchema: { type: "object", properties: {} },
+			handler: async () => ({ content: textContent("ok"), isError: false }),
+		},
+	]);
+	registry.addSource(todoSource);
+	registry.addSource(genericSource);
+	return registry;
+}
+
 function getStructured<T>(result: { structuredContent?: unknown }): T | undefined {
 	return result.structuredContent as T | undefined;
 }
@@ -70,6 +99,51 @@ describe("System Tools", () => {
 		expect(getStructured<{ tools?: Array<{ name: string }> }>(result)?.tools).toEqual([
 			{ name: "test__greet" },
 		]);
+	});
+
+	it("search with scope=tools matches natural-language terms across source, name, and description", async () => {
+		const registry = await makeTodoSearchRegistry();
+		const systemTools = await createSystemTools(() => registry);
+		const result = await systemTools.execute("search", {
+			scope: "tools",
+			query: "todo task create",
+		});
+
+		expect(result.isError).toBe(false);
+		expect(getStructured<{ tools?: Array<{ name: string }> }>(result)?.tools?.[0]).toEqual({
+			name: "synapse-todo-board__create_board_task",
+		});
+		expect(extractText(result.content)).toContain("synapse-todo-board__create_board_task");
+	});
+
+	it("search with scope=tools tokenizes hyphenated source names", async () => {
+		const registry = await makeTodoSearchRegistry();
+		const systemTools = await createSystemTools(() => registry);
+		const result = await systemTools.execute("search", {
+			scope: "tools",
+			query: "todo board",
+		});
+
+		expect(result.isError).toBe(false);
+		const names = getStructured<{ tools?: Array<{ name: string }> }>(result)?.tools?.map(
+			(t) => t.name,
+		);
+		expect(names).toContain("synapse-todo-board__create_board_task");
+		expect(names).toContain("synapse-todo-board__list_boards");
+	});
+
+	it("search with scope=tools matches description terms", async () => {
+		const registry = await makeTodoSearchRegistry();
+		const systemTools = await createSystemTools(() => registry);
+		const result = await systemTools.execute("search", {
+			scope: "tools",
+			query: "specific board",
+		});
+
+		expect(result.isError).toBe(false);
+		expect(getStructured<{ tools?: Array<{ name: string }> }>(result)?.tools?.[0]).toEqual({
+			name: "synapse-todo-board__create_board_task",
+		});
 	});
 
 	it("search with scope=tools and empty query returns all tools grouped", async () => {
