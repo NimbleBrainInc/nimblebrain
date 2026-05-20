@@ -32,6 +32,7 @@
 
 import { Hono } from "hono";
 import { DEV_IDENTITY } from "../../identity/providers/dev.ts";
+import { ConversationCorruptedError } from "../../runtime/errors.ts";
 import { requireAuth } from "../middleware/auth.ts";
 import { errorLog } from "../middleware/error-log.ts";
 import { optionalWorkspace } from "../middleware/workspace.ts";
@@ -60,7 +61,23 @@ export function conversationEventRoutes(ctx: AppContext) {
       // Two-step lookup so we can return 403 (not-yours) distinctly
       // from 404 (doesn't exist). Pass no access ctx to `findConversation`
       // — we want raw existence, then evaluate ownership ourselves.
-      const conversation = await ctx.runtime.findConversation(conversationId);
+      //
+      // The store throws `ConversationCorruptedError` for pre-migration
+      // files lacking `ownerId` (operator forgot one of the two
+      // migrations). Map that to a clean 422 with the migration
+      // command in the message instead of letting it bubble as 500.
+      const conversation = await ctx.runtime.findConversation(conversationId).catch((err) => {
+        if (err instanceof ConversationCorruptedError) {
+          return err;
+        }
+        throw err;
+      });
+      if (conversation instanceof ConversationCorruptedError) {
+        return apiError(422, "conversation_corrupted", conversation.message, {
+          conversationId: conversation.conversationId,
+          reason: conversation.reason,
+        });
+      }
       if (!conversation) {
         return apiError(404, "not_found", "Conversation not found");
       }

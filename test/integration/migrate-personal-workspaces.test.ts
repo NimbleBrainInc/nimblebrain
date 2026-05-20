@@ -317,6 +317,47 @@ describe("migrate-personal-workspaces", () => {
     expect(existsSync(join(workDir, "workspaces", "ws_user_user_alice"))).toBe(true);
   });
 
+  test("heals a partial-rename: dir at new id, workspace.json#id stuck on old id", async () => {
+    // Simulate the crash window between `rename(2)` (directory moved
+    // atomically to the new path) and the workspace.json rewrite
+    // (still carries the old embedded `id`). The migration's
+    // "personal at new id" branch must heal this on rerun.
+    await seedUser("user_alice", "alice@example.com", "Alice");
+    const newId = "ws_user_user_alice";
+    const wsDir = join(workDir, "workspaces", newId);
+    await mkdir(wsDir, { recursive: true, mode: 0o700 });
+    await mkdir(join(wsDir, "conversations"), { recursive: true });
+    const now = new Date().toISOString();
+    // Note: file at newId path, but the EMBEDDED id is still the
+    // legacy slug. No isPersonal / ownerUserId yet (the rewrite
+    // would have set those).
+    await writeFile(
+      join(wsDir, "workspace.json"),
+      `${JSON.stringify(
+        {
+          id: "ws_alice",
+          name: "Alice's Workspace",
+          members: [{ userId: "user_alice", role: "admin" }],
+          bundles: [],
+          createdAt: now,
+          updatedAt: now,
+        },
+        null,
+        2,
+      )}\n`,
+    );
+
+    const { exitCode, stderr } = await runMigrate();
+    expect(exitCode).toBe(0);
+    expect(stderr).toContain("stamped identity fields");
+
+    const ws = await readWorkspace(newId);
+    // Healed: id matches the directory it lives in.
+    expect(ws.id).toBe(newId);
+    expect(ws.isPersonal).toBe(true);
+    expect(ws.ownerUserId).toBe("user_alice");
+  });
+
   test("--help exits 0 and prints usage", async () => {
     const proc = Bun.spawn({
       cmd: ["bun", "run", SCRIPT, "--help"],

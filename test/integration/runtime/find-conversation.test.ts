@@ -296,6 +296,97 @@ describe("/v1/conversations/:id/events — dev mode (no provider)", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Ownerless conversation file → 422 conversation_corrupted (not 500).
+//
+// Regression for round-7 QA #2: a pre-migration file lacking `ownerId`
+// caused the store to throw a generic Error that bubbled to handleChat
+// as 500. The typed `ConversationCorruptedError` maps to 422 with the
+// migration command in the message.
+// ---------------------------------------------------------------------------
+
+describe("ownerless conversation file → 422 conversation_corrupted", () => {
+  const API_KEY = "find-conv-corrupted-key-1234";
+  const workDir = join(tmpdir(), `nb-find-conv-corrupted-${Date.now()}`);
+  let runtime: Runtime;
+  let handle: ServerHandle;
+  let baseUrl: string;
+  const convId = "conv_ddeeaaddbbeeeeff";
+
+  test("setup", async () => {
+    mkdirSync(workDir, { recursive: true });
+    runtime = await Runtime.start({
+      model: { provider: "custom", adapter: createEchoModel() },
+      noDefaultBundles: true,
+      logging: { disabled: true },
+      workDir,
+    });
+    await provisionTestWorkspace(runtime);
+    handle = startServer({
+      runtime,
+      port: 0,
+      provider: createTestAuthAdapter(API_KEY, runtime),
+    });
+    baseUrl = `http://localhost:${handle.port}`;
+
+    // Plant an ownerless file at the top-level conversations dir to
+    // simulate a tenant that ran migrate:personal-workspaces but
+    // never ran migrate:conversations-to-top-level. (In practice
+    // ownerless files would live under workspaces/.../conversations/
+    // pre-migration, but the second migration is what stamps
+    // ownerId; a file at top-level with no ownerId is the
+    // operator-forgot-step-2 state.)
+    mkdirSync(join(workDir, "conversations"), { recursive: true });
+    const meta = {
+      id: convId,
+      createdAt: "2025-01-01T00:00:00.000Z",
+      updatedAt: "2025-01-01T00:00:00.000Z",
+      title: null,
+      lastModel: null,
+      format: "events",
+      // intentionally no ownerId
+    };
+    await Bun.write(
+      join(workDir, "conversations", `${convId}.jsonl`),
+      `${JSON.stringify(meta)}\n`,
+    );
+  });
+
+  test("GET /v1/conversations/:id/events on an ownerless file returns 422 (not 500)", async () => {
+    const res = await fetch(`${baseUrl}/v1/conversations/${convId}/events`, {
+      headers: { Authorization: `Bearer ${API_KEY}` },
+    });
+    expect(res.status).toBe(422);
+    const body = await res.json();
+    expect(body.error).toBe("conversation_corrupted");
+    expect(body.message).toMatch(/migrate:conversations-to-top-level/);
+    expect(body.details?.conversationId).toBe(convId);
+    expect(body.details?.reason).toBe("missing_owner");
+  });
+
+  test("POST /v1/chat resuming an ownerless conversation returns 422 (not 500)", async () => {
+    const res = await fetch(`${baseUrl}/v1/chat`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${API_KEY}`,
+        "X-Workspace-Id": TEST_WORKSPACE_ID,
+      },
+      body: JSON.stringify({ message: "resume", conversationId: convId }),
+    });
+    expect(res.status).toBe(422);
+    const body = await res.json();
+    expect(body.error).toBe("conversation_corrupted");
+    expect(body.details?.reason).toBe("missing_owner");
+  });
+
+  test("teardown", async () => {
+    handle?.stop(true);
+    await runtime?.shutdown();
+    rmSync(workDir, { recursive: true, force: true });
+  });
+});
+
 afterAll(() => {
   // belt-and-suspenders cleanup if a test died early
 });

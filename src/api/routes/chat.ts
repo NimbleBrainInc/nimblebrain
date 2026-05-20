@@ -20,7 +20,14 @@ export function chatRoutes(ctx: AppContext) {
     .use("*", requireWorkspace(ctx.workspaceStore))
     .use("*", errorLog(ctx))
     .post("/v1/chat", chatBodyLimit, rl, (c) =>
-      handleChat(c.req.raw, ctx.runtime, ctx.features, c.var.identity, c.var.workspaceId),
+      handleChat(
+        c.req.raw,
+        ctx.runtime,
+        ctx.features,
+        c.var.identity,
+        c.var.workspaceId,
+        ctx.conversationEventManager,
+      ),
     )
     .post("/v1/chat/stream", chatBodyLimit, rl, (c) =>
       handleChatStream(

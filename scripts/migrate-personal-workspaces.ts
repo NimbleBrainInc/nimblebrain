@@ -288,11 +288,22 @@ async function main(): Promise<void> {
       if (atNew) {
         // Personal workspace already at the new id. Stamp identity
         // fields if missing.
+        //
+        // Partial-rename recovery: if a prior run crashed between
+        // `rename(oldDir, newDir)` and the workspace.json rewrite,
+        // the file at the new path still carries `id: oldId` inside.
+        // Spread-without-override would preserve that stale id; the
+        // explicit `id: newId` below heals that state on rerun. The
+        // stamping condition (`isPersonal !== true ||
+        // ownerUserId !== user.id`) holds in this partial-rename
+        // case because the workspace.json rewrite never ran, so we
+        // reliably enter this branch and write the corrected id.
         if (atNew.isPersonal !== true || atNew.ownerUserId !== user.id) {
           if (!args.dryRun) {
             const wsPath = join(workspacesDir, newId, "workspace.json");
             const updated: Workspace = {
               ...atNew,
+              id: newId,
               isPersonal: true,
               ownerUserId: user.id,
               about: atNew.about ?? null,

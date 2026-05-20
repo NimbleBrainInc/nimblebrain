@@ -132,7 +132,18 @@ export class ConversationIndex {
 
     const totalCount = items.length;
 
-    // Cursor pagination: skip entries up to and including the cursor ID
+    // Cursor pagination: skip entries up to and including the cursor ID.
+    //
+    // Edge case (future hardening, not Stage 1): if the cursor names a
+    // conversation that no longer satisfies the current `access`
+    // filter — owner changed (Stage 4 sharing), or the conversation
+    // was deleted between calls — `findIndex` returns -1 and the
+    // slice is a no-op, so the caller re-sees page 1 instead of
+    // getting an empty / shifted page. Stage 1 single-owner doesn't
+    // hit this (ownership can't change), but the cursor model should
+    // be revisited when sharing returns. Options: opaque
+    // ({createdAt}, last-id) cursors that don't depend on the filtered
+    // result, or return an explicit `cursor_invalid` signal.
     if (options?.cursor) {
       const idx = items.findIndex((s) => s.id === options.cursor);
       if (idx >= 0) items = items.slice(idx + 1);
