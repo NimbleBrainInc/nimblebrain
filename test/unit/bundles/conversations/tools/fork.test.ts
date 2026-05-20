@@ -75,9 +75,9 @@ function writeSourceConversation(): string {
 	return writeTmpFile(`${SOURCE_ID}.jsonl`, lines);
 }
 
-async function buildIndex(): Promise<ConversationIndex> {
+function buildIndex(): ConversationIndex {
 	const index = new ConversationIndex();
-	await index.build(TMP_DIR);
+	index.init(TMP_DIR);
 	return index;
 }
 

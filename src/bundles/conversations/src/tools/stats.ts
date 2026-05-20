@@ -61,8 +61,8 @@ export async function handleStats(
   const untilIso = now.toISOString();
 
   // Get all conversations matching the date range using the index
-  const listResult = index.list({
-    limit: 999999,
+  const listResult = await index.list({
+    limit: Number.MAX_SAFE_INTEGER,
     dateFrom: sinceIso || undefined,
     dateTo: untilIso,
     sortBy: "created",

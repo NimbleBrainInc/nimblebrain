@@ -67,7 +67,7 @@ function selectByCharCap(messages: unknown[], cap: number): GetMessagesResult {
 }
 
 export async function handleGet(input: GetInput, index: ConversationIndex): Promise<object> {
-  const entry = index.get(input.id);
+  const entry = await index.get(input.id);
   if (!entry) {
     throw new Error(`Conversation not found: ${input.id}`);
   }

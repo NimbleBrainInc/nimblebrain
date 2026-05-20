@@ -49,7 +49,6 @@ beforeEach(async () => {
 });
 
 afterEach(() => {
-	index.stopWatching();
 	rmSync(TMP_DIR, { recursive: true, force: true });
 });
 
@@ -62,7 +61,7 @@ async function setupConversation(
 	const fname = filename ?? `${id}.jsonl`;
 	const lines = [JSON.stringify(meta), ...messages.map((m) => JSON.stringify(m))];
 	writeTmpFile(fname, lines);
-	await index.build(TMP_DIR);
+	index.init(TMP_DIR);
 }
 
 // ---------------------------------------------------------------------------
@@ -262,7 +261,7 @@ describe("handleExport — json", () => {
 
 describe("handleExport — errors", () => {
 	test("throws for non-existent conversation ID", async () => {
-		await index.build(TMP_DIR);
+		index.init(TMP_DIR);
 
 		expect(
 			handleExport({ id: "conv_nonexistent", format: "markdown" }, index),

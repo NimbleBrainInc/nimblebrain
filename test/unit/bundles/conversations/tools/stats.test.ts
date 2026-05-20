@@ -92,7 +92,7 @@ afterEach(() => {
 describe("handleStats", () => {
 	test("returns zeros for empty directory", async () => {
 		const index = new ConversationIndex();
-		await index.build(TMP_DIR);
+		index.init(TMP_DIR);
 
 		const result = await handleStats({ period: "all" }, index);
 
@@ -119,7 +119,7 @@ describe("handleStats", () => {
 		});
 
 		const index = new ConversationIndex();
-		await index.build(TMP_DIR);
+		index.init(TMP_DIR);
 
 		const result = await handleStats({ period: "all" }, index);
 
@@ -153,7 +153,7 @@ describe("handleStats", () => {
 		});
 
 		const index = new ConversationIndex();
-		await index.build(TMP_DIR);
+		index.init(TMP_DIR);
 
 		const result = await handleStats({ period: "all" }, index);
 
@@ -205,7 +205,7 @@ describe("handleStats", () => {
 		});
 
 		const index = new ConversationIndex();
-		await index.build(TMP_DIR);
+		index.init(TMP_DIR);
 
 		const result = await handleStats({ period: "all" }, index);
 
@@ -242,7 +242,7 @@ describe("handleStats", () => {
 		});
 
 		const index = new ConversationIndex();
-		await index.build(TMP_DIR);
+		index.init(TMP_DIR);
 
 		const result = await handleStats({ period: "all" }, index);
 
@@ -269,7 +269,7 @@ describe("handleStats", () => {
 		});
 
 		const index = new ConversationIndex();
-		await index.build(TMP_DIR);
+		index.init(TMP_DIR);
 
 		const result = await handleStats({ period: "day" }, index);
 
@@ -296,7 +296,7 @@ describe("handleStats", () => {
 		});
 
 		const index = new ConversationIndex();
-		await index.build(TMP_DIR);
+		index.init(TMP_DIR);
 
 		const result = await handleStats({ period: "week" }, index);
 
@@ -322,7 +322,7 @@ describe("handleStats", () => {
 		});
 
 		const index = new ConversationIndex();
-		await index.build(TMP_DIR);
+		index.init(TMP_DIR);
 
 		// No period specified — should default to "week"
 		const result = await handleStats({}, index);
@@ -333,7 +333,7 @@ describe("handleStats", () => {
 
 	test("period.since and period.until are ISO strings", async () => {
 		const index = new ConversationIndex();
-		await index.build(TMP_DIR);
+		index.init(TMP_DIR);
 
 		const result = await handleStats({ period: "week" }, index);
 
@@ -350,7 +350,7 @@ describe("handleStats", () => {
 
 	test("period 'all' has empty since string", async () => {
 		const index = new ConversationIndex();
-		await index.build(TMP_DIR);
+		index.init(TMP_DIR);
 
 		const result = await handleStats({ period: "all" }, index);
 
@@ -382,7 +382,7 @@ describe("handleStats", () => {
 		});
 
 		const index = new ConversationIndex();
-		await index.build(TMP_DIR);
+		index.init(TMP_DIR);
 
 		const result = await handleStats({ period: "all" }, index);
 
@@ -391,7 +391,7 @@ describe("handleStats", () => {
 
 	test("does not include USD cost in output", async () => {
 		const index = new ConversationIndex();
-		await index.build(TMP_DIR);
+		index.init(TMP_DIR);
 
 		const result = await handleStats({ period: "all" }, index);
 
@@ -413,7 +413,7 @@ describe("handleStats", () => {
 		});
 
 		const index = new ConversationIndex();
-		await index.build(TMP_DIR);
+		index.init(TMP_DIR);
 
 		const result = await handleStats({ period: "all" }, index);
 

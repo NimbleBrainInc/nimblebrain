@@ -48,7 +48,7 @@ export async function handleSearch(input: SearchInput, index: ConversationIndex)
   const limit = input.limit ?? DEFAULT_LIMIT;
   const queryLower = query.toLowerCase();
 
-  const allConversations = index.list({ limit: index.size || 1 });
+  const allConversations = await index.list({ limit: Number.MAX_SAFE_INTEGER });
   const results: SearchResult[] = [];
 
   for (const entry of allConversations.conversations) {

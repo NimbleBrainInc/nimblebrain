@@ -44,12 +44,12 @@ function writeConvFile(spec: ConvSpec): string {
 	return path;
 }
 
-async function buildIndex(specs: ConvSpec[]): Promise<ConversationIndex> {
+function buildIndex(specs: ConvSpec[]): ConversationIndex {
 	for (const spec of specs) {
 		writeConvFile(spec);
 	}
 	const index = new ConversationIndex();
-	await index.build(TMP_DIR);
+	index.init(TMP_DIR);
 	return index;
 }
 
@@ -240,7 +240,7 @@ describe("handleList", () => {
 
 	test("empty directory returns empty array and totalCount 0", async () => {
 		const index = new ConversationIndex();
-		await index.build(TMP_DIR);
+		index.init(TMP_DIR);
 		const result = await handleList({}, index);
 
 		expect(result.conversations).toEqual([]);
@@ -277,6 +277,24 @@ describe("handleList", () => {
 		for (let i = 1; i < dates.length; i++) {
 			expect(dates[i]! <= dates[i - 1]!).toBe(true);
 		}
+	});
+
+	test("handleList reflects a file written after init (issue #155)", async () => {
+		// Pull-on-demand: each handleList call reconciles with disk. No
+		// debounce, no flush plumbing — the file just shows up.
+		const index = new ConversationIndex();
+		index.init(TMP_DIR);
+
+		writeConvFile({
+			id: "fresh",
+			createdAt: "2025-05-01T00:00:00.000Z",
+			updatedAt: "2025-05-01T00:00:00.000Z",
+			title: "Written after init",
+			messages: [{ role: "user", content: "hello", timestamp: "2025-05-01T00:01:00.000Z" }],
+		});
+
+		const result = await handleList({}, index);
+		expect(result.conversations.find((c) => c.id === "fresh")).toBeDefined();
 	});
 
 	test("passes through all input fields to the index", async () => {

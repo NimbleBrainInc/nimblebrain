@@ -69,7 +69,7 @@ describe("handleUpdate", () => {
 		const lines = [JSON.stringify(meta), ...messages.map((m) => JSON.stringify(m))];
 		writeTmpFile("conv_test001.jsonl", lines);
 
-		await index.build(TMP_DIR);
+		index.init(TMP_DIR);
 
 		const result = (await handleUpdate({ id: "conv_test001", title: "New title" }, index)) as Record<string, unknown>;
 
@@ -90,7 +90,7 @@ describe("handleUpdate", () => {
 		const lines = [JSON.stringify(meta), ...messages.map((m) => JSON.stringify(m))];
 		writeTmpFile("conv_test001.jsonl", lines);
 
-		await index.build(TMP_DIR);
+		index.init(TMP_DIR);
 
 		await handleUpdate({ id: "conv_test001", title: "Updated" }, index);
 
@@ -113,7 +113,7 @@ describe("handleUpdate", () => {
 		const lines = [JSON.stringify(meta), ...messages.map((m) => JSON.stringify(m))];
 		writeTmpFile("conv_test001.jsonl", lines);
 
-		await index.build(TMP_DIR);
+		index.init(TMP_DIR);
 
 		await handleUpdate({ id: "conv_test001", title: "Integrity check" }, index);
 
@@ -144,7 +144,7 @@ describe("handleUpdate", () => {
 		const lines = [JSON.stringify(meta), ...messages.map((m) => JSON.stringify(m))];
 		writeTmpFile("conv_test001.jsonl", lines);
 
-		await index.build(TMP_DIR);
+		index.init(TMP_DIR);
 
 		await handleUpdate({ id: "conv_test001", title: "After" }, index);
 
@@ -159,7 +159,7 @@ describe("handleUpdate", () => {
 	// ---------------------------------------------------------------------------
 
 	test("throws error for non-existent conversation ID", async () => {
-		await index.build(TMP_DIR);
+		index.init(TMP_DIR);
 
 		await expect(
 			handleUpdate({ id: "conv_nonexistent", title: "Nope" }, index),
@@ -174,7 +174,7 @@ describe("handleUpdate", () => {
 		const meta = makeMeta({ id: "conv_empty" });
 		writeTmpFile("conv_empty.jsonl", [JSON.stringify(meta)]);
 
-		await index.build(TMP_DIR);
+		index.init(TMP_DIR);
 
 		const result = (await handleUpdate({ id: "conv_empty", title: "Empty conv" }, index)) as Record<string, unknown>;
 

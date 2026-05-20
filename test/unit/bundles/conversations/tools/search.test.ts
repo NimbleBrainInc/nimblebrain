@@ -56,7 +56,6 @@ describe("conversations__search", () => {
 	});
 
 	afterEach(() => {
-		index.stopWatching();
 		rmSync(dir, { recursive: true, force: true });
 	});
 
@@ -68,7 +67,7 @@ describe("conversations__search", () => {
 				{ role: "assistant", content: "Kubernetes is an orchestration platform for containers." },
 			],
 		});
-		await index.build(dir);
+		index.init(dir);
 
 		const result = (await handleSearch({ query: "orchestration" }, index)) as {
 			results: Array<{ id: string; matches: Array<{ snippet: string }> }>;
@@ -86,7 +85,7 @@ describe("conversations__search", () => {
 				{ role: "assistant", content: "Here is the Auth configuration." },
 			],
 		});
-		await index.build(dir);
+		index.init(dir);
 
 		const result = (await handleSearch({ query: "Auth" }, index)) as {
 			results: Array<{ id: string; matches: Array<{ messageIndex: number }> }>;
@@ -107,7 +106,7 @@ describe("conversations__search", () => {
 				{ role: "user", content: "deploy step 5" },
 			],
 		});
-		await index.build(dir);
+		index.init(dir);
 
 		const result = (await handleSearch({ query: "deploy" }, index)) as {
 			results: Array<{ id: string; matches: Array<{ messageIndex: number }> }>;
@@ -124,7 +123,7 @@ describe("conversations__search", () => {
 		writeConversation(dir, "conv-b", {
 			messages: [{ role: "user", content: "database backup" }],
 		});
-		await index.build(dir);
+		index.init(dir);
 
 		const result = (await handleSearch({ query: "database", limit: 1 }, index)) as {
 			results: Array<{ id: string }>;
@@ -134,7 +133,7 @@ describe("conversations__search", () => {
 	});
 
 	it("throws error for empty query", async () => {
-		await index.build(dir);
+		index.init(dir);
 
 		await expect(handleSearch({ query: "" }, index)).rejects.toThrow(
 			"query is required and cannot be empty",
@@ -142,7 +141,7 @@ describe("conversations__search", () => {
 	});
 
 	it("throws error for whitespace-only query", async () => {
-		await index.build(dir);
+		index.init(dir);
 
 		await expect(handleSearch({ query: "   " }, index)).rejects.toThrow(
 			"query is required and cannot be empty",
@@ -156,7 +155,7 @@ describe("conversations__search", () => {
 				{ role: "assistant", content: "Greetings!" },
 			],
 		});
-		await index.build(dir);
+		index.init(dir);
 
 		const result = (await handleSearch({ query: "xyznonexistent" }, index)) as {
 			results: Array<unknown>;
@@ -173,7 +172,7 @@ describe("conversations__search", () => {
 		writeConversation(dir, "conv-ctx", {
 			messages: [{ role: "user", content }],
 		});
-		await index.build(dir);
+		index.init(dir);
 
 		const result = (await handleSearch({ query: "target_word" }, index)) as {
 			results: Array<{ matches: Array<{ snippet: string }> }>;
@@ -196,7 +195,7 @@ describe("conversations__search", () => {
 			title: "My Important Chat",
 			messages: [{ role: "user", content: "special keyword here" }],
 		});
-		await index.build(dir);
+		index.init(dir);
 
 		const result = (await handleSearch({ query: "special keyword" }, index)) as {
 			results: Array<{ id: string; title: string | null; matches: Array<{ snippet: string }> }>;
@@ -209,7 +208,7 @@ describe("conversations__search", () => {
 	});
 
 	it("returns empty results for empty directory", async () => {
-		await index.build(dir);
+		index.init(dir);
 
 		const result = (await handleSearch({ query: "anything" }, index)) as {
 			results: Array<unknown>;
@@ -231,7 +230,7 @@ describe("conversations__search", () => {
 			title: "Chat Z",
 			messages: [{ role: "user", content: "no match here" }],
 		});
-		await index.build(dir);
+		index.init(dir);
 
 		const result = (await handleSearch({ query: "shared term" }, index)) as {
 			results: Array<{ id: string }>;

@@ -153,13 +153,10 @@ async function routeToolCall(
 async function main(): Promise<void> {
   log(`Starting with conversations dir: ${CONVERSATIONS_DIR}`);
 
-  // Build the in-memory index from JSONL file headers
+  // Pull-on-demand index: each tool call reconciles with disk via mtime cache.
   const index = new ConversationIndex();
-  await index.build(CONVERSATIONS_DIR);
-  log(`Indexed ${index.size} conversations`);
-
-  // Start watching for file changes
-  index.startWatching(CONVERSATIONS_DIR);
+  index.init(CONVERSATIONS_DIR);
+  log(`Index initialized at ${CONVERSATIONS_DIR}`);
 
   // Create MCP server
   const server = new Server(
@@ -245,7 +242,6 @@ async function main(): Promise<void> {
   // Clean shutdown
   const shutdown = async () => {
     log("Shutting down...");
-    index.stopWatching();
     await server.close();
     process.exit(0);
   };

@@ -78,11 +78,11 @@ afterEach(() => {
 });
 
 // ---------------------------------------------------------------------------
-// build()
+// init + initial read
 // ---------------------------------------------------------------------------
 
-describe("build", () => {
-	test("builds index from a directory with 3 JSONL files", async () => {
+describe("init", () => {
+	test("reads a directory with 3 JSONL files", async () => {
 		writeConvFile({
 			id: "aaa",
 			createdAt: "2025-01-01T00:00:00.000Z",
@@ -122,11 +122,11 @@ describe("build", () => {
 		});
 
 		const index = new ConversationIndex();
-		await index.build(TMP_DIR);
+		index.init(TMP_DIR);
 
-		expect(index.size).toBe(3);
+		expect((await index.list()).totalCount).toBe(3);
 
-		const a = index.get("aaa");
+		const a = await index.get("aaa");
 		expect(a).toBeDefined();
 		expect(a!.title).toBe("First conversation");
 		expect(a!.messageCount).toBe(2);
@@ -135,24 +135,23 @@ describe("build", () => {
 		expect(a!.lastModel).toBe("claude-sonnet-4-5-20250929");
 		expect(a!.preview).toBe("Hello world");
 
-		const b = index.get("bbb");
+		const b = await index.get("bbb");
 		expect(b).toBeDefined();
 		expect(b!.messageCount).toBe(1);
 		expect(b!.preview).toBe("How does MCP work?");
 
-		const c = index.get("ccc");
+		const c = await index.get("ccc");
 		expect(c).toBeDefined();
 		expect(c!.title).toBeNull();
 		expect(c!.messageCount).toBe(3);
 		expect(c!.preview).toBe("Deploy to production");
 	});
 
-	test("empty directory results in size 0", async () => {
+	test("empty directory results in totalCount 0", async () => {
 		const index = new ConversationIndex();
-		await index.build(TMP_DIR);
-		expect(index.size).toBe(0);
+		index.init(TMP_DIR);
 
-		const result = index.list();
+		const result = await index.list();
 		expect(result.conversations).toEqual([]);
 		expect(result.nextCursor).toBeNull();
 		expect(result.totalCount).toBe(0);
@@ -174,9 +173,9 @@ describe("build", () => {
 		writeFileSync(join(TMP_DIR, "conv_broken.jsonl"), "this is not valid json\n");
 
 		const index = new ConversationIndex();
-		await index.build(TMP_DIR);
-		expect(index.size).toBe(1);
-		expect(index.get("good")).toBeDefined();
+		index.init(TMP_DIR);
+		expect((await index.list()).totalCount).toBe(1);
+		expect(await index.get("good")).toBeDefined();
 	});
 });
 
@@ -209,16 +208,16 @@ describe("list pagination", () => {
 		});
 
 		const index = new ConversationIndex();
-		await index.build(TMP_DIR);
+		index.init(TMP_DIR);
 
 		// First page
-		const page1 = index.list({ limit: 2 });
+		const page1 = await index.list({ limit: 2 });
 		expect(page1.conversations).toHaveLength(2);
 		expect(page1.totalCount).toBe(3);
 		expect(page1.nextCursor).not.toBeNull();
 
 		// Second page using cursor
-		const page2 = index.list({ limit: 2, cursor: page1.nextCursor! });
+		const page2 = await index.list({ limit: 2, cursor: page1.nextCursor! });
 		expect(page2.conversations).toHaveLength(1);
 		expect(page2.nextCursor).toBeNull();
 		expect(page2.totalCount).toBe(3);
@@ -261,26 +260,26 @@ describe("list search", () => {
 		});
 
 		const index = new ConversationIndex();
-		await index.build(TMP_DIR);
+		index.init(TMP_DIR);
 
 		// Search by title
-		const r1 = index.list({ search: "kubernetes" });
+		const r1 = await index.list({ search: "kubernetes" });
 		expect(r1.conversations).toHaveLength(2);
 		expect(r1.totalCount).toBe(2);
 		const ids1 = r1.conversations.map((c) => c.id).sort();
 		expect(ids1).toEqual(["s1", "s3"]);
 
 		// Search by preview content
-		const r2 = index.list({ search: "postgres" });
+		const r2 = await index.list({ search: "postgres" });
 		expect(r2.conversations).toHaveLength(1);
 		expect(r2.conversations[0]!.id).toBe("s2");
 
 		// Case insensitive
-		const r3 = index.list({ search: "DEPLOY" });
+		const r3 = await index.list({ search: "DEPLOY" });
 		expect(r3.conversations).toHaveLength(2);
 
 		// No match
-		const r4 = index.list({ search: "nonexistent" });
+		const r4 = await index.list({ search: "nonexistent" });
 		expect(r4.conversations).toHaveLength(0);
 		expect(r4.totalCount).toBe(0);
 	});
@@ -315,20 +314,20 @@ describe("list date filtering", () => {
 		});
 
 		const index = new ConversationIndex();
-		await index.build(TMP_DIR);
+		index.init(TMP_DIR);
 
 		// Only February onwards
-		const r1 = index.list({ dateFrom: "2025-02-01T00:00:00.000Z" });
+		const r1 = await index.list({ dateFrom: "2025-02-01T00:00:00.000Z" });
 		expect(r1.totalCount).toBe(2);
 		expect(r1.conversations.map((c) => c.id).sort()).toEqual(["d2", "d3"]);
 
 		// Only up to February
-		const r2 = index.list({ dateTo: "2025-02-28T00:00:00.000Z" });
+		const r2 = await index.list({ dateTo: "2025-02-28T00:00:00.000Z" });
 		expect(r2.totalCount).toBe(2);
 		expect(r2.conversations.map((c) => c.id).sort()).toEqual(["d1", "d2"]);
 
 		// Exact range: February only
-		const r3 = index.list({
+		const r3 = await index.list({
 			dateFrom: "2025-02-01T00:00:00.000Z",
 			dateTo: "2025-02-28T23:59:59.999Z",
 		});
@@ -371,14 +370,14 @@ describe("list sorting", () => {
 		});
 
 		const index = new ConversationIndex();
-		await index.build(TMP_DIR);
+		index.init(TMP_DIR);
 
 		// Sort by created (desc): sort3, sort2, sort1
-		const byCreated = index.list({ sortBy: "created" });
+		const byCreated = await index.list({ sortBy: "created" });
 		expect(byCreated.conversations.map((c) => c.id)).toEqual(["sort3", "sort2", "sort1"]);
 
 		// Sort by updated (desc): sort1, sort2, sort3
-		const byUpdated = index.list({ sortBy: "updated" });
+		const byUpdated = await index.list({ sortBy: "updated" });
 		expect(byUpdated.conversations.map((c) => c.id)).toEqual(["sort1", "sort2", "sort3"]);
 	});
 
@@ -399,9 +398,9 @@ describe("list sorting", () => {
 		});
 
 		const index = new ConversationIndex();
-		await index.build(TMP_DIR);
+		index.init(TMP_DIR);
 
-		const result = index.list();
+		const result = await index.list();
 		// def1 has later updatedAt, so comes first
 		expect(result.conversations[0]!.id).toBe("def1");
 	});
@@ -422,54 +421,41 @@ describe("get", () => {
 		});
 
 		const index = new ConversationIndex();
-		await index.build(TMP_DIR);
+		index.init(TMP_DIR);
 
-		expect(index.get("get1")).toBeDefined();
-		expect(index.get("get1")!.title).toBe("Get test");
-		expect(index.get("nonexistent")).toBeUndefined();
+		expect(await index.get("get1")).toBeDefined();
+		expect((await index.get("get1"))!.title).toBe("Get test");
+		expect(await index.get("nonexistent")).toBeUndefined();
 	});
 });
 
 // ---------------------------------------------------------------------------
-// fs.watch integration
+// Directory reconciliation — each list/get reads fresh from disk
 // ---------------------------------------------------------------------------
 
-describe("fs.watch integration", () => {
-	test("indexes a new file when processPendingFiles runs", async () => {
-		// Tests the deterministic post-debounce path. We do NOT exercise
-		// fs.watch here because macOS FSEvents is unreliable for new-file
-		// creation under parallel-test load — it occasionally drops the
-		// event entirely, producing a flake. The sibling deletion test
-		// uses the same private-method pattern. The actual fs.watch →
-		// debounce → processPendingFiles wiring is exercised end-to-end
-		// in the integration suite where retries / longer timeouts apply.
+describe("directory reconciliation", () => {
+	test("picks up a file written after init", async () => {
 		const index = new ConversationIndex();
-		await index.build(TMP_DIR);
-		expect(index.size).toBe(0);
+		index.init(TMP_DIR);
+		expect((await index.list()).totalCount).toBe(0);
 
 		writeConvFile({
-			id: "watch1",
+			id: "fresh",
 			createdAt: "2025-01-01T00:00:00.000Z",
 			updatedAt: "2025-01-01T00:00:00.000Z",
-			title: "Watched file",
-			messages: [{ role: "user", content: "new message", timestamp: "2025-01-01T00:01:00.000Z" }],
+			title: "Written after init",
+			messages: [{ role: "user", content: "hi", timestamp: "2025-01-01T00:01:00.000Z" }],
 		});
 
-		// Drive the debounce-flush path directly. Mirrors what fs.watch's
-		// 500ms timer eventually invokes.
-		const priv = index as any;
-		priv.dir = TMP_DIR;
-		priv.pendingFiles.add("conv_watch1.jsonl");
-		await priv.processPendingFiles();
-
-		expect(index.size).toBe(1);
-		expect(index.get("watch1")).toBeDefined();
-		expect(index.get("watch1")!.title).toBe("Watched file");
+		expect((await index.list()).totalCount).toBe(1);
+		const entry = await index.get("fresh");
+		expect(entry).toBeDefined();
+		expect(entry!.title).toBe("Written after init");
 	});
 
-	test("removes deleted file from index when processPendingFiles runs", async () => {
+	test("drops a file that has been deleted", async () => {
 		const filePath = writeConvFile({
-			id: "watch_del",
+			id: "doomed",
 			createdAt: "2025-01-01T00:00:00.000Z",
 			updatedAt: "2025-01-01T00:00:00.000Z",
 			title: "Will be deleted",
@@ -477,43 +463,39 @@ describe("fs.watch integration", () => {
 		});
 
 		const index = new ConversationIndex();
-		await index.build(TMP_DIR);
-		expect(index.size).toBe(1);
-		expect(index.get("watch_del")).toBeDefined();
+		index.init(TMP_DIR);
+		expect(await index.get("doomed")).toBeDefined();
 
-		// Delete the file, then simulate a watch event by directly invoking
-		// processPendingFiles. This tests the cleanup logic without depending
-		// on fs.watch event delivery timing, which is unreliable under CI load.
 		rmSync(filePath);
 
-		// Access private pendingFiles + processPendingFiles via the instance
-		const priv = index as any;
-		priv.dir = TMP_DIR;
-		priv.pendingFiles.add("conv_watch_del.jsonl");
-		await priv.processPendingFiles();
-
-		expect(index.size).toBe(0);
-		expect(index.get("watch_del")).toBeUndefined();
+		expect(await index.get("doomed")).toBeUndefined();
+		expect((await index.list()).totalCount).toBe(0);
 	});
 
-	test("stopWatching cleans up", async () => {
-		const index = new ConversationIndex();
-		await index.build(TMP_DIR);
-
-		index.startWatching(TMP_DIR);
-		index.stopWatching();
-
-		// Write a file after stopping — should NOT be indexed
+	test("re-reads a file when its content (and mtime) changes", async () => {
 		writeConvFile({
-			id: "after_stop",
+			id: "mutable",
 			createdAt: "2025-01-01T00:00:00.000Z",
 			updatedAt: "2025-01-01T00:00:00.000Z",
-			title: "Should not appear",
-			messages: [{ role: "user", content: "ignored", timestamp: "2025-01-01T00:01:00.000Z" }],
+			title: "Original",
+			messages: [{ role: "user", content: "first", timestamp: "2025-01-01T00:01:00.000Z" }],
 		});
 
-		await new Promise((resolve) => setTimeout(resolve, 800));
+		const index = new ConversationIndex();
+		index.init(TMP_DIR);
+		expect((await index.get("mutable"))!.title).toBe("Original");
 
-		expect(index.size).toBe(0);
+		// Bump mtime so the mtime cache invalidates. Some filesystems quantize
+		// mtime to ms, so a same-ms rewrite can be invisible — wait a hair.
+		await new Promise((resolve) => setTimeout(resolve, 25));
+		writeConvFile({
+			id: "mutable",
+			createdAt: "2025-01-01T00:00:00.000Z",
+			updatedAt: "2025-01-01T00:00:00.000Z",
+			title: "Updated",
+			messages: [{ role: "user", content: "first", timestamp: "2025-01-01T00:01:00.000Z" }],
+		});
+
+		expect((await index.get("mutable"))!.title).toBe("Updated");
 	});
 });

@@ -48,8 +48,7 @@ export async function createConversationsSource(
     let index = indexCache.get(cacheKey);
     if (!index) {
       index = new ConversationIndex();
-      await index.build(dir);
-      index.startWatching(dir);
+      index.init(dir);
       indexCache.set(cacheKey, index);
     }
     return { index, dir };

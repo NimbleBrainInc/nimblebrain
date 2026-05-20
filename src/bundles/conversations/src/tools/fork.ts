@@ -18,7 +18,7 @@ export interface ForkInput {
 }
 
 export async function handleFork(input: ForkInput, index: ConversationIndex): Promise<object> {
-  const entry = index.get(input.id);
+  const entry = await index.get(input.id);
   if (!entry) {
     throw new Error(`Conversation not found: ${input.id}`);
   }

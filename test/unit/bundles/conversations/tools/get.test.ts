@@ -79,7 +79,6 @@ describe("conversations__get", () => {
 	});
 
 	afterEach(() => {
-		index.stopWatching();
 		rmSync(dir, { recursive: true, force: true });
 	});
 
@@ -97,7 +96,7 @@ describe("conversations__get", () => {
 				{ role: "user", content: "Message 3", timestamp: ts },
 			],
 		});
-		await index.build(dir);
+		index.init(dir);
 
 		const result = (await handleGet({ id: "conv-5msgs" }, index)) as {
 			metadata: Record<string, unknown>;
@@ -129,7 +128,7 @@ describe("conversations__get", () => {
 				{ role: "user", content: "Fifth", timestamp: ts },
 			],
 		});
-		await index.build(dir);
+		index.init(dir);
 
 		const result = (await handleGet({ id: "conv-limited", limit: 2 }, index)) as {
 			messages: Array<{ role: string; content: string }>;
@@ -143,7 +142,7 @@ describe("conversations__get", () => {
 	});
 
 	it("returns isError response for non-existent conversation ID", async () => {
-		await index.build(dir);
+		index.init(dir);
 
 		await expect(handleGet({ id: "does-not-exist" }, index)).rejects.toThrow(
 			"Conversation not found: does-not-exist",
@@ -181,7 +180,7 @@ describe("conversations__get", () => {
 				},
 			],
 		});
-		await index.build(dir);
+		index.init(dir);
 
 		const result = (await handleGet({ id: "conv-meta" }, index)) as {
 			messages: Array<{
@@ -222,7 +221,7 @@ describe("conversations__get", () => {
 				{ role: "assistant", content: "a2", timestamp: ts },
 			],
 		});
-		await index.build(dir);
+		index.init(dir);
 
 		const result = (await handleGet(
 			{ id: "conv-meta-only", expand: "metadata" },
@@ -248,7 +247,7 @@ describe("conversations__get", () => {
 			timestamp: ts,
 		}));
 		writeConversation(dir, "conv-many", { messages });
-		await index.build(dir);
+		index.init(dir);
 
 		const result = (await handleGet({ id: "conv-many" }, index)) as {
 			messages: Array<{ content: string }>;
@@ -275,7 +274,7 @@ describe("conversations__get", () => {
 			timestamp: ts,
 		}));
 		writeConversation(dir, "conv-full", { messages });
-		await index.build(dir);
+		index.init(dir);
 
 		const result = (await handleGet({ id: "conv-full", expand: "full" }, index)) as {
 			messages: unknown[];
@@ -297,7 +296,7 @@ describe("conversations__get", () => {
 			timestamp: ts,
 		}));
 		writeConversation(dir, "conv-bigwindow", { messages });
-		await index.build(dir);
+		index.init(dir);
 
 		const result = (await handleGet({ id: "conv-bigwindow" }, index)) as {
 			messages: Array<{ content: string }>;
@@ -325,7 +324,7 @@ describe("conversations__get", () => {
 				{ role: "assistant", content: overCap, timestamp: ts },
 			],
 		});
-		await index.build(dir);
+		index.init(dir);
 
 		const result = (await handleGet({ id: "conv-onehuge" }, index)) as {
 			messages: Array<{ content: string }>;
@@ -365,7 +364,7 @@ describe("conversations__get", () => {
 			usage: { inputTokens: 100, outputTokens: 50, model: "claude-sonnet-4-6", llmMs: 1200 },
 		}));
 		writeConversation(dir, "conv-fits-under-engine-cap", { messages });
-		await index.build(dir);
+		index.init(dir);
 
 		const result = await handleGet({ id: "conv-fits-under-engine-cap" }, index);
 		const serialized = JSON.stringify(result, null, 2);
