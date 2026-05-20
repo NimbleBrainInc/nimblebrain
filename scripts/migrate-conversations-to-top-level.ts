@@ -30,10 +30,11 @@
  *     bun run scripts/migrate-conversations-to-top-level.ts [--work-dir <path>] [--dry-run]
  */
 
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { mkdir, readdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
+import { acquireMigrationLock } from "./lib/migration-lock.ts";
 
 const REMOVED_EVENT_TYPES = new Set(["metadata.visibility", "metadata.participants"]);
 const CONV_FILE_RE = /^conv_[a-f0-9]{16}\.jsonl$/;
@@ -149,6 +150,53 @@ async function scanCandidates(
   }
 
   return { candidates, byConvId };
+}
+
+/**
+ * Pre-flight: source workspaces dir and destination conversations dir
+ * must be on the same filesystem, because the per-conversation move
+ * uses `rename(2)` which fails `EXDEV` across mount points. Standard
+ * deployments share one PVC, but multi-mount setups (e.g. workspaces
+ * on object storage, conversations on local SSD) would have the
+ * script abort mid-batch leaving partial state. Fail fast instead
+ * with a clear message that names the issue.
+ *
+ * The check compares `st_dev` of each dir, falling back to the parent
+ * when a dir doesn't yet exist (the destination is created lazily;
+ * the source might not exist if there's nothing to migrate).
+ */
+function preflightSameFs(workspacesDir: string, destDir: string, workDir: string): void {
+  const devOf = (path: string): number | null => {
+    let cur = path;
+    while (cur && !existsSync(cur)) {
+      const parent = join(cur, "..");
+      if (parent === cur) return null;
+      cur = parent;
+    }
+    if (!cur) return null;
+    try {
+      return statSync(cur).dev;
+    } catch {
+      return null;
+    }
+  };
+  const srcDev = devOf(workspacesDir);
+  const dstDev = devOf(destDir);
+  // If either side returns null we can't make the determination —
+  // skip the check rather than false-positive. The actual `rename(2)`
+  // will surface EXDEV per-file if it matters and there's no easy
+  // way to be more certain pre-flight.
+  if (srcDev === null || dstDev === null) return;
+  if (srcDev !== dstDev) {
+    console.error(
+      `[migrate] [FATAL] source and destination are on different filesystems ` +
+        `(workspaces/ on dev=${srcDev}, conversations/ on dev=${dstDev}). ` +
+        `\`rename(2)\` cannot cross mount points — every move would fail EXDEV. ` +
+        `Either consolidate ${workDir}'s subtree onto one mount, or run a copy-then-delete ` +
+        `migration script (this one is rename-only by design for atomicity).`,
+    );
+    process.exit(2);
+  }
 }
 
 /**
@@ -302,6 +350,23 @@ async function main(): Promise<void> {
 
   const workspacesDir = join(args.workDir, "workspaces");
   const destDir = join(args.workDir, "conversations");
+
+  if (!existsSync(args.workDir)) {
+    console.error(`[migrate] workDir does not exist: ${args.workDir}`);
+    process.exit(1);
+  }
+
+  // Block concurrent runs on the same workDir (see scripts/lib/migration-lock.ts).
+  acquireMigrationLock(args.workDir, "migrate-conversations-to-top-level");
+
+  // Same-filesystem pre-flight. `rename(2)` fails EXDEV across mount
+  // points; under standard single-PVC deployments source and dest
+  // share a filesystem, but the platform doesn't enforce that and a
+  // multi-mount setup would have the script abort mid-batch instead
+  // of failing fast. Compare `st_dev` between the source workspace
+  // dir (or its parent if workspaces/ doesn't exist yet) and the
+  // destination conversations dir (or its parent).
+  preflightSameFs(workspacesDir, destDir, args.workDir);
 
   const { candidates, byConvId } = await scanCandidates(workspacesDir);
   console.error(`[migrate] found ${candidates.length} conversation file(s) under workspaces/`);

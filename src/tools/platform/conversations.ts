@@ -28,11 +28,17 @@ import {
 
 /**
  * Create the "conversations" platform source — an in-process MCP server.
- * Migrated from the former standalone MCP server at
- * src/bundles/conversations/src/server.ts.
+ *
+ * Replaces the former standalone stdio server (deleted Stage 1 round-8).
+ * The standalone server had no identity or ownership gates and would have
+ * served every user's conversations to any caller; the in-process source
+ * enforces `currentAccess()` on every handler and is now the only entry
+ * point. The bundle directory's `src/` (handlers, index-cache,
+ * jsonl-reader) and `ui/` (the iframe dist) remain — both are imported
+ * by this source.
  *
  * Tools: list, get, search, update, fork, stats, export
- * Resources: ui://conversations/browser (HTML SPA)
+ * Resources: ui://conversations/browser (HTML SPA from the bundle's ui/dist)
  * Placements: sidebar conversations link at priority 1
  */
 export async function createConversationsSource(

@@ -37,6 +37,7 @@ import {
   WorkspaceStore,
 } from "../src/workspace/workspace-store.ts";
 import type { Workspace } from "../src/workspace/types.ts";
+import { acquireMigrationLock } from "./lib/migration-lock.ts";
 
 interface Args {
   workDir: string;
@@ -265,6 +266,11 @@ async function main(): Promise<void> {
     console.error(`[migrate] no users dir at ${usersDir} — nothing to do`);
     return;
   }
+
+  // Block concurrent migrations on the same workDir. Two operators
+  // racing rename / writeJsonAtomic on the same workspace would corrupt
+  // it; the lock makes the contention visible instead of silent.
+  acquireMigrationLock(args.workDir, "migrate-personal-workspaces");
 
   const userStore = new UserStore(args.workDir);
   const wsStore = new WorkspaceStore(args.workDir);
