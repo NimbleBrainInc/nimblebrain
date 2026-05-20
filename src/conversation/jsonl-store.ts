@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { ConversationCorruptedError } from "../runtime/errors.ts";
 import { assertNoBinaryPayloads } from "./binary-guard.ts";
 import { ConversationIndex, canAccess } from "./index-cache.ts";
 import {
@@ -98,9 +99,9 @@ export class JsonlConversationStore implements ConversationStore {
 
     const raw = JSON.parse(firstLine) as Record<string, unknown>;
     if (typeof raw.ownerId !== "string" || raw.ownerId.length === 0) {
-      throw new Error(
-        `[conversation] missing ownerId in ${id} — operator must back-fill ownerId on legacy conversations`,
-      );
+      // Typed error so the HTTP layer can map to a clean 422
+      // (see src/api/handlers.ts::conversationCorruptedResponse).
+      throw new ConversationCorruptedError(id, "missing_owner");
     }
     const conversation: Conversation = {
       id: raw.id as string,

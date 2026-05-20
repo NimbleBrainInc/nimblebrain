@@ -10,6 +10,7 @@ import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { EngineEvent, EventSink } from "../engine/types.ts";
+import { ConversationCorruptedError } from "../runtime/errors.ts";
 import { assertNoBinaryPayloads } from "./binary-guard.ts";
 import {
   deriveConversationMeta,
@@ -158,13 +159,11 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
     const raw = JSON.parse(lines[0]!) as Record<string, unknown>;
     if (typeof raw.ownerId !== "string" || raw.ownerId.length === 0) {
       // Stage 1 invariant: every conversation has an ownerId. A file
-      // without one is pre-Stage-1 data and unreadable by this code.
-      // Surface loudly — operator must back-fill `ownerId` (the
-      // conversation-to-top-level migration script lands as
-      // delegation-model Stage 1 Task 004).
-      throw new Error(
-        `[conversation] missing ownerId in ${id} — operator must back-fill ownerId on legacy conversations.`,
-      );
+      // without one is pre-migration data and unreadable by this code.
+      // Throw a typed error so the HTTP layer can map to a clean
+      // `422 conversation_corrupted` (with the migration command in
+      // the message) instead of bubbling as 500.
+      throw new ConversationCorruptedError(id, "missing_owner");
     }
     const conversation: Conversation = {
       id: raw.id as string,

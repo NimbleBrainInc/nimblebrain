@@ -8,7 +8,11 @@ import { ingestFiles, isAllowedMime, type UploadedFile } from "../files/ingest.t
 import { createFileStore } from "../files/store.ts";
 import type { FileEntry } from "../files/types.ts";
 import type { IdentityProvider, UserIdentity } from "../identity/provider.ts";
-import { ConversationAccessDeniedError, RunInProgressError } from "../runtime/errors.ts";
+import {
+  ConversationAccessDeniedError,
+  ConversationCorruptedError,
+  RunInProgressError,
+} from "../runtime/errors.ts";
 import { type RequestContext, runWithRequestContext } from "../runtime/request-context.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import type { ChatRequest } from "../runtime/types.ts";
@@ -47,6 +51,7 @@ export async function handleChat(
   features: ResolvedFeatures,
   identity?: UserIdentity,
   workspaceId?: string,
+  conversationEventManager?: ConversationEventManager,
 ): Promise<Response> {
   const parsed = await parseChatBody(request, runtime, features, identity, workspaceId);
   if (parsed instanceof Response) return parsed;
@@ -54,6 +59,11 @@ export async function handleChat(
   if (parsed.conversationId && runtime.isConversationActive(parsed.conversationId)) {
     return runInProgressResponse(parsed.conversationId);
   }
+
+  // Same self-echo-suppression contract as /v1/chat/stream: if the
+  // caller has an open conv-events SSE on this conversation, they can
+  // pass its server-issued subscriber id so the broadcast skips it.
+  const originSubscriberId = request.headers.get("x-origin-subscriber-id") ?? undefined;
 
   try {
     const result = await runtime.chat(parsed);
@@ -63,19 +73,54 @@ export async function handleChat(
       ...result.usage,
       costUsd: estimateCost(result.usage.model, result.usage),
     };
-    return json({
+    const responseBody = {
       ...result,
       inputTokens: result.usage.inputTokens,
       outputTokens: result.usage.outputTokens,
       usage: wireUsage,
       ...(parsed.workspaceId ? { workspaceId: parsed.workspaceId } : {}),
-    });
+    };
+
+    // Same-user cross-tab broadcast — parity with /v1/chat/stream. A
+    // peer tab on /v1/conversations/:id/events sees the user.message
+    // (so the visible chat updates immediately) and the `done`
+    // payload (final response + usage). The synchronous caller still
+    // gets the full result inline; this just keeps any peer tabs in
+    // sync. Subscriber-keyed exclusion prevents echo to the sender
+    // (see conversation-events.ts::broadcastToConversation docblock).
+    if (conversationEventManager && identity) {
+      const broadcastConvId = parsed.conversationId ?? result.conversationId;
+      if (broadcastConvId) {
+        conversationEventManager.broadcastToConversation(
+          broadcastConvId,
+          "user.message",
+          {
+            userId: identity.id,
+            displayName: identity.displayName,
+            content: parsed.message,
+            timestamp: new Date().toISOString(),
+          },
+          originSubscriberId,
+        );
+        conversationEventManager.broadcastToConversation(
+          broadcastConvId,
+          "done",
+          responseBody as Record<string, unknown>,
+          originSubscriberId,
+        );
+      }
+    }
+
+    return json(responseBody);
   } catch (err) {
     if (err instanceof RunInProgressError) {
       return runInProgressResponse(err.conversationId);
     }
     if (err instanceof ConversationAccessDeniedError) {
       return conversationAccessDeniedResponse(err.conversationId);
+    }
+    if (err instanceof ConversationCorruptedError) {
+      return conversationCorruptedResponse(err);
     }
     throw err;
   }
@@ -97,6 +142,18 @@ function conversationAccessDeniedResponse(conversationId: string): Response {
     "You do not have access to this conversation.",
     { conversationId },
   );
+}
+
+function conversationCorruptedResponse(err: ConversationCorruptedError): Response {
+  // 422 (Unprocessable Entity) over 500: the request is well-formed
+  // but the server-side state can't process it until an operator
+  // runs the migration. Surfacing the migration command in the
+  // message gives the operator the next step instead of a stack
+  // trace in the logs.
+  return apiError(422, "conversation_corrupted", err.message, {
+    conversationId: err.conversationId,
+    reason: err.reason,
+  });
 }
 
 /** Handle POST /v1/chat/stream — SSE streaming chat request. */
@@ -263,6 +320,14 @@ export async function handleChatStream(
             send("error", {
               error: "conversation_access_denied",
               message: "You do not have access to this conversation.",
+            });
+            finish();
+            return;
+          }
+          if (err instanceof ConversationCorruptedError) {
+            send("error", {
+              error: "conversation_corrupted",
+              message: err.message,
             });
             finish();
             return;

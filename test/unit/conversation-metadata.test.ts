@@ -61,7 +61,10 @@ describe("Conversation metadata schema (JSONL)", () => {
     lines[0] = JSON.stringify(meta);
     await writeFile(path, lines.join("\n"));
 
-    await expect(store.load(conv.id)).rejects.toThrow(/missing ownerId/);
+    // The store now throws a typed `ConversationCorruptedError` with
+    // `reason: "missing_owner"` so the HTTP layer can map it to a
+    // clean 422 with the migration command in the message.
+    await expect(store.load(conv.id)).rejects.toThrow(/missing_owner/);
   });
 });
 
