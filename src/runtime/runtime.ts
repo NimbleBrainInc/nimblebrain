@@ -166,6 +166,24 @@ class MultiEventSink implements EventSink {
 }
 
 /**
+ * Wraps a sink so a throw in `emit` is logged instead of propagating. Used
+ * only at the `defaultEvents` fan-out (`buildEventSink`) — server.ts wraps
+ * defaultEvents.emit to chain the SSE broadcast after the log writer; an
+ * unhandled throw in the log writer would otherwise abort the broadcast.
+ * Engine-time sink chains stay loud (a throwing engine sink is a bug).
+ */
+class FaultIsolatedSink implements EventSink {
+  constructor(private inner: EventSink) {}
+  emit(event: EngineEvent): void {
+    try {
+      this.inner.emit(event);
+    } catch (err) {
+      console.error("[runtime] event sink threw on emit:", err);
+    }
+  }
+}
+
+/**
  * Tracks parent engine run state for delegate context.
  * Listens to engine events to maintain current runId and iteration count.
  */
@@ -1467,21 +1485,20 @@ export class Runtime {
     };
     engineConfig.toolPromotion = this.buildToolPromotionFactory();
 
-    // Emit chat.start so the client knows the conversation ID immediately
-    // and conversation list UIs can refresh
+    // Emit chat.start so the client knows the conversation ID immediately.
     if (requestSink) {
       requestSink.emit({
         type: "chat.start",
         data: { conversationId: conversation.id },
       });
-      // Notify conversation browser UIs that a new conversation exists
-      if (!request.conversationId) {
-        requestSink.emit({
-          type: "data.changed",
-          data: { server: "conversations", tool: "list" },
-        });
-      }
     }
+
+    // Surface a new conversation the moment its file exists — the user
+    // message is already on disk by this point, so the list shows the
+    // conversation with the message preview as its label. Once title
+    // generation settles, the title-block `.finally` fires a second
+    // broadcast that flips the label to the generated title (#155).
+    if (!request.conversationId) this.notifyConversationsChanged();
 
     const result = await runWithRequestContext(reqCtx, () =>
       engine.run(engineConfig, systemPrompt, messages, tools),
@@ -1523,6 +1540,10 @@ export class Runtime {
     // chaining, a `void store.update(...)` orphan rejection (e.g. ENOENT when
     // the conversation was deleted between chat() returning and the title
     // landing) surfaces as an unhandled rejection and fails the whole run.
+    //
+    // The post-turn broadcast above already surfaced this conversation in the
+    // list (labelled with its message preview); the `.finally` below
+    // broadcasts again so the label flips to the generated title (#155).
     if (conversation.title === null) {
       const titleModel = this.resolveModelFn(this.getModelSlot("fast"));
       const titleInput =
@@ -1534,8 +1555,9 @@ export class Runtime {
           // Title generation is best-effort; a failed write must not crash
           // the chat. Common causes: model latency timeout (generateTitle),
           // or ENOENT on the conversation file (deleted concurrently).
-          console.error("[runtime] title generation failed:", err);
-        });
+          console.error("[runtime] title generation or persist failed:", err);
+        })
+        .finally(() => this.notifyConversationsChanged());
     }
 
     return {
@@ -2305,6 +2327,20 @@ export class Runtime {
    */
   getBundleMcpDeps(wsId: string): BundleMcpDeps | undefined {
     return this._bundleMcpDepsFactory?.(wsId);
+  }
+
+  /**
+   * Broadcast a conversations-list refresh on the runtime's default sink —
+   * the one api/server.ts wraps to drive the `/v1/events` SSE broadcast that
+   * `useDataSync` consumes. The per-request chat sink never reaches that
+   * channel, so a conversation created mid-chat would otherwise stay absent
+   * from the list until a manual refresh (#155).
+   */
+  private notifyConversationsChanged(): void {
+    this.defaultEvents.emit({
+      type: "data.changed",
+      data: { server: "conversations", tool: "list" },
+    });
   }
 
   /**
@@ -3396,7 +3432,11 @@ function buildEventSink(config: RuntimeConfig): {
       logLevel: config.logging?.level ?? "normal",
     });
   }
-  const events: EventSink = sinks.length > 0 ? new MultiEventSink(sinks) : new NoopEventSink();
+  // Isolate each sink in the default fan-out: a logging throw must not abort
+  // later sinks in the chain (notably the SSE broadcast wrap in api/server.ts).
+  const isolated = sinks.map((s) => new FaultIsolatedSink(s));
+  const events: EventSink =
+    isolated.length > 0 ? new MultiEventSink(isolated) : new NoopEventSink();
   return { events, eventStore };
 }
 

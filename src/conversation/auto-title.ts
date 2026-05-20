@@ -1,5 +1,8 @@
 import type { LanguageModelV3 } from "@ai-sdk/provider";
 
+/** Hard cap so a hung fast-model call can't leave the caller's promise pending. */
+const TITLE_TIMEOUT_MS = 10_000;
+
 /**
  * Generate a short conversation title using the provided model.
  * Non-blocking — call fire-and-forget after first turn.
@@ -30,6 +33,7 @@ export async function generateTitle(
         },
       ],
       maxOutputTokens: 30,
+      abortSignal: AbortSignal.timeout(TITLE_TIMEOUT_MS),
     });
     const textBlock = result.content.find((b) => b.type === "text");
     if (textBlock?.type === "text") {
