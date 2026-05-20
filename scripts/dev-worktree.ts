@@ -15,8 +15,12 @@
  *   - Auth:    none (dev mode — no `instance.json`)
  *
  * Set `ANTHROPIC_API_KEY` (or other provider keys) in your shell to
- * unlock real LLM calls. Without them, everything but model invocation
- * still works — uploads, MCP resources, tool calls, conversation log.
+ * unlock real LLM calls. As a convenience, this script also auto-loads
+ * `<worktree>/.env` if present, otherwise the main repo's `.env`
+ * (discovered via `git rev-parse --git-common-dir`). Shell-exported
+ * values always win over the file. Without any keys set, everything
+ * but model invocation still works — uploads, MCP resources, tool
+ * calls, conversation log.
  *
  * Reset state:  `rm -rf .nimblebrain-worktree && bun run dev:worktree`
  * Share state across worktrees:  `NB_WORK_DIR=/abs/path bun run dev:worktree`
@@ -25,6 +29,7 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { loadDotenvIntoProcess } from "./lib/dev-env.ts";
 
 // Anchor the worktree root from the script's location, not `process.cwd()`,
 // so `bun run scripts/dev-worktree.ts` from a subdirectory still resolves
@@ -66,12 +71,26 @@ function seedConfigIfMissing(): void {
 
 seedConfigIfMissing();
 
+// Auto-load .env BEFORE the spawn so the child process inherits keys.
+// Discovery is worktree-local first, then the main repo (shared `.env`
+// via `git rev-parse --git-common-dir`). Shell exports always win, so
+// `direnv` / `mise` workflows aren't disrupted. Silent when no .env
+// found — the prior "set in your shell" contract still works.
+const envResult = loadDotenvIntoProcess(WORKTREE_ROOT);
+
 console.log("[dev:worktree] Starting");
 console.log(`[dev:worktree]   Worktree: ${WORKTREE_ROOT}`);
 console.log(`[dev:worktree]   Workdir:  ${WORKDIR}`);
 console.log(`[dev:worktree]   API:      http://localhost:${API_PORT}`);
 console.log(`[dev:worktree]   Web:      http://localhost:${WEB_PORT}`);
 console.log("[dev:worktree]   Auth:     none (dev mode)");
+if (envResult.path) {
+  const note =
+    envResult.skipped.length > 0
+      ? ` (applied ${envResult.applied.length}, ${envResult.skipped.length} skipped — shell already set)`
+      : ` (applied ${envResult.applied.length})`;
+  console.log(`[dev:worktree]   Loaded .env from ${envResult.path}${note}`);
+}
 
 const child = spawn(
   "bun",
