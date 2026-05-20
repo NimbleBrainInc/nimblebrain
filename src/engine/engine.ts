@@ -540,39 +540,48 @@ export class AgentEngine {
         const callProviderOptions = buildThinkingProviderOptions(config.model, config.thinking);
 
         const callOnce = (msgs: LanguageModelV3Message[]) =>
-          withRetry(() =>
-            callModel(
-              this.model,
-              {
-                prompt: [
-                  {
-                    role: "system",
-                    content: callPrompt,
-                    providerOptions: {
-                      anthropic: { cacheControl: { type: "ephemeral" } },
+          withRetry(
+            () =>
+              callModel(
+                this.model,
+                {
+                  prompt: [
+                    {
+                      role: "system",
+                      content: callPrompt,
+                      providerOptions: {
+                        anthropic: { cacheControl: { type: "ephemeral" } },
+                      },
                     },
-                  },
-                  ...addCacheBreakpoint(msgs),
-                ],
-                tools: modelTools,
-                maxOutputTokens: config.maxOutputTokens,
-                // Forward the run-scoped signal into the model call. AI
-                // SDK V3 providers honor `abortSignal` by aborting the
-                // underlying fetch, so an in-flight stream cancels at
-                // the network layer instead of blocking the engine
-                // until the model finishes. Pairs with the iteration-
-                // boundary check above: that handles between-step
-                // cancellation, this handles in-step.
-                ...(config.signal ? { abortSignal: config.signal } : {}),
-                ...(Object.keys(callProviderOptions).length > 0
-                  ? { providerOptions: callProviderOptions }
-                  : {}),
-              },
-              (text) => this.events.emit({ type: "text.delta", data: { runId, text } }),
-              (text) => this.events.emit({ type: "reasoning.delta", data: { runId, text } }),
-              (id, name) => this.events.emit({ type: "tool.preparing", data: { runId, id, name } }),
-              (id) => this.events.emit({ type: "tool.preparing.done", data: { runId, id } }),
-            ),
+                    ...addCacheBreakpoint(msgs),
+                  ],
+                  tools: modelTools,
+                  maxOutputTokens: config.maxOutputTokens,
+                  // Forward the run-scoped signal into the model call. AI
+                  // SDK V3 providers honor `abortSignal` by aborting the
+                  // underlying fetch, so an in-flight stream cancels at
+                  // the network layer instead of blocking the engine
+                  // until the model finishes. Pairs with the iteration-
+                  // boundary check above: that handles between-step
+                  // cancellation, this handles in-step.
+                  ...(config.signal ? { abortSignal: config.signal } : {}),
+                  ...(Object.keys(callProviderOptions).length > 0
+                    ? { providerOptions: callProviderOptions }
+                    : {}),
+                },
+                (text) => this.events.emit({ type: "text.delta", data: { runId, text } }),
+                (text) => this.events.emit({ type: "reasoning.delta", data: { runId, text } }),
+                (id, name) =>
+                  this.events.emit({ type: "tool.preparing", data: { runId, id, name } }),
+                (id) => this.events.emit({ type: "tool.preparing.done", data: { runId, id } }),
+              ),
+            // Defaults preserved; only the new fourth arg matters here.
+            // The retry backoff sleep aborts on `config.signal` so a
+            // cancel during backoff bites within the abort tick instead
+            // of after the full delay (up to ~8.5s on attempt 3).
+            3,
+            1000,
+            config.signal,
           );
 
         const llmStart = performance.now();

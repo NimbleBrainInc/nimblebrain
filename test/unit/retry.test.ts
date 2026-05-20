@@ -118,4 +118,67 @@ describe("withRetry", () => {
     ).rejects.toThrow(err);
     expect(calls).toBe(1);
   });
+
+  it("interrupts backoff when signal aborts mid-sleep", async () => {
+    // Pre-existing gap closed: if the signal aborted during the
+    // backoff window, the engine had to wait the full delay (up to
+    // ~8.5s on attempt 3) before the next retry attempt observed
+    // the abort. Now the sleep is abort-aware — cancellation bites
+    // within the abort tick.
+    const controller = new AbortController();
+    let calls = 0;
+    const err = { status: 429 };
+    const start = Date.now();
+
+    const runPromise = withRetry(
+      async () => {
+        calls++;
+        throw err;
+      },
+      3,
+      // 5-second base delay — without the abort, attempt 1's
+      // backoff alone would block this test for 5s+.
+      5_000,
+      controller.signal,
+    );
+
+    // Let attempt 1 fail and the backoff timer arm.
+    await new Promise((r) => setTimeout(r, 20));
+    controller.abort();
+
+    await expect(runPromise).rejects.toMatchObject({ name: "AbortError" });
+
+    const elapsed = Date.now() - start;
+    // Way under the 5-second backoff that would have held us
+    // without the abort. A generous ceiling that still catches
+    // any regression to "wait the full delay first".
+    expect(elapsed).toBeLessThan(500);
+    // Exactly one attempt fired before the abort interrupted backoff.
+    expect(calls).toBe(1);
+  });
+
+  it("rejects synchronously when called with a pre-aborted signal during backoff", async () => {
+    // Symmetric coverage: a signal that's already aborted when the
+    // backoff sleep starts must reject immediately, not arm a timer
+    // it then has to clean up. Matters for the engine's iteration
+    // path where the abort may have fired during the prior attempt.
+    const controller = new AbortController();
+    let calls = 0;
+    const err = { status: 429 };
+
+    const fn = async () => {
+      calls++;
+      // Abort BEFORE we throw — backoff observes a pre-aborted
+      // signal when it tries to sleep.
+      if (calls === 1) controller.abort();
+      throw err;
+    };
+
+    const start = Date.now();
+    await expect(withRetry(fn, 3, 5_000, controller.signal)).rejects.toMatchObject({
+      name: "AbortError",
+    });
+    expect(Date.now() - start).toBeLessThan(100);
+    expect(calls).toBe(1);
+  });
 });
