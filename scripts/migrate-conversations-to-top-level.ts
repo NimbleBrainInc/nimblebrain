@@ -241,12 +241,21 @@ async function moveConversation(
   // Recovery path: destination already exists from a prior interrupted
   // run. The destination write was atomic (temp+rename), so the file
   // there is structurally complete — trust it. Just clear the source.
+  //
+  // Note that we do NOT compare source/destination contents. The
+  // documented operational model has the platform stopped during
+  // migration, so source + destination existing simultaneously is
+  // unambiguously a crash-between-rename-and-unlink. Operators who
+  // somehow get here with different content need the log line.
   if (existsSync(destPath)) {
     if (dryRun) {
       console.error(
         `[migrate]   [dry-run] would delete stale source ${cand.wsId}/${cand.convId} (destination already migrated)`,
       );
     } else {
+      console.error(
+        `[migrate]   recovery: deleting stale source workspaces/${cand.wsId}/conversations/${cand.convId}.jsonl (destination already migrated; contents not compared)`,
+      );
       await unlink(cand.srcPath);
     }
     return "recovered";

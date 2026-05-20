@@ -362,6 +362,11 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
     atMessage?: number,
     access?: ConversationAccessContext,
   ): Promise<Conversation | null> {
+    // Unlike delete/update which can short-circuit on the access
+    // check, fork legitimately needs the loaded source to do its job
+    // (history + messagesToCopy). So we load first, then evaluate
+    // both branches in the same posture: foreign owner and missing
+    // both return null, indistinguishable to the caller.
     const source = await this.load(id);
     if (!source) return null;
     if (access && source.ownerId !== access.userId) return null;

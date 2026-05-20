@@ -1607,6 +1607,18 @@ export class Runtime {
    * sharing instances across requests would add no benefit and force
    * a lifecycle concern (when does it die?). The directory is created
    * on first use.
+   *
+   * STAGE 1 CLOSEOUT FOLLOW-UP — perf at scale: every call rebuilds
+   * the store's `ConversationIndex`, which re-scans the conversations
+   * directory on first `list()`. Fine for low-traffic dev; on a
+   * tenant with thousands of conversations the activity-dashboard's
+   * `store.list({ limit: 50 }, access)` becomes O(n) on every
+   * refresh. The bundle's `src/bundles/conversations/src/index-cache.ts`
+   * uses `fs.watch` + debounce specifically to avoid this — the
+   * runtime version does not. Either cache the store as a
+   * Runtime-lifetime singleton (and propagate `invalidate()` through
+   * the same chain `EventSink` events already flow), or share the
+   * bundle's watcher-backed index here. Not blocking Stage 1 ship.
    */
   getUserConversationStore(): ConversationStore {
     return new EventSourcedConversationStore({

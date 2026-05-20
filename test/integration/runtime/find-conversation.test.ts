@@ -235,6 +235,67 @@ describe("/v1/conversations/:id/events — workspace-optional", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// /v1/conversations/:id/events — dev mode (no identity provider configured)
+//
+// Regression for round-6 QA C1: the route's handler read `identity.id`
+// unconditionally; in dev mode `c.var.identity` is undefined and the
+// handler threw `TypeError: Cannot read properties of undefined`.
+// `bun run dev:worktree` (or any auth-disabled deployment) would 500
+// the moment the web client opened the SSE.
+// ---------------------------------------------------------------------------
+
+describe("/v1/conversations/:id/events — dev mode (no provider)", () => {
+  const workDir = join(tmpdir(), `nb-find-conv-events-dev-${Date.now()}`);
+  let runtime: Runtime;
+  let handle: ServerHandle;
+  let baseUrl: string;
+  let convId: string;
+
+  test("setup", async () => {
+    mkdirSync(workDir, { recursive: true });
+    runtime = await Runtime.start({
+      model: { provider: "custom", adapter: createEchoModel() },
+      noDefaultBundles: true,
+      logging: { disabled: true },
+      workDir,
+    });
+    await provisionTestWorkspace(runtime);
+    // No `provider` → dev mode. The auth middleware passes through
+    // without setting c.var.identity.
+    handle = startServer({ runtime, port: 0 });
+    baseUrl = `http://localhost:${handle.port}`;
+
+    // Seed a conversation via runtime.chat without an identity. The
+    // runtime's dev-mode fallback mints the conversation under
+    // `usr_default`, which is what `DEV_IDENTITY.id` resolves to and
+    // what the route's dev fallback compares against.
+    const seed = await runtime.chat({
+      message: "seed in dev mode",
+      workspaceId: TEST_WORKSPACE_ID,
+    });
+    convId = seed.conversationId;
+  });
+
+  test("dev mode: SSE for the dev user's own conversation returns 200 (not 500)", async () => {
+    const res = await fetch(`${baseUrl}/v1/conversations/${convId}/events`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Content-Type")).toMatch(/text\/event-stream/);
+    await res.body?.cancel();
+  });
+
+  test("dev mode: 404 for a non-existent conversation", async () => {
+    const res = await fetch(`${baseUrl}/v1/conversations/conv_0000000000000000/events`);
+    expect(res.status).toBe(404);
+  });
+
+  test("teardown", async () => {
+    handle?.stop(true);
+    await runtime?.shutdown();
+    rmSync(workDir, { recursive: true, force: true });
+  });
+});
+
 afterAll(() => {
   // belt-and-suspenders cleanup if a test died early
 });
