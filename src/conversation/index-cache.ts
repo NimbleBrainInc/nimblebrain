@@ -54,6 +54,13 @@ export class ConversationIndex {
       return;
     }
 
+    // Count ownerless files separately from generic "couldn't parse"
+    // failures. Ownerless files are pre-migration state that the
+    // operator's expected resolution is `bun run migrate:conversations-
+    // to-top-level`; surface a single line so they aren't a silent
+    // oracle ("the dashboard is missing N conversations and no one
+    // sees why").
+    let ownerlessSkipped = 0;
     for (const file of files) {
       try {
         const content = await readFile(join(dir, file), "utf-8");
@@ -61,10 +68,18 @@ export class ConversationIndex {
         if (parsed) {
           this.entries.set(parsed.summary.id, parsed.summary);
           this.accessMeta.set(parsed.summary.id, parsed.access);
+        } else if (isLikelyOwnerlessFile(content)) {
+          ownerlessSkipped++;
         }
       } catch {
         // Skip corrupt or unreadable files
       }
+    }
+
+    if (ownerlessSkipped > 0) {
+      console.warn(
+        `[index] excluded ${ownerlessSkipped} ownerless conversation file(s) in ${dir} — run \`bun run migrate:conversations-to-top-level\` to stamp ownerId.`,
+      );
     }
 
     this.populated = true;
@@ -184,6 +199,28 @@ function extractEventPreview(content: unknown): string {
     }
   }
   return "";
+}
+
+/**
+ * Heuristic check: did parseFileHeader bail because the file is
+ * structurally OK but lacks `ownerId`? Used by `populate` to count
+ * ownerless skips so operators see a "you have N pre-migration files"
+ * line — vs corrupt files which silently fail.
+ *
+ * Doesn't re-derive everything: just peeks at line 1, parses it, and
+ * checks whether `id` is present and `ownerId` is absent. Worst case
+ * if we're wrong (file IS corrupt with a plausible-looking line 1)
+ * the count is off by one; the operator action is the same either way.
+ */
+function isLikelyOwnerlessFile(content: string): boolean {
+  const firstLine = content.split("\n", 1)[0];
+  if (!firstLine) return false;
+  try {
+    const meta = JSON.parse(firstLine) as Partial<ConversationMetadata>;
+    return typeof meta.id === "string" && !meta.ownerId;
+  } catch {
+    return false;
+  }
 }
 
 /**

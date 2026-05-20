@@ -227,6 +227,9 @@ export class JsonlConversationStore implements ConversationStore {
     atMessage?: number,
     access?: ConversationAccessContext,
   ): Promise<Conversation | null> {
+    // Fork needs the loaded source for history + messagesToCopy, so
+    // we load first. Foreign-owner and missing both return null —
+    // indistinguishable to the caller, same posture as delete/update.
     const source = await this.load(id);
     if (!source) return null;
     if (access && source.ownerId !== access.userId) return null;

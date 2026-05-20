@@ -20,9 +20,18 @@
  *    posture (matches the `ConversationAccessDeniedError` mapping on
  *    the chat path). Content does not leak.
  *  - Conversation exists and the caller is the owner → 200 SSE.
+ *
+ * Dev-mode: when no identity provider is configured (`bun run
+ * dev:worktree`, `Runtime.start` without an `instance.json`), the
+ * caller is treated as `DEV_IDENTITY` (`usr_default`) — same fallback
+ * `runtime.chat` uses for the analogous case. Production deployments
+ * with an identity provider configured but middleware that fails to
+ * populate `c.var.identity` get a 401 (don't silently default to
+ * usr_default and pool every user's reads).
  */
 
 import { Hono } from "hono";
+import { DEV_IDENTITY } from "../../identity/providers/dev.ts";
 import { requireAuth } from "../middleware/auth.ts";
 import { errorLog } from "../middleware/error-log.ts";
 import { optionalWorkspace } from "../middleware/workspace.ts";
@@ -37,6 +46,17 @@ export function conversationEventRoutes(ctx: AppContext) {
       const conversationId = c.req.param("id");
       const identity = c.var.identity;
 
+      // Resolve the caller id. Authenticated request → identity.id.
+      // Dev mode (no identity provider configured) → fall back to
+      // DEV_IDENTITY so the same conversations `runtime.chat` minted
+      // under usr_default are readable. Misconfigured production
+      // (provider exists but middleware didn't populate identity) →
+      // 401 instead of pooling reads under a sentinel user.
+      const callerId = identity?.id ?? (ctx.runtime.getIdentityProvider() ? null : DEV_IDENTITY.id);
+      if (!callerId) {
+        return apiError(401, "authentication_required", "Authentication required.");
+      }
+
       // Two-step lookup so we can return 403 (not-yours) distinctly
       // from 404 (doesn't exist). Pass no access ctx to `findConversation`
       // — we want raw existence, then evaluate ownership ourselves.
@@ -44,7 +64,7 @@ export function conversationEventRoutes(ctx: AppContext) {
       if (!conversation) {
         return apiError(404, "not_found", "Conversation not found");
       }
-      if (conversation.ownerId !== identity.id) {
+      if (conversation.ownerId !== callerId) {
         return apiError(
           403,
           "conversation_access_denied",
@@ -61,7 +81,7 @@ export function conversationEventRoutes(ctx: AppContext) {
       // any chat-stream POST it originates — that prevents the
       // chat-stream's broadcast from echoing back to this same
       // subscription.
-      const { stream } = ctx.conversationEventManager.addSubscriber(conversationId, identity.id);
+      const { stream } = ctx.conversationEventManager.addSubscriber(conversationId, callerId);
 
       return new Response(stream, {
         headers: {

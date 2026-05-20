@@ -179,6 +179,9 @@ export class InMemoryConversationStore implements ConversationStore {
     atMessage?: number,
     access?: ConversationAccessContext,
   ): Promise<Conversation | null> {
+    // Fork needs the source for history + messagesToCopy, so we
+    // resolve it first. Foreign-owner and missing both return null —
+    // indistinguishable to the caller, same posture as delete/update.
     const source = this.conversations.get(id);
     if (!source) return null;
     if (access && source.ownerId !== access.userId) return null;
