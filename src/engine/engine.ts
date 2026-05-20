@@ -468,6 +468,20 @@ export class AgentEngine {
     const unregisterToolControls = config.toolPromotion?.registerControls(toolControls);
     try {
       while (iteration < maxIter) {
+        // Cancellation check at the top of every iteration. The signal is
+        // already threaded to `tools.execute` so an in-flight tool call
+        // can honor it, but without checking here the engine would
+        // proceed to the NEXT LLM call after a cancelled tool — wasting
+        // a model round-trip and continuing to generate downstream tool
+        // calls the caller no longer wants. Cooperative cancellation:
+        // we don't preempt the current tool, but we don't start new work
+        // either. The runtime catch translates AbortError into the
+        // appropriate `run.error` event for SSE consumers.
+        if (config.signal?.aborted) {
+          throw config.signal.reason instanceof Error
+            ? config.signal.reason
+            : new DOMException("The operation was aborted.", "AbortError");
+        }
         // Filter out any tool the supervisor has tripped this run. Removing
         // the tool from the model's toolset is more reliable than telling
         // the model "do not call this tool" via prose — the model literally

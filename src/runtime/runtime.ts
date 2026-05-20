@@ -1015,6 +1015,12 @@ export class Runtime {
       // runs). Member-scoped MCP bundles use this to route to the right
       // per-principal source. Workspace-scoped sources ignore it.
       ...(request.identity ? { principalId: request.identity.id } : {}),
+      // Cancellation: thread the caller's signal into the engine. The
+      // engine checks it between iterations and forwards it down to every
+      // tool call. Without this, callers racing the chat against a
+      // deadline (notably the automations executor's `Promise.race`
+      // against `maxRunDurationMs`) silently orphan in-flight work.
+      ...(request.signal ? { signal: request.signal } : {}),
     };
 
     // Determine which event store handles conversation events for this request.

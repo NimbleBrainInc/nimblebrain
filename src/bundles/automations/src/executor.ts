@@ -29,6 +29,17 @@ export interface ChatFnRequest {
   workspaceId?: string;
   /** Identity under which this automation runs. */
   identity?: { id: string; name?: string; email?: string; role?: string };
+  /**
+   * Cancellation signal forwarded into `runtime.chat()` → engine → tool
+   * calls. When the scheduler's per-run controller aborts (timeout,
+   * explicit cancel, scheduler stop), the in-flight LLM/tool work
+   * actually stops instead of being orphaned. Before this field
+   * existed, a chat that exceeded `maxRunDurationMs` ran to completion
+   * in the background and wrote a complete conversation to disk
+   * minutes after the executor had already synthesized a fake
+   * "timeout" run record.
+   */
+  signal?: AbortSignal;
 }
 
 /** Minimal chat result shape (matches runtime ChatResult). */
@@ -171,32 +182,64 @@ export function createDirectExecutor(
 ) {
   return async function executeDirect(
     automation: Automation,
-    signal?: AbortSignal,
+    externalSignal?: AbortSignal,
   ): Promise<AutomationRun> {
     const startedAt = new Date().toISOString();
     const timeoutMs = automation.maxRunDurationMs ?? DEFAULT_TIMEOUT_MS;
     const ctx = getContext(automation);
 
-    // Race the chat call against a timeout
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      const timer = setTimeout(
-        () =>
-          reject(
-            new Error(
-              `Automation ${automation.id} timed out after ${Math.round(timeoutMs / 1000)}s`,
-            ),
-          ),
-        timeoutMs,
-      );
-      signal?.addEventListener("abort", () => {
-        clearTimeout(timer);
-        reject(new DOMException("The operation was aborted.", "AbortError"));
+    // Combined cancellation: a single controller aborts when EITHER the
+    // scheduler's external signal fires (manual cancel, scheduler stop)
+    // OR the per-run timeout elapses. The combined signal goes into
+    // chatFn → runtime.chat → engine.run → every tool call, so an
+    // abort actually cancels in-flight LLM/tool work instead of
+    // orphaning it the way the old `Promise.race` pattern did.
+    //
+    // Production bug this fixes: `morning-brief-6am-pt` runs took
+    // 6–7 minutes while the 5-minute Promise.race rejected at the
+    // 5-minute mark, returning to dispatchRun. The chat kept running,
+    // finished cleanly 1–2 minutes later, wrote a complete conversation
+    // to disk — and the result was discarded. The agent saw a "timeout"
+    // run record with `iterations: 0, toolCalls: 0` despite the agent
+    // doing all the work.
+    const runController = new AbortController();
+    let timedOut = false;
+    const timeoutTimer = setTimeout(() => {
+      timedOut = true;
+      runController.abort();
+    }, timeoutMs);
+
+    let onExternalAbort: (() => void) | undefined;
+    if (externalSignal) {
+      if (externalSignal.aborted) {
+        runController.abort(externalSignal.reason);
+      } else {
+        onExternalAbort = () => runController.abort(externalSignal.reason);
+        externalSignal.addEventListener("abort", onExternalAbort, { once: true });
+      }
+    }
+
+    try {
+      const data = await chatFn({
+        ...buildRequest(automation, ctx),
+        signal: runController.signal,
       });
-    });
-
-    const data = await Promise.race([chatFn(buildRequest(automation, ctx)), timeoutPromise]);
-
-    return mapResultToRun(automation, startedAt, data);
+      return mapResultToRun(automation, startedAt, data);
+    } catch (err) {
+      // Preserve the canonical "timed out after Ns" wording so
+      // `Scheduler.dispatchRun` classifies this as `timeout` and not
+      // generic `failure`. External-cancel paths preserve the original
+      // AbortError so they classify as `cancelled`.
+      if (timedOut) {
+        throw new Error(
+          `Automation ${automation.id} timed out after ${Math.round(timeoutMs / 1000)}s`,
+        );
+      }
+      throw err;
+    } finally {
+      clearTimeout(timeoutTimer);
+      if (onExternalAbort) externalSignal?.removeEventListener("abort", onExternalAbort);
+    }
   };
 }
 

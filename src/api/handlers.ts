@@ -56,7 +56,12 @@ export async function handleChat(
   }
 
   try {
-    const result = await runtime.chat(parsed);
+    // Thread the request's abort signal into the chat so a client
+    // disconnect or upstream timeout actually cancels the in-flight
+    // engine loop and tool calls — instead of orphaning the work until
+    // it eventually finishes writing to disk (the production bug behind
+    // the morning-brief executor lying about timeouts).
+    const result = await runtime.chat({ ...parsed, signal: request.signal });
     // Cost is derived at the boundary, never stored. Same wire shape as
     // the streaming `done` event so clients see one consistent contract.
     const wireUsage = {
@@ -183,7 +188,11 @@ export async function handleChatStream(
       });
 
       runtime
-        .chat(parsed, sink)
+        // Thread the HTTP request's signal so client disconnect cancels
+        // the engine loop + in-flight tool calls (cooperative). The SSE
+        // stream's controller closes on cancellation via `closed` flag;
+        // this propagates the cancellation INTO the chat too.
+        .chat({ ...parsed, signal: request.signal }, sink)
         .then((result) => {
           // Cost is computed at the API boundary — never stored. The
           // wire-format `usage.costUsd` is what clients display; deriving
