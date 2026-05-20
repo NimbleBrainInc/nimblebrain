@@ -13,24 +13,19 @@ import { RequireActiveWorkspace } from "./components/RequireActiveWorkspace";
 
 // ── Types ────────────────────────────────────────────────────────────────
 //
-// Mirror the shapes returned by the `nb__skills` source. We don't import
-// from the server-side TS to keep the web client decoupled — duplication
-// is acceptable here since these are stable contract types and any drift
-// surfaces immediately in the UI.
-
-type Scope = "org" | "workspace" | "user" | "bundle";
-type Status = "active" | "draft" | "disabled" | "archived";
-
-// `ListedSkill` / `ReadSkill` were duplicated declarations of the
-// server-side shapes from `src/tools/platform/skills.ts`. Both sides
-// now import the canonical types from `schemas/skills.ts` via the
-// generated platform-schemas tree, so a future shape change in one
-// place can't silently drift from the other.
+// Canonical shapes from `src/tools/platform/schemas/skills.ts`, mirrored
+// here via codegen at `web/src/_generated/platform-schemas/`. Server and
+// web both import from the same declarations so a shape change in one
+// place can't silently drift from the other (the pattern §2.1 in
+// `src/tools/platform/AGENTS.md` exists to enforce). Local aliases keep
+// the diff small for historical readers.
 import type {
   SkillDetail as ReadSkill,
+  SkillScope as Scope,
+  SkillsListOutput,
+  SkillStatus as Status,
   SkillSummary as ListedSkill,
 } from "../../_generated/platform-schemas/skills";
-export type { ListedSkill, ReadSkill };
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -86,7 +81,7 @@ function Inner() {
       if (scopeFilter !== "all") args.scope = scopeFilter;
       if (statusFilter !== "all") args.status = statusFilter;
       const res = await callTool("skills", "list", args);
-      const data = parseToolResponse<{ skills: ListedSkill[] }>(res);
+      const data = parseToolResponse<SkillsListOutput>(res);
       setSkills(data.skills);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to load skills.";

@@ -43,7 +43,14 @@ import { validateSkill } from "../../skills/validator.ts";
 import { deleteSkill, updateSkill, writeSkill } from "../../skills/writer.ts";
 import { defineInProcessApp, type InProcessTool } from "../in-process-app.ts";
 import type { McpSource } from "../mcp-source.ts";
-import type { ActiveSkillEntry, SkillDetail, SkillSummary } from "./schemas/skills.ts";
+import type {
+  ActiveSkillEntry,
+  SkillDetail,
+  SkillSummary,
+  SkillsActiveForOutput,
+  SkillsListOutput,
+  SkillsReadOutput,
+} from "./schemas/skills.ts";
 import {
   SkillsActivateInput,
   SkillsActiveForInput,
@@ -170,9 +177,16 @@ export function createSkillsSource(runtime: Runtime, eventSink: EventSink): McpS
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         try {
           const list = await listSkills(runtime, authoringGuidePath, input);
+          // Construct via the canonical envelope so a shape drift on
+          // either side surfaces at compile time. The cast at the
+          // boundary is needed because `structuredContent`'s wire type
+          // is `Record<string, unknown>`, which TS doesn't infer
+          // structural interfaces into; validation still happens on
+          // `out`'s declaration.
+          const out: SkillsListOutput = { skills: list };
           return {
             content: textContent(summarizeList(list)),
-            structuredContent: { skills: list },
+            structuredContent: out as unknown as Record<string, unknown>,
             isError: false,
           };
         } catch (err) {
@@ -252,9 +266,13 @@ export function createSkillsSource(runtime: Runtime, eventSink: EventSink): McpS
               isError: true,
             };
           }
+          // Compile-time drift coverage on the read shape: `out`'s type
+          // pins it to the canonical `SkillsReadOutput`. Wire cast is
+          // the same shim explained in the `list` handler.
+          const out: SkillsReadOutput = result;
           return {
             content: textContent(summarizeRead(result)),
-            structuredContent: result as unknown as Record<string, unknown>,
+            structuredContent: out as unknown as Record<string, unknown>,
             isError: false,
           };
         } catch (err) {
@@ -294,9 +312,10 @@ export function createSkillsSource(runtime: Runtime, eventSink: EventSink): McpS
               isError: true,
             };
           }
+          const out: SkillsActiveForOutput = { active: result, conversationId: convId };
           return {
             content: textContent(summarizeActive(result)),
-            structuredContent: { active: result, conversationId: convId },
+            structuredContent: out as unknown as Record<string, unknown>,
             isError: false,
           };
         } catch (err) {

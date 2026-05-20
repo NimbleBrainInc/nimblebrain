@@ -3,9 +3,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { callTool } from "../api/client";
 import { parseToolResponse } from "../lib/tool-response";
-// Canonical shape from `src/tools/platform/schemas/skills.ts`; mirrored
+// Canonical shapes from `src/tools/platform/schemas/skills.ts`; mirrored
 // here via codegen so server + web can't drift.
-import type { ActiveSkillEntry as ActiveSkill } from "../_generated/platform-schemas/skills";
+import type {
+  ActiveSkillEntry as ActiveSkill,
+  SkillsActiveForOutput,
+} from "../_generated/platform-schemas/skills";
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -51,7 +54,7 @@ export function SkillsPopover({ conversationId }: { conversationId: string | nul
     setError(null);
     try {
       const res = await callTool("skills", "active_for", { conversation_id: conversationId });
-      const data = parseToolResponse<{ active: ActiveSkill[] }>(res);
+      const data = parseToolResponse<SkillsActiveForOutput>(res);
       setSkills(data.active);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to load active skills.";

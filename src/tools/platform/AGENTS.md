@@ -209,6 +209,41 @@ catch a future shape change. Narrow via `"run" in data` (or `data.status ===
 "dispatched"`) — the type system then forces every consumer to handle every
 branch.
 
+### In-process platform-tool variant
+
+`src/bundles/automations/src/server.ts`-style handlers return their
+domain object directly (`Promise<AutomationsRunOutput>`) and the
+framework wraps them as MCP `ToolResult` at registration time. That's
+the simplest §2.1 shape — the handler's return type IS the contract.
+
+In-process platform tools registered via `defineInProcessApp` return
+`Promise<ToolResult>` directly because they build the MCP-boundary
+shape themselves (`content` for the human summary, `structuredContent`
+for the typed payload, `isError` for the error flag). To still get
+compile-time drift coverage:
+
+```ts
+handler: async (input): Promise<ToolResult> => {
+  const list = await listSkills(...);
+  const out: SkillsListOutput = { skills: list };  // ← shape pinned here
+  return {
+    content: textContent(summarizeList(list)),
+    // Wire-format cast: `structuredContent` is `Record<string, unknown>`
+    // and TS doesn't structurally widen interfaces into it. The named
+    // `out` declaration above is the load-bearing assertion.
+    structuredContent: out as unknown as Record<string, unknown>,
+    isError: false,
+  };
+},
+```
+
+The discipline is the same — a named `XxxOutput` from `schemas/` —
+just expressed at the construction site rather than the handler
+signature. Either form satisfies §2.1; pick by which layer authored
+the handler. See `src/tools/platform/skills.ts` for the
+platform-tool reference; `src/bundles/automations/src/server.ts`
+for the bundle reference.
+
 ### Output schemas vs input schemas
 
 Output types are typically **type-only** exports — no TypeBox runtime
