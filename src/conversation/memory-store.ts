@@ -38,7 +38,7 @@ export class InMemoryConversationStore implements ConversationStore {
   private conversations = new Map<string, Conversation>();
   private messages = new Map<string, StoredMessage[]>();
 
-  async create(options?: CreateConversationOptions): Promise<Conversation> {
+  async create(options: CreateConversationOptions): Promise<Conversation> {
     const id = `conv_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`;
     const now = new Date().toISOString();
     const conversation: Conversation = {
@@ -47,14 +47,8 @@ export class InMemoryConversationStore implements ConversationStore {
       updatedAt: now,
       title: null,
       lastModel: null,
-      ...(options?.workspaceId ? { workspaceId: options.workspaceId } : {}),
-      ...(options?.ownerId ? { ownerId: options.ownerId } : {}),
-      visibility: options?.ownerId ? (options.visibility ?? "private") : options?.visibility,
-      ...(options?.ownerId
-        ? { participants: options.participants ?? [options.ownerId] }
-        : options?.participants
-          ? { participants: options.participants }
-          : {}),
+      ownerId: options.ownerId,
+      ...(options.workspaceId ? { workspaceId: options.workspaceId } : {}),
     };
     this.conversations.set(id, conversation);
     this.messages.set(id, []);
@@ -65,13 +59,8 @@ export class InMemoryConversationStore implements ConversationStore {
     const conversation = this.conversations.get(id) ?? null;
     if (!conversation) return null;
 
-    if (access) {
-      const meta = {
-        ownerId: conversation.ownerId,
-        visibility: conversation.visibility,
-        participants: conversation.participants,
-      };
-      if (!canAccess(meta, access)) return null;
+    if (access && !canAccess({ ownerId: conversation.ownerId }, access)) {
+      return null;
     }
 
     return conversation;
@@ -110,15 +99,7 @@ export class InMemoryConversationStore implements ConversationStore {
     const summaries: ConversationSummary[] = [];
 
     for (const [id, conversation] of this.conversations) {
-      // Apply access filtering when context is provided
-      if (access) {
-        const meta = {
-          ownerId: conversation.ownerId,
-          visibility: conversation.visibility,
-          participants: conversation.participants,
-        };
-        if (!canAccess(meta, access)) continue;
-      }
+      if (access && !canAccess({ ownerId: conversation.ownerId }, access)) continue;
       const msgs = this.messages.get(id) ?? [];
       const firstUser = msgs.find((m) => m.role === "user");
       const preview = firstUser
@@ -145,6 +126,7 @@ export class InMemoryConversationStore implements ConversationStore {
         totalInputTokens: totals.usage.inputTokens,
         totalOutputTokens: totals.usage.outputTokens,
         totalCostUsd: totals.costUsd,
+        ownerId: conversation.ownerId,
       });
     }
 
@@ -167,16 +149,23 @@ export class InMemoryConversationStore implements ConversationStore {
     return { conversations: page, nextCursor, totalCount };
   }
 
-  async delete(id: string): Promise<boolean> {
-    if (!this.conversations.has(id)) return false;
+  async delete(id: string, access?: ConversationAccessContext): Promise<boolean> {
+    const conv = this.conversations.get(id);
+    if (!conv) return false;
+    if (access && conv.ownerId !== access.userId) return false;
     this.conversations.delete(id);
     this.messages.delete(id);
     return true;
   }
 
-  async update(id: string, patch: ConversationPatch): Promise<Conversation | null> {
+  async update(
+    id: string,
+    patch: ConversationPatch,
+    access?: ConversationAccessContext,
+  ): Promise<Conversation | null> {
     const conversation = this.conversations.get(id);
     if (!conversation) return null;
+    if (access && conversation.ownerId !== access.userId) return null;
 
     if (patch.title !== undefined) {
       conversation.title = patch.title;
@@ -185,15 +174,26 @@ export class InMemoryConversationStore implements ConversationStore {
     return { ...conversation };
   }
 
-  async fork(id: string, atMessage?: number): Promise<Conversation | null> {
+  async fork(
+    id: string,
+    atMessage?: number,
+    access?: ConversationAccessContext,
+  ): Promise<Conversation | null> {
+    // Fork needs the source for history + messagesToCopy, so we
+    // resolve it first. Foreign-owner and missing both return null —
+    // indistinguishable to the caller, same posture as delete/update.
     const source = this.conversations.get(id);
     if (!source) return null;
+    if (access && source.ownerId !== access.userId) return null;
 
     const sourceMessages = this.messages.get(id) ?? [];
     const messagesToCopy =
       atMessage !== undefined ? sourceMessages.slice(0, atMessage) : [...sourceMessages];
 
-    const newConv = await this.create();
+    const newConv = await this.create({
+      ownerId: source.ownerId,
+      ...(source.workspaceId ? { workspaceId: source.workspaceId } : {}),
+    });
 
     // Track lastModel from copied messages. Token totals derive at read.
     for (const msg of messagesToCopy) {
@@ -214,57 +214,5 @@ export class InMemoryConversationStore implements ConversationStore {
     );
 
     return newConv;
-  }
-
-  async shareConversation(id: string, ownerId: string): Promise<Conversation | null> {
-    const conversation = this.conversations.get(id);
-    if (!conversation) return null;
-    if (conversation.ownerId && conversation.ownerId !== ownerId) return null;
-
-    conversation.visibility = "shared";
-    if (!conversation.participants) {
-      conversation.participants = [ownerId];
-    } else if (!conversation.participants.includes(ownerId)) {
-      conversation.participants = [ownerId, ...conversation.participants];
-    }
-
-    return { ...conversation };
-  }
-
-  async unshareConversation(id: string, ownerId: string): Promise<Conversation | null> {
-    const conversation = this.conversations.get(id);
-    if (!conversation) return null;
-    if (conversation.ownerId && conversation.ownerId !== ownerId) return null;
-
-    conversation.visibility = "private";
-    conversation.participants = conversation.ownerId ? [conversation.ownerId] : [];
-
-    return { ...conversation };
-  }
-
-  async addParticipant(id: string, userId: string): Promise<Conversation | null> {
-    const conversation = this.conversations.get(id);
-    if (!conversation) return null;
-
-    if (!conversation.participants) {
-      conversation.participants = [userId];
-    } else if (!conversation.participants.includes(userId)) {
-      conversation.participants = [...conversation.participants, userId];
-    }
-
-    return { ...conversation };
-  }
-
-  async removeParticipant(id: string, userId: string): Promise<Conversation | null> {
-    const conversation = this.conversations.get(id);
-    if (!conversation) return null;
-    // Cannot remove the owner
-    if (conversation.ownerId === userId) return null;
-
-    if (conversation.participants) {
-      conversation.participants = conversation.participants.filter((p) => p !== userId);
-    }
-
-    return { ...conversation };
   }
 }

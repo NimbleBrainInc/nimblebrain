@@ -152,9 +152,9 @@ export function ChatProvider({
     }
   }, []);
 
-  // Subscribe to conversation events for shared conversations
-  const isShared = chat.conversationMeta?.visibility === "shared";
-  useConversationEvents(chat.conversationId, isShared, {
+  // Same-user cross-tab sync (Stage 1 single-owner). Stage 4 widens
+  // the audience when sharing returns.
+  useConversationEvents(chat.conversationId, {
     onRemoteUserMessage: (data) => {
       chat.injectRemoteUserMessage(data.userId, data.displayName, data.content);
     },

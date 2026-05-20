@@ -10,6 +10,7 @@ import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { EngineEvent, EventSink } from "../engine/types.ts";
+import { ConversationCorruptedError } from "../runtime/errors.ts";
 import { assertNoBinaryPayloads } from "./binary-guard.ts";
 import {
   deriveConversationMeta,
@@ -127,7 +128,7 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
   // ConversationStore interface
   // =========================================================================
 
-  async create(options?: CreateConversationOptions): Promise<Conversation> {
+  async create(options: CreateConversationOptions): Promise<Conversation> {
     const id = `conv_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`;
     const now = new Date().toISOString();
     const conversation: Conversation = {
@@ -136,16 +137,10 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
       updatedAt: now,
       title: null,
       lastModel: null,
+      ownerId: options.ownerId,
       format: "events",
-      ...(options?.workspaceId ? { workspaceId: options.workspaceId } : {}),
-      ...(options?.ownerId ? { ownerId: options.ownerId } : {}),
-      visibility: options?.ownerId ? (options.visibility ?? "private") : options?.visibility,
-      ...(options?.ownerId
-        ? { participants: options.participants ?? [options.ownerId] }
-        : options?.participants
-          ? { participants: options.participants }
-          : {}),
-      ...(options?.metadata ? { metadata: options.metadata } : {}),
+      ...(options.workspaceId ? { workspaceId: options.workspaceId } : {}),
+      ...(options.metadata ? { metadata: options.metadata } : {}),
     };
     const path = this.path(id);
     await writeFile(path, `${JSON.stringify(conversation)}\n`);
@@ -162,17 +157,23 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
     if (lines.length === 0) return null;
 
     const raw = JSON.parse(lines[0]!) as Record<string, unknown>;
+    if (typeof raw.ownerId !== "string" || raw.ownerId.length === 0) {
+      // Stage 1 invariant: every conversation has an ownerId. A file
+      // without one is pre-migration data and unreadable by this code.
+      // Throw a typed error so the HTTP layer can map to a clean
+      // `422 conversation_corrupted` (with the migration command in
+      // the message) instead of bubbling as 500.
+      throw new ConversationCorruptedError(id, "missing_owner");
+    }
     const conversation: Conversation = {
       id: raw.id as string,
       createdAt: raw.createdAt as string,
       updatedAt: (raw.updatedAt as string) ?? (raw.createdAt as string),
       title: (raw.title as string | null) ?? null,
       lastModel: (raw.lastModel as string | null) ?? null,
+      ownerId: raw.ownerId,
       ...(raw.format ? { format: raw.format as "events" } : {}),
       ...(raw.workspaceId ? { workspaceId: raw.workspaceId as string } : {}),
-      ...(raw.ownerId ? { ownerId: raw.ownerId as string } : {}),
-      ...(raw.visibility ? { visibility: raw.visibility as "private" | "shared" } : {}),
-      ...(raw.participants ? { participants: raw.participants as string[] } : {}),
       ...(raw.metadata ? { metadata: raw.metadata as Record<string, unknown> } : {}),
     };
 
@@ -183,15 +184,8 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
       if (usage.lastModel) {
         conversation.lastModel = usage.lastModel;
       }
-      // Derive title, visibility, participants from metadata events
-      const meta = deriveConversationMeta(events, {
-        title: conversation.title,
-        visibility: conversation.visibility,
-        participants: conversation.participants,
-      });
+      const meta = deriveConversationMeta(events, { title: conversation.title });
       conversation.title = meta.title;
-      if (meta.visibility !== undefined) conversation.visibility = meta.visibility;
-      if (meta.participants !== undefined) conversation.participants = meta.participants;
       // Derive updatedAt from last event timestamp
       const lastEvent = events[events.length - 1];
       if (lastEvent) {
@@ -199,13 +193,8 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
       }
     }
 
-    if (access) {
-      const meta = {
-        ownerId: conversation.ownerId,
-        visibility: conversation.visibility,
-        participants: conversation.participants,
-      };
-      if (!canAccess(meta, access)) return null;
+    if (access && !canAccess({ ownerId: conversation.ownerId }, access)) {
+      return null;
     }
 
     return conversation;
@@ -339,7 +328,14 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
     return this.index.list(options, access);
   }
 
-  async delete(id: string): Promise<boolean> {
+  async delete(id: string, access?: ConversationAccessContext): Promise<boolean> {
+    // Access check happens before existence check so we don't leak
+    // existence-but-not-yours to non-owners — `false` for both shapes.
+    if (access) {
+      const conv = await this.load(id);
+      if (!conv) return false;
+      if (conv.ownerId !== access.userId) return false;
+    }
     const path = this.path(id);
     if (!existsSync(path)) return false;
     await unlink(path);
@@ -347,18 +343,40 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
     return true;
   }
 
-  update(id: string, patch: ConversationPatch): Promise<Conversation | null> {
+  async update(
+    id: string,
+    patch: ConversationPatch,
+    access?: ConversationAccessContext,
+  ): Promise<Conversation | null> {
+    if (access) {
+      const existing = await this.load(id);
+      if (!existing) return null;
+      if (existing.ownerId !== access.userId) return null;
+    }
     return this.trackWrite(this._update(id, patch));
   }
 
-  async fork(id: string, atMessage?: number): Promise<Conversation | null> {
+  async fork(
+    id: string,
+    atMessage?: number,
+    access?: ConversationAccessContext,
+  ): Promise<Conversation | null> {
+    // Unlike delete/update which can short-circuit on the access
+    // check, fork legitimately needs the loaded source to do its job
+    // (history + messagesToCopy). So we load first, then evaluate
+    // both branches in the same posture: foreign owner and missing
+    // both return null, indistinguishable to the caller.
     const source = await this.load(id);
     if (!source) return null;
+    if (access && source.ownerId !== access.userId) return null;
 
     const allMessages = await this.history(source);
     const messagesToCopy = atMessage !== undefined ? allMessages.slice(0, atMessage) : allMessages;
 
-    const newConv = await this.create();
+    const newConv = await this.create({
+      ownerId: source.ownerId,
+      ...(source.workspaceId ? { workspaceId: source.workspaceId } : {}),
+    });
 
     if (messagesToCopy.length > 0) {
       // Token totals are derived from events; only carry lastModel forward.
@@ -433,74 +451,6 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
     }
 
     return newConv;
-  }
-
-  async shareConversation(id: string, ownerId: string): Promise<Conversation | null> {
-    const conversation = await this.load(id);
-    if (!conversation) return null;
-    if (conversation.ownerId && conversation.ownerId !== ownerId) return null;
-
-    const ts = new Date().toISOString();
-    this.appendEventSync(id, { ts, type: "metadata.visibility", visibility: "shared" });
-
-    let participants = conversation.participants ?? [];
-    if (!participants.includes(ownerId)) {
-      participants = [ownerId, ...participants];
-    }
-    this.appendEventSync(id, { ts, type: "metadata.participants", participants });
-
-    this.index.invalidate();
-    return this.load(id);
-  }
-
-  async unshareConversation(id: string, ownerId: string): Promise<Conversation | null> {
-    const conversation = await this.load(id);
-    if (!conversation) return null;
-    if (conversation.ownerId && conversation.ownerId !== ownerId) return null;
-
-    const ts = new Date().toISOString();
-    this.appendEventSync(id, { ts, type: "metadata.visibility", visibility: "private" });
-    const participants = conversation.ownerId ? [conversation.ownerId] : [];
-    this.appendEventSync(id, { ts, type: "metadata.participants", participants });
-
-    this.index.invalidate();
-    return this.load(id);
-  }
-
-  async addParticipant(id: string, userId: string): Promise<Conversation | null> {
-    const conversation = await this.load(id);
-    if (!conversation) return null;
-
-    let participants = conversation.participants ?? [];
-    if (!participants.includes(userId)) {
-      participants = [...participants, userId];
-      this.appendEventSync(id, {
-        ts: new Date().toISOString(),
-        type: "metadata.participants",
-        participants,
-      });
-      this.index.invalidate();
-    }
-
-    return this.load(id);
-  }
-
-  async removeParticipant(id: string, userId: string): Promise<Conversation | null> {
-    const conversation = await this.load(id);
-    if (!conversation) return null;
-    if (conversation.ownerId === userId) return null;
-
-    if (conversation.participants) {
-      const participants = conversation.participants.filter((p) => p !== userId);
-      this.appendEventSync(id, {
-        ts: new Date().toISOString(),
-        type: "metadata.participants",
-        participants,
-      });
-      this.index.invalidate();
-    }
-
-    return this.load(id);
   }
 
   async flush(): Promise<void> {

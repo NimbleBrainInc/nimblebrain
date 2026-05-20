@@ -6,7 +6,7 @@
  * date filtering, and search.
  */
 
-import type { ConversationIndex, ListResult } from "../index-cache.ts";
+import type { AccessContext, ConversationIndex, ListResult } from "../index-cache.ts";
 
 export interface ListInput {
   limit?: number;
@@ -17,13 +17,20 @@ export interface ListInput {
   dateTo?: string;
 }
 
-export async function handleList(input: ListInput, index: ConversationIndex): Promise<ListResult> {
-  return index.list({
-    limit: input.limit,
-    cursor: input.cursor,
-    search: input.search,
-    sortBy: input.sortBy,
-    dateFrom: input.dateFrom,
-    dateTo: input.dateTo,
-  });
+export async function handleList(
+  input: ListInput,
+  index: ConversationIndex,
+  access?: AccessContext,
+): Promise<ListResult> {
+  return index.list(
+    {
+      limit: input.limit,
+      cursor: input.cursor,
+      search: input.search,
+      sortBy: input.sortBy,
+      dateFrom: input.dateFrom,
+      dateTo: input.dateTo,
+    },
+    access,
+  );
 }

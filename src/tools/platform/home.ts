@@ -26,14 +26,29 @@ export function createHomeSource(runtime: Runtime, eventSink: EventSink): McpSou
       inputSchema: HomeActivityInput,
       handler: async (input: Record<string, unknown>) => {
         try {
+          // Ownership-filter the activity view to the caller's
+          // conversations. Stage 1's top-level store holds every
+          // user's conversations in one directory; unfiltered the
+          // dashboard would leak peer ids/titles/previews into User
+          // A's view of their own activity.
+          const identity = runtime.getCurrentIdentity();
+          if (!identity) {
+            return {
+              content: textContent(
+                JSON.stringify({ error: "home__activity requires an authenticated identity" }),
+              ),
+              isError: true,
+            };
+          }
           const wsDir = runtime.getWorkspaceScopedDir();
           const logDir = join(wsDir, "logs");
-          const store = runtime.getStore();
+          const store = runtime.findConversationStore();
           const automationRunsDir = join(wsDir, "automations", "runs");
           const collector = new ActivityCollector({
             logDir,
             conversations: { kind: "store", store },
             automationRunsDir,
+            access: { userId: identity.id },
           });
 
           const defaults = {

@@ -52,7 +52,7 @@ describe("Runtime identity stores wiring", () => {
 
     await provisionTestWorkspace(rt);
 
-    const convStore = rt.getConversationStore(TEST_WORKSPACE_ID);
+    const convStore = rt.findConversationStore();
     expect(typeof convStore.create).toBe("function");
   });
 
@@ -130,7 +130,7 @@ describe("Runtime identity stores wiring", () => {
     expect(fetched!.name).toBe("Test Workspace");
   });
 
-  it("getConversationStore() is an alias for getStore()", async () => {
+  it("findConversationStore() and findConversation() share the top-level store", async () => {
     const workDir = makeTempDir("conv-alias");
     dirs.push(workDir);
 
@@ -142,16 +142,16 @@ describe("Runtime identity stores wiring", () => {
 
     await provisionTestWorkspace(rt);
 
-    // Both return workspace-scoped stores for the same workspace (new instances each call)
-    const convStore = rt.getConversationStore(TEST_WORKSPACE_ID);
-    const store = rt.getStore(TEST_WORKSPACE_ID);
-    // They are separate instances but point to the same directory
-    expect(typeof convStore.create).toBe("function");
-    expect(typeof store.create).toBe("function");
-    // Verify they can both create conversations in the same workspace
-    const conv = await convStore.create({ workspaceId: TEST_WORKSPACE_ID });
-    const loaded = await store.load(conv.id);
+    // Both accessors land on `{workDir}/conversations/`. New instances
+    // each call (the store is stateless w.r.t. its dir), but a write
+    // through one is immediately visible through the other.
+    const store = rt.findConversationStore();
+    const conv = await store.create({
+      workspaceId: TEST_WORKSPACE_ID,
+      ownerId: "user_test",
+    });
+    const loaded = await rt.findConversation(conv.id);
     expect(loaded).not.toBeNull();
-    expect(loaded!.id).toBe(conv.id);
+    expect(loaded?.id).toBe(conv.id);
   });
 });

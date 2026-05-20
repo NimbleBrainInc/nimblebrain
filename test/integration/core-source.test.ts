@@ -608,8 +608,12 @@ describe("Core Source", () => {
 			await provisionTestWorkspace(runtime);
 			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
 
+			// Stage 1 single-owner: the briefing now requires an
+			// authenticated identity and filters the activity collector
+			// to the caller's conversations. Identity in the request
+			// context must match the seed's ownerId.
 			const ctx = {
-				identity: null,
+				identity: { id: "user_test", email: "test@example.com" } as never,
 				workspaceId: TEST_WORKSPACE_ID,
 				workspaceAgents: null,
 				workspaceModelOverride: null,
@@ -619,8 +623,8 @@ describe("Core Source", () => {
 			// generator short-circuits to a "quiet day" briefing and the
 			// model never gets invoked (the cache test would pass vacuously).
 			await runWithRequestContext(ctx, async () => {
-				const store = runtime.getStore();
-				await store.create();
+				const store = runtime.findConversationStore();
+				await store.create({ ownerId: "user_test" });
 			});
 
 			// First call: model throws, tool returns isError.

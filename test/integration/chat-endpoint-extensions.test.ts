@@ -171,12 +171,13 @@ describe("ChatRequest.metadata — conversation persistence", () => {
       });
 
       // Load the conversation and verify metadata is present
-      const conv = await runtime.getStore(TEST_WORKSPACE_ID).load(result.conversationId);
+      const conv = await runtime.findConversationStore().load(result.conversationId);
       expect(conv).not.toBeNull();
       expect(conv!.metadata).toEqual({ source: "automation", id: "test-123" });
 
-      // Verify it's actually in the JSONL file's first line
-      const convDir = join(workDir, "workspaces", TEST_WORKSPACE_ID, "conversations");
+      // Verify it's actually in the JSONL file's first line at the
+      // top-level conversation path.
+      const convDir = join(workDir, "conversations");
       const files = require("fs").readdirSync(convDir).filter((f: string) => f.endsWith(".jsonl"));
       expect(files.length).toBeGreaterThan(0);
       const content = readFileSync(join(convDir, files[0]!), "utf-8");
@@ -202,7 +203,7 @@ describe("ChatRequest.metadata — conversation persistence", () => {
         message: "hello",
         workspaceId: TEST_WORKSPACE_ID,
       });
-      const conv = await runtime.getStore(TEST_WORKSPACE_ID).load(result.conversationId);
+      const conv = await runtime.findConversationStore().load(result.conversationId);
       expect(conv).not.toBeNull();
       expect(conv!.metadata).toBeUndefined();
     } finally {
@@ -236,7 +237,7 @@ describe("ChatRequest.metadata — conversation persistence", () => {
         metadata: { source: "second" },
       });
 
-      const conv = await runtime.getStore(TEST_WORKSPACE_ID).load(result1.conversationId);
+      const conv = await runtime.findConversationStore().load(result1.conversationId);
       expect(conv!.metadata).toEqual({ source: "first" });
     } finally {
       await runtime.shutdown();

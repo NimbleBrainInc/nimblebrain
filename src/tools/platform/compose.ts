@@ -267,7 +267,6 @@ async function composeLive(runtime: Runtime, convId: string): Promise<ComposeRes
         }
       : undefined,
     proxied.length > 0,
-    undefined, // participants — request-scoped
     workspaceContext,
     overlays,
     layer3Entries,
@@ -551,12 +550,26 @@ async function readConvEvents(
 ): Promise<import("../../conversation/types.ts").ConversationEvent[] | null> {
   // Mirrors the helper in skills.ts. Inlined here rather than imported so
   // this source doesn't take a dep on a sibling tool's private API.
+  //
+  // Stage 1 single-owner: gate the read on ownership BEFORE touching
+  // the event log. The conversation id is a tool input — any
+  // authenticated caller could pass an arbitrary id; without this
+  // check, `effective_context` would happily read peer conversations'
+  // assembled-context / skills.loaded / llm.response events. The
+  // `findConversation(id, access)` call returns null for both
+  // not-found and foreign-owner, same shape as the "no store" branch
+  // below.
+  const identity = runtime.getCurrentIdentity();
+  if (!identity) return null;
+  const owned = await runtime.findConversation(convId, { userId: identity.id });
+  if (!owned) return null;
+
   const { EventSourcedConversationStore } = await import(
     "../../conversation/event-sourced-store.ts"
   );
   let store: InstanceType<typeof EventSourcedConversationStore> | null = null;
   try {
-    const raw = runtime.getConversationStore();
+    const raw = runtime.findConversationStore();
     store = raw instanceof EventSourcedConversationStore ? raw : null;
   } catch {
     /* no store in scope — fall through to null */

@@ -88,7 +88,7 @@ describe("assertNoBinaryPayloads", () => {
 describe("conversation stores reject binary-bearing messages (issue #54)", () => {
   it("EventSourcedConversationStore.append throws on Buffer in contentParts", async () => {
     const store = new EventSourcedConversationStore({ dir: makeDir() });
-    const conv = await store.create();
+    const conv = await store.create({ ownerId: "user_test" });
 
     const poisoned = {
       role: "user",
@@ -105,7 +105,7 @@ describe("conversation stores reject binary-bearing messages (issue #54)", () =>
 
   it("JsonlConversationStore.append throws on Uint8Array in contentParts", async () => {
     const store = new JsonlConversationStore(makeDir());
-    const conv = await store.create();
+    const conv = await store.create({ ownerId: "user_test" });
 
     const poisoned = {
       role: "user",
@@ -119,7 +119,7 @@ describe("conversation stores reject binary-bearing messages (issue #54)", () =>
   it("clean message with resource_link round-trips without per-byte dict pattern", async () => {
     const dir = makeDir();
     const store = new EventSourcedConversationStore({ dir });
-    const conv = await store.create();
+    const conv = await store.create({ ownerId: "user_test" });
 
     const clean: StoredMessage = {
       role: "user",

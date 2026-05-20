@@ -334,7 +334,20 @@ export interface BootstrapResponse {
     role: "admin" | "member";
     memberCount: number;
     bundleCount: number;
+    /**
+     * `true` for the user's personal workspace. Pre-Stage-1 deployments
+     * return `false` for every workspace until the
+     * `migrate-personal-workspaces` script runs.
+     */
+    isPersonal: boolean;
   }>;
+  /**
+   * The user's personal workspace id (always `isPersonal: true`,
+   * `ownerUserId === user.id`). `null` only when the migration hasn't
+   * run yet on an existing deployment — the UI may fall back to
+   * `activeWorkspace` in that case.
+   */
+  personalWorkspaceId: string | null;
   activeWorkspace: string | null;
   shell: {
     placements: PlacementEntry[];

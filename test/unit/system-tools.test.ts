@@ -177,7 +177,6 @@ describe("System Tools", () => {
 			undefined,
 			undefined,
 			undefined,
-			undefined,
 			toolEligibilityCtx,
 		);
 
@@ -217,7 +216,6 @@ describe("System Tools", () => {
 		};
 		const systemTools = await createSystemTools(
 			() => registry,
-			undefined,
 			undefined,
 			undefined,
 			undefined,
@@ -338,7 +336,6 @@ describe("System Tools", () => {
 			undefined,
 			undefined,
 			undefined,
-			undefined,
 			toolPromotionCtx,
 		);
 
@@ -383,7 +380,6 @@ describe("System Tools", () => {
 		};
 		const systemTools = await createSystemTools(
 			() => registry,
-			undefined,
 			undefined,
 			undefined,
 			undefined,
@@ -444,7 +440,6 @@ describe("System Tools", () => {
 		};
 		const systemTools = await createSystemTools(
 			() => registry,
-			undefined,
 			undefined,
 			undefined,
 			undefined,
@@ -847,7 +842,6 @@ describe("manage_app configure — workspace-scoped credentials", () => {
 			undefined,
 			undefined,
 			mpakHome,
-			undefined,
 			undefined,
 			undefined,
 			undefined,

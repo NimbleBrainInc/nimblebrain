@@ -8,7 +8,11 @@ import { ingestFiles, isAllowedMime, type UploadedFile } from "../files/ingest.t
 import { createFileStore } from "../files/store.ts";
 import type { FileEntry } from "../files/types.ts";
 import type { IdentityProvider, UserIdentity } from "../identity/provider.ts";
-import { RunInProgressError } from "../runtime/errors.ts";
+import {
+  ConversationAccessDeniedError,
+  ConversationCorruptedError,
+  RunInProgressError,
+} from "../runtime/errors.ts";
 import { type RequestContext, runWithRequestContext } from "../runtime/request-context.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import type { ChatRequest } from "../runtime/types.ts";
@@ -47,6 +51,7 @@ export async function handleChat(
   features: ResolvedFeatures,
   identity?: UserIdentity,
   workspaceId?: string,
+  conversationEventManager?: ConversationEventManager,
 ): Promise<Response> {
   const parsed = await parseChatBody(request, runtime, features, identity, workspaceId);
   if (parsed instanceof Response) return parsed;
@@ -54,6 +59,11 @@ export async function handleChat(
   if (parsed.conversationId && runtime.isConversationActive(parsed.conversationId)) {
     return runInProgressResponse(parsed.conversationId);
   }
+
+  // Same self-echo-suppression contract as /v1/chat/stream: if the
+  // caller has an open conv-events SSE on this conversation, they can
+  // pass its server-issued subscriber id so the broadcast skips it.
+  const originSubscriberId = request.headers.get("x-origin-subscriber-id") ?? undefined;
 
   try {
     // Thread the request's abort signal into the chat so a client
@@ -68,16 +78,54 @@ export async function handleChat(
       ...result.usage,
       costUsd: estimateCost(result.usage.model, result.usage),
     };
-    return json({
+    const responseBody = {
       ...result,
       inputTokens: result.usage.inputTokens,
       outputTokens: result.usage.outputTokens,
       usage: wireUsage,
       ...(parsed.workspaceId ? { workspaceId: parsed.workspaceId } : {}),
-    });
+    };
+
+    // Same-user cross-tab broadcast — parity with /v1/chat/stream. A
+    // peer tab on /v1/conversations/:id/events sees the user.message
+    // (so the visible chat updates immediately) and the `done`
+    // payload (final response + usage). The synchronous caller still
+    // gets the full result inline; this just keeps any peer tabs in
+    // sync. Subscriber-keyed exclusion prevents echo to the sender
+    // (see conversation-events.ts::broadcastToConversation docblock).
+    if (conversationEventManager && identity) {
+      const broadcastConvId = parsed.conversationId ?? result.conversationId;
+      if (broadcastConvId) {
+        conversationEventManager.broadcastToConversation(
+          broadcastConvId,
+          "user.message",
+          {
+            userId: identity.id,
+            displayName: identity.displayName,
+            content: parsed.message,
+            timestamp: new Date().toISOString(),
+          },
+          originSubscriberId,
+        );
+        conversationEventManager.broadcastToConversation(
+          broadcastConvId,
+          "done",
+          responseBody as Record<string, unknown>,
+          originSubscriberId,
+        );
+      }
+    }
+
+    return json(responseBody);
   } catch (err) {
     if (err instanceof RunInProgressError) {
       return runInProgressResponse(err.conversationId);
+    }
+    if (err instanceof ConversationAccessDeniedError) {
+      return conversationAccessDeniedResponse(err.conversationId);
+    }
+    if (err instanceof ConversationCorruptedError) {
+      return conversationCorruptedResponse(err);
     }
     throw err;
   }
@@ -90,6 +138,27 @@ function runInProgressResponse(conversationId: string): Response {
     "This conversation already has an active response. Wait for it to finish before sending another message.",
     { conversationId },
   );
+}
+
+function conversationAccessDeniedResponse(conversationId: string): Response {
+  return apiError(
+    403,
+    "conversation_access_denied",
+    "You do not have access to this conversation.",
+    { conversationId },
+  );
+}
+
+function conversationCorruptedResponse(err: ConversationCorruptedError): Response {
+  // 422 (Unprocessable Entity) over 500: the request is well-formed
+  // but the server-side state can't process it until an operator
+  // runs the migration. Surfacing the migration command in the
+  // message gives the operator the next step instead of a stack
+  // trace in the logs.
+  return apiError(422, "conversation_corrupted", err.message, {
+    conversationId: err.conversationId,
+    reason: err.reason,
+  });
 }
 
 /** Handle POST /v1/chat/stream — SSE streaming chat request. */
@@ -107,6 +176,15 @@ export async function handleChatStream(
   if (parsed.conversationId && runtime.isConversationActive(parsed.conversationId)) {
     return runInProgressResponse(parsed.conversationId);
   }
+
+  // The sender's own /v1/conversations/:id/events subscription (if any)
+  // is indistinguishable from peer-tab subscriptions by userId post-
+  // Stage-1. The client passes its subscription's `subscriberId` here
+  // so the broadcast skips it and the sender's tab doesn't double-
+  // process the event (once via this chat-stream response, once via
+  // its conv-events subscription). Optional — clients that aren't
+  // subscribed get full fan-out, which is correct.
+  const originSubscriberId = request.headers.get("x-origin-subscriber-id") ?? undefined;
 
   const convId = parsed.conversationId;
 
@@ -136,10 +214,16 @@ export async function handleChatStream(
         controller.close();
       };
 
-      // Defer the cross-participant user.message broadcast until the engine
-      // confirms the run actually started (first chat.start). If the call
-      // rejects with RunInProgressError, no broadcast fires and other
-      // participants never see a phantom message with no assistant reply.
+      // Cross-subscriber broadcast: streams chat-stream events to other
+      // SSE subscribers on /v1/conversations/:id/events. After Stage 1's
+      // single-owner cutover, the only legitimate consumer is the same
+      // user across browser tabs / devices (no "other participants" — the
+      // sharing primitives are gone). The broadcast survives as
+      // same-user cross-tab sync; Stage 4 reintroduces sharing with
+      // policy gates and a real multi-user audience.
+      //
+      // Deferred until chat.start so RunInProgressError doesn't produce a
+      // phantom user.message broadcast with no assistant reply.
       let userMessageBroadcast = false;
       const broadcastUserMessageOnce = () => {
         if (userMessageBroadcast) return;
@@ -154,7 +238,7 @@ export async function handleChatStream(
               content: parsed.message,
               timestamp: new Date().toISOString(),
             },
-            identity.id,
+            originSubscriberId,
           );
         }
       };
@@ -175,13 +259,16 @@ export async function handleChatStream(
             broadcastUserMessageOnce();
           }
           send(event.type, event.data);
-          // Broadcast to other participants watching this conversation
+          // Same-user cross-tab broadcast. The exclude key is the
+          // sender's own subscriber id (if any) — see the
+          // `originSubscriberId` block above for why subscriber-keyed
+          // exclusion is correct and userId-keyed exclusion isn't.
           if (convId && conversationEventManager && identity) {
             conversationEventManager.broadcastToConversation(
               convId,
               event.type,
               event.data as Record<string, unknown>,
-              identity.id,
+              originSubscriberId,
             );
           }
         }
@@ -214,7 +301,8 @@ export async function handleChatStream(
             usage: wireUsage,
           };
           send("done", doneData);
-          // Broadcast done to other participants
+          // Same-user cross-tab broadcast (Stage 1 single-owner).
+          // Subscriber-keyed exclude — see docblock.
           if (conversationEventManager && identity) {
             const broadcastConvId = convId ?? result.conversationId;
             if (broadcastConvId) {
@@ -222,7 +310,7 @@ export async function handleChatStream(
                 broadcastConvId,
                 "done",
                 doneData as Record<string, unknown>,
-                identity.id,
+                originSubscriberId,
               );
             }
           }
@@ -233,6 +321,22 @@ export async function handleChatStream(
             send("error", {
               error: "run_in_progress",
               message: "This conversation already has an active response.",
+            });
+            finish();
+            return;
+          }
+          if (err instanceof ConversationAccessDeniedError) {
+            send("error", {
+              error: "conversation_access_denied",
+              message: "You do not have access to this conversation.",
+            });
+            finish();
+            return;
+          }
+          if (err instanceof ConversationCorruptedError) {
+            send("error", {
+              error: "conversation_corrupted",
+              message: err.message,
             });
             finish();
             return;
@@ -738,10 +842,48 @@ export async function handleBootstrap(
       ? requested
       : userWorkspaces[0]!.id;
 
-  // 3. Shell placements for the active workspace (ambient + scoped, merged).
+  // 3. Identify the user's personal workspace. Stage 1 invariant:
+  //    every user has exactly one personal workspace where
+  //    `isPersonal === true && ownerUserId === identity.id`. If for any
+  //    reason there are multiple (data corruption — shouldn't happen),
+  //    pick the earliest-created and log a warning so operators notice.
+  //    If there are zero (pre-migration deployment), `personalWorkspaceId`
+  //    is `null` — the UI can fall back to `activeWorkspace`.
+  const personalCandidates = userWorkspaces.filter(
+    (ws) => ws.isPersonal === true && ws.ownerUserId === identity.id,
+  );
+  let personalWorkspaceId: string | null = null;
+  if (personalCandidates.length === 1) {
+    personalWorkspaceId = personalCandidates[0]!.id;
+  } else if (personalCandidates.length > 1) {
+    // Earliest by createdAt — list() already sorts ascending, but be
+    // explicit so a future change to list ordering doesn't silently
+    // change which workspace counts as "the" personal one.
+    const earliest = personalCandidates
+      .slice()
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0]!;
+    personalWorkspaceId = earliest.id;
+    console.warn(
+      `[bootstrap] user ${identity.id} has ${personalCandidates.length} personal workspaces; ` +
+        `picking earliest-created ${earliest.id}. This is data corruption — investigate.`,
+    );
+  } else {
+    // Zero personal workspaces. Expected for legacy tenants in the
+    // pre-migration window — `ensureUserWorkspace` creates one on the
+    // next login, or the operator runs `migrate:personal-workspaces`.
+    // Per-login bootstrap is high-volume; `log.info` (dim, greppable)
+    // is enough — `console.warn` would create alarming yellow noise
+    // for an expected pre-migration state.
+    log.info(
+      `[bootstrap] user ${identity.id} has no personal workspace. ` +
+        `Run \`bun run migrate:personal-workspaces\` or trigger a re-login.`,
+    );
+  }
+
+  // 4. Shell placements for the active workspace (ambient + scoped, merged).
   const placements = runtime.getPlacementRegistry().forWorkspace(activeWorkspace);
 
-  // 4. Config
+  // 5. Config
   const models = runtime.getModelSlots();
   const configuredProviders = runtime.getConfiguredProviders();
   const maxIterations = runtime.getMaxIterations();
@@ -762,7 +904,11 @@ export async function handleBootstrap(
       role: ws.members.find((m) => m.userId === identity.id)!.role,
       memberCount: ws.members.length,
       bundleCount: ws.bundles.length,
+      // `isPersonal` defaults to `false` on disk for pre-Stage-1 workspaces;
+      // backfilled eagerly by the personal-workspace migration.
+      isPersonal: ws.isPersonal === true,
     })),
+    personalWorkspaceId,
     activeWorkspace,
     shell: {
       placements,

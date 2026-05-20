@@ -22,6 +22,7 @@ function bootstrapWs(
     name: "Test",
     memberCount: 1,
     bundleCount: 0,
+    isPersonal: false,
     ...partial,
   };
 }

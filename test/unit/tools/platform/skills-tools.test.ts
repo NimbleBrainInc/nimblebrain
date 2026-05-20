@@ -65,11 +65,14 @@ class FakeRuntime {
     if (!this.wsId) throw new Error("no workspace");
     return this.wsId;
   }
-  getConversationStore(): EventSourcedConversationStore {
+  findConversationStore(): EventSourcedConversationStore {
     return this._store;
   }
-  getStore(): EventSourcedConversationStore {
-    return this._store;
+  async findConversation(
+    id: string,
+    access?: { userId: string },
+  ): Promise<unknown> {
+    return this._store.load(id, access);
   }
   getWorkspaceStore() {
     // Tests that exercise the cross-workspace path supply this directly
@@ -137,6 +140,12 @@ let source: McpSource | undefined;
 beforeEach(() => {
   workDir = mkdtempSync(join(tmpdir(), "skills-tools-test-"));
   runtime = new FakeRuntime(workDir);
+  // Default identity matches the `ownerId: "user_test"` used by every
+  // `runtime.store().create({...})` call in this file. Stage 1 single-
+  // owner means tools that read conversation events require the caller
+  // to own the conversation; this seeds that match for the happy path.
+  // Tests that need to assert ownership-mismatch should override.
+  runtime.identity = { id: "user_test" };
 });
 
 afterEach(async () => {
@@ -508,7 +517,7 @@ describe("skills__read", () => {
 
 describe("skills__active_for", () => {
   test("returns the most recent skills.loaded event projected to active-for shape", async () => {
-    const conv = await runtime.store().create();
+    const conv = await runtime.store().create({ ownerId: "user_test" });
     // setActiveConversation routes the subsequent emit() calls into conv's
     // event log (the store appends to whatever conversation is "active" at
     // emit time — see event-sourced-store.ts:appendEvent). The active_for
@@ -573,7 +582,7 @@ describe("skills__active_for", () => {
   });
 
   test("returns empty array (not error) when no skills.loaded fired yet", async () => {
-    const conv = await runtime.store().create();
+    const conv = await runtime.store().create({ ownerId: "user_test" });
     const src = await buildSource();
     const client = src.getClient()!;
     const result = await client.callTool({
@@ -599,7 +608,7 @@ describe("skills__active_for", () => {
   test("defaults to current conversation from request context when conversation_id omitted", async () => {
     // Inside a chat the agent doesn't know its own conv id. The handler
     // reads it from RequestContext when input.conversation_id is missing.
-    const conv = await runtime.store().create();
+    const conv = await runtime.store().create({ ownerId: "user_test" });
     runtime.store().setActiveConversation(conv.id);
     runtime.store().emit({
       type: "skills.loaded",
@@ -646,8 +655,8 @@ describe("skills__active_for", () => {
     // If the agent passes an explicit id, honor it — even if a different
     // conv is in the request context. Lets the agent inspect a sibling
     // conversation it has access to.
-    const ctxConv = await runtime.store().create();
-    const argConv = await runtime.store().create();
+    const ctxConv = await runtime.store().create({ ownerId: "user_test" });
+    const argConv = await runtime.store().create({ ownerId: "user_test" });
     runtime.store().setActiveConversation(argConv.id);
     runtime.store().emit({
       type: "skills.loaded",
@@ -702,7 +711,7 @@ describe("skills__active_for", () => {
 
 describe("skills__loading_log", () => {
   test("filters by conversation_id, since, until, skill_id", async () => {
-    const conv = await runtime.store().create();
+    const conv = await runtime.store().create({ ownerId: "user_test" });
     runtime.store().setActiveConversation(conv.id);
 
     const events = [
@@ -815,8 +824,8 @@ describe("skills__loading_log", () => {
   });
 
   test("workspace-wide scan (no conversation_id) walks every conv jsonl in the store dir", async () => {
-    const conv1 = await runtime.store().create();
-    const conv2 = await runtime.store().create();
+    const conv1 = await runtime.store().create({ ownerId: "user_test" });
+    const conv2 = await runtime.store().create({ ownerId: "user_test" });
     runtime.store().appendEvent(conv1.id, {
       type: "skills.loaded",
       ts: "2026-01-01T00:00:00.000Z",

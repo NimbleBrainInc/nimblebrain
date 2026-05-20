@@ -99,7 +99,7 @@ describe("per-conversation token accumulation", () => {
 
 		// Derived totals from the list summary should be the sum of per-turn
 		// usage. Allow for async flush — at least 2 turns must be visible.
-		const store = runtime.getStore(TEST_WORKSPACE_ID);
+		const store = runtime.findConversationStore();
 		const list = await store.list();
 		const summary = list.conversations.find((c) => c.id === turn1.conversationId);
 		expect(summary).toBeDefined();
@@ -133,7 +133,7 @@ describe("per-conversation token accumulation", () => {
 
 		await new Promise((r) => setTimeout(r, 1500));
 
-		const store = runtime.getStore(TEST_WORKSPACE_ID);
+		const store = runtime.findConversationStore();
 		const list = await store.list();
 		const sumA = list.conversations.find((c) => c.id === a1.conversationId);
 		const sumB = list.conversations.find((c) => c.id === b1.conversationId);

@@ -162,7 +162,6 @@ describe("manage_app configure — end-to-end", () => {
       undefined,
       undefined,
       undefined,
-      undefined,
       ctx,
     );
     return { tools, registry };

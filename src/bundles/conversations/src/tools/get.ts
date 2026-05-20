@@ -10,7 +10,7 @@
  * single tool call.
  */
 
-import type { ConversationIndex } from "../index-cache.ts";
+import type { AccessContext, ConversationIndex } from "../index-cache.ts";
 import { readConversation } from "../jsonl-reader.ts";
 
 export interface GetInput {
@@ -66,8 +66,14 @@ function selectByCharCap(messages: unknown[], cap: number): GetMessagesResult {
   return { messages: kept, droppedOlderMessages: dropped, truncated: dropped > 0 };
 }
 
-export async function handleGet(input: GetInput, index: ConversationIndex): Promise<object> {
-  const entry = index.get(input.id);
+export async function handleGet(
+  input: GetInput,
+  index: ConversationIndex,
+  access?: AccessContext,
+): Promise<object> {
+  // `index.get` returns undefined for both not-found and exists-but-
+  // not-yours when `access` is supplied — one error message, no leak.
+  const entry = index.get(input.id, access);
   if (!entry) {
     throw new Error(`Conversation not found: ${input.id}`);
   }
@@ -86,8 +92,6 @@ export async function handleGet(input: GetInput, index: ConversationIndex): Prom
     totalOutputTokens: conversation.meta.totalOutputTokens,
     lastModel: conversation.meta.lastModel,
     ...(conversation.meta.ownerId ? { ownerId: conversation.meta.ownerId } : {}),
-    ...(conversation.meta.visibility ? { visibility: conversation.meta.visibility } : {}),
-    ...(conversation.meta.participants ? { participants: conversation.meta.participants } : {}),
   };
 
   const expand = input.expand ?? "messages";

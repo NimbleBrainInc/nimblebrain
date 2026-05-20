@@ -26,6 +26,7 @@ function writeConversation(
 	const updatedAt = opts.updatedAt ?? createdAt;
 	const meta = JSON.stringify({
 		id,
+		ownerId: "usr_test",
 		createdAt,
 		updatedAt,
 		title: opts.title ?? null,
@@ -230,22 +231,6 @@ describe("ConversationIndex", () => {
 		expect(byCreated.conversations[0]!.id).toBe("conv_new_create");
 	});
 
-	it("handles old-format files missing updatedAt and title", async () => {
-		// Write a minimal old-format file (only id and createdAt)
-		const meta = JSON.stringify({ id: "conv_old", createdAt: "2024-06-01T00:00:00.000Z" });
-		const userMsg = JSON.stringify({ role: "user", content: "old message", timestamp: "2024-06-01T00:00:00.000Z" });
-		writeFileSync(join(dir, "conv_old.jsonl"), `${meta}\n${userMsg}\n`);
-
-		await index.populate(dir);
-
-		const entry = index.get("conv_old");
-		expect(entry).toBeDefined();
-		expect(entry!.updatedAt).toBe("2024-06-01T00:00:00.000Z"); // falls back to createdAt
-		expect(entry!.title).toBeNull();
-		expect(entry!.totalInputTokens).toBe(0);
-		expect(entry!.preview).toBe("old message");
-	});
-
 	it("populate() handles non-existent directory gracefully", async () => {
 		const missingDir = join(tmpdir(), `nb-missing-${crypto.randomUUID()}`);
 		await index.populate(missingDir);
@@ -262,5 +247,33 @@ describe("ConversationIndex", () => {
 		expect(result.conversations).toHaveLength(1);
 		expect(result.conversations[0]!.id).toBe("conv_match");
 		expect(result.totalCount).toBe(1);
+	});
+
+	it("excludes legacy files missing ownerId from list()", async () => {
+		// Strict single-owner invariant: an ownerless on-disk file
+		// predates Stage 1 and has no defensible owner, so the index
+		// drops it rather than synthesizing one. Pair to load()'s throw
+		// at conversation-metadata.test.ts:52-64.
+		writeConversation(dir, "conv_valid", { title: "Owned" });
+		const legacyMeta = JSON.stringify({
+			id: "conv_legacy",
+			createdAt: "2024-06-01T00:00:00.000Z",
+			updatedAt: "2024-06-01T00:00:00.000Z",
+			title: "Ownerless",
+		});
+		const legacyMsg = JSON.stringify({
+			role: "user",
+			content: "no owner",
+			timestamp: "2024-06-01T00:00:00.000Z",
+		});
+		writeFileSync(join(dir, "conv_legacy.jsonl"), `${legacyMeta}\n${legacyMsg}\n`);
+
+		await index.populate(dir);
+
+		expect(index.get("conv_valid")).toBeDefined();
+		expect(index.get("conv_legacy")).toBeUndefined();
+		const listed = index.list();
+		expect(listed.conversations).toHaveLength(1);
+		expect(listed.conversations[0]!.id).toBe("conv_valid");
 	});
 });

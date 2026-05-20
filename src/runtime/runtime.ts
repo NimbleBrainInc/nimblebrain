@@ -18,9 +18,10 @@ import { EventSourcedConversationStore } from "../conversation/event-sourced-sto
 import { JsonlConversationStore } from "../conversation/jsonl-store.ts";
 import { InMemoryConversationStore } from "../conversation/memory-store.ts";
 import type {
+  Conversation,
   ConversationListResult,
   ConversationStore,
-  ParticipantInfo,
+  CreateConversationOptions,
 } from "../conversation/types.ts";
 import { sliceHistory, stripOlderReasoning, windowMessages } from "../conversation/window.ts";
 import { AgentEngine } from "../engine/engine.ts";
@@ -76,7 +77,7 @@ import type { ResourceData } from "../tools/types.ts";
 import { UserConnectorStore } from "../users/user-connector-store.ts";
 import { WorkspaceContext } from "../workspace/context.ts";
 import { WorkspaceStore } from "../workspace/workspace-store.ts";
-import { RunInProgressError } from "./errors.ts";
+import { ConversationAccessDeniedError, RunInProgressError } from "./errors.ts";
 import { PlacementRegistry } from "./placement-registry.ts";
 import {
   getRequestContext,
@@ -213,9 +214,6 @@ export class Runtime {
     | null = null;
   /** Getter for current workspace ID (set per-request). */
   private _currentWorkspaceId: (() => string | null) | null = null;
-  private _manageConversationCtx:
-    | import("../tools/conversation-tools.ts").ManageConversationContext
-    | null = null;
   /**
    * Cache for `skill://<bundle>/usage` resource fetches. A `null` body is a
    * sentinel meaning "this bundle does not publish the resource" — without it,
@@ -467,12 +465,6 @@ export class Runtime {
     const manageUsersCtx = { getIdentity, userStore, provider: identityProvider };
     const manageWorkspacesCtx = { getIdentity, workspaceStore };
     const manageMembersCtx = { getIdentity, workspaceStore, userStore };
-    const manageConversationCtx: import("../tools/conversation-tools.ts").ManageConversationContext =
-      {
-        getIdentity,
-        conversationStore: store,
-        workspaceStore,
-      };
     const manageBundleCtx = {
       getWorkspaceId,
       workspaceStore,
@@ -531,7 +523,6 @@ export class Runtime {
     rtHolder.rt = rt;
     rt._getIdentity = getIdentity;
     rt._getWorkspaceId = getWorkspaceId;
-    rt._manageConversationCtx = manageConversationCtx;
 
     // Register the `nb` system source. Built as an in-process MCP server
     // — `createSystemTools` returns it already-started so it's ready to
@@ -552,7 +543,6 @@ export class Runtime {
       manageUsersCtx,
       manageWorkspacesCtx,
       manageMembersCtx,
-      manageConversationCtx,
       manageBundleCtx,
       toolPromotionCtx,
       toolEligibilityCtx,
@@ -680,27 +670,73 @@ export class Runtime {
     }
     const wsId = request.workspaceId;
 
-    // Resolve conversation store: always workspace-scoped.
-    // JsonlConversationStore is stateless (each operation reads from disk),
-    // so per-request instances are safe.
-    const wsContext = this.getWorkspaceContext(wsId);
-    const store: ConversationStore = new EventSourcedConversationStore({
-      dir: wsContext.getDataPath("conversations"),
-      logLevel: this.config.logging?.level ?? "normal",
-    });
+    // Resolve conversation store: top-level, user-scoped. Stage 1
+    // collapsed conversations onto a single store at `{workDir}/
+    // conversations/`; `workspaceId` on the request still scopes
+    // tools / registry / file storage, but the conversation file
+    // itself lives at the user level. Per-call instances remain safe
+    // — `EventSourcedConversationStore` is stateless w.r.t. its dir.
+    const store: ConversationStore = this.findConversationStore();
 
     // Load workspace config once per request for agents/models overrides.
     const workspace = await this._workspaceStore.get(wsId);
 
-    const createOpts = {
-      ownerId: request.identity?.id,
+    // Stage 1 invariant: every conversation has an owner. Production
+    // path: the HTTP auth middleware sets `request.identity` before
+    // `runtime.chat` runs.
+    //
+    // Dev-mode fallback: when the runtime has no identity provider
+    // configured (`bun run dev:worktree`, raw `Runtime.start({ model,
+    // noDefaultBundles: true })` in tests), `usr_default` becomes the
+    // owner. This is GATED on `!this._identityProvider` so a
+    // production deployment with auth misconfigured throws loudly
+    // instead of silently defaulting every request to a sentinel
+    // user — the previous unconditional fallback would have made
+    // every conversation in such a deployment owned by `usr_default`,
+    // bypassing the single-owner invariant.
+    let ownerId: string;
+    if (request.identity?.id) {
+      ownerId = request.identity.id;
+    } else if (!this._identityProvider) {
+      ownerId = "usr_default";
+    } else {
+      throw new Error(
+        "[runtime.chat] no identity on request — the auth middleware must populate " +
+          "request.identity before runtime.chat runs. A misconfigured production " +
+          "deployment with an identity provider but missing middleware would " +
+          "otherwise default every conversation to a sentinel user.",
+      );
+    }
+    const createOpts: CreateConversationOptions = {
+      ownerId,
       workspaceId: wsId,
       ...(request.metadata ? { metadata: request.metadata } : {}),
     };
 
-    const conversation = request.conversationId
-      ? ((await store.load(request.conversationId)) ?? (await store.create(createOpts)))
-      : await store.create(createOpts);
+    // Resume an existing conversation only if the caller owns it.
+    // Stage 1 single-owner invariant: a conversation's ownerId must
+    // match the requesting identity. Today this is implicitly
+    // workspace-bounded because the store dir is per-wsId, but Task 005
+    // collapses every conversation onto a top-level store — at which
+    // point this owner check is the ONLY barrier between users and
+    // each other's conversations. Enforce it now, in the load-bearing
+    // chat path, so the invariant doesn't have a window of being
+    // workspace-discipline-only.
+    //
+    // The disambiguation between "doesn't exist" (→ create new) and
+    // "exists but isn't yours" (→ throw) matters: silently creating a
+    // new conversation when the caller passes a foreign id would mask
+    // a takeover attempt as a normal flow.
+    let conversation: Conversation;
+    if (request.conversationId) {
+      const existing = await store.load(request.conversationId);
+      if (existing && existing.ownerId !== ownerId) {
+        throw new ConversationAccessDeniedError(request.conversationId, ownerId);
+      }
+      conversation = existing ?? (await store.create(createOpts));
+    } else {
+      conversation = await store.create(createOpts);
+    }
 
     // Preserve metadata on resumed conversations (don't overwrite)
     if (request.metadata && !conversation.metadata) {
@@ -841,19 +877,6 @@ export class Runtime {
       locale: reqIdentity?.preferences?.locale ?? "en-US",
     };
 
-    // Build participants for shared conversations
-    let participants: ParticipantInfo[] | undefined;
-    if (conversation.visibility === "shared" && conversation.participants?.length) {
-      participants = [];
-      for (const userId of conversation.participants) {
-        const user = await this._userStore.get(userId);
-        participants.push({
-          userId,
-          displayName: user?.displayName ?? userId,
-        });
-      }
-    }
-
     const workspaceContext = workspace ? { id: workspace.id, name: workspace.name } : { id: wsId };
 
     // Build per-request context skills with workspace identity override
@@ -898,7 +921,6 @@ export class Runtime {
       appState,
       prefs,
       proxied.length > 0,
-      participants,
       workspaceContext,
       liveOverlays,
       layer3Entries,
@@ -1578,19 +1600,68 @@ export class Runtime {
     return wsRegistry;
   }
 
-  /** Get a workspace-scoped ConversationStore. */
-  getStore(wsId?: string): ConversationStore {
-    const id = wsId ?? this.requireWorkspaceId();
-    const ctx = this.getWorkspaceContext(id);
+  /**
+   * Get the **user-scoped** (top-level) ConversationStore.
+   *
+   * As of Stage 1, conversations are user-owned entities stored at
+   * `{workDir}/conversations/{convId}.jsonl`, not workspace-scoped. This
+   * is the canonical conversation store; every read and write of a
+   * conversation routes through it.
+   *
+   * Per-call instances are intentional: `EventSourcedConversationStore`
+   * is stateless w.r.t. its dir (each operation reads from disk), so
+   * sharing instances across requests would add no benefit and force
+   * a lifecycle concern (when does it die?). The directory is created
+   * on first use.
+   *
+   * STAGE 1 CLOSEOUT FOLLOW-UP — perf at scale: every call rebuilds
+   * the store's `ConversationIndex`, which re-scans the conversations
+   * directory on first `list()`. Fine for low-traffic dev; on a
+   * tenant with thousands of conversations the activity-dashboard's
+   * `store.list({ limit: 50 }, access)` becomes O(n) on every
+   * refresh. The bundle's `src/bundles/conversations/src/index-cache.ts`
+   * uses `fs.watch` + debounce specifically to avoid this — the
+   * runtime version does not. Either cache the store as a
+   * Runtime-lifetime singleton (and propagate `invalidate()` through
+   * the same chain `EventSink` events already flow), or share the
+   * bundle's watcher-backed index here. Not blocking Stage 1 ship.
+   */
+  getUserConversationStore(): ConversationStore {
     return new EventSourcedConversationStore({
-      dir: ctx.getDataPath("conversations"),
+      dir: join(resolveWorkDir(this.config), "conversations"),
       logLevel: this.config.logging?.level ?? "normal",
     });
   }
 
-  /** Alias for getStore() — clearer name for conversation-specific usage. */
-  getConversationStore(wsId?: string): ConversationStore {
-    return this.getStore(wsId);
+  /**
+   * The canonical store handle for conversation reads and writes. Alias
+   * for `getUserConversationStore()` — `find*` is the read-side framing
+   * (`findConversation` returns a single conversation by id;
+   * `findConversationStore` returns the store you'd use to enumerate or
+   * mutate). Both forms point at the same top-level store; keep them
+   * as siblings until usage settles and one form clearly wins.
+   */
+  findConversationStore(): ConversationStore {
+    return this.getUserConversationStore();
+  }
+
+  /**
+   * Locate a conversation by id from the top-level store. Returns the
+   * `Conversation` metadata, or `null` if the file doesn't exist. The
+   * single source of truth for "give me this conversation" — every
+   * conversation-touching call site reads through this.
+   *
+   * Pass `access` to gate the read by ownership at the store layer.
+   * Without `access` the caller is asserting "I am the ownership
+   * boundary" (e.g. `runtime.chat` after its own owner check, or a
+   * trusted internal caller); with it, the store returns `null` for
+   * existence-but-not-yours, matching `load()`'s posture.
+   */
+  async findConversation(
+    convId: string,
+    access?: import("../conversation/types.ts").ConversationAccessContext,
+  ): Promise<Conversation | null> {
+    return this.findConversationStore().load(convId, access);
   }
 
   /** Get the UserStore instance. */
@@ -2125,15 +2196,6 @@ export class Runtime {
     return this.config.allowInsecureRemotes === true;
   }
 
-  /** Inject the per-conversation event manager for participant eviction on removal/unshare. */
-  setConversationEventManager(
-    manager: import("../api/conversation-events.ts").ConversationEventManager,
-  ): void {
-    if (this._manageConversationCtx) {
-      this._manageConversationCtx.conversationEventManager = manager;
-    }
-  }
-
   /** Get the file context configuration with defaults applied. */
   getFilesConfig(): FileConfig {
     return { ...DEFAULT_FILE_CONFIG, ...this.config.files };
@@ -2172,12 +2234,20 @@ export class Runtime {
     return apps;
   }
 
-  /** List conversations (workspace-scoped). */
+  /**
+   * List conversations from the top-level store. Pass `access` to filter
+   * by ownership; without it the caller asserts trusted enumeration
+   * scope (CLI, admin tools). The `wsId` parameter is gone — every
+   * conversation lives at the user level, and tool/workspace scoping
+   * is a concern for the conversation's runtime context, not for
+   * enumeration. To filter by workspace, list and filter on
+   * `Conversation.workspaceId` at the call site.
+   */
   async listConversations(
     options?: import("../conversation/types.ts").ListOptions,
-    wsId?: string,
+    access?: import("../conversation/types.ts").ConversationAccessContext,
   ): Promise<ConversationListResult> {
-    return this.getStore(wsId).list(options);
+    return this.findConversationStore().list(options, access);
   }
 
   /**

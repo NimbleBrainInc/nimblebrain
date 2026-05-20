@@ -109,7 +109,33 @@ describe("Runtime", () => {
     await runtime.shutdown();
   });
 
-  it("uses JSONL store when configured", async () => {
+  it("getUserConversationStore() creates and uses {workDir}/conversations/", async () => {
+    const workDir = join(testDir, "user-conv-store-fresh-dir");
+    mkdirSync(workDir, { recursive: true });
+
+    const runtime = await Runtime.start({
+      model: { provider: "custom", adapter: createEchoModel() },
+      noDefaultBundles: true,
+      workDir,
+    });
+
+    const store = runtime.getUserConversationStore();
+    const conv = await store.create({ ownerId: "user_alice" });
+
+    // The conversation lives at {workDir}/conversations/{convId}.jsonl
+    // — not under any workspace.
+    const topLevelDir = join(workDir, "conversations");
+    expect(existsSync(topLevelDir)).toBe(true);
+    expect(existsSync(join(topLevelDir, `${conv.id}.jsonl`))).toBe(true);
+
+    // The conversation's owner round-trips.
+    const loaded = await store.load(conv.id);
+    expect(loaded?.ownerId).toBe("user_alice");
+
+    await runtime.shutdown();
+  });
+
+  it("chat persists conversations at the top-level store", async () => {
     const workDir = join(testDir, "jsonl-store");
     mkdirSync(workDir, { recursive: true });
 
@@ -123,11 +149,15 @@ describe("Runtime", () => {
 
     await runtime.chat({ message: "Persistent", workspaceId: TEST_WORKSPACE_ID });
 
-    // Conversations are stored in workspace-scoped paths
+    // Conversations live at the top-level user dir, not under any
+    // workspace path. Stage 1 Task 005 collapsed the workspace-scoped
+    // location entirely.
+    const topLevelConvDir = join(workDir, "conversations");
+    const topLevelFiles = [...new Bun.Glob("**/*.jsonl").scanSync(topLevelConvDir)];
+    expect(topLevelFiles.length).toBeGreaterThan(0);
+    // Nothing was written under workspaces/.../conversations/.
     const wsConvDir = join(workDir, "workspaces", TEST_WORKSPACE_ID, "conversations");
-    const files = new Bun.Glob("**/*.jsonl").scanSync(wsConvDir);
-    const fileList = [...files];
-    expect(fileList.length).toBeGreaterThan(0);
+    expect(existsSync(wsConvDir)).toBe(false);
 
     await runtime.shutdown();
   });
