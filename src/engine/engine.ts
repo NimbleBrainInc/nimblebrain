@@ -468,26 +468,26 @@ export class AgentEngine {
     const unregisterToolControls = config.toolPromotion?.registerControls(toolControls);
     try {
       while (iteration < maxIter) {
-        // Cancellation check at the top of every iteration. The signal is
-        // already threaded to `tools.execute` so an in-flight tool call
-        // can honor it, but without checking here the engine would
-        // proceed to the NEXT LLM call after a cancelled tool — wasting
-        // a model round-trip and continuing to generate downstream tool
-        // calls the caller no longer wants. Cooperative cancellation:
-        // we don't preempt the current tool, but we don't start new work
-        // either. The runtime catch translates AbortError into the
-        // appropriate `run.error` event for SSE consumers.
+        // Cancellation check at the top of every iteration. Three signal
+        // propagation paths now cover the full agent loop:
         //
-        // Gap acknowledged: an IN-FLIGHT LLM stream (`callModel` →
-        // `model.doStream`) is not signal-aware. The current step
-        // through this check blocks on the stream until it completes
-        // before the next iteration's abort check fires. For tool-call-
-        // dominated runs (the morning-brief case this fix targets) the
-        // gap is small. For long completions / reasoning-heavy runs
-        // it's a real cancellation lag — fix is to plumb `signal`
-        // through `callModel` to `model.doStream({ abortSignal })`,
-        // tracked separately so this PR stays scoped to the
-        // architectural plumbing.
+        //   1. THIS check — between iterations. Catches a cancel that
+        //      fires during a tool call (e.g. an external timeout that
+        //      fires mid-tool); without it, the engine would proceed to
+        //      the next LLM round-trip after the cancelled tool.
+        //   2. `tools.execute(call, config.signal)` — in-flight tool.
+        //      Task-augmented MCP tools get `tasks/cancel`; inline ones
+        //      abort their RPC.
+        //   3. `callModel(..., { abortSignal: config.signal })` below —
+        //      in-flight LLM stream. The provider aborts the underlying
+        //      fetch on signal, so a long completion or reasoning-heavy
+        //      run cancels at the network layer instead of blocking
+        //      until the model finishes.
+        //
+        // Cooperative throughout: we never preempt running work, just
+        // stop starting new work. The runtime catch translates the
+        // thrown AbortError into the appropriate `run.error` event for
+        // SSE consumers.
         if (config.signal?.aborted) {
           throw config.signal.reason instanceof Error
             ? config.signal.reason
@@ -556,6 +556,14 @@ export class AgentEngine {
                 ],
                 tools: modelTools,
                 maxOutputTokens: config.maxOutputTokens,
+                // Forward the run-scoped signal into the model call. AI
+                // SDK V3 providers honor `abortSignal` by aborting the
+                // underlying fetch, so an in-flight stream cancels at
+                // the network layer instead of blocking the engine
+                // until the model finishes. Pairs with the iteration-
+                // boundary check above: that handles between-step
+                // cancellation, this handles in-step.
+                ...(config.signal ? { abortSignal: config.signal } : {}),
                 ...(Object.keys(callProviderOptions).length > 0
                   ? { providerOptions: callProviderOptions }
                   : {}),
