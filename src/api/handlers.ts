@@ -163,8 +163,7 @@ export async function handleChatStream(
           event.type === "tool.preparing.done" ||
           event.type === "tool.start" ||
           event.type === "tool.done" ||
-          event.type === "llm.done" ||
-          event.type === "data.changed"
+          event.type === "llm.done"
         ) {
           if (event.type === "chat.start") {
             broadcastUserMessageOnce();
