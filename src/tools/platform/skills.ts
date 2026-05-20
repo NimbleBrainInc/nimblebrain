@@ -43,6 +43,14 @@ import { validateSkill } from "../../skills/validator.ts";
 import { deleteSkill, updateSkill, writeSkill } from "../../skills/writer.ts";
 import { defineInProcessApp, type InProcessTool } from "../in-process-app.ts";
 import type { McpSource } from "../mcp-source.ts";
+import type {
+  ActiveSkillEntry,
+  SkillDetail,
+  SkillSummary,
+  SkillsActiveForOutput,
+  SkillsListOutput,
+  SkillsReadOutput,
+} from "./schemas/skills.ts";
 import {
   SkillsActivateInput,
   SkillsActiveForInput,
@@ -169,9 +177,16 @@ export function createSkillsSource(runtime: Runtime, eventSink: EventSink): McpS
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         try {
           const list = await listSkills(runtime, authoringGuidePath, input);
+          // Construct via the canonical envelope so a shape drift on
+          // either side surfaces at compile time. The cast at the
+          // boundary is needed because `structuredContent`'s wire type
+          // is `Record<string, unknown>`, which TS doesn't infer
+          // structural interfaces into; validation still happens on
+          // `out`'s declaration.
+          const out: SkillsListOutput = { skills: list };
           return {
             content: textContent(summarizeList(list)),
-            structuredContent: { skills: list },
+            structuredContent: out as unknown as Record<string, unknown>,
             isError: false,
           };
         } catch (err) {
@@ -251,9 +266,13 @@ export function createSkillsSource(runtime: Runtime, eventSink: EventSink): McpS
               isError: true,
             };
           }
+          // Compile-time drift coverage on the read shape: `out`'s type
+          // pins it to the canonical `SkillsReadOutput`. Wire cast is
+          // the same shim explained in the `list` handler.
+          const out: SkillsReadOutput = result;
           return {
             content: textContent(summarizeRead(result)),
-            structuredContent: result as unknown as Record<string, unknown>,
+            structuredContent: out as unknown as Record<string, unknown>,
             isError: false,
           };
         } catch (err) {
@@ -293,9 +312,10 @@ export function createSkillsSource(runtime: Runtime, eventSink: EventSink): McpS
               isError: true,
             };
           }
+          const out: SkillsActiveForOutput = { active: result, conversationId: convId };
           return {
             content: textContent(summarizeActive(result)),
-            structuredContent: { active: result, conversationId: convId },
+            structuredContent: out as unknown as Record<string, unknown>,
             isError: false,
           };
         } catch (err) {
@@ -434,41 +454,11 @@ interface ListInput {
   modified_since?: string;
 }
 
-interface ListedSkill {
-  id: string;
-  name: string;
-  layer: 1 | 3;
-  scope: "org" | "workspace" | "user" | "bundle";
-  status: "active" | "draft" | "disabled" | "archived";
-  type?: string;
-  tokens: number;
-  source: { bundle?: string; bundleVersion?: string; path?: string; uri?: string };
-  description?: string;
-  modifiedAt?: string;
-  loadingStrategy?: string;
-  appliesToTools?: string[];
-  priority?: number;
-}
-
-interface ReadResult {
-  id: string;
-  content: string;
-  layer: 1 | 3;
-  scope: "org" | "workspace" | "user" | "bundle";
-  source: { bundle?: string; bundleVersion?: string; path?: string; uri?: string };
-  metadata: {
-    name: string;
-    description?: string;
-    type?: string;
-    priority?: number;
-    loadingStrategy?: string;
-    appliesToTools?: string[];
-    status?: string;
-    overrides?: Array<{ bundle?: string; skill?: string; reason: string }>;
-    derivedFrom?: string;
-  };
-  modifiedAt?: string;
-}
+// Local aliases for the canonical output shapes from `schemas/skills.ts`.
+// Server and web both import from there — this alias just keeps the
+// historical local name in this file's body so the diff stays small.
+type ListedSkill = SkillSummary;
+type ReadResult = SkillDetail;
 
 function skillToListed(skill: Skill): ListedSkill {
   const m = skill.manifest;
@@ -834,14 +824,8 @@ function inferScopeFromPath(
   return "bundle";
 }
 
-interface ActiveForEntry {
-  id: string;
-  layer: 3;
-  scope: "org" | "workspace" | "user" | "bundle";
-  tokens: number;
-  loadedBy: "always" | "tool_affinity";
-  reason: string;
-}
+// Local alias for the canonical shape from `schemas/skills.ts`.
+type ActiveForEntry = ActiveSkillEntry;
 
 /**
  * Find the most recent `skills.loaded` event for the conversation and
