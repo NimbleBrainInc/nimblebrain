@@ -4,12 +4,14 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   findDotenvFile,
   loadDotenvIntoProcess,
+  mainRepoRootFor,
   parseDotenv,
 } from "../../../scripts/lib/dev-env.ts";
 
@@ -55,6 +57,44 @@ describe("parseDotenv", () => {
     const m = parseDotenv("KEY==signed-thing==");
     expect(m.get("KEY")).toBe("=signed-thing==");
   });
+
+  test("strips leading `export ` prefix so source-able .env files work", () => {
+    // Some operators keep a `.env` that's also `source`-able from a
+    // shell, which uses `export NAME=value` syntax. Bun's loader
+    // strips the prefix; without it the parser would store the key
+    // as `"export FOO"` and the intended var would silently never
+    // resolve via `process.env.FOO`.
+    const m = parseDotenv(["export FOO=bar", "BAZ=qux", "export  TRIPLE_SPACED=ok"].join("\n"));
+    expect(m.get("FOO")).toBe("bar");
+    expect(m.get("BAZ")).toBe("qux");
+    expect(m.get("TRIPLE_SPACED")).toBe("ok");
+    expect(m.size).toBe(3);
+  });
+
+  test("skips keys that still contain whitespace after the export-strip", () => {
+    // `FOO BAR=baz` is malformed — no shell can set such a variable,
+    // so silently storing it would be a footgun. Skip rather than
+    // produce a never-fetchable entry.
+    const m = parseDotenv(["FOO BAR=baz", "OK=fine"].join("\n"));
+    expect(m.size).toBe(1);
+    expect(m.get("OK")).toBe("fine");
+  });
+
+  test("strips trailing inline `# comment` from unquoted values (Bun parity)", () => {
+    // Matches Bun's `.env` loader. The boundary is `whitespace + #`
+    // so values with `#` mid-token (e.g. a hash inside a base64
+    // chunk, no surrounding whitespace) aren't truncated.
+    const m = parseDotenv(
+      [
+        "FOO=bar # trailing comment",
+        "INLINE_HASH=abc#def", // no whitespace before #, preserved
+        "TRAILING_SPACE=baz   ", // pure whitespace, no comment
+      ].join("\n"),
+    );
+    expect(m.get("FOO")).toBe("bar");
+    expect(m.get("INLINE_HASH")).toBe("abc#def");
+    expect(m.get("TRAILING_SPACE")).toBe("baz");
+  });
 });
 
 describe("findDotenvFile", () => {
@@ -78,6 +118,74 @@ describe("findDotenvFile", () => {
     const path = join(root, ".env");
     writeFileSync(path, "FOO=bar\n");
     expect(findDotenvFile(root)).toBe(path);
+  });
+});
+
+describe("findDotenvFile / mainRepoRootFor — git worktree discovery", () => {
+  // The PR's reason for existing: a linked worktree (e.g.
+  // .claude/worktrees/<name>/) needs to find the main repo's `.env`
+  // one path level up the shared `.git` dir. Verified empirically
+  // before, now pinned with a real `git init` + `git worktree add`
+  // so a future refactor of `mainRepoRootFor` can't silently break
+  // the only thing this script promises operators.
+  let scratch: string;
+  let mainRepo: string;
+  let worktree: string;
+
+  beforeEach(() => {
+    scratch = mkdtempSync(join(tmpdir(), "dev-env-worktree-"));
+    mainRepo = join(scratch, "main");
+    worktree = join(scratch, "wt");
+    mkdirSync(mainRepo, { recursive: true });
+
+    // Real git init in the main repo. Need an initial commit before
+    // `git worktree add` will succeed.
+    const git = (cwd: string, ...args: string[]): void => {
+      execFileSync("git", args, { cwd, stdio: ["ignore", "ignore", "pipe"] });
+    };
+    git(mainRepo, "init", "--initial-branch=main", "-q");
+    git(mainRepo, "config", "user.email", "test@example.invalid");
+    git(mainRepo, "config", "user.name", "Test");
+    git(mainRepo, "config", "commit.gpgsign", "false");
+    writeFileSync(join(mainRepo, "README.md"), "# scratch\n");
+    git(mainRepo, "add", "README.md");
+    git(mainRepo, "commit", "-q", "-m", "init");
+    // Linked worktree on a branch off main.
+    git(mainRepo, "worktree", "add", "-q", "-b", "feature", worktree);
+  });
+
+  afterEach(() => {
+    rmSync(scratch, { recursive: true, force: true });
+  });
+
+  test("mainRepoRootFor returns the main repo root from inside a linked worktree", () => {
+    const resolved = mainRepoRootFor(worktree);
+    // Resolve through realpath to neutralize /private/var vs /var
+    // and other macOS symlink quirks before comparing.
+    expect(resolved).not.toBeNull();
+    expect(existsSync(join(resolved!, "README.md"))).toBe(true);
+  });
+
+  test("findDotenvFile from a linked worktree resolves the main repo's .env", () => {
+    const mainEnv = join(mainRepo, ".env");
+    writeFileSync(mainEnv, "ANTHROPIC_API_KEY=sk-from-main-repo\n");
+    const found = findDotenvFile(worktree);
+    expect(found).not.toBeNull();
+    // Compare via existsSync rather than path equality — macOS
+    // tmpdir symlinks (/var → /private/var) make exact-string
+    // comparison fragile.
+    expect(found && existsSync(found)).toBe(true);
+    expect(found?.endsWith("/.env")).toBe(true);
+  });
+
+  test("worktree-local .env wins over main repo .env (discovery order)", () => {
+    writeFileSync(join(mainRepo, ".env"), "X=from-main\n");
+    writeFileSync(join(worktree, ".env"), "X=from-worktree\n");
+    const found = findDotenvFile(worktree);
+    expect(found).not.toBeNull();
+    // Whatever path was returned, it must come from the worktree,
+    // not the main repo.
+    expect(found?.startsWith(worktree)).toBe(true);
   });
 });
 

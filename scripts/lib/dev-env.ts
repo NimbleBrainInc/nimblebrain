@@ -61,8 +61,9 @@ export function findDotenvFile(worktreeRoot: string): string | null {
 }
 
 /**
- * Resolve the main repo's working tree for a worktree-relative path.
- * Returns `null` when not in a git checkout (e.g. tarball extract).
+ * Resolve the main repo's working tree given the absolute path of a
+ * worktree. Returns `null` when not in a git checkout (e.g. tarball
+ * extract).
  */
 export function mainRepoRootFor(worktreeRoot: string): string | null {
   try {
@@ -82,13 +83,22 @@ export function mainRepoRootFor(worktreeRoot: string): string | null {
 }
 
 /**
- * Parse `.env` content into a key → value map. Minimal parser:
- *  - `KEY=VALUE`
- *  - Leading `#` lines and blank lines are skipped.
- *  - A trailing inline ` # comment` is NOT stripped (matches most
- *    `.env` tooling — operators rarely use inline comments, and
- *    stripping risks losing legitimate `#` inside quoted values).
- *  - Single or double quotes around the value are stripped.
+ * Parse `.env` content into a key → value map. Designed to match
+ * Bun's built-in `.env` loader behavior where it matters for
+ * operators — diverging from Bun was the bug class the PR review
+ * round flagged. Specifically:
+ *
+ *  - `KEY=VALUE`, blank lines and `#` lines skipped.
+ *  - A leading `export ` on the key is stripped (so an operator can
+ *    keep a `.env` that's also `source`-able from a shell). Without
+ *    this, `export FOO=bar` parses with key `"export FOO"` and the
+ *    intended var is silently never set.
+ *  - For UNQUOTED values, a trailing ` # comment` is stripped. For
+ *    QUOTED values (single or double), the value is preserved
+ *    verbatim — operators with `#` inside a URL fragment, an
+ *    anchor, or a password must wrap the value in quotes (matches
+ *    Bun + standard `.env` tooling).
+ *  - Single or double wrapping quotes on the value are stripped.
  *  - No `${VAR}` interpolation. Keep this dumb; if an operator wants
  *    interpolation they're already using `direnv`.
  *
@@ -102,14 +112,29 @@ export function parseDotenv(content: string): Map<string, string> {
     if (!line || line.startsWith("#")) continue;
     const eq = line.indexOf("=");
     if (eq <= 0) continue; // no `=` or starts with `=` — skip
-    const key = line.slice(0, eq).trim();
+    let key = line.slice(0, eq).trim();
+    // Strip a leading `export ` so source-able `.env` files work.
+    // Matches Bun's loader.
+    key = key.replace(/^export\s+/, "");
+    // A key that still contains whitespace after the export strip is
+    // malformed (e.g. accidental `FOO BAR=baz`); skip rather than
+    // store a never-fetchable variable.
+    if (/\s/.test(key)) continue;
     let value = line.slice(eq + 1).trim();
-    // Strip wrapping quotes if both ends match.
-    if (
-      (value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'"))
-    ) {
+    const isQuoted =
+      (value.startsWith('"') && value.endsWith('"') && value.length >= 2) ||
+      (value.startsWith("'") && value.endsWith("'") && value.length >= 2);
+    if (isQuoted) {
       value = value.slice(1, -1);
+    } else {
+      // Strip trailing ` # comment` from unquoted values to match Bun.
+      // The boundary is `whitespace + #` so we don't truncate values
+      // that legitimately contain `#` mid-token (e.g. a base64 chunk
+      // with no surrounding whitespace).
+      const inlineComment = value.search(/\s+#/);
+      if (inlineComment !== -1) {
+        value = value.slice(0, inlineComment).trimEnd();
+      }
     }
     out.set(key, value);
   }
