@@ -22,7 +22,11 @@ import type {
   ConversationStore,
   ParticipantInfo,
 } from "../conversation/types.ts";
-import { sliceHistory, stripOlderReasoning, windowMessages } from "../conversation/window.ts";
+import {
+  applyReasoningReplayPolicy,
+  sliceHistory,
+  windowMessages,
+} from "../conversation/window.ts";
 import { AgentEngine } from "../engine/engine.ts";
 import { estimateMessageTokens, estimateToolDescriptionTokens } from "../engine/token-estimate.ts";
 import type {
@@ -46,6 +50,7 @@ import { createIdentityProvider } from "../identity/provider.ts";
 import { DEV_IDENTITY } from "../identity/providers/dev.ts";
 import { UserStore } from "../identity/user.ts";
 import { InstructionsStore } from "../instructions/index.ts";
+import { getProviderFromModel } from "../model/catalog.ts";
 import { buildModelResolver, resolveModelString } from "../model/registry.ts";
 import { PermissionStore } from "../permissions/permission-store.ts";
 import type { Layer3SkillEntry, PromptAppInfo } from "../prompt/compose.ts";
@@ -963,9 +968,10 @@ export class Runtime {
 
     // Per-request hooks: inherit `beforeToolCall` from the runtime-level
     // hooks; compose `transformContext` here so the windowing budget is
-    // the one we just resolved for THIS call. The order (slice → strip
-    // older reasoning → window by token budget) is preserved.
+    // the one we just resolved for THIS call. The order (slice → apply
+    // provider replay policy → window by token budget) is preserved.
     const maxHistoryMessages = this.config.maxHistoryMessages ?? DEFAULT_MAX_HISTORY_MESSAGES;
+    const replayProvider = getProviderFromModel(resolvedModelString);
     const perRequestHooks: EngineHooks = {
       ...this.hooks,
       transformContext: (historyMessages, opts) => {
@@ -977,8 +983,8 @@ export class Runtime {
         const budget =
           attempt > 0 ? Math.floor(messageBudget.budget / (1 << attempt)) : messageBudget.budget;
         const sliced = sliceHistory(historyMessages, maxHistoryMessages);
-        const reasoningStripped = stripOlderReasoning(sliced);
-        return windowMessages(reasoningStripped, budget);
+        const replayReady = applyReasoningReplayPolicy(sliced, replayProvider);
+        return windowMessages(replayReady, budget);
       },
     };
 

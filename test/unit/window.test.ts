@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import type { LanguageModelV3Message } from "@ai-sdk/provider";
 import {
+	applyReasoningReplayPolicy,
 	sliceHistory,
 	stripOlderReasoning,
 	windowMessages,
@@ -458,5 +459,64 @@ describe("stripOlderReasoning", () => {
 		];
 		const result = stripOlderReasoning(msgs);
 		expect(result).toBe(msgs);
+	});
+});
+
+describe("applyReasoningReplayPolicy", () => {
+	const replayHistoryWithToolCall = (): LanguageModelV3Message[] => [
+		textMsg("user", "do something"),
+		{
+			role: "assistant",
+			content: [
+				{ type: "reasoning" as const, text: "considering options" },
+				{
+					type: "tool-call" as const,
+					toolCallId: "call_1",
+					toolName: "search",
+					input: { q: "x" },
+					providerOptions: {
+						google: { thoughtSignature: "opaque-signature" },
+					},
+				},
+			],
+		},
+		toolResultMsg("call_1"),
+		assistantWithReasoning("now reasoning again", "done"),
+	];
+
+	it("uses Anthropic's older-reasoning stripping policy", () => {
+		const msgs = replayHistoryWithToolCall();
+		const result = applyReasoningReplayPolicy(msgs, "anthropic");
+
+		expect(result[1]).toEqual({
+			role: "assistant",
+			content: [
+				{
+					type: "tool-call",
+					toolCallId: "call_1",
+					toolName: "search",
+					input: { q: "x" },
+					providerOptions: {
+						google: { thoughtSignature: "opaque-signature" },
+					},
+				},
+			],
+		});
+	});
+
+	it("preserves OpenAI reasoning paired with replayed tool calls", () => {
+		const msgs = replayHistoryWithToolCall();
+		const result = applyReasoningReplayPolicy(msgs, "openai");
+
+		expect(result).toBe(msgs);
+		expect(result[1]).toEqual(msgs[1]!);
+	});
+
+	it("preserves Gemini reasoning and thought metadata paired with replayed tool calls", () => {
+		const msgs = replayHistoryWithToolCall();
+		const result = applyReasoningReplayPolicy(msgs, "google");
+
+		expect(result).toBe(msgs);
+		expect(result[1]).toEqual(msgs[1]!);
 	});
 });

@@ -120,6 +120,21 @@ export function stripOlderReasoning(messages: LanguageModelV3Message[]): Languag
 }
 
 /**
+ * Apply provider-specific replay policy for reasoning blocks.
+ *
+ * The historical stripping optimization is Anthropic-specific: older thinking
+ * signatures are safe to omit and otherwise grow the prompt quickly. OpenAI
+ * Responses API and Gemini can require reasoning/thought metadata to remain
+ * paired with replayed tool calls, so preserve those providers' history intact.
+ */
+export function applyReasoningReplayPolicy(
+  messages: LanguageModelV3Message[],
+  provider: string,
+): LanguageModelV3Message[] {
+  return provider === "anthropic" ? stripOlderReasoning(messages) : messages;
+}
+
+/**
  * Limit conversation history by message group count.
  * Keeps the first message (initial user request) plus the most recent
  * `maxGroups` message groups. Tool call/result pairs count as one group.
