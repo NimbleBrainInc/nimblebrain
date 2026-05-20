@@ -3506,6 +3506,61 @@ describe("malformed tool call input", () => {
       expect(modelCalls).toBe(0);
     });
 
+    it("forwards config.signal as abortSignal into model.doStream", async () => {
+      // Regression for the in-flight LLM stream cancellation gap: a
+      // signal threaded through `config.signal` must reach the model
+      // call as `options.abortSignal`, or AI SDK providers can't
+      // abort the underlying fetch and a long completion blocks the
+      // engine until the model finishes.
+      const controller = new AbortController();
+      let receivedSignal: AbortSignal | undefined;
+      const model = createMockModel((options) => {
+        receivedSignal = options.abortSignal;
+        return {
+          content: [{ type: "text", text: "ok" }],
+          inputTokens: 5,
+          outputTokens: 5,
+        };
+      });
+      const engine = makeEngine(model);
+
+      await engine.run(
+        { ...defaultConfig, signal: controller.signal },
+        "",
+        [{ role: "user", content: [{ type: "text", text: "go" }] }],
+        [],
+      );
+
+      expect(receivedSignal).toBe(controller.signal);
+    });
+
+    it("omits abortSignal from doStream options when config.signal is undefined", async () => {
+      // Symmetric check: don't synthesize an empty signal when the
+      // caller didn't pass one. Providers behave differently on
+      // `abortSignal: undefined` vs the field being absent; keep
+      // the shape clean.
+      let optionsSeen: { abortSignal?: AbortSignal } | undefined;
+      const model = createMockModel((options) => {
+        optionsSeen = options;
+        return {
+          content: [{ type: "text", text: "ok" }],
+          inputTokens: 5,
+          outputTokens: 5,
+        };
+      });
+      const engine = makeEngine(model);
+
+      await engine.run(
+        defaultConfig,
+        "",
+        [{ role: "user", content: [{ type: "text", text: "go" }] }],
+        [],
+      );
+
+      expect(optionsSeen).toBeDefined();
+      expect("abortSignal" in (optionsSeen ?? {})).toBe(false);
+    });
+
     it("propagates a custom abort reason as the thrown error", async () => {
       // When the executor aborts with a specific Error (e.g. timeout),
       // the engine surfaces that reason through the throw — so the
