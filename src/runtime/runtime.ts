@@ -40,6 +40,7 @@ import type {
 import { rehydrateUserResources } from "../files/rehydrate.ts";
 import { createFileStore } from "../files/store.ts";
 import { DEFAULT_FILE_CONFIG, type FileConfig } from "../files/types.ts";
+import { FileBackedHostResourcesResolver, TokenBucketRateLimit } from "../host-resources/index.ts";
 import type { InstanceConfig } from "../identity/instance.ts";
 import { loadInstanceConfig } from "../identity/instance.ts";
 import type { IdentityProvider, UserIdentity } from "../identity/provider.ts";
@@ -334,6 +335,24 @@ export class Runtime {
       mpakHome,
     );
     lifecycle.setPlacementRegistry(placementRegistry);
+
+    // Host-resources subsystem. One resolver + one rate-limit shared
+    // across every bundle spawned through this runtime, parameterized
+    // per-call by workspace id. Construction lives here (not inside
+    // lifecycle) because the resolver depends on the workspace-scoped
+    // data layout, which is a Runtime concern; lifecycle just consumes
+    // the factory via `setBundleMcpDepsFactory`.
+    const hostResourcesWorkDir = resolveWorkDir(config);
+    const hostResourcesResolver = new FileBackedHostResourcesResolver((wsId) => {
+      const wsCtx = new WorkspaceContext({ wsId, workDir: hostResourcesWorkDir });
+      return createFileStore(wsCtx.getDataPath("files"));
+    });
+    const hostResourcesRateLimit = new TokenBucketRateLimit();
+    lifecycle.setBundleMcpDepsFactory((wsId) => ({
+      workspaceId: wsId,
+      hostResources: hostResourcesResolver,
+      rateLimit: hostResourcesRateLimit,
+    }));
 
     // Wire the connection-running notification path so URL bundles
     // whose interactive OAuth completes (after the user clicks Connect

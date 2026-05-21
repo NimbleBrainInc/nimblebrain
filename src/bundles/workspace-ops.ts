@@ -7,7 +7,7 @@
 import type { ToolRegistry } from "../tools/registry.ts";
 import { WorkspaceContext } from "../workspace/context.ts";
 import { defaultWorkDir, resolveBundleDataDirForRef, serverNameFromRef } from "./paths.ts";
-import { startBundleSource } from "./startup.ts";
+import { type BundleMcpDeps, startBundleSource } from "./startup.ts";
 import type { BundleRef } from "./types.ts";
 
 /** A single entry in the process inventory — one per (workspace, bundle) pair. */
@@ -36,6 +36,13 @@ export async function installBundleInWorkspace(
   opts?: {
     allowInsecureRemotes?: boolean;
     workDir?: string;
+    /**
+     * Per-workspace host-resources deps. Caller (`system-tools` /
+     * `manage_app install`, `connector-tools`) pulls from Runtime.
+     * Passed through to `startBundleSource` so the spawned bundle's
+     * McpSource registers inbound `ai.nimblebrain/resources/*` handlers.
+     */
+    bundleMcp?: BundleMcpDeps;
   },
 ): Promise<ProcessInventoryEntry> {
   // workDir default matches the sibling `uninstallBundleFromWorkspace`
@@ -64,6 +71,7 @@ export async function installBundleInWorkspace(
     // `user_config` from the workspace credential store before prepareServer
     // validates it.
     workspaceContext: wsContext,
+    bundleMcp: opts?.bundleMcp,
   });
 
   return {

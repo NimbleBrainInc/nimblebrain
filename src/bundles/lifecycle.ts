@@ -60,6 +60,18 @@ export class BundleLifecycleManager {
     | (() => import("./automations/src/domain.ts").AutomationDomainContext)
     | null = null;
 
+  /**
+   * Factory for per-workspace host-resources deps. Set by Runtime after
+   * construction (`setBundleMcpDepsFactory`). When set, every install
+   * path threads the matching deps through `startBundleSource` so the
+   * spawned bundle's McpSource registers inbound handlers for
+   * `ai.nimblebrain/resources/{read,list}`. Null in test/minimal
+   * runtimes that don't wire the host-resources subsystem — bundles
+   * spawned in that mode can't call host-resources methods (the
+   * handlers are never registered).
+   */
+  private getBundleMcpDeps: ((wsId: string) => import("./startup.ts").BundleMcpDeps) | null = null;
+
   constructor(
     private eventSink: EventSink,
     private configPath: string | undefined,
@@ -83,6 +95,23 @@ export class BundleLifecycleManager {
     getter: () => import("./automations/src/domain.ts").AutomationDomainContext,
   ): void {
     this.getAutomationsCtx = getter;
+  }
+
+  /**
+   * Wire the host-resources deps factory. Called by Runtime once the
+   * resolver + rate-limit are constructed. When unset, bundles spawn
+   * without inbound `ai.nimblebrain/resources/*` handlers registered;
+   * any bundle declaring `required: true` already fails the install
+   * gate so this is reached only by bundles that don't need the
+   * extension.
+   */
+  setBundleMcpDepsFactory(factory: (wsId: string) => import("./startup.ts").BundleMcpDeps): void {
+    this.getBundleMcpDeps = factory;
+  }
+
+  /** Internal: resolve the workspace's host-resources deps, or undefined when unwired. */
+  private resolveBundleMcpDeps(wsId: string): import("./startup.ts").BundleMcpDeps | undefined {
+    return this.getBundleMcpDeps?.(wsId);
   }
 
   // ---- Queries -----------------------------------------------------------
@@ -148,7 +177,11 @@ export class BundleLifecycleManager {
       registry,
       this.eventSink,
       this.configPath ? dirname(this.configPath) : undefined,
-      { dataDir: bundleDataDir, workspaceContext: wsContext },
+      {
+        dataDir: bundleDataDir,
+        workspaceContext: wsContext,
+        bundleMcp: this.resolveBundleMcpDeps(wsId),
+      },
     );
     if (!manifest) {
       // Named bundles always have a manifest — startBundleSource reads it
@@ -222,7 +255,7 @@ export class BundleLifecycleManager {
       registry,
       this.eventSink,
       configDir,
-      { dataDir: bundleDataDir },
+      { dataDir: bundleDataDir, bundleMcp: this.resolveBundleMcpDeps(wsId) },
     );
     if (!manifest) {
       // Local bundles always have a manifest.json on disk; startBundleSource
@@ -342,6 +375,7 @@ export class BundleLifecycleManager {
           wsId,
           workDir: nbWorkDir,
           onInteractiveAuthRequired,
+          bundleMcp: this.resolveBundleMcpDeps(wsId),
         },
       );
       sourceName = result.sourceName;
@@ -848,6 +882,7 @@ export class BundleLifecycleManager {
         : {}),
       abortSignal: providerAbort.signal,
     });
+    const bundleMcpDeps = this.resolveBundleMcpDeps(wsId);
     const source = new McpSource(
       serverName,
       {
@@ -857,6 +892,14 @@ export class BundleLifecycleManager {
         authProvider: provider,
       },
       this.eventSink,
+      bundleMcpDeps
+        ? {
+            workspaceId: bundleMcpDeps.workspaceId,
+            bundleId: serverName,
+            hostResources: bundleMcpDeps.hostResources,
+            rateLimit: bundleMcpDeps.rateLimit,
+          }
+        : undefined,
     );
 
     // Wire the new source into the right place BEFORE start so any tool
