@@ -10,12 +10,15 @@
  * Lock file shape: `{workDir}/.migration-lock` containing
  * `{ pid: number, startedAt: ISO 8601 string, script: string }`.
  *
- * Acquire semantics:
- *  - No lock file → write our lock + register exit handlers → return.
- *  - Lock file exists + PID is alive → throw with the holder's details.
- *  - Lock file exists + PID is dead (process gone) → log a stale-takeover
- *    warning, overwrite, register handlers, return.
- *  - Lock file exists + corrupt JSON → treat as stale, log + take over.
+ * Acquire semantics (atomic via `O_EXCL` open):
+ *  - Try `writeFileSync(..., flag: "wx")` — succeeds iff no file exists.
+ *    No check-then-write window: kernel guarantees one winner.
+ *  - On `EEXIST`, inspect the existing lock:
+ *      - Live PID → throw with the holder's details.
+ *      - Dead PID → log + unlink + retry the exclusive write.
+ *      - Corrupt JSON → log + unlink + retry the exclusive write.
+ *    Bounded by `MAX_ACQUIRE_ATTEMPTS` to prevent pathological loops if
+ *    multiple racers contend for the takeover.
  *
  * Release: unlink the lock file. Wired into `process.on("exit"|"SIGINT"|"SIGTERM")`
  * so a Ctrl-C or normal exit clears it. A `kill -9` leaves a stale lock;
@@ -26,10 +29,11 @@
  * The cost (a 5 ms write) is negligible.
  */
 
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const LOCK_FILENAME = ".migration-lock";
+const MAX_ACQUIRE_ATTEMPTS = 3;
 
 interface LockFile {
   pid: number;
@@ -54,21 +58,46 @@ function isPidAlive(pid: number): boolean {
 }
 
 /**
+ * Atomic create-if-absent. Returns true on success, false on EEXIST.
+ * Other errors propagate.
+ */
+function tryWriteLockExclusive(lockPath: string, lock: LockFile): boolean {
+  try {
+    writeFileSync(lockPath, `${JSON.stringify(lock, null, 2)}\n`, {
+      mode: 0o600,
+      flag: "wx",
+    });
+    return true;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "EEXIST") return false;
+    throw err;
+  }
+}
+
+/**
  * Acquire the migration lock. Throws if another live process holds it.
  * Returns a `release()` function the caller should call on clean exit
  * (also wired into process-exit signals automatically).
  */
 export function acquireMigrationLock(workDir: string, script: string): () => void {
   const lockPath = join(workDir, LOCK_FILENAME);
+  const lock: LockFile = {
+    pid: process.pid,
+    startedAt: new Date().toISOString(),
+    script,
+  };
 
-  if (existsSync(lockPath)) {
+  for (let attempt = 0; attempt < MAX_ACQUIRE_ATTEMPTS; attempt++) {
+    if (tryWriteLockExclusive(lockPath, lock)) break;
+
+    // EEXIST — inspect the holder.
     let existing: LockFile | null = null;
     try {
       existing = JSON.parse(readFileSync(lockPath, "utf-8")) as LockFile;
     } catch {
-      // Corrupt lock file — treat as stale.
-      existing = null;
+      // Corrupt JSON — fall through to takeover.
     }
+
     if (existing && typeof existing.pid === "number" && isPidAlive(existing.pid)) {
       throw new Error(
         `Another migration is already running (script=${existing.script}, pid=${existing.pid}, startedAt=${existing.startedAt}). ` +
@@ -76,6 +105,7 @@ export function acquireMigrationLock(workDir: string, script: string): () => voi
           `${lockPath} manually and try again.`,
       );
     }
+
     if (existing) {
       console.warn(
         `[migrate] stale lock at ${lockPath} (script=${existing.script}, pid=${existing.pid}, dead) — taking over.`,
@@ -83,14 +113,19 @@ export function acquireMigrationLock(workDir: string, script: string): () => voi
     } else {
       console.warn(`[migrate] corrupt lock at ${lockPath} — taking over.`);
     }
-  }
 
-  const lock: LockFile = {
-    pid: process.pid,
-    startedAt: new Date().toISOString(),
-    script,
-  };
-  writeFileSync(lockPath, `${JSON.stringify(lock, null, 2)}\n`, { mode: 0o600 });
+    try {
+      unlinkSync(lockPath);
+    } catch {
+      // Concurrent takeover removed it first; next iteration re-evaluates.
+    }
+
+    if (attempt === MAX_ACQUIRE_ATTEMPTS - 1) {
+      throw new Error(
+        `Could not acquire migration lock at ${lockPath} after ${MAX_ACQUIRE_ATTEMPTS} attempts — concurrent takeover contention.`,
+      );
+    }
+  }
 
   let released = false;
   const release = (): void => {
