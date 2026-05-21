@@ -492,9 +492,18 @@ export async function startBundleSource(
       // capability declarations, so http-proxy (and any future declaration)
       // gets silently skipped at spawn. Surface it loudly instead of letting
       // operators chase phantom UI bugs.
+      //
+      // The host-capability gate is also degraded by this path: with
+      // `manifest === null`, `assertHostCapabilitiesAvailable` below
+      // is skipped, so a `host_capabilities[k] = { required: true }`
+      // declaration that would normally refuse install is silently bypassed.
+      // Phase 1 is a no-op (no bundle declares required:true yet); fail-closed
+      // semantics for this path are a Phase 2 follow-up alongside the
+      // first bundle that depends on the gate.
       log.warn(
         `[bundles] manifest cache miss for ${ref.name} — capability declarations ` +
-          "(http-proxy, etc.) will be skipped at spawn. Reinstall the bundle to repopulate.",
+          "(http-proxy, host_capabilities, etc.) will be skipped at spawn, including " +
+          "the install-time host-resources gate. Reinstall the bundle to repopulate.",
       );
     }
 
