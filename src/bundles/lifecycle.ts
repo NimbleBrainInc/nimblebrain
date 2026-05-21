@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { log } from "../cli/log.ts";
 import { cleanupComposioBundle } from "../composio/sdk.ts";
 import type { EventSink } from "../engine/types.ts";
+import { assertHostCapabilitiesAvailable } from "../host-resources/index.ts";
 import type { PlacementRegistry } from "../runtime/placement-registry.ts";
 import { FileCredentialStore } from "../tools/credential-store.ts";
 import { McpSource } from "../tools/mcp-source.ts";
@@ -156,6 +157,17 @@ export class BundleLifecycleManager {
       throw new Error(`No manifest found for ${name} after install`);
     }
 
+    try {
+      assertHostCapabilitiesAvailable(manifest, name);
+    } catch (err) {
+      // Source has already been started by startBundleSource; tear it down
+      // before propagating so we don't leak a subprocess for a refused
+      // install. The instance hasn't been added to `this.instances` yet,
+      // so registry removal is the only cleanup needed.
+      await registry.removeSource(sourceName).catch(() => {});
+      throw err;
+    }
+
     const isUpjack = manifest._meta?.["ai.nimblebrain/upjack"] != null;
     const instance = createInstance(sourceName, name, manifest, isUpjack, wsId, bundleDataDir);
     instance.configKey = name;
@@ -229,6 +241,13 @@ export class BundleLifecycleManager {
       // reads and validates it before spawning. Null is a precondition
       // violation.
       throw new Error(`No manifest read for local bundle at ${bundlePath}`);
+    }
+
+    try {
+      assertHostCapabilitiesAvailable(manifest, manifest.name);
+    } catch (err) {
+      await registry.removeSource(sourceName).catch(() => {});
+      throw err;
     }
 
     const isUpjack = manifest._meta?.["ai.nimblebrain/upjack"] != null;

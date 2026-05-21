@@ -9,6 +9,7 @@ import type { PlacementDeclaration, RemoteTransportConfig } from "../bundles/typ
 import { log } from "../cli/log.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import type { ContentBlock, EventSink, ToolResult } from "../engine/types.ts";
+import { hostExtensions } from "../host-resources/index.ts";
 import { promoteHiddenErrors } from "./promote-hidden-errors.ts";
 import { createRemoteTransport } from "./remote-transport.ts";
 import { scrubArgsForDispatch } from "./scrub-args.ts";
@@ -343,6 +344,13 @@ export class McpSource implements ToolSource {
     // honors task-augmented `tools/call` and will attach `params.task: {ttl}`
     // when calling those tools. The engine then polls via tasks/get and
     // retrieves via tasks/result instead of blocking the request.
+    //
+    // The `extensions` block carries NimbleBrain-namespaced vendor
+    // capabilities (e.g. `ai.nimblebrain/host-resources`) per the MCP
+    // extensions spec — https://modelcontextprotocol.io/extensions/overview.
+    // Bundles read these from their ClientCapabilities to opt into
+    // bundle→host resource reads. Phase 1 advertises the capability;
+    // handlers land in Phase 2.
     this.client = new Client(
       { name: "nimblebrain", version: "0.1.0" },
       {
@@ -352,6 +360,7 @@ export class McpSource implements ToolSource {
             cancel: {},
             list: {},
           },
+          extensions: hostExtensions(),
         },
       },
     );
@@ -641,6 +650,7 @@ export class McpSource implements ToolSource {
             cancel: {},
             list: {},
           },
+          extensions: hostExtensions(),
         },
       },
     );

@@ -7,8 +7,15 @@
   "additionalProperties": false,
   "properties": {
     "host_version": {
-      "const": "1.0",
-      "description": "Host manifest schema version."
+      "enum": ["1.0", "1.1"],
+      "description": "Host manifest schema version. 1.1 adds host_capabilities."
+    },
+    "host_capabilities": {
+      "type": "object",
+      "description": "NimbleBrain host capabilities this bundle requires or prefers. Keys are vendor-namespaced extension keys (e.g. \"ai.nimblebrain/host-resources\") matching the platform's ClientCapabilities.extensions advertisement. Each value declares the bundle's requirements for that capability.",
+      "additionalProperties": {
+        "$ref": "#/$defs/HostCapabilityRequirement"
+      }
     },
     "name": {
       "type": "string",
@@ -79,6 +86,18 @@
     }
   },
   "$defs": {
+    "HostCapabilityRequirement": {
+      "type": "object",
+      "description": "Bundle's requirement against one NimbleBrain host capability. `required: true` makes the platform refuse install if the capability is missing; `required: false` (or omitted) means the bundle prefers it but adapts at runtime via SDK availability checks plus structured tool-error fallback.",
+      "additionalProperties": false,
+      "properties": {
+        "required": {
+          "type": "boolean",
+          "description": "When true, the platform must advertise this capability in ClientCapabilities.extensions or install is refused.",
+          "default": false
+        }
+      }
+    },
     "PlacementDeclaration": {
       "type": "object",
       "required": ["slot", "resourceUri"],
