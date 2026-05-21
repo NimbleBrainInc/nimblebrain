@@ -157,6 +157,10 @@ export class BundleLifecycleManager {
       throw new Error(`No manifest found for ${name} after install`);
     }
 
+    // Gate on `_meta["ai.nimblebrain/host"].host_capabilities`. Only named
+    // and local installs are gated — `installRemote` has no MCPB manifest
+    // to declare requirements on (remote bundles would opt in via their
+    // own initialize response in a future phase).
     try {
       assertHostCapabilitiesAvailable(manifest, name);
     } catch (err) {
