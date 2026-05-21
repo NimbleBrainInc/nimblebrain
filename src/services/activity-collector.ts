@@ -1,7 +1,7 @@
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { SseEventManager } from "../api/events.ts";
-import type { ConversationStore } from "../conversation/types.ts";
+import type { ConversationAccessContext, ConversationStore } from "../conversation/types.ts";
 import type {
   ActivityBundleEvent,
   ActivityConversationSummary,
@@ -33,7 +33,7 @@ export interface ActivityCollectorOptions {
    * home bundle server uses the `jsonl` source and gets workspace
    * isolation from the file layout it sees.
    */
-  access?: import("../conversation/types.ts").ConversationAccessContext;
+  access?: ConversationAccessContext;
 }
 
 /**
@@ -48,7 +48,7 @@ export class ActivityCollector {
   private conversations: ConversationSource;
   private bundleEvents: BundleEventSource;
   private automationRunsDir?: string;
-  private access?: import("../conversation/types.ts").ConversationAccessContext;
+  private access?: ConversationAccessContext;
 
   constructor(options: ActivityCollectorOptions) {
     this.logDir = options.logDir;

@@ -1,4 +1,5 @@
 import type { UserConfigFieldDef } from "../config/workspace-credentials.ts";
+import type { Connection } from "./connection.ts";
 
 /**
  * Declaration of a UI placement in the shell layout.
@@ -394,7 +395,7 @@ export interface BundleInstance {
    * Empty / undefined for non-URL bundles (stdio, in-process); they never
    * speak OAuth.
    */
-  connections?: Map<string, import("./connection.ts").Connection>;
+  connections?: Map<string, Connection>;
   /**
    * Original `BundleRef` for URL bundles, retained on the instance so
    * lifecycle can reconstruct per-member `McpSource`s on-demand for

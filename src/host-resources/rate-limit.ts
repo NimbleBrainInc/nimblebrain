@@ -1,4 +1,13 @@
-import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
+import { McpError } from "@modelcontextprotocol/sdk/types.js";
+
+/**
+ * Server-error code for "rate limited." Lives in the JSON-RPC
+ * implementation-defined server-error range (-32000 to -32099), not in
+ * the SDK's `ErrorCode` enum (which only covers the spec-reserved
+ * codes). `-32603 InternalError` would be semantically wrong here —
+ * rate limiting is a deliberate quota response, not a server fault.
+ */
+const RATE_LIMITED = -32004;
 
 /**
  * Per-(workspace, bundle) rate limit on inbound host-resources requests.
@@ -44,6 +53,11 @@ interface Bucket {
 }
 
 export class TokenBucketRateLimit implements HostResourcesRateLimit {
+  // No eviction by design — bucket count is bounded by the number of
+  // distinct `(workspaceId, bundleId)` pairs the runtime has ever
+  // seen, which is itself bounded by installed bundles × active
+  // workspaces. The map is per-runtime, so a process restart resets
+  // it; that's the operational pressure-release valve at scale.
   private readonly buckets = new Map<string, Bucket>();
   private readonly ratePerSec: number;
   private readonly burst: number;
@@ -72,7 +86,7 @@ export class TokenBucketRateLimit implements HostResourcesRateLimit {
       const deficit = 1 - bucket.tokens;
       const retryAfterMs = Math.ceil((deficit / this.ratePerSec) * 1000);
       this.buckets.set(key, bucket);
-      throw new McpError(ErrorCode.InternalError, "Rate limited", { retryAfterMs });
+      throw new McpError(RATE_LIMITED, "Rate limited", { retryAfterMs });
     }
 
     bucket.tokens -= 1;

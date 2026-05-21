@@ -4,7 +4,7 @@ import { mcpAuthCallbackUrl } from "../api/routes/mcp-auth.ts";
 import { getMpak } from "../bundles/mpak.ts";
 import { deriveServerName, slugifyServerName } from "../bundles/paths.ts";
 import { startBundleSource } from "../bundles/startup.ts";
-import type { BundleManifest, BundleRef } from "../bundles/types.ts";
+import type { BundleManifest, BundleRef, RemoteTransportConfig } from "../bundles/types.ts";
 import { installBundleInWorkspace } from "../bundles/workspace-ops.ts";
 import { log } from "../cli/log.ts";
 import { composioUserId, createComposioSession } from "../composio/sdk.ts";
@@ -1067,7 +1067,7 @@ async function handleInstallRemoteOAuth(
   async function buildComposioWiring(): Promise<
     | {
         url: string;
-        transport: import("../bundles/types.ts").RemoteTransportConfig;
+        transport: RemoteTransportConfig;
       }
     | { __err: string }
   > {
@@ -1152,9 +1152,7 @@ async function handleInstallRemoteOAuth(
   // fresh-install branch only; the dedup branches re-use the existing
   // persisted ref.
   function buildRef(
-    composioWiring:
-      | { url: string; transport: import("../bundles/types.ts").RemoteTransportConfig }
-      | undefined,
+    composioWiring: { url: string; transport: RemoteTransportConfig } | undefined,
     staticOAuthClient: { clientId: string; clientSecretKey: string } | undefined,
   ): BundleRef {
     return {
@@ -1249,9 +1247,7 @@ async function handleInstallRemoteOAuth(
     // to commit. Composio session create and operator-credential read
     // are gated here so a duplicate-install click (caught above) never
     // burns an upstream Composio session or reads the credential.
-    let composioWiring:
-      | { url: string; transport: import("../bundles/types.ts").RemoteTransportConfig }
-      | undefined;
+    let composioWiring: { url: string; transport: RemoteTransportConfig } | undefined;
     if (action.auth === "composio") {
       const wiring = await buildComposioWiring();
       if ("__err" in wiring) return errResult(wiring.__err);
@@ -1465,6 +1461,7 @@ async function handleInstallMpak(
       {
         allowInsecureRemotes: ctx.runtime.getAllowInsecureRemotes(),
         workDir: ctx.runtime.getWorkDir(),
+        bundleMcp: ctx.runtime.getBundleMcpDeps(wsId),
       },
     );
   } catch (err) {

@@ -59,7 +59,14 @@ export interface BundleMcpDeps {
   rateLimit: HostResourcesRateLimit;
 }
 
-function composeBundleMcpContext(
+/**
+ * Compose the per-source `BundleMcpContext` from the deps captured at
+ * the workspace level plus the resolved source name. Exported so the
+ * one other call site that constructs an `McpSource` directly
+ * (`lifecycle.installRemote`, which doesn't go through this function)
+ * uses the same four-field shape.
+ */
+export function composeBundleMcpContext(
   deps: BundleMcpDeps | undefined,
   sourceName: string,
 ): BundleMcpContext | undefined {

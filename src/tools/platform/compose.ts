@@ -34,6 +34,7 @@ import { isToolVisibleToRole } from "../../config/features.ts";
 import {
   CONVERSATION_ID_RE,
   type ContextAssembledEvent,
+  type ConversationEvent,
   type SkillsLoadedEvent,
 } from "../../conversation/types.ts";
 import { textContent } from "../../engine/content-helpers.ts";
@@ -547,7 +548,7 @@ function findMatchingSnapshot(
 async function readConvEvents(
   runtime: Runtime,
   convId: string,
-): Promise<import("../../conversation/types.ts").ConversationEvent[] | null> {
+): Promise<ConversationEvent[] | null> {
   // Mirrors the helper in skills.ts. Inlined here rather than imported so
   // this source doesn't take a dep on a sibling tool's private API.
   //

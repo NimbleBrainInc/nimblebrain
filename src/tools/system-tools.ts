@@ -2,8 +2,9 @@ import { NoopEventSink } from "../adapters/noop-events.ts";
 import type { BundleLifecycleManager } from "../bundles/lifecycle.ts";
 import { getMpak } from "../bundles/mpak.ts";
 import { deriveServerName } from "../bundles/paths.ts";
+import type { BundleMcpDeps } from "../bundles/startup.ts";
 import { startBundleSource } from "../bundles/startup.ts";
-import type { BundleManifest } from "../bundles/types.ts";
+import type { BundleManifest, BundleRef } from "../bundles/types.ts";
 import {
   installBundleInWorkspace,
   uninstallBundleFromWorkspace,
@@ -45,6 +46,14 @@ export interface ManageBundleContext {
   // manage_app install/configure flow spawns bundles the same way the
   // platform does at boot; both paths need the live runtime sink.
   eventSink: EventSink;
+  /**
+   * Per-workspace host-resources deps factory. Threaded into
+   * `installBundleInWorkspace` so the bundle's McpSource registers
+   * `ai.nimblebrain/resources/*` inbound handlers. Optional for test
+   * runtimes that don't wire the host-resources subsystem; production
+   * runtime always sets this. See `Runtime.start()`.
+   */
+  bundleMcpDepsFactory?: (wsId: string) => BundleMcpDeps;
 }
 
 export type ToolPromotionContext = ToolPromotionControls;
@@ -822,7 +831,7 @@ async function installBundleInWorkspaceViaCtx(
   ctx: ManageBundleContext,
 ): Promise<ToolResult> {
   try {
-    const bundleRef = { name } as import("../bundles/types.ts").BundleRef;
+    const bundleRef = { name } as BundleRef;
 
     // Spawn the bundle process with plain server name in workspace registry
     const entry = await installBundleInWorkspace(
@@ -834,6 +843,7 @@ async function installBundleInWorkspaceViaCtx(
       {
         allowInsecureRemotes: ctx.allowInsecureRemotes,
         workDir: ctx.workDir,
+        bundleMcp: ctx.bundleMcpDepsFactory?.(wsId),
       },
     );
 

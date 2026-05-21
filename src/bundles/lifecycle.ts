@@ -14,6 +14,7 @@ import {
   WorkspaceOAuthProvider,
 } from "../tools/workspace-oauth-provider.ts";
 import { WorkspaceContext } from "../workspace/context.ts";
+import type { AutomationDomainContext } from "./automations/src/domain.ts";
 import { createAutomation, deleteAutomation } from "./automations/src/domain.ts";
 import { connectorSlug, hasPersistedComposioConnection } from "./composio-connection.ts";
 import {
@@ -26,7 +27,7 @@ import { getMpak } from "./mpak.ts";
 import { hasPersistedWorkspaceOAuthTokens } from "./oauth-tokens.ts";
 import { defaultWorkDir, deriveServerName, resolveBundleDataDirForRef } from "./paths.ts";
 import { consumePendingAuth } from "./pending-auth-buffer.ts";
-import { startBundleSource } from "./startup.ts";
+import { type BundleMcpDeps, composeBundleMcpContext, startBundleSource } from "./startup.ts";
 import type {
   BriefingBlock,
   BundleInstance,
@@ -56,9 +57,7 @@ export class BundleLifecycleManager {
    * `source: "bundle"` and `bundleName`, which the LLM-facing schema
    * deliberately doesn't accept. See src/tools/platform/CLAUDE.md § 1.4.
    */
-  private getAutomationsCtx:
-    | (() => import("./automations/src/domain.ts").AutomationDomainContext)
-    | null = null;
+  private getAutomationsCtx: (() => AutomationDomainContext) | null = null;
 
   /**
    * Factory for per-workspace host-resources deps. Set by Runtime after
@@ -70,7 +69,7 @@ export class BundleLifecycleManager {
    * spawned in that mode can't call host-resources methods (the
    * handlers are never registered).
    */
-  private getBundleMcpDeps: ((wsId: string) => import("./startup.ts").BundleMcpDeps) | null = null;
+  private getBundleMcpDeps: ((wsId: string) => BundleMcpDeps) | null = null;
 
   constructor(
     private eventSink: EventSink,
@@ -91,9 +90,7 @@ export class BundleLifecycleManager {
    * — useful for minimal test runtimes that don't want the automations
    * subsystem.
    */
-  setAutomationsContextGetter(
-    getter: () => import("./automations/src/domain.ts").AutomationDomainContext,
-  ): void {
+  setAutomationsContextGetter(getter: () => AutomationDomainContext): void {
     this.getAutomationsCtx = getter;
   }
 
@@ -105,12 +102,12 @@ export class BundleLifecycleManager {
    * gate so this is reached only by bundles that don't need the
    * extension.
    */
-  setBundleMcpDepsFactory(factory: (wsId: string) => import("./startup.ts").BundleMcpDeps): void {
+  setBundleMcpDepsFactory(factory: (wsId: string) => BundleMcpDeps): void {
     this.getBundleMcpDeps = factory;
   }
 
   /** Internal: resolve the workspace's host-resources deps, or undefined when unwired. */
-  private resolveBundleMcpDeps(wsId: string): import("./startup.ts").BundleMcpDeps | undefined {
+  private resolveBundleMcpDeps(wsId: string): BundleMcpDeps | undefined {
     return this.getBundleMcpDeps?.(wsId);
   }
 
@@ -882,7 +879,6 @@ export class BundleLifecycleManager {
         : {}),
       abortSignal: providerAbort.signal,
     });
-    const bundleMcpDeps = this.resolveBundleMcpDeps(wsId);
     const source = new McpSource(
       serverName,
       {
@@ -892,14 +888,7 @@ export class BundleLifecycleManager {
         authProvider: provider,
       },
       this.eventSink,
-      bundleMcpDeps
-        ? {
-            workspaceId: bundleMcpDeps.workspaceId,
-            bundleId: serverName,
-            hostResources: bundleMcpDeps.hostResources,
-            rateLimit: bundleMcpDeps.rateLimit,
-          }
-        : undefined,
+      composeBundleMcpContext(this.resolveBundleMcpDeps(wsId), serverName),
     );
 
     // Wire the new source into the right place BEFORE start so any tool

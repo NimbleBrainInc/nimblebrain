@@ -5,6 +5,7 @@ import {
   type ReadResourceResult,
 } from "@modelcontextprotocol/sdk/types.js";
 import { log } from "../cli/log.ts";
+import { isTextMime } from "../files/mime.ts";
 import type { FileStore } from "../files/store.ts";
 import { FILE_URI_SCHEME, fileIdToUri, uriToFileId } from "../files/uri.ts";
 import { HOST_RESOURCES_MAX_READ_SIZE } from "./capability.ts";
@@ -120,6 +121,16 @@ export class FileBackedHostResourcesResolver implements HostResourcesResolver {
         supported: [FILE_URI_SCHEME],
       });
     }
+    // Pagination isn't supported in v1 — listing a workspace's files
+    // returns the full set in a single call. A bundle that passes a
+    // cursor would otherwise silently get the full set every call,
+    // breaking polite pagination loops. Reject loudly so the bundle
+    // SDK can detect the missing feature.
+    if (params.cursor && params.cursor.length > 0) {
+      throw new McpError(ErrorCode.InvalidParams, "Pagination is not supported in this version", {
+        cursor: params.cursor,
+      });
+    }
 
     const store = this.getFileStoreForWorkspace(ctx.workspaceId);
     const all = await store.readRegistry();
@@ -163,26 +174,4 @@ export class FileBackedHostResourcesResolver implements HostResourcesResolver {
       supported: [FILE_URI_SCHEME],
     });
   }
-}
-
-// Text-mime predicate — mirrors `src/tools/platform/files.ts::isTextMime`
-// so the bundle-side path and the agent-side `files__read` make the same
-// text/blob choice for any given mime type. Keep these two in sync; if
-// one ever supports a new text mime (e.g. application/jsonl), so should
-// the other.
-const TEXT_MIMES = new Set([
-  "text/plain",
-  "text/csv",
-  "text/markdown",
-  "text/html",
-  "text/xml",
-  "text/yaml",
-  "application/json",
-  "application/xml",
-  "application/yaml",
-]);
-
-function isTextMime(mimeType: string): boolean {
-  const bare = mimeType.split(";", 1)[0]?.trim().toLowerCase() ?? "";
-  return bare.startsWith("text/") || TEXT_MIMES.has(bare);
 }
