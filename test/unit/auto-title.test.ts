@@ -145,4 +145,21 @@ describe("sanitizeGeneratedTitle", () => {
 			"Use this fallback title",
 		);
 	});
+
+	it("rejects apology and identity-response variants", () => {
+		const fallback = "Create a smoke test deal";
+
+		expect(sanitizeGeneratedTitle("I apologize, but I cannot help", fallback)).toBe(
+			fallback,
+		);
+		expect(sanitizeGeneratedTitle("I'm sorry, but I can't do that", fallback)).toBe(
+			fallback,
+		);
+		expect(sanitizeGeneratedTitle("I’m sorry, but I can't do that", fallback)).toBe(
+			fallback,
+		);
+		expect(sanitizeGeneratedTitle("As Claude, I should clarify", fallback)).toBe(
+			fallback,
+		);
+	});
 });

@@ -72,17 +72,24 @@ function isValidGeneratedTitle(title: string): boolean {
   if (title.length > 80) return false;
   if (/\n/.test(title)) return false;
 
-  const normalized = title.toLowerCase();
+  const normalized = title.toLowerCase().replace(/[’‘]/g, "'");
   const refusalStarts = [
     "i appreciate",
+    "i apologize",
+    "i'm sorry",
+    "i am sorry",
     "i cannot",
     "i can't",
+    "i cannot assist",
+    "i can't assist",
     "i need to clarify",
     "i don't have",
     "i do not have",
     "as an ai",
+    "as claude",
     "i'm claude",
     "i am claude",
+    "sorry,",
   ];
   if (refusalStarts.some((prefix) => normalized.startsWith(prefix))) return false;
 
