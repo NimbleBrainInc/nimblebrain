@@ -139,4 +139,52 @@ describe("assertHostCapabilitiesAvailable", () => {
     expect(caught?.message).toContain("ai.nimblebrain/nonexistent");
     expect(caught?.message).not.toContain("optional-thing");
   });
+
+  // The gate runs JSON-Schema validation before the policy check — without
+  // this, a typo'd `requierd: true` would be silently treated as
+  // `required: false` and the bundle would install when it shouldn't.
+  // These tests prove the schema is actually enforced at the gate, not
+  // just exercised by a standalone schema test.
+
+  it("rejects manifests whose host-meta block fails schema validation (typo'd field)", () => {
+    const bad: BundleManifest = {
+      manifest_version: "0.4",
+      name: "typo-bundle",
+      display_name: "Typo",
+      version: "0.0.1",
+      description: "fixture",
+      author: { name: "test" },
+      server: { type: "node", entry_point: "x", mcp_config: { command: "node", args: [] } },
+      _meta: {
+        "ai.nimblebrain/host": {
+          host_version: "1.1",
+          host_capabilities: {
+            "ai.nimblebrain/host-resources": { required: true, oops: "typo" } as unknown,
+          },
+        },
+      },
+    } as unknown as BundleManifest;
+
+    expect(() => assertHostCapabilitiesAvailable(bad, "typo-bundle")).toThrow(/invalid/i);
+  });
+
+  it("rejects manifests that pair host_capabilities with host_version 1.0", () => {
+    const bad: BundleManifest = {
+      manifest_version: "0.4",
+      name: "version-mismatch",
+      display_name: "Mismatch",
+      version: "0.0.1",
+      description: "fixture",
+      author: { name: "test" },
+      server: { type: "node", entry_point: "x", mcp_config: { command: "node", args: [] } },
+      _meta: {
+        "ai.nimblebrain/host": {
+          host_version: "1.0",
+          host_capabilities: { "ai.nimblebrain/host-resources": { required: true } },
+        },
+      },
+    } as unknown as BundleManifest;
+
+    expect(() => assertHostCapabilitiesAvailable(bad, "version-mismatch")).toThrow(/invalid/i);
+  });
 });

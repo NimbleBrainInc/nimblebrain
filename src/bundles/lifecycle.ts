@@ -156,10 +156,6 @@ export class BundleLifecycleManager {
       throw new Error(`No manifest found for ${name} after install`);
     }
 
-    // Host-capability gate runs inside startBundleSource (pre-spawn) so
-    // every named/local install path is covered by construction. A
-    // capability-mismatch throw above this line never spawns a subprocess.
-
     const isUpjack = manifest._meta?.["ai.nimblebrain/upjack"] != null;
     const instance = createInstance(sourceName, name, manifest, isUpjack, wsId, bundleDataDir);
     instance.configKey = name;
@@ -234,8 +230,6 @@ export class BundleLifecycleManager {
       // violation.
       throw new Error(`No manifest read for local bundle at ${bundlePath}`);
     }
-
-    // Host-capability gate runs inside startBundleSource (pre-spawn).
 
     const isUpjack = manifest._meta?.["ai.nimblebrain/upjack"] != null;
     // Use manifest.name (scoped name) as bundleName, not the filesystem path.
