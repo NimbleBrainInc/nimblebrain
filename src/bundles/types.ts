@@ -296,10 +296,11 @@ export interface HostManifestMeta {
    * Entries with `required: true` cause install to fail if the platform
    * does not advertise the capability. Entries with `required: false` (or
    * omitted) are prefers-but-adapts — bundles use the SDK's availability
-   * check at runtime and fall back gracefully (e.g. Level-C tool error
+   * check at runtime and fall back gracefully (e.g. structured tool error
    * teaching the agent to retry with inline content).
    *
-   * v1.1+.
+   * Presence of this field requires `host_version: "1.1"` (enforced by
+   * the JSON Schema's `if/then`).
    */
   host_capabilities?: Record<string, HostCapabilityRequirement>;
 }

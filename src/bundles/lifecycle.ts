@@ -4,7 +4,6 @@ import { dirname, join } from "node:path";
 import { log } from "../cli/log.ts";
 import { cleanupComposioBundle } from "../composio/sdk.ts";
 import type { EventSink } from "../engine/types.ts";
-import { assertHostCapabilitiesAvailable } from "../host-resources/index.ts";
 import type { PlacementRegistry } from "../runtime/placement-registry.ts";
 import { FileCredentialStore } from "../tools/credential-store.ts";
 import { McpSource } from "../tools/mcp-source.ts";
@@ -157,20 +156,9 @@ export class BundleLifecycleManager {
       throw new Error(`No manifest found for ${name} after install`);
     }
 
-    // Gate on `_meta["ai.nimblebrain/host"].host_capabilities`. Only named
-    // and local installs are gated — `installRemote` has no MCPB manifest
-    // to declare requirements on (remote bundles would opt in via their
-    // own initialize response in a future phase).
-    try {
-      assertHostCapabilitiesAvailable(manifest, name);
-    } catch (err) {
-      // Source has already been started by startBundleSource; tear it down
-      // before propagating so we don't leak a subprocess for a refused
-      // install. The instance hasn't been added to `this.instances` yet,
-      // so registry removal is the only cleanup needed.
-      await registry.removeSource(sourceName).catch(() => {});
-      throw err;
-    }
+    // Host-capability gate runs inside startBundleSource (pre-spawn) so
+    // every named/local install path is covered by construction. A
+    // capability-mismatch throw above this line never spawns a subprocess.
 
     const isUpjack = manifest._meta?.["ai.nimblebrain/upjack"] != null;
     const instance = createInstance(sourceName, name, manifest, isUpjack, wsId, bundleDataDir);
@@ -247,12 +235,7 @@ export class BundleLifecycleManager {
       throw new Error(`No manifest read for local bundle at ${bundlePath}`);
     }
 
-    try {
-      assertHostCapabilitiesAvailable(manifest, manifest.name);
-    } catch (err) {
-      await registry.removeSource(sourceName).catch(() => {});
-      throw err;
-    }
+    // Host-capability gate runs inside startBundleSource (pre-spawn).
 
     const isUpjack = manifest._meta?.["ai.nimblebrain/upjack"] != null;
     // Use manifest.name (scoped name) as bundleName, not the filesystem path.

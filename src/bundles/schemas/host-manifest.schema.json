@@ -85,6 +85,14 @@
       "$ref": "#/$defs/BriefingBlock"
     }
   },
+  "if": {
+    "required": ["host_capabilities"]
+  },
+  "then": {
+    "properties": {
+      "host_version": { "const": "1.1" }
+    }
+  },
   "$defs": {
     "HostCapabilityRequirement": {
       "type": "object",

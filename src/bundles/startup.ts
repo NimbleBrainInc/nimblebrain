@@ -7,6 +7,7 @@ import {
   type UserConfigFieldDef,
 } from "../config/workspace-credentials.ts";
 import type { EventSink } from "../engine/types.ts";
+import { assertHostCapabilitiesAvailable } from "../host-resources/index.ts";
 import { FileCredentialStore } from "../tools/credential-store.ts";
 import { McpSource } from "../tools/mcp-source.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
@@ -565,6 +566,18 @@ export async function startBundleSource(
     source = result.source;
     meta = result.meta;
     manifest = result.manifest;
+  }
+
+  // Refuse to spawn a bundle whose `host_capabilities` declares required
+  // capabilities the platform doesn't advertise. Single chokepoint for
+  // every named/local install + re-spawn path: lifecycle install, the
+  // hot workspace install (`installBundleInWorkspace`), connector eager-
+  // start, configure-restart, boot reload — all reach this point with
+  // the manifest loaded but before the subprocess is started, so a
+  // refused install never leaves a leaked process behind. URL bundles
+  // have `manifest = null` and are skipped (they have no MCPB manifest).
+  if (manifest) {
+    assertHostCapabilitiesAvailable(manifest, manifest.name);
   }
 
   await source.start();
