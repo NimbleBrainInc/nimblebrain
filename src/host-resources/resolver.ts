@@ -150,11 +150,17 @@ export class FileBackedHostResourcesResolver implements HostResourcesResolver {
       ? all.filter((entry) => entry.mimeType === params.filter?.mimeType)
       : all;
 
-    const filteredByTags = params.filter?.tags?.length
-      ? filteredByMime.filter((entry) =>
-          (params.filter?.tags ?? []).every((tag) => entry.tags?.includes(tag)),
-        )
-      : filteredByMime;
+    // Defensive: a buggy bundle could send `tags: "single-tag"` (string)
+    // instead of `tags: ["single-tag"]`. The handler's type cast doesn't
+    // validate runtime shape; without this guard, `.every` on a string
+    // throws TypeError and the bundle gets a generic dispatch failure.
+    // Treat non-array as no filter — the bundle author can debug their
+    // call shape from the empty-result behavior.
+    const tagFilter = Array.isArray(params.filter?.tags) ? params.filter.tags : [];
+    const filteredByTags =
+      tagFilter.length > 0
+        ? filteredByMime.filter((entry) => tagFilter.every((tag) => entry.tags?.includes(tag)))
+        : filteredByMime;
 
     const resources = filteredByTags.map((entry) => ({
       uri: fileIdToUri(entry.id),

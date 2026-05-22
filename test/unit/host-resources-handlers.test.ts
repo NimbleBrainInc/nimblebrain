@@ -6,12 +6,15 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import {
   CallToolRequestSchema,
+  ListResourcesResultSchema,
   ListToolsRequestSchema,
   ReadResourceResultSchema,
+  type ListResourcesResult,
   type ReadResourceResult,
 } from "@modelcontextprotocol/sdk/types.js";
 import {
   FileBackedHostResourcesResolver,
+  HOST_RESOURCES_LIST_METHOD,
   HOST_RESOURCES_READ_METHOD,
   TokenBucketRateLimit,
 } from "../../src/host-resources/index.ts";
@@ -159,6 +162,88 @@ describe("McpSource inbound host-resources handlers", () => {
     expect(parsed.contents[0]?.uri).toBe(uri);
     expect(parsed.contents[0]?.mimeType).toBe("text/csv");
     expect(parsed.contents[0]?.text).toBe("hello,world");
+
+    await source.stop();
+  });
+
+  // The list handler in mcp-source.ts unwraps `params._meta.filter` (a
+  // non-standard location chosen because spec `ListResourcesRequest`
+  // doesn't carry `filter` at the top level). This test proves the
+  // bundle-supplied filter reaches the resolver intact — without it, a
+  // future refactor of the param-schema parse could silently swap
+  // filtered for unfiltered results and the resolver-level tests would
+  // still pass.
+  it("dispatches ai.nimblebrain/resources/list with _meta.filter through to the resolver", async () => {
+    await seedFile(wsAStore, "rows.csv", "x", "text/csv");
+    await seedFile(wsAStore, "doc.md", "y", "text/markdown");
+
+    const server = new Server(
+      { name: "fake-bundle", version: "0.0.1" },
+      { capabilities: { tools: {} } },
+    );
+    server.setRequestHandler(ListToolsRequestSchema, async () => ({
+      tools: [
+        {
+          name: "list_csvs",
+          description: "Lists CSV resources via the host extension.",
+          inputSchema: { type: "object", properties: {} },
+        },
+      ],
+    }));
+    server.setRequestHandler(CallToolRequestSchema, async () => {
+      try {
+        const result = (await server.request(
+          {
+            method: HOST_RESOURCES_LIST_METHOD,
+            params: { _meta: { filter: { mimeType: "text/csv" } } },
+          },
+          ListResourcesResultSchema,
+        )) as ListResourcesResult;
+        return {
+          content: [{ type: "text", text: JSON.stringify(result) }],
+          isError: false,
+        };
+      } catch (err) {
+        return {
+          content: [{ type: "text", text: err instanceof Error ? err.message : String(err) }],
+          isError: true,
+        };
+      }
+    });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+
+    const resolver = new FileBackedHostResourcesResolver(() => wsAStore);
+    const rateLimit = new TokenBucketRateLimit();
+    const source = new McpSource(
+      "fake-bundle",
+      { type: "inProcess", createServer: async () => ({ server, clientTransport }) },
+      NoopSink,
+      {
+        workspaceId: "ws_a",
+        bundleId: "fake-bundle",
+        hostResources: resolver,
+        rateLimit,
+      },
+    );
+    await source.start();
+
+    const callResult = await source.execute("list_csvs", {});
+    if (callResult.isError) {
+      throw new Error(
+        `expected isError=false, got isError=true. content=${JSON.stringify(callResult.content)}`,
+      );
+    }
+    const textBlock = callResult.content.find((c) => c.type === "text") as
+      | { type: "text"; text: string }
+      | undefined;
+    const parsed = JSON.parse(textBlock?.text ?? "{}") as ListResourcesResult;
+    // The filter unwrap worked end-to-end: only the CSV came back, not
+    // the markdown. A refactor that drops _meta.filter without updating
+    // both the schema parse and this expectation will fail loudly here.
+    expect(parsed.resources).toHaveLength(1);
+    expect(parsed.resources[0]?.name).toBe("rows.csv");
+    expect(parsed.resources[0]?.mimeType).toBe("text/csv");
 
     await source.stop();
   });
