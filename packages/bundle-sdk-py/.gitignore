@@ -1,0 +1,13 @@
+# Python build artifacts
+dist/
+build/
+*.egg-info/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# uv-managed virtualenv (per-developer; not committed)
+.venv/
+
+# Editor / OS
+.DS_Store
