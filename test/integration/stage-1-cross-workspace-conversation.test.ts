@@ -181,7 +181,12 @@ describe("Stage 1 — conversations outlive their workspace context", () => {
     const loaded = await runtime.findConversation(convId, { userId: ALICE.id });
     expect(loaded).not.toBeNull();
     expect(loaded?.ownerId).toBe(ALICE.id);
-    expect(loaded?.workspaceId).toBe(sharedA);
+    // Stage 2 (T006): the chat surface is identity-bound; the metadata
+    // `workspaceId` is the session (personal) workspace, NOT the value
+    // of `X-Workspace-Id`. The header is accepted-but-ignored on the
+    // chat path; per-call workspace attribution lives on each tool.done
+    // event's payload.
+    expect(loaded?.workspaceId).toBe(`ws_user_${ALICE.id}`);
 
     // 4. SSE event stream on the conversation also still works —
     //    the events route gates on ownership, not workspace membership.
@@ -232,21 +237,21 @@ describe("Stage 1 — conversations outlive their workspace context", () => {
     const continueBody = (await continueRes.json()) as { conversationId: string };
     expect(continueBody.conversationId).toBe(convId);
 
-    // 7. The conversation now has two turns recorded — one against
-    //    sharedA (pre-removal), one against sharedB (post-removal).
-    //    The conversation file metadata still pins the ORIGINAL
-    //    workspaceId; tool scoping for new turns is the live request's
-    //    `X-Workspace-Id`, not the metadata's.
+    // 7. The conversation now has two turns recorded — one in
+    //    sharedA-flavored context (pre-removal), one in sharedB-flavored
+    //    (post-removal). Per Stage 2 (T006) the metadata `workspaceId`
+    //    records the session (personal) workspace, NOT the `X-Workspace-Id`
+    //    of the request. Tool scoping for cross-workspace calls now
+    //    happens at dispatch time via the orchestrator's parsed namespace
+    //    — the metadata field is only a UI breadcrumb for the legacy
+    //    single-workspace overlays/file-store reads.
     const store = runtime.findConversationStore();
     const conv = (await store.load(convId)) ?? null;
     expect(conv).not.toBeNull();
     if (conv) {
       const messages = await store.history(conv);
       expect(messages.length).toBeGreaterThanOrEqual(2);
-      // Metadata's workspaceId is the original — it's a recorded
-      // attribute of where the conversation started, not a live
-      // routing key.
-      expect(conv.workspaceId).toBe(sharedA);
+      expect(conv.workspaceId).toBe(`ws_user_${ALICE.id}`);
     }
   });
 });

@@ -88,12 +88,27 @@ export function surfaceTools(
 }
 
 function matchToolPattern(toolName: string, pattern: string): boolean {
+  // Stage 2 (T006): tool names from the cross-workspace aggregator carry
+  // a `ws_<id>/` namespace prefix. Patterns coming from `skill.allowedTools`
+  // / `request.allowedTools` / `focusedServerName` are typically authored
+  // against the BARE form (`source__tool` or `source__*`) — that's the
+  // shape skill manifests and the chat composer use. Match against both
+  // the full namespaced name AND the post-`/` inner form so legacy
+  // patterns keep working and namespace-aware patterns (`ws_<id>/...`)
+  // also match precisely when intended.
+  const inner = (() => {
+    const slashIndex = toolName.indexOf("/");
+    return slashIndex >= 0 && toolName.startsWith("ws_")
+      ? toolName.slice(slashIndex + 1)
+      : toolName;
+  })();
+  const candidates = inner === toolName ? [toolName] : [toolName, inner];
   if (!pattern.includes("*")) {
-    return toolName === pattern;
+    return candidates.some((c) => c === pattern);
   }
   // Convert glob to regex: "leadgen__*" → /^leadgen__.*$/
   const regex = new RegExp(
     `^${pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*")}$`,
   );
-  return regex.test(toolName);
+  return candidates.some((c) => regex.test(c));
 }

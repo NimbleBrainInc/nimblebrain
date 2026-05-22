@@ -221,9 +221,19 @@ export interface ChatRequest {
   conversationId?: string;
   model?: string;
   maxIterations?: number;
-  /** Workspace scope for this request. Resolved by middleware from header, conversation, or default. */
-  workspaceId?: string;
-  /** When set, the chat is scoped to a specific app. */
+  /**
+   * When set, the chat is scoped to a specific app.
+   *
+   * Stage 2 (delegation-model): the chat surface is identity-bound, not
+   * workspace-bound. Tools come from the cross-workspace aggregator
+   * (`orchestrator.aggregateToolList(identityId)`) and each tool call
+   * routes through the orchestrator's parsed-namespace path. There is no
+   * session-level `workspaceId` — `ChatRequest.workspaceId` was removed
+   * by T006. The session's "default workspace" for legacy single-
+   * workspace reads (overlays, file store, app skills) is the
+   * identity's personal workspace at `personalWorkspaceIdFor(identity.id)`.
+   * Per-call workspace attribution lives on the tool's namespace prefix.
+   */
   appContext?: AppContext;
   /** Additional content parts from file uploads (text extracts, images). */
   contentParts?: ContentPart[];
@@ -276,9 +286,17 @@ export interface TurnUsage extends TokenUsage {
 export interface ChatResult {
   response: string;
   conversationId: string;
-  /** Workspace ID this chat was scoped to, if any. */
-  workspaceId?: string;
   skillName: string | null;
+  /**
+   * Tool calls executed during this run. `name` is the canonical
+   * namespaced form `ws_<id>/<source>__<tool>` — Q2 of
+   * `STAGE_2_DESIGN_DECISIONS.md`: store the raw namespaced form;
+   * render display-name + friendly name on the fly. Per-turn workspace
+   * attribution lives here on each call's name, NOT on a top-level
+   * `ChatResult.workspaceId` field (removed by T006 — different tool
+   * calls in the same turn can land in different workspaces, so a
+   * single result-level workspaceId would be misleading).
+   */
   toolCalls: Array<{
     id: string;
     name: string;

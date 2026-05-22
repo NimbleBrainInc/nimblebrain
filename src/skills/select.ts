@@ -49,21 +49,36 @@ export interface SelectInput {
  * Empty pattern returns false. More complex patterns (e.g. `*__patch_*`) are
  * out of scope for Phase 2 — they fall through to exact-match, so they only
  * match the literal pattern string.
+ *
+ * Stage 2 (T006) — tool names from the cross-workspace aggregator carry a
+ * `ws_<id>/` namespace prefix. Patterns in skill manifests and `appContext`-
+ * driven affinity rules are typically authored against the BARE form
+ * (`<source>__*`). Match against both the full namespaced name AND the
+ * post-`/` inner form so legacy patterns keep working unchanged and
+ * namespace-aware patterns (`ws_<id>/<source>__*`) also match precisely.
  */
 export function toolMatches(toolName: string, pattern: string): boolean {
   if (pattern === "") return false;
   if (pattern === "*") return true;
+
+  // Derive the inner form once. If `toolName` looks like `ws_<id>/<inner>`
+  // we strip the prefix and try both forms; otherwise we just use the
+  // original name. Two candidates keeps the matcher's logic shape (one
+  // pattern, one rule) intact below.
+  const slashIndex = toolName.indexOf("/");
+  const inner =
+    slashIndex >= 0 && toolName.startsWith("ws_") ? toolName.slice(slashIndex + 1) : toolName;
+  const candidates = inner === toolName ? [toolName] : [toolName, inner];
+
   if (pattern.endsWith("__*")) {
-    // Keep the trailing `__`, drop the `*`.
     const prefix = pattern.slice(0, -1);
-    return toolName.startsWith(prefix);
+    return candidates.some((c) => c.startsWith(prefix));
   }
   if (pattern.startsWith("*__")) {
-    // Drop the leading `*`.
     const suffix = pattern.slice(1);
-    return toolName.endsWith(suffix);
+    return candidates.some((c) => c.endsWith(suffix));
   }
-  return toolName === pattern;
+  return candidates.some((c) => c === pattern);
 }
 
 /**

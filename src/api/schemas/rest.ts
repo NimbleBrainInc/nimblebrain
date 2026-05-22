@@ -74,7 +74,8 @@ export const ChatRequestBody = Type.Object(
     maxIterations: Type.Optional(Type.Number()),
     workspaceId: Type.Optional(
       Type.String({
-        description: "Workspace id; takes precedence over the X-Workspace-Id header when both set.",
+        description:
+          "DEPRECATED (Stage 2 / T006): the chat surface is identity-bound; tools come from every workspace the caller can see and each call routes by namespace prefix. This field and the X-Workspace-Id header are accepted-but-ignored on /v1/chat so existing clients keep working. Per-tool-call workspace attribution lives on each tool.done event's `workspaceId` field.",
       }),
     ),
     appContext: Type.Optional(

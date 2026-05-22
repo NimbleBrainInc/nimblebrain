@@ -1,9 +1,22 @@
 /**
- * Tests: runtime.chat() identity and workspace guards.
+ * Tests: `runtime.chat()` identity guards (Stage 2 / T006).
  *
- * When an auth provider is configured (instance.json exists), runtime.chat()
- * must reject calls missing identity or workspaceId. In dev mode (no auth),
- * workspaceId is still required — there is no implicit fallback.
+ * Stage 2 made the chat surface identity-bound, not workspace-bound. The
+ * old `ChatRequest.workspaceId` field is gone — tools come from the
+ * cross-workspace aggregator and each call routes via the orchestrator.
+ * What this file pins is the remaining identity contract:
+ *
+ *   - When an auth provider is configured (`instance.json` exists),
+ *     `runtime.chat()` MUST hard-error if `request.identity` is missing.
+ *     A misconfigured production deployment (auth provider wired, auth
+ *     middleware missing) would otherwise silently default every
+ *     conversation to `usr_default`, bypassing single-owner.
+ *   - In dev mode (no auth provider), the same call succeeds with the
+ *     `DEV_IDENTITY` fallback (`usr_default`). The fallback is gated on
+ *     `!this._identityProvider` so production can't silently degrade.
+ *
+ * Pre-Stage-2 this file also pinned "workspaceId is required" cases.
+ * Those contracts are deleted (T006: "delete don't deprecate").
  */
 
 import { afterAll, describe, expect, it } from "bun:test";
@@ -12,7 +25,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Runtime } from "../../../src/runtime/runtime.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
-import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../../helpers/test-workspace.ts";
 
 const testDirs: string[] = [];
 
@@ -46,11 +58,11 @@ afterAll(() => {
 });
 
 // ---------------------------------------------------------------------------
-// Auth configured — guards enforce identity + workspace
+// Auth configured — identity is the only guard left
 // ---------------------------------------------------------------------------
 
 describe("runtime.chat() with auth configured", () => {
-  it("rejects chat without identity or workspaceId", async () => {
+  it("rejects chat without identity (auth provider configured)", async () => {
     const workDir = makeTempDir("no-identity");
     writeInstanceConfig(workDir);
 
@@ -61,18 +73,16 @@ describe("runtime.chat() with auth configured", () => {
     });
 
     try {
-      // When auth is configured, workspaceId is checked first — missing workspace
-      // rejects before identity can be validated
-      await expect(
-        runtime.chat({ message: "hello" }),
-      ).rejects.toThrow("workspaceId is required");
+      await expect(runtime.chat({ message: "hello" })).rejects.toThrow(
+        /no identity on request/,
+      );
     } finally {
       await runtime.shutdown();
     }
   });
 
-  it("rejects chat with identity but no workspaceId", async () => {
-    const workDir = makeTempDir("no-workspace");
+  it("accepts chat with identity (no workspaceId required — Stage 2 T006)", async () => {
+    const workDir = makeTempDir("identity-only");
     writeInstanceConfig(workDir);
 
     const runtime = await Runtime.start({
@@ -82,42 +92,8 @@ describe("runtime.chat() with auth configured", () => {
     });
 
     try {
-      await expect(
-        runtime.chat({
-          message: "hello",
-          identity: {
-            id: "usr_test",
-            email: "test@example.com",
-            displayName: "Test",
-            orgRole: "member",
-            preferences: {},
-          },
-        }),
-      ).rejects.toThrow("workspaceId is required");
-    } finally {
-      await runtime.shutdown();
-    }
-  });
-
-  it("accepts chat with both identity and workspaceId", async () => {
-    const workDir = makeTempDir("full-ctx");
-    writeInstanceConfig(workDir);
-
-    const runtime = await Runtime.start({
-      workDir,
-      noDefaultBundles: true,
-      model: { provider: "custom", adapter: createEchoModel() },
-    });
-
-    try {
-      // Create workspace so the conversation directory exists and registry is provisioned
-      const wsStore = runtime.getWorkspaceStore();
-      const ws = await wsStore.create("Test Workspace");
-      await runtime.ensureWorkspaceRegistry(ws.id);
-
       const result = await runtime.chat({
         message: "hello",
-        workspaceId: ws.id,
         identity: {
           id: "usr_test",
           email: "test@example.com",
@@ -140,8 +116,8 @@ describe("runtime.chat() with auth configured", () => {
 // ---------------------------------------------------------------------------
 
 describe("runtime.chat() in dev mode (no auth)", () => {
-  it("works with explicit workspaceId and no identity", async () => {
-    const workDir = makeTempDir("dev-explicit-ws");
+  it("works with no identity (dev mode falls back to DEV_IDENTITY)", async () => {
+    const workDir = makeTempDir("dev-no-identity");
     // No instance.json → dev mode
 
     const runtime = await Runtime.start({
@@ -151,34 +127,9 @@ describe("runtime.chat() in dev mode (no auth)", () => {
     });
 
     try {
-      await provisionTestWorkspace(runtime);
-
-      const result = await runtime.chat({
-        message: "hello dev",
-        workspaceId: TEST_WORKSPACE_ID,
-      });
+      const result = await runtime.chat({ message: "hello dev" });
       expect(result.response).toBe("hello dev");
       expect(result.conversationId).toMatch(/^conv_/);
-      expect(result.workspaceId).toBe(TEST_WORKSPACE_ID);
-    } finally {
-      await runtime.shutdown();
-    }
-  });
-
-  it("throws when no workspaceId is provided even in dev mode", async () => {
-    const workDir = makeTempDir("dev-no-ws");
-    // No instance.json → dev mode
-
-    const runtime = await Runtime.start({
-      workDir,
-      noDefaultBundles: true,
-      model: { provider: "custom", adapter: createEchoModel() },
-    });
-
-    try {
-      await expect(
-        runtime.chat({ message: "no workspace" }),
-      ).rejects.toThrow("workspaceId is required");
     } finally {
       await runtime.shutdown();
     }

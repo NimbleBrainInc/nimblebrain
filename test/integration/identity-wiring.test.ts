@@ -130,51 +130,58 @@ describe("Management tools in registry", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 3. Chat with workspace context
+// 3. Chat is identity-bound (Stage 2 / T006)
 // ---------------------------------------------------------------------------
+//
+// Pre-Stage-2 this section pinned "chat creates the conversation in the
+// requested workspace's directory" and "chat without workspaceId throws."
+// Both contracts were deleted by T006: chat is now identity-bound, the
+// session workspace is the identity's personal workspace, and the
+// `ChatRequest.workspaceId` field is gone. The conversation file still
+// lives at top-level (`{workDir}/conversations/{convId}.jsonl`); the
+// metadata's `workspaceId` is the session breadcrumb (personal workspace),
+// not a path concern.
 
-describe("Chat with workspace context", () => {
-  it("creates conversation in workspace directory with ownerId", async () => {
-    const workDir = makeTempDir("ws-chat");
+describe("Chat is identity-bound (Stage 2 / T006)", () => {
+  it("conversation lives at top-level with ownerId; metadata records the personal workspace as the session breadcrumb", async () => {
+    const workDir = makeTempDir("identity-bound-chat");
     const runtime = await Runtime.start({
       workDir,
       noDefaultBundles: true,
       model: { provider: "custom", adapter: createEchoModel() },
     });
 
-    // Create a workspace via the store
-    const wsStore = runtime.getWorkspaceStore();
-    const ws = await wsStore.create("Engineering");
-
-    // Ensure workspace registry exists (workspace created after startup)
-    await runtime.ensureWorkspaceRegistry(ws.id);
-
-    // Chat with workspace and identity context
+    // No explicit `workspaceId` — T006 removed it. Just an identity.
     const result = await runtime.chat({
-      message: "hello from workspace chat",
-      workspaceId: ws.id,
-      identity: { id: "usr_alice", email: "alice@example.com" },
+      message: "hello from identity-bound chat",
+      identity: {
+        id: "usr_alice",
+        email: "alice@example.com",
+        displayName: "Alice",
+        orgRole: "member",
+        preferences: {},
+      },
     });
 
     expect(result.conversationId).toMatch(/^conv_/);
-    expect(result.workspaceId).toBe(ws.id);
 
-    // Stage 1 Task 005: conversations live at the top-level user dir;
-    // the workspaceId stays on metadata for tool scoping but is not a
-    // path concern.
+    // Conversation lives at the top-level (Stage 1 Task 005); the
+    // metadata workspaceId is the session (personal) workspace.
     const convFile = join(workDir, "conversations", `${result.conversationId}.jsonl`);
     expect(existsSync(convFile)).toBe(true);
 
     const content = readFileSync(convFile, "utf-8");
     const metadataLine = JSON.parse(content.split("\n")[0]!);
     expect(metadataLine.ownerId).toBe("usr_alice");
-    expect(metadataLine.workspaceId).toBe(ws.id);
+    // Stamped from the auto-provisioned personal workspace.
+    expect(typeof metadataLine.workspaceId).toBe("string");
+    expect(metadataLine.workspaceId).toMatch(/^ws_user_usr_alice/);
 
-    // Nothing was written under the workspace dir.
+    // Nothing was written under a workspace-scoped dir.
     const wsConvFile = join(
       workDir,
       "workspaces",
-      ws.id,
+      metadataLine.workspaceId,
       "conversations",
       `${result.conversationId}.jsonl`,
     );
@@ -182,50 +189,22 @@ describe("Chat with workspace context", () => {
 
     await runtime.shutdown();
   });
-});
 
-// ---------------------------------------------------------------------------
-// 4. Chat without workspace (backward compat)
-// ---------------------------------------------------------------------------
-
-describe("Chat without workspace (workspaceId is now required)", () => {
-  it("throws when no workspaceId is provided", async () => {
-    const workDir = makeTempDir("no-ws-chat");
+  it("chat in dev mode (no identity, no workspaceId) succeeds via DEV_IDENTITY fallback", async () => {
+    const workDir = makeTempDir("dev-mode-chat");
     const runtime = await Runtime.start({
       workDir,
       noDefaultBundles: true,
       model: { provider: "custom", adapter: createEchoModel() },
     });
 
-    try {
-      await expect(
-        runtime.chat({ message: "hello global" }),
-      ).rejects.toThrow("workspaceId is required");
-    } finally {
-      await runtime.shutdown();
-    }
-  });
-
-  it("chat works with explicit workspaceId", async () => {
-    const workDir = makeTempDir("explicit-ws");
-    const runtime = await Runtime.start({
-      workDir,
-      noDefaultBundles: true,
-      model: { provider: "custom", adapter: createEchoModel() },
-    });
-
-    await provisionTestWorkspace(runtime);
-
-    const result = await runtime.chat({
-      message: "ping",
-      workspaceId: TEST_WORKSPACE_ID,
-    });
+    const result = await runtime.chat({ message: "ping" });
 
     expect(result.response).toBeTruthy();
     expect(result.conversationId).toMatch(/^conv_/);
-    expect(result.workspaceId).toBe(TEST_WORKSPACE_ID);
 
-    // Top-level conversation dir (Stage 1 Task 005).
+    // Conversation at top-level dir; identity-bound under DEV_IDENTITY's
+    // personal workspace.
     const convFile = join(workDir, "conversations", `${result.conversationId}.jsonl`);
     expect(existsSync(convFile)).toBe(true);
 

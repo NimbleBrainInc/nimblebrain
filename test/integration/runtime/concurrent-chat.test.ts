@@ -112,14 +112,32 @@ describe("concurrent chat rejection", () => {
     });
     await provisionTestWorkspace(runtime);
 
-    const seed = await runtime.chat({ message: "seed", workspaceId: TEST_WORKSPACE_ID });
+    // Seed a conversation as Alice. The post-Stage-2 chat surface no
+    // longer rejects on missing `workspaceId` (T006 deletes the field
+    // entirely), so we provoke a throw by resuming Alice's conversation
+    // as Bob — `ConversationAccessDeniedError` from the single-owner
+    // gate. The point of this test is the lock-release contract, not
+    // the throw mechanism.
+    const alice = {
+      id: "usr_alice",
+      email: "alice@example.com",
+      displayName: "Alice",
+      orgRole: "member" as const,
+      preferences: {},
+    };
+    const bob = {
+      id: "usr_bob",
+      email: "bob@example.com",
+      displayName: "Bob",
+      orgRole: "member" as const,
+      preferences: {},
+    };
+
+    const seed = await runtime.chat({ message: "seed", identity: alice });
     const convId = seed.conversationId;
 
-    // Missing workspaceId causes the inner body to throw — lock must still release.
     await expect(
-      runtime.chat({ message: "bad", conversationId: convId } as unknown as Parameters<
-        typeof runtime.chat
-      >[0]),
+      runtime.chat({ message: "bad", conversationId: convId, identity: bob }),
     ).rejects.toThrow();
 
     expect(runtime.isConversationActive(convId)).toBe(false);

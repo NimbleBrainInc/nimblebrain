@@ -48,7 +48,7 @@ import {
  * at the top — visible by `grep -n SKIP_UNTIL_T006` across the repo —
  * makes the lifecycle a single-line change.
  */
-const SKIP_UNTIL_T006 = true;
+const SKIP_UNTIL_T006 = false;
 
 // Each test is wrapped in `it.if(!SKIP_UNTIL_T006)(...)`. When T006 flips
 // the const to `false`, all five become real `it(...)` cases. Bun's

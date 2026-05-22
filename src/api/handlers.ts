@@ -23,6 +23,7 @@ import { validateToolInput } from "../tools/validate-input.ts";
 import { estimateCost } from "../usage/cost.ts";
 import { bytesToBase64 } from "../util/base64.ts";
 import { PersonalWorkspaceInvariantError } from "../workspace/errors.ts";
+import { personalWorkspaceIdFor } from "../workspace/workspace-store.ts";
 import type { ConversationEventManager } from "./conversation-events.ts";
 import type { SseEventManager } from "./events.ts";
 import { ChatRequestBody, ToolCallRequestEnvelope } from "./schemas/rest.ts";
@@ -79,12 +80,16 @@ export async function handleChat(
       ...result.usage,
       costUsd: estimateCost(result.usage.model, result.usage),
     };
+    // Stage 2 (T006): chat is identity-bound. `ChatRequest.workspaceId` is
+    // gone, and `ChatResult.workspaceId` with it — per-tool-call workspace
+    // attribution lives on each `tool.done` event's `workspaceId` field
+    // (stamped from the orchestrator's resolved namespace), not on the
+    // response envelope.
     const responseBody = {
       ...result,
       inputTokens: result.usage.inputTokens,
       outputTokens: result.usage.outputTokens,
       usage: wireUsage,
-      ...(parsed.workspaceId ? { workspaceId: parsed.workspaceId } : {}),
     };
 
     // Same-user cross-tab broadcast — parity with /v1/chat/stream. A
@@ -328,10 +333,13 @@ export async function handleChatStream(
             ...result.usage,
             costUsd: estimateCost(result.usage.model, result.usage),
           };
+          // Stage 2 (T006): no `workspaceId` on the chat-level done
+          // envelope — per-tool-call attribution lives on each
+          // `tool.done` event's payload above. See `ChatResult`'s
+          // doc comment for the rationale.
           const doneData = {
             response: result.response,
             conversationId: result.conversationId,
-            ...(parsed.workspaceId ? { workspaceId: parsed.workspaceId } : {}),
             skillName: result.skillName,
             toolCalls: result.toolCalls,
             inputTokens: result.usage.inputTokens,
@@ -1335,14 +1343,21 @@ async function parseChatBody(
   }
   const parsed = body as ChatRequestBody;
 
-  // Middleware-resolved workspace takes precedence over body field
-  const resolvedWorkspaceId = workspaceId ?? parsed.workspaceId;
+  // Stage 2 (T006): `/v1/chat` is identity-bound. The body's `workspaceId`
+  // and the `X-Workspace-Id` header are accepted-but-ignored for the chat
+  // path so existing clients (web composer, automations executor) keep
+  // working without a flag day. The header still resolves through
+  // `requireWorkspace` middleware for OTHER routes that consume it
+  // (handleResourceProxy, handleFileServe, handleReadResource); we just
+  // don't thread it into `ChatRequest`. A debug log on every call would
+  // be too noisy; the warning lives in the schema description and the
+  // ChatRequest doc comment.
+  void workspaceId;
 
   return {
     message: parsed.message,
     ...(parsed.conversationId !== undefined ? { conversationId: parsed.conversationId } : {}),
     ...(parsed.model !== undefined ? { model: parsed.model } : {}),
-    ...(resolvedWorkspaceId ? { workspaceId: resolvedWorkspaceId } : {}),
     ...(parsed.appContext !== undefined ? { appContext: parsed.appContext } : {}),
     ...(parsed.metadata !== undefined ? { metadata: parsed.metadata } : {}),
     ...(parsed.allowedTools !== undefined ? { allowedTools: parsed.allowedTools } : {}),
@@ -1408,21 +1423,35 @@ async function parseMultipartChatBody(
     return apiError(400, "bad_request", "message or file attachment is required");
   }
 
-  // If no files, treat as a plain text request (no ingest needed)
+  // If no files, treat as a plain text request (no ingest needed).
+  // Stage 2 (T006): no `workspaceId` on the chat envelope — see
+  // `parseChatBody`'s comment.
   if (uploadedFiles.length === 0) {
+    void workspaceId;
     return {
       message,
       conversationId: typeof conversationId === "string" ? conversationId : undefined,
       model: typeof model === "string" ? model : undefined,
       appContext,
-      ...(workspaceId ? { workspaceId } : {}),
       ...(identity ? { identity } : {}),
     };
   }
 
   // Ingest files: validate, store, extract text, build content parts.
-  // Files MUST be workspace-scoped so the files__* tools can find them.
-  const store = createFileStore(join(runtime.getWorkspaceScopedDir(workspaceId), "files"));
+  //
+  // Stage 2 (T006): the chat surface is identity-bound, so the file
+  // store must be too. `runtime.chat()` reads files from
+  // `getWorkspaceScopedDir(personalWorkspaceIdFor(identity.id))/files`;
+  // ingest writes to the SAME location here, ignoring any
+  // `X-Workspace-Id` header (which the chat path also ignores). The
+  // `workspaceId` parameter is intentionally void'd — kept on the
+  // signature so other callers of `parseMultipartChatBody` (if any)
+  // don't break, but the chat path no longer routes by it.
+  // Cross-workspace ingest is a Stage 6 concern (files would need to
+  // be tagged with their target workspace at upload).
+  void workspaceId;
+  const ingestWsId = identity?.id ? personalWorkspaceIdFor(identity.id) : workspaceId;
+  const store = createFileStore(join(runtime.getWorkspaceScopedDir(ingestWsId), "files"));
   const filesConfig = runtime.getFilesConfig();
   // Use conversationId if provided, otherwise a placeholder (will be replaced by runtime.chat)
   const convId = (typeof conversationId === "string" && conversationId) || "pending";
@@ -1433,7 +1462,6 @@ async function parseMultipartChatBody(
       errors: ingestResult.errors,
     });
   }
-
   return {
     message,
     conversationId: typeof conversationId === "string" ? conversationId : undefined,
@@ -1441,7 +1469,6 @@ async function parseMultipartChatBody(
     appContext,
     contentParts: ingestResult.contentParts,
     fileRefs: ingestResult.fileRefs,
-    ...(workspaceId ? { workspaceId } : {}),
     ...(identity ? { identity } : {}),
   };
 }

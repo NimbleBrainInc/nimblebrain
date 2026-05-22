@@ -22,18 +22,19 @@ import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { textContent } from "../../src/engine/content-helpers.ts";
 import type { EventSink } from "../../src/engine/types.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
-import { textContent } from "../../src/engine/content-helpers.ts";
+import type { ChatRequest } from "../../src/runtime/types.ts";
 import { defineInProcessApp, type InProcessTool } from "../../src/tools/in-process-app.ts";
 import type { McpSource } from "../../src/tools/mcp-source.ts";
-import type { ChatRequest } from "../../src/runtime/types.ts";
+import { namespacedToolName } from "../../src/tools/namespace.ts";
+import { ensureUserWorkspace } from "../../src/workspace/provisioning.ts";
 import {
   personalWorkspaceIdFor,
   type WorkspaceStore,
 } from "../../src/workspace/workspace-store.ts";
-import { ensureUserWorkspace } from "../../src/workspace/provisioning.ts";
 import { createEchoModel, type EchoModelOptions } from "./echo-model.ts";
 
 // ── Public option / handle shapes ──────────────────────────────────
@@ -149,9 +150,10 @@ export interface TwoWorkspaceFixture {
   };
   /**
    * Build a `ChatRequest` with the fixture's identity pre-populated.
-   * Tests pass `workspaceId` explicitly because Stage 2's runtime still
-   * accepts it as a tool-scoping breadcrumb on the conversation; the
-   * orchestrator routes per-call by namespace, not by this field.
+   *
+   * T006: the chat surface is identity-bound, so no `workspaceId` is
+   * passed — the runtime aggregates tools across every workspace the
+   * identity can see and routes each call via the orchestrator.
    */
   buildChatRequest: (overrides: Partial<ChatRequest> & { message: string }) => ChatRequest;
   /** Tear down: stop runtime, remove workDir. Always call in `afterAll`/`afterEach`. */
@@ -329,16 +331,23 @@ export async function createTwoWorkspaceFixture(
   sharedRegistry.addSource(sharedSource.source);
   personalRegistry.addSource(personalSource.source);
 
+  // T006 fixture reconciliation: post-orchestrator, the fixture's qualified
+  // names route through `routeToolCall` and must match the orchestrator's
+  // parse contract exactly. Build them via the single legal construction
+  // site (`namespacedToolName`) so any future tweak to the primitive
+  // surfaces here as a build error instead of as a silent dispatch miss.
+  // The inner part stays `<source>__<tool>` because that's what the
+  // workspace's `ToolRegistry` expects after the orchestrator strips
+  // the `ws_<id>/` prefix.
   const sharedHandle: WorkspaceHandle = {
     id: sharedWorkspaceId,
     name: sharedWorkspaceName,
     sourceName: SHARED_SOURCE_NAME,
     toolName: sharedToolBareName,
-    // Inner tool name is `<source>__<tool>` — what the workspace's
-    // ToolRegistry expects after the orchestrator strips the `ws_<id>/`
-    // prefix. Built directly rather than via `namespacedToolName(...)`
-    // to keep the fixture independent of the helper under test.
-    qualifiedToolName: `${sharedWorkspaceId}/${SHARED_SOURCE_NAME}__${sharedToolBareName}`,
+    qualifiedToolName: namespacedToolName(
+      sharedWorkspaceId,
+      `${SHARED_SOURCE_NAME}__${sharedToolBareName}`,
+    ),
     callCount: sharedSource.callCount,
     resetCallCount: sharedSource.reset,
     source: sharedSource.source,
@@ -348,15 +357,21 @@ export async function createTwoWorkspaceFixture(
     name: `${identity.displayName}'s Workspace`,
     sourceName: PERSONAL_SOURCE_NAME,
     toolName: personalToolBareName,
-    qualifiedToolName: `${personalWorkspaceId}/${PERSONAL_SOURCE_NAME}__${personalToolBareName}`,
+    qualifiedToolName: namespacedToolName(
+      personalWorkspaceId,
+      `${PERSONAL_SOURCE_NAME}__${personalToolBareName}`,
+    ),
     callCount: personalSource.callCount,
     resetCallCount: personalSource.reset,
     source: personalSource.source,
   };
 
+  // T006: `ChatRequest.workspaceId` is removed. The chat surface is
+  // identity-bound — tools come from every workspace the identity can
+  // see and each call routes by namespace prefix. The fixture's
+  // `buildChatRequest` reflects that by only stamping `identity`.
   const buildChatRequest: TwoWorkspaceFixture["buildChatRequest"] = (overrides) => ({
     identity,
-    workspaceId: sharedWorkspaceId,
     ...overrides,
   });
 

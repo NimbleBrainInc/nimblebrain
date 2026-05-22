@@ -11,9 +11,18 @@ import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type ServerHandle, startServer } from "../../src/api/server.ts";
+import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
+import { ensureUserWorkspace } from "../../src/workspace/provisioning.ts";
+import { personalWorkspaceIdFor } from "../../src/workspace/workspace-store.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+
+// Stage 2 (T006): chat is identity-bound. Files uploaded via /v1/chat/*
+// land in the identity's personal workspace, not the `X-Workspace-Id`
+// header. The test exercises the same identity (DEV_IDENTITY in dev
+// mode) for both upload + read so the file store paths line up.
+const PERSONAL_WS_ID = personalWorkspaceIdFor(DEV_IDENTITY.id);
 
 let runtime: Runtime;
 let handle: ServerHandle;
@@ -29,6 +38,14 @@ beforeAll(async () => {
     workDir: testDir,
   });
   await provisionTestWorkspace(runtime);
+  // Provision the dev user's personal workspace + registry so the
+  // file-store paths used by chat-multipart ingest exist before the
+  // first request hits `/v1/chat/stream`.
+  await ensureUserWorkspace(runtime.getWorkspaceStore(), {
+    id: DEV_IDENTITY.id,
+    displayName: DEV_IDENTITY.displayName,
+  });
+  await runtime.ensureWorkspaceRegistry(PERSONAL_WS_ID);
   handle = startServer({ runtime, port: 0 });
   baseUrl = `http://localhost:${handle.port}`;
 });
@@ -49,7 +66,7 @@ async function uploadChatFile(content: string, filename: string, mimeType: strin
 
   const res = await fetch(`${baseUrl}/v1/chat/stream`, {
     method: "POST",
-    headers: { "X-Workspace-Id": TEST_WORKSPACE_ID },
+    headers: { "X-Workspace-Id": PERSONAL_WS_ID },
     body: form,
   });
   if (res.status !== 200) {
@@ -66,7 +83,7 @@ async function callFilesTool(
 ): Promise<{ status: number; body: unknown }> {
   const res = await fetch(`${baseUrl}/v1/tools/call`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
+    headers: { "Content-Type": "application/json", "X-Workspace-Id": PERSONAL_WS_ID },
     body: JSON.stringify({ server: "files", tool, arguments: args }),
   });
   const body = await res.json();
@@ -157,7 +174,7 @@ describe("chat multipart upload ↔ files__* visibility (bug 4)", () => {
     expect(id).toBeDefined();
 
     const res = await fetch(`${baseUrl}/v1/files/${id}`, {
-      headers: { "X-Workspace-Id": TEST_WORKSPACE_ID },
+      headers: { "X-Workspace-Id": PERSONAL_WS_ID },
     });
     expect(res.status).toBe(200);
     expect(await res.text()).toBe("served bytes");
@@ -173,7 +190,7 @@ describe("chat multipart upload ↔ files__* visibility (bug 4)", () => {
     const legacyShape = "fl_mo7gybgy_5ad5f8a8"; // base36 + 8 hex, from the anchor bug report
     for (const id of [newShape, legacyShape]) {
       const res = await fetch(`${baseUrl}/v1/files/${id}`, {
-        headers: { "X-Workspace-Id": TEST_WORKSPACE_ID },
+        headers: { "X-Workspace-Id": PERSONAL_WS_ID },
       });
       expect(res.status).toBe(404);
       const body = (await res.json()) as { error: string };
@@ -182,7 +199,7 @@ describe("chat multipart upload ↔ files__* visibility (bug 4)", () => {
 
     // Negative control: malformed id gets rejected at the regex, 400.
     const bad = await fetch(`${baseUrl}/v1/files/not-a-valid-id`, {
-      headers: { "X-Workspace-Id": TEST_WORKSPACE_ID },
+      headers: { "X-Workspace-Id": PERSONAL_WS_ID },
     });
     expect(bad.status).toBe(400);
     const badBody = (await bad.json()) as { error: string };
