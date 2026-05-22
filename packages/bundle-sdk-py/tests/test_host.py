@@ -79,6 +79,100 @@ def test_supports_scheme_false_when_unavailable():
     assert host(ctx).supports_scheme("files") is False
 
 
+# ---------------------------------------------------------------------------
+# Per-method gates: `available` vs `list_available`.
+# ---------------------------------------------------------------------------
+#
+# v1 hosts ship `read.enabled` and `list.enabled` in lockstep, but the
+# capability shape allows them to split. These tests pin that the SDK
+# doesn't bake the lockstep assumption in — `read()` gates on `read`,
+# `list()` gates on `list`, independently.
+
+
+def test_list_available_reflects_list_enabled_independent_of_read():
+    """A host with `list.enabled=true, read.enabled=false` should
+    report `list_available=True` even though `available` is False."""
+    ctx = make_ctx(
+        extensions={
+            HOST_RESOURCES_CAPABILITY_KEY: {
+                "read": {"enabled": False},
+                "list": {"enabled": True},
+            }
+        },
+    )
+    h = host(ctx)
+    assert h.available is False
+    assert h.list_available is True
+
+
+def test_available_reflects_read_enabled_independent_of_list():
+    """Inverse: `read.enabled=true, list.enabled=false` should have
+    `available=True` but `list_available=False`."""
+    ctx = make_ctx(
+        extensions={
+            HOST_RESOURCES_CAPABILITY_KEY: {
+                "read": {"enabled": True},
+                "list": {"enabled": False},
+            }
+        },
+    )
+    h = host(ctx)
+    assert h.available is True
+    assert h.list_available is False
+
+
+def test_list_available_false_when_no_caps():
+    assert host(make_ctx()).list_available is False
+
+
+def test_list_available_false_on_malformed_list_block():
+    ctx = make_ctx(
+        extensions={
+            HOST_RESOURCES_CAPABILITY_KEY: {
+                "read": {"enabled": True},
+                "list": "not-a-dict",
+            }
+        },
+    )
+    assert host(ctx).list_available is False
+
+
+@pytest.mark.asyncio
+async def test_list_raises_when_only_read_enabled():
+    """`list()` must NOT proceed just because `read.enabled` is true.
+    Without this, a future host could split the flags and the SDK
+    would silently dispatch list calls to a method the host hasn't
+    enabled."""
+    ctx = make_ctx(
+        extensions={
+            HOST_RESOURCES_CAPABILITY_KEY: {
+                "read": {"enabled": True},
+                "list": {"enabled": False},
+            }
+        },
+    )
+    with pytest.raises(HostCapabilityMissing):
+        await host(ctx).list()
+    assert ctx.session.calls == []  # gated locally; no wire call
+
+
+@pytest.mark.asyncio
+async def test_read_raises_when_only_list_enabled():
+    """Symmetric: `read()` must NOT proceed just because `list.enabled`
+    is true."""
+    ctx = make_ctx(
+        extensions={
+            HOST_RESOURCES_CAPABILITY_KEY: {
+                "read": {"enabled": False},
+                "list": {"enabled": True},
+            }
+        },
+    )
+    with pytest.raises(HostCapabilityMissing):
+        await host(ctx).read("files://fl_abc")
+    assert ctx.session.calls == []
+
+
 def test_supports_scheme_false_on_malformed_schemes():
     """A host that advertised `schemes` as a non-list (a string, dict,
     whatever) shouldn't crash the bundle's scheme probe. The defensive

@@ -35,12 +35,23 @@ from nimblebrain_bundle_sdk.methods import (
 # types. Custom methods like `ai.nimblebrain/resources/*` aren't in that
 # union, so static typing won't accept us passing them directly.
 #
-# At runtime, `send_request` only calls `request.model_dump()` and dumps
-# the result onto the JSON-RPC stream. Any Pydantic model with the
-# right wire shape works. We define our request types as plain
-# `BaseModel` subclasses and `cast` them to `ServerRequest` at the call
-# site — the cast is a static-type accommodation, not a runtime
-# requirement.
+# At runtime, `send_request` only calls `request.model_dump()` on the
+# input and dumps the result onto the JSON-RPC stream (verified against
+# `mcp` 1.27.x — see `mcp.shared.session.BaseSession.send_request`).
+# Any Pydantic model with the right wire shape works. We define our
+# request types as plain `BaseModel` subclasses and `cast` them to
+# `ServerRequest` at the call site.
+#
+# # Runtime contract dependency
+#
+# The `cast` is a static-type accommodation today, but it *relies on*
+# the dump-only behaviour of the mcp SDK's `send_request`. If the SDK
+# ever switches to validating inputs against the `ServerRequest`
+# RootModel (or constructing typed envelopes internally), the cast
+# would break at runtime, not at import. The `pyproject.toml` deps pin
+# `mcp<2.0` to bound this risk to minor-version drift, and the test
+# matrix exercises the integration shape against current `mcp` on every
+# CI run. Bump the pin and re-verify on the next minor release.
 
 
 class _HostResourcesReadParams(BaseModel):
@@ -117,21 +128,44 @@ class HostResources:
 
     @property
     def available(self) -> bool:
-        """True when the host advertised host-resources with read enabled.
+        """True when the host advertised host-resources with **read** enabled.
 
-        Reads from `ClientCapabilities.extensions["ai.nimblebrain/host-resources"]`.
-        Falls back to the legacy `experimental` slot for hosts that
+        This is the common-case probe for `read()`. For `list()`, use
+        `list_available` instead — a host could advertise `list.enabled`
+        without `read.enabled` (or vice versa), and gating both methods
+        on a single flag would silently mis-route.
+
+        Reads from `ClientCapabilities.extensions["ai.nimblebrain/host-resources"]`,
+        falling back to the legacy `experimental` slot for hosts that
         haven't migrated to the spec-blessed `extensions` field yet.
         Returns False on any malformed shape so a buggy host can't
         crash a bundle's availability probe.
         """
+        return self._method_enabled("read")
+
+    @property
+    def list_available(self) -> bool:
+        """True when the host advertised host-resources with **list** enabled.
+
+        v1 hosts always ship `read` and `list` enabled together, so this
+        will move in lockstep with `available` in practice. The split
+        exists because the capability shape allows independent flags and
+        the SDK shouldn't bake the lockstep assumption in — a future host
+        that disables one method (e.g. read-only inventory listing) gets
+        correct behaviour for free.
+        """
+        return self._method_enabled("list")
+
+    def _method_enabled(self, method: str) -> bool:
+        """Per-method capability gate. Shared by `available` /
+        `list_available` and the per-call guards in `read` / `list`."""
         cap = self._capability_block()
         if cap is None:
             return False
-        read = cap.get("read")
-        if not isinstance(read, dict):
+        block = cap.get(method)
+        if not isinstance(block, dict):
             return False
-        return bool(read.get("enabled"))
+        return bool(block.get("enabled"))
 
     def supports_scheme(self, scheme: str) -> bool:
         """True when the host advertised the given URI scheme.
@@ -153,9 +187,10 @@ class HostResources:
     async def read(self, uri: str) -> ReadResourceResult:
         """Read a single workspace resource by URI.
 
-        Raises `HostCapabilityMissing` if the host hasn't advertised
-        the extension — check `available` first, or catch and fall back
-        to a structured tool error (the Level-C pattern).
+        Raises `HostCapabilityMissing` if the host hasn't advertised the
+        extension with `read.enabled` — check `available` first, or
+        catch and fall back to a structured tool error (the Level-C
+        pattern).
 
         Raises `McpError` for wire-level errors:
         - `-32002 Resource not found` (also: cross-workspace lookup)
@@ -163,7 +198,7 @@ class HostResources:
         - `-32005 Response too large` (with `size`, `maxSize`)
         - `-32602 Invalid params` (unsupported scheme)
         """
-        if not self.available:
+        if not self._method_enabled("read"):
             raise HostCapabilityMissing(HOST_RESOURCES_CAPABILITY_KEY)
 
         request = _HostResourcesReadRequest(params=_HostResourcesReadParams(uri=uri))
@@ -187,9 +222,11 @@ class HostResources:
         cursors with `-32602`.
 
         Raises `HostCapabilityMissing` if the host hasn't advertised
-        the extension. Wire errors propagate as `McpError` (see `read`).
+        the extension with `list.enabled` — check `list_available`
+        before calling, or catch and fall back. Wire errors propagate as
+        `McpError` (see `read`).
         """
-        if not self.available:
+        if not self._method_enabled("list"):
             raise HostCapabilityMissing(HOST_RESOURCES_CAPABILITY_KEY)
 
         filter_obj = _HostResourcesListFilter(scheme=scheme, mime_type=mime_type, tags=tags)

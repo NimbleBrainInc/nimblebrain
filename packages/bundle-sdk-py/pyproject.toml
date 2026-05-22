@@ -27,7 +27,16 @@ dependencies = [
     # ClientCapabilities) are imported from this. FastMCP depends on it
     # transitively; pinning explicitly so the SDK's import paths don't
     # silently break when FastMCP's transitive resolution shifts.
-    "mcp>=1.27.0",
+    #
+    # The upper bound is intentional. The SDK's custom-method dispatch
+    # (`cast(ServerRequest, ...)` in `host.py`) relies on
+    # `BaseSession.send_request` calling only `.model_dump()` on the
+    # request — a behavior verified against 1.27.x but not contractually
+    # guaranteed by mcp's public surface. A 2.0 release could plausibly
+    # tighten input validation and break us at runtime (not import time).
+    # Bump after verifying against the next minor release; cut a SDK
+    # major if the dispatch shape needs to change.
+    "mcp>=1.27.0,<2.0.0",
 ]
 
 [project.urls]
