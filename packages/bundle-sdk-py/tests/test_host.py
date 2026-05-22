@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import pytest
 from mcp.types import ReadResourceResult
-from tests.conftest import make_ctx
 
 from nimblebrain_bundle_sdk import (
     HOST_RESOURCES_CAPABILITY_KEY,
@@ -28,7 +27,7 @@ from nimblebrain_bundle_sdk import (
     HostCapabilityMissing,
     host,
 )
-
+from tests.conftest import make_ctx
 
 # ---------------------------------------------------------------------------
 # Capability detection
@@ -80,15 +79,30 @@ def test_supports_scheme_false_when_unavailable():
     assert host(ctx).supports_scheme("files") is False
 
 
+def test_supports_scheme_false_on_malformed_schemes():
+    """A host that advertised `schemes` as a non-list (a string, dict,
+    whatever) shouldn't crash the bundle's scheme probe. The defensive
+    `isinstance(schemes, list)` guard in host.py:146 covers this — pin
+    it so a future "simplification" of the guard fails CI."""
+    ctx = make_ctx(
+        extensions={
+            HOST_RESOURCES_CAPABILITY_KEY: {
+                "read": {"enabled": True},
+                # Wrong shape — should be a list. Buggy host.
+                "schemes": "files",  # type: ignore[dict-item]
+            }
+        }
+    )
+    assert host(ctx).supports_scheme("files") is False
+
+
 # ---------------------------------------------------------------------------
 # read()
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_read_dispatches_namespaced_method(
-    host_resources_v1_extensions, read_result_ok
-):
+async def test_read_dispatches_namespaced_method(host_resources_v1_extensions, read_result_ok):
     ctx = make_ctx(extensions=host_resources_v1_extensions, next_response=read_result_ok)
     result = await host(ctx).read("files://fl_abc")
 
@@ -132,9 +146,7 @@ async def test_list_dispatches_namespaced_method_with_no_filter(
 
 
 @pytest.mark.asyncio
-async def test_list_wraps_mime_type_filter_in_meta(
-    host_resources_v1_extensions, list_result_ok
-):
+async def test_list_wraps_mime_type_filter_in_meta(host_resources_v1_extensions, list_result_ok):
     ctx = make_ctx(extensions=host_resources_v1_extensions, next_response=list_result_ok)
     await host(ctx).list(mime_type="text/csv")
 
@@ -145,9 +157,7 @@ async def test_list_wraps_mime_type_filter_in_meta(
 
 
 @pytest.mark.asyncio
-async def test_list_wraps_tags_filter_in_meta(
-    host_resources_v1_extensions, list_result_ok
-):
+async def test_list_wraps_tags_filter_in_meta(host_resources_v1_extensions, list_result_ok):
     ctx = make_ctx(extensions=host_resources_v1_extensions, next_response=list_result_ok)
     await host(ctx).list(tags=["draft"])
 
@@ -162,9 +172,7 @@ async def test_list_combines_filters(host_resources_v1_extensions, list_result_o
 
     call = ctx.session.calls[0]
     assert call.params == {
-        "_meta": {
-            "filter": {"scheme": "files", "mimeType": "text/csv", "tags": ["draft"]}
-        }
+        "_meta": {"filter": {"scheme": "files", "mimeType": "text/csv", "tags": ["draft"]}}
     }
 
 

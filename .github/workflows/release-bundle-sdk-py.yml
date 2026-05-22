@@ -46,9 +46,13 @@ jobs:
       - name: Install dependencies
         run: uv sync --frozen --no-install-project
       - name: Lint
-        run: uv run ruff check src/
+        # Include `tests/` so test-only imports/formatting drift fails
+        # CI rather than getting caught on a release tag — release-time
+        # lint failures block a publish, so scope shifts here are
+        # better caught on PR.
+        run: uv run ruff check src/ tests/
       - name: Format check
-        run: uv run ruff format --check src/
+        run: uv run ruff format --check src/ tests/
       - name: Test
         run: uv run pytest tests/ -v
 

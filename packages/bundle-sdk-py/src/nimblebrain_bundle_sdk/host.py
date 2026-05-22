@@ -57,13 +57,16 @@ class _HostResourcesListFilter(BaseModel):
     mime_type: str | None = None
     tags: list[str] | None = None
 
-    # Wire shape uses `mimeType` (camelCase) per MCP convention. Pydantic's
-    # `alias` lets us expose snake_case to Python callers while serializing
-    # the camelCase form. `populate_by_name` keeps either input shape
-    # acceptable.
-    model_config = {"populate_by_name": True}
-
     def to_wire(self) -> dict[str, Any]:
+        """Hand-serialize to the camelCase wire shape.
+
+        Pydantic aliasing (`Field(alias="mimeType")` + `populate_by_name`)
+        is the more idiomatic way to do this, but it would only matter
+        if callers were constructing this model directly. They aren't —
+        `_HostResourcesListFilter` is internal and `HostResources.list()`
+        builds it from kwargs, so the explicit dict-build is simpler
+        than wiring + documenting an alias roundtrip.
+        """
         out: dict[str, Any] = {}
         if self.scheme is not None:
             out["scheme"] = self.scheme
