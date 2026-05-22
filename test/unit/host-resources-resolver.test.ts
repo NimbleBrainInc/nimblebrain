@@ -154,6 +154,10 @@ describe("FileBackedHostResourcesResolver.read", () => {
       caught = e as McpError;
     }
     expect(caught).toBeInstanceOf(McpError);
+    // Pin the JSON-RPC code so doc/impl drift fails CI. `-32005` lives in
+    // the impl-defined server-error range, alongside `-32004 Rate limited`
+    // — both are deliberate quota responses, not server faults.
+    expect(caught?.code).toBe(-32005);
     const data = caught?.data as { size?: number; maxSize?: number } | undefined;
     expect(data?.size).toBe(100);
     expect(data?.maxSize).toBe(10);

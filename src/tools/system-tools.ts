@@ -242,6 +242,7 @@ export async function createSystemTools(
             manageBundleCtx.workDir,
             gate,
             mpakHome,
+            manageBundleCtx.bundleMcpDepsFactory?.(wsId),
           );
         }
         return { content: textContent(`Unknown action: ${action}`), isError: true };
@@ -739,6 +740,7 @@ async function configureBundle(
   workDir: string,
   confirmGate?: ConfirmationGate,
   mpakHome?: string,
+  bundleMcp?: BundleMcpDeps,
 ): Promise<ToolResult> {
   try {
     const mpak = getMpak(mpakHome!);
@@ -801,6 +803,7 @@ async function configureBundle(
     const result = await startBundleSource({ name }, registry, eventSink, undefined, {
       wsId,
       workDir,
+      bundleMcp,
     });
 
     const tools = await registry.availableTools();

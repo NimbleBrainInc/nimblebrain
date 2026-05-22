@@ -21,6 +21,17 @@ import { HOST_RESOURCES_MAX_READ_SIZE } from "./capability.ts";
 const RESOURCE_NOT_FOUND = -32002;
 
 /**
+ * Impl-defined server-error code for "response too large." Sibling to
+ * `-32004 Rate limited` in the JSON-RPC reserved range — both are
+ * deliberate quota responses, not server faults. `-32603 InternalError`
+ * would mis-signal "this read exceeded the cap" as "the platform is
+ * broken." Bundle SDKs match on the specific code to back off
+ * intelligently (e.g. split a large read into ranges once range reads
+ * ship in v2).
+ */
+const RESPONSE_TOO_LARGE = -32005;
+
+/**
  * Per-call context for resolving a host resource. The workspace id comes
  * from the bundle's session, never from the URI — the platform owns the
  * identity, the URI carries only the file id. The bundle id rides along
@@ -83,7 +94,7 @@ export class FileBackedHostResourcesResolver implements HostResourcesResolver {
     }
 
     if (result.size > this.maxReadSize) {
-      throw new McpError(ErrorCode.InternalError, "Response too large", {
+      throw new McpError(RESPONSE_TOO_LARGE, "Response too large", {
         uri,
         size: result.size,
         maxSize: this.maxReadSize,

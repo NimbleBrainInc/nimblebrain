@@ -23,13 +23,15 @@ const RATE_LIMITED = -32004;
  * server-error range (`-32000` to `-32099`) — `-32603 InternalError`
  * would mis-signal a deliberate quota response as a server fault.
  *
- * Phase 2a tunables (host-resources/capability defaults):
+ * Phase 2a defaults (not configurable yet — the constructor accepts
+ * `RateLimitOptions` but `Runtime.start()` doesn't thread a config
+ * block through. Operator-tunable `hostResources.rateLimit` is a
+ * tracked follow-up; the current defaults are conservative enough
+ * that no operator has needed an override):
  * - ratePerSec: 100   (every 10ms is the steady-state floor)
  * - burst:     1000   (10 seconds of slack for bursty workloads)
  *
- * These are runtime config overrides via `nimblebrain.json`'s
- * `hostResources.rateLimit` block. Defaults are conservative; a bundle
- * that hits them is doing something unusual.
+ * A bundle that hits these defaults is doing something unusual.
  */
 export interface HostResourcesRateLimit {
   /**

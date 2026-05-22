@@ -46,6 +46,7 @@
 
 ### Changed
 
+- **`files__read` text extraction broadens slightly.** `extractText` now treats any `text/*` mime as UTF-8-decodable (previously only an exact-match allowlist of nine mimes). Practical effect: `text/sql`, `text/css`, `text/javascript`, etc. are now extractable from `files__read` instead of returning null. The decode path falls back to null safely if the bytes don't decode. Consolidates a third `isTextMime` duplicate with the agent-side and bundle-side predicates.
 - Uploaded images are persisted in conversation JSONL as MCP `resource_link` blocks pointing to `files://<id>` instead of inline `Uint8Array` bytes. The runtime rehydrates them to AI SDK V3 `file` parts at the `model.doStream` boundary, so vision content is now stable across multi-turn agent loops (previously dropped on turn 2+). Existing JSONL files are read forward without migration; legacy `image` blocks are quietly omitted on reconstruction (same as the pre-fix behavior).
 - Apps list in the system prompt now surfaces each bundle's `initialize.instructions` inside `<app-instructions>` containment tags, so per-bundle guidance reaches the LLM.
 - Iframe bridge uses the MCP transport (`StreamableHTTPClientTransport` against `/mcp`) for `tools/call` and `resources/read`. `INTERNAL_APPS` authz still precedes transport selection. Bridge advertises `hostCapabilities.tasks` to iframes and forwards `notifications/tasks/status` on a per-bridge subscription.

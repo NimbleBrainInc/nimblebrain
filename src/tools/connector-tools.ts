@@ -1290,6 +1290,7 @@ async function handleInstallRemoteOAuth(
           allowInsecureRemotes: ctx.runtime.getAllowInsecureRemotes(),
           wsId,
           workDir: ctx.runtime.getWorkDir(),
+          bundleMcp: ctx.runtime.getBundleMcpDeps(wsId),
         });
         // Source is now registered and `tools/list` works. State is NOT
         // forced here — `seedInstance` (above) already derived the
@@ -2392,6 +2393,7 @@ async function respawnBundleAfterCredentialChange(
       wsId,
       workDir: ctx.runtime.getWorkDir(),
       allowInsecureRemotes: ctx.runtime.getAllowInsecureRemotes(),
+      bundleMcp: ctx.runtime.getBundleMcpDeps(wsId),
     });
     return { ok: true };
   } catch (err) {
