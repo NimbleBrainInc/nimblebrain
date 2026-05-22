@@ -39,7 +39,7 @@
 import { existsSync } from "node:fs";
 import { readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { UserStore } from "../src/identity/user.ts";
 import { writeJsonAtomic } from "../src/util/atomic-json.ts";
 import type { Workspace } from "../src/workspace/types.ts";
@@ -57,6 +57,7 @@ interface Args {
 interface Stats {
   usersScanned: number;
   healed: number;
+  partialRenameHealed: number;
   alreadyCanonical: number;
   noTruncatedWorkspace: number;
   skippedNameMismatch: number;
@@ -133,6 +134,12 @@ function isAdminOf(ws: Workspace, userId: string): boolean {
  * Count top-level conversation JSONL files whose metadata's
  * `workspaceId` equals `id`. Conversations are stored at
  * `{workDir}/conversations/*.jsonl` post-Stage-1.
+ *
+ * O(N) scan of the conversations dir per call. Acceptable for a
+ * maintenance script that runs during a window — small tenants spend
+ * milliseconds, large tenants spend seconds. If a future tenant has
+ * a per-user count high enough to make this hot, build a single
+ * `Map<workspaceId, count>` once in main and pass it in.
  */
 async function countConversationRefs(
   conversationsDir: string,
@@ -146,6 +153,78 @@ async function countConversationRefs(
     if (meta && meta.workspaceId === id) n++;
   }
   return n;
+}
+
+/**
+ * Recursively walk `dir`, returning the relative path of the first file
+ * that ISN'T an expected sentinel. Used to detect canonical-stub content
+ * a bundles+convRefs check alone misses — populated data/credentials/
+ * skills/files/ subdirs, a legacy conversations/ subdir, or any other
+ * file an `rm -rf` would silently destroy.
+ *
+ * Allowed:
+ *  - `workspace.json` at the root.
+ *  - Any `.gitkeep` (scaffolding sentinel for empty subdirs).
+ *  - Any directory itself (recursion descends into it).
+ *
+ * Returns null when the tree contains only allowed entries.
+ */
+async function findUnexpectedContent(
+  dir: string,
+  root: string = dir,
+): Promise<string | null> {
+  const entries = await readdir(dir, { withFileTypes: true });
+  for (const entry of entries) {
+    const full = join(dir, entry.name);
+    if (entry.isFile()) {
+      const rel = relative(root, full);
+      if (rel === "workspace.json") continue;
+      if (entry.name === ".gitkeep") continue;
+      return rel;
+    }
+    if (entry.isDirectory()) {
+      const inside = await findUnexpectedContent(full, root);
+      if (inside) return inside;
+    }
+  }
+  return null;
+}
+
+/**
+ * Return the first populated optional `workspace.json` field whose
+ * contents would be lost if this canonical stub is rm'd. The minimum
+ * shape for a "truly empty" canonical stub is: exactly the owner as
+ * a sole admin member, zero bundles, no agents/skillDirs/models/
+ * identity/connectorsAllowList/oauthOperatorApps populated. Anything
+ * else means the stub holds real state and the operator must
+ * reconcile.
+ */
+function findPopulatedWorkspaceField(
+  ws: Workspace,
+  ownerUserId: string,
+): string | null {
+  if ((ws.bundles ?? []).length > 0) return `bundles (${ws.bundles.length})`;
+
+  const members = ws.members ?? [];
+  if (members.length !== 1) {
+    return `members (${members.length} — expected exactly the owner as sole admin)`;
+  }
+  const sole = members[0];
+  if (!sole || sole.userId !== ownerUserId || sole.role !== "admin") {
+    return `members[0] (expected ${ownerUserId} as admin, got ${sole?.userId} as ${sole?.role})`;
+  }
+
+  if (ws.agents && Object.keys(ws.agents).length > 0) return "agents";
+  if (ws.skillDirs && ws.skillDirs.length > 0) return "skillDirs";
+  if (ws.models && Object.keys(ws.models).length > 0) return "models";
+  if (ws.identity) return "identity";
+  if (ws.connectorsAllowList && ws.connectorsAllowList.length > 0) {
+    return "connectorsAllowList";
+  }
+  if (ws.oauthOperatorApps && Object.keys(ws.oauthOperatorApps).length > 0) {
+    return "oauthOperatorApps";
+  }
+  return null;
 }
 
 /**
@@ -224,32 +303,57 @@ async function healOne(opts: {
   const canonicalDir = join(workspacesDir, canonicalId);
 
   // Stub-handling on the canonical id.
+  //
+  // Three layers of "is this stub truly empty?" gate the `rm -rf`. Any
+  // populated workspace.json field, any reference from a top-level
+  // conversation, or any unexpected file under the canonical dir flips
+  // to a hard-error — the script never auto-merges or silently
+  // destroys real state. Operator must reconcile.
   if (existsSync(canonicalDir)) {
     const canonicalWsPath = join(canonicalDir, "workspace.json");
+
     if (existsSync(canonicalWsPath)) {
       const canonicalWs = JSON.parse(
         await readFile(canonicalWsPath, "utf-8"),
       ) as Workspace;
-      const bundleCount = canonicalWs.bundles?.length ?? 0;
-      const refCount = await countConversationRefs(conversationsDir, canonicalId);
-      if (bundleCount > 0 || refCount > 0) {
+
+      const populatedField = findPopulatedWorkspaceField(canonicalWs, userId);
+      if (populatedField) {
         return {
           error:
-            `canonical stub ${canonicalId} holds state ` +
-            `(bundles=${bundleCount}, convRefs=${refCount}) — ` +
-            "manual reconciliation required",
+            `canonical stub ${canonicalId} workspace.json is populated ` +
+            `(${populatedField}) — manual reconciliation required`,
         };
       }
-      console.error(
-        `[heal] ${userId}: ${dryRun ? "[dry-run] would " : ""}delete empty canonical stub ${canonicalId}`,
-      );
-      if (!dryRun) await rm(canonicalDir, { recursive: true, force: true });
-    } else {
-      console.error(
-        `[heal] ${userId}: ${dryRun ? "[dry-run] would " : ""}delete stub dir ${canonicalId} (no workspace.json)`,
-      );
-      if (!dryRun) await rm(canonicalDir, { recursive: true, force: true });
+
+      const refCount = await countConversationRefs(conversationsDir, canonicalId);
+      if (refCount > 0) {
+        return {
+          error:
+            `canonical stub ${canonicalId} is referenced by ${refCount} ` +
+            "top-level conversation(s) — manual reconciliation required",
+        };
+      }
     }
+
+    // Recursive content walk. Catches:
+    //  - populated data/credentials/skills/files/ subdirs (anything
+    //    beyond their `.gitkeep` sentinels)
+    //  - legacy `conversations/` subdir from Stage-0 stubs
+    //  - any other unanticipated file
+    const extra = await findUnexpectedContent(canonicalDir);
+    if (extra) {
+      return {
+        error:
+          `canonical stub ${canonicalId} has unexpected content (${extra}) — ` +
+          "manual reconciliation required",
+      };
+    }
+
+    console.error(
+      `[heal] ${userId}: ${dryRun ? "[dry-run] would " : ""}delete empty canonical stub ${canonicalId}`,
+    );
+    if (!dryRun) await rm(canonicalDir, { recursive: true, force: true });
   }
 
   // Rename truncatedId → canonicalId.
@@ -324,6 +428,7 @@ async function main(): Promise<void> {
   const stats: Stats = {
     usersScanned: 0,
     healed: 0,
+    partialRenameHealed: 0,
     alreadyCanonical: 0,
     noTruncatedWorkspace: 0,
     skippedNameMismatch: 0,
@@ -348,6 +453,69 @@ async function main(): Promise<void> {
     try {
       const truncatedWs = await wsStore.get(truncatedId);
       if (!truncatedWs) {
+        // No truncated workspace. Common path: this user was always at
+        // the canonical id (Stage 0 lazy-create) — nothing to do.
+        //
+        // Less-common path: a previous heal crashed between
+        // `rename(truncated, canonical)` and the workspace.json rewrite,
+        // leaving the canonical dir on disk but its embedded `id` /
+        // `isPersonal` / `ownerUserId` still pointing at the pre-rename
+        // values. Detect and stamp on rerun — mirrors Stage 1's
+        // `migrate-personal-workspaces.ts` partial-rename heal.
+        const canonicalWs = await wsStore.get(canonicalId);
+        const needsStamp =
+          canonicalWs !== null &&
+          (canonicalWs.id !== canonicalId ||
+            canonicalWs.isPersonal !== true ||
+            canonicalWs.ownerUserId !== user.id);
+        if (canonicalWs && needsStamp) {
+          console.error(
+            `[heal] ${user.id}: ${args.dryRun ? "[dry-run] would " : ""}` +
+              `stamp identity on partial-rename canonical ${canonicalId} ` +
+              `(was id=${canonicalWs.id}, isPersonal=${canonicalWs.isPersonal}, ` +
+              `ownerUserId=${canonicalWs.ownerUserId})`,
+          );
+          if (!args.dryRun) {
+            const wsPath = join(workspacesDir, canonicalId, "workspace.json");
+            const updated: Workspace = {
+              ...canonicalWs,
+              id: canonicalId,
+              isPersonal: true,
+              ownerUserId: user.id,
+              about: canonicalWs.about ?? null,
+              updatedAt: new Date().toISOString(),
+            };
+            await writeJsonAtomic(wsPath, updated);
+          }
+          // Rewrite conversation refs that still point at the pre-rename
+          // truncated id. (If the partial run rewrote some but not all,
+          // remaining ones get fixed now; if it crashed before any
+          // rewrites, all get fixed.)
+          let rewrites = 0;
+          if (existsSync(conversationsDir)) {
+            for (const fname of await readdir(conversationsDir)) {
+              if (!fname.endsWith(".jsonl")) continue;
+              const cpath = join(conversationsDir, fname);
+              const meta = await readConversationMetadata(cpath);
+              if (!meta || meta.workspaceId !== truncatedId) continue;
+              if (args.dryRun) {
+                rewrites++;
+                continue;
+              }
+              if (
+                await rewriteConversationWorkspaceId(cpath, truncatedId, canonicalId)
+              ) {
+                rewrites++;
+              }
+            }
+          }
+          console.error(
+            `[heal] ${user.id}: ${args.dryRun ? "[dry-run] would " : ""}` +
+              `rewrite workspaceId on ${rewrites} conversation(s) referencing truncated id`,
+          );
+          stats.partialRenameHealed++;
+          continue;
+        }
         console.error(
           `[heal] ${user.id}: no truncated workspace ${truncatedId} — skip`,
         );
@@ -398,6 +566,7 @@ async function main(): Promise<void> {
   console.error(`[heal] summary${args.dryRun ? " (dry-run)" : ""}:`);
   console.error(`[heal]   users scanned:                 ${stats.usersScanned}`);
   console.error(`[heal]   healed users:                  ${stats.healed}`);
+  console.error(`[heal]   partial-rename healed:         ${stats.partialRenameHealed}`);
   console.error(`[heal]   already canonical (skipped):   ${stats.alreadyCanonical}`);
   console.error(`[heal]   no truncated workspace:        ${stats.noTruncatedWorkspace}`);
   console.error(`[heal]   skipped (name mismatch):       ${stats.skippedNameMismatch}`);

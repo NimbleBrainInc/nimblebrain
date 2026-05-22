@@ -73,6 +73,7 @@ async function seedWorkspace(opts: {
   isPersonal?: boolean;
   ownerUserId?: string;
   about?: string | null;
+  extra?: Record<string, unknown>;
 }): Promise<void> {
   const wsDir = join(workDir, "workspaces", opts.id);
   await mkdir(wsDir, { recursive: true, mode: 0o700 });
@@ -88,6 +89,7 @@ async function seedWorkspace(opts: {
   if (opts.isPersonal !== undefined) ws.isPersonal = opts.isPersonal;
   if (opts.ownerUserId !== undefined) ws.ownerUserId = opts.ownerUserId;
   if (opts.about !== undefined) ws.about = opts.about;
+  if (opts.extra) Object.assign(ws, opts.extra);
   await writeFile(join(wsDir, "workspace.json"), `${JSON.stringify(ws, null, 2)}\n`);
 }
 
@@ -273,6 +275,202 @@ describe("heal-truncated-personal-workspaces", () => {
     }
   });
 
+  test("adversarial: canonical stub has extra members → script refuses, leaves both workspaces untouched", async () => {
+    // Pre-PR-C, a personal workspace could carry multiple admins (the
+    // case we observed on hq production where Mat was admin on Mario's
+    // personal workspace). An rm -rf that ignored membership would
+    // strip those collaborators from the audit trail without warning.
+    await seedUser();
+    await seedWorkspace({
+      id: TRUNCATED_WS_ID,
+      name: EXPECTED_NAME,
+      members: [{ userId: USER_ID, role: "admin" }],
+    });
+    await seedWorkspace({
+      id: CANONICAL_WS_ID,
+      name: "Personal",
+      members: [
+        { userId: USER_ID, role: "admin" },
+        { userId: "user_collaborator", role: "admin" },
+      ],
+      bundles: [],
+    });
+
+    const before = await snapshotWorkdir();
+    const { exitCode, stderr } = await runHeal();
+
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("canonical stub");
+    expect(stderr).toContain("workspace.json is populated");
+    expect(stderr).toContain("members");
+    expect(stderr).toContain("manual reconciliation required");
+
+    const after = await snapshotWorkdir();
+    expect(after.size).toBe(before.size);
+    for (const [path, hash] of before) {
+      expect(after.get(path)).toBe(hash);
+    }
+  });
+
+  test("adversarial: canonical stub has populated optional field (agents) → script refuses", async () => {
+    // workspace.json can carry agents/skillDirs/models/identity/
+    // connectorsAllowList/oauthOperatorApps. None of these were
+    // checked by the original bundle-count gate. Picking `agents` as
+    // a representative; the check is shape-driven and covers all.
+    await seedUser();
+    await seedWorkspace({
+      id: TRUNCATED_WS_ID,
+      name: EXPECTED_NAME,
+      members: [{ userId: USER_ID, role: "admin" }],
+    });
+    await seedWorkspace({
+      id: CANONICAL_WS_ID,
+      name: "Personal",
+      members: [{ userId: USER_ID, role: "admin" }],
+      bundles: [],
+      extra: {
+        agents: {
+          assistant: { model: "anthropic:claude-sonnet-4-6", identity: null },
+        },
+      },
+    });
+
+    const before = await snapshotWorkdir();
+    const { exitCode, stderr } = await runHeal();
+
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("canonical stub");
+    expect(stderr).toContain("agents");
+    expect(stderr).toContain("manual reconciliation required");
+
+    const after = await snapshotWorkdir();
+    expect(after.size).toBe(before.size);
+    for (const [path, hash] of before) {
+      expect(after.get(path)).toBe(hash);
+    }
+  });
+
+  test("adversarial: canonical stub has populated subdir (data/) → script refuses", async () => {
+    // Stage 0 scaffolds data/, credentials/, skills/, files/ with
+    // .gitkeep sentinels. If a user ever wrote real content into any
+    // of them (a credentialed bundle wrote to data/X.json, a custom
+    // skill landed under skills/, etc.), an rm -rf would silently
+    // destroy it. The recursive walk catches this even when
+    // workspace.json is empty.
+    await seedUser();
+    await seedWorkspace({
+      id: TRUNCATED_WS_ID,
+      name: EXPECTED_NAME,
+      members: [{ userId: USER_ID, role: "admin" }],
+    });
+    await seedWorkspace({
+      id: CANONICAL_WS_ID,
+      name: "Personal",
+      members: [{ userId: USER_ID, role: "admin" }],
+      bundles: [],
+    });
+    const stubDataDir = join(workDir, "workspaces", CANONICAL_WS_ID, "data");
+    await mkdir(stubDataDir, { recursive: true });
+    await writeFile(join(stubDataDir, ".gitkeep"), "");
+    await writeFile(join(stubDataDir, "real-content.json"), '{"x":1}');
+
+    const before = await snapshotWorkdir();
+    const { exitCode, stderr } = await runHeal();
+
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("canonical stub");
+    expect(stderr).toContain("unexpected content");
+    expect(stderr).toContain("real-content.json");
+    expect(stderr).toContain("manual reconciliation required");
+
+    const after = await snapshotWorkdir();
+    expect(after.size).toBe(before.size);
+    for (const [path, hash] of before) {
+      expect(after.get(path)).toBe(hash);
+    }
+  });
+
+  test("adversarial: canonical stub has legacy conversations/ subdir → script refuses", async () => {
+    // Stage 0 stubs predate the Stage 1 conversations move. A legacy
+    // per-workspace `conversations/*.jsonl` file inside the canonical
+    // dir would have been silently destroyed by an rm -rf — the
+    // top-level countConversationRefs check only scans
+    // {workDir}/conversations/, never the per-workspace subdir.
+    await seedUser();
+    await seedWorkspace({
+      id: TRUNCATED_WS_ID,
+      name: EXPECTED_NAME,
+      members: [{ userId: USER_ID, role: "admin" }],
+    });
+    await seedWorkspace({
+      id: CANONICAL_WS_ID,
+      name: "Personal",
+      members: [{ userId: USER_ID, role: "admin" }],
+      bundles: [],
+    });
+    const stubConvDir = join(workDir, "workspaces", CANONICAL_WS_ID, "conversations");
+    await mkdir(stubConvDir, { recursive: true });
+    await writeFile(
+      join(stubConvDir, "conv_legacy.jsonl"),
+      `${JSON.stringify({ id: "conv_legacy", createdAt: new Date().toISOString() })}\n`,
+    );
+
+    const before = await snapshotWorkdir();
+    const { exitCode, stderr } = await runHeal();
+
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("canonical stub");
+    expect(stderr).toContain("unexpected content");
+    expect(stderr).toContain("conv_legacy.jsonl");
+    expect(stderr).toContain("manual reconciliation required");
+
+    const after = await snapshotWorkdir();
+    expect(after.size).toBe(before.size);
+    for (const [path, hash] of before) {
+      expect(after.get(path)).toBe(hash);
+    }
+  });
+
+  test("partial-rename heal: canonical exists with stale id + no truncated → stamp identity + rewrite refs", async () => {
+    // Simulates a prior heal run that crashed between the directory
+    // rename and the workspace.json rewrite. On rerun, the truncated
+    // dir is gone, but the canonical dir's embedded `id`,
+    // `isPersonal`, `ownerUserId` still point at the pre-rename
+    // values. Detect-and-stamp on rerun — mirrors Stage 1's
+    // migrate-personal-workspaces partial-rename heal.
+    await seedUser();
+    // The canonical dir exists, but its workspace.json is in the
+    // pre-rename state.
+    await seedWorkspace({
+      id: CANONICAL_WS_ID,
+      name: EXPECTED_NAME,
+      members: [{ userId: USER_ID, role: "admin" }],
+      // Stale fields the crash left behind:
+      isPersonal: false,
+      // Note: ownerUserId intentionally absent.
+      extra: { id: TRUNCATED_WS_ID }, // overrides the seedWorkspace-set id
+    });
+    // A conversation that still references the pre-rename id.
+    await seedTopLevelConversation({
+      convId: "conv_alpha",
+      workspaceId: TRUNCATED_WS_ID,
+    });
+
+    const { exitCode, stderr } = await runHeal();
+    expect(exitCode).toBe(0);
+    expect(stderr).toContain(`stamp identity on partial-rename canonical ${CANONICAL_WS_ID}`);
+    expect(stderr).toContain("rewrite workspaceId on 1 conversation(s) referencing truncated id");
+    expect(stderr).toContain("partial-rename healed:         1");
+
+    const ws = await readWorkspace(CANONICAL_WS_ID);
+    expect(ws.id).toBe(CANONICAL_WS_ID);
+    expect(ws.isPersonal).toBe(true);
+    expect(ws.ownerUserId).toBe(USER_ID);
+
+    const meta = await readConvMetadata("conv_alpha");
+    expect(meta.workspaceId).toBe(CANONICAL_WS_ID);
+  });
+
   test("adversarial: name mismatch → that user is skipped", async () => {
     // Pins the "don't guess the personal owner from id shape alone"
     // invariant. A workspace at the truncated id whose name isn't
@@ -323,7 +521,7 @@ describe("heal-truncated-personal-workspaces", () => {
     }
   });
 
-  test("idempotent: a second --apply run after a successful first run is a no-op", async () => {
+  test("idempotent: a second run after a successful first run is a no-op", async () => {
     await seedUser();
     await seedWorkspace({
       id: TRUNCATED_WS_ID,
@@ -346,7 +544,10 @@ describe("heal-truncated-personal-workspaces", () => {
     const second = await runHeal();
     expect(second.exitCode).toBe(0);
     expect(second.stderr).toContain("no truncated workspace");
-    expect(second.stderr).not.toContain("rename");
+    // No rename operation occurred — checking the verb specifically so
+    // the "partial-rename healed" stat label doesn't trigger the assertion.
+    expect(second.stderr).not.toContain("rename ws_");
+    expect(second.stderr).not.toContain("would rename");
 
     const afterSecond = await snapshotWorkdir();
     expect(afterSecond.size).toBe(afterFirst.size);
@@ -387,7 +588,7 @@ describe("heal-truncated-personal-workspaces", () => {
     }
   });
 
-  test("lock contention: second --apply while a first holds the lock fails fast with holder details", async () => {
+  test("lock contention: second run while a first holds the lock fails fast with holder details", async () => {
     await seedUser();
     await seedWorkspace({
       id: TRUNCATED_WS_ID,

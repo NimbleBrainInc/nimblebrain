@@ -143,7 +143,7 @@ When migrating a tenant onto Stage 1, run the scripts in this order, all during 
 
 1. `bun run migrate:personal-workspaces` — renames each user's personal workspace to `ws_user_<userId>` and stamps `isPersonal` / `ownerUserId`.
 2. `bun run migrate:conversations-to-top-level` — moves per-workspace conversations to `{workDir}/conversations/`.
-3. `bun run scripts/heal-truncated-personal-workspaces.ts` — **only if needed.** Some legacy tenants (notably hq) used a 16-char-truncated slug for personal workspaces that step 1 doesn't recognize. Heuristic: step 1's output shows `no personal workspace found (will be created on next login)` for users who actually do have a workspace named `<displayName>'s Workspace` at a short-slug id. If you see that pattern, run this heal script (dry-run first). Idempotent — safe to run on any tenant; it exits cleanly with `no truncated workspace` when nothing matches. All three scripts share the same `.migration-lock` PID file, so they're serialized by construction.
+3. `bun run heal:truncated-personal-workspaces` — **only if needed.** Some legacy tenants (notably hq) used a 16-char-truncated slug for personal workspaces that step 1 doesn't recognize. Heuristic: step 1's output shows `no personal workspace found (will be created on next login)` for users who actually do have a workspace named `<displayName>'s Workspace` at a short-slug id. If you see that pattern, run this heal script (dry-run first). Idempotent — safe to run on any tenant; it exits cleanly with `no truncated workspace` when nothing matches. All three scripts share the same `.migration-lock` PID file, so they're serialized by construction.
 
 ## Debug Logging
 
