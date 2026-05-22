@@ -137,6 +137,21 @@ When adding a new code path that touches workspace-scoped credentials or identit
 
 **Conversations are user-scoped, not workspace-scoped.** Post-Stage-1, every conversation lives at `{workDir}/conversations/{convId}.jsonl` and is authorized by ownership (`Conversation.ownerId === access.userId`). Look up via `runtime.findConversation(convId, { userId })`; write via `runtime.findConversationStore()`. `workspaceId` on conversation metadata is a tool-scoping breadcrumb — it tells the runtime which workspace's tools the chat had access to when a turn ran, NOT where the file lives. Hand-building per-workspace conversation paths (`join(workDir, "workspaces", wsId, "conversations", ...)`) is a regression caught by `check:conversation-paths`. **Personal workspace ids** go through `personalWorkspaceIdFor(userId)` from `src/workspace/workspace-store.ts` — no hand-built `"ws_user_" + userId` or `` `ws_user_${userId}` `` outside that helper (`check:personal-workspace-id` enforces).
 
+### Personal workspace invariants
+
+Personal workspaces (`isPersonal === true`) are sole-owner-by-design. The store enforces four rules and throws `PersonalWorkspaceInvariantError` (`src/workspace/errors.ts`) on violation:
+
+1. **Members locked** to `[{ userId: ownerUserId, role: "admin" }]`. `addMember` / `removeMember` / `updateMemberRole` and `update({ members })` all reject mutations on personal workspaces.
+2. **`isPersonal` frozen** post-create (both directions).
+3. **`ownerUserId` frozen** on personal workspaces.
+4. **`ownerUserId` forbidden** on non-personal workspaces (the two fields travel together).
+
+What stays freely mutable on a personal workspace: `bundles`, `name`, `about`, `customInstructions`. Those are workspace-content edits, not identity edits.
+
+The HTTP layer maps `PersonalWorkspaceInvariantError` to `422 personal_workspace_invariant` with `{ workspaceId, reason }` details (same shape as `ConversationCorruptedError → 422`). The workspace-mgmt tool handlers encode the error into `structuredContent` so it survives the in-process MCP serialization boundary; `handleToolCall` decodes and emits the 422.
+
+Pre-Stage-1.1 data (multi-admin personal workspaces seen on hq production) is repaired retroactively by `scripts/cleanup-personal-workspace-members.ts` (alias: `bun run cleanup:personal-workspace-members`, or `make cleanup-personal-workspace-members CLIENT=<x> ENV=<y>` for in-cluster runs). Idempotent; dry-run by default, `--apply` to write. A personal workspace missing `ownerUserId` is a hard-error — operator must triage.
+
 ## Debug Logging
 
 Hot-path diagnostics are gated behind namespace flags so they're available when you need them without editing source. Use for tracing across the runtime ↔ SSE ↔ browser ↔ iframe chain.

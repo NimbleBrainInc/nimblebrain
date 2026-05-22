@@ -112,23 +112,24 @@ describe("ensureUserWorkspace", () => {
     expect(sharedAfter?.members).toEqual([{ userId: "user_alice", role: "member" }]);
   });
 
-  test("self-heals when the canonical workspace exists but the user is not a member", async () => {
-    // Arrange: pre-create the personal workspace WITHOUT the user as a
-    // member (simulates admin error or partial migration).
+  test("create populates the owner as sole admin so ensureUserWorkspace is a pure read on the second login (Stage 1.1)", async () => {
+    // Stage 1.1 invariant: `WorkspaceStore.create` produces a personal
+    // workspace whose `members` is already `[{ userId: ownerUserId,
+    // role: "admin" }]`. The earlier "personal workspace exists with
+    // zero members" state can no longer be reached through the
+    // canonical create path — and `addMember` on a personal workspace
+    // is now rejected by the store. So ensureUserWorkspace becomes a
+    // pure read on every login after the first. Operators with
+    // pre-Stage-1.1 data converge via
+    // `scripts/cleanup-personal-workspace-members.ts`.
     const wsId = personalWorkspaceIdFor("user_alice");
-    await store.create("Alice's Workspace", wsId.slice(3), {
+    const pre = await store.create("Alice's Workspace", wsId.slice(3), {
       isPersonal: true,
       ownerUserId: "user_alice",
     });
+    expect(pre.members).toEqual([{ userId: "user_alice", role: "admin" }]);
 
-    // Pre-condition: workspace exists with zero members.
-    const pre = await store.get(wsId);
-    expect(pre?.members).toEqual([]);
-
-    // Act: provisioning runs.
     const ws = await ensureUserWorkspace(store, { id: "user_alice", displayName: "Alice" });
-
-    // The workspace is the same one; the user is now a member.
     expect(ws.id).toBe(wsId);
     expect(ws.members).toEqual([{ userId: "user_alice", role: "admin" }]);
   });

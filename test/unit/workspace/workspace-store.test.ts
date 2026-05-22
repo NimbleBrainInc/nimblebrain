@@ -349,20 +349,22 @@ describe("WorkspaceStore.update", () => {
     expect(updated?.about).toBe("new description");
   });
 
-  test("ignores attempted writes to isPersonal and ownerUserId (Pick excludes them)", async () => {
+  test("throws PersonalWorkspaceInvariantError on attempted writes to isPersonal/ownerUserId (Stage 1.1)", async () => {
     const ws = await store.create("Alice", "user_user_alice", {
       isPersonal: true,
       ownerUserId: "user_alice",
     });
-    // Cast to bypass the Pick<> at the type level — runtime should still
-    // preserve the original fields because update spreads only the allowed
-    // keys it accepted in the Pick. (TypeScript catches misuse at compile;
-    // this asserts the runtime contract too.)
-    const updated = await store.update(ws.id, {
-      isPersonal: false,
-      ownerUserId: "user_evil",
-    } as unknown as { name: string });
-    expect(updated?.isPersonal).toBe(true);
-    expect(updated?.ownerUserId).toBe("user_alice");
+    // Cast to bypass the Pick<> at the type level — runtime must throw
+    // loudly instead of silently stripping the disallowed keys. The
+    // silent-strip behavior is what produced multi-admin personal
+    // workspaces on hq production; Stage 1.1 replaces it with a typed
+    // error. Exhaustive invariant coverage lives in
+    // `personal-workspace-invariants.test.ts`.
+    await expect(
+      store.update(ws.id, {
+        isPersonal: false,
+        ownerUserId: "user_evil",
+      } as unknown as { name: string }),
+    ).rejects.toThrow(/personal-workspace invariant/i);
   });
 });

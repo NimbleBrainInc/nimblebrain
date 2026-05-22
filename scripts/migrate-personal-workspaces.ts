@@ -233,9 +233,11 @@ async function stampNonPersonal(
   if (!wantsPersonalStamp && !wantsAboutStamp) return false;
   if (dryRun) return true;
 
-  // Write directly — `store.update` strips isPersonal/ownerUserId by
-  // design (Task 001). For the migration we DO need to write isPersonal,
-  // so we bypass the patch shape and write the full record.
+  // Write directly — `store.update` throws PersonalWorkspaceInvariantError
+  // when an isPersonal/ownerUserId patch is attempted (Stage 1.1). The
+  // migration legitimately needs to write isPersonal on workspaces that
+  // don't carry it yet, so we bypass the patch shape and write the full
+  // record. Same precedent the Stage 1.1 cleanup script follows.
   const updated: Workspace = {
     ...ws,
     isPersonal: false,
