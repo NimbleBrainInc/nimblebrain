@@ -157,13 +157,21 @@ export class FileBackedHostResourcesResolver implements HostResourcesResolver {
       ? all.filter((entry) => entry.mimeType === params.filter?.mimeType)
       : all;
 
-    // Defensive: a buggy bundle could send `tags: "single-tag"` (string)
-    // instead of `tags: ["single-tag"]`. The handler's type cast doesn't
-    // validate runtime shape; without this guard, `.every` on a string
-    // throws TypeError and the bundle gets a generic dispatch failure.
-    // Treat non-array as no filter — the bundle author can debug their
-    // call shape from the empty-result behavior.
-    const tagFilter = Array.isArray(params.filter?.tags) ? params.filter.tags : [];
+    // Validate `tags` shape before iterating. A buggy bundle that sends
+    // `tags: "single-tag"` (string) instead of `tags: ["single-tag"]`
+    // would otherwise throw TypeError on `.every` and surface as a
+    // generic dispatch failure with no diagnostic. Reject with
+    // `-32602 Invalid params`, mirroring the unsupported-scheme branch
+    // above: same error code, same actionable shape for the bundle
+    // author. Treating non-array as "no filter" was considered and
+    // rejected — silently returning all files lies about whether the
+    // filter ran.
+    if (params.filter?.tags !== undefined && !Array.isArray(params.filter.tags)) {
+      throw new McpError(ErrorCode.InvalidParams, "filter.tags must be an array of strings", {
+        receivedType: typeof params.filter.tags,
+      });
+    }
+    const tagFilter = params.filter?.tags ?? [];
     const filteredByTags =
       tagFilter.length > 0
         ? filteredByMime.filter((entry) => tagFilter.every((tag) => entry.tags?.includes(tag)))

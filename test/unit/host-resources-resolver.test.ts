@@ -195,4 +195,28 @@ describe("FileBackedHostResourcesResolver.list", () => {
     }
     expect(caught?.code).toBe(INVALID_PARAMS);
   });
+
+  // Tag-shape validation. A buggy bundle sending `tags: "draft"` (string)
+  // instead of `tags: ["draft"]` (array) used to throw `TypeError: .every
+  // is not a function` and surface as a generic dispatch failure — no
+  // useful diagnostic. Now: reject with `-32602`, mirroring the
+  // scheme-filter branch. Silently treating non-array as "no filter"
+  // was rejected as misleading (the bundle gets all files back instead
+  // of a clear error).
+  it("rejects non-array tags filter with -32602", async () => {
+    let caught: McpError | null = null;
+    try {
+      // Pass a string where the type cast expects string[]. Coerced
+      // through `unknown` because the resolver's TS signature would
+      // otherwise reject this at compile time — the runtime guard is
+      // what we're exercising.
+      await makeResolver().list(
+        { filter: { tags: "draft" as unknown as string[] } },
+        ctxA,
+      );
+    } catch (e) {
+      caught = e as McpError;
+    }
+    expect(caught?.code).toBe(INVALID_PARAMS);
+  });
 });
