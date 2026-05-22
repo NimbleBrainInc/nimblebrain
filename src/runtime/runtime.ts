@@ -54,6 +54,7 @@ import { DEV_IDENTITY } from "../identity/providers/dev.ts";
 import { UserStore } from "../identity/user.ts";
 import { InstructionsStore } from "../instructions/index.ts";
 import { buildModelResolver, resolveModelString } from "../model/registry.ts";
+import { createToolListAggregator, type ToolListAggregator } from "../orchestrator/index.ts";
 import { PermissionStore } from "../permissions/permission-store.ts";
 import type {
   AppStateInfo,
@@ -206,6 +207,19 @@ export class Runtime {
   _getWorkspaceId: () => string | null = () => null;
   /** Per-workspace ToolRegistry instances — each workspace gets its own scoped registry. */
   private _workspaceRegistries: Map<string, ToolRegistry>;
+  /**
+   * Lazy cross-workspace tool-list aggregator for `/mcp` and (in T006)
+   * runtime chat. Constructed on first access against the runtime's
+   * workspace store + per-workspace registries. Watcher-backed cache
+   * (`src/orchestrator/tool-list-cache.ts`); disposed on `shutdown()`.
+   *
+   * Single-source-of-truth note: the aggregator is built lazily because
+   * the workspace store and the per-workspace registry map are populated
+   * during `Runtime.start()` and the constructor doesn't see them at the
+   * right moment. First access stamps the dependencies; subsequent
+   * accesses return the same instance.
+   */
+  private _toolListAggregator: ToolListAggregator | null = null;
   // Protected sources are captured in start() and passed to startWorkspaceBundles directly.
   /** The system source ("nb") — shared across workspace registries. */
   _systemSource: ToolSource | null;
@@ -1751,6 +1765,44 @@ export class Runtime {
   }
 
   /**
+   * Get the cross-workspace tool-list aggregator. Lazy on first call; same
+   * instance returned thereafter so the watcher cache lives a runtime
+   * lifetime. The aggregator is the load-bearing surface for
+   * identity-bound `/mcp` (T007) and runtime chat (T006) — every
+   * `tools/list` response for an identity flows through here.
+   *
+   * Per-workspace listings re-use the existing
+   * `ensureWorkspaceRegistry` JIT path. The aggregator does not
+   * pre-construct registries for every workspace the user can access;
+   * it only constructs the ones it needs to list. That stays
+   * pay-as-you-go.
+   */
+  getToolListAggregator(): ToolListAggregator {
+    if (!this._toolListAggregator) {
+      this._toolListAggregator = createToolListAggregator({
+        workDir: this.getWorkDir(),
+        workspaceStore: this._workspaceStore,
+        // Per-workspace lister: JIT-ensure the registry, then enumerate
+        // its tools. Wrapping `availableTools()` here keeps the
+        // aggregator decoupled from registry construction.
+        listToolsForWorkspace: async (wsId) => {
+          const registry = await this.ensureWorkspaceRegistry(wsId);
+          return registry.availableTools().then((schemas) =>
+            schemas.map((s) => ({
+              name: s.name,
+              description: s.description,
+              inputSchema: s.inputSchema,
+              source: "registry",
+              ...(s.annotations !== undefined ? { annotations: s.annotations } : {}),
+            })),
+          );
+        },
+      });
+    }
+    return this._toolListAggregator;
+  }
+
+  /**
    * Get the UserConnectorStore — per-user storage for personal connections.
    * Lazily constructed on first access and cached. Mirrors the WorkspaceStore
    * pattern but operates on `users/<userId>/user.json` instead of
@@ -2357,6 +2409,13 @@ export class Runtime {
 
   async shutdown(): Promise<void> {
     await this.telemetryManager.shutdown();
+    // Close the cross-workspace tool-list aggregator's FS watchers so
+    // long-running test suites don't leak handles between fixtures.
+    // Idempotent — `dispose()` checks an internal flag.
+    if (this._toolListAggregator) {
+      this._toolListAggregator.dispose();
+      this._toolListAggregator = null;
+    }
     // Stop all sources across all workspace registries
     for (const [_wsId, reg] of this._workspaceRegistries) {
       for (const name of reg.sourceNames()) {

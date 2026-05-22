@@ -140,6 +140,9 @@ async function createMcpClient(
 // ── Tests ───────────────────────────────────────────────────────────
 
 describe("MCP workspace scoping", () => {
+  // Stage 2: every tool name is namespaced as `ws_<id>/<source>__<tool>`.
+  // Per-workspace registry filtering still happens, but the namespacing
+  // is what tells the orchestrator which workspace's registry to consult.
   it("ListTools returns only workspace + protected tools (not denied)", async () => {
     const client = await createMcpClient();
     try {
@@ -147,11 +150,11 @@ describe("MCP workspace scoping", () => {
       const names = result.tools.map((t) => t.name);
 
       // Should include allowed and protected tools
-      expect(names).toContain(`${ALLOWED_SOURCE}__greet`);
-      expect(names).toContain(`${PROTECTED_SOURCE}__admin`);
+      expect(names).toContain(`${TEST_WORKSPACE_ID}/${ALLOWED_SOURCE}__greet`);
+      expect(names).toContain(`${TEST_WORKSPACE_ID}/${PROTECTED_SOURCE}__admin`);
 
       // Should NOT include denied bundle's tools
-      expect(names).not.toContain(`${DENIED_SOURCE}__secret`);
+      expect(names).not.toContain(`${TEST_WORKSPACE_ID}/${DENIED_SOURCE}__secret`);
     } finally {
       await client.close();
     }
@@ -161,7 +164,7 @@ describe("MCP workspace scoping", () => {
     const client = await createMcpClient();
     try {
       const result = await client.callTool({
-        name: `${ALLOWED_SOURCE}__greet`,
+        name: `${TEST_WORKSPACE_ID}/${ALLOWED_SOURCE}__greet`,
         arguments: { name: "world" },
       });
       expect(result.isError).toBeFalsy();
@@ -177,7 +180,7 @@ describe("MCP workspace scoping", () => {
     const client = await createMcpClient();
     try {
       const result = await client.callTool({
-        name: `${PROTECTED_SOURCE}__admin`,
+        name: `${TEST_WORKSPACE_ID}/${PROTECTED_SOURCE}__admin`,
         arguments: {},
       });
       expect(result.isError).toBeFalsy();
@@ -186,15 +189,26 @@ describe("MCP workspace scoping", () => {
     }
   });
 
-  it("CallTool to non-workspace bundle returns error", async () => {
+  it("CallTool to non-workspace bundle returns a JSON-RPC error (unknown_tool_source)", async () => {
     const client = await createMcpClient();
     try {
-      const result = await client.callTool({
-        name: `${DENIED_SOURCE}__secret`,
-        arguments: {},
-      });
-      // The tool doesn't exist in the workspace registry, so execute will fail
-      expect(result.isError).toBe(true);
+      // Stage 2: a source not in the target workspace's registry
+      // surfaces as the orchestrator's `UnknownToolSource` →
+      // -32601 MethodNotFound with `data.reason: "unknown_tool_source"`.
+      let errorCode: number | undefined;
+      let dataReason: string | undefined;
+      try {
+        await client.callTool({
+          name: `${TEST_WORKSPACE_ID}/${DENIED_SOURCE}__secret`,
+          arguments: {},
+        });
+      } catch (err) {
+        const e = err as { code?: number; data?: { reason?: string } };
+        errorCode = e.code;
+        dataReason = e.data?.reason;
+      }
+      expect(errorCode).toBe(-32601);
+      expect(dataReason).toBe("unknown_tool_source");
     } finally {
       await client.close();
     }

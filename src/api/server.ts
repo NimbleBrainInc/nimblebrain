@@ -175,7 +175,11 @@ export function startServer(options: ServerOptions): ServerHandle {
   // reclaim the same logical session on the same schedule, with the host's
   // sweep being what actually frees the JS heap. The registry TTL is a
   // backstop on the metadata layer for the cluster-shared view.
-  const mcpHost = new McpServerHost({ registry: sessionRegistry, idleTtlMs: sessionTtlMs });
+  const mcpHost = new McpServerHost({
+    registry: sessionRegistry,
+    runtime,
+    idleTtlMs: sessionTtlMs,
+  });
 
   // Build shared context for all route groups
   const ctx: AppContext = {

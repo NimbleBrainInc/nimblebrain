@@ -230,15 +230,18 @@ describe("Bundle with placements → /v1/shell", () => {
 // =============================================================================
 
 describe("MCP client e2e with nb tools", () => {
+	// Stage 2: every tool name is namespaced as `ws_<id>/<source>__<tool>`.
+	const NB_PREFIX = `${TEST_WORKSPACE_ID}/nb__`;
+
 	it("listTools includes nb__ prefixed tools", async () => {
 		const client = await createMcpClient();
 		try {
 			const result = await client.listTools();
-			const coreTools = result.tools.filter((t) => t.name.startsWith("nb__"));
+			const coreTools = result.tools.filter((t) => t.name.startsWith(NB_PREFIX));
 			expect(coreTools.length).toBeGreaterThanOrEqual(7);
 
 			const names = coreTools.map((t) => t.name).sort();
-			expect(names).toContain("nb__list_apps");
+			expect(names).toContain(`${NB_PREFIX}list_apps`);
 		} finally {
 			await client.close();
 		}
@@ -248,11 +251,11 @@ describe("MCP client e2e with nb tools", () => {
 		const client = await createMcpClient();
 		try {
 			const result = await client.listTools();
-			const nbTools = result.tools.filter((t) => t.name.startsWith("nb__"));
+			const nbTools = result.tools.filter((t) => t.name.startsWith(NB_PREFIX));
 			expect(nbTools.length).toBeGreaterThanOrEqual(1);
 
 			const names = nbTools.map((t) => t.name);
-			expect(names).toContain("nb__search");
+			expect(names).toContain(`${NB_PREFIX}search`);
 		} finally {
 			await client.close();
 		}
@@ -262,7 +265,7 @@ describe("MCP client e2e with nb tools", () => {
 		const client = await createMcpClient();
 		try {
 			const result = await client.callTool({
-				name: "nb__list_apps",
+				name: `${NB_PREFIX}list_apps`,
 				arguments: {},
 			});
 			expect(result.isError).toBeFalsy();

@@ -22,10 +22,9 @@ import {
 	type SessionRegistry,
 } from "../../../src/api/session-store/index.ts";
 import type { ResolvedFeatures } from "../../../src/config/features.ts";
-import { ToolRegistry } from "../../../src/tools/registry.ts";
 
 const FAKE_FEATURES = {} as ResolvedFeatures;
-const WORKSPACE_ID = "ws_test";
+const SESSION_CTX = { identity: null };
 
 function initRequest(): Request {
 	return new Request("http://test/mcp", {
@@ -59,15 +58,8 @@ function listRequest(sessionId: string): Request {
 	});
 }
 
-async function initSession(
-	host: McpServerHost,
-	toolRegistry: ToolRegistry,
-): Promise<string> {
-	const res = await host.handle(initRequest(), toolRegistry, FAKE_FEATURES, {
-		registry: toolRegistry,
-		identity: null,
-		workspaceId: WORKSPACE_ID,
-	});
+async function initSession(host: McpServerHost): Promise<string> {
+	const res = await host.handle(initRequest(), FAKE_FEATURES, SESSION_CTX);
 	const sid = res.headers.get("mcp-session-id");
 	if (!sid) {
 		throw new Error(`expected mcp-session-id header on init response; status=${res.status}`);
@@ -75,22 +67,13 @@ async function initSession(
 	return sid;
 }
 
-async function touch(
-	host: McpServerHost,
-	toolRegistry: ToolRegistry,
-	sessionId: string,
-): Promise<void> {
-	await host.handle(listRequest(sessionId), toolRegistry, FAKE_FEATURES, {
-		registry: toolRegistry,
-		identity: null,
-		workspaceId: WORKSPACE_ID,
-	});
+async function touch(host: McpServerHost, sessionId: string): Promise<void> {
+	await host.handle(listRequest(sessionId), FAKE_FEATURES, SESSION_CTX);
 }
 
 describe("McpServerHost — reclamation", () => {
 	let registry: SessionRegistry;
 	let host: McpServerHost;
-	let toolRegistry: ToolRegistry;
 
 	afterEach(async () => {
 		await host?.shutdown();
@@ -104,11 +87,10 @@ describe("McpServerHost — reclamation", () => {
 				idleTtlMs: 25,
 				sweepIntervalMs: 5,
 			});
-			toolRegistry = new ToolRegistry();
 		});
 
 		it("closes transports whose idle window has elapsed", async () => {
-			const sid = await initSession(host, toolRegistry);
+			const sid = await initSession(host);
 			expect(host.transportCount()).toBe(1);
 
 			// Wait past TTL + a sweep tick.
@@ -118,22 +100,18 @@ describe("McpServerHost — reclamation", () => {
 
 			// Subsequent request reports `not_found` — the registry was
 			// also cleaned by the onclose cascade.
-			const res = await host.handle(listRequest(sid), toolRegistry, FAKE_FEATURES, {
-				registry: toolRegistry,
-				identity: null,
-				workspaceId: WORKSPACE_ID,
-			});
+			const res = await host.handle(listRequest(sid), FAKE_FEATURES, SESSION_CTX);
 			expect(res.status).toBe(404);
 			const body = (await res.json()) as { error: { data: { reason: string } } };
 			expect(body.error.data.reason).toBe("not_found");
 		});
 
 		it("keeps an actively-touched session alive past TTL", async () => {
-			const sid = await initSession(host, toolRegistry);
+			const sid = await initSession(host);
 			// Touch every 10ms across a window > TTL (25ms).
 			for (let i = 0; i < 6; i++) {
 				await new Promise((r) => setTimeout(r, 10));
-				await touch(host, toolRegistry, sid);
+				await touch(host, sid);
 			}
 			expect(host.transportCount()).toBe(1);
 		});
@@ -149,25 +127,20 @@ describe("McpServerHost — reclamation", () => {
 				maxSessions: 3,
 				sweepIntervalMs: 60_000,
 			});
-			toolRegistry = new ToolRegistry();
 		});
 
 		it("evicts the least-recently-used transport when a new init arrives at cap", async () => {
-			const s1 = await initSession(host, toolRegistry);
-			await initSession(host, toolRegistry);
-			await initSession(host, toolRegistry);
+			const s1 = await initSession(host);
+			await initSession(host);
+			await initSession(host);
 			expect(host.transportCount()).toBe(3);
 
 			// Fourth init at cap=3 → s1 evicted (it's the oldest).
-			const s4 = await initSession(host, toolRegistry);
+			const s4 = await initSession(host);
 			expect(host.transportCount()).toBe(3);
 
 			// s1 is gone — should now miss with not_found.
-			const res = await host.handle(listRequest(s1), toolRegistry, FAKE_FEATURES, {
-				registry: toolRegistry,
-				identity: null,
-				workspaceId: WORKSPACE_ID,
-			});
+			const res = await host.handle(listRequest(s1), FAKE_FEATURES, SESSION_CTX);
 			expect(res.status).toBe(404);
 			const body = (await res.json()) as { error: { data: { reason: string } } };
 			expect(body.error.data.reason).toBe("not_found");
@@ -177,38 +150,26 @@ describe("McpServerHost — reclamation", () => {
 		});
 
 		it("touching a session moves it out of LRU eviction range", async () => {
-			const s1 = await initSession(host, toolRegistry);
-			const s2 = await initSession(host, toolRegistry);
-			const s3 = await initSession(host, toolRegistry);
+			const s1 = await initSession(host);
+			const s2 = await initSession(host);
+			const s3 = await initSession(host);
 
 			// Touch s1 — now LRU order is s2, s3, s1.
-			await touch(host, toolRegistry, s1);
+			await touch(host, s1);
 
 			// Fourth init evicts the new oldest, which is s2.
-			await initSession(host, toolRegistry);
+			await initSession(host);
 
 			// s1 still live (we touched it).
-			const r1 = await host.handle(listRequest(s1), toolRegistry, FAKE_FEATURES, {
-				registry: toolRegistry,
-				identity: null,
-				workspaceId: WORKSPACE_ID,
-			});
+			const r1 = await host.handle(listRequest(s1), FAKE_FEATURES, SESSION_CTX);
 			expect(r1.status).not.toBe(404);
 
 			// s2 evicted.
-			const r2 = await host.handle(listRequest(s2), toolRegistry, FAKE_FEATURES, {
-				registry: toolRegistry,
-				identity: null,
-				workspaceId: WORKSPACE_ID,
-			});
+			const r2 = await host.handle(listRequest(s2), FAKE_FEATURES, SESSION_CTX);
 			expect(r2.status).toBe(404);
 
 			// s3 still live (untouched but newer than s2).
-			const r3 = await host.handle(listRequest(s3), toolRegistry, FAKE_FEATURES, {
-				registry: toolRegistry,
-				identity: null,
-				workspaceId: WORKSPACE_ID,
-			});
+			const r3 = await host.handle(listRequest(s3), FAKE_FEATURES, SESSION_CTX);
 			expect(r3.status).not.toBe(404);
 		});
 	});

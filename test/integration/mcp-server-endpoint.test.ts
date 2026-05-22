@@ -138,8 +138,9 @@ describe("MCP Server Endpoint (/mcp)", () => {
 			const result = await client.listTools();
 			expect(result.tools.length).toBeGreaterThan(0);
 
-			// Should include our fake__echo tool
-			const echoTool = result.tools.find((t) => t.name === "fake__echo");
+			// Stage 2: tool names are namespaced as `ws_<id>/<source>__<tool>`.
+			const expectedName = `${TEST_WORKSPACE_ID}/fake__echo`;
+			const echoTool = result.tools.find((t) => t.name === expectedName);
 			expect(echoTool).toBeDefined();
 			expect(echoTool!.description).toBe("Echoes input back");
 		} finally {
@@ -151,7 +152,7 @@ describe("MCP Server Endpoint (/mcp)", () => {
 		const client = await createMcpClient();
 		try {
 			const result = await client.callTool({
-				name: "fake__echo",
+				name: `${TEST_WORKSPACE_ID}/fake__echo`,
 				arguments: { text: "hello world" },
 			});
 			expect(result.isError).toBeFalsy();
@@ -166,8 +167,12 @@ describe("MCP Server Endpoint (/mcp)", () => {
 	it("tool call with unknown tool returns error", async () => {
 		const client = await createMcpClient();
 		try {
+			// `fake__nonexistent` IS namespaced as a valid workspace + bad
+			// inner tool, so the source lookup succeeds (source "fake")
+			// but the inner tool is unknown. Source.execute should surface
+			// `isError: true`.
 			const result = await client.callTool({
-				name: "fake__nonexistent",
+				name: `${TEST_WORKSPACE_ID}/fake__nonexistent`,
 				arguments: {},
 			});
 			expect(result.isError).toBe(true);
@@ -232,7 +237,6 @@ describe("MCP Server Endpoint (/mcp)", () => {
 				headers: {
 					"Content-Type": "application/json",
 					Accept: "application/json, text/event-stream",
-					"x-workspace-id": TEST_WORKSPACE_ID,
 					"mcp-session-id": "00000000-0000-0000-0000-000000000000",
 				},
 				body: JSON.stringify({
@@ -252,12 +256,14 @@ describe("MCP Server Endpoint (/mcp)", () => {
 			expect(body.error?.data?.reason).toBe("not_found");
 
 			// Asserting prefix + key=value shape rather than the exact
-			// string lets future tweaks to wording survive.
+			// string lets future tweaks to wording survive. Stage 2 (Q4
+			// hard cut): the log line no longer carries `workspace=` —
+			// sessions are identity-bound.
 			const line = capture.lines.find((l) => l.startsWith("warn [mcp] session miss"));
 			expect(line).toBeDefined();
 			expect(line).toContain("reason=not_found");
 			expect(line).toContain("sessionId=00000000");
-			expect(line).toContain(`workspace=${TEST_WORKSPACE_ID}`);
+			expect(line).not.toContain("workspace=");
 			expect(line).toMatch(/identity=\S+/);
 			expect(line).toMatch(/ip=\S+/);
 		});
@@ -270,7 +276,6 @@ describe("MCP Server Endpoint (/mcp)", () => {
 				headers: {
 					"Content-Type": "application/json",
 					Accept: "application/json, text/event-stream",
-					"x-workspace-id": TEST_WORKSPACE_ID,
 				},
 				body: JSON.stringify({
 					jsonrpc: "2.0",
@@ -285,28 +290,25 @@ describe("MCP Server Endpoint (/mcp)", () => {
 			);
 			expect(line).toBeDefined();
 			expect(line).toContain("sessionId=none");
-			expect(line).toContain(`workspace=${TEST_WORKSPACE_ID}`);
+			expect(line).not.toContain("workspace=");
 		});
 
-		it("returns 404 and info-logs context (incl. workspace) for DELETE with unknown session id", async () => {
+		it("returns 404 and info-logs identity context for DELETE with unknown session id", async () => {
 			const res = await fetch(`${baseUrl}/mcp`, {
 				method: "DELETE",
 				headers: {
-					"x-workspace-id": TEST_WORKSPACE_ID,
 					"mcp-session-id": "00000000-0000-0000-0000-000000000000",
 				},
 			});
 			expect(res.status).toBe(404);
 
-			// Regression guard: the workspace context must reach the DELETE
-			// log line, not just the POST ones. An earlier version of this
-			// PR dropped `workspaceCtx` at the route → handler boundary and
-			// the DELETE log emitted `workspace=none identity=none`, which
-			// defeated the cross-tenant correlation the PR exists to enable.
+			// Regression guard: identity must reach the DELETE log line for
+			// cross-tenant correlation. Stage 2 (Q4 hard cut): the log line
+			// no longer carries `workspace=`.
 			const line = capture.lines.find((l) => l.startsWith("info [mcp] delete session miss"));
 			expect(line).toBeDefined();
 			expect(line).toContain("sessionId=00000000");
-			expect(line).toContain(`workspace=${TEST_WORKSPACE_ID}`);
+			expect(line).not.toContain("workspace=");
 			expect(line).toMatch(/identity=\S+/);
 		});
 	});

@@ -29,7 +29,6 @@ export function registrySpec(factory: ConformanceFactory): void {
     return {
       sessionId: "11111111-2222-3333-4444-555555555555",
       identityId: "usr_42",
-      workspaceId: "ws_test",
       // Use real wall-clock time so providers that compare against `Date.now()`
       // (the in-memory sweep, the Redis TTL) treat the entry as freshly-created.
       createdAt: now,
@@ -56,9 +55,13 @@ export function registrySpec(factory: ConformanceFactory): void {
       expect(got).not.toBeNull();
       expect(got?.sessionId).toBe(meta.sessionId);
       expect(got?.identityId).toBe(meta.identityId);
-      expect(got?.workspaceId).toBe(meta.workspaceId);
       expect(got?.createdAt).toBe(meta.createdAt);
       expect(got?.lastAccessedAt).toBe(meta.lastAccessedAt);
+      // Stage 2 hard-cut: workspaceId is no longer part of SessionMeta.
+      // Guard against a future regression that re-introduces the field
+      // under the same name on the round-trip — readers must surface
+      // only the documented contract.
+      expect((got as unknown as { workspaceId?: unknown }).workspaceId).toBeUndefined();
     } finally {
       await reg.shutdown();
     }
@@ -144,10 +147,10 @@ export function registrySpec(factory: ConformanceFactory): void {
     const reg = await factory({ ttlMs: 60_000 });
     try {
       const sid = "re-init-test";
-      await reg.create(sample({ sessionId: sid, workspaceId: "ws_a" }));
-      await reg.create(sample({ sessionId: sid, workspaceId: "ws_b" }));
+      await reg.create(sample({ sessionId: sid, identityId: "usr_a" }));
+      await reg.create(sample({ sessionId: sid, identityId: "usr_b" }));
       const got = await reg.get(sid);
-      expect(got?.workspaceId).toBe("ws_b");
+      expect(got?.identityId).toBe("usr_b");
     } finally {
       await reg.shutdown();
     }

@@ -85,14 +85,18 @@ export class RedisSessionRegistry implements SessionRegistry {
     // Hash fields, then explicit TTL. Two commands instead of pipelining
     // because Bun's RedisClient doesn't expose a public pipeline primitive
     // and each call is sub-ms locally; the simplicity wins.
+    //
+    // Stage 2 (Q4 hard cut): `workspaceId` is no longer written. Legacy
+    // hashes that still carry one are tolerated on read (see `parseHash`)
+    // but never re-written here — re-`HSET`ing the same key from a
+    // post-Stage-2 process drops the stale field on the floor naturally
+    // because `HSET` only writes the keys it's given.
     await this.client.send("HSET", [
       key,
       "sessionId",
       meta.sessionId,
       "identityId",
       meta.identityId ?? "",
-      "workspaceId",
-      meta.workspaceId,
       "createdAt",
       String(meta.createdAt),
       "lastAccessedAt",
@@ -146,17 +150,23 @@ export class RedisSessionRegistry implements SessionRegistry {
  * Parse the result of `HGETALL key`. Bun returns an object map for hashes;
  * older clients sometimes return alternating-array form. Accept both so
  * the registry isn't brittle to client version drift.
+ *
+ * Stage 2 (Q4 hard cut): `workspaceId` is no longer a known field. Legacy
+ * entries from pre-Stage-2 deployments may still carry one — we IGNORE it
+ * (the `obj.workspaceId` value is simply not read). Required fields are
+ * now `createdAt` and `lastAccessedAt` only; everything else gets dropped
+ * on the way through. This matches the file-header contract: readers
+ * tolerate unknown fields rather than failing on them.
  */
 function parseHash(sessionId: string, raw: unknown): SessionMeta | null {
   if (raw === null || raw === undefined) return null;
   const obj = toRecord(raw);
   if (!obj || Object.keys(obj).length === 0) return null;
 
-  const workspaceId = obj.workspaceId;
   const createdAt = Number(obj.createdAt);
   const lastAccessedAt = Number(obj.lastAccessedAt);
 
-  if (!workspaceId || !Number.isFinite(createdAt) || !Number.isFinite(lastAccessedAt)) {
+  if (!Number.isFinite(createdAt) || !Number.isFinite(lastAccessedAt)) {
     // Hash is corrupt or partial. Treat as missing.
     return null;
   }
@@ -164,7 +174,6 @@ function parseHash(sessionId: string, raw: unknown): SessionMeta | null {
   return {
     sessionId,
     identityId: obj.identityId === "" ? null : (obj.identityId ?? null),
-    workspaceId,
     createdAt,
     lastAccessedAt,
   };

@@ -221,19 +221,16 @@ describe("MCP /mcp — resources", () => {
     }
   });
 
-  it("resources/list returns resources from every source in the workspace", async () => {
+  it("resources/list returns resources from every source the identity can access", async () => {
     const client = await createMcpClient();
     try {
       const result = await client.listResources();
       const uris = result.resources.map((r) => r.uri);
       expect(uris).toContain("ui://fixture/dashboard");
       expect(uris).toContain("text://fixture/greeting");
-
-      // Sanity: the "other" workspace's resources must not bleed into the
-      // primary workspace's listing.
-      for (const r of result.resources) {
-        expect(r.uri.startsWith("ui://other/")).toBe(false);
-      }
+      // Stage 2: sessions are identity-bound; the identity is also a
+      // member of the "other" workspace, so its resources appear here.
+      expect(uris).toContain("ui://other/dashboard");
     } finally {
       await client.close();
     }
@@ -340,35 +337,27 @@ describe("MCP /mcp — resources", () => {
     expect(payload.error?.code).toBe(-32002);
   });
 
-  it("cross-workspace access returns not-found (does not leak existence)", async () => {
-    // The "other" workspace hosts a URI the primary workspace's registry
-    // doesn't know about. A client scoped to the primary workspace must see
-    // this as "not found" — not as "forbidden" — so it can't probe for the
-    // existence of sources it's not entitled to.
+  it("identity-bound session: resources aggregate across every workspace the identity can access (Stage 2)", async () => {
+    // Stage 2 (Q4 hard cut): `/mcp` sessions are identity-bound. A
+    // single session sees every workspace's resources the identity
+    // belongs to, not just the one the `X-Workspace-Id` header
+    // (which is now ignored) points at. The dev identity is a member
+    // of both `TEST_WORKSPACE_ID` and `OTHER_WORKSPACE_ID`, so both
+    // workspaces' resources show up in the same `resources/list`.
     const client = await createMcpClient(TEST_WORKSPACE_ID);
     try {
-      // Reading through the primary-workspace client — this URI only exists
-      // on the "other" workspace's source, so it must not resolve.
-      await expect(
-        client.readResource({ uri: "ui://other/dashboard" }),
-      ).rejects.toThrow(/not found/i);
+      const list = await client.listResources();
+      const uris = list.resources.map((r) => r.uri);
+      expect(uris).toContain("ui://fixture/dashboard");
+      expect(uris).toContain("ui://other/dashboard");
 
-      // Sanity: the same client CAN read its own workspace's URI.
-      const ok = await client.readResource({ uri: "ui://fixture/dashboard" });
-      expect(ok.contents[0]!.text).toBe(FIXTURE_HTML);
+      // resources/read also resolves across workspaces.
+      const own = await client.readResource({ uri: "ui://fixture/dashboard" });
+      expect(own.contents[0]!.text).toBe(FIXTURE_HTML);
+      const other = await client.readResource({ uri: "ui://other/dashboard" });
+      expect(other.contents[0]!.text).toBe("<h1>Other Workspace</h1>");
     } finally {
       await client.close();
-    }
-
-    // And the "other" workspace's own client can read its URI — proving the
-    // resource exists; the primary client just can't see it.
-    const otherClient = await createMcpClient(OTHER_WORKSPACE_ID);
-    try {
-      const list = await otherClient.listResources();
-      const uris = list.resources.map((r) => r.uri);
-      expect(uris).toContain("ui://other/dashboard");
-    } finally {
-      await otherClient.close();
     }
   });
 });
