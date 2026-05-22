@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { type Dirent, existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import matter from "gray-matter";
@@ -119,7 +119,7 @@ export function mergeScopedSkills(platform: Skill[], workspace: Skill[], user: S
 }
 
 function collectScopedSkills(dir: string, scope: SkillScope, out: Skill[], depth: number): void {
-  let entries: import("node:fs").Dirent[];
+  let entries: Dirent[];
   try {
     entries = readdirSync(dir, { withFileTypes: true });
   } catch {

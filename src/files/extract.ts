@@ -1,6 +1,7 @@
 import mammoth from "mammoth";
 import { extractText as extractPdfText } from "unpdf";
 import * as XLSX from "xlsx";
+import { isTextMime } from "./mime.ts";
 
 /**
  * Truncation suffix used by callers that route extracted text into the
@@ -49,22 +50,6 @@ export async function extractText(
     console.error(`[files/extract] Failed to extract text from ${mimeType}:`, err);
     return null;
   }
-}
-
-const TEXT_MIME_TYPES = new Set([
-  "text/plain",
-  "text/csv",
-  "text/markdown",
-  "text/html",
-  "text/xml",
-  "text/yaml",
-  "application/json",
-  "application/xml",
-  "application/yaml",
-]);
-
-function isTextMime(mimeType: string): boolean {
-  return TEXT_MIME_TYPES.has(mimeType);
 }
 
 function truncate(

@@ -7,9 +7,13 @@ import {
   type UserConfigFieldDef,
 } from "../config/workspace-credentials.ts";
 import type { EventSink } from "../engine/types.ts";
-import { assertHostCapabilitiesAvailable } from "../host-resources/index.ts";
+import {
+  assertHostCapabilitiesAvailable,
+  type HostResourcesRateLimit,
+  type HostResourcesResolver,
+} from "../host-resources/index.ts";
 import { FileCredentialStore } from "../tools/credential-store.ts";
-import { McpSource } from "../tools/mcp-source.ts";
+import { type BundleMcpContext, McpSource } from "../tools/mcp-source.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
 import type { ToolSource } from "../tools/types.ts";
 import {
@@ -37,6 +41,43 @@ import type {
   StartBundleResult,
 } from "./types.ts";
 import { validateBundleUrl } from "./url-validator.ts";
+
+/**
+ * Per-spawn host-resources deps. Callers (lifecycle, workspace-ops) thread
+ * these in when they know the workspace; `startBundleSource` composes the
+ * full `BundleMcpContext` for each spawned source by adding the source name
+ * as `bundleId`.
+ *
+ * Absent for in-process platform sources (which don't go through
+ * `startBundleSource` anyway) and for paths that don't yet plumb the
+ * deps (boot reload, configureBundle restart, connector eager-start —
+ * follow-up).
+ */
+export interface BundleMcpDeps {
+  workspaceId: string;
+  hostResources: HostResourcesResolver;
+  rateLimit: HostResourcesRateLimit;
+}
+
+/**
+ * Compose the per-source `BundleMcpContext` from the deps captured at
+ * the workspace level plus the resolved source name. Exported so the
+ * one other call site that constructs an `McpSource` directly
+ * (`lifecycle.installRemote`, which doesn't go through this function)
+ * uses the same four-field shape.
+ */
+export function composeBundleMcpContext(
+  deps: BundleMcpDeps | undefined,
+  sourceName: string,
+): BundleMcpContext | undefined {
+  if (!deps) return undefined;
+  return {
+    workspaceId: deps.workspaceId,
+    bundleId: sourceName,
+    hostResources: deps.hostResources,
+    rateLimit: deps.rateLimit,
+  };
+}
 
 /**
  * Platform-side context every bundle subprocess needs at spawn time,
@@ -199,6 +240,17 @@ export async function startBundleSource(
      * SSE event so the UI banner appears. No-op for non-URL bundles.
      */
     onInteractiveAuthRequired?: (authorizationUrl: string) => void;
+    /**
+     * Per-workspace host-resources deps. When present, the spawned
+     * McpSource registers inbound handlers for
+     * `ai.nimblebrain/resources/{read,list}` so the bundle can read
+     * workspace files through the platform. Workspace-id-bearing
+     * caller provides the resolver + rate-limit shared across all
+     * bundles in this workspace; the source-name (composed inside
+     * this function) supplies the `bundleId` half of the rate-limit
+     * + audit key.
+     */
+    bundleMcp?: BundleMcpDeps;
   },
 ): Promise<StartBundleResult> {
   // Reconcile workspaceContext / wsId / workDir into a single context for
@@ -342,6 +394,7 @@ export async function startBundleSource(
         authProvider,
       },
       eventSink,
+      composeBundleMcpContext(opts?.bundleMcp, sourceName),
     );
 
     // Kick off start() and finalize on completion. The promise's value
@@ -487,19 +540,20 @@ export async function startBundleSource(
       meta = extractBundleMeta(cachedManifest as unknown as Record<string, unknown>);
       manifest = cachedManifest;
     } else {
-      // Same silent-failure shape as the bug this file's helper extraction was
-      // written to fix: with no manifest in cache we can't read `_meta`
-      // capability declarations, so http-proxy (and any future declaration)
-      // gets silently skipped at spawn. Surface it loudly instead of letting
+      // Same silent-failure shape as the bug this file's helper extraction
+      // was written to fix: with no manifest in cache we can't read `_meta`
+      // capability declarations, so http-proxy and host_capabilities get
+      // silently skipped at spawn. Surface it loudly instead of letting
       // operators chase phantom UI bugs.
       //
-      // The host-capability gate is also degraded by this path: with
-      // `manifest === null`, `assertHostCapabilitiesAvailable` below
-      // is skipped, so a `host_capabilities[k] = { required: true }`
-      // declaration that would normally refuse install is silently bypassed.
-      // Phase 1 is a no-op (no bundle declares required:true yet); fail-closed
-      // semantics for this path are a Phase 2 follow-up alongside the
-      // first bundle that depends on the gate.
+      // The host-capability gate is also degraded by this path. Fail-closed
+      // was considered for Phase 2a and reverted: the boot-reload path
+      // (workspace.json carries a bundle ref whose manifest was never
+      // mpak-cached, or whose cache was wiped between sessions) hits this
+      // legitimately, and refusing the spawn there breaks workspaces that
+      // were valid before the platform restart. A proper resolution
+      // requires a cache-warm step before the check; tracked for a
+      // follow-up.
       log.warn(
         `[bundles] manifest cache miss for ${ref.name} — capability declarations ` +
           "(http-proxy, host_capabilities, etc.) will be skipped at spawn, including " +
@@ -561,6 +615,7 @@ export async function startBundleSource(
         },
       },
       eventSink,
+      composeBundleMcpContext(opts?.bundleMcp, sourceName),
     );
   } else {
     const internalEnv = ref.protected && opts?.internalEnv ? opts.internalEnv : undefined;
@@ -571,6 +626,7 @@ export async function startBundleSource(
       opts?.dataDir,
       eventSink,
       wsContext?.workspaceId,
+      opts?.bundleMcp,
     );
     source = result.source;
     meta = result.meta;
@@ -617,6 +673,7 @@ function buildLocalSource(
   dataDirOverride: string | undefined,
   eventSink: EventSink,
   wsId: string | undefined,
+  bundleMcp: BundleMcpDeps | undefined,
 ): { source: McpSource; meta: LocalBundleMeta; manifest: BundleManifest } {
   const bundleDir = resolveLocalBundle(ref.path, configDir);
   if (!bundleDir) {
@@ -726,6 +783,7 @@ function buildLocalSource(
       },
     },
     eventSink,
+    composeBundleMcpContext(bundleMcp, sourceName),
   );
 
   return {

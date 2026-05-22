@@ -5,10 +5,12 @@ import { fileURLToPath } from "node:url";
 import type { LanguageModelV3, LanguageModelV3Message } from "@ai-sdk/provider";
 import { NoopEventSink } from "../adapters/noop-events.ts";
 import { WorkspaceLogSink } from "../adapters/workspace-log-sink.ts";
+import type { AutomationDomainContext } from "../bundles/automations/src/domain.ts";
 import { BundleLifecycleManager } from "../bundles/lifecycle.ts";
 import { deriveServerName } from "../bundles/paths.ts";
 import { setConnectionRunningHandler } from "../bundles/pending-auth-buffer.ts";
-import type { AppInfo, BundleInstance } from "../bundles/types.ts";
+import type { BundleMcpDeps } from "../bundles/startup.ts";
+import type { AppInfo, BundleInstance, PlacementDeclaration } from "../bundles/types.ts";
 import { log } from "../cli/log.ts";
 import { isToolVisibleToRole, type ResolvedFeatures, resolveFeatures } from "../config/features.ts";
 import { deriveOverridePath } from "../config/overrides.ts";
@@ -19,9 +21,11 @@ import { JsonlConversationStore } from "../conversation/jsonl-store.ts";
 import { InMemoryConversationStore } from "../conversation/memory-store.ts";
 import type {
   Conversation,
+  ConversationAccessContext,
   ConversationListResult,
   ConversationStore,
   CreateConversationOptions,
+  ListOptions,
 } from "../conversation/types.ts";
 import { sliceHistory, stripOlderReasoning, windowMessages } from "../conversation/window.ts";
 import { AgentEngine } from "../engine/engine.ts";
@@ -35,11 +39,13 @@ import type {
   EventSink,
   SkillsLoadedPayload,
   ToolPromotionResult,
+  ToolRouter,
   ToolSchema,
 } from "../engine/types.ts";
 import { rehydrateUserResources } from "../files/rehydrate.ts";
 import { createFileStore } from "../files/store.ts";
 import { DEFAULT_FILE_CONFIG, type FileConfig } from "../files/types.ts";
+import { FileBackedHostResourcesResolver, TokenBucketRateLimit } from "../host-resources/index.ts";
 import type { InstanceConfig } from "../identity/instance.ts";
 import { loadInstanceConfig } from "../identity/instance.ts";
 import type { IdentityProvider, UserIdentity } from "../identity/provider.ts";
@@ -49,7 +55,12 @@ import { UserStore } from "../identity/user.ts";
 import { InstructionsStore } from "../instructions/index.ts";
 import { buildModelResolver, resolveModelString } from "../model/registry.ts";
 import { PermissionStore } from "../permissions/permission-store.ts";
-import type { Layer3SkillEntry, PromptAppInfo } from "../prompt/compose.ts";
+import type {
+  AppStateInfo,
+  FocusedAppInfo,
+  Layer3SkillEntry,
+  PromptAppInfo,
+} from "../prompt/compose.ts";
 import { composeSystemPrompt } from "../prompt/compose.ts";
 import { ConnectorDirectory } from "../registries/directory.ts";
 import { RegistryStore } from "../registries/registry-store.ts";
@@ -73,7 +84,7 @@ import type { DelegateContext } from "../tools/delegate.ts";
 import { McpSource } from "../tools/mcp-source.ts";
 import { SharedSourceRef, type ToolRegistry } from "../tools/registry.ts";
 import { createSystemTools } from "../tools/system-tools.ts";
-import type { ResourceData } from "../tools/types.ts";
+import type { ResourceData, ToolSource } from "../tools/types.ts";
 import { UserConnectorStore } from "../users/user-connector-store.ts";
 import { WorkspaceContext } from "../workspace/context.ts";
 import { WorkspaceStore } from "../workspace/workspace-store.ts";
@@ -197,9 +208,9 @@ export class Runtime {
   private _workspaceRegistries: Map<string, ToolRegistry>;
   // Protected sources are captured in start() and passed to startWorkspaceBundles directly.
   /** The system source ("nb") — shared across workspace registries. */
-  _systemSource: import("../tools/types.ts").ToolSource | null;
+  _systemSource: ToolSource | null;
   /** Platform sources (home, conversations, files, etc.) — retained for JIT workspace registration. */
-  private _platformSources: import("../tools/types.ts").ToolSource[] = [];
+  private _platformSources: ToolSource[] = [];
   /**
    * Domain-context getter for the automations bundle. Set by the
    * automations source factory; consumed by internal callers (CLI's
@@ -209,9 +220,17 @@ export class Runtime {
    * `bundleName`, `allowedTools`) — that the LLM-facing tool schema
    * deliberately doesn't expose. See `src/tools/platform/CLAUDE.md` § 1.4.
    */
-  private _automationsContextGetter:
-    | (() => import("../bundles/automations/src/domain.ts").AutomationDomainContext)
-    | null = null;
+  private _automationsContextGetter: (() => AutomationDomainContext) | null = null;
+  /**
+   * Per-workspace host-resources deps factory. Set in `Runtime.start()`
+   * after the resolver + rate-limit are constructed; consumed by every
+   * install path that spawns a bundle (lifecycle.installNamed/Local/
+   * Remote, system-tools manage_app install, connector-tools install,
+   * workspace-runtime boot reload). Returns `undefined` only when the
+   * runtime is constructed without the host-resources subsystem wired
+   * — never in production.
+   */
+  private _bundleMcpDepsFactory: ((wsId: string) => BundleMcpDeps) | null = null;
   /** Getter for current workspace ID (set per-request). */
   private _currentWorkspaceId: (() => string | null) | null = null;
   /**
@@ -255,7 +274,7 @@ export class Runtime {
     workspaceStore: WorkspaceStore,
     identityProvider: IdentityProvider | null,
     workspaceRegistries: Map<string, ToolRegistry>,
-    systemSource: import("../tools/types.ts").ToolSource | null,
+    systemSource: ToolSource | null,
     currentWorkspaceId: () => string | null,
   ) {
     this.resolveModelFn = resolveModelFn;
@@ -334,6 +353,35 @@ export class Runtime {
       mpakHome,
     );
     lifecycle.setPlacementRegistry(placementRegistry);
+
+    // Host-resources subsystem. One resolver + one rate-limit shared
+    // across every bundle spawned through this runtime, parameterized
+    // per-call by workspace id. Construction lives here (not inside
+    // lifecycle) because the resolver depends on the workspace-scoped
+    // data layout, which is a Runtime concern; lifecycle consumes via
+    // `setBundleMcpDepsFactory`, other install paths consume via
+    // `Runtime.getBundleMcpDeps(wsId)`.
+    const hostResourcesWorkDir = resolveWorkDir(config);
+    // Memoize FileStore per workspace. FileStore today is closures over
+    // a path (cheap), but if it ever gains state (caches, fd handles,
+    // mtime watchers), per-call construction would leak. Bounded by
+    // active-workspace count.
+    const hostResourcesFileStoreCache = new Map<string, ReturnType<typeof createFileStore>>();
+    const hostResourcesResolver = new FileBackedHostResourcesResolver((wsId) => {
+      const cached = hostResourcesFileStoreCache.get(wsId);
+      if (cached) return cached;
+      const wsCtx = new WorkspaceContext({ wsId, workDir: hostResourcesWorkDir });
+      const store = createFileStore(wsCtx.getDataPath("files"));
+      hostResourcesFileStoreCache.set(wsId, store);
+      return store;
+    });
+    const hostResourcesRateLimit = new TokenBucketRateLimit();
+    const bundleMcpDepsFactory = (wsId: string) => ({
+      workspaceId: wsId,
+      hostResources: hostResourcesResolver,
+      rateLimit: hostResourcesRateLimit,
+    });
+    lifecycle.setBundleMcpDepsFactory(bundleMcpDepsFactory);
 
     // Wire the connection-running notification path so URL bundles
     // whose interactive OAuth completes (after the user clicks Connect
@@ -441,7 +489,7 @@ export class Runtime {
     const defaultModelId = getDefaultModel();
     // Workspace-aware ToolRouter proxy: the engine calls availableTools()/execute()
     // within runWithRequestContext(), so the proxy reads the current workspace's registry.
-    const workspaceToolRouter: import("../engine/types.ts").ToolRouter = {
+    const workspaceToolRouter: ToolRouter = {
       availableTools: () => {
         if (!rtHolder.rt) throw new Error("Runtime not initialized");
         return rtHolder.rt.getRegistryForCurrentWorkspace().availableTools();
@@ -475,6 +523,13 @@ export class Runtime {
       // install/configure. Keeps chat-initiated bundle installs on the same
       // live-update pipeline as boot-time bundle startup.
       eventSink: events,
+      // Per-workspace host-resources deps factory. `installBundleInWorkspaceViaCtx`
+      // calls this for the target workspace and threads the result through
+      // `installBundleInWorkspace`'s opts so the spawned McpSource registers
+      // `ai.nimblebrain/resources/*` handlers. Without this, the agent's
+      // `manage_app install` path silently bypasses the host-resources
+      // capability — the production path that needs it most.
+      bundleMcpDepsFactory,
     };
     const noActiveToolPromotionRun = (toolName: string): ToolPromotionResult => ({
       ok: false,
@@ -564,6 +619,9 @@ export class Runtime {
     if (rt._automationsContextGetter) {
       lifecycle.setAutomationsContextGetter(rt._automationsContextGetter);
     }
+    // Make the host-resources factory accessible on `rt` so non-lifecycle
+    // install paths (connector-tools, boot reload) can pull deps directly.
+    rt._bundleMcpDepsFactory = bundleMcpDepsFactory;
 
     // Register placements declared by platform sources. The helper isolates
     // the duck-type — `getPlacements()` is on `McpSource` (carrying the
@@ -582,6 +640,10 @@ export class Runtime {
       await startWorkspaceBundles(workspaceStore, platformSources, systemTools, events, configDir, {
         workDir: resolveWorkDir(config),
         allowInsecureRemotes: config.allowInsecureRemotes,
+        // Boot re-spawn picks up host-resources handlers per workspace so
+        // a platform restart doesn't silently drop the capability for
+        // already-installed bundles.
+        getBundleMcpDeps: bundleMcpDepsFactory,
       });
     rt._workspaceRegistries = workspaceRegistries;
     rt._platformSources = platformSources;
@@ -819,7 +881,7 @@ export class Runtime {
     const activeRegistry = this.getRegistryForWorkspace(wsId);
 
     // Build focusedApp when the request is scoped to a specific app (§7 app-aware chat)
-    let focusedApp: import("../prompt/compose.ts").FocusedAppInfo | undefined;
+    let focusedApp: FocusedAppInfo | undefined;
     if (request.appContext) {
       const source = activeRegistry
         .getSources()
@@ -850,7 +912,7 @@ export class Runtime {
     }
 
     // Build appState for prompt injection (Synapse Feature 2 — LLM-aware UI state)
-    let appState: import("../prompt/compose.ts").AppStateInfo | undefined;
+    let appState: AppStateInfo | undefined;
     if (request.appContext?.appState && focusedApp) {
       const bundleRef = this.lifecycle?.getInstance(request.appContext.serverName, wsId);
       appState = {
@@ -1330,7 +1392,7 @@ export class Runtime {
     }
 
     // Search across all workspace registries for the source
-    let source: import("../tools/types.ts").ToolSource | undefined;
+    let source: ToolSource | undefined;
     for (const reg of this._workspaceRegistries.values()) {
       source = reg.getSources().find((s) => s.name === serverName);
       if (source) break;
@@ -1520,6 +1582,20 @@ export class Runtime {
   }
 
   /**
+   * Resolve the host-resources deps for a workspace. Used by install
+   * paths that don't go through `BundleLifecycleManager`: connector-tools
+   * (Composio install eager-start), workspace-runtime (boot reload).
+   * Returns `undefined` only when the runtime was constructed without the
+   * host-resources subsystem wired — never in production. Callers should
+   * thread the returned deps into `startBundleSource` (or
+   * `installBundleInWorkspace`) via the `bundleMcp` opt so the spawned
+   * McpSource registers inbound `ai.nimblebrain/resources/*` handlers.
+   */
+  getBundleMcpDeps(wsId: string): BundleMcpDeps | undefined {
+    return this._bundleMcpDepsFactory?.(wsId);
+  }
+
+  /**
    * Get a per-workdir `InstructionsStore` for the org / workspace overlays.
    * Per-bundle instructions are NOT stored here — bundles own their storage
    * and publish a `app://instructions` resource if and only if they
@@ -1659,7 +1735,7 @@ export class Runtime {
    */
   async findConversation(
     convId: string,
-    access?: import("../conversation/types.ts").ConversationAccessContext,
+    access?: ConversationAccessContext,
   ): Promise<Conversation | null> {
     return this.findConversationStore().load(convId, access);
   }
@@ -1803,9 +1879,7 @@ export class Runtime {
    * (CLI, lifecycle) read it back via `getAutomationsContext()` to bypass
    * the LLM-facing tool surface and call the domain API directly.
    */
-  registerAutomationsContext(
-    getter: () => import("../bundles/automations/src/domain.ts").AutomationDomainContext,
-  ): void {
+  registerAutomationsContext(getter: () => AutomationDomainContext): void {
     this._automationsContextGetter = getter;
   }
 
@@ -1815,7 +1889,7 @@ export class Runtime {
    * Each call returns a fresh context bound to the current request's
    * workspace — workspace switching between calls is safe.
    */
-  getAutomationsContext(): import("../bundles/automations/src/domain.ts").AutomationDomainContext {
+  getAutomationsContext(): AutomationDomainContext {
     if (!this._automationsContextGetter) {
       throw new Error(
         "Automations source not registered — runtime started without platform sources?",
@@ -2244,8 +2318,8 @@ export class Runtime {
    * `Conversation.workspaceId` at the call site.
    */
   async listConversations(
-    options?: import("../conversation/types.ts").ListOptions,
-    access?: import("../conversation/types.ts").ConversationAccessContext,
+    options?: ListOptions,
+    access?: ConversationAccessContext,
   ): Promise<ConversationListResult> {
     return this.findConversationStore().list(options, access);
   }
@@ -2301,13 +2375,11 @@ export class Runtime {
  * external bundles, whose placements come from their manifest, not the
  * source — return `[]`.
  */
-function readSourcePlacements(
-  src: import("../tools/types.ts").ToolSource,
-): import("../bundles/types.ts").PlacementDeclaration[] {
+function readSourcePlacements(src: ToolSource): PlacementDeclaration[] {
   const fn = (src as { getPlacements?: () => unknown }).getPlacements;
   if (typeof fn !== "function") return [];
   const out = fn.call(src);
-  return Array.isArray(out) ? (out as import("../bundles/types.ts").PlacementDeclaration[]) : [];
+  return Array.isArray(out) ? (out as PlacementDeclaration[]) : [];
 }
 
 function resolveModel(config: RuntimeConfig): (modelString: string) => LanguageModelV3 {
