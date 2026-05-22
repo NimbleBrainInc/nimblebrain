@@ -138,6 +138,14 @@ When adding a new code path that touches workspace-scoped credentials or identit
 
 **Conversations are user-scoped, not workspace-scoped.** Post-Stage-1, every conversation lives at `{workDir}/conversations/{convId}.jsonl` and is authorized by ownership (`Conversation.ownerId === access.userId`). Look up via `runtime.findConversation(convId, { userId })`; write via `runtime.findConversationStore()`. `workspaceId` on conversation metadata is a tool-scoping breadcrumb — it tells the runtime which workspace's tools the chat had access to when a turn ran, NOT where the file lives. Hand-building per-workspace conversation paths (`join(workDir, "workspaces", wsId, "conversations", ...)`) is a regression caught by `check:conversation-paths`. **Personal workspace ids** go through `personalWorkspaceIdFor(userId)` from `src/workspace/workspace-store.ts` — no hand-built `"ws_user_" + userId` or `` `ws_user_${userId}` `` outside that helper (`check:personal-workspace-id` enforces).
 
+### Stage 1 follow-ups — tenant migration order
+
+When migrating a tenant onto Stage 1, run the scripts in this order, all during a maintenance window with the platform scaled to zero:
+
+1. `bun run migrate:personal-workspaces` — renames each user's personal workspace to `ws_user_<userId>` and stamps `isPersonal` / `ownerUserId`.
+2. `bun run migrate:conversations-to-top-level` — moves per-workspace conversations to `{workDir}/conversations/`.
+3. `bun run heal:truncated-personal-workspaces` — **only if needed.** Some legacy tenants (notably hq) used a 16-char-truncated slug for personal workspaces that step 1 doesn't recognize. Heuristic: step 1's output shows `no personal workspace found (will be created on next login)` for users who actually do have a workspace named `<displayName>'s Workspace` at a short-slug id. If you see that pattern, run this heal script (dry-run first). Idempotent — safe to run on any tenant; it exits cleanly with `no truncated workspace` when nothing matches. All three scripts share the same `.migration-lock` PID file, so they're serialized by construction.
+
 ## Debug Logging
 
 Hot-path diagnostics are gated behind namespace flags so they're available when you need them without editing source. Use for tracing across the runtime ↔ SSE ↔ browser ↔ iframe chain.
