@@ -85,11 +85,18 @@ export class FileBackedHostResourcesResolver implements HostResourcesResolver {
     let result: Awaited<ReturnType<typeof store.readFile>>;
     try {
       result = await store.readFile(fileId);
-    } catch {
-      // Two failure modes collapse into one error code here on purpose:
-      // file genuinely doesn't exist in this workspace, vs file is in a
-      // different workspace (we never look across workspaces). The same
-      // response prevents inventory enumeration across tenants.
+    } catch (err) {
+      // Multiple failure modes collapse into one error code here on
+      // purpose: file genuinely doesn't exist in this workspace, file
+      // is in a different workspace (we never look across workspaces),
+      // disk I/O / permission / corruption errors. The collapse
+      // prevents cross-tenant inventory enumeration AND keeps the wire
+      // contract simple for bundle SDKs. But operators chasing a real
+      // disk-side issue need visibility — log the actual error before
+      // collapsing so the ops trail isn't blind.
+      log.warn(
+        `[host-resources] [${ctx.bundleId}:${ctx.workspaceId}] read ${uri} failed (collapsing to -32002): ${err instanceof Error ? err.message : String(err)}`,
+      );
       throw new McpError(RESOURCE_NOT_FOUND, "Resource not found", { uri });
     }
 

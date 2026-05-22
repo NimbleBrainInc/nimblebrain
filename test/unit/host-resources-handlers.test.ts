@@ -49,7 +49,13 @@ afterEach(async () => {
   await rm(rootDir, { recursive: true, force: true });
 });
 
-async function seedFile(store: FileStore, name: string, body: string, mime: string) {
+async function seedFile(
+  store: FileStore,
+  name: string,
+  body: string,
+  mime: string,
+  tags: string[] = [],
+) {
   const saved = await store.saveFile(Buffer.from(body), name, mime);
   await store.appendRegistry({
     id: saved.id,
@@ -58,7 +64,7 @@ async function seedFile(store: FileStore, name: string, body: string, mime: stri
     size: saved.size,
     createdAt: new Date().toISOString(),
     description: undefined,
-    tags: [],
+    tags,
   } as unknown as FileEntry);
   return saved.id;
 }
@@ -244,6 +250,82 @@ describe("McpSource inbound host-resources handlers", () => {
     expect(parsed.resources).toHaveLength(1);
     expect(parsed.resources[0]?.name).toBe("rows.csv");
     expect(parsed.resources[0]?.mimeType).toBe("text/csv");
+
+    await source.stop();
+  });
+
+  // The handler's filter cast in mcp-source.ts includes `tags?: string[]`.
+  // The mimeType test above covers the unwrap path generically; this case
+  // proves the tags field also makes it through intact. A future refactor
+  // that narrows the cast (e.g. drops `tags` for "simpler typing") would
+  // pass the mimeType test and break this one.
+  it("dispatches ai.nimblebrain/resources/list with _meta.filter.tags through to the resolver", async () => {
+    await seedFile(wsAStore, "draft.md", "x", "text/markdown", ["draft"]);
+    await seedFile(wsAStore, "final.md", "y", "text/markdown", ["published"]);
+
+    const server = new Server(
+      { name: "fake-bundle", version: "0.0.1" },
+      { capabilities: { tools: {} } },
+    );
+    server.setRequestHandler(ListToolsRequestSchema, async () => ({
+      tools: [
+        {
+          name: "list_drafts",
+          description: "Lists draft-tagged resources via the host extension.",
+          inputSchema: { type: "object", properties: {} },
+        },
+      ],
+    }));
+    server.setRequestHandler(CallToolRequestSchema, async () => {
+      try {
+        const result = (await server.request(
+          {
+            method: HOST_RESOURCES_LIST_METHOD,
+            params: { _meta: { filter: { tags: ["draft"] } } },
+          },
+          ListResourcesResultSchema,
+        )) as ListResourcesResult;
+        return {
+          content: [{ type: "text", text: JSON.stringify(result) }],
+          isError: false,
+        };
+      } catch (err) {
+        return {
+          content: [{ type: "text", text: err instanceof Error ? err.message : String(err) }],
+          isError: true,
+        };
+      }
+    });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+
+    const resolver = new FileBackedHostResourcesResolver(() => wsAStore);
+    const rateLimit = new TokenBucketRateLimit();
+    const source = new McpSource(
+      "fake-bundle",
+      { type: "inProcess", createServer: async () => ({ server, clientTransport }) },
+      NoopSink,
+      {
+        workspaceId: "ws_a",
+        bundleId: "fake-bundle",
+        hostResources: resolver,
+        rateLimit,
+      },
+    );
+    await source.start();
+
+    const callResult = await source.execute("list_drafts", {});
+    if (callResult.isError) {
+      throw new Error(
+        `expected isError=false, got isError=true. content=${JSON.stringify(callResult.content)}`,
+      );
+    }
+    const textBlock = callResult.content.find((c) => c.type === "text") as
+      | { type: "text"; text: string }
+      | undefined;
+    const parsed = JSON.parse(textBlock?.text ?? "{}") as ListResourcesResult;
+    expect(parsed.resources).toHaveLength(1);
+    expect(parsed.resources[0]?.name).toBe("draft.md");
 
     await source.stop();
   });
