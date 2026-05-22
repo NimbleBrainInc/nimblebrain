@@ -88,6 +88,7 @@
 
 ### Fixed
 
+- Heal script for tenants whose legacy personal-workspace slugs use the 16-char truncated form unrecognized by `migrate-personal-workspaces.ts` — run `scripts/heal-truncated-personal-workspaces.ts` after the Stage 1 migrations to rename truncated personal workspaces to the canonical form, stamp identity fields, delete empty canonical stubs, and rewrite conversation `workspaceId` refs.
 - `runtime.chat()` now honors an `AbortSignal` end-to-end (`ChatRequest.signal` → `EngineConfig.signal` → iteration loop + every tool call). Callers racing the chat against a deadline (notably the automations executor's per-run budget) now cancel in-flight LLM/tool work instead of orphaning it; HTTP `/v1/chat` and `/v1/chat/stream` also forward `request.signal`, so client disconnect cancels engine work ([#251](https://github.com/NimbleBrainInc/nimblebrain/pull/251)).
 - Task-augmented MCP tools no longer report a false `MCP error -32603: Task <id> failed` when the server stored a usable `tasks/result` payload; the engine refetches and surfaces the real content ([#245](https://github.com/NimbleBrainInc/nimblebrain/pull/245)).
 - `automations__run` no longer hits `MCP error -32001: Request timed out` on multi-minute automations; `handleRun` caps its sync wait below the SDK's 60 s request timeout and returns a `{ status: "dispatched" }` envelope when the run outlasts the window, with the scheduler tracking it in the background ([#245](https://github.com/NimbleBrainInc/nimblebrain/pull/245)).
