@@ -51,44 +51,36 @@ export async function ensureUserWorkspace(
   identity: ProvisioningIdentity,
 ): Promise<Workspace> {
   const wsId = personalWorkspaceIdFor(identity.id);
-
-  const existing = await store.get(wsId);
-  if (existing) return existing;
-
   const name = identity.displayName ? `${identity.displayName}'s Workspace` : "Workspace";
   const slug = personalWorkspaceSlugFor(identity.id);
 
-  try {
-    return await store.create(name, slug, {
-      isPersonal: true,
-      ownerUserId: identity.id,
-    });
-  } catch (err) {
-    if (err instanceof WorkspaceConflictError) {
-      return reconcileConflict(store, wsId);
+  // Self-healing read-then-create loop. The body covers three race
+  // shapes around the canonical id: (a) another caller already created
+  // it (read wins); (b) we lose a create-conflict and the workspace
+  // exists by the time we re-read (loop returns it); (c) we lose a
+  // create-conflict but the workspace was deleted before re-read (loop
+  // recreates). 3 attempts is plenty — (c) twice in a row would
+  // require pathological concurrent create+delete churn on one user.
+  const MAX_ATTEMPTS = 3;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    const existing = await store.get(wsId);
+    if (existing) return existing;
+    try {
+      return await store.create(name, slug, {
+        isPersonal: true,
+        ownerUserId: identity.id,
+      });
+    } catch (err) {
+      if (err instanceof WorkspaceConflictError) continue;
+      // `PersonalWorkspaceInvariantError` here would mean this helper
+      // built a bad-shape personal workspace — a bug, not a race.
+      // Anything else: surface unchanged.
+      if (err instanceof PersonalWorkspaceInvariantError) throw err;
+      throw err;
     }
-    // A `PersonalWorkspaceInvariantError` from create() here would mean
-    // the helper itself produced a bad-shape personal workspace — bug,
-    // let it surface.
-    if (err instanceof PersonalWorkspaceInvariantError) throw err;
-    throw err;
   }
-}
 
-/**
- * A `create()` collision on the canonical personal-workspace id means
- * another concurrent call won the race. Re-read and return. Never create
- * a second workspace with a different slug — two personal workspaces per
- * user is exactly the bug the canonical-id model exists to prevent.
- */
-async function reconcileConflict(store: WorkspaceStore, wsId: string): Promise<Workspace> {
-  const existing = await store.get(wsId);
-  if (existing) return existing;
-  // WorkspaceConflictError fires only when store.get() returned non-null
-  // inside create() — so reaching here means the workspace existed at
-  // throw time and was deleted before our re-read (concurrent delete,
-  // rare). Surface the inconsistency; callers retry.
   throw new Error(
-    `[provisioning] personal workspace ${wsId} disappeared between create-conflict and re-read`,
+    `[provisioning] personal workspace ${wsId} couldn't be reconciled after ${MAX_ATTEMPTS} attempts — investigate concurrent create/delete activity`,
   );
 }

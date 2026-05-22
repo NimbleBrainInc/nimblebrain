@@ -5,7 +5,7 @@
  *
  * Stage 1 introduced personal workspaces (`isPersonal: true`,
  * `ownerUserId: <user>`) but didn't enforce that their `members` array
- * matched the canonical sole-owner shape. The hq production tenant
+ * matched the canonical sole-owner shape. A production tenant
  * surfaced a personal workspace with three admins, which Stage 1.1
  * now disallows at the store layer. Operators with pre-existing data
  * shaped by the looser invariant run this script once to converge.

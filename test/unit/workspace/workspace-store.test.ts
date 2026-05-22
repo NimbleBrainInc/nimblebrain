@@ -357,7 +357,7 @@ describe("WorkspaceStore.update", () => {
     // Cast to bypass the Pick<> at the type level — runtime must throw
     // loudly instead of silently stripping the disallowed keys. The
     // silent-strip behavior is what produced multi-admin personal
-    // workspaces on hq production; Stage 1.1 replaces it with a typed
+    // workspaces in production; Stage 1.1 replaces it with a typed
     // error. Exhaustive invariant coverage lives in
     // `personal-workspace-invariants.test.ts`.
     await expect(

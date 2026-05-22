@@ -150,7 +150,7 @@ What stays freely mutable on a personal workspace: `bundles`, `name`, `about`, `
 
 The HTTP layer maps `PersonalWorkspaceInvariantError` to `422 personal_workspace_invariant` with `{ workspaceId, reason }` details (same shape as `ConversationCorruptedError → 422`). The workspace-mgmt tool handlers encode the error into `structuredContent` so it survives the in-process MCP serialization boundary; `handleToolCall` decodes and emits the 422.
 
-Pre-Stage-1.1 data (multi-admin personal workspaces seen on hq production) is repaired retroactively by `scripts/cleanup-personal-workspace-members.ts` (alias: `bun run cleanup:personal-workspace-members`, or `make cleanup-personal-workspace-members CLIENT=<x> ENV=<y>` for in-cluster runs). Idempotent; dry-run by default, `--apply` to write. A personal workspace missing `ownerUserId` is a hard-error — operator must triage.
+Pre-Stage-1.1 data (multi-admin personal workspaces observed in production) is repaired retroactively by `scripts/cleanup-personal-workspace-members.ts` (alias: `bun run cleanup:personal-workspace-members`). Idempotent; dry-run by default, `--apply` to write. A personal workspace missing `ownerUserId` is a hard-error — operator must triage.
 
 ## Debug Logging
 

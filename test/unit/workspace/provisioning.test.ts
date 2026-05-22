@@ -3,8 +3,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { ensureUserWorkspace } from "../../../src/workspace/provisioning.ts";
+import type { Workspace } from "../../../src/workspace/types.ts";
 import {
   personalWorkspaceIdFor,
+  WorkspaceConflictError,
   WorkspaceStore,
 } from "../../../src/workspace/workspace-store.ts";
 
@@ -79,6 +81,66 @@ describe("ensureUserWorkspace", () => {
     expect(list.length).toBe(1);
     expect(list[0]!.members).toEqual([{ userId: "user_alice", role: "admin" }]);
     expect(list[0]!.isPersonal).toBe(true);
+  });
+
+  test("self-heals when canonical is deleted between create-conflict and re-read", async () => {
+    // Race shape (pinning what an earlier version of reconcileConflict
+    // would have 500'd on): caller A's `store.get` returns null, A's
+    // `store.create` loses the race to caller B → throws
+    // WorkspaceConflictError, but C deletes the workspace before A
+    // re-reads. The bounded retry loop must recreate, not throw.
+    let getCallNo = 0;
+    let createCallNo = 0;
+    const recreated: Workspace = {
+      id: personalWorkspaceIdFor("user_alice"),
+      name: "Alice's Workspace",
+      members: [{ userId: "user_alice", role: "admin" }],
+      bundles: [],
+      isPersonal: true,
+      ownerUserId: "user_alice",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    const stub = {
+      async get(_id: string): Promise<Workspace | null> {
+        getCallNo++;
+        return null; // both reads see the deleted state
+      },
+      async create(_name: string, _slug: string): Promise<Workspace> {
+        createCallNo++;
+        if (createCallNo === 1) {
+          throw new WorkspaceConflictError(personalWorkspaceIdFor("user_alice"));
+        }
+        return recreated;
+      },
+    } as unknown as WorkspaceStore;
+
+    const result = await ensureUserWorkspace(stub, {
+      id: "user_alice",
+      displayName: "Alice",
+    });
+
+    expect(result).toBe(recreated);
+    expect(getCallNo).toBe(2); // initial read + post-conflict re-read
+    expect(createCallNo).toBe(2); // first lost, second won
+  });
+
+  test("gives up after 3 attempts under pathological create/delete churn", async () => {
+    // If every attempt loses to a concurrent creator AND every
+    // re-read sees the workspace already deleted again, surface a
+    // diagnosable error instead of looping forever.
+    const stub = {
+      async get(): Promise<Workspace | null> {
+        return null;
+      },
+      async create(): Promise<Workspace> {
+        throw new WorkspaceConflictError(personalWorkspaceIdFor("user_alice"));
+      },
+    } as unknown as WorkspaceStore;
+
+    await expect(
+      ensureUserWorkspace(stub, { id: "user_alice", displayName: "Alice" }),
+    ).rejects.toThrow(/couldn't be reconciled after 3 attempts/);
   });
 
   test("different users get different personal workspaces", async () => {

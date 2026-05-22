@@ -265,7 +265,7 @@ export class WorkspaceStore {
     // and historic callers did exactly that. Detect the attempt and
     // throw a typed error instead of silently stripping — the silent
     // strip is the failure mode that produced multi-admin personal
-    // workspaces on hq production.
+    // workspaces in production.
     //
     // Casts here are scoped to read-only inspection of the widened patch
     // shape. We do NOT widen the spread that builds `updated` — only

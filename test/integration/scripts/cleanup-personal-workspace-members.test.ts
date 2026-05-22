@@ -82,16 +82,16 @@ async function runCleanup(args: string[] = []): Promise<{ exitCode: number; stde
 
 describe("cleanup-personal-workspace-members", () => {
   test("multi-admin personal workspace gets cleaned to sole-owner-admin", async () => {
-    // The exact failure mode that motivated the script: an
-    // hq-production personal workspace with three admins.
+    // The exact failure mode that motivated the script: a personal
+    // workspace with three admins.
     await seedWorkspace({
       id: "ws_user_user_alice",
       isPersonal: true,
       ownerUserId: "user_alice",
       members: [
         { userId: "user_alice", role: "admin" },
-        { userId: "user_mat", role: "admin" },
-        { userId: "user_mario", role: "admin" },
+        { userId: "user_b", role: "admin" },
+        { userId: "user_c", role: "admin" },
       ],
     });
 
@@ -100,8 +100,8 @@ describe("cleanup-personal-workspace-members", () => {
     expect(stderr).toContain("ws_user_user_alice");
     // The log should name the dropped members so the operator can
     // verify what was removed.
-    expect(stderr).toContain("user_mat");
-    expect(stderr).toContain("user_mario");
+    expect(stderr).toContain("user_b");
+    expect(stderr).toContain("user_c");
 
     const ws = await readWorkspace("ws_user_user_alice");
     expect(ws.members).toEqual([{ userId: "user_alice", role: "admin" }]);
