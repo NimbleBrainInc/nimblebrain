@@ -37,7 +37,7 @@
  */
 
 import { existsSync } from "node:fs";
-import { readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { readdir, readFile, rename, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, relative } from "node:path";
 import { UserStore } from "../src/identity/user.ts";
@@ -47,6 +47,10 @@ import {
   personalWorkspaceIdFor,
   WorkspaceStore,
 } from "../src/workspace/workspace-store.ts";
+import {
+  readConversationMetadata,
+  rewriteConversationWorkspaceId,
+} from "./lib/conversation-metadata.ts";
 import { acquireMigrationLock } from "./lib/migration-lock.ts";
 
 interface Args {
@@ -191,18 +195,59 @@ async function findUnexpectedContent(
 }
 
 /**
- * Return the first populated optional `workspace.json` field whose
- * contents would be lost if this canonical stub is rm'd. The minimum
- * shape for a "truly empty" canonical stub is: exactly the owner as
- * a sole admin member, zero bundles, no agents/skillDirs/models/
- * identity/connectorsAllowList/oauthOperatorApps populated. Anything
- * else means the stub holds real state and the operator must
- * reconcile.
+ * Keys allowed on a "truly empty" canonical stub. Anything outside
+ * this set is forbidden — new optional fields on `Workspace` default
+ * to forbidden, which is the safe direction (a denylist would silently
+ * allow new fields, e.g. `allowHttpProxy`, that the script doesn't
+ * know about yet).
+ *
+ * Members of this set still have value-level checks below — `bundles`
+ * must be empty, `members` must be exactly the owner-admin, etc.
+ */
+const ALLOWED_STUB_KEYS: ReadonlySet<string> = new Set([
+  "id",
+  "name",
+  "members",
+  "bundles",
+  "createdAt",
+  "updatedAt",
+  "about",
+  "isPersonal",
+  "ownerUserId",
+]);
+
+/**
+ * Return the first populated `workspace.json` field whose contents
+ * would be lost if this canonical stub is rm'd. The minimum shape for
+ * a "truly empty" canonical stub is:
+ *   - only structural keys present (allowlisted above)
+ *   - exactly the owner as sole admin member
+ *   - zero bundles
+ *   - `about` null or empty
+ *
+ * Inverted from the prior denylist style. The previous version
+ * enumerated `agents`/`skillDirs`/`models`/`identity`/
+ * `connectorsAllowList`/`oauthOperatorApps` explicitly and would have
+ * silently passed any new optional field added to `Workspace` later
+ * (round-2 QA caught `allowHttpProxy` missing from that list). Adding
+ * an unfamiliar field to the allowlist is now an explicit operator
+ * decision.
  */
 function findPopulatedWorkspaceField(
   ws: Workspace,
   ownerUserId: string,
 ): string | null {
+  // 1. Reject any field outside the allowlist — covers `agents`,
+  //    `skillDirs`, `models`, `identity`, `allowHttpProxy`,
+  //    `connectorsAllowList`, `oauthOperatorApps`, and anything added
+  //    to `Workspace` in the future.
+  for (const key of Object.keys(ws)) {
+    if (!ALLOWED_STUB_KEYS.has(key)) {
+      return `unexpected field: ${key}`;
+    }
+  }
+
+  // 2. Value-level checks on the allowlisted keys.
   if ((ws.bundles ?? []).length > 0) return `bundles (${ws.bundles.length})`;
 
   const members = ws.members ?? [];
@@ -214,67 +259,44 @@ function findPopulatedWorkspaceField(
     return `members[0] (expected ${ownerUserId} as admin, got ${sole?.userId} as ${sole?.role})`;
   }
 
-  if (ws.agents && Object.keys(ws.agents).length > 0) return "agents";
-  if (ws.skillDirs && ws.skillDirs.length > 0) return "skillDirs";
-  if (ws.models && Object.keys(ws.models).length > 0) return "models";
-  if (ws.identity) return "identity";
-  if (ws.connectorsAllowList && ws.connectorsAllowList.length > 0) {
-    return "connectorsAllowList";
+  if (typeof ws.about === "string" && ws.about.length > 0) {
+    return "about (non-empty)";
   }
-  if (ws.oauthOperatorApps && Object.keys(ws.oauthOperatorApps).length > 0) {
-    return "oauthOperatorApps";
+  if (ws.ownerUserId !== undefined && ws.ownerUserId !== ownerUserId) {
+    return `ownerUserId (got ${ws.ownerUserId}, expected ${ownerUserId})`;
   }
   return null;
 }
 
 /**
- * Read the metadata line (line 1) of a conversation JSONL. Returns null
- * if unreadable / unparseable — the file is left alone in that case.
+ * Walk `conversationsDir` and rewrite every top-level conversation
+ * JSONL whose metadata's `workspaceId` matches `oldId` to `newId`.
+ * Returns the count of files that were (or would be, in dry-run)
+ * rewritten. Used twice in main: the happy-path rename and the
+ * partial-rename heal.
  */
-async function readConversationMetadata(
-  filePath: string,
-): Promise<Record<string, unknown> | null> {
-  try {
-    const raw = await readFile(filePath, "utf-8");
-    const newlineIdx = raw.indexOf("\n");
-    const firstLine = newlineIdx < 0 ? raw : raw.slice(0, newlineIdx);
-    return JSON.parse(firstLine) as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Rewrite the metadata line of a conversation JSONL so its
- * `workspaceId` reflects the renamed workspace. Returns true if
- * rewritten. Other lines pass through byte-identical.
- */
-async function rewriteConversationWorkspaceId(
-  filePath: string,
+async function rewriteConvRefs(
+  conversationsDir: string,
   oldId: string,
   newId: string,
-): Promise<boolean> {
-  const raw = await readFile(filePath, "utf-8");
-  const newlineIdx = raw.indexOf("\n");
-  if (newlineIdx < 0) return false;
-
-  const metadataLine = raw.slice(0, newlineIdx);
-  const rest = raw.slice(newlineIdx); // includes the leading \n
-
-  let meta: Record<string, unknown>;
-  try {
-    meta = JSON.parse(metadataLine);
-  } catch {
-    return false;
+  dryRun: boolean,
+): Promise<number> {
+  if (!existsSync(conversationsDir)) return 0;
+  let rewrites = 0;
+  for (const fname of await readdir(conversationsDir)) {
+    if (!fname.endsWith(".jsonl")) continue;
+    const cpath = join(conversationsDir, fname);
+    const meta = await readConversationMetadata(cpath);
+    if (!meta || meta.workspaceId !== oldId) continue;
+    if (dryRun) {
+      rewrites++;
+      continue;
+    }
+    if (await rewriteConversationWorkspaceId(cpath, oldId, newId)) {
+      rewrites++;
+    }
   }
-  if (meta.workspaceId !== oldId) return false;
-  meta.workspaceId = newId;
-  const newMetadata = JSON.stringify(meta);
-
-  const tmp = `${filePath}.tmp.${Date.now()}`;
-  await writeFile(tmp, `${newMetadata}${rest}`, { encoding: "utf-8", mode: 0o600 });
-  await rename(tmp, filePath);
-  return true;
+  return rewrites;
 }
 
 /**
@@ -378,22 +400,12 @@ async function healOne(opts: {
   }
 
   // Rewrite workspaceId on conversations that point at the truncated id.
-  let rewrites = 0;
-  if (existsSync(conversationsDir)) {
-    for (const fname of await readdir(conversationsDir)) {
-      if (!fname.endsWith(".jsonl")) continue;
-      const cpath = join(conversationsDir, fname);
-      const meta = await readConversationMetadata(cpath);
-      if (!meta || meta.workspaceId !== truncatedId) continue;
-      if (dryRun) {
-        rewrites++;
-        continue;
-      }
-      if (await rewriteConversationWorkspaceId(cpath, truncatedId, canonicalId)) {
-        rewrites++;
-      }
-    }
-  }
+  const rewrites = await rewriteConvRefs(
+    conversationsDir,
+    truncatedId,
+    canonicalId,
+    dryRun,
+  );
   console.error(
     `[heal] ${userId}: ${dryRun ? "[dry-run] would " : ""}rewrite workspaceId on ${rewrites} conversation(s)`,
   );
@@ -462,6 +474,16 @@ async function main(): Promise<void> {
         // `isPersonal` / `ownerUserId` still pointing at the pre-rename
         // values. Detect and stamp on rerun — mirrors Stage 1's
         // `migrate-personal-workspaces.ts` partial-rename heal.
+        //
+        // Two safety gates before stamping — the canonical might be an
+        // unrelated workspace that happens to share the id:
+        //   - name must match `<displayName>'s Workspace` (the rename
+        //     preserved name from the original truncated workspace)
+        //   - user must be an admin member (claims ownership)
+        // The empty-content gates that `healOne` applies to stubs do
+        // NOT apply here — a partially-renamed canonical legitimately
+        // carries the user's bundles, settings, and pre-PR-C extra
+        // collaborators. We're stamping identity, not deleting.
         const canonicalWs = await wsStore.get(canonicalId);
         const needsStamp =
           canonicalWs !== null &&
@@ -469,6 +491,32 @@ async function main(): Promise<void> {
             canonicalWs.isPersonal !== true ||
             canonicalWs.ownerUserId !== user.id);
         if (canonicalWs && needsStamp) {
+          const expectedName = `${user.displayName}'s Workspace`;
+          if (canonicalWs.name !== expectedName) {
+            console.error(
+              `[heal] ${user.id}: canonical ${canonicalId} exists with stale identity ` +
+                `but name ${JSON.stringify(canonicalWs.name)} != expected ${JSON.stringify(expectedName)} — ` +
+                "refuse to stamp (manual reconciliation required)",
+            );
+            stats.errors.push({
+              ctx: user.id,
+              message: `canonical ${canonicalId} has stale identity but unexpected name — operator must reconcile`,
+            });
+            continue;
+          }
+          if (!isAdminOf(canonicalWs, user.id)) {
+            console.error(
+              `[heal] ${user.id}: canonical ${canonicalId} exists with stale identity ` +
+                `but ${user.id} is not an admin member — refuse to stamp ` +
+                "(manual reconciliation required)",
+            );
+            stats.errors.push({
+              ctx: user.id,
+              message: `canonical ${canonicalId} has stale identity but ${user.id} is not an admin — operator must reconcile`,
+            });
+            continue;
+          }
+
           console.error(
             `[heal] ${user.id}: ${args.dryRun ? "[dry-run] would " : ""}` +
               `stamp identity on partial-rename canonical ${canonicalId} ` +
@@ -487,28 +535,12 @@ async function main(): Promise<void> {
             };
             await writeJsonAtomic(wsPath, updated);
           }
-          // Rewrite conversation refs that still point at the pre-rename
-          // truncated id. (If the partial run rewrote some but not all,
-          // remaining ones get fixed now; if it crashed before any
-          // rewrites, all get fixed.)
-          let rewrites = 0;
-          if (existsSync(conversationsDir)) {
-            for (const fname of await readdir(conversationsDir)) {
-              if (!fname.endsWith(".jsonl")) continue;
-              const cpath = join(conversationsDir, fname);
-              const meta = await readConversationMetadata(cpath);
-              if (!meta || meta.workspaceId !== truncatedId) continue;
-              if (args.dryRun) {
-                rewrites++;
-                continue;
-              }
-              if (
-                await rewriteConversationWorkspaceId(cpath, truncatedId, canonicalId)
-              ) {
-                rewrites++;
-              }
-            }
-          }
+          const rewrites = await rewriteConvRefs(
+            conversationsDir,
+            truncatedId,
+            canonicalId,
+            args.dryRun,
+          );
           console.error(
             `[heal] ${user.id}: ${args.dryRun ? "[dry-run] would " : ""}` +
               `rewrite workspaceId on ${rewrites} conversation(s) referencing truncated id`,

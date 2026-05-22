@@ -431,6 +431,103 @@ describe("heal-truncated-personal-workspaces", () => {
     }
   });
 
+  test("adversarial: canonical stub has allowHttpProxy set → script refuses (allowlist catches non-enumerated field)", async () => {
+    // Round-2 QA finding: the original check was an explicit denylist
+    // of known unsafe fields and missed `allowHttpProxy`. The allowlist
+    // makes any field outside ALLOWED_STUB_KEYS forbidden by default.
+    // Pinning a specific field that wasn't in the original denylist
+    // proves the new approach catches them all — including ones that
+    // don't exist yet.
+    await seedUser();
+    await seedWorkspace({
+      id: TRUNCATED_WS_ID,
+      name: EXPECTED_NAME,
+      members: [{ userId: USER_ID, role: "admin" }],
+    });
+    await seedWorkspace({
+      id: CANONICAL_WS_ID,
+      name: "Personal",
+      members: [{ userId: USER_ID, role: "admin" }],
+      bundles: [],
+      extra: { allowHttpProxy: false },
+    });
+
+    const before = await snapshotWorkdir();
+    const { exitCode, stderr } = await runHeal();
+
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("canonical stub");
+    expect(stderr).toContain("unexpected field: allowHttpProxy");
+    expect(stderr).toContain("manual reconciliation required");
+
+    const after = await snapshotWorkdir();
+    expect(after.size).toBe(before.size);
+    for (const [path, hash] of before) {
+      expect(after.get(path)).toBe(hash);
+    }
+  });
+
+  test("partial-rename adversarial: canonical name doesn't match → refuse to stamp", async () => {
+    // Round-2 QA finding: partial-rename branch must verify the
+    // canonical is actually the user's personal before stamping
+    // identity onto it. A workspace named something else that happens
+    // to live at ws_user_<userId> shouldn't be silently claimed.
+    await seedUser();
+    // No truncated workspace.
+    // Canonical exists but is a totally unrelated workspace.
+    await seedWorkspace({
+      id: CANONICAL_WS_ID,
+      name: "Some Team Project", // NOT "Alice's Workspace"
+      members: [{ userId: USER_ID, role: "admin" }],
+      bundles: [{ source: { type: "static", name: "fake" } } as unknown],
+      // Stale identity stamps (the trigger condition):
+      isPersonal: false,
+      extra: { id: TRUNCATED_WS_ID },
+    });
+
+    const before = await snapshotWorkdir();
+    const { exitCode, stderr } = await runHeal();
+
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain(`canonical ${CANONICAL_WS_ID} exists with stale identity`);
+    expect(stderr).toContain("unexpected name");
+    expect(stderr).toContain("manual reconciliation required");
+
+    const after = await snapshotWorkdir();
+    expect(after.size).toBe(before.size);
+    for (const [path, hash] of before) {
+      expect(after.get(path)).toBe(hash);
+    }
+  });
+
+  test("partial-rename adversarial: user is not admin of canonical → refuse to stamp", async () => {
+    await seedUser();
+    await seedWorkspace({
+      id: CANONICAL_WS_ID,
+      name: EXPECTED_NAME,
+      members: [
+        { userId: USER_ID, role: "member" },
+        { userId: "user_other", role: "admin" },
+      ],
+      isPersonal: false,
+      extra: { id: TRUNCATED_WS_ID },
+    });
+
+    const before = await snapshotWorkdir();
+    const { exitCode, stderr } = await runHeal();
+
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain(`canonical ${CANONICAL_WS_ID} exists with stale identity`);
+    expect(stderr).toContain(`${USER_ID} is not an admin`);
+    expect(stderr).toContain("manual reconciliation required");
+
+    const after = await snapshotWorkdir();
+    expect(after.size).toBe(before.size);
+    for (const [path, hash] of before) {
+      expect(after.get(path)).toBe(hash);
+    }
+  });
+
   test("partial-rename heal: canonical exists with stale id + no truncated → stamp identity + rewrite refs", async () => {
     // Simulates a prior heal run that crashed between the directory
     // rename and the workspace.json rewrite. On rerun, the truncated
