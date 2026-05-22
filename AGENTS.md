@@ -54,6 +54,7 @@ Each worktree gets its own isolated state, so two worktrees can run side-by-side
 - **Linting:** Biome (not ESLint/Prettier). Run `bun run lint`.
 - **Type checking:** `bunx tsc --noEmit`. Strict mode enabled.
 - **Prefer typed-safe paths over `as unknown as T`.** When TS errors, find the input/output type matching runtime shape (e.g. stream-side vs prompt-side) before widening. Cast escape hatches require a comment naming the mismatch. Example: `src/model/inbound-fit.ts`.
+- **Code-style rules beyond Biome/tsc live in [CODE_STYLE.md](./CODE_STYLE.md)** and are enforced by `bun run check:code-style` (part of `verify:static`). Add a rule when you find yourself enforcing the same pattern in review twice. Each rule lands with its check and the cleanup of existing violations in the same PR — otherwise it has no teeth.
 - **HTTP framework:** Hono for routing and middleware. Typed context via `AppEnv`/`AuthEnv`.
 - **Model types:** Use Vercel AI SDK V3 types (`LanguageModelV3`, `LanguageModelV3Message`, etc.) from `@ai-sdk/provider`. The engine calls `model.doStream()` directly.
 - **No classes for data** — plain interfaces + factory functions preferred.
@@ -137,6 +138,15 @@ When adding a new code path that touches workspace-scoped credentials or identit
 
 **Conversations are user-scoped, not workspace-scoped.** Post-Stage-1, every conversation lives at `{workDir}/conversations/{convId}.jsonl` and is authorized by ownership (`Conversation.ownerId === access.userId`). Look up via `runtime.findConversation(convId, { userId })`; write via `runtime.findConversationStore()`. `workspaceId` on conversation metadata is a tool-scoping breadcrumb — it tells the runtime which workspace's tools the chat had access to when a turn ran, NOT where the file lives. Hand-building per-workspace conversation paths (`join(workDir, "workspaces", wsId, "conversations", ...)`) is a regression caught by `check:conversation-paths`. **Personal workspace ids** go through `personalWorkspaceIdFor(userId)` from `src/workspace/workspace-store.ts` — no hand-built `"ws_user_" + userId` or `` `ws_user_${userId}` `` outside that helper (`check:personal-workspace-id` enforces).
 
+### Stage 1 follow-ups — tenant migration order
+
+When migrating a tenant onto Stage 1, run the scripts in this order, all during a maintenance window with the platform scaled to zero:
+
+1. `bun run migrate:personal-workspaces` — renames each user's personal workspace to `ws_user_<userId>` and stamps `isPersonal` / `ownerUserId`.
+2. `bun run migrate:conversations-to-top-level` — moves per-workspace conversations to `{workDir}/conversations/`.
+3. `bun run heal:truncated-personal-workspaces` — **only if needed.** Some legacy tenants used a 16-char-truncated slug for personal workspaces that step 1 doesn't recognize. Heuristic: step 1's output shows `no personal workspace found (will be created on next login)` for users who actually do have a workspace named `<displayName>'s Workspace` at a short-slug id. If you see that pattern, run this heal script (dry-run first). Idempotent — safe to run on any tenant; it exits cleanly with `no truncated workspace` when nothing matches. All three scripts share the same `.migration-lock` PID file, so they're serialized by construction.
+4. `bun run cleanup:personal-workspace-members` — **only if needed.** Pre-Stage-1.1 data may include multi-admin personal workspaces that the new store invariants reject. Idempotent; dry-run by default, `--apply` to write. A personal workspace missing `ownerUserId` is a hard-error — operator must triage.
+
 ### Personal workspace invariants
 
 Personal workspaces (`isPersonal === true`) are sole-owner-by-design. The store enforces four rules and throws `PersonalWorkspaceInvariantError` (`src/workspace/errors.ts`) on violation:
@@ -149,8 +159,6 @@ Personal workspaces (`isPersonal === true`) are sole-owner-by-design. The store 
 What stays freely mutable on a personal workspace: `bundles`, `name`, `about`, `customInstructions`. Those are workspace-content edits, not identity edits.
 
 The HTTP layer maps `PersonalWorkspaceInvariantError` to `422 personal_workspace_invariant` with `{ workspaceId, reason }` details (same shape as `ConversationCorruptedError → 422`). The workspace-mgmt tool handlers encode the error into `structuredContent` so it survives the in-process MCP serialization boundary; `handleToolCall` decodes and emits the 422.
-
-Pre-Stage-1.1 data (multi-admin personal workspaces observed in production) is repaired retroactively by `scripts/cleanup-personal-workspace-members.ts` (alias: `bun run cleanup:personal-workspace-members`). Idempotent; dry-run by default, `--apply` to write. A personal workspace missing `ownerUserId` is a hard-error — operator must triage.
 
 ## Debug Logging
 

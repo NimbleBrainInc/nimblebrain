@@ -29,7 +29,7 @@ export interface HostResourcesReadCapability {
   enabled: boolean;
   /** v2: bounded `offset`/`length` reads. */
   range: boolean;
-  /** Whole-response byte cap. Bundles exceeding this get -32603 ResponseTooLarge. */
+  /** Whole-response byte cap. Bundles exceeding this get -32005 ResponseTooLarge. */
   maxSize: number;
 }
 

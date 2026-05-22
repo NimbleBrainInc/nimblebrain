@@ -14,6 +14,7 @@ import {
   WorkspaceOAuthProvider,
 } from "../tools/workspace-oauth-provider.ts";
 import { WorkspaceContext } from "../workspace/context.ts";
+import type { AutomationDomainContext } from "./automations/src/domain.ts";
 import { createAutomation, deleteAutomation } from "./automations/src/domain.ts";
 import { connectorSlug, hasPersistedComposioConnection } from "./composio-connection.ts";
 import {
@@ -26,7 +27,7 @@ import { getMpak } from "./mpak.ts";
 import { hasPersistedWorkspaceOAuthTokens } from "./oauth-tokens.ts";
 import { defaultWorkDir, deriveServerName, resolveBundleDataDirForRef } from "./paths.ts";
 import { consumePendingAuth } from "./pending-auth-buffer.ts";
-import { startBundleSource } from "./startup.ts";
+import { type BundleMcpDeps, composeBundleMcpContext, startBundleSource } from "./startup.ts";
 import type {
   BriefingBlock,
   BundleInstance,
@@ -56,9 +57,19 @@ export class BundleLifecycleManager {
    * `source: "bundle"` and `bundleName`, which the LLM-facing schema
    * deliberately doesn't accept. See src/tools/platform/CLAUDE.md § 1.4.
    */
-  private getAutomationsCtx:
-    | (() => import("./automations/src/domain.ts").AutomationDomainContext)
-    | null = null;
+  private getAutomationsCtx: (() => AutomationDomainContext) | null = null;
+
+  /**
+   * Factory for per-workspace host-resources deps. Set by Runtime after
+   * construction (`setBundleMcpDepsFactory`). When set, every install
+   * path threads the matching deps through `startBundleSource` so the
+   * spawned bundle's McpSource registers inbound handlers for
+   * `ai.nimblebrain/resources/{read,list}`. Null in test/minimal
+   * runtimes that don't wire the host-resources subsystem — bundles
+   * spawned in that mode can't call host-resources methods (the
+   * handlers are never registered).
+   */
+  private getBundleMcpDeps: ((wsId: string) => BundleMcpDeps) | null = null;
 
   constructor(
     private eventSink: EventSink,
@@ -79,10 +90,25 @@ export class BundleLifecycleManager {
    * — useful for minimal test runtimes that don't want the automations
    * subsystem.
    */
-  setAutomationsContextGetter(
-    getter: () => import("./automations/src/domain.ts").AutomationDomainContext,
-  ): void {
+  setAutomationsContextGetter(getter: () => AutomationDomainContext): void {
     this.getAutomationsCtx = getter;
+  }
+
+  /**
+   * Wire the host-resources deps factory. Called by Runtime once the
+   * resolver + rate-limit are constructed. When unset, bundles spawn
+   * without inbound `ai.nimblebrain/resources/*` handlers registered;
+   * any bundle declaring `required: true` already fails the install
+   * gate so this is reached only by bundles that don't need the
+   * extension.
+   */
+  setBundleMcpDepsFactory(factory: (wsId: string) => BundleMcpDeps): void {
+    this.getBundleMcpDeps = factory;
+  }
+
+  /** Internal: resolve the workspace's host-resources deps, or undefined when unwired. */
+  private resolveBundleMcpDeps(wsId: string): BundleMcpDeps | undefined {
+    return this.getBundleMcpDeps?.(wsId);
   }
 
   // ---- Queries -----------------------------------------------------------
@@ -148,7 +174,11 @@ export class BundleLifecycleManager {
       registry,
       this.eventSink,
       this.configPath ? dirname(this.configPath) : undefined,
-      { dataDir: bundleDataDir, workspaceContext: wsContext },
+      {
+        dataDir: bundleDataDir,
+        workspaceContext: wsContext,
+        bundleMcp: this.resolveBundleMcpDeps(wsId),
+      },
     );
     if (!manifest) {
       // Named bundles always have a manifest — startBundleSource reads it
@@ -222,7 +252,7 @@ export class BundleLifecycleManager {
       registry,
       this.eventSink,
       configDir,
-      { dataDir: bundleDataDir },
+      { dataDir: bundleDataDir, bundleMcp: this.resolveBundleMcpDeps(wsId) },
     );
     if (!manifest) {
       // Local bundles always have a manifest.json on disk; startBundleSource
@@ -342,6 +372,7 @@ export class BundleLifecycleManager {
           wsId,
           workDir: nbWorkDir,
           onInteractiveAuthRequired,
+          bundleMcp: this.resolveBundleMcpDeps(wsId),
         },
       );
       sourceName = result.sourceName;
@@ -857,6 +888,7 @@ export class BundleLifecycleManager {
         authProvider: provider,
       },
       this.eventSink,
+      composeBundleMcpContext(this.resolveBundleMcpDeps(wsId), serverName),
     );
 
     // Wire the new source into the right place BEFORE start so any tool
@@ -1438,6 +1470,10 @@ export class BundleLifecycleManager {
       allowInsecureRemotes: this.allowInsecureRemotes,
       wsId,
       workDir,
+      // Re-thread on reconnect so a Composio OAuth callback doesn't
+      // silently drop the bundle's host-resources handlers. The
+      // composio-auth callback path goes through here.
+      bundleMcp: this.resolveBundleMcpDeps(wsId),
     });
   }
 

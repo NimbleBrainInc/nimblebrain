@@ -27,7 +27,7 @@
  */
 
 import { existsSync } from "node:fs";
-import { readdir, readFile, rename, writeFile } from "node:fs/promises";
+import { readdir, readFile, rename } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { UserStore } from "../src/identity/user.ts";
@@ -37,6 +37,7 @@ import {
   WorkspaceStore,
 } from "../src/workspace/workspace-store.ts";
 import type { Workspace } from "../src/workspace/types.ts";
+import { rewriteConversationWorkspaceId } from "./lib/conversation-metadata.ts";
 import { acquireMigrationLock } from "./lib/migration-lock.ts";
 
 interface Args {
@@ -182,40 +183,6 @@ async function renameWorkspace(
     if (!fname.endsWith(".jsonl")) continue;
     await rewriteConversationWorkspaceId(join(convDir, fname), oldId, newId);
   }
-}
-
-/**
- * Rewrite the metadata line (line 1) of a conversation JSONL so its
- * `workspaceId` reflects the renamed workspace. Other lines are passed
- * through byte-identical — never reparse run/llm/tool events here.
- */
-async function rewriteConversationWorkspaceId(
-  filePath: string,
-  oldId: string,
-  newId: string,
-): Promise<void> {
-  const raw = await readFile(filePath, "utf-8");
-  const newlineIdx = raw.indexOf("\n");
-  if (newlineIdx < 0) return;
-
-  const metadataLine = raw.slice(0, newlineIdx);
-  const rest = raw.slice(newlineIdx); // includes the leading \n
-
-  let meta: Record<string, unknown>;
-  try {
-    meta = JSON.parse(metadataLine);
-  } catch {
-    // Malformed metadata; leave the file alone. Operator can fix.
-    return;
-  }
-  if (meta.workspaceId !== oldId) return; // already migrated or different ws
-  meta.workspaceId = newId;
-  const newMetadata = JSON.stringify(meta);
-
-  // Atomic write: tmp file + rename.
-  const tmp = `${filePath}.tmp.${Date.now()}`;
-  await writeFile(tmp, `${newMetadata}${rest}`, { encoding: "utf-8", mode: 0o600 });
-  await rename(tmp, filePath);
 }
 
 /**

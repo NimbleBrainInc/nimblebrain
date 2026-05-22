@@ -19,6 +19,7 @@ import { textContent } from "../../engine/content-helpers.ts";
 import type { ContentBlock, EventSink, ToolResult } from "../../engine/types.ts";
 import { extractText } from "../../files/extract.ts";
 import { IMAGE_TYPES, isExtractable, PDF_TYPES } from "../../files/ingest.ts";
+import { isTextMime } from "../../files/mime.ts";
 import { createFileStore, type FileStore } from "../../files/store.ts";
 import type { FileEntry } from "../../files/types.ts";
 import { fileIdToUri, uriToFileId } from "../../files/uri.ts";
@@ -483,21 +484,4 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
     },
     eventSink,
   );
-}
-
-const TEXT_MIMES = new Set([
-  "text/plain",
-  "text/csv",
-  "text/markdown",
-  "text/html",
-  "text/xml",
-  "text/yaml",
-  "application/json",
-  "application/xml",
-  "application/yaml",
-]);
-
-function isTextMime(mimeType: string): boolean {
-  const bare = mimeType.split(";", 1)[0]?.trim().toLowerCase() ?? "";
-  return bare.startsWith("text/") || TEXT_MIMES.has(bare);
 }

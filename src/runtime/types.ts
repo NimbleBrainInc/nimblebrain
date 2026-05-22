@@ -4,6 +4,7 @@ import type { ConfirmationGate } from "../config/privilege.ts";
 import type { ConversationStore } from "../conversation/types.ts";
 import type { EventSink } from "../engine/types.ts";
 import type { ContentPart, FileReference } from "../files/types.ts";
+import type { UserIdentity } from "../identity/provider.ts";
 import type { ProvidersConfig } from "../model/registry.ts";
 import type { TokenUsage } from "../usage/types.ts";
 
@@ -233,7 +234,7 @@ export interface ChatRequest {
   /** Glob patterns filtering which tools are available. Matches use same logic as skill allowed-tools. */
   allowedTools?: string[];
   /** Authenticated user identity for this request. Set by API middleware. */
-  identity?: import("../identity/provider.ts").UserIdentity;
+  identity?: UserIdentity;
   /**
    * Cancellation signal forwarded to the engine and threaded down to every
    * tool call via `EngineConfig.signal`. When aborted, the agent loop stops

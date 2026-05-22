@@ -4,11 +4,12 @@
  * These are consumed by system tools for hot bundle management within workspaces.
  */
 
+import type { EventSink } from "../engine/types.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
 import { WorkspaceContext } from "../workspace/context.ts";
 import { defaultWorkDir, resolveBundleDataDirForRef, serverNameFromRef } from "./paths.ts";
-import { startBundleSource } from "./startup.ts";
-import type { BundleRef } from "./types.ts";
+import { type BundleMcpDeps, startBundleSource } from "./startup.ts";
+import type { BundleRef, LocalBundleMeta } from "./types.ts";
 
 /** A single entry in the process inventory — one per (workspace, bundle) pair. */
 export interface ProcessInventoryEntry {
@@ -16,7 +17,7 @@ export interface ProcessInventoryEntry {
   bundle: BundleRef;
   dataDir: string;
   serverName: string;
-  meta?: import("./types.ts").LocalBundleMeta | null;
+  meta?: LocalBundleMeta | null;
 }
 
 /**
@@ -31,11 +32,18 @@ export async function installBundleInWorkspace(
   registry: ToolRegistry,
   // Required — threaded into the new McpSource so task-augmented tools'
   // progress events reach SSE. See mcp-source.ts for the full rationale.
-  eventSink: import("../engine/types.ts").EventSink,
+  eventSink: EventSink,
   configDir: string | undefined,
   opts?: {
     allowInsecureRemotes?: boolean;
     workDir?: string;
+    /**
+     * Per-workspace host-resources deps. Caller (`system-tools` /
+     * `manage_app install`, `connector-tools`) pulls from Runtime.
+     * Passed through to `startBundleSource` so the spawned bundle's
+     * McpSource registers inbound `ai.nimblebrain/resources/*` handlers.
+     */
+    bundleMcp?: BundleMcpDeps;
   },
 ): Promise<ProcessInventoryEntry> {
   // workDir default matches the sibling `uninstallBundleFromWorkspace`
@@ -64,6 +72,7 @@ export async function installBundleInWorkspace(
     // `user_config` from the workspace credential store before prepareServer
     // validates it.
     workspaceContext: wsContext,
+    bundleMcp: opts?.bundleMcp,
   });
 
   return {
