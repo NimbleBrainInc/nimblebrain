@@ -1470,6 +1470,10 @@ export class BundleLifecycleManager {
       allowInsecureRemotes: this.allowInsecureRemotes,
       wsId,
       workDir,
+      // Re-thread on reconnect so a Composio OAuth callback doesn't
+      // silently drop the bundle's host-resources handlers. The
+      // composio-auth callback path goes through here.
+      bundleMcp: this.resolveBundleMcpDeps(wsId),
     });
   }
 

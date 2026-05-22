@@ -8,8 +8,10 @@ import {
 
 // The rate limiter is per-(workspaceId, bundleId). One greedy bundle
 // can't starve another, and one workspace can't starve another. Each
-// `check()` call debits one token; exhaustion throws JSON-RPC -32603
+// `check()` call debits one token; exhaustion throws JSON-RPC -32004
 // with retryAfterMs in the error data so a polite bundle can back off.
+
+const RATE_LIMITED = -32004;
 
 describe("TokenBucketRateLimit defaults", () => {
   it("exposes the documented defaults", () => {
@@ -41,7 +43,7 @@ describe("TokenBucketRateLimit.check", () => {
     expect(() => rl.check("ws_a", "bundle_x")).toThrow();
   });
 
-  it("rejected calls throw McpError with retryAfterMs", () => {
+  it("rejected calls throw McpError with -32004 and retryAfterMs", () => {
     let now = 1000;
     const rl = new TokenBucketRateLimit({ burst: 1, ratePerSec: 10, now: () => now });
     rl.check("ws_a", "bundle_x");
@@ -52,6 +54,12 @@ describe("TokenBucketRateLimit.check", () => {
       caught = e as McpError;
     }
     expect(caught).toBeInstanceOf(McpError);
+    // Pin the JSON-RPC code so doc/impl drift fails CI rather than
+    // silently shifting the contract that bundle SDK retry logic
+    // depends on. Rate limiting lives in the impl-defined server-error
+    // range, NOT `-32603 InternalError` (which would mis-signal a
+    // deliberate quota response as a server fault).
+    expect(caught?.code).toBe(RATE_LIMITED);
     const data = caught?.data as { retryAfterMs?: number } | undefined;
     expect(typeof data?.retryAfterMs).toBe("number");
     expect(data?.retryAfterMs).toBeGreaterThan(0);

@@ -17,9 +17,11 @@ const RATE_LIMITED = -32004;
  *
  * Token bucket semantics: a bundle accrues `ratePerSec` tokens per
  * second up to a `burst` ceiling. Each `check()` debits one token; a
- * call with no tokens throws `-32603 Rate limited` carrying
+ * call with no tokens throws `-32004 Rate limited` carrying
  * `retryAfterMs` in the error data so a polite bundle can back off
- * intelligently.
+ * intelligently. The code sits in the JSON-RPC impl-defined
+ * server-error range (`-32000` to `-32099`) — `-32603 InternalError`
+ * would mis-signal a deliberate quota response as a server fault.
  *
  * Phase 2a tunables (host-resources/capability defaults):
  * - ratePerSec: 100   (every 10ms is the steady-state floor)

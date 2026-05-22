@@ -721,7 +721,7 @@ export class McpSource implements ToolSource {
    * the surface).
    *
    * Handlers do three things, in order: rate-limit check (throws
-   * `-32603` on exhaustion), delegate to the resolver (which enforces
+   * `-32004` on exhaustion), delegate to the resolver (which enforces
    * scheme allowlist + workspace isolation + size cap), and log via
    * the `host-resources` debug namespace. Errors propagate as JSON-RPC
    * errors back to the bundle.
@@ -743,10 +743,9 @@ export class McpSource implements ToolSource {
       const params = request.params ?? {};
       return ctx.hostResources.list(
         // Bundle-supplied filter rides in `_meta` per MCP convention for
-        // extension-carried request data. Spec `ListResourcesRequest`
-        // doesn't have a `filter` field; we look in `_meta` first and
-        // fall back to top-level for forward-compat with a future
-        // upstream variant that does add `filter`.
+        // extension-carried request data — spec `ListResourcesRequest`
+        // doesn't have a `filter` field. If the spec ever adds one, also
+        // accept it from `params.filter` here.
         {
           cursor: typeof params.cursor === "string" ? params.cursor : undefined,
           filter:
