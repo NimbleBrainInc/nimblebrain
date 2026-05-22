@@ -34,6 +34,7 @@ COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile --production --ignore-scripts
 
 COPY src/ src/
+COPY scripts/ scripts/
 
 # Build bundle UIs (dist/ is gitignored, must build in container)
 RUN for ui in src/bundles/*/ui; do \
