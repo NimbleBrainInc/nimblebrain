@@ -144,7 +144,21 @@ When migrating a tenant onto Stage 1, run the scripts in this order, all during 
 
 1. `bun run migrate:personal-workspaces` — renames each user's personal workspace to `ws_user_<userId>` and stamps `isPersonal` / `ownerUserId`.
 2. `bun run migrate:conversations-to-top-level` — moves per-workspace conversations to `{workDir}/conversations/`.
-3. `bun run heal:truncated-personal-workspaces` — **only if needed.** Some legacy tenants (notably hq) used a 16-char-truncated slug for personal workspaces that step 1 doesn't recognize. Heuristic: step 1's output shows `no personal workspace found (will be created on next login)` for users who actually do have a workspace named `<displayName>'s Workspace` at a short-slug id. If you see that pattern, run this heal script (dry-run first). Idempotent — safe to run on any tenant; it exits cleanly with `no truncated workspace` when nothing matches. All three scripts share the same `.migration-lock` PID file, so they're serialized by construction.
+3. `bun run heal:truncated-personal-workspaces` — **only if needed.** Some legacy tenants used a 16-char-truncated slug for personal workspaces that step 1 doesn't recognize. Heuristic: step 1's output shows `no personal workspace found (will be created on next login)` for users who actually do have a workspace named `<displayName>'s Workspace` at a short-slug id. If you see that pattern, run this heal script (dry-run first). Idempotent — safe to run on any tenant; it exits cleanly with `no truncated workspace` when nothing matches. All three scripts share the same `.migration-lock` PID file, so they're serialized by construction.
+4. `bun run cleanup:personal-workspace-members` — **only if needed.** Pre-Stage-1.1 data may include multi-admin personal workspaces that the new store invariants reject. Idempotent; dry-run by default, `--apply` to write. A personal workspace missing `ownerUserId` is a hard-error — operator must triage.
+
+### Personal workspace invariants
+
+Personal workspaces (`isPersonal === true`) are sole-owner-by-design. The store enforces four rules and throws `PersonalWorkspaceInvariantError` (`src/workspace/errors.ts`) on violation:
+
+1. **Members locked** to `[{ userId: ownerUserId, role: "admin" }]`. `addMember` / `removeMember` / `updateMemberRole` and `update({ members })` all reject mutations on personal workspaces.
+2. **`isPersonal` frozen** post-create (both directions).
+3. **`ownerUserId` frozen** on personal workspaces.
+4. **`ownerUserId` forbidden** on non-personal workspaces (the two fields travel together).
+
+What stays freely mutable on a personal workspace: `bundles`, `name`, `about`, `customInstructions`. Those are workspace-content edits, not identity edits.
+
+The HTTP layer maps `PersonalWorkspaceInvariantError` to `422 personal_workspace_invariant` with `{ workspaceId, reason }` details (same shape as `ConversationCorruptedError → 422`). The workspace-mgmt tool handlers encode the error into `structuredContent` so it survives the in-process MCP serialization boundary; `handleToolCall` decodes and emits the 422.
 
 ## Debug Logging
 

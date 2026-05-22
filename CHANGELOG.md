@@ -43,6 +43,8 @@
 - Top-level `/profile` route. Identity isn't a setting; un-nested from `/settings/*`.
 - Org-admin gate on `set_model_config` — backend now refuses non-org-admin writes (was UI-only via RouteGuard). Distinguishes "no identity" (cron, automations) from "wrong role" so debug logs make non-user code paths obvious.
 - HTTP proxy primitive (`_meta["ai.nimblebrain/http-proxy"]`). Bundles can expose a loopback HTTP server (e.g. `astro preview`, Jupyter kernel) through the platform at `/v1/ws/<wsId>/apps/<bundle>/<mount>/*`. Loopback-only target, credentials and `Accept-Encoding` stripped on forward, `Set-Cookie`/CSP/X-Frame-Options stripped on response, per-workspace kill switch via `Workspace.allowHttpProxy`. Bundles get `NB_WORKSPACE_ID`, `NB_PROXY_PREFIX`, `NB_PUBLIC_ORIGIN` in their env at spawn ([docs](https://docs.nimblebrain.ai/apps/http-proxy/)).
+- `PersonalWorkspaceInvariantError` typed error (`src/workspace/errors.ts`) → HTTP 422 `personal_workspace_invariant` with structured `{ workspaceId, reason }` body. Mirrors the `ConversationCorruptedError` → 422 precedent; raised by `WorkspaceStore` on attempts to mutate the locked members / `isPersonal` / `ownerUserId` fields on personal workspaces.
+- `scripts/cleanup-personal-workspace-members.ts` (alias: `bun run cleanup:personal-workspace-members`) — one-off retroactive cleanup that converges pre-Stage-1.1 personal workspaces to the sole-owner-admin shape. Idempotent, dry-run by default.
 
 ### Changed
 
@@ -87,6 +89,7 @@
 - **Removed `manage_conversation` actions:** `shareConversation`, `unshareConversation`, `addParticipant`, `removeParticipant` are gone. Single-owner semantics; sharing returns in a future stage with policy gates. External callers that previously invoked these actions get an `unknown action` error.
 - **`Conversation.visibility` and `Conversation.participants` removed from the schema.** Reads of pre-migration files that still carry these fields skip them at parse time; writes never produce them. `ownerId` is now required on every conversation file — pre-migration files without one fail to load with a clear "run the migration" hint.
 - **`/v1/conversations/:id/events` no longer requires `X-Workspace-Id`.** The header is still honored when sent (validated for format + membership); absent → 200, present + malformed → 400, present + non-member → 403. Foreign-owner conversation → 403 `conversation_access_denied`; non-existent → 404 `not_found`. Web clients that already send the header keep working unchanged.
+- **Personal workspaces enforce sole-owner-admin membership and freeze `isPersonal` / `ownerUserId` post-create.** `WorkspaceStore.update` / `addMember` / `removeMember` / `updateMemberRole` throw `PersonalWorkspaceInvariantError` on any member or identity-field mutation against a personal workspace; `WorkspaceStore.create` rejects a personal workspace whose initial members aren't exactly `[{ userId: ownerUserId, role: "admin" }]`. Operators with pre-existing multi-admin personal workspaces must run `bun run cleanup:personal-workspace-members --apply` to converge — `bundles`, `name`, `about`, `customInstructions` remain freely mutable.
 
 ### Fixed
 

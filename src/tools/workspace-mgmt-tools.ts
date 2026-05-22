@@ -3,6 +3,7 @@ import type { ToolResult } from "../engine/types.ts";
 import type { UserIdentity } from "../identity/provider.ts";
 import { ORG_ADMIN_ROLES } from "../identity/types.ts";
 import type { UserStore } from "../identity/user.ts";
+import { PersonalWorkspaceInvariantError } from "../workspace/errors.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
 import type { InProcessTool } from "./in-process-app.ts";
 
@@ -187,6 +188,12 @@ async function handleCreate(
       isError: false,
     };
   } catch (err) {
+    // PersonalWorkspaceInvariantError propagates to the HTTP layer
+    // (mapped to 422). Swallowing it here would degrade a sharp
+    // identity-boundary violation into a soft 200 + isError:true.
+    if (err instanceof PersonalWorkspaceInvariantError) {
+      return personalWorkspaceInvariantToolResult(err);
+    }
     return {
       content: textContent(
         `Failed to create workspace: ${err instanceof Error ? err.message : String(err)}`,
@@ -250,6 +257,9 @@ async function handleUpdate(
       isError: false,
     };
   } catch (err) {
+    if (err instanceof PersonalWorkspaceInvariantError) {
+      return personalWorkspaceInvariantToolResult(err);
+    }
     return {
       content: textContent(
         `Failed to update workspace: ${err instanceof Error ? err.message : String(err)}`,
@@ -366,6 +376,28 @@ function memberPermissionDenied(): ToolResult {
   };
 }
 
+/**
+ * Encode `PersonalWorkspaceInvariantError` into the ToolResult so the
+ * HTTP layer (`handleToolCall`) can recognize it and map to a 422 with
+ * a structured body — the typed error class itself is lost across the
+ * in-process MCP serialization boundary. The marker is the `error`
+ * field on `structuredContent`; consumers outside the HTTP layer (the
+ * agent loop, external MCP clients) see a regular `isError: true`
+ * result and can read the same `structuredContent` if they care.
+ */
+function personalWorkspaceInvariantToolResult(err: PersonalWorkspaceInvariantError): ToolResult {
+  return {
+    content: textContent(err.message),
+    structuredContent: {
+      error: "personal_workspace_invariant",
+      workspaceId: err.workspaceId,
+      reason: err.reason,
+      message: err.message,
+    },
+    isError: true,
+  };
+}
+
 /** @deprecated Member management is now handled by manage_workspaces. Kept for test coverage of handler logic. */
 export function createManageMembersTool(ctx: ManageMembersContext): InProcessTool {
   return {
@@ -475,6 +507,9 @@ async function handleAddMember(
       isError: false,
     };
   } catch (err) {
+    if (err instanceof PersonalWorkspaceInvariantError) {
+      return personalWorkspaceInvariantToolResult(err);
+    }
     return {
       content: textContent(
         `Failed to add member: ${err instanceof Error ? err.message : String(err)}`,
@@ -536,6 +571,9 @@ async function handleRemoveMember(
       isError: false,
     };
   } catch (err) {
+    if (err instanceof PersonalWorkspaceInvariantError) {
+      return personalWorkspaceInvariantToolResult(err);
+    }
     return {
       content: textContent(
         `Failed to remove member: ${err instanceof Error ? err.message : String(err)}`,
@@ -613,6 +651,9 @@ async function handleUpdateMember(
       isError: false,
     };
   } catch (err) {
+    if (err instanceof PersonalWorkspaceInvariantError) {
+      return personalWorkspaceInvariantToolResult(err);
+    }
     return {
       content: textContent(
         `Failed to update member: ${err instanceof Error ? err.message : String(err)}`,

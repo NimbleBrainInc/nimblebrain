@@ -22,6 +22,7 @@ import type { ResourceData } from "../tools/types.ts";
 import { validateToolInput } from "../tools/validate-input.ts";
 import { estimateCost } from "../usage/cost.ts";
 import { bytesToBase64 } from "../util/base64.ts";
+import { PersonalWorkspaceInvariantError } from "../workspace/errors.ts";
 import type { ConversationEventManager } from "./conversation-events.ts";
 import type { SseEventManager } from "./events.ts";
 import { ChatRequestBody, ToolCallRequestEnvelope } from "./schemas/rest.ts";
@@ -159,6 +160,44 @@ function conversationCorruptedResponse(err: ConversationCorruptedError): Respons
     conversationId: err.conversationId,
     reason: err.reason,
   });
+}
+
+/**
+ * Map `PersonalWorkspaceInvariantError` to a structured 422 response.
+ * Mirrors `conversationCorruptedResponse` — 422 over 500 because the
+ * request is well-formed; the state it would produce isn't. The
+ * `reason` field is the structured handle clients use to react (e.g.
+ * surface "cannot remove members from a personal workspace" without
+ * parsing the human message).
+ */
+function personalWorkspaceInvariantResponse(err: PersonalWorkspaceInvariantError): Response {
+  return apiError(422, "personal_workspace_invariant", err.message, {
+    workspaceId: err.workspaceId,
+    reason: err.reason,
+  });
+}
+
+/**
+ * Recognize the structuredContent shape that the workspace-mgmt tool
+ * handlers emit when they catch `PersonalWorkspaceInvariantError`.
+ * `structuredContent` rides through the in-process MCP serialization
+ * intact, so we can re-detect the original invariant violation from the
+ * tool result on the HTTP side without preserving the typed class
+ * across the boundary. See `workspace-mgmt-tools.ts::personalWorkspaceInvariantToolResult`.
+ */
+function isPersonalWorkspaceInvariantToolResult(structured: unknown): structured is {
+  error: "personal_workspace_invariant";
+  workspaceId: string;
+  reason: string;
+  message?: string;
+} {
+  if (!structured || typeof structured !== "object") return false;
+  const obj = structured as Record<string, unknown>;
+  return (
+    obj.error === "personal_workspace_invariant" &&
+    typeof obj.workspaceId === "string" &&
+    typeof obj.reason === "string"
+  );
 }
 
 /** Handle POST /v1/chat/stream — SSE streaming chat request. */
@@ -770,7 +809,38 @@ export async function handleToolCall(
     };
     sseManager?.emit(failEvent);
     eventSink?.emit(failEvent);
+    // Typed invariant errors get mapped to clean HTTP status codes
+    // (mirrors how /v1/chat handles ConversationCorruptedError). The
+    // direct-throw path (in-process tool that bubbles up to here without
+    // crossing the MCP serialization boundary) preserves the typed
+    // class. The structuredContent-marker path below handles the case
+    // where the error already became a ToolResult inside an in-process
+    // MCP source.
+    if (err instanceof PersonalWorkspaceInvariantError) {
+      return personalWorkspaceInvariantResponse(err);
+    }
     throw err;
+  }
+
+  // Recognize a PersonalWorkspaceInvariantError encoded in the tool
+  // result. The error class doesn't survive the in-process MCP
+  // serialization boundary (handler throws → SDK catches → JSON-RPC
+  // error → SDK client throws a generic McpError), so workspace-mgmt
+  // tool handlers encode it as `structuredContent.error === "personal_
+  // workspace_invariant"` with `reason` + `workspaceId`. We unwrap that
+  // here so callers (web shell, external MCP clients) see a clean 422
+  // with the same structured body as the direct-throw path above.
+  if (result.isError && isPersonalWorkspaceInvariantToolResult(result.structuredContent)) {
+    const sc = result.structuredContent;
+    return apiError(
+      422,
+      "personal_workspace_invariant",
+      typeof sc.message === "string" ? sc.message : "Personal-workspace invariant violated",
+      {
+        workspaceId: sc.workspaceId,
+        reason: sc.reason,
+      },
+    );
   }
 
   const ms = Math.round(performance.now() - t0);

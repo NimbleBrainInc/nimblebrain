@@ -3,8 +3,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { ensureUserWorkspace } from "../../../src/workspace/provisioning.ts";
+import type { Workspace } from "../../../src/workspace/types.ts";
 import {
   personalWorkspaceIdFor,
+  WorkspaceConflictError,
   WorkspaceStore,
 } from "../../../src/workspace/workspace-store.ts";
 
@@ -81,6 +83,66 @@ describe("ensureUserWorkspace", () => {
     expect(list[0]!.isPersonal).toBe(true);
   });
 
+  test("self-heals when canonical is deleted between create-conflict and re-read", async () => {
+    // Race shape (pinning what an earlier version of reconcileConflict
+    // would have 500'd on): caller A's `store.get` returns null, A's
+    // `store.create` loses the race to caller B → throws
+    // WorkspaceConflictError, but C deletes the workspace before A
+    // re-reads. The bounded retry loop must recreate, not throw.
+    let getCallNo = 0;
+    let createCallNo = 0;
+    const recreated: Workspace = {
+      id: personalWorkspaceIdFor("user_alice"),
+      name: "Alice's Workspace",
+      members: [{ userId: "user_alice", role: "admin" }],
+      bundles: [],
+      isPersonal: true,
+      ownerUserId: "user_alice",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    const stub = {
+      async get(_id: string): Promise<Workspace | null> {
+        getCallNo++;
+        return null; // both reads see the deleted state
+      },
+      async create(_name: string, _slug: string): Promise<Workspace> {
+        createCallNo++;
+        if (createCallNo === 1) {
+          throw new WorkspaceConflictError(personalWorkspaceIdFor("user_alice"));
+        }
+        return recreated;
+      },
+    } as unknown as WorkspaceStore;
+
+    const result = await ensureUserWorkspace(stub, {
+      id: "user_alice",
+      displayName: "Alice",
+    });
+
+    expect(result).toBe(recreated);
+    expect(getCallNo).toBe(2); // initial read + post-conflict re-read
+    expect(createCallNo).toBe(2); // first lost, second won
+  });
+
+  test("gives up after 3 attempts under pathological create/delete churn", async () => {
+    // If every attempt loses to a concurrent creator AND every
+    // re-read sees the workspace already deleted again, surface a
+    // diagnosable error instead of looping forever.
+    const stub = {
+      async get(): Promise<Workspace | null> {
+        return null;
+      },
+      async create(): Promise<Workspace> {
+        throw new WorkspaceConflictError(personalWorkspaceIdFor("user_alice"));
+      },
+    } as unknown as WorkspaceStore;
+
+    await expect(
+      ensureUserWorkspace(stub, { id: "user_alice", displayName: "Alice" }),
+    ).rejects.toThrow(/couldn't be reconciled after 3 attempts/);
+  });
+
   test("different users get different personal workspaces", async () => {
     const a = await ensureUserWorkspace(store, { id: "user_alice", displayName: "Alice" });
     const b = await ensureUserWorkspace(store, { id: "user_bob", displayName: "Bob" });
@@ -112,23 +174,24 @@ describe("ensureUserWorkspace", () => {
     expect(sharedAfter?.members).toEqual([{ userId: "user_alice", role: "member" }]);
   });
 
-  test("self-heals when the canonical workspace exists but the user is not a member", async () => {
-    // Arrange: pre-create the personal workspace WITHOUT the user as a
-    // member (simulates admin error or partial migration).
+  test("create populates the owner as sole admin so ensureUserWorkspace is a pure read on the second login (Stage 1.1)", async () => {
+    // Stage 1.1 invariant: `WorkspaceStore.create` produces a personal
+    // workspace whose `members` is already `[{ userId: ownerUserId,
+    // role: "admin" }]`. The earlier "personal workspace exists with
+    // zero members" state can no longer be reached through the
+    // canonical create path — and `addMember` on a personal workspace
+    // is now rejected by the store. So ensureUserWorkspace becomes a
+    // pure read on every login after the first. Operators with
+    // pre-Stage-1.1 data converge via
+    // `scripts/cleanup-personal-workspace-members.ts`.
     const wsId = personalWorkspaceIdFor("user_alice");
-    await store.create("Alice's Workspace", wsId.slice(3), {
+    const pre = await store.create("Alice's Workspace", wsId.slice(3), {
       isPersonal: true,
       ownerUserId: "user_alice",
     });
+    expect(pre.members).toEqual([{ userId: "user_alice", role: "admin" }]);
 
-    // Pre-condition: workspace exists with zero members.
-    const pre = await store.get(wsId);
-    expect(pre?.members).toEqual([]);
-
-    // Act: provisioning runs.
     const ws = await ensureUserWorkspace(store, { id: "user_alice", displayName: "Alice" });
-
-    // The workspace is the same one; the user is now a member.
     expect(ws.id).toBe(wsId);
     expect(ws.members).toEqual([{ userId: "user_alice", role: "admin" }]);
   });
