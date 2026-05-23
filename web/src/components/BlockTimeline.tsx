@@ -468,7 +468,11 @@ function ToolCallRow({ item }: { item: ToolDescription }) {
         disabled={!hasDetail}
       >
         <RowIcon tone={item.tone} />
-        {item.summary && <span className="turn-pill__call-summary">{item.summary}</span>}
+        {/* Always show *something* — input summary when there is one,
+            otherwise the tool name. A no-input call (e.g. `current_user()`)
+            still needs to identify itself; just a dot + duration tells the
+            reader nothing about what ran. */}
+        <span className="turn-pill__call-summary">{item.summary ?? item.name}</span>
         {item.tone !== "running" && item.durationMs != null && (
           <span className="turn-pill__call-ms">{formatDuration(item.durationMs)}</span>
         )}

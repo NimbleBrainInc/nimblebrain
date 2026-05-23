@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { render } from "@testing-library/react";
+import { act, fireEvent, render } from "@testing-library/react";
 import { BlockTimeline } from "../src/components/BlockTimeline.tsx";
 import type {
 	ContentBlock,
@@ -324,6 +324,52 @@ describe("LiveCursor", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 // Reasoning chip — settled persistence
 // ─────────────────────────────────────────────────────────────────────────────
+
+describe("ToolCallRow fallback label", () => {
+	it("shows the tool name when the call has no input summary", () => {
+		// No-input tools (e.g. current_user()) produced rows that read as
+		// just "● 7ms" — no label, no signal about what ran. Fall back to
+		// the tool's stripped name so the reader can identify the call.
+		const noInputCall: ToolCallDisplay = {
+			id: "n1",
+			name: "list_active_apps",
+			status: "done",
+			ok: true,
+			ms: 7,
+		};
+		// Multi-call ToolRow renders a ToolCallRow per call. Pair the
+		// no-input call with one that has input so the row enters its
+		// per-call list mode.
+		const withInputCall: ToolCallDisplay = {
+			id: "w1",
+			name: "list_active_apps",
+			status: "done",
+			ok: true,
+			ms: 5,
+			input: { query: "anything" },
+		};
+		const { container } = renderTimeline({
+			blocks: [tool(withInputCall, noInputCall)],
+		});
+		// Per-call rows only render when the chip head is expanded.
+		const heads = pillHeads(container);
+		expect(heads.length).toBe(1);
+		act(() => {
+			fireEvent.click(heads[0]);
+		});
+		const summaries: string[] = [];
+		for (const span of Array.from(container.getElementsByTagName("span"))) {
+			if (
+				(span.getAttribute("class") ?? "").split(/\s+/).includes("turn-pill__call-summary")
+			) {
+				summaries.push((span.textContent ?? "").trim());
+			}
+		}
+		// One row is the input preview ("query: anything"); the other must
+		// fall back to the tool name (the call had no input to preview).
+		expect(summaries).toContain("list_active_apps");
+	});
+});
 
 describe("ReasoningChip", () => {
 	it("persists as a clickable 'Thought' chip on settled turns", () => {
