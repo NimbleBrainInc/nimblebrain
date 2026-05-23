@@ -4,10 +4,8 @@ import { Streamdown } from "streamdown";
 import type { ChatMessage, PreparingTool, StreamingState } from "../hooks/useChat";
 import { participantColor } from "../lib/participant-colors";
 import type { DisplayDetail } from "../lib/tool-display";
+import { BlockTimeline } from "./BlockTimeline";
 import { FileAttachment } from "./FileAttachment";
-import { InlineAppView } from "./InlineAppView";
-import { ResourceLinkView } from "./ResourceLinkView";
-import { TurnActivityPill } from "./TurnActivityPill";
 
 function formatTokens(count: number): string {
   if (count >= 1000) return `${(count / 1000).toFixed(1)}k`;
@@ -333,94 +331,21 @@ export function MessageList({
                   </div>
                 ) : (
                   <div className="w-full break-words min-w-0 overflow-hidden flex flex-col gap-3">
-                    {/* Turn-level activity surface — anchors at the top of the
-                        assistant message. Single source of truth for status,
-                        tool grouping, and reasoning timeline. */}
-                    <TurnActivityPill
-                      blocks={msg.blocks}
-                      streamingState={streamingState}
-                      preparingTool={preparingTool ?? null}
-                      isCurrentTurn={isStreaming && idx === messages.length - 1}
-                      displayDetail={displayDetail}
-                    />
-                    {/* Render content blocks in temporal order. Reasoning is
-                        surfaced inside the pill; tool blocks emit only their
-                        widget/resource attachments here. */}
                     {msg.blocks ? (
-                      msg.blocks.map((block, blockIdx) => {
-                        if (block.type === "reasoning") {
-                          // Reasoning lives in the pill timeline now.
-                          return null;
-                        }
-                        if (block.type === "text" && block.text) {
-                          return (
-                            // biome-ignore lint/suspicious/noArrayIndexKey: blocks are append-only and don't reorder
-                            <div key={blockIdx} className="min-h-[1em]">
-                              <Streamdown
-                                className="streamdown-container presence-assistant-message"
-                                isAnimating={
-                                  isStreaming &&
-                                  idx === messages.length - 1 &&
-                                  blockIdx === msg.blocks!.length - 1
-                                }
-                              >
-                                {block.text}
-                              </Streamdown>
-                            </div>
-                          );
-                        }
-                        if (block.type === "tool" && block.toolCalls.length > 0) {
-                          const blockWidgets = block.toolCalls.filter(
-                            (tc) => tc.resourceUri && tc.status === "done" && tc.appName,
-                          );
-                          const resourceLinkCalls = block.toolCalls.filter(
-                            (tc) =>
-                              tc.status === "done" &&
-                              tc.appName &&
-                              tc.resourceLinks &&
-                              tc.resourceLinks.length > 0,
-                          );
-                          if (blockWidgets.length === 0 && resourceLinkCalls.length === 0) {
-                            return null;
-                          }
-                          return (
-                            // biome-ignore lint/suspicious/noArrayIndexKey: blocks are append-only and don't reorder
-                            <div key={blockIdx} className="flex flex-col gap-3">
-                              {blockWidgets.map((tc) => {
-                                // Pass the full ui:// URI through — InlineAppView strips the
-                                // scheme and forwards everything after as the resource path.
-                                // The legacy regex `/^ui:\/\/[^/]+\/(.+)$/` dropped the first
-                                // segment on the assumption it was a namespace prefix, which
-                                // breaks two-segment URIs like `ui://<state>/<method>` where
-                                // the first segment is load-bearing (Reboot's convention for
-                                // state-scoped UI methods).
-                                return (
-                                  <InlineAppView
-                                    key={tc.id}
-                                    appName={tc.appName!}
-                                    resourceUri={tc.resourceUri!}
-                                    toolResult={{ tool: tc.name, result: tc.result }}
-                                  />
-                                );
-                              })}
-                              {resourceLinkCalls.flatMap((tc) =>
-                                tc.resourceLinks!.map((link) => (
-                                  <ResourceLinkView
-                                    key={`${tc.id}:${link.uri}`}
-                                    appName={tc.appName!}
-                                    uri={link.uri}
-                                    name={link.name}
-                                    mimeType={link.mimeType}
-                                    description={link.description}
-                                  />
-                                )),
-                              )}
-                            </div>
-                          );
-                        }
-                        return null;
-                      })
+                      <BlockTimeline
+                        blocks={msg.blocks}
+                        isCurrentMessage={isStreaming && idx === messages.length - 1}
+                        streamingState={streamingState}
+                        preparingTool={preparingTool ?? null}
+                        displayDetail={displayDetail}
+                      />
                     ) : (
+                      // Legacy / pre-block-model conversations: render the
+                      // serialized message content as one Streamdown block.
+                      // The block model has been the engine's emission shape
+                      // for some time, so this branch is essentially
+                      // history-only; kept for archived JSONLs that don't
+                      // have `blocks` populated.
                       <div className="min-h-[1em]">
                         <Streamdown
                           className="streamdown-container presence-assistant-message"
