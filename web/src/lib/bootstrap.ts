@@ -28,6 +28,12 @@ export function bootstrapWorkspacesToInfo(
     memberCount: ws.memberCount,
     bundles: [],
     userRole: ws.role,
+    // `isPersonal` flows through unchanged from bootstrap. T010's
+    // WorkspaceTargetPicker reads it to preselect the personal
+    // workspace for personal-typical (`defaultBinding: "personal"`)
+    // connectors. Pre-Stage-1 deployments return `false` for every
+    // workspace; the picker degrades to "no preselection" gracefully.
+    isPersonal: ws.isPersonal,
   }));
 }
 
@@ -64,6 +70,12 @@ export function parseWorkspaceListResponse(raw: unknown): WorkspaceInfo[] {
           ? (ws.bundles as Array<{ name?: string; path?: string }>)
           : [],
         ...(userRole ? { userRole } : {}),
+        // Pass through `isPersonal` from either contract. Bootstrap
+        // returns it directly; `manage_workspaces.list` is expected to
+        // surface it now that T010's install dialog depends on it for
+        // preselection. Missing field gracefully degrades to "not
+        // identified as personal" — the picker shows no preselection.
+        ...(typeof ws.isPersonal === "boolean" ? { isPersonal: ws.isPersonal } : {}),
       };
     });
 }

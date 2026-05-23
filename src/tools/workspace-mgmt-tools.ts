@@ -324,6 +324,11 @@ async function handleList(ctx: ManageWorkspacesContext): Promise<ToolResult> {
         // web client gate workspace-admin UI without an extra `list_members`
         // round-trip per workspace.
         ...(userRole ? { userRole } : {}),
+        // `isPersonal` is consumed by T010's WorkspaceTargetPicker to
+        // preselect the personal workspace for personal-typical
+        // connectors. Pre-Stage-1 workspaces return `false`; the
+        // picker degrades to "no preselection" gracefully.
+        isPersonal: ws.isPersonal === true,
       };
     });
     const data = { workspaces: result };

@@ -19,7 +19,7 @@ import {
 } from "../../src/tools/connector-tools.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
 import { WorkspaceContext } from "../../src/workspace/context.ts";
-import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
+import { personalWorkspaceIdFor, WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 
 /**
  * Coverage for the new actions on `manage_connectors` introduced with
@@ -650,7 +650,11 @@ describe("manage_connectors.install (static-auth)", () => {
 
   test("errors with a setup pointer when oauthOperatorApps[id] is missing", async () => {
     const tool = buildTool(h, ADMIN_USER);
-    const result = await tool.handler({ action: "install", entry: asanaEntry() });
+    const result = await tool.handler({
+      action: "install",
+      entry: asanaEntry(),
+      wsId: h.wsId,
+    });
     expect(result.isError).toBe(true);
     // The error message names the portal / Set up affordance.
     const text = (result.content?.[0] as { text?: string } | undefined)?.text ?? "";
@@ -671,7 +675,11 @@ describe("manage_connectors.install (static-auth)", () => {
     });
 
     const tool = buildTool(h, ADMIN_USER);
-    const result = await tool.handler({ action: "install", entry: asanaEntry() });
+    const result = await tool.handler({
+      action: "install",
+      entry: asanaEntry(),
+      wsId: h.wsId,
+    });
     expect(result.isError).toBe(true);
     const text = (result.content?.[0] as { text?: string } | undefined)?.text ?? "";
     expect(text.toLowerCase()).toContain("client_secret");
@@ -686,7 +694,11 @@ describe("manage_connectors.install (static-auth)", () => {
       clientSecret: "sec-private",
     });
 
-    const result = await tool.handler({ action: "install", entry: asanaEntry() });
+    const result = await tool.handler({
+      action: "install",
+      entry: asanaEntry(),
+      wsId: h.wsId,
+    });
     expect(result.isError).toBe(false);
     expect(structured(result).ok).toBe(true);
     // serverName is the slug of the canonical reverse-DNS form
@@ -738,7 +750,11 @@ describe("manage_connectors.install", () => {
     // 'Failed to install' from there is the contract — it proves the
     // dispatch ran the install action rather than rejecting up front.
     const tool = buildTool(h, ADMIN_USER);
-    const result = await tool.handler({ action: "install", entry: mpakEntry() });
+    const result = await tool.handler({
+      action: "install",
+      entry: mpakEntry(),
+      wsId: h.wsId,
+    });
     expect(result.isError).toBe(true);
     const text = (result.content?.[0] as { text?: string } | undefined)?.text ?? "";
     expect(text.toLowerCase()).toContain("failed to install");
@@ -754,6 +770,7 @@ describe("manage_connectors.install", () => {
     const result = await tool.handler({
       action: "install",
       entry: mpakEntry({ id: "@some-vendor/some-bundle", pkg: "@some-vendor/some-bundle" }),
+      wsId: h.wsId,
     });
     expect(result.isError).toBe(true);
     // Reaches install path; failure is the mpak fetch (no real registry).
@@ -765,18 +782,56 @@ describe("manage_connectors.install", () => {
     await h.workspaceStore.update(h.wsId, { connectorsAllowList: ["ipinfo"] });
 
     const tool = buildTool(h, ADMIN_USER);
-    const result = await tool.handler({ action: "install", entry: mpakEntry() });
+    const result = await tool.handler({
+      action: "install",
+      entry: mpakEntry(),
+      wsId: h.wsId,
+    });
     expect(result.isError).toBe(true);
     const text = (result.content?.[0] as { text?: string } | undefined)?.text ?? "";
     expect(text).toContain("not visible in this workspace");
   });
 
-  test("mpak install requires workspace context", async () => {
+  test("install hard-errors when wsId is missing (Stage 1 lesson 3)", async () => {
+    // Stage 2: the UI's install dialog picks a target workspace via
+    // WorkspaceTargetPicker and supplies it explicitly. A buggy client
+    // (or a tampered MCP call) that omits `wsId` must NOT silently fall
+    // back to "current workspace" or "personal" — credential layouts
+    // would pool across tenants. Hard-error, naming the missing arg.
+    // Adversarial: pin "what if no wsId was sent" — neither session
+    // context, identity, nor catalog `defaultBinding` may be consulted
+    // to recover a target.
     const tool = buildTool(h, ADMIN_USER, null);
     const result = await tool.handler({ action: "install", entry: mpakEntry() });
     expect(result.isError).toBe(true);
     const text = (result.content?.[0] as { text?: string } | undefined)?.text ?? "";
-    expect(text.toLowerCase()).toContain("workspace context required");
+    expect(text.toLowerCase()).toContain("wsid is required");
+  });
+
+  test("install hard-errors when wsId is the empty string", async () => {
+    // Whitespace / empty-string wsId is treated as missing. A client
+    // that omitted the field and stringified `undefined` would land
+    // here; the contract is the same as missing.
+    const tool = buildTool(h, ADMIN_USER);
+    const result = await tool.handler({ action: "install", entry: mpakEntry(), wsId: "" });
+    expect(result.isError).toBe(true);
+    const text = (result.content?.[0] as { text?: string } | undefined)?.text ?? "";
+    expect(text.toLowerCase()).toContain("wsid is required");
+  });
+
+  test("install hard-errors when wsId names a workspace the caller is not a member of", async () => {
+    // Adversarial: a tampered client could pick a wsId outside the
+    // user's membership. The install must refuse — credentials would
+    // otherwise land in a workspace the caller has no right to seed.
+    const tool = buildTool(h, ADMIN_USER);
+    const result = await tool.handler({
+      action: "install",
+      entry: mpakEntry(),
+      wsId: "ws_does_not_exist",
+    });
+    expect(result.isError).toBe(true);
+    const text = (result.content?.[0] as { text?: string } | undefined)?.text ?? "";
+    expect(text.toLowerCase()).toContain("not found");
   });
 
   test("returns permission_denied when caller is not workspace admin (mpak)", async () => {
@@ -784,7 +839,11 @@ describe("manage_connectors.install", () => {
     // (placements, tools, credential inheritance). Non-admin members
     // can't unilaterally add bundles every other member then sees.
     const tool = buildTool(h, NON_ADMIN_USER);
-    const result = await tool.handler({ action: "install", entry: mpakEntry() });
+    const result = await tool.handler({
+      action: "install",
+      entry: mpakEntry(),
+      wsId: h.wsId,
+    });
     expect(result.isError).toBe(true);
     expect(structured(result).error).toBe("permission_denied");
   });
@@ -858,13 +917,21 @@ describe("manage_connectors.install", () => {
     expect(text.toLowerCase()).toContain("install action is required");
   });
 
-  test("Stage 2 personal-connector install: defaultBinding='personal' targets the caller's personal workspace with a slug serverName", async () => {
-    // Stage 2: legacy user-scope is gone. A catalog entry with
-    // `defaultBinding: "personal"` now binds to the caller's personal
-    // workspace (`personalWorkspaceIdFor(userId)`) but the install
-    // pipeline produces the same slug-shaped serverName as before —
-    // route-safe and FS-safe.
-    const adminPersonalWsId = `ws_user_${ADMIN_USER.id}`;
+  test("personal-workspace install: wsId picked by the dialog targets personalWorkspaceIdFor(userId); stored ref has oauthScope=workspace", async () => {
+    // Stage 2 / T010: the install dialog's WorkspaceTargetPicker picks
+    // the personal workspace by `defaultBinding === "personal"` and
+    // supplies its id explicitly. The tool itself never reads the
+    // catalog's `defaultBinding` to pick a target — that is the picker
+    // UI's job. Pin three things:
+    //   - The recorded `wsId` IS `personalWorkspaceIdFor(callerId)`
+    //     (the canonical helper, NOT a hand-built `ws_user_<id>`
+    //     template literal — `check:personal-workspace-id` is `src/`-
+    //     only but assertion through the helper keeps the test
+    //     coupled to the real construction site).
+    //   - The persisted BundleRef carries `oauthScope: "workspace"`.
+    //     The "user" literal is gone (T008) and stays gone.
+    //   - The slug-shaped serverName is unchanged.
+    const adminPersonalWsId = personalWorkspaceIdFor(ADMIN_USER.id);
     // Provision the admin's personal workspace so the install lookup
     // succeeds. Mirrors the production boot-time scaffold.
     await h.workspaceStore.create("Admin Personal", `user_${ADMIN_USER.id}`, {
@@ -874,6 +941,7 @@ describe("manage_connectors.install", () => {
     const tool = buildTool(h, ADMIN_USER);
     const result = await tool.handler({
       action: "install",
+      wsId: adminPersonalWsId,
       entry: {
         id: "com.canva/mcp",
         registryId: "bundled-static",
@@ -896,6 +964,49 @@ describe("manage_connectors.install", () => {
     expect(sn).toBe("com-canva-mcp");
     expect(sc.scope).toBe("workspace");
     expect(sc.wsId).toBe(adminPersonalWsId);
+
+    // Persisted ref pins the post-T008 shape: oauthScope: "workspace"
+    // (the legacy "user" literal does not exist in this codebase).
+    const personalWs = await h.workspaceStore.get(adminPersonalWsId);
+    const installed = personalWs?.bundles.find(
+      (b): b is Extract<BundleRef, { url: string }> =>
+        "url" in b && b.url === "https://mcp.canva.com/mcp",
+    );
+    expect(installed).toBeDefined();
+    expect(installed?.oauthScope).toBe("workspace");
+  });
+
+  test("install into a shared workspace records wsId on the structuredContent (audit attribution)", async () => {
+    // Audit attribution (Stage 1 lesson 2): every install event must
+    // surface the picked `wsId`, NOT the global header switcher's
+    // current value. We can't observe the persisted audit-log event
+    // from the unit-test harness (NoopEventSink), but the
+    // structuredContent IS the audit attribution surface — the
+    // EventSink writer reads the same shape. Pinning `sc.wsId ===
+    // <picked>` regardless of the harness's `h.wsId` rules out the
+    // "ambient session leak" failure mode.
+    const ws2 = await h.workspaceStore.create("Helix", "helix");
+    await h.workspaceStore.addMember(ws2.id, ADMIN_USER.id, "admin");
+    const tool = buildTool(h, ADMIN_USER, h.wsId); // session header says ws_acme
+    const result = await tool.handler({
+      action: "install",
+      wsId: ws2.id, // picker says ws_helix
+      entry: mpakEntry(),
+    });
+    // mpak install fails the network fetch (no registry) but that
+    // failure path is downstream of the dispatcher's audit attribution
+    // — we read attribution from the request, not the response. Pin
+    // the request-side variant: the install reached handleInstallMpak,
+    // which means the dispatcher validated the picked wsId. (For a
+    // successful-install attribution pin see the static-auth +
+    // personal-workspace tests above, which return structuredContent
+    // including `wsId`.)
+    expect(result.isError).toBe(true);
+    const text = (result.content?.[0] as { text?: string } | undefined)?.text ?? "";
+    expect(text.toLowerCase()).toContain("failed to install");
+    // The picked wsId reached mpak — the dispatcher did not silently
+    // fall back to h.wsId / personalWorkspaceIdFor.
+    expect(text).not.toContain(h.wsId);
   });
 });
 

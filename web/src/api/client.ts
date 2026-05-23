@@ -774,20 +774,28 @@ export async function uninstallConnector(
 
 /**
  * Install a connector. Pass the full `DirectoryEntry` the user
- * clicked — server dispatches by `entry.install.kind`. Idempotent;
- * already-installed connectors return `alreadyInstalled: true`.
- * Does NOT start OAuth — caller follows up with
- * `initiateMcpOAuth(serverName)` for remote-OAuth installs.
+ * clicked plus the picked target `wsId` (the WorkspaceTargetPicker in
+ * the install dialog is the source of truth). The server dispatches by
+ * `entry.install.kind` and hard-errors when `wsId` is missing —
+ * Stage 1 precedent: `startBundleSource` refuses to default to
+ * personal. Idempotent; already-installed connectors return
+ * `alreadyInstalled: true`. Does NOT start OAuth — caller follows up
+ * with `initiateMcpOAuth(serverName)` for remote-OAuth installs.
  */
-export async function installConnector(entry: DirectoryEntry): Promise<{
+export async function installConnector(
+  entry: DirectoryEntry,
+  wsId: string,
+): Promise<{
   ok: boolean;
   alreadyInstalled: boolean;
   serverName: string;
   scope: "workspace";
+  wsId: string;
 }> {
   const result = await callTool("nb", "manage_connectors", {
     action: "install",
     entry,
+    wsId,
   });
   return unwrapStructured(result, "install");
 }

@@ -14,6 +14,16 @@ export interface WorkspaceInfo {
   bundles: Array<{ name?: string; path?: string }>;
   /** The signed-in user's role within this workspace, when they're a member. */
   userRole?: "admin" | "member";
+  /**
+   * `true` for the user's personal workspace (auto-provisioned at first
+   * login, sole-owner-by-design). Drives the install dialog's preselection
+   * heuristic — personal-typical connectors (`defaultBinding: "personal"`)
+   * default to the personal workspace; non-personal workspaces require an
+   * explicit pick. The platform's bootstrap endpoint sets this; the
+   * `parseWorkspaceListResponse` fallback also propagates it so the
+   * shell mounted via either path agrees.
+   */
+  isPersonal?: boolean;
 }
 
 interface WorkspaceContextValue {
