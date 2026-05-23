@@ -366,24 +366,45 @@ function chipHead(
     };
   }
 
-  if (group.verbIsFallback) {
-    return {
-      label: `${group.count} actions`,
-      subject: group.subject,
-      countSuffix: 0,
-      totalMs: group.totalMs,
-      tokenLabel: approximateTokenLabel(totalReasoningChars),
-    };
-  }
-
   const running = group.tone === "running" || isReasoningTailStreaming;
-  const verb = running ? group.verbPresent : group.verb;
+  const { label, showCountSuffix } = formatGroupLabel(group, { running });
   return {
-    label: group.object ? `${verb} ${group.object}` : verb,
+    label,
     subject: group.subject,
-    countSuffix: group.count,
+    countSuffix: showCountSuffix ? group.count : 0,
     totalMs: group.totalMs,
     tokenLabel: approximateTokenLabel(totalReasoningChars),
+  };
+}
+
+/**
+ * Single source of truth for "what does a group of tool calls look like?".
+ * Both the phase-chip head (ActivityChip) and the per-row head (ToolRow)
+ * consume this — the rule must match in both places or recovered errors,
+ * fallback verbs, and count suffixes will diverge silently between
+ * surfaces. Keep all label / count-suffix decisions in this one function.
+ *
+ *   - Fallback verb → count-led label ("3 actions"), no `×N` suffix
+ *     (the count is in the label itself).
+ *   - Real verb → "Verb object" (or just "Verb" when object is absent),
+ *     with `×N` suffix when count > 1.
+ *
+ * `running` picks past- vs. present-progressive tense. Callers compute it
+ * themselves — the phase chip combines `group.tone === "running"` with the
+ * reasoning-tail-streaming flag (a piece of state the aggregator can't
+ * see); rows just pass `group.tone === "running"`.
+ */
+function formatGroupLabel(
+  group: GroupDescription,
+  opts: { running: boolean },
+): { label: string; showCountSuffix: boolean } {
+  if (group.verbIsFallback) {
+    return { label: `${group.count} actions`, showCountSuffix: false };
+  }
+  const verb = opts.running ? group.verbPresent : group.verb;
+  return {
+    label: group.object ? `${verb} ${group.object}` : verb,
+    showCountSuffix: group.count > 1,
   };
 }
 
@@ -444,15 +465,9 @@ function ToolRow({ calls }: { calls: ReadonlyArray<ToolCallDisplay> }) {
   const toggle = useCallback(() => setOpen((v) => !v), []);
   const descriptions = useMemo(() => calls.map(describeCall), [calls]);
   const group = useMemo(() => aggregateGroup(descriptions), [descriptions]);
-  // Same fallback rule as the chip head: when the verb is fallback, lead
-  // with the count rather than a verb-shaped placeholder.
-  const verb = group.tone === "running" ? group.verbPresent : group.verb;
-  const label = group.verbIsFallback
-    ? `${group.count} actions`
-    : group.object
-      ? `${verb} ${group.object}`
-      : verb;
-  const showCountSuffix = !group.verbIsFallback && group.count > 1;
+  const { label, showCountSuffix } = formatGroupLabel(group, {
+    running: group.tone === "running",
+  });
   return (
     <div className="turn-pill__row" data-tone={group.tone} data-open={open}>
       <button type="button" onClick={toggle} className="turn-pill__row-head" aria-expanded={open}>
