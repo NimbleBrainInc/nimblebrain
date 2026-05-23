@@ -6,8 +6,6 @@
  * raw tool-call data directly; it only consumes these shapes.
  */
 
-import type { ContentBlock, ToolCallDisplay } from "../../hooks/useChat.ts";
-
 /**
  * Display tone for a single tool call. `running` drives the present-tense
  * verb and the spinner icon; `ok` / `error` are the terminal states.
@@ -55,57 +53,4 @@ export interface ToolDescription {
   /** Message for failed calls; null when successful. */
   errorText: string | null;
   durationMs: number | null;
-}
-
-/**
- * One entry in a turn's activity timeline.
- *
- * - `reasoning` rows surface model thinking inline with the tool activity.
- * - `tool` rows collapse every call of the same (stripped) tool name within
- *   the turn into a single group, regardless of how reasoning interleaves
- *   between them. The group sits at the position of its first call.
- */
-export type TimelineEntry =
-  | { kind: "reasoning"; text: string }
-  | { kind: "tool"; name: string; calls: ReadonlyArray<ToolCallDisplay> };
-
-/**
- * One slice of an assistant turn for chronological rendering in the message
- * body. The turn is partitioned at text boundaries: each `text` slice is a
- * single text block; each `activity` slice is the contiguous run of
- * reasoning/tool blocks that streamed between two text blocks (or before the
- * first / after the last).
- *
- * Two consumers:
- *   - The message body renders `text` slices as prose and `activity` slices
- *     as a `TurnActivityPill` plus any inline widget attachments — so a turn
- *     that goes "preamble text → tool calls → final text" renders in that
- *     order instead of hoisting every pill to the top of the message.
- *   - Each `activity` slice is fed to `groupTurn` independently, so the pill
- *     within still gets cross-block tool grouping for its own scope. Grouping
- *     does not cross text boundaries — a tool used both before and after a
- *     text block reads as two separate phases of work, which it is.
- */
-export type TurnSegment =
-  | { kind: "text"; text: string }
-  | { kind: "activity"; blocks: ReadonlyArray<ContentBlock> };
-
-/**
- * Turn-level summary used by the pill's L1 (collapsed) head. Derived from the
- * full set of tool calls in a turn; not coupled to streamingState — the pill
- * combines this with streamingState to choose its running-vs-done label.
- */
-export interface TurnSummary {
-  /** Past-tense dominant verb across all calls ("Researched"). */
-  dominantVerb: string;
-  /** Present-progressive form for use during streaming ("Researching"). */
-  dominantVerbPresent: string;
-  /** Headline subject when calls share one, otherwise null. */
-  topSubject: string | null;
-  /** Total number of tool calls in the turn (sum across groups). */
-  totalCalls: number;
-  /** Sum of per-call durations in ms, when any are known. */
-  totalMs: number | null;
-  /** True while any call is still running. */
-  running: boolean;
 }

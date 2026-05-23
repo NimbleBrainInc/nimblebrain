@@ -234,7 +234,7 @@ export function MessageInput({
         </div>
       </div>
 
-      {/* Shortcut hints — status copy lives on the TurnActivityPill, not here. */}
+      {/* Shortcut hints — status copy lives on the BlockTimeline / LiveCursor, not here. */}
       <div className="flex items-center justify-center gap-3 mt-2 text-[10px] text-muted-foreground">
         {onNewConversation && (
           <button

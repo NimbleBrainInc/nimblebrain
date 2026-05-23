@@ -752,6 +752,36 @@
   color: var(--warm-hover);
 }
 
+/* ───────────────────────────────────────────────────────────────────────
+ * Live cursor — covers the gaps between blocks during a streaming turn
+ *
+ * Appears at the bottom of an assistant message body only while the engine
+ * is in a "between blocks" state (thinking pre-first-block, preparing the
+ * next tool call, or analyzing a result). When a block is actively
+ * absorbing the state (text/reasoning streaming, tool running), the block's
+ * own active treatment covers it and the cursor stays hidden.
+ *
+ * Visual: small spinner + muted label. No box; deliberately quiet — the
+ * blocks themselves are the loud part.
+ * ─────────────────────────────────────────────────────────────────────── */
+.live-cursor {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.live-cursor__spinner {
+  color: var(--processing);
+  animation: spin 1s linear infinite;
+  flex-shrink: 0;
+}
+.live-cursor__label {
+  color: var(--processing);
+  font-weight: 500;
+}
+
 /* Workspace selector dropdown entrance */
 .ws-dropdown-enter {
   animation: ws-dropdown-in 150ms ease-out;
