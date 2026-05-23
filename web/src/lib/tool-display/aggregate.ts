@@ -45,6 +45,14 @@ export interface GroupDescription {
   verb: string;
   /** Present-progressive form (e.g. "Searching") for the running state. */
   verbPresent: string;
+  /**
+   * True when `verb` is the neutral fallback because no verb covered a
+   * majority. Renderers should treat this as a signal that the verb is
+   * NOT a real characterization — typically by leading with the count
+   * ("3 actions") instead of the verb word, and by suppressing the
+   * `object` (already null in this case).
+   */
+  verbIsFallback: boolean;
   /** Inferred object when every non-null `object` agrees; null otherwise. */
   object: string | null;
   /** Headline subject when every non-null `headSubject` agrees; null otherwise. */
@@ -63,6 +71,7 @@ export function aggregateGroup(descriptions: ReadonlyArray<ToolDescription>): Gr
   return {
     verb,
     verbPresent: PRESENT_TENSE[verb] ?? verb,
+    verbIsFallback,
     object: verbIsFallback ? null : agreedField(descriptions, (d) => d.object),
     subject: agreedField(descriptions, (d) => d.headSubject),
     count: descriptions.length,

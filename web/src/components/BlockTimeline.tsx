@@ -301,7 +301,7 @@ function ActivityChip({ rows, isReasoningTailStreaming, displayDetail }: Activit
         <HeadIcon tone={tone} />
         <span className="turn-pill__label">{head.label}</span>
         {head.subject && <span className="turn-pill__row-subject">· {head.subject}</span>}
-        {head.count > 1 && <span className="turn-pill__row-count">×{head.count}</span>}
+        {head.countSuffix > 1 && <span className="turn-pill__row-count">×{head.countSuffix}</span>}
         {tone !== "running" && head.totalMs != null && (
           <span className="turn-pill__ms">· {formatDuration(head.totalMs)}</span>
         )}
@@ -327,7 +327,8 @@ function ActivityChip({ rows, isReasoningTailStreaming, displayDetail }: Activit
 interface ChipHead {
   label: string;
   subject: string | null;
-  count: number;
+  /** Count to render as a `×N` suffix. 0 means "don't render the suffix". */
+  countSuffix: number;
   totalMs: number | null;
   tokenLabel: string | null;
 }
@@ -337,6 +338,12 @@ interface ChipHead {
  * the reasoning context the aggregator doesn't see (token count, the
  * streaming-tail flag). This function does no aggregation of its own —
  * it picks tense and assembles strings.
+ *
+ * Fallback verb → count-led label ("3 actions"). The verb word would be
+ * verb-shaped scaffolding with no real signal; the count is the strongest
+ * truth we have when actions can't be characterized as one thing. The
+ * `×N` suffix is suppressed in that case — the count is already in the
+ * label.
  */
 function chipHead(
   rows: ReadonlyArray<ActivityRow>,
@@ -353,9 +360,19 @@ function chipHead(
     return {
       label: isReasoningTailStreaming ? "Thinking…" : "Thought",
       subject: null,
-      count: 0,
+      countSuffix: 0,
       totalMs: null,
       tokenLabel: isReasoningTailStreaming ? null : approximateTokenLabel(totalReasoningChars),
+    };
+  }
+
+  if (group.verbIsFallback) {
+    return {
+      label: `${group.count} actions`,
+      subject: group.subject,
+      countSuffix: 0,
+      totalMs: group.totalMs,
+      tokenLabel: approximateTokenLabel(totalReasoningChars),
     };
   }
 
@@ -364,7 +381,7 @@ function chipHead(
   return {
     label: group.object ? `${verb} ${group.object}` : verb,
     subject: group.subject,
-    count: group.count,
+    countSuffix: group.count,
     totalMs: group.totalMs,
     tokenLabel: approximateTokenLabel(totalReasoningChars),
   };
@@ -427,15 +444,22 @@ function ToolRow({ calls }: { calls: ReadonlyArray<ToolCallDisplay> }) {
   const toggle = useCallback(() => setOpen((v) => !v), []);
   const descriptions = useMemo(() => calls.map(describeCall), [calls]);
   const group = useMemo(() => aggregateGroup(descriptions), [descriptions]);
+  // Same fallback rule as the chip head: when the verb is fallback, lead
+  // with the count rather than a verb-shaped placeholder.
   const verb = group.tone === "running" ? group.verbPresent : group.verb;
-  const label = group.object ? `${verb} ${group.object}` : verb;
+  const label = group.verbIsFallback
+    ? `${group.count} actions`
+    : group.object
+      ? `${verb} ${group.object}`
+      : verb;
+  const showCountSuffix = !group.verbIsFallback && group.count > 1;
   return (
     <div className="turn-pill__row" data-tone={group.tone} data-open={open}>
       <button type="button" onClick={toggle} className="turn-pill__row-head" aria-expanded={open}>
         <RowIcon tone={group.tone} />
         <span className="turn-pill__row-name">{label}</span>
         {group.subject && <span className="turn-pill__row-subject">· {group.subject}</span>}
-        {group.count > 1 && <span className="turn-pill__row-count">×{group.count}</span>}
+        {showCountSuffix && <span className="turn-pill__row-count">×{group.count}</span>}
         {group.tone !== "running" && group.totalMs != null && (
           <span className="turn-pill__row-ms">· {formatDuration(group.totalMs)}</span>
         )}

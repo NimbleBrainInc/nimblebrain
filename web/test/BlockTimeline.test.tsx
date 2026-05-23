@@ -371,6 +371,45 @@ describe("ToolCallRow fallback label", () => {
 	});
 });
 
+describe("ActivityChip fallback label", () => {
+	it("leads with 'N actions' when tools mix verbs (no majority)", () => {
+		// Three different verbs → no majority → fallback. Head should NOT
+		// say "Worked ×3" (verb-shaped scaffolding plus a redundant count);
+		// it should say "3 actions" (the count IS the truthful summary).
+		const call1: ToolCallDisplay = {
+			id: "a",
+			name: "add_workspace_member",
+			status: "done",
+			ok: true,
+			ms: 10,
+		};
+		const call2: ToolCallDisplay = {
+			id: "b",
+			name: "list_workspace_tools",
+			status: "done",
+			ok: true,
+			ms: 10,
+		};
+		const call3: ToolCallDisplay = {
+			id: "c",
+			name: "remove_workspace_member",
+			status: "done",
+			ok: true,
+			ms: 10,
+		};
+		const { container } = renderTimeline({
+			blocks: [tool(call1, call2, call3)],
+		});
+		const heads = pillHeads(container);
+		expect(heads.length).toBe(1);
+		const headText = (heads[0].textContent ?? "").trim();
+		expect(headText).toContain("3 actions");
+		// The redundant `×3` suffix MUST be suppressed — the count is in
+		// the label itself.
+		expect(headText).not.toContain("×3");
+	});
+});
+
 describe("ReasoningChip", () => {
 	it("persists as a clickable 'Thought' chip on settled turns", () => {
 		// Previously the only-reasoning case (no tools) hid entirely after

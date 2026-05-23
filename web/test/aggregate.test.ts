@@ -213,6 +213,39 @@ describe("aggregateGroup — count", () => {
 	});
 });
 
+describe("aggregateGroup — verbIsFallback flag", () => {
+	// Renderers need to know when the verb is the neutral fallback (so they
+	// can present count-led labels instead of pretending we have a real verb).
+	it("sets verbIsFallback=true when no verb has a majority", () => {
+		const g = aggregateGroup([
+			desc({ verb: "Searched" }),
+			desc({ verb: "Read" }),
+			desc({ verb: "Listed" }),
+		]);
+		expect(g.verbIsFallback).toBe(true);
+	});
+
+	it("sets verbIsFallback=false when a verb covers the majority", () => {
+		const g = aggregateGroup([
+			desc({ verb: "Searched" }),
+			desc({ verb: "Searched" }),
+			desc({ verb: "Read" }),
+		]);
+		expect(g.verbIsFallback).toBe(false);
+	});
+
+	it("sets verbIsFallback=false for a single call (its verb is canonical)", () => {
+		const g = aggregateGroup([desc({ verb: "Worked" })]);
+		expect(g.verb).toBe("Worked");
+		expect(g.verbIsFallback).toBe(false);
+	});
+
+	it("sets verbIsFallback=false for an empty group (nothing to characterize)", () => {
+		const g = aggregateGroup([]);
+		expect(g.verbIsFallback).toBe(false);
+	});
+});
+
 describe("aggregateGroup — fallback verb suppresses object", () => {
 	// "Worked manage tools" is nonsense — the verb already admits we don't
 	// know what happened, so pinning it to a shared object pretends we do.
