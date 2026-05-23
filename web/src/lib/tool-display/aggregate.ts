@@ -19,7 +19,13 @@
  *     even with the fallback verb — the subject comes from the user's
  *     input and is true regardless of which tools ran.
  *   - `totalMs`: sum of known durations; `null` when none are known.
- *   - `tone`: any running → running; else any error → error; else ok.
+ *   - `tone`: any running → running; else the LAST call's tone. Earlier
+ *     errors followed by a later success are the natural shape of agentic
+ *     recovery — the model tried something, it failed, it adjusted, it
+ *     succeeded. Escalating the chip head to "error" in that case trains
+ *     the user to ignore the red icon when it does appear. The per-call
+ *     rows in the chip body still show their own tones, so the user can
+ *     still see what failed by expanding.
  *
  * Scope: this is Layer 1 of the tool-display aggregation stack. It does
  * NOT understand verb synonymy (that's Layer 2, a future taxonomy) and
@@ -110,10 +116,13 @@ function sumDurations(descriptions: ReadonlyArray<ToolDescription>): number | nu
 }
 
 function aggregateTone(descriptions: ReadonlyArray<ToolDescription>): Tone {
-  let hasError = false;
+  // Running takes precedence — anything in flight makes the group in flight.
   for (const d of descriptions) {
     if (d.tone === "running") return "running";
-    if (d.tone === "error") hasError = true;
   }
-  return hasError ? "error" : "ok";
+  // Otherwise the group's terminal outcome is the LAST call's tone.
+  // Recovery (error → … → success) reads as success; failure-without-
+  // recovery (… → error) reads as error.
+  if (descriptions.length === 0) return "ok";
+  return descriptions[descriptions.length - 1].tone;
 }

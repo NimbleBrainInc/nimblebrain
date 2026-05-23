@@ -135,7 +135,29 @@ describe("aggregateGroup — tone", () => {
 		expect(g.tone).toBe("running");
 	});
 
-	it("returns error when any call errored and none are running", () => {
+	it("returns ok when every call settled cleanly", () => {
+		const g = aggregateGroup([
+			desc({ verb: "Searched", tone: "ok" }),
+			desc({ verb: "Searched", tone: "ok" }),
+		]);
+		expect(g.tone).toBe("ok");
+	});
+
+	it("treats error → success as recovery (terminal outcome wins)", () => {
+		// Agentic self-correction: the model tried, it failed, it adjusted,
+		// it succeeded. The chip head shouldn't shout "error" when the
+		// model actually got there.
+		const g = aggregateGroup([
+			desc({ verb: "Searched", tone: "error" }),
+			desc({ verb: "Searched", tone: "ok" }),
+		]);
+		expect(g.tone).toBe("ok");
+	});
+
+	it("treats success → error as a terminal failure", () => {
+		// The model had something working, then broke it (or moved on to a
+		// call that failed). The latest state is what the user needs to know
+		// about.
 		const g = aggregateGroup([
 			desc({ verb: "Searched", tone: "ok" }),
 			desc({ verb: "Searched", tone: "error" }),
@@ -143,12 +165,13 @@ describe("aggregateGroup — tone", () => {
 		expect(g.tone).toBe("error");
 	});
 
-	it("returns ok when every call settled cleanly", () => {
+	it("returns error when every call failed (no recovery)", () => {
 		const g = aggregateGroup([
-			desc({ verb: "Searched", tone: "ok" }),
-			desc({ verb: "Searched", tone: "ok" }),
+			desc({ verb: "Searched", tone: "error" }),
+			desc({ verb: "Searched", tone: "error" }),
+			desc({ verb: "Searched", tone: "error" }),
 		]);
-		expect(g.tone).toBe("ok");
+		expect(g.tone).toBe("error");
 	});
 });
 
