@@ -190,6 +190,44 @@ describe("aggregateGroup — count", () => {
 	});
 });
 
+describe("aggregateGroup — fallback verb suppresses object", () => {
+	// "Worked manage tools" is nonsense — the verb already admits we don't
+	// know what happened, so pinning it to a shared object pretends we do.
+	// When verb falls back, object collapses to null and the chip head
+	// reads as just the fallback verb (plus subject / count, which remain
+	// meaningful).
+	it("clears object when no verb has a majority but objects agree", () => {
+		const g = aggregateGroup([
+			desc({ verb: "Added", object: "tools" }),
+			desc({ verb: "Listed", object: "tools" }),
+			desc({ verb: "Removed", object: "tools" }),
+		]);
+		expect(g.verb).toBe("Worked");
+		expect(g.object).toBeNull();
+	});
+
+	it("preserves subject even when the verb is the fallback", () => {
+		// Subject comes from the user's input, not from tool semantics — it
+		// remains true regardless of what verb we settle on.
+		const g = aggregateGroup([
+			desc({ verb: "Added", object: "tools", headSubject: "alpha" }),
+			desc({ verb: "Listed", object: "tools", headSubject: "alpha" }),
+			desc({ verb: "Removed", object: "tools", headSubject: "alpha" }),
+		]);
+		expect(g.verb).toBe("Worked");
+		expect(g.object).toBeNull();
+		expect(g.subject).toBe("alpha");
+	});
+
+	it("still includes object for a single call (no fallback path triggered)", () => {
+		const g = aggregateGroup([desc({ verb: "Worked", object: "tools" })]);
+		// Single-call short-circuit returns the call's own verb; "Worked" here
+		// is the literal verb, not the aggregation fallback, so object stays.
+		expect(g.verb).toBe("Worked");
+		expect(g.object).toBe("tools");
+	});
+});
+
 describe("aggregateGroup — user's mixed-tool scenario", () => {
 	// The case from the screenshot: three search-shaped tools with different
 	// names but the same inferred verb ("Searched") and a shared subject

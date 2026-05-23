@@ -460,15 +460,18 @@
 .turn-pill__head:disabled { cursor: default; }
 .turn-pill__head:disabled:hover { opacity: 0.7; color: var(--muted-foreground); }
 
-/* Active OR expanded → box treatment so the head reads as a real surface. */
-.turn-pill[data-tone="running"] > .turn-pill__head,
+/* Expanded → box treatment so the head reads as the top of a real
+   surface. Active (running) state is NOT boxed — it uses the spinner +
+   brand color treatment below, the same as <LiveCursor>. Keeping
+   in-flight chrome consistent across both surfaces means the user sees
+   one "loading" shape regardless of whether work is owned by a chip or
+   by the gap between chips. */
 .turn-pill[data-expanded="true"] > .turn-pill__head {
   padding: 6px 12px;
   background: var(--card);
   border: 1px solid var(--border);
   opacity: 1;
 }
-.turn-pill[data-tone="running"] > .turn-pill__head:hover,
 .turn-pill[data-expanded="true"] > .turn-pill__head:hover {
   border-color: color-mix(in oklch, var(--border), var(--foreground) 20%);
 }

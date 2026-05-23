@@ -10,8 +10,14 @@
  *   - `verb`: majority verb across the group. If a single verb covers
  *     more than half the calls it wins; otherwise we surface a neutral
  *     fallback rather than misclaim the action.
- *   - `object` / `subject`: only when every non-null value agrees.
- *     Mixed values produce `null` — showing one would lie about the rest.
+ *   - `object`: only when every non-null value agrees AND we picked a
+ *     real verb. A fallback verb pinned to a real object reads as
+ *     nonsense ("Worked manage tools") — the verb already admits we
+ *     don't know what happened; pairing it with an object pretends we
+ *     do. When the verb is the fallback, object is null.
+ *   - `subject`: only when every non-null value agrees. Always allowed,
+ *     even with the fallback verb — the subject comes from the user's
+ *     input and is true regardless of which tools ran.
  *   - `totalMs`: sum of known durations; `null` when none are known.
  *   - `tone`: any running → running; else any error → error; else ok.
  *
@@ -47,10 +53,11 @@ export interface GroupDescription {
 
 export function aggregateGroup(descriptions: ReadonlyArray<ToolDescription>): GroupDescription {
   const verb = majorityVerb(descriptions);
+  const verbIsFallback = verb === MAJORITY_FALLBACK && descriptions.length > 1;
   return {
     verb,
     verbPresent: PRESENT_TENSE[verb] ?? verb,
-    object: agreedField(descriptions, (d) => d.object),
+    object: verbIsFallback ? null : agreedField(descriptions, (d) => d.object),
     subject: agreedField(descriptions, (d) => d.headSubject),
     count: descriptions.length,
     totalMs: sumDurations(descriptions),
