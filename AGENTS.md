@@ -342,7 +342,7 @@ These cause production bugs if violated:
 - Bridge must guard listeners with `destroyed` flag (React StrictMode double-mounts)
 - `SlotRenderer` effect depends only on `placementKey` (callbacks via refs, not deps)
 - Shell components must not consume `ChatContext` (use `ChatConfigContext` instead)
-- `setAuthToken` and `setActiveWorkspaceId` in `web/src/api/client.ts` fire a registered lifecycle handler on real changes only (equality-guarded). The bridge MCP client registers `resetMcpBridgeClient` here at module load to drop its workspace-bound session on switch / logout. Stateless callers (REST helpers) read the current values per-request and need no hook.
+- `setAuthToken` in `web/src/api/client.ts` fires a registered lifecycle handler on real changes only (equality-guarded). The bridge MCP client registers `resetMcpBridgeClient` here at module load to drop its identity-bound session on logout. `setActiveWorkspaceId` is also equality-guarded but does NOT fire the handler — per Stage 2 / Q3 the `/mcp` session is identity-bound, so workspace switches reuse the same session and dispatch context via the per-request `X-Workspace-Id` header. Stateless callers (REST helpers) read the current values per-request and need no hook.
 
 ## Auto-Generated Files
 

@@ -476,7 +476,10 @@ async function handleListInstalled(
     version: string;
     type: "remote" | "local";
     state: string;
-    scope: "workspace" | "user";
+    // Stage 2: only workspace-scope connectors exist. Personal connectors
+    // live in the caller's personal workspace; the legacy `"user"` arm was
+    // removed in T008/T009 — every population site below emits `"workspace"`.
+    scope: "workspace";
     interactive: boolean;
     toolCount: number;
     trustScore: number | null;

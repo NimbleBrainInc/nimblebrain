@@ -22,7 +22,7 @@ import { roleAtLeast, useScopedRole } from "../../hooks/useScopedRole";
  * because the catalog is long enough that a single column wastes
  * horizontal space.
  */
-export function ConnectorBrowsePage({ scope }: { scope: "user" | "workspace" }) {
+export function ConnectorBrowsePage({ mode }: { mode: "personal" | "workspace" }) {
   const [entries, setEntries] = useState<DirectoryEntry[]>([]);
   const [errors, setErrors] = useState<Array<{ registryId: string; message: string }>>([]);
   const [installed, setInstalled] = useState<InstalledConnector[]>([]);
@@ -37,33 +37,30 @@ export function ConnectorBrowsePage({ scope }: { scope: "user" | "workspace" }) 
   const navigate = useNavigate();
 
   const backPath =
-    scope === "user" ? "/settings/personal/connectors" : "/settings/workspace/connectors";
+    mode === "personal" ? "/settings/personal/connectors" : "/settings/workspace/connectors";
   const configureBasePath = backPath;
 
   // One fetcher for the page. Stable identity across renders via
   // useCallback so we can wire it both to the mount effect (with
   // cancellation) and the post-modal-save refresh from the same source.
-  const fetchDirectory = useCallback(
-    async (signal?: { cancelled: boolean }) => {
-      try {
-        setLoading(true);
-        const [dirRes, insRes] = await Promise.all([
-          listDirectory(),
-          getInstalledConnectors({ scope }),
-        ]);
-        if (signal?.cancelled) return;
-        setEntries(dirRes.entries);
-        setErrors(dirRes.errors);
-        setInstalled(insRes.installed);
-      } catch (err) {
-        if (signal?.cancelled) return;
-        setLoadError(err instanceof Error ? err.message : String(err));
-      } finally {
-        if (!signal?.cancelled) setLoading(false);
-      }
-    },
-    [scope],
-  );
+  const fetchDirectory = useCallback(async (signal?: { cancelled: boolean }) => {
+    try {
+      setLoading(true);
+      const [dirRes, insRes] = await Promise.all([
+        listDirectory(),
+        getInstalledConnectors({ scope: "workspace" }),
+      ]);
+      if (signal?.cancelled) return;
+      setEntries(dirRes.entries);
+      setErrors(dirRes.errors);
+      setInstalled(insRes.installed);
+    } catch (err) {
+      if (signal?.cancelled) return;
+      setLoadError(err instanceof Error ? err.message : String(err));
+    } finally {
+      if (!signal?.cancelled) setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     const signal = { cancelled: false };
@@ -93,13 +90,13 @@ export function ConnectorBrowsePage({ scope }: { scope: "user" | "workspace" }) 
     return false;
   }
 
-  // Filter to scope, drop installed, apply search. The UI `scope` is a
-  // page-mode (`"user"` = personal view, `"workspace"` = workspace view);
-  // catalog entries declare a `defaultBinding` (`"personal" |
-  // "workspace"`). Map between them at the filter boundary.
+  // Filter to mode, drop installed, apply search. The UI `mode` is a
+  // page-view discriminator (`"personal"` vs `"workspace"`) — both
+  // values map 1:1 onto the catalog entry's `defaultBinding`. The
+  // legacy `"user"` literal was renamed in T009 (Group D audit) because
+  // a route/page mode indicator is not an oauthScope.
   const visibleEntries = useMemo(() => {
-    const targetBinding = scope === "user" ? "personal" : "workspace";
-    const inScope = entries.filter((e) => e.defaultBinding === targetBinding && !isInstalled(e));
+    const inScope = entries.filter((e) => e.defaultBinding === mode && !isInstalled(e));
     if (!query.trim()) return inScope;
     const q = query.trim().toLowerCase();
     return inScope.filter(
@@ -110,7 +107,7 @@ export function ConnectorBrowsePage({ scope }: { scope: "user" | "workspace" }) 
     );
     // installedByKey is captured by isInstalled via closure; re-running
     // when it changes is what lets newly-installed connectors disappear.
-  }, [entries, scope, query, installedByKey]);
+  }, [entries, mode, query, installedByKey]);
 
   const onInstall = async (entry: DirectoryEntry) => {
     setBusyId(`${entry.registryId}::${entry.id}`);
@@ -153,7 +150,7 @@ export function ConnectorBrowsePage({ scope }: { scope: "user" | "workspace" }) 
       <div>
         <h1 className="text-xl font-semibold tracking-tight">Browse connectors</h1>
         <p className="text-sm text-muted-foreground mt-1">
-          {scope === "user"
+          {mode === "personal"
             ? "Personal services to connect to your account."
             : "Tools and services to add to this workspace."}
         </p>
@@ -183,9 +180,7 @@ export function ConnectorBrowsePage({ scope }: { scope: "user" | "workspace" }) 
         <p className="text-sm text-destructive">{loadError}</p>
       ) : visibleEntries.length === 0 ? (
         <p className="text-sm text-muted-foreground">
-          {query
-            ? `No results for "${query}".`
-            : "Everything available in this scope is already installed."}
+          {query ? `No results for "${query}".` : "Everything available here is already installed."}
         </p>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">

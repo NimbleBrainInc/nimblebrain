@@ -63,12 +63,19 @@ export function getMcpBridgeClient(): Promise<Client> {
 /**
  * Close the MCP bridge transport and clear the singleton.
  *
- * Wired into `api/client.ts`'s auth/workspace setters via the lifecycle
- * handler below — every `setAuthToken(...)` and `setActiveWorkspaceId(...)`
- * call drops the cached transport because the platform's `Mcp-Session-Id`
- * is workspace- and identity-bound at init. Without this, switching
- * workspaces would silently keep dispatching iframe tool calls against
- * the previous tenant's session. Safe to call when no client exists.
+ * Wired into `api/client.ts`'s auth-token setter via the lifecycle handler
+ * below — `setAuthToken(...)` (the logout / identity boundary) drops the
+ * cached transport because the platform's `Mcp-Session-Id` is bound to
+ * the identity at init. Without this, logout would silently keep
+ * dispatching iframe tool calls against the previous identity's session.
+ *
+ * Stage 2 / Q3 (locked 2026-05-22): `setActiveWorkspaceId(...)` does NOT
+ * fire this handler — the `/mcp` session is identity-bound, not
+ * workspace-bound, so workspace switches reuse the same session. The
+ * per-request `X-Workspace-Id` header (read fresh by `mcpFetch` below)
+ * carries workspace context for tool dispatch.
+ *
+ * Safe to call when no client exists.
  */
 export function resetMcpBridgeClient(): void {
   const current = pending;

@@ -25,10 +25,16 @@ import {
  */
 export function ToolPermissionsTable({
   serverName,
-  scope,
+  mode: _mode,
 }: {
   serverName: string;
-  scope: "user" | "workspace";
+  /**
+   * UI affordance — which settings page is rendering us. The REST
+   * helpers always read/write workspace-scope permissions (Stage 2:
+   * personal connectors live in the user's personal workspace,
+   * addressed by setting it active before navigating here).
+   */
+  mode: "personal" | "workspace";
 }) {
   const [tools, setTools] = useState<ConnectorTool[]>([]);
   const [policies, setPolicies] = useState<Record<string, ToolPolicy>>({});
@@ -46,7 +52,7 @@ export function ToolPermissionsTable({
         // (list_tools + get_permissions). Server-side runs the two
         // reads in parallel; this halves the page-load REST traffic
         // for the table.
-        const res = await listConnectorToolsWithPermissions(serverName, scope);
+        const res = await listConnectorToolsWithPermissions(serverName, "workspace");
         if (cancelled) return;
         setTools(res.tools);
         setPolicies(res.permissions);
@@ -60,7 +66,7 @@ export function ToolPermissionsTable({
     return () => {
       cancelled = true;
     };
-  }, [serverName, scope]);
+  }, [serverName]);
 
   const policyFor = (toolName: string): ToolPolicy =>
     policies[toolName] === "disallow" ? "disallow" : "allow";
@@ -71,7 +77,7 @@ export function ToolPermissionsTable({
     const prev = policyFor(toolName);
     setPolicies((p) => ({ ...p, [toolName]: next }));
     try {
-      await setConnectorPermissions(serverName, scope, { [toolName]: next });
+      await setConnectorPermissions(serverName, "workspace", { [toolName]: next });
     } catch (err) {
       setPolicies((p) => ({ ...p, [toolName]: prev }));
       setError(err instanceof Error ? err.message : String(err));
@@ -87,7 +93,7 @@ export function ToolPermissionsTable({
     const prev = { ...policies };
     setPolicies(all);
     try {
-      await setConnectorPermissions(serverName, scope, all);
+      await setConnectorPermissions(serverName, "workspace", all);
     } catch (err) {
       setPolicies(prev);
       setError(err instanceof Error ? err.message : String(err));

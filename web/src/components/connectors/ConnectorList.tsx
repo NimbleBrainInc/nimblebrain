@@ -7,7 +7,7 @@ import { EmptyState } from "../../pages/settings/components";
 import { ConnectorIcon } from "./ConnectorIcon";
 
 /**
- * Lists installed connectors for a single scope (Personal or
+ * Lists installed connectors for a single page mode (Personal or
  * Workspace). The list is intentionally minimal — icon, name, status
  * + action verb when something needs attention, chevron link to
  * Configure. Type / interactive / version metadata is deferred to
@@ -16,12 +16,17 @@ import { ConnectorIcon } from "./ConnectorIcon";
  * Browsing for new connectors lives on a separate /browse page
  * reached via the action in the page header — the list itself only
  * shows what's already installed.
+ *
+ * `mode` is a UI affordance (which settings page is rendering us);
+ * `getInstalledConnectors` always reads from the active workspace
+ * (Stage 2: personal connectors live in the user's personal
+ * workspace, addressed by setting it active before navigating here).
  */
 export function ConnectorList({
-  scope,
+  mode: _mode,
   configureBasePath,
 }: {
-  scope: "user" | "workspace";
+  mode: "personal" | "workspace";
   configureBasePath: string;
 }) {
   const [installed, setInstalled] = useState<InstalledConnector[]>([]);
@@ -30,21 +35,18 @@ export function ConnectorList({
   const [query, setQuery] = useState("");
   const wsCtx = useWorkspaceContext();
 
-  const refresh = useCallback(
-    async (opts?: { silent?: boolean }) => {
-      if (!opts?.silent) setLoading(true);
-      setError(null);
-      try {
-        const ins = await getInstalledConnectors({ scope });
-        setInstalled(ins.installed);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : String(err));
-      } finally {
-        if (!opts?.silent) setLoading(false);
-      }
-    },
-    [scope],
-  );
+  const refresh = useCallback(async (opts?: { silent?: boolean }) => {
+    if (!opts?.silent) setLoading(true);
+    setError(null);
+    try {
+      const ins = await getInstalledConnectors({ scope: "workspace" });
+      setInstalled(ins.installed);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      if (!opts?.silent) setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     refresh();
@@ -108,7 +110,7 @@ export function ConnectorList({
       <div className="border-t border-border">
         {filtered.map((ins) => (
           <ConnectorRow
-            key={`${ins.scope}:${ins.serverName}`}
+            key={ins.serverName}
             installed={ins}
             configureBasePath={configureBasePath}
           />

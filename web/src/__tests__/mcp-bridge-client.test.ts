@@ -209,6 +209,97 @@ describe("resetMcpBridgeClient", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Bridge lifecycle vs auth/workspace setters — Stage 2 / Q3 (locked
+// 2026-05-22): the `/mcp` session is identity-bound, NOT workspace-bound.
+// Workspace switches must reuse the same bridge session; only logout (auth
+// token change) drops it.
+// ---------------------------------------------------------------------------
+
+describe("bridge session lifecycle vs auth/workspace setters", () => {
+  test("workspace switch reuses the same bridge client (Q3 regression)", async () => {
+    // Engage the production wiring: setAuthToken fires resetMcpBridgeClient;
+    // setActiveWorkspaceId does NOT (Q3). The lifecycle handler the
+    // production module registers at load is `resetMcpBridgeClient` itself.
+    setAuthLifecycleHandler(resetMcpBridgeClient);
+
+    const first = await getMcpBridgeClient();
+    expect(clientCtorCalls).toBe(1);
+
+    // Switch workspace — must NOT close the cached client.
+    setActiveWorkspaceId("ws-after-switch");
+    // Allow any (incorrectly-fired) async close to flush before we observe.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(clientCloseCalls).toBe(0);
+
+    // Next bridge call returns the same instance.
+    const second = await getMcpBridgeClient();
+    expect(second).toBe(first);
+    expect(clientCtorCalls).toBe(1);
+    expect(connectCalls).toBe(1);
+  });
+
+  test("logout (setAuthToken null) drops the bridge client (Q3 boundary)", async () => {
+    setAuthLifecycleHandler(resetMcpBridgeClient);
+
+    const first = await getMcpBridgeClient();
+    expect(clientCtorCalls).toBe(1);
+
+    // Logout / identity change — handler runs, transport closes.
+    setAuthToken(null);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(clientCloseCalls).toBe(1);
+
+    // Next bridge call builds a fresh client.
+    const second = await getMcpBridgeClient();
+    expect(second).not.toBe(first);
+    expect(clientCtorCalls).toBe(2);
+    expect(connectCalls).toBe(2);
+  });
+
+  test("next bridge fetch after switch carries the new X-Workspace-Id", async () => {
+    // Topology guard for Stage 1 lesson 1: T013 wires sidebar app
+    // selection to `setActiveWorkspaceId`, and the bridge MUST carry the
+    // new workspace id on the next tool-call fetch (without dropping the
+    // session). Without this, switching apps would dispatch every iframe
+    // call against the previous workspace's tools.
+    setAuthLifecycleHandler(resetMcpBridgeClient);
+
+    await getMcpBridgeClient();
+    const customFetch = lastTransportOptions?.fetch;
+    if (!customFetch) throw new Error("custom fetch not configured");
+
+    const captured: Array<Record<string, string>> = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+      captured.push(Object.fromEntries(new Headers(init?.headers).entries()));
+      return new Response("{}", { status: 200 });
+    }) as typeof fetch;
+
+    try {
+      // Initial fetch carries ws-initial (from beforeEach).
+      await customFetch("https://example.test/mcp", { method: "POST" });
+
+      // Switch workspace — bridge session survives.
+      setActiveWorkspaceId("ws-after-switch");
+
+      // Next fetch carries the new workspace id.
+      await customFetch("https://example.test/mcp", { method: "POST" });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    expect(captured).toHaveLength(2);
+    expect(captured[0]?.["x-workspace-id"]).toBe("ws-initial");
+    expect(captured[1]?.["x-workspace-id"]).toBe("ws-after-switch");
+    // Session was NOT torn down; same client serviced both fetches.
+    expect(clientCtorCalls).toBe(1);
+    expect(clientCloseCalls).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Session-not-found recovery — fixes the symptom in #141 where a stale
 // `Mcp-Session-Id` (after a server-side TTL eviction or process restart)
 // would lock every iframe call into a permanent error until page refresh.

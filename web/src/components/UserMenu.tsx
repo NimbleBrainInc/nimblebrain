@@ -5,9 +5,10 @@ import { useSession } from "../context/SessionContext";
 import { cn } from "../lib/utils";
 
 // ---------------------------------------------------------------------------
-// Avatar palette — same hues as WorkspaceSelector for consistency, but the
-// user gets a different deterministic index (hashed from email/id, not
-// workspace name) so the colors don't clash with the active workspace.
+// Avatar palette. The user gets a deterministic index hashed from
+// email/id; T013's sidebar workspace+apps navigator will adopt the same
+// palette so workspace + identity avatars stay visually consistent
+// without colliding (different hash inputs → different hues).
 // ---------------------------------------------------------------------------
 
 const AVATAR_PALETTE: [string, string][] = [
@@ -50,9 +51,11 @@ interface UserMenuProps {
 /**
  * Identity-bound menu pinned to the bottom of the shell sidebar.
  *
- * Sits below the workspace switcher (which is workspace-bound) — the two
- * are deliberate peers: workspace context at top (changes per session
- * activity), identity context at bottom (constant across the session).
+ * Sits at the bottom as a constant-across-session anchor. The top of
+ * the sidebar (currently an empty slot post-T009 teardown) becomes
+ * the workspace+apps navigator in T013, completing the spatial story
+ * of "workspace context at top, identity at bottom."
+ *
  * Click reveals a popover with profile settings and sign out — the user's
  * always-available account surface, regardless of which page they're on.
  */

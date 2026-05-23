@@ -23,7 +23,7 @@ export function WorkspaceConnectorsTab() {
         }
       />
       <RequireActiveWorkspace>
-        <ConnectorList scope="workspace" configureBasePath="/settings/workspace/connectors" />
+        <ConnectorList mode="workspace" configureBasePath="/settings/workspace/connectors" />
       </RequireActiveWorkspace>
     </div>
   );

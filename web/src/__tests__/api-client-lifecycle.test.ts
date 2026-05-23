@@ -1,19 +1,28 @@
 // ---------------------------------------------------------------------------
 // api/client.ts — auth lifecycle contract
 //
-// Pinning the only behavioral guarantee callers depend on: every
-// `setAuthToken(...)` and `setActiveWorkspaceId(...)` fires the registered
-// lifecycle handler. That contract is what `mcp-bridge-client.ts` relies on
-// to drop its workspace-bound MCP session when the user switches workspaces
-// or logs out — without it, the next iframe call would dispatch against
-// the previous tenant's session.
+// Pinning the two behavioral guarantees callers depend on:
+//
+// 1. `setAuthToken(...)` fires the registered lifecycle handler on real
+//    changes (logout / identity boundary). `mcp-bridge-client.ts` relies on
+//    this to drop its identity-bound MCP session on logout — without it,
+//    the next iframe call would dispatch against the previous identity.
+//
+// 2. `setActiveWorkspaceId(...)` does NOT fire the handler. Stage 2 / Q3
+//    (locked 2026-05-22): the `/mcp` session is identity-bound, not
+//    workspace-bound. Workspace switches reuse the same session and
+//    dispatch context via the per-request `X-Workspace-Id` header. A
+//    regression to the old "reset on switch" wiring would force a fresh
+//    handshake on every browse — which is the failure Q3 codified.
+//
+// Both setters keep their equality guard: noop sets must not fire the
+// handler (avoids tearing down the MCP transport on every benign re-set).
 //
 // We don't test the wiring at module-load time (mcp-bridge-client's call
 // to `setAuthLifecycleHandler(resetMcpBridgeClient)`) because mocking that
 // reliably across the full test suite means fighting Bun's module cache.
 // The wiring is one line and trivially verifiable by code review; the
-// contract this file pins is the much more important property — that
-// when production code calls `setAuthToken`, the handler runs.
+// contracts this file pins are the much more important properties.
 // ---------------------------------------------------------------------------
 
 import { afterEach, describe, expect, mock, test } from "bun:test";
@@ -43,18 +52,18 @@ describe("auth lifecycle handler", () => {
     expect(handler).toHaveBeenCalledTimes(3);
   });
 
-  test("setActiveWorkspaceId fires the registered handler", () => {
+  test("setActiveWorkspaceId does NOT fire the registered handler (Q3 — bridge survives switches)", () => {
+    // Q3 (locked 2026-05-22): the `/mcp` session is identity-bound; a
+    // workspace switch must NOT drop the bridge transport. A regression
+    // here would force a fresh handshake every time the user changes
+    // workspaces.
     const handler = mock(() => {});
     setAuthLifecycleHandler(handler);
 
     setActiveWorkspaceId("ws-1");
-    expect(handler).toHaveBeenCalledTimes(1);
-
     setActiveWorkspaceId("ws-2");
-    expect(handler).toHaveBeenCalledTimes(2);
-
     setActiveWorkspaceId(null);
-    expect(handler).toHaveBeenCalledTimes(3);
+    expect(handler).toHaveBeenCalledTimes(0);
   });
 
   test("setAuthLifecycleHandler(null) silences subsequent setter calls", () => {
@@ -67,7 +76,6 @@ describe("auth lifecycle handler", () => {
     setAuthLifecycleHandler(null);
 
     setAuthToken("tok-b");
-    setActiveWorkspaceId("ws-x");
     expect(handler).toHaveBeenCalledTimes(1);
   });
 
@@ -105,18 +113,21 @@ describe("auth lifecycle handler", () => {
     expect(handler).toHaveBeenCalledTimes(2);
   });
 
-  test("setActiveWorkspaceId with the same value does NOT fire the handler", () => {
+  test("setActiveWorkspaceId equality guard: noop sets are still cheap (no internal work)", () => {
+    // Q3: the handler doesn't fire for workspace switches at all (see test
+    // above). But the equality guard is still load-bearing: production
+    // callers (`WorkspaceContext` provider, route guards, App.tsx bootstrap)
+    // repeatedly set the same value during render, and we want each call
+    // to bail out at the equality check rather than reassign a module
+    // variable. We assert the user-facing property: the handler is never
+    // invoked, real-change or noop.
     const handler = mock(() => {});
     setAuthLifecycleHandler(handler);
 
     setActiveWorkspaceId("ws-same");
-    expect(handler).toHaveBeenCalledTimes(1);
-
     setActiveWorkspaceId("ws-same");
     setActiveWorkspaceId("ws-same");
-    expect(handler).toHaveBeenCalledTimes(1);
-
     setActiveWorkspaceId("ws-different");
-    expect(handler).toHaveBeenCalledTimes(2);
+    expect(handler).toHaveBeenCalledTimes(0);
   });
 });

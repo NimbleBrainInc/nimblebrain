@@ -11,7 +11,6 @@ import { Logo } from "./Logo";
 import { MobileSidebarDrawer } from "./MobileSidebarDrawer";
 import { SidebarToggle } from "./SidebarToggle";
 import { UserMenu } from "./UserMenu";
-import { WorkspaceSelector } from "./WorkspaceSelector";
 
 /**
  * Priority threshold for ungrouped (core) sidebar items.
@@ -85,10 +84,9 @@ export const ShellLayout = memo(function ShellLayout({
             isCollapsed ? "w-16" : "w-60",
           )}
         >
-          {/* Workspace identity */}
-          <div className={`${isCollapsed ? "px-0 pt-3 pb-1" : "px-1 pt-3 pb-1"} shrink-0`}>
-            <WorkspaceSelector collapsed={isCollapsed} />
-          </div>
+          {/* Workspace identity slot — left empty by T009 teardown. T013
+              fills this with the sidebar workspace+apps navigator
+              (Q1, locked 2026-05-22). Do not insert a placeholder. */}
 
           {/* Top zone — scrollable; key triggers fade-in on workspace switch */}
           <div key={wsSlug} className="flex-1 overflow-y-auto py-1 sidebar-scroll sidebar-nav-fade">
@@ -151,10 +149,8 @@ export const ShellLayout = memo(function ShellLayout({
       {isHidden && (
         <MobileSidebarDrawer>
           <div className="flex flex-col h-full">
-            {/* Mobile workspace identity */}
-            <div className="px-1 pt-4 pb-1 shrink-0">
-              <WorkspaceSelector collapsed={false} />
-            </div>
+            {/* Mobile workspace identity slot — left empty by T009 teardown.
+                T013 fills this with the sidebar workspace+apps navigator. */}
             <div className="flex-1 overflow-y-auto py-1 sidebar-scroll">
               {/* Ungrouped core nav */}
               {ungrouped.map((p) => (

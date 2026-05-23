@@ -32,13 +32,18 @@ export function getAuthToken(): string | null {
 }
 
 /**
- * Hook fired whenever the auth token or active workspace changes — used by
- * stateful clients that hold a session bound to one of those values. The
- * MCP bridge client (`mcp-bridge-client.ts`) registers here at module load
- * so its cached transport (workspace-bound `Mcp-Session-Id`) gets dropped
- * on workspace switch / logout instead of silently servicing the wrong
- * tenant. Stateless callers (REST helpers, `fetchWithRefresh`) read the
- * current token / workspace ID per-request and need no hook.
+ * Hook fired on logout / auth-token change — used by stateful clients that
+ * hold a session bound to the identity. The MCP bridge client
+ * (`mcp-bridge-client.ts`) registers here at module load so its cached
+ * transport gets dropped on logout instead of silently servicing the next
+ * identity. Stateless callers (REST helpers, `fetchWithRefresh`) read the
+ * current token per-request and need no hook.
+ *
+ * Stage 2 / Q3 (locked 2026-05-22): the `/mcp` session is identity-bound,
+ * not workspace-bound. Workspace switches do NOT drop the bridge session —
+ * `setActiveWorkspaceId` therefore no longer fires this hook. Cross-call
+ * workspace context is supplied per-request via the `X-Workspace-Id`
+ * header read fresh by the custom fetch in `mcp-bridge-client.ts`.
  */
 let onAuthLifecycleChange: (() => void) | null = null;
 export function setAuthLifecycleHandler(handler: (() => void) | null): void {
@@ -52,11 +57,14 @@ export function setAuthToken(token: string | null): void {
   onAuthLifecycleChange?.();
 }
 
-/** Set the active workspace ID included as X-Workspace-Id header. */
+/**
+ * Set the active workspace ID included as `X-Workspace-Id` header on REST
+ * + bridge fetches. Does NOT fire the auth lifecycle hook — per Q3 the
+ * `/mcp` bridge session survives workspace switches.
+ */
 export function setActiveWorkspaceId(id: string | null): void {
   if (activeWorkspaceId === id) return;
   activeWorkspaceId = id;
-  onAuthLifecycleChange?.();
 }
 
 /** Get the active workspace ID (for modules that build their own headers). */
@@ -604,10 +612,14 @@ export interface BundleUserConfigField {
 }
 
 /**
- * Per-(scope, principal) installed view. Returns every bundle visible
- * in the workspace (or user) — local stdio servers, local URL bundles,
- * Synapse apps, and remote OAuth connectors. `type` distinguishes
- * remote URL connectors from local in-process / subprocess bundles.
+ * Per-workspace installed view. Returns every bundle visible in the
+ * workspace — local stdio servers, local URL bundles, Synapse apps, and
+ * remote OAuth connectors. `type` distinguishes remote URL connectors
+ * from local in-process / subprocess bundles. Personal connectors live
+ * in the caller's personal workspace.
+ *
+ * Stage 2: `scope` is always `"workspace"`. The legacy `"user"` arm was
+ * removed in T008/T009.
  */
 export interface InstalledConnector {
   serverName: string;
@@ -615,7 +627,7 @@ export interface InstalledConnector {
   version: string;
   type: "remote" | "local";
   state: string;
-  scope: "workspace" | "user";
+  scope: "workspace";
   /** Whether this connector exposes a UI surface (auto-mounts a sidebar entry). */
   interactive: boolean;
   toolCount: number;
@@ -700,7 +712,7 @@ function unwrapStructured<T>(result: ToolCallResult, what: string): T {
 }
 
 export async function getInstalledConnectors(opts?: {
-  scope?: "all" | "workspace" | "user";
+  scope?: "all" | "workspace";
 }): Promise<{ installed: InstalledConnector[] }> {
   const result = await callTool("nb", "manage_connectors", {
     action: "list_installed",
@@ -727,10 +739,10 @@ export async function getInstalledConnector(
 
 export async function disconnectConnector(
   serverName: string,
-  scope?: "workspace" | "user",
+  scope?: "workspace",
 ): Promise<{
   ok: boolean;
-  scope: "workspace" | "user";
+  scope: "workspace";
   revoked: { access?: boolean; refresh?: boolean };
   deletedLocal: boolean;
   revokeError?: string;
@@ -750,8 +762,8 @@ export async function disconnectConnector(
  */
 export async function uninstallConnector(
   serverName: string,
-  scope: "workspace" | "user",
-): Promise<{ ok: boolean; scope: "workspace" | "user"; serverName: string }> {
+  scope: "workspace",
+): Promise<{ ok: boolean; scope: "workspace"; serverName: string }> {
   const result = await callTool("nb", "manage_connectors", {
     action: "uninstall",
     serverName,
@@ -771,7 +783,7 @@ export async function installConnector(entry: DirectoryEntry): Promise<{
   ok: boolean;
   alreadyInstalled: boolean;
   serverName: string;
-  scope: "workspace" | "user";
+  scope: "workspace";
 }> {
   const result = await callTool("nb", "manage_connectors", {
     action: "install",
@@ -956,9 +968,9 @@ export type ToolPolicy = "allow" | "disallow";
  */
 export async function listConnectorToolsWithPermissions(
   serverName: string,
-  scope?: "workspace" | "user",
+  scope?: "workspace",
 ): Promise<{
-  scope: "workspace" | "user";
+  scope: "workspace";
   serverName: string;
   tools: ConnectorTool[];
   permissions: Record<string, ToolPolicy>;
@@ -973,9 +985,9 @@ export async function listConnectorToolsWithPermissions(
 
 export async function setConnectorPermissions(
   serverName: string,
-  scope: "workspace" | "user",
+  scope: "workspace",
   tools: Record<string, ToolPolicy>,
-): Promise<{ ok: boolean; scope: "workspace" | "user"; serverName: string }> {
+): Promise<{ ok: boolean; scope: "workspace"; serverName: string }> {
   const result = await callTool("nb", "manage_connectors", {
     action: "set_permissions",
     serverName,

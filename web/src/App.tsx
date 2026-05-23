@@ -376,11 +376,11 @@ function AuthenticatedAppContent({
                 <Route path="connectors" element={<WorkspaceConnectorsTab />} />
                 <Route
                   path="connectors/browse"
-                  element={<ConnectorBrowsePage scope="workspace" />}
+                  element={<ConnectorBrowsePage mode="workspace" />}
                 />
                 <Route
                   path="connectors/:serverName"
-                  element={<ConnectorDetailPage scope="workspace" />}
+                  element={<ConnectorDetailPage mode="workspace" />}
                 />
                 <Route path="skills" element={<SkillsTab />} />
               </Route>
