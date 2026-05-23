@@ -371,6 +371,257 @@ servers:
         auth: dcr
         tags: [meetings, notes]
 
+  # ── Composio-backed (shared workspace identity via aggregator) ─
+  # Composio holds the vendor's tokens; the platform persists only an
+  # opaque connectedAccountId per workspace and proxies tool calls
+  # through a per-session Composio MCP URL (same pattern as the Gmail /
+  # Outlook entries above). The remote url is a placeholder overwritten
+  # at install. Each entry's authConfigEnv must be wired per tenant.
+  # `tools` is curated hard — Composio toolkits publish far more tools
+  # than the agent's tool-search context can absorb.
+  - name: com.box/files
+    title: Box
+    description: Files, folders, and shared links (via Composio)
+    version: "0.1.0"
+    icons:
+      - src: https://static.nimblebrain.ai/icons/box.png
+        sizes: ["any"]
+    remotes:
+      - type: streamable-http
+        url: https://backend.composio.dev/v3/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        defaultBinding: workspace
+        auth: composio
+        composio:
+          toolkit: box
+          authConfigEnv: COMPOSIO_BOX_AUTH_CONFIG_ID
+          tools:
+            - BOX_UPLOAD_FILE
+            - BOX_DOWNLOAD_FILE
+            - BOX_GET_FILE_INFORMATION
+            - BOX_UPDATE_FILE
+            - BOX_DELETE_FILE
+            - BOX_COPY_FILE
+            - BOX_MOVE_FILE
+            - BOX_CREATE_FOLDER
+            - BOX_GET_FOLDER
+            - BOX_LIST_ITEMS_IN_FOLDER
+            - BOX_ADD_SHARED_LINK_TO_FILE
+            - BOX_ADD_SHARED_LINK_TO_FOLDER
+            - BOX_CREATE_COMMENT
+            - BOX_GET_CURRENT_USER
+            - BOX_ASK_QUESTION
+        tags: [storage, files, composio]
+
+  - name: com.github/repos
+    title: GitHub
+    description: Issues, pull requests, and repository files (via Composio)
+    version: "0.1.0"
+    icons:
+      - src: https://static.nimblebrain.ai/icons/github.png
+        sizes: ["any"]
+    remotes:
+      - type: streamable-http
+        url: https://backend.composio.dev/v3/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        defaultBinding: workspace
+        auth: composio
+        composio:
+          toolkit: github
+          authConfigEnv: COMPOSIO_GITHUB_AUTH_CONFIG_ID
+          tools:
+            - GITHUB_CREATE_AN_ISSUE
+            - GITHUB_GET_AN_ISSUE
+            - GITHUB_CREATE_AN_ISSUE_COMMENT
+            - GITHUB_ADD_LABELS_TO_AN_ISSUE
+            - GITHUB_ADD_ASSIGNEES_TO_AN_ISSUE
+            - GITHUB_CREATE_A_PULL_REQUEST
+            - GITHUB_GET_A_PULL_REQUEST
+            - GITHUB_FIND_PULL_REQUESTS
+            - GITHUB_CREATE_A_REVIEW_FOR_A_PULL_REQUEST
+            - GITHUB_FIND_REPOSITORIES
+            - GITHUB_GET_A_REPOSITORY
+            - GITHUB_GET_A_REPOSITORY_README
+            - GITHUB_GET_A_COMMIT
+            - GITHUB_CREATE_OR_UPDATE_FILE_CONTENTS
+            - GITHUB_GET_A_BRANCH
+        tags: [dev, code, composio]
+
+  - name: com.google/calendar
+    title: Google Calendar
+    description: Create, find, and manage calendar events (via Composio)
+    version: "0.1.0"
+    icons:
+      - src: https://static.nimblebrain.ai/icons/google-calendar.png
+        sizes: ["any"]
+    remotes:
+      - type: streamable-http
+        url: https://backend.composio.dev/v3/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        defaultBinding: workspace
+        auth: composio
+        composio:
+          toolkit: googlecalendar
+          authConfigEnv: COMPOSIO_GOOGLECALENDAR_AUTH_CONFIG_ID
+          tools:
+            - GOOGLECALENDAR_CREATE_EVENT
+            - GOOGLECALENDAR_UPDATE_EVENT
+            - GOOGLECALENDAR_PATCH_EVENT
+            - GOOGLECALENDAR_DELETE_EVENT
+            - GOOGLECALENDAR_FIND_EVENT
+            - GOOGLECALENDAR_EVENTS_LIST
+            - GOOGLECALENDAR_EVENTS_GET
+            - GOOGLECALENDAR_FIND_FREE_SLOTS
+            - GOOGLECALENDAR_FREE_BUSY_QUERY
+            - GOOGLECALENDAR_QUICK_ADD
+            - GOOGLECALENDAR_LIST_CALENDARS
+            - GOOGLECALENDAR_GET_CALENDAR
+            - GOOGLECALENDAR_GET_CURRENT_DATE_TIME
+            - GOOGLECALENDAR_REMOVE_ATTENDEE
+        tags: [calendar, scheduling, composio]
+
+  - name: com.intuit/quickbooks
+    title: QuickBooks
+    description: Invoices, customers, payments, and financial reports (via Composio)
+    version: "0.1.0"
+    icons:
+      - src: https://static.nimblebrain.ai/icons/quickbooks.png
+        sizes: ["any"]
+    remotes:
+      - type: streamable-http
+        url: https://backend.composio.dev/v3/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        defaultBinding: workspace
+        auth: composio
+        composio:
+          toolkit: quickbooks
+          authConfigEnv: COMPOSIO_QUICKBOOKS_AUTH_CONFIG_ID
+          # Financial surface — read + create only, no delete/batch ops.
+          tools:
+            - QUICKBOOKS_CREATE_INVOICE
+            - QUICKBOOKS_READ_INVOICE
+            - QUICKBOOKS_LIST_INVOICES
+            - QUICKBOOKS_UPDATE_SPARSE_INVOICE
+            - QUICKBOOKS_CREATE_CUSTOMER
+            - QUICKBOOKS_READ_CUSTOMER
+            - QUICKBOOKS_CREATE_PAYMENT
+            - QUICKBOOKS_GET_PAYMENT
+            - QUICKBOOKS_CREATE_BILL
+            - QUICKBOOKS_GET_BILL
+            - QUICKBOOKS_CREATE_ESTIMATE
+            - QUICKBOOKS_GET_COMPANY_INFO
+            - QUICKBOOKS_GET_PROFIT_AND_LOSS_REPORT
+            - QUICKBOOKS_GET_BALANCE_SHEET_REPORT
+            - QUICKBOOKS_QUERY_ENTITIES
+        tags: [accounting, finance, composio]
+
+  - name: com.linkedin/social
+    title: LinkedIn
+    description: Create posts and read profile/company data (via Composio)
+    version: "0.1.0"
+    icons:
+      - src: https://static.nimblebrain.ai/icons/linkedin.png
+        sizes: ["any"]
+    remotes:
+      - type: streamable-http
+        url: https://backend.composio.dev/v3/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        defaultBinding: workspace
+        auth: composio
+        composio:
+          toolkit: linkedin
+          authConfigEnv: COMPOSIO_LINKEDIN_AUTH_CONFIG_ID
+          tools:
+            - LINKEDIN_CREATE_LINKED_IN_POST
+            - LINKEDIN_CREATE_ARTICLE_OR_URL_SHARE
+            - LINKEDIN_CREATE_COMMENT_ON_POST
+            - LINKEDIN_GET_POST_CONTENT
+            - LINKEDIN_DELETE_LINKED_IN_POST
+            - LINKEDIN_GET_MY_INFO
+            - LINKEDIN_GET_PERSON
+            - LINKEDIN_GET_COMPANY_INFO
+            - LINKEDIN_GET_ORG_PAGE_STATS
+            - LINKEDIN_GET_SHARE_STATS
+            - LINKEDIN_GET_NETWORK_SIZE
+            - LINKEDIN_LIST_REACTIONS
+            - LINKEDIN_INITIALIZE_IMAGE_UPLOAD
+            - LINKEDIN_REGISTER_IMAGE_UPLOAD
+            - LINKEDIN_GET_IMAGE
+        tags: [social, marketing, composio]
+
+  - name: com.slack/messaging
+    title: Slack
+    description: Send messages, read channels, and search (via Composio)
+    version: "0.1.0"
+    icons:
+      - src: https://static.nimblebrain.ai/icons/slack.png
+        sizes: ["any"]
+    remotes:
+      - type: streamable-http
+        url: https://backend.composio.dev/v3/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        defaultBinding: workspace
+        auth: composio
+        composio:
+          toolkit: slack
+          authConfigEnv: COMPOSIO_SLACK_AUTH_CONFIG_ID
+          tools:
+            - SLACK_SEND_MESSAGE
+            - SLACK_UPDATES_A_SLACK_MESSAGE
+            - SLACK_DELETES_A_MESSAGE_FROM_A_CHAT
+            - SLACK_SCHEDULE_MESSAGE
+            - SLACK_FETCH_CONVERSATION_HISTORY
+            - SLACK_FETCH_MESSAGE_THREAD_FROM_A_CONVERSATION
+            - SLACK_LIST_ALL_CHANNELS
+            - SLACK_FIND_CHANNELS
+            - SLACK_CREATE_CHANNEL
+            - SLACK_SEARCH_MESSAGES
+            - SLACK_LIST_ALL_USERS
+            - SLACK_FIND_USER_BY_EMAIL_ADDRESS
+            - SLACK_ADD_REACTION_TO_AN_ITEM
+            - SLACK_RETRIEVE_CONVERSATION_INFORMATION
+            - SLACK_UPLOAD_OR_CREATE_A_FILE_IN_SLACK
+        tags: [messaging, productivity, composio]
+
+  - name: com.whatsapp/messaging
+    title: WhatsApp
+    description: Send WhatsApp Business messages and templates (via Composio)
+    version: "0.1.0"
+    icons:
+      - src: https://static.nimblebrain.ai/icons/whatsapp.png
+        sizes: ["any"]
+    remotes:
+      - type: streamable-http
+        url: https://backend.composio.dev/v3/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        defaultBinding: workspace
+        auth: composio
+        composio:
+          toolkit: whatsapp
+          authConfigEnv: COMPOSIO_WHATSAPP_AUTH_CONFIG_ID
+          tools:
+            - WHATSAPP_SEND_MESSAGE
+            - WHATSAPP_SEND_TEMPLATE_MESSAGE
+            - WHATSAPP_SEND_MEDIA
+            - WHATSAPP_SEND_LOCATION
+            - WHATSAPP_SEND_CONTACTS
+            - WHATSAPP_SEND_INTERACTIVE_BUTTONS
+            - WHATSAPP_SEND_INTERACTIVE_LIST
+            - WHATSAPP_GET_MESSAGE_TEMPLATES
+            - WHATSAPP_CREATE_MESSAGE_TEMPLATE
+            - WHATSAPP_GET_TEMPLATE_STATUS
+            - WHATSAPP_GET_BUSINESS_PROFILE
+            - WHATSAPP_GET_PHONE_NUMBERS
+            - WHATSAPP_UPLOAD_MEDIA
+        tags: [messaging, composio]
+
   # ── Member-scoped (personal account per user) ─────────────────
   - name: com.google.gmail/mcp
     title: Gmail
