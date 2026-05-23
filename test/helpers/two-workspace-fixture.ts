@@ -25,6 +25,7 @@ import { join } from "node:path";
 import { textContent } from "../../src/engine/content-helpers.ts";
 import type { EventSink } from "../../src/engine/types.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
+import { getRequestContext } from "../../src/runtime/request-context.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import type { ChatRequest } from "../../src/runtime/types.ts";
 import { defineInProcessApp, type InProcessTool } from "../../src/tools/in-process-app.ts";
@@ -89,6 +90,12 @@ export interface TwoWorkspaceFixtureOptions {
  *  - `callCount()` is the topology probe — a non-zero counter on the
  *    *wrong* workspace would fail the "naive: dispatch to current
  *    workspace" failure mode (lesson 1).
+ *  - `auditTrail()` is the attribution probe (Stage 1 lesson 2) — the
+ *    sequence of `RequestContext.workspaceId` values that were active
+ *    each time this source's handler ran. A correct orchestrator stamps
+ *    the parsed-from-namespace workspace; the failure mode (stamping the
+ *    session's default) is invisible to `callCount()` but a smoking gun
+ *    here.
  */
 export interface WorkspaceHandle {
   /** Canonical workspace id, e.g. `ws_helix` or `ws_user_<userId>`. */
@@ -105,6 +112,17 @@ export interface WorkspaceHandle {
   callCount: () => number;
   /** Reset counter to zero. Useful when reusing a fixture across cases. */
   resetCallCount: () => void;
+  /**
+   * Workspace ids observed in `RequestContext.workspaceId` at handler-
+   * invocation time, in call order. Independent observation channel
+   * from `callCount()`: a misattribution that still routes to the right
+   * source (e.g. session-default stamped onto a correctly-routed
+   * dispatch) shows up here as a mismatched id while the counter looks
+   * fine.
+   */
+  auditTrail: () => string[];
+  /** Reset audit trail. */
+  resetAuditTrail: () => void;
   /** The underlying source (in-process MCP), exposed for advanced assertions. */
   source: McpSource;
 }
@@ -185,14 +203,24 @@ const PERSONAL_SOURCE_NAME = "gmail";
 /**
  * Build an in-process MCP source with a single counter-incrementing
  * echo tool. The handler closes over a local `count` variable so the
- * caller can read dispatch topology from the returned `callCount()` getter.
+ * caller can read dispatch topology from the returned `callCount()` getter,
+ * and an `audit` array so callers can read the per-call
+ * `RequestContext.workspaceId` (Stage 1 lesson 2 — attribution proof
+ * independent of the dispatch-topology counter).
  */
 function buildCounterSource(
   sourceName: string,
   toolName: string,
   sink: EventSink,
-): { source: McpSource; callCount: () => number; reset: () => void } {
+): {
+  source: McpSource;
+  callCount: () => number;
+  reset: () => void;
+  audit: () => string[];
+  resetAudit: () => void;
+} {
   let count = 0;
+  const audit: string[] = [];
   const tool: InProcessTool = {
     name: toolName,
     description: `Counter-echo tool exposed by source "${sourceName}".`,
@@ -207,6 +235,13 @@ function buildCounterSource(
     },
     handler: async (input) => {
       count += 1;
+      // The orchestrator wraps `source.execute` in `runWithRequestContext`
+      // with `workspaceId` set to the parsed-from-namespace target. We
+      // record what the handler saw — the audit channel external to
+      // the counter. Sentinel string when context is absent so the
+      // assertion failure mode is unmistakable ("no context" vs wrong id).
+      const ctx = getRequestContext();
+      audit.push(ctx?.workspaceId ?? "<no-request-context>");
       const echo = typeof input.echo === "string" ? input.echo : "";
       // The output text uniquely identifies the originating source so
       // tests can verify the two calls produced distinguishable strings
@@ -230,6 +265,10 @@ function buildCounterSource(
     callCount: () => count,
     reset: () => {
       count = 0;
+    },
+    audit: () => [...audit],
+    resetAudit: () => {
+      audit.length = 0;
     },
   };
 }
@@ -350,6 +389,8 @@ export async function createTwoWorkspaceFixture(
     ),
     callCount: sharedSource.callCount,
     resetCallCount: sharedSource.reset,
+    auditTrail: sharedSource.audit,
+    resetAuditTrail: sharedSource.resetAudit,
     source: sharedSource.source,
   };
   const personalHandle: WorkspaceHandle = {
@@ -363,6 +404,8 @@ export async function createTwoWorkspaceFixture(
     ),
     callCount: personalSource.callCount,
     resetCallCount: personalSource.reset,
+    auditTrail: personalSource.audit,
+    resetAuditTrail: personalSource.resetAudit,
     source: personalSource.source,
   };
 
