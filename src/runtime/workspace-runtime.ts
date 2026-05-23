@@ -9,11 +9,13 @@
 import { join } from "node:path";
 import { hasPersistedComposioConnection } from "../bundles/composio-connection.ts";
 import { hasPersistedWorkspaceOAuthTokens } from "../bundles/oauth-tokens.ts";
-import { bundleNameFromRef, resolveBundleDataDir, serverNameFromRef } from "../bundles/paths.ts";
+import { resolveBundleDataDirForRef, serverNameFromRef } from "../bundles/paths.ts";
 import { setPendingAuth } from "../bundles/pending-auth-buffer.ts";
+import type { BundleMcpDeps } from "../bundles/startup.ts";
 import { startBundleSource } from "../bundles/startup.ts";
 import type { BundleRef, LocalBundleMeta } from "../bundles/types.ts";
 import { log } from "../cli/log.ts";
+import type { EventSink } from "../engine/types.ts";
 import { ToolRegistry } from "../tools/registry.ts";
 import type { ToolSource } from "../tools/types.ts";
 import type { Workspace } from "../workspace/types.ts";
@@ -46,21 +48,23 @@ export interface ProcessInventoryEntry {
  *
  * For each workspace, iterates its declared bundles and produces one
  * ProcessInventoryEntry per (workspace, bundle) pair. The `dataDir`
- * is workspace-scoped via `resolveBundleDataDir`.
+ * is workspace-scoped via `resolveBundleDataDirForRef` (which keys the
+ * slug on `manifest.name`, reading it from disk for path bundles).
  */
 export function buildProcessInventory(
   workspaces: Workspace[],
   workDir: string,
+  configDir?: string,
 ): ProcessInventoryEntry[] {
   const entries: ProcessInventoryEntry[] = [];
 
   for (const ws of workspaces) {
-    const wsPath = join(workDir, "workspaces", ws.id);
-
     for (const bundle of ws.bundles) {
       const serverName = serverNameFromRef(bundle);
-      const bundleName = bundleNameFromRef(bundle);
-      const dataDir = resolveBundleDataDir(wsPath, bundleName);
+      // Slug is keyed on `manifest.name` (read here for path bundles) so the
+      // launch-path data dir and the seedInstance / briefing reader-path
+      // data dir cannot disagree.
+      const dataDir = resolveBundleDataDirForRef(workDir, ws.id, bundle, configDir);
 
       entries.push({
         wsId: ws.id,
@@ -128,16 +132,25 @@ export async function startWorkspaceBundles(
   // Required. Propagated to every McpSource so task-augmented tool calls
   // can emit `tool.progress` events that reach the SSE broadcast layer.
   // Pass `new NoopEventSink()` only if intentionally discarding events.
-  eventSink: import("../engine/types.ts").EventSink,
+  eventSink: EventSink,
   configDir: string | undefined,
   opts?: {
     allowInsecureRemotes?: boolean;
     workDir?: string;
+    /**
+     * Per-workspace host-resources deps factory. Threaded into
+     * `startBundleSource` so re-spawned bundles register inbound
+     * `ai.nimblebrain/resources/*` handlers across platform restarts —
+     * without this, every restart silently loses host-resources support
+     * until the next reinstall. Runtime threads `Runtime.getBundleMcpDeps`
+     * through here.
+     */
+    getBundleMcpDeps?: (wsId: string) => BundleMcpDeps | undefined;
   },
 ): Promise<{ registries: Map<string, ToolRegistry>; entries: ProcessInventoryEntry[] }> {
   const workDir = opts?.workDir ?? join(process.env.NB_WORK_DIR ?? "", ".nimblebrain");
   const workspaces = await workspaceStore.list();
-  const inventory = buildProcessInventory(workspaces, workDir);
+  const inventory = buildProcessInventory(workspaces, workDir, configDir);
 
   // Group inventory by workspace
   const byWorkspace = new Map<string, ProcessInventoryEntry[]>();
@@ -261,6 +274,10 @@ export async function startWorkspaceBundles(
         onInteractiveAuthRequired: (authorizationUrl) => {
           setPendingAuth(entry.wsId, entry.serverName, authorizationUrl);
         },
+        // Re-register inbound host-resources handlers on respawn so bundles
+        // installed with host-resources support don't silently lose the
+        // capability across platform restarts.
+        bundleMcp: opts?.getBundleMcpDeps?.(entry.wsId),
       });
       // Use the actual source name from the registry (may differ from path-derived name)
       resultEntries[idx] = { ...entry, serverName: result.sourceName, meta: result.meta };

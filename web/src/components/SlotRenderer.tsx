@@ -17,6 +17,11 @@ interface SlotRendererProps {
   onChat?: (message: string, context?: UiChatContext) => void;
   onNavigate?: (route: string) => void;
   onPromptAction?: (prompt: string) => void;
+  /**
+   * One-shot: force a cache-bypassing data load on first handshake.
+   * Only the home route sets this (from `?force=1`); inert elsewhere.
+   */
+  forceRefresh?: boolean;
 }
 
 export function SlotRenderer({
@@ -26,6 +31,7 @@ export function SlotRenderer({
   onChat,
   onNavigate,
   onPromptAction,
+  forceRefresh = false,
 }: SlotRendererProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const bridgesRef = useRef<BridgeHandle[]>([]);
@@ -49,6 +55,11 @@ export function SlotRenderer({
   onNavigateRef.current = onNavigate;
   const onPromptActionRef = useRef(onPromptAction);
   onPromptActionRef.current = onPromptAction;
+
+  // Mirror `forceRefresh` into a ref so `getHostExtensions` reads it at
+  // handshake time — the same reason `workspaceRef`/`modeRef` exist.
+  const forceRefreshRef = useRef(forceRefresh);
+  forceRefreshRef.current = forceRefresh;
 
   const filtered = routeFilter ? placements.filter((p) => p.route === routeFilter) : placements;
 
@@ -99,7 +110,8 @@ export function SlotRenderer({
             onChat: (...args) => onChatRef.current?.(...args),
             onNavigate: (...args) => onNavigateRef.current?.(...args),
             onPromptAction: (...args) => onPromptActionRef.current?.(...args),
-            getHostExtensions: () => buildHostExtensions(workspaceRef.current),
+            getHostExtensions: () =>
+              buildHostExtensions(workspaceRef.current, forceRefreshRef.current),
           });
           bridges.push(bridge);
         } catch (err) {

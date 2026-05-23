@@ -20,6 +20,7 @@ import {
 } from "./api/client";
 import { AppWithChat } from "./components/AppWithChat";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { HomeAppRoute } from "./components/HomeAppRoute";
 import { Login } from "./components/Login";
 import { RouteGuard } from "./components/RouteGuard";
 import { ShellLayout } from "./components/ShellLayout";
@@ -311,7 +312,7 @@ function AuthenticatedAppContent({
               {homePlacement ? (
                 <Route
                   index
-                  element={<AppWithChat placement={homePlacement} onNavigate={handleNavigate} />}
+                  element={<HomeAppRoute placement={homePlacement} onNavigate={handleNavigate} />}
                 />
               ) : (
                 <Route
@@ -535,7 +536,11 @@ function RedirectAppPanel() {
 }
 
 /** Redirect "/" to "/w/<active-workspace-slug>/" */
-function WorkspaceRedirect() {
+export function WorkspaceRedirect() {
+  // Carry the query string + hash through the `/` → `/w/<slug>/` redirect.
+  // Dropping it would kill params meant for the home route — e.g. `?force=1`,
+  // which `HomeAppRoute` reads — for anyone hitting the bare root URL.
+  const { search, hash } = useLocation();
   const { activeWorkspace, workspaces, loading } = useWorkspaceContext();
   if (loading)
     return (
@@ -545,7 +550,7 @@ function WorkspaceRedirect() {
     );
   const ws = activeWorkspace ?? workspaces[0];
   if (!ws) return <Navigate to="/settings" replace />;
-  return <Navigate to={`/w/${toSlug(ws.id)}/`} replace />;
+  return <Navigate to={{ pathname: `/w/${toSlug(ws.id)}/`, search, hash }} replace />;
 }
 
 export function App() {

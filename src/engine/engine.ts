@@ -7,7 +7,8 @@ import type {
   LanguageModelV3ToolResultPart,
   SharedV3ProviderOptions,
 } from "@ai-sdk/provider";
-import { MAX_ITERATIONS, MAX_TOOL_RESULT_CHARS } from "../limits.ts";
+import { log } from "../cli/log.ts";
+import { DEFAULT_MAX_DIRECT_TOOLS, MAX_ITERATIONS, MAX_TOOL_RESULT_CHARS } from "../limits.ts";
 import { getProviderFromModel, supportsEnabledThinking } from "../model/catalog.ts";
 import { normalizeForReplay } from "../model/inbound-fit.ts";
 import { callModel, type StreamResult } from "../model/stream.ts";
@@ -21,6 +22,7 @@ import {
   extractTextForModel,
   textContent,
 } from "./content-helpers.ts";
+import { isContextOverflowError } from "./context-overflow.ts";
 import { withRetry } from "./retry.ts";
 import { createRunSupervisor } from "./supervisor.ts";
 import { toolSchemaForLlm } from "./tool-schema-for-llm.ts";
@@ -269,6 +271,137 @@ export class AgentEngine {
 
     const directTools = [...tools];
     const directToolNames = new Set(directTools.map((t) => t.name));
+    // LRU bookkeeping for agent-promoted tools. Initial tools (passed in
+    // `tools`) are NEVER tracked here, so the eviction loop can never
+    // touch them — they're operator-opted-in. Counter is monotonic so
+    // smaller stamp = older, regardless of clock skew or test parallelism.
+    const promotedLastUsed = new Map<string, number>();
+    let useCounter = 0;
+    const maxActiveTools = config.maxActiveTools ?? DEFAULT_MAX_DIRECT_TOOLS;
+    if (directTools.length > maxActiveTools) {
+      // Operator-facing: initial tool set already exceeds the per-run cap,
+      // so the cap can't be enforced strictly for agent-driven additions.
+      // Surface the misconfiguration once at run start; behavior degrades
+      // to "cap is soft, agent additions stick on top." See addTool below.
+      console.warn(
+        `[engine] initial tools (${directTools.length}) exceed maxActiveTools (${maxActiveTools}); ` +
+          `cap will be soft for this run. Reduce the initial tool set or raise maxActiveTools.`,
+      );
+    }
+
+    const toolControls = {
+      addTool: (toolName: string) => {
+        if (directToolNames.has(toolName)) {
+          // Already-active tool counts as a "use" — refresh LRU stamp so
+          // re-promoting a recently-used tool doesn't make it look stale.
+          if (promotedLastUsed.has(toolName)) {
+            promotedLastUsed.set(toolName, ++useCounter);
+          }
+          return {
+            ok: true,
+            toolName,
+            changed: false,
+            message: `${toolName} is already available in the active tool list.`,
+          };
+        }
+        const schema = allToolSchemaMap.get(toolName);
+        if (!schema) {
+          return {
+            ok: false,
+            toolName,
+            changed: false,
+            reason: "not_found",
+            message: `${toolName} was not found in the current tool registry.`,
+          };
+        }
+        if (schema.annotations?.["ai.nimblebrain/internal"]) {
+          return {
+            ok: false,
+            toolName,
+            changed: false,
+            reason: "internal_tool",
+            message: `${toolName} is an internal tool and cannot be added to the active tool list.`,
+          };
+        }
+        if (config.toolPromotion && !config.toolPromotion.isToolEligible(schema)) {
+          return {
+            ok: false,
+            toolName,
+            changed: false,
+            reason: "not_allowed",
+            message: `${toolName} is not available in the current run.`,
+          };
+        }
+        directTools.push(schema);
+        directToolNames.add(toolName);
+        promotedLastUsed.set(toolName, ++useCounter);
+        this.events.emit({ type: "tool.promoted", data: { runId, toolName } });
+
+        // Backstop: cap active tools by evicting LRU agent-promoted entries.
+        // Initial tools are exempt because they're not in `promotedLastUsed`.
+        // Defensive guard: if the just-added tool would be its own eviction
+        // victim (only possible when initial tools alone already exceed the
+        // cap, so promotedLastUsed has only this one entry), break out.
+        // Cap is "soft" in that pathological config — the alternative would
+        // be silently undoing the agent's intentional promotion, which is
+        // worse than letting the cap stretch by one.
+        while (directTools.length > maxActiveTools && promotedLastUsed.size > 0) {
+          let oldestName: string | null = null;
+          let oldestStamp = Number.POSITIVE_INFINITY;
+          for (const [name, stamp] of promotedLastUsed) {
+            if (stamp < oldestStamp) {
+              oldestStamp = stamp;
+              oldestName = name;
+            }
+          }
+          if (!oldestName || oldestName === toolName) break;
+          const idx = directTools.findIndex((t) => t.name === oldestName);
+          if (idx >= 0) directTools.splice(idx, 1);
+          directToolNames.delete(oldestName);
+          promotedLastUsed.delete(oldestName);
+          this.events.emit({
+            type: "tool.released",
+            data: { runId, toolName: oldestName, reason: "evicted" },
+          });
+        }
+        return {
+          ok: true,
+          toolName,
+          changed: true,
+          message: `${toolName} is now available in the active tool list.`,
+        };
+      },
+      removeTool: (toolName: string) => {
+        if (toolName.startsWith("nb__")) {
+          return {
+            ok: false,
+            toolName,
+            changed: false,
+            reason: "system_tool",
+            message: `${toolName} is a system tool and cannot be released.`,
+          };
+        }
+        if (!directToolNames.has(toolName)) {
+          return {
+            ok: true,
+            toolName,
+            changed: false,
+            message: `${toolName} is not in the active tool list.`,
+          };
+        }
+        const idx = directTools.findIndex((t) => t.name === toolName);
+        if (idx >= 0) directTools.splice(idx, 1);
+        directToolNames.delete(toolName);
+        promotedLastUsed.delete(toolName);
+        this.events.emit({ type: "tool.released", data: { runId, toolName } });
+        return {
+          ok: true,
+          toolName,
+          changed: true,
+          message: `${toolName} was removed from the active tool list.`,
+        };
+      },
+    };
 
     this.events.emit({
       type: "run.start",
@@ -332,9 +465,43 @@ export class AgentEngine {
     // content filter, etc.) rather than always reporting "complete".
     let lastFinishReason: FinishReason | undefined;
 
+    const unregisterToolControls = config.toolPromotion?.registerControls(toolControls);
     try {
       while (iteration < maxIter) {
-        const modelTools: LanguageModelV3FunctionTool[] = directTools.map((t) => ({
+        // Cancellation check at the top of every iteration. Three signal
+        // propagation paths now cover the full agent loop:
+        //
+        //   1. THIS check — between iterations. Catches a cancel that
+        //      fires during a tool call (e.g. an external timeout that
+        //      fires mid-tool); without it, the engine would proceed to
+        //      the next LLM round-trip after the cancelled tool.
+        //   2. `tools.execute(call, config.signal)` — in-flight tool.
+        //      Task-augmented MCP tools get `tasks/cancel`; inline ones
+        //      abort their RPC.
+        //   3. `callModel(..., { abortSignal: config.signal })` below —
+        //      in-flight LLM stream. The provider aborts the underlying
+        //      fetch on signal, so a long completion or reasoning-heavy
+        //      run cancels at the network layer instead of blocking
+        //      until the model finishes.
+        //
+        // Cooperative throughout: we never preempt running work, just
+        // stop starting new work. The runtime catch translates the
+        // thrown AbortError into the appropriate `run.error` event for
+        // SSE consumers.
+        if (config.signal?.aborted) {
+          throw config.signal.reason instanceof Error
+            ? config.signal.reason
+            : new DOMException("The operation was aborted.", "AbortError");
+        }
+        // Filter out any tool the supervisor has tripped this run. Removing
+        // the tool from the model's toolset is more reliable than telling
+        // the model "do not call this tool" via prose — the model literally
+        // can't call a tool that isn't in its list. Other tools remain
+        // available so the run can recover.
+        const trippedSet = new Set(supervisor.snapshot().trippedTools);
+        const usableDirectTools =
+          trippedSet.size === 0 ? directTools : directTools.filter((t) => !trippedSet.has(t.name));
+        const modelTools: LanguageModelV3FunctionTool[] = usableDirectTools.map((t) => ({
           type: "function" as const,
           name: t.name,
           description: t.description,
@@ -342,16 +509,21 @@ export class AgentEngine {
         }));
 
         const toolSchemaMap = new Map<string, ToolSchema>();
-        for (const t of directTools) {
+        for (const t of usableDirectTools) {
           toolSchemaMap.set(t.name, t);
         }
 
-        // 1. Apply context/prompt hooks and call LLM
-        const windowed = config.hooks?.transformContext
-          ? config.hooks.transformContext([...history])
-          : history;
+        // 1. Apply context/prompt hooks and call LLM. The transformContext
+        //    hook is also re-invoked on a context-overflow recovery (see
+        //    the call loop below) with `overflowAttempt: 1` so the hook
+        //    can return more aggressively trimmed messages.
+        const runTransform = (attempt: number): LanguageModelV3Message[] =>
+          config.hooks?.transformContext
+            ? config.hooks.transformContext([...history], { overflowAttempt: attempt })
+            : history;
+        const windowed = runTransform(0);
         // Sanitize: filter out empty text content blocks that the API rejects
-        const callMessages = sanitizeMessages(windowed);
+        let callMessages = sanitizeMessages(windowed);
         let callPrompt = config.hooks?.transformPrompt
           ? config.hooks.transformPrompt(systemPrompt)
           : systemPrompt;
@@ -365,47 +537,101 @@ export class AgentEngine {
             "remains unfinished so the user can continue in a follow-up message.]";
         }
 
-        // One-shot nudge after the supervisor tripped on the previous iteration.
-        // Pairs with the synth-stop replacement so the directive is unambiguous:
-        // the tool result tells the model what to say, the system-prompt nudge
-        // forecloses further tool calls.
-        if (supervisor.needsPromptNudge()) {
-          callPrompt +=
-            "\n\n[IMPORTANT: A tool was detected to be in a loop and has been disabled " +
-            "for the remainder of this run. Do NOT call any more tools. Produce a final " +
-            "response now per the instructions in the last tool result.]";
-          supervisor.consumeNudge();
-        }
-
         const callProviderOptions = buildThinkingProviderOptions(config.model, config.thinking);
 
-        const llmStart = performance.now();
-        const response: StreamResult = await withRetry(() =>
-          callModel(
-            this.model,
-            {
-              prompt: [
+        const callOnce = (msgs: LanguageModelV3Message[]) =>
+          withRetry(
+            () =>
+              callModel(
+                this.model,
                 {
-                  role: "system",
-                  content: callPrompt,
-                  providerOptions: {
-                    anthropic: { cacheControl: { type: "ephemeral" } },
-                  },
+                  prompt: [
+                    {
+                      role: "system",
+                      content: callPrompt,
+                      providerOptions: {
+                        anthropic: { cacheControl: { type: "ephemeral" } },
+                      },
+                    },
+                    ...addCacheBreakpoint(msgs),
+                  ],
+                  tools: modelTools,
+                  maxOutputTokens: config.maxOutputTokens,
+                  // Forward the run-scoped signal into the model call. AI
+                  // SDK V3 providers honor `abortSignal` by aborting the
+                  // underlying fetch, so an in-flight stream cancels at
+                  // the network layer instead of blocking the engine
+                  // until the model finishes. Pairs with the iteration-
+                  // boundary check above: that handles between-step
+                  // cancellation, this handles in-step.
+                  ...(config.signal ? { abortSignal: config.signal } : {}),
+                  ...(Object.keys(callProviderOptions).length > 0
+                    ? { providerOptions: callProviderOptions }
+                    : {}),
                 },
-                ...addCacheBreakpoint(callMessages),
-              ],
-              tools: modelTools,
-              maxOutputTokens: config.maxOutputTokens,
-              ...(Object.keys(callProviderOptions).length > 0
-                ? { providerOptions: callProviderOptions }
-                : {}),
-            },
-            (text) => this.events.emit({ type: "text.delta", data: { runId, text } }),
-            (text) => this.events.emit({ type: "reasoning.delta", data: { runId, text } }),
-            (id, name) => this.events.emit({ type: "tool.preparing", data: { runId, id, name } }),
-            (id) => this.events.emit({ type: "tool.preparing.done", data: { runId, id } }),
-          ),
-        );
+                (text) => this.events.emit({ type: "text.delta", data: { runId, text } }),
+                (text) => this.events.emit({ type: "reasoning.delta", data: { runId, text } }),
+                (id, name) =>
+                  this.events.emit({ type: "tool.preparing", data: { runId, id, name } }),
+                (id) => this.events.emit({ type: "tool.preparing.done", data: { runId, id } }),
+              ),
+            // Defaults preserved; only the new fourth arg matters here.
+            // The retry backoff sleep aborts on `config.signal` so a
+            // cancel during backoff bites within the abort tick instead
+            // of after the full delay (up to ~8.5s on attempt 3).
+            3,
+            1000,
+            config.signal,
+          );
+
+        const llmStart = performance.now();
+        let response: StreamResult;
+        let overflowAttempt = 0;
+        while (true) {
+          try {
+            response = await callOnce(callMessages);
+            break;
+          } catch (err) {
+            // Reactive recovery for provider-reported context-window
+            // overflows. The pre-flight `resolveMessageBudget` should make
+            // this rare; when it fires, we re-window with the hook's
+            // own `overflowAttempt`-driven scaling (typically halves the
+            // budget) and retry once. A second overflow propagates the
+            // original error so the UI can surface a clear "conversation
+            // too long" message rather than silently looping.
+            if (
+              overflowAttempt === 0 &&
+              isContextOverflowError(err) &&
+              config.hooks?.transformContext
+            ) {
+              overflowAttempt = 1;
+              const previousMessageCount = callMessages.length;
+              const errorMessage = err instanceof Error ? err.message : String(err);
+              // Always-on stderr line so a frequency uptick is visible in
+              // operator logs without flipping a debug flag. Recovery
+              // firing means the pre-flight budget composition disagreed
+              // with the provider's tokenizer — actionable signal for
+              // tuning DEFAULT_BUDGET_SAFETY_MARGIN_TOKENS or the
+              // estimator. Per-conversation correlation via runId; the
+              // aggregate is what drives action.
+              log.warn(
+                `[engine] context overflow recovery runId=${runId} attempt=${overflowAttempt} previousMessages=${previousMessageCount} model=${config.model} error="${errorMessage}"`,
+              );
+              this.events.emit({
+                type: "context.overflow_recovery",
+                data: {
+                  runId,
+                  attempt: overflowAttempt,
+                  previousMessageCount,
+                  errorMessage,
+                },
+              });
+              callMessages = sanitizeMessages(runTransform(overflowAttempt));
+              continue;
+            }
+            throw err;
+          }
+        }
         const llmMs = Math.round(performance.now() - llmStart);
 
         // Accumulate text output (add newline between turns if needed)
@@ -562,6 +788,13 @@ export class AgentEngine {
               }
             }
 
+            // LRU refresh: a promoted tool that's actively being called
+            // moves to the back of the eviction queue. Initial tools aren't
+            // in the map and are exempt from eviction either way.
+            if (promotedLastUsed.has(gatedCall.name)) {
+              promotedLastUsed.set(gatedCall.name, ++useCounter);
+            }
+
             // Guard: reject oversized tool results before event emission or history accumulation
             const maxResultSize = config.maxToolResultSize ?? 1_000_000;
             if (maxResultSize > 0) {
@@ -585,9 +818,10 @@ export class AgentEngine {
 
             // Supervisor sees the post-hook, post-A.3-normalization result.
             // On a trip, the replacement directive flows downstream in place
-            // of the original — the model sees the directive in its tool
-            // message and the engine appends a system-prompt nudge on the
-            // next iteration via `needsPromptNudge()`.
+            // of the original tool result. The tripped tool is filtered out
+            // of `modelTools` on subsequent iterations (see the top of the
+            // run loop), so the model can't call it again regardless of
+            // what the directive says.
             const verdict = supervisor.observe(gatedCall, hookedResult);
             const finalResult = verdict.type === "synth" ? verdict.replacement : hookedResult;
 
@@ -635,7 +869,6 @@ export class AgentEngine {
 
         for (const {
           toolCall,
-          gatedCall,
           result,
           ms,
           resourceUri: uri,
@@ -681,25 +914,6 @@ export class AgentEngine {
               ? { type: "error-text", value: llmText }
               : { type: "text", value: llmText },
           });
-
-          if (
-            gatedCall.name === "nb__search" &&
-            !result.isError &&
-            gatedCall.input.scope === "tools"
-          ) {
-            const structured = result.structuredContent as
-              | { tools?: Array<{ name?: string }> }
-              | undefined;
-            for (const { name } of structured?.tools ?? []) {
-              if (!name) continue;
-              if (directToolNames.has(name)) continue;
-              const schema = allToolSchemaMap.get(name);
-              if (!schema) continue;
-              if (schema.annotations?.["ai.nimblebrain/internal"]) continue;
-              directTools.push(schema);
-              directToolNames.add(name);
-            }
-          }
         }
 
         // 6. Feed results back as tool message
@@ -718,6 +932,8 @@ export class AgentEngine {
         },
       });
       throw err;
+    } finally {
+      unregisterToolControls?.();
     }
 
     const stopReason: StopReason =

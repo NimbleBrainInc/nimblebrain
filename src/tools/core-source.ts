@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { readFile, rename, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -760,10 +759,26 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
             const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
             const until = new Date().toISOString();
 
-            // Collect activity from workspace-scoped logs
+            // Collect activity from workspace-scoped logs; conversations
+            // themselves live at the user level post-Stage 1, so the
+            // activity collector reads through the top-level store with
+            // an ownership filter to keep the briefing scoped to the
+            // caller. Without the filter, the briefing would aggregate
+            // every user's conversations in the deployment.
+            const identity = runtime.getCurrentIdentity();
+            if (!identity) {
+              return {
+                content: textContent("Briefing requires an authenticated identity."),
+                isError: true,
+              };
+            }
             const logDir = join(wsDir, "logs");
-            const store = runtime.getStore();
-            const collector = new ActivityCollector(logDir, store);
+            const store = runtime.findConversationStore();
+            const collector = new ActivityCollector({
+              logDir,
+              conversations: { kind: "store", store },
+              access: { userId: identity.id },
+            });
             const activity = await collector.collect({ since });
 
             // Collect briefing facets — scoped to current workspace
@@ -775,23 +790,22 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
               until,
             });
 
-            // Resolve the model from the "fast" slot
-            const modelId = runtime.getModelSlot("fast");
-            const model = runtime.resolveModel(modelId);
+            // Resolve the "fast" slot's model for the briefing call.
+            const modelString = runtime.getModelSlot("fast");
+            const model = runtime.resolveModel(modelString);
 
-            // Generate briefing with facets + activity
-            const generator = new BriefingGenerator(model, {
-              enabled: true,
-              model: modelId,
+            const generator = new BriefingGenerator(model, modelString, {
               userName: homeConfig.userName,
               timezone: homeConfig.timezone,
               cacheTtlMinutes: homeConfig.cacheTtlMinutes,
             });
-            const briefing: BriefingOutput = await generator.generate(activity, facetContext);
 
-            // Cache the result
-            const hash = createHash("md5").update(JSON.stringify(activity.totals)).digest("hex");
-            cache.set(briefing, hash);
+            // generate() throws on LLM failure. The outer catch turns
+            // that into an isError tool result, which the home UI
+            // renders as a clear error state with a retry button.
+            // Cache writes only happen on the success path below.
+            const briefing: BriefingOutput = await generator.generate(activity, facetContext);
+            cache.set(briefing);
 
             return {
               content: textContent("Briefing generated."),

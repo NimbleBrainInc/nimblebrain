@@ -20,7 +20,7 @@ describe("supervisor — pass-through behavior", () => {
       const verdict = sup.observe(call("foo"), textResult(`distinct-${i}`));
       expect(verdict.type).toBe("pass");
     }
-    expect(sup.needsPromptNudge()).toBe(false);
+    expect(sup.snapshot().trippedTools).toEqual([]);
   });
 
   it("passes through varied errors (each different fingerprint resets counter)", () => {
@@ -61,7 +61,12 @@ describe("supervisor — trips on repeated identical results", () => {
       const synthText = (v3.replacement.content[0] as { text: string }).text;
       expect(synthText).toContain(sameError);
       expect(synthText).toContain("foo");
-      expect(synthText).toContain("Do not call any tools");
+      // Scoped to this tool, past-tense, no universal directives that would
+      // rot in conversation history across future runs.
+      expect(synthText).toContain("disabled for the rest of this run");
+      expect(synthText).not.toContain("Do not call any tools");
+      expect(synthText).not.toContain("End the run");
+      expect(synthText).toContain("Other tools remain available");
     }
   });
 
@@ -74,23 +79,13 @@ describe("supervisor — trips on repeated identical results", () => {
     expect(v3.type).toBe("synth");
   });
 
-  it("sets needsPromptNudge after a trip", () => {
+  it("reports tripped tool in snapshot after a trip", () => {
     const sup = createRunSupervisor();
     const e = textResult("err", true);
     sup.observe(call("foo"), e);
     sup.observe(call("foo"), e);
     sup.observe(call("foo"), e);
-    expect(sup.needsPromptNudge()).toBe(true);
-  });
-
-  it("consumeNudge clears the flag", () => {
-    const sup = createRunSupervisor();
-    const e = textResult("err", true);
-    sup.observe(call("foo"), e);
-    sup.observe(call("foo"), e);
-    sup.observe(call("foo"), e);
-    sup.consumeNudge();
-    expect(sup.needsPromptNudge()).toBe(false);
+    expect(sup.snapshot().trippedTools).toEqual(["foo"]);
   });
 });
 
@@ -106,16 +101,15 @@ describe("supervisor — stickiness once tripped", () => {
     expect(recovery.type).toBe("synth");
   });
 
-  it("renudges on every post-trip call", () => {
+  it("keeps the tool in trippedTools across subsequent calls", () => {
     const sup = createRunSupervisor();
     const e = textResult("err", true);
     sup.observe(call("foo"), e);
     sup.observe(call("foo"), e);
     sup.observe(call("foo"), e);
-    sup.consumeNudge();
 
     sup.observe(call("foo"), e);
-    expect(sup.needsPromptNudge()).toBe(true);
+    expect(sup.snapshot().trippedTools).toEqual(["foo"]);
   });
 });
 

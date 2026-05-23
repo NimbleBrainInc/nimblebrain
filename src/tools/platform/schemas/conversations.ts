@@ -28,8 +28,17 @@ export type ConversationsListInput = Static<typeof ConversationsListInput>;
 export const ConversationsGetInput = Type.Object(
   {
     id: Type.String({ description: "Conversation ID." }),
+    expand: Type.Optional(
+      StringEnum(["metadata", "messages", "full"] as const, {
+        description:
+          'How much of the conversation to return. "metadata" returns just metadata (no messages). "messages" (default) returns metadata + the most recent `limit` messages, capped by a content-size guard. "full" returns every message — use only when you genuinely need the entire transcript; long conversations can run hundreds of thousands of tokens.',
+      }),
+    ),
     limit: Type.Optional(
-      Type.Number({ description: "Max messages to return (from end of conversation)." }),
+      Type.Number({
+        description:
+          'Max messages to return when expand is "messages" (the default mode). Counted from the end of the conversation. Default: 20. Ignored when expand is "metadata" or "full".',
+      }),
     ),
   },
   { required: ["id"] },

@@ -130,6 +130,33 @@ describe("loadConfig", () => {
     });
   });
 
+  it("absolutizes a relative workDir from the config file", () => {
+    const configPath = writeTestConfig("rel-workdir.json", { workDir: ".nimblebrain" });
+    const config = loadConfig({ config: configPath });
+    expect(config.workDir).toBeDefined();
+    expect(config.workDir!.startsWith("/")).toBe(true);
+    expect(config.workDir!.endsWith(".nimblebrain")).toBe(true);
+  });
+
+  it("leaves an absolute workDir untouched", () => {
+    const abs = join(testDir, "abs-workdir-fixture");
+    const configPath = writeTestConfig("abs-workdir.json", { workDir: abs });
+    const config = loadConfig({ config: configPath });
+    expect(config.workDir).toBe(abs);
+  });
+
+  it("leaves workDir undefined when no source supplies one", () => {
+    const configPath = writeTestConfig("no-workdir.json", {});
+    const prev = process.env.NB_WORK_DIR;
+    delete process.env.NB_WORK_DIR;
+    try {
+      const config = loadConfig({ config: configPath });
+      expect(config.workDir).toBeUndefined();
+    } finally {
+      if (prev !== undefined) process.env.NB_WORK_DIR = prev;
+    }
+  });
+
   it("CLI flags override file config", () => {
     const configPath = writeTestConfig("override.json", {
       defaultModel: "claude-sonnet-4-5-20250929",

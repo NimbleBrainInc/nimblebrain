@@ -27,6 +27,8 @@ function useIsMobile(): boolean {
 interface AppWithChatProps {
   placement: PlacementEntry;
   onNavigate: (route: string) => void;
+  /** One-shot `?force=1` cache-bust — only the home route passes this. */
+  forceRefresh?: boolean;
 }
 
 const DEFAULT_WIDTH = 380;
@@ -34,7 +36,7 @@ const RESIZE_HANDLE_WIDTH = 4; // px — matches ResizeHandle's w-1 at 16px root
 const TRANSITION_STANDARD = "300ms cubic-bezier(0.33, 1, 0.68, 1)";
 const TRANSITION_FULLSCREEN = "350ms cubic-bezier(0.4, 0, 0.2, 1)";
 
-export function AppWithChat({ placement, onNavigate }: AppWithChatProps) {
+export function AppWithChat({ placement, onNavigate, forceRefresh }: AppWithChatProps) {
   const { panelState, panelWidth, setPanelWidth, openPanel, closePanel, toggleFullscreen } =
     useChatPanelContext();
   const [isDragging, setIsDragging] = useState(false);
@@ -248,6 +250,7 @@ export function AppWithChat({ placement, onNavigate }: AppWithChatProps) {
               onChat={handleChat}
               onNavigate={onNavigate}
               onPromptAction={handlePromptAction}
+              forceRefresh={forceRefresh}
             />
           </div>
         </div>

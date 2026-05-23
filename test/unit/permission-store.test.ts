@@ -101,7 +101,7 @@ describe("PermissionStore", () => {
       // Workspace scope at the same name should not see the user's policy.
       expect(
         await store.get(
-          { scope: "workspace", wsId: "ws1" },
+          { scope: "workspace", wsId: "ws_one" },
           "gmail",
           "send_email",
         ),

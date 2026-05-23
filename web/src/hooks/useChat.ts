@@ -124,11 +124,12 @@ export interface ChatMessage {
   };
 }
 
-/** Conversation-level metadata for shared conversation support. */
+/**
+ * Conversation-level metadata. Stage 1: single-owner only — sharing
+ * was removed (returns in Stage 4 with policy gating).
+ */
 export interface LoadedConversationMeta {
   ownerId?: string;
-  visibility?: "private" | "shared";
-  participants?: string[];
 }
 
 export interface UseChatReturn {
@@ -543,7 +544,11 @@ export function useChat(initialConversationId?: string, currentUserId?: string):
   const loadConversation = useCallback(async (id: string) => {
     setError(null);
     try {
-      const res = await callTool("conversations", "get", { id });
+      // expand:"full" — the shell is rendering the entire chat, not
+      // sampling for an LLM. The bounded default (`expand:"messages"`,
+      // last 20) exists to keep agent tool-results small; the trusted
+      // web shell needs every turn or the UI silently shows only the tail.
+      const res = await callTool("conversations", "get", { id, expand: "full" });
       if (res.isError) {
         const errText = res.content
           ?.map((b) => b.text ?? "")
@@ -567,17 +572,11 @@ export function useChat(initialConversationId?: string, currentUserId?: string):
         metadata: {
           id: string;
           ownerId?: string;
-          visibility?: "private" | "shared";
-          participants?: string[];
         };
         messages: ChatMessage[];
       };
       setConversationId(data.metadata.id);
-      setConversationMeta({
-        ownerId: data.metadata.ownerId,
-        visibility: data.metadata.visibility,
-        participants: data.metadata.participants,
-      });
+      setConversationMeta({ ownerId: data.metadata.ownerId });
       setMessages(data.messages);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to load conversation";

@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { appendFile, mkdir, readdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { basename, join, relative, resolve } from "node:path";
-import type { FileEntry } from "./types.ts";
+import type { ExtractedTextSidecar, FileEntry } from "./types.ts";
 
 /** Sanitize a filename: strip path separators, null bytes, and control chars (0x00-0x1F). */
 export function sanitizeFilename(name: string): string {
@@ -43,6 +43,14 @@ export interface FileStore {
   appendTombstone(id: string): Promise<void>;
   deleteFile(id: string): Promise<void>;
   ensureFilesDir(): Promise<void>;
+  /**
+   * Read the extracted-text sidecar for `id`. Returns null if the sidecar
+   * is missing or unreadable. Callers decide invalidation by comparing
+   * `maxSize` against their current config.
+   */
+  readExtractedText(id: string): Promise<ExtractedTextSidecar | null>;
+  /** Write (or overwrite) the extracted-text sidecar for `id`. */
+  writeExtractedText(id: string, sidecar: ExtractedTextSidecar): Promise<void>;
 }
 
 /**
@@ -180,6 +188,39 @@ export function createFileStore(filesDir: string): FileStore {
     } catch {
       // File already gone from disk — tombstone still recorded.
     }
+    // Best-effort sidecar cleanup. The sidecar is derived, so a stale
+    // copy isn't a correctness issue, but leaving it on disk leaks space.
+    try {
+      await unlink(extractedSidecarPath(id));
+    } catch {
+      // Sidecar never existed or already removed.
+    }
+  }
+
+  function extractedSidecarPath(id: string): string {
+    return join(filesDir, `${id}.extracted.json`);
+  }
+
+  async function readExtractedText(id: string): Promise<ExtractedTextSidecar | null> {
+    try {
+      const raw = await readFile(extractedSidecarPath(id), "utf-8");
+      const parsed = JSON.parse(raw) as ExtractedTextSidecar;
+      if (
+        typeof parsed.text !== "string" ||
+        typeof parsed.maxSize !== "number" ||
+        typeof parsed.truncated !== "boolean"
+      ) {
+        return null;
+      }
+      return parsed;
+    } catch {
+      return null;
+    }
+  }
+
+  async function writeExtractedText(id: string, sidecar: ExtractedTextSidecar): Promise<void> {
+    await ensureFilesDir();
+    await writeFile(extractedSidecarPath(id), JSON.stringify(sidecar));
   }
 
   return {
@@ -192,5 +233,7 @@ export function createFileStore(filesDir: string): FileStore {
     appendTombstone,
     deleteFile,
     ensureFilesDir,
+    readExtractedText,
+    writeExtractedText,
   };
 }

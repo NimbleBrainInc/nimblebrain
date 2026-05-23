@@ -1,6 +1,8 @@
+import { PersonalWorkspaceInvariantError } from "./errors.ts";
 import type { Workspace } from "./types.ts";
 import {
-  MemberConflictError,
+  personalWorkspaceIdFor,
+  personalWorkspaceSlugFor,
   WorkspaceConflictError,
   type WorkspaceStore,
 } from "./workspace-store.ts";
@@ -15,109 +17,70 @@ export interface ProvisioningIdentity {
 }
 
 /**
- * Ensure the user has at least one workspace. Idempotent.
+ * Ensure the user has a personal workspace. Idempotent.
  *
- * Invariant for the system: every authenticated user has ≥1 workspace.
- * Providers call this on every successful verifyRequest so the invariant
- * is self-healing — any state drift (admin deletion, partial failure,
- * users migrated from a prior build) is corrected on next login instead
- * of causing a permanent 500.
+ * Invariant (Stage 1+): every authenticated user owns exactly one personal
+ * workspace at the canonical id `personalWorkspaceIdFor(user.id)`. The user
+ * may additionally be a member of any number of shared workspaces; this
+ * helper does not touch those.
+ *
+ * Providers call this on every successful verifyRequest so the invariant is
+ * self-healing — any state drift (workspace missing, partial-applied
+ * migration) is corrected on next login.
  *
  * Behavior:
- * - User already a member of ≥1 workspace → return the first, no writes.
- * - User has no memberships → create a private workspace, add as admin.
- * - Concurrent first-login race (two calls for the same identity in flight)
- *   → resolved without creating duplicates. One race winner completes both
- *   create and addMember; losers either see the committed workspace via
- *   getWorkspacesForUser, or catch WorkspaceConflictError / MemberConflictError
- *   and re-read. No same-user race produces more than one workspace.
+ * - Personal workspace exists at the canonical id → return it. The store's
+ *   create-time invariant guarantees the owner is the sole admin member;
+ *   we don't second-guess that here.
+ * - Personal workspace does not exist → create with `isPersonal: true` +
+ *   `ownerUserId`, which `WorkspaceStore.create` populates with the
+ *   owner-admin member.
+ * - Concurrent first-login race → one winner creates, losers detect the
+ *   conflict and re-read.
  *
- * Concurrency note: WorkspaceStore.create is read-then-write without a
- * filesystem lock, so `create` only detects conflicts where the first
- * writer already committed. This helper's safety comes from (a) slugs
- * being derived from the full user ID — different users cannot collide —
- * and (b) same-user races converging on the same addMember target.
+ * Returns the user's personal workspace (always — never a shared one).
+ *
+ * Pre-Stage-1.1 state (the user exists but their personal workspace's
+ * member list isn't the canonical sole-owner-admin) is NOT auto-healed
+ * here. The membership invariant is now enforced by the store; bumping
+ * it from a login hot-path would silently mutate identity-bound state.
+ * Operators recover via `scripts/cleanup-personal-workspace-members.ts`.
  */
 export async function ensureUserWorkspace(
   store: WorkspaceStore,
   identity: ProvisioningIdentity,
 ): Promise<Workspace> {
-  const existing = await store.getWorkspacesForUser(identity.id);
-  if (existing.length > 0) {
-    return existing[0]!;
-  }
-
-  const slug = deriveSlug(identity.id);
+  const wsId = personalWorkspaceIdFor(identity.id);
   const name = identity.displayName ? `${identity.displayName}'s Workspace` : "Workspace";
+  const slug = personalWorkspaceSlugFor(identity.id);
 
-  try {
-    const ws = await store.create(name, slug);
+  // Self-healing read-then-create loop. The body covers three race
+  // shapes around the canonical id: (a) another caller already created
+  // it (read wins); (b) we lose a create-conflict and the workspace
+  // exists by the time we re-read (loop returns it); (c) we lose a
+  // create-conflict but the workspace was deleted before re-read (loop
+  // recreates). 3 attempts is plenty — (c) twice in a row would
+  // require pathological concurrent create+delete churn on one user.
+  const MAX_ATTEMPTS = 3;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    const existing = await store.get(wsId);
+    if (existing) return existing;
     try {
-      return await store.addMember(ws.id, identity.id, "admin");
+      return await store.create(name, slug, {
+        isPersonal: true,
+        ownerUserId: identity.id,
+      });
     } catch (err) {
-      // A loser of the create race can reach reconcileConflict and call
-      // addMember before we do. Tolerate it: re-read and return.
-      if (err instanceof MemberConflictError) {
-        return (await store.get(ws.id)) ?? ws;
-      }
+      if (err instanceof WorkspaceConflictError) continue;
+      // `PersonalWorkspaceInvariantError` here would mean this helper
+      // built a bad-shape personal workspace — a bug, not a race.
+      // Anything else: surface unchanged.
+      if (err instanceof PersonalWorkspaceInvariantError) throw err;
       throw err;
     }
-  } catch (err) {
-    if (!(err instanceof WorkspaceConflictError)) throw err;
-    return reconcileConflict(store, identity, `ws_${slug}`);
-  }
-}
-
-/**
- * A create() collision on our deterministic slug means another concurrent
- * call is mid-flight for the same identity — with full (untruncated) user
- * IDs as slugs, no two different users can collide here. Recover by
- * re-reading and ensuring membership. Never create a second workspace with
- * a different slug: two workspaces per user from a race is the exact bug
- * the old timestamp-suffix fallback introduced.
- */
-async function reconcileConflict(
-  store: WorkspaceStore,
-  identity: ProvisioningIdentity,
-  wsId: string,
-): Promise<Workspace> {
-  const existing = await store.get(wsId);
-  if (!existing) {
-    // WorkspaceConflictError fires only when store.get() returned non-null
-    // inside create() — so reaching here means the workspace existed at
-    // throw time and was deleted before our re-read (concurrent delete,
-    // rare). Recreate it.
-    const ws = await store.create(
-      identity.displayName ? `${identity.displayName}'s Workspace` : "Workspace",
-      deriveSlug(identity.id),
-    );
-    return await store.addMember(ws.id, identity.id, "admin");
   }
 
-  const isMember = existing.members.some((m) => m.userId === identity.id);
-  if (isMember) return existing;
-
-  try {
-    return await store.addMember(existing.id, identity.id, "admin");
-  } catch (err) {
-    if (err instanceof MemberConflictError) {
-      return (await store.get(existing.id)) ?? existing;
-    }
-    throw err;
-  }
-}
-
-/**
- * Derive a workspace slug from a user ID.
- *
- * Uses the full (prefix-stripped) user ID with NO truncation. The old
- * `.slice(0, 16)` inherited from resolveWorkspace left only ~7 hex chars
- * of entropy for OIDC IDs (`usr_oidc_<12 hex>` → `usr_oidc_<7 hex>`),
- * producing a birthday collision at ~16K users. On collision, the
- * reconcile path would silently add two unrelated users as admins of
- * the same workspace — a security bug. WORKSPACE_ID_RE permits 64 chars
- * so there is no reason to truncate.
- */
-function deriveSlug(userId: string): string {
-  return userId.replace(/^user_/, "").toLowerCase();
+  throw new Error(
+    `[provisioning] personal workspace ${wsId} couldn't be reconciled after ${MAX_ATTEMPTS} attempts — investigate concurrent create/delete activity`,
+  );
 }

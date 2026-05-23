@@ -5,10 +5,12 @@ import { fileURLToPath } from "node:url";
 import type { LanguageModelV3, LanguageModelV3Message } from "@ai-sdk/provider";
 import { NoopEventSink } from "../adapters/noop-events.ts";
 import { WorkspaceLogSink } from "../adapters/workspace-log-sink.ts";
+import type { AutomationDomainContext } from "../bundles/automations/src/domain.ts";
 import { BundleLifecycleManager } from "../bundles/lifecycle.ts";
 import { deriveServerName } from "../bundles/paths.ts";
 import { setConnectionRunningHandler } from "../bundles/pending-auth-buffer.ts";
-import type { AppInfo, BundleInstance } from "../bundles/types.ts";
+import type { BundleMcpDeps } from "../bundles/startup.ts";
+import type { AppInfo, BundleInstance, PlacementDeclaration } from "../bundles/types.ts";
 import { log } from "../cli/log.ts";
 import { isToolVisibleToRole, type ResolvedFeatures, resolveFeatures } from "../config/features.ts";
 import { deriveOverridePath } from "../config/overrides.ts";
@@ -18,12 +20,16 @@ import { EventSourcedConversationStore } from "../conversation/event-sourced-sto
 import { JsonlConversationStore } from "../conversation/jsonl-store.ts";
 import { InMemoryConversationStore } from "../conversation/memory-store.ts";
 import type {
+  Conversation,
+  ConversationAccessContext,
   ConversationListResult,
   ConversationStore,
-  ParticipantInfo,
+  CreateConversationOptions,
+  ListOptions,
 } from "../conversation/types.ts";
-import { sliceHistory, windowMessages } from "../conversation/window.ts";
+import { sliceHistory, stripOlderReasoning, windowMessages } from "../conversation/window.ts";
 import { AgentEngine } from "../engine/engine.ts";
+import { estimateMessageTokens, estimateToolDescriptionTokens } from "../engine/token-estimate.ts";
 import type {
   ContextAssembledPayload,
   ContextAssembledSource,
@@ -32,11 +38,14 @@ import type {
   EngineHooks,
   EventSink,
   SkillsLoadedPayload,
+  ToolPromotionResult,
+  ToolRouter,
   ToolSchema,
 } from "../engine/types.ts";
 import { rehydrateUserResources } from "../files/rehydrate.ts";
 import { createFileStore } from "../files/store.ts";
 import { DEFAULT_FILE_CONFIG, type FileConfig } from "../files/types.ts";
+import { FileBackedHostResourcesResolver, TokenBucketRateLimit } from "../host-resources/index.ts";
 import type { InstanceConfig } from "../identity/instance.ts";
 import { loadInstanceConfig } from "../identity/instance.ts";
 import type { IdentityProvider, UserIdentity } from "../identity/provider.ts";
@@ -46,10 +55,16 @@ import { UserStore } from "../identity/user.ts";
 import { InstructionsStore } from "../instructions/index.ts";
 import { buildModelResolver, resolveModelString } from "../model/registry.ts";
 import { PermissionStore } from "../permissions/permission-store.ts";
-import type { Layer3SkillEntry, PromptAppInfo } from "../prompt/compose.ts";
+import type {
+  AppStateInfo,
+  FocusedAppInfo,
+  Layer3SkillEntry,
+  PromptAppInfo,
+} from "../prompt/compose.ts";
 import { composeSystemPrompt } from "../prompt/compose.ts";
 import { ConnectorDirectory } from "../registries/directory.ts";
 import { RegistryStore } from "../registries/registry-store.ts";
+import { synthesizeBundleSkill } from "../skills/bundle-skills.ts";
 import {
   loadBuiltinSkills,
   loadCoreSkills,
@@ -61,17 +76,19 @@ import {
 import { SkillMatcher } from "../skills/matcher.ts";
 import { selectLayer3Skills } from "../skills/select.ts";
 import { approxTokens } from "../skills/tokens.ts";
+import { truncateMarkdownToBudget } from "../skills/truncate.ts";
 import type { Skill } from "../skills/types.ts";
 import { TelemetryManager } from "../telemetry/manager.ts";
 import { PostHogEventSink } from "../telemetry/posthog-sink.ts";
 import type { DelegateContext } from "../tools/delegate.ts";
 import { McpSource } from "../tools/mcp-source.ts";
-import type { ToolRegistry } from "../tools/registry.ts";
+import { SharedSourceRef, type ToolRegistry } from "../tools/registry.ts";
 import { createSystemTools } from "../tools/system-tools.ts";
-import type { ResourceData } from "../tools/types.ts";
+import type { ResourceData, ToolSource } from "../tools/types.ts";
 import { UserConnectorStore } from "../users/user-connector-store.ts";
+import { WorkspaceContext } from "../workspace/context.ts";
 import { WorkspaceStore } from "../workspace/workspace-store.ts";
-import { RunInProgressError } from "./errors.ts";
+import { ConversationAccessDeniedError, RunInProgressError } from "./errors.ts";
 import { PlacementRegistry } from "./placement-registry.ts";
 import {
   getRequestContext,
@@ -88,7 +105,9 @@ const DEFAULT_MODEL = "claude-sonnet-4-6";
 
 import { DEFAULT_MAX_INPUT_TOKENS, DEFAULT_MAX_ITERATIONS } from "../limits.ts";
 import { resolveMaxOutputTokens } from "./resolve-max-output-tokens.ts";
+import { resolveMessageBudget } from "./resolve-message-budget.ts";
 import { resolveThinking } from "./resolve-thinking.ts";
+import { isToolEligibleForPromotion } from "./tool-eligibility.ts";
 
 const DEFAULT_MAX_HISTORY_MESSAGES = 40;
 
@@ -189,9 +208,9 @@ export class Runtime {
   private _workspaceRegistries: Map<string, ToolRegistry>;
   // Protected sources are captured in start() and passed to startWorkspaceBundles directly.
   /** The system source ("nb") — shared across workspace registries. */
-  _systemSource: import("../tools/types.ts").ToolSource | null;
+  _systemSource: ToolSource | null;
   /** Platform sources (home, conversations, files, etc.) — retained for JIT workspace registration. */
-  private _platformSources: import("../tools/types.ts").ToolSource[] = [];
+  private _platformSources: ToolSource[] = [];
   /**
    * Domain-context getter for the automations bundle. Set by the
    * automations source factory; consumed by internal callers (CLI's
@@ -201,15 +220,25 @@ export class Runtime {
    * `bundleName`, `allowedTools`) — that the LLM-facing tool schema
    * deliberately doesn't expose. See `src/tools/platform/CLAUDE.md` § 1.4.
    */
-  private _automationsContextGetter:
-    | (() => import("../bundles/automations/src/domain.ts").AutomationDomainContext)
-    | null = null;
+  private _automationsContextGetter: (() => AutomationDomainContext) | null = null;
+  /**
+   * Per-workspace host-resources deps factory. Set in `Runtime.start()`
+   * after the resolver + rate-limit are constructed; consumed by every
+   * install path that spawns a bundle (lifecycle.installNamed/Local/
+   * Remote, system-tools manage_app install, connector-tools install,
+   * workspace-runtime boot reload). Returns `undefined` only when the
+   * runtime is constructed without the host-resources subsystem wired
+   * — never in production.
+   */
+  private _bundleMcpDepsFactory: ((wsId: string) => BundleMcpDeps) | null = null;
   /** Getter for current workspace ID (set per-request). */
   private _currentWorkspaceId: (() => string | null) | null = null;
-  private _manageConversationCtx:
-    | import("../tools/conversation-tools.ts").ManageConversationContext
-    | null = null;
-  private skillResourceCache = new Map<string, { content: string; fetchedAt: number }>();
+  /**
+   * Cache for `skill://<bundle>/usage` resource fetches. A `null` body is a
+   * sentinel meaning "this bundle does not publish the resource" — without it,
+   * `loadBundleSkills` would re-probe every non-skill bundle on every chat.
+   */
+  private skillResourceCache = new Map<string, { content: string | null; fetchedAt: number }>();
   private static readonly SKILL_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
   /**
    * Conversation IDs with an in-flight chat() call. Prevents concurrent runs on
@@ -245,7 +274,7 @@ export class Runtime {
     workspaceStore: WorkspaceStore,
     identityProvider: IdentityProvider | null,
     workspaceRegistries: Map<string, ToolRegistry>,
-    systemSource: import("../tools/types.ts").ToolSource | null,
+    systemSource: ToolSource | null,
     currentWorkspaceId: () => string | null,
   ) {
     this.resolveModelFn = resolveModelFn;
@@ -325,6 +354,35 @@ export class Runtime {
     );
     lifecycle.setPlacementRegistry(placementRegistry);
 
+    // Host-resources subsystem. One resolver + one rate-limit shared
+    // across every bundle spawned through this runtime, parameterized
+    // per-call by workspace id. Construction lives here (not inside
+    // lifecycle) because the resolver depends on the workspace-scoped
+    // data layout, which is a Runtime concern; lifecycle consumes via
+    // `setBundleMcpDepsFactory`, other install paths consume via
+    // `Runtime.getBundleMcpDeps(wsId)`.
+    const hostResourcesWorkDir = resolveWorkDir(config);
+    // Memoize FileStore per workspace. FileStore today is closures over
+    // a path (cheap), but if it ever gains state (caches, fd handles,
+    // mtime watchers), per-call construction would leak. Bounded by
+    // active-workspace count.
+    const hostResourcesFileStoreCache = new Map<string, ReturnType<typeof createFileStore>>();
+    const hostResourcesResolver = new FileBackedHostResourcesResolver((wsId) => {
+      const cached = hostResourcesFileStoreCache.get(wsId);
+      if (cached) return cached;
+      const wsCtx = new WorkspaceContext({ wsId, workDir: hostResourcesWorkDir });
+      const store = createFileStore(wsCtx.getDataPath("files"));
+      hostResourcesFileStoreCache.set(wsId, store);
+      return store;
+    });
+    const hostResourcesRateLimit = new TokenBucketRateLimit();
+    const bundleMcpDepsFactory = (wsId: string) => ({
+      workspaceId: wsId,
+      hostResources: hostResourcesResolver,
+      rateLimit: hostResourcesRateLimit,
+    });
+    lifecycle.setBundleMcpDepsFactory(bundleMcpDepsFactory);
+
     // Wire the connection-running notification path so URL bundles
     // whose interactive OAuth completes (after the user clicks Connect
     // and returns from the AS) transition out of `pending_auth` and
@@ -335,8 +393,15 @@ export class Runtime {
 
     const gate = config.confirmationGate ?? new NoopConfirmationGate();
 
-    const maxInputTokens = config.maxInputTokens ?? DEFAULT_MAX_INPUT_TOKENS;
-    const maxHistoryMessages = config.maxHistoryMessages ?? DEFAULT_MAX_HISTORY_MESSAGES;
+    // Neither `maxInputTokens` nor `maxHistoryMessages` are composed at
+    // runtime startup anymore — they're read per-call from `this.config`
+    // in `chat()`. The per-call message budget comes from the resolved
+    // model's context window minus the static per-call overhead (system
+    // prompt + tools + reserved output + safety margin), capped by the
+    // operator's `config.maxInputTokens`. See `resolve-message-budget.ts`.
+    // The runtime-level hooks below carry only `beforeToolCall`;
+    // `transformContext` is built per-request so the budget reflects
+    // what the model actually sees on each call.
 
     // Build delegate context for nb__delegate tool
     // Use a late-bound getter for defaultModel so it reflects live config changes
@@ -377,13 +442,20 @@ export class Runtime {
       getRemainingIterations: () => delegateTracker.getRemainingIterations(),
       getParentRunId: () => delegateTracker.getParentRunId(),
       defaultModel: getDefaultModel(),
-      defaultMaxInputTokens: maxInputTokens,
+      defaultMaxInputTokens: config.maxInputTokens ?? DEFAULT_MAX_INPUT_TOKENS,
       // Raw operator config (may be undefined). Delegate resolves against
       // the child's model at execution time so the resolved values fit
       // the child's model rather than the parent's.
       configMaxOutputTokens: config.maxOutputTokens,
       configThinking: config.thinking,
       configThinkingBudgetTokens: config.thinkingBudgetTokens,
+      // Per-engine isolation for tool promotion: child engines get their
+      // own controls installed in reqCtx (with save/restore) instead of
+      // inheriting the parent's via AsyncLocalStorage.
+      get toolPromotion() {
+        if (!rtHolder.rt) return undefined;
+        return rtHolder.rt.buildToolPromotionFactory();
+      },
     };
 
     // System tools (search, manage_app, bundle_status, delegate). Skill
@@ -405,10 +477,11 @@ export class Runtime {
     const features = resolveFeatures(config.features);
     const hooks: EngineHooks = {
       beforeToolCall: createPrivilegeHook(gate, events, features),
-      transformContext: (messages) => {
-        const sliced = sliceHistory(messages, maxHistoryMessages);
-        return windowMessages(sliced, maxInputTokens);
-      },
+      // `transformContext` is intentionally NOT set here. It is composed
+      // per-request in `chat()` because the message budget depends on
+      // values only known at call time (the resolved model's context
+      // window, the per-call system prompt and tool set, and the
+      // resolved `maxOutputTokens`). See `resolveMessageBudget`.
     };
 
     const store = buildStore(config);
@@ -416,7 +489,7 @@ export class Runtime {
     const defaultModelId = getDefaultModel();
     // Workspace-aware ToolRouter proxy: the engine calls availableTools()/execute()
     // within runWithRequestContext(), so the proxy reads the current workspace's registry.
-    const workspaceToolRouter: import("../engine/types.ts").ToolRouter = {
+    const workspaceToolRouter: ToolRouter = {
       availableTools: () => {
         if (!rtHolder.rt) throw new Error("Runtime not initialized");
         return rtHolder.rt.getRegistryForCurrentWorkspace().availableTools();
@@ -440,12 +513,6 @@ export class Runtime {
     const manageUsersCtx = { getIdentity, userStore, provider: identityProvider };
     const manageWorkspacesCtx = { getIdentity, workspaceStore };
     const manageMembersCtx = { getIdentity, workspaceStore, userStore };
-    const manageConversationCtx: import("../tools/conversation-tools.ts").ManageConversationContext =
-      {
-        getIdentity,
-        conversationStore: store,
-        workspaceStore,
-      };
     const manageBundleCtx = {
       getWorkspaceId,
       workspaceStore,
@@ -456,7 +523,33 @@ export class Runtime {
       // install/configure. Keeps chat-initiated bundle installs on the same
       // live-update pipeline as boot-time bundle startup.
       eventSink: events,
+      // Per-workspace host-resources deps factory. `installBundleInWorkspaceViaCtx`
+      // calls this for the target workspace and threads the result through
+      // `installBundleInWorkspace`'s opts so the spawned McpSource registers
+      // `ai.nimblebrain/resources/*` handlers. Without this, the agent's
+      // `manage_app install` path silently bypasses the host-resources
+      // capability — the production path that needs it most.
+      bundleMcpDepsFactory,
     };
+    const noActiveToolPromotionRun = (toolName: string): ToolPromotionResult => ({
+      ok: false,
+      toolName,
+      changed: false,
+      reason: "no_active_run",
+      message: "Tool promotion tools can only be called during an active agent run.",
+    });
+    const toolPromotionCtx = {
+      addTool: (toolName: string) =>
+        getRequestContext()?.toolPromotion?.addTool(toolName) ?? noActiveToolPromotionRun(toolName),
+      removeTool: (toolName: string) =>
+        getRequestContext()?.toolPromotion?.removeTool(toolName) ??
+        noActiveToolPromotionRun(toolName),
+    };
+    const isToolEligibleForCurrentRequest = (tool: ToolSchema): boolean => {
+      const ctx = getRequestContext();
+      return isToolEligibleForPromotion(tool, ctx?.identity?.orgRole, features);
+    };
+    const toolEligibilityCtx = { isToolEligible: isToolEligibleForCurrentRequest };
 
     // Create Runtime with empty workspace registries first — needed by system tools
     const rt = new Runtime(
@@ -485,7 +578,6 @@ export class Runtime {
     rtHolder.rt = rt;
     rt._getIdentity = getIdentity;
     rt._getWorkspaceId = getWorkspaceId;
-    rt._manageConversationCtx = manageConversationCtx;
 
     // Register the `nb` system source. Built as an in-process MCP server
     // — `createSystemTools` returns it already-started so it's ready to
@@ -506,8 +598,9 @@ export class Runtime {
       manageUsersCtx,
       manageWorkspacesCtx,
       manageMembersCtx,
-      manageConversationCtx,
       manageBundleCtx,
+      toolPromotionCtx,
+      toolEligibilityCtx,
     );
     rt._systemSource = systemTools;
 
@@ -526,6 +619,9 @@ export class Runtime {
     if (rt._automationsContextGetter) {
       lifecycle.setAutomationsContextGetter(rt._automationsContextGetter);
     }
+    // Make the host-resources factory accessible on `rt` so non-lifecycle
+    // install paths (connector-tools, boot reload) can pull deps directly.
+    rt._bundleMcpDepsFactory = bundleMcpDepsFactory;
 
     // Register placements declared by platform sources. The helper isolates
     // the duck-type — `getPlacements()` is on `McpSource` (carrying the
@@ -544,6 +640,10 @@ export class Runtime {
       await startWorkspaceBundles(workspaceStore, platformSources, systemTools, events, configDir, {
         workDir: resolveWorkDir(config),
         allowInsecureRemotes: config.allowInsecureRemotes,
+        // Boot re-spawn picks up host-resources handlers per workspace so
+        // a platform restart doesn't silently drop the capability for
+        // already-installed bundles.
+        getBundleMcpDeps: bundleMcpDepsFactory,
       });
     rt._workspaceRegistries = workspaceRegistries;
     rt._platformSources = platformSources;
@@ -632,28 +732,73 @@ export class Runtime {
     }
     const wsId = request.workspaceId;
 
-    // Resolve conversation store: always workspace-scoped.
-    // JsonlConversationStore is stateless (each operation reads from disk),
-    // so per-request instances are safe.
-    const workDir = resolveWorkDir(this.config);
-    const wsConvDir = join(workDir, "workspaces", wsId, "conversations");
-    const store: ConversationStore = new EventSourcedConversationStore({
-      dir: wsConvDir,
-      logLevel: this.config.logging?.level ?? "normal",
-    });
+    // Resolve conversation store: top-level, user-scoped. Stage 1
+    // collapsed conversations onto a single store at `{workDir}/
+    // conversations/`; `workspaceId` on the request still scopes
+    // tools / registry / file storage, but the conversation file
+    // itself lives at the user level. Per-call instances remain safe
+    // — `EventSourcedConversationStore` is stateless w.r.t. its dir.
+    const store: ConversationStore = this.findConversationStore();
 
     // Load workspace config once per request for agents/models overrides.
     const workspace = await this._workspaceStore.get(wsId);
 
-    const createOpts = {
-      ownerId: request.identity?.id,
+    // Stage 1 invariant: every conversation has an owner. Production
+    // path: the HTTP auth middleware sets `request.identity` before
+    // `runtime.chat` runs.
+    //
+    // Dev-mode fallback: when the runtime has no identity provider
+    // configured (`bun run dev:worktree`, raw `Runtime.start({ model,
+    // noDefaultBundles: true })` in tests), `usr_default` becomes the
+    // owner. This is GATED on `!this._identityProvider` so a
+    // production deployment with auth misconfigured throws loudly
+    // instead of silently defaulting every request to a sentinel
+    // user — the previous unconditional fallback would have made
+    // every conversation in such a deployment owned by `usr_default`,
+    // bypassing the single-owner invariant.
+    let ownerId: string;
+    if (request.identity?.id) {
+      ownerId = request.identity.id;
+    } else if (!this._identityProvider) {
+      ownerId = "usr_default";
+    } else {
+      throw new Error(
+        "[runtime.chat] no identity on request — the auth middleware must populate " +
+          "request.identity before runtime.chat runs. A misconfigured production " +
+          "deployment with an identity provider but missing middleware would " +
+          "otherwise default every conversation to a sentinel user.",
+      );
+    }
+    const createOpts: CreateConversationOptions = {
+      ownerId,
       workspaceId: wsId,
       ...(request.metadata ? { metadata: request.metadata } : {}),
     };
 
-    const conversation = request.conversationId
-      ? ((await store.load(request.conversationId)) ?? (await store.create(createOpts)))
-      : await store.create(createOpts);
+    // Resume an existing conversation only if the caller owns it.
+    // Stage 1 single-owner invariant: a conversation's ownerId must
+    // match the requesting identity. Today this is implicitly
+    // workspace-bounded because the store dir is per-wsId, but Task 005
+    // collapses every conversation onto a top-level store — at which
+    // point this owner check is the ONLY barrier between users and
+    // each other's conversations. Enforce it now, in the load-bearing
+    // chat path, so the invariant doesn't have a window of being
+    // workspace-discipline-only.
+    //
+    // The disambiguation between "doesn't exist" (→ create new) and
+    // "exists but isn't yours" (→ throw) matters: silently creating a
+    // new conversation when the caller passes a foreign id would mask
+    // a takeover attempt as a normal flow.
+    let conversation: Conversation;
+    if (request.conversationId) {
+      const existing = await store.load(request.conversationId);
+      if (existing && existing.ownerId !== ownerId) {
+        throw new ConversationAccessDeniedError(request.conversationId, ownerId);
+      }
+      conversation = existing ?? (await store.create(createOpts));
+    } else {
+      conversation = await store.create(createOpts);
+    }
 
     // Preserve metadata on resumed conversations (don't overwrite)
     if (request.metadata && !conversation.metadata) {
@@ -736,7 +881,7 @@ export class Runtime {
     const activeRegistry = this.getRegistryForWorkspace(wsId);
 
     // Build focusedApp when the request is scoped to a specific app (§7 app-aware chat)
-    let focusedApp: import("../prompt/compose.ts").FocusedAppInfo | undefined;
+    let focusedApp: FocusedAppInfo | undefined;
     if (request.appContext) {
       const source = activeRegistry
         .getSources()
@@ -767,7 +912,7 @@ export class Runtime {
     }
 
     // Build appState for prompt injection (Synapse Feature 2 — LLM-aware UI state)
-    let appState: import("../prompt/compose.ts").AppStateInfo | undefined;
+    let appState: AppStateInfo | undefined;
     if (request.appContext?.appState && focusedApp) {
       const bundleRef = this.lifecycle?.getInstance(request.appContext.serverName, wsId);
       appState = {
@@ -794,19 +939,6 @@ export class Runtime {
       locale: reqIdentity?.preferences?.locale ?? "en-US",
     };
 
-    // Build participants for shared conversations
-    let participants: ParticipantInfo[] | undefined;
-    if (conversation.visibility === "shared" && conversation.participants?.length) {
-      participants = [];
-      for (const userId of conversation.participants) {
-        const user = await this._userStore.get(userId);
-        participants.push({
-          userId,
-          displayName: user?.displayName ?? userId,
-        });
-      }
-    }
-
     const workspaceContext = workspace ? { id: workspace.id, name: workspace.name } : { id: wsId };
 
     // Build per-request context skills with workspace identity override
@@ -818,12 +950,20 @@ export class Runtime {
     // Layer 3 selection — pick skills with `loading_strategy: always` and
     // `tool_affined` strategies based on the active tool set. The merged pool
     // includes platform / workspace / user tier skills (user > workspace >
-    // platform on name collisions).
+    // platform on name collisions). Bundle-exposed `skill://<name>/usage`
+    // resources are synthesized into the pool as `tool_affined` skills so a
+    // workspace-level chat picks them up whenever the bundle's tools are
+    // surfaced — no `appContext` scoping required (the prior path only fired
+    // under `appContext`, missing cross-app workflows).
     const userId = reqIdentity?.id ?? null;
     const layer3Pool = this.loadConversationSkills(wsId, userId);
+    const bundleSkills = await this.loadBundleSkills(wsId, {
+      appContextServerName: request.appContext?.serverName,
+    });
+    const mergedLayer3Pool: Skill[] = [...layer3Pool, ...bundleSkills];
     const activeToolNames = tools.map((t) => t.name);
     const selectedLayer3 = selectLayer3Skills({
-      skills: layer3Pool,
+      skills: mergedLayer3Pool,
       activeTools: activeToolNames,
     });
     const layer3Entries: Layer3SkillEntry[] = selectedLayer3.map((s) => ({
@@ -843,20 +983,10 @@ export class Runtime {
       appState,
       prefs,
       proxied.length > 0,
-      participants,
       workspaceContext,
       liveOverlays,
       layer3Entries,
     );
-
-    // Load history and rehydrate any `resource_link` blocks (attached
-    // images persisted as URI references) into AI SDK V3 `file` parts
-    // with bytes loaded from the workspace FileStore. This is the seam
-    // where the storage shape (URI references) meets the model-call
-    // shape (inline bytes) — see `src/files/rehydrate.ts`.
-    const history = await store.history(conversation);
-    const fileStore = createFileStore(join(this.getWorkspaceScopedDir(wsId), "files"));
-    const messages = await rehydrateUserResources(history, fileStore);
 
     // Workspace model overrides are in the RequestContext — read via getModelSlot()
 
@@ -876,6 +1006,18 @@ export class Runtime {
     // and depends on it being qualified.
     resolvedModelString = resolveModelString(resolvedModelString);
 
+    // Load history and rehydrate any supported `resource_link` blocks
+    // (attached files persisted as URI references) into AI SDK V3 `file`
+    // parts with bytes loaded from the workspace FileStore. This is the seam
+    // where the storage shape (URI references) meets the model-call
+    // shape (inline bytes) — see `src/files/rehydrate.ts`.
+    const history = await store.history(conversation);
+    const fileStore = createFileStore(join(this.getWorkspaceScopedDir(wsId), "files"));
+    const messages = await rehydrateUserResources(history, fileStore, {
+      model: resolvedModelString,
+      maxExtractedTextSize: this.getFilesConfig().maxExtractedTextSize,
+    });
+
     // Resolve maxOutputTokens FIRST — resolveThinking needs it to clamp the
     // thinking budget so visible-content headroom is always preserved.
     const resolvedMaxOutputTokens = resolveMaxOutputTokens({
@@ -889,6 +1031,40 @@ export class Runtime {
       model: resolvedModelString,
       maxOutputTokens: resolvedMaxOutputTokens,
     });
+
+    // Compose the per-call message budget from the model's actual context
+    // window minus the static per-call overhead. `configMaxInputTokens`
+    // is treated as a CAP — never a target. See
+    // `src/runtime/resolve-message-budget.ts`.
+    const configMaxInputTokens = this.config.maxInputTokens ?? DEFAULT_MAX_INPUT_TOKENS;
+    const messageBudget = resolveMessageBudget({
+      model: resolvedModelString,
+      configMaxInputTokens,
+      systemPrompt,
+      tools,
+      maxOutputTokens: resolvedMaxOutputTokens,
+    });
+
+    // Per-request hooks: inherit `beforeToolCall` from the runtime-level
+    // hooks; compose `transformContext` here so the windowing budget is
+    // the one we just resolved for THIS call. The order (slice → strip
+    // older reasoning → window by token budget) is preserved.
+    const maxHistoryMessages = this.config.maxHistoryMessages ?? DEFAULT_MAX_HISTORY_MESSAGES;
+    const perRequestHooks: EngineHooks = {
+      ...this.hooks,
+      transformContext: (historyMessages, opts) => {
+        // `overflowAttempt > 0` means the provider rejected the prior
+        // call for exceeding the model's context window. Halve the
+        // composed budget per attempt and re-window. The engine caps
+        // recovery at one attempt today so this scales at most by 1/2.
+        const attempt = opts?.overflowAttempt ?? 0;
+        const budget =
+          attempt > 0 ? Math.floor(messageBudget.budget / (1 << attempt)) : messageBudget.budget;
+        const sliced = sliceHistory(historyMessages, maxHistoryMessages);
+        const reasoningStripped = stripOlderReasoning(sliced);
+        return windowMessages(reasoningStripped, budget);
+      },
+    };
 
     // Build pre-emit run telemetry tied to the engine's runId. The engine fires
     // these immediately after `run.start` and before any LLM call so the conv
@@ -905,11 +1081,15 @@ export class Runtime {
     const engineConfig: EngineConfig = {
       model: resolvedModelString,
       maxIterations: request.maxIterations ?? this.config.maxIterations ?? DEFAULT_MAX_ITERATIONS,
-      maxInputTokens: this.config.maxInputTokens ?? DEFAULT_MAX_INPUT_TOKENS,
+      // Surfaced on run.start telemetry. The actual budget enforcement
+      // happens inside `perRequestHooks.transformContext` above; this
+      // value is reported for observability so operators can see what
+      // the call was allotted vs. what it actually used.
+      maxInputTokens: messageBudget.budget,
       maxOutputTokens: resolvedMaxOutputTokens,
       ...(resolvedThinking ? { thinking: resolvedThinking } : {}),
       maxToolResultSize: this.config.maxToolResultSize,
-      hooks: this.hooks,
+      hooks: perRequestHooks,
       runMetadata: {
         skillsLoaded,
         contextAssembled,
@@ -919,6 +1099,12 @@ export class Runtime {
       // runs). Member-scoped MCP bundles use this to route to the right
       // per-principal source. Workspace-scoped sources ignore it.
       ...(request.identity ? { principalId: request.identity.id } : {}),
+      // Cancellation: thread the caller's signal into the engine. The
+      // engine checks it between iterations and forwards it down to every
+      // tool call. Without this, callers racing the chat against a
+      // deadline (notably the automations executor's `Promise.race`
+      // against `maxRunDurationMs`) silently orphan in-flight work.
+      ...(request.signal ? { signal: request.signal } : {}),
     };
 
     // Determine which event store handles conversation events for this request.
@@ -973,6 +1159,7 @@ export class Runtime {
       workspaceModelOverride: workspace?.models ?? null,
       conversationId: conversation.id,
     };
+    engineConfig.toolPromotion = this.buildToolPromotionFactory();
 
     // Emit chat.start so the client knows the conversation ID immediately
     // and conversation list UIs can refresh
@@ -1140,12 +1327,64 @@ export class Runtime {
     return this._features;
   }
 
+  /**
+   * Build the engine-config `toolPromotion` factory for a single agent run.
+   * Both the top-level Runtime.chat() engine.run() AND any nested engine
+   * (e.g. delegate sub-agents) call this so each engine gets its OWN
+   * promotion controls installed in the request context for the lifetime
+   * of its run. The save/restore in `registerControls` lets nested engines
+   * stack: parent installs → child installs (saves parent) → child
+   * unregister restores parent → parent unregister deletes.
+   *
+   * Without this isolation, AsyncLocalStorage propagates the parent's
+   * `reqCtx.toolPromotion` into the child's frame; a sub-agent calling
+   * nb__manage_tools would silently mutate the parent's directTools and
+   * its own changes would never reach its own modelTools. See the
+   * regression test in test/unit/engine.test.ts.
+   */
+  buildToolPromotionFactory(): NonNullable<EngineConfig["toolPromotion"]> {
+    const features = this._features;
+    return {
+      isToolEligible: (tool) =>
+        isToolEligibleForPromotion(tool, getRequestContext()?.identity?.orgRole, features),
+      registerControls: (controls) => {
+        const ctx = getRequestContext();
+        if (!ctx) {
+          // No request context = no place to install controls. Caller's
+          // unregister becomes a no-op; their nb__manage_tools handler
+          // hits the "no_active_run" path. Acceptable degradation.
+          return () => {};
+        }
+        const prev = ctx.toolPromotion;
+        ctx.toolPromotion = controls;
+        return () => {
+          if (prev === undefined) {
+            delete ctx.toolPromotion;
+          } else {
+            ctx.toolPromotion = prev;
+          }
+        };
+      },
+    };
+  }
+
   /** Scoped internal token for protected default bundles. Rotated on every restart. */
   getInternalToken(): string {
     return this._internalToken;
   }
 
-  /** Fetch the skill:// usage resource for an app's MCP server, with caching. */
+  /**
+   * Fetch the `skill://<serverName>/usage` resource for a bundle, with caching.
+   *
+   * Negative results (resource absent, source not MCP, transport error) are
+   * cached as a `null` sentinel — the common case is "this bundle has no skill
+   * resource," and re-issuing the read on every chat over a stable bundle set
+   * would N×-multiply the request-path latency.
+   *
+   * `SharedSourceRef`-wrapped sources are unwrapped before the `McpSource`
+   * check; protected default bundles arrive wrapped and would otherwise be
+   * silently invisible to this path.
+   */
   private async getAppSkillResource(serverName: string): Promise<string | null> {
     const cached = this.skillResourceCache.get(serverName);
     if (cached && Date.now() - cached.fetchedAt < Runtime.SKILL_CACHE_TTL) {
@@ -1153,30 +1392,33 @@ export class Runtime {
     }
 
     // Search across all workspace registries for the source
-    let source: import("../tools/types.ts").ToolSource | undefined;
+    let source: ToolSource | undefined;
     for (const reg of this._workspaceRegistries.values()) {
       source = reg.getSources().find((s) => s.name === serverName);
       if (source) break;
     }
-    if (!(source instanceof McpSource)) return null;
+    const unwrapped = source instanceof SharedSourceRef ? source.unwrap() : source;
+    if (!(unwrapped instanceof McpSource)) {
+      this.skillResourceCache.set(serverName, { content: null, fetchedAt: Date.now() });
+      return null;
+    }
 
+    let body: string | null = null;
     try {
-      const resource = await source.readResource(`skill://${serverName}/usage`);
+      const resource = await unwrapped.readResource(`skill://${serverName}/usage`);
       const content = resource?.text ?? null;
       if (content) {
-        // Token budget: cap at ~3000 tokens (~12000 chars)
-        const truncated =
-          content.length > 12000 ? `${content.slice(0, 12000)}\n\n[truncated]` : content;
-        this.skillResourceCache.set(serverName, {
-          content: truncated,
-          fetchedAt: Date.now(),
-        });
-        return truncated;
+        // Token budget: cap at ~3000 tokens (~12000 chars). Heading-aware
+        // so we don't slice mid-sentence (production case: a "rules" appendix
+        // at the end of a SKILL.md was lost mid-rule, breaking the model's
+        // tool-selection logic).
+        body = truncateMarkdownToBudget(content, 12000).body;
       }
     } catch {
-      // Resource doesn't exist or read failed — skip silently
+      // Resource doesn't exist or read failed — fall through to negative cache.
     }
-    return null;
+    this.skillResourceCache.set(serverName, { content: body, fetchedAt: Date.now() });
+    return body;
   }
 
   /** Check if an MCP source exposes a specific resource URI. */
@@ -1187,6 +1429,63 @@ export class Runtime {
     } catch {
       return false;
     }
+  }
+
+  /**
+   * Probe every MCP source in `wsId`'s registry for a `skill://<name>/usage`
+   * resource and synthesize a Layer 3 `Skill` for any that responds. Each
+   * synthesized skill is `tool_affined` to `<name>__*`, so it loads via the
+   * standard `selectLayer3Skills` path whenever the bundle's tools are in
+   * the active toolset — no `appContext` required.
+   *
+   * Use case: a workspace-level chat where the model needs the bundle's
+   * workflow guidance but isn't "entered" into the app. Without this, the
+   * skill lived only on the `appContext`-scoped `<app-guide>` path and was
+   * invisible to cross-bundle chats.
+   *
+   * Resource fetches reuse `getAppSkillResource`'s 5-minute cache, so this
+   * stays cheap on warm requests. Per-source errors are swallowed (resource
+   * not found is the normal not-published case).
+   */
+  private async loadBundleSkills(
+    wsId: string,
+    options: { appContextServerName?: string } = {},
+  ): Promise<Skill[]> {
+    const registry = this._workspaceRegistries.get(wsId);
+    if (!registry) return [];
+
+    // Candidate sources: MCP-backed (unwrapping `SharedSourceRef` so protected
+    // default bundles are visible), and not the one already injected via
+    // `<app-guide>` in `appContext` chats — otherwise the same body lands
+    // twice in the prompt under two different framings.
+    //
+    // No trust-score gate: if a bundle is active its tools are callable, so
+    // suppressing the workflow guidance that teaches the model how to use them
+    // safely would make the situation worse, not better. Trust is enforced at
+    // install time. See `formatFocusedAppSection` for the matching policy on
+    // the `<app-guide>` path.
+    const candidates: string[] = [];
+    for (const source of registry.getSources()) {
+      if (source.name === options.appContextServerName) continue;
+      const inner = source instanceof SharedSourceRef ? source.unwrap() : source;
+      if (!(inner instanceof McpSource)) continue;
+      candidates.push(source.name);
+    }
+
+    // Parallel fetch: serial probing N-times-multiplied the chat hot-path
+    // latency on workspaces with many non-skill bundles. `getAppSkillResource`
+    // caches both positive and negative results so steady-state cost is zero.
+    const synthesized = await Promise.all(
+      candidates.map(async (name) => {
+        try {
+          const body = await this.getAppSkillResource(name);
+          return body ? synthesizeBundleSkill({ serverName: name, body }) : null;
+        } catch {
+          return null;
+        }
+      }),
+    );
+    return synthesized.filter((s): s is Skill => s !== null);
   }
 
   /**
@@ -1283,6 +1582,20 @@ export class Runtime {
   }
 
   /**
+   * Resolve the host-resources deps for a workspace. Used by install
+   * paths that don't go through `BundleLifecycleManager`: connector-tools
+   * (Composio install eager-start), workspace-runtime (boot reload).
+   * Returns `undefined` only when the runtime was constructed without the
+   * host-resources subsystem wired — never in production. Callers should
+   * thread the returned deps into `startBundleSource` (or
+   * `installBundleInWorkspace`) via the `bundleMcp` opt so the spawned
+   * McpSource registers inbound `ai.nimblebrain/resources/*` handlers.
+   */
+  getBundleMcpDeps(wsId: string): BundleMcpDeps | undefined {
+    return this._bundleMcpDepsFactory?.(wsId);
+  }
+
+  /**
    * Get a per-workdir `InstructionsStore` for the org / workspace overlays.
    * Per-bundle instructions are NOT stored here — bundles own their storage
    * and publish a `app://instructions` resource if and only if they
@@ -1363,19 +1676,68 @@ export class Runtime {
     return wsRegistry;
   }
 
-  /** Get a workspace-scoped ConversationStore. */
-  getStore(wsId?: string): ConversationStore {
-    const id = wsId ?? this.requireWorkspaceId();
-    const workDir = resolveWorkDir(this.config);
+  /**
+   * Get the **user-scoped** (top-level) ConversationStore.
+   *
+   * As of Stage 1, conversations are user-owned entities stored at
+   * `{workDir}/conversations/{convId}.jsonl`, not workspace-scoped. This
+   * is the canonical conversation store; every read and write of a
+   * conversation routes through it.
+   *
+   * Per-call instances are intentional: `EventSourcedConversationStore`
+   * is stateless w.r.t. its dir (each operation reads from disk), so
+   * sharing instances across requests would add no benefit and force
+   * a lifecycle concern (when does it die?). The directory is created
+   * on first use.
+   *
+   * STAGE 1 CLOSEOUT FOLLOW-UP — perf at scale: every call rebuilds
+   * the store's `ConversationIndex`, which re-scans the conversations
+   * directory on first `list()`. Fine for low-traffic dev; on a
+   * tenant with thousands of conversations the activity-dashboard's
+   * `store.list({ limit: 50 }, access)` becomes O(n) on every
+   * refresh. The bundle's `src/bundles/conversations/src/index-cache.ts`
+   * uses `fs.watch` + debounce specifically to avoid this — the
+   * runtime version does not. Either cache the store as a
+   * Runtime-lifetime singleton (and propagate `invalidate()` through
+   * the same chain `EventSink` events already flow), or share the
+   * bundle's watcher-backed index here. Not blocking Stage 1 ship.
+   */
+  getUserConversationStore(): ConversationStore {
     return new EventSourcedConversationStore({
-      dir: join(workDir, "workspaces", id, "conversations"),
+      dir: join(resolveWorkDir(this.config), "conversations"),
       logLevel: this.config.logging?.level ?? "normal",
     });
   }
 
-  /** Alias for getStore() — clearer name for conversation-specific usage. */
-  getConversationStore(wsId?: string): ConversationStore {
-    return this.getStore(wsId);
+  /**
+   * The canonical store handle for conversation reads and writes. Alias
+   * for `getUserConversationStore()` — `find*` is the read-side framing
+   * (`findConversation` returns a single conversation by id;
+   * `findConversationStore` returns the store you'd use to enumerate or
+   * mutate). Both forms point at the same top-level store; keep them
+   * as siblings until usage settles and one form clearly wins.
+   */
+  findConversationStore(): ConversationStore {
+    return this.getUserConversationStore();
+  }
+
+  /**
+   * Locate a conversation by id from the top-level store. Returns the
+   * `Conversation` metadata, or `null` if the file doesn't exist. The
+   * single source of truth for "give me this conversation" — every
+   * conversation-touching call site reads through this.
+   *
+   * Pass `access` to gate the read by ownership at the store layer.
+   * Without `access` the caller is asserting "I am the ownership
+   * boundary" (e.g. `runtime.chat` after its own owner check, or a
+   * trusted internal caller); with it, the store returns `null` for
+   * existence-but-not-yours, matching `load()`'s posture.
+   */
+  async findConversation(
+    convId: string,
+    access?: ConversationAccessContext,
+  ): Promise<Conversation | null> {
+    return this.findConversationStore().load(convId, access);
   }
 
   /** Get the UserStore instance. */
@@ -1479,17 +1841,34 @@ export class Runtime {
   }
 
   /**
+   * Construct a `WorkspaceContext` bound to `wsId` and the runtime's
+   * `workDir`. The context is the typed handle to workspace-scoped paths
+   * and the workspace credential store; call sites should prefer this to
+   * `getWorkspaceScopedDir(wsId)` + `join` because it routes through the
+   * single validation point (`WORKSPACE_ID_RE`) and forbids subpath
+   * traversal.
+   *
+   * Instances are constructed fresh per call — they are lightweight (one
+   * regex validation + a handful of field assignments) and immutable, so
+   * sharing them across requests is never a correctness problem and not
+   * sharing them avoids any cache-invalidation question when a workspace
+   * is removed.
+   */
+  getWorkspaceContext(wsId: string): WorkspaceContext {
+    return new WorkspaceContext({ wsId, workDir: resolveWorkDir(this.config) });
+  }
+
+  /**
    * Resolve the workspace-scoped data directory for the current request.
    * Returns `{workDir}/workspaces/{wsId}` when a workspace is active.
    * Dev mode (no identity provider) falls back to global workDir.
    */
   getWorkspaceScopedDir(wsId?: string | null): string {
     const id = wsId ?? this.getCurrentWorkspaceId();
-    const workDir = resolveWorkDir(this.config);
-    if (id) return join(workDir, "workspaces", id);
+    if (id) return this.getWorkspaceContext(id).getRoot();
 
     // Dev mode (no identity provider) — allow global fallback for local development
-    if (!this._identityProvider) return workDir;
+    if (!this._identityProvider) return resolveWorkDir(this.config);
 
     throw new Error("No workspace context — cannot resolve scoped directory.");
   }
@@ -1500,9 +1879,7 @@ export class Runtime {
    * (CLI, lifecycle) read it back via `getAutomationsContext()` to bypass
    * the LLM-facing tool surface and call the domain API directly.
    */
-  registerAutomationsContext(
-    getter: () => import("../bundles/automations/src/domain.ts").AutomationDomainContext,
-  ): void {
+  registerAutomationsContext(getter: () => AutomationDomainContext): void {
     this._automationsContextGetter = getter;
   }
 
@@ -1512,7 +1889,7 @@ export class Runtime {
    * Each call returns a fresh context bound to the current request's
    * workspace — workspace switching between calls is safe.
    */
-  getAutomationsContext(): import("../bundles/automations/src/domain.ts").AutomationDomainContext {
+  getAutomationsContext(): AutomationDomainContext {
     if (!this._automationsContextGetter) {
       throw new Error(
         "Automations source not registered — runtime started without platform sources?",
@@ -1764,7 +2141,7 @@ export class Runtime {
     // Live org-tier dir, fresh every call.
     orgPool.push(...loadScopedSkills(join(workDir, "skills"), "org"));
 
-    const workspaceDir = join(workDir, "workspaces", wsId, "skills");
+    const workspaceDir = this.getWorkspaceContext(wsId).getDataPath("skills");
     const workspacePool = loadScopedSkills(workspaceDir, "workspace");
 
     const userPool: Skill[] = [];
@@ -1893,15 +2270,6 @@ export class Runtime {
     return this.config.allowInsecureRemotes === true;
   }
 
-  /** Inject the per-conversation event manager for participant eviction on removal/unshare. */
-  setConversationEventManager(
-    manager: import("../api/conversation-events.ts").ConversationEventManager,
-  ): void {
-    if (this._manageConversationCtx) {
-      this._manageConversationCtx.conversationEventManager = manager;
-    }
-  }
-
   /** Get the file context configuration with defaults applied. */
   getFilesConfig(): FileConfig {
     return { ...DEFAULT_FILE_CONFIG, ...this.config.files };
@@ -1940,12 +2308,20 @@ export class Runtime {
     return apps;
   }
 
-  /** List conversations (workspace-scoped). */
+  /**
+   * List conversations from the top-level store. Pass `access` to filter
+   * by ownership; without it the caller asserts trusted enumeration
+   * scope (CLI, admin tools). The `wsId` parameter is gone — every
+   * conversation lives at the user level, and tool/workspace scoping
+   * is a concern for the conversation's runtime context, not for
+   * enumeration. To filter by workspace, list and filter on
+   * `Conversation.workspaceId` at the call site.
+   */
   async listConversations(
-    options?: import("../conversation/types.ts").ListOptions,
-    wsId?: string,
+    options?: ListOptions,
+    access?: ConversationAccessContext,
   ): Promise<ConversationListResult> {
-    return this.getStore(wsId).list(options);
+    return this.findConversationStore().list(options, access);
   }
 
   /**
@@ -1999,13 +2375,11 @@ export class Runtime {
  * external bundles, whose placements come from their manifest, not the
  * source — return `[]`.
  */
-function readSourcePlacements(
-  src: import("../tools/types.ts").ToolSource,
-): import("../bundles/types.ts").PlacementDeclaration[] {
+function readSourcePlacements(src: ToolSource): PlacementDeclaration[] {
   const fn = (src as { getPlacements?: () => unknown }).getPlacements;
   if (typeof fn !== "function") return [];
   const out = fn.call(src);
-  return Array.isArray(out) ? (out as import("../bundles/types.ts").PlacementDeclaration[]) : [];
+  return Array.isArray(out) ? (out as PlacementDeclaration[]) : [];
 }
 
 function resolveModel(config: RuntimeConfig): (modelString: string) => LanguageModelV3 {
@@ -2150,19 +2524,36 @@ function stampDerivedScope(workDir: string, skill: Skill): Skill {
  * set + history + Layer 3 skills counted in `skills.loaded`. The snapshot
  * carries counts and tokens only — never content (the bodies are already
  * in the conversation log via earlier source events / message history).
+ *
+ * Exported for tests — the regression we care about (image attachments not
+ * inflating history tokens by 100×) is the integration between this builder
+ * and `estimateMessageTokens`. Direct test access keeps the regression
+ * verifiable without spinning a full Runtime.
  */
-function buildContextAssembledPayload(input: {
+export function buildContextAssembledPayload(input: {
   systemPrompt: string;
   activeTools: ToolSchema[];
   messages: LanguageModelV3Message[];
   skillsLoaded: SkillsLoadedPayload;
 }): ContextAssembledPayload {
   const promptTokens = approxTokens(input.systemPrompt);
+  // Tool descriptions: name + description + input schema. Routed through
+  // `estimateToolDescriptionTokens` (not `approxTokens(JSON.stringify(t))`)
+  // so we never hand a future object that could carry a `Uint8Array` to
+  // `JSON.stringify` — the bug we just fixed on the history path.
   const toolDescTokens = input.activeTools.reduce(
-    (sum, t) => sum + approxTokens(`${t.name}\n${t.description}\n${JSON.stringify(t.inputSchema)}`),
+    (sum, t) => sum + estimateToolDescriptionTokens(t),
     0,
   );
-  const historyTokens = input.messages.reduce((sum, m) => sum + approxTokens(JSON.stringify(m)), 0);
+  // History tokens: walk content parts with `estimateMessageTokens`.
+  //
+  // The previous formula was `approxTokens(JSON.stringify(m))`, which for any
+  // user message carrying a `file` part with `data: Uint8Array(<bytes>)`
+  // (rehydrated images — see `src/files/rehydrate.ts`) inflated by 30-100×:
+  // `JSON.stringify(Uint8Array)` expands to `{"0":n,"1":n,…}` (~12 chars/byte)
+  // and the chars/4 heuristic over-counted by ~3 tokens per image byte. Two
+  // ~700KB PNGs landed at 2.8M+ phantom tokens for a 51K-token call.
+  const historyTokens = input.messages.reduce((sum, m) => sum + estimateMessageTokens(m), 0);
   const sources: ContextAssembledSource[] = [
     { kind: "system_prompt", tokens: promptTokens },
     { kind: "tool_descriptions", count: input.activeTools.length, tokens: toolDescTokens },

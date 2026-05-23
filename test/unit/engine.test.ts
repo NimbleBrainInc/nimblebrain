@@ -10,10 +10,16 @@ import type {
   EngineEvent,
   EventSink,
   ToolCall,
+  ToolPromotionControls,
   ToolResult,
   ToolSchema,
 } from "../../src/engine/types.ts";
 import { textContent } from "../../src/engine/content-helpers.ts";
+import {
+  getRequestContext,
+  runWithRequestContext,
+  type RequestContext,
+} from "../../src/runtime/request-context.ts";
 import type { LanguageModelV3, LanguageModelV3Message } from "@ai-sdk/provider";
 
 const defaultConfig: EngineConfig = {
@@ -119,7 +125,7 @@ describe("AgentEngine", () => {
     expect(result.stopReason).toBe("complete");
   });
 
-  it("promotes tools discovered by nb__search for the next iteration", async () => {
+  it("does not promote tools discovered by nb__search implicitly", async () => {
     let callCount = 0;
     const seenToolLists: string[][] = [];
     const model = createMockModel((options) => {
@@ -143,26 +149,13 @@ describe("AgentEngine", () => {
       }
 
       if (callCount === 2) {
-        expect(toolNames).toContain("newsapi__get_top_headlines");
+        expect(toolNames).not.toContain("newsapi__get_top_headlines");
         return {
-          content: [
-            {
-              type: "tool-call",
-              toolCallId: "call_news",
-              toolName: "newsapi__get_top_headlines",
-              input: JSON.stringify({ country: "us", category: "technology", page_size: 5 }),
-            },
-          ],
+          content: [{ type: "text", text: "Done!" }],
           inputTokens: 10,
           outputTokens: 5,
         };
       }
-
-      return {
-        content: [{ type: "text", text: "Done!" }],
-        inputTokens: 10,
-        outputTokens: 5,
-      };
     });
 
     const toolSchemas: ToolSchema[] = [
@@ -204,12 +197,1109 @@ describe("AgentEngine", () => {
     );
 
     expect(seenToolLists[0]).toEqual(["nb__search"]);
-    expect(seenToolLists[1]).toContain("newsapi__get_top_headlines");
+    expect(seenToolLists[1]).not.toContain("newsapi__get_top_headlines");
+    expect(result.toolCalls.map((c) => c.name)).toEqual(["nb__search"]);
+    expect(result.output).toBe("Done!");
+  });
+
+  it("nb__manage_tools add promotes a discovered tool for the next iteration", async () => {
+    let callCount = 0;
+    const seenToolLists: string[][] = [];
+    const model = createMockModel((options) => {
+      callCount++;
+      const toolNames = (options.tools ?? []).map((t) => t.name);
+      seenToolLists.push(toolNames);
+
+      if (callCount === 1) {
+        return {
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call_search",
+              toolName: "nb__search",
+              input: JSON.stringify({ scope: "tools", query: "newsapi" }),
+            },
+          ],
+          inputTokens: 10,
+          outputTokens: 5,
+        };
+      }
+
+      if (callCount === 2) {
+        expect(toolNames).not.toContain("newsapi__get_top_headlines");
+        return {
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call_manage",
+              toolName: "nb__manage_tools",
+              input: JSON.stringify({ add: ["newsapi__get_top_headlines"] }),
+            },
+          ],
+          inputTokens: 10,
+          outputTokens: 5,
+        };
+      }
+
+      if (callCount === 3) {
+        expect(toolNames).toContain("newsapi__get_top_headlines");
+        return {
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call_news",
+              toolName: "newsapi__get_top_headlines",
+              input: JSON.stringify({ country: "us" }),
+            },
+          ],
+          inputTokens: 10,
+          outputTokens: 5,
+        };
+      }
+
+      return {
+        content: [{ type: "text", text: "Done!" }],
+        inputTokens: 10,
+        outputTokens: 5,
+      };
+    });
+
+    const toolSchemas: ToolSchema[] = [
+      { name: "nb__search", description: "Search tools", inputSchema: { type: "object", properties: {} } },
+      { name: "nb__manage_tools", description: "Patch tool list", inputSchema: { type: "object", properties: {} } },
+      {
+        name: "newsapi__get_top_headlines",
+        description: "Get top headlines",
+        inputSchema: { type: "object", properties: {} },
+      },
+    ];
+
+    const events: EngineEvent[] = [];
+    let activeControls: ToolPromotionControls | null = null;
+    const engine = new AgentEngine(
+      model,
+      new StaticToolRouter(toolSchemas, (call) => {
+        if (call.name === "nb__search") {
+          return {
+            content: textContent("Found newsapi__get_top_headlines"),
+            structuredContent: { tools: [{ name: "newsapi__get_top_headlines" }] },
+            isError: false,
+          };
+        }
+        if (call.name === "nb__manage_tools") {
+          expect(activeControls).not.toBeNull();
+          const add = (call.input.add as string[] | undefined) ?? [];
+          const remove = (call.input.remove as string[] | undefined) ?? [];
+          const promoted = add.map((n) => activeControls!.addTool(n));
+          const released = remove.map((n) => activeControls!.removeTool(n));
+          return {
+            content: textContent("ok"),
+            structuredContent: { promoted, released },
+            isError: false,
+          };
+        }
+        if (call.name === "newsapi__get_top_headlines") {
+          return { content: textContent("headline results"), isError: false };
+        }
+        return { content: textContent(""), isError: false };
+      }),
+      { emit: (event) => events.push(event) },
+    );
+
+    const result = await engine.run(
+      {
+        ...defaultConfig,
+        toolPromotion: {
+          isToolEligible: () => true,
+          registerControls: (controls) => {
+            activeControls = controls;
+            return () => {
+              activeControls = null;
+            };
+          },
+        },
+      },
+      "",
+      [{ role: "user", content: [{ type: "text", text: "Get me tech news" }] }],
+      [toolSchemas[0]!, toolSchemas[1]!],
+    );
+
+    expect(seenToolLists[0]).toEqual(["nb__search", "nb__manage_tools"]);
+    expect(seenToolLists[2]).toContain("newsapi__get_top_headlines");
     expect(result.toolCalls.map((c) => c.name)).toEqual([
       "nb__search",
+      "nb__manage_tools",
       "newsapi__get_top_headlines",
     ]);
-    expect(result.output).toBe("Done!");
+    expect(events.some((e) => e.type === "tool.promoted")).toBe(true);
+  });
+
+  it("nb__manage_tools combined add+remove patches in one call", async () => {
+    let callCount = 0;
+    const seenToolLists: string[][] = [];
+    const model = createMockModel((options) => {
+      callCount++;
+      const toolNames = (options.tools ?? []).map((t) => t.name);
+      seenToolLists.push(toolNames);
+
+      if (callCount === 1) {
+        // Bootstrap: promote two tools so we can test removing one in the next call.
+        return {
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call_init",
+              toolName: "nb__manage_tools",
+              input: JSON.stringify({ add: ["a__one", "b__two"] }),
+            },
+          ],
+          inputTokens: 10,
+          outputTokens: 5,
+        };
+      }
+
+      if (callCount === 2) {
+        expect(toolNames).toContain("a__one");
+        expect(toolNames).toContain("b__two");
+        // Domain switch: drop a__one, add c__three, in one patch.
+        return {
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call_swap",
+              toolName: "nb__manage_tools",
+              input: JSON.stringify({ add: ["c__three"], remove: ["a__one"] }),
+            },
+          ],
+          inputTokens: 10,
+          outputTokens: 5,
+        };
+      }
+
+      if (callCount === 3) {
+        expect(toolNames).not.toContain("a__one");
+        expect(toolNames).toContain("b__two");
+        expect(toolNames).toContain("c__three");
+        return {
+          content: [{ type: "text", text: "Done!" }],
+          inputTokens: 10,
+          outputTokens: 5,
+        };
+      }
+    });
+
+    const toolSchemas: ToolSchema[] = [
+      { name: "nb__manage_tools", description: "Patch tool list", inputSchema: { type: "object", properties: {} } },
+      { name: "a__one", description: "Tool A", inputSchema: { type: "object", properties: {} } },
+      { name: "b__two", description: "Tool B", inputSchema: { type: "object", properties: {} } },
+      { name: "c__three", description: "Tool C", inputSchema: { type: "object", properties: {} } },
+    ];
+
+    const events: EngineEvent[] = [];
+    let activeControls: ToolPromotionControls | null = null;
+    const engine = new AgentEngine(
+      model,
+      new StaticToolRouter(toolSchemas, (call) => {
+        if (call.name === "nb__manage_tools") {
+          expect(activeControls).not.toBeNull();
+          const add = (call.input.add as string[] | undefined) ?? [];
+          const remove = (call.input.remove as string[] | undefined) ?? [];
+          const promoted = add.map((n) => activeControls!.addTool(n));
+          const released = remove.map((n) => activeControls!.removeTool(n));
+          return {
+            content: textContent("ok"),
+            structuredContent: { promoted, released },
+            isError: false,
+          };
+        }
+        return { content: textContent(""), isError: false };
+      }),
+      { emit: (event) => events.push(event) },
+    );
+
+    const result = await engine.run(
+      {
+        ...defaultConfig,
+        toolPromotion: {
+          isToolEligible: () => true,
+          registerControls: (controls) => {
+            activeControls = controls;
+            return () => {
+              activeControls = null;
+            };
+          },
+        },
+      },
+      "",
+      [{ role: "user", content: [{ type: "text", text: "Patch tools" }] }],
+      [toolSchemas[0]!],
+    );
+
+    expect(result.toolCalls.map((c) => c.name)).toEqual(["nb__manage_tools", "nb__manage_tools"]);
+    expect(events.filter((e) => e.type === "tool.promoted")).toHaveLength(3); // a__one, b__two, c__three
+    expect(events.filter((e) => e.type === "tool.released")).toHaveLength(1); // a__one
+  });
+
+  it("nb__manage_tools rejects internal tools per-item without affecting other items", async () => {
+    let callCount = 0;
+    const seenToolLists: string[][] = [];
+    const model = createMockModel((options) => {
+      callCount++;
+      const toolNames = (options.tools ?? []).map((t) => t.name);
+      seenToolLists.push(toolNames);
+
+      if (callCount === 1) {
+        return {
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call_mixed",
+              toolName: "nb__manage_tools",
+              input: JSON.stringify({ add: ["app__public", "internal__secret"] }),
+            },
+          ],
+          inputTokens: 10,
+          outputTokens: 5,
+        };
+      }
+
+      if (callCount === 2) {
+        expect(toolNames).toContain("app__public");
+        expect(toolNames).not.toContain("internal__secret");
+        return {
+          content: [{ type: "text", text: "Done!" }],
+          inputTokens: 10,
+          outputTokens: 5,
+        };
+      }
+    });
+
+    const toolSchemas: ToolSchema[] = [
+      { name: "nb__manage_tools", description: "Patch tool list", inputSchema: { type: "object", properties: {} } },
+      {
+        name: "app__public",
+        description: "Public tool",
+        inputSchema: { type: "object", properties: {} },
+      },
+      {
+        name: "internal__secret",
+        description: "Internal secret tool",
+        inputSchema: { type: "object", properties: {} },
+        annotations: { "ai.nimblebrain/internal": true },
+      },
+    ];
+
+    const events: EngineEvent[] = [];
+    let activeControls: ToolPromotionControls | null = null;
+    const engine = new AgentEngine(
+      model,
+      new StaticToolRouter(toolSchemas, (call) => {
+        if (call.name === "nb__manage_tools") {
+          expect(activeControls).not.toBeNull();
+          const add = (call.input.add as string[] | undefined) ?? [];
+          const promoted = add.map((n) => activeControls!.addTool(n));
+          return {
+            content: textContent("ok"),
+            structuredContent: { promoted, released: [] },
+            isError: false,
+          };
+        }
+        return { content: textContent(""), isError: false };
+      }),
+      { emit: (event) => events.push(event) },
+    );
+
+    const result = await engine.run(
+      {
+        ...defaultConfig,
+        toolPromotion: {
+          isToolEligible: () => true,
+          registerControls: (controls) => {
+            activeControls = controls;
+            return () => {
+              activeControls = null;
+            };
+          },
+        },
+      },
+      "",
+      [{ role: "user", content: [{ type: "text", text: "Mixed batch" }] }],
+      [toolSchemas[0]!],
+    );
+
+    const manageCall = result.toolCalls.find((c) => c.name === "nb__manage_tools");
+    expect(manageCall).toBeDefined();
+    // Per-item failure does not fail the whole call; structuredContent reports it.
+    expect(manageCall?.ok).toBe(true);
+    // Only the public tool was promoted; the internal one was rejected per-item.
+    expect(events.filter((e) => e.type === "tool.promoted")).toHaveLength(1);
+  });
+
+  it("nb__manage_tools add rejects role/feature-ineligible tools per-item", async () => {
+    let callCount = 0;
+    const seenToolLists: string[][] = [];
+    const model = createMockModel((options) => {
+      callCount++;
+      const toolNames = (options.tools ?? []).map((t) => t.name);
+      seenToolLists.push(toolNames);
+
+      if (callCount === 1) {
+        return {
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call_admin",
+              toolName: "nb__manage_tools",
+              input: JSON.stringify({ add: ["nb__manage_users"] }),
+            },
+          ],
+          inputTokens: 10,
+          outputTokens: 5,
+        };
+      }
+
+      if (callCount === 2) {
+        expect(toolNames).not.toContain("nb__manage_users");
+        return {
+          content: [{ type: "text", text: "Done!" }],
+          inputTokens: 10,
+          outputTokens: 5,
+        };
+      }
+    });
+
+    const toolSchemas: ToolSchema[] = [
+      { name: "nb__manage_tools", description: "Patch tool list", inputSchema: { type: "object", properties: {} } },
+      {
+        name: "nb__manage_users",
+        description: "Manage users",
+        inputSchema: { type: "object", properties: {} },
+      },
+    ];
+
+    const events: EngineEvent[] = [];
+    let activeControls: ToolPromotionControls | null = null;
+    const engine = new AgentEngine(
+      model,
+      new StaticToolRouter(toolSchemas, (call) => {
+        if (call.name === "nb__manage_tools") {
+          expect(activeControls).not.toBeNull();
+          const add = (call.input.add as string[] | undefined) ?? [];
+          const promoted = add.map((n) => activeControls!.addTool(n));
+          return {
+            content: textContent("ok"),
+            structuredContent: { promoted, released: [] },
+            isError: false,
+          };
+        }
+        return { content: textContent(""), isError: false };
+      }),
+      { emit: (event) => events.push(event) },
+    );
+
+    const result = await engine.run(
+      {
+        ...defaultConfig,
+        toolPromotion: {
+          isToolEligible: (tool) => tool.name !== "nb__manage_users",
+          registerControls: (controls) => {
+            activeControls = controls;
+            return () => {
+              activeControls = null;
+            };
+          },
+        },
+      },
+      "",
+      [{ role: "user", content: [{ type: "text", text: "Try to promote admin tool" }] }],
+      [toolSchemas[0]!],
+    );
+
+    expect(result.toolCalls.find((c) => c.name === "nb__manage_tools")).toBeDefined();
+    expect(seenToolLists[1]).not.toContain("nb__manage_users");
+    expect(events.some((e) => e.type === "tool.promoted")).toBe(false);
+  });
+
+  it("nb__manage_tools remove refuses system tools per-item", async () => {
+    let callCount = 0;
+    const seenToolLists: string[][] = [];
+    const model = createMockModel((options) => {
+      callCount++;
+      const toolNames = (options.tools ?? []).map((t) => t.name);
+      seenToolLists.push(toolNames);
+
+      if (callCount === 1) {
+        return {
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call_drop_search",
+              toolName: "nb__manage_tools",
+              input: JSON.stringify({ remove: ["nb__search"] }),
+            },
+          ],
+          inputTokens: 10,
+          outputTokens: 5,
+        };
+      }
+
+      if (callCount === 2) {
+        expect(toolNames).toContain("nb__search");
+        return {
+          content: [{ type: "text", text: "Done!" }],
+          inputTokens: 10,
+          outputTokens: 5,
+        };
+      }
+    });
+
+    const toolSchemas: ToolSchema[] = [
+      { name: "nb__search", description: "Search tools", inputSchema: { type: "object", properties: {} } },
+      { name: "nb__manage_tools", description: "Patch tool list", inputSchema: { type: "object", properties: {} } },
+    ];
+
+    const events: EngineEvent[] = [];
+    let activeControls: ToolPromotionControls | null = null;
+    const engine = new AgentEngine(
+      model,
+      new StaticToolRouter(toolSchemas, (call) => {
+        if (call.name === "nb__manage_tools") {
+          expect(activeControls).not.toBeNull();
+          const remove = (call.input.remove as string[] | undefined) ?? [];
+          const released = remove.map((n) => activeControls!.removeTool(n));
+          return {
+            content: textContent("ok"),
+            structuredContent: { promoted: [], released },
+            isError: false,
+          };
+        }
+        return { content: textContent(""), isError: false };
+      }),
+      { emit: (event) => events.push(event) },
+    );
+
+    const result = await engine.run(
+      {
+        ...defaultConfig,
+        toolPromotion: {
+          isToolEligible: () => true,
+          registerControls: (controls) => {
+            activeControls = controls;
+            return () => {
+              activeControls = null;
+            };
+          },
+        },
+      },
+      "",
+      [{ role: "user", content: [{ type: "text", text: "Try to drop search" }] }],
+      toolSchemas,
+    );
+
+    expect(result.toolCalls.find((c) => c.name === "nb__manage_tools")).toBeDefined();
+    expect(seenToolLists[1]).toContain("nb__search");
+    expect(events.some((e) => e.type === "tool.released")).toBe(false);
+  });
+
+  // ── LRU eviction backstop ─────────────────────────────────────────
+
+  it("LRU eviction: respects maxActiveTools and evicts oldest agent-promoted tool", async () => {
+    // 5 promotable tools, cap=4 (one initial + 3 promoted slots). Promoting
+    // all 5 in one batch should evict the two earliest (a, b).
+    const toolSchemas: ToolSchema[] = [
+      { name: "nb__manage_tools", description: "Patch tool list", inputSchema: { type: "object", properties: {} } },
+      { name: "app__a", description: "A", inputSchema: { type: "object", properties: {} } },
+      { name: "app__b", description: "B", inputSchema: { type: "object", properties: {} } },
+      { name: "app__c", description: "C", inputSchema: { type: "object", properties: {} } },
+      { name: "app__d", description: "D", inputSchema: { type: "object", properties: {} } },
+      { name: "app__e", description: "E", inputSchema: { type: "object", properties: {} } },
+    ];
+
+    let callCount = 0;
+    let activeControls: ToolPromotionControls | null = null;
+    const events: EngineEvent[] = [];
+
+    const model = createMockModel(() => {
+      callCount++;
+      if (callCount === 1) {
+        return {
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "promote_all",
+              toolName: "nb__manage_tools",
+              input: JSON.stringify({ add: ["app__a", "app__b", "app__c", "app__d", "app__e"] }),
+            },
+          ],
+          inputTokens: 10,
+          outputTokens: 5,
+        };
+      }
+      return { content: [{ type: "text", text: "Done!" }], inputTokens: 10, outputTokens: 5 };
+    });
+
+    const engine = new AgentEngine(
+      model,
+      new StaticToolRouter(toolSchemas, (call) => {
+        if (call.name === "nb__manage_tools") {
+          const add = (call.input.add as string[] | undefined) ?? [];
+          const promoted = add.map((n) => activeControls!.addTool(n));
+          return {
+            content: textContent("ok"),
+            structuredContent: { promoted, released: [] },
+            isError: false,
+          };
+        }
+        return { content: textContent(""), isError: false };
+      }),
+      { emit: (event) => events.push(event) },
+    );
+
+    await engine.run(
+      {
+        ...defaultConfig,
+        maxActiveTools: 4, // initial nb__manage_tools + 3 promoted slots
+        toolPromotion: {
+          isToolEligible: () => true,
+          registerControls: (controls) => {
+            activeControls = controls;
+            return () => {
+              activeControls = null;
+            };
+          },
+        },
+      },
+      "",
+      [{ role: "user", content: [{ type: "text", text: "Promote five" }] }],
+      [toolSchemas[0]!],
+    );
+
+    expect(events.filter((e) => e.type === "tool.promoted")).toHaveLength(5);
+    const evicted = events
+      .filter(
+        (e) =>
+          e.type === "tool.released" &&
+          (e.data as { reason?: string }).reason === "evicted",
+      )
+      .map((e) => (e.data as { toolName: string }).toolName);
+    expect(evicted).toEqual(["app__a", "app__b"]);
+  });
+
+  it("LRU eviction: never evicts initial tools even when cap is exceeded", async () => {
+    const toolSchemas: ToolSchema[] = [
+      { name: "nb__manage_tools", description: "Patch tool list", inputSchema: { type: "object", properties: {} } },
+      { name: "initial__a", description: "Initial A", inputSchema: { type: "object", properties: {} } },
+      { name: "initial__b", description: "Initial B", inputSchema: { type: "object", properties: {} } },
+      { name: "promoted__x", description: "Promoted X", inputSchema: { type: "object", properties: {} } },
+      { name: "promoted__y", description: "Promoted Y", inputSchema: { type: "object", properties: {} } },
+    ];
+
+    let callCount = 0;
+    let activeControls: ToolPromotionControls | null = null;
+    const events: EngineEvent[] = [];
+
+    const model = createMockModel(() => {
+      callCount++;
+      if (callCount === 1) {
+        return {
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "promote",
+              toolName: "nb__manage_tools",
+              input: JSON.stringify({ add: ["promoted__x", "promoted__y"] }),
+            },
+          ],
+          inputTokens: 10,
+          outputTokens: 5,
+        };
+      }
+      return { content: [{ type: "text", text: "Done!" }], inputTokens: 10, outputTokens: 5 };
+    });
+
+    const engine = new AgentEngine(
+      model,
+      new StaticToolRouter(toolSchemas, (call) => {
+        if (call.name === "nb__manage_tools") {
+          const add = (call.input.add as string[] | undefined) ?? [];
+          const promoted = add.map((n) => activeControls!.addTool(n));
+          return {
+            content: textContent("ok"),
+            structuredContent: { promoted, released: [] },
+            isError: false,
+          };
+        }
+        return { content: textContent(""), isError: false };
+      }),
+      { emit: (event) => events.push(event) },
+    );
+
+    await engine.run(
+      {
+        ...defaultConfig,
+        // Cap=3: initial set already fills it. Each promotion overflows;
+        // initial tools are exempt from eviction; the just-added tool is
+        // also exempt (defensive self-eviction guard). Result: x is
+        // evictable when y is added (x is now older than the just-added y),
+        // y survives as the last-promoted entry.
+        maxActiveTools: 3,
+        toolPromotion: {
+          isToolEligible: () => true,
+          registerControls: (controls) => {
+            activeControls = controls;
+            return () => {
+              activeControls = null;
+            };
+          },
+        },
+      },
+      "",
+      [{ role: "user", content: [{ type: "text", text: "Promote past cap" }] }],
+      [toolSchemas[0]!, toolSchemas[1]!, toolSchemas[2]!],
+    );
+
+    const evictedNames = events
+      .filter(
+        (e) =>
+          e.type === "tool.released" &&
+          (e.data as { reason?: string }).reason === "evicted",
+      )
+      .map((e) => (e.data as { toolName: string }).toolName);
+    // Initial tools never evicted (they're not in promotedLastUsed).
+    expect(evictedNames).not.toContain("initial__a");
+    expect(evictedNames).not.toContain("initial__b");
+    expect(evictedNames).not.toContain("nb__manage_tools");
+    // promoted__x is evicted when promoted__y arrives (x is older, y is
+    // the just-added and protected by the self-eviction guard).
+    expect(evictedNames).toContain("promoted__x");
+    // promoted__y stays — it was the last-promoted entry and the guard
+    // refused to undo the agent's intentional addition.
+    expect(evictedNames).not.toContain("promoted__y");
+  });
+
+  it("LRU eviction: tool execution refreshes the eviction stamp", async () => {
+    // Promote a, b, c, then call a (refreshes its stamp), then promote d.
+    // Without refresh, a would be the oldest and evicted. With refresh,
+    // b is the LRU victim.
+    const toolSchemas: ToolSchema[] = [
+      { name: "nb__manage_tools", description: "Patch tool list", inputSchema: { type: "object", properties: {} } },
+      { name: "app__a", description: "A", inputSchema: { type: "object", properties: {} } },
+      { name: "app__b", description: "B", inputSchema: { type: "object", properties: {} } },
+      { name: "app__c", description: "C", inputSchema: { type: "object", properties: {} } },
+      { name: "app__d", description: "D", inputSchema: { type: "object", properties: {} } },
+    ];
+
+    let callCount = 0;
+    let activeControls: ToolPromotionControls | null = null;
+    const events: EngineEvent[] = [];
+
+    const model = createMockModel(() => {
+      callCount++;
+      if (callCount === 1) {
+        return {
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "p1",
+              toolName: "nb__manage_tools",
+              input: JSON.stringify({ add: ["app__a", "app__b", "app__c"] }),
+            },
+          ],
+          inputTokens: 10,
+          outputTokens: 5,
+        };
+      }
+      if (callCount === 2) {
+        return {
+          content: [
+            { type: "tool-call", toolCallId: "use_a", toolName: "app__a", input: JSON.stringify({}) },
+          ],
+          inputTokens: 10,
+          outputTokens: 5,
+        };
+      }
+      if (callCount === 3) {
+        return {
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "p2",
+              toolName: "nb__manage_tools",
+              input: JSON.stringify({ add: ["app__d"] }),
+            },
+          ],
+          inputTokens: 10,
+          outputTokens: 5,
+        };
+      }
+      return { content: [{ type: "text", text: "Done!" }], inputTokens: 10, outputTokens: 5 };
+    });
+
+    const engine = new AgentEngine(
+      model,
+      new StaticToolRouter(toolSchemas, (call) => {
+        if (call.name === "nb__manage_tools") {
+          const add = (call.input.add as string[] | undefined) ?? [];
+          const promoted = add.map((n) => activeControls!.addTool(n));
+          return {
+            content: textContent("ok"),
+            structuredContent: { promoted, released: [] },
+            isError: false,
+          };
+        }
+        return { content: textContent("ok"), isError: false };
+      }),
+      { emit: (event) => events.push(event) },
+    );
+
+    await engine.run(
+      {
+        ...defaultConfig,
+        // Cap=4: nb__manage_tools (initial) + 3 promoted slots. Promoting
+        // a 4th forces eviction of the LRU promoted entry.
+        maxActiveTools: 4,
+        toolPromotion: {
+          isToolEligible: () => true,
+          registerControls: (controls) => {
+            activeControls = controls;
+            return () => {
+              activeControls = null;
+            };
+          },
+        },
+      },
+      "",
+      [{ role: "user", content: [{ type: "text", text: "LRU dance" }] }],
+      [toolSchemas[0]!],
+    );
+
+    const evictedNames = events
+      .filter(
+        (e) =>
+          e.type === "tool.released" &&
+          (e.data as { reason?: string }).reason === "evicted",
+      )
+      .map((e) => (e.data as { toolName: string }).toolName);
+    expect(evictedNames).toEqual(["app__b"]);
+  });
+
+  it("LRU eviction: when initial > cap, agent additions stick (cap goes soft)", async () => {
+    // Pathological config: 5 initial tools but cap=3. Without the defensive
+    // guard, the first addTool would push length=6, find the just-added
+    // tool as the only entry in promotedLastUsed, and self-evict — silently
+    // undoing the agent's intentional promotion. With the guard, the
+    // promotion sticks and the cap is "soft" for this run.
+    const toolSchemas: ToolSchema[] = [
+      { name: "nb__manage_tools", description: "Patch tool list", inputSchema: { type: "object", properties: {} } },
+      { name: "init__a", description: "A", inputSchema: { type: "object", properties: {} } },
+      { name: "init__b", description: "B", inputSchema: { type: "object", properties: {} } },
+      { name: "init__c", description: "C", inputSchema: { type: "object", properties: {} } },
+      { name: "init__d", description: "D", inputSchema: { type: "object", properties: {} } },
+      { name: "promoted__x", description: "X", inputSchema: { type: "object", properties: {} } },
+    ];
+
+    let callCount = 0;
+    let activeControls: ToolPromotionControls | null = null;
+    const events: EngineEvent[] = [];
+    const seenToolLists: string[][] = [];
+
+    const model = createMockModel((options) => {
+      seenToolLists.push((options.tools ?? []).map((t) => t.name));
+      callCount++;
+      if (callCount === 1) {
+        return {
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "p",
+              toolName: "nb__manage_tools",
+              input: JSON.stringify({ add: ["promoted__x"] }),
+            },
+          ],
+          inputTokens: 10,
+          outputTokens: 5,
+        };
+      }
+      return { content: [{ type: "text", text: "Done!" }], inputTokens: 10, outputTokens: 5 };
+    });
+
+    const engine = new AgentEngine(
+      model,
+      new StaticToolRouter(toolSchemas, (call) => {
+        if (call.name === "nb__manage_tools") {
+          const add = (call.input.add as string[] | undefined) ?? [];
+          const promoted = add.map((n) => activeControls!.addTool(n));
+          return {
+            content: textContent("ok"),
+            structuredContent: { promoted, released: [] },
+            isError: false,
+          };
+        }
+        return { content: textContent(""), isError: false };
+      }),
+      { emit: (event) => events.push(event) },
+    );
+
+    await engine.run(
+      {
+        ...defaultConfig,
+        maxActiveTools: 3, // 5 initial > cap=3
+        toolPromotion: {
+          isToolEligible: () => true,
+          registerControls: (controls) => {
+            activeControls = controls;
+            return () => {
+              activeControls = null;
+            };
+          },
+        },
+      },
+      "",
+      [{ role: "user", content: [{ type: "text", text: "Promote past initial" }] }],
+      [toolSchemas[0]!, toolSchemas[1]!, toolSchemas[2]!, toolSchemas[3]!, toolSchemas[4]!],
+    );
+
+    // Crucial: promoted__x is visible in the agent's tool list on iter 2.
+    // It was NOT silently self-evicted by the LRU loop.
+    expect(seenToolLists[1]).toContain("promoted__x");
+    // No tools were evicted — the only entry in promotedLastUsed (promoted__x
+    // itself) was protected by the self-eviction guard.
+    const evictedNames = events
+      .filter(
+        (e) =>
+          e.type === "tool.released" &&
+          (e.data as { reason?: string }).reason === "evicted",
+      )
+      .map((e) => (e.data as { toolName: string }).toolName);
+    expect(evictedNames).toHaveLength(0);
+  });
+
+  // ── Nested-engine isolation (delegate sub-agent regression) ──────
+
+  it("nested engine.run inside a parent run isolates promotion controls per engine", async () => {
+    // Regression: a sub-agent calling nb__manage_tools must mutate ITS OWN
+    // directTools, not the parent's. Without per-engine save/restore in
+    // registerControls, AsyncLocalStorage propagates the parent's
+    // reqCtx.toolPromotion into the child's frame and the child's
+    // promotions silently mutate the parent.
+
+    // Shared factory: same shape as Runtime.buildToolPromotionFactory.
+    // Save/restore is the load-bearing part — without it, child's
+    // unregister would leave reqCtx.toolPromotion === child controls
+    // (or undefined) instead of the parent's.
+    const toolPromotionFactory: NonNullable<EngineConfig["toolPromotion"]> = {
+      isToolEligible: () => true,
+      registerControls: (controls) => {
+        const ctx = getRequestContext();
+        if (!ctx) return () => {};
+        const prev = ctx.toolPromotion;
+        ctx.toolPromotion = controls;
+        return () => {
+          if (prev === undefined) {
+            delete ctx.toolPromotion;
+          } else {
+            ctx.toolPromotion = prev;
+          }
+        };
+      },
+    };
+
+    // Outer toolset: nb__manage_tools (promotable) + a "delegate" tool
+    // that, when called, spawns an inner engine.run().
+    const outerSchemas: ToolSchema[] = [
+      { name: "nb__manage_tools", description: "Patch tool list", inputSchema: { type: "object", properties: {} } },
+      { name: "spawn_child", description: "Run a child engine", inputSchema: { type: "object", properties: {} } },
+      { name: "outer__only", description: "Outer tool", inputSchema: { type: "object", properties: {} } },
+    ];
+
+    // Inner toolset: distinct from outer's. The inner agent will try to
+    // promote `inner__discovered`, which exists in the inner router but
+    // NOT in the outer's directTools. If isolation is broken, the outer's
+    // directTools would gain inner__discovered.
+    const innerSchemas: ToolSchema[] = [
+      { name: "nb__manage_tools", description: "Patch tool list", inputSchema: { type: "object", properties: {} } },
+      { name: "inner__discovered", description: "Inner-only tool", inputSchema: { type: "object", properties: {} } },
+    ];
+
+    const outerToolListsSeen: string[][] = [];
+    const innerToolListsSeen: string[][] = [];
+
+    // Inner model: iter 1 promotes inner__discovered; iter 2 verifies it's
+    // visible and emits Done.
+    let innerCallCount = 0;
+    const innerModel = createMockModel((options) => {
+      innerToolListsSeen.push((options.tools ?? []).map((t) => t.name));
+      innerCallCount++;
+      if (innerCallCount === 1) {
+        return {
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "inner_promote",
+              toolName: "nb__manage_tools",
+              input: JSON.stringify({ add: ["inner__discovered"] }),
+            },
+          ],
+          inputTokens: 5,
+          outputTokens: 5,
+        };
+      }
+      return { content: [{ type: "text", text: "inner done" }], inputTokens: 5, outputTokens: 5 };
+    });
+
+    // Outer model: iter 1 calls spawn_child; iter 2 emits Done.
+    let outerCallCount = 0;
+    const outerModel = createMockModel((options) => {
+      outerToolListsSeen.push((options.tools ?? []).map((t) => t.name));
+      outerCallCount++;
+      if (outerCallCount === 1) {
+        return {
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "spawn",
+              toolName: "spawn_child",
+              input: JSON.stringify({}),
+            },
+          ],
+          inputTokens: 5,
+          outputTokens: 5,
+        };
+      }
+      return { content: [{ type: "text", text: "outer done" }], inputTokens: 5, outputTokens: 5 };
+    });
+
+    // Build the inner engine inside the spawn_child handler. The inner
+    // engine uses the SAME factory (which is what production does via
+    // ctx.toolPromotion in delegate.ts). The save/restore in the factory
+    // pops the parent's controls back into reqCtx when inner's run
+    // finishes, so the outer can continue normally.
+    let activeOuterControls: ToolPromotionControls | null = null;
+    let activeInnerControls: ToolPromotionControls | null = null;
+    const events: EngineEvent[] = [];
+
+    const innerRouter = new StaticToolRouter(innerSchemas, (call) => {
+      if (call.name === "nb__manage_tools") {
+        const add = (call.input.add as string[] | undefined) ?? [];
+        // Inner's manage_tools handler reaches the controls in reqCtx.
+        // After the fix, reqCtx.toolPromotion is the inner's controls
+        // (because the inner engine.run installed them). The inner's
+        // controls mutate the inner engine's directTools.
+        const controls = getRequestContext()?.toolPromotion;
+        if (!controls) {
+          return { content: textContent("no controls"), isError: true };
+        }
+        const promoted = add.map((n) => controls.addTool(n));
+        return {
+          content: textContent("ok"),
+          structuredContent: { promoted, released: [] },
+          isError: false,
+        };
+      }
+      return { content: textContent(""), isError: false };
+    });
+
+    const outerRouter = new StaticToolRouter(outerSchemas, async (call) => {
+      if (call.name === "nb__manage_tools") {
+        // Same handler as inner, but in the OUTER call context. reqCtx.toolPromotion
+        // here is the outer's controls.
+        const add = (call.input.add as string[] | undefined) ?? [];
+        const controls = getRequestContext()?.toolPromotion;
+        if (!controls) return { content: textContent("no controls"), isError: true };
+        const promoted = add.map((n) => controls.addTool(n));
+        return {
+          content: textContent("ok"),
+          structuredContent: { promoted, released: [] },
+          isError: false,
+        };
+      }
+      if (call.name === "spawn_child") {
+        // This is the equivalent of nb__delegate: spawn a fresh engine.run
+        // INSIDE the parent's request context. Without the per-engine
+        // toolPromotion factory, child's manage_tools would leak into outer.
+        const innerEngine = new AgentEngine(innerModel, innerRouter, {
+          emit: (event) => events.push({ ...event, data: { ...event.data, scope: "inner" } }),
+        });
+        await innerEngine.run(
+          {
+            ...defaultConfig,
+            toolPromotion: {
+              ...toolPromotionFactory,
+              registerControls: (controls) => {
+                activeInnerControls = controls;
+                const release = toolPromotionFactory.registerControls(controls);
+                return () => {
+                  activeInnerControls = null;
+                  release();
+                };
+              },
+            },
+          },
+          "",
+          [{ role: "user", content: [{ type: "text", text: "child task" }] }],
+          [innerSchemas[0]!],
+        );
+        return { content: textContent("child done"), isError: false };
+      }
+      return { content: textContent(""), isError: false };
+    });
+
+    const outerEngine = new AgentEngine(outerModel, outerRouter, {
+      emit: (event) => events.push({ ...event, data: { ...event.data, scope: "outer" } }),
+    });
+
+    // Wrap the whole flow in a request context so reqCtx exists for the
+    // factory to install controls into.
+    const reqCtx: RequestContext = {
+      identity: null,
+      workspaceId: null,
+      workspaceAgents: null,
+      workspaceModelOverride: null,
+    };
+    await runWithRequestContext(reqCtx, async () => {
+      await outerEngine.run(
+        {
+          ...defaultConfig,
+          toolPromotion: {
+            ...toolPromotionFactory,
+            registerControls: (controls) => {
+              activeOuterControls = controls;
+              const release = toolPromotionFactory.registerControls(controls);
+              return () => {
+                activeOuterControls = null;
+                release();
+              };
+            },
+          },
+        },
+        "",
+        [{ role: "user", content: [{ type: "text", text: "delegate something" }] }],
+        [outerSchemas[0]!, outerSchemas[1]!, outerSchemas[2]!],
+      );
+    });
+
+    // Outer's tool list across iterations should NEVER include
+    // inner__discovered. If isolation is broken, the inner's promotion
+    // would have mutated the outer's directTools and inner__discovered
+    // would appear in outerToolListsSeen[1] or beyond.
+    for (const [i, toolList] of outerToolListsSeen.entries()) {
+      expect(toolList, `outer iteration ${i} tool list`).not.toContain("inner__discovered");
+    }
+
+    // Inner's iter 2 tool list MUST include inner__discovered — proves
+    // the inner's manage_tools call actually reached the inner's own
+    // directTools, not the outer's.
+    expect(innerToolListsSeen[1]).toContain("inner__discovered");
+
+    // After everything finishes, reqCtx.toolPromotion is restored to
+    // its pre-run state (undefined here since this test created the
+    // reqCtx fresh).
+    expect(reqCtx.toolPromotion).toBeUndefined();
+
+    // Sentinel: silence unused-var warnings; references are part of the
+    // test's documentation of which controls are which.
+    void activeOuterControls;
+    void activeInnerControls;
   });
 
   it("includes resourceUri in tool events when tool has UI annotations", async () => {
@@ -2180,6 +3270,317 @@ describe("malformed tool call input", () => {
 
       expect(result.toolCalls[0]!.output).toContain("name");
       expect(result.toolCalls[0]!.output).toContain("string");
+    });
+  });
+
+  describe("context-overflow recovery", () => {
+    it("re-invokes transformContext with overflowAttempt=1 and retries once on a context-overflow error", async () => {
+      let callCount = 0;
+      const recordedAttempts: Array<number | undefined> = [];
+      const events: EngineEvent[] = [];
+      const recordingSink: EventSink = {
+        emit(e: EngineEvent) {
+          events.push(e);
+        },
+      };
+
+      // First call throws an Anthropic-shaped overflow error; second succeeds.
+      const model = createMockModel(() => {
+        callCount += 1;
+        if (callCount === 1) {
+          throw Object.assign(
+            new Error("prompt is too long: 1257504 tokens > 1000000 maximum"),
+            { status: 400 },
+          );
+        }
+        return {
+          content: [{ type: "text", text: "recovered" }],
+        };
+      });
+
+      const engine = new AgentEngine(
+        model,
+        new StaticToolRouter([], () => ({ content: textContent(""), isError: false })),
+        recordingSink,
+      );
+
+      const result = await engine.run(
+        {
+          ...defaultConfig,
+          hooks: {
+            transformContext: (msgs, opts) => {
+              recordedAttempts.push(opts?.overflowAttempt);
+              return msgs;
+            },
+          },
+        },
+        "",
+        [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+        [],
+      );
+
+      // The model was called twice: once that overflowed, once that succeeded.
+      expect(callCount).toBe(2);
+
+      // transformContext got called twice — once at overflowAttempt=0
+      // (or undefined), once at overflowAttempt=1.
+      expect(recordedAttempts).toEqual([0, 1]);
+
+      // The recovery event was emitted exactly once with attempt=1.
+      const recoveryEvents = events.filter((e) => e.type === "context.overflow_recovery");
+      expect(recoveryEvents).toHaveLength(1);
+      expect(recoveryEvents[0]!.data).toMatchObject({ attempt: 1 });
+
+      // The run succeeded with the second call's output.
+      expect(result.output).toBe("recovered");
+      expect(result.stopReason).toBe("complete");
+    });
+
+    it("propagates the original overflow error after a single recovery attempt fails", async () => {
+      let callCount = 0;
+      const model = createMockModel(() => {
+        callCount += 1;
+        // Both calls overflow.
+        throw Object.assign(
+          new Error("prompt is too long: still too big"),
+          { status: 400 },
+        );
+      });
+
+      const engine = new AgentEngine(
+        model,
+        new StaticToolRouter([], () => ({ content: textContent(""), isError: false })),
+        new NoopEventSink(),
+      );
+
+      await expect(
+        engine.run(
+          {
+            ...defaultConfig,
+            hooks: { transformContext: (msgs) => msgs },
+          },
+          "",
+          [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+          [],
+        ),
+      ).rejects.toThrow(/prompt is too long/);
+
+      // Two model calls: the original + one recovery attempt.
+      expect(callCount).toBe(2);
+    });
+
+    it("does NOT retry on a non-overflow error (auth, unrelated 400, etc.)", async () => {
+      let callCount = 0;
+      const model = createMockModel(() => {
+        callCount += 1;
+        throw Object.assign(new Error("invalid api key"), { status: 401 });
+      });
+
+      const engine = new AgentEngine(
+        model,
+        new StaticToolRouter([], () => ({ content: textContent(""), isError: false })),
+        new NoopEventSink(),
+      );
+
+      await expect(
+        engine.run(
+          {
+            ...defaultConfig,
+            hooks: { transformContext: (msgs) => msgs },
+          },
+          "",
+          [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+          [],
+        ),
+      ).rejects.toThrow(/Authentication failed/);
+
+      // No recovery — the auth error is non-retryable and surfaces immediately.
+      expect(callCount).toBe(1);
+    });
+  });
+
+  describe("cancellation via config.signal", () => {
+    it("aborts the loop between iterations when config.signal fires after a tool call", async () => {
+      // Regression for the orphan-and-write bug: before this PR, the
+      // engine only forwarded `config.signal` to `tools.execute`. A
+      // run whose signal aborted mid-flight would let the current tool
+      // call honor it (good) but still proceed to the NEXT LLM call,
+      // wasting a model round-trip and generating downstream tool
+      // calls the caller no longer wants. The fix is a check at the
+      // top of every iteration; this test exercises that check
+      // end-to-end.
+      const controller = new AbortController();
+      let modelCalls = 0;
+      const model = createMockModel(() => {
+        modelCalls++;
+        // Iteration 1: return a tool call.
+        if (modelCalls === 1) {
+          return {
+            content: [
+              {
+                type: "tool-call",
+                toolCallId: "call_1",
+                toolName: "test__noop",
+                input: JSON.stringify({}),
+              },
+            ],
+            inputTokens: 10,
+            outputTokens: 5,
+          };
+        }
+        // Iteration 2 onward would yield text completion; but we
+        // should never reach this because the abort check at the top
+        // of iteration 2 throws first.
+        return {
+          content: [{ type: "text", text: "should not appear" }],
+          inputTokens: 10,
+          outputTokens: 5,
+        };
+      });
+
+      let toolCallCount = 0;
+      const engine = makeEngine(model, {
+        schemas: [
+          {
+            name: "test__noop",
+            description: "noop",
+            inputSchema: { type: "object", properties: {} },
+          },
+        ],
+        handler: () => {
+          toolCallCount++;
+          // Fire the signal right after the tool finishes. The engine's
+          // iteration-boundary check should observe it before the next
+          // LLM call. (Aborting BEFORE the tool runs would surface as
+          // a tool-side abort; we deliberately abort post-tool to
+          // exercise the between-iteration check the PR added.)
+          controller.abort();
+          return { content: textContent("noop"), isError: false };
+        },
+      });
+
+      await expect(
+        engine.run(
+          { ...defaultConfig, signal: controller.signal },
+          "",
+          [{ role: "user", content: [{ type: "text", text: "go" }] }],
+          [],
+        ),
+      ).rejects.toMatchObject({ name: "AbortError" });
+
+      // Iteration 1 ran (model called once, tool called once) but
+      // iteration 2's LLM call did NOT — the abort check stopped the
+      // loop before the next round-trip.
+      expect(modelCalls).toBe(1);
+      expect(toolCallCount).toBe(1);
+    });
+
+    it("throws immediately when signal is already aborted on entry", async () => {
+      // Pre-aborted signals should fail-fast on the first iteration's
+      // boundary check, before any model call. Important for the
+      // executor's cancellation contract: when the scheduler aborts a
+      // run before it really starts, no LLM spend should accrue.
+      const controller = new AbortController();
+      controller.abort();
+
+      let modelCalls = 0;
+      const model = createMockModel(() => {
+        modelCalls++;
+        return {
+          content: [{ type: "text", text: "should not run" }],
+          inputTokens: 10,
+          outputTokens: 5,
+        };
+      });
+      const engine = makeEngine(model);
+
+      await expect(
+        engine.run(
+          { ...defaultConfig, signal: controller.signal },
+          "",
+          [{ role: "user", content: [{ type: "text", text: "go" }] }],
+          [],
+        ),
+      ).rejects.toMatchObject({ name: "AbortError" });
+
+      expect(modelCalls).toBe(0);
+    });
+
+    it("forwards config.signal as abortSignal into model.doStream", async () => {
+      // Regression for the in-flight LLM stream cancellation gap: a
+      // signal threaded through `config.signal` must reach the model
+      // call as `options.abortSignal`, or AI SDK providers can't
+      // abort the underlying fetch and a long completion blocks the
+      // engine until the model finishes.
+      const controller = new AbortController();
+      let receivedSignal: AbortSignal | undefined;
+      const model = createMockModel((options) => {
+        receivedSignal = options.abortSignal;
+        return {
+          content: [{ type: "text", text: "ok" }],
+          inputTokens: 5,
+          outputTokens: 5,
+        };
+      });
+      const engine = makeEngine(model);
+
+      await engine.run(
+        { ...defaultConfig, signal: controller.signal },
+        "",
+        [{ role: "user", content: [{ type: "text", text: "go" }] }],
+        [],
+      );
+
+      expect(receivedSignal).toBe(controller.signal);
+    });
+
+    it("omits abortSignal from doStream options when config.signal is undefined", async () => {
+      // Symmetric check: don't synthesize an empty signal when the
+      // caller didn't pass one. Providers behave differently on
+      // `abortSignal: undefined` vs the field being absent; keep
+      // the shape clean.
+      let optionsSeen: { abortSignal?: AbortSignal } | undefined;
+      const model = createMockModel((options) => {
+        optionsSeen = options;
+        return {
+          content: [{ type: "text", text: "ok" }],
+          inputTokens: 5,
+          outputTokens: 5,
+        };
+      });
+      const engine = makeEngine(model);
+
+      await engine.run(
+        defaultConfig,
+        "",
+        [{ role: "user", content: [{ type: "text", text: "go" }] }],
+        [],
+      );
+
+      expect(optionsSeen).toBeDefined();
+      expect("abortSignal" in (optionsSeen ?? {})).toBe(false);
+    });
+
+    it("propagates a custom abort reason as the thrown error", async () => {
+      // When the executor aborts with a specific Error (e.g. timeout),
+      // the engine surfaces that reason through the throw — so the
+      // scheduler can classify the failure correctly (timeout vs
+      // generic cancel). Drift here would silently collapse all
+      // cancellations into the same status.
+      const controller = new AbortController();
+      const customReason = new Error("Automation foo timed out after 600s");
+      controller.abort(customReason);
+
+      const engine = makeEngine();
+
+      await expect(
+        engine.run(
+          { ...defaultConfig, signal: controller.signal },
+          "",
+          [{ role: "user", content: [{ type: "text", text: "go" }] }],
+          [],
+        ),
+      ).rejects.toThrow(/timed out after 600s/);
     });
   });
 });

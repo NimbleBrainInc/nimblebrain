@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { resolveFeatures, isToolEnabled } from "../../../src/config/features.ts";
+import { isToolEligibleForPromotion } from "../../../src/runtime/tool-eligibility.ts";
 
 describe("identity & workspace feature flags", () => {
 	describe("resolveFeatures", () => {
@@ -66,6 +67,68 @@ describe("identity & workspace feature flags", () => {
 		it("enables manage_workspaces when workspaceManagement is true", () => {
 			const features = resolveFeatures({ workspaceManagement: true });
 			expect(isToolEnabled("nb__manage_workspaces", features)).toBe(true);
+		});
+	});
+
+	describe("isToolEligibleForPromotion", () => {
+		it("rejects role-invisible admin tools for members", () => {
+			const features = resolveFeatures();
+			expect(
+				isToolEligibleForPromotion(
+					{ name: "nb__manage_users", description: "Manage users", inputSchema: {} },
+					"member",
+					features,
+				),
+			).toBe(false);
+		});
+
+		it("allows admin tools for admins when their feature is enabled", () => {
+			const features = resolveFeatures();
+			expect(
+				isToolEligibleForPromotion(
+					{ name: "nb__manage_users", description: "Manage users", inputSchema: {} },
+					"admin",
+					features,
+				),
+			).toBe(true);
+		});
+
+		it("rejects feature-disabled tools even for admins", () => {
+			const features = resolveFeatures({ userManagement: false });
+			expect(
+				isToolEligibleForPromotion(
+					{ name: "nb__manage_users", description: "Manage users", inputSchema: {} },
+					"admin",
+					features,
+				),
+			).toBe(false);
+		});
+
+		it("rejects internal tools even when role and feature allow them", () => {
+			const features = resolveFeatures();
+			expect(
+				isToolEligibleForPromotion(
+					{
+						name: "test__secret",
+						description: "Secret tool",
+						inputSchema: {},
+						annotations: { "ai.nimblebrain/internal": true },
+					},
+					"admin",
+					features,
+				),
+			).toBe(false);
+		});
+
+		it("allows ordinary tools", () => {
+			const features = resolveFeatures();
+			expect(
+				isToolEligibleForPromotion(
+					{ name: "app__create_contact", description: "Create contact", inputSchema: {} },
+					"member",
+					features,
+				),
+			).toBe(true);
 		});
 	});
 });

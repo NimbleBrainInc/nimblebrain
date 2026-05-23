@@ -4,7 +4,7 @@
  * Export a conversation as markdown or JSON.
  */
 
-import type { ConversationIndex } from "../index-cache.ts";
+import type { AccessContext, ConversationIndex } from "../index-cache.ts";
 import { type DisplayMessage, readConversation } from "../jsonl-reader.ts";
 
 export interface ExportInput {
@@ -83,8 +83,12 @@ function exportMarkdown(
   return lines.join("\n");
 }
 
-export async function handleExport(input: ExportInput, index: ConversationIndex): Promise<object> {
-  const entry = index.get(input.id);
+export async function handleExport(
+  input: ExportInput,
+  index: ConversationIndex,
+  access?: AccessContext,
+): Promise<object> {
+  const entry = index.get(input.id, access);
   if (!entry) {
     throw new Error(`Conversation not found: ${input.id}`);
   }

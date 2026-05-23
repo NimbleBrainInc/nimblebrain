@@ -126,13 +126,17 @@ export class RegistryStore {
    * (intentionally not exposed through the admin tool — kept here for
    * tests / future migration paths).
    *
+   * `url` is intentionally NOT patchable here. Registry URLs are
+   * deployment configuration — set via `NB_REGISTRIES` or by editing
+   * `registries.json` directly — not a runtime mutation surface.
+   *
    * When env overrides are active, persistent mutation is rejected —
    * the env value is the source of truth and we don't want to silently
    * shadow it with a `registries.json` write.
    */
   async update(
     id: string,
-    patch: Partial<Pick<RegistryConfig, "enabled" | "url" | "name">>,
+    patch: Partial<Pick<RegistryConfig, "enabled" | "name">>,
     opts: { force?: boolean } = {},
   ): Promise<RegistryConfig> {
     if (this.envOverride) {

@@ -1,8 +1,8 @@
 import { join } from "node:path";
-import { ActivityCollector } from "../../bundles/home/src/services/activity-collector.ts";
 import { textContent } from "../../engine/content-helpers.ts";
 import type { EventSink } from "../../engine/types.ts";
 import type { Runtime } from "../../runtime/runtime.ts";
+import { ActivityCollector } from "../../services/activity-collector.ts";
 import { defineInProcessApp, type InProcessTool } from "../in-process-app.ts";
 import type { McpSource } from "../mcp-source.ts";
 import { loadHomeUi } from "../platform-resources/home/dashboard.ts";
@@ -26,10 +26,30 @@ export function createHomeSource(runtime: Runtime, eventSink: EventSink): McpSou
       inputSchema: HomeActivityInput,
       handler: async (input: Record<string, unknown>) => {
         try {
+          // Ownership-filter the activity view to the caller's
+          // conversations. Stage 1's top-level store holds every
+          // user's conversations in one directory; unfiltered the
+          // dashboard would leak peer ids/titles/previews into User
+          // A's view of their own activity.
+          const identity = runtime.getCurrentIdentity();
+          if (!identity) {
+            return {
+              content: textContent(
+                JSON.stringify({ error: "home__activity requires an authenticated identity" }),
+              ),
+              isError: true,
+            };
+          }
           const wsDir = runtime.getWorkspaceScopedDir();
           const logDir = join(wsDir, "logs");
-          const conversationsDir = join(wsDir, "conversations");
-          const collector = new ActivityCollector(logDir, conversationsDir, wsDir);
+          const store = runtime.findConversationStore();
+          const automationRunsDir = join(wsDir, "automations", "runs");
+          const collector = new ActivityCollector({
+            logDir,
+            conversations: { kind: "store", store },
+            automationRunsDir,
+            access: { userId: identity.id },
+          });
 
           const defaults = {
             since: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),

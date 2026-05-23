@@ -590,11 +590,16 @@ describe("handleRun", () => {
 			ctx,
 		);
 
-		const result = (await handleRun({ name: "Immediate" }, ctx)) as {
-			run: AutomationRun;
-		};
+		const result = await handleRun({ name: "Immediate" }, ctx);
 
-		expect(result.run).toBeDefined();
+		// Narrow the discriminated union explicitly. `as { run }` is the
+		// anti-pattern that masked the dispatched-envelope branch — see
+		// `AutomationsRunOutput` in src/tools/platform/schemas/automations.ts.
+		if (!("run" in result)) {
+			throw new Error(
+				`expected sync run shape, got ${JSON.stringify(result)}`,
+			);
+		}
 		expect(result.run.automationId).toBe("immediate");
 		expect(result.run.status).toBe("success");
 	});
@@ -604,6 +609,53 @@ describe("handleRun", () => {
 		await expect(handleRun({ name: "Nope" }, ctx)).rejects.toThrow(
 			"Automation not found",
 		);
+	});
+
+	test("returns 'dispatched' envelope when run outlasts the sync-wait window", async () => {
+		// Regression for the production failure where `automations__run` on a
+		// multi-minute automation collided with the SDK's 60s MCP request
+		// timeout and surfaced to the agent as a false -32001 failure. With
+		// the bounded sync-wait, long-running calls return a dispatched
+		// envelope instead of hanging the request.
+		//
+		// The runNow mock returns a promise we control explicitly so the
+		// test cleans up its own timer instead of leaving a long setTimeout
+		// pending past the assertion. Pattern matters — copy-pasted tests
+		// with leaked timers add up.
+		let resolveRun: ((value: AutomationRun | null) => void) | undefined;
+		const runPromise = new Promise<AutomationRun | null>((resolve) => {
+			resolveRun = resolve;
+		});
+		const slowCtx = makeCtx({
+			handleRunSyncWaitMs: 20,
+			runNow: () => runPromise,
+		});
+		handleCreate(
+			createArgs("Slow", "Takes forever", { type: "interval", intervalMs: 60_000 }),
+			slowCtx,
+		);
+
+		try {
+			const result = await handleRun({ name: "Slow" }, slowCtx);
+
+			// Narrow to the "dispatched" branch of the union — if the
+			// handler ever stops emitting this branch (regression to a
+			// blocking handleRun), this test fails to compile.
+			if (!("status" in result)) {
+				throw new Error(
+					`expected dispatched envelope, got ${JSON.stringify(result)}`,
+				);
+			}
+			expect(result.status).toBe("dispatched");
+			expect(result.automationId).toBe("slow");
+			expect(result.message).toContain("still running");
+		} finally {
+			// Drain the pending runNow promise so it doesn't sit live past
+			// the test (handleRun no longer awaits it after the sync-wait
+			// times out, and Bun's runner doesn't pin the suite on it, but
+			// hygiene matters when the file grows).
+			resolveRun?.(null);
+		}
 	});
 });
 

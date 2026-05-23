@@ -1,5 +1,6 @@
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import type { Runtime } from "../../src/runtime/runtime.ts";
+import { WorkspaceContext } from "../../src/workspace/context.ts";
 
 /**
  * Default workspace ID for integration tests.
@@ -7,6 +8,26 @@ import type { Runtime } from "../../src/runtime/runtime.ts";
  * dev-mode fallback. This constant standardizes the ID used across tests.
  */
 export const TEST_WORKSPACE_ID = "ws_test";
+
+/**
+ * Construct a `WorkspaceContext` for unit tests that don't have a full
+ * `Runtime` available. Produces the same `WorkspaceContext` instance
+ * type as `Runtime.getWorkspaceContext(wsId)`, but the signature
+ * intentionally differs: the runtime form takes only `wsId` (the
+ * runtime owns the workDir), while this helper takes `(workDir, wsId)`
+ * so tests can point at a `mkdtempSync(...)` directory without
+ * bootstrapping the whole platform.
+ *
+ * Use this anywhere a test fixture previously passed `(wsId, workDir)`
+ * pairs to free functions — the resulting context is the same
+ * production code uses today.
+ */
+export function makeTestWorkspaceContext(
+  workDir: string,
+  wsId: string = TEST_WORKSPACE_ID,
+): WorkspaceContext {
+  return new WorkspaceContext({ wsId, workDir });
+}
 
 /**
  * Provision a workspace for integration tests.

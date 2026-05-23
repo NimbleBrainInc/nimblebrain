@@ -2,6 +2,8 @@ import { existsSync, mkdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { writeJsonAtomic } from "../util/atomic-json.ts";
+import { WorkspaceContext } from "../workspace/context.ts";
+import { WORKSPACE_ID_RE } from "../workspace/workspace-store.ts";
 
 /**
  * Per-tool permission policies for installed connectors. Stored
@@ -136,8 +138,20 @@ export class PermissionStore {
       if (!ID_RE.test(owner.userId)) return null;
       return join(this.workDir, "users", owner.userId, "permissions.json");
     }
-    if (!ID_RE.test(owner.wsId)) return null;
-    return join(this.workDir, "workspaces", owner.wsId, "permissions.json");
+    // Workspace branch validates against the strict `WORKSPACE_ID_RE`
+    // (`ws_<slug>`), not the laxer local `ID_RE`. Reason: the path is
+    // built through `WorkspaceContext`, which enforces `WORKSPACE_ID_RE`
+    // at construction. If we let a wsId pass the local guard but fail
+    // the context's, this function would throw instead of returning
+    // null — silently tightening the "null on malformed" contract.
+    // Production wsIds always come from `WorkspaceStore.create` which
+    // also enforces `WORKSPACE_ID_RE`, so this guard is defense in
+    // depth against a future caller that bypasses the store.
+    if (!WORKSPACE_ID_RE.test(owner.wsId)) return null;
+    return new WorkspaceContext({ wsId: owner.wsId, workDir: this.workDir }).getDataPath(
+      "root",
+      "permissions.json",
+    );
   }
 }
 

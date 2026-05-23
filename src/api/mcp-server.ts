@@ -20,6 +20,26 @@
  *      the load balancer's job (cookie stickiness, header-hash), not the
  *      registry's.
  *
+ * Reclamation policy on the transport map (the layer that holds the heap):
+ *
+ *   - **Idle TTL** — a periodic sweep closes any transport whose
+ *     `lastAccessedAt` is older than the configured idle TTL. Same TTL the
+ *     registry uses; one knob (`MCP_SESSION_TTL_SECONDS`). This releases
+ *     orphaned transports from clients that vanish without sending DELETE
+ *     (mobile backgrounding, closed tabs, abandoned OAuth flows). The
+ *     registry's own TTL becomes redundant safety on the metadata layer.
+ *
+ *   - **LRU on capacity** — the map is ordered most-recently-used last.
+ *     When a new initialize arrives at capacity, the least-recently-used
+ *     transport is closed and replaced. Capacity overflow is **not** a
+ *     client error; well-formed initializes always succeed. The cap
+ *     (`MCP_MAX_SESSIONS`) is a memory-budget device, not a feature gate.
+ *
+ * Both reclamation paths funnel through `evict(sid, reason)`, which removes
+ * the entry from the map *before* calling `close()` — preventing a
+ * concurrent request from finding a half-dead transport between the close
+ * call and the SDK's `onclose` cascade.
+ *
  * On a request whose sessionId we don't have a local transport for:
  *
  *   - Registry says nothing exists → `not_found`. Session evicted or never
@@ -31,7 +51,10 @@
  *
  * Both return 404 with a JSON-RPC envelope; `error.data.reason` lets
  * operators correlate logs without the registry having to know what an
- * "instance" is.
+ * "instance" is. During eviction there is a small window where the local
+ * map has already removed the entry but the registry-side delete has not
+ * yet landed — in that window the response carries `reason: "unavailable"`
+ * instead of `"not_found"`. Not a bug; operators should be aware.
  */
 
 import { readFileSync } from "node:fs";
@@ -82,17 +105,22 @@ const MCP_SERVER_VERSION = process.env.NB_VERSION || mcpPkg.version;
 
 /* ── Capacity limit (configurable via env) ──
  *
- * Sessions are evicted on idle TTL (managed by the injected SessionRegistry,
- * not by this module). The cap below is a memory ceiling on the local
- * transport map: a misbehaving client that re-inits on every request can't
- * blow the heap by allocating transports faster than the registry's TTL
- * reclaims them. Override via `MCP_MAX_SESSIONS`.
+ * The cap is a memory ceiling on the local transport map. When a new
+ * initialize lands at capacity, the least-recently-used transport is
+ * evicted to make room — we never refuse a well-formed initialize.
+ * Override via `MCP_MAX_SESSIONS`.
  *
- * The TTL knob (`MCP_SESSION_TTL_SECONDS` / `sessionStore.ttlSeconds`) is
- * applied in `Runtime.getSessionStoreTtlMs()` — it shapes the registry,
- * not this map.
+ * Idle reclamation is independent: a periodic sweep closes transports
+ * whose `lastAccessedAt` is past the idle TTL. Same TTL knob the
+ * registry uses (`MCP_SESSION_TTL_SECONDS` / `sessionStore.ttlSeconds`),
+ * applied in `Runtime.getSessionStoreTtlMs()` and threaded into the
+ * host. Under normal load the cap should never bind; LRU is the safety
+ * valve, idle TTL is the primary release path.
  */
 const MAX_MCP_SESSIONS = parsePositiveIntEnv("MCP_MAX_SESSIONS", 100);
+
+/** Sweep cadence for the idle reclamation loop. Matches the in-memory registry. */
+const DEFAULT_SWEEP_INTERVAL_MS = 60_000;
 
 /**
  * Validate a positive-integer env var. Rejects NaN / non-positive values
@@ -115,6 +143,31 @@ export function parsePositiveIntEnv(name: string, fallback: number): number {
 interface TransportEntry {
   transport: WebStandardStreamableHTTPServerTransport;
   workspaceId: string;
+  /**
+   * Wall-clock ms of the last request that touched this transport. Drives
+   * both idle eviction (sweep closes entries older than `idleTtlMs`) and
+   * LRU ordering (the Map is mutated on each touch so iteration order is
+   * least-recently-used first).
+   */
+  lastAccessedAt: number;
+}
+
+export interface McpServerHostOptions {
+  registry: SessionRegistry;
+  /**
+   * Idle TTL in ms. Transports with no activity past this window are
+   * evicted by the periodic sweep. Required: there is no sensible default
+   * that wouldn't silently disable eviction on misconfiguration.
+   */
+  idleTtlMs: number;
+  /** Soft cap on concurrent transports. Overflow evicts least-recently-used. */
+  maxSessions?: number;
+  /**
+   * Sweep cadence in ms. Internal knob; production uses
+   * `DEFAULT_SWEEP_INTERVAL_MS`. Tests override to advance faster than
+   * wall-clock so short-TTL assertions don't take seconds.
+   */
+  sweepIntervalMs?: number;
 }
 
 /** Workspace context captured at session creation time. */
@@ -149,9 +202,35 @@ const TASKS_CAPABILITY: NonNullable<ServerCapabilities["tasks"]> = {
 export class McpServerHost {
   private readonly transports = new Map<string, TransportEntry>();
   private readonly registry: SessionRegistry;
+  private readonly idleTtlMs: number;
+  private readonly maxSessions: number;
+  private readonly sweepInterval: ReturnType<typeof setInterval>;
 
-  constructor(opts: { registry: SessionRegistry }) {
+  constructor(opts: McpServerHostOptions) {
     this.registry = opts.registry;
+    this.idleTtlMs = opts.idleTtlMs;
+    this.maxSessions = opts.maxSessions ?? MAX_MCP_SESSIONS;
+
+    // Validate up-front: silent eviction-disabled state must not ship to
+    // prod. Mirrors the philosophy of `parsePositiveIntEnv` for the env path.
+    if (!Number.isFinite(this.idleTtlMs) || this.idleTtlMs <= 0) {
+      throw new Error(`McpServerHost: idleTtlMs must be a positive number, got ${this.idleTtlMs}`);
+    }
+    if (
+      !Number.isFinite(this.maxSessions) ||
+      this.maxSessions <= 0 ||
+      !Number.isInteger(this.maxSessions)
+    ) {
+      throw new Error(
+        `McpServerHost: maxSessions must be a positive integer, got ${this.maxSessions}`,
+      );
+    }
+
+    const intervalMs = opts.sweepIntervalMs ?? DEFAULT_SWEEP_INTERVAL_MS;
+    this.sweepInterval = setInterval(() => this.sweepIdle(Date.now()), intervalMs);
+    if (typeof this.sweepInterval === "object" && "unref" in this.sweepInterval) {
+      this.sweepInterval.unref();
+    }
   }
 
   /**
@@ -201,6 +280,7 @@ export class McpServerHost {
    * during graceful server stop.
    */
   async shutdown(): Promise<void> {
+    clearInterval(this.sweepInterval);
     for (const [sid, entry] of this.transports) {
       try {
         await entry.transport.close();
@@ -230,9 +310,15 @@ export class McpServerHost {
     if (sessionId) {
       const local = this.transports.get(sessionId);
       if (local) {
-        // Fast path: we own this transport. Best-effort registry touch
-        // keeps the cluster-shared TTL aligned without blocking the request.
-        this.registry.touch(sessionId, Date.now()).catch((err) => {
+        // Fast path: we own this transport. Touch + re-insert moves the
+        // entry to the MRU end of the Map so LRU eviction picks the oldest
+        // first. Best-effort registry touch keeps the cluster-shared TTL
+        // aligned without blocking the request.
+        const now = Date.now();
+        local.lastAccessedAt = now;
+        this.transports.delete(sessionId);
+        this.transports.set(sessionId, local);
+        this.registry.touch(sessionId, now).catch((err) => {
           log.warn(`[mcp] registry touch failed: ${(err as Error).message}`);
         });
         return local.transport.handleRequest(request);
@@ -255,8 +341,13 @@ export class McpServerHost {
       return jsonRpcError(400, -32000, "Bad Request: No valid session ID provided");
     }
 
-    if (this.transports.size >= MAX_MCP_SESSIONS) {
-      return jsonRpcError(429, -32000, "Too many active sessions");
+    // At capacity, evict the least-recently-used transport (front of the
+    // Map iteration order) before admitting the new initialize. Well-formed
+    // initializes always succeed; the cap is a memory budget, not a 4xx.
+    while (this.transports.size >= this.maxSessions) {
+      const oldest = this.transports.keys().next();
+      if (oldest.done) break;
+      this.evict(oldest.value, "pressure");
     }
 
     return this.initializeSession(request, body, toolRegistry, features, workspaceCtx);
@@ -354,7 +445,7 @@ export class McpServerHost {
           return;
         }
 
-        this.transports.set(sid, { transport, workspaceId: wsId });
+        this.transports.set(sid, { transport, workspaceId: wsId, lastAccessedAt: now });
         // Fire-and-forget the registry write. The session is already live
         // on this process; if the registry is down we still serve the client.
         this.registry
@@ -385,6 +476,47 @@ export class McpServerHost {
     const server = createServer(toolRegistry, features, workspaceCtx);
     await server.connect(transport);
     return transport.handleRequest(request, { parsedBody });
+  }
+
+  /**
+   * Close a transport and remove it from the lookup map. Used by both
+   * reclamation paths (`sweepIdle` and capacity-pressure eviction in
+   * `handlePost`).
+   *
+   * Order matters: remove from `this.transports` BEFORE calling `close()`.
+   * The SDK's `close()` fires `transport.onclose` synchronously inside its
+   * body, which would run the existing cleanup cascade (map delete +
+   * registry delete) — but during the window between the close call and
+   * onclose firing, a concurrent request to the fast path could still see
+   * the entry and dispatch into a half-dead transport. Deleting first
+   * closes that window. The cascade's second `transports.delete(sid)` then
+   * becomes an idempotent no-op.
+   *
+   * Registry cleanup is delegated to the existing `transport.onclose`
+   * handler so we don't double-call `bestEffortDelete` from both paths.
+   */
+  private evict(sessionId: string, reason: "idle" | "pressure"): void {
+    const entry = this.transports.get(sessionId);
+    if (!entry) return;
+    const idleMs = Date.now() - entry.lastAccessedAt;
+    log.info(`[mcp] evicting transport reason=${reason} sessionId=${sessionId} idleMs=${idleMs}`);
+    this.transports.delete(sessionId);
+    entry.transport.close().catch((err) => {
+      log.warn(`[mcp] evict close failed sessionId=${sessionId}: ${(err as Error).message}`);
+    });
+  }
+
+  /**
+   * Walk the transport map oldest-first and evict any entry whose idle
+   * window has elapsed. Map iteration order is LRU order (we re-insert on
+   * touch), so we can stop at the first entry that's still within TTL —
+   * everything after it is newer.
+   */
+  private sweepIdle(now: number): void {
+    for (const [sid, entry] of this.transports) {
+      if (now - entry.lastAccessedAt <= this.idleTtlMs) break;
+      this.evict(sid, "idle");
+    }
   }
 
   /**

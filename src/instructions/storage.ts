@@ -1,5 +1,6 @@
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { WorkspaceContext } from "../workspace/context.ts";
 import {
   type InstructionsMeta,
   MAX_INSTRUCTIONS_BYTES,
@@ -95,7 +96,11 @@ export class InstructionsStore {
     if (opts.scope === "org") {
       return join(this.workDir, "org");
     }
-    return join(this.workDir, "workspaces", opts.wsId!);
+    // Workspace overlay lives at the workspace root. Routed through the
+    // typed context so the layout has one definition site
+    // (`src/workspace/context.ts`). `validateScopeArgs` above already
+    // re-checked the wsId; the context constructor re-validates (cheap).
+    return new WorkspaceContext({ wsId: opts.wsId!, workDir: this.workDir }).getRoot();
   }
 }
 

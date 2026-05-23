@@ -2,28 +2,29 @@ import { NoopEventSink } from "../adapters/noop-events.ts";
 import type { BundleLifecycleManager } from "../bundles/lifecycle.ts";
 import { getMpak } from "../bundles/mpak.ts";
 import { deriveServerName } from "../bundles/paths.ts";
+import type { BundleMcpDeps } from "../bundles/startup.ts";
 import { startBundleSource } from "../bundles/startup.ts";
-import type { BundleManifest } from "../bundles/types.ts";
+import type { BundleManifest, BundleRef } from "../bundles/types.ts";
 import {
   installBundleInWorkspace,
   uninstallBundleFromWorkspace,
 } from "../bundles/workspace-ops.ts";
 import { isToolEnabled, type ResolvedFeatures } from "../config/features.ts";
 import type { ConfirmationGate } from "../config/privilege.ts";
-import { resolveUserConfig } from "../config/workspace-credentials.ts";
 import { textContent } from "../engine/content-helpers.ts";
-import type { EventSink, ToolResult } from "../engine/types.ts";
+import type { EventSink, ToolPromotionControls, ToolResult, ToolSchema } from "../engine/types.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import type { Skill } from "../skills/types.ts";
+import { WorkspaceContext } from "../workspace/context.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
 import { createManageConnectorsTool } from "./connector-tools.ts";
-import type { ManageConversationContext } from "./conversation-tools.ts";
 import { buildCoreResourceMap } from "./core-resources/index.ts";
 import { createCoreToolDefs } from "./core-source.ts";
 import type { DelegateContext } from "./delegate.ts";
 import { createDelegateTool } from "./delegate.ts";
 import { defineInProcessApp, type InProcessTool } from "./in-process-app.ts";
 import { McpSource } from "./mcp-source.ts";
+import { createManageToolsToolDefs } from "./platform/manage-tools.ts";
 import type { ToolRegistry } from "./registry.ts";
 import { createManageRegistriesTool } from "./registry-tools.ts";
 import { createManageUsersTool, type ManageUsersContext } from "./user-tools.ts";
@@ -45,6 +46,20 @@ export interface ManageBundleContext {
   // manage_app install/configure flow spawns bundles the same way the
   // platform does at boot; both paths need the live runtime sink.
   eventSink: EventSink;
+  /**
+   * Per-workspace host-resources deps factory. Threaded into
+   * `installBundleInWorkspace` so the bundle's McpSource registers
+   * `ai.nimblebrain/resources/*` inbound handlers. Optional for test
+   * runtimes that don't wire the host-resources subsystem; production
+   * runtime always sets this. See `Runtime.start()`.
+   */
+  bundleMcpDepsFactory?: (wsId: string) => BundleMcpDeps;
+}
+
+export type ToolPromotionContext = ToolPromotionControls;
+
+export interface ToolEligibilityContext {
+  isToolEligible(tool: ToolSchema): boolean;
 }
 
 /** Callback that returns the current loaded skills from the runtime. */
@@ -80,11 +95,13 @@ export async function createSystemTools(
   manageUsersCtx?: ManageUsersContext,
   manageWorkspacesCtx?: ManageWorkspacesContext,
   manageMembersCtx?: ManageMembersContext,
-  manageConversationCtx?: ManageConversationContext,
   manageBundleCtx?: ManageBundleContext,
+  toolPromotionCtx?: ToolPromotionContext,
+  toolEligibilityCtx?: ToolEligibilityContext,
 ): Promise<McpSource> {
   // Core tools (always available, not feature-gated)
   const coreToolDefs: InProcessTool[] = runtime ? createCoreToolDefs(runtime) : [];
+  const manageToolsToolDefs: InProcessTool[] = createManageToolsToolDefs(toolPromotionCtx);
 
   const systemToolDefs: InProcessTool[] = [
     {
@@ -145,7 +162,8 @@ export async function createSystemTools(
         // scope === "tools" (default)
         const q = query.toLowerCase();
         const all = (await getRegistry().availableTools()).filter(
-          (t) => !t.annotations?.["ai.nimblebrain/internal"],
+          (t) =>
+            toolEligibilityCtx?.isToolEligible(t) ?? !t.annotations?.["ai.nimblebrain/internal"],
         );
         if (!q) return groupToolsBySource(all);
         const matches = all.filter(
@@ -224,6 +242,7 @@ export async function createSystemTools(
             manageBundleCtx.workDir,
             gate,
             mpakHome,
+            manageBundleCtx.bundleMcpDepsFactory?.(wsId),
           );
         }
         return { content: textContent(`Unknown action: ${action}`), isError: true };
@@ -242,16 +261,13 @@ export async function createSystemTools(
   }
 
   if (manageWorkspacesCtx) {
-    // Merge member and conversation contexts into the workspace tool
+    // Merge member context into the workspace tool. The conversation
+    // context was removed in Stage 1's schema purge (share/unshare/
+    // participant actions are gone — `manage_workspaces` no longer
+    // needs a conversation store).
     const mergedCtx = {
       ...manageWorkspacesCtx,
       ...(manageMembersCtx ? { userStore: manageMembersCtx.userStore } : {}),
-      ...(manageConversationCtx
-        ? {
-            conversationStore: manageConversationCtx.conversationStore,
-            conversationEventManager: manageConversationCtx.conversationEventManager,
-          }
-        : {}),
     };
     systemToolDefs.push(createManageWorkspacesTool(mergedCtx));
   }
@@ -290,7 +306,7 @@ export async function createSystemTools(
     {
       name: "nb",
       version: "1.0.0",
-      tools: [...coreToolDefs, ...filteredSystemDefs],
+      tools: [...coreToolDefs, ...manageToolsToolDefs, ...filteredSystemDefs],
       resources: buildCoreResourceMap(),
     },
     eventSink ?? new NoopEventSink(),
@@ -724,6 +740,7 @@ async function configureBundle(
   workDir: string,
   confirmGate?: ConfirmationGate,
   mpakHome?: string,
+  bundleMcp?: BundleMcpDeps,
 ): Promise<ToolResult> {
   try {
     const mpak = getMpak(mpakHome!);
@@ -761,12 +778,11 @@ async function configureBundle(
     // re-prompts for every field so users can update existing credentials.
     // Prompted values are persisted to the workspace credential store at
     // `{workDir}/workspaces/{wsId}/credentials/{bundle-slug}.json` — no
-    // round-trip through `~/.mpak/config.json`.
-    await resolveUserConfig({
+    // round-trip through `~/.mpak/config.json`. Routed through
+    // `WorkspaceContext` so the store's wsId is bound and validated once.
+    await new WorkspaceContext({ wsId, workDir }).getCredentialStore().resolveUserConfig({
       bundleName: name,
       userConfigSchema: userConfig,
-      wsId,
-      workDir,
       gate: confirmGate,
       forcePrompt: true,
     });
@@ -787,6 +803,7 @@ async function configureBundle(
     const result = await startBundleSource({ name }, registry, eventSink, undefined, {
       wsId,
       workDir,
+      bundleMcp,
     });
 
     const tools = await registry.availableTools();
@@ -817,7 +834,7 @@ async function installBundleInWorkspaceViaCtx(
   ctx: ManageBundleContext,
 ): Promise<ToolResult> {
   try {
-    const bundleRef = { name } as import("../bundles/types.ts").BundleRef;
+    const bundleRef = { name } as BundleRef;
 
     // Spawn the bundle process with plain server name in workspace registry
     const entry = await installBundleInWorkspace(
@@ -829,6 +846,7 @@ async function installBundleInWorkspaceViaCtx(
       {
         allowInsecureRemotes: ctx.allowInsecureRemotes,
         workDir: ctx.workDir,
+        bundleMcp: ctx.bundleMcpDepsFactory?.(wsId),
       },
     );
 

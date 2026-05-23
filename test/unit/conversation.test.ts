@@ -21,13 +21,13 @@ function conversationTests(name: string, makeStore: () => ConversationStore) {
     });
 
     it("creates a conversation with a unique id", async () => {
-      const conv = await store.create();
+      const conv = await store.create({ ownerId: "user_test" });
       expect(conv.id).toMatch(/^conv_/);
       expect(conv.createdAt).toBeTruthy();
     });
 
     it("loads an existing conversation", async () => {
-      const conv = await store.create();
+      const conv = await store.create({ ownerId: "user_test" });
       const loaded = await store.load(conv.id);
       expect(loaded).not.toBeNull();
       expect(loaded!.id).toBe(conv.id);
@@ -39,7 +39,7 @@ function conversationTests(name: string, makeStore: () => ConversationStore) {
     });
 
     it("appends and retrieves messages", async () => {
-      const conv = await store.create();
+      const conv = await store.create({ ownerId: "user_test" });
       await store.append(conv, msg("user", "Hello"));
       await store.append(conv, msg("assistant", "Hi there"));
       await store.append(conv, msg("user", "How are you?"));
@@ -53,7 +53,7 @@ function conversationTests(name: string, makeStore: () => ConversationStore) {
     });
 
     it("respects limit parameter", async () => {
-      const conv = await store.create();
+      const conv = await store.create({ ownerId: "user_test" });
       await store.append(conv, msg("user", "First"));
       await store.append(conv, msg("assistant", "Second"));
       await store.append(conv, msg("user", "Third"));
@@ -65,13 +65,13 @@ function conversationTests(name: string, makeStore: () => ConversationStore) {
     });
 
     it("returns empty history for new conversation", async () => {
-      const conv = await store.create();
+      const conv = await store.create({ ownerId: "user_test" });
       const history = await store.history(conv);
       expect(history).toHaveLength(0);
     });
 
     it("preserves metadata in history output", async () => {
-      const conv = await store.create();
+      const conv = await store.create({ ownerId: "user_test" });
       await store.append(conv, {
         ...msg("assistant", "Matched skill"),
         metadata: { skill: "test-skill", toolCalls: [] },
@@ -106,7 +106,7 @@ describe("JsonlConversationStore (persistence)", () => {
 
   it("persists across store instances", async () => {
     const store1 = new JsonlConversationStore(persistDir);
-    const conv = await store1.create();
+    const conv = await store1.create({ ownerId: "user_test" });
     await store1.append(conv, msg("user", "Remember me"));
 
     // New instance, same directory
@@ -122,7 +122,11 @@ describe("JsonlConversationStore (persistence)", () => {
 
 describe("windowMessages", () => {
   function wmsg(role: "user" | "assistant", text: string): Message {
-    return { role, content: text };
+    // V3 shape: user/assistant content is an array of typed parts. Some
+    // older tests passed strings here, which fell through the legacy
+    // `chars/4` reducer; the part-aware `estimateMessageTokens` is strict
+    // about the V3 shape so all helpers below use the correct one.
+    return { role, content: [{ type: "text", text }] } as Message;
   }
 
   it("returns all messages when under budget", () => {

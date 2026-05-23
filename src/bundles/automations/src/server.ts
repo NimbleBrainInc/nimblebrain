@@ -18,6 +18,14 @@ import {
   ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { Cron } from "croner";
+import type {
+  AutomationSummary,
+  AutomationsCancelOutput,
+  AutomationsListOutput,
+  AutomationsRunOutput,
+  AutomationsRunsOutput,
+  AutomationsStatusOutput,
+} from "../../../tools/platform/schemas/automations.ts";
 import { createAutomation, deleteAutomation, updateAutomation } from "./domain.ts";
 import { executeHttp } from "./executor.ts";
 import { Scheduler } from "./scheduler.ts";
@@ -271,6 +279,13 @@ export interface ToolContext {
   currentUserId?: string;
   /** Current workspace ID (for setting automation workspace scope at creation time). */
   currentWorkspaceId?: string;
+  /**
+   * Override the `handleRun` sync-wait deadline (ms). Production callers
+   * leave this unset and get the default `HANDLE_RUN_SYNC_WAIT_MS`; tests
+   * use it to exercise the "dispatched, still running" envelope without
+   * having to wait 30s. Has no effect outside `handleRun`.
+   */
+  handleRunSyncWaitMs?: number;
 }
 
 /**
@@ -423,7 +438,7 @@ export function handleDelete(args: Record<string, unknown>, ctx: ToolContext): o
   return deleteAutomation(name, ctx);
 }
 
-export function handleList(args: Record<string, unknown>, ctx: ToolContext): object {
+export function handleList(args: Record<string, unknown>, ctx: ToolContext): AutomationsListOutput {
   const defs = ctx.definitions();
   const now = Date.now();
 
@@ -437,7 +452,7 @@ export function handleList(args: Record<string, unknown>, ctx: ToolContext): obj
     automations = automations.filter((a) => a.source === args.source);
   }
 
-  const summaries = automations.map((a) => ({
+  const summaries: AutomationSummary[] = automations.map((a) => ({
     id: a.id,
     name: a.name,
     description: a.description,
@@ -459,7 +474,10 @@ export function handleList(args: Record<string, unknown>, ctx: ToolContext): obj
   };
 }
 
-export function handleStatus(args: Record<string, unknown>, ctx: ToolContext): object {
+export function handleStatus(
+  args: Record<string, unknown>,
+  ctx: ToolContext,
+): AutomationsStatusOutput {
   const name = args.name as string;
   if (!name) throw new Error("Missing required field: name");
 
@@ -503,7 +521,7 @@ export function handleStatus(args: Record<string, unknown>, ctx: ToolContext): o
   };
 }
 
-export function handleRuns(args: Record<string, unknown>, ctx: ToolContext): object {
+export function handleRuns(args: Record<string, unknown>, ctx: ToolContext): AutomationsRunsOutput {
   const automationId = args.automationId as string | undefined;
   const status = args.status as AutomationRun["status"] | undefined;
   const since = args.since as string | undefined;
@@ -520,7 +538,21 @@ export function handleRuns(args: Record<string, unknown>, ctx: ToolContext): obj
   return { runs, total: runs.length };
 }
 
-export async function handleRun(args: Record<string, unknown>, ctx: ToolContext): Promise<object> {
+/**
+ * Maximum time `handleRun` will hold the MCP request awaiting completion
+ * before returning a "dispatched, still running" envelope. Sized well
+ * below the SDK's 60s default request timeout — without this cap, any
+ * automation that takes longer than ~60s collides with the timeout and
+ * the agent sees `-32001 Request timed out` while the run is healthy
+ * and proceeding in the background. The scheduler continues to track
+ * the run; callers can poll `automations__runs` for the final record.
+ */
+const HANDLE_RUN_SYNC_WAIT_MS = 30_000;
+
+export async function handleRun(
+  args: Record<string, unknown>,
+  ctx: ToolContext,
+): Promise<AutomationsRunOutput> {
   const name = args.name as string;
   if (!name) throw new Error("Missing required field: name");
 
@@ -535,8 +567,53 @@ export async function handleRun(args: Record<string, unknown>, ctx: ToolContext)
 
   log(`handleRun: found "${name}" (id=${automation.id}), dispatching via runNow...`);
 
-  const run = await ctx.runNow(automation.id);
-  if (!run) {
+  // Race the run against a sync-wait deadline. Quick automations finish
+  // inside the window and return their full run record; longer ones get
+  // a "dispatched" envelope so the agent can poll instead of seeing a
+  // false -32001 failure.
+  //
+  // `Scheduler.dispatchRun` synthesizes a failure record for any
+  // executor throw and returns it — so the EXECUTOR side never rejects.
+  // BUT `updateAfterRun` (called from `dispatchRun` after the executor
+  // settles) does filesystem I/O — `appendRun` + `saveDefinitions` — and
+  // can reject on disk-full, EBUSY, or permission flaps. In the
+  // synchronous-completion path the rejection surfaces through
+  // Promise.race and our outer catch handles it; in the dispatched path
+  // the run keeps going in the background and an `updateAfterRun` throw
+  // would become an unhandled rejection. The `.catch(noop)` swallows
+  // exactly that case — the scheduler's own logging is the right place
+  // for filesystem diagnostics, not the MCP request frame.
+  const runPromise = ctx.runNow(automation.id);
+  runPromise.catch(() => {});
+
+  const waitMs = ctx.handleRunSyncWaitMs ?? HANDLE_RUN_SYNC_WAIT_MS;
+  const PENDING = Symbol("pending");
+  // Track the timer so we can clear it when the run wins the race —
+  // otherwise the pending timeout pins the event loop for up to waitMs
+  // past handleRun returning. Quick automations + bursty traffic would
+  // accumulate live timers under load and delay clean process shutdown.
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<typeof PENDING>((resolve) => {
+    timer = setTimeout(() => resolve(PENDING), waitMs);
+  });
+  let outcome: AutomationRun | null | typeof PENDING;
+  try {
+    outcome = await Promise.race([runPromise, timeoutPromise]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+
+  if (outcome === PENDING) {
+    return {
+      status: "dispatched",
+      automationId: automation.id,
+      message:
+        `Started "${name}" — still running after ${waitMs / 1000}s. ` +
+        `Use automations__runs to check completion.`,
+    };
+  }
+
+  if (!outcome) {
     // Debug: dump scheduler state to understand why runNow returned null
     const schedulerDefs = ctx.definitions();
     const ids = Array.from(schedulerDefs.keys());
@@ -548,10 +625,13 @@ export async function handleRun(args: Record<string, unknown>, ctx: ToolContext)
     );
   }
 
-  return { run };
+  return { run: outcome };
 }
 
-export function handleCancel(args: Record<string, unknown>, ctx: ToolContext): object {
+export function handleCancel(
+  args: Record<string, unknown>,
+  ctx: ToolContext,
+): AutomationsCancelOutput {
   const name = args.name as string;
   if (!name) throw new Error("Missing required field: name");
 

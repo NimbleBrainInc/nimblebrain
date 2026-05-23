@@ -50,6 +50,15 @@ export interface DelegateContext {
   configThinking?: "off" | "adaptive" | "enabled";
   /** Operator-pinned thinking budget (raw runtime config, may be undefined). */
   configThinkingBudgetTokens?: number;
+  /**
+   * Per-engine tool-promotion factory. Threaded into childConfig so the
+   * sub-agent installs ITS OWN promotion controls in the request context
+   * for the lifetime of the child run, instead of inheriting (and
+   * mutating) the parent's via AsyncLocalStorage. The factory's
+   * `registerControls` save/restores `reqCtx.toolPromotion` so nested
+   * engines stack cleanly.
+   */
+  toolPromotion?: EngineConfig["toolPromotion"];
 }
 
 /**
@@ -204,13 +213,19 @@ export function createDelegateTool(ctx: DelegateContext): InProcessTool {
           maxOutputTokens: childMaxOutputTokens,
         });
 
-        // Create child engine config
+        // Create child engine config. Pass through the toolPromotion
+        // factory so the child engine installs ITS OWN promotion controls
+        // (saving the parent's, restoring on its run's finally). Without
+        // this, AsyncLocalStorage propagates the parent's reqCtx.toolPromotion
+        // and the child's nb__manage_tools calls would mutate the parent's
+        // tool list while leaving the child's own list untouched.
         const childConfig: EngineConfig = {
           model: modelString,
           maxIterations: cappedIterations,
           maxInputTokens: ctx.defaultMaxInputTokens,
           maxOutputTokens: childMaxOutputTokens,
           ...(childThinking ? { thinking: childThinking } : {}),
+          ...(ctx.toolPromotion ? { toolPromotion: ctx.toolPromotion } : {}),
         };
 
         // Wrap the parent router in a filtering proxy when tool globs are active.

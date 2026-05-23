@@ -1,8 +1,12 @@
-import { BRIDGE_HELPER } from "./_bridge.ts";
-
-export const HOME_BRIEFING_INLINE_SCRIPT =
-  BRIDGE_HELPER +
-  `
+// The inline briefing widget subscribes via the Synapse SDK (`App.on`),
+// which maps the host's JSON-RPC `ui/notifications/tool-result` to the
+// short `"tool-result"` event name and delivers the
+// `{ content, structuredContent, raw }` payload. Listening directly for
+// `"synapse/tool-result"` (the prior shape) never fires — the host
+// doesn't emit that method. `autoResize: true` lets the SDK send
+// `ui/notifications/size-changed` itself; no raw postMessage needed.
+// See issue #220.
+export const HOME_BRIEFING_INLINE_SCRIPT = `
 const app = document.getElementById("app");
 
 // --- Markdown helpers ---
@@ -55,29 +59,18 @@ function renderInline(data) {
 
   html += '</div>';
   app.innerHTML = html;
-
-  // Report height for auto-sizing
-  try {
-    var height = document.body.scrollHeight;
-    window.parent.postMessage({ method: "ui/notifications/size-changed", params: { height: height } }, "*");
-  } catch (_) {
-    // postMessage may fail if parent frame is detached — not actionable
-  }
 }
 
-// Listen for tool result from host
-window.addEventListener("message", function(e) {
-  var msg = e.data;
-  if (!msg || typeof msg !== "object") return;
-
-  if (msg.method === "synapse/tool-result") {
-    var data = msg.params && msg.params.result;
-    if (data && typeof data === "object") {
-      renderInline(typeof data === "string" ? JSON.parse(data) : data);
-    }
-  }
-});
-
-// Show minimal loading state
+// Show minimal loading state immediately so the widget never looks blank.
 app.innerHTML = '<div class="inline-briefing"><div class="greeting" style="color:var(--muted,#71717a)">Loading briefing...</div></div>';
+
+Synapse.connect({ name: "nb-home-briefing-inline", version: "1.0.0", autoResize: true })
+  .then(function(synapseApp) {
+    synapseApp.on("tool-result", function(data) {
+      var payload = data && data.structuredContent;
+      if (payload && typeof payload === "object") {
+        renderInline(payload);
+      }
+    });
+  });
 `;

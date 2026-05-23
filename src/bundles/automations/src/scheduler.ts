@@ -397,6 +397,12 @@ export class Scheduler {
   private async dispatchRun(auto: Automation): Promise<AutomationRun> {
     const controller = new AbortController();
     this.activeRuns.set(auto.id, controller);
+    // Capture real dispatch time so synthesized failure records carry an
+    // honest elapsed window. Without this, a 5-minute hang and a
+    // 100-millisecond setup crash both render as startedAt == completedAt
+    // to the millisecond — operators can't tell the failure modes apart
+    // from the run record alone.
+    const startedAt = new Date().toISOString();
 
     try {
       const run = await this.executor(auto, controller.signal);
@@ -411,7 +417,7 @@ export class Scheduler {
       const failedRun: AutomationRun = {
         id: `run_${Date.now()}_${isAbort ? "cancel" : isTimeout ? "timeout" : "err"}`,
         automationId: auto.id,
-        startedAt: new Date().toISOString(),
+        startedAt,
         completedAt: new Date().toISOString(),
         status: isAbort ? "cancelled" : isTimeout ? "timeout" : "failure",
         inputTokens: 0,

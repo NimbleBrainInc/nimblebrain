@@ -21,10 +21,11 @@ import type { ToolCall, ToolResult } from "./types.ts";
  * behaviour (a tool that fails once with error A, then once with error B,
  * then succeeds, never trips).
  *
- * Pairs with a one-shot system-prompt nudge consumed by the engine on the
- * iteration after a trip — see `needsPromptNudge` / `consumeNudge`. The
- * supervisor itself never aborts the run; the engine reads the verdict and
- * decides what to surface.
+ * The supervisor itself never aborts the run; the engine reads the verdict
+ * and decides what to surface. On a trip the engine also filters the
+ * tripped tool out of the model's toolset for the rest of the run, so the
+ * model can't call the broken tool again regardless of how it reads the
+ * synth directive.
  */
 
 export interface SupervisorConfig {
@@ -62,14 +63,6 @@ export interface RunSupervisor {
    * normalization). Returns the verdict the engine should act on.
    */
   observe(call: ToolCall, result: ToolResult): SupervisorVerdict;
-  /**
-   * True when a synth verdict was issued since the last `consumeNudge` —
-   * the engine should append a single-shot system-prompt nudge to the
-   * next iteration.
-   */
-  needsPromptNudge(): boolean;
-  /** Clear the nudge flag after the engine emits the nudge. */
-  consumeNudge(): void;
   /** Telemetry snapshot. */
   snapshot(): SupervisorSnapshot;
 }
@@ -89,7 +82,6 @@ export function createRunSupervisor(config: SupervisorConfig = {}): RunSuperviso
   const textCap = config.fingerprintTextCap ?? DEFAULT_FINGERPRINT_CAP;
 
   const states = new Map<string, ToolState>();
-  let pendingNudge = false;
 
   function getState(toolName: string): ToolState {
     let s = states.get(toolName);
@@ -101,6 +93,12 @@ export function createRunSupervisor(config: SupervisorConfig = {}): RunSuperviso
   }
 
   function fingerprint(call: ToolCall, result: ToolResult): string {
+    // Known limitation: hashing only the first `textCap` chars can
+    // false-positive on tools that return a long stable preamble (e.g. a
+    // verbose header) followed by a short varying field. Two semantically
+    // distinct results may collapse to the same fingerprint and trip the
+    // supervisor early. Addressable later by hashing head+tail or
+    // structuredContent when present; out of scope here.
     const text = extractTextForModel(result.content).trim().slice(0, textCap);
     return createHash("sha1")
       .update(`${call.name}\0${result.isError ? "E" : "S"}\0${text}`)
@@ -108,15 +106,17 @@ export function createRunSupervisor(config: SupervisorConfig = {}): RunSuperviso
   }
 
   function synthReplacement(toolName: string, originalText: string, repeats: number): ToolResult {
+    // Wording note: this content persists in the conversation log across
+    // future runs, so the message is scoped to *this* tool and phrased as a
+    // record of what happened. No universal directives ("stop using tools",
+    // "end the run") — those rot when reread in a later turn where other
+    // tools are still callable.
     const directive =
-      `[NB supervisor] Tool \`${toolName}\` has returned the same result ${repeats} times in a row. ` +
-      `This is a loop. Stop calling this tool.\n\n` +
-      `Underlying tool output (last call):\n${originalText}\n\n` +
-      `Required action: produce a final response to the user that includes:\n` +
-      `1. What you were trying to accomplish.\n` +
-      `2. The literal error or output above so the user can act on it.\n` +
-      `3. One concrete suggestion (check the connection, narrow the question, try a different tool, etc.).\n\n` +
-      `Do not call any tools. End the run.`;
+      `[NB supervisor] Tool \`${toolName}\` returned the same result ${repeats} times in a row; ` +
+      `this tool has been disabled for the rest of this run.\n\n` +
+      `Underlying output (last call):\n${originalText}\n\n` +
+      `Other tools remain available. Consider an alternative approach or summarize current findings ` +
+      `if no path forward exists.`;
     return {
       content: textContent(directive),
       isError: true,
@@ -129,12 +129,10 @@ export function createRunSupervisor(config: SupervisorConfig = {}): RunSuperviso
 
     if (state.tripped) {
       // Once tripped, every subsequent call to the same tool keeps getting
-      // the synthetic directive. The model receives an unambiguous "this
-      // tool is unusable" signal regardless of whether the upstream call
-      // would now succeed — recovering from a stuck loop happens in a new
-      // run, not mid-run.
+      // the synthetic directive. In practice the engine drops tripped tools
+      // from modelTools so the model can't call again — this branch is a
+      // belt-and-suspenders fallback if a caller invokes the tool anyway.
       const originalText = extractTextForModel(result.content).trim();
-      pendingNudge = true;
       return {
         type: "synth",
         replacement: synthReplacement(call.name, originalText, state.consecutiveRepeats),
@@ -153,7 +151,6 @@ export function createRunSupervisor(config: SupervisorConfig = {}): RunSuperviso
 
     if (state.consecutiveRepeats >= maxRepeats) {
       state.tripped = true;
-      pendingNudge = true;
       const originalText = extractTextForModel(result.content).trim();
       return {
         type: "synth",
@@ -168,10 +165,6 @@ export function createRunSupervisor(config: SupervisorConfig = {}): RunSuperviso
 
   return {
     observe,
-    needsPromptNudge: () => pendingNudge,
-    consumeNudge: () => {
-      pendingNudge = false;
-    },
     snapshot: () => ({
       trippedTools: [...states.entries()].filter(([, s]) => s.tripped).map(([name]) => name),
       callCounts: Object.fromEntries(

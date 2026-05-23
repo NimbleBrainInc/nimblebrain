@@ -509,4 +509,126 @@ describe("createDirectExecutor — recursive-call guard", () => {
 		const result = await executor(automation);
 		expect(result.status).toBe("success");
 	});
+
+	test("forwards a combined signal into chatFn so timeouts cancel in-flight chat work", async () => {
+		// Regression: the old Promise.race pattern rejected at the timeout
+		// but didn't propagate cancellation to the chatFn. The chat kept
+		// running, finished cleanly minutes later, and the result was
+		// silently discarded. Now the chatFn receives a signal that
+		// aborts on the same timeout — so it can cooperatively stop.
+		let receivedSignal: AbortSignal | undefined;
+		let signalFiredDuringChat = false;
+
+		const slowChatFn: ChatFn = async (req) => {
+			receivedSignal = req.signal;
+			// Wait up to 500ms but bail on abort so the test runs fast.
+			await new Promise<void>((resolve) => {
+				const timer = setTimeout(resolve, 500);
+				req.signal?.addEventListener(
+					"abort",
+					() => {
+						signalFiredDuringChat = true;
+						clearTimeout(timer);
+						resolve();
+					},
+					{ once: true },
+				);
+			});
+			// On abort the chat throws — matches engine.run behavior under
+			// signal-driven cancellation.
+			if (req.signal?.aborted) {
+				throw new DOMException("The operation was aborted.", "AbortError");
+			}
+			return {
+				response: "ok",
+				conversationId: "conv_test",
+				toolCalls: [],
+				inputTokens: 100,
+				outputTokens: 50,
+				stopReason: "complete",
+				usage: { iterations: 1 },
+			};
+		};
+
+		const executor = createDirectExecutor(slowChatFn, () => ({
+			workspaceId: "ws_test",
+		}));
+		const automation = makeAutomation({ maxRunDurationMs: 50 });
+
+		await expect(executor(automation)).rejects.toThrow(/timed out after/);
+		expect(receivedSignal).toBeDefined();
+		expect(signalFiredDuringChat).toBe(true);
+	});
+
+	test("external cancel propagates into chatFn signal as AbortError", async () => {
+		// Symmetric to the timeout case: when the scheduler aborts the
+		// run controller (manual cancel, scheduler.stop()), the chatFn's
+		// signal must also fire so the in-flight engine work cancels.
+		let chatSawAbort = false;
+		const slowChatFn: ChatFn = async (req) => {
+			await new Promise<void>((resolve) => {
+				req.signal?.addEventListener(
+					"abort",
+					() => {
+						chatSawAbort = true;
+						resolve();
+					},
+					{ once: true },
+				);
+				setTimeout(resolve, 5000);
+			});
+			throw new DOMException("The operation was aborted.", "AbortError");
+		};
+
+		const executor = createDirectExecutor(slowChatFn, () => ({ workspaceId: "ws_test" }));
+		const externalController = new AbortController();
+		const automation = makeAutomation({ maxRunDurationMs: 10_000 });
+
+		const runPromise = executor(automation, externalController.signal);
+		// Give the chat a tick to start, then cancel.
+		await new Promise((r) => setTimeout(r, 10));
+		externalController.abort();
+
+		await expect(runPromise).rejects.toThrow();
+		expect(chatSawAbort).toBe(true);
+	});
+
+	test("external-cancel wins the race when timeout fires concurrently — no false 'timeout' status", async () => {
+		// Race regression: external abort + timeout firing in the same
+		// tick. Without the `externallyAborted` flag, `timedOut` flips
+		// true under both paths and the catch rewrites the error to
+		// "timed out after Ns" — so the scheduler stamps `status:
+		// "timeout"` on what was really a cancel. Narrow window, but
+		// the whole point of the PR is honest status records.
+		const chatFn: ChatFn = async (req) => {
+			await new Promise<void>((resolve) => {
+				req.signal?.addEventListener("abort", () => resolve(), { once: true });
+				setTimeout(resolve, 5000);
+			});
+			throw new DOMException("The operation was aborted.", "AbortError");
+		};
+
+		const executor = createDirectExecutor(chatFn, () => ({ workspaceId: "ws_test" }));
+		const externalController = new AbortController();
+		// Make the timeout extremely tight so it fires very close to the
+		// external cancel — exercises the race the flag is meant to
+		// disambiguate.
+		const automation = makeAutomation({ maxRunDurationMs: 5 });
+
+		const runPromise = executor(automation, externalController.signal);
+		// Cancel externally in the same tick — both abort sources fire
+		// near-simultaneously.
+		externalController.abort();
+
+		// External cancel must dominate: the error must NOT be the
+		// timeout-shape that `Scheduler.dispatchRun` keys off via
+		// `errorMsg.includes("timed out")`.
+		let caughtMessage = "";
+		try {
+			await runPromise;
+		} catch (e) {
+			caughtMessage = e instanceof Error ? e.message : String(e);
+		}
+		expect(caughtMessage).not.toMatch(/timed out after/);
+	});
 });

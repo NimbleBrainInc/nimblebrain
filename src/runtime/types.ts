@@ -4,6 +4,7 @@ import type { ConfirmationGate } from "../config/privilege.ts";
 import type { ConversationStore } from "../conversation/types.ts";
 import type { EventSink } from "../engine/types.ts";
 import type { ContentPart, FileReference } from "../files/types.ts";
+import type { UserIdentity } from "../identity/provider.ts";
 import type { ProvidersConfig } from "../model/registry.ts";
 import type { TokenUsage } from "../usage/types.ts";
 
@@ -233,7 +234,28 @@ export interface ChatRequest {
   /** Glob patterns filtering which tools are available. Matches use same logic as skill allowed-tools. */
   allowedTools?: string[];
   /** Authenticated user identity for this request. Set by API middleware. */
-  identity?: import("../identity/provider.ts").UserIdentity;
+  identity?: UserIdentity;
+  /**
+   * Cancellation signal forwarded to the engine and threaded down to every
+   * tool call via `EngineConfig.signal`. When aborted, the agent loop stops
+   * before its next iteration; in-flight task-augmented MCP tools receive
+   * `tasks/cancel`; inline tool calls abort their RPC.
+   *
+   * Without this, callers racing `runtime.chat()` against an external
+   * deadline (e.g. the automations executor's `Promise.race` against
+   * `maxRunDurationMs`) ORPHAN the in-flight LLM/tool work — the chat
+   * keeps running, finishes, writes the conversation to disk, but the
+   * caller never sees the result. Production proof: `morning-brief-6am-pt`
+   * runs in ws_nimblebrain_shared completed in 6-7m while the 5m
+   * Promise.race silently abandoned them, leaving fake `timeout` run
+   * records and ~$X of wasted LLM spend per missed run.
+   *
+   * Cooperative: the engine checks the signal between iterations and the
+   * current tool call may run to completion before the loop exits. Long-
+   * running tools honor the signal via the contract in CLAUDE.md
+   * §"Long-Running Tools (MCP Tasks)".
+   */
+  signal?: AbortSignal;
 }
 
 /**

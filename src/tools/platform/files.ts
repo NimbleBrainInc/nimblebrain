@@ -16,7 +16,10 @@
 
 import { join } from "node:path";
 import { textContent } from "../../engine/content-helpers.ts";
-import type { EventSink, ToolResult } from "../../engine/types.ts";
+import type { ContentBlock, EventSink, ToolResult } from "../../engine/types.ts";
+import { extractText } from "../../files/extract.ts";
+import { IMAGE_TYPES, isExtractable, PDF_TYPES } from "../../files/ingest.ts";
+import { isTextMime } from "../../files/mime.ts";
 import { createFileStore, type FileStore } from "../../files/store.ts";
 import type { FileEntry } from "../../files/types.ts";
 import { fileIdToUri, uriToFileId } from "../../files/uri.ts";
@@ -109,15 +112,115 @@ async function handleSearch(store: FileStore, args: SearchInput): Promise<object
   return { files: files.slice(0, limit), total: files.length };
 }
 
-async function handleRead(store: FileStore, args: { id: string }): Promise<object> {
-  // `readFile` throws `File not found` if the registry entry is missing, so
-  // a separate `findEntry` pre-check would just re-scan the registry.
-  const read = await store.readFile(args.id);
+function humanSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1_048_576) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / 1_048_576).toFixed(1)} MB`;
+}
+
+/**
+ * Read a file. Returns a `resource_link` reference plus a human-readable
+ * text block; never returns the bytes inline. For text-extractable types
+ * (text/code, PDF, DOCX, XLSX) the text block includes the extracted text
+ * up to `maxExtractedTextSize`.
+ *
+ * Bytes were previously surfaced as a base64 string in the tool result.
+ * The model could not consume base64 as image/PDF input — providers handle
+ * those via native file parts on user uploads (see `src/files/rehydrate.ts`)
+ * — so the base64 path produced unusable payloads while inflating the
+ * conversation log and replay tokens by 5–10× per byte. This handler is the
+ * single seam where that leak is closed for the agent-pull direction; the
+ * user-attachment direction is already lean via `ingest.ts`.
+ */
+async function handleRead(
+  store: FileStore,
+  maxExtractedTextSize: number,
+  args: { id: string },
+): Promise<ToolResult> {
+  // `findEntry` so a missing id is a clean "not found" without touching
+  // bytes. Mirrors the prior behavior of the pre-change `readFile` throw.
+  const entry = await store.findEntry(args.id);
+  if (!entry) {
+    return {
+      content: textContent(JSON.stringify({ error: `File not found: ${args.id}` })),
+      isError: true,
+    };
+  }
+
+  const sizeText = humanSize(entry.size);
+  const intro = `Read ${entry.filename} (${sizeText}, ${entry.mimeType}).`;
+
+  // The resource_link is the durable, byte-free reference. Every result
+  // includes one so any resource_link-aware consumer can locate the
+  // workspace `files://` resource without re-reading through this tool.
+  // Today `extractTextForModel` filters these out of the LLM-bound text,
+  // which is what we want: the model receives the human text block; the
+  // link rides alongside for tool-result metadata, UI rendering, and a
+  // future tool-side rehydration pass.
+  const link: ContentBlock = {
+    type: "resource_link",
+    uri: fileIdToUri(args.id),
+    name: entry.filename,
+    mimeType: entry.mimeType,
+    size: entry.size,
+    description: sizeText,
+  } as ContentBlock;
+
+  const structured: Record<string, unknown> = {
+    id: entry.id,
+    filename: entry.filename,
+    mimeType: entry.mimeType,
+    size: entry.size,
+    extractedText: null,
+    truncated: false,
+  };
+
+  // PDFs route through the same `extractText` path as docs/text because the
+  // agent-pull surface only ever delivers text from this tool. (Native PDF
+  // input for capable models is a different seam — `rehydrate.ts` at the
+  // user-attachment boundary.)
+  const canExtract = isExtractable(entry.mimeType) || PDF_TYPES.has(entry.mimeType);
+  if (canExtract) {
+    const read = await store.readFile(args.id);
+    const extracted = await extractText(read.data, read.mimeType, maxExtractedTextSize);
+    if (extracted) {
+      structured.extractedText = extracted.text;
+      structured.truncated = extracted.truncated;
+      return {
+        content: [
+          link,
+          { type: "text", text: `${intro}\n\n--- Extracted text ---\n${extracted.text}` },
+        ],
+        structuredContent: structured,
+        isError: false,
+      };
+    }
+    // Extraction supported in principle but failed at runtime (corrupt /
+    // empty / decoder error). Fall through to a metadata-only response;
+    // the resource_link is still useful, the bytes aren't.
+    return {
+      content: [
+        link,
+        {
+          type: "text",
+          text: `${intro} Text extraction was not successful for this file; only metadata is available.`,
+        },
+      ],
+      structuredContent: structured,
+      isError: false,
+    };
+  }
+
+  // Non-extractable: images, fonts, archives, raw binary. The model has no
+  // useful surface for these via the tool — vision-capable models receive
+  // images through the user-attachment rehydration path, not here.
+  const note = IMAGE_TYPES.has(entry.mimeType)
+    ? " Images attached to a user message are rehydrated as native vision input on the next turn; reading them here returns metadata only."
+    : " This MIME type is not text-extractable; only metadata is available.";
   return {
-    base64Data: read.data.toString("base64"),
-    filename: read.filename,
-    mimeType: read.mimeType,
-    size: read.size,
+    content: [link, { type: "text", text: `${intro}${note}` }],
+    structuredContent: structured,
+    isError: false,
   };
 }
 
@@ -250,11 +353,21 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
     },
     {
       name: "read",
-      description: "Read a file's content by ID. Returns base64-encoded data along with metadata.",
+      description:
+        "Read a file by ID. Returns a resource_link reference and a human-readable summary. " +
+        "For text-extractable formats (text, code, JSON, Markdown, CSV, HTML, XML, YAML, PDF, " +
+        "DOCX, XLSX) the summary includes the extracted text up to the workspace's " +
+        "max-extracted-text size. For images and other non-extractable binary, only metadata " +
+        "is returned — images attached to a user message are delivered to the model via native " +
+        "file input on the next turn, not through this tool.",
       inputSchema: FilesReadInput,
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         try {
-          return ok(await handleRead(getStore(), input as unknown as { id: string }));
+          return await handleRead(
+            getStore(),
+            runtime.getFilesConfig().maxExtractedTextSize,
+            input as unknown as { id: string },
+          );
         } catch (err) {
           return fail(err instanceof Error ? err.message : String(err));
         }
@@ -371,21 +484,4 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
     },
     eventSink,
   );
-}
-
-const TEXT_MIMES = new Set([
-  "text/plain",
-  "text/csv",
-  "text/markdown",
-  "text/html",
-  "text/xml",
-  "text/yaml",
-  "application/json",
-  "application/xml",
-  "application/yaml",
-]);
-
-function isTextMime(mimeType: string): boolean {
-  const bare = mimeType.split(";", 1)[0]?.trim().toLowerCase() ?? "";
-  return bare.startsWith("text/") || TEXT_MIMES.has(bare);
 }

@@ -119,6 +119,13 @@ export function createBridge(
 
   function postToIframe(data: unknown): void {
     if (destroyed) return;
+    // App iframes are srcdoc (see iframe.ts:createAppIframe), so their
+    // origin is the opaque "null" origin. `postMessage`'s targetOrigin
+    // only accepts "*", "/", or a serialised URL — literal "null" throws
+    // DOMException at runtime. Tightening this requires the sandbox-proxy
+    // work (iframe.ts TODO in createAppIframe) that gives iframes a real
+    // origin. The iframe→parent direction (where the real leak lives) is
+    // hardened via `hostContext.origin` in the handshake response below.
     iframe.contentWindow?.postMessage(data, "*");
   }
 
@@ -229,6 +236,12 @@ export function createBridge(
           hostCapabilities,
           hostContext: {
             ...extensions,
+            // `origin` is the platform's window.location.origin. SDK helpers
+            // use it as `targetOrigin` on outbound postMessage and to
+            // validate `event.origin` on inbound — closing the gap that
+            // bundles can't otherwise discover the host origin from a
+            // srcdoc iframe (which itself runs in the "null" origin).
+            origin: window.location.origin,
             theme: extMode,
             styles: {
               variables: extTokens,

@@ -4,10 +4,23 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { CallToolResult, CreateTaskResult, Task } from "@modelcontextprotocol/sdk/types.js";
+import {
+  CallToolResultSchema,
+  ListResourcesRequestSchema,
+  ReadResourceRequestSchema,
+} from "@modelcontextprotocol/sdk/types.js";
+import { z } from "zod";
 import type { PlacementDeclaration, RemoteTransportConfig } from "../bundles/types.ts";
 import { log } from "../cli/log.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import type { ContentBlock, EventSink, ToolResult } from "../engine/types.ts";
+import {
+  HOST_RESOURCES_LIST_METHOD,
+  HOST_RESOURCES_READ_METHOD,
+  type HostResourcesRateLimit,
+  type HostResourcesResolver,
+  hostExtensions,
+} from "../host-resources/index.ts";
 import { promoteHiddenErrors } from "./promote-hidden-errors.ts";
 import { createRemoteTransport } from "./remote-transport.ts";
 import { scrubArgsForDispatch } from "./scrub-args.ts";
@@ -54,6 +67,36 @@ const TASK_CREATED_TIMEOUT_MS = 60_000;
  * event payload in a runaway log.
  */
 const STDERR_TAIL_MAX_LINES = 50;
+
+/**
+ * Per-bundle context threaded into McpSource so its Client can answer
+ * inbound `ai.nimblebrain/resources/*` requests. Owned by the caller
+ * (lifecycle, workspace-ops) which knows the workspace; passed into the
+ * constructor at spawn time. Absent for in-process platform sources —
+ * they are the platform talking to itself and have no business asking
+ * the host for resources.
+ */
+export interface BundleMcpContext {
+  workspaceId: string;
+  /** The McpSource name (bundle slug). Used for audit + rate-limit attribution. */
+  bundleId: string;
+  hostResources: HostResourcesResolver;
+  rateLimit: HostResourcesRateLimit;
+}
+
+/**
+ * Inbound request schemas — the standard MCP `resources/{read,list}`
+ * shapes with the method literal swapped for our namespaced extension.
+ * `ZodObject.extend` overrides the matching key, so the schema's params
+ * shape (uri / cursor / filter) carries through unchanged from the
+ * spec-blessed types. Layer 3 migration is just `s/ai.nimblebrain\///`.
+ */
+const NbReadResourceRequestSchema = ReadResourceRequestSchema.extend({
+  method: z.literal(HOST_RESOURCES_READ_METHOD),
+});
+const NbListResourcesRequestSchema = ListResourcesRequestSchema.extend({
+  method: z.literal(HOST_RESOURCES_LIST_METHOD),
+});
 
 /**
  * Hard cap on a single stderr line we'll log or buffer. A bundle that
@@ -256,11 +299,19 @@ export class McpSource implements ToolSource {
    * session). "I didn't think about it" is not one of those cases —
    * that's what turned this parameter optional and silently broke live
    * updates across the whole platform.
+   *
+   * `bundleContext` is optional and threaded only on bundle-spawning
+   * paths. When set, the Client registers inbound handlers for
+   * `ai.nimblebrain/resources/{read,list}` against the bundle's
+   * workspace. In-process platform sources don't pass it (they're MCP
+   * servers talking to the platform itself, not bundles requesting
+   * platform resources).
    */
   constructor(
     readonly name: string,
     private mode: McpTransportMode,
     private eventSink: EventSink,
+    private readonly bundleContext?: BundleMcpContext,
   ) {
     log.debug("mcp", `McpSource('${name}') constructed`);
   }
@@ -342,6 +393,13 @@ export class McpSource implements ToolSource {
     // honors task-augmented `tools/call` and will attach `params.task: {ttl}`
     // when calling those tools. The engine then polls via tasks/get and
     // retrieves via tasks/result instead of blocking the request.
+    //
+    // The `extensions` block carries NimbleBrain-namespaced vendor
+    // capabilities (e.g. `ai.nimblebrain/host-resources`) per the MCP
+    // extensions spec — https://modelcontextprotocol.io/extensions/overview.
+    // Bundles read these from their ClientCapabilities to opt into
+    // bundle→host resource reads. Phase 1 advertises the capability;
+    // handlers land in Phase 2.
     this.client = new Client(
       { name: "nimblebrain", version: "0.1.0" },
       {
@@ -351,9 +409,14 @@ export class McpSource implements ToolSource {
             cancel: {},
             list: {},
           },
+          extensions: hostExtensions(),
         },
       },
     );
+    // Inbound host-resources handlers registered before connect so they're
+    // ready the moment the bundle issues its first request. No-op for
+    // in-process sources that don't pass a bundleContext.
+    this.registerBundleHandlers(this.client);
 
     // Timeout MCP handshake — remote gets shorter timeout (15s vs 30s)
     const CONNECT_TIMEOUT = this.mode.type === "remote" ? 15_000 : 30_000;
@@ -402,6 +465,10 @@ export class McpSource implements ToolSource {
           await this.cleanupOnStartFailure();
           this.rebuildRemoteTransport();
           this.client = this.buildClient();
+          // Re-register inbound host-resources handlers on the rebuilt
+          // Client — handler tables don't carry over from the prior
+          // instance.
+          this.registerBundleHandlers(this.client);
           // Re-arm crash detection for the retry: cleanupOnStartFailure
           // set `stopping = true` to suppress its own teardown noise; we
           // need it false again before the new transport's onclose can
@@ -640,9 +707,55 @@ export class McpSource implements ToolSource {
             cancel: {},
             list: {},
           },
+          extensions: hostExtensions(),
         },
       },
     );
+  }
+
+  /**
+   * Register inbound handlers for the host-resources extension methods.
+   * Called once per Client lifecycle — after `new Client()` (initial
+   * start) and after `buildClient()` (OAuth retry rebuild). No-op when
+   * `bundleContext` is absent (in-process platform sources don't need
+   * the surface).
+   *
+   * Handlers do three things, in order: rate-limit check (throws
+   * `-32004` on exhaustion), delegate to the resolver (which enforces
+   * scheme allowlist + workspace isolation + size cap), and log via
+   * the `host-resources` debug namespace. Errors propagate as JSON-RPC
+   * errors back to the bundle.
+   */
+  private registerBundleHandlers(client: Client): void {
+    const ctx = this.bundleContext;
+    if (!ctx) return;
+
+    client.setRequestHandler(NbReadResourceRequestSchema, async (request) => {
+      ctx.rateLimit.check(ctx.workspaceId, ctx.bundleId);
+      return ctx.hostResources.read(request.params.uri, {
+        workspaceId: ctx.workspaceId,
+        bundleId: ctx.bundleId,
+      });
+    });
+
+    client.setRequestHandler(NbListResourcesRequestSchema, async (request) => {
+      ctx.rateLimit.check(ctx.workspaceId, ctx.bundleId);
+      const params = request.params ?? {};
+      return ctx.hostResources.list(
+        // Bundle-supplied filter rides in `_meta` per MCP convention for
+        // extension-carried request data — spec `ListResourcesRequest`
+        // doesn't have a `filter` field. If the spec ever adds one, also
+        // accept it from `params.filter` here.
+        {
+          cursor: typeof params.cursor === "string" ? params.cursor : undefined,
+          filter:
+            ((params._meta as Record<string, unknown> | undefined)?.filter as
+              | { scheme?: string; mimeType?: string; tags?: string[] }
+              | undefined) ?? undefined,
+        },
+        { workspaceId: ctx.workspaceId, bundleId: ctx.bundleId },
+      );
+    });
   }
 
   /** Check if the transport is still connected. */
@@ -1373,11 +1486,57 @@ export class McpSource implements ToolSource {
               return;
             }
             const isAborted = handle.abortController.signal.aborted;
-            const callToolResult: CallToolResult = {
+
+            // Defense in depth: the upstream MCP SDK's task stream emits
+            // `type: 'error'` with an `McpError(InternalError, "Task <id>
+            // failed")` whenever the server-side task status is `failed`,
+            // AND discards the server's `tasks/result` payload along the
+            // way. A bundle that misclassified its own terminal status —
+            // e.g., a post-result exception flipping COMPLETED→FAILED
+            // while a usable payload already existed in the store — would
+            // surface to the agent as a useless string with the real
+            // output gone. Try one extra fetch before settling for the
+            // generic error.
+            //
+            // Discriminator: `endsWith` on the known `handle.taskId`,
+            // NOT a regex on the bare message. McpError's constructor
+            // wraps the message as `"MCP error <code>: <message>"` (see
+            // node_modules/@modelcontextprotocol/sdk/.../types.js), so
+            // the production `error.message` is "MCP error -32603:
+            // Task <id> failed" — anchored regexes against the bare
+            // form silently fail to match and the recovery is a no-op.
+            // Using the taskId as the discriminator also tightens
+            // specificity: we won't accidentally recover on a bundle-
+            // authored error that happens to mention a different task.
+            let recoveredResult: CallToolResult | null = null;
+            const isGenericTaskFailed = errMessage.endsWith(`Task ${handle.taskId} failed`);
+            if (!isAborted && this.client && isGenericTaskFailed) {
+              try {
+                recoveredResult = await this.client.experimental.tasks.getTaskResult(
+                  handle.taskId,
+                  CallToolResultSchema,
+                );
+                log.debug(
+                  "mcp",
+                  `recovered tasks/result for failed task ${handle.taskId} on ${this.name}`,
+                );
+              } catch {
+                // No result genuinely available — fall through to the
+                // generic-error path below.
+              }
+            }
+
+            const callToolResult: CallToolResult = recoveredResult ?? {
               content: [{ type: "text", text: errMessage }],
               isError: true,
             };
             handle.terminal = { result: callToolResult };
+            // Contract: even when we recover a payload, `latestTask.status`
+            // reflects what the SERVER reported (`failed`/`cancelled`).
+            // The recovery only salvages the agent-visible content; we
+            // don't rewrite the server's terminal verdict. Status
+            // consumers (UI progress, postmortem inspection) see the
+            // honest server state; the agent sees the actual output.
             handle.latestTask = {
               ...handle.latestTask,
               status: isAborted ? "cancelled" : "failed",

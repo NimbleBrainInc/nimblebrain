@@ -19,6 +19,39 @@ export interface Workspace {
   createdAt: string;
   updatedAt: string;
 
+  /**
+   * `true` for a user's personal workspace (auto-provisioned at first login
+   * via `ensureUserWorkspace`). `false` for shared/team workspaces.
+   *
+   * Source of truth for the "is this personal?" predicate — never parse the
+   * workspace id. Enforced co-required with `ownerUserId`: a personal
+   * workspace ALWAYS has its owner declared. Not patchable after creation;
+   * a workspace's "personal-ness" is part of its identity.
+   *
+   * Optional in the type for read back-compat with workspaces created before
+   * Stage 1 (defaults to `false` when absent on disk). The Task 003
+   * migration backfills the field eagerly.
+   */
+  isPersonal?: boolean;
+  /**
+   * For personal workspaces only — the id of the user who owns this
+   * workspace. The reverse pointer for the user↔workspace relationship.
+   * Code that needs to ask "who owns this workspace?" reads this field;
+   * it never regex-parses the id string.
+   *
+   * MUST be set when `isPersonal: true`. MUST be absent when
+   * `isPersonal: false` / undefined. Not patchable post-creation.
+   */
+  ownerUserId?: string;
+  /**
+   * Short human-readable description. Populated by the workspace
+   * settings UI and consumed by the Stage 3+ discovery layer (workspace
+   * directory). Defined now so the schema doesn't migrate twice.
+   *
+   * Defaults to `null` on creation. Patchable.
+   */
+  about?: string | null;
+
   /** Named agent profiles for multi-agent delegation. */
   agents?: Record<string, AgentProfile>;
   /** Additional skill directories to scan. */

@@ -1,4 +1,5 @@
-import type { ParticipantInfo } from "../conversation/types.ts";
+// `ParticipantInfo` was the participants-section input; gone post Stage 1.
+// Stage 4 reintroduces a participants concept with policy gating.
 import { approxTokens } from "../skills/tokens.ts";
 import type { Skill } from "../skills/types.ts";
 
@@ -48,7 +49,6 @@ export type TracedLayerKind =
   | "core_skill"
   | "user_context_skill"
   | "user_prefs"
-  | "participants"
   | "workspace_context"
   | "org_overlay"
   | "workspace_overlay"
@@ -198,7 +198,6 @@ export function composeSystemPrompt(
   appState?: AppStateInfo,
   userPrefs?: UserPrefs,
   hasProxiedTools?: boolean,
-  participants?: ParticipantInfo[],
   workspaceContext?: WorkspaceContext,
   overlays?: OverlayLayers,
   layer3Skills?: Layer3SkillEntry[],
@@ -211,7 +210,6 @@ export function composeSystemPrompt(
     appState,
     userPrefs,
     hasProxiedTools,
-    participants,
     workspaceContext,
     overlays,
     layer3Skills,
@@ -239,7 +237,6 @@ export function composeSystemPromptTraced(
   appState?: AppStateInfo,
   userPrefs?: UserPrefs,
   hasProxiedTools?: boolean,
-  participants?: ParticipantInfo[],
   workspaceContext?: WorkspaceContext,
   overlays?: OverlayLayers,
   layer3Skills?: Layer3SkillEntry[],
@@ -307,17 +304,8 @@ export function composeSystemPromptTraced(
     tokens: approxTokens(prefsText),
   });
 
-  // Layer 1.6: Participants section (shared conversations only).
-  if (participants && participants.length > 0) {
-    const participantsText = formatParticipantsSection(participants);
-    layers.push({
-      kind: "participants",
-      id: "nb:participants",
-      source: "runtime — shared conversation participants",
-      text: participantsText,
-      tokens: approxTokens(participantsText),
-    });
-  }
+  // Layer 1.6: Participants section — removed in Stage 1 (single-owner
+  // conversations). Returns in Stage 4 with policy-gated sharing.
 
   // Layer 1.7: Workspace context.
   if (workspaceContext) {
@@ -513,7 +501,7 @@ function formatAppsSection(apps: PromptAppInfo[], hasProxiedTools?: boolean): st
   if (hasProxiedTools) {
     lines.push(
       "",
-      '**Important:** These apps have tools that are not in your direct tool list. To use an app\'s tools, call `nb__search` with `scope: "tools"` and a keyword (e.g., "contact", "invoice", "document") to discover the exact tool names. Tool names use the format `source__tool` (e.g., `synapse-crm__create_contact`). Never guess tool names — always discover them first.',
+      '**Important:** These apps have tools that are not in your direct tool list. To use an app\'s tools, call `nb__search` with `scope: "tools"` and a keyword (e.g., "contact", "invoice", "document") to discover exact tool names, then call `nb__manage_tools` with `{ "add": ["source__tool", ...] }` to make them callable on the next turn. When you switch domains, patch in one call with `{ "add": [...], "remove": [...] }`. Tool names use the format `source__tool` (e.g., `synapse-crm__create_contact`). Never guess tool names — always discover them first.',
     );
   }
   return lines.join("\n");
@@ -523,11 +511,11 @@ const INTERACTION_RULES = `### Interaction Rules
 
 - When the user describes a change, identify which tool achieves it and call it directly. Do not ask for confirmation unless the action is destructive or ambiguous.
 - After making changes, briefly confirm what you did. The app view refreshes automatically — do not describe the UI.
-- If unsure which tool to use, call \`nb__search\` with \`scope: "tools"\` and a keyword.
+- If unsure which tool to use, call \`nb__search\` with \`scope: "tools"\` and a keyword. If the chosen tool is not currently callable, add it via \`nb__manage_tools({ add: ["source__tool"] })\` before using it. Default to retain — only remove tools when clearly switching domains, batched into the same patch as the new adds.
 - When the user says "undo" or "go back," check if the app has undo, snapshot, or history tools. If not, say undo is not available for this app.
 - When the user gives vague feedback ("I don't like it," "make it better"), ask ONE clarifying question about what specifically to change.
 - Messages may include an \`[App Context: ...]\` header with metadata from the app. Use it to understand what the user was looking at.
-- Other apps are still available via \`nb__search\` (scope: "tools") if the user's request spans apps.`;
+- Other apps are still available via \`nb__search\` (scope: "tools") if the user's request spans apps; add discovered tools via \`nb__manage_tools\` before calling them.`;
 
 function formatFocusedAppSection(focusedApp: FocusedAppInfo): string {
   const safeName = sanitizeLineField(focusedApp.name);
@@ -539,16 +527,24 @@ function formatFocusedAppSection(focusedApp: FocusedAppInfo): string {
   lines.push("");
   lines.push("### App Guide");
   lines.push("");
-  if (focusedApp.skillResource && focusedApp.trustScore >= 50) {
-    lines.push(`<app-guide>\n${focusedApp.skillResource}\n</app-guide>`);
+  // Trust is enforced at install time, not per-prompt: if a bundle is active
+  // in the workspace its tools are already callable, so suppressing the
+  // workflow guidance that teaches the model how to use them safely would
+  // make the situation worse, not better. Tool descriptions, tool outputs,
+  // and `app://instructions` flow through ungated already.
+  if (focusedApp.skillResource) {
+    // Escape any embedded `</app-guide>` so a bundle-authored skill body
+    // cannot break out of containment. Matches the pattern used for
+    // `<app-state>` (l. 584), `<app-instructions>` (l. 494), and
+    // `<layer3-skill>` (l. 632).
+    const safeGuide = focusedApp.skillResource.replaceAll("</app-guide>", "&lt;/app-guide>");
+    lines.push(`<app-guide>\n${safeGuide}\n</app-guide>`);
     if (focusedApp.referenceResourceUri) {
       lines.push("");
       lines.push(
         `For detailed tool guidance, error recovery, and reference material, read the \`${focusedApp.referenceResourceUri}\` resource.`,
       );
     }
-  } else if (focusedApp.skillResource) {
-    lines.push("App guide available but not injected — bundle trust score below threshold.");
   } else {
     lines.push("No app-specific guide available. Use the available tools to help the user.");
   }
@@ -562,12 +558,9 @@ const MAX_STATE_TOKENS = 4096;
 
 /**
  * Format the app state section for injection into the system prompt.
- * Trust-gated: only apps with trustScore >= 50 get their state in the prompt.
+ * See `<app-guide>` injection above for the trust-at-install rationale.
  */
 function formatAppStateSection(appState: AppStateInfo): string | null {
-  // Trust gating: score must be >= 50
-  if (appState.trustScore < 50) return null;
-
   const stateJson = JSON.stringify(appState.state, null, 2);
   // Rough token estimate: 1 token ≈ 4 chars
   const estimatedTokens = Math.ceil(stateJson.length / 4);
@@ -581,21 +574,8 @@ function formatAppStateSection(appState: AppStateInfo): string | null {
     inner = `${stateJson.slice(0, MAX_STATE_TOKENS * 4)}\n[state truncated — ask user for details]`;
   }
 
-  return `## Current App State\nLast updated: ${appState.updatedAt}\n\n<app-state>\n${inner}\n</app-state>`;
-}
-
-function formatParticipantsSection(participants: ParticipantInfo[]): string {
-  const lines = [
-    "## Participants",
-    "",
-    "This is a shared conversation with the following participants:",
-  ];
-  for (const p of participants) {
-    const safeName = p.displayName ? sanitizeLineField(p.displayName) : undefined;
-    const label = safeName ? `${safeName} (${p.userId})` : p.userId;
-    lines.push(`- ${label}`);
-  }
-  return lines.join("\n");
+  const escaped = inner.replaceAll("</app-state>", "&lt;/app-state>");
+  return `## Current App State\nLast updated: ${appState.updatedAt}\n\n<app-state>\n${escaped}\n</app-state>`;
 }
 
 /**

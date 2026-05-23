@@ -1,3 +1,17 @@
+/**
+ * Cached extracted-text sidecar for a stored file.
+ *
+ * Persisted next to the bytes (`${id}.extracted.json`) so derived text is
+ * computed once per file and reused on every rehydration. Invalidated by
+ * `maxSize` mismatch — if the runtime's `maxExtractedTextSize` changes,
+ * the cache is regenerated on next read.
+ */
+export interface ExtractedTextSidecar {
+  text: string;
+  maxSize: number;
+  truncated: boolean;
+}
+
 /** Workspace file entry stored in registry.jsonl */
 export interface FileEntry {
   id: string;
@@ -34,9 +48,9 @@ export interface IngestResult {
  *
  * Text and MCP `resource_link` only — bytes for binary attachments are
  * persisted in the workspace `FileStore` and referenced by URI. The
- * runtime rehydrates image resource_links into AI SDK V3 `file` parts at
- * the `model.doStream` boundary; non-image resource_links are surfaced
- * to the model as text references.
+ * runtime rehydrates supported resource_links into AI SDK V3 `file` parts
+ * at the `model.doStream` boundary; unsupported resource_links are
+ * surfaced to the model as text references.
  */
 export type ContentPart =
   | { type: "text"; text: string }

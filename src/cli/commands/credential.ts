@@ -2,6 +2,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { Command } from "commander";
 import { FileCredentialStore } from "../../tools/credential-store.ts";
+import { WorkspaceContext } from "../../workspace/context.ts";
 import { log } from "../log.ts";
 
 /**
@@ -84,9 +85,11 @@ export function createCredentialCommand(): Command {
       const workDir = resolveWorkDir(opts.workDir);
       // Direct fs read here rather than extending CredentialStore — list
       // is operator-only diagnostic UX, not part of the runtime contract
-      // the SaaS-encrypted store will need to support.
+      // the SaaS-encrypted store will need to support. The path still
+      // goes through WorkspaceContext so the layout has one definition
+      // site (`src/workspace/context.ts`).
       const { existsSync, readdirSync } = await import("node:fs");
-      const dir = join(workDir, "workspaces", wsId, "credentials", "secrets");
+      const dir = new WorkspaceContext({ wsId, workDir }).getDataPath("credentials", "secrets");
       if (!existsSync(dir)) {
         log.info(`[credential] no secrets in ${wsId}`);
         return;

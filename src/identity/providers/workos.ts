@@ -11,7 +11,7 @@ import type {
   UserIdentity,
 } from "../provider.ts";
 import type { OrgRole } from "../types.ts";
-import type { User, UserStore } from "../user.ts";
+import type { User, UserPreferences, UserStore } from "../user.ts";
 
 // ── JWT helpers (shared with OIDC provider — duplicated intentionally to keep providers independent) ──
 
@@ -400,7 +400,7 @@ export class WorkosIdentityProvider implements IdentityProvider {
   private async syncLocalProfile(
     workosUserId: string,
     data: { email: string; displayName: string; orgRole: OrgRole },
-  ): Promise<import("../user.ts").UserPreferences> {
+  ): Promise<UserPreferences> {
     if (!this.userStore) return {};
 
     const existing = await this.userStore.get(workosUserId);

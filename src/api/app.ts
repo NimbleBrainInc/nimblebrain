@@ -57,12 +57,18 @@ export function createApp(
   // before our path-based handler runs.
   app.route("/", proxyRoutes(ctx));
 
+  // Conversation events SSE — Stage 1 Task 005 dropped the workspace
+  // requirement on this route (conversations live at the user level
+  // post-collapse). Must register BEFORE chat/tools/etc. so their
+  // `requireWorkspace` `use("*")` middleware doesn't 400 us on a
+  // path that intentionally has no X-Workspace-Id header.
+  app.route("/", conversationEventRoutes(ctx));
+
   app.route("/", bootstrapRoutes(ctx));
   app.route("/", chatRoutes(ctx));
   app.route("/", toolRoutes(ctx));
   app.route("/", resourceRoutes(ctx));
   app.route("/", eventRoutes(ctx));
-  app.route("/", conversationEventRoutes(ctx));
 
   // 404 fallback
   app.notFound(() => apiError(404, "not_found", "Not found"));

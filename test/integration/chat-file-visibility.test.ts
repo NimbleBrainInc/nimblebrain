@@ -118,20 +118,36 @@ describe("chat multipart upload ↔ files__* visibility (bug 4)", () => {
   });
 
   it("file uploaded via /v1/chat/stream is readable by files__read", async () => {
-    await uploadChatFile("round trip", "roundtrip.bin", "application/octet-stream");
+    const payload = "round trip";
+    await uploadChatFile(payload, "roundtrip.bin", "application/octet-stream");
     const files = await listFiles();
     const id = files.find((f) => f.filename === "roundtrip.bin")?.id;
     expect(id).toBeDefined();
 
     const read = await callFilesTool("read", { id });
     expect(read.status).toBe(200);
-    const structured = extractStructured(read.body) as {
-      base64Data: string;
-      filename: string;
-      mimeType: string;
+
+    // Lean contract: tool result is a resource_link + a human-readable text
+    // block. The bytes are NOT returned inline (see commit "files__read
+    // returns resource_link + extracted text, never base64"). The file
+    // remains addressable via the resource_link URI and via GET /v1/files/:id
+    // (covered by the next test) — that's what "readable" means now.
+    const body = read.body as {
+      content?: Array<{ type: string; uri?: string; mimeType?: string; text?: string }>;
+      structuredContent?: { id: string; filename: string; mimeType: string; size: number };
     };
-    expect(Buffer.from(structured.base64Data, "base64").toString("utf-8")).toBe("round trip");
-    expect(structured.filename).toBe("roundtrip.bin");
+
+    const link = body.content?.find((c) => c.type === "resource_link");
+    expect(link?.uri).toBe(`files://${id}`);
+    expect(link?.mimeType).toBe("application/octet-stream");
+
+    expect(body.structuredContent?.filename).toBe("roundtrip.bin");
+    expect(body.structuredContent?.size).toBe(payload.length);
+
+    // Regression guard for the base64 leak.
+    const serialized = JSON.stringify(read.body);
+    expect(serialized).not.toContain("base64Data");
+    expect(serialized).not.toContain(Buffer.from(payload).toString("base64"));
   });
 
   it("file uploaded via /v1/chat/stream is served by GET /v1/files/:id", async () => {

@@ -13,8 +13,12 @@ import type { InProcessTool } from "./in-process-app.ts";
  *
  * The two seeded registries are:
  *   - "curated"  — locked, always on
- *   - "mpak"     — toggleable; admin can override the URL to point
- *     at a private mpak instance
+ *   - "mpak"     — toggleable
+ *
+ * Registry URLs (e.g., a self-hosted mpak) are deployment configuration,
+ * not runtime state — set via the `NB_REGISTRIES` env var or by editing
+ * `registries.json` directly. This tool intentionally has no `set_url`
+ * action.
  */
 
 export interface ManageRegistriesContext {
@@ -32,11 +36,10 @@ export function createManageRegistriesTool(ctx: ManageRegistriesContext): InProc
       properties: {
         action: {
           type: "string",
-          enum: ["list", "enable", "disable", "set_url", "rename"],
+          enum: ["list", "enable", "disable", "rename"],
           description: "Action to perform.",
         },
         id: { type: "string", description: "Registry id (required for non-list actions)." },
-        url: { type: "string", description: "New registry URL (set_url only)." },
         name: { type: "string", description: "New display name (rename only)." },
       },
       required: ["action"],
@@ -84,39 +87,6 @@ export function createManageRegistriesTool(ctx: ManageRegistriesContext): InProc
             const next = await store.update(id, { enabled: false });
             return {
               content: textContent(`Disabled "${next.name}".`),
-              structuredContent: { ok: true, registry: next },
-              isError: false,
-            };
-          }
-          case "set_url": {
-            const url = String(input.url ?? "");
-            if (!url) return { content: textContent("`url` is required."), isError: true };
-            // Cheap shape check — full URL parsing happens at registry
-            // load time. This guards against pasting a server name
-            // without a scheme. Restrict to http(s) — registry URLs
-            // only ever contact remote endpoints; `javascript:` /
-            // `file:` / `data:` schemes have no business here, even
-            // org-admin gated.
-            let parsed: URL;
-            try {
-              parsed = new URL(url);
-            } catch {
-              return {
-                content: textContent(`Invalid URL: ${url}`),
-                isError: true,
-              };
-            }
-            if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-              return {
-                content: textContent(
-                  `Registry URL must use http or https — got "${parsed.protocol}".`,
-                ),
-                isError: true,
-              };
-            }
-            const next = await store.update(id, { url });
-            return {
-              content: textContent(`Updated "${next.name}" URL to ${url}.`),
               structuredContent: { ok: true, registry: next },
               isError: false,
             };

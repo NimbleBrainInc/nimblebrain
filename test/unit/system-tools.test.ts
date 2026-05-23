@@ -9,6 +9,8 @@ import { createSystemTools } from "../../src/tools/system-tools.ts";
 import type {
 	GetSkillsFn,
 	ManageBundleContext,
+	ToolEligibilityContext,
+	ToolPromotionContext,
 } from "../../src/tools/system-tools.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
 import { textContent } from "../../src/engine/content-helpers.ts";
@@ -19,7 +21,9 @@ import {
 	NoopConfirmationGate,
 } from "../../src/config/privilege.ts";
 import type { ConfirmationGate } from "../../src/config/privilege.ts";
+import { resolveFeatures } from "../../src/config/features.ts";
 import { getWorkspaceCredentials } from "../../src/config/workspace-credentials.ts";
+import { isToolEligibleForPromotion } from "../../src/runtime/tool-eligibility.ts";
 import { readSkill } from "../../src/skills/writer.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 
@@ -83,8 +87,8 @@ describe("System Tools", () => {
 		expect(result.isError).toBe(false);
 		expect(extractText(result.content)).toContain("test");
 		expect(extractText(result.content)).toContain("2 tools");
-		// Browse path must populate structuredContent so the engine can promote
-		// discovered tools into the direct callable set on the next iteration.
+		// Browse path returns machine-readable tool names so the agent can pass
+		// them directly to nb__manage_tools when it wants to make discovered tools callable.
 		expect(getStructured<{ tools?: Array<{ name: string }> }>(result)?.tools).toEqual([
 			{ name: "test__greet" },
 			{ name: "test__farewell" },
@@ -134,6 +138,116 @@ describe("System Tools", () => {
 		]);
 	});
 
+	it("search with scope=tools excludes tools that are not eligible", async () => {
+		const registry = new ToolRegistry();
+		const source = await makeInProcessSource("nb", [
+			{
+				name: "visible",
+				description: "Visible tool",
+				inputSchema: { type: "object", properties: {} },
+				handler: async () => ({ content: textContent("ok"), isError: false }),
+			},
+			{
+				name: "manage_users",
+				description: "Manage users",
+				inputSchema: { type: "object", properties: {} },
+				handler: async () => ({ content: textContent("ok"), isError: false }),
+			},
+		]);
+		registry.addSource(source);
+		const features = resolveFeatures();
+		const toolEligibilityCtx: ToolEligibilityContext = {
+			isToolEligible: (tool) => isToolEligibleForPromotion(tool, "member", features),
+		};
+		const systemTools = await createSystemTools(
+			() => registry,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			toolEligibilityCtx,
+		);
+
+		const result = await systemTools.execute("search", {
+			scope: "tools",
+			query: "tool",
+		});
+		expect(result.isError).toBe(false);
+		const text = extractText(result.content);
+		expect(text).toContain("nb__visible");
+		expect(text).not.toContain("nb__manage_users");
+		expect(getStructured<{ tools?: Array<{ name: string }> }>(result)?.tools).toEqual([
+			{ name: "nb__visible" },
+		]);
+	});
+
+	it("search with scope=tools excludes feature-disabled tools", async () => {
+		const registry = new ToolRegistry();
+		const source = await makeInProcessSource("nb", [
+			{
+				name: "visible",
+				description: "Visible tool",
+				inputSchema: { type: "object", properties: {} },
+				handler: async () => ({ content: textContent("ok"), isError: false }),
+			},
+			{
+				name: "manage_users",
+				description: "Manage users tool",
+				inputSchema: { type: "object", properties: {} },
+				handler: async () => ({ content: textContent("ok"), isError: false }),
+			},
+		]);
+		registry.addSource(source);
+		const features = resolveFeatures({ userManagement: false });
+		const toolEligibilityCtx: ToolEligibilityContext = {
+			isToolEligible: (tool) => isToolEligibleForPromotion(tool, "admin", features),
+		};
+		const systemTools = await createSystemTools(
+			() => registry,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			toolEligibilityCtx,
+		);
+
+		const result = await systemTools.execute("search", {
+			scope: "tools",
+			query: "tool",
+		});
+		expect(result.isError).toBe(false);
+		const text = extractText(result.content);
+		expect(text).toContain("nb__visible");
+		expect(text).not.toContain("nb__manage_users");
+		expect(getStructured<{ tools?: Array<{ name: string }> }>(result)?.tools).toEqual([
+			{ name: "nb__visible" },
+		]);
+	});
+
 	// `search with scope=registry` lives in test/smoke/system-tools-registry.test.ts.
 	// It hits the live mpak registry over the network, which makes it a smoke
 	// test by definition (CLAUDE.md: smoke tier owns "real MCP server spawns,
@@ -168,7 +282,196 @@ describe("System Tools", () => {
 		const tools = await systemTools.tools();
 		const names = tools.map((t) => t.name);
 		expect(names).toContain("nb__search");
+		expect(names).toContain("nb__manage_tools");
 		expect(names).toContain("nb__manage_app");
+	});
+
+	it("manage_tools requires at least one of add or remove to be non-empty", async () => {
+		const registry = await makeRegistry();
+		const systemTools = await createSystemTools(() => registry);
+		const empty = await systemTools.execute("manage_tools", {});
+		expect(empty.isError).toBe(true);
+		expect(extractText(empty.content)).toContain("at least one");
+
+		const bothEmpty = await systemTools.execute("manage_tools", { add: [], remove: [] });
+		expect(bothEmpty.isError).toBe(true);
+		expect(extractText(bothEmpty.content)).toContain("at least one");
+	});
+
+	it("manage_tools requires an active agent run", async () => {
+		const registry = await makeRegistry();
+		const systemTools = await createSystemTools(() => registry);
+		const result = await systemTools.execute("manage_tools", { add: ["test__greet"] });
+		expect(result.isError).toBe(true);
+		expect(extractText(result.content)).toContain("active agent run");
+	});
+
+	it("manage_tools delegates add and remove to active run tool controls", async () => {
+		const registry = await makeRegistry();
+		const calls: string[] = [];
+		const toolPromotionCtx: ToolPromotionContext = {
+			addTool(toolName) {
+				calls.push(`add:${toolName}`);
+				return { ok: true, toolName, changed: true, message: `${toolName} added` };
+			},
+			removeTool(toolName) {
+				calls.push(`remove:${toolName}`);
+				return { ok: true, toolName, changed: true, message: `${toolName} removed` };
+			},
+		};
+		const systemTools = await createSystemTools(
+			() => registry,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			toolPromotionCtx,
+		);
+
+		const result = await systemTools.execute("manage_tools", {
+			add: ["test__greet", "test__farewell"],
+			remove: ["test__stale"],
+		});
+		expect(result.isError).toBe(false);
+		// Removes run before adds so atomic domain-switch frees slots first.
+		expect(calls).toEqual(["remove:test__stale", "add:test__greet", "add:test__farewell"]);
+
+		const text = extractText(result.content);
+		expect(text).toContain("Promoted 2/2");
+		expect(text).toContain("Released 1/1");
+
+		const structured = getStructured<{
+			promoted: Array<{ ok: boolean; toolName: string }>;
+			released: Array<{ ok: boolean; toolName: string }>;
+		}>(result);
+		expect(structured?.promoted).toHaveLength(2);
+		expect(structured?.released).toHaveLength(1);
+	});
+
+	it("manage_tools surfaces per-item failures in structuredContent without failing the call", async () => {
+		const registry = await makeRegistry();
+		const toolPromotionCtx: ToolPromotionContext = {
+			addTool(toolName) {
+				if (toolName === "internal__secret") {
+					return {
+						ok: false,
+						toolName,
+						changed: false,
+						reason: "internal_tool",
+						message: `${toolName} is an internal tool and cannot be added.`,
+					};
+				}
+				return { ok: true, toolName, changed: true, message: `${toolName} added` };
+			},
+			removeTool(toolName) {
+				return { ok: true, toolName, changed: true, message: `${toolName} removed` };
+			},
+		};
+		const systemTools = await createSystemTools(
+			() => registry,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			toolPromotionCtx,
+		);
+
+		const result = await systemTools.execute("manage_tools", {
+			add: ["app__public", "internal__secret"],
+		});
+		// Per-item failure does not flip the call-level isError flag — the structured
+		// content is the source of truth so the agent can act on partial success.
+		expect(result.isError).toBe(false);
+		const text = extractText(result.content);
+		expect(text).toContain("Promoted 1/2");
+		expect(text).toContain("internal__secret");
+
+		const structured = getStructured<{
+			promoted: Array<{ ok: boolean; toolName: string; reason?: string }>;
+		}>(result);
+		expect(structured?.promoted[0]?.ok).toBe(true);
+		expect(structured?.promoted[1]?.ok).toBe(false);
+		expect(structured?.promoted[1]?.reason).toBe("internal_tool");
+	});
+
+	it("manage_tools accepts exact tool names returned by search", async () => {
+		const registry = new ToolRegistry();
+		const source = await makeInProcessSource("test", [
+			{
+				name: "tool.with.dot",
+				description: "Dotted tool name",
+				inputSchema: { type: "object", properties: {} },
+				handler: async () => ({ content: textContent("ok"), isError: false }),
+			},
+		]);
+		registry.addSource(source);
+		const calls: string[] = [];
+		const toolPromotionCtx: ToolPromotionContext = {
+			addTool(toolName) {
+				calls.push(`add:${toolName}`);
+				return { ok: true, toolName, changed: true, message: `${toolName} added` };
+			},
+			removeTool(toolName) {
+				calls.push(`remove:${toolName}`);
+				return { ok: true, toolName, changed: true, message: `${toolName} removed` };
+			},
+		};
+		const systemTools = await createSystemTools(
+			() => registry,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			toolPromotionCtx,
+		);
+
+		const searchResult = await systemTools.execute("search", {
+			scope: "tools",
+			query: "dotted",
+		});
+		expect(searchResult.isError).toBe(false);
+		expect(getStructured<{ tools?: Array<{ name: string }> }>(searchResult)?.tools).toEqual([
+			{ name: "test__tool.with.dot" },
+		]);
+
+		const result = await systemTools.execute("manage_tools", {
+			add: ["test__tool.with.dot"],
+		});
+		expect(result.isError).toBe(false);
+		expect(calls).toEqual(["add:test__tool.with.dot"]);
 	});
 });
 
@@ -539,7 +842,6 @@ describe("manage_app configure — workspace-scoped credentials", () => {
 			undefined,
 			undefined,
 			mpakHome,
-			undefined,
 			undefined,
 			undefined,
 			undefined,

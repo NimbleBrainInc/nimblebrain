@@ -1,5 +1,8 @@
 import { join } from "node:path";
-import { ConversationIndex } from "../../bundles/conversations/src/index-cache.ts";
+import {
+  type AccessContext,
+  ConversationIndex,
+} from "../../bundles/conversations/src/index-cache.ts";
 import { type ExportInput, handleExport } from "../../bundles/conversations/src/tools/export.ts";
 import { type ForkInput, handleFork } from "../../bundles/conversations/src/tools/fork.ts";
 import { type GetInput, handleGet } from "../../bundles/conversations/src/tools/get.ts";
@@ -25,34 +28,57 @@ import {
 
 /**
  * Create the "conversations" platform source — an in-process MCP server.
- * Migrated from the former standalone MCP server at
- * src/bundles/conversations/src/server.ts.
+ *
+ * Replaces the former standalone stdio server (deleted Stage 1 round-8).
+ * The standalone server had no identity or ownership gates and would have
+ * served every user's conversations to any caller; the in-process source
+ * enforces `currentAccess()` on every handler and is now the only entry
+ * point. The bundle directory's `src/` (handlers, index-cache,
+ * jsonl-reader) and `ui/` (the iframe dist) remain — both are imported
+ * by this source.
  *
  * Tools: list, get, search, update, fork, stats, export
- * Resources: ui://conversations/browser (HTML SPA)
+ * Resources: ui://conversations/browser (HTML SPA from the bundle's ui/dist)
  * Placements: sidebar conversations link at priority 1
  */
 export async function createConversationsSource(
   runtime: Runtime,
   eventSink: EventSink,
 ): Promise<McpSource> {
-  // Per-workspace ConversationIndex cache — lazy-built on first access.
-  // Each workspace gets its own index pointing at its own conversations directory.
-  const indexCache = new Map<string, ConversationIndex>();
+  // Single process-wide ConversationIndex over the top-level
+  // conversation directory. Post-Stage-1, all conversations live at
+  // `{workDir}/conversations/`; per-workspace caches would just be
+  // identical clones over the same dir. Access filtering is the
+  // dispatcher's job (see `currentAccess()` below), not the index's
+  // — the index tracks ownerId on every entry and each handler call
+  // narrows to the caller's owned set.
+  let cachedIndex: ConversationIndex | null = null;
 
   async function getIndex(): Promise<{ index: ConversationIndex; dir: string }> {
-    const wsDir = runtime.getWorkspaceScopedDir();
-    const dir = join(wsDir, "conversations");
-    const cacheKey = dir; // unique per workspace path
-
-    let index = indexCache.get(cacheKey);
-    if (!index) {
-      index = new ConversationIndex();
-      await index.build(dir);
-      index.startWatching(dir);
-      indexCache.set(cacheKey, index);
+    const dir = join(runtime.getWorkDir(), "conversations");
+    if (!cachedIndex) {
+      cachedIndex = new ConversationIndex();
+      await cachedIndex.build(dir);
+      cachedIndex.startWatching(dir);
     }
-    return { index, dir };
+    return { index: cachedIndex, dir };
+  }
+
+  /**
+   * Resolve the current request's access context. Reads
+   * `runtime.getCurrentIdentity()`; throws if the dispatcher fires
+   * without an authenticated request — these tools are user-facing
+   * and have no defensible "system" caller post-Stage-1.
+   */
+  function currentAccess(): AccessContext {
+    const identity = runtime.getCurrentIdentity();
+    if (!identity) {
+      throw new Error(
+        "[conversations] no authenticated identity in request context — " +
+          "the platform conversation tools require a user-scoped caller.",
+      );
+    }
+    return { userId: identity.id };
   }
 
   /** Shared error handler — catches, formats, returns isError result. */
@@ -86,17 +112,17 @@ export async function createConversationsSource(
       inputSchema: ConversationsListInput,
       handler: withErrorHandling(async (input) => {
         const { index } = await getIndex();
-        return handleList(input as unknown as ListInput, index);
+        return handleList(input as unknown as ListInput, index, currentAccess());
       }),
     },
     {
       name: "get",
       description:
-        "Load a conversation's full message history including metadata, message content, tool calls, and token usage per message.",
+        'Load a conversation by ID. Returns metadata plus, by default, the most recent ~20 messages (with the message payload capped to ~30 KB; the full pretty-printed response stays under ~50 KB). Use expand:"metadata" for just the metadata or expand:"full" when you actually need the entire transcript — long conversations can run hundreds of thousands of tokens and full reads are recorded in tool history.',
       inputSchema: ConversationsGetInput,
       handler: withErrorHandling(async (input) => {
         const { index } = await getIndex();
-        return handleGet(input as unknown as GetInput, index);
+        return handleGet(input as unknown as GetInput, index, currentAccess());
       }),
     },
     {
@@ -106,7 +132,7 @@ export async function createConversationsSource(
       inputSchema: ConversationsSearchInput,
       handler: withErrorHandling(async (input) => {
         const { index } = await getIndex();
-        return handleSearch(input as unknown as SearchInput, index);
+        return handleSearch(input as unknown as SearchInput, index, currentAccess());
       }),
     },
     {
@@ -115,7 +141,7 @@ export async function createConversationsSource(
       inputSchema: ConversationsUpdateInput,
       handler: withErrorHandling(async (input) => {
         const { index } = await getIndex();
-        return handleUpdate(input as unknown as UpdateInput, index);
+        return handleUpdate(input as unknown as UpdateInput, index, currentAccess());
       }),
     },
     {
@@ -125,7 +151,7 @@ export async function createConversationsSource(
       inputSchema: ConversationsForkInput,
       handler: withErrorHandling(async (input) => {
         const { index } = await getIndex();
-        return handleFork(input as unknown as ForkInput, index);
+        return handleFork(input as unknown as ForkInput, index, currentAccess());
       }),
     },
     {
@@ -135,7 +161,7 @@ export async function createConversationsSource(
       inputSchema: ConversationsStatsInput,
       handler: withErrorHandling(async (input) => {
         const { index } = await getIndex();
-        return handleStats(input as unknown as StatsInput, index);
+        return handleStats(input as unknown as StatsInput, index, currentAccess());
       }),
     },
     {
@@ -145,7 +171,7 @@ export async function createConversationsSource(
       inputSchema: ConversationsExportInput,
       handler: withErrorHandling(async (input) => {
         const { index } = await getIndex();
-        return handleExport(input as unknown as ExportInput, index);
+        return handleExport(input as unknown as ExportInput, index, currentAccess());
       }),
     },
   ];

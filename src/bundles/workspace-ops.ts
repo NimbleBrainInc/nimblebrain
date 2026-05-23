@@ -4,13 +4,12 @@
  * These are consumed by system tools for hot bundle management within workspaces.
  */
 
-import { homedir } from "node:os";
-import { join } from "node:path";
-import { clearAllWorkspaceCredentials } from "../config/workspace-credentials.ts";
+import type { EventSink } from "../engine/types.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
-import { bundleNameFromRef, resolveBundleDataDir, serverNameFromRef } from "./paths.ts";
-import { startBundleSource } from "./startup.ts";
-import type { BundleRef } from "./types.ts";
+import { WorkspaceContext } from "../workspace/context.ts";
+import { defaultWorkDir, resolveBundleDataDirForRef, serverNameFromRef } from "./paths.ts";
+import { type BundleMcpDeps, startBundleSource } from "./startup.ts";
+import type { BundleRef, LocalBundleMeta } from "./types.ts";
 
 /** A single entry in the process inventory — one per (workspace, bundle) pair. */
 export interface ProcessInventoryEntry {
@@ -18,7 +17,7 @@ export interface ProcessInventoryEntry {
   bundle: BundleRef;
   dataDir: string;
   serverName: string;
-  meta?: import("./types.ts").LocalBundleMeta | null;
+  meta?: LocalBundleMeta | null;
 }
 
 /**
@@ -33,18 +32,33 @@ export async function installBundleInWorkspace(
   registry: ToolRegistry,
   // Required — threaded into the new McpSource so task-augmented tools'
   // progress events reach SSE. See mcp-source.ts for the full rationale.
-  eventSink: import("../engine/types.ts").EventSink,
+  eventSink: EventSink,
   configDir: string | undefined,
   opts?: {
     allowInsecureRemotes?: boolean;
     workDir?: string;
+    /**
+     * Per-workspace host-resources deps. Caller (`system-tools` /
+     * `manage_app install`, `connector-tools`) pulls from Runtime.
+     * Passed through to `startBundleSource` so the spawned bundle's
+     * McpSource registers inbound `ai.nimblebrain/resources/*` handlers.
+     */
+    bundleMcp?: BundleMcpDeps;
   },
 ): Promise<ProcessInventoryEntry> {
-  const workDir = opts?.workDir ?? process.env.NB_WORK_DIR ?? "";
+  // workDir default matches the sibling `uninstallBundleFromWorkspace`
+  // below — previously this function fell through to `""` and emitted
+  // relative paths from cwd (a latent bug). The new default routes
+  // through `~/.nimblebrain`, matching every other workspace-scoped
+  // entry point. A caller that explicitly passes `workDir: ""` now
+  // hits the `WorkspaceContext` constructor's empty-string rejection
+  // (deliberate — relative paths in this code path were never correct).
+  const workDir = opts?.workDir ?? defaultWorkDir();
+  const wsContext = new WorkspaceContext({ wsId, workDir });
   const serverName = serverNameFromRef(bundleRef);
-  const bundleName = bundleNameFromRef(bundleRef);
-  const wsPath = join(workDir, "workspaces", wsId);
-  const dataDir = resolveBundleDataDir(wsPath, bundleName);
+  // Slug source is `manifest.name`, resolved via the canonical helper so the
+  // launch-path data dir agrees with the seedInstance / briefing reader path.
+  const dataDir = resolveBundleDataDirForRef(workDir, wsId, bundleRef, configDir);
 
   // Check for existing registration
   if (registry.hasSource(serverName)) {
@@ -54,11 +68,11 @@ export async function installBundleInWorkspace(
   const result = await startBundleSource(bundleRef, registry, eventSink, configDir, {
     allowInsecureRemotes: opts?.allowInsecureRemotes,
     dataDir,
-    // Thread workspace id + work dir so the named-bundle path can resolve
+    // Thread the workspace context so the named-bundle path can resolve
     // `user_config` from the workspace credential store before prepareServer
     // validates it.
-    wsId,
-    workDir,
+    workspaceContext: wsContext,
+    bundleMcp: opts?.bundleMcp,
   });
 
   return {
@@ -100,9 +114,9 @@ export async function uninstallBundleFromWorkspace(
 
   // Best-effort credential cleanup — don't fail uninstall if it errors.
   // Credentials are config, not data: they should not persist across uninstalls.
-  const workDir = opts?.workDir ?? process.env.NB_WORK_DIR ?? join(homedir(), ".nimblebrain");
+  const workDir = opts?.workDir ?? defaultWorkDir();
   try {
-    await clearAllWorkspaceCredentials(wsId, bundleName, workDir);
+    await new WorkspaceContext({ wsId, workDir }).getCredentialStore().clearAll(bundleName);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     process.stderr.write(

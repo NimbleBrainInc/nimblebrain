@@ -211,7 +211,7 @@ export class SseEventManager implements EventSink {
 
   /**
    * Register a local listener that is called on every broadcast.
-   * Useful for in-process consumers (e.g. HomeService) that need
+   * Useful for in-process consumers (caches, dashboards) that need
    * event-driven invalidation without being an SSE client.
    */
   onEvent(callback: (event: string, data: Record<string, unknown>) => void): void {

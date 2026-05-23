@@ -50,7 +50,7 @@ describe("Conversation full lifecycle (store-level)", () => {
 
 	it("create → append 3 messages → list (verify tokens) → rename → search → fork → delete", async () => {
 		// --- create ---
-		const conv = await store.create();
+		const conv = await store.create({ ownerId: "user_test" });
 		expect(conv.id).toMatch(/^conv_/);
 
 		// --- append 3 messages ---
@@ -145,10 +145,13 @@ describe("Backward compatibility: old-format JSONL → append", () => {
 	});
 
 	it("loads old-format JSONL, appends new messages, and derives tokens correctly", async () => {
-		// Write an old-format file (only id + createdAt on line 1, no enriched fields)
+		// Write an old-format file (only id + createdAt + the now-required
+		// ownerId, no other enriched fields). Stage 1 requires ownerId on
+		// every conversation; the migration script stamps it on pre-Stage-1
+		// data.
 		const id = "conv_1e9ac400000000b1";
 		const createdAt = "2024-06-15T10:00:00.000Z";
-		const metaLine = JSON.stringify({ id, createdAt });
+		const metaLine = JSON.stringify({ id, createdAt, ownerId: "user_test" });
 		const oldUserMsg = JSON.stringify({
 			role: "user",
 			content: "old question about budgets",

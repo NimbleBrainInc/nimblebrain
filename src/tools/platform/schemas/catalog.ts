@@ -5,6 +5,7 @@ import * as Conversations from "./conversations.ts";
 import * as Files from "./files.ts";
 import * as Home from "./home.ts";
 import * as Instructions from "./instructions.ts";
+import * as ManageTools from "./manage-tools.ts";
 import * as Skills from "./skills.ts";
 import * as Usage from "./usage.ts";
 
@@ -13,6 +14,9 @@ import * as Usage from "./usage.ts";
 // types end-to-end. New sources / tools added here automatically gain
 // compile-time enforcement at every call site.
 export const PlatformToolCatalog = {
+  nb: {
+    manage_tools: { input: ManageTools.ManageToolsInput },
+  },
   skills: {
     list: { input: Skills.SkillsListInput },
     read: { input: Skills.SkillsReadInput },

@@ -111,7 +111,8 @@ describe("manage_app — workspace-aware install/uninstall", () => {
       ws.id,
       bundleRef,
       registry,
-      workDir,
+      sink,
+      undefined,
       { workDir },
     );
 
@@ -159,7 +160,8 @@ describe("manage_app — workspace-aware install/uninstall", () => {
       ws.id,
       bundleRef,
       registry,
-      workDir,
+      sink,
+      undefined,
       { workDir },
     );
     lifecycle.seedInstance(entry.serverName, bundleDir, bundleRef, entry.meta ?? undefined, ws.id);
@@ -209,10 +211,10 @@ describe("manage_app — workspace-aware install/uninstall", () => {
     const sink = makeEventCollector();
 
     const entry1 = await installBundleInWorkspace(
-      ws1.id, bundleRef, registry1, workDir, { workDir },
+      ws1.id, bundleRef, registry1, sink, undefined, { workDir },
     );
     const entry2 = await installBundleInWorkspace(
-      ws2.id, bundleRef, registry2, workDir, { workDir },
+      ws2.id, bundleRef, registry2, sink, undefined, { workDir },
     );
 
     // Same plain server name in both
@@ -246,7 +248,7 @@ describe("manage_app — workspace-aware install/uninstall", () => {
 
     // Install via workspace path
     const entry = await installBundleInWorkspace(
-      ws.id, bundleRef, registry, workDir, { workDir },
+      ws.id, bundleRef, registry, sink, undefined, { workDir },
     );
     lifecycle.seedInstance(entry.serverName, bundleDir, bundleRef, entry.meta ?? undefined, ws.id);
     await store.update(ws.id, { bundles: [{ path: bundleDir }] });
@@ -276,7 +278,7 @@ describe("manage_app — workspace-aware install/uninstall", () => {
     const lifecycle = new BundleLifecycleManager(registry, sink, undefined);
 
     const entry = await installBundleInWorkspace(
-      ws.id, bundleRef, registry, workDir, { workDir },
+      ws.id, bundleRef, registry, sink, undefined, { workDir },
     );
     lifecycle.seedInstance(entry.serverName, bundleDir, bundleRef, entry.meta ?? undefined, ws.id);
 

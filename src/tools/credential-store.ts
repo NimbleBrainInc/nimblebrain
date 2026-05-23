@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import { chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { WORKSPACE_ID_RE } from "../api/auth-middleware.ts";
+import { WorkspaceContext } from "../workspace/context.ts";
 import { Redacted } from "./redacted.ts";
 
 /**
@@ -53,12 +53,6 @@ function assertValidKey(key: string): void {
   }
 }
 
-function assertValidWsId(wsId: string): void {
-  if (typeof wsId !== "string" || !WORKSPACE_ID_RE.test(wsId)) {
-    throw new Error(`[credential-store] invalid wsId: "${wsId}".`);
-  }
-}
-
 /**
  * Plaintext file-backed `CredentialStore`. Ships in v1 self-host. Each
  * secret lives in its own file at:
@@ -75,8 +69,14 @@ export class FileCredentialStore implements CredentialStore {
   constructor(private readonly workDir: string) {}
 
   private dir(wsId: string): string {
-    assertValidWsId(wsId);
-    return join(this.workDir, "workspaces", wsId, "credentials", "secrets");
+    // Routed through WorkspaceContext so the `workspaces/{wsId}/credentials/`
+    // layout has exactly one definition site (`src/workspace/context.ts`).
+    // The context constructor validates `wsId` against `WORKSPACE_ID_RE`;
+    // no local guard needed.
+    return new WorkspaceContext({ wsId, workDir: this.workDir }).getDataPath(
+      "credentials",
+      "secrets",
+    );
   }
 
   private filePath(wsId: string, key: string): string {

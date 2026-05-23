@@ -3,7 +3,6 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { log } from "../cli/log.ts";
 import { cleanupComposioBundle } from "../composio/sdk.ts";
-import { clearAllWorkspaceCredentials } from "../config/workspace-credentials.ts";
 import type { EventSink } from "../engine/types.ts";
 import type { PlacementRegistry } from "../runtime/placement-registry.ts";
 import { FileCredentialStore } from "../tools/credential-store.ts";
@@ -12,6 +11,8 @@ import type { ToolRegistry } from "../tools/registry.ts";
 import { UserPoolSource } from "../tools/user-pool-source.ts";
 import { WorkspaceOAuthProvider } from "../tools/workspace-oauth-provider.ts";
 import { validateAdditionalAuthorizationParams } from "../util/oauth-params.ts";
+import { WorkspaceContext } from "../workspace/context.ts";
+import type { AutomationDomainContext } from "./automations/src/domain.ts";
 import { createAutomation, deleteAutomation } from "./automations/src/domain.ts";
 import { connectorSlug, hasPersistedComposioConnection } from "./composio-connection.ts";
 import {
@@ -22,9 +23,9 @@ import {
 } from "./connection.ts";
 import { getMpak } from "./mpak.ts";
 import { hasPersistedWorkspaceOAuthTokens } from "./oauth-tokens.ts";
-import { deriveBundleDataDir, deriveServerName } from "./paths.ts";
+import { defaultWorkDir, deriveServerName, resolveBundleDataDirForRef } from "./paths.ts";
 import { consumePendingAuth } from "./pending-auth-buffer.ts";
-import { startBundleSource } from "./startup.ts";
+import { type BundleMcpDeps, composeBundleMcpContext, startBundleSource } from "./startup.ts";
 import type {
   BriefingBlock,
   BundleInstance,
@@ -54,9 +55,19 @@ export class BundleLifecycleManager {
    * `source: "bundle"` and `bundleName`, which the LLM-facing schema
    * deliberately doesn't accept. See src/tools/platform/CLAUDE.md § 1.4.
    */
-  private getAutomationsCtx:
-    | (() => import("./automations/src/domain.ts").AutomationDomainContext)
-    | null = null;
+  private getAutomationsCtx: (() => AutomationDomainContext) | null = null;
+
+  /**
+   * Factory for per-workspace host-resources deps. Set by Runtime after
+   * construction (`setBundleMcpDepsFactory`). When set, every install
+   * path threads the matching deps through `startBundleSource` so the
+   * spawned bundle's McpSource registers inbound handlers for
+   * `ai.nimblebrain/resources/{read,list}`. Null in test/minimal
+   * runtimes that don't wire the host-resources subsystem — bundles
+   * spawned in that mode can't call host-resources methods (the
+   * handlers are never registered).
+   */
+  private getBundleMcpDeps: ((wsId: string) => BundleMcpDeps) | null = null;
 
   constructor(
     private eventSink: EventSink,
@@ -77,10 +88,25 @@ export class BundleLifecycleManager {
    * — useful for minimal test runtimes that don't want the automations
    * subsystem.
    */
-  setAutomationsContextGetter(
-    getter: () => import("./automations/src/domain.ts").AutomationDomainContext,
-  ): void {
+  setAutomationsContextGetter(getter: () => AutomationDomainContext): void {
     this.getAutomationsCtx = getter;
+  }
+
+  /**
+   * Wire the host-resources deps factory. Called by Runtime once the
+   * resolver + rate-limit are constructed. When unset, bundles spawn
+   * without inbound `ai.nimblebrain/resources/*` handlers registered;
+   * any bundle declaring `required: true` already fails the install
+   * gate so this is reached only by bundles that don't need the
+   * extension.
+   */
+  setBundleMcpDepsFactory(factory: (wsId: string) => BundleMcpDeps): void {
+    this.getBundleMcpDeps = factory;
+  }
+
+  /** Internal: resolve the workspace's host-resources deps, or undefined when unwired. */
+  private resolveBundleMcpDeps(wsId: string): BundleMcpDeps | undefined {
+    return this.getBundleMcpDeps?.(wsId);
   }
 
   // ---- Queries -----------------------------------------------------------
@@ -133,17 +159,24 @@ export class BundleLifecycleManager {
     await mpak.bundleCache.loadBundle(name);
 
     // Workspace-scoped data dir keeps two workspaces installing the same
-    // bundle from stomping on each other's entity data. Matches the
-    // seedInstance layout used at platform boot.
-    const nbWorkDir = process.env.NB_WORK_DIR ?? join(homedir(), ".nimblebrain");
-    const bundleDataDir = join(nbWorkDir, "workspaces", wsId, "data", deriveBundleDataDir(name));
+    // bundle from stomping on each other's entity data. Slug source is
+    // `manifest.name` via `resolveBundleDataDirForRef` — same call used by
+    // the boot-time inventory and the JIT install path, so all three agree.
+    const nbWorkDir = defaultWorkDir();
+    const wsContext = new WorkspaceContext({ wsId, workDir: nbWorkDir });
+    const configDir = this.configPath ? dirname(this.configPath) : undefined;
+    const bundleDataDir = resolveBundleDataDirForRef(nbWorkDir, wsId, { name }, configDir);
 
     const { sourceName, manifest } = await startBundleSource(
       { name, env },
       registry,
       this.eventSink,
       this.configPath ? dirname(this.configPath) : undefined,
-      { dataDir: bundleDataDir, wsId, workDir: nbWorkDir },
+      {
+        dataDir: bundleDataDir,
+        workspaceContext: wsContext,
+        bundleMcp: this.resolveBundleMcpDeps(wsId),
+      },
     );
     if (!manifest) {
       // Named bundles always have a manifest — startBundleSource reads it
@@ -152,7 +185,7 @@ export class BundleLifecycleManager {
     }
 
     const isUpjack = manifest._meta?.["ai.nimblebrain/upjack"] != null;
-    const instance = createInstance(sourceName, name, manifest, isUpjack, wsId);
+    const instance = createInstance(sourceName, name, manifest, isUpjack, wsId, bundleDataDir);
     instance.configKey = name;
     this.transition(instance, "running");
 
@@ -198,11 +231,26 @@ export class BundleLifecycleManager {
     wsId: string,
     env?: Record<string, string>,
   ): Promise<BundleInstance> {
+    // Workspace-scoped data dir computed up-front via the canonical helper
+    // (slug = manifest.name) so the subprocess's MPAK_WORKSPACE and the
+    // seedInstance / briefing reader path agree on a single location.
+    // Without this override `buildLocalSource`'s fallback would compose a
+    // `<nbWorkDir>/data/<slug>` path that bypasses the workspace prefix
+    // and uses a path-derived slug.
+    const nbWorkDir = defaultWorkDir();
+    const configDir = this.configPath ? dirname(this.configPath) : undefined;
+    const bundleDataDir = resolveBundleDataDirForRef(
+      nbWorkDir,
+      wsId,
+      { path: bundlePath },
+      configDir,
+    );
     const { sourceName, manifest } = await startBundleSource(
       { path: bundlePath, env },
       registry,
       this.eventSink,
-      this.configPath ? dirname(this.configPath) : undefined,
+      configDir,
+      { dataDir: bundleDataDir, bundleMcp: this.resolveBundleMcpDeps(wsId) },
     );
     if (!manifest) {
       // Local bundles always have a manifest.json on disk; startBundleSource
@@ -213,7 +261,14 @@ export class BundleLifecycleManager {
 
     const isUpjack = manifest._meta?.["ai.nimblebrain/upjack"] != null;
     // Use manifest.name (scoped name) as bundleName, not the filesystem path.
-    const instance = createInstance(sourceName, manifest.name, manifest, isUpjack, wsId);
+    const instance = createInstance(
+      sourceName,
+      manifest.name,
+      manifest,
+      isUpjack,
+      wsId,
+      bundleDataDir,
+    );
     instance.configKey = bundlePath; // config entry uses the filesystem path
     this.transition(instance, "running");
 
@@ -274,7 +329,7 @@ export class BundleLifecycleManager {
     ui?: BundleUiMeta | null,
     trustScore?: number | null,
   ): Promise<BundleInstance> {
-    const nbWorkDir = process.env.NB_WORK_DIR ?? join(homedir(), ".nimblebrain");
+    const nbWorkDir = defaultWorkDir();
 
     // Pre-register the instance + Connection BEFORE startBundleSource so
     // the interactive-auth callback (fired during source.start()) can find
@@ -315,6 +370,7 @@ export class BundleLifecycleManager {
           wsId,
           workDir: nbWorkDir,
           onInteractiveAuthRequired,
+          bundleMcp: this.resolveBundleMcpDeps(wsId),
         },
       );
       sourceName = result.sourceName;
@@ -434,9 +490,11 @@ export class BundleLifecycleManager {
     // Credentials are config, not data — they should not persist across
     // uninstalls. Data directories are preserved (step 6).
     if (instance) {
-      const workDir = process.env.NB_WORK_DIR ?? join(homedir(), ".nimblebrain");
+      const workDir = defaultWorkDir();
       try {
-        await clearAllWorkspaceCredentials(instance.wsId, instance.bundleName, workDir);
+        await new WorkspaceContext({ wsId: instance.wsId, workDir })
+          .getCredentialStore()
+          .clearAll(instance.bundleName);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         process.stderr.write(
@@ -450,14 +508,10 @@ export class BundleLifecycleManager {
       // shouldn't survive an uninstall. Worst case the dir is already
       // gone; rmSync with `force` is a no-op then.
       try {
-        const oauthDir = join(
+        const oauthDir = new WorkspaceContext({
+          wsId: instance.wsId,
           workDir,
-          "workspaces",
-          instance.wsId,
-          "credentials",
-          "mcp-oauth",
-          serverName,
-        );
+        }).getDataPath("credentials", "mcp-oauth", serverName);
         rmSync(oauthDir, { recursive: true, force: true });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -494,14 +548,10 @@ export class BundleLifecycleManager {
           );
         }
         try {
-          const composioDir = join(
+          const composioDir = new WorkspaceContext({
+            wsId: instance.wsId,
             workDir,
-            "workspaces",
-            instance.wsId,
-            "credentials",
-            "composio",
-            connectorSlug(composioRef.connectorId),
-          );
+          }).getDataPath("credentials", "composio", connectorSlug(composioRef.connectorId));
           rmSync(composioDir, { recursive: true, force: true });
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
@@ -805,6 +855,12 @@ export class BundleLifecycleManager {
       owner: isWorkspaceScope ? { type: "workspace", wsId } : { type: "user", userId: principalId },
       serverName,
       workDir: opts.workDir,
+      // Workspace-scoped tokens route the credential directory through
+      // the typed handle; user-scoped tokens stay on the legacy
+      // workDir-derivation path (no workspace owns them).
+      ...(isWorkspaceScope
+        ? { workspaceContext: new WorkspaceContext({ wsId, workDir: opts.workDir }) }
+        : {}),
       callbackUrl: opts.callbackUrl,
       allowInsecureRemotes: opts.allowInsecureRemotes === true,
       onInteractiveAuthRequired: (url) => {
@@ -830,6 +886,7 @@ export class BundleLifecycleManager {
         authProvider: provider,
       },
       this.eventSink,
+      composeBundleMcpContext(this.resolveBundleMcpDeps(wsId), serverName),
     );
 
     // Wire the new source into the right place BEFORE start so any tool
@@ -972,6 +1029,9 @@ export class BundleLifecycleManager {
       owner: isWorkspaceScope ? { type: "workspace", wsId } : { type: "user", userId: principalId },
       serverName,
       workDir: opts.workDir,
+      ...(isWorkspaceScope
+        ? { workspaceContext: new WorkspaceContext({ wsId, workDir: opts.workDir }) }
+        : {}),
       callbackUrl: "http://_/", // unused for revocation path
       allowInsecureRemotes: opts.allowInsecureRemotes === true,
     });
@@ -1408,6 +1468,10 @@ export class BundleLifecycleManager {
       allowInsecureRemotes: this.allowInsecureRemotes,
       wsId,
       workDir,
+      // Re-thread on reconnect so a Composio OAuth callback doesn't
+      // silently drop the bundle's host-resources handlers. The
+      // composio-auth callback path goes through here.
+      bundleMcp: this.resolveBundleMcpDeps(wsId),
     });
   }
 
@@ -1472,8 +1536,11 @@ export class BundleLifecycleManager {
      *  test callers; production callers should always pass it. */
     registry?: ToolRegistry,
   ): void {
-    // Resolve entity data root from dataDir + upjack namespace at seed time.
-    // This is the single source of truth — downstream consumers read it directly.
+    // Resolve entity data root from dataDir + upjack namespace. `dataDir` is
+    // already the canonical bundle-data parent (slug = manifest.name) thanks
+    // to `resolveBundleDataDirForRef` at every caller — buildProcessInventory,
+    // installLocal, installNamed, installBundleInWorkspace. No re-derivation
+    // here: launcher and reader agree by construction.
     const entityDataRoot =
       dataDir && manifestMeta?.upjackNamespace
         ? join(dataDir, manifestMeta.upjackNamespace, "data")
@@ -1564,7 +1631,7 @@ export class BundleLifecycleManager {
           authorizationUrl: pendingAuthUrl,
         });
       } else {
-        const workDir = process.env.NB_WORK_DIR ?? join(homedir(), ".nimblebrain");
+        const workDir = defaultWorkDir();
         // Composio-backed connectors live in a parallel credential
         // namespace — the user-presence signal is
         // `credentials/composio/<connectorId>/connection.json`, not
@@ -1617,7 +1684,17 @@ function createInstance(
   manifest: BundleManifest,
   isUpjack: boolean,
   wsId: string,
+  dataDir: string,
 ): BundleInstance {
+  // Mirror the entityDataRoot composition `seedInstance` does at boot so
+  // JIT installs (installLocal / installNamed) leave the BundleInstance in
+  // the same shape as a boot-seeded one. Without this, briefing facets
+  // pointed at a freshly-installed upjack bundle would find
+  // `instance.entityDataRoot === undefined` and silently report nothing.
+  const upjackMeta = manifest._meta?.["ai.nimblebrain/upjack"] as
+    | { namespace?: string }
+    | undefined;
+  const namespace = upjackMeta?.namespace;
   return {
     serverName,
     bundleName,
@@ -1631,6 +1708,7 @@ function createInstance(
     protected: false,
     type: isUpjack ? "upjack" : "plain",
     wsId,
+    ...(namespace ? { entityDataRoot: join(dataDir, namespace, "data") } : {}),
   };
 }
 

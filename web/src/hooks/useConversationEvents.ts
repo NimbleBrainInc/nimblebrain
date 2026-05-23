@@ -1,9 +1,15 @@
 /**
  * React hook for subscribing to per-conversation SSE events.
  *
- * Only connects when the conversation is shared and has an ID.
- * Disconnects on cleanup or when the conversation changes.
- * On reconnect, triggers a full conversation reload to catch missed messages.
+ * Stage 1: conversations are single-owner; the broadcast still fires
+ * server-side so this subscription is the same-user cross-tab sync
+ * path (one user, multiple browser tabs/devices on the same
+ * conversation). Stage 4 reintroduces multi-user sharing and this
+ * hook's audience widens.
+ *
+ * Disconnects on cleanup or when the conversation changes. On
+ * reconnect, triggers a full conversation reload to catch missed
+ * messages.
  */
 
 import { useEffect, useRef } from "react";
@@ -26,7 +32,6 @@ export interface ConversationEventCallbacks {
 
 export function useConversationEvents(
   conversationId: string | null,
-  isShared: boolean,
   callbacks: ConversationEventCallbacks,
 ): void {
   // Keep callbacks in a ref so we don't reconnect on every render
@@ -34,8 +39,9 @@ export function useConversationEvents(
   callbacksRef.current = callbacks;
 
   useEffect(() => {
-    // Only subscribe when viewing a shared conversation
-    if (!conversationId || !isShared) return;
+    // Subscribe whenever a conversation is open — same-user cross-tab
+    // sync (and, post-Stage-4, multi-user sharing).
+    if (!conversationId) return;
 
     const token = getAuthToken();
     let connection: ConversationSseConnection | null = null;
@@ -71,5 +77,5 @@ export function useConversationEvents(
     return () => {
       connection?.close();
     };
-  }, [conversationId, isShared]);
+  }, [conversationId]);
 }

@@ -4,6 +4,14 @@
  */
 import type { Static, TSchema } from "@sinclair/typebox";
 export declare const PlatformToolCatalog: {
+    readonly nb: {
+        readonly manage_tools: {
+            readonly input: import("@sinclair/typebox").TObject<{
+                add: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
+                remove: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
+            }>;
+        };
+    };
     readonly skills: {
         readonly list: {
             readonly input: import("@sinclair/typebox").TObject<{
@@ -234,6 +242,7 @@ export declare const PlatformToolCatalog: {
         readonly get: {
             readonly input: import("@sinclair/typebox").TObject<{
                 id: import("@sinclair/typebox").TString;
+                expand: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"metadata" | "messages" | "full">>;
                 limit: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
             }>;
         };

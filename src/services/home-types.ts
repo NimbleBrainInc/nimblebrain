@@ -26,18 +26,25 @@ export interface BriefingSection {
   action?: BriefingAction;
 }
 
-/** Action attached to a briefing section. */
+/** Action attached to a briefing section. `type` discriminates which
+ * field carries the payload — navigate uses `route`, startChat uses
+ * `prompt` — but both fields are present in the wire shape (nullable
+ * for the unused variant) because Anthropic structured-output requires
+ * all schema properties to appear in `required`. Consumers check
+ * `action.type` before reading the relevant field. */
 export interface BriefingAction {
+  type: "navigate" | "startChat";
   label: string;
-  type: "chat" | "navigate";
-  value: string;
+  /** Set on navigate actions; null on startChat. */
+  route: string | null;
+  /** Set on startChat actions; null on navigate. */
+  prompt: string | null;
 }
 
 /** In-memory cache entry for a generated briefing. */
 export interface BriefingCacheEntry {
   briefing: BriefingOutput;
   generatedAt: number;
-  activityHash: string;
   invalidated: boolean;
 }
 
@@ -56,6 +63,7 @@ export interface ActivityOutput {
   bundle_events: ActivityBundleEvent[];
   tool_usage: ToolUsageSummary[];
   errors: ErrorEntry[];
+  automations?: AutomationRunSummary;
   totals: {
     conversations: number;
     tool_calls: number;
@@ -63,6 +71,21 @@ export interface ActivityOutput {
     output_tokens: number;
     errors: number;
   };
+}
+
+/** Summary of automation runs for a time period. */
+export interface AutomationRunSummary {
+  total: number;
+  succeeded: number;
+  failed: number;
+  failures: AutomationFailure[];
+}
+
+/** A failed automation run with details. */
+export interface AutomationFailure {
+  name: string;
+  error?: string;
+  action: BriefingAction;
 }
 
 /** Conversation summary for activity reporting. */
@@ -103,10 +126,12 @@ export interface ErrorEntry {
   context?: string;
 }
 
-/** Home feature configuration from nimblebrain.json. */
+/** Home feature configuration from nimblebrain.json. Mirrors the shape
+ * returned by `Runtime.getHomeConfig()`. Feature gating (`enabled`) and
+ * model selection live elsewhere — the model identity is passed to
+ * BriefingGenerator separately, and feature-flag gating happens at
+ * tool registration. */
 export interface HomeConfig {
-  enabled: boolean;
-  model: string | null;
   userName: string;
   timezone: string;
   cacheTtlMinutes: number;

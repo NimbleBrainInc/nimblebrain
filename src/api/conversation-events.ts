@@ -57,9 +57,23 @@ export class ConversationEventManager {
 
   /**
    * Subscribe a user to a conversation's event stream.
-   * Returns the ReadableStream to be used as the Response body.
+   *
+   * Returns both the ReadableStream (the Response body) and the
+   * server-generated `subscriberId` for the new subscription. The id
+   * is also written into the stream as the first frame
+   * (`event: subscribed`) so the consumer can learn it from the SSE
+   * payload alone — clients that originate a `/v1/chat/stream` POST
+   * for the same conversation pass that id back as the
+   * `X-Origin-Subscriber-Id` header. The chat-stream handler forwards
+   * the id to `broadcastToConversation`'s `excludeSubscriberId`, which
+   * prevents the broadcast from echoing the same event back to the
+   * sender's own subscription (which is otherwise indistinguishable
+   * from peer-tab subscriptions of the same user post-Stage-1).
    */
-  addSubscriber(conversationId: string, userId: string): ReadableStream<Uint8Array> {
+  addSubscriber(
+    conversationId: string,
+    userId: string,
+  ): { stream: ReadableStream<Uint8Array>; subscriberId: string } {
     const id = crypto.randomUUID();
     let sub: ConversationSubscriber;
 
@@ -67,13 +81,15 @@ export class ConversationEventManager {
       start: (controller) => {
         sub = { id, userId, conversationId, controller, closed: false };
         this.subscribers.set(id, sub);
+        const subscribedMsg = `event: subscribed\ndata: ${JSON.stringify({ subscriberId: id })}\n\n`;
+        controller.enqueue(encoder.encode(subscribedMsg));
       },
       cancel: () => {
         this.removeSubscriber(id);
       },
     });
 
-    return stream;
+    return { stream, subscriberId: id };
   }
 
   /** Remove a specific subscriber. */
@@ -88,16 +104,35 @@ export class ConversationEventManager {
   /**
    * Broadcast an event to all subscribers of a specific conversation.
    *
+   * Stage 1 single-owner: every legitimate subscriber to a given
+   * conversation is the same user (the owner) connected from another
+   * tab/device. Filtering on `userId` would skip every subscriber
+   * (round-3 had this bug); not filtering at all double-delivers to
+   * the sender's own tab (round-4 had this bug — the sender's tab
+   * receives via both `/v1/chat/stream` and its own
+   * `/v1/conversations/:id/events` subscription).
+   *
+   * The correct filter key is the **subscriber id**: the sender
+   * passes its current conv-events subscriber id as
+   * `excludeSubscriberId`, so its own subscription is skipped while
+   * peer tabs (different subscriber ids, same userId) still receive.
+   *
+   * Stage 4 will reintroduce multi-participant semantics with
+   * explicit policy gates; until then, this is the only exclusion
+   * shape needed.
+   *
    * @param conversationId - Target conversation
    * @param eventType - SSE event type (e.g. "text.delta", "user.message")
    * @param data - Event data payload
-   * @param excludeUserId - Optional user to exclude (prevents echo for the sender)
+   * @param excludeSubscriberId - Optional subscriber id to skip
+   *   (typically the sender's own subscriber id, to prevent
+   *   self-echo on chat-stream-originated broadcasts).
    */
   broadcastToConversation(
     conversationId: string,
     eventType: string,
     data: Record<string, unknown>,
-    excludeUserId?: string,
+    excludeSubscriberId?: string,
   ): void {
     const message = `event: ${eventType}\ndata: ${JSON.stringify(data)}\n\n`;
     const encoded = encoder.encode(message);
@@ -108,38 +143,12 @@ export class ConversationEventManager {
         continue;
       }
       if (sub.conversationId !== conversationId) continue;
-      if (excludeUserId && sub.userId === excludeUserId) continue;
+      if (excludeSubscriberId && sub.id === excludeSubscriberId) continue;
 
       try {
         sub.controller.enqueue(encoded);
       } catch (err) {
         console.warn("[conversation-events] SSE write failed:", err);
-        this.closeSub(sub);
-        this.subscribers.delete(id);
-      }
-    }
-  }
-
-  /**
-   * Remove a specific user from a conversation's subscribers.
-   * Used when a participant is removed — closes their stream immediately.
-   */
-  removeUserFromConversation(conversationId: string, userId: string): void {
-    for (const [id, sub] of this.subscribers) {
-      if (sub.conversationId === conversationId && sub.userId === userId) {
-        this.closeSub(sub);
-        this.subscribers.delete(id);
-      }
-    }
-  }
-
-  /**
-   * Remove all subscribers for a conversation.
-   * Used when a conversation is unshared.
-   */
-  removeAllForConversation(conversationId: string): void {
-    for (const [id, sub] of this.subscribers) {
-      if (sub.conversationId === conversationId) {
         this.closeSub(sub);
         this.subscribers.delete(id);
       }

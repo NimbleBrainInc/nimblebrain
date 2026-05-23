@@ -1,27 +1,62 @@
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { SseEventManager } from "../api/events.ts";
-import type { ConversationStore } from "../conversation/types.ts";
+import type { ConversationAccessContext, ConversationStore } from "../conversation/types.ts";
 import type {
   ActivityBundleEvent,
   ActivityConversationSummary,
   ActivityInput,
   ActivityOutput,
+  AutomationRunSummary,
   ErrorEntry,
   ToolUsageSummary,
 } from "./home-types.ts";
 
+type ConversationSource =
+  | { kind: "store"; store: ConversationStore }
+  | { kind: "jsonl"; conversationsDir: string };
+
+type BundleEventSource = { kind: "sse"; eventManager: SseEventManager } | { kind: "none" };
+
+export interface ActivityCollectorOptions {
+  logDir: string;
+  conversations: ConversationSource;
+  bundleEvents?: BundleEventSource;
+  automationRunsDir?: string;
+  /**
+   * Caller's identity context for ownership filtering. REQUIRED for
+   * in-process callers post-Stage 1 — the top-level conversation
+   * store holds every user's conversations, so an unfiltered
+   * `store.list()` would leak peer conversations into the activity
+   * summary. Omit only for trusted internal callers operating outside
+   * a request context (e.g. CLI background tasks); the standalone
+   * home bundle server uses the `jsonl` source and gets workspace
+   * isolation from the file layout it sees.
+   */
+  access?: ConversationAccessContext;
+}
+
 /**
- * Collects activity data from three sources: conversation store, structured
- * logs, and the SSE event buffer. Returns a unified ActivityOutput snapshot
- * for the home dashboard.
+ * Unified activity collector for both runtime modes.
+ *
+ * In-process platform callers use the ConversationStore-backed source.
+ * The standalone home bundle server uses the JSONL-backed source because it
+ * runs outside Runtime and only has access to workspace files.
  */
 export class ActivityCollector {
-  constructor(
-    private logDir: string,
-    private store: ConversationStore,
-    private eventManager?: SseEventManager,
-  ) {}
+  private logDir: string;
+  private conversations: ConversationSource;
+  private bundleEvents: BundleEventSource;
+  private automationRunsDir?: string;
+  private access?: ConversationAccessContext;
+
+  constructor(options: ActivityCollectorOptions) {
+    this.logDir = options.logDir;
+    this.conversations = options.conversations;
+    this.bundleEvents = options.bundleEvents ?? { kind: "none" };
+    this.automationRunsDir = options.automationRunsDir;
+    this.access = options.access;
+  }
 
   async collect(input: ActivityInput = {}): Promise<ActivityOutput> {
     const now = new Date();
@@ -30,7 +65,7 @@ export class ActivityCollector {
     const limit = input.limit ?? 50;
     const category = input.category;
 
-    const [conversations, bundleEvents, { toolUsage, errors }] = await Promise.all([
+    const [conversations, bundleEvents, { toolUsage, errors }, automations] = await Promise.all([
       !category || category === "conversations"
         ? this.collectConversations(since, until, limit)
         : Promise.resolve([]),
@@ -41,6 +76,9 @@ export class ActivityCollector {
             toolUsage: [] as ToolUsageSummary[],
             errors: [] as ErrorEntry[],
           }),
+      !category && this.automationRunsDir
+        ? this.collectAutomationRuns(since, until)
+        : Promise.resolve(null),
     ]);
 
     let totalToolCalls = 0;
@@ -54,7 +92,7 @@ export class ActivityCollector {
       totalOutputTokens += c.output_tokens;
     }
 
-    return {
+    const output: ActivityOutput = {
       period: { since, until },
       conversations,
       bundle_events: bundleEvents,
@@ -68,6 +106,12 @@ export class ActivityCollector {
         errors: errors.length,
       },
     };
+
+    if (automations) {
+      output.automations = automations;
+    }
+
+    return output;
   }
 
   private async collectConversations(
@@ -75,10 +119,31 @@ export class ActivityCollector {
     until: string,
     limit: number,
   ): Promise<ActivityConversationSummary[]> {
-    const result = await this.store.list({
-      sortBy: "updatedAt",
-      limit,
-    });
+    const source = this.conversations;
+    if (source.kind === "jsonl") {
+      return this.collectConversationsFromJsonl(source.conversationsDir, since, until, limit);
+    }
+
+    return this.collectConversationsFromStore(source.store, since, until, limit);
+  }
+
+  private async collectConversationsFromStore(
+    store: ConversationStore,
+    since: string,
+    until: string,
+    limit: number,
+  ): Promise<ActivityConversationSummary[]> {
+    const result = await store.list(
+      {
+        sortBy: "updatedAt",
+        limit,
+      },
+      // Ownership filter — the top-level store holds every user's
+      // conversations; without this every caller would see peer
+      // activity. `undefined` keeps the legacy "trusted scope"
+      // behavior for callers that haven't been migrated yet.
+      this.access,
+    );
 
     const summaries: ActivityConversationSummary[] = [];
     for (const c of result.conversations) {
@@ -98,9 +163,100 @@ export class ActivityCollector {
     return summaries;
   }
 
+  private async collectConversationsFromJsonl(
+    conversationsDir: string,
+    since: string,
+    until: string,
+    limit: number,
+  ): Promise<ActivityConversationSummary[]> {
+    let filenames: string[];
+    try {
+      filenames = await readdir(conversationsDir);
+    } catch {
+      return [];
+    }
+
+    const jsonlFiles = filenames.filter((f) => f.endsWith(".jsonl")).sort();
+    const summaries: ActivityConversationSummary[] = [];
+
+    for (const filename of jsonlFiles) {
+      if (summaries.length >= limit) break;
+
+      try {
+        const content = await readFile(join(conversationsDir, filename), "utf-8");
+        const lines = content.split("\n").filter(Boolean);
+        const firstLine = lines[0];
+        if (!firstLine?.trim()) continue;
+
+        const meta = JSON.parse(firstLine) as Record<string, unknown>;
+        const updatedAt = (meta.updatedAt as string) ?? "";
+        if (updatedAt < since || updatedAt > until) continue;
+
+        let inputTokens = 0;
+        let outputTokens = 0;
+        let messageCount = 0;
+        let preview = "";
+        for (let i = 1; i < lines.length; i++) {
+          try {
+            const entry = JSON.parse(lines[i]!) as {
+              type?: string;
+              role?: string;
+              content?: unknown;
+              usage?: { inputTokens?: number; outputTokens?: number };
+              metadata?: { usage?: { inputTokens?: number; outputTokens?: number } };
+            };
+
+            if (entry.type === "llm.response" && entry.usage) {
+              inputTokens += entry.usage.inputTokens ?? 0;
+              outputTokens += entry.usage.outputTokens ?? 0;
+            } else if (entry.type === "user.message") {
+              messageCount++;
+              if (!preview && Array.isArray(entry.content)) {
+                const firstText = (entry.content as Array<{ type?: string; text?: string }>).find(
+                  (c) => c.type === "text",
+                );
+                preview = firstText?.text ?? "";
+              }
+            } else if (entry.type === "run.done") {
+              messageCount++;
+            } else if (entry.role) {
+              messageCount++;
+              if (!preview && entry.role === "user" && typeof entry.content === "string") {
+                preview = entry.content;
+              }
+              if (entry.role === "assistant" && entry.metadata?.usage) {
+                inputTokens += entry.metadata.usage.inputTokens ?? 0;
+                outputTokens += entry.metadata.usage.outputTokens ?? 0;
+              }
+            }
+          } catch {
+            // Skip malformed conversation lines.
+          }
+        }
+
+        summaries.push({
+          id: (meta.id as string) ?? filename.replace(".jsonl", ""),
+          created_at: (meta.createdAt as string) ?? "",
+          updated_at: updatedAt,
+          message_count: messageCount,
+          tool_call_count: 0,
+          input_tokens: inputTokens,
+          output_tokens: outputTokens,
+          preview,
+          had_errors: false,
+        });
+      } catch {
+        // Skip unreadable or malformed conversation files.
+      }
+    }
+
+    summaries.sort((a, b) => (b.updated_at > a.updated_at ? 1 : -1));
+    return summaries;
+  }
+
   private collectBundleEvents(since: string): ActivityBundleEvent[] {
-    if (!this.eventManager) return [];
-    const events = this.eventManager.getEventsSince(since);
+    if (this.bundleEvents.kind !== "sse") return [];
+    const events = this.bundleEvents.eventManager.getEventsSince(since);
     const bundleEvents: ActivityBundleEvent[] = [];
 
     for (const e of events) {
@@ -117,6 +273,79 @@ export class ActivityCollector {
       });
     }
     return bundleEvents;
+  }
+
+  private async collectAutomationRuns(
+    since: string,
+    until: string,
+  ): Promise<AutomationRunSummary | null> {
+    if (!this.automationRunsDir) return null;
+
+    let filenames: string[];
+    try {
+      filenames = await readdir(this.automationRunsDir);
+    } catch {
+      return null;
+    }
+
+    const jsonlFiles = filenames.filter((f) => f.endsWith(".jsonl"));
+    if (jsonlFiles.length === 0) return null;
+
+    const sinceMs = new Date(since).getTime();
+    const untilMs = new Date(until).getTime();
+
+    let total = 0;
+    let succeeded = 0;
+    let failed = 0;
+    const failures: AutomationRunSummary["failures"] = [];
+
+    for (const filename of jsonlFiles) {
+      try {
+        const content = await readFile(join(this.automationRunsDir, filename), "utf-8");
+        for (const line of content.split("\n")) {
+          if (!line.trim()) continue;
+
+          let run: Record<string, unknown>;
+          try {
+            run = JSON.parse(line);
+          } catch {
+            continue;
+          }
+
+          const startedAt = run.startedAt as string | undefined;
+          if (!startedAt) continue;
+
+          const startedMs = new Date(startedAt).getTime();
+          if (startedMs < sinceMs || startedMs > untilMs) continue;
+
+          const status = run.status as string | undefined;
+          if (status !== "success" && status !== "failure" && status !== "timeout") continue;
+
+          total++;
+          if (status === "success") {
+            succeeded++;
+          } else {
+            failed++;
+            const automationName = filename.replace(/\.jsonl$/, "");
+            failures.push({
+              name: automationName,
+              error: (run.error as string) ?? undefined,
+              action: {
+                label: "View failed run",
+                type: "startChat",
+                route: null,
+                prompt: `Show me the failed ${automationName} automation run`,
+              },
+            });
+          }
+        }
+      } catch {
+        // Skip unreadable automation run files.
+      }
+    }
+
+    if (total === 0) return null;
+    return { total, succeeded, failed, failures };
   }
 
   private async collectFromLogs(

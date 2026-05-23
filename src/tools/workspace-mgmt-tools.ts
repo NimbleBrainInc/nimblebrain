@@ -3,14 +3,8 @@ import type { ToolResult } from "../engine/types.ts";
 import type { UserIdentity } from "../identity/provider.ts";
 import { ORG_ADMIN_ROLES } from "../identity/types.ts";
 import type { UserStore } from "../identity/user.ts";
+import { PersonalWorkspaceInvariantError } from "../workspace/errors.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
-import {
-  canManageConversation,
-  handleAddParticipant,
-  handleRemoveParticipant,
-  handleShareConversation,
-  handleUnshareConversation,
-} from "./conversation-tools.ts";
 import type { InProcessTool } from "./in-process-app.ts";
 
 // ── Types ─────────────────────────────────────────────────────────
@@ -21,10 +15,6 @@ export interface ManageWorkspacesContext {
   workspaceStore: WorkspaceStore;
   /** Required for member management (user validation, display name enrichment). */
   userStore?: UserStore;
-  /** Required for conversation management (load, share, participant ops). */
-  conversationStore?: import("../conversation/types.ts").ConversationStore;
-  /** Per-conversation event manager — evict subscribers on participant removal. */
-  conversationEventManager?: import("../api/conversation-events.ts").ConversationEventManager;
 }
 
 /** @deprecated Use ManageWorkspacesContext instead — members are now managed via manage_workspaces. */
@@ -51,7 +41,7 @@ export function createManageWorkspacesTool(ctx: ManageWorkspacesContext): InProc
   return {
     name: "manage_workspaces",
     description:
-      "Manage workspaces, their members, and conversation sharing. Workspace CRUD requires org admin. Member management requires workspace or org admin. Conversation sharing requires conversation owner or workspace admin.",
+      "Manage workspaces and their members. Workspace CRUD requires org admin. Member management requires workspace or org admin. Conversation sharing was removed in Stage 1 of the delegation-model refactor and returns in Stage 4 with policy-gated primitives.",
     inputSchema: {
       type: "object",
       properties: {
@@ -66,10 +56,6 @@ export function createManageWorkspacesTool(ctx: ManageWorkspacesContext): InProc
             "remove_member",
             "update_member",
             "list_members",
-            "share_conversation",
-            "unshare_conversation",
-            "add_participant",
-            "remove_participant",
           ],
           description: "Action to perform.",
         },
@@ -98,16 +84,12 @@ export function createManageWorkspacesTool(ctx: ManageWorkspacesContext): InProc
         },
         userId: {
           type: "string",
-          description: "User ID (for member and participant actions).",
+          description: "User ID (for member actions).",
         },
         role: {
           type: "string",
           enum: ["admin", "member"],
           description: "Workspace role (for add_member, update_member).",
-        },
-        conversationId: {
-          type: "string",
-          description: "Conversation ID (for conversation sharing actions).",
         },
       },
       required: ["action"],
@@ -153,48 +135,6 @@ export function createManageWorkspacesTool(ctx: ManageWorkspacesContext): InProc
             return handleUpdateMember(ctx as ManageMembersContext, workspaceId, input);
           case "list_members":
             return handleListMembers(ctx as ManageMembersContext, workspaceId);
-        }
-      }
-
-      // Conversation sharing — requires conversation owner or workspace admin
-      if (
-        [
-          "share_conversation",
-          "unshare_conversation",
-          "add_participant",
-          "remove_participant",
-        ].includes(action)
-      ) {
-        if (!ctx.conversationStore) {
-          return { content: textContent("Conversation management not available."), isError: true };
-        }
-        const identity = ctx.getIdentity();
-        if (!identity) {
-          return { content: textContent("Authentication required."), isError: true };
-        }
-        const conversationId = input.conversationId ? String(input.conversationId) : undefined;
-        if (!conversationId) {
-          return { content: textContent("conversationId is required."), isError: true };
-        }
-        const convCtx = {
-          getIdentity: ctx.getIdentity,
-          conversationStore: ctx.conversationStore,
-          workspaceStore: ctx.workspaceStore,
-          conversationEventManager: ctx.conversationEventManager,
-        };
-        const check = await canManageConversation(convCtx, conversationId, identity);
-        if (!check.allowed) {
-          return { content: textContent(check.reason!), isError: false };
-        }
-        switch (action) {
-          case "share_conversation":
-            return handleShareConversation(convCtx, conversationId, identity);
-          case "unshare_conversation":
-            return handleUnshareConversation(convCtx, conversationId, identity);
-          case "add_participant":
-            return handleAddParticipant(convCtx, conversationId, input);
-          case "remove_participant":
-            return handleRemoveParticipant(convCtx, conversationId, input);
         }
       }
 
@@ -248,6 +188,12 @@ async function handleCreate(
       isError: false,
     };
   } catch (err) {
+    // PersonalWorkspaceInvariantError propagates to the HTTP layer
+    // (mapped to 422). Swallowing it here would degrade a sharp
+    // identity-boundary violation into a soft 200 + isError:true.
+    if (err instanceof PersonalWorkspaceInvariantError) {
+      return personalWorkspaceInvariantToolResult(err);
+    }
     return {
       content: textContent(
         `Failed to create workspace: ${err instanceof Error ? err.message : String(err)}`,
@@ -311,6 +257,9 @@ async function handleUpdate(
       isError: false,
     };
   } catch (err) {
+    if (err instanceof PersonalWorkspaceInvariantError) {
+      return personalWorkspaceInvariantToolResult(err);
+    }
     return {
       content: textContent(
         `Failed to update workspace: ${err instanceof Error ? err.message : String(err)}`,
@@ -427,6 +376,28 @@ function memberPermissionDenied(): ToolResult {
   };
 }
 
+/**
+ * Encode `PersonalWorkspaceInvariantError` into the ToolResult so the
+ * HTTP layer (`handleToolCall`) can recognize it and map to a 422 with
+ * a structured body — the typed error class itself is lost across the
+ * in-process MCP serialization boundary. The marker is the `error`
+ * field on `structuredContent`; consumers outside the HTTP layer (the
+ * agent loop, external MCP clients) see a regular `isError: true`
+ * result and can read the same `structuredContent` if they care.
+ */
+function personalWorkspaceInvariantToolResult(err: PersonalWorkspaceInvariantError): ToolResult {
+  return {
+    content: textContent(err.message),
+    structuredContent: {
+      error: "personal_workspace_invariant",
+      workspaceId: err.workspaceId,
+      reason: err.reason,
+      message: err.message,
+    },
+    isError: true,
+  };
+}
+
 /** @deprecated Member management is now handled by manage_workspaces. Kept for test coverage of handler logic. */
 export function createManageMembersTool(ctx: ManageMembersContext): InProcessTool {
   return {
@@ -536,6 +507,9 @@ async function handleAddMember(
       isError: false,
     };
   } catch (err) {
+    if (err instanceof PersonalWorkspaceInvariantError) {
+      return personalWorkspaceInvariantToolResult(err);
+    }
     return {
       content: textContent(
         `Failed to add member: ${err instanceof Error ? err.message : String(err)}`,
@@ -597,6 +571,9 @@ async function handleRemoveMember(
       isError: false,
     };
   } catch (err) {
+    if (err instanceof PersonalWorkspaceInvariantError) {
+      return personalWorkspaceInvariantToolResult(err);
+    }
     return {
       content: textContent(
         `Failed to remove member: ${err instanceof Error ? err.message : String(err)}`,
@@ -674,6 +651,9 @@ async function handleUpdateMember(
       isError: false,
     };
   } catch (err) {
+    if (err instanceof PersonalWorkspaceInvariantError) {
+      return personalWorkspaceInvariantToolResult(err);
+    }
     return {
       content: textContent(
         `Failed to update member: ${err instanceof Error ? err.message : String(err)}`,

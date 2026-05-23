@@ -269,7 +269,7 @@ async function readEvents(id: string): Promise<ConversationEvent[]> {
 
 describe("EventSourcedConversationStore — persistence", () => {
   test("skills.loaded emit is mapped to a ConversationEvent in the conv jsonl", async () => {
-    const conv = await store.create();
+    const conv = await store.create({ ownerId: "user_test" });
     store.setActiveConversation(conv.id);
 
     store.emit({
@@ -304,7 +304,7 @@ describe("EventSourcedConversationStore — persistence", () => {
   });
 
   test("context.assembled persists with sources + total intact", async () => {
-    const conv = await store.create();
+    const conv = await store.create({ ownerId: "user_test" });
     store.setActiveConversation(conv.id);
 
     store.emit({
@@ -331,7 +331,7 @@ describe("EventSourcedConversationStore — persistence", () => {
   });
 
   test("end-to-end: engine emit → store persist preserves shape", async () => {
-    const conv = await store.create();
+    const conv = await store.create({ ownerId: "user_test" });
     store.setActiveConversation(conv.id);
 
     const sink: EventSink = {

@@ -54,6 +54,7 @@ Each worktree gets its own isolated state, so two worktrees can run side-by-side
 - **Linting:** Biome (not ESLint/Prettier). Run `bun run lint`.
 - **Type checking:** `bunx tsc --noEmit`. Strict mode enabled.
 - **Prefer typed-safe paths over `as unknown as T`.** When TS errors, find the input/output type matching runtime shape (e.g. stream-side vs prompt-side) before widening. Cast escape hatches require a comment naming the mismatch. Example: `src/model/inbound-fit.ts`.
+- **Code-style rules beyond Biome/tsc live in [CODE_STYLE.md](./CODE_STYLE.md)** and are enforced by `bun run check:code-style` (part of `verify:static`). Add a rule when you find yourself enforcing the same pattern in review twice. Each rule lands with its check and the cleanup of existing violations in the same PR — otherwise it has no teeth.
 - **HTTP framework:** Hono for routing and middleware. Typed context via `AppEnv`/`AuthEnv`.
 - **Model types:** Use Vercel AI SDK V3 types (`LanguageModelV3`, `LanguageModelV3Message`, etc.) from `@ai-sdk/provider`. The engine calls `model.doStream()` directly.
 - **No classes for data** — plain interfaces + factory functions preferred.
@@ -134,6 +135,30 @@ web/               Vite + React + TypeScript SPA (separate package.json)
 All tool handlers that access data must be workspace-scoped. Use `runtime.requireWorkspaceId()` (never `getCurrentWorkspaceId()`). In dev mode it returns `"_dev"` — no special-case logic needed.
 
 When adding a new code path that touches workspace-scoped credentials or identity, match the existing precedent: **hard-error on missing `wsId`, don't silently default**. `startBundleSource`'s named-bundle branch throws; the URL-bundle branch does too (for OAuth-provider paths). A `?? "ws_default"` fallback would pool credentials across tenants.
+
+**Conversations are user-scoped, not workspace-scoped.** Post-Stage-1, every conversation lives at `{workDir}/conversations/{convId}.jsonl` and is authorized by ownership (`Conversation.ownerId === access.userId`). Look up via `runtime.findConversation(convId, { userId })`; write via `runtime.findConversationStore()`. `workspaceId` on conversation metadata is a tool-scoping breadcrumb — it tells the runtime which workspace's tools the chat had access to when a turn ran, NOT where the file lives. Hand-building per-workspace conversation paths (`join(workDir, "workspaces", wsId, "conversations", ...)`) is a regression caught by `check:conversation-paths`. **Personal workspace ids** go through `personalWorkspaceIdFor(userId)` from `src/workspace/workspace-store.ts` — no hand-built `"ws_user_" + userId` or `` `ws_user_${userId}` `` outside that helper (`check:personal-workspace-id` enforces).
+
+### Stage 1 follow-ups — tenant migration order
+
+When migrating a tenant onto Stage 1, run the scripts in this order, all during a maintenance window with the platform scaled to zero:
+
+1. `bun run migrate:personal-workspaces` — renames each user's personal workspace to `ws_user_<userId>` and stamps `isPersonal` / `ownerUserId`.
+2. `bun run migrate:conversations-to-top-level` — moves per-workspace conversations to `{workDir}/conversations/`.
+3. `bun run heal:truncated-personal-workspaces` — **only if needed.** Some legacy tenants used a 16-char-truncated slug for personal workspaces that step 1 doesn't recognize. Heuristic: step 1's output shows `no personal workspace found (will be created on next login)` for users who actually do have a workspace named `<displayName>'s Workspace` at a short-slug id. If you see that pattern, run this heal script (dry-run first). Idempotent — safe to run on any tenant; it exits cleanly with `no truncated workspace` when nothing matches. All three scripts share the same `.migration-lock` PID file, so they're serialized by construction.
+4. `bun run cleanup:personal-workspace-members` — **only if needed.** Pre-Stage-1.1 data may include multi-admin personal workspaces that the new store invariants reject. Idempotent; dry-run by default, `--apply` to write. A personal workspace missing `ownerUserId` is a hard-error — operator must triage.
+
+### Personal workspace invariants
+
+Personal workspaces (`isPersonal === true`) are sole-owner-by-design. The store enforces four rules and throws `PersonalWorkspaceInvariantError` (`src/workspace/errors.ts`) on violation:
+
+1. **Members locked** to `[{ userId: ownerUserId, role: "admin" }]`. `addMember` / `removeMember` / `updateMemberRole` and `update({ members })` all reject mutations on personal workspaces.
+2. **`isPersonal` frozen** post-create (both directions).
+3. **`ownerUserId` frozen** on personal workspaces.
+4. **`ownerUserId` forbidden** on non-personal workspaces (the two fields travel together).
+
+What stays freely mutable on a personal workspace: `bundles`, `name`, `about`, `customInstructions`. Those are workspace-content edits, not identity edits.
+
+The HTTP layer maps `PersonalWorkspaceInvariantError` to `422 personal_workspace_invariant` with `{ workspaceId, reason }` details (same shape as `ConversationCorruptedError → 422`). The workspace-mgmt tool handlers encode the error into `structuredContent` so it survives the in-process MCP serialization boundary; `handleToolCall` decodes and emits the 422.
 
 ## Debug Logging
 
@@ -244,6 +269,8 @@ Long-running entities can get orphaned if the bundle subprocess dies mid-run. Th
 
 `sanitizeLineField()` and XML containment tags in `compose.ts` are prompt injection mitigations. Do not remove without reviewing `test/unit/prompt-injection.test.ts`. The `DELEGATE_PREAMBLE` in `delegate.ts` prevents task-as-system-prompt injection.
 
+**Bundle trust is install-time, not per-prompt.** Do not add `trustScore >= N` gates on any path that injects bundle-authored content into the prompt (skills, app guides, app state, custom instructions). Once a bundle is active in the workspace its tools are already callable, so suppressing the workflow guidance that teaches the model how to use them safely makes the model less safe, not more — and tool descriptions, tool outputs, and `app://instructions` flow through ungated already. The defense is XML containment with `</tag>` escape in the body, the pattern used by `<app-state>`, `<app-guide>`, `<app-instructions>`, `<app-custom-instructions>`, and `<layer3-skill>`. Any new bundle-authored containment tag must escape its own closing form in the body the same way. `trustScore` fields on `FocusedAppInfo` / `AppStateInfo` / `PromptAppInfo` remain for display only.
+
 ## API Surfaces — Three Audiences
 
 The platform serves three audiences with three protocol surfaces. They are not tiers; they are distinct contracts for distinct callers, intentionally split.
@@ -279,10 +306,16 @@ If none of those apply, write a tool action. A simple JSON read like "what's the
 
 Two-layer state model for `/mcp`. Don't merge them.
 
-- **Transport map** (`McpServerHost.transports`): per-process `Map<sessionId, transport>`. Owns the live `WebStandardStreamableHTTPServerTransport`, the SDK `Server` instance, and in-flight JSON-RPC state. Process-bound — never serialize, never share across processes.
+- **Transport map** (`McpServerHost.transports`): per-process LRU `Map<sessionId, TransportEntry>`. Owns the live `WebStandardStreamableHTTPServerTransport`, the SDK `Server` instance, in-flight JSON-RPC state, and `lastAccessedAt`. Process-bound — never serialize, never share across processes.
 - **`SessionRegistry`** (`src/api/session-store/`): pluggable cluster-shared metadata. Stores `{sessionId, identityId, workspaceId, createdAt, lastAccessedAt}` only. **No pod / instance / owner fields** — adding any would leak deployment vocabulary into a metadata interface. Implementations: `InMemorySessionRegistry` (default) and `RedisSessionRegistry`.
 
 Routing requests to the process owning a session's transport is the **load balancer's** job (ALB `lb_cookie` stickiness or header-hash on `Mcp-Session-Id`). The registry doesn't route; it can't move transports.
+
+**Reclamation invariants** — see `mcp-server.ts` file header for the why:
+
+- Idle TTL and LRU-on-capacity both go through `evict(sid, reason)`. **Delete from the map before calling `close()`**, never the reverse — concurrent-request race.
+- Same TTL drives both layers (`Runtime.getSessionStoreTtlMs()` → host sweep + registry). One knob.
+- Capacity overflow is never a 4xx. A well-formed initialize at `MAX_MCP_SESSIONS` evicts the LRU and is admitted. Do not reintroduce `Too many active sessions`.
 
 **Session-miss `error.data.reason`** has exactly two values:
 
@@ -296,7 +329,7 @@ Routing requests to the process owning a session's transport is the **load balan
 3. `sessionStore.type: "redis"`. Each tenant gets its own Redis instance in its own namespace (see `infra/CLAUDE.md` per-tenant Redis pattern). Default `nb:mcp:session:` keyPrefix is correct under that model.
 4. `platform.strategy.type: RollingUpdate`. Only after (1).
 
-**TTL units: seconds at the surface, ms internally.** Operator-facing: `MCP_SESSION_TTL_SECONDS` env (highest priority) > `sessionStore.ttlSeconds` config > 8h default. Conversion to ms happens in `Runtime.getSessionStoreTtlMs()` only — registry constructors and sweep math take ms. Don't add mixed-unit code elsewhere.
+**TTL units: seconds at the surface, ms internally.** Operator-facing: `MCP_SESSION_TTL_SECONDS` env (highest priority) > `sessionStore.ttlSeconds` config > 8h default. Conversion to ms happens in `Runtime.getSessionStoreTtlMs()` only — registry constructors and the host's idle sweep both take ms from there. Don't add mixed-unit code elsewhere.
 
 ## MCP App Bridge Rules
 

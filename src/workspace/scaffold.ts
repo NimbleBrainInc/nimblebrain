@@ -1,8 +1,15 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-/** Subdirectories created inside every workspace. */
-export const WORKSPACE_DIRS = ["data", "credentials", "conversations", "skills", "files"] as const;
+/**
+ * Subdirectories created inside every workspace.
+ *
+ * `conversations/` was removed in Stage 1 Task 005 — conversations
+ * live at `{workDir}/conversations/`, not under each workspace. The
+ * `WorkspaceScope` enum still lists `"conversations"` for the
+ * migration script's legacy-path detection; no live code writes there.
+ */
+export const WORKSPACE_DIRS = ["data", "credentials", "skills", "files"] as const;
 
 /**
  * Scaffold the directory structure for a workspace.

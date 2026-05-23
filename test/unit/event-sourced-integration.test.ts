@@ -17,7 +17,7 @@ describe("Event-sourced integration", () => {
     const store = new EventSourcedConversationStore({ ...dirs });
 
     // Create conversation
-    const conv = await store.create();
+    const conv = await store.create({ ownerId: "user_test" });
     expect(conv.format).toBe("events");
 
     // Append user message
@@ -87,6 +87,9 @@ describe("Event-sourced integration", () => {
       totalOutputTokens: 10,
       totalCostUsd: 0.001,
       lastModel: "claude-sonnet-4-5-20250929",
+      // Stage 1: ownerId is required on every conversation. The
+      // migration script stamps it on pre-Stage-1 files.
+      ownerId: "user_test",
     };
     const userMsg: StoredMessage = {
       role: "user",
@@ -130,8 +133,8 @@ describe("Event-sourced integration", () => {
     const normalStore = new EventSourcedConversationStore({ ...normalDirs, logLevel: "normal" });
     const debugStore = new EventSourcedConversationStore({ ...debugDirs, logLevel: "debug" });
 
-    const normalConv = await normalStore.create();
-    const debugConv = await debugStore.create();
+    const normalConv = await normalStore.create({ ownerId: "user_test" });
+    const debugConv = await debugStore.create({ ownerId: "user_test" });
 
     const engineEvent = {
       type: "run.start" as const,

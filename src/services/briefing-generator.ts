@@ -1,5 +1,7 @@
-import type { LanguageModelV3 } from "@ai-sdk/provider";
+import type { LanguageModelV3, SharedV3ProviderOptions } from "@ai-sdk/provider";
+import { getModelByString, getProviderFromModel } from "../model/catalog.ts";
 import type { BriefingContext } from "./briefing-collector.ts";
+import { debugBriefing } from "./briefing-debug.ts";
 import type {
   ActivityOutput,
   BriefingOutput,
@@ -7,6 +9,25 @@ import type {
   BriefingState,
   HomeConfig,
 } from "./home-types.ts";
+
+/**
+ * Wall-clock cap for the LLM call. Covers realistic p99 across providers
+ * without burning user attention on a stuck request.
+ */
+const BRIEFING_TIMEOUT_MS = 45_000;
+
+/**
+ * Output token cap. The prompt asks for "under 800 tokens" — 1500 gives
+ * headroom for a verbose generation without allowing runaway output.
+ */
+const BRIEFING_MAX_OUTPUT_TOKENS = 1500;
+
+/**
+ * Input bounds. A tenant with thousands of CRM rows shouldn't be able to
+ * blow up the LLM input — cap facet count and per-facet data payload.
+ */
+const BRIEFING_MAX_FACETS = 12;
+const BRIEFING_MAX_FACET_DATA_CHARS = 800;
 
 const BRIEFING_SYSTEM_PROMPT = `You are a daily briefing generator for a business workspace.
 
@@ -22,9 +43,9 @@ Produce a JSON object with two fields:
    - "text": 1–2 sentences in business language. Use names, numbers, and specifics from the facet data.
    - "type": "positive" | "neutral" | "warning"
    - "category": "recent" | "upcoming" | "attention"
-   - "action" (optional): semantic action object, one of:
-     - { "type": "navigate", "route": "<route from facet>", "label": "Open CRM" }
-     - { "type": "startChat", "prompt": "<natural language prompt>", "label": "Ask about this" }
+   - "action" (optional): semantic action object. The shape includes both "route" and "prompt"; set the unused one to null based on the action type:
+     - navigate: { "type": "navigate", "route": "<route from facet>", "prompt": null, "label": "Open CRM" }
+     - startChat: { "type": "startChat", "route": null, "prompt": "<natural language prompt>", "label": "Ask about this" }
    Each facet includes a "route" field — use that exact value in navigate actions.
 
 Rules:
@@ -67,8 +88,18 @@ const BRIEFING_RESPONSE_SCHEMA = {
                 type: "object" as const,
                 properties: {
                   type: { type: "string" as const, enum: ["navigate", "startChat"] },
-                  route: { type: "string" as const, description: "Route for navigate actions" },
-                  prompt: { type: "string" as const, description: "Prompt for startChat actions" },
+                  // Discriminated payloads: navigate uses route, startChat uses prompt.
+                  // Both fields are listed in `required` (Anthropic structured-output
+                  // rule) but the unused one must be `null`, not a fabricated string.
+                  // The TS type (BriefingAction) matches this nullable wire shape.
+                  route: {
+                    anyOf: [{ type: "string" as const }, { type: "null" as const }],
+                    description: "Route for navigate actions; null on startChat",
+                  },
+                  prompt: {
+                    anyOf: [{ type: "string" as const }, { type: "null" as const }],
+                    description: "Prompt for startChat actions; null on navigate",
+                  },
                   label: { type: "string" as const },
                 },
                 required: ["type", "route", "prompt", "label"],
@@ -87,9 +118,35 @@ const BRIEFING_RESPONSE_SCHEMA = {
   additionalProperties: false,
 };
 
+/**
+ * Provider-aware options for the short structured briefing call. Suppresses
+ * reasoning/thinking on every provider that exposes a knob (gated on the
+ * catalog's `capabilities.reasoning` so older models that don't expose
+ * the option get an empty options object). Inlined here rather than
+ * abstracted into a slot-profile because briefing is the only caller
+ * today; if a second caller appears, lift this into a shared helper.
+ */
+function shortCallProviderOptions(modelString: string | null): SharedV3ProviderOptions {
+  if (!modelString) return {};
+  const provider = getProviderFromModel(modelString);
+  const model = getModelByString(modelString);
+  if (!model?.capabilities.reasoning) return {};
+  switch (provider) {
+    case "anthropic":
+      return { anthropic: { thinking: { type: "disabled" } } };
+    case "google":
+      return { google: { thinkingConfig: { thinkingBudget: 0 } } };
+    case "openai":
+      return { openai: { reasoningEffort: "minimal" } };
+    default:
+      return {};
+  }
+}
+
 export class BriefingGenerator {
   constructor(
     private model: LanguageModelV3,
+    private modelString: string | null,
     private config: HomeConfig,
   ) {}
 
@@ -114,6 +171,8 @@ export class BriefingGenerator {
       };
     }
 
+    // Throws on failure — caller (tools/core-source.ts) catches and
+    // renders a minimal "couldn't load" briefing without caching.
     return this.generateWithLlm(activity, greeting, date, now, facetContext);
   }
 
@@ -176,87 +235,113 @@ export class BriefingGenerator {
     now: string,
     facetContext?: BriefingContext,
   ): Promise<BriefingOutput> {
-    try {
-      // Build the user message with facet context (primary) and activity (secondary)
-      const userPayload: Record<string, unknown> = {};
-      if (facetContext && facetContext.facets.length > 0) {
-        userPayload.app_facets = facetContext.facets.map((f) => ({
-          app: f.appName,
-          route: f.appRoute,
-          label: f.facet.label,
-          type: f.facet.type,
-          data: f.data,
-          ok: f.ok,
-        }));
-        userPayload.period = facetContext.period;
+    const userPayload = this.buildUserPayload(activity, facetContext);
+    const userText = JSON.stringify(userPayload);
+
+    // Per-facet diagnostic log gated on NB_DEBUG_BRIEFING — emits one
+    // line per facet showing what the collector resolved. The bug
+    // surface for this tool is "LLM said no data, but I have data";
+    // this log answers "what did the collector actually send?" in one
+    // pageload. Quiet by default.
+    const facets = (userPayload.app_facets as Array<Record<string, unknown>> | undefined) ?? [];
+    if (facets.length === 0) {
+      debugBriefing(() => "no facets resolved");
+    } else {
+      for (const f of facets) {
+        debugBriefing(() => {
+          const data =
+            typeof f.data === "string"
+              ? f.data.slice(0, 160)
+              : JSON.stringify(f.data).slice(0, 160);
+          return `facet app=${f.app} label="${f.label}" ok=${f.ok} data="${data.replace(/\n/g, " ")}"`;
+        });
       }
-      userPayload.system_activity = {
-        conversations: activity.totals.conversations,
-        tool_calls: activity.totals.tool_calls,
-        errors: activity.totals.errors,
-        error_rate:
-          activity.totals.tool_calls > 0
-            ? `${((activity.totals.errors / activity.totals.tool_calls) * 100).toFixed(1)}%`
-            : "0%",
-        bundle_events: activity.bundle_events,
-      };
-
-      const abort = AbortSignal.timeout(15_000);
-      const response = await this.model.doGenerate({
-        prompt: [
-          { role: "system", content: BRIEFING_SYSTEM_PROMPT },
-          {
-            role: "user",
-            content: [{ type: "text", text: JSON.stringify(userPayload) }],
-          },
-        ],
-        responseFormat: {
-          type: "json",
-          schema: BRIEFING_RESPONSE_SCHEMA,
-          name: "briefing",
-          description: "Daily workspace briefing with sections",
-        },
-        maxOutputTokens: 4000,
-        abortSignal: abort,
-      });
-
-      const finishReason = response.finishReason?.unified ?? "unknown";
-      if (finishReason === "length") {
-        console.warn("[briefing] LLM response truncated (hit token limit)");
-      }
-
-      const textBlock = response.content.find((b) => b.type === "text");
-      if (!textBlock || textBlock.type !== "text") {
-        console.error("[briefing] no text block in LLM response");
-        return this.fallbackBriefing(greeting, date, now);
-      }
-
-      const parsed = this.parseJson(textBlock.text, finishReason === "length");
-      if (!parsed || typeof parsed.lede !== "string" || !Array.isArray(parsed.sections)) {
-        console.error(
-          "[briefing] failed to parse briefing JSON. finishReason=%s, first 500 chars: %s",
-          finishReason,
-          textBlock.text.slice(0, 500),
-        );
-        return this.fallbackBriefing(greeting, date, now);
-      }
-
-      const sections: BriefingSection[] = parsed.sections;
-      const state = this.deriveState(sections);
-
-      return {
-        greeting,
-        date,
-        lede: parsed.lede,
-        sections,
-        state,
-        generated_at: now,
-        cached: false,
-      };
-    } catch (err) {
-      console.error("[briefing] LLM generation failed:", err instanceof Error ? err.message : err);
-      return this.fallbackBriefing(greeting, date, now);
     }
+
+    const providerOptions = shortCallProviderOptions(this.modelString);
+    const abort = AbortSignal.timeout(BRIEFING_TIMEOUT_MS);
+    const response = await this.model.doGenerate({
+      prompt: [
+        { role: "system", content: BRIEFING_SYSTEM_PROMPT },
+        {
+          role: "user",
+          content: [{ type: "text", text: userText }],
+        },
+      ],
+      responseFormat: {
+        type: "json",
+        schema: BRIEFING_RESPONSE_SCHEMA,
+        name: "briefing",
+        description: "Daily workspace briefing with sections",
+      },
+      maxOutputTokens: BRIEFING_MAX_OUTPUT_TOKENS,
+      abortSignal: abort,
+      ...(Object.keys(providerOptions).length > 0 ? { providerOptions } : {}),
+    });
+
+    const finishReason = response.finishReason?.unified ?? "unknown";
+    if (finishReason === "length") {
+      console.warn("[briefing] LLM response truncated (hit token limit)");
+    }
+
+    const textBlock = response.content.find((b) => b.type === "text");
+    if (!textBlock || textBlock.type !== "text") {
+      throw new Error("LLM returned no text content for briefing");
+    }
+
+    const parsed = this.parseJson(textBlock.text, finishReason === "length");
+    if (!parsed || typeof parsed.lede !== "string" || !Array.isArray(parsed.sections)) {
+      throw new Error(
+        `Failed to parse briefing JSON (finishReason=${finishReason}): ${textBlock.text.slice(0, 200)}`,
+      );
+    }
+
+    return {
+      greeting,
+      date,
+      lede: parsed.lede,
+      sections: parsed.sections,
+      state: this.deriveState(parsed.sections),
+      generated_at: now,
+      cached: false,
+    };
+  }
+
+  private buildUserPayload(
+    activity: ActivityOutput,
+    facetContext?: BriefingContext,
+  ): Record<string, unknown> {
+    const userPayload: Record<string, unknown> = {};
+    if (facetContext && facetContext.facets.length > 0) {
+      // Cap facet count and per-facet data size — tenants with very large
+      // entity stores (5k+ CRM contacts, etc.) can produce facet data
+      // strings that dominate input tokens and push first-token latency
+      // past the wall-clock cap.
+      const truncated = facetContext.facets.slice(0, BRIEFING_MAX_FACETS).map((f) => ({
+        app: f.appName,
+        route: f.appRoute,
+        label: f.facet.label,
+        type: f.facet.type,
+        data:
+          f.data.length > BRIEFING_MAX_FACET_DATA_CHARS
+            ? `${f.data.slice(0, BRIEFING_MAX_FACET_DATA_CHARS)}… (truncated)`
+            : f.data,
+        ok: f.ok,
+      }));
+      userPayload.app_facets = truncated;
+      userPayload.period = facetContext.period;
+    }
+    userPayload.system_activity = {
+      conversations: activity.totals.conversations,
+      tool_calls: activity.totals.tool_calls,
+      errors: activity.totals.errors,
+      error_rate:
+        activity.totals.tool_calls > 0
+          ? `${((activity.totals.errors / activity.totals.tool_calls) * 100).toFixed(1)}%`
+          : "0%",
+      bundle_events: activity.bundle_events,
+    };
+    return userPayload;
   }
 
   private parseJson(
@@ -373,17 +458,5 @@ export class BriefingGenerator {
     if (sections.some((s) => s.type === "warning")) return "attention";
     if (sections.every((s) => s.type === "positive")) return "all-clear";
     return "normal";
-  }
-
-  private fallbackBriefing(greeting: string, date: string, now: string): BriefingOutput {
-    return {
-      greeting,
-      date,
-      lede: "Activity summary is available.",
-      sections: [],
-      state: "normal",
-      generated_at: now,
-      cached: false,
-    };
   }
 }

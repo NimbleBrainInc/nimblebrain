@@ -1,4 +1,4 @@
-import { extractText } from "./extract.ts";
+import { extractText, REHYDRATE_TRUNCATED_SUFFIX } from "./extract.ts";
 import type { FileStore } from "./store.ts";
 import type { ContentPart, FileConfig, FileEntry, FileReference, IngestResult } from "./types.ts";
 import { fileIdToUri } from "./uri.ts";
@@ -10,8 +10,10 @@ export interface UploadedFile {
   mimeType: string;
 }
 
-// MIME types we accept, grouped by category
-const EXTRACTABLE_TEXT = new Set([
+// MIME types we accept, grouped by category. Exported so other modules
+// (notably `src/tools/platform/files.ts::handleRead`) classify files
+// against the same source of truth instead of duplicating the lists.
+export const EXTRACTABLE_TEXT = new Set([
   "text/plain",
   "text/csv",
   "text/markdown",
@@ -23,11 +25,12 @@ const EXTRACTABLE_TEXT = new Set([
   "application/yaml",
 ]);
 
-const EXTRACTABLE_DOCS = new Set([
-  "application/pdf",
+export const EXTRACTABLE_DOCS = new Set([
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 ]);
+
+export const PDF_TYPES = new Set(["application/pdf"]);
 
 /**
  * Image MIME types accepted on upload. Exported so the rehydration
@@ -55,6 +58,7 @@ const BINARY_TYPES = new Set([
 const ALLOWED_MIMES = new Set([
   ...EXTRACTABLE_TEXT,
   ...EXTRACTABLE_DOCS,
+  ...PDF_TYPES,
   ...IMAGE_TYPES,
   ...BINARY_TYPES,
 ]);
@@ -73,13 +77,24 @@ export function isAllowedMime(mimeType: string): boolean {
   return ALLOWED_MIMES.has(normalizeMime(mimeType));
 }
 
-function isExtractable(mimeType: string): boolean {
+/**
+ * True if `extractText` knows how to surface a textual representation
+ * of bytes of this MIME type. PDF is excluded: `rehydrate.ts` and
+ * `handleRead` route PDFs through their own (capability-aware) policy,
+ * not the generic ingest extraction path, so the set stays focused on
+ * formats where the only useful surface to the model is extracted text.
+ */
+export function isExtractable(mimeType: string): boolean {
   const bare = normalizeMime(mimeType);
   return EXTRACTABLE_TEXT.has(bare) || EXTRACTABLE_DOCS.has(bare);
 }
 
 function isImage(mimeType: string): boolean {
   return IMAGE_TYPES.has(normalizeMime(mimeType));
+}
+
+function isPdf(mimeType: string): boolean {
+  return PDF_TYPES.has(normalizeMime(mimeType));
 }
 
 function humanSize(bytes: number): string {
@@ -91,8 +106,8 @@ function humanSize(bytes: number): string {
 /**
  * Validate and ingest uploaded files into the workspace file store.
  *
- * For each valid file: stores it, registers metadata, extracts text,
- * and builds content parts for the LLM message.
+ * For each valid file: stores it, registers metadata, extracts text when
+ * applicable, and builds content parts for the LLM message.
  */
 export async function ingestFiles(
   files: UploadedFile[],
@@ -162,14 +177,31 @@ export async function ingestFiles(
           text: `--- Attached: ${file.filename} (${saved.id}, ${humanSize(saved.size)}) ---\n${result.text}`,
         });
       }
+    } else if (isPdf(file.mimeType)) {
+      // Populate the extracted-text sidecar so rehydrate's text-fallback
+      // path (historical / unsupported-model / oversize) is O(text read)
+      // instead of O(reload bytes + re-run unpdf) on every turn. Uses the
+      // rehydrate-suffix variant so a cache hit at rehydrate time
+      // produces byte-identical content to a live extraction. Best-effort:
+      // a failed extraction here just means rehydrate will retry live.
+      const result = await extractText(file.data, file.mimeType, config.maxExtractedTextSize, {
+        truncatedSuffix: REHYDRATE_TRUNCATED_SUFFIX,
+      });
+      if (result) {
+        await store.writeExtractedText(saved.id, {
+          text: result.text,
+          maxSize: config.maxExtractedTextSize,
+          truncated: result.truncated,
+        });
+      }
     }
 
-    // Image files → MCP `resource_link` content part. The runtime rehydrates
-    // these to AI SDK V3 `file` parts (with bytes loaded from the FileStore)
-    // at the `model.doStream` boundary, so vision content survives through
-    // multi-turn agentic loops without the conversation log carrying the
-    // bytes inline.
-    if (isImage(file.mimeType)) {
+    // Rehydratable files → MCP `resource_link` content part. The runtime
+    // turns supported resource links into AI SDK V3 `file` parts (with bytes
+    // loaded from the FileStore) at the `model.doStream` boundary, so binary
+    // content survives multi-turn agentic loops without the conversation log
+    // carrying bytes or extracted PDF text inline.
+    if (isImage(file.mimeType) || isPdf(file.mimeType)) {
       contentParts.push({
         type: "resource_link",
         uri: fileIdToUri(saved.id),

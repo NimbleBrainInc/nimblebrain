@@ -17,8 +17,6 @@ interface ConversationMetadata {
   updatedAt?: string;
   title?: string | null;
   ownerId?: string;
-  visibility?: "private" | "shared";
-  participants?: string[];
 }
 
 /**
@@ -27,11 +25,13 @@ interface ConversationMetadata {
  * Lazily populates by reading only line 1 (metadata) and the first user
  * message (preview) from each JSONL file — never loads full history.
  */
-/** Access-control metadata stored alongside each summary in the index. */
+/**
+ * Access-control metadata stored alongside each summary in the index.
+ * Stage 1: single-owner only — `ownerId` is the entire authorization
+ * surface. Stage 4 reintroduces sharing via explicit policy.
+ */
 interface IndexedAccessMeta {
   ownerId?: string;
-  visibility?: "private" | "shared";
-  participants?: string[];
 }
 
 export class ConversationIndex {
@@ -54,6 +54,13 @@ export class ConversationIndex {
       return;
     }
 
+    // Count ownerless files separately from generic "couldn't parse"
+    // failures. Ownerless files are pre-migration state that the
+    // operator's expected resolution is `bun run migrate:conversations-
+    // to-top-level`; surface a single line so they aren't a silent
+    // oracle ("the dashboard is missing N conversations and no one
+    // sees why").
+    let ownerlessSkipped = 0;
     for (const file of files) {
       try {
         const content = await readFile(join(dir, file), "utf-8");
@@ -61,10 +68,18 @@ export class ConversationIndex {
         if (parsed) {
           this.entries.set(parsed.summary.id, parsed.summary);
           this.accessMeta.set(parsed.summary.id, parsed.access);
+        } else if (isLikelyOwnerlessFile(content)) {
+          ownerlessSkipped++;
         }
       } catch {
         // Skip corrupt or unreadable files
       }
+    }
+
+    if (ownerlessSkipped > 0) {
+      console.warn(
+        `[index] excluded ${ownerlessSkipped} ownerless conversation file(s) in ${dir} — run \`bun run migrate:conversations-to-top-level\` to stamp ownerId.`,
+      );
     }
 
     this.populated = true;
@@ -117,7 +132,18 @@ export class ConversationIndex {
 
     const totalCount = items.length;
 
-    // Cursor pagination: skip entries up to and including the cursor ID
+    // Cursor pagination: skip entries up to and including the cursor ID.
+    //
+    // Edge case (future hardening, not Stage 1): if the cursor names a
+    // conversation that no longer satisfies the current `access`
+    // filter — owner changed (Stage 4 sharing), or the conversation
+    // was deleted between calls — `findIndex` returns -1 and the
+    // slice is a no-op, so the caller re-sees page 1 instead of
+    // getting an empty / shifted page. Stage 1 single-owner doesn't
+    // hit this (ownership can't change), but the cursor model should
+    // be revisited when sharing returns. Options: opaque
+    // ({createdAt}, last-id) cursors that don't depend on the filtered
+    // result, or return an explicit `cursor_invalid` signal.
     if (options?.cursor) {
       const idx = items.findIndex((s) => s.id === options.cursor);
       if (idx >= 0) items = items.slice(idx + 1);
@@ -133,35 +159,23 @@ export class ConversationIndex {
 }
 
 /**
- * Check if a user can access a conversation based on its access metadata.
+ * Check if a user can access a conversation.
  *
- * Rules:
- * - Admins can see everything
- * - Legacy conversations (no ownerId/visibility) are visible to all (backward compat)
- * - Owner always sees their own conversations
- * - Shared conversations are visible to participants
- * - Private conversations are only visible to their owner
+ * Stage 1: single-owner. A conversation is accessible iff the caller
+ * is its owner. Workspace-admin overrides and shared-with-participants
+ * semantics are gone — Stage 4 reintroduces them with explicit policy
+ * gates and audit trails.
+ *
+ * A `meta` of `undefined` or one without `ownerId` is treated as
+ * inaccessible — Stage 1 enforces "every conversation has an owner"
+ * at write time, so unset means the index hasn't caught up.
  */
 export function canAccess(
   meta: IndexedAccessMeta | undefined,
   access: ConversationAccessContext,
 ): boolean {
-  // Admins see everything
-  if (access.workspaceRole === "admin") return true;
-
-  // Legacy conversations without access metadata are visible to all
-  if (!meta?.ownerId && !meta?.visibility) return true;
-
-  // Owner always has access
-  if (meta?.ownerId === access.userId) return true;
-
-  // Shared conversations visible to participants
-  if (meta?.visibility === "shared") {
-    return meta.participants?.includes(access.userId) ?? false;
-  }
-
-  // Private (default) — only owner (already handled above)
-  return false;
+  if (!meta?.ownerId) return false;
+  return meta.ownerId === access.userId;
 }
 
 /**
@@ -199,6 +213,28 @@ function extractEventPreview(content: unknown): string {
 }
 
 /**
+ * Heuristic check: did parseFileHeader bail because the file is
+ * structurally OK but lacks `ownerId`? Used by `populate` to count
+ * ownerless skips so operators see a "you have N pre-migration files"
+ * line — vs corrupt files which silently fail.
+ *
+ * Doesn't re-derive everything: just peeks at line 1, parses it, and
+ * checks whether `id` is present and `ownerId` is absent. Worst case
+ * if we're wrong (file IS corrupt with a plausible-looking line 1)
+ * the count is off by one; the operator action is the same either way.
+ */
+function isLikelyOwnerlessFile(content: string): boolean {
+  const firstLine = content.split("\n", 1)[0];
+  if (!firstLine) return false;
+  try {
+    const meta = JSON.parse(firstLine) as Partial<ConversationMetadata>;
+    return typeof meta.id === "string" && !meta.ownerId;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Parse a JSONL file's content to extract a ConversationSummary and access metadata.
  * Reads line 1 for metadata and scans for the first user message as preview.
  * Supports both legacy (StoredMessage) and event-sourced formats.
@@ -228,8 +264,6 @@ function parseFileHeader(
   let derivedCostUsd = 0;
   let lastEventTs: string | null = null;
   let derivedTitle: string | null | undefined;
-  let derivedVisibility: "private" | "shared" | undefined;
-  let derivedParticipants: string[] | undefined;
 
   if (eventFormat) {
     // Event-sourced format: scan for events
@@ -242,8 +276,6 @@ function parseFileHeader(
           usage?: TokenUsage;
           model?: string;
           title?: string | null;
-          visibility?: "private" | "shared";
-          participants?: string[];
         };
         if (event.ts) lastEventTs = event.ts;
         if (event.type === "user.message") {
@@ -259,10 +291,6 @@ function parseFileHeader(
           derivedCostUsd += estimateCost(event.model, event.usage);
         } else if (event.type === "metadata.title") {
           derivedTitle = event.title;
-        } else if (event.type === "metadata.visibility") {
-          derivedVisibility = event.visibility;
-        } else if (event.type === "metadata.participants") {
-          derivedParticipants = event.participants;
         }
       } catch {
         // Skip malformed event lines
@@ -293,8 +321,17 @@ function parseFileHeader(
   // Totals are always derived. Legacy line-1 metadata totals are
   // intentionally ignored — old conversations show zero totals if their
   // events don't carry usage. (See PR removing stored totals.)
-  const effectiveVisibility = derivedVisibility ?? meta.visibility;
-  const effectiveParticipants = derivedParticipants ?? meta.participants;
+
+  // Stage 1 invariant: every conversation has an ownerId. A file
+  // without one is pre-migration data — load() already throws when
+  // it encounters such a file directly, and the index honors the same
+  // invariant by EXCLUDING ownerless entries entirely. Including them
+  // with an absent / empty ownerId would be a category error: the
+  // application's view of "conversations that exist" would include
+  // entries that load() can't actually return. Operators see
+  // ownerless files via filesystem inspection or the migration
+  // script's report, not via the index.
+  if (!meta.ownerId) return null;
 
   return {
     summary: {
@@ -307,11 +344,10 @@ function parseFileHeader(
       totalInputTokens: derivedInputTokens,
       totalOutputTokens: derivedOutputTokens,
       totalCostUsd: derivedCostUsd,
+      ownerId: meta.ownerId,
     },
     access: {
-      ...(meta.ownerId ? { ownerId: meta.ownerId } : {}),
-      ...(effectiveVisibility ? { visibility: effectiveVisibility } : {}),
-      ...(effectiveParticipants ? { participants: effectiveParticipants } : {}),
+      ownerId: meta.ownerId,
     },
   };
 }

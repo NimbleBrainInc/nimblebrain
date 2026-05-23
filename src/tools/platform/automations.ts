@@ -21,10 +21,12 @@ import {
   loadDefinitions,
   saveDefinitions,
 } from "../../bundles/automations/src/store.ts";
+import type { Automation } from "../../bundles/automations/src/types.ts";
 import { textContent } from "../../engine/content-helpers.ts";
 import type { EventSink } from "../../engine/types.ts";
 import { getRequestContext } from "../../runtime/request-context.ts";
 import type { Runtime } from "../../runtime/runtime.ts";
+import type { ChatRequest } from "../../runtime/types.ts";
 import { defineInProcessApp, type InProcessTool } from "../in-process-app.ts";
 import type { McpSource } from "../mcp-source.ts";
 import { AUTOMATIONS_PANEL_HTML } from "../platform-resources/automations/panel.ts";
@@ -64,9 +66,7 @@ export async function createAutomationsSource(
   // For user-triggered runs (test run button), it reads from the current
   // request context (AsyncLocalStorage). For scheduled runs (timer), there's
   // no request context, so it falls back to the runtime's current workspace.
-  function getExecutorContext(
-    automation?: import("../../bundles/automations/src/types.ts").Automation,
-  ): ExecutorContext {
+  function getExecutorContext(automation?: Automation): ExecutorContext {
     const reqCtx = getRequestContext();
     return {
       workspaceId:
@@ -78,7 +78,7 @@ export async function createAutomationsSource(
     };
   }
   const executor = createDirectExecutor(
-    (req) => runtime.chat(req as import("../../runtime/types.ts").ChatRequest),
+    (req) => runtime.chat(req as ChatRequest),
     getExecutorContext,
   );
   const scheduler = new Scheduler(executor, {

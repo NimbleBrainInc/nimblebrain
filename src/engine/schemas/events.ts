@@ -100,6 +100,18 @@ export const DataChangedPayload = Type.Object({
 });
 export type DataChangedPayload = Static<typeof DataChangedPayload>;
 
+export const ToolPromotionChangedPayload = Type.Object({
+  runId: Type.String(),
+  toolName: Type.String(),
+  /**
+   * Why the change happened. Absent for normal agent-driven add/remove.
+   * Present (`"evicted"`) when the engine reclaimed a slot under the
+   * `maxActiveTools` cap.
+   */
+  reason: Type.Optional(Type.String()),
+});
+export type ToolPromotionChangedPayload = Static<typeof ToolPromotionChangedPayload>;
+
 const SkillEventCommonFields = {
   id: Type.String({ description: "Filesystem path of the skill." }),
   name: Type.String(),
@@ -151,6 +163,8 @@ export const TypedEngineEvent = Type.Union([
   Type.Object({ type: Type.Literal("skills.loaded"), data: SkillsLoadedPayload }),
   Type.Object({ type: Type.Literal("context.assembled"), data: ContextAssembledPayload }),
   Type.Object({ type: Type.Literal("data.changed"), data: DataChangedPayload }),
+  Type.Object({ type: Type.Literal("tool.promoted"), data: ToolPromotionChangedPayload }),
+  Type.Object({ type: Type.Literal("tool.released"), data: ToolPromotionChangedPayload }),
   Type.Object({ type: Type.Literal("skill.created"), data: SkillCreatedPayload }),
   Type.Object({ type: Type.Literal("skill.updated"), data: SkillUpdatedPayload }),
   Type.Object({ type: Type.Literal("skill.deleted"), data: SkillDeletedPayload }),

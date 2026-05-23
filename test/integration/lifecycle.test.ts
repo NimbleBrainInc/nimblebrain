@@ -37,7 +37,10 @@ function eventTypes(collector: { events: EngineEvent[] }): string[] {
 }
 
 /** Create a minimal echo MCP server bundle on disk with a valid MCPB manifest. */
-function createEchoBundleOnDisk(dir: string, opts?: { withUiMeta?: boolean; withUpjack?: boolean }): string {
+function createEchoBundleOnDisk(
+	dir: string,
+	opts?: { withUiMeta?: boolean; withUpjack?: boolean; upjackNamespace?: string },
+): string {
 	mkdirSync(dir, { recursive: true });
 
 	const nodeModulesPath = join(import.meta.dir, "../..", "node_modules");
@@ -76,7 +79,9 @@ main();
 		};
 	}
 	if (opts?.withUpjack) {
-		meta["ai.nimblebrain/upjack"] = { entities: [] };
+		const upjack: Record<string, unknown> = { entities: [] };
+		if (opts.upjackNamespace) upjack.namespace = opts.upjackNamespace;
+		meta["ai.nimblebrain/upjack"] = upjack;
 	}
 
 	const manifest = {
@@ -187,6 +192,48 @@ describe("BundleLifecycleManager — install local bundle", () => {
 
 		await registry.removeSource(instance.serverName);
 	}, 15_000);
+
+	it(
+		"installLocal lands the bundle's entityDataRoot at workspaces/<wsId>/data/<manifest-slug>/<namespace>/data (end-to-end)",
+		async () => {
+			// The regression we're guarding: installLocal previously didn't pass
+			// dataDir to startBundleSource, so buildLocalSource fell back to
+			// `<workDir>/data/<slug>` (workspace-agnostic) using a path-derived
+			// slug. After this PR, installLocal must produce a workspace-scoped
+			// directory keyed on `manifest.name`.
+			const bundleDir = createEchoBundleOnDisk(join(testDir, "echo-upjack-e2e"), {
+				withUpjack: true,
+				upjackNamespace: "apps/echo",
+			});
+			const configPath = join(testDir, "nimblebrain-upjack-e2e.json");
+			writeFileSync(configPath, JSON.stringify({ bundles: [] }, null, 2));
+
+			// Pin the workdir to the test tree so the assertion is host-agnostic
+			// and the test doesn't pollute the dev workdir at ~/.nimblebrain.
+			const prevWorkDir = process.env.NB_WORK_DIR;
+			process.env.NB_WORK_DIR = testDir;
+			try {
+				const registry = new ToolRegistry();
+				const sink = makeEventCollector();
+				const lifecycle = new BundleLifecycleManager(sink, configPath);
+
+				const instance = await lifecycle.installLocal(bundleDir, registry, "ws_test");
+				try {
+					// Manifest name is `@test/echo` → slug `test-echo` (NOT
+					// path-derived, NOT under a workspace-agnostic /data/ root).
+					expect(instance.entityDataRoot).toBe(
+						join(testDir, "workspaces", "ws_test", "data", "test-echo", "apps/echo", "data"),
+					);
+				} finally {
+					await registry.removeSource(instance.serverName);
+				}
+			} finally {
+				if (prevWorkDir === undefined) delete process.env.NB_WORK_DIR;
+				else process.env.NB_WORK_DIR = prevWorkDir;
+			}
+		},
+		15_000,
+	);
 });
 
 // ---------------------------------------------------------------------------
@@ -630,6 +677,46 @@ describe("BundleLifecycleManager — instance tracking", () => {
 
 		const instance = lifecycle.getInstance("plain-srv", "ws_test")!;
 		expect(instance.entityDataRoot).toBeUndefined();
+	});
+
+	it("seedInstance composes entityDataRoot by trusting the caller's dataDir (no re-derivation)", () => {
+		// The previous incarnation of this test locked in a workaround:
+		// seedInstance used to receive a wrong `dataDir` (a path-bundle slug
+		// produced by `bundleNameFromRef(ref.path)`) and silently rebuild
+		// `entityDataRoot` from `manifestName` to compensate. That workaround
+		// is gone — every caller now routes through `resolveBundleDataDirForRef`,
+		// which keys the slug on `manifest.name` directly, so the input dataDir
+		// is already correct. The contract here is just: append the upjack
+		// namespace and `data/` to whatever the caller passed. No magic.
+		const sink = makeEventCollector();
+		const lifecycle = new BundleLifecycleManager(sink, undefined);
+
+		const correctDataDir = "/data/workspaces/ws_eng/data/nimblebraininc-synapse-crm";
+
+		lifecycle.seedInstance(
+			"synapse-crm",
+			"/Users/foo/Code/hq/synapse-apps/synapse-crm",
+			{ path: "/Users/foo/Code/hq/synapse-apps/synapse-crm" },
+			{
+				manifestName: "@nimblebraininc/synapse-crm",
+				version: "0.3.2",
+				ui: null,
+				briefing: {
+					facets: [
+						{ name: "deals", label: "Deals", type: "delta", entity: "deal" },
+					],
+				},
+				type: "upjack",
+				upjackNamespace: "apps/crm",
+			},
+			"ws_eng",
+			correctDataDir,
+		);
+
+		const instance = lifecycle.getInstance("synapse-crm", "ws_eng")!;
+		expect(instance.entityDataRoot).toBe(
+			"/data/workspaces/ws_eng/data/nimblebraininc-synapse-crm/apps/crm/data",
+		);
 	});
 });
 

@@ -19,15 +19,7 @@
  * next implementer registers them in the right place.
  */
 
-import {
-  copyFileSync,
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  realpathSync,
-  statSync,
-} from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { EventSourcedConversationStore } from "../../conversation/event-sourced-store.ts";
 import type { ConversationEvent, SkillsLoadedEvent } from "../../conversation/types.ts";
@@ -43,6 +35,14 @@ import { validateSkill } from "../../skills/validator.ts";
 import { deleteSkill, updateSkill, writeSkill } from "../../skills/writer.ts";
 import { defineInProcessApp, type InProcessTool } from "../in-process-app.ts";
 import type { McpSource } from "../mcp-source.ts";
+import type {
+  ActiveSkillEntry,
+  SkillDetail,
+  SkillSummary,
+  SkillsActiveForOutput,
+  SkillsListOutput,
+  SkillsReadOutput,
+} from "./schemas/skills.ts";
 import {
   SkillsActivateInput,
   SkillsActiveForInput,
@@ -169,9 +169,16 @@ export function createSkillsSource(runtime: Runtime, eventSink: EventSink): McpS
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         try {
           const list = await listSkills(runtime, authoringGuidePath, input);
+          // Construct via the canonical envelope so a shape drift on
+          // either side surfaces at compile time. The cast at the
+          // boundary is needed because `structuredContent`'s wire type
+          // is `Record<string, unknown>`, which TS doesn't infer
+          // structural interfaces into; validation still happens on
+          // `out`'s declaration.
+          const out: SkillsListOutput = { skills: list };
           return {
             content: textContent(summarizeList(list)),
-            structuredContent: { skills: list },
+            structuredContent: out as unknown as Record<string, unknown>,
             isError: false,
           };
         } catch (err) {
@@ -251,9 +258,13 @@ export function createSkillsSource(runtime: Runtime, eventSink: EventSink): McpS
               isError: true,
             };
           }
+          // Compile-time drift coverage on the read shape: `out`'s type
+          // pins it to the canonical `SkillsReadOutput`. Wire cast is
+          // the same shim explained in the `list` handler.
+          const out: SkillsReadOutput = result;
           return {
             content: textContent(summarizeRead(result)),
-            structuredContent: result as unknown as Record<string, unknown>,
+            structuredContent: out as unknown as Record<string, unknown>,
             isError: false,
           };
         } catch (err) {
@@ -293,9 +304,10 @@ export function createSkillsSource(runtime: Runtime, eventSink: EventSink): McpS
               isError: true,
             };
           }
+          const out: SkillsActiveForOutput = { active: result, conversationId: convId };
           return {
             content: textContent(summarizeActive(result)),
-            structuredContent: { active: result, conversationId: convId },
+            structuredContent: out as unknown as Record<string, unknown>,
             isError: false,
           };
         } catch (err) {
@@ -434,41 +446,11 @@ interface ListInput {
   modified_since?: string;
 }
 
-interface ListedSkill {
-  id: string;
-  name: string;
-  layer: 1 | 3;
-  scope: "org" | "workspace" | "user" | "bundle";
-  status: "active" | "draft" | "disabled" | "archived";
-  type?: string;
-  tokens: number;
-  source: { bundle?: string; bundleVersion?: string; path?: string; uri?: string };
-  description?: string;
-  modifiedAt?: string;
-  loadingStrategy?: string;
-  appliesToTools?: string[];
-  priority?: number;
-}
-
-interface ReadResult {
-  id: string;
-  content: string;
-  layer: 1 | 3;
-  scope: "org" | "workspace" | "user" | "bundle";
-  source: { bundle?: string; bundleVersion?: string; path?: string; uri?: string };
-  metadata: {
-    name: string;
-    description?: string;
-    type?: string;
-    priority?: number;
-    loadingStrategy?: string;
-    appliesToTools?: string[];
-    status?: string;
-    overrides?: Array<{ bundle?: string; skill?: string; reason: string }>;
-    derivedFrom?: string;
-  };
-  modifiedAt?: string;
-}
+// Local aliases for the canonical output shapes from `schemas/skills.ts`.
+// Server and web both import from there — this alias just keeps the
+// historical local name in this file's body so the diff stays small.
+type ListedSkill = SkillSummary;
+type ReadResult = SkillDetail;
 
 function skillToListed(skill: Skill): ListedSkill {
   const m = skill.manifest;
@@ -834,14 +816,8 @@ function inferScopeFromPath(
   return "bundle";
 }
 
-interface ActiveForEntry {
-  id: string;
-  layer: 3;
-  scope: "org" | "workspace" | "user" | "bundle";
-  tokens: number;
-  loadedBy: "always" | "tool_affinity";
-  reason: string;
-}
+// Local alias for the canonical shape from `schemas/skills.ts`.
+type ActiveForEntry = ActiveSkillEntry;
 
 /**
  * Find the most recent `skills.loaded` event for the conversation and
@@ -853,6 +829,15 @@ async function activeForConversation(
   runtime: Runtime,
   convId: string,
 ): Promise<ActiveForEntry[] | null> {
+  // Stage 1 single-owner: verify the caller owns the requested
+  // conversation before reading its events. `findConversation(id,
+  // access)` returns null for both not-found and foreign-owner —
+  // same shape as the unauthenticated branch, no existence leak.
+  const identity = runtime.getCurrentIdentity();
+  if (!identity) return null;
+  const owned = await runtime.findConversation(convId, { userId: identity.id });
+  if (!owned) return null;
+
   const events = await readConvEvents(runtime, convId);
   if (events === null) return null;
 
@@ -900,11 +885,26 @@ async function loadingLog(
 ): Promise<LoadingLogEntry[]> {
   const filter = input as LoadingLogInput;
 
+  // Stage 1 single-owner: every conversation read here must belong to
+  // the caller. Without an identity we refuse rather than scan — the
+  // top-level store holds every user's conversations and an
+  // unauthenticated scan would leak peer skills.loaded events.
+  const identity = runtime.getCurrentIdentity();
+  if (!identity) {
+    throw new Error("skills__loading_log requires an authenticated identity");
+  }
+  const access = { userId: identity.id };
+
   const convIds: string[] = [];
   if (filter.conversation_id) {
+    // Explicit-id branch: verify ownership before reading events.
+    // `findConversation(id, access)` returns null for both not-found
+    // and foreign-owner, so we treat them the same: no entries.
+    const owned = await runtime.findConversation(filter.conversation_id, access);
+    if (!owned) return [];
     convIds.push(filter.conversation_id);
   } else {
-    convIds.push(...listWorkspaceConversationIds(runtime));
+    convIds.push(...(await listOwnedConversationIds(runtime, access)));
   }
 
   const out: LoadingLogEntry[] = [];
@@ -932,15 +932,9 @@ async function loadingLog(
 }
 
 /**
- * Read raw conversation events for the given id from the active store.
- *
- * Resolves through `runtime.getConversationStore()` when possible (the
- * Phase 1 abstraction); falls back to instantiating an
- * EventSourcedConversationStore on the workspace conversation dir when the
- * runtime hasn't bound one (e.g. the legacy global path during tests).
- *
- * Returns `null` for not-found, `[]` for legacy (message-format)
- * conversations.
+ * Read raw conversation events for the given id from the top-level
+ * conversation store. Returns `null` for not-found, `[]` for legacy
+ * (message-format) conversations.
  */
 async function readConvEvents(
   runtime: Runtime,
@@ -953,12 +947,11 @@ async function readConvEvents(
 }
 
 function getEventStore(runtime: Runtime): EventSourcedConversationStore | null {
-  // The runtime exposes a `ConversationStore` interface; for Phase 2 the
-  // event-sourced store is the only one with `readEvents`. Returns null
-  // when the store is missing (no workspace context) or is some other
-  // shape (e.g. an in-memory test double).
+  // The runtime exposes a `ConversationStore` interface; only the
+  // event-sourced store has `readEvents`. Returns null when the store
+  // is some other shape (e.g. an in-memory test double).
   try {
-    const raw = runtime.getConversationStore();
+    const raw = runtime.findConversationStore();
     return raw instanceof EventSourcedConversationStore ? raw : null;
   } catch {
     return null;
@@ -974,18 +967,29 @@ function conversationFileExists(store: EventSourcedConversationStore, convId: st
   }
 }
 
-function listWorkspaceConversationIds(runtime: Runtime): string[] {
-  const store = getEventStore(runtime);
-  if (!store) return [];
-  const dir = store.getDir();
-  if (!existsSync(dir)) return [];
-  try {
-    return readdirSync(dir)
-      .filter((f) => f.endsWith(".jsonl"))
-      .map((f) => f.slice(0, -".jsonl".length));
-  } catch {
-    return [];
+/**
+ * List conversation ids owned by the caller. Goes through the store's
+ * `list(opts, access)` which applies the same ownership filter the
+ * platform conversation tools use. Walks paginated results so a tenant
+ * with many owned conversations is covered.
+ */
+async function listOwnedConversationIds(
+  runtime: Runtime,
+  access: { userId: string },
+): Promise<string[]> {
+  const store = runtime.findConversationStore();
+  const ids: string[] = [];
+  let cursor: string | undefined;
+  // Fixed page size; enough that a normal tenant gets one page.
+  // The store's `list` is in-memory after `populate`, so paging is
+  // cheap. Loop until the store reports no more.
+  while (true) {
+    const page = await store.list({ limit: 200, ...(cursor ? { cursor } : {}) }, access);
+    for (const c of page.conversations) ids.push(c.id);
+    if (!page.nextCursor) break;
+    cursor = page.nextCursor;
   }
+  return ids;
 }
 
 function errorResult(err: unknown): ToolResult {
@@ -1164,7 +1168,7 @@ function scopeDir(runtime: Runtime, scope: WritableScope): string {
   if (scope === "org") return join(workDir, "skills");
   if (scope === "workspace") {
     const wsId = runtime.requireWorkspaceId();
-    return join(workDir, "workspaces", wsId, "skills");
+    return runtime.getWorkspaceContext(wsId).getDataPath("skills");
   }
   // user
   const identity = runtime.getCurrentIdentity();

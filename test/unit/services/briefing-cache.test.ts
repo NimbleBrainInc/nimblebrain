@@ -29,7 +29,7 @@ describe("BriefingCache", () => {
 
 	test("set() then get() returns briefing with cached: true", () => {
 		const briefing = makeBriefing();
-		cache.set(briefing, "hash1");
+		cache.set(briefing);
 		const result = cache.get();
 		expect(result).not.toBeNull();
 		expect(result!.cached).toBe(true);
@@ -37,17 +37,17 @@ describe("BriefingCache", () => {
 	});
 
 	test("invalidate() causes get() to return null", () => {
-		cache.set(makeBriefing(), "hash1");
+		cache.set(makeBriefing());
 		cache.invalidate();
 		expect(cache.get()).toBeNull();
 		expect(cache.isStale()).toBe(true);
 	});
 
 	test("re-set after invalidation works", () => {
-		cache.set(makeBriefing(), "hash1");
+		cache.set(makeBriefing());
 		cache.invalidate();
 		expect(cache.get()).toBeNull();
-		cache.set(makeBriefing({ lede: "Updated" }), "hash2");
+		cache.set(makeBriefing({ lede: "Updated" }));
 		const result = cache.get();
 		expect(result).not.toBeNull();
 		expect(result!.lede).toBe("Updated");
@@ -58,7 +58,7 @@ describe("BriefingCache", () => {
 		try {
 			const cache31 = new BriefingCache(30);
 			Date.now = originalNow;
-			cache31.set(makeBriefing(), "hash1");
+			cache31.set(makeBriefing());
 			Date.now = () => originalNow() + 31 * 60 * 1000;
 			expect(cache31.get()).toBeNull();
 		} finally {
@@ -69,7 +69,7 @@ describe("BriefingCache", () => {
 	test("not expired within TTL", () => {
 		const originalNow = Date.now;
 		try {
-			cache.set(makeBriefing(), "hash1");
+			cache.set(makeBriefing());
 			Date.now = () => originalNow() + 15 * 60 * 1000; // 15 minutes (within 30 min TTL)
 			expect(cache.get()).not.toBeNull();
 		} finally {
@@ -77,3 +77,4 @@ describe("BriefingCache", () => {
 		}
 	});
 });
+

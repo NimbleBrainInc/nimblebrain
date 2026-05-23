@@ -7,6 +7,7 @@ import type {
   OAuthTokens,
 } from "@modelcontextprotocol/sdk/shared/auth.js";
 import { WorkspaceOAuthProvider } from "../../src/tools/workspace-oauth-provider.ts";
+import { WorkspaceContext } from "../../src/workspace/context.ts";
 
 // Bun.serve-based cases (headless single-hop, headless multi-hop, interactive
 // 302, interactive 200, SSRF block) live in
@@ -756,5 +757,81 @@ describe("WorkspaceOAuthProvider — revokeAndDeleteTokens", () => {
     expect(result.revoked.refresh).toBe(true);
     expect(result.revoked.access).toBe(true);
     expect(result.deletedLocal).toBe(true);
+  });
+});
+
+describe("WorkspaceOAuthProvider — WorkspaceContext construction (Stage 0)", () => {
+  let workDir: string;
+
+  beforeEach(() => {
+    workDir = mkdtempSync(join(tmpdir(), "nb-oauth-ctx-test-"));
+  });
+
+  it("derives the same dataDir whether constructed via workDir alone or workspaceContext", async () => {
+    const ctx = new WorkspaceContext({ wsId: "ws_test", workDir });
+    const viaLegacy = new WorkspaceOAuthProvider({
+      owner: { type: "workspace", wsId: "ws_test" },
+      serverName: "granola",
+      workDir,
+      callbackUrl: CALLBACK,
+    });
+    const viaContext = new WorkspaceOAuthProvider({
+      owner: { type: "workspace", wsId: "ws_test" },
+      serverName: "granola",
+      workDir,
+      callbackUrl: CALLBACK,
+      workspaceContext: ctx,
+    });
+    // Functional check: write through one, read through the other. If the
+    // two constructors agree on dataDir they'll see each other's files.
+    await viaLegacy.saveTokens({ access_token: "a", token_type: "Bearer", refresh_token: "r" });
+    const seenByContext = await viaContext.tokens();
+    expect(seenByContext).toEqual({
+      access_token: "a",
+      token_type: "Bearer",
+      refresh_token: "r",
+    });
+  });
+
+  it("rejects a workspaceContext whose wsId does not match the owner", () => {
+    const ctx = new WorkspaceContext({ wsId: "ws_other", workDir });
+    expect(
+      () =>
+        new WorkspaceOAuthProvider({
+          owner: { type: "workspace", wsId: "ws_test" },
+          serverName: "granola",
+          workDir,
+          callbackUrl: CALLBACK,
+          workspaceContext: ctx,
+        }),
+    ).toThrow(/owner\/context mismatch/);
+  });
+
+  it("rejects a workspaceContext paired with a user-typed owner", () => {
+    const ctx = new WorkspaceContext({ wsId: "ws_test", workDir });
+    expect(
+      () =>
+        new WorkspaceOAuthProvider({
+          owner: { type: "user", userId: "user_alice" },
+          serverName: "granola",
+          workDir,
+          callbackUrl: CALLBACK,
+          workspaceContext: ctx,
+        }),
+    ).toThrow(/workspaceContext is only valid with workspace-typed owners/);
+  });
+
+  it("returns the same owner instance via getOwner — no rebind path", () => {
+    const owner = { type: "workspace" as const, wsId: "ws_test" };
+    const p = new WorkspaceOAuthProvider({
+      owner,
+      serverName: "granola",
+      workDir,
+      callbackUrl: CALLBACK,
+    });
+    // The owner-context type is readonly, so attempted reassignment is a
+    // compile error. Verify at runtime that the wsId still matches and is
+    // structurally identical to the construction-time value.
+    expect(p.getOwner()).toEqual(owner);
   });
 });

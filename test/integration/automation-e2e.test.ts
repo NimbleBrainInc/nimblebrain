@@ -32,6 +32,7 @@ import {
 	handleStatus,
 	type ToolContext,
 } from "../../src/bundles/automations/src/server.ts";
+import type { AutomationsRunOutput } from "../../src/tools/platform/schemas/automations.ts";
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -63,6 +64,20 @@ function defaultExecutorResult(auto: Automation): AutomationRun {
 }
 
 let scheduler: Scheduler;
+
+/**
+ * `handleRun` returns a discriminated union — see `AutomationsRunOutput`.
+ * Integration tests using the fast in-process executor always expect
+ * the synchronous `{ run }` shape; this helper narrows + asserts that
+ * explicitly so a future test with a slow executor doesn't silently
+ * drop into the "dispatched" branch and pass on undefined dereferences.
+ */
+function expectSyncRun(result: AutomationsRunOutput): AutomationRun {
+	if ("run" in result) return result.run;
+	throw new Error(
+		`expected handleRun to return synchronously with { run }, got ${JSON.stringify(result)}`,
+	);
+}
 
 function createHarness(): ToolContext {
 	executorCalls = [];
@@ -128,13 +143,12 @@ describe("automation e2e: create -> run -> verify", () => {
 		expect(createResult.automation.id).toBe("daily-summary");
 
 		// Step 2: Trigger via run handler
-		const runResult = (await handleRun({ name: "Daily Summary" }, ctx)) as {
-			run: AutomationRun;
-		};
+		const run = expectSyncRun(await handleRun({ name: "Daily Summary" }, ctx));
+		// `handleRun` is typed as AutomationsRunOutput; expectSyncRun narrows
+		// to the synchronous-completion shape for this fast-executor test.
 
-		expect(runResult.run).toBeDefined();
-		expect(runResult.run.status).toBe("success");
-		expect(runResult.run.automationId).toBe("daily-summary");
+		expect(run.status).toBe("success");
+		expect(run.automationId).toBe("daily-summary");
 
 		// Step 3: Verify run history
 		const runsResult = handleRuns(
@@ -259,14 +273,12 @@ describe("automation e2e: run records metrics", () => {
 			ctx,
 		);
 
-		const result = (await handleRun({ name: "Multi Tool Job" }, ctx)) as {
-			run: AutomationRun;
-		};
+		const run = expectSyncRun(await handleRun({ name: "Multi Tool Job" }, ctx));
 
-		expect(result.run.toolCalls).toBe(7);
-		expect(result.run.iterations).toBe(4);
-		expect(result.run.inputTokens).toBe(500);
-		expect(result.run.outputTokens).toBe(200);
+		expect(run.toolCalls).toBe(7);
+		expect(run.iterations).toBe(4);
+		expect(run.inputTokens).toBe(500);
+		expect(run.outputTokens).toBe(200);
 	});
 
 	test("status shows updated runCount and lastRunStatus after run", async () => {

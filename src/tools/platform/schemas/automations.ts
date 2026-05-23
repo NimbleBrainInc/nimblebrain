@@ -171,3 +171,197 @@ export const AutomationsCancelInput = Type.Object(
   { required: ["name"] },
 );
 export type AutomationsCancelInput = Static<typeof AutomationsCancelInput>;
+
+// ── Tool output types ────────────────────────────────────────────────────
+//
+// These are TYPE-ONLY exports — no TypeBox runtime schema. The handler in
+// `src/bundles/automations/src/server.ts` is the authority on output shape;
+// these types track it for consumers (CLI, integration tests, web client,
+// any future caller) so a single change point catches drift at compile
+// time instead of at agent-confusion time.
+//
+// Why no runtime schema for outputs: we don't validate outputs at the
+// MCP boundary — the handler's TypeScript return type already constrains
+// it, and Pydantic-style runtime checks would just duplicate that
+// constraint at the cost of an extra serialization round-trip. Outputs
+// are checked at the seams that matter (per-call-site, via these types).
+//
+// Why these are self-contained (not imported from `bundles/automations/
+// src/types.ts`): the codegen at `scripts/codegen-web-platform-schemas.ts`
+// emits .d.ts files for the web package with `rootDir` pinned to
+// `schemas/`. Cross-tree imports break that boundary. Drift between
+// these types and the canonical `Automation` / `AutomationRun` is
+// guarded at COMPILE time by
+// `src/bundles/automations/src/output-types-drift-guard.ts`, which
+// `bun run check` validates as part of the standard CI gate. When you
+// change `Automation` or `AutomationRun`, that file's type-level
+// constraints fail to compile against the corresponding mirror here —
+// the build error points at the field that drifted.
+//
+// When you change a handler return shape, update the matching output
+// type here in the same commit. The output type is the contract.
+
+/**
+ * Status of the most recent automation run, as exposed via the list/
+ * summary surface. Mirrors `AutomationRun["status"]` minus `"running"`
+ * — the list view shows the most recent COMPLETED run's outcome, never
+ * one in flight.
+ */
+export type AutomationLastRunStatus = "success" | "failure" | "timeout" | "skipped";
+
+/**
+ * Summary row returned per automation by `handleList`. Subset of the
+ * stored `Automation` shape plus a couple of human-formatted fields the
+ * UI surfaces directly. `lastRunAt` / `nextRunAt` are human-relative
+ * strings (e.g. "in 2h", "4h ago") — the raw ISO timestamps stay on the
+ * stored `Automation`.
+ */
+export interface AutomationSummary {
+  id: string;
+  name: string;
+  description?: string;
+  schedule: string;
+  enabled: boolean;
+  source: "user" | "agent" | "bundle";
+  runCount: number;
+  lastRunStatus: AutomationLastRunStatus | null;
+  lastRunAt: string | null;
+  nextRunAt: string | null;
+  disabledAt: string | null;
+  disabledReason: string | null;
+  estimatedCostPerDay: number;
+}
+
+export interface AutomationsListOutput {
+  automations: AutomationSummary[];
+  total: number;
+}
+
+/**
+ * Structural mirror of a single AutomationRun record as returned by
+ * the handlers. Kept in sync with `AutomationRun` in
+ * `bundles/automations/src/types.ts` via the assertion test referenced
+ * above. New fields added there MUST also appear here.
+ */
+export interface AutomationRunRecord {
+  id: string;
+  automationId: string;
+  startedAt: string;
+  completedAt?: string;
+  status: "running" | "success" | "failure" | "timeout" | "cancelled" | "skipped";
+  conversationId?: string;
+  inputTokens: number;
+  outputTokens: number;
+  toolCalls: number;
+  iterations: number;
+  error?: string;
+  transient?: boolean;
+  resultPreview?: string;
+  stopReason?: "complete" | "max_iterations" | "length" | "content_filter" | "error" | "other";
+}
+
+/**
+ * Token budget block on a stored automation. Mirror of the
+ * `TokenBudget` interface; kept here to avoid a cross-tree import
+ * (see top-of-section comment).
+ */
+export interface AutomationTokenBudget {
+  maxInputTokens?: number;
+  maxOutputTokens?: number;
+  period?: "daily" | "monthly";
+}
+
+/**
+ * Schedule spec block on a stored automation. Mirror of `ScheduleSpec`.
+ */
+export interface AutomationScheduleSpec {
+  type: "cron" | "interval";
+  expression?: string;
+  timezone?: string;
+  intervalMs?: number;
+}
+
+/**
+ * Automation detail returned by `handleStatus`. Spreads the stored
+ * Automation and overlays a few computed fields the UI consumes
+ * directly: humanized schedule + relative-time strings, cost numbers,
+ * and undefined→null coercion on optional fields (`tokenBudget`,
+ * `budgetResetAt`) so JSON consumers see a consistent shape per field.
+ */
+export interface AutomationStatusDetail {
+  id: string;
+  name: string;
+  description?: string;
+  prompt: string;
+  schedule: AutomationScheduleSpec;
+  scheduleHuman: string;
+  enabled: boolean;
+  source: "user" | "agent" | "bundle";
+  bundleName?: string;
+  ownerId?: string;
+  workspaceId?: string;
+  model?: string | null;
+  skill?: string;
+  allowedTools?: string[];
+  maxIterations?: number;
+  maxInputTokens?: number;
+  maxRunDurationMs?: number;
+  runCount: number;
+  consecutiveErrors: number;
+  cumulativeInputTokens: number;
+  cumulativeOutputTokens: number;
+  tokenBudget: AutomationTokenBudget | null;
+  budgetResetAt: string | null;
+  lastRunAt?: string;
+  lastRunAtHuman: string | null;
+  lastRunStatus?: AutomationLastRunStatus;
+  nextRunAt?: string;
+  nextRunAtHuman: string | null;
+  disabledAt?: string;
+  disabledReason?: string;
+  createdAt: string;
+  updatedAt: string;
+  actualCostUsd: number;
+  estimatedCostPerRun: number;
+  estimatedCostPerDay: number;
+  estimatedCostPerMonth: number;
+}
+
+export interface AutomationsStatusOutput {
+  automation: AutomationStatusDetail;
+  recentRuns: AutomationRunRecord[];
+}
+
+export interface AutomationsRunsOutput {
+  runs: AutomationRunRecord[];
+  total: number;
+}
+
+/**
+ * Discriminated union — `handleRun` returns one of two shapes:
+ *
+ *   { run: AutomationRunRecord }                     when the run finishes
+ *                                                    inside the sync-wait
+ *                                                    window (~30s default).
+ *
+ *   { status: "dispatched"; automationId; message }  when the run is still
+ *                                                    in flight after the
+ *                                                    window. Scheduler keeps
+ *                                                    tracking; poll
+ *                                                    `automations__runs`
+ *                                                    for completion.
+ *
+ * Both shapes indicate the dispatch succeeded; only an error response
+ * indicates failure to dispatch. Consumers MUST narrow before
+ * dereferencing `run.*` — `as { run: ... }` is the anti-pattern that
+ * caused the production CLI crash this type prevents.
+ */
+export type AutomationsRunOutput =
+  | { run: AutomationRunRecord }
+  | { status: "dispatched"; automationId: string; message: string };
+
+export interface AutomationsCancelOutput {
+  cancelled: boolean;
+  id: string;
+  message: string;
+}

@@ -29,11 +29,23 @@ metadata:
 ## System Tools
 
 - **nb__search** — Unified search tool. Use `scope: "tools"` to search installed tools by keyword (empty query lists everything). Use `scope: "registry"` to search the mpak registry for installable bundles.
+- **nb__manage_tools** — Patch your active tool list in one call. Input: `{ add?: ["source__tool", ...], remove?: ["source__tool", ...] }`. Use `add` to promote discovered tools so they become callable on the next turn. Use `remove` to release tools you no longer need (system tools `nb__*` cannot be released). Combine `add` and `remove` in one call when switching domains.
 - **nb__status** — Platform status. Default gives an overview (model, app count, skill count). Use `scope: "bundles"` for per-app health/version, `scope: "skills"` for loaded skills, `scope: "config"` for model and limit details.
 - **nb__manage_app** — Install, uninstall, or configure apps:
   - `install` — Download, prompt for credentials if needed, start.
   - `uninstall` — Stop and remove.
   - `configure` — Re-prompt for credentials on an existing app.
+
+## Tool Discovery Workflow
+
+App tools are not in your direct tool list by default. To use one:
+
+1. `nb__search` with `scope: "tools"` and a keyword → returns tool names.
+2. `nb__manage_tools({ add: ["source__tool", ...] })` → makes the discovered tools callable on the next turn. Add as many as you'll need in a single call.
+3. Call the tools.
+4. When the user clearly switches domains (CRM → email, design → invoicing), patch in one call: `nb__manage_tools({ add: [new tools], remove: [old tools] })`. **Default to retain.** Do not release after every call; the goal is to keep the active list shaped for the current task, not to leave it empty between turns.
+
+Never guess tool names. Never skip step 2 — a tool not in your active list is not callable, even after discovery.
 
 ## Credentials
 
@@ -54,7 +66,7 @@ All credentials are collected by the terminal — never in chat.
 
 ## Platform Capabilities
 
-These built-in capabilities are always available. Their tools may not be in your direct tool list — use `nb__search` with `scope: "tools"` and the indicated query to discover them before calling.
+These built-in capabilities are always available. Their tools may not be in your direct tool list — follow the Tool Discovery Workflow above (`nb__search` → `nb__manage_tools({ add })` → call) using the indicated query.
 
 - **Files** — List, search, read, write, tag, and delete workspace files. Use when the user asks about files, uploads, documents, or attachments. Search query: `"files"`
 - **Conversations** — Search and recall past conversations. Use when the user references prior discussions — phrases like "we discussed", "remember when", "last time we talked about". Search query: `"conversations"`
@@ -63,8 +75,8 @@ These built-in capabilities are always available. Their tools may not be in your
 ## Rules
 
 - If a bundle's tools appear in your tool list, it is working.
-- **Always call `nb__search` with `scope: "tools"` before attempting any app tool call.** Your tool list may only show system tools (nb__*). App tools must be discovered first. Never guess tool names.
+- **For any app tool not in your active list, run the Tool Discovery Workflow above (`nb__search` → `nb__manage_tools({ add })` → call).** Your tool list may only show system tools (`nb__*`). Never guess tool names; never call a tool you have not promoted via `nb__manage_tools`.
 - All app tool names use the `source__tool` format (e.g., `synapse-crm__create_contact`). Never call a tool without this prefix.
-- If you need tools from multiple apps in one request, call `nb__search` with `scope: "tools"` once per app to discover their tools, then call the discovered tools.
+- If you need tools from multiple apps in one request, batch them into a single `nb__manage_tools({ add: [...] })` call after searching each app.
 - Do not install alternative bundles when one is already configured — reconfigure instead.
 - "My name is X" → `set_preferences`.

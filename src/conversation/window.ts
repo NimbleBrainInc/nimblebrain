@@ -1,31 +1,19 @@
 import type { LanguageModelV3Message } from "@ai-sdk/provider";
+import { estimateMessageTokens } from "../engine/token-estimate.ts";
 
 /**
  * Estimate token count for a message.
- * Uses ~4 characters per token (rough but fast).
- * V3 messages: system has string content, user/assistant/tool have content as array of parts.
+ *
+ * Routed through the part-aware `estimateMessageTokens` (shared with the
+ * `context.assembled` telemetry path) so the windowing decision and the
+ * reported token count agree on the same numbers. The previous local
+ * `chars/4` heuristic over-counted by ~3 tokens per byte for any message
+ * carrying a rehydrated `file` part (a `Uint8Array` serialized as
+ * `{"0":n,"1":n,…}`), which caused excessive trimming when images were
+ * present even though the provider would charge the image ~1.5K tokens.
  */
 function estimateTokens(msg: LanguageModelV3Message): number {
-  if (typeof msg.content === "string") {
-    // system message
-    return Math.ceil(msg.content.length / 4);
-  }
-  // content is an array of parts — serialize each part's text/output
-  let length = 0;
-  for (const part of msg.content) {
-    if ("text" in part && typeof part.text === "string") {
-      length += part.text.length;
-    } else if ("input" in part) {
-      // tool-call part
-      length += JSON.stringify(part.input).length;
-    } else if ("output" in part) {
-      // tool-result part
-      length += JSON.stringify(part.output).length;
-    } else {
-      length += JSON.stringify(part).length;
-    }
-  }
-  return Math.ceil(length / 4);
+  return estimateMessageTokens(msg);
 }
 
 /**
@@ -83,6 +71,52 @@ function groupMessages(messages: LanguageModelV3Message[]): LanguageModelV3Messa
     }
   }
   return groups;
+}
+
+/**
+ * Strip reasoning blocks from assistant messages older than the most recent
+ * assistant turn.
+ *
+ * Anthropic's guidance for extended thinking: pass thinking blocks from the
+ * most recent turn back to the API unchanged; strip thinking blocks from
+ * older turns to reduce token usage. The reasoning blocks attached to the
+ * last assistant message are still load-bearing — they pair with any
+ * tool-use chain currently in flight — but every earlier assistant message's
+ * reasoning is historical and replays as opaque signature bytes that bloat
+ * the prompt linearly with turn count.
+ *
+ * In production conv_e00606c7aab7423d we saw 100+ KB `llm.response` events
+ * dominated by Anthropic signatures with empty `text`. This is the seam
+ * where that growth is cut.
+ *
+ * Edge case: an assistant message that contains ONLY reasoning blocks is a
+ * legitimate placeholder for a turn that produced reasoning-only output
+ * (see `event-reconstructor.ts` step 4a). Stripping its only content would
+ * leave an empty assistant message that Anthropic rejects on replay, so
+ * those placeholders are kept intact.
+ */
+export function stripOlderReasoning(messages: LanguageModelV3Message[]): LanguageModelV3Message[] {
+  let lastAssistantIdx = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i]?.role === "assistant") {
+      lastAssistantIdx = i;
+      break;
+    }
+  }
+  if (lastAssistantIdx <= 0) return messages;
+
+  let changed = false;
+  const out = messages.map((msg, idx) => {
+    if (idx === lastAssistantIdx) return msg;
+    if (msg.role !== "assistant") return msg;
+    if (typeof msg.content === "string") return msg;
+    const nonReasoning = msg.content.filter((part) => part.type !== "reasoning");
+    if (nonReasoning.length === msg.content.length) return msg;
+    if (nonReasoning.length === 0) return msg; // pure-reasoning placeholder
+    changed = true;
+    return { ...msg, content: nonReasoning };
+  });
+  return changed ? out : messages;
 }
 
 /**

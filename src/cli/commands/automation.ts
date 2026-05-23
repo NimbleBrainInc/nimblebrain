@@ -5,6 +5,11 @@ import { ConsoleEventSink } from "../../adapters/console-events.ts";
 import { updateAutomation } from "../../bundles/automations/src/domain.ts";
 import { extractText } from "../../engine/content-helpers.ts";
 import { Runtime } from "../../runtime/runtime.ts";
+import type {
+  AutomationsListOutput,
+  AutomationsRunOutput,
+  AutomationsStatusOutput,
+} from "../../tools/platform/schemas/automations.ts";
 import { loadConfig } from "../config.ts";
 import { log } from "../log.ts";
 
@@ -69,17 +74,7 @@ export function createAutomationCommand(): Command {
       let runtime: Runtime | undefined;
       try {
         runtime = await startHeadlessRuntime(globals.config);
-        const data = (await callTool(runtime, "automations__list")) as {
-          automations: Array<{
-            name: string;
-            enabled: boolean;
-            schedule: string;
-            source: string;
-            lastRunStatus: string | null;
-            nextRunAt: string | null;
-          }>;
-          total: number;
-        };
+        const data = (await callTool(runtime, "automations__list")) as AutomationsListOutput;
 
         if (globals.json) {
           process.stdout.write(`${JSON.stringify(data)}\n`);
@@ -120,34 +115,9 @@ export function createAutomationCommand(): Command {
       let runtime: Runtime | undefined;
       try {
         runtime = await startHeadlessRuntime(globals.config);
-        const data = (await callTool(runtime, "automations__status", { name })) as {
-          automation: {
-            id: string;
-            name: string;
-            description?: string;
-            prompt: string;
-            scheduleHuman: string;
-            enabled: boolean;
-            source: string;
-            runCount: number;
-            consecutiveErrors: number;
-            lastRunAtHuman: string | null;
-            nextRunAtHuman: string | null;
-            model?: string | null;
-            maxIterations?: number;
-            skill?: string;
-          };
-          recentRuns: Array<{
-            id: string;
-            status: string;
-            startedAt: string;
-            completedAt?: string;
-            iterations: number;
-            toolCalls: number;
-            error?: string;
-            resultPreview?: string;
-          }>;
-        };
+        const data = (await callTool(runtime, "automations__status", {
+          name,
+        })) as AutomationsStatusOutput;
 
         if (globals.json) {
           process.stdout.write(`${JSON.stringify(data)}\n`);
@@ -208,22 +178,20 @@ export function createAutomationCommand(): Command {
       let runtime: Runtime | undefined;
       try {
         runtime = await startHeadlessRuntime(globals.config);
-        const data = (await callTool(runtime, "automations__run", { name })) as {
-          run: {
-            id: string;
-            status: string;
-            startedAt: string;
-            completedAt?: string;
-            iterations: number;
-            toolCalls: number;
-            error?: string;
-            resultPreview?: string;
-          };
-        };
+        // `automations__run` returns a discriminated union — see
+        // `AutomationsRunOutput` for the contract. Consumers MUST narrow
+        // before dereferencing; `as { run }` is the anti-pattern that
+        // caused the production CLI crash this import prevents.
+        const data = (await callTool(runtime, "automations__run", {
+          name,
+        })) as AutomationsRunOutput;
 
         if (globals.json) {
           process.stdout.write(`${JSON.stringify(data)}\n`);
-        } else {
+        } else if ("status" in data && data.status === "dispatched") {
+          console.log(data.message);
+          console.log(`Poll: nb automation status ${data.automationId}`);
+        } else if ("run" in data) {
           const r = data.run;
           console.log(`Run ${r.id}: ${r.status}`);
           console.log(`  Started:    ${r.startedAt}`);

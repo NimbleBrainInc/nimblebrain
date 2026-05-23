@@ -492,10 +492,15 @@ describe("composeSystemPrompt — user preferences", () => {
   });
 });
 
-describe("composeSystemPrompt — app guide trust gating", () => {
+describe("composeSystemPrompt — app guide injection", () => {
+  // Trust is enforced at install time, not per-prompt. The `<app-guide>` body
+  // ships regardless of MTF score because the bundle's tools are already
+  // callable and suppressing the workflow guidance would leave the model
+  // less safe, not more. These tests guard against re-introducing a per-turn
+  // trust gate.
   const guideText = "Use tasks__create to add items. Always set a due date.";
 
-  it("high trust (80): app guide is included", () => {
+  it("includes the app guide at high trust", () => {
     const focused: FocusedAppInfo = {
       name: "Tasks",
       tools: [],
@@ -508,7 +513,7 @@ describe("composeSystemPrompt — app guide trust gating", () => {
     expect(result).not.toContain("trust score below threshold");
   });
 
-  it("low trust (30): app guide is NOT included, fallback shown", () => {
+  it("includes the app guide at low trust (no per-turn gate)", () => {
     const focused: FocusedAppInfo = {
       name: "Tasks",
       tools: [],
@@ -516,37 +521,12 @@ describe("composeSystemPrompt — app guide trust gating", () => {
       trustScore: 30,
     };
     const result = composeSystemPrompt([], null, undefined, focused);
-    expect(result).not.toContain(guideText);
-    expect(result).not.toContain("<app-guide>");
-    expect(result).toContain("App guide available but not injected — bundle trust score below threshold.");
-  });
-
-  it("boundary: trustScore 50 includes guide", () => {
-    const focused: FocusedAppInfo = {
-      name: "Tasks",
-      tools: [],
-      skillResource: guideText,
-      trustScore: 50,
-    };
-    const result = composeSystemPrompt([], null, undefined, focused);
     expect(result).toContain(guideText);
     expect(result).toContain("<app-guide>");
+    expect(result).not.toContain("trust score below threshold");
   });
 
-  it("boundary: trustScore 49 excludes guide", () => {
-    const focused: FocusedAppInfo = {
-      name: "Tasks",
-      tools: [],
-      skillResource: guideText,
-      trustScore: 49,
-    };
-    const result = composeSystemPrompt([], null, undefined, focused);
-    expect(result).not.toContain(guideText);
-    expect(result).not.toContain("<app-guide>");
-    expect(result).toContain("trust score below threshold");
-  });
-
-  it("no skillResource: works regardless of trust score", () => {
+  it("emits the no-guide fallback only when skillResource is absent", () => {
     const focused: FocusedAppInfo = {
       name: "Tasks",
       tools: [],
@@ -638,7 +618,6 @@ describe("composeSystemPrompt — org / workspace overlays", () => {
       undefined,
       undefined,
       undefined,
-      undefined,
       overlays,
     );
     expect(result).toContain("## Organization Instructions");
@@ -652,7 +631,6 @@ describe("composeSystemPrompt — org / workspace overlays", () => {
     const result = composeSystemPrompt(
       [],
       null,
-      undefined,
       undefined,
       undefined,
       undefined,
@@ -703,7 +681,6 @@ describe("composeSystemPrompt — org / workspace overlays", () => {
       undefined,
       undefined,
       undefined,
-      undefined,
       overlays,
     );
     expect(result).toContain("&lt;/org-instructions>");
@@ -725,7 +702,6 @@ describe("composeSystemPrompt — org / workspace overlays", () => {
       testSkill,
       apps,
       focused,
-      undefined,
       undefined,
       undefined,
       undefined,
@@ -774,7 +750,6 @@ describe("composeSystemPrompt — Layer 3 skills (Phase 2)", () => {
       undefined,
       undefined,
       undefined,
-      undefined,
       entries,
     );
     expect(result).toContain("## Skills");
@@ -793,7 +768,6 @@ describe("composeSystemPrompt — Layer 3 skills (Phase 2)", () => {
     const result = composeSystemPrompt(
       [],
       null,
-      undefined,
       undefined,
       undefined,
       undefined,
@@ -822,7 +796,6 @@ describe("composeSystemPrompt — Layer 3 skills (Phase 2)", () => {
       undefined,
       undefined,
       undefined,
-      undefined,
       [a, b],
     );
     expect(result.indexOf("### voice-a")).toBeLessThan(result.indexOf("### voice-b"));
@@ -832,7 +805,6 @@ describe("composeSystemPrompt — Layer 3 skills (Phase 2)", () => {
     const result = composeSystemPrompt(
       [],
       null,
-      undefined,
       undefined,
       undefined,
       undefined,
@@ -859,7 +831,6 @@ describe("composeSystemPrompt — Layer 3 skills (Phase 2)", () => {
       undefined,
       undefined,
       undefined,
-      undefined,
       [empty, real],
     );
     expect(result).toContain("### real");
@@ -876,7 +847,6 @@ describe("composeSystemPrompt — Layer 3 skills (Phase 2)", () => {
       [soul],
       null,
       apps,
-      undefined,
       undefined,
       undefined,
       undefined,
@@ -1030,7 +1000,6 @@ describe("composeSystemPromptTraced", () => {
       undefined,
       undefined,
       undefined,
-      undefined,
       [bundleAffined, standalone],
     );
     const section = traced.layers.find((l) => l.kind === "layer3_skills");
@@ -1075,7 +1044,6 @@ describe("composeSystemPromptTraced", () => {
       undefined,
       undefined,
       undefined,
-      undefined,
       { workspace: "" },
     );
     expect(tracedEmpty.layers.find((l) => l.kind === "workspace_overlay")).toBeUndefined();
@@ -1083,7 +1051,6 @@ describe("composeSystemPromptTraced", () => {
     const tracedSet = composeSystemPromptTraced(
       [makeContextSkill("soul", 0, "I am.")],
       null,
-      undefined,
       undefined,
       undefined,
       undefined,
