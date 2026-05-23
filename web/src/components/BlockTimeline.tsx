@@ -40,12 +40,13 @@ import type {
 import { useMinDisplayTime, type VisualStatus } from "../hooks/useMinDisplayTime";
 import { formatDuration, stripServerPrefix } from "../lib/format";
 import {
+  aggregateGroup,
   describeCall,
   type DisplayDetail,
+  type GroupDescription,
   type Tone,
   type ToolDescription,
 } from "../lib/tool-display";
-import { PRESENT_TENSE } from "../lib/tool-display/verbs";
 import { InlineAppView } from "./InlineAppView";
 import { ResourceLinkView } from "./ResourceLinkView";
 
@@ -276,14 +277,15 @@ function ActivityChip({ rows, isReasoningTailStreaming, displayDetail }: Activit
     [rows, allCalls, smoothedCalls],
   );
   const descriptions = useMemo(() => smoothedCalls.map(describeCall), [smoothedCalls]);
+  const group = useMemo(() => aggregateGroup(descriptions), [descriptions]);
 
   if (displayDetail === "quiet") return null;
 
-  const anyRunning = descriptions.some((d) => d.tone === "running");
-  const anyError = descriptions.some((d) => d.tone === "error");
-  const tone: Tone = anyRunning || isReasoningTailStreaming ? "running" : anyError ? "error" : "ok";
-
-  const head = chipHead(smoothedRows, descriptions, tone, isReasoningTailStreaming);
+  // Reasoning-tail streaming counts as "running" for the chip even though
+  // no tool is in flight — the only piece of state the aggregator can't
+  // see on its own (it knows tools, not reasoning).
+  const tone: Tone = group.tone === "running" || isReasoningTailStreaming ? "running" : group.tone;
+  const head = chipHead(rows, group, isReasoningTailStreaming);
   const hasBody = rows.some((r) => r.kind === "reasoning" || r.kind === "tool");
   const isSingleRow = rows.length === 1;
 
@@ -300,7 +302,7 @@ function ActivityChip({ rows, isReasoningTailStreaming, displayDetail }: Activit
         <span className="turn-pill__label">{head.label}</span>
         {head.subject && <span className="turn-pill__row-subject">· {head.subject}</span>}
         {head.count > 1 && <span className="turn-pill__row-count">×{head.count}</span>}
-        {!anyRunning && head.totalMs != null && (
+        {tone !== "running" && head.totalMs != null && (
           <span className="turn-pill__ms">· {formatDuration(head.totalMs)}</span>
         )}
         {head.tokenLabel && <span className="turn-pill__ms">· {head.tokenLabel}</span>}
@@ -331,56 +333,40 @@ interface ChipHead {
 }
 
 /**
- * Derive the chip's collapsed-state label. Mixed segments lead with the
- * tool work (since that's the visible action) and surface reasoning token
- * count as a footnote. Pure-reasoning segments lead with the thought
- * label; the user discovers tool detail by opening the chip.
+ * Compose the chip's collapsed-state label from a `GroupDescription` plus
+ * the reasoning context the aggregator doesn't see (token count, the
+ * streaming-tail flag). This function does no aggregation of its own —
+ * it picks tense and assembles strings.
  */
 function chipHead(
   rows: ReadonlyArray<ActivityRow>,
-  descriptions: ReadonlyArray<ToolDescription>,
-  tone: Tone,
+  group: GroupDescription,
   isReasoningTailStreaming: boolean,
 ): ChipHead {
-  const reasoningRows = rows.filter(
-    (r): r is Extract<ActivityRow, { kind: "reasoning" }> => r.kind === "reasoning",
+  const totalReasoningChars = rows.reduce(
+    (acc, r) => (r.kind === "reasoning" ? acc + r.text.length : acc),
+    0,
   );
-  const toolRows = rows.filter(
-    (r): r is Extract<ActivityRow, { kind: "tool" }> => r.kind === "tool",
-  );
-  const totalChars = reasoningRows.reduce((acc, r) => acc + r.text.length, 0);
-  const tokenLabel = toolRows.length === 0 ? null : approximateTokenLabel(totalChars) || null;
 
-  // Pure reasoning — no tools at all in this segment.
-  if (descriptions.length === 0) {
-    const label = isReasoningTailStreaming ? "Thinking…" : "Thought";
+  // Pure reasoning — no tool calls in this segment.
+  if (group.count === 0) {
     return {
-      label,
+      label: isReasoningTailStreaming ? "Thinking…" : "Thought",
       subject: null,
       count: 0,
       totalMs: null,
-      tokenLabel: isReasoningTailStreaming ? null : approximateTokenLabel(totalChars) || null,
+      tokenLabel: isReasoningTailStreaming ? null : approximateTokenLabel(totalReasoningChars),
     };
   }
 
-  // Tool work present — lead with the dominant tool verb.
-  const sample = descriptions[0];
-  const sameName = descriptions.every((d) => d.name === sample.name);
-  let verb: string;
-  if (sameName) {
-    verb = tone === "running" ? (PRESENT_TENSE[sample.verb] ?? sample.verb) : sample.verb;
-  } else {
-    verb = tone === "running" ? "Working" : "Used tools";
-  }
-  const label = sameName && sample.object ? `${verb} ${sample.object}` : verb;
-  const subject = firstSubject(descriptions);
-  const totalMs = sumDurations(descriptions);
+  const running = group.tone === "running" || isReasoningTailStreaming;
+  const verb = running ? group.verbPresent : group.verb;
   return {
-    label,
-    subject,
-    count: descriptions.length,
-    totalMs,
-    tokenLabel,
+    label: group.object ? `${verb} ${group.object}` : verb,
+    subject: group.subject,
+    count: group.count,
+    totalMs: group.totalMs,
+    tokenLabel: approximateTokenLabel(totalReasoningChars),
   };
 }
 
@@ -440,34 +426,18 @@ function ToolRow({ calls }: { calls: ReadonlyArray<ToolCallDisplay> }) {
   const [open, setOpen] = useState(false);
   const toggle = useCallback(() => setOpen((v) => !v), []);
   const descriptions = useMemo(() => calls.map(describeCall), [calls]);
-  const tone: Tone = descriptions.some((d) => d.tone === "running")
-    ? "running"
-    : descriptions.some((d) => d.tone === "error")
-      ? "error"
-      : "ok";
-  const totalMs = sumDurations(descriptions);
-  const sample = descriptions[0];
-  const sameName = descriptions.every((d) => d.name === sample.name);
-  const verb = sameName
-    ? tone === "running"
-      ? (PRESENT_TENSE[sample.verb] ?? sample.verb)
-      : sample.verb
-    : tone === "running"
-      ? "Working"
-      : "Used tools";
-  const label = sameName && sample.object ? `${verb} ${sample.object}` : verb;
-  const subject = firstSubject(descriptions);
+  const group = useMemo(() => aggregateGroup(descriptions), [descriptions]);
+  const verb = group.tone === "running" ? group.verbPresent : group.verb;
+  const label = group.object ? `${verb} ${group.object}` : verb;
   return (
-    <div className="turn-pill__row" data-tone={tone} data-open={open}>
+    <div className="turn-pill__row" data-tone={group.tone} data-open={open}>
       <button type="button" onClick={toggle} className="turn-pill__row-head" aria-expanded={open}>
-        <RowIcon tone={tone} />
+        <RowIcon tone={group.tone} />
         <span className="turn-pill__row-name">{label}</span>
-        {subject && <span className="turn-pill__row-subject">· {subject}</span>}
-        {descriptions.length > 1 && (
-          <span className="turn-pill__row-count">×{descriptions.length}</span>
-        )}
-        {tone !== "running" && totalMs != null && (
-          <span className="turn-pill__row-ms">· {formatDuration(totalMs)}</span>
+        {group.subject && <span className="turn-pill__row-subject">· {group.subject}</span>}
+        {group.count > 1 && <span className="turn-pill__row-count">×{group.count}</span>}
+        {group.tone !== "running" && group.totalMs != null && (
+          <span className="turn-pill__row-ms">· {formatDuration(group.totalMs)}</span>
         )}
         <ChevronRight className="turn-pill__chev" style={{ width: 12, height: 12 }} />
       </button>
@@ -718,23 +688,6 @@ function weaveSmoothed(
       ? { kind: "tool", name: r.name, calls: r.calls.map((c) => byId.get(c.id) ?? c) }
       : r,
   );
-}
-
-function sumDurations(items: ReadonlyArray<ToolDescription>): number | null {
-  let any = false;
-  let total = 0;
-  for (const it of items) {
-    if (typeof it.durationMs === "number") {
-      any = true;
-      total += it.durationMs;
-    }
-  }
-  return any ? total : null;
-}
-
-function firstSubject(items: ReadonlyArray<ToolDescription>): string | null {
-  for (const it of items) if (it.headSubject) return it.headSubject;
-  return null;
 }
 
 /** Same heuristic as the old reasoning row — 4 chars/token, k-form ≥2500. */
