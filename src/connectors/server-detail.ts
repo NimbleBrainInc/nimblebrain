@@ -8,7 +8,7 @@
  * `MpakSource` reads the same shape natively from mpak's `/v1/servers/...`
  * via the SDK. Consumers always see one type. The `_meta` extension
  * `ai.nimblebrain/connector` carries our platform-specific fields
- * (defaultScope, auth, operatorSetup, etc.) without polluting
+ * (defaultBinding, auth, operatorSetup, etc.) without polluting
  * upstream-defined slots.
  *
  * Validated at every system boundary so an invalid entry is dropped
@@ -106,8 +106,21 @@ export interface Package {
  * it undefined).
  */
 export interface NimbleBrainConnectorMeta {
-  /** Recommended OAuth identity scope for the connector. */
-  defaultScope?: "workspace" | "user";
+  /**
+   * Default install target — a UX hint the platform uses to decide
+   * which workspace receives the install action when the catalog entry
+   * is exercised.
+   *
+   * - `"workspace"` — install into the active workspace; bundle is
+   *   shared with all members. Granted to admins only.
+   * - `"personal"` — install into the caller's personal workspace
+   *   (`personalWorkspaceIdFor(userId)`); tokens are sole-owner by
+   *   construction.
+   *
+   * Not a per-ref `oauthScope` — every installed ref is workspace-bound
+   * post-Stage-2. This field selects the wsId.
+   */
+  defaultBinding?: "workspace" | "personal";
   /**
    * OAuth flow type for remote services.
    *

@@ -102,7 +102,7 @@ describe("projectServerDetailToDirectoryEntry", () => {
         remotes: [{ type: "streamable-http", url: "https://example.com/mcp" }],
         _meta: {
           "ai.nimblebrain/connector": {
-            defaultScope: "user",
+            defaultBinding: "personal",
             auth: "static",
             requiredScopes: ["read", "write"],
             additionalAuthorizationParams: { access_type: "offline" },
@@ -118,7 +118,7 @@ describe("projectServerDetailToDirectoryEntry", () => {
       CTX,
     );
     expect(e?.install.kind).toBe("remote-oauth");
-    expect(e?.defaultScope).toBe("user");
+    expect(e?.defaultBinding).toBe("personal");
     expect(e?.tags).toEqual(["email"]);
     if (e?.install.kind === "remote-oauth") {
       expect(e.install.auth).toBe("static");
@@ -158,14 +158,14 @@ describe("projectServerDetailToDirectoryEntry", () => {
     }
   });
 
-  test("defaults defaultScope to 'workspace' when no NimbleBrain meta is present", () => {
+  test("defaults defaultBinding to 'workspace' when no NimbleBrain meta is present", () => {
     const e = projectServerDetailToDirectoryEntry(
       detail({
         remotes: [{ type: "streamable-http", url: "https://example.com/mcp" }],
       }),
       CTX,
     );
-    expect(e?.defaultScope).toBe("workspace");
+    expect(e?.defaultBinding).toBe("workspace");
   });
 
   test("defaults remote auth to 'dcr' when meta is absent", () => {

@@ -105,11 +105,13 @@ export function mcpAuthRoutes(ctx: AppContext) {
 
   // ── POST /v1/mcp-auth/initiate ────────────────────────────────────
   //
-  // Workspace-authed. Body: { serverName }. Resolves the principal from
-  // the bundle's declared scope (workspace-scope → WORKSPACE_PRINCIPAL_ID;
-  // member-scope → calling user id). Calls `lifecycle.startAuth` which
-  // is idempotent on double-click and tears down stale sources (so
-  // disconnect → reconnect works without a process restart).
+  // Workspace-authed. Body: { serverName }. Stage 2: every URL bundle
+  // is workspace-scoped, so the principal is always `WORKSPACE_PRINCIPAL_ID`.
+  // Personal connectors bind to the user's personal workspace, which is
+  // itself a workspace from the lifecycle's vantage. Calls
+  // `lifecycle.startAuth`, which is idempotent on double-click and tears
+  // down stale sources (so disconnect → reconnect works without a
+  // process restart).
   //
   // Auth + workspace middleware applied per-handler (not via .use("*"))
   // so the unauthenticated /callback below is unaffected. Hono's
@@ -140,23 +142,12 @@ export function mcpAuthRoutes(ctx: AppContext) {
         return apiError(404, "bundle_not_found", `Bundle "${serverName}" not installed.`);
       }
 
-      // Resolve the principal from the bundle's scope. Member-scope
-      // requires an authenticated identity to act as.
-      const oauthScope = instance.oauthScope ?? "workspace";
-      let principalId: string;
-      if (oauthScope === "user") {
-        const callerId = c.var.identity?.id;
-        if (!callerId) {
-          return apiError(
-            401,
-            "unauthenticated",
-            "Member-scope bundles require an authenticated user.",
-          );
-        }
-        principalId = callerId;
-      } else {
-        principalId = WORKSPACE_PRINCIPAL_ID;
-      }
+      // Stage 2: every URL bundle is workspace-scoped (legacy `"user"`
+      // literal was deleted). Personal connectors bind to the user's
+      // personal workspace, so the workspace principal is the only
+      // legal value here. `instance.oauthScope` is always `"workspace"`
+      // or undefined post-Stage-2.
+      const principalId = WORKSPACE_PRINCIPAL_ID;
 
       let authorizationUrl: string;
       try {
@@ -338,11 +329,9 @@ export function mcpAuthRoutes(ctx: AppContext) {
       );
     }
 
-    // Every connector lands on the workspace Connectors page. Personal
-    // Connectors UI is parked, so user-scope bundles share the same
-    // landing for now; when Personal returns, scope-aware dispatch
-    // here can read `lifecycle.getInstance(serverName, wsId).oauthScope`
-    // to branch.
+    // Every connector lands on the workspace Connectors page. Stage 2
+    // collapsed user-scope into the owner's personal workspace; per-
+    // workspace dispatch needs no additional branching here.
 
     // Clear the one-shot state cookie so a refresh of this page can't
     // be used as a replay vector.

@@ -4,7 +4,7 @@
 # before it leaves the registry.
 #
 # `_meta["ai.nimblebrain/connector"]` carries platform-specific fields
-# that don't fit upstream-defined slots (defaultScope, OAuth flow type,
+# that don't fit upstream-defined slots (defaultBinding, OAuth flow type,
 # operator-setup pointer, recommended scopes, search tags, UI hints).
 #
 # Operators with custom curation needs override this list at runtime by
@@ -32,7 +32,7 @@ servers:
         url: https://mcp.asana.com/v2/mcp
     _meta:
       ai.nimblebrain/connector:
-        defaultScope: workspace
+        defaultBinding: workspace
         auth: static
         operatorSetup:
           portalUrl: https://app.asana.com/0/my-apps
@@ -52,7 +52,7 @@ servers:
         url: https://mcp.notion.com/mcp
     _meta:
       ai.nimblebrain/connector:
-        defaultScope: workspace
+        defaultBinding: workspace
         auth: dcr
         tags: [docs, knowledge]
 
@@ -68,7 +68,7 @@ servers:
         url: https://mcp.linear.app/mcp
     _meta:
       ai.nimblebrain/connector:
-        defaultScope: workspace
+        defaultBinding: workspace
         auth: dcr
         tags: [issues, project-mgmt]
 
@@ -90,7 +90,7 @@ servers:
         url: https://bindings.mcp.cloudflare.com/sse
     _meta:
       ai.nimblebrain/connector:
-        defaultScope: workspace
+        defaultBinding: workspace
         auth: dcr
         tags: [infra, devops]
 
@@ -112,7 +112,7 @@ servers:
         url: https://mcp.dropbox.com/mcp
     _meta:
       ai.nimblebrain/connector:
-        defaultScope: workspace
+        defaultBinding: workspace
         auth: static
         requiredScopes:
           - files.metadata.read
@@ -151,7 +151,7 @@ servers:
         url: https://backend.composio.dev/v3/mcp
     _meta:
       ai.nimblebrain/connector:
-        defaultScope: workspace
+        defaultBinding: workspace
         auth: composio
         composio:
           toolkit: gmail
@@ -190,7 +190,7 @@ servers:
         url: https://backend.composio.dev/v3/mcp
     _meta:
       ai.nimblebrain/connector:
-        defaultScope: workspace
+        defaultBinding: workspace
         auth: composio
         composio:
           toolkit: outlook
@@ -228,7 +228,7 @@ servers:
         url: https://mcp.mercury.com/mcp
     _meta:
       ai.nimblebrain/connector:
-        defaultScope: workspace
+        defaultBinding: workspace
         auth: dcr
         tags: [banking, finance]
 
@@ -244,7 +244,7 @@ servers:
         url: https://mcp.neon.tech/mcp
     _meta:
       ai.nimblebrain/connector:
-        defaultScope: workspace
+        defaultBinding: workspace
         auth: dcr
         tags: [database, postgres]
 
@@ -260,7 +260,7 @@ servers:
         url: https://mcp.paypal.com/sse
     _meta:
       ai.nimblebrain/connector:
-        defaultScope: workspace
+        defaultBinding: workspace
         auth: dcr
         tags: [payments]
 
@@ -276,7 +276,7 @@ servers:
         url: https://mcp.sentry.dev/mcp
     _meta:
       ai.nimblebrain/connector:
-        defaultScope: workspace
+        defaultBinding: workspace
         auth: dcr
         tags: [observability, errors]
 
@@ -292,7 +292,7 @@ servers:
         url: https://mcp.stripe.com/
     _meta:
       ai.nimblebrain/connector:
-        defaultScope: workspace
+        defaultBinding: workspace
         auth: dcr
         tags: [payments, billing]
 
@@ -319,7 +319,7 @@ servers:
         url: https://mcp.webflow.com/sse
     _meta:
       ai.nimblebrain/connector:
-        defaultScope: workspace
+        defaultBinding: workspace
         auth: dcr
         tags: [design, cms]
 
@@ -335,7 +335,7 @@ servers:
         url: https://mcp.wix.com/sse
     _meta:
       ai.nimblebrain/connector:
-        defaultScope: workspace
+        defaultBinding: workspace
         auth: dcr
         tags: [website, cms]
 
@@ -351,7 +351,7 @@ servers:
         url: https://mcp.granola.ai/mcp
     _meta:
       ai.nimblebrain/connector:
-        defaultScope: workspace
+        defaultBinding: workspace
         auth: dcr
         tags: [meetings, notes]
 
@@ -368,7 +368,7 @@ servers:
         url: https://gmailmcp.googleapis.com/mcp/v1
     _meta:
       ai.nimblebrain/connector:
-        defaultScope: user
+        defaultBinding: personal
         auth: static
         requiredScopes:
           - https://www.googleapis.com/auth/gmail.readonly
@@ -394,7 +394,7 @@ servers:
         url: https://mcp.hubspot.com
     _meta:
       ai.nimblebrain/connector:
-        defaultScope: user
+        defaultBinding: personal
         auth: static
         operatorSetup:
           portalUrl: https://developers.hubspot.com/docs/apps/developer-platform/build-apps/integrate-with-the-remote-hubspot-mcp-server
@@ -414,7 +414,7 @@ servers:
         url: https://mcp.microsoft.com/mail
     _meta:
       ai.nimblebrain/connector:
-        defaultScope: user
+        defaultBinding: personal
         auth: static
         requiredScopes:
           - https://graph.microsoft.com/Mail.ReadWrite
@@ -438,7 +438,7 @@ servers:
         url: https://mcp.zoom.us/mcp
     _meta:
       ai.nimblebrain/connector:
-        defaultScope: user
+        defaultBinding: personal
         auth: static
         requiredScopes: [meeting:read, recording:read]
         operatorSetup:

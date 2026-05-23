@@ -8,6 +8,7 @@
 
 import { join } from "node:path";
 import { hasPersistedComposioConnection } from "../bundles/composio-connection.ts";
+import { assertBundleRefIsPostStage2 } from "../bundles/lifecycle.ts";
 import { hasPersistedWorkspaceOAuthTokens } from "../bundles/oauth-tokens.ts";
 import { resolveBundleDataDirForRef, serverNameFromRef } from "../bundles/paths.ts";
 import { setPendingAuth } from "../bundles/pending-auth-buffer.ts";
@@ -60,6 +61,11 @@ export function buildProcessInventory(
 
   for (const ws of workspaces) {
     for (const bundle of ws.bundles) {
+      // Disk-read boundary: refs carrying the legacy `oauthScope: "user"`
+      // literal hard-error here. Operators are expected to have run
+      // `bun run migrate:user-creds` before deploying Stage 2 — see
+      // `nimblebrain-ops/research/delegation-model/STAGE_2_DEPLOY.md`.
+      assertBundleRefIsPostStage2(bundle);
       const serverName = serverNameFromRef(bundle);
       // Slug is keyed on `manifest.name` (read here for path bundles) so the
       // launch-path data dir and the seedInstance / briefing reader-path
@@ -195,50 +201,29 @@ export async function startWorkspaceBundles(
     const wsRegistry = registries.get(wsId);
     if (!wsRegistry) return; // unreachable: registries is keyed by every wsId in byWorkspace
 
-    // User-scoped URL bundles don't auto-start at boot — there's no
-    // user identity to authenticate as. Connections are created lazily
-    // on first call from each user. We still record the bundle so it
-    // appears in the workspace's installed list (Settings → Connectors
-    // surface, via `manage_connectors.list_installed`) and the
-    // lifecycle's seedInstance can wire it up with an empty
-    // connections map.
-    if ("url" in entry.bundle && entry.bundle.oauthScope === "user") {
-      log.info(
-        `[bundles] Skipping boot start for user-scoped URL bundle "${entry.serverName}" — connections created on-demand`,
-      );
-      resultEntries[idx] = {
-        ...entry,
-        meta: {
-          version: "remote (member-scope)",
-          ui: entry.bundle.ui ?? null,
-          briefing: null,
-          httpProxy: null,
-          type: "plain" as const,
-        },
-      };
-      return;
-    }
-
-    // Workspace-scoped URL bundles without persisted tokens also skip
-    // auto-start at boot — there's nothing to connect with. The
-    // Connection sits in `not_authenticated` until the user clicks
-    // Connect (which triggers `lifecycle.startAuth`). This is what
-    // keeps a fresh install silent — no surprise OAuth banner on a
-    // bundle the user added but hasn't authenticated yet.
-    // `seedInstance` consults the same token check to set state.
+    // URL bundles without persisted tokens skip auto-start at boot —
+    // there's nothing to connect with. The Connection sits in
+    // `not_authenticated` until the user clicks Connect (which triggers
+    // `lifecycle.startAuth`). This is what keeps a fresh install silent
+    // — no surprise OAuth banner on a bundle the user added but hasn't
+    // authenticated yet. `seedInstance` consults the same token check to
+    // set state.
     //
     // Composio-backed bundles use a parallel credential namespace
     // (`credentials/composio/<connectorId>/connection.json`) so the
     // probe has to read the right artifact — mirrors the discriminator
     // in `lifecycle.seedInstance`.
+    //
+    // Stage 2: every URL bundle is workspace-scoped (the legacy
+    // `oauthScope: "user"` literal was deleted). Personal connectors
+    // bind to the owning user's personal workspace at install time.
     if ("url" in entry.bundle) {
-      const scope = entry.bundle.oauthScope ?? "workspace";
       const hasAuth = entry.bundle.composio
         ? hasPersistedComposioConnection(workDir, entry.wsId, entry.bundle.composio.connectorId)
         : hasPersistedWorkspaceOAuthTokens(workDir, entry.wsId, entry.serverName);
-      if (scope === "workspace" && !hasAuth) {
+      if (!hasAuth) {
         log.info(
-          `[bundles] Skipping boot start for workspace-scope URL bundle "${entry.serverName}" — no tokens yet (state: not_authenticated)`,
+          `[bundles] Skipping boot start for URL bundle "${entry.serverName}" — no tokens yet (state: not_authenticated)`,
         );
         resultEntries[idx] = {
           ...entry,

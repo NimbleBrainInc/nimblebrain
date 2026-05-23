@@ -272,10 +272,10 @@ export async function createSystemTools(
     systemToolDefs.push(createManageWorkspacesTool(mergedCtx));
   }
 
-  // Connectors tool. Surface includes both workspace-scope and
-  // user-scope (personal) connectors under one tool action surface —
-  // the right scope is chosen by the catalog entry's `defaultScope` for
-  // installs and by lookup for disconnects.
+  // Connectors tool. Single surface for both workspace-targeted and
+  // personal-workspace-targeted connectors — the install destination
+  // is chosen by the catalog entry's `defaultBinding`, and disconnects
+  // look up the binding workspace from the installed ref.
   if (runtime && manageWorkspacesCtx) {
     systemToolDefs.push(
       createManageConnectorsTool({

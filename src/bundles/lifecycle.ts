@@ -8,7 +8,6 @@ import type { PlacementRegistry } from "../runtime/placement-registry.ts";
 import { FileCredentialStore } from "../tools/credential-store.ts";
 import { McpSource } from "../tools/mcp-source.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
-import { UserPoolSource } from "../tools/user-pool-source.ts";
 import {
   validateAdditionalAuthorizationParams,
   WorkspaceOAuthProvider,
@@ -39,6 +38,53 @@ import type {
   HttpProxyConfig,
   RemoteTransportConfig,
 } from "./types.ts";
+
+// ---------------------------------------------------------------------------
+// Hard-error on legacy `oauthScope: "user"` records read from disk.
+// ---------------------------------------------------------------------------
+
+/**
+ * Thrown when a `BundleRef` read from disk carries the legacy
+ * `oauthScope: "user"` literal. Stage 2 cut the literal from the schema;
+ * the only legal value is `"workspace"`. The cure is the deploy runbook —
+ * operators run `bun run migrate:user-creds` before deploying Stage 2.
+ *
+ * The runtime does NOT translate, normalize, or rewrite legacy data at
+ * load. A skipped migration is operator error and surfaces here as a
+ * hard boot failure naming the offending record, not a silent in-memory
+ * fixup. See
+ * `nimblebrain-ops/research/delegation-model/STAGE_2_DEPLOY.md` for the
+ * operator contract.
+ */
+export class LegacyOAuthScopeError extends Error {
+  readonly serverName: string;
+  readonly url: string | undefined;
+  constructor(serverName: string, url: string | undefined) {
+    super(
+      `[lifecycle] bundle "${serverName}" carries legacy oauthScope: "user". ` +
+        "Run `bun run migrate:user-creds` before starting the platform. " +
+        "See nimblebrain-ops/research/delegation-model/STAGE_2_DEPLOY.md.",
+    );
+    this.name = "LegacyOAuthScopeError";
+    this.serverName = serverName;
+    this.url = url;
+  }
+}
+
+/**
+ * Assert a `BundleRef` read from disk conforms to the post-Stage-2 schema.
+ * Throws `LegacyOAuthScopeError` on encounter — does not translate. The
+ * deploy runbook is the operator contract; the runtime stays strict.
+ */
+export function assertBundleRefIsPostStage2(ref: BundleRef): void {
+  if (!("url" in ref)) return;
+  // Widen to the runtime-disk shape so we can detect a value that
+  // JSON.parse left in place but the static type rejects.
+  const widened: { oauthScope?: string } = ref as { oauthScope?: string };
+  if (widened.oauthScope === "user") {
+    throw new LegacyOAuthScopeError(ref.serverName ?? "(unknown)", ref.url);
+  }
+}
 
 // ---------------------------------------------------------------------------
 // BundleLifecycleManager — owns the state of all installed bundles and
@@ -771,12 +817,14 @@ export class BundleLifecycleManager {
     if (!instance.ref || !("url" in instance.ref)) {
       throw new Error(`[lifecycle] missing URL ref for "${serverName}" — cannot construct source`);
     }
-    const isWorkspaceScope = principalId === WORKSPACE_PRINCIPAL_ID;
-    const expectedScope = isWorkspaceScope ? "workspace" : "user";
-    const declaredScope = instance.oauthScope ?? "workspace";
-    if (declaredScope !== expectedScope) {
+    // Stage 2: every URL bundle is workspace-scoped (the legacy
+    // `oauthScope: "user"` literal was deleted). The only legal
+    // principal is `WORKSPACE_PRINCIPAL_ID`; a member-scoped call
+    // would be a regression of the schema cut.
+    if (principalId !== WORKSPACE_PRINCIPAL_ID) {
       throw new Error(
-        `[lifecycle] bundle "${serverName}" is ${declaredScope}-scoped — cannot start auth for principal "${principalId}"`,
+        `[lifecycle] startAuth: principal "${principalId}" is not a workspace principal — ` +
+          "Stage 2 cut the legacy user-scope path; bind the bundle to the owner's personal workspace instead.",
       );
     }
 
@@ -854,15 +902,12 @@ export class BundleLifecycleManager {
     const providerAbort = new AbortController();
 
     const provider = new WorkspaceOAuthProvider({
-      owner: isWorkspaceScope ? { type: "workspace", wsId } : { type: "user", userId: principalId },
+      owner: { type: "workspace", wsId },
       serverName,
       workDir: opts.workDir,
       // Workspace-scoped tokens route the credential directory through
-      // the typed handle; user-scoped tokens stay on the legacy
-      // workDir-derivation path (no workspace owns them).
-      ...(isWorkspaceScope
-        ? { workspaceContext: new WorkspaceContext({ wsId, workDir: opts.workDir }) }
-        : {}),
+      // the typed handle.
+      workspaceContext: new WorkspaceContext({ wsId, workDir: opts.workDir }),
       callbackUrl: opts.callbackUrl,
       allowInsecureRemotes: opts.allowInsecureRemotes === true,
       onInteractiveAuthRequired: (url) => {
@@ -891,22 +936,12 @@ export class BundleLifecycleManager {
       composeBundleMcpContext(this.resolveBundleMcpDeps(wsId), serverName),
     );
 
-    // Wire the new source into the right place BEFORE start so any tool
-    // call during the flow finds it (and gets a "starting" / "pending_auth"
-    // structured error instead of "no source").
-    if (isWorkspaceScope) {
-      const registry = this.registriesByWs.get(wsId);
-      if (registry && !registry.hasSource(serverName)) {
-        registry.addSource(source);
-      }
-    } else {
-      const pool = this.userPools.get(`${serverName}|${wsId}`);
-      if (!pool) {
-        throw new Error(
-          `[lifecycle] member-pool not registered for "${serverName}" in ${wsId} — this is a boot-ordering bug`,
-        );
-      }
-      await pool.setUserSource(principalId, source);
+    // Wire the new source into the workspace registry BEFORE start so
+    // any tool call during the flow finds it (and gets a "starting" /
+    // "pending_auth" structured error instead of "no source").
+    const registry = this.registriesByWs.get(wsId);
+    if (registry && !registry.hasSource(serverName)) {
+      registry.addSource(source);
     }
     this.recordConnectionStateChange(serverName, wsId, principalId, "starting", {
       source,
@@ -995,7 +1030,14 @@ export class BundleLifecycleManager {
     if (!ref || !("url" in ref)) {
       throw new Error(`[lifecycle] missing URL ref for "${serverName}" — cannot revoke tokens`);
     }
-    const isWorkspaceScope = principalId === WORKSPACE_PRINCIPAL_ID;
+    // Stage 2: every URL bundle is workspace-scoped. The only legal
+    // principal is `WORKSPACE_PRINCIPAL_ID`.
+    if (principalId !== WORKSPACE_PRINCIPAL_ID) {
+      throw new Error(
+        `[lifecycle] disconnect: principal "${principalId}" is not a workspace principal — ` +
+          "Stage 2 cut the legacy user-scope path.",
+      );
+    }
 
     // Composio-backed bundles use a parallel credential namespace —
     // OAuth tokens live at Composio, not in our `mcp-oauth` directory.
@@ -1009,7 +1051,7 @@ export class BundleLifecycleManager {
     // delete call revokes both at the upstream vendor. Reporting
     // `{ access }` only (not faking `refresh`) keeps the return
     // shape honest about what we know.
-    if (ref.composio && isWorkspaceScope) {
+    if (ref.composio) {
       const { upstreamDeleted, localDeleted, lastError } = await cleanupComposioBundle({
         workDir: opts.workDir,
         wsId,
@@ -1028,12 +1070,10 @@ export class BundleLifecycleManager {
     }
 
     const provider = new WorkspaceOAuthProvider({
-      owner: isWorkspaceScope ? { type: "workspace", wsId } : { type: "user", userId: principalId },
+      owner: { type: "workspace", wsId },
       serverName,
       workDir: opts.workDir,
-      ...(isWorkspaceScope
-        ? { workspaceContext: new WorkspaceContext({ wsId, workDir: opts.workDir }) }
-        : {}),
+      workspaceContext: new WorkspaceContext({ wsId, workDir: opts.workDir }),
       callbackUrl: "http://_/", // unused for revocation path
       allowInsecureRemotes: opts.allowInsecureRemotes === true,
     });
@@ -1054,10 +1094,13 @@ export class BundleLifecycleManager {
   }
 
   /**
-   * Stop and unwire the McpSource for one (bundle, principal) tuple.
-   * Workspace-scope: `source.stop()` + remove from the workspace
-   * registry. Member-scope: `pool.removeMember(principalId)` (which
-   * stops the source internally and removes it from the pool's map).
+   * Stop and unwire the McpSource for one (bundle, workspace-principal)
+   * tuple. Stops `source.stop()` and removes the source from the
+   * workspace registry.
+   *
+   * Stage 2 collapsed the member-scope (user-pool) branch — every URL
+   * bundle now binds to a workspace, including personal connectors
+   * (those bind to the owner's personal workspace).
    *
    * Idempotent: silently no-ops if no source is currently wired up.
    */
@@ -1066,42 +1109,34 @@ export class BundleLifecycleManager {
     wsId: string,
     principalId: string,
   ): Promise<void> {
-    if (principalId === WORKSPACE_PRINCIPAL_ID) {
-      const instance = this.instances.get(`${serverName}|${wsId}`);
-      const conn = instance?.connections?.get(principalId);
-      if (conn?.source) {
-        try {
-          await conn.source.stop();
-        } catch (err) {
-          // Best-effort: a failing stop shouldn't block the teardown
-          // (we're going to drop the source anyway). Surface for
-          // operator visibility — a stuck-source pattern is worth
-          // catching even if individual occurrences are benign.
-          log.warn(
-            `[lifecycle] source.stop() failed for ${serverName}|${wsId}|${principalId}: ${
-              err instanceof Error ? err.message : String(err)
-            }`,
-          );
-        }
+    if (principalId !== WORKSPACE_PRINCIPAL_ID) {
+      throw new Error(
+        `[lifecycle] teardownConnectionSource: principal "${principalId}" is not a workspace principal — ` +
+          "Stage 2 cut the legacy user-scope path.",
+      );
+    }
+    const instance = this.instances.get(`${serverName}|${wsId}`);
+    const conn = instance?.connections?.get(principalId);
+    if (conn?.source) {
+      try {
+        await conn.source.stop();
+      } catch (err) {
+        // Best-effort: a failing stop shouldn't block the teardown
+        // (we're going to drop the source anyway). Surface for
+        // operator visibility — a stuck-source pattern is worth
+        // catching even if individual occurrences are benign.
+        log.warn(
+          `[lifecycle] source.stop() failed for ${serverName}|${wsId}|${principalId}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
       }
-      const registry = this.registriesByWs.get(wsId);
-      if (registry?.hasSource(serverName)) {
-        await registry.removeSource(serverName);
-      }
-    } else {
-      const pool = this.userPools.get(`${serverName}|${wsId}`);
-      await pool?.removeUser(principalId);
+    }
+    const registry = this.registriesByWs.get(wsId);
+    if (registry?.hasSource(serverName)) {
+      await registry.removeSource(serverName);
     }
   }
-
-  /**
-   * Map of `(serverName|wsId)` → `UserPoolSource` for member-scoped
-   * bundles. Populated by `seedInstance`; consumed by `startAuth` and
-   * `disconnect`. Kept here (rather than reaching into the per-workspace
-   * ToolRegistry) so lifecycle has direct access without coupling to a
-   * specific registry shape.
-   */
-  private readonly userPools = new Map<string, UserPoolSource>();
 
   /**
    * Map of `wsId` → `ToolRegistry` for the workspace. Required so
@@ -1112,11 +1147,6 @@ export class BundleLifecycleManager {
    */
   private readonly registriesByWs = new Map<string, ToolRegistry>();
 
-  /** Lookup helper — returns the pool for diagnostic / testing use. */
-  getUserPool(serverName: string, wsId: string): UserPoolSource | undefined {
-    return this.userPools.get(`${serverName}|${wsId}`);
-  }
-
   /**
    * Wire the per-workspace registries map. Called once by `Runtime.start`
    * after the workspace bundle boot loop has constructed the registries.
@@ -1126,159 +1156,6 @@ export class BundleLifecycleManager {
   setWorkspaceRegistries(registries: Map<string, ToolRegistry>): void {
     this.registriesByWs.clear();
     for (const [wsId, registry] of registries) this.registriesByWs.set(wsId, registry);
-  }
-
-  /**
-   * Wire workspace-membership lookups so user-scope install + boot can
-   * find which workspaces a user belongs to. Lifecycle doesn't take
-   * `WorkspaceStore` directly to avoid an import cycle and to keep its
-   * dependency surface minimal — a single closure suffices.
-   *
-   * The closure returns workspace ids the user is a member of (any role
-   * — install permissions are gated upstream at the tool layer).
-   */
-  setWorkspacesForUserResolver(resolver: (userId: string) => Promise<string[]>): void {
-    this.workspacesForUser = resolver;
-  }
-
-  // ---- User-scope (personal connections) -----------------------------
-
-  /**
-   * Per-user `BundleInstance` map for personal connections. Keyed by
-   * `(serverName, userId)`. Populated by `seedUserInstance` (boot +
-   * install paths). Connection state on these instances tracks the
-   * user's own auth lifecycle; the per-workspace `userPools` provide
-   * the runtime tool dispatch surface.
-   */
-  private readonly userInstances = new Map<string, BundleInstance>();
-  private workspacesForUser: ((userId: string) => Promise<string[]>) | null = null;
-
-  /** Lookup helper for the user-scope BundleInstance map. */
-  getUserInstance(serverName: string, userId: string): BundleInstance | undefined {
-    return this.userInstances.get(`${serverName}|${userId}`);
-  }
-
-  /**
-   * Register a personal connection for a user. Adds a `BundleInstance`
-   * to the user-scope map and wires a `UserPoolSource` entry into every
-   * workspace registry the user is a member of, so any workspace's
-   * agent loop can dispatch tool calls through the user's source.
-   *
-   * Called from:
-   *   - The `manage_connectors.install` tool action when a user
-   *     installs a personal bundle.
-   *   - Runtime boot, for every (user, bundle) pair discovered by
-   *     walking `users/<userId>/user.json` files.
-   */
-  async seedUserInstance(serverName: string, ref: BundleRef, userId: string): Promise<void> {
-    if (!("url" in ref)) {
-      throw new Error(`[lifecycle] seedUserInstance requires a URL ref for "${serverName}"`);
-    }
-    const key = `${serverName}|${userId}`;
-    let instance = this.userInstances.get(key);
-    if (!instance) {
-      instance = {
-        serverName,
-        bundleName: ref.url,
-        version: "remote",
-        state: "stopped",
-        trustScore: null,
-        ui: null,
-        briefing: null,
-        httpProxy: null,
-        protected: false,
-        type: "plain",
-        wsId: "_user", // synthetic — user-scope instances aren't in any workspace
-        oauthScope: "user",
-        ref: { ...ref },
-      };
-      this.userInstances.set(key, instance);
-    }
-
-    if (!this.workspacesForUser) return; // boot ordering — caller will retry
-    const wsIds = await this.workspacesForUser(userId);
-    for (const wsId of wsIds) {
-      const registry = this.registriesByWs.get(wsId);
-      if (!registry) continue;
-
-      // Each workspace gets one UserPoolSource per server name. The pool
-      // dispatches to the per-user McpSource by principalId at call time.
-      // Idempotent: existing pool is reused, only the user's slot is
-      // populated/replaced.
-      let pool = this.userPools.get(`${serverName}|${wsId}`);
-      if (!pool) {
-        pool = new UserPoolSource(serverName);
-        this.userPools.set(`${serverName}|${wsId}`, pool);
-        if (!registry.hasSource(serverName)) {
-          registry.addSource(pool);
-        }
-        void pool.start().catch(() => {
-          // Pool start is a no-op today; future-hook safe.
-        });
-      }
-      // The per-user McpSource is constructed lazily on first call from
-      // that user (via the tool router → pool.execute path) — we don't
-      // wire it eagerly because users may never invoke a tool from this
-      // bundle. The pool sees an empty entry until then.
-    }
-  }
-
-  /**
-   * Disconnect a user's personal connection. Revokes upstream tokens,
-   * deletes local credentials, and removes the user's source from
-   * every workspace pool they're registered in. The pool itself stays
-   * (other users may still have this bundle); only this user's slot is
-   * cleared. After disconnect, the bundle remains in the user's
-   * `user.json` (use the install tool's `uninstall` action — when added —
-   * to remove from the personal install list).
-   */
-  async disconnectUser(
-    serverName: string,
-    userId: string,
-    opts: { workDir: string; allowInsecureRemotes?: boolean },
-  ): Promise<{
-    revoked: { access?: boolean; refresh?: boolean };
-    deletedLocal: boolean;
-    revokeError?: string;
-  }> {
-    const instance = this.userInstances.get(`${serverName}|${userId}`);
-    if (!instance) {
-      throw new Error(`[lifecycle] user "${userId}" has no personal "${serverName}" installed`);
-    }
-    const ref = instance.ref;
-    if (!ref || !("url" in ref)) {
-      throw new Error(`[lifecycle] missing URL ref for user-scope "${serverName}"`);
-    }
-
-    const provider = new WorkspaceOAuthProvider({
-      owner: { type: "user", userId },
-      serverName,
-      workDir: opts.workDir,
-      callbackUrl: "http://_/", // unused for revocation path
-      allowInsecureRemotes: opts.allowInsecureRemotes === true,
-    });
-    const result = await provider.revokeAndDeleteTokens({ bundleUrl: ref.url });
-
-    // Remove from every workspace pool this user is in.
-    if (this.workspacesForUser) {
-      const wsIds = await this.workspacesForUser(userId);
-      for (const wsId of wsIds) {
-        const pool = this.userPools.get(`${serverName}|${wsId}`);
-        await pool?.removeUser(userId);
-      }
-    }
-
-    // Note: we don't update the BundleInstance's connections map here —
-    // user-scope state lives on `instance.connections.get(userId)`,
-    // which is only populated when the user authenticates. Disconnect
-    // before auth is a no-op for that map. After auth, recordConnectionStateChange
-    // would be called via the user-scope startAuth path.
-
-    return {
-      revoked: result.revoked,
-      deletedLocal: result.deletedLocal,
-      ...(result.error ? { revokeError: result.error } : {}),
-    };
   }
 
   // ---- Bundle-contributed automations -------------------------------------
@@ -1506,14 +1383,11 @@ export class BundleLifecycleManager {
    * Seed instances from the initial bundle startup (called by Runtime.start
    * after bundles are already running).
    *
-   * For URL bundles with `oauthScope: "user"`, an empty
-   * `UserPoolSource` is constructed and registered in the supplied
-   * `registry` so the bundle's name appears in tool routing — even
-   * before any member has connected. The pool itself returns `tools()
-   * = []` until a member's per-principal source connects (Track B
-   * acceptance: agent sees no tools from the bundle until at least one
-   * member connects, which matches the "Connect to access N tools"
-   * affordance on the Connections page).
+   * Stage 2: every URL bundle binds to its workspace explicitly. The
+   * disk-read boundary (`buildProcessInventory`) calls
+   * `assertBundleRefIsPostStage2` and hard-errors on legacy
+   * `oauthScope: "user"` records — see the deploy runbook at
+   * `nimblebrain-ops/research/delegation-model/STAGE_2_DEPLOY.md`.
    */
   seedInstance(
     serverName: string,
@@ -1533,11 +1407,11 @@ export class BundleLifecycleManager {
       | undefined,
     wsId: string,
     dataDir?: string,
-    /** Per-workspace ToolRegistry — used to register the UserPoolSource
-     *  for member-scoped URL bundles. Optional for backward compat with
+    /** Per-workspace ToolRegistry. Optional for backward compat with
      *  test callers; production callers should always pass it. */
     registry?: ToolRegistry,
   ): void {
+    void registry; // registry is no longer used; kept for caller backward compat
     // Resolve entity data root from dataDir + upjack namespace. `dataDir` is
     // already the canonical bundle-data parent (slug = manifest.name) thanks
     // to `resolveBundleDataDirForRef` at every caller — buildProcessInventory,
@@ -1548,11 +1422,11 @@ export class BundleLifecycleManager {
         ? join(dataDir, manifestMeta.upjackNamespace, "data")
         : undefined;
 
-    // Resolve oauthScope for URL bundles. Member-scoped bundles seed with
-    // an empty connections map — Connections are created on-demand when
-    // each member calls a tool or hits Connect from the UI.
+    // Resolve oauthScope for URL bundles. Post-Stage-2 the only legal
+    // value is `"workspace"`; the disk-read boundary
+    // (`buildProcessInventory`) hard-errors on legacy `"user"` records.
     const oauthScope: BundleInstance["oauthScope"] | undefined =
-      "url" in ref ? (ref.oauthScope ?? "workspace") : undefined;
+      "url" in ref ? "workspace" : undefined;
 
     // Track A: validate authorize-URL params at the seed boundary.
     // Catches reserved-key collisions (client_id, state, PKCE, scope, etc.)
@@ -1579,9 +1453,9 @@ export class BundleLifecycleManager {
       wsId,
       ...(oauthScope !== undefined ? { oauthScope } : {}),
       ...(entityDataRoot !== undefined ? { entityDataRoot } : {}),
-      // URL bundles only — needed for member-scope to reconstruct per-
-      // member McpSources on-demand (URL, transport config, eventually
-      // oauthClient + scopes). Stored as an opaque copy.
+      // URL bundles only — needed to reconstruct McpSources on-demand
+      // (URL, transport config, oauthClient + scopes). Stored as an
+      // opaque copy.
       ...("url" in ref ? { ref: { ...ref } } : {}),
     };
     const key = `${serverName}|${wsId}`;
@@ -1589,33 +1463,6 @@ export class BundleLifecycleManager {
 
     // For URL bundles, derive the boot-time Connection state.
     if ("url" in ref) {
-      if (oauthScope === "user") {
-        // Construct + register the per-bundle UserPoolSource so the
-        // bundle exists in the workspace registry from boot. Per-member
-        // McpSources are added to the pool lazily as members connect
-        // (`startMemberAuth` below). Without this registration the
-        // bundle would be invisible to the agent's tool list until a
-        // member connected — which is too late.
-        const pool = new UserPoolSource(serverName);
-        this.userPools.set(`${serverName}|${wsId}`, pool);
-        // Pool's start() is a no-op; calling it for symmetry / future
-        // hooks. Errors here are unrecoverable so we log + continue.
-        void pool.start().catch((err) => {
-          log.warn(
-            `[lifecycle] member-pool start failed for ${serverName}: ${
-              err instanceof Error ? err.message : String(err)
-            }`,
-          );
-        });
-        if (registry && !registry.hasSource(serverName)) {
-          registry.addSource(pool);
-        }
-        // No auto-Connection at boot — connections.size = 0 and the
-        // BundleInstance.state stays in its default. Members create
-        // their own Connections on-demand via Connect.
-        instance.state = "stopped";
-        return;
-      }
       // Workspace-scope. Boot-time outcomes, in priority order:
       //   1. The OAuth provider's interactive callback fired during boot
       //      (RT was persisted but rejected — the SDK fell back to the

@@ -59,7 +59,6 @@ export class UpjackSource implements ToolSource {
     toolName: string,
     input: Record<string, unknown>,
     _signal?: AbortSignal,
-    _principalId?: string,
   ): Promise<ToolResult> {
     const sep = toolName.indexOf("_");
     if (sep === -1) return fail(`Invalid tool name: ${toolName}`);

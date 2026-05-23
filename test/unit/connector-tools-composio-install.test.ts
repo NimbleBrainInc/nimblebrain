@@ -105,7 +105,7 @@ function gmailEntry(): import("../../src/registries/types.ts").DirectoryEntry {
     registryType: "static",
     name: "Gmail",
     description: "Read, send, and draft mail",
-    defaultScope: "workspace",
+    defaultBinding: "workspace",
     install: {
       kind: "remote-oauth",
       url: GMAIL_URL,
@@ -173,7 +173,6 @@ function buildHarness(): Harness {
     getEventSink: () => new NoopEventSink(),
     getPermissionStore: () => ({ deleteConnector: async () => {} }),
     getUserStore: () => ({ get: async () => null }),
-    getUserConnectorStore: () => ({ get: async () => null }),
     getBundleInstancesForWorkspace: () => lifecycle.getInstances(),
   } as unknown as Runtime;
 

@@ -93,9 +93,13 @@ export function ConnectorBrowsePage({ scope }: { scope: "user" | "workspace" }) 
     return false;
   }
 
-  // Filter to scope, drop installed, apply search.
+  // Filter to scope, drop installed, apply search. The UI `scope` is a
+  // page-mode (`"user"` = personal view, `"workspace"` = workspace view);
+  // catalog entries declare a `defaultBinding` (`"personal" |
+  // "workspace"`). Map between them at the filter boundary.
   const visibleEntries = useMemo(() => {
-    const inScope = entries.filter((e) => e.defaultScope === scope && !isInstalled(e));
+    const targetBinding = scope === "user" ? "personal" : "workspace";
+    const inScope = entries.filter((e) => e.defaultBinding === targetBinding && !isInstalled(e));
     if (!query.trim()) return inScope;
     const q = query.trim().toLowerCase();
     return inScope.filter(

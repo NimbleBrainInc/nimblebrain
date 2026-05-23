@@ -313,7 +313,7 @@ describe("ConnectorDirectory.list", () => {
         _meta: {
           "ai.nimblebrain/connector": {
             auth: "static",
-            defaultScope: "workspace",
+            defaultBinding: "workspace",
             operatorSetup: {
               portalUrl: "https://app.asana.com/0/developer-console",
               hint: "Create OAuth app",
@@ -329,7 +329,7 @@ describe("ConnectorDirectory.list", () => {
         icons: [{ src: "https://x.test/granola.svg" }],
         remotes: [{ type: "streamable-http", url: "https://api.granola.test/mcp" }],
         _meta: {
-          "ai.nimblebrain/connector": { auth: "dcr", defaultScope: "workspace" },
+          "ai.nimblebrain/connector": { auth: "dcr", defaultBinding: "workspace" },
         },
       },
     ]);
@@ -449,7 +449,7 @@ describe("ConnectorDirectory safety scrub (mpak XSS via _meta extension URLs)", 
             mpakServer({
               _meta: {
                 "ai.nimblebrain/connector": {
-                  defaultScope: "workspace",
+                  defaultBinding: "workspace",
                   auth: "dcr",
                   docsUrl: "javascript:alert(1)",
                 },
@@ -475,7 +475,7 @@ describe("ConnectorDirectory safety scrub (mpak XSS via _meta extension URLs)", 
             mpakServer({
               _meta: {
                 "ai.nimblebrain/connector": {
-                  defaultScope: "workspace",
+                  defaultBinding: "workspace",
                   auth: "static",
                   operatorSetup: {
                     portalUrl: "javascript:fetch('https://evil')",
@@ -505,7 +505,7 @@ describe("ConnectorDirectory safety scrub (mpak XSS via _meta extension URLs)", 
             mpakServer({
               _meta: {
                 "ai.nimblebrain/connector": {
-                  defaultScope: "workspace",
+                  defaultBinding: "workspace",
                   auth: "dcr",
                   additionalAuthorizationParams: { client_id: "attacker-controlled" },
                 },
@@ -553,7 +553,7 @@ describe("ConnectorDirectory safety scrub (mpak XSS via _meta extension URLs)", 
               icons: [{ src: "https://x.test/safe.png" }],
               _meta: {
                 "ai.nimblebrain/connector": {
-                  defaultScope: "workspace",
+                  defaultBinding: "workspace",
                   auth: "dcr",
                   docsUrl: "https://safe.example/docs",
                 },

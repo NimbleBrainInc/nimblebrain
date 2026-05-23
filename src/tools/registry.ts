@@ -1,11 +1,9 @@
-import { WORKSPACE_PRINCIPAL_ID } from "../bundles/connection.ts";
 import { log } from "../cli/log.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import type { ToolCall, ToolResult, ToolRouter, ToolSchema } from "../engine/types.ts";
 import type { PermissionStore } from "../permissions/permission-store.ts";
 import type { McpSource } from "./mcp-source.ts";
 import type { Tool, ToolSource } from "./types.ts";
-import { UserPoolSource } from "./user-pool-source.ts";
 
 /**
  * Structural check for "looks like an McpSource task-aware surface".
@@ -53,9 +51,8 @@ export class SharedSourceRef implements ToolSource {
     toolName: string,
     input: Record<string, unknown>,
     signal?: AbortSignal,
-    principalId?: string,
   ): Promise<ToolResult> {
-    return this.inner.execute(toolName, input, signal, principalId);
+    return this.inner.execute(toolName, input, signal);
   }
   /** Unwrap to the underlying source — used by task-aware dispatch. */
   unwrap(): ToolSource {
@@ -136,7 +133,7 @@ export class ToolRegistry implements ToolRouter {
     return all;
   }
 
-  async execute(call: ToolCall, signal?: AbortSignal, principalId?: string): Promise<ToolResult> {
+  async execute(call: ToolCall, signal?: AbortSignal): Promise<ToolResult> {
     const sepIndex = call.name.indexOf("__");
     if (sepIndex === -1) {
       // Auto-search for matching tools to help the LLM recover
@@ -168,64 +165,28 @@ export class ToolRegistry implements ToolRouter {
     }
 
     // Permission gate: when configured, look up the per-tool policy
-    // for the connector. User-scope sources (UserPoolSource) key on
-    // the calling principal; everything else keys on workspace.
-    //
-    // Fail-closed posture: if the source needs a principal (user-scope)
-    // but none was passed, refuse rather than fall through. The
-    // UserPoolSource itself rejects principal-less calls anyway, but
-    // "couldn't identify the caller → skip policy" is the wrong
-    // default for a security gate.
-    if (this.permissionStore) {
-      const unwrapped = source instanceof SharedSourceRef ? source.unwrap() : source;
-      const isUserScoped = unwrapped instanceof UserPoolSource;
-      // Defense in depth: treat the workspace sentinel ("_workspace")
-      // the same as a missing principal at this layer. The OAuth
-      // initiate path stamps the sentinel for workspace-scope bundles
-      // and never reaches a UserPoolSource today, but the constant is
-      // exported and any future caller that accidentally passed it
-      // through would otherwise key user-scope policy lookups on
-      // `users/_workspace/`. UserPoolSource still refuses the call
-      // downstream — this just keeps the gate authoritative.
-      const hasIdentifiedPrincipal = !!principalId && principalId !== WORKSPACE_PRINCIPAL_ID;
-      if (isUserScoped && !hasIdentifiedPrincipal) {
+    // for the connector. Stage 2: every source is workspace-scoped —
+    // the legacy user-pool path was deleted along with `UserPoolSource`.
+    if (this.permissionStore && this.wsId) {
+      const owner = { scope: "workspace" as const, wsId: this.wsId };
+      const policy = await this.permissionStore.get(owner, prefix, localName);
+      if (policy === "disallow") {
         return {
           content: textContent(
-            `Tool "${prefix}__${localName}" is user-scoped but no principal was provided.`,
+            `Tool "${prefix}__${localName}" is disabled by policy. Adjust in Settings → Connectors → ${prefix} → Configure.`,
           ),
           isError: true,
           structuredContent: {
-            error: "principal_required",
+            error: "tool_permission_denied",
             connector: prefix,
             tool: localName,
+            scope: owner.scope,
           },
         };
       }
-      const owner = isUserScoped
-        ? ({ scope: "user", userId: principalId as string } as const)
-        : this.wsId
-          ? ({ scope: "workspace", wsId: this.wsId } as const)
-          : null;
-      if (owner) {
-        const policy = await this.permissionStore.get(owner, prefix, localName);
-        if (policy === "disallow") {
-          return {
-            content: textContent(
-              `Tool "${prefix}__${localName}" is disabled by policy. Adjust in Settings → Connectors → ${prefix} → Configure.`,
-            ),
-            isError: true,
-            structuredContent: {
-              error: "tool_permission_denied",
-              connector: prefix,
-              tool: localName,
-              scope: owner.scope,
-            },
-          };
-        }
-      }
     }
 
-    return source.execute(localName, call.input, signal, principalId);
+    return source.execute(localName, call.input, signal);
   }
 
   /** Search all tools by keyword (substring match on name + description). */

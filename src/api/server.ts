@@ -188,7 +188,6 @@ export function startServer(options: ServerOptions): ServerHandle {
     authOptions: { mode: authMode, internalToken, eventSink: runtime.getEventSink() },
     provider: effectiveProvider,
     workspaceStore: runtime.getWorkspaceStore(),
-    userConnectorStore: runtime.getUserConnectorStore(),
     healthMonitor,
     sseManager,
     conversationEventManager,

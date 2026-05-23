@@ -40,17 +40,14 @@ export interface ToolSource {
    * (tasks/cancel for task-augmented calls, RequestOptions for inline);
    * other sources may ignore it if their work is fast.
    *
-   * `principalId` is the identity to authenticate as for member-scoped
-   * remote MCP bundles — the conversation owner's user id for agent-loop
-   * calls, the explicit caller for the REST `/v1/tools/call` path. Only
-   * `UserPoolSource` reads it; single-principal sources (workspace-scope
-   * MCP, in-process platform sources, stdio bundles) ignore the value.
+   * Identity context flows through `runWithRequestContext`'s
+   * AsyncLocalStorage; sources that need the caller's identity read it
+   * there. No principal argument is threaded through.
    */
   execute(
     toolName: string,
     input: Record<string, unknown>,
     signal?: AbortSignal,
-    principalId?: string,
   ): Promise<ToolResult>;
 }
 

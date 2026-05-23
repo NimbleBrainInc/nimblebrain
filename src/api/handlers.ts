@@ -787,20 +787,14 @@ export async function handleToolCall(
   const t0 = performance.now();
   let result: Awaited<ReturnType<typeof registry.execute>> | undefined;
   try {
-    // Thread the calling member's identity to the registry so member-
-    // scoped MCP bundles route to the right per-principal source.
-    // Workspace-scoped sources ignore principalId entirely.
-    const principalId = identity?.id;
+    // Identity flows through AsyncLocalStorage via `reqCtx`. Sources that
+    // need the caller's identity read it from `getRequestContext()`.
     result = await runWithRequestContext(reqCtx, () =>
-      registry.execute(
-        {
-          id: callId,
-          name: toolName,
-          input: coercedArgs,
-        },
-        undefined,
-        principalId,
-      ),
+      registry.execute({
+        id: callId,
+        name: toolName,
+        input: coercedArgs,
+      }),
     );
   } catch (err) {
     const ms = Math.round(performance.now() - t0);

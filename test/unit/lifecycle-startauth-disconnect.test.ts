@@ -30,7 +30,8 @@ function seedInstance(
   lifecycle: BundleLifecycleManager,
   serverName: string,
   wsId: string,
-  oauthScope: "workspace" | "user" = "workspace",
+  // Stage 2: only "workspace" is legal post-schema-cut.
+  oauthScope: "workspace" = "workspace",
   ref?: BundleRef,
 ): BundleInstance {
   const instance: BundleInstance = {
@@ -77,22 +78,13 @@ describe("BundleLifecycleManager.startAuth — validation & idempotence", () => 
     ).rejects.toThrow(/missing URL ref/);
   });
 
-  test("rejects when principal mismatches declared scope (workspace bundle, user principal)", async () => {
+  test("rejects when principal is not the workspace principal (Stage 2: user-scope removed)", async () => {
     seedInstance(lifecycle, "granola", "ws_test", "workspace", {
       url: "https://example.test/mcp",
     });
     await expect(
       lifecycle.startAuth("granola", "ws_test", "user_alice", OPTS),
-    ).rejects.toThrow(/workspace-scoped/);
-  });
-
-  test("rejects when principal mismatches declared scope (user bundle, _workspace principal)", async () => {
-    seedInstance(lifecycle, "granola", "ws_test", "user", {
-      url: "https://example.test/mcp",
-    });
-    await expect(
-      lifecycle.startAuth("granola", "ws_test", "_workspace", OPTS),
-    ).rejects.toThrow(/user-scoped/);
+    ).rejects.toThrow(/not a workspace principal/);
   });
 
   test("returns existing pending_auth URL without restarting (debounces double-click)", async () => {

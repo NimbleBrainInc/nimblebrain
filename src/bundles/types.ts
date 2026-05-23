@@ -116,19 +116,12 @@ export type BundleRef =
       trustScore?: number | null;
       ui?: BundleUiMeta | null;
       /**
-       * OAuth identity scope for this URL bundle.
-       *
-       * - `"workspace"` (default): one identity per `(workspace, server)`. All
-       *   members share the same OAuth tokens. Correct for shared
-       *   integrations like a team Notion or org Slack.
-       * - `"user"`: each user authenticates independently and has their
-       *   own tokens at `<workDir>/users/<userId>/credentials/mcp-oauth/
-       *   <server>/`. Correct for personal-account services (Granola,
-       *   personal Gmail, personal Zoom). Opt-in per user: those who
-       *   don't connect get a structured `pending_auth` error when they
-       *   (or the agent on their behalf) try to call a tool.
+       * OAuth identity scope for this URL bundle. `"workspace"` is the
+       * only legal value: one identity per `(workspace, server)`, shared
+       * across workspace members. Personal connectors bind to the owning
+       * user's personal workspace (`personalWorkspaceIdFor(userId)`).
        */
-      oauthScope?: "workspace" | "user";
+      oauthScope?: "workspace";
       /**
        * Pre-registered OAuth client config. Required for vendors that don't
        * support Dynamic Client Registration (RFC 7591) — Gmail, Outlook,
@@ -374,13 +367,12 @@ export interface BundleInstance {
   /** Absolute path to the entity data root (e.g., {wsDir}/data/{bundle}/apps/crm/data). Resolved at startup. */
   entityDataRoot?: string;
   /**
-   * OAuth identity scope for URL bundles. Defaults to "workspace" —
-   * one shared identity per (workspace, server). `"user"` flips to
-   * per-user storage at `<workDir>/users/<userId>/credentials/...`,
-   * letting each user authenticate independently against the same
-   * remote service. Undefined for non-URL bundles.
+   * OAuth identity scope for URL bundles. `"workspace"` is the only legal
+   * value — one shared identity per `(workspace, server)`. Personal
+   * connectors are workspace-scoped to the user's personal workspace
+   * (`personalWorkspaceIdFor(userId)`). Undefined for non-URL bundles.
    */
-  oauthScope?: "workspace" | "user";
+  oauthScope?: "workspace";
   /**
    * Per-principal Connections for URL bundles. Each entry is one
    * (bundle, principal) tuple owning an McpSource and its OAuth state
@@ -398,11 +390,10 @@ export interface BundleInstance {
   connections?: Map<string, Connection>;
   /**
    * Original `BundleRef` for URL bundles, retained on the instance so
-   * lifecycle can reconstruct per-member `McpSource`s on-demand for
-   * `oauthScope: "user"` (the URL, transport config, oauthClient and
-   * scopes are all on the ref). Undefined for non-URL bundles —
-   * named/local bundles don't need to spawn additional sources after
-   * boot.
+   * lifecycle can reconstruct sources on-demand. Carries the URL,
+   * transport config, oauthClient and scopes. Undefined for non-URL
+   * bundles — named/local bundles don't need to spawn additional
+   * sources after boot.
    */
   ref?: BundleRef;
 }

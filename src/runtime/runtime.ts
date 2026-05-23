@@ -96,7 +96,6 @@ import { namespacedToolName } from "../tools/namespace.ts";
 import { SharedSourceRef, type ToolRegistry } from "../tools/registry.ts";
 import { createSystemTools } from "../tools/system-tools.ts";
 import type { ResourceData, Tool, ToolSource } from "../tools/types.ts";
-import { UserConnectorStore } from "../users/user-connector-store.ts";
 import { WorkspaceContext } from "../workspace/context.ts";
 import { ensureUserWorkspace } from "../workspace/provisioning.ts";
 import { personalWorkspaceIdFor, WorkspaceStore } from "../workspace/workspace-store.ts";
@@ -208,7 +207,6 @@ export class Runtime {
   private _instanceConfig: InstanceConfig | null;
   private _userStore: UserStore;
   private _workspaceStore: WorkspaceStore;
-  private _userConnectorStore: UserConnectorStore | null = null;
   private _permissionStore: PermissionStore | null = null;
   private _registryStore: RegistryStore | null = null;
   private _identityProvider: IdentityProvider | null;
@@ -722,54 +720,22 @@ export class Runtime {
     // each route having to thread the registry through.
     lifecycle.setWorkspaceRegistries(workspaceRegistries);
 
-    // User-scope install needs to know which workspaces a user is in
-    // to register their personal bundles into each workspace's tool
-    // registry. Closure-based to avoid an import cycle (lifecycle ←→
-    // workspaceStore would be circular).
-    lifecycle.setWorkspacesForUserResolver(async (userId: string) => {
-      const all = await workspaceStore.getWorkspacesForUser(userId);
-      return all.map((ws) => ws.id);
-    });
-
-    // Seed lifecycle instances for workspace bundles (user-installed only)
+    // Seed lifecycle instances for workspace bundles. Operators are
+    // expected to have run `bun run migrate:user-creds` (T003) before
+    // deploying Stage 2 — see
+    // `nimblebrain-ops/research/delegation-model/STAGE_2_DEPLOY.md`. The
+    // runtime no longer migrates or normalizes legacy `oauthScope: "user"`
+    // records at boot; a legacy ref reaches `seedInstance` only via
+    // `buildProcessInventory` and throws `LegacyOAuthScopeError` there.
     for (const entry of workspaceBundleEntries) {
       const { serverName: sn, bundle: ref, meta, wsId, dataDir } = entry;
       const label = "name" in ref ? ref.name : "url" in ref ? ref.url : ref.path;
-      // Pass the per-workspace registry so seedInstance can register a
-      // UserPoolSource for user-scope URL bundles (used in workspace.json
-      // for the legacy "member" path; new user-scope installs flow
-      // through user.json + seedUserInstance below).
       const wsRegistry = workspaceRegistries.get(wsId);
       lifecycle.seedInstance(sn, label, ref, meta ?? undefined, wsId, dataDir, wsRegistry);
 
       const instance = lifecycle.getInstance(sn, wsId);
       if (instance?.ui?.placements && instance.ui.placements.length > 0) {
         placementRegistry.register(sn, instance.ui.placements, wsId);
-      }
-    }
-
-    // Boot pass for user-scope personal connections. Each user.json
-    // declares the bundles that user has personally installed; for each
-    // (user, bundle) pair we seed a user-scope BundleInstance and wire
-    // a UserPoolSource into every workspace registry the user is in.
-    // Errors here are isolated per-record so a single corrupt user.json
-    // doesn't prevent boot.
-    const userConnStore = rt.getUserConnectorStore();
-    const allUsers = await userConnStore.list();
-    for (const userRecord of allUsers) {
-      for (const ref of userRecord.bundles) {
-        if (!("url" in ref)) continue;
-        const sn =
-          ref.serverName ?? new URL(ref.url).hostname.replace(/[^a-z0-9]/gi, "-").toLowerCase();
-        try {
-          await lifecycle.seedUserInstance(sn, ref, userRecord.userId);
-        } catch (err) {
-          process.stderr.write(
-            `[runtime] Failed to seed user-scope "${sn}" for ${userRecord.userId}: ${
-              err instanceof Error ? err.message : String(err)
-            }\n`,
-          );
-        }
       }
     }
 
@@ -1265,11 +1231,6 @@ export class Runtime {
         skillsLoaded,
         contextAssembled,
       },
-      // Agent-loop identity rule: tool calls inside this run authenticate
-      // as the request's identity (= conversation owner for chat-based
-      // runs). Member-scoped MCP bundles use this to route to the right
-      // per-principal source. Workspace-scoped sources ignore it.
-      ...(request.identity ? { principalId: request.identity.id } : {}),
       // Cancellation: thread the caller's signal into the engine. The
       // engine checks it between iterations and forwards it down to every
       // tool call. Without this, callers racing the chat against a
@@ -1471,7 +1432,7 @@ export class Runtime {
           ...(t.annotations !== undefined ? { annotations: t.annotations } : {}),
         }));
       },
-      execute: async (call, signal, principalId) => {
+      execute: async (call, signal) => {
         let routed: Awaited<ReturnType<typeof routeToolCall>>;
         try {
           routed = await routeToolCall({
@@ -1494,16 +1455,33 @@ export class Runtime {
         // calls reach the source the same way single-workspace ones do.
         const sepIndex = routed.toolName.indexOf("__");
         const bareToolName = sepIndex >= 0 ? routed.toolName.slice(sepIndex + 2) : routed.toolName;
-        // Use the source's `execute` directly — the per-workspace
-        // registry's `execute` would re-split on `__` and look up the
-        // source again. We already have the resolved source from the
-        // orchestrator, so this is one fewer lookup and bypasses any
-        // permission gating logic on the registry. Future work (T008):
-        // re-thread the orchestrator output through the registry's
-        // permission gate so cross-workspace tool calls also see the
-        // `PermissionStore`. Acceptable to defer in T006 because the
-        // gate is install-time visibility, not per-call.
-        return routed.source.execute(bareToolName, call.input, signal, principalId);
+        // T008 ambient-context fix (approach (a) per the task spec):
+        // wrap the source dispatch with `runWithRequestContext` so the
+        // tool handler reading `runtime.requireWorkspaceId()` sees the
+        // ROUTED workspace, not the chat session's personal workspace.
+        // Without this wrap, shared `nb__*` system tools dispatched
+        // cross-workspace would read ambient state from the wrong
+        // workspace — the failure mode the Group C audit named at
+        // `_chatInner`'s RequestContext-creation comment.
+        //
+        // The outer `runWithRequestContext` at `_chatInner` still sets
+        // session-level fields (`identity`, `workspaceAgents`,
+        // `workspaceModelOverride`, `conversationId`). We preserve
+        // those here and OVERRIDE only `workspaceId` — handlers that
+        // read session-scoped fields (overlays, file store) keep
+        // working unchanged; per-call handlers see the routed wsId.
+        const outer = getRequestContext();
+        const perCallCtx: RequestContext = {
+          identity: outer?.identity ?? null,
+          workspaceId: routed.context.workspaceId,
+          workspaceAgents: outer?.workspaceAgents ?? null,
+          workspaceModelOverride: outer?.workspaceModelOverride ?? null,
+          ...(outer?.conversationId !== undefined ? { conversationId: outer.conversationId } : {}),
+          ...(outer?.toolPromotion !== undefined ? { toolPromotion: outer.toolPromotion } : {}),
+        };
+        return runWithRequestContext(perCallCtx, () =>
+          routed.source.execute(bareToolName, call.input, signal),
+        );
       },
     };
   }
@@ -2063,19 +2041,6 @@ export class Runtime {
   }
 
   /**
-   * Get the UserConnectorStore — per-user storage for personal connections.
-   * Lazily constructed on first access and cached. Mirrors the WorkspaceStore
-   * pattern but operates on `users/<userId>/user.json` instead of
-   * `workspaces/<wsId>/workspace.json`.
-   */
-  getUserConnectorStore(): UserConnectorStore {
-    if (!this._userConnectorStore) {
-      this._userConnectorStore = new UserConnectorStore(this.getWorkDir());
-    }
-    return this._userConnectorStore;
-  }
-
-  /**
    * Get the PermissionStore — per-tool policy lookups for installed
    * connectors. File-backed, scoped per (user × connector) and
    * (workspace × connector). Lazy + cached.
@@ -2574,9 +2539,8 @@ export class Runtime {
   /**
    * Whether the runtime allows OAuth flows / bundle URLs to target loopback
    * / RFC1918 / cloud-metadata hosts. Mirrors `config.allowInsecureRemotes`;
-   * read by `/v1/mcp-auth/initiate` when constructing per-member providers
-   * for `oauthScope: "user"` URL bundles so the SSRF allowlist matches
-   * the boot-time provider's behavior.
+   * read by `/v1/mcp-auth/initiate` when constructing the workspace OAuth
+   * provider so the SSRF allowlist matches the boot-time provider's behavior.
    */
   getAllowInsecureRemotes(): boolean {
     return this.config.allowInsecureRemotes === true;

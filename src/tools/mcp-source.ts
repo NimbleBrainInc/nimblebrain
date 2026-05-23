@@ -922,11 +922,6 @@ export class McpSource implements ToolSource {
     toolName: string,
     input: Record<string, unknown>,
     signal?: AbortSignal,
-    // McpSource is single-principal — tokens come from the bound
-    // authProvider's persistence dir. Member-scope dispatch happens at the
-    // `UserPoolSource` wrapper layer, which selects the right per-member
-    // McpSource and calls its execute(). No-op here.
-    _principalId?: string,
   ): Promise<ToolResult> {
     if (!this.client || this.dead) {
       return { content: textContent(`McpSource "${this.name}" not started`), isError: true };

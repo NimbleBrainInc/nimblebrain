@@ -52,7 +52,7 @@ const NOTION_ID = "com.notion/mcp";
  * Build a DirectoryEntry shaped like what `StaticSource` projects for
  * Asana — used by install tests since the install API takes the full
  * entry, not an id. Field set matches the real source output; tests
- * can override pieces (operatorSetup, defaultScope) per case.
+ * can override pieces (operatorSetup, defaultBinding) per case.
  */
 function asanaEntry(over: Partial<DirectoryEntry> = {}): DirectoryEntry {
   return {
@@ -61,7 +61,7 @@ function asanaEntry(over: Partial<DirectoryEntry> = {}): DirectoryEntry {
     registryType: "static",
     name: "Asana",
     description: "Tasks, projects, and team workflows",
-    defaultScope: "workspace",
+    defaultBinding: "workspace",
     install: {
       kind: "remote-oauth",
       url: ASANA_URL,
@@ -94,7 +94,7 @@ function mpakEntry(over: { id?: string; pkg?: string; name?: string } = {}): Dir
     registryType: "mpak",
     name: over.name ?? "Echo",
     description: "Reference MCP server for testing",
-    defaultScope: "workspace",
+    defaultBinding: "workspace",
     install: {
       kind: "mpak-bundle",
       package: over.pkg ?? "@nimblebraininc/echo",
@@ -193,9 +193,6 @@ function buildHarness(opts: { adminId?: string } = {}): Harness {
       ): Promise<void> => {},
     }),
     getUserStore: () => ({
-      get: async (_id: string) => null,
-    }),
-    getUserConnectorStore: () => ({
       get: async (_id: string) => null,
     }),
     getBundleInstancesForWorkspace: (_wsId: string) => lifecycle.getInstances(),
@@ -815,7 +812,7 @@ describe("manage_connectors.install", () => {
         registryType: "static",
         name: "Evil",
         description: "x",
-        defaultScope: "workspace",
+        defaultBinding: "workspace",
         install: {
           kind: "remote-oauth",
           url: "javascript:alert(1)",
@@ -847,7 +844,7 @@ describe("manage_connectors.install", () => {
         registryType: "static",
         name: "Evil",
         description: "x",
-        defaultScope: "workspace",
+        defaultBinding: "workspace",
         install: {
           kind: "remote-oauth",
           url: "https://mcp.evil.test/mcp",
@@ -861,27 +858,20 @@ describe("manage_connectors.install", () => {
     expect(text.toLowerCase()).toContain("install action is required");
   });
 
-  test("user-scope dup-fallback returns a slug, not the raw reverse-DNS id (regression for QA review)", async () => {
-    // The dup branch handles orphan recovery: workspace/user.json says
-    // the bundle is installed but lifecycle lost the instance. The
-    // recovered serverName must be the slug (route-safe, FS-safe), not
-    // entry.id raw (`com.canva/mcp` — slashes break the URL route, the
-    // UserPoolSource name, and the lifecycle Map key shape).
-    const dupBundle = {
-      url: "https://mcp.canva.com/mcp",
-      oauthScope: "user" as const,
-      // Intentionally NO `serverName` field — simulates a legacy
-      // user.json record from before #195's slugify-on-install.
-    };
-    const customRuntime = {
-      ...h.runtime,
-      getUserConnectorStore: () => ({
-        get: async () => ({ bundles: [dupBundle] }),
-      }),
-    } as unknown as typeof h.runtime;
-    const customH = { ...h, runtime: customRuntime };
-
-    const tool = buildTool(customH, ADMIN_USER);
+  test("Stage 2 personal-connector install: defaultBinding='personal' targets the caller's personal workspace with a slug serverName", async () => {
+    // Stage 2: legacy user-scope is gone. A catalog entry with
+    // `defaultBinding: "personal"` now binds to the caller's personal
+    // workspace (`personalWorkspaceIdFor(userId)`) but the install
+    // pipeline produces the same slug-shaped serverName as before —
+    // route-safe and FS-safe.
+    const adminPersonalWsId = `ws_user_${ADMIN_USER.id}`;
+    // Provision the admin's personal workspace so the install lookup
+    // succeeds. Mirrors the production boot-time scaffold.
+    await h.workspaceStore.create("Admin Personal", `user_${ADMIN_USER.id}`, {
+      isPersonal: true,
+      ownerUserId: ADMIN_USER.id,
+    });
+    const tool = buildTool(h, ADMIN_USER);
     const result = await tool.handler({
       action: "install",
       entry: {
@@ -890,7 +880,7 @@ describe("manage_connectors.install", () => {
         registryType: "static",
         name: "Canva",
         description: "x",
-        defaultScope: "user",
+        defaultBinding: "personal",
         install: {
           kind: "remote-oauth",
           url: "https://mcp.canva.com/mcp",
@@ -899,13 +889,13 @@ describe("manage_connectors.install", () => {
       },
     });
     expect(result.isError).toBe(false);
-    const sn = (result.structuredContent as { serverName?: string }).serverName ?? "";
-    // Regardless of whether this hits the reattach or already-installed
-    // branch, the response serverName must be slug-shaped — never the
-    // raw reverse-DNS form.
+    const sc = result.structuredContent as { serverName?: string; scope?: string; wsId?: string };
+    const sn = sc.serverName ?? "";
     expect(sn).not.toContain("/");
     expect(sn).not.toContain(".");
     expect(sn).toBe("com-canva-mcp");
+    expect(sc.scope).toBe("workspace");
+    expect(sc.wsId).toBe(adminPersonalWsId);
   });
 });
 
