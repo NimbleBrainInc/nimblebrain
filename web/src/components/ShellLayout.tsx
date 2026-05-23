@@ -9,6 +9,7 @@ import { toSlug } from "../lib/workspace-slug";
 import type { PlacementEntry } from "../types";
 import { Logo } from "./Logo";
 import { MobileSidebarDrawer } from "./MobileSidebarDrawer";
+import { Sidebar as WorkspaceNavSidebar } from "./shell/Sidebar";
 import { SidebarToggle } from "./SidebarToggle";
 import { UserMenu } from "./UserMenu";
 
@@ -84,12 +85,12 @@ export const ShellLayout = memo(function ShellLayout({
             isCollapsed ? "w-16" : "w-60",
           )}
         >
-          {/* Workspace identity slot — left empty by T009 teardown. T013
-              fills this with the sidebar workspace+apps navigator
-              (Q1, locked 2026-05-22). Do not insert a placeholder. */}
-
           {/* Top zone — scrollable; key triggers fade-in on workspace switch */}
           <div key={wsSlug} className="flex-1 overflow-y-auto py-1 sidebar-scroll sidebar-nav-fade">
+            {/* Workspace+apps navigator — Stage 2 / T013 (Q1, locked
+                2026-05-22). Replaces the deleted header switcher. */}
+            {!isCollapsed && <WorkspaceNavSidebar />}
+
             {/* Ungrouped core nav — no label */}
             {ungrouped.map((p) => (
               <NavItem
@@ -149,9 +150,11 @@ export const ShellLayout = memo(function ShellLayout({
       {isHidden && (
         <MobileSidebarDrawer>
           <div className="flex flex-col h-full">
-            {/* Mobile workspace identity slot — left empty by T009 teardown.
-                T013 fills this with the sidebar workspace+apps navigator. */}
             <div className="flex-1 overflow-y-auto py-1 sidebar-scroll">
+              {/* Workspace+apps navigator — Stage 2 / T013. Identical
+                  source of truth to the desktop sidebar; sized to fit
+                  the drawer width. */}
+              <WorkspaceNavSidebar />
               {/* Ungrouped core nav */}
               {ungrouped.map((p) => (
                 <MobileNavItem
