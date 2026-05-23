@@ -42,7 +42,13 @@ import { describeCall, describeTurn, groupTurn } from "../lib/tool-display";
 import { PRESENT_TENSE } from "../lib/tool-display/verbs";
 
 interface TurnActivityPillProps {
-  blocks: ContentBlock[] | undefined;
+  /**
+   * Blocks contributing to this pill. For per-segment rendering (the common
+   * case) this is one activity slice's blocks; for the legacy whole-turn
+   * call site or the trailing-live-indicator it may be the full block list
+   * or `undefined`/`[]`.
+   */
+  blocks: ReadonlyArray<ContentBlock> | undefined;
   streamingState: StreamingState;
   preparingTool: PreparingTool | null;
   /** True for the message that's currently streaming; gates the live label. */

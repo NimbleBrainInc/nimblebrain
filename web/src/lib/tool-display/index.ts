@@ -9,12 +9,13 @@
 export { describeCall } from "./describe.ts";
 export type { ToolRenderer } from "./registry.ts";
 export { registerToolRenderer } from "./registry.ts";
-export { describeTurn, groupTurn } from "./turn.ts";
+export { describeTurn, groupTurn, segmentTurn } from "./turn.ts";
 export type {
   DisplayDetail,
   InputField,
   TimelineEntry,
   Tone,
   ToolDescription,
+  TurnSegment,
   TurnSummary,
 } from "./types.ts";

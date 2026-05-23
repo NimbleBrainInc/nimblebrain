@@ -1,9 +1,9 @@
 import { AlertCircle, Check, ChevronDown, Copy, RotateCcw, Zap } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Streamdown } from "streamdown";
-import type { ChatMessage, PreparingTool, StreamingState } from "../hooks/useChat";
+import type { ChatMessage, ContentBlock, PreparingTool, StreamingState } from "../hooks/useChat";
 import { participantColor } from "../lib/participant-colors";
-import type { DisplayDetail } from "../lib/tool-display";
+import { type DisplayDetail, segmentTurn } from "../lib/tool-display";
 import { FileAttachment } from "./FileAttachment";
 import { InlineAppView } from "./InlineAppView";
 import { ResourceLinkView } from "./ResourceLinkView";
@@ -217,6 +217,196 @@ function useSmartScroll(messages: ChatMessage[]) {
   return { scrollRef, bottomRef, isAtBottom, scrollToBottom };
 }
 
+/**
+ * Render one assistant turn's body — pills and prose interleaved in stream
+ * order. Splits `msg.blocks` into chronological slices via `segmentTurn`:
+ *
+ * - `text` slices render as `<Streamdown>` paragraphs.
+ * - `activity` slices render as one `<TurnActivityPill>` (its own scope of
+ *   reasoning + tool calls) followed by any inline widget attachments.
+ *
+ * Live-state attachment:
+ *   - The pill in the *last* activity slice carries `isCurrentTurn` for the
+ *     streaming message. Earlier activity slices are settled (the model has
+ *     moved past them).
+ *   - When the live state is `thinking` / `preparing` but the last slice is
+ *     text (or there are no slices yet), a trailing pill is rendered to
+ *     carry the "Thinking…" / "Calling X…" label until the next
+ *     reasoning/tool block lands and absorbs it into a new activity slice.
+ *
+ * Legacy fallback: pre-block-model conversations have `msg.blocks ===
+ * undefined`; render `msg.content` once and a single top-level pill, since
+ * there's nothing to segment.
+ */
+function AssistantTurnBody({
+  msg,
+  displayContent,
+  isCurrentMessage,
+  streamingState,
+  preparingTool,
+  displayDetail,
+}: {
+  msg: ChatMessage;
+  displayContent: string;
+  isCurrentMessage: boolean;
+  streamingState: StreamingState;
+  preparingTool: PreparingTool | null | undefined;
+  displayDetail: DisplayDetail;
+}) {
+  if (!msg.blocks) {
+    return (
+      <>
+        <TurnActivityPill
+          blocks={undefined}
+          streamingState={streamingState}
+          preparingTool={preparingTool ?? null}
+          isCurrentTurn={isCurrentMessage}
+          displayDetail={displayDetail}
+        />
+        <div className="min-h-[1em]">
+          <Streamdown
+            className="streamdown-container presence-assistant-message"
+            isAnimating={isCurrentMessage}
+          >
+            {displayContent}
+          </Streamdown>
+        </div>
+      </>
+    );
+  }
+
+  const segments = segmentTurn(msg.blocks);
+  const lastSegment = segments[segments.length - 1];
+  // Trailing pill: the live "Thinking…" / "Calling X…" indicator has no
+  // activity slice to attach to (no segments yet, or the model just emitted
+  // text and is planning the next call). Once the next reasoning/tool block
+  // lands, segmentTurn will hand back a fresh activity slice and this pill
+  // gives way to the slice's own pill.
+  const needsTrailingLivePill =
+    isCurrentMessage &&
+    (streamingState === "thinking" || streamingState === "preparing") &&
+    (!lastSegment || lastSegment.kind === "text");
+
+  return (
+    <>
+      {segments.map((segment, segIdx) => {
+        const isLast = segIdx === segments.length - 1;
+        if (segment.kind === "text") {
+          // The "streaming tail" cursor sits on the bottommost text only
+          // when nothing else (a trailing live pill) is below it.
+          const isStreamingTail = isCurrentMessage && isLast && !needsTrailingLivePill;
+          return (
+            // biome-ignore lint/suspicious/noArrayIndexKey: segments derived from append-only blocks; identity by position is stable
+            <div key={`text:${segIdx}`} className="min-h-[1em]">
+              <Streamdown
+                className="streamdown-container presence-assistant-message"
+                isAnimating={isStreamingTail}
+              >
+                {segment.text}
+              </Streamdown>
+            </div>
+          );
+        }
+        return (
+          <ActivitySegmentView
+            // biome-ignore lint/suspicious/noArrayIndexKey: activity slices are append-only and don't reorder
+            key={`activity:${segIdx}`}
+            blocks={segment.blocks}
+            isCurrentTurn={isCurrentMessage && isLast}
+            streamingState={streamingState}
+            preparingTool={preparingTool ?? null}
+            displayDetail={displayDetail}
+          />
+        );
+      })}
+      {needsTrailingLivePill && (
+        <TurnActivityPill
+          blocks={undefined}
+          streamingState={streamingState}
+          preparingTool={preparingTool ?? null}
+          isCurrentTurn={true}
+          displayDetail={displayDetail}
+        />
+      )}
+    </>
+  );
+}
+
+/**
+ * One activity slice: the pill summarizing this run's reasoning + tool
+ * calls, plus any inline widget / resource-link attachments from tool
+ * blocks in the slice (these surface alongside the pill at the spot where
+ * the work happened, rather than at the top of the message).
+ */
+function ActivitySegmentView({
+  blocks,
+  isCurrentTurn,
+  streamingState,
+  preparingTool,
+  displayDetail,
+}: {
+  blocks: ReadonlyArray<ContentBlock>;
+  isCurrentTurn: boolean;
+  streamingState: StreamingState;
+  preparingTool: PreparingTool | null;
+  displayDetail: DisplayDetail;
+}) {
+  return (
+    <>
+      <TurnActivityPill
+        blocks={blocks}
+        streamingState={streamingState}
+        preparingTool={preparingTool}
+        isCurrentTurn={isCurrentTurn}
+        displayDetail={displayDetail}
+      />
+      {blocks.map((block, bi) => {
+        if (block.type !== "tool" || block.toolCalls.length === 0) return null;
+        const blockWidgets = block.toolCalls.filter(
+          (tc) => tc.resourceUri && tc.status === "done" && tc.appName,
+        );
+        const resourceLinkCalls = block.toolCalls.filter(
+          (tc) =>
+            tc.status === "done" && tc.appName && tc.resourceLinks && tc.resourceLinks.length > 0,
+        );
+        if (blockWidgets.length === 0 && resourceLinkCalls.length === 0) return null;
+        return (
+          // biome-ignore lint/suspicious/noArrayIndexKey: blocks within a slice are append-only and don't reorder
+          <div key={`widgets:${bi}`} className="flex flex-col gap-3">
+            {blockWidgets.map((tc) => (
+              // Pass the full ui:// URI through — InlineAppView strips the
+              // scheme and forwards everything after as the resource path.
+              // The legacy regex `/^ui:\/\/[^/]+\/(.+)$/` dropped the first
+              // segment on the assumption it was a namespace prefix, which
+              // breaks two-segment URIs like `ui://<state>/<method>` where
+              // the first segment is load-bearing (Reboot's convention for
+              // state-scoped UI methods).
+              <InlineAppView
+                key={tc.id}
+                appName={tc.appName!}
+                resourceUri={tc.resourceUri!}
+                toolResult={{ tool: tc.name, result: tc.result }}
+              />
+            ))}
+            {resourceLinkCalls.flatMap((tc) =>
+              tc.resourceLinks!.map((link) => (
+                <ResourceLinkView
+                  key={`${tc.id}:${link.uri}`}
+                  appName={tc.appName!}
+                  uri={link.uri}
+                  name={link.name}
+                  mimeType={link.mimeType}
+                  description={link.description}
+                />
+              )),
+            )}
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
 export function MessageList({
   messages,
   isStreaming,
@@ -333,103 +523,14 @@ export function MessageList({
                   </div>
                 ) : (
                   <div className="w-full break-words min-w-0 overflow-hidden flex flex-col gap-3">
-                    {/* Turn-level activity surface — anchors at the top of the
-                        assistant message. Single source of truth for status,
-                        tool grouping, and reasoning timeline. */}
-                    <TurnActivityPill
-                      blocks={msg.blocks}
+                    <AssistantTurnBody
+                      msg={msg}
+                      displayContent={displayContent}
+                      isCurrentMessage={isStreaming && idx === messages.length - 1}
                       streamingState={streamingState}
-                      preparingTool={preparingTool ?? null}
-                      isCurrentTurn={isStreaming && idx === messages.length - 1}
+                      preparingTool={preparingTool}
                       displayDetail={displayDetail}
                     />
-                    {/* Render content blocks in temporal order. Reasoning is
-                        surfaced inside the pill; tool blocks emit only their
-                        widget/resource attachments here. */}
-                    {msg.blocks ? (
-                      msg.blocks.map((block, blockIdx) => {
-                        if (block.type === "reasoning") {
-                          // Reasoning lives in the pill timeline now.
-                          return null;
-                        }
-                        if (block.type === "text" && block.text) {
-                          return (
-                            // biome-ignore lint/suspicious/noArrayIndexKey: blocks are append-only and don't reorder
-                            <div key={blockIdx} className="min-h-[1em]">
-                              <Streamdown
-                                className="streamdown-container presence-assistant-message"
-                                isAnimating={
-                                  isStreaming &&
-                                  idx === messages.length - 1 &&
-                                  blockIdx === msg.blocks!.length - 1
-                                }
-                              >
-                                {block.text}
-                              </Streamdown>
-                            </div>
-                          );
-                        }
-                        if (block.type === "tool" && block.toolCalls.length > 0) {
-                          const blockWidgets = block.toolCalls.filter(
-                            (tc) => tc.resourceUri && tc.status === "done" && tc.appName,
-                          );
-                          const resourceLinkCalls = block.toolCalls.filter(
-                            (tc) =>
-                              tc.status === "done" &&
-                              tc.appName &&
-                              tc.resourceLinks &&
-                              tc.resourceLinks.length > 0,
-                          );
-                          if (blockWidgets.length === 0 && resourceLinkCalls.length === 0) {
-                            return null;
-                          }
-                          return (
-                            // biome-ignore lint/suspicious/noArrayIndexKey: blocks are append-only and don't reorder
-                            <div key={blockIdx} className="flex flex-col gap-3">
-                              {blockWidgets.map((tc) => {
-                                // Pass the full ui:// URI through — InlineAppView strips the
-                                // scheme and forwards everything after as the resource path.
-                                // The legacy regex `/^ui:\/\/[^/]+\/(.+)$/` dropped the first
-                                // segment on the assumption it was a namespace prefix, which
-                                // breaks two-segment URIs like `ui://<state>/<method>` where
-                                // the first segment is load-bearing (Reboot's convention for
-                                // state-scoped UI methods).
-                                return (
-                                  <InlineAppView
-                                    key={tc.id}
-                                    appName={tc.appName!}
-                                    resourceUri={tc.resourceUri!}
-                                    toolResult={{ tool: tc.name, result: tc.result }}
-                                  />
-                                );
-                              })}
-                              {resourceLinkCalls.flatMap((tc) =>
-                                tc.resourceLinks!.map((link) => (
-                                  <ResourceLinkView
-                                    key={`${tc.id}:${link.uri}`}
-                                    appName={tc.appName!}
-                                    uri={link.uri}
-                                    name={link.name}
-                                    mimeType={link.mimeType}
-                                    description={link.description}
-                                  />
-                                )),
-                              )}
-                            </div>
-                          );
-                        }
-                        return null;
-                      })
-                    ) : (
-                      <div className="min-h-[1em]">
-                        <Streamdown
-                          className="streamdown-container presence-assistant-message"
-                          isAnimating={isStreaming && idx === messages.length - 1}
-                        >
-                          {displayContent}
-                        </Streamdown>
-                      </div>
-                    )}
                     {/* File attachments */}
                     {msg.files && msg.files.length > 0 && (
                       <div className="flex flex-wrap gap-2">

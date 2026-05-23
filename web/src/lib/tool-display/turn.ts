@@ -1,28 +1,72 @@
 /**
- * Turn selector — collapses one assistant turn's `blocks[]` into a single
- * activity timeline for the TurnActivityPill.
+ * Turn selectors — derive display structure from one assistant turn's
+ * `blocks[]`.
  *
- * Two invariants:
+ * Two levels:
  *
- * 1. **Cross-block tool grouping.** Every call of the same (stripped) tool
- *    name within the turn merges into one `tool` entry, regardless of how
- *    reasoning interleaves between calls. The block model only coalesces
- *    *consecutive* tool calls; this selector does the rest. Without it,
- *    extended-thinking turns produce a stack of single-call entries (see
- *    Mercury repro in the redesign notes).
+ * - `segmentTurn` partitions the turn into chronological slices for the
+ *   message body. Text blocks become their own slices; consecutive runs of
+ *   reasoning/tool blocks between text slices become `activity` slices. The
+ *   body renders each slice in order so pills appear next to the work they
+ *   represent instead of hoisting to the top.
  *
- * 2. **First-occurrence ordering.** A tool group sits at the index of its
- *    first call; later calls of the same tool fold in without moving the
- *    group. Reasoning entries are appended at their own position, so the
- *    timeline still reads "reasoning then activity then more reasoning"
- *    truthfully.
+ * - `groupTurn` collapses one slice's reasoning + tool blocks into a single
+ *   activity timeline for the TurnActivityPill. Two invariants:
+ *
+ *   1. **Cross-block tool grouping (within a slice).** Every call of the
+ *      same tool name in the slice merges into one `tool` entry, regardless
+ *      of how reasoning interleaves between calls. Without it, extended-
+ *      thinking phases produce a stack of single-call entries (see Mercury
+ *      repro in the redesign notes). Grouping does not cross text
+ *      boundaries — that's the segmenter's job.
+ *
+ *   2. **First-occurrence ordering.** A tool group sits at the index of its
+ *      first call; later calls of the same tool fold in without moving the
+ *      group. Reasoning entries are appended at their own position, so the
+ *      timeline still reads "reasoning then activity then more reasoning"
+ *      truthfully.
  */
 
 import type { ContentBlock, ToolCallDisplay } from "../../hooks/useChat.ts";
 import { stripServerPrefix } from "../format.ts";
 import { describeCall } from "./describe.ts";
-import type { TimelineEntry, TurnSummary } from "./types.ts";
+import type { TimelineEntry, TurnSegment, TurnSummary } from "./types.ts";
 import { dominantVerb, PRESENT_TENSE } from "./verbs.ts";
+
+/**
+ * Partition a turn into chronological slices for message-body rendering.
+ * Text blocks become their own slices; consecutive non-text blocks
+ * (`reasoning` + `tool`) coalesce into one `activity` slice.
+ *
+ * Empty text blocks (zero-length `text`) are dropped — they're streaming
+ * artifacts and would render as empty paragraphs. Activity slices are kept
+ * even when they contain only zero-length reasoning blocks; downstream
+ * (`groupTurn` + visibility gate) decides whether to render them.
+ */
+export function segmentTurn(blocks: ReadonlyArray<ContentBlock>): TurnSegment[] {
+  const segments: TurnSegment[] = [];
+  let buffer: ContentBlock[] = [];
+
+  const flushActivity = () => {
+    if (buffer.length === 0) return;
+    segments.push({ kind: "activity", blocks: buffer });
+    buffer = [];
+  };
+
+  for (const block of blocks) {
+    if (block.type === "text") {
+      flushActivity();
+      if (block.text.length > 0) {
+        segments.push({ kind: "text", text: block.text });
+      }
+    } else {
+      buffer.push(block);
+    }
+  }
+  flushActivity();
+
+  return segments;
+}
 
 /**
  * Walk `blocks[]` and produce the turn's timeline. Text blocks render in the
