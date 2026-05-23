@@ -16,6 +16,7 @@
 - **Connector serverName slugified from canonical reverse-DNS form.** A new `slugifyServerName(canonicalName)` rule transforms `ServerDetail.name` (e.g. `com.canva/mcp`) into a URL-safe, filesystem-safe, collision-free single-segment slug (`com-canva-mcp`) at install time. Both source types use the same rule so a connector's `serverName` is uniform regardless of whether it came from the curated catalog or mpak. The whole-namespace preservation eliminates the rightmost-segment collision class (`com.acme.crm/mcp` and `com.foobar.crm/mcp` produce distinct slugs, where last-segment derivation would have collapsed both to `crm`).
 - **`bun run check:catalog` + PR-gated GitHub Action** for catalog rot detection. Runs the platform's exact OAuth-discovery chain (RFC 9728 protected-resource → RFC 8414 AS metadata → RFC 7591 `registration_endpoint`) against every `auth: dcr` entry in `catalog.yaml`. Fails the PR if a vendor URL goes 5xx, drops DCR support, or moves their well-known metadata path. Network-dependent; not part of `bun run verify`. Triggered by `pull_request` paths-filter on `src/connectors/catalog.yaml`.
 - **Conversations moved to top-level user-owned storage** (delegation-model Stage 1). Every conversation now lives at `{workDir}/conversations/{convId}.jsonl` instead of `{workDir}/workspaces/{wsId}/conversations/...`, with single-owner authorization (`Conversation.ownerId === access.userId`). The conversation outlives its workspace context — a user removed from workspace A can still read every conversation they own that originated there. Multi-participant / sharing semantics are deferred to a future stage with explicit policy gates. Operator deploy is **breaking** and requires two migration scripts (see Breaking).
+- **Cross-workspace tool calls from a single chat** (delegation-model Stage 2). Identity-bound chat + `/mcp` sessions; tool list aggregates across the user's workspaces, namespaced `ws_<id>/<tool>`. User-scope credentials migrate to the personal workspace; `oauthScope: "user"` deleted (no compat shim). Header switcher → sidebar workspace+apps navigator. **Breaking** — run `bun run migrate:user-creds` before deploying (`nimblebrain-ops/research/delegation-model/STAGE_2_DEPLOY.md`). Gating verification: cross-workspace E2E green in `bun run smoke`.
 
 ### Added
 
@@ -45,6 +46,14 @@
 - HTTP proxy primitive (`_meta["ai.nimblebrain/http-proxy"]`). Bundles can expose a loopback HTTP server (e.g. `astro preview`, Jupyter kernel) through the platform at `/v1/ws/<wsId>/apps/<bundle>/<mount>/*`. Loopback-only target, credentials and `Accept-Encoding` stripped on forward, `Set-Cookie`/CSP/X-Frame-Options stripped on response, per-workspace kill switch via `Workspace.allowHttpProxy`. Bundles get `NB_WORKSPACE_ID`, `NB_PROXY_PREFIX`, `NB_PUBLIC_ORIGIN` in their env at spawn ([docs](https://docs.nimblebrain.ai/apps/http-proxy/)).
 - `PersonalWorkspaceInvariantError` typed error (`src/workspace/errors.ts`) → HTTP 422 `personal_workspace_invariant` with structured `{ workspaceId, reason }` body. Mirrors the `ConversationCorruptedError` → 422 precedent; raised by `WorkspaceStore` on attempts to mutate the locked members / `isPersonal` / `ownerUserId` fields on personal workspaces.
 - `scripts/cleanup-personal-workspace-members.ts` (alias: `bun run cleanup:personal-workspace-members`) — one-off retroactive cleanup that converges pre-Stage-1.1 personal workspaces to the sole-owner-admin shape. Idempotent, dry-run by default.
+- `src/orchestrator/` — per-call workspace routing + watcher-backed tool-list aggregator (Stage 2). Errors: `UnknownNamespacedToolName` / `UnknownWorkspace` / `WorkspaceAccessDenied` / `UnknownToolSource`, identical `data.reason` shapes on REST and `/mcp`.
+- `src/tools/namespace.ts` — `namespacedToolName` / `parseNamespacedToolName`. Single construction + parse site; `check:tool-namespace` AST lint enforces.
+- Sidebar workspace+apps navigator (Q1): role badges, composer breadcrumbs, per-call workspace provenance in the transcript.
+- Connector install workspace target picker with typed-confirmation gate for shared installs (T010).
+- `LegacyOAuthScopeError` — operator-actionable error on legacy `oauthScope: "user"` records (T008).
+- AST lint `check:credential-paths` — flags `join(..., "users", X, "credentials", ...)` and equivalent shapes in `src/`. Joins the three other delegation-model lints in `verify:static`.
+- `src/workspace/workspace-id-pattern.ts` — shared workspace-id regex literal; web tier imports via codegen at `web/src/_generated/workspace-id-pattern.ts`. `check:codegen` + a regex-equality test pin the contract.
+- External MCP cross-workspace smoke test (Claude Desktop-style client).
 
 ### Changed
 
@@ -60,6 +69,10 @@
 - `POST /v1/chat` validation error wording. Hand-rolled checks (`"metadata must be a JSON object"`, `"allowedTools must be an array of strings"`) replaced with TypeBox path-prefixed errors (`"/metadata: Expected object"`, `"/allowedTools: Expected array"`). HTTP status (400) and `error: "bad_request"` are unchanged. External callers asserting on the exact wording need to update; the field name still appears in the message.
 - Skill manifest writes now always include `metadata.keywords` and `metadata.triggers` as arrays (defaulting to `[]` when omitted by the caller). Previously a partial `metadata: { category: "X" }` could write a manifest with no `keywords`/`triggers` keys at all; the loader's domain type required them, so the divergence was a latent type lie. The on-disk JSON shape is now what the type always claimed.
 - API responses now carry HSTS (`max-age=31536000; includeSubDomains`) and CSP (`default-src 'none'; frame-ancestors 'none'; base-uri 'none'`) by default so direct-exposure self-hosted deployments aren't naked. Operators terminating TLS at a reverse proxy that already emits these can disable via `NB_HSTS=""` / `NB_CSP=""`, or override to a custom value via env var or middleware option ([#20](https://github.com/NimbleBrainInc/nimblebrain/pull/20)).
+- Bridge MCP client session survives workspace switch (Stage 2 / Q3). `setActiveWorkspaceId` no longer fires the bridge-reset hook; reset still fires on logout via `setAuthToken`. Dispatch flows via per-request `X-Workspace-Id`.
+- Catalog field `defaultScope` renamed to `defaultBinding` with values `"workspace" | "personal"` (Stage 2 / T008). 19 catalog entries updated.
+- Web prop `scope: "user" | "workspace"` renamed to `mode: "personal" | "workspace"` across four UI components (Stage 2 / T009).
+- Tool name display in the conversation transcript renders as a workspace badge + friendly tool name (Stage 2 / Q2); raw `ws_<id>/<tool>` stays in JSONL.
 
 ### Breaking
 
@@ -90,6 +103,12 @@
 - **`Conversation.visibility` and `Conversation.participants` removed from the schema.** Reads of pre-migration files that still carry these fields skip them at parse time; writes never produce them. `ownerId` is now required on every conversation file — pre-migration files without one fail to load with a clear "run the migration" hint.
 - **`/v1/conversations/:id/events` no longer requires `X-Workspace-Id`.** The header is still honored when sent (validated for format + membership); absent → 200, present + malformed → 400, present + non-member → 403. Foreign-owner conversation → 403 `conversation_access_denied`; non-existent → 404 `not_found`. Web clients that already send the header keep working unchanged.
 - **Personal workspaces enforce sole-owner-admin membership and freeze `isPersonal` / `ownerUserId` post-create.** `WorkspaceStore.update` / `addMember` / `removeMember` / `updateMemberRole` throw `PersonalWorkspaceInvariantError` on any member or identity-field mutation against a personal workspace; `WorkspaceStore.create` rejects a personal workspace whose initial members aren't exactly `[{ userId: ownerUserId, role: "admin" }]`. Operators with pre-existing multi-admin personal workspaces must run `bun run cleanup:personal-workspace-members --apply` to converge — `bundles`, `name`, `about`, `customInstructions` remain freely mutable.
+- **Operator action — run `bun run migrate:user-creds` BEFORE deploying.** Moves `users/<id>/credentials/...` to the user's personal workspace; idempotent, shares `.migration-lock` with Stage 1. Without it the Stage 2 loader throws `LegacyOAuthScopeError`. Runbook: `nimblebrain-ops/research/delegation-model/STAGE_2_DEPLOY.md` (Redis registry schema cut per Q4 covered there).
+- **`BundleRef.oauthScope: "user"` deleted** (T008). Loader throws `LegacyOAuthScopeError`; catalog field renamed `defaultScope` → `defaultBinding: "workspace" | "personal"`.
+- **`installConnector(entry, wsId)`** — `wsId` now required (T010); pre-Stage-2 callers no longer compile.
+- **`ToolSource.execute`** — `principalId` argument removed (T008); identity flows via `RequestContext` AsyncLocalStorage. Third-party implementers must drop the parameter.
+- **`ChatRequest.workspaceId` / `ChatResult.workspaceId` removed** (T006). Chat is identity-bound; per-turn workspace is determined by the namespaced tool name.
+- **`SessionMeta.workspaceId` hard-cut** (T007, Q4). `RedisSessionRegistry` ignores legacy `workspaceId` on read.
 
 ### Fixed
 
@@ -123,6 +142,10 @@
 - `bridgeUseMcp` feature flag and its scaffolding (`web/src/features.ts`, `getBridgeUseMcp` / `setBridgeUseMcp`, the schema entry, the resolver field). The MCP transport is the only path; legacy REST branches in the bridge are deleted.
 - Skill create/edit form no longer surfaces "Loading strategy" and "Tool affinity (comma-separated globs)" inputs. These fields exist on the on-disk `SkillManifest` but were never in the LLM-facing tool schema and were silently dropped by `skills__create` / `skills__update`. Operators who need them today should edit the skill markdown file directly under `~/.nimblebrain/{skills,workspaces/<wsId>/skills,users/<userId>/skills}/`; a future operator-only API may surface them.
 - Registry URL editing on the Org → Registries settings page (and the `manage_registries set_url` action). URL overrides (e.g. self-hosted mpak) are deployment config — set via `NB_REGISTRIES` or `registries.json`. The UI now shows the configured URL or "(using default)" as read-only.
+- `WorkspaceSelector` (header switcher) — replaced by the sidebar navigator (Q1).
+- `UserConnectorStore` class + `src/users/` directory (T008). Credentials live in the workspace.
+- `UserPoolSource` (T008). Cross-workspace dispatch routes through the orchestrator.
+- Boot-time `user.json` migration in `runtime.ts` (T008). Operators run `bun run migrate:user-creds` explicitly during the maintenance window.
 
 ### Operator notes
 

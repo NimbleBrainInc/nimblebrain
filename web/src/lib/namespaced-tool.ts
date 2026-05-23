@@ -6,10 +6,14 @@
 // `./src` and the vite alias only covers `@/* → ./src/*`), so this file is
 // the web-tier source of truth for parsing `ws_<id>/<tool_name>` strings.
 //
-// Contract — kept in lockstep with the platform primitive:
+// Contract — kept in lockstep with the platform primitive via codegen:
 //   - First `/` is the separator. Tool names may contain `/` (the
 //     trailing segment is preserved verbatim).
-//   - `wsId` must match `WORKSPACE_ID_RE` (`^ws_[a-zA-Z0-9_-]+$`).
+//   - `wsId` must match `WORKSPACE_ID_RE`. The pattern + flags come
+//     from `web/src/_generated/workspace-id-pattern.ts`, emitted from
+//     `src/workspace/workspace-id-pattern.ts` by `bun run codegen` —
+//     so future server-side tightening propagates here automatically,
+//     and CI's `check:codegen` catches drift between source and copy.
 //   - No `??` / `||` fallback. Invalid shapes return `null` here (web
 //     surfaces fall back to rendering the raw string per Q2 — "fall back
 //     to raw if metadata missing"). The platform primitive throws; the
@@ -21,7 +25,9 @@
 // helper or the platform primitive on the server side.
 // ---------------------------------------------------------------------------
 
-const WORKSPACE_ID_RE = /^ws_[a-zA-Z0-9_-]+$/;
+import { WORKSPACE_ID_FLAGS, WORKSPACE_ID_PATTERN } from "../_generated/workspace-id-pattern.ts";
+
+const WORKSPACE_ID_RE = new RegExp(WORKSPACE_ID_PATTERN, WORKSPACE_ID_FLAGS);
 
 /**
  * Parse a namespaced tool name into `{ wsId, toolName }`. Returns `null`

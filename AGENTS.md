@@ -136,7 +136,28 @@ All tool handlers that access data must be workspace-scoped. Use `runtime.requir
 
 When adding a new code path that touches workspace-scoped credentials or identity, match the existing precedent: **hard-error on missing `wsId`, don't silently default**. `startBundleSource`'s named-bundle branch throws; the URL-bundle branch does too (for OAuth-provider paths). A `?? "ws_default"` fallback would pool credentials across tenants.
 
+**Credentials live in the workspace, not the user.** Post-Stage-2 every credential file is reachable at `{workDir}/workspaces/<wsId>/credentials/...` and is constructed only through `WorkspaceContext` (via `runtime.getWorkspaceContext(wsId)`) or the primitives in `src/config/workspace-credentials.ts`. The pre-Stage-2 layout `{workDir}/users/<userId>/credentials/...` is fully deleted from the read path — the loader at `src/bundles/lifecycle.ts::assertBundleRefIsPostStage2` throws `LegacyOAuthScopeError` on any disk record carrying `oauthScope: "user"`, and operators must run `bun run migrate:user-creds` before deploying (see `nimblebrain-ops/research/delegation-model/STAGE_2_DEPLOY.md`). User-personal credentials live in the user's personal workspace at `{workDir}/workspaces/ws_user_<userId>/credentials/...` — the same code path serves them. `users/<userId>/...` is reserved for non-credential per-user data (currently `users/<userId>/skills/`); future per-user data follows the same convention. Hand-building `join(workDir, "users", userId, "credentials", ...)` paths is a regression caught by `check:credential-paths`.
+
 **Conversations are user-scoped, not workspace-scoped.** Post-Stage-1, every conversation lives at `{workDir}/conversations/{convId}.jsonl` and is authorized by ownership (`Conversation.ownerId === access.userId`). Look up via `runtime.findConversation(convId, { userId })`; write via `runtime.findConversationStore()`. `workspaceId` on conversation metadata is a tool-scoping breadcrumb — it tells the runtime which workspace's tools the chat had access to when a turn ran, NOT where the file lives. Hand-building per-workspace conversation paths (`join(workDir, "workspaces", wsId, "conversations", ...)`) is a regression caught by `check:conversation-paths`. **Personal workspace ids** go through `personalWorkspaceIdFor(userId)` from `src/workspace/workspace-store.ts` — no hand-built `"ws_user_" + userId` or `` `ws_user_${userId}` `` outside that helper (`check:personal-workspace-id` enforces).
+
+### Cross-workspace tool namespacing (Stage 2)
+
+Sessions — chat and `/mcp` — are **identity-bound, not workspace-bound**. A user's tool list aggregates across every workspace they belong to; tools from a non-default workspace are namespaced `ws_<id>/<tool_name>`. `ws_helix/crm.search` and `ws_user_<id>/gmail.send` can be invoked in the same conversation.
+
+- **Construct** namespaced names only via `namespacedToolName(wsId, name)` from `src/tools/namespace.ts`. **Parse** only via `parseNamespacedToolName(s)` from the same module. Hand-building or `.split("/")`-ing a namespaced name is a regression caught by `check:tool-namespace`.
+- **Web tier** mirrors the parser at `web/src/lib/namespaced-tool.ts` (web can't import from `src/`). The web parser's regex is built from `WORKSPACE_ID_PATTERN` / `WORKSPACE_ID_FLAGS` in `web/src/_generated/workspace-id-pattern.ts`, emitted from `src/workspace/workspace-id-pattern.ts` by `bun run codegen`. `check:codegen` catches drift; a regex-equality test in `web/test/namespaced-tool.test.ts` pins the contract.
+- **Per-call routing** lives in `src/orchestrator/` — parse `ws_<id>/<name>` → construct `WorkspaceContext(id)` → dispatch. Errors flow as `UnknownNamespacedToolName` / `UnknownWorkspace` / `WorkspaceAccessDenied` / `UnknownToolSource`; both the chat REST surface (`POST /v1/chat`) and the `/mcp` JSON-RPC surface map them to identical structured `data.reason` discriminators.
+- `BundleRef.oauthScope: "user"` is **deleted from the type union** (Stage 2 / T008). Every install binds workspace explicitly via `wsId`; legacy disk records throw `LegacyOAuthScopeError` on load with an operator-actionable message naming the migration script.
+- **Dev-mode parity.** Identity-bound sessions work in dev mode (no auth gate); the dev identity flows through the orchestrator the same as a real one. `runtime.requireWorkspaceId()` returns `"_dev"` only when no workspace is in scope — cross-workspace dispatch routes through the same code path.
+
+### Stage 2 follow-ups — tenant migration order
+
+When migrating a tenant onto Stage 2, run the user-credential migration during a maintenance window with the platform scaled to zero:
+
+1. `bun run migrate:user-creds` — moves `{workDir}/users/<userId>/credentials/...` to `{workDir}/workspaces/ws_user_<userId>/credentials/...`. Idempotent, dry-run by default, shares `.migration-lock` with the Stage 1 scripts. Run **before** deploying the Stage 2 image — the loader throws `LegacyOAuthScopeError` on first read of any unmigrated `oauthScope: "user"` record.
+2. Cut traffic to the new build. The first `/mcp` session after the cut allocates an identity-bound session id; the Redis registry schema dropped `workspaceId` (Q4 hard cut) so any in-flight session is harmless to drain.
+
+The full runbook (verification checks, rollback, smoke tests) lives in `nimblebrain-ops/research/delegation-model/STAGE_2_DEPLOY.md`.
 
 ### Stage 1 follow-ups — tenant migration order
 

@@ -5,6 +5,13 @@ import { writeJsonAtomic } from "../util/atomic-json.ts";
 import { PersonalWorkspaceInvariantError } from "./errors.ts";
 import { scaffoldWorkspace } from "./scaffold.ts";
 import type { Workspace, WorkspaceMember, WorkspaceRole } from "./types.ts";
+import { WORKSPACE_ID_RE } from "./workspace-id-pattern.ts";
+
+// Re-export so existing `import { WORKSPACE_ID_RE } from ".../workspace-store.ts"`
+// call sites keep working. The literal source string + flags live in
+// `workspace-id-pattern.ts` so the codegen step (and the web tier) can
+// consume the same contract — see that file's header for the why.
+export { WORKSPACE_ID_RE } from "./workspace-id-pattern.ts";
 
 // ── Errors ─────────────────────────────────────────────────────────
 
@@ -31,16 +38,10 @@ export class MemberConflictError extends Error {
 
 // ── Workspace ID validation ────────────────────────────────────────
 
-/**
- * Valid workspace ID: ws_ prefix followed by 1-64 alphanumeric/underscore chars.
- *
- * Exported because credential-store primitives (src/config/workspace-credentials)
- * write to filesystem paths derived from `wsId`. Those primitives must validate
- * against this same regex to defend against path-traversal (e.g., `../evil`)
- * even when the call site looks trusted. Keep in lockstep with the scaffold
- * assumptions in `WORKSPACE_DIRS` and the path layout in `WorkspaceStore`.
- */
-export const WORKSPACE_ID_RE = /^ws_[a-z0-9_]{1,64}$/i;
+// `WORKSPACE_ID_RE` lives in `./workspace-id-pattern.ts` so the web
+// tier (which can't import from `src/`) can consume the same literal
+// via build-time codegen. Re-exported above. See the pattern module's
+// header for the full rationale.
 
 // ── Slugification ──────────────────────────────────────────────────
 

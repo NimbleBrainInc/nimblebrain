@@ -31,6 +31,8 @@ const REPO_ROOT = resolve(import.meta.dirname ?? __dirname, "..");
 const SCHEMA_SRC = join(REPO_ROOT, "src/tools/platform/schemas");
 const TMP_OUT = join(REPO_ROOT, ".tmp-codegen");
 const WEB_DEST = join(REPO_ROOT, "web/src/_generated/platform-schemas");
+const WORKSPACE_ID_PATTERN_SRC = join(REPO_ROOT, "src/workspace/workspace-id-pattern.ts");
+const WORKSPACE_ID_PATTERN_DEST = join(REPO_ROOT, "web/src/_generated/workspace-id-pattern.ts");
 
 /**
  * Per-file header injected at the top of every generated .d.ts.
@@ -60,6 +62,63 @@ function injectHeaders(dir: string, sourceRoot: string): void {
     const body = readFileSync(full, "utf-8");
     writeFileSync(full, header(sourcePath) + body);
   }
+}
+
+// ── workspace-id-pattern (Stage 2 / T012) ──────────────────────────
+//
+// Emits a runtime `.ts` mirroring the literal pattern + flags exported
+// from `src/workspace/workspace-id-pattern.ts`. The web tier
+// (`web/src/lib/namespaced-tool.ts`) imports the generated copy and
+// constructs its own RegExp locally. CI's `check:codegen` step
+// (`git diff --exit-code web/src/_generated/`) catches drift between
+// the server source and the emitted copy.
+//
+// Why we don't ship a `.d.ts` here: the web tier needs the actual
+// string values at runtime to validate workspace ids. `.d.ts` would
+// only give us type-level types. So this step is a hand-written extract
+// of the two string literals — no `tsc` emission needed.
+
+function extractStringLiteral(source: string, name: string): string {
+  // Match `export const <name> = "<value>";` with the value as a
+  // double-quoted JS string literal. No escapes are interpreted — the
+  // workspace-id pattern uses only ASCII + the chars `^$_{},|[]0-9a-z`,
+  // none of which need escaping in a JS string. If a future change to
+  // the source adds escapes, this regex needs to widen accordingly.
+  const re = new RegExp(`export\\s+const\\s+${name}\\s*=\\s*"([^"\\\\]*)"`);
+  const m = re.exec(source);
+  if (!m || typeof m[1] !== "string") {
+    throw new Error(
+      `[codegen] could not extract ${name} from ${WORKSPACE_ID_PATTERN_SRC} — the source file format may have changed`,
+    );
+  }
+  return m[1];
+}
+
+console.log("[codegen] workspace-id-pattern → web/src/_generated/workspace-id-pattern.ts");
+
+{
+  const src = readFileSync(WORKSPACE_ID_PATTERN_SRC, "utf-8");
+  const pattern = extractStringLiteral(src, "WORKSPACE_ID_PATTERN");
+  const flags = extractStringLiteral(src, "WORKSPACE_ID_FLAGS");
+
+  // JSON.stringify produces a safely-quoted JS string literal even if
+  // someone slips a `"` or `\` into the pattern later. Defense in depth
+  // against silent codegen breakage.
+  const patternLiteral = JSON.stringify(pattern);
+  const flagsLiteral = JSON.stringify(flags);
+
+  const body = `${header("src/workspace/workspace-id-pattern.ts")}
+// Workspace-id pattern + flags mirrored from the server-side source.
+// The web tier rebuilds the regex locally; see the source file's
+// header for the contract.
+
+export const WORKSPACE_ID_PATTERN = ${patternLiteral};
+export const WORKSPACE_ID_FLAGS = ${flagsLiteral};
+`;
+
+  mkdirSync(dirname(WORKSPACE_ID_PATTERN_DEST), { recursive: true });
+  writeFileSync(WORKSPACE_ID_PATTERN_DEST, body);
+  console.log(`[codegen] OK → ${WORKSPACE_ID_PATTERN_DEST.replace(REPO_ROOT, ".")}`);
 }
 
 console.log("[codegen] platform-schemas → web/src/_generated/platform-schemas/");
