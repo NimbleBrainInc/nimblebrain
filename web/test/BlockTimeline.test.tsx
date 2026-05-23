@@ -148,36 +148,52 @@ describe("BlockTimeline order", () => {
 // Tool-chip folding
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("BlockTimeline tool folding", () => {
-	it("folds consecutive same-name tool blocks into one chip with ×N count", () => {
+describe("BlockTimeline phase folding", () => {
+	it("folds contiguous reasoning + tool blocks into ONE chip per phase", () => {
+		// The user's reported pain: [Thought · 25 tokens] and [Used tools ×4]
+		// as two separate chips. They are the same phase of work — one chip
+		// with the reasoning + tool rows inside.
+		const { container } = renderTimeline({
+			blocks: [reasoning("plan"), tool(done("a", "search"), done("b", "search"))],
+		});
+		expect(pillHeads(container).length).toBe(1);
+	});
+
+	it("breaks the phase at a text boundary", () => {
+		// Text between the two tool calls makes them distinct phases.
+		const { container } = renderTimeline({
+			blocks: [tool(done("a", "search")), text("midway"), tool(done("b", "search"))],
+		});
+		expect(pillHeads(container).length).toBe(2);
+	});
+
+	it("does NOT break the phase at a reasoning boundary", () => {
+		// Reasoning is part of the phase, not a separator. [tool, reasoning,
+		// tool] is ONE chip whose body lists the rows in order.
+		const { container } = renderTimeline({
+			blocks: [tool(done("a", "search")), reasoning("more"), tool(done("b", "search"))],
+		});
+		expect(pillHeads(container).length).toBe(1);
+	});
+
+	it("folds same-name consecutive tool blocks into one row with ×N", () => {
+		// Within a phase, three consecutive same-name tool blocks collapse to
+		// one row showing ×3. Visible in the chip's collapsed head label.
 		const { container } = renderTimeline({
 			blocks: [tool(done("a", "search")), tool(done("b", "search")), tool(done("c", "search"))],
 		});
 		const heads = pillHeads(container);
 		expect(heads.length).toBe(1);
-		// ×3 marker present
-		expect((heads[0].textContent ?? "")).toContain("×3");
+		expect(heads[0].textContent ?? "").toContain("×3");
 	});
 
-	it("does NOT fold tools across a reasoning or text break", () => {
-		// Same tool name on either side of a reasoning block must read as two
-		// phases of work — folding across the break would lie about the
-		// timeline.
-		const { container } = renderTimeline({
-			blocks: [
-				tool(done("a", "search")),
-				reasoning("think"),
-				tool(done("b", "search")),
-			],
-		});
-		expect(pillHeads(container).length).toBe(3); // tool + reasoning + tool
-	});
-
-	it("keeps distinct tool names as separate chips even when consecutive", () => {
+	it("keeps distinct tool names as separate rows within the same chip", () => {
+		// Two consecutive tool blocks with different names share one phase
+		// chip but render as two rows inside (revealed on expand).
 		const { container } = renderTimeline({
 			blocks: [tool(done("a", "search")), tool(done("b", "read"))],
 		});
-		expect(pillHeads(container).length).toBe(2);
+		expect(pillHeads(container).length).toBe(1);
 	});
 });
 

@@ -642,20 +642,30 @@
   padding: 4px 0 8px 18px;
 }
 
-/* Reasoning row variant — muted, monospace-free */
+/* Reasoning text — sits inside the already-bordered chip body, so no
+   second border / background. Just slightly muted prose with a scrollable
+   max height for long traces. */
 .turn-pill__reasoning {
   margin: 0;
-  padding: 8px 12px;
-  background: var(--muted);
-  border: 1px solid var(--border);
-  border-radius: 6px;
+  padding: 0;
+  background: transparent;
+  border: 0;
   color: var(--muted-foreground);
-  font-size: 12px;
+  font-size: 12.5px;
   line-height: 1.55;
   white-space: pre-wrap;
   word-break: break-word;
   max-height: 320px;
   overflow-y: auto;
+}
+
+/* Single-row chip bodies (just reasoning, or just one tool group): the
+   chip head already provides the affordance, so render the content
+   directly inside the body with consistent padding instead of wrapping
+   it in another row chrome. */
+.turn-pill__reasoning-wrap,
+.turn-pill__tool-wrap {
+  padding: 10px 12px;
 }
 
 /* Sections (Input / Result / Error) */

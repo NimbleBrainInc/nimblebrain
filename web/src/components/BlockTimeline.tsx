@@ -3,26 +3,29 @@
  *
  * First principles:
  *
- *   1. **Faithful timeline.** Each block the LLM emits (text, reasoning,
- *      tool) gets its own element at the spot it streamed. No per-turn
- *      aggregation, no hoisting. The summary IS the order.
+ *   1. **Faithful timeline.** Each phase the LLM emits renders at the spot
+ *      it streamed. No per-turn aggregation, no hoisting.
  *
- *   2. **Blocks are self-stating.** Each non-text block renders as a chip
- *      that carries its own status: active spinner while the work is
- *      happening, muted/clickable once settled. There is no separate
- *      "turn-level status" surface.
+ *   2. **One chip per phase of work.** A "phase" is a contiguous run of
+ *      reasoning + tool blocks with no text between. Reasoning followed by
+ *      tools (the natural think→act pattern) reads as one collapsible
+ *      activity, not two stacked chips. Text always breaks the phase —
+ *      "preamble text → tools → final text" stays three distinct elements.
  *
- *   3. **One live cursor for the gaps.** When the engine is mid-flight but
+ *   3. **Blocks are self-stating.** A chip is muted when its work is
+ *      settled and active when something inside it is in flight. There is
+ *      no separate turn-level status surface.
+ *
+ *   4. **One live cursor for the gaps.** When the engine is mid-flight but
  *      no block is currently absorbing the state (initial warm-up,
- *      preparing the next tool, post-tool analyzing), a small <LiveCursor>
+ *      preparing the next tool, post-tool analyzing), a small `<LiveCursor>`
  *      at the bottom of the message body covers the transition. The
  *      moment the next block starts streaming, the block's own active
  *      state takes over and the cursor steps aside.
  *
- * Consecutive tool blocks whose calls all share a single tool name fold
- * into one `<ToolChip>` row with a `×N` count — common bulk patterns stay
- * compact without crossing reasoning/text boundaries (which would
- * misrepresent the timeline).
+ * Within a phase: consecutive tool blocks whose calls share a single tool
+ * name fold into one tool row with `×N`. Reasoning rows each keep their
+ * own row. The chip's body lists the rows in stream order.
  */
 
 import { AlertCircle, Check, ChevronRight, Copy, Loader2 } from "lucide-react";
@@ -47,36 +50,55 @@ import { InlineAppView } from "./InlineAppView";
 import { ResourceLinkView } from "./ResourceLinkView";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Timeline iterator
+// Data model
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** One renderable item after consecutive-same-name tool folding. */
-type TimelineItem =
-  | { kind: "text"; text: string }
+/** One row inside an `activity` segment's chip body. */
+type ActivityRow =
   | { kind: "reasoning"; text: string }
   | { kind: "tool"; name: string; calls: ToolCallDisplay[] };
 
 /**
- * Fold consecutive tool blocks whose calls share a single tool name into one
- * tool item. Mixed-name tool blocks pass through as a single tool item with
- * `name = ""` (caller falls back to per-call labels). Reasoning or text
- * between tool blocks always breaks the fold.
+ * One renderable item after segmentation + within-segment tool folding.
+ *
+ * - `text` — single text block (whole-paragraph prose).
+ * - `activity` — a contiguous run of reasoning + tool blocks with no text
+ *   between, presented as ONE chip whose body lists each `rows[]` entry.
+ */
+type TimelineItem = { kind: "text"; text: string } | { kind: "activity"; rows: ActivityRow[] };
+
+/**
+ * Walk `blocks[]`, partition at text boundaries, and within each activity
+ * segment fold consecutive same-name tool blocks into one tool row.
+ *
+ * Empty reasoning blocks (zero-length text) and empty tool blocks are
+ * dropped so the timeline doesn't render placeholders for nothing.
  */
 function foldBlocks(blocks: ReadonlyArray<ContentBlock>): TimelineItem[] {
   const items: TimelineItem[] = [];
+  let rows: ActivityRow[] = [];
+
+  const flush = () => {
+    if (rows.length === 0) return;
+    items.push({ kind: "activity", rows });
+    rows = [];
+  };
+
   for (const block of blocks) {
     if (block.type === "text") {
+      flush();
       if (block.text.length > 0) items.push({ kind: "text", text: block.text });
       continue;
     }
     if (block.type === "reasoning") {
-      if (block.text.length > 0) items.push({ kind: "reasoning", text: block.text });
+      if (block.text.length === 0) continue;
+      rows.push({ kind: "reasoning", text: block.text });
       continue;
     }
     // tool block
     if (block.toolCalls.length === 0) continue;
     const sharedName = sameNameAcross(block.toolCalls);
-    const prev = items[items.length - 1];
+    const prev = rows[rows.length - 1];
     if (
       sharedName !== null &&
       prev?.kind === "tool" &&
@@ -85,13 +107,14 @@ function foldBlocks(blocks: ReadonlyArray<ContentBlock>): TimelineItem[] {
     ) {
       prev.calls.push(...block.toolCalls);
     } else {
-      items.push({
+      rows.push({
         kind: "tool",
         name: sharedName ?? "",
         calls: [...block.toolCalls],
       });
     }
   }
+  flush();
   return items;
 }
 
@@ -101,6 +124,10 @@ function sameNameAcross(calls: ReadonlyArray<ToolCallDisplay>): string | null {
   for (const c of calls) if (c.name !== first) return null;
   return first;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BlockTimeline — top-level iterator
+// ─────────────────────────────────────────────────────────────────────────────
 
 interface BlockTimelineProps {
   blocks: ReadonlyArray<ContentBlock>;
@@ -124,9 +151,6 @@ export function BlockTimeline({
     <>
       {items.map((item, idx) => {
         const isLast = idx === items.length - 1;
-        // Reasoning / text are "active" only when they're the tail of a
-        // currently-streaming message receiving deltas. Tool chips derive
-        // their active state from per-call status (see ToolChip).
         const isTailDelta = isCurrentMessage && isLast && streamingState === "streaming";
         if (item.kind === "text") {
           return (
@@ -141,22 +165,15 @@ export function BlockTimeline({
             </div>
           );
         }
-        if (item.kind === "reasoning") {
-          return (
-            <ReasoningChip
-              // biome-ignore lint/suspicious/noArrayIndexKey: same as above
-              key={`reasoning:${idx}`}
-              text={item.text}
-              isActive={isTailDelta}
-              displayDetail={displayDetail}
-            />
-          );
-        }
         return (
           // biome-ignore lint/suspicious/noArrayIndexKey: same as above
-          <div key={`tool:${idx}`} className="flex flex-col gap-3">
-            <ToolChip calls={item.calls} groupName={item.name} displayDetail={displayDetail} />
-            <ToolWidgets calls={item.calls} />
+          <div key={`activity:${idx}`} className="flex flex-col gap-3">
+            <ActivityChip
+              rows={item.rows}
+              isReasoningTailStreaming={isTailDelta && lastRow(item.rows)?.kind === "reasoning"}
+              displayDetail={displayDetail}
+            />
+            <ToolWidgets calls={collectToolCalls(item.rows)} />
           </div>
         );
       })}
@@ -167,17 +184,27 @@ export function BlockTimeline({
   );
 }
 
+function lastRow(rows: ReadonlyArray<ActivityRow>): ActivityRow | undefined {
+  return rows[rows.length - 1];
+}
+
+function collectToolCalls(rows: ReadonlyArray<ActivityRow>): ToolCallDisplay[] {
+  const out: ToolCallDisplay[] = [];
+  for (const r of rows) if (r.kind === "tool") out.push(...r.calls);
+  return out;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Live cursor — covers the gaps between blocks
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
  * Render only when the engine is mid-flight but no block is absorbing the
- * state. The engine's streamingState tells us which case we're in:
+ * state. `streamingState` tells us which case we're in:
  *
- *   - `streaming` → a text/reasoning block is receiving deltas; that block's
- *     own active state covers it → cursor hides.
- *   - `working`   → a tool call has status="running"; the ToolChip spins →
+ *   - `streaming` → text/reasoning block receiving deltas; that block's own
+ *     active state covers it → cursor hides.
+ *   - `working`   → a tool call has status="running"; the chip spins →
  *     cursor hides.
  *   - `thinking`  → pre-first-block warm-up; cursor shows "Thinking…".
  *   - `preparing` → tool being built server-side, no tool block pushed yet;
@@ -220,25 +247,45 @@ function liveCursorLabel(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Reasoning chip
+// Activity chip — one collapsible widget per phase of work
 // ─────────────────────────────────────────────────────────────────────────────
 
-function ReasoningChip({
-  text,
-  isActive,
-  displayDetail,
-}: {
-  text: string;
-  isActive: boolean;
+interface ActivityChipProps {
+  rows: ReadonlyArray<ActivityRow>;
+  /** True when the trailing row is reasoning still receiving deltas. */
+  isReasoningTailStreaming: boolean;
   displayDetail: DisplayDetail;
-}) {
+}
+
+function ActivityChip({ rows, isReasoningTailStreaming, displayDetail }: ActivityChipProps) {
   const [open, setOpen] = useState(false);
   const toggle = useCallback(() => setOpen((v) => !v), []);
+
+  // Flatten every tool call across the segment so useMinDisplayTime gets a
+  // stable list, then weave smoothed statuses back into descriptions for
+  // tone / label derivation. Without smoothing, a 2ms tool flashes
+  // running→done too briefly to register.
+  const allCalls = useMemo(() => collectToolCalls(rows), [rows]);
+  const visualStatuses = useMinDisplayTime(allCalls);
+  const smoothedCalls = useMemo(
+    () => applyVisualStatuses(allCalls, visualStatuses),
+    [allCalls, visualStatuses],
+  );
+  const smoothedRows = useMemo(
+    () => weaveSmoothed(rows, allCalls, smoothedCalls),
+    [rows, allCalls, smoothedCalls],
+  );
+  const descriptions = useMemo(() => smoothedCalls.map(describeCall), [smoothedCalls]);
+
   if (displayDetail === "quiet") return null;
 
-  const tone: ChipTone = isActive ? "running" : "ok";
-  const tokenLabel = approximateTokenLabel(text.length);
-  const head = isActive ? "Thinking…" : "Thought";
+  const anyRunning = descriptions.some((d) => d.tone === "running");
+  const anyError = descriptions.some((d) => d.tone === "error");
+  const tone: Tone = anyRunning || isReasoningTailStreaming ? "running" : anyError ? "error" : "ok";
+
+  const head = chipHead(smoothedRows, descriptions, tone, isReasoningTailStreaming);
+  const hasBody = rows.some((r) => r.kind === "reasoning" || r.kind === "tool");
+  const isSingleRow = rows.length === 1;
 
   return (
     <div className="turn-pill" data-tone={tone} data-expanded={open}>
@@ -247,154 +294,194 @@ function ReasoningChip({
         onClick={toggle}
         className="turn-pill__head"
         aria-expanded={open}
-        disabled={text.length === 0}
+        disabled={!hasBody}
       >
         <HeadIcon tone={tone} />
-        <span className="turn-pill__label">{head}</span>
-        {!isActive && tokenLabel && <span className="turn-pill__ms">· {tokenLabel}</span>}
-        {text.length > 0 && (
-          <ChevronRight className="turn-pill__chev" style={{ width: 14, height: 14 }} />
+        <span className="turn-pill__label">{head.label}</span>
+        {head.subject && <span className="turn-pill__row-subject">· {head.subject}</span>}
+        {head.count > 1 && <span className="turn-pill__row-count">×{head.count}</span>}
+        {!anyRunning && head.totalMs != null && (
+          <span className="turn-pill__ms">· {formatDuration(head.totalMs)}</span>
         )}
+        {head.tokenLabel && <span className="turn-pill__ms">· {head.tokenLabel}</span>}
+        {hasBody && <ChevronRight className="turn-pill__chev" style={{ width: 14, height: 14 }} />}
       </button>
-      {open && text.length > 0 && (
+      {open && hasBody && (
         <div className="turn-pill__body">
-          <div className="turn-pill__row-body">
-            <pre className="turn-pill__reasoning">{text}</pre>
-          </div>
+          {isSingleRow ? (
+            <SingleRowBody row={smoothedRows[0]} />
+          ) : (
+            smoothedRows.map((row, idx) => (
+              // biome-ignore lint/suspicious/noArrayIndexKey: rows within a segment are append-only and don't reorder
+              <ActivityRowView key={`row:${idx}`} row={row} />
+            ))
+          )}
         </div>
       )}
     </div>
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Tool chip — one call OR a folded group of consecutive same-name calls
-// ─────────────────────────────────────────────────────────────────────────────
+interface ChipHead {
+  label: string;
+  subject: string | null;
+  count: number;
+  totalMs: number | null;
+  tokenLabel: string | null;
+}
 
-function ToolChip({
-  calls,
-  groupName,
-  displayDetail,
-}: {
-  calls: ReadonlyArray<ToolCallDisplay>;
-  /** Shared name across folded calls; "" when calls have mixed names. */
-  groupName: string;
-  displayDetail: DisplayDetail;
-}) {
+/**
+ * Derive the chip's collapsed-state label. Mixed segments lead with the
+ * tool work (since that's the visible action) and surface reasoning token
+ * count as a footnote. Pure-reasoning segments lead with the thought
+ * label; the user discovers tool detail by opening the chip.
+ */
+function chipHead(
+  rows: ReadonlyArray<ActivityRow>,
+  descriptions: ReadonlyArray<ToolDescription>,
+  tone: Tone,
+  isReasoningTailStreaming: boolean,
+): ChipHead {
+  const reasoningRows = rows.filter(
+    (r): r is Extract<ActivityRow, { kind: "reasoning" }> => r.kind === "reasoning",
+  );
+  const toolRows = rows.filter(
+    (r): r is Extract<ActivityRow, { kind: "tool" }> => r.kind === "tool",
+  );
+  const totalChars = reasoningRows.reduce((acc, r) => acc + r.text.length, 0);
+  const tokenLabel = toolRows.length === 0 ? null : approximateTokenLabel(totalChars) || null;
+
+  // Pure reasoning — no tools at all in this segment.
+  if (descriptions.length === 0) {
+    const label = isReasoningTailStreaming ? "Thinking…" : "Thought";
+    return {
+      label,
+      subject: null,
+      count: 0,
+      totalMs: null,
+      tokenLabel: isReasoningTailStreaming ? null : approximateTokenLabel(totalChars) || null,
+    };
+  }
+
+  // Tool work present — lead with the dominant tool verb.
+  const sample = descriptions[0];
+  const sameName = descriptions.every((d) => d.name === sample.name);
+  let verb: string;
+  if (sameName) {
+    verb = tone === "running" ? (PRESENT_TENSE[sample.verb] ?? sample.verb) : sample.verb;
+  } else {
+    verb = tone === "running" ? "Working" : "Used tools";
+  }
+  const label = sameName && sample.object ? `${verb} ${sample.object}` : verb;
+  const subject = firstSubject(descriptions);
+  const totalMs = sumDurations(descriptions);
+  return {
+    label,
+    subject,
+    count: descriptions.length,
+    totalMs,
+    tokenLabel,
+  };
+}
+
+/** Render one segment-body row when there's only ONE row — skip the
+ *  nested row chrome and render the content directly. Click-to-expand is
+ *  already provided by the chip head. */
+function SingleRowBody({ row }: { row: ActivityRow }) {
+  if (row.kind === "reasoning") {
+    return (
+      <div className="turn-pill__reasoning-wrap">
+        <div className="turn-pill__reasoning">{row.text}</div>
+      </div>
+    );
+  }
+  // tool
+  return (
+    <div className="turn-pill__tool-wrap">
+      {row.calls.length === 1 ? (
+        <ToolCallDetail item={describeCall(row.calls[0])} />
+      ) : (
+        row.calls.map((c) => <ToolCallRow key={c.id} item={describeCall(c)} />)
+      )}
+    </div>
+  );
+}
+
+/** Render one row in a multi-row segment body — each row is its own
+ *  expandable mini-section so the user can drill into reasoning text or
+ *  per-call detail without losing the surrounding context. */
+function ActivityRowView({ row }: { row: ActivityRow }) {
+  if (row.kind === "reasoning") return <ReasoningRow text={row.text} />;
+  return <ToolRow calls={row.calls} />;
+}
+
+function ReasoningRow({ text }: { text: string }) {
   const [open, setOpen] = useState(false);
   const toggle = useCallback(() => setOpen((v) => !v), []);
-
-  // Hold each call in "running" for at least the grace period so fast tools
-  // don't flash. Smoothed statuses are overlaid back onto the descriptions
-  // before tone / label derivation.
-  const callsMutable = useMemo(() => [...calls], [calls]);
-  const visualStatuses = useMinDisplayTime(callsMutable);
-  const smoothed = useMemo(
-    () => applyVisualStatuses(callsMutable, visualStatuses),
-    [callsMutable, visualStatuses],
+  const tokenLabel = approximateTokenLabel(text.length);
+  return (
+    <div className="turn-pill__row" data-tone="ok" data-open={open}>
+      <button type="button" onClick={toggle} className="turn-pill__row-head" aria-expanded={open}>
+        <RowIcon tone="ok" />
+        <span className="turn-pill__row-name">Thought</span>
+        {tokenLabel && <span className="turn-pill__row-subject">· {tokenLabel}</span>}
+        <ChevronRight className="turn-pill__chev" style={{ width: 12, height: 12 }} />
+      </button>
+      {open && (
+        <div className="turn-pill__row-body">
+          <div className="turn-pill__reasoning">{text}</div>
+        </div>
+      )}
+    </div>
   );
-  const descriptions = useMemo(() => smoothed.map(describeCall), [smoothed]);
+}
 
-  if (displayDetail === "quiet") return null;
-
-  const tone: ChipTone = descriptions.some((d) => d.tone === "running")
+function ToolRow({ calls }: { calls: ReadonlyArray<ToolCallDisplay> }) {
+  const [open, setOpen] = useState(false);
+  const toggle = useCallback(() => setOpen((v) => !v), []);
+  const descriptions = useMemo(() => calls.map(describeCall), [calls]);
+  const tone: Tone = descriptions.some((d) => d.tone === "running")
     ? "running"
     : descriptions.some((d) => d.tone === "error")
       ? "error"
       : "ok";
   const totalMs = sumDurations(descriptions);
-  const headLabel = chipHeadLabel(descriptions, tone, groupName);
+  const sample = descriptions[0];
+  const sameName = descriptions.every((d) => d.name === sample.name);
+  const verb = sameName
+    ? tone === "running"
+      ? (PRESENT_TENSE[sample.verb] ?? sample.verb)
+      : sample.verb
+    : tone === "running"
+      ? "Working"
+      : "Used tools";
+  const label = sameName && sample.object ? `${verb} ${sample.object}` : verb;
   const subject = firstSubject(descriptions);
-  const count = descriptions.length;
-
   return (
-    <div className="turn-pill" data-tone={tone} data-expanded={open}>
-      <button type="button" onClick={toggle} className="turn-pill__head" aria-expanded={open}>
-        <HeadIcon tone={tone} />
-        <span className="turn-pill__label">{headLabel}</span>
+    <div className="turn-pill__row" data-tone={tone} data-open={open}>
+      <button type="button" onClick={toggle} className="turn-pill__row-head" aria-expanded={open}>
+        <RowIcon tone={tone} />
+        <span className="turn-pill__row-name">{label}</span>
         {subject && <span className="turn-pill__row-subject">· {subject}</span>}
-        {count > 1 && <span className="turn-pill__row-count">×{count}</span>}
-        {tone !== "running" && totalMs != null && (
-          <span className="turn-pill__ms">· {formatDuration(totalMs)}</span>
+        {descriptions.length > 1 && (
+          <span className="turn-pill__row-count">×{descriptions.length}</span>
         )}
-        <ChevronRight className="turn-pill__chev" style={{ width: 14, height: 14 }} />
+        {tone !== "running" && totalMs != null && (
+          <span className="turn-pill__row-ms">· {formatDuration(totalMs)}</span>
+        )}
+        <ChevronRight className="turn-pill__chev" style={{ width: 12, height: 12 }} />
       </button>
       {open && (
-        <div className="turn-pill__body">
-          <div className="turn-pill__row-body">
-            {count === 1 ? (
-              <ToolCallDetail item={descriptions[0]} />
-            ) : (
-              descriptions.map((d) => <ToolCallRow key={d.id} item={d} />)
-            )}
-          </div>
+        <div className="turn-pill__row-body">
+          {descriptions.length === 1 ? (
+            <ToolCallDetail item={descriptions[0]} />
+          ) : (
+            descriptions.map((d) => <ToolCallRow key={d.id} item={d} />)
+          )}
         </div>
       )}
     </div>
   );
-}
-
-/**
- * Inline app views + resource-link cards a tool returned. Rendered below the
- * tool chip so the rich result presentation sits next to the work that
- * produced it.
- *
- * Filter rules match the prior MessageList behavior: `resourceUri` widgets
- * only render when the call is `done` AND the result came from a known
- * `appName` (so we know how to mount the bundle's UI).
- */
-function ToolWidgets({ calls }: { calls: ReadonlyArray<ToolCallDisplay> }) {
-  const widgets = calls.filter((tc) => tc.resourceUri && tc.status === "done" && tc.appName);
-  const resourceLinkCalls = calls.filter(
-    (tc) => tc.status === "done" && tc.appName && tc.resourceLinks && tc.resourceLinks.length > 0,
-  );
-  if (widgets.length === 0 && resourceLinkCalls.length === 0) return null;
-  return (
-    <>
-      {widgets.map((tc) => (
-        // Pass the full ui:// URI through — InlineAppView strips the scheme
-        // and forwards everything after as the resource path. The legacy
-        // regex `/^ui:\/\/[^/]+\/(.+)$/` dropped the first segment on the
-        // assumption it was a namespace prefix, which breaks two-segment
-        // URIs like `ui://<state>/<method>` where the first segment is
-        // load-bearing (Reboot's convention for state-scoped UI methods).
-        <InlineAppView
-          key={tc.id}
-          appName={tc.appName!}
-          resourceUri={tc.resourceUri!}
-          toolResult={{ tool: tc.name, result: tc.result }}
-        />
-      ))}
-      {resourceLinkCalls.flatMap((tc) =>
-        tc.resourceLinks!.map((link) => (
-          <ResourceLinkView
-            key={`${tc.id}:${link.uri}`}
-            appName={tc.appName!}
-            uri={link.uri}
-            name={link.name}
-            mimeType={link.mimeType}
-            description={link.description}
-          />
-        )),
-      )}
-    </>
-  );
-}
-
-function chipHeadLabel(
-  descriptions: ReadonlyArray<ToolDescription>,
-  tone: ChipTone,
-  groupName: string,
-): string {
-  if (descriptions.length === 0) return "Tool";
-  // Mixed-name folded group: fall back to generic phrasing rather than
-  // misrepresent which tool was used.
-  if (groupName === "" && descriptions.length > 1) {
-    return tone === "running" ? "Working…" : "Used tools";
-  }
-  const sample = descriptions[0];
-  const verb = tone === "running" ? (PRESENT_TENSE[sample.verb] ?? sample.verb) : sample.verb;
-  return sample.object ? `${verb} ${sample.object}` : verb;
 }
 
 function ToolCallRow({ item }: { item: ToolDescription }) {
@@ -493,9 +580,7 @@ function CopyButton({ content }: { content: string }) {
     async (e: React.MouseEvent) => {
       e.stopPropagation();
       try {
-        if (!navigator.clipboard?.writeText) {
-          throw new Error("Clipboard API not available");
-        }
+        if (!navigator.clipboard?.writeText) throw new Error("Clipboard API not available");
         await navigator.clipboard.writeText(content);
         setState("copied");
       } catch {
@@ -530,12 +615,52 @@ function CopyButton({ content }: { content: string }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Shared chrome
+// Tool widgets (inline app views + resource-link cards)
 // ─────────────────────────────────────────────────────────────────────────────
 
-type ChipTone = Tone;
+function ToolWidgets({ calls }: { calls: ReadonlyArray<ToolCallDisplay> }) {
+  const widgets = calls.filter((tc) => tc.resourceUri && tc.status === "done" && tc.appName);
+  const resourceLinkCalls = calls.filter(
+    (tc) => tc.status === "done" && tc.appName && tc.resourceLinks && tc.resourceLinks.length > 0,
+  );
+  if (widgets.length === 0 && resourceLinkCalls.length === 0) return null;
+  return (
+    <>
+      {widgets.map((tc) => (
+        // Pass the full ui:// URI through — InlineAppView strips the scheme
+        // and forwards everything after as the resource path. The legacy
+        // regex `/^ui:\/\/[^/]+\/(.+)$/` dropped the first segment on the
+        // assumption it was a namespace prefix, which breaks two-segment
+        // URIs like `ui://<state>/<method>` where the first segment is
+        // load-bearing (Reboot's convention for state-scoped UI methods).
+        <InlineAppView
+          key={tc.id}
+          appName={tc.appName!}
+          resourceUri={tc.resourceUri!}
+          toolResult={{ tool: tc.name, result: tc.result }}
+        />
+      ))}
+      {resourceLinkCalls.flatMap((tc) =>
+        tc.resourceLinks!.map((link) => (
+          <ResourceLinkView
+            key={`${tc.id}:${link.uri}`}
+            appName={tc.appName!}
+            uri={link.uri}
+            name={link.name}
+            mimeType={link.mimeType}
+            description={link.description}
+          />
+        )),
+      )}
+    </>
+  );
+}
 
-function HeadIcon({ tone }: { tone: ChipTone }) {
+// ─────────────────────────────────────────────────────────────────────────────
+// Shared chrome icons
+// ─────────────────────────────────────────────────────────────────────────────
+
+function HeadIcon({ tone }: { tone: Tone }) {
   if (tone === "running") {
     return (
       <Loader2
@@ -575,6 +700,26 @@ function applyVisualStatuses(
   });
 }
 
+/**
+ * Rebuild the rows array using smoothed call objects, preserving structure
+ * (reasoning rows pass through; tool rows get smoothed calls in the same
+ * order they appeared in the flattened list).
+ */
+function weaveSmoothed(
+  rows: ReadonlyArray<ActivityRow>,
+  origCalls: ReadonlyArray<ToolCallDisplay>,
+  smoothed: ReadonlyArray<ToolCallDisplay>,
+): ActivityRow[] {
+  if (smoothed.length !== origCalls.length) return [...rows];
+  const byId = new Map<string, ToolCallDisplay>();
+  for (let i = 0; i < origCalls.length; i++) byId.set(origCalls[i].id, smoothed[i]);
+  return rows.map((r) =>
+    r.kind === "tool"
+      ? { kind: "tool", name: r.name, calls: r.calls.map((c) => byId.get(c.id) ?? c) }
+      : r,
+  );
+}
+
 function sumDurations(items: ReadonlyArray<ToolDescription>): number | null {
   let any = false;
   let total = 0;
@@ -588,9 +733,7 @@ function sumDurations(items: ReadonlyArray<ToolDescription>): number | null {
 }
 
 function firstSubject(items: ReadonlyArray<ToolDescription>): string | null {
-  for (const it of items) {
-    if (it.headSubject) return it.headSubject;
-  }
+  for (const it of items) if (it.headSubject) return it.headSubject;
   return null;
 }
 
