@@ -32,7 +32,8 @@ import {
   GetTaskResultSchema,
   TaskStatusNotificationSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { uploadResource } from "../api/client";
+import { getActiveWorkspaceId, uploadResource } from "../api/client";
+import { namespacedToolName } from "../lib/namespaced-tool";
 import { getMcpBridgeClient, withSessionRetry } from "../mcp-bridge-client";
 import { getHostThemeMode, getSpecThemeTokens, getThemeTokens } from "./theme";
 import type {
@@ -685,12 +686,33 @@ async function callToolViaMcp(
   params: ToolsCallParams,
   id: string,
 ): Promise<UiToolResultResponse | UiToolResultError | Record<string, unknown>> {
-  // The `/mcp` endpoint advertises tool names as `<source>__<tool>`, so
-  // the wire `tools/call` must use the qualified form (see
-  // `mcp-server.ts::CallToolRequestSchema`). Iframes that already pass a
-  // qualified name flow through unchanged; bare names get prefixed with
-  // the resolved `server` (post-INTERNAL_APPS authz).
-  const wireName = params.name.includes("__") ? params.name : `${server}__${params.name}`;
+  // The `/mcp` endpoint expects fully namespaced tool names of the form
+  // `ws_<id>/<source>__<tool>` (Stage 2 / T007: orchestrator rejects
+  // bare names with `-32602 invalid_tool_name`). Two transformations:
+  //
+  //   1. Qualified: iframes pass either `<tool>` (bare) or
+  //      `<source>__<tool>` (already qualified). Normalize to the
+  //      qualified form using the post-INTERNAL_APPS-authz `server`.
+  //   2. Namespaced: prefix with `ws_<active>/`. Per Q3 the bridge
+  //      auto-prefixes by the iframe's host workspace. Today the
+  //      iframe is always mounted under the current URL's workspace
+  //      (`/w/<slug>/app/<bundle>`), so the active workspace == the
+  //      iframe's host workspace. If we ever support side-by-side
+  //      iframes from different workspaces, capture the host at
+  //      bridge construction instead.
+  const qualifiedName = params.name.includes("__") ? params.name : `${server}__${params.name}`;
+  const activeWsId = getActiveWorkspaceId();
+  if (!activeWsId) {
+    return {
+      jsonrpc: "2.0",
+      id,
+      error: {
+        code: -32000,
+        message: "No active workspace; cannot dispatch tool call.",
+      },
+    } satisfies UiToolResultError;
+  }
+  const wireName = namespacedToolName(activeWsId, qualifiedName);
 
   return withSessionRetry(async () => {
     const client = await getMcpBridgeClient();
