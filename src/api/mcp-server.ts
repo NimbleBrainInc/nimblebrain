@@ -704,7 +704,7 @@ function createServer(
       });
     } catch (err) {
       if (err instanceof UnknownNamespacedToolName) {
-        throw new McpError(ErrorCode.InvalidParams, `Invalid tool name: expected ws_<id>/<tool>`, {
+        throw new McpError(ErrorCode.InvalidParams, `Invalid tool name: expected ws_<id>-<tool>`, {
           reason: "invalid_tool_name",
           input: err.input,
           parse: err.reason,

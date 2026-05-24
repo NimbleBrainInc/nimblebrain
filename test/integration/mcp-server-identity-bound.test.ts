@@ -155,11 +155,11 @@ function personalWsId(): string {
 }
 
 function sharedToolName(): string {
-  return `${SHARED_WS_ID}/${SHARED_SOURCE_NAME}__${SHARED_TOOL_BARE}`;
+  return `${SHARED_WS_ID}-${SHARED_SOURCE_NAME}__${SHARED_TOOL_BARE}`;
 }
 
 function personalToolName(): string {
-  return `${personalWsId()}/${PERSONAL_SOURCE_NAME}__${PERSONAL_TOOL_BARE}`;
+  return `${personalWsId()}-${PERSONAL_SOURCE_NAME}__${PERSONAL_TOOL_BARE}`;
 }
 
 /**
@@ -362,7 +362,7 @@ describe("/mcp identity-bound session (Stage 2 T007)", () => {
       }
       expect(errorCode).toBe(-32602);
       expect(dataReason).toBe("invalid_tool_name");
-      expect(errorMessage).toContain("ws_<id>/<tool>");
+      expect(errorMessage).toContain("ws_<id>-<tool>");
     } finally {
       await client.close();
     }
@@ -375,7 +375,7 @@ describe("/mcp identity-bound session (Stage 2 T007)", () => {
       let dataReason: string | undefined;
       try {
         await client.callTool({
-          name: "ws_nonexistent/crm__search",
+          name: "ws_nonexistent-crm__search",
           arguments: {},
         });
       } catch (err) {
@@ -405,7 +405,7 @@ describe("/mcp identity-bound session (Stage 2 T007)", () => {
       let dataReason: string | undefined;
       try {
         await client.callTool({
-          name: `${FORBIDDEN_WS}/crm__search`,
+          name: `${FORBIDDEN_WS}-crm__search`,
           arguments: {},
         });
       } catch (err) {
@@ -427,7 +427,7 @@ describe("/mcp identity-bound session (Stage 2 T007)", () => {
       let dataReason: string | undefined;
       try {
         await client.callTool({
-          name: `${SHARED_WS_ID}/no_such_source__no_such_tool`,
+          name: `${SHARED_WS_ID}-no_such_source__no_such_tool`,
           arguments: {},
         });
       } catch (err) {

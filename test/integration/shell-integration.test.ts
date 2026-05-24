@@ -231,7 +231,7 @@ describe("Bundle with placements → /v1/shell", () => {
 
 describe("MCP client e2e with nb tools", () => {
 	// Stage 2: every tool name is namespaced as `ws_<id>/<source>__<tool>`.
-	const NB_PREFIX = `${TEST_WORKSPACE_ID}/nb__`;
+	const NB_PREFIX = `${TEST_WORKSPACE_ID}-nb__`;
 
 	it("listTools includes nb__ prefixed tools", async () => {
 		const client = await createMcpClient();

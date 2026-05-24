@@ -73,12 +73,14 @@ export { callModel } from "./model/stream.ts";
 export { composeSystemPrompt } from "./prompt/index.ts";
 export type { ChatRequest, ChatResult, RuntimeConfig, TurnUsage } from "./runtime/index.ts";
 // Runtime
-export { filterTools, Runtime, surfaceTools } from "./runtime/index.ts";
+export { Runtime } from "./runtime/index.ts";
 export type { Skill, SkillManifest, SkillMetadata } from "./skills/index.ts";
 // Skills
 export { loadSkillDir, parseSkillContent, parseSkillFile, SkillMatcher } from "./skills/index.ts";
 export type { InProcessTool, Tool, ToolSource } from "./tools/index.ts";
 // Tools
 export { defineInProcessApp, McpSource, ToolRegistry } from "./tools/index.ts";
+// Tool surfacing (lives in tools/ layer; consumed by runtime composition root)
+export { filterTools, surfaceTools } from "./tools/surfacing.ts";
 export { estimateCost } from "./usage/cost.ts";
 export type { TokenUsage } from "./usage/types.ts";

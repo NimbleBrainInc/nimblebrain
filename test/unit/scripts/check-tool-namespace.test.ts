@@ -39,8 +39,8 @@ function findFirst<T extends ts.Node>(
 }
 
 describe("check-tool-namespace — isNamespacedToolStringLiteral", () => {
-  test("matches a hard-coded `ws_helix/crm.search`", () => {
-    const src = parse(`const s = "ws_helix/crm.search";`);
+  test("matches a hard-coded `ws_helix-crm__search`", () => {
+    const src = parse(`const s = "ws_helix-crm__search";`);
     const node = findFirst(src, ts.isStringLiteral);
     expect(node).toBeDefined();
     expect(isNamespacedToolStringLiteral(node!)).toBe(true);
@@ -55,23 +55,23 @@ describe("check-tool-namespace — isNamespacedToolStringLiteral", () => {
     expect(isNamespacedToolStringLiteral(node!)).toBe(false);
   });
 
-  test("does NOT match an unrelated literal containing `/`", () => {
-    const src = parse(`const s = "foo/bar";`);
+  test("does NOT match an unrelated literal containing `-`", () => {
+    const src = parse(`const s = "foo-bar";`);
     const node = findFirst(src, ts.isStringLiteral);
     expect(isNamespacedToolStringLiteral(node!)).toBe(false);
   });
 });
 
 describe("check-tool-namespace — isNamespacedToolTemplate", () => {
-  test("matches `` `ws_${wsId}/${name}` `` (head ends `ws_`, span ends `/`)", () => {
-    const src = parse("const s = `ws_${wsId}/${name}`;");
+  test("matches `` `ws_${wsId}-${name}` `` (head is `ws_`, span starts `-`)", () => {
+    const src = parse("const s = `ws_${wsId}-${name}`;");
     const node = findFirst(src, ts.isTemplateExpression);
     expect(node).toBeDefined();
     expect(isNamespacedToolTemplate(node!)).toBe(true);
   });
 
-  test("matches `` `ws_helix/${name}` `` (literal id in head)", () => {
-    const src = parse("const s = `ws_helix/${name}`;");
+  test("matches `` `ws_helix-${name}` `` (literal id in head)", () => {
+    const src = parse("const s = `ws_helix-${name}`;");
     const node = findFirst(src, ts.isTemplateExpression);
     expect(isNamespacedToolTemplate(node!)).toBe(true);
   });
@@ -84,56 +84,56 @@ describe("check-tool-namespace — isNamespacedToolTemplate", () => {
     expect(isNamespacedToolTemplate(node!)).toBe(false);
   });
 
-  test("does NOT match `` `prefix-ws_${wsId}/${name}` `` (head doesn't end with `ws_`)", () => {
+  test("does NOT match `` `prefix-ws_${wsId}-${name}` `` (head doesn't start `ws_`)", () => {
     // Avoid false positives on unrelated templates whose head happens
     // to contain `ws_` mid-string.
-    const src = parse("const s = `prefix-ws_${wsId}/${name}`;");
+    const src = parse("const s = `prefix-ws_${wsId}-${name}`;");
     const node = findFirst(src, ts.isTemplateExpression);
     expect(isNamespacedToolTemplate(node!)).toBe(false);
   });
 });
 
 describe("check-tool-namespace — isNamespacedToolBinaryConcat", () => {
-  test('matches `"ws_" + wsId + "/" + name`', () => {
-    const src = parse('const s = "ws_" + wsId + "/" + name;');
+  test('matches `"ws_" + wsId + "-" + name`', () => {
+    const src = parse('const s = "ws_" + wsId + "-" + name;');
     const bin = findFirst(src, ts.isBinaryExpression);
     expect(isNamespacedToolBinaryConcat(bin!)).toBe(true);
   });
 
-  test('does NOT match `"ws_" + wsId` (no slash follow-up)', () => {
+  test('does NOT match `"ws_" + wsId` (no separator follow-up)', () => {
     const src = parse('const s = "ws_" + wsId;');
     const bin = findFirst(src, ts.isBinaryExpression);
     expect(isNamespacedToolBinaryConcat(bin!)).toBe(false);
   });
 
-  test('does NOT match `"foo/" + name` (no ws_ prefix)', () => {
-    const src = parse('const s = "foo/" + name;');
+  test('does NOT match `"foo-" + name` (no ws_ prefix)', () => {
+    const src = parse('const s = "foo-" + name;');
     const bin = findFirst(src, ts.isBinaryExpression);
     expect(isNamespacedToolBinaryConcat(bin!)).toBe(false);
   });
 });
 
 describe("check-tool-namespace — isNamespacedSplit", () => {
-  test('matches `namespacedName.split("/")`', () => {
-    const src = parse(`const [w, n] = namespacedName.split("/");`);
+  test('matches `namespacedName.split("-")`', () => {
+    const src = parse(`const [w, n] = namespacedName.split("-");`);
     const call = findFirst(src, ts.isCallExpression);
     expect(isNamespacedSplit(call!)).toBe(true);
   });
 
-  test('matches `qualifiedToolName.split("/")`', () => {
-    const src = parse(`const parts = qualifiedToolName.split("/");`);
+  test('matches `qualifiedToolName.split("-")`', () => {
+    const src = parse(`const parts = qualifiedToolName.split("-");`);
     const call = findFirst(src, ts.isCallExpression);
     expect(isNamespacedSplit(call!)).toBe(true);
   });
 
-  test('matches `toolName.split("/")`', () => {
-    const src = parse(`const parts = toolName.split("/");`);
+  test('matches `toolName.split("-")`', () => {
+    const src = parse(`const parts = toolName.split("-");`);
     const call = findFirst(src, ts.isCallExpression);
     expect(isNamespacedSplit(call!)).toBe(true);
   });
 
-  test('does NOT match `urlPath.split("/")` (unrelated binding name)', () => {
-    const src = parse(`const segments = urlPath.split("/");`);
+  test('does NOT match `urlPath.split("-")` (unrelated binding name)', () => {
+    const src = parse(`const segments = urlPath.split("-");`);
     const call = findFirst(src, ts.isCallExpression);
     expect(isNamespacedSplit(call!)).toBe(false);
   });
@@ -144,11 +144,11 @@ describe("check-tool-namespace — isNamespacedSplit", () => {
     expect(isNamespacedSplit(call!)).toBe(false);
   });
 
-  test('does NOT match `obj.toolName.split("/")` (receiver is property access, not identifier)', () => {
+  test('does NOT match `obj.toolName.split("-")` (receiver is property access, not identifier)', () => {
     // Deliberate: the lint avoids false-positives by limiting to
     // direct identifier receivers. A real misuse will surface as
-    // `const tn = obj.toolName; tn.split("/")` which IS flagged.
-    const src = parse(`const parts = obj.toolName.split("/");`);
+    // `const tn = obj.toolName; tn.split("-")` which IS flagged.
+    const src = parse(`const parts = obj.toolName.split("-");`);
     const call = findFirst(src, ts.isCallExpression);
     expect(isNamespacedSplit(call!)).toBe(false);
   });

@@ -10,6 +10,7 @@
  * trivially composed into the runtime by Task 006.
  */
 
+import { bareToolName } from "../tools/namespace.ts";
 import type { Skill } from "./types.ts";
 
 /**
@@ -54,20 +55,20 @@ export interface SelectInput {
  * `ws_<id>/` namespace prefix. Patterns in skill manifests and `appContext`-
  * driven affinity rules are typically authored against the BARE form
  * (`<source>__*`). Match against both the full namespaced name AND the
- * post-`/` inner form so legacy patterns keep working unchanged and
- * namespace-aware patterns (`ws_<id>/<source>__*`) also match precisely.
+ * bare inner form so legacy patterns keep working unchanged and
+ * namespace-aware patterns (`ws_<id>-<source>__*`) also match precisely.
  */
 export function toolMatches(toolName: string, pattern: string): boolean {
   if (pattern === "") return false;
   if (pattern === "*") return true;
 
-  // Derive the inner form once. If `toolName` looks like `ws_<id>/<inner>`
-  // we strip the prefix and try both forms; otherwise we just use the
-  // original name. Two candidates keeps the matcher's logic shape (one
-  // pattern, one rule) intact below.
-  const slashIndex = toolName.indexOf("/");
-  const inner =
-    slashIndex >= 0 && toolName.startsWith("ws_") ? toolName.slice(slashIndex + 1) : toolName;
+  // Derive the inner form once. If `toolName` is namespaced
+  // (`ws_<id>-<inner>`) we strip the prefix and try both forms; otherwise
+  // we just use the original name. Two candidates keeps the matcher's
+  // logic shape (one pattern, one rule) intact below. Stripping goes
+  // through the canonical `bareToolName` parser so the separator lives in
+  // exactly one place.
+  const inner = bareToolName(toolName);
   const candidates = inner === toolName ? [toolName] : [toolName, inner];
 
   if (pattern.endsWith("__*")) {

@@ -139,7 +139,7 @@ describe("MCP Server Endpoint (/mcp)", () => {
 			expect(result.tools.length).toBeGreaterThan(0);
 
 			// Stage 2: tool names are namespaced as `ws_<id>/<source>__<tool>`.
-			const expectedName = `${TEST_WORKSPACE_ID}/fake__echo`;
+			const expectedName = `${TEST_WORKSPACE_ID}-fake__echo`;
 			const echoTool = result.tools.find((t) => t.name === expectedName);
 			expect(echoTool).toBeDefined();
 			expect(echoTool!.description).toBe("Echoes input back");
@@ -152,7 +152,7 @@ describe("MCP Server Endpoint (/mcp)", () => {
 		const client = await createMcpClient();
 		try {
 			const result = await client.callTool({
-				name: `${TEST_WORKSPACE_ID}/fake__echo`,
+				name: `${TEST_WORKSPACE_ID}-fake__echo`,
 				arguments: { text: "hello world" },
 			});
 			expect(result.isError).toBeFalsy();
@@ -172,7 +172,7 @@ describe("MCP Server Endpoint (/mcp)", () => {
 			// but the inner tool is unknown. Source.execute should surface
 			// `isError: true`.
 			const result = await client.callTool({
-				name: `${TEST_WORKSPACE_ID}/fake__nonexistent`,
+				name: `${TEST_WORKSPACE_ID}-fake__nonexistent`,
 				arguments: {},
 			});
 			expect(result.isError).toBe(true);

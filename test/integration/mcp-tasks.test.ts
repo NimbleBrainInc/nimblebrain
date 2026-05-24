@@ -345,7 +345,7 @@ describe("/mcp task lifecycle", () => {
       // taskCreated → taskStatus* → result stream; we take the first message
       // and assert it's a CreateTaskResult-shaped payload.
       const stream = client.experimental.tasks.callToolStream(
-        { name: `${TEST_WORKSPACE_ID}/fake__fast`, arguments: {} },
+        { name: `${TEST_WORKSPACE_ID}-fake__fast`, arguments: {} },
         undefined,
         { task: { ttl: 60_000 } },
       );
@@ -387,7 +387,7 @@ describe("/mcp task lifecycle", () => {
     try {
       // Use the blocking tool so we can observe a mid-flight status.
       const stream = client.experimental.tasks.callToolStream(
-        { name: `${TEST_WORKSPACE_ID}/fake__slow`, arguments: {} },
+        { name: `${TEST_WORKSPACE_ID}-fake__slow`, arguments: {} },
         undefined,
         { task: { ttl: 60_000 } },
       );
@@ -423,7 +423,7 @@ describe("/mcp task lifecycle", () => {
     const client = await createClient();
     try {
       const stream = client.experimental.tasks.callToolStream(
-        { name: `${TEST_WORKSPACE_ID}/fake__slow`, arguments: {} },
+        { name: `${TEST_WORKSPACE_ID}-fake__slow`, arguments: {} },
         undefined,
         { task: { ttl: 60_000 } },
       );
@@ -455,7 +455,7 @@ describe("/mcp task lifecycle", () => {
     try {
       // Run fast tool to completion.
       const stream = client.experimental.tasks.callToolStream(
-        { name: `${TEST_WORKSPACE_ID}/fake__fast`, arguments: {} },
+        { name: `${TEST_WORKSPACE_ID}-fake__fast`, arguments: {} },
         undefined,
         { task: { ttl: 60_000 } },
       );
@@ -485,7 +485,7 @@ describe("/mcp task lifecycle", () => {
 
     try {
       const stream = aClient.experimental.tasks.callToolStream(
-        { name: `${TEST_WORKSPACE_ID}/fake__slow`, arguments: {} },
+        { name: `${TEST_WORKSPACE_ID}-fake__slow`, arguments: {} },
         undefined,
         { task: { ttl: 60_000 } },
       );
@@ -527,7 +527,7 @@ describe("/mcp task lifecycle", () => {
     try {
       let code: number | undefined;
       try {
-        await client.callTool({ name: `${TEST_WORKSPACE_ID}/fake__must_task`, arguments: {} });
+        await client.callTool({ name: `${TEST_WORKSPACE_ID}-fake__must_task`, arguments: {} });
       } catch (err) {
         code = (err as { code?: number }).code;
       }
@@ -541,7 +541,7 @@ describe("/mcp task lifecycle", () => {
     const client = await createClient();
     try {
       const stream = client.experimental.tasks.callToolStream(
-        { name: `${TEST_WORKSPACE_ID}/fake__never_task`, arguments: {} },
+        { name: `${TEST_WORKSPACE_ID}-fake__never_task`, arguments: {} },
         undefined,
         { task: { ttl: 60_000 } },
       );
@@ -567,7 +567,7 @@ describe("/mcp structuredContent preservation (inline tools/call)", () => {
   it("inline tools/call passes structuredContent through", async () => {
     const client = await createClient();
     try {
-      const result = await client.callTool({ name: `${TEST_WORKSPACE_ID}/fake__never_task`, arguments: {} });
+      const result = await client.callTool({ name: `${TEST_WORKSPACE_ID}-fake__never_task`, arguments: {} });
       expect(result.isError).toBeFalsy();
       // Preservation of `content` was always correct; we're checking that
       // the handler no longer drops adjacent fields.

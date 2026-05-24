@@ -158,7 +158,7 @@ describe("routeToolCall — happy path", () => {
 
     const routed = await routeToolCall({
       identityId: USER_ID,
-      namespacedName: `${SHARED_WS}/crm__search`,
+      namespacedName: `${SHARED_WS}-crm__search`,
       runtime,
     });
 
@@ -212,7 +212,7 @@ describe("routeToolCall — authorization fails loud", () => {
     try {
       await routeToolCall({
         identityId: USER_ID,
-        namespacedName: `${SHARED_WS}/crm__search`,
+        namespacedName: `${SHARED_WS}-crm__search`,
         runtime,
       });
     } catch (err) {
@@ -236,7 +236,7 @@ describe("routeToolCall — personal workspace authorization", () => {
 
     const routed = await routeToolCall({
       identityId: USER_ID,
-      namespacedName: `${PERSONAL_WS}/gmail__send`,
+      namespacedName: `${PERSONAL_WS}-gmail__send`,
       runtime,
     });
 
@@ -256,12 +256,12 @@ describe("routeToolCall — context isolation (Stage 1 lesson 1)", () => {
 
     const first = await routeToolCall({
       identityId: USER_ID,
-      namespacedName: `${SHARED_WS}/crm__search`,
+      namespacedName: `${SHARED_WS}-crm__search`,
       runtime,
     });
     const second = await routeToolCall({
       identityId: USER_ID,
-      namespacedName: `${PERSONAL_WS}/gmail__send`,
+      namespacedName: `${PERSONAL_WS}-gmail__send`,
       runtime,
     });
 
@@ -294,7 +294,7 @@ describe("routeToolCall — no ambient state", () => {
 
     const routed = await routeToolCall({
       identityId: USER_ID,
-      namespacedName: `${SHARED_WS}/crm__search`,
+      namespacedName: `${SHARED_WS}-crm__search`,
       runtime,
     });
 
@@ -321,7 +321,7 @@ describe("routeToolCall — unknown workspace", () => {
     try {
       await routeToolCall({
         identityId: USER_ID,
-        namespacedName: "ws_doesnotexist/foo__bar",
+        namespacedName: "ws_doesnotexist-foo__bar",
         runtime,
       });
     } catch (err) {
@@ -360,7 +360,7 @@ describe("routeToolCall — unknown tool source", () => {
     try {
       await routeToolCall({
         identityId: USER_ID,
-        namespacedName: `${SHARED_WS}/crm__search`,
+        namespacedName: `${SHARED_WS}-crm__search`,
         runtime,
       });
     } catch (err) {

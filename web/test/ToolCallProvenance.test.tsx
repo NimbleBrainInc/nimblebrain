@@ -3,12 +3,12 @@
 //
 // Pins the three behaviors the task spec calls out:
 //
-//   1. Friendly name + workspace badge — `ws_helix/collateral.get_doc`
+//   1. Friendly name + workspace badge — `ws_helix-collateral__get_doc`
 //      renders as `collateral.get_doc · Helix` with the Helix
 //      workspace badge.
 //   2. Fallback to raw on missing workspace — a tool call for
-//      `ws_removed/foo` where `ws_removed` is no longer in the user's
-//      workspace list renders the raw `ws_removed/foo` string.
+//      `ws_removed-foo` where `ws_removed` is no longer in the user's
+//      workspace list renders the raw `ws_removed-foo` string.
 //      Adversarial: a regression that defaulted to the personal
 //      workspace's display name would be a subtle correctness bug.
 //   3. Namespace parsing flows through `parseNamespacedToolName` only —
@@ -80,15 +80,15 @@ describe("ToolCallProvenance", () => {
   test("renders friendly tool name + workspace badge for known namespaced tool", async () => {
     mounted = await mount(
       <ToolCallProvenance
-        toolName="ws_helix/collateral.get_doc"
+        toolName="ws_helix-collateral__get_doc"
         status="ok"
         workspaces={[ws({ id: "ws_helix", name: "Helix" })]}
       />,
     );
     const text = mounted.container.textContent ?? "";
-    // Friendly name: `collateral.get_doc` (stripServerPrefix is a no-op
-    // here because there's no `__` server prefix on the tool segment).
-    expect(text).toContain("collateral.get_doc");
+    // Friendly name: `get_doc` after `stripServerPrefix` removes
+    // `collateral__` from `collateral__get_doc`.
+    expect(text).toContain("get_doc");
     expect(text).toContain("Helix");
     // Workspace badge carries data attributes for the visual
     // attribution test.
@@ -109,7 +109,7 @@ describe("ToolCallProvenance", () => {
   test("strips the `<server>__` prefix when present", async () => {
     mounted = await mount(
       <ToolCallProvenance
-        toolName="ws_helix/gmail__send_message"
+        toolName="ws_helix-gmail__send_message"
         workspaces={[ws({ id: "ws_helix", name: "Helix" })]}
       />,
     );
@@ -132,7 +132,7 @@ describe("ToolCallProvenance", () => {
     // historical tool call.
     mounted = await mount(
       <ToolCallProvenance
-        toolName="ws_removed/foo"
+        toolName="ws_removed-foo"
         workspaces={[
           ws({ id: "ws_user_u1", name: "Personal", isPersonal: true }),
           ws({ id: "ws_helix", name: "Helix" }),
@@ -141,9 +141,9 @@ describe("ToolCallProvenance", () => {
     );
     const root = findByTestId(mounted.container, "tool-call-provenance");
     expect(root?.getAttribute("data-fallback")).toBe("missing-workspace");
-    expect(root?.getAttribute("data-raw")).toBe("ws_removed/foo");
+    expect(root?.getAttribute("data-raw")).toBe("ws_removed-foo");
     const text = mounted.container.textContent ?? "";
-    expect(text).toContain("ws_removed/foo");
+    expect(text).toContain("ws_removed-foo");
     // No workspace badge in the fallback path — there's no friendly
     // workspace to attribute to.
     expect(findByTestId(mounted.container, "workspace-badge")).toBeNull();
@@ -169,7 +169,7 @@ describe("ToolCallProvenance", () => {
   test("status: error renders the error pill", async () => {
     mounted = await mount(
       <ToolCallProvenance
-        toolName="ws_helix/crm.search"
+        toolName="ws_helix-crm__search"
         status="error"
         workspaces={[ws({ id: "ws_helix", name: "Helix" })]}
       />,
@@ -182,7 +182,7 @@ describe("ToolCallProvenance", () => {
   test("status: running renders the running pill", async () => {
     mounted = await mount(
       <ToolCallProvenance
-        toolName="ws_helix/crm.search"
+        toolName="ws_helix-crm__search"
         status="running"
         workspaces={[ws({ id: "ws_helix", name: "Helix" })]}
       />,
@@ -194,7 +194,7 @@ describe("ToolCallProvenance", () => {
   test("personal workspace gets the dedicated badge variant", async () => {
     mounted = await mount(
       <ToolCallProvenance
-        toolName="ws_user_u1/gmail.send"
+        toolName="ws_user_u1-gmail__send"
         workspaces={[ws({ id: "ws_user_u1", name: "Personal", isPersonal: true })]}
       />,
     );
@@ -216,16 +216,16 @@ describe("ToolCallProvenance", () => {
 // ---------------------------------------------------------------------------
 
 describe("audit: no .split(\"/\") in new T013 components", () => {
-  test("ToolCallProvenance + ComposerFooter + sidebar nav have zero matches", async () => {
+  test("ToolCallProvenance + ComposerFooter + WorkspaceSection have zero matches", async () => {
+    // The sidebar workspace-nav set went through two redesigns post-
+    // T013 (left rail, then labelled vertical section). WorkspaceSection
+    // is the current structural guard for the workspaces surface.
     const root = join(import.meta.dir, "..");
     const targets = [
       "src/components/chat/ToolCallProvenance.tsx",
       "src/components/chat/ComposerFooter.tsx",
       "src/components/chat/Composer.tsx",
-      "src/components/shell/Sidebar.tsx",
-      "src/components/shell/SidebarWorkspaceNav.tsx",
-      "src/components/shell/WorkspaceRow.tsx",
-      "src/components/shell/WorkspaceAppList.tsx",
+      "src/components/shell/WorkspaceSection.tsx",
     ];
     const offenders: string[] = [];
     for (const rel of targets) {

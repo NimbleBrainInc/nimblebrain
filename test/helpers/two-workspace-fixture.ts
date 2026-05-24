@@ -85,7 +85,7 @@ export interface TwoWorkspaceFixtureOptions {
  * Per-workspace handle exposed by the fixture. The `name` /
  * `qualifiedToolName` fields are the load-bearing strings tests assert on:
  *
- *  - `qualifiedToolName` is the `ws_<id>/<source>__<tool>` form the
+ *  - `qualifiedToolName` is the `ws_<id>-<source>__<tool>` form the
  *    orchestrator (post-T006) parses on every tool call.
  *  - `callCount()` is the topology probe — a non-zero counter on the
  *    *wrong* workspace would fail the "naive: dispatch to current

@@ -19,18 +19,18 @@ import {
 import { parseNamespacedToolName } from "../src/lib/namespaced-tool";
 
 describe("parseNamespacedToolName (web)", () => {
-  test("parses ws_<id>/<tool> cleanly", () => {
-    expect(parseNamespacedToolName("ws_helix/crm.search")).toEqual({
+  test("parses ws_<id>-<tool> cleanly", () => {
+    expect(parseNamespacedToolName("ws_helix-crm__search")).toEqual({
       wsId: "ws_helix",
-      toolName: "crm.search",
+      toolName: "crm__search",
     });
   });
 
-  test("first `/` is the separator — tool names may contain `/`", () => {
-    // Mirrors the platform primitive: `ws_helix/foo/bar` → toolName "foo/bar"
-    expect(parseNamespacedToolName("ws_helix/foo/bar")).toEqual({
+  test("first `-` is the separator — tool names may contain `-`", () => {
+    // Mirrors the platform primitive: `ws_helix-foo-bar` → toolName "foo-bar"
+    expect(parseNamespacedToolName("ws_helix-foo-bar")).toEqual({
       wsId: "ws_helix",
-      toolName: "foo/bar",
+      toolName: "foo-bar",
     });
   });
 
@@ -39,20 +39,20 @@ describe("parseNamespacedToolName (web)", () => {
   });
 
   test("returns null on empty workspace component", () => {
-    expect(parseNamespacedToolName("/crm.search")).toBeNull();
+    expect(parseNamespacedToolName("-crm__search")).toBeNull();
   });
 
   test("returns null on empty tool component", () => {
-    expect(parseNamespacedToolName("ws_helix/")).toBeNull();
+    expect(parseNamespacedToolName("ws_helix-")).toBeNull();
   });
 
   test("returns null on invalid wsId (no `ws_` prefix)", () => {
-    expect(parseNamespacedToolName("helix/crm.search")).toBeNull();
+    expect(parseNamespacedToolName("helix-crm__search")).toBeNull();
   });
 
   test("returns null on path-traversal-style wsId", () => {
-    // The WORKSPACE_ID_RE rejects `..` / `/` in the wsId segment.
-    expect(parseNamespacedToolName("ws_../etc/passwd/foo")).toBeNull();
+    // The WORKSPACE_ID_RE rejects characters not in `[a-z0-9_]`.
+    expect(parseNamespacedToolName("ws_..-etc-passwd-foo")).toBeNull();
   });
 
   test("returns null on empty / non-string input", () => {

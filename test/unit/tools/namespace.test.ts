@@ -11,7 +11,7 @@
  *  - `namespacedToolName` accepting a wsId carrying path traversal
  *    or whitespace — the Stage 2 invariant lift that motivates the
  *    `WORKSPACE_ID_RE` import.
- *  - Embedded `/` in tool name being mis-split (we take the FIRST `/`
+ *  - Embedded `-` in tool name being mis-split (we take the FIRST `-`
  *    as the separator; this contract is asserted explicitly).
  *  - Round-trip property: anything `namespacedToolName` produces must
  *    parse back to the same `{wsId, toolName}`. If this breaks, the
@@ -27,9 +27,9 @@ import {
 } from "../../../src/tools/namespace.ts";
 
 describe("namespacedToolName — construction", () => {
-  test("builds `ws_<id>/<name>` for valid inputs", () => {
-    expect(namespacedToolName("ws_helix", "crm.search")).toBe("ws_helix/crm.search");
-    expect(namespacedToolName("ws_user_alice", "gmail.send")).toBe("ws_user_alice/gmail.send");
+  test("builds `ws_<id>-<name>` for valid inputs", () => {
+    expect(namespacedToolName("ws_helix", "crm__search")).toBe("ws_helix-crm__search");
+    expect(namespacedToolName("ws_user_alice", "gmail__send")).toBe("ws_user_alice-gmail__send");
   });
 
   test("throws on empty wsId — fail-loud, no silent default (Stage 1 lesson 3)", () => {
@@ -75,25 +75,25 @@ describe("namespacedToolName — construction", () => {
 
 describe("parseNamespacedToolName — parsing", () => {
   test("parses a valid namespaced name", () => {
-    expect(parseNamespacedToolName("ws_helix/crm.search")).toEqual({
+    expect(parseNamespacedToolName("ws_helix-crm__search")).toEqual({
       wsId: "ws_helix",
-      toolName: "crm.search",
+      toolName: "crm__search",
     });
   });
 
-  test("takes the FIRST `/` as separator — tool names may contain `/`", () => {
-    // Documented contract: future tool sources (resources-as-tools)
-    // may surface names containing `/`. Splitting on first `/` keeps
-    // that viable. If this changes, the orchestrator's dispatch must
-    // change in lockstep.
-    expect(parseNamespacedToolName("ws_helix/foo/bar")).toEqual({
+  test("takes the FIRST `-` as separator — tool names may contain `-`", () => {
+    // Documented contract: tool names can themselves contain `-` (e.g.
+    // `crm-tool__search`). Workspace ids can't contain `-` per
+    // WORKSPACE_ID_PATTERN, so the first `-` is unambiguously the
+    // workspace/tool boundary.
+    expect(parseNamespacedToolName("ws_helix-foo-bar")).toEqual({
       wsId: "ws_helix",
-      toolName: "foo/bar",
+      toolName: "foo-bar",
     });
   });
 
   test("throws on non-namespaced input — no fallback to current workspace (Stage 1 lesson 3)", () => {
-    // The failure mode this pins: a silent "if no slash, assume
+    // The failure mode this pins: a silent "if no separator, assume
     // current workspace" defaulting that would let untyped tool names
     // run against the wrong workspace.
     expect(() => parseNamespacedToolName("crm.search")).toThrow(UnknownNamespacedToolName);
@@ -103,21 +103,21 @@ describe("parseNamespacedToolName — parsing", () => {
     expect(() => parseNamespacedToolName("")).toThrow(UnknownNamespacedToolName);
   });
 
-  test("throws on empty workspace component (`ws_/foo`)", () => {
-    // `ws_/foo` after splitting at first `/` yields `wsId=""`; the
+  test("throws on empty workspace component (`-foo`)", () => {
+    // `-foo` after splitting at first `-` yields `wsId=""`; the
     // primitive must reject rather than produce an invalid scope.
-    expect(() => parseNamespacedToolName("ws_/foo")).toThrow(UnknownNamespacedToolName);
+    expect(() => parseNamespacedToolName("-foo")).toThrow(UnknownNamespacedToolName);
   });
 
-  test("throws on empty tool name (`ws_helix/`)", () => {
-    expect(() => parseNamespacedToolName("ws_helix/")).toThrow(UnknownNamespacedToolName);
+  test("throws on empty tool name (`ws_helix-`)", () => {
+    expect(() => parseNamespacedToolName("ws_helix-")).toThrow(UnknownNamespacedToolName);
   });
 
   test("throws when workspace component fails WORKSPACE_ID_RE", () => {
-    // `..` after split yields an invalid wsId that the orchestrator
-    // would otherwise have to defend against itself; the primitive
-    // catches it.
-    expect(() => parseNamespacedToolName("../foo/bar")).toThrow(UnknownNamespacedToolName);
+    // `..` before the first `-` yields an invalid wsId that the
+    // orchestrator would otherwise have to defend against itself; the
+    // primitive catches it.
+    expect(() => parseNamespacedToolName("..-foo-bar")).toThrow(UnknownNamespacedToolName);
   });
 
   test("error carries structured reason and input fields", () => {
@@ -137,44 +137,42 @@ describe("parseNamespacedToolName — parsing", () => {
 describe("round-trip property", () => {
   test("`parseNamespacedToolName(namespacedToolName(w, n))` round-trips for valid pairs", () => {
     // Sampling the space of valid inputs that real call sites will
-    // produce. The produced string must also match the documented
-    // shape regex — that's a second invariant that downstream
-    // consumers (e.g. orchestrator dispatch) may rely on.
+    // produce. Produced strings must also be LLM-provider compatible
+    // (`[a-zA-Z0-9_-]{1,128}`) — that's why `-` is the separator.
     const cases: Array<{ wsId: string; toolName: string }> = [
-      { wsId: "ws_helix", toolName: "crm.search" },
-      { wsId: "ws_user_alice", toolName: "gmail.send" },
+      { wsId: "ws_helix", toolName: "crm__search" },
+      { wsId: "ws_user_alice", toolName: "gmail__send" },
       { wsId: "ws_a", toolName: "x" },
-      { wsId: "ws_ABC_123", toolName: "search-records" },
-      { wsId: "ws_workspace_with_underscores", toolName: "tool.with.dots" },
-      // First-slash semantics: a tool name with `/` must round-trip
-      // through the primitive without being re-split.
-      { wsId: "ws_helix", toolName: "foo/bar" },
-      { wsId: "ws_helix", toolName: "a/b/c/d" },
+      { wsId: "ws_ABC_123", toolName: "search_records" },
+      { wsId: "ws_workspace_with_underscores", toolName: "tool_name" },
+      // First-`-` semantics: a tool name with embedded `-` must
+      // round-trip through the primitive without being re-split.
+      { wsId: "ws_helix", toolName: "foo-bar" },
+      { wsId: "ws_helix", toolName: "a-b-c-d" },
     ];
-    const SHAPE_RE = /^ws_[a-zA-Z0-9_-]+\/[^/].*$|^ws_[a-zA-Z0-9_-]+\/[^/]$/;
-    // Looser shape check that admits the embedded-slash cases:
-    const SHAPE_RE_LOOSE = /^ws_[a-zA-Z0-9_-]+\/.+$/;
+    // Shape regex matches the canonical form. Tool names can contain
+    // any of `[a-zA-Z0-9_-]` (LLM-compatible chars).
+    const SHAPE_RE = /^ws_[a-zA-Z0-9_]+-[a-zA-Z0-9_-]+$/;
     for (const { wsId, toolName } of cases) {
       const s = namespacedToolName(wsId, toolName);
-      expect(s).toMatch(SHAPE_RE_LOOSE);
+      expect(s).toMatch(SHAPE_RE);
       expect(parseNamespacedToolName(s)).toEqual({ wsId, toolName });
-      // Acknowledge SHAPE_RE exists to silence unused-binding warnings
-      // from biome — kept for documentation of the strict no-embedded-
-      // slash form, which the embedded-slash cases intentionally widen.
-      void SHAPE_RE;
     }
   });
 
-  test("produced string matches the canonical `/^ws_[a-zA-Z0-9_-]+\\/[^/]+$/` for slash-free tool names", () => {
-    // Tight regex applies only when the tool name itself has no `/`.
+  test("produced string matches the LLM provider regex `[a-zA-Z0-9_-]{1,128}`", () => {
+    // The whole point of using `-` (not `/`) as the separator: every
+    // produced name must pass the upstream provider's tool-name
+    // validator. Regressing this would block tool registration with
+    // OpenAI/Anthropic/etc. at the API boundary.
     const cases: Array<[string, string]> = [
-      ["ws_helix", "crm.search"],
-      ["ws_user_alice", "gmail.send"],
+      ["ws_helix", "crm__search"],
+      ["ws_user_alice", "gmail__send"],
       ["ws_a", "x"],
     ];
-    const RE = /^ws_[a-zA-Z0-9_-]+\/[^/]+$/;
+    const PROVIDER_RE = /^[a-zA-Z0-9_-]{1,128}$/;
     for (const [wsId, toolName] of cases) {
-      expect(namespacedToolName(wsId, toolName)).toMatch(RE);
+      expect(namespacedToolName(wsId, toolName)).toMatch(PROVIDER_RE);
     }
   });
 });

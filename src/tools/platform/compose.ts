@@ -50,12 +50,12 @@ import {
 import { getRequestContext } from "../../runtime/request-context.ts";
 import { makeIdentitySkill, type Runtime } from "../../runtime/runtime.ts";
 import { hashSkillBody } from "../../runtime/skills-loaded-payload.ts";
-import { surfaceTools } from "../../runtime/tools.ts";
 import { parseSkillContent } from "../../skills/loader.ts";
 import { selectLayer3Skills } from "../../skills/select.ts";
 import type { InProcessTool } from "../in-process-app.ts";
 import { defineInProcessApp } from "../in-process-app.ts";
 import type { McpSource } from "../mcp-source.ts";
+import { surfaceTools } from "../surfacing.ts";
 import { ComposeEffectiveContextInput } from "./schemas/compose.ts";
 
 const COMPOSE_SOURCE_NAME = "compose";

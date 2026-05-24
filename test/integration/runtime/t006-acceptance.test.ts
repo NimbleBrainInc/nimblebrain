@@ -135,7 +135,7 @@ describe("runtime.chat — orchestrator error taxonomy (T006)", () => {
           toolCalls: [
             {
               toolCallId: "call_unknown_ws",
-              toolName: "ws_does_not_exist/crm__search",
+              toolName: "ws_does_not_exist-crm__search",
               input: "{}",
             },
           ],
@@ -170,7 +170,7 @@ describe("runtime.chat — orchestrator error taxonomy (T006)", () => {
           toolCalls: [
             {
               toolCallId: "call_denied",
-              toolName: `${stranger.id}/crm__search`,
+              toolName: `${stranger.id}-crm__search`,
               input: "{}",
             },
           ],
@@ -208,7 +208,7 @@ describe("runtime.chat — orchestrator error taxonomy (T006)", () => {
               // is not registered there. Orchestrator must surface
               // UnknownToolSource (not UnknownWorkspace — ws exists and
               // user IS a member).
-              toolName: `${fixture?.personal.id ?? "ws_user_x"}/nonexistent__do_thing`,
+              toolName: `${fixture?.personal.id ?? "ws_user_x"}-nonexistent__do_thing`,
               input: "{}",
             },
           ],
@@ -227,7 +227,7 @@ describe("runtime.chat — orchestrator error taxonomy (T006)", () => {
           toolCalls: [
             {
               toolCallId: "call_unknown_source",
-              toolName: `${personalId}/nonexistent__do_thing`,
+              toolName: `${personalId}-nonexistent__do_thing`,
               input: "{}",
             },
           ],

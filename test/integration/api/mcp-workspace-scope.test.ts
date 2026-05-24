@@ -150,11 +150,11 @@ describe("MCP workspace scoping", () => {
       const names = result.tools.map((t) => t.name);
 
       // Should include allowed and protected tools
-      expect(names).toContain(`${TEST_WORKSPACE_ID}/${ALLOWED_SOURCE}__greet`);
-      expect(names).toContain(`${TEST_WORKSPACE_ID}/${PROTECTED_SOURCE}__admin`);
+      expect(names).toContain(`${TEST_WORKSPACE_ID}-${ALLOWED_SOURCE}__greet`);
+      expect(names).toContain(`${TEST_WORKSPACE_ID}-${PROTECTED_SOURCE}__admin`);
 
       // Should NOT include denied bundle's tools
-      expect(names).not.toContain(`${TEST_WORKSPACE_ID}/${DENIED_SOURCE}__secret`);
+      expect(names).not.toContain(`${TEST_WORKSPACE_ID}-${DENIED_SOURCE}__secret`);
     } finally {
       await client.close();
     }
@@ -164,7 +164,7 @@ describe("MCP workspace scoping", () => {
     const client = await createMcpClient();
     try {
       const result = await client.callTool({
-        name: `${TEST_WORKSPACE_ID}/${ALLOWED_SOURCE}__greet`,
+        name: `${TEST_WORKSPACE_ID}-${ALLOWED_SOURCE}__greet`,
         arguments: { name: "world" },
       });
       expect(result.isError).toBeFalsy();
@@ -180,7 +180,7 @@ describe("MCP workspace scoping", () => {
     const client = await createMcpClient();
     try {
       const result = await client.callTool({
-        name: `${TEST_WORKSPACE_ID}/${PROTECTED_SOURCE}__admin`,
+        name: `${TEST_WORKSPACE_ID}-${PROTECTED_SOURCE}__admin`,
         arguments: {},
       });
       expect(result.isError).toBeFalsy();
@@ -199,7 +199,7 @@ describe("MCP workspace scoping", () => {
       let dataReason: string | undefined;
       try {
         await client.callTool({
-          name: `${TEST_WORKSPACE_ID}/${DENIED_SOURCE}__secret`,
+          name: `${TEST_WORKSPACE_ID}-${DENIED_SOURCE}__secret`,
           arguments: {},
         });
       } catch (err) {

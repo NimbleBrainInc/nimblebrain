@@ -94,6 +94,7 @@ import type { DelegateContext } from "../tools/delegate.ts";
 import { McpSource } from "../tools/mcp-source.ts";
 import { namespacedToolName } from "../tools/namespace.ts";
 import { SharedSourceRef, type ToolRegistry } from "../tools/registry.ts";
+import { surfaceTools } from "../tools/surfacing.ts";
 import { createSystemTools } from "../tools/system-tools.ts";
 import type { ResourceData, Tool, ToolSource } from "../tools/types.ts";
 import { WorkspaceContext } from "../workspace/context.ts";
@@ -107,7 +108,6 @@ import {
   runWithRequestContext,
 } from "./request-context.ts";
 import { buildSkillsLoadedPayload } from "./skills-loaded-payload.ts";
-import { surfaceTools } from "./tools.ts";
 import type { ChatRequest, ChatResult, ModelSlots, RuntimeConfig, TurnUsage } from "./types.ts";
 import { createWorkspaceRegistry, startWorkspaceBundles } from "./workspace-runtime.ts";
 

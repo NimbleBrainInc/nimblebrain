@@ -13,9 +13,9 @@ import type {
 import { DEFAULT_CHILD_ITERATIONS, MAX_CHILD_ITERATIONS } from "../limits.ts";
 import { resolveMaxOutputTokens } from "../runtime/resolve-max-output-tokens.ts";
 import { resolveThinking } from "../runtime/resolve-thinking.ts";
-import { filterTools } from "../runtime/tools.ts";
 import type { AgentProfile } from "../runtime/types.ts";
 import type { InProcessTool } from "./in-process-app.ts";
+import { filterTools } from "./surfacing.ts";
 
 /** Fixed system prompt for delegate calls without a named agent profile. */
 const DELEGATE_PREAMBLE =

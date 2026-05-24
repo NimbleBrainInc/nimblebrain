@@ -328,14 +328,14 @@ describe("cross-workspace chat (Stage 2 contract — T001)", () => {
   // intentional personal-workspace use. The contract: unknown prefix
   // → structured error, no dispatch anywhere.
   it.if(!SKIP_UNTIL_T006)(
-    "unknown prefix — ws_doesnotexist/foo surfaces a structured error, does NOT fall back to personal workspace",
+    "unknown prefix — ws_doesnotexist-foo surfaces a structured error, does NOT fall back to personal workspace",
     async () => {
       fixture = await bootFixtureWithScript(() => [
         {
           toolCalls: [
             {
               toolCallId: "call_bogus_ws",
-              toolName: "ws_doesnotexist/foo__bar",
+              toolName: "ws_doesnotexist-foo__bar",
               input: JSON.stringify({ echo: "bogus" }),
             },
           ],

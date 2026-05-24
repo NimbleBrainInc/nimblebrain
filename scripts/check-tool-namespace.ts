@@ -3,7 +3,7 @@
  * Lint: cross-workspace tool names go through `namespacedToolName` /
  * `parseNamespacedToolName` in `src/tools/namespace.ts`.
  *
- * Stage 2 (delegation-model refactor) makes `ws_<id>/<toolName>` the
+ * Stage 2 (delegation-model refactor) makes `ws_<id>-<toolName>` the
  * canonical cross-workspace tool-name shape. The primitive in
  * `src/tools/namespace.ts` is the **single construction site** for that
  * form. This lint enforces the constraint structurally so a future
@@ -12,17 +12,16 @@
  *
  * What this script flags (both are regressions):
  *
- *  (a) **Construction-by-hand** of the `ws_<id>/<toolName>` form:
- *      - String literal containing the substring `ws_<id>/` where the
+ *  (a) **Construction-by-hand** of the `ws_<id>-<toolName>` form:
+ *      - String literal containing the substring `ws_<id>-` where the
  *        id slot is non-empty.
- *      - Template literal whose head text matches `^ws_…/` OR whose
- *        head ends with `ws_` and the first span is followed by a
- *        literal beginning with `/` (the
- *        `` `ws_${wsId}/${toolName}` `` shape).
+ *      - Template literal whose head text matches `^ws_…-` OR whose
+ *        head is exactly `"ws_"` and the literal after the first span
+ *        begins with `-` (the `` `ws_${wsId}-${toolName}` `` shape).
  *      - String concat with the `ws_` prefix immediately followed by
- *        a `/` literal further down the chain.
+ *        a `-` literal further down the chain.
  *
- *  (b) **Parse-by-hand**: `.split("/")` called on an identifier whose
+ *  (b) **Parse-by-hand**: `.split("-")` called on an identifier whose
  *      name strongly suggests a namespaced tool name (matches a small
  *      heuristic regex — `namespaced`, `qualifiedToolName`,
  *      `fullToolName`, etc.). The intent is to nudge callers to use
@@ -79,29 +78,32 @@ interface Violation {
 // ── Construction predicates (a) ─────────────────────────────────────
 
 /**
- * True for a string literal whose text contains `ws_<id>/` where the
- * `<id>` slot is non-empty. Catches hard-coded `"ws_helix/crm.search"`
+ * True for a string literal whose text contains `ws_<id>-` where the
+ * `<id>` slot is non-empty. Catches hard-coded `"ws_helix-crm__search"`
  * and similar.
  *
- * Empty workspace slot (`"ws_/foo"`) is intentionally NOT flagged here
- * — that's a degenerate shape the primitive rejects, and we don't want
- * to false-positive on unrelated strings that happen to contain `ws_/`.
+ * Workspace ids match `[a-z0-9_]` (no hyphens) per
+ * `WORKSPACE_ID_PATTERN`, so the regex char class excludes `-`. The
+ * first `-` after `ws_<id>` is unambiguously the workspace/tool
+ * separator. Empty workspace slot (`"ws_-foo"`) is intentionally NOT
+ * flagged here — that's a degenerate shape the primitive rejects,
+ * and we don't want to false-positive on unrelated strings.
  */
 export function isNamespacedToolStringLiteral(node: ts.StringLiteral): boolean {
-  return /ws_[a-zA-Z0-9_-]+\//.test(node.text);
+  return /ws_[a-zA-Z0-9_]+-/.test(node.text);
 }
 
 /**
- * True for a template literal that assembles a `ws_<id>/<rest>` shape.
+ * True for a template literal that assembles a `ws_<id>-<rest>` shape.
  * Handles two common forms:
- *   - Head begins with `ws_X/` (literal id, dynamic rest).
+ *   - Head begins with `ws_<X>-` (literal id, dynamic rest).
  *   - Head is exactly `"ws_"` (i.e. the template starts with the
  *     workspace prefix) AND the literal after the first span starts
- *     with `/` (`` `ws_${wsId}/${toolName}` ``).
+ *     with `-` (`` `ws_${wsId}-${toolName}` ``).
  *
  * The exact-`"ws_"` requirement (instead of `endsWith("ws_")`) avoids
  * false positives on unrelated templates whose head merely contains
- * `ws_` mid-string, e.g. `` `prefix-ws_${id}/...` ``. The latter is
+ * `ws_` mid-string, e.g. `` `prefix-ws_${id}-...` ``. The latter is
  * not a Stage-2 namespaced tool name and shouldn't be flagged.
  *
  * No-substitution templates (no `${}`) are routed through
@@ -110,24 +112,27 @@ export function isNamespacedToolStringLiteral(node: ts.StringLiteral): boolean {
  */
 export function isNamespacedToolTemplate(node: ts.TemplateExpression): boolean {
   // Form 1: literal id in head.
-  if (/ws_[a-zA-Z0-9_-]+\//.test(node.head.text)) return true;
+  if (/ws_[a-zA-Z0-9_]+-/.test(node.head.text)) return true;
   // Form 2: head is exactly `"ws_"`, first span's trailing literal
-  // begins with `/`.
+  // begins with `-`.
   if (node.head.text === "ws_") {
     const firstSpan = node.templateSpans[0];
-    if (firstSpan && firstSpan.literal.text.startsWith("/")) return true;
+    if (firstSpan && firstSpan.literal.text.startsWith("-")) return true;
   }
   return false;
 }
 
 /**
  * Walks a `+` chain and returns true iff some operand is a literal
- * `"ws_"` AND a later operand (anywhere in the chain) is a literal
- * beginning with `"/"`. Catches `"ws_" + wsId + "/" + name`.
+ * `"ws_"` AND a later operand (anywhere in the chain) is the literal
+ * `"-"` (or starts with `-`). Catches `"ws_" + wsId + "-" + name`.
  *
  * The dual condition keeps the predicate from flagging unrelated
  * concat patterns like `"ws_" + something` that don't continue into a
- * tool-name component.
+ * tool-name component. We deliberately require the separator literal
+ * to START with `-` (rather than just contain `-`), because `-` is a
+ * common char in lots of unrelated strings — broader matching would
+ * generate noise on URL/slug/date concat patterns.
  */
 export function isNamespacedToolBinaryConcat(node: ts.BinaryExpression): boolean {
   if (node.operatorToken.kind !== ts.SyntaxKind.PlusToken) return false;
@@ -143,7 +148,7 @@ export function isNamespacedToolBinaryConcat(node: ts.BinaryExpression): boolean
   collect(node);
 
   let sawWsPrefix = -1;
-  let sawSlashAfter = false;
+  let sawSepAfter = false;
   for (let i = 0; i < operands.length; i++) {
     const op = operands[i];
     if (!op) continue;
@@ -152,30 +157,30 @@ export function isNamespacedToolBinaryConcat(node: ts.BinaryExpression): boolean
     if (text === null) continue;
     if (sawWsPrefix < 0) {
       // Either exactly "ws_" or a literal beginning with "ws_" and
-      // ending mid-id (no slash yet).
-      if (text === "ws_" || (text.startsWith("ws_") && !text.includes("/"))) {
+      // ending mid-id (no separator yet).
+      if (text === "ws_" || (text.startsWith("ws_") && !text.includes("-"))) {
         sawWsPrefix = i;
       }
     } else if (i > sawWsPrefix) {
-      if (text.startsWith("/") || text.includes("/")) {
-        sawSlashAfter = true;
+      if (text.startsWith("-")) {
+        sawSepAfter = true;
         break;
       }
     }
   }
-  return sawWsPrefix >= 0 && sawSlashAfter;
+  return sawWsPrefix >= 0 && sawSepAfter;
 }
 
 // ── Parse predicate (b) ─────────────────────────────────────────────
 
 /**
- * True for `<id>.split("/")` where `<id>` is an identifier whose name
+ * True for `<id>.split("-")` where `<id>` is an identifier whose name
  * matches `NAMESPACED_BINDING_RE`. The pattern is the canonical
  * by-hand-parse the primitive is meant to replace.
  *
  * Conservative on receiver shape: only flags direct identifier
  * receivers (not arbitrary expressions). A property access like
- * `obj.toolName.split("/")` is NOT flagged — the lint should not be a
+ * `obj.toolName.split("-")` is NOT flagged — the lint should not be a
  * data-flow analyzer. Real misuse tends to be direct.
  */
 export function isNamespacedSplit(node: ts.CallExpression): boolean {
@@ -188,7 +193,7 @@ export function isNamespacedSplit(node: ts.CallExpression): boolean {
   if (!arg) return false;
   const argText =
     ts.isStringLiteral(arg) || ts.isNoSubstitutionTemplateLiteral(arg) ? arg.text : null;
-  return argText === "/";
+  return argText === "-";
 }
 
 // ── Walker scaffolding (same shape as check-conversation-paths.ts) ──
@@ -242,11 +247,11 @@ function scanFile(absPath: string, violations: Violation[]): void {
 
   function visit(node: ts.Node): void {
     if (ts.isStringLiteral(node) && isNamespacedToolStringLiteral(node)) {
-      record(node, "string literal builds `ws_<id>/<toolName>` shape");
+      record(node, "string literal builds `ws_<id>-<toolName>` shape");
     } else if (ts.isTemplateExpression(node) && isNamespacedToolTemplate(node)) {
-      record(node, "template literal builds `ws_<id>/<toolName>` shape");
+      record(node, "template literal builds `ws_<id>-<toolName>` shape");
     } else if (ts.isBinaryExpression(node) && isNamespacedToolBinaryConcat(node)) {
-      record(node, "string concat builds `ws_<id>/<toolName>` shape");
+      record(node, "string concat builds `ws_<id>-<toolName>` shape");
     } else if (ts.isCallExpression(node) && isNamespacedSplit(node)) {
       record(node, '`.split("/")` on a presumed namespaced tool name');
     }

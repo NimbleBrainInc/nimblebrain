@@ -1,11 +1,19 @@
 /**
  * Cross-workspace tool name primitive.
  *
- * **Single construction site for `ws_<id>/<toolName>`.** No other code
+ * **Single construction site for `ws_<id>-<toolName>`.** No other code
  * site in `src/` may build or parse this form by hand — the convention
  * is enforced by the `check:tool-namespace` AST lint
  * (`scripts/check-tool-namespace.ts`). See Stage 2 `SPEC_REFERENCE.md`
  * § "Constraints" item 6.
+ *
+ * **Separator: `-`.** Workspace ids match
+ * `WORKSPACE_ID_PATTERN = ^ws_[a-z0-9_]{1,64}$` (no `-`), so the first
+ * `-` is unambiguously the workspace/tool boundary. We chose `-` over
+ * `/` because LLM provider tool-name validators (OpenAI, Anthropic,
+ * etc.) constrain names to `[a-zA-Z0-9_-]{1,128}` — `/` is rejected
+ * at the provider boundary, breaking tool registration. `-` satisfies
+ * both the provider regex and our unambiguity requirement.
  *
  * Design rules (matching Stage 1 lessons):
  *
@@ -19,11 +27,12 @@
  *    credential-store primitives: a wsId carrying path-traversal
  *    (`../etc`) or whitespace (`ws helix`) must be rejected at the
  *    construction site, not later.
- * 3. **First-slash split** when parsing. Tool names may contain `/`
- *    in the future (e.g. URL-shaped resource ids surfaced as tools).
- *    `parseNamespacedToolName("ws_helix/foo/bar")` returns
- *    `{ wsId: "ws_helix", toolName: "foo/bar" }`. The contract is
- *    asserted in `test/unit/tools/namespace.test.ts`.
+ * 3. **First-`-` split** when parsing. Tool names may contain `-`
+ *    themselves (e.g. `crm-tool__search`); the first `-` is the
+ *    workspace boundary, the rest is the tool name verbatim.
+ *    `parseNamespacedToolName("ws_helix-foo-bar")` returns
+ *    `{ wsId: "ws_helix", toolName: "foo-bar" }`. Asserted in
+ *    `test/unit/tools/namespace.test.ts`.
  * 4. **No `as unknown as T` casts.** Pure string functions; type flow
  *    is direct.
  */
@@ -115,7 +124,7 @@ export function namespacedToolName(wsId: string, name: string): string {
       "[tools/namespace] namespacedToolName: tool name is required (non-empty string)",
     );
   }
-  return `${wsId}/${name}`;
+  return `${wsId}-${name}`;
 }
 
 // ── Parsing ───────────────────────────────────────────────────────
@@ -123,17 +132,24 @@ export function namespacedToolName(wsId: string, name: string): string {
 /**
  * Parse a namespaced tool name back into `{ wsId, toolName }`.
  *
- * Takes the **first** `/` as the separator so tool names may contain
- * `/` themselves: `parseNamespacedToolName("ws_helix/foo/bar")` →
- * `{ wsId: "ws_helix", toolName: "foo/bar" }`. The intent is to keep
- * future tool sources (resources-as-tools, nested namespaces) viable
- * without re-cutting this contract.
+ * Takes the **first** `-` as the separator. Workspace ids cannot
+ * contain `-` (per `WORKSPACE_ID_PATTERN = ^ws_[a-z0-9_]{1,64}$`), so
+ * the first `-` is always the workspace boundary; tool names may
+ * contain `-` themselves and round-trip cleanly:
+ * `parseNamespacedToolName("ws_helix-foo-bar")` →
+ * `{ wsId: "ws_helix", toolName: "foo-bar" }`.
+ *
+ * Why `-` and not `/`: LLM provider tool-name validators (OpenAI,
+ * Anthropic, ...) typically constrain tool names to
+ * `[a-zA-Z0-9_-]{1,128}`, rejecting `/`. The separator must satisfy
+ * that external regex AND remain unambiguous against the workspace
+ * id pattern. `-` is the only single-char that fits both.
  *
  * Throws `UnknownNamespacedToolName` on:
  *   - Input not a string, or empty.
- *   - No `/` separator (`"crm.search"`).
- *   - Empty workspace component (`"ws_/foo"`).
- *   - Empty tool name component (`"ws_helix/"`).
+ *   - No `-` separator (`"crm.search"`).
+ *   - Empty workspace component (`"-foo"`).
+ *   - Empty tool name component (`"ws_helix-"`).
  *   - Workspace component fails `WORKSPACE_ID_RE`.
  *
  * Never returns `null`/`undefined`. Never silently falls back to a
@@ -148,16 +164,16 @@ export function parseNamespacedToolName(s: string): { wsId: string; toolName: st
       "[tools/namespace] parseNamespacedToolName: input is required (non-empty string)",
     );
   }
-  const slashIdx = s.indexOf("/");
-  if (slashIdx < 0) {
+  const sepIdx = s.indexOf("-");
+  if (sepIdx < 0) {
     throw new UnknownNamespacedToolName(
       s,
       "missing_separator",
-      `[tools/namespace] parseNamespacedToolName: missing "/" separator in "${s}"`,
+      `[tools/namespace] parseNamespacedToolName: missing "-" separator in "${s}"`,
     );
   }
-  const wsId = s.slice(0, slashIdx);
-  const toolName = s.slice(slashIdx + 1);
+  const wsId = s.slice(0, sepIdx);
+  const toolName = s.slice(sepIdx + 1);
   if (wsId.length === 0) {
     throw new UnknownNamespacedToolName(
       s,
@@ -180,4 +196,31 @@ export function parseNamespacedToolName(s: string): { wsId: string; toolName: st
     );
   }
   return { wsId, toolName };
+}
+
+/**
+ * Best-effort bare tool name for read-side consumers.
+ *
+ * If `s` is a namespaced name (`ws_<id>-<toolName>`), return the
+ * `<toolName>` portion; otherwise return `s` unchanged. Unlike
+ * `parseNamespacedToolName` this NEVER throws — it exists for the
+ * read-side surfaces (tool surfacing in `runtime/tools.ts`, Layer-3
+ * skill affinity in `skills/select.ts`, the engine's system-tool
+ * release guard) that operate on tool lists mixing namespaced
+ * (cross-workspace) and bare (pre-namespace, system, or test) names and
+ * must classify both. Dispatch keeps using the strict parser, where an
+ * unparseable name MUST fail loud.
+ *
+ * Implemented in terms of `parseNamespacedToolName` so the separator
+ * and the `WORKSPACE_ID_RE` boundary stay defined in exactly one place:
+ * a non-namespaced name (no `-`, or a leading segment that isn't a
+ * valid `ws_<id>`) throws inside the parser and falls through to the
+ * pass-through branch.
+ */
+export function bareToolName(s: string): string {
+  try {
+    return parseNamespacedToolName(s).toolName;
+  } catch {
+    return s;
+  }
 }

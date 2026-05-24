@@ -3,7 +3,7 @@ import { existsSync, rmSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Runtime } from "../../src/runtime/runtime.ts";
-import { surfaceTools } from "../../src/runtime/tools.ts";
+import { surfaceTools } from "../../src/tools/surfacing.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
 import type { ToolSchema } from "../../src/engine/types.ts";
