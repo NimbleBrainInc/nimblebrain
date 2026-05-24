@@ -16,7 +16,7 @@ import {
   WORKSPACE_ID_FLAGS,
   WORKSPACE_ID_PATTERN,
 } from "../src/_generated/workspace-id-pattern.ts";
-import { identityToolName, parseNamespacedToolName } from "../src/lib/namespaced-tool";
+import { parseNamespacedToolName } from "../src/lib/namespaced-tool";
 
 describe("parseNamespacedToolName (web)", () => {
   test("parses ws_<id>-<tool> to workspace scope", () => {
@@ -34,38 +34,34 @@ describe("parseNamespacedToolName (web)", () => {
     });
   });
 
-  test("parses me-<tool> to identity scope", () => {
-    expect(parseNamespacedToolName("me-conversations__search")).toEqual({
-      scope: { kind: "identity" },
+  test("a bare name parses to global scope, whole name as toolName", () => {
+    expect(parseNamespacedToolName("conversations__search")).toEqual({
+      scope: { kind: "global" },
       toolName: "conversations__search",
     });
   });
 
-  test("identityToolName round-trips through the parser", () => {
-    expect(parseNamespacedToolName(identityToolName("files__list"))).toEqual({
-      scope: { kind: "identity" },
-      toolName: "files__list",
+  test("a bare name with no separator is global", () => {
+    expect(parseNamespacedToolName("nb__search")).toEqual({
+      scope: { kind: "global" },
+      toolName: "nb__search",
     });
   });
 
-  test("returns null on missing separator", () => {
-    expect(parseNamespacedToolName("crm.search")).toBeNull();
+  test("a bare name whose source contains `-` (not ws_) stays global", () => {
+    expect(parseNamespacedToolName("helix-crm__search")).toEqual({
+      scope: { kind: "global" },
+      toolName: "helix-crm__search",
+    });
   });
 
-  test("returns null on empty workspace component", () => {
-    expect(parseNamespacedToolName("-crm__search")).toBeNull();
-  });
-
-  test("returns null on empty tool component", () => {
+  test("returns null on empty tool component after a workspace prefix", () => {
     expect(parseNamespacedToolName("ws_helix-")).toBeNull();
   });
 
-  test("returns null on invalid wsId (no `ws_` prefix)", () => {
-    expect(parseNamespacedToolName("helix-crm__search")).toBeNull();
-  });
-
-  test("returns null on path-traversal-style wsId", () => {
-    // The WORKSPACE_ID_RE rejects characters not in `[a-z0-9_]`.
+  test("returns null on a malformed ws_ prefix (workspace attempt, not global)", () => {
+    // Starts with `ws_` but fails WORKSPACE_ID_RE → render raw, don't
+    // silently treat a malformed workspace name as a bare global one.
     expect(parseNamespacedToolName("ws_..-etc-passwd-foo")).toBeNull();
   });
 
@@ -75,11 +71,11 @@ describe("parseNamespacedToolName (web)", () => {
     expect(parseNamespacedToolName(undefined as unknown as string)).toBeNull();
   });
 
-  test("never falls back to a 'current workspace' — Q2 invariant", () => {
-    // A regression that defaulted to the user's personal workspace on
-    // missing wsId would be a subtle correctness bug. The parser must
-    // refuse rather than guess.
-    expect(parseNamespacedToolName("foo")).toBeNull();
+  test("a bare name never resolves to a workspace — no 'current workspace' guess (Q2)", () => {
+    // A bare name is global, never silently routed to the user's current
+    // workspace. The scope is explicit: workspace only when ws_<id>- is present.
+    const parsed = parseNamespacedToolName("foo");
+    expect(parsed?.scope.kind).toBe("global");
   });
 });
 

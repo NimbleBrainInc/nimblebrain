@@ -343,13 +343,17 @@ describe("/mcp identity-bound session (Stage 2 T007)", () => {
     }
   });
 
-  it("tools/call with un-namespaced name rejects with -32602 invalid_tool_name (failure mode: silent route)", async () => {
+  it("tools/call with a bare name rejects with -32602 (bare → global scope, not silently routed to a workspace)", async () => {
     const client = await createIdentityBoundClient();
     try {
       let errorCode: number | undefined;
       let dataReason: string | undefined;
       let errorMessage: string | undefined;
       try {
+        // A bare `<source>__<tool>` for a workspace app. Bare = global
+        // scope; a workspace-app tool isn't a global tool, so it's refused
+        // (pre-W3 as "global not routable") — NOT silently routed to a
+        // current workspace.
         await client.callTool({
           name: `${SHARED_SOURCE_NAME}__${SHARED_TOOL_BARE}`,
           arguments: { echo: "noop" },
@@ -361,8 +365,8 @@ describe("/mcp identity-bound session (Stage 2 T007)", () => {
         errorMessage = e.message;
       }
       expect(errorCode).toBe(-32602);
-      expect(dataReason).toBe("invalid_tool_name");
-      expect(errorMessage).toContain("ws_<id>-<tool>");
+      expect(dataReason).toBe("global_not_routable");
+      expect(errorMessage).toContain("Global tool dispatch");
     } finally {
       await client.close();
     }

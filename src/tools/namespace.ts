@@ -42,27 +42,26 @@ import { WORKSPACE_ID_RE } from "../workspace/workspace-store.ts";
 // ── Scope ──────────────────────────────────────────────────────────
 
 /**
- * The scope a namespaced tool name dispatches into.
+ * The scope a tool name dispatches into.
  *
- * Stage 2 had one axis — the workspace. The identity app surface adds a
- * second: tools that belong to the IDENTITY (conversations, files,
- * automations) span every workspace and authorize by `ownerId`, so they
- * carry no workspace. A namespaced tool name is therefore
- * `<scope>-<toolName>` where the leading segment is either a workspace id
- * (`ws_<id>`) or the identity sentinel (`me`).
+ * Two axes, distinguished by presence of a workspace prefix:
+ *
+ *   - **workspace** — `ws_<id>-<toolName>`. A workspace-*replicated* tool:
+ *     the same app installed in two workspaces is two distinct tools, each
+ *     carrying its workspace. Dispatched against `WorkspaceContext(wsId)`.
+ *   - **global** — bare `<toolName>` (no prefix). A *singleton*: platform
+ *     system tools (`nb__*`) and identity-owned apps (`conversations__*`,
+ *     later `files__*` / `automations__*`). There's one of each, so it
+ *     carries no workspace. Dispatched against the identity / global
+ *     context (the orchestrator validates the source against a kernel-
+ *     owned global-source set before routing).
+ *
+ * The workspace prefix means "this specific workspace"; its ABSENCE means
+ * global. No `me-`-style sentinel — a bare name is global by construction.
  */
 export type ToolScope =
   | { readonly kind: "workspace"; readonly wsId: string }
-  | { readonly kind: "identity" };
-
-/**
- * Sentinel scope segment for identity-scoped tool names (`me-<tool>`).
- *
- * Safe against collision: a workspace id must match
- * `WORKSPACE_ID_RE = ^ws_[a-z0-9_]{1,64}$`, which `me` can never satisfy
- * (no `ws_` prefix), so the first-`-` split stays unambiguous.
- */
-export const IDENTITY_SCOPE = "me";
+  | { readonly kind: "global" };
 
 // ── Errors ─────────────────────────────────────────────────────────
 
@@ -152,60 +151,44 @@ export function namespacedToolName(wsId: string, name: string): string {
   return `${wsId}-${name}`;
 }
 
-/**
- * Build an identity-scoped tool name: `me-<name>`.
- *
- * The identity counterpart to `namespacedToolName`. Used by the
- * cross-workspace aggregator for tools whose placement scope is
- * `identity` (conversations, files, automations) and by the web bridge
- * when an identity app's iframe dispatches a tool. Throws
- * `InvalidNamespacedToolNameInput` on an empty/non-string name — same
- * fail-loud posture as the workspace builder.
- */
-export function identityToolName(name: string): string {
-  if (typeof name !== "string" || name.length === 0) {
-    throw new InvalidNamespacedToolNameInput(
-      IDENTITY_SCOPE,
-      String(name),
-      "empty_tool_name",
-      "[tools/namespace] identityToolName: tool name is required (non-empty string)",
-    );
-  }
-  return `${IDENTITY_SCOPE}-${name}`;
-}
+// Global tools have NO builder: a global tool name IS its bare
+// `<source>__<tool>` form (e.g. `nb__search`, `conversations__search`).
+// There's nothing to prefix — absence of a `ws_<id>-` prefix is what
+// makes a name global.
 
 // ── Parsing ───────────────────────────────────────────────────────
 
 /**
- * Parse a namespaced tool name into `{ scope, toolName }`.
+ * Parse a tool name into `{ scope, toolName }`.
  *
- * Grammar: `<scope>-<toolName>`, split on the **first** `-`. The leading
- * segment is the scope:
- *   - `me`        → `{ kind: "identity" }`
- *   - `ws_<id>`   → `{ kind: "workspace", wsId }`
+ * Grammar:
+ *   - `ws_<id>-<toolName>` → `{ kind: "workspace", wsId }`, toolName is the
+ *     remainder after the first `-`. Workspace ids can't contain `-`
+ *     (`^ws_[a-z0-9_]{1,64}$`), so the first `-` is the workspace boundary;
+ *     tool names may contain `-` and round-trip cleanly
+ *     (`ws_helix-foo-bar` → wsId `ws_helix`, toolName `foo-bar`).
+ *   - **bare** `<toolName>` (anything not matching the above) →
+ *     `{ kind: "global" }`, toolName is the WHOLE input (no prefix to
+ *     strip). Platform tools (`nb__search`) and identity-owned app tools
+ *     (`conversations__search`) are global singletons.
  *
- * Neither a workspace id nor `me` contains `-` (workspace ids match
- * `^ws_[a-z0-9_]{1,64}$`), so the first `-` is always the scope
- * boundary; tool names may contain `-` themselves and round-trip
- * cleanly: `parseNamespacedToolName("ws_helix-foo-bar")` →
- * `{ scope: { kind: "workspace", wsId: "ws_helix" }, toolName: "foo-bar" }`.
+ * The workspace prefix means "this specific workspace"; its absence means
+ * global. There is no `me-`-style sentinel.
  *
- * Why `-` and not `/`: LLM provider tool-name validators (OpenAI,
- * Anthropic, ...) typically constrain tool names to
- * `[a-zA-Z0-9_-]{1,128}`, rejecting `/`. The separator must satisfy
- * that external regex AND remain unambiguous against the scope grammar.
- * `-` is the only single-char that fits both.
+ * Why `-` and not `/`: LLM provider tool-name validators constrain names
+ * to `[a-zA-Z0-9_-]{1,128}`, rejecting `/`. `-` satisfies that and is
+ * unambiguous against the workspace-id pattern.
  *
- * Throws `UnknownNamespacedToolName` on:
+ * Throws `UnknownNamespacedToolName` only on:
  *   - Input not a string, or empty.
- *   - No `-` separator (`"crm.search"`).
- *   - Empty scope component (`"-foo"`).
- *   - Empty tool name component (`"ws_helix-"`, `"me-"`).
- *   - Scope component that is neither `me` nor a valid `ws_<id>`.
+ *   - A `ws_<id>-` workspace prefix with an EMPTY tool name (`"ws_helix-"`).
+ *   - A leading segment that starts with `ws_` (a workspace attempt) but
+ *     fails `WORKSPACE_ID_RE` — a malformed/hostile workspace id, surfaced
+ *     rather than silently treated as a (bare) global name.
  *
- * Never returns `null`/`undefined`. Never silently falls back to a
- * "current workspace" — that decision belongs to the orchestrator, and
- * only after this primitive has confirmed the input *is* namespaced.
+ * Everything else resolves to a global name. The orchestrator still
+ * fails loud on a bare name whose source isn't in the kernel global-source
+ * set — that check belongs there (it owns the registry), not here.
  */
 export function parseNamespacedToolName(s: string): { scope: ToolScope; toolName: string } {
   if (typeof s !== "string" || s.length === 0) {
@@ -216,60 +199,50 @@ export function parseNamespacedToolName(s: string): { scope: ToolScope; toolName
     );
   }
   const sepIdx = s.indexOf("-");
-  if (sepIdx < 0) {
-    throw new UnknownNamespacedToolName(
-      s,
-      "missing_separator",
-      `[tools/namespace] parseNamespacedToolName: missing "-" separator in "${s}"`,
-    );
+  if (sepIdx > 0) {
+    const head = s.slice(0, sepIdx);
+    if (WORKSPACE_ID_RE.test(head)) {
+      const toolName = s.slice(sepIdx + 1);
+      if (toolName.length === 0) {
+        throw new UnknownNamespacedToolName(
+          s,
+          "empty_tool_name",
+          `[tools/namespace] parseNamespacedToolName: empty tool name in "${s}"`,
+        );
+      }
+      return { scope: { kind: "workspace", wsId: head }, toolName };
+    }
+    // A leading `ws_`-prefixed segment that isn't a valid id is a malformed
+    // workspace attempt (typo / traversal / cross-tenant probe), not a
+    // bare global name — surface it instead of silently globalizing.
+    if (head.startsWith("ws_")) {
+      throw new UnknownNamespacedToolName(
+        s,
+        "invalid_wsid",
+        `[tools/namespace] parseNamespacedToolName: invalid workspace id "${head}" in "${s}"`,
+      );
+    }
   }
-  const head = s.slice(0, sepIdx);
-  const toolName = s.slice(sepIdx + 1);
-  if (head.length === 0) {
-    throw new UnknownNamespacedToolName(
-      s,
-      "empty_scope",
-      `[tools/namespace] parseNamespacedToolName: empty scope in "${s}"`,
-    );
-  }
-  if (toolName.length === 0) {
-    throw new UnknownNamespacedToolName(
-      s,
-      "empty_tool_name",
-      `[tools/namespace] parseNamespacedToolName: empty tool name in "${s}"`,
-    );
-  }
-  if (head === IDENTITY_SCOPE) {
-    return { scope: { kind: "identity" }, toolName };
-  }
-  if (WORKSPACE_ID_RE.test(head)) {
-    return { scope: { kind: "workspace", wsId: head }, toolName };
-  }
-  throw new UnknownNamespacedToolName(
-    s,
-    "invalid_scope",
-    `[tools/namespace] parseNamespacedToolName: invalid scope "${head}" in "${s}" (expected "${IDENTITY_SCOPE}" or a valid ws_<id>)`,
-  );
+  // Bare: no workspace prefix. The whole name is the (global) tool name.
+  return { scope: { kind: "global" }, toolName: s };
 }
 
 /**
  * Best-effort bare tool name for read-side consumers.
  *
- * If `s` is a namespaced name (`ws_<id>-<toolName>`), return the
- * `<toolName>` portion; otherwise return `s` unchanged. Unlike
- * `parseNamespacedToolName` this NEVER throws — it exists for the
- * read-side surfaces (tool surfacing in `runtime/tools.ts`, Layer-3
- * skill affinity in `skills/select.ts`, the engine's system-tool
- * release guard) that operate on tool lists mixing namespaced
- * (cross-workspace) and bare (pre-namespace, system, or test) names and
- * must classify both. Dispatch keeps using the strict parser, where an
- * unparseable name MUST fail loud.
+ * If `s` is a workspace-namespaced name (`ws_<id>-<toolName>`), return the
+ * `<toolName>` portion; for a bare/global name, return it unchanged. It
+ * exists for the read-side surfaces (tool surfacing in `runtime/tools.ts`,
+ * Layer-3 skill affinity in `skills/select.ts`, the engine's system-tool
+ * release guard) that classify tool lists mixing workspace-namespaced and
+ * bare names.
  *
- * Implemented in terms of `parseNamespacedToolName` so the separator
- * and the `WORKSPACE_ID_RE` boundary stay defined in exactly one place:
- * a non-namespaced name (no `-`, or a leading segment that isn't a
- * valid `ws_<id>`) throws inside the parser and falls through to the
- * pass-through branch.
+ * Implemented in terms of `parseNamespacedToolName` so the separator and
+ * the `WORKSPACE_ID_RE` boundary stay defined in one place: a global name
+ * parses to `{ kind: "global", toolName: s }` (the whole name), so this
+ * returns `s`; a workspace name returns the stripped tool name. The
+ * try/catch guards the only throwing cases (empty input, malformed
+ * `ws_<id>-` prefix) — those pass through unchanged too.
  */
 export function bareToolName(s: string): string {
   try {

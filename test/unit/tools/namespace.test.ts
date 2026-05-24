@@ -20,8 +20,6 @@
 
 import { describe, expect, test } from "bun:test";
 import {
-  IDENTITY_SCOPE,
-  identityToolName,
   InvalidNamespacedToolNameInput,
   namespacedToolName,
   parseNamespacedToolName,
@@ -94,44 +92,28 @@ describe("parseNamespacedToolName — parsing", () => {
     });
   });
 
-  test("throws on non-namespaced input — no fallback to current workspace (Stage 1 lesson 3)", () => {
-    // The failure mode this pins: a silent "if no separator, assume
-    // current workspace" defaulting that would let untyped tool names
-    // run against the wrong workspace.
-    expect(() => parseNamespacedToolName("crm.search")).toThrow(UnknownNamespacedToolName);
-  });
-
   test("throws on empty input", () => {
     expect(() => parseNamespacedToolName("")).toThrow(UnknownNamespacedToolName);
   });
 
-  test("throws on empty workspace component (`-foo`)", () => {
-    // `-foo` after splitting at first `-` yields `wsId=""`; the
-    // primitive must reject rather than produce an invalid scope.
-    expect(() => parseNamespacedToolName("-foo")).toThrow(UnknownNamespacedToolName);
-  });
-
-  test("throws on empty tool name (`ws_helix-`)", () => {
+  test("throws on empty tool name after a workspace prefix (`ws_helix-`)", () => {
     expect(() => parseNamespacedToolName("ws_helix-")).toThrow(UnknownNamespacedToolName);
   });
 
-  test("throws when workspace component fails WORKSPACE_ID_RE", () => {
-    // `..` before the first `-` yields an invalid wsId that the
-    // orchestrator would otherwise have to defend against itself; the
-    // primitive catches it.
-    expect(() => parseNamespacedToolName("..-foo-bar")).toThrow(UnknownNamespacedToolName);
+  test("throws on a malformed ws_ prefix — a workspace attempt, not a bare name", () => {
+    // A leading `ws_`-prefixed segment that fails WORKSPACE_ID_RE is a
+    // malformed/hostile workspace id (typo, traversal, cross-tenant
+    // probe). Surface it rather than silently treating it as global.
+    expect(() => parseNamespacedToolName("ws_BAD!-foo")).toThrow(UnknownNamespacedToolName);
   });
 
-  test("error carries structured reason and input fields", () => {
+  test("malformed ws_ prefix carries reason invalid_wsid", () => {
     try {
-      parseNamespacedToolName("crm.search");
+      parseNamespacedToolName("ws_BAD!-foo");
       throw new Error("expected throw");
     } catch (err) {
       expect(err).toBeInstanceOf(UnknownNamespacedToolName);
-      const e = err as UnknownNamespacedToolName;
-      expect(e.name).toBe("UnknownNamespacedToolName");
-      expect(e.input).toBe("crm.search");
-      expect(e.reason).toBe("missing_separator");
+      expect((err as UnknownNamespacedToolName).reason).toBe("invalid_wsid");
     }
   });
 });
@@ -182,56 +164,48 @@ describe("round-trip property", () => {
   });
 });
 
-describe("identity scope (`me-<tool>`)", () => {
-  test("identityToolName builds `me-<name>`", () => {
-    expect(identityToolName("conversations__search")).toBe("me-conversations__search");
-    expect(IDENTITY_SCOPE).toBe("me");
+describe("global scope (bare names)", () => {
+  test("a bare platform tool parses to global scope, whole name as toolName", () => {
+    // No `ws_<id>-` prefix → global singleton. The whole name is the tool
+    // name (nothing to strip). The orchestrator validates the source
+    // against the kernel global-source set.
+    expect(parseNamespacedToolName("nb__search")).toEqual({
+      scope: { kind: "global" },
+      toolName: "nb__search",
+    });
   });
 
-  test("identityToolName throws on empty name", () => {
-    expect(() => identityToolName("")).toThrow(InvalidNamespacedToolNameInput);
-  });
-
-  test("parses an identity-scoped name to the identity scope", () => {
-    expect(parseNamespacedToolName("me-conversations__search")).toEqual({
-      scope: { kind: "identity" },
+  test("a bare identity-owned app tool parses to global scope", () => {
+    expect(parseNamespacedToolName("conversations__search")).toEqual({
+      scope: { kind: "global" },
       toolName: "conversations__search",
     });
   });
 
-  test("identity scope takes the FIRST `-` — tool names may contain `-`", () => {
-    expect(parseNamespacedToolName("me-foo-bar")).toEqual({
-      scope: { kind: "identity" },
-      toolName: "foo-bar",
+  test("a bare name whose source contains `-` stays global (whole name preserved)", () => {
+    // `synapse-crm` doesn't start with `ws_`, so the leading `-` is NOT a
+    // workspace boundary — the entire name is the (global) tool name. The
+    // orchestrator later rejects it because `synapse-crm` isn't a global
+    // source; the parser doesn't pre-judge that.
+    expect(parseNamespacedToolName("synapse-crm__search")).toEqual({
+      scope: { kind: "global" },
+      toolName: "synapse-crm__search",
     });
   });
 
-  test("`me` is unambiguous against workspace ids (no ws_ prefix)", () => {
-    // A workspace id must match ^ws_..., which `me` can never satisfy,
-    // so the leading `me` segment is always the identity sentinel.
-    const parsed = parseNamespacedToolName("me-x");
-    expect(parsed.scope.kind).toBe("identity");
-  });
-
-  test("throws on empty tool name (`me-`)", () => {
-    expect(() => parseNamespacedToolName("me-")).toThrow(UnknownNamespacedToolName);
-  });
-
-  test("identity round-trips", () => {
-    const s = identityToolName("files__list");
-    expect(parseNamespacedToolName(s)).toEqual({
-      scope: { kind: "identity" },
-      toolName: "files__list",
+  test("no `me-` prefix exists — `me-foo` is just a bare global name", () => {
+    // The old design had a `me` sentinel; bare-global dropped it. `me-foo`
+    // is now simply a bare name (head `me` isn't `ws_`-prefixed).
+    expect(parseNamespacedToolName("me-foo")).toEqual({
+      scope: { kind: "global" },
+      toolName: "me-foo",
     });
   });
 
-  test("a non-me, non-ws_ scope is rejected with reason invalid_scope", () => {
-    try {
-      parseNamespacedToolName("helix-foo");
-      throw new Error("expected throw");
-    } catch (err) {
-      expect(err).toBeInstanceOf(UnknownNamespacedToolName);
-      expect((err as UnknownNamespacedToolName).reason).toBe("invalid_scope");
-    }
+  test("a workspace prefix still wins over global — ws_ takes the route", () => {
+    expect(parseNamespacedToolName("ws_helix-nb__search")).toEqual({
+      scope: { kind: "workspace", wsId: "ws_helix" },
+      toolName: "nb__search",
+    });
   });
 });

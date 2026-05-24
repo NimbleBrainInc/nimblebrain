@@ -57,6 +57,7 @@ import { InstructionsStore } from "../instructions/index.ts";
 import { buildModelResolver, resolveModelString } from "../model/registry.ts";
 import {
   createToolListAggregator,
+  GlobalScopeNotRoutable,
   routeToolCall,
   type ToolListAggregator,
   UnknownNamespacedToolName,
@@ -2776,10 +2777,25 @@ function mapOrchestratorErrorToToolResult(err: unknown, namespacedName: string):
       },
     };
   }
+  if (err instanceof GlobalScopeNotRoutable) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: `[orchestrator] global tool dispatch is not yet available for "${err.toolName}".`,
+        },
+      ],
+      isError: true,
+      structuredContent: {
+        error: "orchestrator_error",
+        reason: "global_not_routable",
+        toolName: err.toolName,
+      },
+    };
+  }
   // Re-throw anything we don't recognize — surfaces via `run.error`.
   // No silent default reason: that would conflate a regression in the
-  // orchestrator's error taxonomy with the deliberate four classes
-  // above.
+  // orchestrator's error taxonomy with the deliberate classes above.
   void namespacedName;
   throw err;
 }

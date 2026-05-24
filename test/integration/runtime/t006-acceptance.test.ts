@@ -109,8 +109,12 @@ describe("runtime.chat — orchestrator error taxonomy (T006)", () => {
           toolCalls: [
             {
               toolCallId: "call_invalid_name",
-              // Missing `ws_<id>/` prefix.
-              toolName: "bare_tool_no_prefix",
+              // A malformed `ws_`-prefixed name: looks like a workspace
+              // attempt but fails WORKSPACE_ID_RE, so the parser throws
+              // UnknownNamespacedToolName. (A *bare* name like
+              // `bare_tool_no_prefix` is now global scope, not a parse
+              // error — see the global-scope cases in namespace.test.ts.)
+              toolName: "ws_BAD!-foo__bar",
               input: "{}",
             },
           ],

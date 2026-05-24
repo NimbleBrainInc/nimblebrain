@@ -151,9 +151,10 @@ describe("ToolCallProvenance", () => {
     expect(text).not.toContain("Personal");
   });
 
-  test("non-namespaced input renders verbatim", async () => {
-    // Legacy / unrouted platform tools like `nb__resources_search` —
-    // surface them as-is, no fake workspace badge.
+  test("bare/global input renders the friendly tool name with no workspace badge", async () => {
+    // Bare platform tools like `nb__resources_search` are global
+    // singletons — render the friendly tool name (source prefix stripped),
+    // marked as global scope, with no workspace badge.
     mounted = await mount(
       <ToolCallProvenance
         toolName="nb__resources_search"
@@ -161,8 +162,8 @@ describe("ToolCallProvenance", () => {
       />,
     );
     const root = findByTestId(mounted.container, "tool-call-provenance");
-    expect(root?.getAttribute("data-fallback")).toBe("non-namespaced");
-    expect(mounted.container.textContent).toContain("nb__resources_search");
+    expect(root?.getAttribute("data-scope")).toBe("global");
+    expect(mounted.container.textContent).toContain("resources_search");
     expect(findByTestId(mounted.container, "workspace-badge")).toBeNull();
   });
 

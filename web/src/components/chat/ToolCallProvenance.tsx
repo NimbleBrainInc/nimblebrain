@@ -79,15 +79,15 @@ export function ToolCallProvenance({
   const friendlyTool = stripServerPrefix(parsed.toolName);
   const scope = parsed.scope;
 
-  // Identity-scoped tool (`me-<tool>`): a personal, cross-workspace
-  // surface (conversations / files / automations). No workspace badge —
-  // it doesn't belong to a workspace.
-  if (scope.kind === "identity") {
+  // Global tool (bare `<source>__<tool>`): a platform tool (`nb__*`) or a
+  // personal, cross-workspace surface (conversations / files / automations).
+  // No workspace badge — it doesn't belong to a workspace.
+  if (scope.kind === "global") {
     return (
       <span
         className="inline-flex items-center gap-1.5"
         data-testid="tool-call-provenance"
-        data-scope="identity"
+        data-scope="global"
       >
         <span className="font-mono text-sm">{friendlyTool}</span>
         <StatusPill status={status} />

@@ -20,8 +20,8 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import {
+  GlobalScopeNotRoutable,
   routeToolCall,
-  UnknownNamespacedToolName,
   UnknownToolSource,
   UnknownWorkspace,
   WorkspaceAccessDenied,
@@ -173,7 +173,7 @@ describe("routeToolCall — strict invariant (Stage 1 lesson 3)", () => {
   // back to "the user's personal workspace." A defensive default
   // would mask the failure mode where the LLM emits a bare tool
   // name and the call lands somewhere unintended.
-  test("un-namespaced name throws UnknownNamespacedToolName (no fallback to personal workspace)", async () => {
+  test("bare name routes to global (not the personal workspace) — fails closed pre-W3, builds no workspace context", async () => {
     const runtime = buildHappyRuntime();
 
     let thrown: unknown = null;
@@ -186,10 +186,11 @@ describe("routeToolCall — strict invariant (Stage 1 lesson 3)", () => {
     } catch (err) {
       thrown = err;
     }
-    expect(thrown).toBeInstanceOf(UnknownNamespacedToolName);
-    // Critical: NO context was constructed. A regression that
-    // silently coerced to `personalWorkspaceIdFor(USER_ID)` would
-    // have built a context before throwing.
+    // Bare name → global scope. Until W3 wires global dispatch this fails
+    // closed via GlobalScopeNotRoutable. The load-bearing invariant holds
+    // either way: a bare name is NEVER silently routed to the personal
+    // workspace — no WorkspaceContext is constructed.
+    expect(thrown).toBeInstanceOf(GlobalScopeNotRoutable);
     expect(runtime.contextCallCount()).toBe(0);
   });
 });

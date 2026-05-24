@@ -88,6 +88,7 @@ import { log } from "../cli/log.ts";
 import { isToolEnabled, isToolVisibleToRole, type ResolvedFeatures } from "../config/features.ts";
 import type { UserIdentity } from "../identity/provider.ts";
 import {
+  GlobalScopeNotRoutable,
   routeToolCall,
   type ToolListAggregator,
   UnknownNamespacedToolName,
@@ -739,6 +740,13 @@ function createServer(
             sourceName: err.sourceName,
             toolName: err.toolName,
           },
+        );
+      }
+      if (err instanceof GlobalScopeNotRoutable) {
+        throw new McpError(
+          ErrorCode.InvalidParams,
+          `Global tool dispatch is not yet available for "${err.toolName}"`,
+          { reason: "global_not_routable", toolName: err.toolName },
         );
       }
       throw err;

@@ -121,21 +121,23 @@ export class UnknownToolSource extends Error {
 }
 
 /**
- * Thrown when a tool name parses to identity scope (`me-<tool>`) but the
- * identity dispatch path isn't wired yet.
+ * Thrown when a tool name parses to global scope (a bare
+ * `<source>__<tool>`) but the global/identity dispatch path isn't wired
+ * yet.
  *
- * Placeholder for Phase A2 (placement scope + `IdentityContext`). Until
- * then the cross-workspace aggregator namespaces every tool by workspace,
- * so no surface emits a `me-` name — this is unreachable in normal flow
- * and exists only to fail closed on a crafted `/mcp` call. Replaced by
- * real identity routing when `IdentityContext` lands.
+ * Placeholder until W3 (global dispatch on `IdentityContext` + the
+ * kernel global-source validation). Until then the cross-workspace
+ * aggregator still namespaces every tool by workspace, so no surface
+ * emits a bare global name — this is unreachable in normal flow and
+ * exists only to fail closed on a crafted bare `/mcp` call. Replaced by
+ * real global routing in W3.
  */
-export class IdentityScopeNotRoutable extends Error {
+export class GlobalScopeNotRoutable extends Error {
   readonly toolName: string;
 
   constructor(toolName: string) {
-    super(`[orchestrator] identity-scoped tool dispatch is not yet available (tool "${toolName}")`);
-    this.name = "IdentityScopeNotRoutable";
+    super(`[orchestrator] global tool dispatch is not yet available (tool "${toolName}")`);
+    this.name = "GlobalScopeNotRoutable";
     this.toolName = toolName;
   }
 }
@@ -225,14 +227,14 @@ export async function routeToolCall(opts: {
   // input. We let it propagate; the HTTP / engine layer maps it.
   const { scope, toolName } = parseNamespacedToolName(namespacedName);
 
-  // Identity-scoped dispatch (`me-<tool>`) routes through an
-  // `IdentityContext`, not a workspace. That path lands in the next
-  // commit (Phase A2 — placement scope + IdentityContext); until then no
-  // producer emits `me-` names (the aggregator namespaces every tool by
+  // Global dispatch (a bare `<source>__<tool>`) routes through an
+  // `IdentityContext` against a kernel-owned global-source set, not a
+  // workspace. That path lands in W3; until then no producer emits bare
+  // global names (the aggregator still namespaces every tool by
   // workspace), so this branch is unreachable in normal flow. A crafted
-  // `/mcp` call carrying a `me-` name lands here and fails closed.
-  if (scope.kind === "identity") {
-    throw new IdentityScopeNotRoutable(toolName);
+  // bare `/mcp` call lands here and fails closed.
+  if (scope.kind === "global") {
+    throw new GlobalScopeNotRoutable(toolName);
   }
   const wsId = scope.wsId;
 

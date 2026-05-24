@@ -51,7 +51,7 @@ import type { Workspace } from "../../src/workspace/types.ts";
 function wsIdOf(name: string): string {
   const { scope } = parseNamespacedToolName(name);
   if (scope.kind !== "workspace") {
-    throw new Error(`expected workspace scope, got identity for "${name}"`);
+    throw new Error(`expected workspace scope, got global for "${name}"`);
   }
   return scope.wsId;
 }

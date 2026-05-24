@@ -307,10 +307,13 @@ describe("cross-workspace chat (Stage 2 contract — T001)", () => {
       if (!tc) return; // narrow for TS
       expect(tc.ok).toBe(false);
 
-      // The error message names the failure mode, not a workspace —
-      // anchors a future search to ensure we never regress into
-      // "fall back to current workspace" silent routing.
-      expect(tc.output).toMatch(/namespac|workspace/i);
+      // Bare name (no `ws_<id>-`) → global scope. A bare workspace-app
+      // tool isn't a global tool, so it's refused (pre-W3 as "global not
+      // routable"; post-W3 as "unknown global source"). Either way the
+      // error names the failure mode, not a workspace — anchoring a future
+      // search against ever regressing into "fall back to current
+      // workspace" silent routing.
+      expect(tc.output).toMatch(/global|namespac|workspace/i);
 
       // Critical: neither workspace's source was called.
       expect(fixture.shared.callCount()).toBe(0);
