@@ -15,13 +15,11 @@ import type { UserIdentity } from "../identity/provider.ts";
 import type { ConnectorCatalogEntry } from "../registries/projection.ts";
 import type { DirectoryEntry } from "../registries/types.ts";
 import type { Runtime } from "../runtime/runtime.ts";
+import { validateAdditionalAuthorizationParams } from "../util/oauth-params.ts";
 import { isHttpUrl } from "../util/url.ts";
 import { FileCredentialStore } from "./credential-store.ts";
 import type { InProcessTool } from "./in-process-app.ts";
-import {
-  validateAdditionalAuthorizationParams,
-  WorkspaceOAuthProvider,
-} from "./workspace-oauth-provider.ts";
+import { WorkspaceOAuthProvider } from "./workspace-oauth-provider.ts";
 
 /**
  * `manage_connectors` tool — single surface for the Connectors UI
