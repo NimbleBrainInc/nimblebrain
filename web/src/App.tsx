@@ -20,7 +20,6 @@ import {
 } from "./api/client";
 import { AppWithChat } from "./components/AppWithChat";
 import { ErrorBoundary } from "./components/ErrorBoundary";
-import { HomeAppRoute } from "./components/HomeAppRoute";
 import { Login } from "./components/Login";
 import { RouteGuard } from "./components/RouteGuard";
 import { ShellLayout } from "./components/ShellLayout";
@@ -41,8 +40,10 @@ import { useEvents } from "./hooks/useEvents";
 import { useShell } from "./hooks/useShell";
 import { bootstrapWorkspacesToInfo } from "./lib/bootstrap";
 import { toSlug } from "./lib/workspace-slug";
+import { GlobalHomePage } from "./pages/GlobalHomePage";
 import { ProfilePage } from "./pages/ProfilePage";
 import { SettingsPage } from "./pages/SettingsPage";
+import { WorkspaceOverviewPage } from "./pages/WorkspaceOverviewPage";
 import { AboutTab } from "./pages/settings/AboutTab";
 import { ConnectorBrowsePage } from "./pages/settings/ConnectorBrowsePage";
 import { ConnectorDetailPage } from "./pages/settings/ConnectorDetailPage";
@@ -292,7 +293,11 @@ function AuthenticatedAppContent({
     }
   }
 
-  const homePlacement = allRoutable.find((p) => p.route === "/");
+  // App placements: everything routable except the bundle-home placement
+  // (route "/"), which the shell no longer renders directly. Home `/` is
+  // now `GlobalHomePage` (workspace-agnostic) and `/w/<slug>/` is
+  // `WorkspaceOverviewPage` (app grid). The bundle-home concept stays in
+  // the placement registry for now in case a future surface needs it.
   const appPlacements = allRoutable.filter((p) => p.route !== "/");
 
   return (
@@ -303,23 +308,17 @@ function AuthenticatedAppContent({
       <ShellLayout forSlot={forSlot} onLogout={onLogout}>
         <ErrorBoundary resetKeys={[location.pathname]}>
           <Routes>
-            {/* Root → redirect to workspace-scoped home */}
-            <Route path="/" element={<WorkspaceRedirect />} />
+            {/* Global Home — workspace-agnostic landing (greeting +
+                workspaces grid). Chat, Conversations, Automations, Files
+                are all identity-bound now, so the root URL is the
+                user's cross-workspace home. */}
+            <Route path="/" element={<GlobalHomePage />} />
 
             {/* Workspace-scoped routes: /w/:slug/... */}
             <Route path="/w/:slug" element={<WorkspaceRouteGuard />}>
-              {/* Workspace home */}
-              {homePlacement ? (
-                <Route
-                  index
-                  element={<HomeAppRoute placement={homePlacement} onNavigate={handleNavigate} />}
-                />
-              ) : (
-                <Route
-                  index
-                  element={<div className="p-6 text-muted-foreground">No home app installed.</div>}
-                />
-              )}
+              {/* Workspace overview — header + app grid. Replaces the
+                  former bundle-home rendering at this index. */}
+              <Route index element={<WorkspaceOverviewPage />} />
               {/* Apps within workspace */}
               {appPlacements.map((p) => (
                 <Route
@@ -533,24 +532,6 @@ function RedirectWorkspaceSlug() {
 function RedirectAppPanel() {
   const { serverName } = useParams<{ serverName: string }>();
   return <Navigate to={`/settings/workspace/apps/${serverName ?? ""}`} replace />;
-}
-
-/** Redirect "/" to "/w/<active-workspace-slug>/" */
-export function WorkspaceRedirect() {
-  // Carry the query string + hash through the `/` → `/w/<slug>/` redirect.
-  // Dropping it would kill params meant for the home route — e.g. `?force=1`,
-  // which `HomeAppRoute` reads — for anyone hitting the bare root URL.
-  const { search, hash } = useLocation();
-  const { activeWorkspace, workspaces, loading } = useWorkspaceContext();
-  if (loading)
-    return (
-      <div className="flex items-center justify-center h-screen text-muted-foreground text-sm">
-        Loading...
-      </div>
-    );
-  const ws = activeWorkspace ?? workspaces[0];
-  if (!ws) return <Navigate to="/settings" replace />;
-  return <Navigate to={{ pathname: `/w/${toSlug(ws.id)}/`, search, hash }} replace />;
 }
 
 export function App() {

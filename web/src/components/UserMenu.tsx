@@ -46,20 +46,31 @@ function initials(displayName: string, email: string): string {
 interface UserMenuProps {
   collapsed: boolean;
   onLogout: () => void;
+  /**
+   * Direction the dropdown opens relative to its trigger. `"down"` for
+   * top-anchored placements (current sidebar layout); `"up"` for
+   * legacy bottom-anchored callers. Defaults to `"down"`.
+   */
+  dropdownDirection?: "up" | "down";
 }
 
 /**
- * Identity-bound menu pinned to the bottom of the shell sidebar.
+ * Identity-bound menu at the top-left of the shell sidebar.
  *
- * Sits at the bottom as a constant-across-session anchor. The top of
- * the sidebar (currently an empty slot post-T009 teardown) becomes
- * the workspace+apps navigator in T013, completing the spatial story
- * of "workspace context at top, identity at bottom."
- *
- * Click reveals a popover with profile settings and sign out — the user's
+ * Identity sits at the top as a constant-across-session anchor; the
+ * workspace+apps navigator (T013) sits below it. Click reveals a
+ * popover with profile settings and sign out — the user's
  * always-available account surface, regardless of which page they're on.
+ *
+ * `dropdownDirection` toggles whether the popover opens below
+ * (top-anchored — default) or above (bottom-anchored — kept for any
+ * legacy mount points).
  */
-export const UserMenu = memo(function UserMenu({ collapsed, onLogout }: UserMenuProps) {
+export const UserMenu = memo(function UserMenu({
+  collapsed,
+  onLogout,
+  dropdownDirection = "down",
+}: UserMenuProps) {
   const session = useSession();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
@@ -154,8 +165,11 @@ export const UserMenu = memo(function UserMenu({ collapsed, onLogout }: UserMenu
           className={cn(
             "absolute z-50 rounded-lg border border-sidebar-border bg-sidebar shadow-lg ws-dropdown-enter",
             collapsed
-              ? "left-full bottom-0 ml-2 w-56"
-              : "left-0 right-0 bottom-full mb-1 w-full min-w-[200px]",
+              ? cn("left-full ml-2 w-56", dropdownDirection === "up" ? "bottom-0" : "top-0")
+              : cn(
+                  "left-0 right-0 w-full min-w-[200px]",
+                  dropdownDirection === "up" ? "bottom-full mb-1" : "top-full mt-1",
+                ),
           )}
         >
           {/* Identity header (collapsed only — expanded already shows it in the trigger) */}

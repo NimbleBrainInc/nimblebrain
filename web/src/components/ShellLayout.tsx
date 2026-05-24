@@ -1,29 +1,28 @@
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import { memo } from "react";
+import { memo, useEffect, useState } from "react";
 import { NavLink } from "react-router-dom";
+import { useChatPanelContext } from "../context/ChatPanelContext";
 import { useSidebar } from "../context/SidebarContext";
 import { useWorkspaceContext } from "../context/WorkspaceContext";
 import { resolveIcon } from "../lib/icons";
 import { cn } from "../lib/utils";
 import { toSlug } from "../lib/workspace-slug";
 import type { PlacementEntry } from "../types";
+import { ChatChrome } from "./ChatChrome";
 import { Logo } from "./Logo";
 import { MobileSidebarDrawer } from "./MobileSidebarDrawer";
-import { Sidebar as WorkspaceNavSidebar } from "./shell/Sidebar";
+import { SidebarSearch } from "./shell/SidebarSearch";
+import { WorkspaceSection } from "./shell/WorkspaceSection";
 import { SidebarToggle } from "./SidebarToggle";
 import { UserMenu } from "./UserMenu";
 
 /**
- * Priority threshold for ungrouped (core) sidebar items.
- * Items in the bare "sidebar" slot with priority < 10 render at the top
- * without a group label. Everything else groups by sub-slot.
- *
- * Convention:
- *   priority 0-9  → ungrouped core nav (Home, Conversations)
- *   priority 10+  → grouped under their sub-slot label
- *   sidebar.apps  → "Apps" group
- *   sidebar.fun   → "Fun" group
- *   sidebar.bottom → pinned to bottom zone
+ * Priority threshold for core sidebar items. Items in the bare
+ * "sidebar" slot with priority < 10 render as ungrouped core nav
+ * (Home, Conversations, Automations, Files). Priority >= 10 items —
+ * historically the "Apps" sub-slot group at the bottom of the sidebar —
+ * are no longer rendered here; apps live on the workspace overview
+ * page (`/w/<slug>/`) instead.
  */
 const UNGROUPED_PRIORITY_THRESHOLD = 10;
 
@@ -41,11 +40,39 @@ interface ShellLayoutProps {
  * - Collapsed (768-1023px): icon-only sidebar
  * - Hidden (<768px): mobile drawer
  *
- * Sidebar has three zones:
- * - Ungrouped: core nav items (sidebar slot, priority < 10) — no label
- * - Grouped: sub-slot groups (sidebar.apps, sidebar.fun, etc.) — with labels
- * - Bottom: pinned items (sidebar.bottom) — separated by border
+ * Sidebar zones (top → bottom):
+ *   1. Identity (UserMenu)
+ *   2. Search stub (⌘P)
+ *   3. Core nav: Home, Conversations, Automations, Files (global,
+ *      identity-bound, cross-workspace)
+ *   4. WORKSPACES section — workspaces are a sibling category to the
+ *      core nav, not a parent column. Click a workspace row =
+ *      navigate to its overview at `/w/<slug>/`. No inline apps.
+ *
+ * The former bottom "APPS" group is gone — apps surface on each
+ * workspace's overview page now.
  */
+// Chat panel transition timings — kept in lockstep with `ChatChrome` so
+// the main content's marginRight slides in sync with the panel itself.
+// Any divergence here is what was making the post-lift animation look
+// "jerky": the chat panel was animating but the content underneath
+// wasn't moving in coordination.
+const CHAT_TRANSITION_STANDARD = "300ms cubic-bezier(0.33, 1, 0.68, 1)";
+const CHAT_RESIZE_HANDLE_WIDTH = 4; // px — matches ChatChrome's ResizeHandle
+
+function useIsMobile(): boolean {
+  const [isMobile, setIsMobile] = useState(
+    () => typeof window !== "undefined" && window.innerWidth < 768,
+  );
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 767px)");
+    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+    mq.addEventListener("change", handler);
+    return () => mq.removeEventListener("change", handler);
+  }, []);
+  return isMobile;
+}
+
 export const ShellLayout = memo(function ShellLayout({
   forSlot,
   onLogout,
@@ -57,19 +84,23 @@ export const ShellLayout = memo(function ShellLayout({
   const wsCtx = useWorkspaceContext();
   const wsSlug = wsCtx.activeWorkspace ? toSlug(wsCtx.activeWorkspace.id) : undefined;
 
-  // All sidebar items except bottom-pinned
-  const sidebarAll = forSlot("sidebar").filter((p) => !p.slot.startsWith("sidebar.bottom"));
+  // Chat-panel coordination — every route's main area pushes over by
+  // `panelWidth` when the chat panel is in sidebar mode (matches the
+  // pre-refactor AppWithChat behavior; lifted here so workspace
+  // overview, global home, settings, etc. all coordinate identically).
+  const chatPanel = useChatPanelContext();
+  const isMobile = useIsMobile();
+  const chatIsSidebar = chatPanel.panelState === "sidebar";
+  const mainMarginRight =
+    chatIsSidebar && !isMobile ? chatPanel.panelWidth + CHAT_RESIZE_HANDLE_WIDTH : 0;
 
-  // Ungrouped core items: bare "sidebar" slot with priority < threshold
-  const ungrouped = sidebarAll.filter(
+  // Ungrouped core items: bare "sidebar" slot with priority < threshold.
+  // Grouped items (formerly the bottom "APPS" group, sourced from
+  // `sidebar.<group>` sub-slots) are no longer rendered in the sidebar —
+  // apps live on the workspace overview page (`/w/<slug>/`) now.
+  const ungrouped = forSlot("sidebar").filter(
     (p) => p.slot === "sidebar" && p.priority < UNGROUPED_PRIORITY_THRESHOLD,
   );
-
-  // Grouped items: everything else (sub-slots + bare sidebar with priority >= threshold)
-  const grouped = sidebarAll.filter(
-    (p) => p.slot !== "sidebar" || p.priority >= UNGROUPED_PRIORITY_THRESHOLD,
-  );
-  const groups = groupBySubSlot(grouped, "sidebar");
 
   // Sidebar bottom items: pinned to bottom, excluding settings (now in workspace dropdown)
   const sidebarBottom = forSlot("sidebar.bottom").filter((p) => p.route !== "settings");
@@ -85,13 +116,20 @@ export const ShellLayout = memo(function ShellLayout({
             isCollapsed ? "w-16" : "w-60",
           )}
         >
-          {/* Top zone — scrollable; key triggers fade-in on workspace switch */}
-          <div key={wsSlug} className="flex-1 overflow-y-auto py-1 sidebar-scroll sidebar-nav-fade">
-            {/* Workspace+apps navigator — Stage 2 / T013 (Q1, locked
-                2026-05-22). Replaces the deleted header switcher. */}
-            {!isCollapsed && <WorkspaceNavSidebar />}
+          {/* Identity (top-left) — anchors the sidebar; dropdown opens
+              downward over the rest of the sidebar. */}
+          <div className="shrink-0 py-2">
+            <UserMenu collapsed={isCollapsed} onLogout={onLogout} />
+          </div>
 
-            {/* Ungrouped core nav — no label */}
+          {/* Search stub (⌘P focuses; palette behavior lands in a later
+              session). Hidden when the sidebar is collapsed to icon-only. */}
+          {!isCollapsed && <SidebarSearch />}
+
+          {/* Scrolling region — key triggers fade-in on workspace switch */}
+          <div key={wsSlug} className="flex-1 overflow-y-auto py-1 sidebar-scroll sidebar-nav-fade">
+            {/* Core nav (Home, Conversations, Automations, Files) —
+                global, identity-bound. Siblings of workspaces. */}
             {ungrouped.map((p) => (
               <NavItem
                 key={p.resourceUri}
@@ -103,40 +141,35 @@ export const ShellLayout = memo(function ShellLayout({
               />
             ))}
 
-            {/* Grouped sidebar placements — with labels */}
-            {Object.entries(groups).map(([group, items]) => (
-              <SidebarGroup
-                key={group}
-                label={group}
-                items={items}
-                collapsed={isCollapsed}
-                wsSlug={wsSlug}
-              />
-            ))}
-          </div>
-
-          {/* Bottom zone — identity only. The collapse toggle is rendered
-              as a half-overflow edge button (below) rather than competing
-              for space here; this keeps the bottom strip as a coherent
-              "this is YOU" anchor without a category-mismatched utility
-              control attached. */}
-          <div className="shrink-0 border-t border-sidebar-border py-2">
-            <UserMenu collapsed={isCollapsed} onLogout={onLogout} />
+            {/* WORKSPACES section — sibling category to the core nav,
+                rendered with a labelled header (Linear / Notion
+                pattern) so the visual cue is "different kind of
+                thing," not "parent column." */}
+            <WorkspaceSection collapsed={isCollapsed} />
           </div>
 
           {/*
             Edge collapse toggle — anchored to the sidebar's right border,
             half-overflowing. Always visible (rather than hover-only) so
             it's reachable on touch and discoverable for first-time users.
-            Sits well below the workspace selector so it doesn't crowd
-            that zone, and well above the bottom UserMenu strip.
           */}
           <SidebarEdgeToggle isCollapsed={isCollapsed} />
         </nav>
       )}
 
-      {/* Main content */}
-      <main className="flex-1 h-dvh overflow-hidden bg-background text-foreground flex flex-col">
+      {/* Main content — pushes over to make room for the chat panel
+          when it's open in sidebar mode. The marginRight + transition
+          here is what every route now relies on (was previously
+          duplicated only inside AppWithChat). Mobile / fullscreen
+          modes don't need this push: mobile chat is full-width;
+          fullscreen chat covers the content overlay-style. */}
+      <main
+        className="flex-1 h-dvh overflow-hidden bg-background text-foreground flex flex-col"
+        style={{
+          marginRight: mainMarginRight,
+          transition: `margin-right ${CHAT_TRANSITION_STANDARD}`,
+        }}
+      >
         {isHidden && (
           <header className="flex items-center gap-2 px-3 py-2 border-b border-border bg-card shrink-0">
             <SidebarToggle />
@@ -146,16 +179,33 @@ export const ShellLayout = memo(function ShellLayout({
         <div className="flex-1 min-h-0 overflow-hidden">{children}</div>
       </main>
 
-      {/* Mobile drawer */}
+      {/* Chat chrome (floating toggle + sliding panel) — mounted at
+          the shell level so chat is always one click away from any
+          route. AppWithChat keeps iframe-specific coordination
+          (marginRight, resize handle) but does NOT render its own
+          chat panel — this is the single mount point. */}
+      <ChatChrome />
+
+      {/* Mobile drawer — single-column layout mirroring desktop. */}
       {isHidden && (
         <MobileSidebarDrawer>
           <div className="flex flex-col h-full">
+            {/* Identity at top */}
+            <div className="shrink-0 py-2">
+              <UserMenu
+                collapsed={false}
+                onLogout={() => {
+                  setDrawerOpen(false);
+                  onLogout();
+                }}
+              />
+            </div>
+
+            {/* Search stub */}
+            <SidebarSearch />
+
             <div className="flex-1 overflow-y-auto py-1 sidebar-scroll">
-              {/* Workspace+apps navigator — Stage 2 / T013. Identical
-                  source of truth to the desktop sidebar; sized to fit
-                  the drawer width. */}
-              <WorkspaceNavSidebar />
-              {/* Ungrouped core nav */}
+              {/* Core nav — siblings of workspaces, not parents. */}
               {ungrouped.map((p) => (
                 <MobileNavItem
                   key={p.resourceUri}
@@ -166,42 +216,24 @@ export const ShellLayout = memo(function ShellLayout({
                 />
               ))}
 
-              {/* Grouped items */}
-              {Object.entries(groups).map(([group, items]) => (
-                <div key={group} className="mt-4 pt-3 border-t border-sidebar-border/60">
-                  <div className="px-4 pb-1 text-[11px] font-bold tracking-[0.08em] text-sidebar-foreground/70 uppercase">
-                    {group}
-                  </div>
-                  {items.map((p) => (
-                    <MobileNavItem
-                      key={p.resourceUri}
-                      to={resolveRoute(p, wsSlug)}
-                      icon={p.icon}
-                      label={p.label ?? p.route ?? "Item"}
-                    />
-                  ))}
-                </div>
-              ))}
+              {/* WORKSPACES section */}
+              <WorkspaceSection />
             </div>
 
-            {/* Bottom pinned items + identity */}
-            <div className="shrink-0 border-t border-sidebar-border py-2">
-              {sidebarBottom.map((p) => (
-                <MobileNavItem
-                  key={p.resourceUri}
-                  to={resolveRoute(p, wsSlug)}
-                  icon={p.icon}
-                  label={p.label ?? "Settings"}
-                />
-              ))}
-              <UserMenu
-                collapsed={false}
-                onLogout={() => {
-                  setDrawerOpen(false);
-                  onLogout();
-                }}
-              />
-            </div>
+            {/* Bottom pinned items (sidebar.bottom placements;
+                settings is accessed via the UserMenu dropdown). */}
+            {sidebarBottom.length > 0 && (
+              <div className="shrink-0 border-t border-sidebar-border py-2">
+                {sidebarBottom.map((p) => (
+                  <MobileNavItem
+                    key={p.resourceUri}
+                    to={resolveRoute(p, wsSlug)}
+                    icon={p.icon}
+                    label={p.label ?? "Settings"}
+                  />
+                ))}
+              </div>
+            )}
           </div>
         </MobileSidebarDrawer>
       )}
@@ -215,11 +247,12 @@ export const ShellLayout = memo(function ShellLayout({
 function resolveRoute(p: PlacementEntry, wsSlug?: string): string {
   // Settings is a core page — /settings (not workspace-scoped)
   if (p.route === "settings") return "/settings";
-  // Workspace-scoped routes
-  const prefix = wsSlug ? `/w/${wsSlug}` : "";
-  // Home gets workspace root
-  if (p.route === "/") return prefix ? `${prefix}/` : "/";
+  // Home is now the global landing at `/` (was workspace-scoped). The
+  // workspace overview lives at `/w/<slug>/` and is reached by clicking
+  // the workspace row directly.
+  if (p.route === "/") return "/";
   // Other routed placements get /w/<slug>/app/<route>
+  const prefix = wsSlug ? `/w/${wsSlug}` : "";
   if (p.route) return `${prefix}/app/${p.route}`;
   return "#";
 }
@@ -351,58 +384,4 @@ function MobileNavItem({
       <span className="flex-1 truncate">{label}</span>
     </NavLink>
   );
-}
-
-function GroupLabel({ children, collapsed }: { children: React.ReactNode; collapsed?: boolean }) {
-  if (collapsed) {
-    return <div className="mx-3 my-2 border-t border-sidebar-border" />;
-  }
-  return (
-    <div className="px-4 pb-1 text-[11px] font-bold tracking-[0.08em] text-sidebar-foreground/70 uppercase">
-      {children}
-    </div>
-  );
-}
-
-const SidebarGroup = memo(function SidebarGroup({
-  label,
-  items,
-  collapsed,
-  wsSlug,
-}: {
-  label: string;
-  items: PlacementEntry[];
-  collapsed?: boolean;
-  wsSlug?: string;
-}) {
-  return (
-    <div className={cn("mt-4", !collapsed && "pt-3 border-t border-sidebar-border/60")}>
-      <GroupLabel collapsed={collapsed}>{label}</GroupLabel>
-      {items.map((p) => (
-        <NavItem
-          key={p.resourceUri}
-          to={resolveRoute(p, wsSlug)}
-          icon={p.icon}
-          label={p.label ?? p.route ?? "Item"}
-          collapsed={collapsed}
-        />
-      ))}
-    </div>
-  );
-});
-
-/** Group placements by sub-slot. "sidebar.apps" → "apps", bare "sidebar" → "general" */
-function groupBySubSlot(
-  placements: PlacementEntry[],
-  parentSlot: string,
-): Record<string, PlacementEntry[]> {
-  const groups: Record<string, PlacementEntry[]> = {};
-  for (const p of placements) {
-    const sub = p.slot.startsWith(`${parentSlot}.`)
-      ? p.slot.slice(parentSlot.length + 1)
-      : "general";
-    if (!groups[sub]) groups[sub] = [];
-    groups[sub].push(p);
-  }
-  return groups;
 }
