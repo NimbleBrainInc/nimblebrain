@@ -2,21 +2,13 @@ import { NoopEventSink } from "../adapters/noop-events.ts";
 import type { BundleLifecycleManager } from "../bundles/lifecycle.ts";
 import { getMpak } from "../bundles/mpak.ts";
 import { deriveServerName } from "../bundles/paths.ts";
-import type { BundleMcpDeps } from "../bundles/startup.ts";
-import { startBundleSource } from "../bundles/startup.ts";
-import type { BundleManifest, BundleRef } from "../bundles/types.ts";
-import {
-  installBundleInWorkspace,
-  uninstallBundleFromWorkspace,
-} from "../bundles/workspace-ops.ts";
+import type { BundleManifest } from "../bundles/types.ts";
 import { isToolEnabled, type ResolvedFeatures } from "../config/features.ts";
 import type { ConfirmationGate } from "../config/privilege.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import type { EventSink, ToolPromotionControls, ToolResult, ToolSchema } from "../engine/types.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import type { Skill } from "../skills/types.ts";
-import { WorkspaceContext } from "../workspace/context.ts";
-import type { WorkspaceStore } from "../workspace/workspace-store.ts";
 import { createManageConnectorsTool } from "./connector-tools.ts";
 import { buildCoreResourceMap } from "./core-resources/index.ts";
 import { createCoreToolDefs } from "./core-source.ts";
@@ -34,28 +26,6 @@ import {
   type ManageWorkspacesContext,
 } from "./workspace-mgmt-tools.ts";
 
-/** Context for workspace-aware bundle management. */
-export interface ManageBundleContext {
-  getWorkspaceId: () => string | null;
-  workspaceStore: WorkspaceStore;
-  workDir: string;
-  configDir: string | undefined;
-  allowInsecureRemotes?: boolean;
-  // Required — threaded into any McpSource spawned by this context so
-  // task-augmented tool progress reaches the SSE broadcast path. The
-  // manage_app install/configure flow spawns bundles the same way the
-  // platform does at boot; both paths need the live runtime sink.
-  eventSink: EventSink;
-  /**
-   * Per-workspace host-resources deps factory. Threaded into
-   * `installBundleInWorkspace` so the bundle's McpSource registers
-   * `ai.nimblebrain/resources/*` inbound handlers. Optional for test
-   * runtimes that don't wire the host-resources subsystem; production
-   * runtime always sets this. See `Runtime.start()`.
-   */
-  bundleMcpDepsFactory?: (wsId: string) => BundleMcpDeps;
-}
-
 export type ToolPromotionContext = ToolPromotionControls;
 
 export interface ToolEligibilityContext {
@@ -68,7 +38,7 @@ export type GetSkillsFn = () => { context: Skill[]; matchable: Skill[] };
 /**
  * Factory that creates the `nb` system source as an in-process MCP server.
  * Merges core platform tools (list_apps, get_config, etc.) with system tools
- * (search, manage_app, delegate, etc.) into a single "nb" source.
+ * (search, delegate, etc.) into a single "nb" source.
  *
  * Returns a started, ready-to-use source. Async because the underlying
  * `McpSource.start()` runs the SDK initialize handshake over the linked
@@ -77,7 +47,10 @@ export type GetSkillsFn = () => { context: Skill[]; matchable: Skill[] };
 export async function createSystemTools(
   getRegistry: () => ToolRegistry,
   _configPath?: string,
-  gate?: ConfirmationGate,
+  // Reserved slot — was the bundle-management ConfirmationGate consumed by
+  // `nb__manage_app`. The tool was removed; keep the positional slot stable
+  // (the file's reserved-slot convention) so every call site's arity holds.
+  _gate?: ConfirmationGate,
   lifecycle?: BundleLifecycleManager,
   delegateCtx?: DelegateContext,
   // skillDir + reloadSkills were here for the legacy `nb__manage_skill`
@@ -95,7 +68,10 @@ export async function createSystemTools(
   manageUsersCtx?: ManageUsersContext,
   manageWorkspacesCtx?: ManageWorkspacesContext,
   manageMembersCtx?: ManageMembersContext,
-  manageBundleCtx?: ManageBundleContext,
+  // Reserved slot — was the workspace-scoped bundle-management context for
+  // `nb__manage_app` (removed). Kept (typed `unknown`) to hold the positional
+  // slot stable for every call site. Prune on the next signature shake-up.
+  _manageBundleCtx?: unknown,
   toolPromotionCtx?: ToolPromotionContext,
   toolEligibilityCtx?: ToolEligibilityContext,
 ): Promise<McpSource> {
@@ -191,74 +167,6 @@ export async function createSystemTools(
         };
       },
     },
-    {
-      name: "manage_app",
-      description:
-        "Install, uninstall, or configure an app. 'configure' prompts for API keys/credentials securely via the terminal. Requires user approval.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          action: {
-            type: "string",
-            enum: ["install", "uninstall", "configure"],
-            description: "Action: install, uninstall, or configure (set credentials)",
-          },
-          name: {
-            type: "string",
-            description: "Bundle name (e.g., @nimblebraininc/ipinfo)",
-          },
-        },
-        required: ["action", "name"],
-      },
-      handler: async (input): Promise<ToolResult> => {
-        const action = String(input.action);
-        const name = String(input.name);
-        if (!lifecycle || !manageBundleCtx) {
-          return {
-            content: textContent("Bundle management requires lifecycle context"),
-            isError: true,
-          };
-        }
-        const wsId = manageBundleCtx.getWorkspaceId();
-        if (!wsId) {
-          return {
-            content: textContent("Workspace context required for bundle management"),
-            isError: true,
-          };
-        }
-        if (action === "install") {
-          return await installBundleInWorkspaceViaCtx(
-            name,
-            wsId,
-            lifecycle,
-            getRegistry(),
-            manageBundleCtx,
-          );
-        }
-        if (action === "uninstall") {
-          return await uninstallBundleFromWorkspaceViaCtx(
-            name,
-            wsId,
-            lifecycle,
-            getRegistry(),
-            manageBundleCtx,
-          );
-        }
-        if (action === "configure") {
-          return await configureBundle(
-            name,
-            getRegistry(),
-            manageBundleCtx.eventSink,
-            wsId,
-            manageBundleCtx.workDir,
-            gate,
-            mpakHome,
-            manageBundleCtx.bundleMcpDepsFactory?.(wsId),
-          );
-        }
-        return { content: textContent(`Unknown action: ${action}`), isError: true };
-      },
-    },
     createReadResourceTool(getRegistry),
     createStatusTool(getRegistry, getSkills, lifecycle, runtime),
   ];
@@ -293,8 +201,7 @@ export async function createSystemTools(
         runtime,
         getIdentity: manageWorkspacesCtx.getIdentity,
         // Workspace id is per-call — pull from the runtime's current
-        // workspace context (same source manage_app uses to know which
-        // workspace's bundles[] to mutate).
+        // workspace context to know which workspace's bundles[] to mutate.
         getWorkspaceId: () => runtime.getCurrentWorkspaceId(),
       }),
     );
@@ -736,192 +643,19 @@ function formatUptime(ms: number): string {
   return `${hours}h ${minutes % 60}m`;
 }
 
-async function configureBundle(
-  name: string,
-  registry: ToolRegistry,
-  // Required — passed to the restarted McpSource so its task-augmented tool
-  // progress events reach SSE broadcasts (Synapse useDataSync). Without it,
-  // re-configuring a bundle's credentials silently breaks live updates for
-  // that bundle until the next full platform restart.
-  eventSink: EventSink,
-  // Workspace id + work directory — required because credentials are stored
-  // per-workspace (`{workDir}/workspaces/{wsId}/credentials/{bundle}.json`),
-  // not globally in `~/.mpak/config.json`. Threaded from the manage_app handler.
-  wsId: string,
-  workDir: string,
-  confirmGate?: ConfirmationGate,
-  mpakHome?: string,
-  bundleMcp?: BundleMcpDeps,
-): Promise<ToolResult> {
-  try {
-    const mpak = getMpak(mpakHome!);
-    const manifest = mpak.bundleCache.getBundleManifest(name) as BundleManifest | null;
-    const userConfig = manifest?.user_config;
-
-    if (!confirmGate?.supportsInteraction) {
-      // Non-interactive (HTTP server mode): show exact config commands.
-      // Credentials are workspace-scoped, so include `-w <wsId>` in the hint.
-      if (!userConfig || Object.keys(userConfig).length === 0) {
-        return { content: textContent(`${name} has no configurable credentials.`), isError: false };
-      }
-      const fields = Object.entries(userConfig)
-        .map(
-          ([key, cfg]) =>
-            `  nb config set ${name} ${key}=<value> -w ${wsId}  # ${cfg.title ?? cfg.description ?? key}`,
-        )
-        .join("\n");
-      return {
-        content: textContent(
-          `Cannot configure interactively in server mode. Run in your terminal:\n\n${fields}\n\nThen restart the server.`,
-        ),
-        isError: true,
-      };
-    }
-
-    if (!userConfig || Object.keys(userConfig).length === 0) {
-      return {
-        content: textContent(`${name} has no configurable credentials.`),
-        isError: false,
-      };
-    }
-
-    // Resolve via the 3-tier workspace-scoped resolver. `forcePrompt: true`
-    // re-prompts for every field so users can update existing credentials.
-    // Prompted values are persisted to the workspace credential store at
-    // `{workDir}/workspaces/{wsId}/credentials/{bundle-slug}.json` — no
-    // round-trip through `~/.mpak/config.json`. Routed through
-    // `WorkspaceContext` so the store's wsId is bound and validated once.
-    await new WorkspaceContext({ wsId, workDir }).getCredentialStore().resolveUserConfig({
-      bundleName: name,
-      userConfigSchema: userConfig,
-      gate: confirmGate,
-      forcePrompt: true,
-    });
-
-    // Restart the bundle via the shared primitive — same construction path
-    // as boot-time / agent install. `startBundleSource` reads the values we
-    // just persisted above from the workspace credential store. If this
-    // function diverges from that primitive the rest of the app silently
-    // breaks (sink plumbing, PYTHONPATH, data-dir layout, user_config
-    // resolution). Delegate instead: pass `wsId`+`workDir` and let
-    // `startBundleSource` derive the workspace-scoped data dir itself —
-    // never compute it here, or it drifts from the install-time layout
-    // and Upjack entity state disappears across restarts.
-    const serverName = deriveServerName(name);
-    if (registry.hasSource(serverName)) {
-      await registry.removeSource(serverName);
-    }
-    const result = await startBundleSource({ name }, registry, eventSink, undefined, {
-      wsId,
-      workDir,
-      bundleMcp,
-    });
-
-    const tools = await registry.availableTools();
-    const count = tools.filter((t) => t.name.startsWith(`${result.sourceName}__`)).length;
-    return {
-      content: textContent(`Configured and restarted ${name}. ${count} tools available.`),
-      isError: false,
-    };
-  } catch (err) {
-    return {
-      content: textContent(
-        `Failed to configure ${name}: ${err instanceof Error ? err.message : String(err)}`,
-      ),
-      isError: true,
-    };
-  }
-}
-
 /**
- * Install a bundle in a workspace: spawn with plain server name,
- * add to workspace.json bundles, seed lifecycle instance.
- */
-async function installBundleInWorkspaceViaCtx(
-  name: string,
-  wsId: string,
-  lifecycle: BundleLifecycleManager,
-  registry: ToolRegistry,
-  ctx: ManageBundleContext,
-): Promise<ToolResult> {
-  try {
-    const bundleRef = { name } as BundleRef;
-
-    // Spawn the bundle process with plain server name in workspace registry
-    const entry = await installBundleInWorkspace(
-      wsId,
-      bundleRef,
-      registry,
-      ctx.eventSink,
-      ctx.configDir,
-      {
-        allowInsecureRemotes: ctx.allowInsecureRemotes,
-        workDir: ctx.workDir,
-        bundleMcp: ctx.bundleMcpDepsFactory?.(wsId),
-      },
-    );
-
-    // Seed lifecycle instance so it can be tracked/queried
-    lifecycle.seedInstance(
-      entry.serverName,
-      name,
-      bundleRef,
-      entry.meta ?? undefined,
-      wsId,
-      entry.dataDir,
-    );
-    // Register placements + emit bundle.installed so the web shell's
-    // sidebar refreshes without a reboot when the chat agent installs
-    // a bundle on the user's behalf.
-    lifecycle.notifyInstalled(entry.serverName, wsId);
-
-    // Add bundle to workspace.json
-    const ws = await ctx.workspaceStore.get(wsId);
-    if (ws) {
-      const already = ws.bundles.some((b) => "name" in b && b.name === name);
-      if (!already) {
-        await ctx.workspaceStore.update(wsId, {
-          bundles: [...ws.bundles, { name }],
-        });
-      }
-    }
-
-    const tools = await registry.availableTools();
-    const count = tools.filter((t) => t.name.startsWith(`${entry.serverName}__`)).length;
-    return {
-      content: textContent(
-        `Installed ${name} in workspace ${wsId}. ${count} tools now available from ${entry.serverName}.`,
-      ),
-      isError: false,
-    };
-  } catch (err) {
-    return {
-      content: textContent(
-        `Failed to install ${name} in workspace ${wsId}: ${err instanceof Error ? err.message : String(err)}`,
-      ),
-      isError: true,
-    };
-  }
-}
-
-/**
- * Uninstall a bundle from a workspace: stop process,
- * remove from workspace.json bundles, remove lifecycle instance.
- */
-/**
- * Resolve the lifecycle key for a bundle being uninstalled.
+ * Resolve the lifecycle key for an installed bundle.
  *
- * Catalog install (Browse / `manage_app install`) writes the
- * slugified canonical id (`slugifyServerName(entry.id)`) onto the
- * BundleRef. Re-deriving from `bundleName` here would compute the
- * OLD short slug and miss the registered source — the exact
- * regression that broke `manage_app uninstall` for any bundle
- * installed via the catalog after #195.
+ * Catalog install (Browse) writes the slugified canonical id
+ * (`slugifyServerName(entry.id)`) onto the BundleRef. Re-deriving from
+ * `bundleName` here would compute the OLD short slug and miss the
+ * registered source — the exact regression that broke uninstall for any
+ * bundle installed via the catalog after #195.
  *
  * Reads `ref.serverName` first, falling back to
- * `deriveServerName(bundleName)` only for legacy installs that
- * predate `serverName`-on-ref persistence. Exported so the regression
- * is unit-testable independently of the full uninstall stack.
+ * `deriveServerName(bundleName)` only for legacy installs that predate
+ * `serverName`-on-ref persistence. Exported so the regression is
+ * unit-testable independently of the full uninstall stack.
  */
 export function resolveBundleServerName(
   bundleName: string,
@@ -929,57 +663,6 @@ export function resolveBundleServerName(
 ): string {
   const persisted = ws?.bundles.find((b) => b.name === bundleName);
   return persisted?.serverName ?? deriveServerName(bundleName);
-}
-
-async function uninstallBundleFromWorkspaceViaCtx(
-  name: string,
-  wsId: string,
-  lifecycle: BundleLifecycleManager,
-  registry: ToolRegistry,
-  ctx: ManageBundleContext,
-): Promise<ToolResult> {
-  try {
-    const ws = await ctx.workspaceStore.get(wsId);
-    const serverName = resolveBundleServerName(name, ws);
-
-    // Protected check — pass wsId to look up the workspace-scoped instance
-    const instance = lifecycle.getInstance(serverName, wsId);
-    if (instance?.protected) {
-      throw new Error(`Cannot uninstall "${serverName}": bundle is protected`);
-    }
-
-    // Stop process and deregister from tool registry. Thread workDir so
-    // the workspace credential file for this bundle is cleaned up as part
-    // of uninstall (best-effort inside uninstallBundleFromWorkspace).
-    await uninstallBundleFromWorkspace(wsId, name, serverName, registry, {
-      workDir: ctx.workDir,
-    });
-
-    // Remove lifecycle instance tracking
-    if (instance) {
-      lifecycle.transition(instance, "stopped");
-    }
-    lifecycle.removeInstance(serverName, wsId);
-
-    // Remove bundle from workspace.json
-    if (ws) {
-      await ctx.workspaceStore.update(wsId, {
-        bundles: ws.bundles.filter((b) => !("name" in b && b.name === name)),
-      });
-    }
-
-    return {
-      content: textContent(`Uninstalled ${serverName} from workspace ${wsId}.`),
-      isError: false,
-    };
-  } catch (err) {
-    return {
-      content: textContent(
-        `Failed to uninstall ${name} from workspace ${wsId}: ${err instanceof Error ? err.message : String(err)}`,
-      ),
-      isError: true,
-    };
-  }
 }
 
 function groupToolsBySource(all: Array<{ name: string; description: string }>): ToolResult {

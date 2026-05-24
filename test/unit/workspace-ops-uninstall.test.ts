@@ -16,8 +16,8 @@ import type { ToolSource } from "../../src/tools/types.ts";
  *
  * Without this contract, a bundle installed via the catalog (which
  * persists `slugifyServerName(entry.id)` on the BundleRef) couldn't be
- * uninstalled by `manage_app uninstall @scope/name` — the agent path
- * computed the OLD short slug and missed the registered source.
+ * uninstalled — the uninstall path computed the OLD short slug and
+ * missed the registered source.
  */
 
 function makeFakeSource(name: string): ToolSource {
@@ -41,12 +41,12 @@ describe("uninstallBundleFromWorkspace", () => {
       await registry.addSource(makeFakeSource(slugifiedServerName));
       expect(registry.hasSource(slugifiedServerName)).toBe(true);
 
-      // Caller (system-tools.uninstallBundleFromWorkspaceViaCtx) is
-      // responsible for resolving the serverName from workspace.json
-      // before calling this helper. We pass it through here.
+      // Caller (catalog/connector uninstall) is responsible for
+      // resolving the serverName from workspace.json before calling
+      // this helper. We pass it through here.
       await uninstallBundleFromWorkspace(
         "ws_acme",
-        "@x/echo", // bundleName from manage_app input
+        "@x/echo", // bundleName from the uninstall request
         slugifiedServerName, // resolved from ref.serverName
         registry,
         { workDir },
@@ -80,10 +80,10 @@ describe("uninstallBundleFromWorkspace", () => {
 
 /**
  * The helper above pins the contract once the resolved serverName is
- * already in hand. These tests pin the *resolver* itself —
- * `manage_app uninstall`'s lookup against `workspace.json` — so a
- * future refactor that drops the resolver doesn't silently re-introduce
- * the catalog-installed-bundle uninstall regression.
+ * already in hand. These tests pin the *resolver* itself — the uninstall
+ * path's lookup against `workspace.json` — so a future refactor that
+ * drops the resolver doesn't silently re-introduce the
+ * catalog-installed-bundle uninstall regression.
  */
 describe("resolveBundleServerName", () => {
   test("returns the persisted slug for a catalog-installed bundle (post-#195)", () => {

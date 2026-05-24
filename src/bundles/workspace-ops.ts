@@ -38,10 +38,10 @@ export async function installBundleInWorkspace(
     allowInsecureRemotes?: boolean;
     workDir?: string;
     /**
-     * Per-workspace host-resources deps. Caller (`system-tools` /
-     * `manage_app install`, `connector-tools`) pulls from Runtime.
-     * Passed through to `startBundleSource` so the spawned bundle's
-     * McpSource registers inbound `ai.nimblebrain/resources/*` handlers.
+     * Per-workspace host-resources deps. Caller (`connector-tools`,
+     * catalog/hot install) pulls from Runtime. Passed through to
+     * `startBundleSource` so the spawned bundle's McpSource registers
+     * inbound `ai.nimblebrain/resources/*` handlers.
      */
     bundleMcp?: BundleMcpDeps;
   },

@@ -2,11 +2,11 @@
  * Unit tests for credential cleanup on workspace bundle uninstall.
  *
  * Targets `src/bundles/workspace-ops.ts:uninstallBundleFromWorkspace`,
- * the live path consumed by system-tools via ManageBundleContext. (A
- * dead duplicate previously existed in `src/runtime/workspace-runtime.ts`;
- * deleted in #195's slugify cleanup.) Must clean up the workspace-scoped
- * credential file as part of uninstall (best-effort — failures log a
- * warning but do not fail the uninstall).
+ * the live uninstall path (connectors UI, catalog). (A dead duplicate
+ * previously existed in `src/runtime/workspace-runtime.ts`; deleted in
+ * #195's slugify cleanup.) Must clean up the workspace-scoped credential
+ * file as part of uninstall (best-effort — failures log a warning but do
+ * not fail the uninstall).
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";

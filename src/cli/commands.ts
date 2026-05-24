@@ -73,9 +73,8 @@ export function bundleList(configPath?: string, json?: boolean): void {
 /** nb bundle add <name> — deprecated, bundles are now workspace-scoped */
 export function bundleAdd(name: string, _configPath?: string): void {
   console.error(
-    `Instance-level bundles have been removed. Use workspace-scoped bundle management instead:\n` +
-      `  nb__manage_app install ${name}\n` +
-      `Or add the bundle to your workspace definition.`,
+    `Instance-level bundles have been removed. Install ${name} from the Apps catalog in settings, ` +
+      `or add the bundle to your workspace definition.`,
   );
   process.exit(1);
 }
@@ -97,9 +96,8 @@ export function bundleAddRemote(
 /** nb bundle remove <name> — deprecated, bundles are now workspace-scoped */
 export function bundleRemove(name: string, _configPath?: string): void {
   console.error(
-    `Instance-level bundles have been removed. Use workspace-scoped bundle management instead:\n` +
-      `  nb__manage_app uninstall ${name}\n` +
-      `Or remove the bundle from your workspace definition.`,
+    `Instance-level bundles have been removed. Uninstall ${name} from the Apps section in settings, ` +
+      `or remove the bundle from your workspace definition.`,
   );
   process.exit(1);
 }

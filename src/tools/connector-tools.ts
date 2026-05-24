@@ -1282,9 +1282,8 @@ async function handleInstallRemoteOAuth(
 /**
  * Mpak (stdio) install. The bundle is fetched from whichever mpak
  * registry the SDK is pointed at, spawned as a subprocess, and
- * registered in the workspace registry. Same mechanics as the chat
- * agent's `bundleManagement.install` so both UI surfaces produce
- * identical state.
+ * registered in the workspace registry via the shared
+ * `installBundleInWorkspace` primitive.
  *
  * Workspace-scope only — every stdio bundle is workspace-shared
  * today. A future per-user mpak install would need its own
@@ -2073,9 +2072,8 @@ async function handleSetUserConfig(
   // Mode 1 (env_inject) bundles only read user_config at spawn — env
   // vars are baked in at fork time. Saving to the credential file is
   // necessary but not sufficient; without a respawn the running
-  // subprocess keeps using whatever it was launched with. Mirror the
-  // chat agent's `configureBundle` pattern so both the chat path and
-  // the UI path produce identical post-write state.
+  // subprocess keeps using whatever it was launched with. Respawn so the
+  // post-write state reflects the new credentials.
   const respawn = await respawnBundleAfterCredentialChange(ctx, wsId, bundleName, serverName);
 
   const populated = await probeUserConfigPopulated(ctx.runtime, wsId, bundleName, schema);
@@ -2163,8 +2161,8 @@ async function respawnBundleAfterCredentialChange(
     }
     // Pass `name` (the scoped manifest name) so startBundleSource hits
     // the named-bundle path that resolves user_config from the
-    // workspace credential store. configDir is undefined — same as
-    // configureBundle's call site; named-bundle path doesn't need it.
+    // workspace credential store. configDir is undefined — the
+    // named-bundle path doesn't need it.
     await startBundleSource({ name: bundleName }, registry, ctx.runtime.getEventSink(), undefined, {
       wsId,
       workDir: ctx.runtime.getWorkDir(),

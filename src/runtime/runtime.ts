@@ -251,8 +251,8 @@ export class Runtime {
    * Per-workspace host-resources deps factory. Set in `Runtime.start()`
    * after the resolver + rate-limit are constructed; consumed by every
    * install path that spawns a bundle (lifecycle.installNamed/Local/
-   * Remote, system-tools manage_app install, connector-tools install,
-   * workspace-runtime boot reload). Returns `undefined` only when the
+   * Remote, connector-tools install, workspace-runtime boot reload).
+   * Returns `undefined` only when the
    * runtime is constructed without the host-resources subsystem wired
    * — never in production.
    */
@@ -281,7 +281,6 @@ export class Runtime {
   private readonly activeConversations = new Set<string>();
 
   private constructor(
-    _engine: AgentEngine,
     resolveModelFn: (modelString: string) => LanguageModelV3,
     store: ConversationStore,
     skillMatcher: SkillMatcher,
@@ -486,9 +485,9 @@ export class Runtime {
       },
     };
 
-    // System tools (search, manage_app, bundle_status, delegate). Skill
-    // mutation lives in the dedicated `nb__skills` source — registered
-    // separately via `createPlatformSources`.
+    // System tools (search, status, delegate). Skill mutation lives in the
+    // dedicated `nb__skills` source — registered separately via
+    // `createPlatformSources`.
     // Use a late-bound holder so reloadSkills can reference `rt` after construction.
     const rtHolder: { rt?: Runtime } = {};
     const boundReloadSkills = async () => {
@@ -514,20 +513,6 @@ export class Runtime {
 
     const store = buildStore(config);
     const { contextSkills, skillMatcher } = buildSkills(config);
-    const defaultModelId = getDefaultModel();
-    // Workspace-aware ToolRouter proxy: the engine calls availableTools()/execute()
-    // within runWithRequestContext(), so the proxy reads the current workspace's registry.
-    const workspaceToolRouter: ToolRouter = {
-      availableTools: () => {
-        if (!rtHolder.rt) throw new Error("Runtime not initialized");
-        return rtHolder.rt.getRegistryForCurrentWorkspace().availableTools();
-      },
-      execute: (call) => {
-        if (!rtHolder.rt) throw new Error("Runtime not initialized");
-        return rtHolder.rt.getRegistryForCurrentWorkspace().execute(call);
-      },
-    };
-    const engine = new AgentEngine(resolveModelFn(defaultModelId), workspaceToolRouter, events);
 
     // Request-scoped context — all identity/workspace reads go through AsyncLocalStorage.
     // Set via runWithRequestContext() in chat(), handleToolCall(), and MCP handler.
@@ -541,24 +526,6 @@ export class Runtime {
     const manageUsersCtx = { getIdentity, userStore, provider: identityProvider };
     const manageWorkspacesCtx = { getIdentity, workspaceStore };
     const manageMembersCtx = { getIdentity, workspaceStore, userStore };
-    const manageBundleCtx = {
-      getWorkspaceId,
-      workspaceStore,
-      workDir: resolveWorkDir(config),
-      configDir: config.configPath ? dirname(config.configPath) : undefined,
-      allowInsecureRemotes: config.allowInsecureRemotes,
-      // The runtime sink flows into every McpSource spawned by manage_app
-      // install/configure. Keeps chat-initiated bundle installs on the same
-      // live-update pipeline as boot-time bundle startup.
-      eventSink: events,
-      // Per-workspace host-resources deps factory. `installBundleInWorkspaceViaCtx`
-      // calls this for the target workspace and threads the result through
-      // `installBundleInWorkspace`'s opts so the spawned McpSource registers
-      // `ai.nimblebrain/resources/*` handlers. Without this, the agent's
-      // `manage_app install` path silently bypasses the host-resources
-      // capability — the production path that needs it most.
-      bundleMcpDepsFactory,
-    };
     const noActiveToolPromotionRun = (toolName: string): ToolPromotionResult => ({
       ok: false,
       toolName,
@@ -620,7 +587,6 @@ export class Runtime {
 
     // Create Runtime with empty workspace registries first — needed by system tools
     const rt = new Runtime(
-      engine,
       resolveModelFn,
       store,
       skillMatcher,
@@ -666,7 +632,7 @@ export class Runtime {
       manageUsersCtx,
       manageWorkspacesCtx,
       manageMembersCtx,
-      manageBundleCtx,
+      undefined, // reserved slot — was manageBundleCtx (nb__manage_app, removed)
       toolPromotionCtx,
       toolEligibilityCtx,
     );
@@ -940,7 +906,7 @@ export class Runtime {
           ...skill,
           body:
             skill.body +
-            `\n\n⚠️ Missing dependencies: ${missing.join(", ")}. Some capabilities may be unavailable. Install with nb__manage_app.`,
+            `\n\n⚠️ Missing dependencies: ${missing.join(", ")}. Some capabilities may be unavailable. Install the missing apps from the Apps catalog in settings.`,
         };
       }
     }

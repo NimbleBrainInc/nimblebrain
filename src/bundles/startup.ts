@@ -50,8 +50,7 @@ import { validateBundleUrl } from "./url-validator.ts";
  *
  * Absent for in-process platform sources (which don't go through
  * `startBundleSource` anyway) and for paths that don't yet plumb the
- * deps (boot reload, configureBundle restart, connector eager-start —
- * follow-up).
+ * deps (boot reload, connector eager-start — follow-up).
  */
 export interface BundleMcpDeps {
   workspaceId: string;
@@ -500,7 +499,7 @@ export async function startBundleSource(
     // pre-#195 installs whose ref doesn't carry the field. Mirrors the
     // URL-branch pattern below — without this the registered source
     // name would diverge from what install persisted, breaking
-    // `manage_app uninstall` for every catalog-installed mpak bundle
+    // uninstall for every catalog-installed mpak bundle
     // whose canonical id and package name produce different slugs
     // (e.g. `dev.mpak.nimblebraininc/echo` vs `@nimblebraininc/echo`).
     const serverName = ref.serverName ?? deriveServerName(ref.name);
@@ -663,7 +662,7 @@ function buildLocalSource(
     /**
      * Slugified canonical reverse-DNS form persisted at install time.
      * When present, used as the source name so the registered key
-     * matches what `manage_app uninstall` looks up; falls back to
+     * matches what uninstall looks up; falls back to
      * `deriveServerName(manifest.name)` for legacy installs.
      */
     serverName?: string;
@@ -692,8 +691,7 @@ function buildLocalSource(
   // Mirror the named-bundle branch: honor a persisted ref.serverName
   // (slugified canonical id from install) before falling back to the
   // legacy short slug. Keeps registered source name in lockstep with
-  // what consumers (manage_app uninstall, lifecycle Map, web routes)
-  // look up by.
+  // what consumers (uninstall, lifecycle Map, web routes) look up by.
   const serverName = ref.serverName ?? deriveServerName(manifest.name);
   validateServerName(serverName);
   const mcpConfig = manifest.server.mcp_config;
