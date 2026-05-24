@@ -281,7 +281,6 @@ export class Runtime {
   private readonly activeConversations = new Set<string>();
 
   private constructor(
-    _engine: AgentEngine,
     resolveModelFn: (modelString: string) => LanguageModelV3,
     store: ConversationStore,
     skillMatcher: SkillMatcher,
@@ -514,20 +513,6 @@ export class Runtime {
 
     const store = buildStore(config);
     const { contextSkills, skillMatcher } = buildSkills(config);
-    const defaultModelId = getDefaultModel();
-    // Workspace-aware ToolRouter proxy: the engine calls availableTools()/execute()
-    // within runWithRequestContext(), so the proxy reads the current workspace's registry.
-    const workspaceToolRouter: ToolRouter = {
-      availableTools: () => {
-        if (!rtHolder.rt) throw new Error("Runtime not initialized");
-        return rtHolder.rt.getRegistryForCurrentWorkspace().availableTools();
-      },
-      execute: (call) => {
-        if (!rtHolder.rt) throw new Error("Runtime not initialized");
-        return rtHolder.rt.getRegistryForCurrentWorkspace().execute(call);
-      },
-    };
-    const engine = new AgentEngine(resolveModelFn(defaultModelId), workspaceToolRouter, events);
 
     // Request-scoped context — all identity/workspace reads go through AsyncLocalStorage.
     // Set via runWithRequestContext() in chat(), handleToolCall(), and MCP handler.
@@ -620,7 +605,6 @@ export class Runtime {
 
     // Create Runtime with empty workspace registries first — needed by system tools
     const rt = new Runtime(
-      engine,
       resolveModelFn,
       store,
       skillMatcher,

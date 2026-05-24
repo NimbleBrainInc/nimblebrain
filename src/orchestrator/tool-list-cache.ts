@@ -45,6 +45,7 @@
 
 import { type FSWatcher, watch } from "node:fs";
 import { join } from "node:path";
+import { log } from "../cli/log.ts";
 import type { Tool } from "../tools/types.ts";
 
 // ── Defaults ───────────────────────────────────────────────────────
@@ -222,16 +223,28 @@ export class ToolListCache {
         const entry = this.ensureWatchEntry(wsId);
         entry.subscribedIdentities.add(identityId);
       }
-      // Concurrent per-workspace listings — pins `Promise.all`
-      // parallelism (case 5 in the task spec).
-      const perWorkspace = await Promise.all(
-        wsIds.map(async (wsId) => {
-          const tools = await this.getWorkspaceTools(wsId);
-          return { wsId, tools };
-        }),
+      // Concurrent per-workspace listings (Promise pipelining, case 5 in
+      // the task spec). Settled, not all-or-nothing: a single workspace
+      // whose listing rejects (e.g. its registry can't be constructed)
+      // must NOT nuke the identity's entire aggregated tool list — degrade
+      // gracefully and surface what the healthy workspaces provide. The
+      // lister already contains per-SOURCE failures one level down; this
+      // catches the rarer whole-WORKSPACE listing failure.
+      const settled = await Promise.allSettled(
+        wsIds.map(async (wsId) => ({ wsId, tools: await this.getWorkspaceTools(wsId) })),
       );
       const out: NamespacedToolDescriptor[] = [];
-      for (const { wsId, tools } of perWorkspace) {
+      for (const result of settled) {
+        if (result.status === "rejected") {
+          log.debug(
+            "mcp",
+            `[tool-list-cache] dropping a workspace from the union for identity "${identityId}": ${
+              result.reason instanceof Error ? result.reason.message : String(result.reason)
+            }`,
+          );
+          continue;
+        }
+        const { wsId, tools } = result.value;
         for (const t of tools) {
           out.push({
             name: namespace(wsId, t.name),
