@@ -73,7 +73,21 @@ export function WorkspaceProvider({
       const active = initialActiveId
         ? (initialWorkspaces.find((w) => w.id === initialActiveId) ?? initialWorkspaces[0])
         : initialWorkspaces[0];
-      if (active) setActiveWorkspaceId(active.id);
+      if (active) {
+        setActiveWorkspaceId(active.id);
+        // Defense-in-depth: localStorage may hold a stale workspace id
+        // (e.g. a workspace the user was removed from, or one that was
+        // deleted). The in-memory api/client state now reflects the
+        // server-resolved fallback; keep localStorage in lockstep so
+        // any code reading it directly doesn't get the stale value.
+        try {
+          if (localStorage.getItem(STORAGE_KEY) !== active.id) {
+            localStorage.setItem(STORAGE_KEY, active.id);
+          }
+        } catch {
+          // localStorage may be unavailable (private mode, quota)
+        }
+      }
       return active ?? null;
     }
     return null;
