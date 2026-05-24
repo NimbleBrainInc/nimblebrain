@@ -21,12 +21,12 @@
 
 import { Plus } from "lucide-react";
 import { useCallback, useMemo } from "react";
-import { useNavigate } from "react-router-dom";
+import { matchPath, useLocation, useNavigate } from "react-router-dom";
 import { useWorkspaceContext, type WorkspaceInfo } from "../../context/WorkspaceContext";
+import { cn } from "../../lib/utils";
 import { getWorkspaceAvatar } from "../../lib/workspace-avatar";
 import { orderWorkspacesForSidebar } from "../../lib/workspace-order";
 import { toSlug } from "../../lib/workspace-slug";
-import { cn } from "../../lib/utils";
 
 interface WorkspaceSectionProps {
   /**
@@ -40,7 +40,20 @@ interface WorkspaceSectionProps {
 export function WorkspaceSection({ collapsed = false }: WorkspaceSectionProps) {
   const wsCtx = useWorkspaceContext();
   const navigate = useNavigate();
+  const location = useLocation();
   const ordered = useMemo(() => orderWorkspacesForSidebar(wsCtx.workspaces), [wsCtx.workspaces]);
+
+  // The active marker follows the ROUTE, not the persisted active
+  // workspace. `activeWorkspace` is always set (it scopes tool dispatch),
+  // so keying the highlight off it lit a workspace row even on global
+  // routes like `/` (Home) or `/conversations` — two items active at
+  // once. A workspace row is "active" only when the current path is
+  // within that workspace (`/w/<slug>/...`), mirroring how the core
+  // NavLinks derive active state from the URL.
+  const activeRouteSlug = useMemo(
+    () => matchPath({ path: "/w/:slug", end: false }, location.pathname)?.params.slug ?? null,
+    [location.pathname],
+  );
 
   const handleSelect = useCallback(
     (ws: WorkspaceInfo) => {
@@ -112,7 +125,7 @@ export function WorkspaceSection({ collapsed = false }: WorkspaceSectionProps) {
             <WorkspaceItem
               key={ws.id}
               workspace={ws}
-              isActive={wsCtx.activeWorkspace?.id === ws.id}
+              isActive={activeRouteSlug === toSlug(ws.id)}
               onSelect={() => handleSelect(ws)}
               collapsed={collapsed}
             />

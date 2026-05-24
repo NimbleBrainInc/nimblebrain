@@ -4,7 +4,9 @@
 // Four pins:
 //   1. Renders the user's workspaces in personal-first then shared
 //      alphabetical order.
-//   2. Active workspace gets the `data-is-active="true"` marker.
+//   2. The active marker follows the ROUTE: a workspace row is active
+//      only on `/w/<slug>/...`; on global routes (`/`, `/conversations`)
+//      no workspace row is active (it must not double-light with Home).
 //   3. Cross-workspace click fires `setActiveWorkspaceId` exactly once;
 //      re-clicking the active workspace's row is a no-op for the
 //      setter (T009 equality guard). Topology pin — a regression that
@@ -66,9 +68,11 @@ function NavigationProbe() {
 async function mount({
   workspaces,
   activeId,
+  initialPath = "/",
 }: {
   workspaces: WorkspaceInfo[];
   activeId?: string;
+  initialPath?: string;
 }): Promise<Mounted> {
   const container = document.createElement("div");
   document.body.appendChild(container);
@@ -77,7 +81,7 @@ async function mount({
   await act(async () => {
     root.render(
       <React.StrictMode>
-        <MemoryRouter initialEntries={["/"]}>
+        <MemoryRouter initialEntries={[initialPath]}>
           <WorkspaceProvider initialWorkspaces={workspaces} initialActiveId={activeId}>
             <NavigationProbe />
             <Routes>
@@ -171,24 +175,47 @@ describe("WorkspaceSection — render + ordering", () => {
 // (2) Active workspace marker
 // ---------------------------------------------------------------------------
 
-describe("WorkspaceSection — active state", () => {
-  test("only the active workspace row carries data-is-active='true'", async () => {
+describe("WorkspaceSection — active state (route-driven)", () => {
+  test("on /w/<slug>/, only that workspace row is active", async () => {
     const helix = ws({ id: "ws_helix", name: "Helix" });
     const personal = ws({ id: "ws_user_u1", name: "Personal", isPersonal: true });
 
-    mounted = await mount({ workspaces: [personal, helix], activeId: "ws_helix" });
+    // The persisted active workspace (tool-scoping) is personal, but the
+    // ROUTE is helix's overview. The highlight must follow the route.
+    mounted = await mount({
+      workspaces: [personal, helix],
+      activeId: "ws_user_u1",
+      initialPath: "/w/helix/",
+    });
 
-    const helixRow = findRow(mounted.container, "ws_helix");
-    const personalRow = findRow(mounted.container, "ws_user_u1");
-    expect(helixRow?.getAttribute("data-is-active")).toBe("true");
-    expect(personalRow?.getAttribute("data-is-active")).toBe("false");
+    expect(findRow(mounted.container, "ws_helix")?.getAttribute("data-is-active")).toBe("true");
+    expect(findRow(mounted.container, "ws_user_u1")?.getAttribute("data-is-active")).toBe("false");
 
-    // Exactly one active row at a time — pins a regression where
-    // active state could be applied to multiple rows simultaneously.
+    // Exactly one active row at a time.
     const allActive = findAllByTestId(mounted.container, "sidebar-workspace-row").filter(
       (r) => r.getAttribute("data-is-active") === "true",
     );
     expect(allActive).toHaveLength(1);
+  });
+
+  test("on a global route (/), NO workspace row is active even with a persisted active workspace", async () => {
+    // Regression pin for the two-active-links bug: `activeWorkspace` is
+    // always set (it scopes tool dispatch), so a state-based highlight lit
+    // a workspace row while Home was simultaneously active. On global
+    // routes the workspace section must show zero active rows.
+    const helix = ws({ id: "ws_helix", name: "Helix" });
+    const personal = ws({ id: "ws_user_u1", name: "Personal", isPersonal: true });
+
+    mounted = await mount({
+      workspaces: [personal, helix],
+      activeId: "ws_helix",
+      initialPath: "/",
+    });
+
+    const allActive = findAllByTestId(mounted.container, "sidebar-workspace-row").filter(
+      (r) => r.getAttribute("data-is-active") === "true",
+    );
+    expect(allActive).toHaveLength(0);
   });
 });
 
