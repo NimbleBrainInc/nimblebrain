@@ -1935,6 +1935,35 @@ export class Runtime {
     return this.getRegistryForWorkspace(wsId);
   }
 
+  /**
+   * Tools the model can DISCOVER via a system-tool surface (`nb__search`
+   * scope:tools). Identity-scoped by design: in an identity-bound session
+   * the searchable set is the UNION of every workspace the identity can
+   * reach (the cross-workspace aggregator), not a single workspace.
+   *
+   * Why this isn't `getRegistryForCurrentWorkspace().availableTools()`:
+   * the aggregator namespaces `nb__search` per workspace, so the model may
+   * invoke ANY workspace's copy of it. Each copy must see everything the
+   * identity can reach — otherwise a tool installed in one workspace is
+   * invisible to another workspace's search. (Concretely: a CRM installed
+   * in `ws_mat`, searched from the personal workspace's `nb__search`,
+   * returned "no CRM tools.") Entries are namespaced (`ws_<id>-<tool>`), so
+   * the model promotes/dispatches them through the orchestrator unchanged.
+   *
+   * Falls back to the current workspace's registry when no identity is in
+   * scope (CLI / non-identity-bound dev paths).
+   */
+  async listDiscoverableTools(): Promise<readonly ToolSchema[]> {
+    const identity = getRequestContext()?.identity;
+    if (identity) {
+      // NamespacedToolDescriptor carries every ToolSchema field (name,
+      // description, inputSchema, annotations) plus wsId/toolName — so the
+      // union is assignable to ToolSchema[] for the search/eligibility path.
+      return this._toolListAggregator.aggregateToolList(identity.id);
+    }
+    return this.getRegistryForCurrentWorkspace().availableTools();
+  }
+
   /** Get the per-workspace registries map. */
   getWorkspaceRegistries(): Map<string, ToolRegistry> {
     return this._workspaceRegistries;

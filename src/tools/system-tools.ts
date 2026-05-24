@@ -161,7 +161,18 @@ export async function createSystemTools(
 
         // scope === "tools" (default)
         const q = query.toLowerCase();
-        const all = (await getRegistry().availableTools()).filter(
+        // Identity-level discovery: search the identity's full
+        // cross-workspace tool union (the aggregator), not just the
+        // calling workspace. The aggregator namespaces nb__search per
+        // workspace, so the model may invoke any workspace's copy — all
+        // must see everything the identity can reach, else a tool
+        // installed in another workspace (e.g. a CRM in ws_mat) is
+        // invisible to this copy. Falls back to the current workspace
+        // when there's no identity in scope (non-identity-bound paths).
+        const discoverable = runtime
+          ? await runtime.listDiscoverableTools()
+          : await getRegistry().availableTools();
+        const all = discoverable.filter(
           (t) =>
             toolEligibilityCtx?.isToolEligible(t) ?? !t.annotations?.["ai.nimblebrain/internal"],
         );
