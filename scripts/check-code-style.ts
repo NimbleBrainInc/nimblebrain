@@ -51,6 +51,12 @@ function checkNoInlineTypeImports(): CheckResult {
   const glob = new Glob("**/*.ts");
 
   for (const file of glob.scanSync({ cwd: SRC_ROOT, absolute: true })) {
+    // Never lint vendored dependencies. Some bundle UIs install their own
+    // node_modules under src/bundles/<name>/ui/ (gitignored, local-only);
+    // those third-party .d.ts files are full of inline type imports we
+    // don't own, and they don't exist in CI's fresh checkout — so without
+    // this skip the check passes in CI but fails on a developer's machine.
+    if (file.split(/[\\/]/).includes("node_modules")) continue;
     const rel = relative(ROOT, file);
     const content = readFileSync(file, "utf-8");
     const source = ts.createSourceFile(file, content, ts.ScriptTarget.Latest, true);
