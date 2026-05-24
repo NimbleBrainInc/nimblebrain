@@ -20,6 +20,8 @@
 
 import { describe, expect, test } from "bun:test";
 import {
+  IDENTITY_SCOPE,
+  identityToolName,
   InvalidNamespacedToolNameInput,
   namespacedToolName,
   parseNamespacedToolName,
@@ -74,9 +76,9 @@ describe("namespacedToolName — construction", () => {
 });
 
 describe("parseNamespacedToolName — parsing", () => {
-  test("parses a valid namespaced name", () => {
+  test("parses a valid workspace-scoped name", () => {
     expect(parseNamespacedToolName("ws_helix-crm__search")).toEqual({
-      wsId: "ws_helix",
+      scope: { kind: "workspace", wsId: "ws_helix" },
       toolName: "crm__search",
     });
   });
@@ -85,9 +87,9 @@ describe("parseNamespacedToolName — parsing", () => {
     // Documented contract: tool names can themselves contain `-` (e.g.
     // `crm-tool__search`). Workspace ids can't contain `-` per
     // WORKSPACE_ID_PATTERN, so the first `-` is unambiguously the
-    // workspace/tool boundary.
+    // scope/tool boundary.
     expect(parseNamespacedToolName("ws_helix-foo-bar")).toEqual({
-      wsId: "ws_helix",
+      scope: { kind: "workspace", wsId: "ws_helix" },
       toolName: "foo-bar",
     });
   });
@@ -156,7 +158,10 @@ describe("round-trip property", () => {
     for (const { wsId, toolName } of cases) {
       const s = namespacedToolName(wsId, toolName);
       expect(s).toMatch(SHAPE_RE);
-      expect(parseNamespacedToolName(s)).toEqual({ wsId, toolName });
+      expect(parseNamespacedToolName(s)).toEqual({
+        scope: { kind: "workspace", wsId },
+        toolName,
+      });
     }
   });
 
@@ -173,6 +178,60 @@ describe("round-trip property", () => {
     const PROVIDER_RE = /^[a-zA-Z0-9_-]{1,128}$/;
     for (const [wsId, toolName] of cases) {
       expect(namespacedToolName(wsId, toolName)).toMatch(PROVIDER_RE);
+    }
+  });
+});
+
+describe("identity scope (`me-<tool>`)", () => {
+  test("identityToolName builds `me-<name>`", () => {
+    expect(identityToolName("conversations__search")).toBe("me-conversations__search");
+    expect(IDENTITY_SCOPE).toBe("me");
+  });
+
+  test("identityToolName throws on empty name", () => {
+    expect(() => identityToolName("")).toThrow(InvalidNamespacedToolNameInput);
+  });
+
+  test("parses an identity-scoped name to the identity scope", () => {
+    expect(parseNamespacedToolName("me-conversations__search")).toEqual({
+      scope: { kind: "identity" },
+      toolName: "conversations__search",
+    });
+  });
+
+  test("identity scope takes the FIRST `-` — tool names may contain `-`", () => {
+    expect(parseNamespacedToolName("me-foo-bar")).toEqual({
+      scope: { kind: "identity" },
+      toolName: "foo-bar",
+    });
+  });
+
+  test("`me` is unambiguous against workspace ids (no ws_ prefix)", () => {
+    // A workspace id must match ^ws_..., which `me` can never satisfy,
+    // so the leading `me` segment is always the identity sentinel.
+    const parsed = parseNamespacedToolName("me-x");
+    expect(parsed.scope.kind).toBe("identity");
+  });
+
+  test("throws on empty tool name (`me-`)", () => {
+    expect(() => parseNamespacedToolName("me-")).toThrow(UnknownNamespacedToolName);
+  });
+
+  test("identity round-trips", () => {
+    const s = identityToolName("files__list");
+    expect(parseNamespacedToolName(s)).toEqual({
+      scope: { kind: "identity" },
+      toolName: "files__list",
+    });
+  });
+
+  test("a non-me, non-ws_ scope is rejected with reason invalid_scope", () => {
+    try {
+      parseNamespacedToolName("helix-foo");
+      throw new Error("expected throw");
+    } catch (err) {
+      expect(err).toBeInstanceOf(UnknownNamespacedToolName);
+      expect((err as UnknownNamespacedToolName).reason).toBe("invalid_scope");
     }
   });
 });

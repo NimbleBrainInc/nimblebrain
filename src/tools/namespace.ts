@@ -39,6 +39,31 @@
 
 import { WORKSPACE_ID_RE } from "../workspace/workspace-store.ts";
 
+// ── Scope ──────────────────────────────────────────────────────────
+
+/**
+ * The scope a namespaced tool name dispatches into.
+ *
+ * Stage 2 had one axis — the workspace. The identity app surface adds a
+ * second: tools that belong to the IDENTITY (conversations, files,
+ * automations) span every workspace and authorize by `ownerId`, so they
+ * carry no workspace. A namespaced tool name is therefore
+ * `<scope>-<toolName>` where the leading segment is either a workspace id
+ * (`ws_<id>`) or the identity sentinel (`me`).
+ */
+export type ToolScope =
+  | { readonly kind: "workspace"; readonly wsId: string }
+  | { readonly kind: "identity" };
+
+/**
+ * Sentinel scope segment for identity-scoped tool names (`me-<tool>`).
+ *
+ * Safe against collision: a workspace id must match
+ * `WORKSPACE_ID_RE = ^ws_[a-z0-9_]{1,64}$`, which `me` can never satisfy
+ * (no `ws_` prefix), so the first-`-` split stays unambiguous.
+ */
+export const IDENTITY_SCOPE = "me";
+
 // ── Errors ─────────────────────────────────────────────────────────
 
 /**
@@ -127,36 +152,62 @@ export function namespacedToolName(wsId: string, name: string): string {
   return `${wsId}-${name}`;
 }
 
+/**
+ * Build an identity-scoped tool name: `me-<name>`.
+ *
+ * The identity counterpart to `namespacedToolName`. Used by the
+ * cross-workspace aggregator for tools whose placement scope is
+ * `identity` (conversations, files, automations) and by the web bridge
+ * when an identity app's iframe dispatches a tool. Throws
+ * `InvalidNamespacedToolNameInput` on an empty/non-string name — same
+ * fail-loud posture as the workspace builder.
+ */
+export function identityToolName(name: string): string {
+  if (typeof name !== "string" || name.length === 0) {
+    throw new InvalidNamespacedToolNameInput(
+      IDENTITY_SCOPE,
+      String(name),
+      "empty_tool_name",
+      "[tools/namespace] identityToolName: tool name is required (non-empty string)",
+    );
+  }
+  return `${IDENTITY_SCOPE}-${name}`;
+}
+
 // ── Parsing ───────────────────────────────────────────────────────
 
 /**
- * Parse a namespaced tool name back into `{ wsId, toolName }`.
+ * Parse a namespaced tool name into `{ scope, toolName }`.
  *
- * Takes the **first** `-` as the separator. Workspace ids cannot
- * contain `-` (per `WORKSPACE_ID_PATTERN = ^ws_[a-z0-9_]{1,64}$`), so
- * the first `-` is always the workspace boundary; tool names may
- * contain `-` themselves and round-trip cleanly:
- * `parseNamespacedToolName("ws_helix-foo-bar")` →
- * `{ wsId: "ws_helix", toolName: "foo-bar" }`.
+ * Grammar: `<scope>-<toolName>`, split on the **first** `-`. The leading
+ * segment is the scope:
+ *   - `me`        → `{ kind: "identity" }`
+ *   - `ws_<id>`   → `{ kind: "workspace", wsId }`
+ *
+ * Neither a workspace id nor `me` contains `-` (workspace ids match
+ * `^ws_[a-z0-9_]{1,64}$`), so the first `-` is always the scope
+ * boundary; tool names may contain `-` themselves and round-trip
+ * cleanly: `parseNamespacedToolName("ws_helix-foo-bar")` →
+ * `{ scope: { kind: "workspace", wsId: "ws_helix" }, toolName: "foo-bar" }`.
  *
  * Why `-` and not `/`: LLM provider tool-name validators (OpenAI,
  * Anthropic, ...) typically constrain tool names to
  * `[a-zA-Z0-9_-]{1,128}`, rejecting `/`. The separator must satisfy
- * that external regex AND remain unambiguous against the workspace
- * id pattern. `-` is the only single-char that fits both.
+ * that external regex AND remain unambiguous against the scope grammar.
+ * `-` is the only single-char that fits both.
  *
  * Throws `UnknownNamespacedToolName` on:
  *   - Input not a string, or empty.
  *   - No `-` separator (`"crm.search"`).
- *   - Empty workspace component (`"-foo"`).
- *   - Empty tool name component (`"ws_helix-"`).
- *   - Workspace component fails `WORKSPACE_ID_RE`.
+ *   - Empty scope component (`"-foo"`).
+ *   - Empty tool name component (`"ws_helix-"`, `"me-"`).
+ *   - Scope component that is neither `me` nor a valid `ws_<id>`.
  *
  * Never returns `null`/`undefined`. Never silently falls back to a
  * "current workspace" — that decision belongs to the orchestrator, and
  * only after this primitive has confirmed the input *is* namespaced.
  */
-export function parseNamespacedToolName(s: string): { wsId: string; toolName: string } {
+export function parseNamespacedToolName(s: string): { scope: ToolScope; toolName: string } {
   if (typeof s !== "string" || s.length === 0) {
     throw new UnknownNamespacedToolName(
       String(s),
@@ -172,13 +223,13 @@ export function parseNamespacedToolName(s: string): { wsId: string; toolName: st
       `[tools/namespace] parseNamespacedToolName: missing "-" separator in "${s}"`,
     );
   }
-  const wsId = s.slice(0, sepIdx);
+  const head = s.slice(0, sepIdx);
   const toolName = s.slice(sepIdx + 1);
-  if (wsId.length === 0) {
+  if (head.length === 0) {
     throw new UnknownNamespacedToolName(
       s,
-      "empty_workspace_id",
-      `[tools/namespace] parseNamespacedToolName: empty workspace id in "${s}"`,
+      "empty_scope",
+      `[tools/namespace] parseNamespacedToolName: empty scope in "${s}"`,
     );
   }
   if (toolName.length === 0) {
@@ -188,14 +239,17 @@ export function parseNamespacedToolName(s: string): { wsId: string; toolName: st
       `[tools/namespace] parseNamespacedToolName: empty tool name in "${s}"`,
     );
   }
-  if (!WORKSPACE_ID_RE.test(wsId)) {
-    throw new UnknownNamespacedToolName(
-      s,
-      "invalid_wsid",
-      `[tools/namespace] parseNamespacedToolName: invalid workspace id "${wsId}" in "${s}"`,
-    );
+  if (head === IDENTITY_SCOPE) {
+    return { scope: { kind: "identity" }, toolName };
   }
-  return { wsId, toolName };
+  if (WORKSPACE_ID_RE.test(head)) {
+    return { scope: { kind: "workspace", wsId: head }, toolName };
+  }
+  throw new UnknownNamespacedToolName(
+    s,
+    "invalid_scope",
+    `[tools/namespace] parseNamespacedToolName: invalid scope "${head}" in "${s}" (expected "${IDENTITY_SCOPE}" or a valid ws_<id>)`,
+  );
 }
 
 /**

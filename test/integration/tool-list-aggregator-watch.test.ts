@@ -46,6 +46,16 @@ import { parseNamespacedToolName } from "../../src/tools/namespace.ts";
 import type { Tool } from "../../src/tools/types.ts";
 import type { Workspace } from "../../src/workspace/types.ts";
 
+// The aggregator emits workspace-scoped names; narrow the parsed scope to
+// the wsId so the `.wsId` reads below stay unchanged.
+function wsIdOf(name: string): string {
+  const { scope } = parseNamespacedToolName(name);
+  if (scope.kind !== "workspace") {
+    throw new Error(`expected workspace scope, got identity for "${name}"`);
+  }
+  return scope.wsId;
+}
+
 // ── Constants ──────────────────────────────────────────────────────
 
 /**
@@ -192,7 +202,7 @@ describe("aggregateToolList — FS-watch invalidation", () => {
 
     const after = await agg.aggregateToolList("user_1");
     const wsAEntries = after
-      .filter((d) => parseNamespacedToolName(d.name).wsId === wsA)
+      .filter((d) => wsIdOf(d.name) === wsA)
       .map((d) => d.toolName)
       .sort();
     expect(wsAEntries).toEqual(["alpha", "beta", "gamma_new"]);
@@ -230,7 +240,7 @@ describe("aggregateToolList — workspace removal", () => {
     const before = await agg.aggregateToolList("user_1");
     expect(before).toHaveLength(3);
     const beforeWorkspaces = new Set(
-      before.map((d) => parseNamespacedToolName(d.name).wsId),
+      before.map((d) => wsIdOf(d.name)),
     );
     expect(beforeWorkspaces).toEqual(new Set([wsA, wsB]));
 
@@ -239,7 +249,7 @@ describe("aggregateToolList — workspace removal", () => {
 
     const after = await agg.aggregateToolList("user_1");
     expect(after).toHaveLength(1);
-    expect(parseNamespacedToolName(after[0]?.name ?? "").wsId).toBe(wsA);
+    expect(wsIdOf(after[0]?.name ?? "")).toBe(wsA);
   });
 });
 

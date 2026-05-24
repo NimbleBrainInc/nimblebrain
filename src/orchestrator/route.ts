@@ -120,6 +120,26 @@ export class UnknownToolSource extends Error {
   }
 }
 
+/**
+ * Thrown when a tool name parses to identity scope (`me-<tool>`) but the
+ * identity dispatch path isn't wired yet.
+ *
+ * Placeholder for Phase A2 (placement scope + `IdentityContext`). Until
+ * then the cross-workspace aggregator namespaces every tool by workspace,
+ * so no surface emits a `me-` name — this is unreachable in normal flow
+ * and exists only to fail closed on a crafted `/mcp` call. Replaced by
+ * real identity routing when `IdentityContext` lands.
+ */
+export class IdentityScopeNotRoutable extends Error {
+  readonly toolName: string;
+
+  constructor(toolName: string) {
+    super(`[orchestrator] identity-scoped tool dispatch is not yet available (tool "${toolName}")`);
+    this.name = "IdentityScopeNotRoutable";
+    this.toolName = toolName;
+  }
+}
+
 // Re-export the parse-time error from the primitive so callers
 // importing the orchestrator's surface get the full error taxonomy in
 // one place. The orchestrator catches and rethrows this without
@@ -203,7 +223,18 @@ export async function routeToolCall(opts: {
 
   // Step 1 — parse. Throws UnknownNamespacedToolName on any malformed
   // input. We let it propagate; the HTTP / engine layer maps it.
-  const { wsId, toolName } = parseNamespacedToolName(namespacedName);
+  const { scope, toolName } = parseNamespacedToolName(namespacedName);
+
+  // Identity-scoped dispatch (`me-<tool>`) routes through an
+  // `IdentityContext`, not a workspace. That path lands in the next
+  // commit (Phase A2 — placement scope + IdentityContext); until then no
+  // producer emits `me-` names (the aggregator namespaces every tool by
+  // workspace), so this branch is unreachable in normal flow. A crafted
+  // `/mcp` call carrying a `me-` name lands here and fails closed.
+  if (scope.kind === "identity") {
+    throw new IdentityScopeNotRoutable(toolName);
+  }
+  const wsId = scope.wsId;
 
   // Step 2 — workspace existence. Distinct from access denial so
   // operators can tell "typo / cross-tenant accident" from

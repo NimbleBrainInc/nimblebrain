@@ -45,6 +45,18 @@ import { parseNamespacedToolName } from "../../../src/tools/namespace.ts";
 import type { Tool } from "../../../src/tools/types.ts";
 import type { Workspace } from "../../../src/workspace/types.ts";
 
+// The aggregator emits workspace-scoped names today; these tests assert
+// workspace colocation. Narrow the parsed scope to `{ wsId, toolName }`
+// so the `.wsId` / `.toolName` reads below stay unchanged. Throws if a
+// name ever parses to identity scope (would be a real regression here).
+function parseWs(name: string): { wsId: string; toolName: string } {
+  const { scope, toolName } = parseNamespacedToolName(name);
+  if (scope.kind !== "workspace") {
+    throw new Error(`expected workspace scope, got identity for "${name}"`);
+  }
+  return { wsId: scope.wsId, toolName };
+}
+
 // ── Fixtures ───────────────────────────────────────────────────────
 
 /**
@@ -207,7 +219,7 @@ describe("aggregateToolList — happy path", () => {
     // Parse every entry back through the primitive — no hand-built
     // `ws_X/Y` literals in this test. Doubles as a contract check
     // that every aggregator entry IS a well-formed namespaced name.
-    const parsed = out.map((d) => parseNamespacedToolName(d.name));
+    const parsed = out.map((d) => parseWs(d.name));
     const wsAEntries = parsed.filter((p) => p.wsId === wsA).map((p) => p.toolName);
     const wsBEntries = parsed.filter((p) => p.wsId === wsB).map((p) => p.toolName);
     expect(wsAEntries.sort()).toEqual(["alpha", "beta", "gamma"]);
@@ -251,7 +263,7 @@ describe("aggregateToolList — collision across workspaces", () => {
     expect(out).toHaveLength(2);
     // Parse the names back to assert both colocations exist; the test
     // never constructs `ws_X/crm.search` itself.
-    const parsed = out.map((d) => parseNamespacedToolName(d.name));
+    const parsed = out.map((d) => parseWs(d.name));
     const owners = parsed.map((p) => p.wsId).sort();
     expect(owners).toEqual([wsA, wsB]);
     // Each entry still carries its own `wsId` + bare `toolName`
@@ -392,8 +404,8 @@ describe("aggregateToolList — per-identity isolation", () => {
     // Parse every entry through the primitive — verifies the
     // namespacing invariant + serves as the "no hand-built ws_X/Y"
     // assertion in the test itself.
-    const user1Workspaces = outUser1.map((d) => parseNamespacedToolName(d.name).wsId);
-    const user2Workspaces = outUser2.map((d) => parseNamespacedToolName(d.name).wsId);
+    const user1Workspaces = outUser1.map((d) => parseWs(d.name).wsId);
+    const user2Workspaces = outUser2.map((d) => parseWs(d.name).wsId);
     expect(new Set(user1Workspaces)).toEqual(new Set([wsA]));
     expect(new Set(user2Workspaces)).toEqual(new Set([wsB]));
     // user_1 must NOT see ws_b's tools and vice versa — pins the
@@ -434,7 +446,7 @@ describe("aggregateToolList — per-identity isolation", () => {
     user1Workspaces = [wsA];
     const after = await agg.aggregateToolList("user_1");
     expect(after).toHaveLength(1);
-    expect(parseNamespacedToolName(after[0]?.name ?? "").wsId).toBe(wsA);
+    expect(parseWs(after[0]?.name ?? "").wsId).toBe(wsA);
   });
 });
 
@@ -464,7 +476,7 @@ describe("aggregateToolList — namespacing primitive enforcement", () => {
     const out = await agg.aggregateToolList("user_1");
     for (const d of out) {
       // Will throw `UnknownNamespacedToolName` on any malformed entry.
-      const parsed = parseNamespacedToolName(d.name);
+      const parsed = parseWs(d.name);
       expect(parsed.wsId).toBe(wsId);
       // Tool names containing `/` round-trip (primitive splits on
       // first slash) — pins the contract documented in

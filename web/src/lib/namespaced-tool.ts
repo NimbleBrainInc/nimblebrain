@@ -36,36 +36,48 @@ import { WORKSPACE_ID_FLAGS, WORKSPACE_ID_PATTERN } from "../_generated/workspac
 const WORKSPACE_ID_RE = new RegExp(WORKSPACE_ID_PATTERN, WORKSPACE_ID_FLAGS);
 
 /**
- * Parse a namespaced tool name into `{ wsId, toolName }`. Returns `null`
+ * Sentinel scope segment for identity-scoped tool names (`me-<tool>`).
+ * Mirrors `IDENTITY_SCOPE` in `src/tools/namespace.ts`.
+ */
+export const IDENTITY_SCOPE = "me";
+
+/**
+ * The scope a namespaced tool name dispatches into. Mirrors `ToolScope`
+ * in `src/tools/namespace.ts`: a workspace (`ws_<id>`) or the identity.
+ */
+export type ToolScope = { kind: "workspace"; wsId: string } | { kind: "identity" };
+
+/**
+ * Parse a namespaced tool name into `{ scope, toolName }`. Returns `null`
  * when the input is not a valid namespaced name — callers should render
  * the raw input in that case (Q2: "fall back to raw if metadata missing").
  *
- * Differs from the server-side `parseNamespacedToolName` in error
- * handling: the server throws (the orchestrator must fail loud to avoid
- * silent cross-workspace routing); the web parser returns null because
- * a transcript renderer that crashed on every tool call for a removed
- * workspace would break the chat history rather than degrade it.
+ * Grammar mirrors the platform primitive: `<scope>-<toolName>`, scope is
+ * `me` (identity) or a `ws_<id>` (workspace). Differs from the server in
+ * error handling: the server throws (the orchestrator must fail loud);
+ * the web parser returns null so a transcript renderer degrades instead
+ * of crashing the chat history on an unparseable name.
  */
-export function parseNamespacedToolName(s: string): { wsId: string; toolName: string } | null {
+export function parseNamespacedToolName(s: string): { scope: ToolScope; toolName: string } | null {
   if (typeof s !== "string" || s.length === 0) return null;
   const sepIdx = s.indexOf("-");
   if (sepIdx < 0) return null;
-  const wsId = s.slice(0, sepIdx);
+  const head = s.slice(0, sepIdx);
   const toolName = s.slice(sepIdx + 1);
-  if (wsId.length === 0 || toolName.length === 0) return null;
-  if (!WORKSPACE_ID_RE.test(wsId)) return null;
-  return { wsId, toolName };
+  if (head.length === 0 || toolName.length === 0) return null;
+  if (head === IDENTITY_SCOPE) return { scope: { kind: "identity" }, toolName };
+  if (WORKSPACE_ID_RE.test(head)) return { scope: { kind: "workspace", wsId: head }, toolName };
+  return null;
 }
 
 /**
- * Build a namespaced tool name `ws_<id>-<toolName>`. Mirrors the
+ * Build a workspace-scoped tool name `ws_<id>-<toolName>`. Mirrors the
  * platform primitive `src/tools/namespace.ts::namespacedToolName` — same
  * `wsId` validation (via the codegen-shared `WORKSPACE_ID_RE`) and the
  * same single construction site discipline. Throws on invalid input.
  *
- * Used by the iframe bridge to prefix tool names before dispatching
- * `tools/call` against `/mcp` (Stage 2 / Q3: bridge auto-prefixes by
- * iframe-host workspace).
+ * Used by the iframe bridge to prefix a workspace app's tool names before
+ * dispatching `tools/call` against `/mcp`.
  */
 export function namespacedToolName(wsId: string, toolName: string): string {
   if (typeof wsId !== "string" || wsId.length === 0) {
@@ -78,4 +90,17 @@ export function namespacedToolName(wsId: string, toolName: string): string {
     throw new Error(`namespacedToolName: invalid toolName (empty) for wsId "${wsId}"`);
   }
   return `${wsId}-${toolName}`;
+}
+
+/**
+ * Build an identity-scoped tool name `me-<toolName>`. The identity
+ * counterpart to `namespacedToolName`; mirrors `identityToolName` in
+ * `src/tools/namespace.ts`. Used by the bridge when an identity app's
+ * iframe dispatches a tool (no workspace in scope).
+ */
+export function identityToolName(toolName: string): string {
+  if (typeof toolName !== "string" || toolName.length === 0) {
+    throw new Error(`identityToolName: invalid toolName (empty)`);
+  }
+  return `${IDENTITY_SCOPE}-${toolName}`;
 }

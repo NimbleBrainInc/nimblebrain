@@ -23,10 +23,10 @@
 // grep would flag it.
 // ---------------------------------------------------------------------------
 
-import { Badge } from "../ui/badge";
 import { useWorkspaceContext, type WorkspaceInfo } from "../../context/WorkspaceContext";
-import { parseNamespacedToolName } from "../../lib/namespaced-tool";
 import { stripServerPrefix } from "../../lib/format";
+import { parseNamespacedToolName } from "../../lib/namespaced-tool";
+import { Badge } from "../ui/badge";
 
 export type ToolCallProvenanceStatus = "ok" | "error" | "running";
 
@@ -61,7 +61,7 @@ export function ToolCallProvenance({
   //   1. Input isn't namespaced at all (legacy / unrouted) — render the
   //      raw input verbatim.
   //   2. wsId is well-formed but no longer in the user's list — render
-  //      the full raw `ws_<id>/<tool>` so the user can still see what
+  //      the full raw `ws_<id>-<tool>` so the user can still see what
   //      tool was called and which workspace it came from.
   if (!parsed) {
     return (
@@ -76,8 +76,26 @@ export function ToolCallProvenance({
     );
   }
 
-  const workspace = list.find((w) => w.id === parsed.wsId);
   const friendlyTool = stripServerPrefix(parsed.toolName);
+  const scope = parsed.scope;
+
+  // Identity-scoped tool (`me-<tool>`): a personal, cross-workspace
+  // surface (conversations / files / automations). No workspace badge —
+  // it doesn't belong to a workspace.
+  if (scope.kind === "identity") {
+    return (
+      <span
+        className="inline-flex items-center gap-1.5"
+        data-testid="tool-call-provenance"
+        data-scope="identity"
+      >
+        <span className="font-mono text-sm">{friendlyTool}</span>
+        <StatusPill status={status} />
+      </span>
+    );
+  }
+
+  const workspace = list.find((w) => w.id === scope.wsId);
 
   if (!workspace) {
     return (

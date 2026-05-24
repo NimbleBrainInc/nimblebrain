@@ -16,12 +16,12 @@ import {
   WORKSPACE_ID_FLAGS,
   WORKSPACE_ID_PATTERN,
 } from "../src/_generated/workspace-id-pattern.ts";
-import { parseNamespacedToolName } from "../src/lib/namespaced-tool";
+import { identityToolName, parseNamespacedToolName } from "../src/lib/namespaced-tool";
 
 describe("parseNamespacedToolName (web)", () => {
-  test("parses ws_<id>-<tool> cleanly", () => {
+  test("parses ws_<id>-<tool> to workspace scope", () => {
     expect(parseNamespacedToolName("ws_helix-crm__search")).toEqual({
-      wsId: "ws_helix",
+      scope: { kind: "workspace", wsId: "ws_helix" },
       toolName: "crm__search",
     });
   });
@@ -29,8 +29,22 @@ describe("parseNamespacedToolName (web)", () => {
   test("first `-` is the separator — tool names may contain `-`", () => {
     // Mirrors the platform primitive: `ws_helix-foo-bar` → toolName "foo-bar"
     expect(parseNamespacedToolName("ws_helix-foo-bar")).toEqual({
-      wsId: "ws_helix",
+      scope: { kind: "workspace", wsId: "ws_helix" },
       toolName: "foo-bar",
+    });
+  });
+
+  test("parses me-<tool> to identity scope", () => {
+    expect(parseNamespacedToolName("me-conversations__search")).toEqual({
+      scope: { kind: "identity" },
+      toolName: "conversations__search",
+    });
+  });
+
+  test("identityToolName round-trips through the parser", () => {
+    expect(parseNamespacedToolName(identityToolName("files__list"))).toEqual({
+      scope: { kind: "identity" },
+      toolName: "files__list",
     });
   });
 
