@@ -5,6 +5,13 @@
  * Opt-in flags (default false) are documented inline.
  */
 export interface FeatureFlags {
+  /**
+   * Reserved. Gated conversational bundle install/uninstall/configure via
+   * `nb__manage_app`, which was removed (install/configure now live in the
+   * Apps catalog + CLI). Kept as a stable operator config knob for the
+   * bundle-management tool the delegation model contemplates reintroducing
+   * (single tool, explicit workspace param, per-call admin auth).
+   */
   bundleManagement?: boolean;
   skillManagement?: boolean;
   delegation?: boolean;
@@ -51,7 +58,6 @@ export function resolveFeatures(config?: FeatureFlags): ResolvedFeatures {
  */
 export const FEATURE_TOOL_MAP: Record<string, keyof FeatureFlags> = {
   // Prefixed names (as seen by the LLM / MCP clients)
-  nb__manage_app: "bundleManagement",
   nb__delegate: "delegation",
   // Identity & workspace tools
   nb__manage_users: "userManagement",
@@ -64,7 +70,6 @@ export const FEATURE_TOOL_MAP: Record<string, keyof FeatureFlags> = {
   skills__deactivate: "skillManagement",
   skills__move_scope: "skillManagement",
   // Unprefixed names (used during system tool registration)
-  manage_app: "bundleManagement",
   delegate: "delegation",
   manage_users: "userManagement",
   manage_workspaces: "workspaceManagement",
