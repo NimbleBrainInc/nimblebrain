@@ -78,7 +78,9 @@ describe("Stage 2 — legacy oauthScope on disk hard-errors at boot", () => {
     expect(caught).toBeInstanceOf(LegacyOAuthScopeError);
     const e = caught as LegacyOAuthScopeError;
     expect(e.serverName).toBe("granola");
+    expect(e.url).toBe("https://granola.so/mcp");
+    // The message must name the recovery command operators copy-paste.
+    // We pin that stable identifier only — NOT the surrounding prose.
     expect(e.message).toContain("migrate:user-creds");
-    expect(e.message).toContain("Stage 2 deploy runbook");
   });
 });

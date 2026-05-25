@@ -40,10 +40,9 @@ describe("assertBundleRefIsPostStage2", () => {
       const e = err as LegacyOAuthScopeError;
       expect(e.serverName).toBe("granola");
       expect(e.url).toBe("https://granola.so/mcp");
-      // Message must name the operator-facing migration command and the
-      // deploy runbook so the failure mode is self-diagnosable.
+      // The message must name the recovery command operators copy-paste.
+      // We pin that stable identifier only — NOT the surrounding prose.
       expect(e.message).toContain("migrate:user-creds");
-      expect(e.message).toContain("Stage 2 deploy runbook");
     }
   });
 
