@@ -1,44 +1,18 @@
-/** Briefing input — passed to home__briefing tool. */
+// The briefing output contract lives in the platform schema — the single
+// source of truth, codegen'd to the web shell. Import for local use below and
+// re-export so backend callers keep importing from `../services/home-types.ts`.
+import type {
+  BriefingAction,
+  BriefingOutput,
+  BriefingSection,
+  BriefingState,
+} from "../tools/platform/schemas/home.ts";
+
+export type { BriefingAction, BriefingOutput, BriefingSection, BriefingState };
+
+/** Briefing input — passed to the `nb__briefing` tool. */
 export interface BriefingInput {
   force_refresh?: boolean;
-}
-
-/** Complete briefing output returned by home__briefing. */
-export interface BriefingOutput {
-  greeting: string;
-  date: string;
-  lede: string;
-  sections: BriefingSection[];
-  state: BriefingState;
-  generated_at: string;
-  cached: boolean;
-}
-
-/** Dashboard state derived from briefing content. */
-export type BriefingState = "empty" | "quiet" | "all-clear" | "normal" | "attention";
-
-/** Individual briefing section (e.g., "Your stock updates showed..."). */
-export interface BriefingSection {
-  id: string;
-  text: string;
-  type: "positive" | "neutral" | "warning";
-  category: "recent" | "upcoming" | "attention";
-  action?: BriefingAction;
-}
-
-/** Action attached to a briefing section. `type` discriminates which
- * field carries the payload — navigate uses `route`, startChat uses
- * `prompt` — but both fields are present in the wire shape (nullable
- * for the unused variant) because Anthropic structured-output requires
- * all schema properties to appear in `required`. Consumers check
- * `action.type` before reading the relevant field. */
-export interface BriefingAction {
-  type: "navigate" | "startChat";
-  label: string;
-  /** Set on navigate actions; null on startChat. */
-  route: string | null;
-  /** Set on startChat actions; null on navigate. */
-  prompt: string | null;
 }
 
 /** In-memory cache entry for a generated briefing. */

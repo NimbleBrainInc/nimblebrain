@@ -10,3 +10,37 @@ export declare const HomeActivityInput: import("@sinclair/typebox").TObject<{
     limit: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
 }>;
 export type HomeActivityInput = Static<typeof HomeActivityInput>;
+/** Dashboard state derived from briefing content. */
+export type BriefingState = "empty" | "quiet" | "all-clear" | "normal" | "attention";
+/**
+ * Action attached to a briefing section. `type` discriminates the payload —
+ * `navigate` uses `route`, `startChat` uses `prompt` — but both fields are
+ * always present (null for the unused variant) because the LLM structured-
+ * output schema requires every property. Consumers check `type` first.
+ */
+export interface BriefingAction {
+    type: "navigate" | "startChat";
+    label: string;
+    /** Set on navigate actions; null on startChat. */
+    route: string | null;
+    /** Set on startChat actions; null on navigate. */
+    prompt: string | null;
+}
+/** Individual briefing section — one line item under a category heading. */
+export interface BriefingSection {
+    id: string;
+    text: string;
+    type: "positive" | "neutral" | "warning";
+    category: "recent" | "upcoming" | "attention";
+    action?: BriefingAction;
+}
+/** Complete briefing output returned by `nb__briefing`. */
+export interface BriefingOutput {
+    greeting: string;
+    date: string;
+    lede: string;
+    sections: BriefingSection[];
+    state: BriefingState;
+    generated_at: string;
+    cached: boolean;
+}

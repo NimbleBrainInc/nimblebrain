@@ -18,12 +18,16 @@
 // the same data that used to feed the bottom `APPS` group.
 // ---------------------------------------------------------------------------
 
+import { useCallback } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import type { BriefingAction } from "../_generated/platform-schemas/home";
+import { BriefingView } from "../components/briefing/BriefingView";
 import { useShellContext } from "../context/ShellContext";
 import { useWorkspaceContext, type WorkspaceInfo } from "../context/WorkspaceContext";
+import { useWorkspaceBriefing } from "../hooks/useWorkspaceBriefing";
 import { resolveIcon } from "../lib/icons";
-import { toSlug } from "../lib/workspace-slug";
 import { cn } from "../lib/utils";
+import { toSlug } from "../lib/workspace-slug";
 import type { PlacementEntry } from "../types";
 
 export function WorkspaceOverviewPage() {
@@ -33,6 +37,26 @@ export function WorkspaceOverviewPage() {
   const navigate = useNavigate();
 
   const workspace = slug ? wsCtx.workspaces.find((w) => toSlug(w.id) === slug) : undefined;
+
+  // The briefing is workspace-scoped server-side via X-Workspace-Id (= the
+  // active workspace). Key the fetch on the active workspace id so the header
+  // and the fetch stay in lockstep (see useWorkspaceBriefing for the rationale).
+  const {
+    briefing,
+    loading: briefingLoading,
+    error: briefingError,
+    refresh: refreshBriefing,
+  } = useWorkspaceBriefing(wsCtx.activeWorkspace?.id);
+
+  const handleBriefingAction = useCallback(
+    (action: BriefingAction) => {
+      if (action.type !== "navigate" || !action.route) return;
+      // Facet navigate actions carry the app's route (e.g. "@scope/name").
+      // Absolute paths pass through; bare routes open the app in this workspace.
+      navigate(action.route.startsWith("/") ? action.route : `/w/${slug}/app/${action.route}`);
+    },
+    [navigate, slug],
+  );
 
   if (wsCtx.loading) {
     return (
@@ -78,6 +102,22 @@ export function WorkspaceOverviewPage() {
           </p>
         </header>
 
+        {/* Briefing — LLM summary of recent workspace activity, generated from
+            the installed apps' declared facets. Restored from the pre-reorg
+            home surface. */}
+        <div className="mb-10">
+          <BriefingView
+            briefing={briefing}
+            loading={briefingLoading}
+            error={briefingError}
+            onRetry={refreshBriefing}
+            onAction={handleBriefingAction}
+          />
+        </div>
+
+        <div className="text-[11px] font-bold tracking-[0.08em] uppercase text-muted-foreground mb-3">
+          Available apps
+        </div>
         {apps.length === 0 ? (
           <div
             className="rounded-lg border border-dashed border-border p-8 text-center text-sm text-muted-foreground"
