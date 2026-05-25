@@ -27,6 +27,7 @@ import { useSidebar } from "../context/SidebarContext";
 import type { AppContext } from "../types";
 import type { ChatPanelRef } from "./ChatPanel";
 import { ChatPanel } from "./ChatPanel";
+import { ResizeHandle } from "./ResizeHandle";
 
 const DEFAULT_WIDTH = 380;
 const TRANSITION_STANDARD = "300ms cubic-bezier(0.33, 1, 0.68, 1)";
@@ -51,7 +52,8 @@ interface ChatChromeProps {
 }
 
 export function ChatChrome({ appContext }: ChatChromeProps) {
-  const { panelState, panelWidth, openPanel, closePanel, toggleFullscreen } = useChatPanelContext();
+  const { panelState, panelWidth, setPanelWidth, openPanel, closePanel, toggleFullscreen } =
+    useChatPanelContext();
   const panelRef = useRef<ChatPanelRef>(null);
   const chat = useChatContext();
   const sidebar = useSidebar();
@@ -232,6 +234,21 @@ export function ChatChrome({ appContext }: ChatChromeProps) {
           onRetry={chat.retryLastMessage}
         />
       </div>
+
+      {/* Resize handle — anchored to the panel's left edge. Rendered here at
+          the single panel mount point so EVERY route gets a resizable,
+          collapsible chat sidebar, not just app views. App iframes read
+          `isResizing` from ChatPanelContext to drop pointer-events mid-drag. */}
+      {isSidebar && !isMobile && (
+        <div className="fixed top-0 h-full z-20 hidden sm:block" style={{ right: panelWidth }}>
+          <ResizeHandle
+            initialWidth={panelWidth}
+            onWidthChange={setPanelWidth}
+            onDoubleClick={() => setPanelWidth(DEFAULT_WIDTH)}
+            className="h-full"
+          />
+        </div>
+      )}
     </>
   );
 }

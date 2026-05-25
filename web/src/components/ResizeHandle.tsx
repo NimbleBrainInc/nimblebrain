@@ -1,10 +1,8 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 interface ResizeHandleProps {
   initialWidth: number;
   onWidthChange: (width: number) => void;
-  onDragStart?: () => void;
-  onDragEnd?: () => void;
   onDoubleClick?: () => void;
   min?: number;
   max?: number;
@@ -14,8 +12,6 @@ interface ResizeHandleProps {
 export function ResizeHandle({
   initialWidth,
   onWidthChange,
-  onDragStart,
-  onDragEnd,
   onDoubleClick,
   min = 280,
   max = 520,
@@ -24,10 +20,12 @@ export function ResizeHandle({
   const ref = useRef<HTMLDivElement>(null);
   const cbRef = useRef(onWidthChange);
   cbRef.current = onWidthChange;
-  const onDragStartRef = useRef(onDragStart);
-  onDragStartRef.current = onDragStart;
-  const onDragEndRef = useRef(onDragEnd);
-  onDragEndRef.current = onDragEnd;
+
+  // While dragging, render a full-viewport overlay (below). It captures the
+  // mouse over everything — including app iframes, which would otherwise eat
+  // the mousemove and stall the drag — so resize is fully self-contained: no
+  // parent needs to know a drag is happening (no shared "isResizing" flag).
+  const [dragging, setDragging] = useState(false);
 
   const liveWidthRef = useRef(initialWidth);
   useEffect(() => {
@@ -53,7 +51,7 @@ export function ResizeHandle({
       document.removeEventListener("mouseup", onMouseUp);
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
-      onDragEndRef.current?.();
+      setDragging(false);
     }
 
     function onMouseDown(e: MouseEvent) {
@@ -62,7 +60,7 @@ export function ResizeHandle({
       dragStartWidth = liveWidthRef.current;
       document.body.style.cursor = "col-resize";
       document.body.style.userSelect = "none";
-      onDragStartRef.current?.();
+      setDragging(true);
       document.addEventListener("mousemove", onMouseMove);
       document.addEventListener("mouseup", onMouseUp);
     }
@@ -77,12 +75,15 @@ export function ResizeHandle({
     };
   }, [min, max]);
 
-  // biome-ignore lint/a11y/noStaticElementInteractions: drag handle uses pointer events for resize
   return (
-    <div
-      ref={ref}
-      onDoubleClick={onDoubleClick}
-      className={`hidden sm:block w-1 shrink-0 cursor-col-resize bg-border hover:bg-ring active:bg-primary transition-colors ${className ?? ""}`}
-    />
+    <>
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: drag handle uses pointer events for resize */}
+      <div
+        ref={ref}
+        onDoubleClick={onDoubleClick}
+        className={`hidden sm:block w-1 shrink-0 cursor-col-resize bg-border hover:bg-ring active:bg-primary transition-colors ${className ?? ""}`}
+      />
+      {dragging && <div className="fixed inset-0 z-[60] cursor-col-resize" />}
+    </>
   );
 }
