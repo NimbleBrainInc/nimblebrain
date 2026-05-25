@@ -3,6 +3,13 @@ import type { LanguageModelV3 } from "@ai-sdk/provider";
 /**
  * Generate a short conversation title using the provided model.
  * Non-blocking — call fire-and-forget after first turn.
+ *
+ * The prompt uses real role turns (user → assistant → user-instruction) rather
+ * than stuffing the whole transcript into one user string. The transcript-in-a-
+ * string shape made the fast model pattern-match "continue the assistant" and
+ * echo the response back as the title — worst on creative/long answers (#253).
+ * A trailing user-role instruction is unambiguously a command, not text to
+ * continue.
  */
 export async function generateTitle(
   model: LanguageModelV3,
@@ -15,14 +22,16 @@ export async function generateTitle(
         {
           role: "system",
           content:
-            "Generate a 3-6 word title for this conversation. Return only the title, nothing else.",
+            "You generate short, descriptive titles for conversations. Reply with the title only.",
         },
+        { role: "user", content: [{ type: "text", text: userMessage.slice(0, 500) }] },
+        { role: "assistant", content: [{ type: "text", text: assistantResponse.slice(0, 500) }] },
         {
           role: "user",
           content: [
             {
               type: "text",
-              text: `User: ${userMessage.slice(0, 200)}\nAssistant: ${assistantResponse.slice(0, 200)}`,
+              text: "Reply with a 3-6 word title summarizing this conversation. Output only the title — no quotes, no markdown, no preamble.",
             },
           ],
         },
@@ -31,7 +40,7 @@ export async function generateTitle(
     });
     const textBlock = result.content.find((b) => b.type === "text");
     if (textBlock?.type === "text") {
-      return textBlock.text.trim();
+      return textBlock.text.trim() || fallbackTitle(userMessage);
     }
     return fallbackTitle(userMessage);
   } catch {

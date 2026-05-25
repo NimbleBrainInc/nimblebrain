@@ -59,4 +59,24 @@ describe("generateTitle", () => {
 		expect(title.length).toBeLessThanOrEqual(60);
 		expect(longMsg.startsWith(title.trimEnd())).toBe(true);
 	});
+
+	it("sends the conversation as real role turns ending in an instruction (#253)", async () => {
+		let captured: unknown;
+		const model = createMockModel((opts) => {
+			captured = opts.prompt;
+			return { content: [{ type: "text", text: "Library Paranoia Joke" }] };
+		});
+		await generateTitle(model, "Write something funny", "A man walks into a library...");
+		const prompt = captured as Array<{ role: string }>;
+		// system, user(question), assistant(answer), user(instruction)
+		expect(prompt.map((m) => m.role)).toEqual(["system", "user", "assistant", "user"]);
+	});
+
+	it("returns the model's title text (trimmed)", async () => {
+		const model = createMockModel(() => ({
+			content: [{ type: "text", text: "  Library Paranoia Joke  " }],
+		}));
+		const title = await generateTitle(model, "Write something funny", "A man walks in...");
+		expect(title).toBe("Library Paranoia Joke");
+	});
 });
