@@ -1,5 +1,5 @@
 /**
- * Stage 2 (delegation-model refactor) Task 007 — session-store legacy
+ * Stage 2 (cross-workspace refactor) Task 007 — session-store legacy
  * compatibility tests.
  *
  * Pins the Q4 (hard-cut) contract on both `SessionRegistry`

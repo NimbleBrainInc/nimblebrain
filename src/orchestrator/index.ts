@@ -1,7 +1,7 @@
 /**
  * Public surface of `src/orchestrator/`.
  *
- * Stage 2 (delegation-model refactor) routes every chat / `/mcp` tool
+ * Stage 2 (cross-workspace refactor) routes every chat / `/mcp` tool
  * dispatch through this module. See `route.ts` for the routing rules
  * and `tool-list-aggregator.ts` for the per-identity aggregated tool
  * surface (watcher-backed cache).

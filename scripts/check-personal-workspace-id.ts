@@ -2,7 +2,7 @@
 /**
  * Lint: personal-workspace ids go through `personalWorkspaceIdFor(userId)`.
  *
- * The delegation-model refactor (Stage 1 Task 001) made
+ * The cross-workspace refactor (Stage 1 Task 001) made
  * `personalWorkspaceIdFor` the single source of truth for the
  * `ws_user_<userId>` format. Hand-building the id in another file —
  * `"ws_user_" + userId`, `` `ws_user_${userId}` ``, etc. — invites

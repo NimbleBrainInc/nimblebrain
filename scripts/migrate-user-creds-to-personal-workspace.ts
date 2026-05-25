@@ -118,7 +118,7 @@ function parseArgs(): Args {
 
 function printHelp(): void {
   console.log(`
-migrate-user-creds-to-personal-workspace — Stage 2 of the delegation-model refactor
+migrate-user-creds-to-personal-workspace — Stage 2 of the cross-workspace refactor
 
 Moves every user-scoped credential file from
   users/<userId>/credentials/...

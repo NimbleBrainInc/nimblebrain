@@ -2,8 +2,8 @@
  * Stage 2 disk-read boundary: refs carrying the legacy `oauthScope: "user"`
  * literal in `workspaces/<wsId>/workspace.json#bundles[]` hard-error at
  * boot. The runtime does NOT migrate or normalize at startup — operators
- * are expected to have run `bun run migrate:user-creds` per the deploy
- * runbook (the Stage 2 deploy runbook).
+ * are expected to have run `bun run migrate:user-creds` per the Stage 2
+ * deploy runbook.
  */
 
 import { afterEach, describe, expect, it } from "bun:test";
@@ -79,6 +79,6 @@ describe("Stage 2 — legacy oauthScope on disk hard-errors at boot", () => {
     const e = caught as LegacyOAuthScopeError;
     expect(e.serverName).toBe("granola");
     expect(e.message).toContain("migrate:user-creds");
-    expect(e.message).toContain("STAGE_2_DEPLOY.md");
+    expect(e.message).toContain("Stage 2 deploy runbook");
   });
 });

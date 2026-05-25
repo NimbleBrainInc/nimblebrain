@@ -4,7 +4,7 @@
  * External MCP clients (Claude Code, Open WebUI, etc.) connect to /mcp and
  * access all installed tools through the standard MCP protocol.
  *
- * **Stage 2 (delegation-model refactor): identity-bound sessions.** The
+ * **Stage 2 (cross-workspace refactor): identity-bound sessions.** The
  * `/mcp` session no longer carries a workspace. `tools/list` returns the
  * **union of every tool the identity can call** across every workspace
  * they belong to, namespaced as `ws_<id>-<tool>` via T005's aggregator.
@@ -603,7 +603,7 @@ export class McpServerHost {
  * Create a new MCP Server instance bound to a single identity-scoped
  * session. Each session gets its own Server + Transport pair.
  *
- * Stage 2 (delegation-model refactor) makes `tools/list` return the union
+ * Stage 2 (cross-workspace refactor) makes `tools/list` return the union
  * across every workspace the identity can access (via the runtime's
  * `getToolListAggregator()`), and `tools/call` parses the namespaced name
  * and routes via `routeToolCall`. Workspace is derived from the parsed

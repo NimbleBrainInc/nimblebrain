@@ -2,7 +2,7 @@
  * Conversation metadata schema — Stage 1 single-owner shape.
  *
  * Pre-Stage-1 this file exercised `visibility` and `participants`
- * field round-trips. Those fields are gone (delegation-model Stage 1);
+ * field round-trips. Those fields are gone (Stage 1);
  * the surviving canonical fields are `ownerId` (required) and
  * `workspaceId` (optional tool-scoping pointer).
  */

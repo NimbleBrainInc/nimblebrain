@@ -1,5 +1,5 @@
 /**
- * Stage 1 E2E — the load-bearing claim of the delegation-model refactor:
+ * Stage 1 E2E — the load-bearing claim of the cross-workspace refactor:
  *
  *   **Conversations outlive their workspace context.**
  *

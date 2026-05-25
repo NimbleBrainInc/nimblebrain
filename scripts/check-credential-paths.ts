@@ -2,7 +2,7 @@
 /**
  * Lint: credentials live in the workspace, not the user.
  *
- * Stage 2 of the delegation-model refactor moved user-scoped credentials
+ * Stage 2 of the cross-workspace refactor moved user-scoped credentials
  * from `{workDir}/users/<userId>/credentials/...` onto the user's
  * personal workspace at `{workDir}/workspaces/ws_user_<userId>/credentials/...`.
  * Every credential read/write in `src/` now resolves through

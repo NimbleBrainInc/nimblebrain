@@ -224,7 +224,7 @@ export interface ChatRequest {
   /**
    * When set, the chat is scoped to a specific app.
    *
-   * Stage 2 (delegation-model): the chat surface is identity-bound, not
+   * Stage 2 (cross-workspace): the chat surface is identity-bound, not
    * workspace-bound. Tools come from the cross-workspace aggregator
    * (`orchestrator.aggregateToolList(identityId)`) and each tool call
    * routes through the orchestrator's parsed-namespace path. There is no

@@ -1,7 +1,7 @@
 /**
  * Unit tests for `src/tools/namespace.ts`.
  *
- * Pins the primitive's contract for Stage 2 of the delegation-model
+ * Pins the primitive's contract for Stage 2 of the cross-workspace
  * refactor. Failure modes covered (in order of likelihood we'd silently
  * regress):
  *

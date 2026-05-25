@@ -3,7 +3,7 @@
  * Lint: cross-workspace tool names go through `namespacedToolName` /
  * `parseNamespacedToolName` in `src/tools/namespace.ts`.
  *
- * Stage 2 (delegation-model refactor) makes `ws_<id>-<toolName>` the
+ * Stage 2 (cross-workspace refactor) makes `ws_<id>-<toolName>` the
  * canonical cross-workspace tool-name shape. The primitive in
  * `src/tools/namespace.ts` is the **single construction site** for that
  * form. This lint enforces the constraint structurally so a future

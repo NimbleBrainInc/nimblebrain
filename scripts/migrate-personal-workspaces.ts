@@ -86,7 +86,7 @@ function parseArgs(): Args {
 
 function printHelp(): void {
   console.log(`
-migrate-personal-workspaces — Stage 1 of the delegation-model refactor
+migrate-personal-workspaces — Stage 1 of the cross-workspace refactor
 
 Renames personal workspaces to ws_user_<userId> and stamps isPersonal /
 ownerUserId fields on every workspace.

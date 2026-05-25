@@ -2,7 +2,7 @@
  * Unit tests for `src/orchestrator/route.ts`.
  *
  * Pins the per-call workspace routing contract for Stage 2 of the
- * delegation-model refactor. Each test names the failure mode a naive
+ * cross-workspace refactor. Each test names the failure mode a naive
  * implementation might silently mask — matching the
  * `004-orchestrator-skeleton.md` "Tests Required" list 1:1.
  *

@@ -421,7 +421,7 @@ describe("EventSourcedConversationStore", () => {
   });
 
   // Stage 1 removed share/unshare/addParticipant/removeParticipant —
-  // see delegation-model/REFACTOR_PLAN Stage 1. Sharing returns in
+  // see the Stage 1 refactor. Sharing returns in
   // Stage 4 with policy-gated primitives.
 
   it("list() reflects title from metadata events", async () => {

@@ -90,7 +90,7 @@ function parseArgs(): Args {
 
 function printHelp(): void {
   console.log(`
-migrate-conversations-to-top-level — Stage 1 of the delegation-model refactor
+migrate-conversations-to-top-level — Stage 1 of the cross-workspace refactor
 
 Moves every conversation from workspaces/{wsId}/conversations/{convId}.jsonl
 to conversations/{convId}.jsonl, purges removed event types

@@ -1,5 +1,5 @@
 /**
- * Two-workspace fixture for the Stage 2 delegation-model cross-workspace
+ * Two-workspace fixture for the Stage 2 cross-workspace
  * contract.
  *
  * Boots a `Runtime` with two workspaces visible to a single identity:

@@ -517,7 +517,7 @@ export class WorkspaceCredentialStore {
 //
 // These remain for incremental migration. Every call site outside this
 // module is being moved to `WorkspaceCredentialStore` (or its owner
-// `WorkspaceContext`) in Stage 0 of the delegation-model refactor; once
+// `WorkspaceContext`) in Stage 0 of the cross-workspace refactor; once
 // the audit grep returns zero, the shims are deleted.
 
 /**

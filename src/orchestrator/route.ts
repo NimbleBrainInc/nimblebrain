@@ -1,7 +1,7 @@
 /**
  * Per-call workspace routing for cross-workspace tool dispatch.
  *
- * Stage 2 (delegation-model refactor) makes every chat / `/mcp` tool
+ * Stage 2 (cross-workspace refactor) makes every chat / `/mcp` tool
  * dispatch flow through this single primitive. Given a namespaced tool
  * name (`ws_<id>-<innerToolName>`) and the calling identity, the
  * orchestrator:

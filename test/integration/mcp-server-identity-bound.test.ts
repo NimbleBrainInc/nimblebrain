@@ -1,5 +1,5 @@
 /**
- * Integration tests for Stage 2 (delegation-model refactor) Task 007:
+ * Integration tests for Stage 2 (cross-workspace refactor) Task 007:
  * `/mcp` sessions are identity-bound, tools are namespaced cross-workspace,
  * and `SessionMeta` no longer carries `workspaceId`.
  *

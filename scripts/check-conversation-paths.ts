@@ -2,7 +2,7 @@
 /**
  * Lint: conversation files live at the top-level user path post-Stage-1.
  *
- * The delegation-model refactor (Stage 1 Task 005) collapsed every
+ * The cross-workspace refactor (Stage 1 Task 005) collapsed every
  * conversation onto a single user-scoped store at
  * `{workDir}/conversations/{convId}.jsonl`. The pre-Stage-1 workspace-
  * scoped layout (`{workDir}/workspaces/{wsId}/conversations/...`) is

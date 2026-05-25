@@ -41,7 +41,7 @@ export function createManageWorkspacesTool(ctx: ManageWorkspacesContext): InProc
   return {
     name: "manage_workspaces",
     description:
-      "Manage workspaces and their members. Workspace CRUD requires org admin. Member management requires workspace or org admin. Conversation sharing was removed in Stage 1 of the delegation-model refactor and returns in Stage 4 with policy-gated primitives.",
+      "Manage workspaces and their members. Workspace CRUD requires org admin. Member management requires workspace or org admin. Conversation sharing was removed in Stage 1 of the cross-workspace refactor and returns in Stage 4 with policy-gated primitives.",
     inputSchema: {
       type: "object",
       properties: {

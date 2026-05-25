@@ -273,7 +273,7 @@ describe("free-function shim parity", () => {
 // proves the boundary holds. Failure of any test here means a
 // regression in workspace isolation, not a trivial implementation
 // detail — these are the load-bearing invariants for the whole
-// delegation-model refactor.
+// cross-workspace refactor.
 
 describe("Stage 0 isolation invariants", () => {
   test("every scope path under context A is disjoint from context B", () => {

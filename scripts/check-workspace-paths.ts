@@ -2,7 +2,7 @@
 /**
  * Lint: workspace-scoped on-disk paths must flow through `WorkspaceContext`.
  *
- * The delegation-model refactor (Stage 0)
+ * The cross-workspace refactor (Stage 0)
  * moves every `{workDir}/workspaces/{wsId}/...` derivation into a single
  * typed handle (`src/workspace/context.ts`). After Stage 0, any new
  * occurrence of the legacy free-form pattern is a regression — it
