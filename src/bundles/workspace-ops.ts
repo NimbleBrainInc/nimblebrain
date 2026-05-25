@@ -1,7 +1,10 @@
 /**
- * Workspace-scoped bundle install/uninstall operations.
+ * Workspace-scoped bundle install operation.
  *
- * These are consumed by system tools for hot bundle management within workspaces.
+ * Consumed by connector install for hot bundle management within a
+ * workspace. (Uninstall is owned by `BundleLifecycleManager.uninstall`,
+ * which resolves the server name, clears credentials, and unregisters
+ * placements/config/automations in one place.)
  */
 
 import type { EventSink } from "../engine/types.ts";
@@ -46,13 +49,12 @@ export async function installBundleInWorkspace(
     bundleMcp?: BundleMcpDeps;
   },
 ): Promise<ProcessInventoryEntry> {
-  // workDir default matches the sibling `uninstallBundleFromWorkspace`
-  // below — previously this function fell through to `""` and emitted
-  // relative paths from cwd (a latent bug). The new default routes
-  // through `~/.nimblebrain`, matching every other workspace-scoped
-  // entry point. A caller that explicitly passes `workDir: ""` now
-  // hits the `WorkspaceContext` constructor's empty-string rejection
-  // (deliberate — relative paths in this code path were never correct).
+  // Default workDir to `~/.nimblebrain` — previously this function fell
+  // through to `""` and emitted relative paths from cwd (a latent bug),
+  // out of step with every other workspace-scoped entry point. A caller
+  // that explicitly passes `workDir: ""` now hits the `WorkspaceContext`
+  // constructor's empty-string rejection (deliberate — relative paths in
+  // this code path were never correct).
   const workDir = opts?.workDir ?? defaultWorkDir();
   const wsContext = new WorkspaceContext({ wsId, workDir });
   const serverName = serverNameFromRef(bundleRef);
@@ -82,45 +84,4 @@ export async function installBundleInWorkspace(
     serverName: result.sourceName,
     meta: result.meta,
   };
-}
-
-/**
- * Uninstall a bundle from a specific workspace (hot — stops process and deregisters).
- *
- * Stops the MCP source, removes it from the registry, and clears the
- * workspace-scoped credential file for the bundle (best-effort —
- * failures are logged but do not fail the uninstall). Data directories
- * are intentionally preserved.
- *
- * `serverName` is the resolved lifecycle key — caller is responsible
- * for reading it from the persisted `BundleRef.serverName` (set at
- * install time from `slugifyServerName(entry.id)`) with
- * `deriveServerName(bundleName)` as a back-compat fallback for legacy
- * refs. Passing the canonical name here would skip the slug and miss
- * the registered source.
- */
-export async function uninstallBundleFromWorkspace(
-  wsId: string,
-  bundleName: string,
-  serverName: string,
-  registry: ToolRegistry,
-  opts?: { workDir?: string },
-): Promise<void> {
-  if (!registry.hasSource(serverName)) {
-    throw new Error(`No bundle "${serverName}" found in workspace "${wsId}"`);
-  }
-
-  await registry.removeSource(serverName);
-
-  // Best-effort credential cleanup — don't fail uninstall if it errors.
-  // Credentials are config, not data: they should not persist across uninstalls.
-  const workDir = opts?.workDir ?? defaultWorkDir();
-  try {
-    await new WorkspaceContext({ wsId, workDir }).getCredentialStore().clearAll(bundleName);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    process.stderr.write(
-      `[workspace-ops] Failed to clear credentials for ${bundleName} in ${wsId}: ${msg}\n`,
-    );
-  }
 }

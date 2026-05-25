@@ -643,28 +643,6 @@ function formatUptime(ms: number): string {
   return `${hours}h ${minutes % 60}m`;
 }
 
-/**
- * Resolve the lifecycle key for an installed bundle.
- *
- * Catalog install (Browse) writes the slugified canonical id
- * (`slugifyServerName(entry.id)`) onto the BundleRef. Re-deriving from
- * `bundleName` here would compute the OLD short slug and miss the
- * registered source — the exact regression that broke uninstall for any
- * bundle installed via the catalog after #195.
- *
- * Reads `ref.serverName` first, falling back to
- * `deriveServerName(bundleName)` only for legacy installs that predate
- * `serverName`-on-ref persistence. Exported so the regression is
- * unit-testable independently of the full uninstall stack.
- */
-export function resolveBundleServerName(
-  bundleName: string,
-  ws: { bundles: Array<{ name?: string; serverName?: string }> } | null,
-): string {
-  const persisted = ws?.bundles.find((b) => b.name === bundleName);
-  return persisted?.serverName ?? deriveServerName(bundleName);
-}
-
 function groupToolsBySource(all: Array<{ name: string; description: string }>): ToolResult {
   const groups = new Map<string, string[]>();
   for (const tool of all) {
