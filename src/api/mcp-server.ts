@@ -691,11 +691,14 @@ function createServer(
 
     // ── Stage 2: parse the namespaced tool name + route via orchestrator
     //
-    // Strict invariant — no fallback to a "current workspace." A bare name
-    // like `crm.search` is a client bug we surface as `-32602 Invalid
-    // params` per MCP spec, with `error.data.reason: "invalid_tool_name"`
-    // so MCP clients can render a meaningful message. The orchestrator's
-    // four error classes each map to a distinct response shape.
+    // Strict invariant — no fallback to a "current workspace." A bare
+    // `<source>__<tool>` name (no `ws_<id>-` prefix) parses to global scope;
+    // until W3 wires global dispatch we surface it as `-32602 Invalid params`
+    // per MCP spec with `error.data.reason: "global_not_routable"`. Truly
+    // malformed names (empty, empty tool, bad `ws_` id) surface as
+    // `invalid_tool_name`. Either way the client gets a meaningful reason and
+    // the call never silently routes. The orchestrator's five error classes
+    // each map to a distinct response shape.
     let routed: Awaited<ReturnType<typeof routeToolCall>>;
     try {
       routed = await routeToolCall({

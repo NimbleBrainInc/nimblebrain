@@ -56,7 +56,9 @@ jobs:
 
   smoke:
     name: Smoke Tests
-    if: github.ref == 'refs/heads/main'
+    # Runs on PRs and on main. Smoke hits the live mpak registry + downloads
+    # bundles (~15s, network); gating it to main-only previously let a stale
+    # smoke assertion merge green and turn main red post-merge.
     needs: [test-unit, test-integration]
     runs-on: ubuntu-latest
     steps:

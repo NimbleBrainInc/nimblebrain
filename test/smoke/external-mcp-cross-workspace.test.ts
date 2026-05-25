@@ -260,14 +260,18 @@ describe("external MCP cross-workspace (Stage 2 T011 smoke)", () => {
   //
   // Pins: a defensive default that silently routes un-prefixed names
   // to the user's personal workspace makes a class of LLM mistakes
-  // succeed in the wrong place. The contract is fail-loud: JSON-RPC
-  // `-32602` with `data.reason: "invalid_tool_name"`.
+  // succeed in the wrong place. A bare `<source>__<tool>` name has no
+  // `ws_<id>-` prefix, so it parses to GLOBAL scope (see
+  // tools/namespace.ts). Global dispatch lands in W3; until then the
+  // orchestrator fails closed with `GlobalScopeNotRoutable`. Either way
+  // the contract is fail-loud: JSON-RPC `-32602` with
+  // `data.reason: "global_not_routable"`, never a fallback route.
   //
   // Critical adversarial detail: neither workspace's counter may
   // increment. A regression that "fails the call but routes to the
   // user's personal workspace anyway" would still tick the personal
   // counter — we assert it stays at zero.
-  it("tools/call with un-namespaced name rejects with -32602 invalid_tool_name and does NOT route anywhere (failure mode: silent fallback)", async () => {
+  it("tools/call with un-namespaced name rejects with -32602 and does NOT route anywhere (failure mode: silent fallback)", async () => {
     resetWorkspaceProbes();
     const client = await createExternalClient();
     try {
@@ -275,7 +279,8 @@ describe("external MCP cross-workspace (Stage 2 T011 smoke)", () => {
       let dataReason: string | undefined;
       try {
         await client.callTool({
-          // No `ws_<id>/` prefix — orchestrator MUST refuse.
+          // No `ws_<id>-` prefix — bare name parses to global scope, which
+          // the orchestrator refuses to route (no fallback to a workspace).
           name: `${fixture.shared.sourceName}__${fixture.shared.toolName}`,
           arguments: { echo: "noop" },
         });
@@ -286,7 +291,7 @@ describe("external MCP cross-workspace (Stage 2 T011 smoke)", () => {
       }
 
       expect(errorCode).toBe(-32602);
-      expect(dataReason).toBe("invalid_tool_name");
+      expect(dataReason).toBe("global_not_routable");
 
       // Adversarial: a silent fallback would tick the personal counter.
       // Neither side may move.
