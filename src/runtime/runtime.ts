@@ -95,6 +95,7 @@ import {
   type RequestContext,
   runWithRequestContext,
 } from "./request-context.ts";
+import { type BufferedRunEvent, RunBus, type RunStatus } from "./run-bus.ts";
 import { buildSkillsLoadedPayload } from "./skills-loaded-payload.ts";
 import { surfaceTools } from "./tools.ts";
 import type { ChatRequest, ChatResult, ModelSlots, RuntimeConfig, TurnUsage } from "./types.ts";
@@ -253,6 +254,14 @@ export class Runtime {
    * so the two would need to be addressed together.
    */
   private readonly activeConversations = new Set<string>();
+
+  /**
+   * Server-authoritative, replayable log of in-flight turns. Detached web
+   * chats run through {@link startTurn}; their engine events are published
+   * here so any viewer (live, reconnecting, or cross-tab) can replay + tail.
+   * The turn's cancellation lives here too — client disconnect does NOT abort.
+   */
+  private readonly runBus = new RunBus();
 
   private constructor(
     _engine: AgentEngine,
@@ -724,6 +733,183 @@ export class Runtime {
     } finally {
       if (lockedConvId) this.activeConversations.delete(lockedConvId);
     }
+  }
+
+  // ===========================================================================
+  // Detached, server-authoritative turns (conversation-tab rewrite).
+  //
+  // `startTurn` runs a chat turn to completion regardless of the caller's
+  // connection. The conversation id is resolved up front and returned
+  // immediately; the engine run continues in the background, publishing every
+  // event to the RunBus. Clients are viewers — they `attachTurn` to replay +
+  // tail. Client disconnect does NOT abort; only `cancelTurn` (Stop) does.
+  // ===========================================================================
+
+  /** Whether a detached turn is currently generating for this conversation. */
+  isTurnActive(conversationId: string): boolean {
+    return this.runBus.isActive(conversationId);
+  }
+
+  /** Conversation ids with an actively generating turn (drives the list dot). */
+  activeTurnConversationIds(): string[] {
+    return this.runBus.activeConversationIds();
+  }
+
+  /** Highest event sequence number for a conversation's current/last run. */
+  turnSeq(conversationId: string): number {
+    return this.runBus.currentSeq(conversationId);
+  }
+
+  /**
+   * Attach a viewer to a conversation's in-flight turn: replays buffered
+   * events with `seq > afterSeq`, then tails live ones. Returns a detach fn
+   * (a safe no-op when nothing is running). Detaching never cancels the turn.
+   */
+  attachTurn(
+    conversationId: string,
+    afterSeq: number,
+    onEvent: (e: BufferedRunEvent) => void,
+    onEnd?: (s: RunStatus) => void,
+  ): () => void {
+    return this.runBus.attach(conversationId, afterSeq, onEvent, onEnd);
+  }
+
+  /** Explicitly cancel an in-flight turn (the Stop button). */
+  cancelTurn(conversationId: string): boolean {
+    return this.runBus.cancel(conversationId);
+  }
+
+  /**
+   * Start a chat turn that runs to completion server-side, decoupled from the
+   * caller's connection. Resolves (creating if new) the conversation id up
+   * front, reserves the run on the RunBus, then runs the engine in the
+   * background — publishing every event to the bus so viewers can replay +
+   * tail via {@link attachTurn}. Returns once the id is known; the turn keeps
+   * running after the HTTP request that called this returns. Throws
+   * {@link RunInProgressError} if a turn is already active for the conversation.
+   */
+  async startTurn(request: ChatRequest): Promise<{ conversationId: string }> {
+    if (!request.workspaceId) {
+      throw new Error("workspaceId is required. Every chat request must be workspace-scoped.");
+    }
+    const store = this.findConversationStore();
+    const ownerId = this.resolveOwnerId(request);
+    const createOpts: CreateConversationOptions = {
+      ownerId,
+      workspaceId: request.workspaceId,
+      ...(request.metadata ? { metadata: request.metadata } : {}),
+    };
+
+    const isNew = !request.conversationId;
+    let conversationId: string;
+    if (request.conversationId) {
+      const existing = await store.load(request.conversationId);
+      if (existing && existing.ownerId !== ownerId) {
+        throw new ConversationAccessDeniedError(request.conversationId, ownerId);
+      }
+      conversationId =
+        existing?.id ?? (await store.create({ ...createOpts, id: request.conversationId })).id;
+    } else {
+      conversationId = (await store.create(createOpts)).id;
+    }
+
+    // Reserve the run (throws if already active). The returned signal is the
+    // RunBus's — NOT the HTTP request's — so client disconnect won't abort.
+    const signal = this.runBus.begin(conversationId);
+
+    // Seed the run stream with the user's message so the turn is
+    // self-contained: any viewer (sender, other tab, post-refresh) can
+    // reconstruct user + assistant from replay alone, no optimistic client
+    // state required.
+    this.publishTurnEvent(conversationId, "user.message", {
+      content: request.message,
+      ...(ownerId ? { userId: ownerId } : {}),
+      timestamp: new Date().toISOString(),
+    });
+
+    // Tell conversation-list UIs a new conversation exists (so the row + its
+    // streaming dot appear immediately). Resolved-existing turns already have
+    // a row.
+    if (isNew) this.emitConversationsChanged();
+
+    const busSink = this.createRunBusSink(conversationId);
+    // Detached: run to completion regardless of the caller's connection.
+    void this.chat({ ...request, conversationId, signal }, busSink)
+      .then((result) => {
+        // Publish a terminal `done` carrying the final result so viewers
+        // finalize the assistant message, then close the run.
+        this.publishTurnEvent(conversationId, "done", {
+          response: result.response,
+          conversationId: result.conversationId,
+          toolCalls: result.toolCalls,
+          stopReason: result.stopReason,
+          usage: result.usage,
+        });
+        this.runBus.end(conversationId, "done");
+      })
+      .catch((err) => {
+        if (signal.aborted) {
+          this.publishTurnEvent(conversationId, "cancelled", {});
+          this.runBus.end(conversationId, "cancelled");
+        } else {
+          this.publishTurnEvent(conversationId, "error", {
+            error: "engine_error",
+            message: err instanceof Error ? err.message : String(err),
+          });
+          this.runBus.end(conversationId, "error");
+        }
+      })
+      .finally(() => {
+        // Refresh list UIs so the row's dot clears and the final title shows.
+        this.emitConversationsChanged();
+      });
+
+    return { conversationId };
+  }
+
+  /**
+   * Live fan-out hook for detached-turn events. The API layer sets this to
+   * forward each published event to the per-conversation SSE manager so
+   * connected viewers tail in real time. Buffering/replay stays in the RunBus;
+   * this is purely the live edge.
+   */
+  onTurnEvent?: (conversationId: string, event: BufferedRunEvent) => void;
+
+  /** Replay snapshot of an in-flight turn for a newly connecting viewer. */
+  getTurnReplay(conversationId: string, afterSeq: number): BufferedRunEvent[] {
+    return this.runBus.bufferedSince(conversationId, afterSeq);
+  }
+
+  /** Publish to the RunBus (buffer/replay) and fan out live (SSE viewers). */
+  private publishTurnEvent(conversationId: string, type: string, data: unknown): void {
+    const buffered = this.runBus.publish(conversationId, type, data);
+    if (buffered) this.onTurnEvent?.(conversationId, buffered);
+  }
+
+  /** EventSink that forwards engine events into the RunBus for one turn. */
+  private createRunBusSink(conversationId: string): EventSink {
+    return {
+      emit: (event: EngineEvent) => {
+        this.publishTurnEvent(conversationId, event.type, event.data);
+      },
+    };
+  }
+
+  /** Broadcast a conversations-list change on the global sink (→ SSE → iframe). */
+  private emitConversationsChanged(): void {
+    this.defaultEvents.emit({
+      type: "data.changed",
+      data: { server: "conversations", tool: "list" },
+    });
+  }
+
+  private resolveOwnerId(request: ChatRequest): string {
+    if (request.identity?.id) return request.identity.id;
+    if (!this._identityProvider) return "usr_default";
+    throw new Error(
+      "[runtime.startTurn] no identity on request — the auth middleware must populate " +
+        "request.identity before the turn starts.",
+    );
   }
 
   private async _chatInner(request: ChatRequest, requestSink?: EventSink): Promise<ChatResult> {
@@ -1211,15 +1397,26 @@ export class Runtime {
       });
     }
 
-    // Fire-and-forget title generation on first turn (use "fast" slot for cost savings)
+    // Fire-and-forget title generation on first turn (use "fast" slot for cost
+    // savings). Decoupled from the turn lifecycle: when it resolves we persist
+    // the title, then broadcast `conversation.title` on the global SSE so any
+    // live viewer's panel header updates in place, and refresh the
+    // conversations list. The global channel (not the turn stream, which the
+    // client closes on `done`) means delivery is reliable after the turn ends
+    // and across tabs — routed to the right conversation by `conversationId`.
     if (conversation.title === null) {
       const titleModel = this.resolveModelFn(this.getModelSlot("fast"));
       const titleInput =
         request.message ||
         `[Uploaded: ${request.fileRefs?.map((f) => f.filename).join(", ") || "files"}]`;
       void generateTitle(titleModel, titleInput, result.output).then(
-        (title) => {
-          void store.update(conversation.id, { title });
+        async (title) => {
+          await store.update(conversation.id, { title });
+          this.defaultEvents.emit({
+            type: "conversation.title",
+            data: { conversationId: conversation.id, title, wsId },
+          });
+          this.emitConversationsChanged();
         },
         (err) => console.error("[runtime] title generation failed:", err),
       );

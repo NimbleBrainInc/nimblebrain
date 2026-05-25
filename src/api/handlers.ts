@@ -8,6 +8,7 @@ import { ingestFiles, isAllowedMime, type UploadedFile } from "../files/ingest.t
 import { createFileStore } from "../files/store.ts";
 import type { FileEntry } from "../files/types.ts";
 import type { IdentityProvider, UserIdentity } from "../identity/provider.ts";
+import { DEV_IDENTITY } from "../identity/providers/dev.ts";
 import {
   ConversationAccessDeniedError,
   ConversationCorruptedError,
@@ -139,6 +140,82 @@ function runInProgressResponse(conversationId: string): Response {
     "This conversation already has an active response. Wait for it to finish before sending another message.",
     { conversationId },
   );
+}
+
+/**
+ * Handle POST /v1/chat/start — kick off a detached, server-authoritative turn
+ * and return the conversation id immediately. The turn runs to completion on
+ * the server regardless of this request's lifecycle (closing the tab does NOT
+ * cancel it). Clients watch the turn via GET /v1/conversations/:id/events,
+ * which replays the in-flight turn then tails live.
+ */
+export async function handleChatStart(
+  request: Request,
+  runtime: Runtime,
+  features: ResolvedFeatures,
+  identity?: UserIdentity,
+  workspaceId?: string,
+): Promise<Response> {
+  const parsed = await parseChatBody(request, runtime, features, identity, workspaceId);
+  if (parsed instanceof Response) return parsed;
+  try {
+    const { conversationId } = await runtime.startTurn(parsed);
+    return Response.json({ conversationId });
+  } catch (err) {
+    if (err instanceof RunInProgressError) {
+      return runInProgressResponse(parsed.conversationId ?? "");
+    }
+    if (err instanceof ConversationAccessDeniedError) {
+      return apiError(
+        403,
+        "conversation_access_denied",
+        "You do not have access to this conversation.",
+        { conversationId: parsed.conversationId },
+      );
+    }
+    throw err;
+  }
+}
+
+/**
+ * Handle POST /v1/conversations/:id/cancel — the explicit Stop button. The
+ * ONLY thing that aborts generation; client disconnect does not. Ownership is
+ * enforced (same posture as the events route).
+ */
+export async function handleChatCancel(
+  conversationId: string,
+  runtime: Runtime,
+  identity?: UserIdentity,
+): Promise<Response> {
+  const callerId = identity?.id ?? (runtime.getIdentityProvider() ? null : DEV_IDENTITY.id);
+  if (!callerId) {
+    return apiError(401, "authentication_required", "Authentication required.");
+  }
+  const conversation = await runtime.findConversation(conversationId).catch((err) => {
+    if (err instanceof ConversationCorruptedError) return err;
+    throw err;
+  });
+  if (conversation instanceof ConversationCorruptedError) {
+    return apiError(422, "conversation_corrupted", conversation.message, {
+      conversationId: conversation.conversationId,
+      reason: conversation.reason,
+    });
+  }
+  if (!conversation) {
+    return apiError(404, "not_found", "Conversation not found");
+  }
+  if (conversation.ownerId !== callerId) {
+    return apiError(
+      403,
+      "conversation_access_denied",
+      "You do not have access to this conversation.",
+      {
+        conversationId,
+      },
+    );
+  }
+  const cancelled = runtime.cancelTurn(conversationId);
+  return Response.json({ cancelled });
 }
 
 function conversationAccessDeniedResponse(conversationId: string): Response {

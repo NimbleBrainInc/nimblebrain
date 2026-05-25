@@ -8,6 +8,8 @@
  * Separate from SseEventManager which handles workspace-level events.
  */
 
+import type { BufferedRunEvent } from "../runtime/run-bus.ts";
+
 /** A subscriber watching a specific conversation's events. */
 interface ConversationSubscriber {
   id: string;
@@ -18,6 +20,13 @@ interface ConversationSubscriber {
 }
 
 const encoder = new TextEncoder();
+
+/** Format an SSE frame. `seq`, when present, is sent as the `id:` line so a
+ *  reconnecting viewer can resume from its last-seen sequence number. */
+function frame(eventType: string, data: unknown, seq?: number): Uint8Array {
+  const idLine = seq != null ? `id: ${seq}\n` : "";
+  return encoder.encode(`event: ${eventType}\n${idLine}data: ${JSON.stringify(data)}\n\n`);
+}
 
 export class ConversationEventManager {
   private subscribers = new Map<string, ConversationSubscriber>();
@@ -73,6 +82,8 @@ export class ConversationEventManager {
   addSubscriber(
     conversationId: string,
     userId: string,
+    replay?: BufferedRunEvent[],
+    meta?: { isActive: boolean; activeSeq: number },
   ): { stream: ReadableStream<Uint8Array>; subscriberId: string } {
     const id = crypto.randomUUID();
     let sub: ConversationSubscriber;
@@ -80,9 +91,24 @@ export class ConversationEventManager {
     const stream = new ReadableStream<Uint8Array>({
       start: (controller) => {
         sub = { id, userId, conversationId, controller, closed: false };
+        // The subscribed frame tells the client whether a turn is in flight
+        // (so it can trim a stale in-flight turn from disk history before the
+        // RunBus replay rebuilds it) and its current seq.
+        controller.enqueue(
+          frame("subscribed", {
+            subscriberId: id,
+            isActive: meta?.isActive ?? false,
+            activeSeq: meta?.activeSeq ?? 0,
+          }),
+        );
+        // Replay the in-flight turn (if any) BEFORE registering for live
+        // fan-out. start() runs synchronously and we add to the subscribers
+        // map only after replaying, so no live event can interleave ahead of
+        // the replay — viewers never see out-of-order deltas.
+        if (replay) {
+          for (const e of replay) controller.enqueue(frame(e.type, e.data, e.seq));
+        }
         this.subscribers.set(id, sub);
-        const subscribedMsg = `event: subscribed\ndata: ${JSON.stringify({ subscriberId: id })}\n\n`;
-        controller.enqueue(encoder.encode(subscribedMsg));
       },
       cancel: () => {
         this.removeSubscriber(id);
@@ -90,6 +116,29 @@ export class ConversationEventManager {
     });
 
     return { stream, subscriberId: id };
+  }
+
+  /**
+   * Fan out a live run event (with its sequence number) to every subscriber
+   * of the conversation. The seq lets viewers de-duplicate against replay and
+   * resume after a reconnect.
+   */
+  publishEvent(conversationId: string, event: BufferedRunEvent): void {
+    const encoded = frame(event.type, event.data, event.seq);
+    for (const [id, sub] of this.subscribers) {
+      if (sub.closed) {
+        this.subscribers.delete(id);
+        continue;
+      }
+      if (sub.conversationId !== conversationId) continue;
+      try {
+        sub.controller.enqueue(encoded);
+      } catch (err) {
+        console.warn("[conversation-events] SSE write failed:", err);
+        this.closeSub(sub);
+        this.subscribers.delete(id);
+      }
+    }
   }
 
   /** Remove a specific subscriber. */

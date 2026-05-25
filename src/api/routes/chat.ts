@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { handleChat, handleChatStream } from "../handlers.ts";
+import { handleChat, handleChatCancel, handleChatStart, handleChatStream } from "../handlers.ts";
 import { requireAuth } from "../middleware/auth.ts";
 import { bodyLimit } from "../middleware/body-limit.ts";
 import { errorLog } from "../middleware/error-log.ts";
@@ -15,28 +15,40 @@ export function chatRoutes(ctx: AppContext) {
   const chatBodyLimit = bodyLimit(1_048_576, {
     multipart: ctx.runtime.getFilesConfig().maxTotalSize,
   });
-  return new Hono<AppEnv>()
-    .use("*", requireAuth(ctx.authOptions))
-    .use("*", requireWorkspace(ctx.workspaceStore))
-    .use("*", errorLog(ctx))
-    .post("/v1/chat", chatBodyLimit, rl, (c) =>
-      handleChat(
-        c.req.raw,
-        ctx.runtime,
-        ctx.features,
-        c.var.identity,
-        c.var.workspaceId,
-        ctx.conversationEventManager,
-      ),
-    )
-    .post("/v1/chat/stream", chatBodyLimit, rl, (c) =>
-      handleChatStream(
-        c.req.raw,
-        ctx.runtime,
-        ctx.features,
-        c.var.identity,
-        c.var.workspaceId,
-        ctx.conversationEventManager,
-      ),
-    );
+  return (
+    new Hono<AppEnv>()
+      .use("*", requireAuth(ctx.authOptions))
+      .use("*", requireWorkspace(ctx.workspaceStore))
+      .use("*", errorLog(ctx))
+      .post("/v1/chat", chatBodyLimit, rl, (c) =>
+        handleChat(
+          c.req.raw,
+          ctx.runtime,
+          ctx.features,
+          c.var.identity,
+          c.var.workspaceId,
+          ctx.conversationEventManager,
+        ),
+      )
+      .post("/v1/chat/stream", chatBodyLimit, rl, (c) =>
+        handleChatStream(
+          c.req.raw,
+          ctx.runtime,
+          ctx.features,
+          c.var.identity,
+          c.var.workspaceId,
+          ctx.conversationEventManager,
+        ),
+      )
+      // Server-authoritative entry point: starts a detached turn and returns
+      // the conversation id immediately. The client then watches via
+      // GET /v1/conversations/:id/events. Generation survives client disconnect.
+      .post("/v1/chat/start", chatBodyLimit, rl, (c) =>
+        handleChatStart(c.req.raw, ctx.runtime, ctx.features, c.var.identity, c.var.workspaceId),
+      )
+      // Explicit Stop — the only way to abort an in-flight turn.
+      .post("/v1/conversations/:id/cancel", (c) =>
+        handleChatCancel(c.req.param("id"), ctx.runtime, c.var.identity),
+      )
+  );
 }

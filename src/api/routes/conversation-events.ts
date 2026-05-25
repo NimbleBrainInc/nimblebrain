@@ -92,13 +92,28 @@ export function conversationEventRoutes(ctx: AppContext) {
         );
       }
 
-      // Create SSE stream for this subscriber. The first frame
-      // (event: subscribed) carries the server-generated subscriberId
-      // so the client can pass it back as `X-Origin-Subscriber-Id` on
-      // any chat-stream POST it originates — that prevents the
-      // chat-stream's broadcast from echoing back to this same
-      // subscription.
-      const { stream } = ctx.conversationEventManager.addSubscriber(conversationId, callerId);
+      // Resume point: the client passes the highest sequence number it has
+      // already rendered (0 / absent = full replay of the in-flight turn).
+      const afterSeqRaw = c.req.query("afterSeq");
+      const afterSeq = afterSeqRaw ? Number.parseInt(afterSeqRaw, 10) : 0;
+      const replay = ctx.runtime.getTurnReplay(
+        conversationId,
+        Number.isFinite(afterSeq) ? afterSeq : 0,
+      );
+
+      // Create the SSE stream. The manager replays the buffered in-flight turn
+      // (events with seq > afterSeq) before registering for live fan-out, so a
+      // page refresh reconstructs the in-progress assistant message and then
+      // tails the rest with no gap or duplication.
+      const { stream } = ctx.conversationEventManager.addSubscriber(
+        conversationId,
+        callerId,
+        replay,
+        {
+          isActive: ctx.runtime.isTurnActive(conversationId),
+          activeSeq: ctx.runtime.turnSeq(conversationId),
+        },
+      );
 
       return new Response(stream, {
         headers: {
