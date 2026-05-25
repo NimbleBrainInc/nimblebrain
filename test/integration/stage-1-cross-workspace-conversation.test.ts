@@ -183,8 +183,8 @@ describe("Stage 1 — conversations outlive their workspace context", () => {
     expect(loaded?.ownerId).toBe(ALICE.id);
     // Stage 2 (T006): the chat surface is identity-bound; the metadata
     // `workspaceId` is the session (personal) workspace, NOT the value
-    // of `X-Workspace-Id`. The header is accepted-but-ignored on the
-    // chat path; per-call workspace attribution lives on each tool.done
+    // of `X-Workspace-Id`. The header now scopes the prompt briefing, not
+    // this metadata field; per-call workspace attribution lives on each tool.done
     // event's payload.
     expect(loaded?.workspaceId).toBe(`ws_user_${ALICE.id}`);
 
@@ -241,8 +241,9 @@ describe("Stage 1 — conversations outlive their workspace context", () => {
     //    sharedA-flavored context (pre-removal), one in sharedB-flavored
     //    (post-removal). Per Stage 2 (T006) the metadata `workspaceId`
     //    records the session (personal) workspace, NOT the `X-Workspace-Id`
-    //    of the request. Tool scoping for cross-workspace calls now
-    //    happens at dispatch time via the orchestrator's parsed namespace
+    //    of the request (which now scopes the prompt briefing, not this
+    //    metadata). Tool scoping for cross-workspace calls happens at
+    //    dispatch time via the orchestrator's parsed namespace
     //    — the metadata field is only a UI breadcrumb for the legacy
     //    single-workspace overlays/file-store reads.
     const store = runtime.findConversationStore();
