@@ -3,7 +3,7 @@
  *
  * Stage 2 (delegation-model refactor) makes every chat / `/mcp` tool
  * dispatch flow through this single primitive. Given a namespaced tool
- * name (`ws_<id>/<innerToolName>`) and the calling identity, the
+ * name (`ws_<id>-<innerToolName>`) and the calling identity, the
  * orchestrator:
  *
  *   1. Parses the namespace via `parseNamespacedToolName` (T002 — the
@@ -194,7 +194,7 @@ export interface OrchestratorRuntime {
 export interface RoutedToolCall {
   /** Fresh `WorkspaceContext` bound to the parsed namespace's wsId. */
   context: WorkspaceContext;
-  /** Tool name after stripping the `ws_<id>/` prefix — what the source executes. */
+  /** Tool name after stripping the `ws_<id>-` prefix — what the source executes. */
   toolName: string;
   /** The dispatch target — the workspace's `ToolSource` registered under the inner tool's source prefix. */
   source: ToolSource;

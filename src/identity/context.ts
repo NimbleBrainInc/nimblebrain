@@ -10,7 +10,7 @@ import { join } from "node:path";
  * Star calls user-owned: conversations, files, automations.
  *
  * The orchestrator constructs one when routing an identity-scoped tool
- * name (`me-<tool>`, see `src/tools/namespace.ts`). Identity-scoped tools
+ * name (bare `<tool>` — global scope; see `src/tools/namespace.ts`). Identity-scoped tools
  * (the `nb` system source; later conversations / files / automations)
  * dispatch against it instead of a workspace context, so they carry NO
  * ambient workspace authority — the trust boundary is the authenticated

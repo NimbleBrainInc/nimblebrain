@@ -24,7 +24,7 @@
  *
  * Namespacing: every entry is built through
  * `namespacedToolName(wsId, name)` from `src/tools/namespace.ts` — the
- * sole legal builder for `ws_<id>/<name>` strings. The
+ * sole legal builder for `ws_<id>-<name>` strings. The
  * `check:tool-namespace` lint rejects any hand-built form elsewhere.
  */
 
@@ -78,8 +78,8 @@ export interface ToolListAggregatorOptions {
  * remaining surface exists for the orchestrator and the test suite —
  * `invalidateIdentity` for membership-change pushes,
  * `activeWatcherCount` for the leak-free-shutdown integration test,
- * `dispose` for the cleanup path the runtime will eventually call on
- * `shutdown()` (T006 wires this in).
+ * `dispose` for the cleanup path the runtime calls on `shutdown()`
+ * (wired in `runtime.ts`).
  */
 export interface ToolListAggregator {
   aggregateToolList(identityId: string): Promise<readonly NamespacedToolDescriptor[]>;

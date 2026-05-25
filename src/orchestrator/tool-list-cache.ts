@@ -67,14 +67,14 @@ const DEFAULT_DEBOUNCE_MS = 100;
 /**
  * A tool entry in the aggregated cross-workspace list.
  *
- * The `name` field is the canonical `ws_<id>/<toolName>` form built via
+ * The `name` field is the canonical `ws_<id>-<toolName>` form built via
  * `namespacedToolName(wsId, t.name)` — never hand-assembled. `wsId` and
  * `toolName` are carried alongside as derived bookkeeping (so callers
  * don't have to re-parse to render breadcrumbs or attribute audit
  * entries). The remaining fields mirror `Tool` from `src/tools/types.ts`.
  */
 export interface NamespacedToolDescriptor {
-  /** Canonical `ws_<id>/<toolName>` form. */
+  /** Canonical `ws_<id>-<toolName>` form. */
   name: string;
   /** Workspace this tool lives in. Same as the `ws_<id>` portion of `name`. */
   wsId: string;

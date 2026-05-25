@@ -67,7 +67,7 @@ export type ToolScope =
 
 /**
  * Thrown by `parseNamespacedToolName` when the input does not match
- * the `ws_<id>/<toolName>` shape, or when either component is invalid.
+ * the `ws_<id>-<toolName>` shape, or when either component is invalid.
  *
  * The orchestrator catches this to distinguish "unparseable / unknown
  * tool name" from genuine tool errors. Don't conflate with
@@ -113,7 +113,7 @@ export class InvalidNamespacedToolNameInput extends Error {
 /**
  * Build a namespaced tool name from a workspace id and a tool name.
  *
- * Returns `ws_<id>/<toolName>`. Throws `InvalidNamespacedToolNameInput`
+ * Returns `ws_<id>-<name>`. Throws `InvalidNamespacedToolNameInput`
  * on any invalid input:
  *   - `wsId` missing, empty, non-string, or failing `WORKSPACE_ID_RE`
  *     (path-traversal, whitespace, wrong prefix all rejected here).
