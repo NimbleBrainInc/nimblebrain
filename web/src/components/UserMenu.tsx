@@ -1,4 +1,4 @@
-import { ChevronUp, LogOut, UserCog } from "lucide-react";
+import { ChevronUp, LogOut, Settings, UserCog } from "lucide-react";
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useSession } from "../context/SessionContext";
@@ -101,6 +101,11 @@ export const UserMenu = memo(function UserMenu({
     navigate("/profile");
   }, [navigate]);
 
+  const goToWorkspaceSettings = useCallback(() => {
+    setOpen(false);
+    navigate("/settings/workspace/general");
+  }, [navigate]);
+
   const handleLogout = useCallback(() => {
     setOpen(false);
     onLogout();
@@ -189,6 +194,14 @@ export const UserMenu = memo(function UserMenu({
             >
               <UserCog className="w-4 h-4 text-sidebar-foreground/60" />
               <span>Profile settings</span>
+            </button>
+            <button
+              type="button"
+              onClick={goToWorkspaceSettings}
+              className="flex items-center gap-2.5 w-full rounded-md px-2 py-2 text-sm text-left transition-all duration-150 text-sidebar-foreground hover:bg-sidebar-foreground/5"
+            >
+              <Settings className="w-4 h-4 text-sidebar-foreground/60" />
+              <span>Workspace settings</span>
             </button>
             <button
               type="button"
