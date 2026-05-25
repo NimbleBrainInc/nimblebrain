@@ -3,8 +3,7 @@
  *
  * Modeled on `src/bundles/conversations/src/index-cache.ts` — same shape
  * (lazy populate on first read + `fs.watch` invalidation + debounce). The
- * pattern is load-bearing per `SPEC_REFERENCE.md` § "Stage 1 lessons to
- * carry forward" item 5: re-scanning the FS on every `aggregateToolList`
+ * pattern is load-bearing: re-scanning the FS on every `aggregateToolList`
  * call is exactly the `getUserConversationStore` perf footgun this
  * refactor is meant to head off.
  *

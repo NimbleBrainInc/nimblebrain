@@ -356,8 +356,7 @@ export function createBridge(
 
       // -----------------------------------------------------------------
       // Spec: tasks/cancel — best-effort cancel; returns the (final)
-      // task state. Cancelling a terminal task surfaces as `-32602` per
-      // SPEC_REFERENCE §8.
+      // task state. Cancelling a terminal task surfaces as `-32602`.
       // -----------------------------------------------------------------
       case "tasks/cancel": {
         const { id, params } = msg;

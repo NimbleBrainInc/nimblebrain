@@ -216,7 +216,7 @@ export interface McpSessionContext {
  *
  * - `cancel: {}` — we accept `tasks/cancel` and route through McpSource.cancelTask
  * - `requests.tools.call: {}` — we accept task-augmented `tools/call` (CreateTaskResult)
- * - `list` is deliberately absent — `tasks/list` is deferred (see SPEC_REFERENCE §Deferred).
+ * - `list` is deliberately absent — `tasks/list` is deferred.
  *
  * Shape defined by `ServerCapabilitiesSchema.tasks` in the SDK types.
  */
@@ -855,8 +855,8 @@ function createServer(
     // (post-`__`) tool name, mirroring `ToolRegistry.execute`'s contract.
     //
     // Preserve `structuredContent` — dropping it was a long-standing bug
-    // that silently violated `CallToolResult must be returned as-is`
-    // (SPEC_REFERENCE §Non-Negotiable Rule 4). `_meta` propagation on the
+    // that silently violated `CallToolResult must be returned as-is`.
+    // `_meta` propagation on the
     // inline path is a no-op today because the engine's ToolResult shape
     // doesn't carry `_meta`; task-augmented flows carry `_meta` through
     // naturally because `tasks/result` returns the full CallToolResult

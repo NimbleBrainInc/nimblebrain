@@ -51,7 +51,7 @@ import type {
  * load. A skipped migration is operator error and surfaces here as a
  * hard boot failure naming the offending record, not a silent in-memory
  * fixup. See
- * `nimblebrain-ops/research/delegation-model/STAGE_2_DEPLOY.md` for the
+ * the Stage 2 deploy runbook for the
  * operator contract.
  */
 export class LegacyOAuthScopeError extends Error {
@@ -61,7 +61,7 @@ export class LegacyOAuthScopeError extends Error {
     super(
       `[lifecycle] bundle "${serverName}" carries legacy oauthScope: "user". ` +
         "Run `bun run migrate:user-creds` before starting the platform. " +
-        "See nimblebrain-ops/research/delegation-model/STAGE_2_DEPLOY.md.",
+        "See the Stage 2 deploy runbook.",
     );
     this.name = "LegacyOAuthScopeError";
     this.serverName = serverName;
@@ -1385,7 +1385,7 @@ export class BundleLifecycleManager {
    * disk-read boundary (`buildProcessInventory`) calls
    * `assertBundleRefIsPostStage2` and hard-errors on legacy
    * `oauthScope: "user"` records — see the deploy runbook at
-   * `nimblebrain-ops/research/delegation-model/STAGE_2_DEPLOY.md`.
+   * the Stage 2 deploy runbook.
    */
   seedInstance(
     serverName: string,

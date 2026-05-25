@@ -33,7 +33,7 @@ export interface CreateIframeOptions {
    * geolocation). Defaults to `false` — servers cannot unilaterally grant
    * themselves device access. The host opts in after some form of consent
    * (per-workspace admin approval, per-bundle config, user prompt), staged for
-   * the consent-UI follow-up in `nimblebrain-ops/research/INTERACTIVE_OAUTH_UI.md`.
+   * the consent-UI follow-up in an internal design note.
    *
    * `clipboard-write` is always on — it's needed for copy/cut UX and is
    * gesture-gated by the browser; not a device-access permission.
@@ -261,7 +261,7 @@ export function createAppIframe(
   // origin so the app runs in a real origin rather than the `null` origin
   // of srcdoc. Requires the double-iframe pattern — outer at host origin,
   // inner at a dedicated sandbox host. Deferred to the sandbox-proxy work
-  // documented in `nimblebrain-ops/research/SANDBOX_PROXY_ARCHITECTURE.md`.
+  // documented in an internal design note.
 
   return iframe;
 }

@@ -83,7 +83,7 @@ export interface WorkspaceOAuthProviderOptions {
    * — it removes one independent place that builds workspace-scoped paths.
    * The classic `(owner, workDir)` construction remains valid for user-
    * scoped owners and for legacy call sites pending migration in
-   * `.tasks/delegation-model/008-migrate-oauth-provider-construction.md`.
+   * a follow-up migration.
    *
    * When `workspaceContext` is provided AND `owner.type !== "workspace"`,
    * construction throws — user-scope owners store tokens under

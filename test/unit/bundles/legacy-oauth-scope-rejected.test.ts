@@ -12,7 +12,7 @@ import type { BundleRef } from "../../../src/bundles/types.ts";
  * does NOT translate or normalize legacy data at boot. A skipped
  * migration is operator error and surfaces here as a hard error
  * naming the offending record. See the deploy runbook at
- * `nimblebrain-ops/research/delegation-model/STAGE_2_DEPLOY.md`.
+ * the Stage 2 deploy runbook.
  */
 describe("assertBundleRefIsPostStage2", () => {
   test("throws LegacyOAuthScopeError on a URL bundle carrying oauthScope: 'user'", () => {
@@ -43,7 +43,7 @@ describe("assertBundleRefIsPostStage2", () => {
       // Message must name the operator-facing migration command and the
       // deploy runbook so the failure mode is self-diagnosable.
       expect(e.message).toContain("migrate:user-creds");
-      expect(e.message).toContain("STAGE_2_DEPLOY.md");
+      expect(e.message).toContain("Stage 2 deploy runbook");
     }
   });
 

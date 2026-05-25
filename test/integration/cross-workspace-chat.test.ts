@@ -18,9 +18,8 @@
  * The point is one obvious string a reviewer can grep when auditing what
  * test coverage the orchestrator gates on.
  *
- * The five cases below correspond 1:1 to the task spec's "Tests Required"
- * list and each names the failure mode it pins. See task file:
- * `.tasks/delegation-model/stage-2/001-cross-workspace-e2e.md`.
+ * The five cases below correspond 1:1 to the cross-workspace E2E test
+ * plan and each names the failure mode it pins.
  */
 
 import { afterEach, describe, expect, it } from "bun:test";

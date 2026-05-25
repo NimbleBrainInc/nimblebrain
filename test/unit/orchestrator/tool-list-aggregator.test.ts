@@ -153,8 +153,8 @@ function makeWorkDir(wsIds: readonly string[]): string {
  * Every test that creates an aggregator registers it here. The
  * `afterEach` hook disposes anything still alive — defense against a
  * test that throws before its own cleanup runs. Watcher leaks across
- * the suite were a Stage 1 failure mode (`SPEC_REFERENCE.md` lesson 5
- * has the index-cache analog); the per-test tracker keeps us honest.
+ * the suite were a Stage 1 failure mode (the index-cache carries the
+ * same risk); the per-test tracker keeps us honest.
  */
 const liveAggregators: Array<{ dispose: () => void }> = [];
 const liveWorkDirs: string[] = [];

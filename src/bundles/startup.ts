@@ -221,7 +221,7 @@ export async function startBundleSource(
      * don't go through `prepareServer` for `user_config`.
      *
      * @deprecated Pass `workspaceContext` instead. Kept for incremental
-     * migration; see Task 007 in `.tasks/delegation-model/`.
+     * migration; see a follow-up migration.
      */
     wsId?: string;
     /**
@@ -255,7 +255,7 @@ export async function startBundleSource(
 ): Promise<StartBundleResult> {
   // Reconcile workspaceContext / wsId / workDir into a single context for
   // the rest of this function. Callers may pass either form; once
-  // .tasks/delegation-model/007 lands, everyone passes workspaceContext.
+  // the follow-up migration lands, everyone passes workspaceContext.
   const wsContext: WorkspaceContext | undefined = resolveWorkspaceContext(opts);
   if ("url" in ref) {
     const serverName = ref.serverName ?? deriveServerName(ref.url);

@@ -3,8 +3,7 @@
  *
  * Proves the spec line: "External MCP test: Claude Desktop sees aggregated
  * tool list, can invoke cross-workspace." This is the contract verification
- * for `.tasks/delegation-model/stage-2/SPEC_REFERENCE.md` §
- * Verification line 3. Smoke tier per `CLAUDE.md` § Testing — runs under
+ * for the Stage 2 cross-workspace requirement. Smoke tier per `CLAUDE.md` § Testing — runs under
  * `bun run smoke`, NOT `bun run test`.
  *
  * Every `it(...)` block names the failure mode it pins. The cases below

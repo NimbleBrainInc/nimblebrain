@@ -144,8 +144,7 @@ export interface McpTaskStore extends TaskStore {
  *
  * Lifetime: same as the SDK `Server` instance that owns it — one per session
  * under the current `createServer` pattern in `mcp-server.ts`. That matches
- * the "tasks die on platform restart" MVP constraint from
- * `SPEC_REFERENCE.md` §Deferred.
+ * the "tasks die on platform restart" MVP constraint.
  */
 export function createMcpTaskStore(options: McpTaskStoreOptions): McpTaskStore {
   const entries = new Map<string, TaskEntry>();
@@ -339,7 +338,7 @@ export function createMcpTaskStore(options: McpTaskStoreOptions): McpTaskStore {
       };
     },
 
-    // tasks/list is deferred (SPEC_REFERENCE.md §Deferred) — return an
+    // tasks/list is deferred — return an
     // empty result so a client that tries it doesn't crash. We don't
     // advertise `tasks.list` in capabilities so spec-compliant clients
     // won't call this anyway.

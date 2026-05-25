@@ -418,7 +418,7 @@ export function createSkillsSource(runtime: Runtime, eventSink: EventSink): McpS
           if (existsSync(authoringGuidePath)) {
             return readFileSync(authoringGuidePath, "utf-8");
           }
-          return "# Authoring Guide\n\n(content pending — see Task 005 in .tasks/skills-phase2/)\n";
+          return "# Authoring Guide\n\n(content pending)\n";
         },
       },
     ],

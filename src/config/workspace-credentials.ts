@@ -523,7 +523,7 @@ export class WorkspaceCredentialStore {
 /**
  * @deprecated Use `workspaceContext.getCredentialStore().get(bundleName)`.
  * Kept for incremental migration; will be removed once all call sites are
- * updated (see `.tasks/delegation-model/`).
+ * updated.
  */
 export async function getWorkspaceCredentials(
   wsId: string,

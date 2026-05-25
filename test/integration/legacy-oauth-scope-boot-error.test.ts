@@ -3,7 +3,7 @@
  * literal in `workspaces/<wsId>/workspace.json#bundles[]` hard-error at
  * boot. The runtime does NOT migrate or normalize at startup — operators
  * are expected to have run `bun run migrate:user-creds` per the deploy
- * runbook (`nimblebrain-ops/research/delegation-model/STAGE_2_DEPLOY.md`).
+ * runbook (the Stage 2 deploy runbook).
  */
 
 import { afterEach, describe, expect, it } from "bun:test";

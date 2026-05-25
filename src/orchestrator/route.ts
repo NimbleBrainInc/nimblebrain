@@ -17,13 +17,12 @@
  *      identity isn't a member.
  *   4. Constructs a fresh `WorkspaceContext` derived from the parsed
  *      `wsId`. NEVER from `runtime.requireWorkspaceId()` or any other
- *      ambient session-level state — per `SPEC_REFERENCE.md`
- *      § Constraints item 3 the context IS the workspace boundary.
+ *      ambient session-level state — the context IS the workspace boundary.
  *   5. Resolves the dispatch handle (the `ToolSource`) for the inner
  *      tool name in that workspace's registry. Throws
  *      `UnknownToolSource` if the source prefix isn't registered.
  *
- * Design rules carried from Stage 1 lessons (`SPEC_REFERENCE.md`):
+ * Design rules carried from Stage 1 lessons:
  *
  *   - **Lesson 3 — strict invariants over defensive defaults.** No
  *     `wsId ?? "ws_default"`, no fallback to "current workspace." Every
@@ -74,8 +73,7 @@ export class UnknownWorkspace extends Error {
 /**
  * Thrown when the workspace exists but the calling identity isn't a
  * member. The orchestrator deliberately surfaces this as an explicit
- * error rather than coercing to a "default" workspace — see
- * `SPEC_REFERENCE.md` § Constraints item 5.
+ * error rather than coercing to a "default" workspace.
  *
  * The payload carries both `identityId` and `wsId` so the HTTP layer
  * can emit a structured 403 without re-parsing the name.
@@ -207,8 +205,7 @@ export interface RoutedToolCall {
  *
  * Pure of ambient state. Routing never reads
  * `runtime.requireWorkspaceId()` / `getCurrentWorkspaceId()` — the
- * wsId comes from the parsed namespace alone, per
- * `SPEC_REFERENCE.md` § Constraints item 3.
+ * wsId comes from the parsed namespace alone.
  */
 export async function routeToolCall(opts: {
   identityId: string;

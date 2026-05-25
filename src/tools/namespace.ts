@@ -4,8 +4,7 @@
  * **Single construction site for `ws_<id>-<toolName>`.** No other code
  * site in `src/` may build or parse this form by hand — the convention
  * is enforced by the `check:tool-namespace` AST lint
- * (`scripts/check-tool-namespace.ts`). See Stage 2 `SPEC_REFERENCE.md`
- * § "Constraints" item 6.
+ * (`scripts/check-tool-namespace.ts`).
  *
  * **Separator: `-`.** Workspace ids match
  * `WORKSPACE_ID_PATTERN = ^ws_[a-z0-9_]{1,64}$` (no `-`), so the first

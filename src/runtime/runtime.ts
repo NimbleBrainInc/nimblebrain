@@ -716,7 +716,7 @@ export class Runtime {
     // Seed lifecycle instances for workspace bundles. Operators are
     // expected to have run `bun run migrate:user-creds` (T003) before
     // deploying Stage 2 — see
-    // `nimblebrain-ops/research/delegation-model/STAGE_2_DEPLOY.md`. The
+    // the Stage 2 deploy runbook. The
     // runtime no longer migrates or normalizes legacy `oauthScope: "user"`
     // records at boot; a legacy ref reaches `seedInstance` only via
     // `buildProcessInventory` and throws `LegacyOAuthScopeError` there.

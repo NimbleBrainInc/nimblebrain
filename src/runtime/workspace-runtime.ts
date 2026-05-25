@@ -64,7 +64,7 @@ export function buildProcessInventory(
       // Disk-read boundary: refs carrying the legacy `oauthScope: "user"`
       // literal hard-error here. Operators are expected to have run
       // `bun run migrate:user-creds` before deploying Stage 2 — see
-      // `nimblebrain-ops/research/delegation-model/STAGE_2_DEPLOY.md`.
+      // the Stage 2 deploy runbook.
       assertBundleRefIsPostStage2(bundle);
       const serverName = serverNameFromRef(bundle);
       // Slug is keyed on `manifest.name` (read here for path bundles) so the
