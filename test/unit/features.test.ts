@@ -56,7 +56,7 @@ describe("isToolVisibleToRole", () => {
 	it("shows non-admin tools to all roles", () => {
 		expect(isToolVisibleToRole("nb__search", "member")).toBe(true);
 		expect(isToolVisibleToRole("nb__set_preferences", "member")).toBe(true);
-		expect(isToolVisibleToRole("nb__manage_app", "member")).toBe(true);
+		expect(isToolVisibleToRole("nb__status", "member")).toBe(true);
 	});
 
 	it("hides admin tools when role is null (unauthenticated)", () => {

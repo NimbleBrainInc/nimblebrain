@@ -149,7 +149,7 @@ You are a data analyst.
     expect(getSystem()).toContain("You are a data analyst");
     expect(getSystem()).toContain("Missing dependencies");
     expect(getSystem()).toContain("@acme/data-tools");
-    expect(getSystem()).toContain("nb__manage_app");
+    expect(getSystem()).toContain("Apps catalog in settings");
 
     await runtime.shutdown();
   });

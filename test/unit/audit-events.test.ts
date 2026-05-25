@@ -165,13 +165,13 @@ describe("WorkspaceLogSink audit events", () => {
     const sink = new WorkspaceLogSink({ dir });
     sink.emit({
       type: "audit.permission_denied",
-      data: { tool: "nb__manage_app", action: "install", target: "@test/foo" },
+      data: { tool: "skills__create", action: "create", target: "my-skill" },
     });
 
     const records = readLogRecords(join(dir, "workspace"));
     expect(records).toHaveLength(1);
     expect(records[0]!.event).toBe("audit.permission_denied");
-    expect(records[0]!.tool).toBe("nb__manage_app");
+    expect(records[0]!.tool).toBe("skills__create");
   });
 });
 
@@ -220,16 +220,16 @@ describe("createPrivilegeHook audit emission", () => {
 
     const result = await hook({
       id: "call_1",
-      name: "nb__manage_app",
-      input: { action: "install", name: "@test/foo" },
+      name: "skills__create",
+      input: { scope: "workspace", name: "my-skill" },
     });
 
     expect(result).toBeNull();
     expect(events).toHaveLength(1);
     expect(events[0]!.type).toBe("audit.permission_denied");
-    expect(events[0]!.data.tool).toBe("nb__manage_app");
-    expect(events[0]!.data.action).toBe("install");
-    expect(events[0]!.data.target).toBe("@test/foo");
+    expect(events[0]!.data.tool).toBe("skills__create");
+    expect(events[0]!.data.action).toBe("create");
+    expect(events[0]!.data.target).toBe("my-skill");
   });
 
   it("does not emit audit event when gate approves", async () => {
@@ -240,8 +240,8 @@ describe("createPrivilegeHook audit emission", () => {
 
     const result = await hook({
       id: "call_1",
-      name: "nb__manage_app",
-      input: { action: "install", name: "@test/foo" },
+      name: "skills__create",
+      input: { scope: "workspace", name: "my-skill" },
     });
 
     expect(result).not.toBeNull();

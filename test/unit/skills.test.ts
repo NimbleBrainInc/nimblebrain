@@ -556,7 +556,7 @@ describe("loadCoreSkills", () => {
       expect(bs.manifest.metadata!.keywords).toContain("mpak");
       expect(bs.manifest.metadata!.triggers).toContain("what can you do");
       expect(bs.body).toContain("nb__search");
-      expect(bs.body).toContain("nb__manage_app");
+      expect(bs.body).toContain("nb__manage_tools");
     } finally {
       spy.mockRestore();
     }

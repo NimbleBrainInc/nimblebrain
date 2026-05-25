@@ -348,8 +348,9 @@ export interface ResolveUserConfigInput {
   gate?: ConfirmationGate;
   /**
    * If `true`, prompt for every field via the gate and persist responses to
-   * the workspace store. Used by the `nb__manage_app configure` TUI action.
-   * No effect when `gate?.supportsInteraction` is false.
+   * the workspace store — the interactive "re-enter all credentials" path,
+   * for updating existing values. No effect when `gate?.supportsInteraction`
+   * is false.
    */
   forcePrompt?: boolean;
 }

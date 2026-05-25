@@ -45,11 +45,6 @@ interface PrivilegeEntry {
 
 const PRIVILEGE_CANDIDATES: PrivilegeEntry[] = [
   {
-    tool: "nb__manage_app",
-    feature: "bundleManagement",
-    describe: (input) => `${input.action} ${input.name}?`,
-  },
-  {
     // Creates land in the prompt as soon as they're written (always-load
     // skills) or on the next applicable turn (tool_affined). Gating
     // matches the description-as-policy line "confirm before creating
@@ -102,14 +97,9 @@ export function createPrivilegeHook(
     const description = entry.describe(call.input);
     const approved = await gate.confirm(description, call.input);
     if (!approved) {
-      // Derive `action` from `input.action` when present (legacy shape used
-      // by `nb__manage_app`); otherwise fall back to the unprefixed tool
-      // name (`delete`, `move_scope` etc.) so audit consumers always see
-      // a non-empty action label.
-      const action =
-        typeof call.input.action === "string"
-          ? call.input.action
-          : (call.name.split("__").pop() ?? call.name);
+      // Audit label: the unprefixed tool name (`create`, `delete`,
+      // `move_scope`) so consumers always see a non-empty action.
+      const action = call.name.split("__").pop() ?? call.name;
       const target = call.input.name ?? call.input.id ?? null;
       eventSink.emit({
         type: "audit.permission_denied",

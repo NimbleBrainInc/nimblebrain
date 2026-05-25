@@ -78,7 +78,7 @@ If the skill needs specific tools:
 - Set allowed_tools to scope tool visibility: ["policy_search__*"]
 - Set requires_bundles to declare dependencies: ["@acme/policy-search"]
 - Before creating, use nb__search with scope "tools" to verify tools exist
-- If tools are missing, tell the user and offer to install via nb__manage_app
+- If tools are missing, tell the user and point them to the Apps section of settings to install the bundle that provides them
 
 ## Choosing the Right Scope
 
