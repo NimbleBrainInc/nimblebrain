@@ -776,6 +776,13 @@ export class Runtime {
 
   /** Explicitly cancel an in-flight turn (the Stop button). */
   cancelTurn(conversationId: string): boolean {
+    if (!this.runBus.isActive(conversationId)) return false;
+    // Publish the terminal `cancelled` frame to live viewers BEFORE ending the
+    // run. `RunBus.cancel` flips status to terminal synchronously, after which
+    // `publish` is a no-op — so the engine's own post-abort `cancelled` publish
+    // (in startTurn's catch) never reaches the SSE. Without this, the Stop
+    // button aborts generation but the UI stays stuck streaming until a reload.
+    this.publishTurnEvent(conversationId, "cancelled", {});
     return this.runBus.cancel(conversationId);
   }
 

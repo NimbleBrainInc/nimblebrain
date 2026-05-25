@@ -6,6 +6,7 @@ import { EventSourcedConversationStore } from "../../src/conversation/event-sour
 import { Runtime } from "../../src/runtime/runtime.ts";
 import type { BufferedRunEvent, RunStatus } from "../../src/runtime/run-bus.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
+import { createMockModel } from "../helpers/mock-model.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
 
 let runtime: Runtime;
@@ -95,5 +96,58 @@ describe("detached turns (server-authoritative streaming)", () => {
     });
     expect(again.conversationId).toBe(conversationId);
     await awaitTurn(conversationId);
+  });
+});
+
+describe("cancel delivers a terminal frame to live viewers (Stop button)", () => {
+  let rt: Runtime;
+  const dir = join(tmpdir(), `nimblebrain-cancel-${Date.now()}`);
+  // Gate the model so the turn stays active until we cancel it mid-run.
+  let release!: () => void;
+  const gate = new Promise<void>((r) => {
+    release = r;
+  });
+
+  beforeAll(async () => {
+    mkdirSync(dir, { recursive: true });
+    rt = await Runtime.start({
+      model: {
+        provider: "custom",
+        adapter: createMockModel(async () => {
+          await gate;
+          return { content: [{ type: "text", text: "unreached" }] };
+        }),
+      },
+      noDefaultBundles: true,
+      logging: { disabled: true },
+      workDir: dir,
+    });
+    await provisionTestWorkspace(rt);
+  });
+
+  afterAll(async () => {
+    release(); // let the gated engine task unwind before shutdown
+    await rt.shutdown();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("publishes `cancelled` on the live onTurnEvent path (not just RunBus onEnd)", async () => {
+    // Capture the SSE feed path: server.ts wires runtime.onTurnEvent →
+    // ConversationEventManager. This is the channel the bug bypassed.
+    const captured: BufferedRunEvent[] = [];
+    rt.onTurnEvent = (_cid, e) => captured.push(e);
+
+    const { conversationId } = await rt.startTurn({
+      message: "hang",
+      workspaceId: TEST_WORKSPACE_ID,
+    });
+    await waitFor(() => rt.isTurnActive(conversationId));
+
+    const ok = rt.cancelTurn(conversationId);
+    expect(ok).toBe(true);
+    // The terminal frame must reach live viewers — RunBus.cancel ends the run
+    // synchronously, so publishing after it (engine's catch) would no-op.
+    expect(captured.some((e) => e.type === "cancelled")).toBe(true);
+    expect(rt.isTurnActive(conversationId)).toBe(false);
   });
 });
