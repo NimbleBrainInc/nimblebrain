@@ -8,10 +8,8 @@ import type { PlacementRegistry } from "../runtime/placement-registry.ts";
 import { FileCredentialStore } from "../tools/credential-store.ts";
 import { McpSource } from "../tools/mcp-source.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
-import {
-  validateAdditionalAuthorizationParams,
-  WorkspaceOAuthProvider,
-} from "../tools/workspace-oauth-provider.ts";
+import { WorkspaceOAuthProvider } from "../tools/workspace-oauth-provider.ts";
+import { validateAdditionalAuthorizationParams } from "../util/oauth-params.ts";
 import { WorkspaceContext } from "../workspace/context.ts";
 import type { AutomationDomainContext } from "./automations/src/domain.ts";
 import { createAutomation, deleteAutomation } from "./automations/src/domain.ts";

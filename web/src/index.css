@@ -460,15 +460,18 @@
 .turn-pill__head:disabled { cursor: default; }
 .turn-pill__head:disabled:hover { opacity: 0.7; color: var(--muted-foreground); }
 
-/* Active OR expanded → box treatment so the head reads as a real surface. */
-.turn-pill[data-tone="running"] > .turn-pill__head,
+/* Expanded → box treatment so the head reads as the top of a real
+   surface. Active (running) state is NOT boxed — it uses the spinner +
+   brand color treatment below, the same as <LiveCursor>. Keeping
+   in-flight chrome consistent across both surfaces means the user sees
+   one "loading" shape regardless of whether work is owned by a chip or
+   by the gap between chips. */
 .turn-pill[data-expanded="true"] > .turn-pill__head {
   padding: 6px 12px;
   background: var(--card);
   border: 1px solid var(--border);
   opacity: 1;
 }
-.turn-pill[data-tone="running"] > .turn-pill__head:hover,
 .turn-pill[data-expanded="true"] > .turn-pill__head:hover {
   border-color: color-mix(in oklch, var(--border), var(--foreground) 20%);
 }
@@ -642,20 +645,30 @@
   padding: 4px 0 8px 18px;
 }
 
-/* Reasoning row variant — muted, monospace-free */
+/* Reasoning text — sits inside the already-bordered chip body, so no
+   second border / background. Just slightly muted prose with a scrollable
+   max height for long traces. */
 .turn-pill__reasoning {
   margin: 0;
-  padding: 8px 12px;
-  background: var(--muted);
-  border: 1px solid var(--border);
-  border-radius: 6px;
+  padding: 0;
+  background: transparent;
+  border: 0;
   color: var(--muted-foreground);
-  font-size: 12px;
+  font-size: 12.5px;
   line-height: 1.55;
   white-space: pre-wrap;
   word-break: break-word;
   max-height: 320px;
   overflow-y: auto;
+}
+
+/* Single-row chip bodies (just reasoning, or just one tool group): the
+   chip head already provides the affordance, so render the content
+   directly inside the body with consistent padding instead of wrapping
+   it in another row chrome. */
+.turn-pill__reasoning-wrap,
+.turn-pill__tool-wrap {
+  padding: 10px 12px;
 }
 
 /* Sections (Input / Result / Error) */
@@ -750,6 +763,36 @@
   background: var(--warm-light);
   border-color: var(--warm);
   color: var(--warm-hover);
+}
+
+/* ───────────────────────────────────────────────────────────────────────
+ * Live cursor — covers the gaps between blocks during a streaming turn
+ *
+ * Appears at the bottom of an assistant message body only while the engine
+ * is in a "between blocks" state (thinking pre-first-block, preparing the
+ * next tool call, or analyzing a result). When a block is actively
+ * absorbing the state (text/reasoning streaming, tool running), the block's
+ * own active treatment covers it and the cursor stays hidden.
+ *
+ * Visual: small spinner + muted label. No box; deliberately quiet — the
+ * blocks themselves are the loud part.
+ * ─────────────────────────────────────────────────────────────────────── */
+.live-cursor {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.live-cursor__spinner {
+  color: var(--processing);
+  animation: spin 1s linear infinite;
+  flex-shrink: 0;
+}
+.live-cursor__label {
+  color: var(--processing);
+  font-weight: 500;
 }
 
 /* Workspace selector dropdown entrance */

@@ -6,15 +6,8 @@
  * let the generic (Tier 0) describer do its job.
  */
 
+export { aggregateGroup, type GroupDescription } from "./aggregate.ts";
 export { describeCall } from "./describe.ts";
 export type { ToolRenderer } from "./registry.ts";
 export { registerToolRenderer } from "./registry.ts";
-export { describeTurn, groupTurn } from "./turn.ts";
-export type {
-  DisplayDetail,
-  InputField,
-  TimelineEntry,
-  Tone,
-  ToolDescription,
-  TurnSummary,
-} from "./types.ts";
+export type { DisplayDetail, InputField, Tone, ToolDescription } from "./types.ts";

@@ -17,7 +17,7 @@
  */
 
 import { getNimbleBrainConnectorMeta, type ServerDetail } from "../connectors/server-detail.ts";
-import { validateAdditionalAuthorizationParams } from "../tools/workspace-oauth-provider.ts";
+import { validateAdditionalAuthorizationParams } from "../util/oauth-params.ts";
 import { isHttpUrl } from "../util/url.ts";
 import type { DirectoryEntry, RegistryType } from "./types.ts";
 

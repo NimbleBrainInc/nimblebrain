@@ -1,0 +1,103 @@
+name: Release bundle-sdk-py
+
+# Triggered by tags matching `bundle-sdk-py/v*` (e.g. `bundle-sdk-py/v0.1.0`).
+# Builds the wheel + sdist, publishes to PyPI via Trusted Publishing
+# (OIDC — no long-lived API token in repo secrets), creates a GitHub
+# Release. The platform release workflow (`release.yml`) is unchanged;
+# tags glob `v*` don't match the prefixed pattern here, so the two
+# pipelines stay independent.
+#
+# First-time PyPI setup (one-time per package, by an operator):
+#   1. Create the `nimblebrain-bundle-sdk` project on PyPI (manual
+#      upload of the first sdist or via `uv publish` with a token).
+#   2. On PyPI, add a Trusted Publisher pointing at:
+#        - repo: NimbleBrainInc/nimblebrain
+#        - workflow: release-bundle-sdk-py.yml
+#        - environment: pypi
+#   3. Configure the `pypi` environment in this repo's GitHub settings
+#      (Actions → Environments → New) for the same name. Optional
+#      reviewer approval gate before publish.
+# After that, every `bundle-sdk-py/v*` tag publishes automatically.
+
+on:
+  push:
+    tags:
+      - 'bundle-sdk-py/v*'
+
+permissions:
+  contents: write   # for GitHub Release creation
+  id-token: write   # for PyPI Trusted Publishing (OIDC)
+
+jobs:
+  verify:
+    name: Verify SDK
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/bundle-sdk-py
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install Python
+        run: uv python install 3.13
+      - name: Install dependencies
+        run: uv sync --frozen --no-install-project
+      - name: Lint
+        # Include `tests/` so test-only imports/formatting drift fails
+        # CI rather than getting caught on a release tag — release-time
+        # lint failures block a publish, so scope shifts here are
+        # better caught on PR.
+        run: uv run ruff check src/ tests/
+      - name: Format check
+        run: uv run ruff format --check src/ tests/
+      - name: Test
+        run: uv run pytest tests/ -v
+
+  build-and-publish:
+    name: Build + publish to PyPI
+    runs-on: ubuntu-latest
+    needs: verify
+    environment:
+      name: pypi
+      url: https://pypi.org/p/nimblebrain-bundle-sdk
+    defaults:
+      run:
+        working-directory: packages/bundle-sdk-py
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+      - name: Verify tag matches package version
+        # Catches `bundle-sdk-py/v0.1.0` tagged against a pyproject.toml
+        # still on `0.0.x`. Tag is the source of truth for version
+        # numbers, but the pyproject.toml has to match because that's
+        # what gets baked into the wheel.
+        run: |
+          TAG="${GITHUB_REF#refs/tags/bundle-sdk-py/v}"
+          PKG_VERSION="$(grep -E '^version = ' pyproject.toml | head -1 | sed -E 's/version = "([^"]+)"/\1/')"
+          if [ "$TAG" != "$PKG_VERSION" ]; then
+            echo "Tag version ($TAG) does not match pyproject.toml version ($PKG_VERSION)"
+            exit 1
+          fi
+          echo "Version match: $TAG"
+      - name: Build sdist + wheel
+        run: uv build
+      - name: Publish to PyPI
+        # Trusted Publishing — no token needed; OIDC from id-token
+        # permission authenticates against the PyPI publisher config.
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: packages/bundle-sdk-py/dist
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: bundle-sdk-py ${{ github.ref_name }}
+          body: |
+            Published to PyPI: https://pypi.org/project/nimblebrain-bundle-sdk/
+            See `packages/bundle-sdk-py/CHANGELOG.md` for changes.
+          files: |
+            packages/bundle-sdk-py/dist/*.whl
+            packages/bundle-sdk-py/dist/*.tar.gz
