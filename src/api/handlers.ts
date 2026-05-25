@@ -1337,16 +1337,10 @@ async function parseChatBody(
   }
   const parsed = body as ChatRequestBody;
 
-  // Stage 2 (T006): `/v1/chat` is identity-bound. The body's `workspaceId`
-  // and the `X-Workspace-Id` header are accepted-but-ignored for the chat
-  // path so existing clients (web composer, automations executor) keep
-  // working without a flag day. The header still resolves through
-  // `requireWorkspace` middleware for OTHER routes that consume it
-  // (handleResourceProxy, handleFileServe, handleReadResource); we just
-  // don't thread it into `ChatRequest`. A debug log on every call would
-  // be too noisy; the warning lives in the schema description and the
-  // ChatRequest doc comment.
-  void workspaceId;
+  // The validated `X-Workspace-Id` (focused workspace) threads into
+  // `ChatRequest.workspaceId`: it drives the deterministic per-workspace
+  // briefing (apps + overlays), NOT the tool list (still the identity's
+  // cross-workspace union). See the `ChatRequest.workspaceId` doc comment.
 
   return {
     message: parsed.message,
@@ -1355,6 +1349,7 @@ async function parseChatBody(
     ...(parsed.appContext !== undefined ? { appContext: parsed.appContext } : {}),
     ...(parsed.metadata !== undefined ? { metadata: parsed.metadata } : {}),
     ...(parsed.allowedTools !== undefined ? { allowedTools: parsed.allowedTools } : {}),
+    ...(workspaceId !== undefined ? { workspaceId } : {}),
     ...(identity ? { identity } : {}),
   };
 }
@@ -1421,12 +1416,12 @@ async function parseMultipartChatBody(
   // Stage 2 (T006): no `workspaceId` on the chat envelope — see
   // `parseChatBody`'s comment.
   if (uploadedFiles.length === 0) {
-    void workspaceId;
     return {
       message,
       conversationId: typeof conversationId === "string" ? conversationId : undefined,
       model: typeof model === "string" ? model : undefined,
       appContext,
+      ...(workspaceId !== undefined ? { workspaceId } : {}),
       ...(identity ? { identity } : {}),
     };
   }
@@ -1443,7 +1438,6 @@ async function parseMultipartChatBody(
   // don't break, but the chat path no longer routes by it.
   // Cross-workspace ingest is a Stage 6 concern (files would need to
   // be tagged with their target workspace at upload).
-  void workspaceId;
   const ingestWsId = identity?.id ? personalWorkspaceIdFor(identity.id) : workspaceId;
   const store = createFileStore(join(runtime.getWorkspaceScopedDir(ingestWsId), "files"));
   const filesConfig = runtime.getFilesConfig();
@@ -1463,6 +1457,7 @@ async function parseMultipartChatBody(
     appContext,
     contentParts: ingestResult.contentParts,
     fileRefs: ingestResult.fileRefs,
+    ...(workspaceId !== undefined ? { workspaceId } : {}),
     ...(identity ? { identity } : {}),
   };
 }

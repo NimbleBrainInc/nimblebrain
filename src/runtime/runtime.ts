@@ -930,8 +930,14 @@ export class Runtime {
     // pass the session (personal) workspace so personal-scope overlays
     // surface; the cross-workspace tools are still in the aggregated list
     // below.
-    const apps = await this.buildAppsList(sessionWsId);
-    const liveOverlays = await this.readPromptOverlays(sessionWsId);
+    // The briefing (Installed Apps + org/workspace overlays) reflects the
+    // workspace the chat is FOCUSED on, not the tool union. `request.workspaceId`
+    // is the focused workspace (from X-Workspace-Id); absent → personal
+    // workspace as a temporary bridge until the home control panel exists.
+    // Both reads are deterministic + workspace-scoped (same for every member).
+    const activeWsId = request.workspaceId ?? sessionWsId;
+    const apps = await this.buildAppsList(activeWsId);
+    const liveOverlays = await this.readPromptOverlays(activeWsId);
 
     // Build focusedApp when the request is scoped to a specific app (§7 app-aware chat).
     // Pre-Stage-2 this searched the request's single workspace; post-T006

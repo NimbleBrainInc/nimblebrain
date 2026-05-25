@@ -222,17 +222,31 @@ export interface ChatRequest {
   model?: string;
   maxIterations?: number;
   /**
+   * The workspace the chat is *focused* on (the `/w/:slug` the user is
+   * viewing, plumbed from the `X-Workspace-Id` header). Drives the
+   * deterministic, workspace-scoped **briefing**: the Installed Apps
+   * section and the org/workspace instruction overlays reflect THIS
+   * workspace, identical for every member (no per-user generation).
+   *
+   * NOT tool scope. Tools remain the cross-workspace union
+   * (`aggregateToolList(identityId)`); re-introducing this field does not
+   * re-narrow tools to one workspace (what T006 removed). Absent → the
+   * chat isn't focused on a workspace (e.g. the future home control
+   * panel); for now it falls back to the personal workspace as a
+   * temporary bridge, NOT a claim that home == the personal workspace.
+   */
+  workspaceId?: string;
+  /**
    * When set, the chat is scoped to a specific app.
    *
    * Stage 2 (cross-workspace): the chat surface is identity-bound, not
    * workspace-bound. Tools come from the cross-workspace aggregator
    * (`orchestrator.aggregateToolList(identityId)`) and each tool call
-   * routes through the orchestrator's parsed-namespace path. There is no
-   * session-level `workspaceId` — `ChatRequest.workspaceId` was removed
-   * by T006. The session's "default workspace" for legacy single-
-   * workspace reads (overlays, file store, app skills) is the
-   * identity's personal workspace at `personalWorkspaceIdFor(identity.id)`.
-   * Per-call workspace attribution lives on the tool's namespace prefix.
+   * routes through the orchestrator's parsed-namespace path. The
+   * `workspaceId` field above is the *focused* workspace for the
+   * deterministic briefing (apps + overlays) only — it does NOT narrow
+   * the tool list. Per-call workspace attribution lives on the tool's
+   * namespace prefix.
    */
   appContext?: AppContext;
   /** Additional content parts from file uploads (text extracts, images). */
