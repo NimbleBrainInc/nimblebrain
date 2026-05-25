@@ -19,7 +19,7 @@ export type HomeActivityInput = Static<typeof HomeActivityInput>;
 // output-schema convention these are type-only (we don't wire-validate
 // outputs): `src/services/home-types.ts` re-exports them for the backend
 // (generator, cache, core-source), and `bun run codegen` emits them to
-// `web/src/_generated/platform-schemas/home.ts` for the web briefing surface.
+// `web/src/_generated/platform-schemas/home.d.ts` for the web briefing surface.
 // Single source of truth — do not hand-redeclare on either side.
 
 /** Dashboard state derived from briefing content. */
