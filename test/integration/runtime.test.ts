@@ -217,7 +217,7 @@ I am Nira, your AI assistant. You work at Acme Corp.
       const systemMsg = options.prompt.find((m) => m.role === "system");
       if (systemMsg && typeof systemMsg.content === "string") {
         // Skip auto-title calls
-        if (!systemMsg.content.includes("Generate a 3-6 word title")) {
+        if (!systemMsg.content.includes("descriptive titles for conversations")) {
           capturedSystem = systemMsg.content;
         }
       }
