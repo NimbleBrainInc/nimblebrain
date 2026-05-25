@@ -588,11 +588,19 @@ export class Runtime {
           for (const tool of await source.tools()) {
             all.push(tool);
           }
-        } catch {
+        } catch (err) {
           // Per-source error containment, mirroring
           // `ToolRegistry.availableTools` — one stuck source must not poison
           // the cross-workspace listing. Surface in the source's own state
-          // (Connectors page) and skip here.
+          // (Connectors page) and skip here; a debug line makes "my tool
+          // disappeared from the list" diagnosable without spamming normal
+          // operation (gated behind NB_DEBUG=mcp).
+          log.debug(
+            "mcp",
+            `[runtime] tool-list aggregator: skipping source "${source.name}" in ${wsId} — ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
         }
       }
       return all;
@@ -1012,10 +1020,10 @@ export class Runtime {
       }));
     // Post-aggregator the focused-app match key is the WORKSPACE-PREFIXED
     // source name: tools land in the active list as
-    // `ws_<id>/<source>__<tool>`, and `surfaceTools.focusedServerName`
+    // `ws_<id>-<source>__<tool>`, and `surfaceTools.focusedServerName`
     // matches with `t.name.startsWith(prefix + "__")`. Build via the
     // namespace primitive (single legal construction site for
-    // `ws_<id>/<...>` per `check:tool-namespace`).
+    // `ws_<id>-<...>` per `check:tool-namespace`).
     const focusedNamespaced =
       request.appContext && focusedAppWsId
         ? namespacedToolName(focusedAppWsId, request.appContext.serverName)
@@ -1433,7 +1441,7 @@ export class Runtime {
         // right workspace. Cleared in the wrap's `tool.done` handler.
         perCallWorkspaceMap.set(call.id, routed.context.workspaceId);
         // `routed.toolName` is the inner `<source>__<tool>` form (the
-        // namespace primitive only strips the `ws_<id>/` prefix).
+        // namespace primitive only strips the `ws_<id>-` prefix).
         // `ToolSource.execute` takes the bare tool name (no source
         // prefix) — mirroring `ToolRegistry.execute`'s contract and
         // T007's `/mcp` dispatch path. Split here so cross-workspace

@@ -7,7 +7,7 @@
  * **Stage 2 (delegation-model refactor): identity-bound sessions.** The
  * `/mcp` session no longer carries a workspace. `tools/list` returns the
  * **union of every tool the identity can call** across every workspace
- * they belong to, namespaced as `ws_<id>/<tool>` via T005's aggregator.
+ * they belong to, namespaced as `ws_<id>-<tool>` via T005's aggregator.
  * `tools/call` parses the namespace via `parseNamespacedToolName` (T002)
  * and routes via `routeToolCall` (T004); the workspace is derived from
  * the parsed name on every call, NOT from any session-level state. The
@@ -662,7 +662,7 @@ function createServer(
         // Feature gating and role visibility apply to the bare (unnamespaced)
         // tool name — that's what `isToolEnabled` / `isToolVisibleToRole`
         // were built for. The aggregator carries the bare name alongside
-        // the canonical `ws_<id>/<name>` form so we don't have to re-parse.
+        // the canonical `ws_<id>-<name>` form so we don't have to re-parse.
         .filter((t) => isToolEnabled(t.toolName, features))
         .filter((t) => isToolVisibleToRole(t.toolName, orgRole))
         .map((t) => ({

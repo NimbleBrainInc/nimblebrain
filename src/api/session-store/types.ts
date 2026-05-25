@@ -27,7 +27,7 @@
  *
  * **Stage 2 (delegation-model refactor) hard-cut `workspaceId` from this
  * type.** Per Q4, sessions are identity-bound — every `tools/call`
- * carries the workspace inline via `ws_<id>/<tool>` namespacing (parsed
+ * carries the workspace inline via `ws_<id>-<tool>` namespacing (parsed
  * and routed by the orchestrator). Putting `workspaceId` on the session
  * pinned a single-workspace assumption into the metadata schema; the cut
  * is permanent. Readers MUST tolerate legacy entries that still carry a

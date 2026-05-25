@@ -687,7 +687,7 @@ async function callToolViaMcp(
   id: string,
 ): Promise<UiToolResultResponse | UiToolResultError | Record<string, unknown>> {
   // The `/mcp` endpoint expects fully namespaced tool names of the form
-  // `ws_<id>/<source>__<tool>` (Stage 2 / T007: orchestrator rejects
+  // `ws_<id>-<source>__<tool>` (Stage 2 / T007: orchestrator rejects
   // bare names with `-32602 invalid_tool_name`). Two transformations:
   //
   //   1. Qualified: iframes pass either `<tool>` (bare) or

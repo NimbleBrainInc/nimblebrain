@@ -7,7 +7,7 @@
  * call site.
  *
  * **Why three exports, not one regex.** The web tier mirrors this
- * pattern (web/src/lib/namespaced-tool.ts parses `ws_<id>/<tool>`
+ * pattern (web/src/lib/namespaced-tool.ts parses `ws_<id>-<tool>`
  * strings). Pre-Stage-2 the web copy was a hand-written regex that
  * diverged from the server's — web allowed hyphens, server did not.
  * That's a "kept in sync by hope" pattern Mat's Stage-2 directive

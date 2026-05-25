@@ -289,7 +289,7 @@ export interface ChatResult {
   skillName: string | null;
   /**
    * Tool calls executed during this run. `name` is the canonical
-   * namespaced form `ws_<id>/<source>__<tool>` — Q2 of
+   * namespaced form `ws_<id>-<source>__<tool>` — Q2 of
    * `STAGE_2_DESIGN_DECISIONS.md`: store the raw namespaced form;
    * render display-name + friendly name on the fly. Per-turn workspace
    * attribution lives here on each call's name, NOT on a top-level

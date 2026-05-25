@@ -277,11 +277,32 @@ export class ToolListCache {
    * change the FS watcher can't see). Idempotent. Also unsubscribes
    * this identity from every workspace's invalidation list so a stale
    * subscription doesn't keep firing into a deleted union.
+   *
+   * Reaps any workspace watcher whose last subscriber was this identity
+   * (e.g. the identity lost access via a workspace delete / membership
+   * change). Without this, watchers accumulate for the lifetime of the
+   * process — an fd leak under long-lived per-tenant workspace churn. The
+   * watcher is lazily re-created by `ensureWatchEntry` on the next listing,
+   * so reaping a still-needed workspace is self-healing; shared workspaces
+   * (other identities still subscribed) keep their watcher.
    */
   invalidateIdentity(identityId: string): void {
     this.identityUnions.delete(identityId);
-    for (const entry of this.workspaces.values()) {
+    const orphaned: string[] = [];
+    for (const [wsId, entry] of this.workspaces) {
       entry.subscribedIdentities.delete(identityId);
+      if (entry.subscribedIdentities.size === 0) orphaned.push(wsId);
+    }
+    for (const wsId of orphaned) {
+      const entry = this.workspaces.get(wsId);
+      if (!entry) continue;
+      if (entry.pendingDebounce !== null) clearTimeout(entry.pendingDebounce);
+      try {
+        entry.watcher.close();
+      } catch {
+        // best-effort — an already-closed watcher throws on close
+      }
+      this.workspaces.delete(wsId);
     }
   }
 

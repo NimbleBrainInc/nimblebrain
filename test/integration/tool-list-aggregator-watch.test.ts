@@ -250,6 +250,12 @@ describe("aggregateToolList — workspace removal", () => {
     const after = await agg.aggregateToolList("user_1");
     expect(after).toHaveLength(1);
     expect(wsIdOf(after[0]?.name ?? "")).toBe(wsA);
+
+    // The dropped workspace's fs.watch handle is REAPED, not leaked: once
+    // user_1 (its last subscriber) loses access, only ws_a's watcher
+    // remains. Without the reap this would be 2 — an fd leak under
+    // long-lived per-tenant workspace churn.
+    expect(agg.activeWatcherCount()).toBe(1);
   });
 });
 
