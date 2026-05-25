@@ -485,3 +485,41 @@ describe("aggregateToolList — namespacing primitive enforcement", () => {
     }
   });
 });
+
+describe("aggregateToolList — graceful degradation (one workspace fails)", () => {
+  test("a rejecting workspace lister is skipped; the union keeps the healthy workspaces' tools", async () => {
+    // Pins the S3 contract: `getUnionForIdentity` uses Promise.allSettled,
+    // NOT Promise.all — a single workspace whose listing rejects (e.g. its
+    // registry can't be constructed) must not nuke the identity's entire
+    // tool list. Without this test a refactor back to all-or-nothing stays
+    // green.
+    const wsA = "ws_a";
+    const wsBad = "ws_bad"; // lister rejects for this one
+    const wsC = "ws_c";
+    const workDir = trackDir(makeWorkDir([wsA, wsBad, wsC]));
+    const toolsA = buildTools(["alpha", "beta"], "src_a");
+    const toolsC = buildTools(["gamma"], "src_c");
+    const lister: WorkspaceToolLister = async (wsId) => {
+      if (wsId === wsA) return toolsA;
+      if (wsId === wsC) return toolsC;
+      throw new Error(`registry construction failed for ${wsId}`);
+    };
+    const store = buildStore({ user_1: [wsA, wsBad, wsC] });
+    const agg = track(
+      createToolListAggregator({
+        workDir,
+        workspaceStore: store,
+        listToolsForWorkspace: lister,
+      }),
+    );
+
+    const out = await agg.aggregateToolList("user_1");
+
+    // The union did NOT reject; it returns exactly the healthy workspaces'
+    // tools, and the failed workspace is absent.
+    expect(out).toHaveLength(toolsA.length + toolsC.length);
+    const owners = new Set(out.map((d) => parseWs(d.name).wsId));
+    expect(owners).toEqual(new Set([wsA, wsC]));
+    expect(out.some((d) => parseWs(d.name).wsId === wsBad)).toBe(false);
+  });
+});
