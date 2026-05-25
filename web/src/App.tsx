@@ -36,6 +36,7 @@ import {
   type WorkspaceInfo,
   WorkspaceProvider,
 } from "./context/WorkspaceContext";
+import { chatStore } from "./hooks/chat-store";
 import { useDataSync } from "./hooks/useDataSync";
 import { useEvents } from "./hooks/useEvents";
 import { useShell } from "./hooks/useShell";
@@ -227,6 +228,11 @@ function AuthenticatedAppContent({
   useEvents(token, wsCtx.activeWorkspace?.id, {
     onDataChanged,
     onConfigChanged: () => config.refreshConfig(),
+    // Auto-title arrived — update the matching conversation's slice so the
+    // chat panel header reflects it live (routed by conversationId).
+    onConversationTitle: ({ conversationId, title }) => {
+      chatStore.setTitle(conversationId, title);
+    },
     // Bundle install / uninstall changes the placement set; refetch
     // the shell so the sidebar's Apps group reflects the new state
     // without a page reload.

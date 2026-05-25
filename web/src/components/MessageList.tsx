@@ -180,15 +180,22 @@ function useSmartScroll(messages: ChatMessage[]) {
     prevConversationKeyRef.current = conversationKey;
     prevMessageCountRef.current = messages.length;
 
-    // Conversation loaded (different conversation or first load with history)
+    // Conversation loaded (different conversation or first load with history):
+    // land at the bottom (most recent turn), like ChatGPT/Claude.
     if (conversationKey !== prevKey && messages.length > 1) {
-      // Use double-rAF to ensure DOM has rendered the messages
+      // Use double-rAF to ensure the DOM has rendered the messages. Scroll the
+      // last real message to the viewport bottom (not the trailing 60vh
+      // spacer / bottomRef, which would leave the last turn off-screen).
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
-          scrollRef.current?.scrollTo({ top: 0, behavior: "instant" });
+          const container = scrollRef.current;
+          const inner = container?.firstElementChild;
+          const lastMsg = inner?.children[messages.length - 1] as HTMLElement | undefined;
+          if (lastMsg) lastMsg.scrollIntoView({ behavior: "instant", block: "end" });
+          else container?.scrollTo({ top: container.scrollHeight, behavior: "instant" });
         });
       });
-      setIsAtBottom(false);
+      setIsAtBottom(true);
       return;
     }
 

@@ -4,6 +4,7 @@ import { connectEvents } from "../api/sse";
 import type {
   ConfigChangedEvent,
   ConnectionStateChangedEvent,
+  ConversationTitleEvent,
   DataChangedEvent,
   SseEventMap,
   SseEventType,
@@ -14,6 +15,8 @@ export interface UseEventsOptions {
   onDataChanged?: (event: DataChangedEvent) => void;
   /** Called when a config.changed SSE event is received. */
   onConfigChanged?: (event: ConfigChangedEvent) => void;
+  /** Called when an auto-generated conversation title arrives. */
+  onConversationTitle?: (event: ConversationTitleEvent) => void;
   /** Called when a per-Connection state transition fires (URL bundles). */
   onConnectionStateChanged?: (event: ConnectionStateChangedEvent) => void;
   /**
@@ -41,6 +44,8 @@ export function useEvents(
   onDataChangedRef.current = options?.onDataChanged;
   const onConfigChangedRef = useRef(options?.onConfigChanged);
   onConfigChangedRef.current = options?.onConfigChanged;
+  const onConversationTitleRef = useRef(options?.onConversationTitle);
+  onConversationTitleRef.current = options?.onConversationTitle;
   const onConnectionStateChangedRef = useRef(options?.onConnectionStateChanged);
   onConnectionStateChangedRef.current = options?.onConnectionStateChanged;
   const onBundleLifecycleChangedRef = useRef(options?.onBundleLifecycleChanged);
@@ -58,6 +63,9 @@ export function useEvents(
         }
         if (type === "config.changed") {
           onConfigChangedRef.current?.(data as ConfigChangedEvent);
+        }
+        if (type === "conversation.title") {
+          onConversationTitleRef.current?.(data as ConversationTitleEvent);
         }
         if (type === "connection.state_changed") {
           onConnectionStateChangedRef.current?.(data as ConnectionStateChangedEvent);

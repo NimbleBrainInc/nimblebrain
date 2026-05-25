@@ -1,9 +1,17 @@
 import type { ReactNode } from "react";
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { callTool } from "../api/client";
+import { chatStore } from "../hooks/chat-store";
 import type { UseChatReturn } from "../hooks/useChat";
 import { useChat } from "../hooks/useChat";
-import { useConversationEvents } from "../hooks/useConversationEvents";
 import type { AppContext, ConfigInfo } from "../types";
 
 // ---------------------------------------------------------------------------
@@ -58,6 +66,19 @@ export function ChatProvider({
   currentUserId,
 }: ChatProviderProps) {
   const chat = useChat(initialConversationId, currentUserId);
+
+  // Drop every cached conversation slice when the signed-in user changes
+  // (logout → login as someone else in the same tab). Conversations are
+  // user-scoped, so a workspace switch must NOT reset — only an identity
+  // change. The store is a module singleton that outlives this provider's
+  // remounts, so stale slices would otherwise leak across users.
+  const prevUserRef = useRef(currentUserId);
+  useEffect(() => {
+    if (prevUserRef.current !== currentUserId) {
+      chatStore.reset();
+      prevUserRef.current = currentUserId;
+    }
+  }, [currentUserId]);
 
   // Dev helper: window.__nb.simulateError("some error message")
   useEffect(() => {
@@ -152,21 +173,10 @@ export function ChatProvider({
     }
   }, []);
 
-  // Same-user cross-tab sync (Stage 1 single-owner). Stage 4 widens
-  // the audience when sharing returns.
-  useConversationEvents(chat.conversationId, {
-    onRemoteUserMessage: (data) => {
-      chat.injectRemoteUserMessage(data.userId, data.displayName, data.content);
-    },
-    onRemoteStreamEvent: (type, data) => {
-      chat.processRemoteStreamEvent(type, data);
-    },
-    onReconnect: () => {
-      if (chat.conversationId) {
-        chat.loadConversation(chat.conversationId);
-      }
-    },
-  });
+  // Cross-tab / refresh sync is now handled by the per-conversation turn
+  // stream itself (server-authoritative): every viewer attaches to
+  // GET /v1/conversations/:id/events, which replays the in-flight turn and
+  // tails live. No separate remote-event bridge needed.
 
   const wrappedSendMessage = useCallback(
     (text: string, appContext?: AppContext, files?: File[]) => {

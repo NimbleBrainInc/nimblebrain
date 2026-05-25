@@ -379,8 +379,14 @@ async function consumeSSEStream(res: Response, onEvent: ChatStreamCallback): Pro
   }
 }
 
-/** Streaming chat via SSE. Calls onEvent for each event, resolves when done. */
-export async function streamChat(req: ChatRequest, onEvent: ChatStreamCallback): Promise<void> {
+/** Streaming chat via SSE. Calls onEvent for each event, resolves when done.
+ *  `signal` is for caller-driven cleanup (logout / store reset) — NOT
+ *  conversation switching, which keeps the stream alive in the background. */
+export async function streamChat(
+  req: ChatRequest,
+  onEvent: ChatStreamCallback,
+  signal?: AbortSignal,
+): Promise<void> {
   // If a conv-events SSE subscription is open for this conversation,
   // pass its server-issued subscriber id so the broadcast suppresses
   // self-echo. Without this, the sender's own tab double-processes
@@ -394,6 +400,7 @@ export async function streamChat(req: ChatRequest, onEvent: ChatStreamCallback):
     credentials: "include",
     headers: headers(originSubId ? { "X-Origin-Subscriber-Id": originSubId } : undefined),
     body: JSON.stringify(req),
+    ...(signal ? { signal } : {}),
   });
 
   if (res.status === 401) {
@@ -420,6 +427,7 @@ export async function streamChatMultipart(
   req: ChatRequest,
   files: File[],
   onEvent: ChatStreamCallback,
+  signal?: AbortSignal,
 ): Promise<void> {
   const formData = new FormData();
   formData.append("message", req.message);
@@ -450,6 +458,7 @@ export async function streamChatMultipart(
     credentials: "include",
     headers: h,
     body: formData,
+    ...(signal ? { signal } : {}),
   });
 
   if (res.status === 401) {
@@ -465,6 +474,70 @@ export async function streamChatMultipart(
   }
 
   await consumeSSEStream(res, onEvent);
+}
+
+/**
+ * Start a server-authoritative turn. Returns the conversation id immediately;
+ * the turn runs to completion on the server regardless of this client. Watch
+ * it via `connectConversationStream`. Replaces the streaming `streamChat` path.
+ */
+export async function startChatTurn(req: ChatRequest): Promise<{ conversationId: string }> {
+  const res = await fetchWithRefresh(`${API_BASE}/v1/chat/start`, {
+    method: "POST",
+    credentials: "include",
+    headers: headers(),
+    body: JSON.stringify(req),
+  });
+  if (res.status === 401) throw new ApiClientError("unauthorized", "Unauthorized", 401);
+  if (!res.ok) {
+    const body: ApiError = await res
+      .json()
+      .catch(() => ({ error: "unknown", message: res.statusText }));
+    throw new ApiClientError(body.error, body.message, res.status, body.details);
+  }
+  return res.json() as Promise<{ conversationId: string }>;
+}
+
+/** Start a server-authoritative turn with file attachments (multipart). */
+export async function startChatTurnMultipart(
+  req: ChatRequest,
+  files: File[],
+): Promise<{ conversationId: string }> {
+  const formData = new FormData();
+  formData.append("message", req.message);
+  if (req.conversationId) formData.append("conversationId", req.conversationId);
+  if (req.model) formData.append("model", req.model);
+  if (req.appContext) formData.append("appContext", JSON.stringify(req.appContext));
+  for (const file of files) formData.append("files", file, file.name);
+
+  const h: Record<string, string> = {};
+  if (authToken && authToken !== "__cookie__") h.Authorization = `Bearer ${authToken}`;
+  if (activeWorkspaceId) h["X-Workspace-Id"] = activeWorkspaceId;
+
+  const res = await fetchWithRefresh(`${API_BASE}/v1/chat/start`, {
+    method: "POST",
+    credentials: "include",
+    headers: h,
+    body: formData,
+  });
+  if (res.status === 401) throw new ApiClientError("unauthorized", "Unauthorized", 401);
+  if (!res.ok) {
+    const body: ApiError = await res
+      .json()
+      .catch(() => ({ error: "unknown", message: res.statusText }));
+    throw new ApiClientError(body.error, body.message, res.status, body.details);
+  }
+  return res.json() as Promise<{ conversationId: string }>;
+}
+
+/** Explicitly stop an in-flight turn (the Stop button). */
+export async function cancelChatTurn(conversationId: string): Promise<void> {
+  await fetchWithRefresh(
+    `${API_BASE}/v1/conversations/${encodeURIComponent(conversationId)}/cancel`,
+    { method: "POST", credentials: "include", headers: headers() },
+  ).catch(() => {
+    // Best-effort — the turn may have already finished.
+  });
 }
 
 // ---------------------------------------------------------------------------

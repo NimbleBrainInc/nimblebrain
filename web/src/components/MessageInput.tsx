@@ -1,4 +1,4 @@
-import { ArrowUp, Paperclip } from "lucide-react";
+import { ArrowUp, Paperclip, Square } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { StreamingState } from "../hooks/useChat";
 import { FileAttachmentChips } from "./FileAttachmentChips";
@@ -11,6 +11,9 @@ interface MessageInputProps {
   onNewConversation?: () => void;
   /** Drives the ambient "breathing" border while a turn is in flight. */
   streamingState?: StreamingState;
+  /** Stop the in-flight turn. When provided, the send button becomes a Stop
+   *  button while a turn is streaming. */
+  onStop?: () => void;
 }
 
 export function MessageInput({
@@ -18,6 +21,7 @@ export function MessageInput({
   disabled,
   onNewConversation,
   streamingState,
+  onStop,
 }: MessageInputProps) {
   const [text, setText] = useState("");
   const [isFocused, setIsFocused] = useState(false);
@@ -218,19 +222,30 @@ export function MessageInput({
               <Paperclip style={{ width: 16, height: 16 }} />
             </button>
           </div>
-          <button
-            onClick={handleSend}
-            disabled={!canSend}
-            type="button"
-            aria-label="Send message"
-            className={`shrink-0 flex items-center justify-center w-8 h-8 rounded-lg transition-all duration-200 ${
-              canSend
-                ? "bg-primary hover:bg-primary/90 text-primary-foreground"
-                : "bg-muted text-muted-foreground cursor-not-allowed"
-            }`}
-          >
-            <ArrowUp style={{ width: 18, height: 18 }} />
-          </button>
+          {disabled && onStop ? (
+            <button
+              onClick={onStop}
+              type="button"
+              aria-label="Stop generating"
+              className="shrink-0 flex items-center justify-center w-8 h-8 rounded-lg transition-all duration-200 bg-primary hover:bg-primary/90 text-primary-foreground"
+            >
+              <Square style={{ width: 14, height: 14 }} fill="currentColor" />
+            </button>
+          ) : (
+            <button
+              onClick={handleSend}
+              disabled={!canSend}
+              type="button"
+              aria-label="Send message"
+              className={`shrink-0 flex items-center justify-center w-8 h-8 rounded-lg transition-all duration-200 ${
+                canSend
+                  ? "bg-primary hover:bg-primary/90 text-primary-foreground"
+                  : "bg-muted text-muted-foreground cursor-not-allowed"
+              }`}
+            >
+              <ArrowUp style={{ width: 18, height: 18 }} />
+            </button>
+          )}
         </div>
       </div>
 

@@ -31,11 +31,18 @@ export type WorkspaceForHostContext = { id: string; name: string } | null;
 export function buildHostExtensions(
   workspace: WorkspaceForHostContext,
   forceRefresh = false,
+  streamingConversationIds: string[] = [],
 ): Record<string, unknown> {
   const ext: Record<string, unknown> = workspace
     ? { workspace: { id: workspace.id, name: workspace.name } }
     : {};
   if (forceRefresh) ext.forceRefresh = true;
+  // Conversations with an in-flight assistant turn in this browser tab. Apps
+  // (e.g. the conversations list) render a live "streaming" affordance per
+  // row. Ephemeral, tab-local — not persisted, not from the server.
+  if (streamingConversationIds.length > 0) {
+    ext.streamingConversationIds = streamingConversationIds;
+  }
   return ext;
 }
 
@@ -47,10 +54,11 @@ export function buildHostExtensions(
 export function buildHostContext(
   mode: "light" | "dark",
   workspace: WorkspaceForHostContext,
+  streamingConversationIds: string[] = [],
 ): Record<string, unknown> {
   const tokens = getThemeTokens(mode);
   return {
-    ...buildHostExtensions(workspace),
+    ...buildHostExtensions(workspace, false, streamingConversationIds),
     theme: mode,
     styles: { variables: tokens },
   };
