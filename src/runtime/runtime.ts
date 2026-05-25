@@ -925,13 +925,16 @@ export class Runtime {
     }
 
     // `buildAppsList` populates each app's `customInstructions` from the
-    // bundle's `app://instructions` resource (when published);
-    // org and workspace overlays come from platform-owned storage. We
-    // pass the session (personal) workspace so personal-scope overlays
-    // surface; the cross-workspace tools are still in the aggregated list
-    // below.
-    const apps = await this.buildAppsList(sessionWsId);
-    const liveOverlays = await this.readPromptOverlays(sessionWsId);
+    // bundle's `app://instructions` resource (when published); org and
+    // workspace overlays come from platform-owned storage. Both reflect the
+    // workspace the chat is FOCUSED on (`request.workspaceId`, from
+    // `X-Workspace-Id`) — not the cross-workspace tool union. Absent, they
+    // fall back to the personal workspace as a temporary bridge until the
+    // home control panel exists. Deterministic + workspace-scoped (same for
+    // every member).
+    const activeWsId = request.workspaceId ?? sessionWsId;
+    const apps = await this.buildAppsList(activeWsId);
+    const liveOverlays = await this.readPromptOverlays(activeWsId);
 
     // Build focusedApp when the request is scoped to a specific app (§7 app-aware chat).
     // Pre-Stage-2 this searched the request's single workspace; post-T006
@@ -1028,18 +1031,19 @@ export class Runtime {
       locale: requestIdentity.preferences?.locale ?? "en-US",
     };
 
-    // The displayed workspace context in the prompt is the session
-    // (personal) workspace — what the user is "in" for legacy single-
-    // workspace UX. Cross-workspace tool calls still execute against
-    // their own namespace-prefixed workspace; this is just the prose
-    // identity the prompt narrates.
-    const workspaceContext = sessionWorkspace
-      ? { id: sessionWorkspace.id, name: sessionWorkspace.name }
-      : { id: sessionWsId };
+    // The prompt narrates the FOCUSED workspace — the same one whose apps +
+    // house rules the briefing above describes — so the prose, the app list,
+    // and the persona all agree. Reuse the already-loaded session workspace
+    // when it's the focused one; otherwise load the focused workspace.
+    const activeWorkspace =
+      activeWsId === sessionWsId ? sessionWorkspace : await this._workspaceStore.get(activeWsId);
+    const workspaceContext = activeWorkspace
+      ? { id: activeWorkspace.id, name: activeWorkspace.name }
+      : { id: activeWsId };
 
-    // Build per-request context skills with workspace identity override
-    const identityOverride = sessionWorkspace?.identity
-      ? makeIdentitySkill(sessionWorkspace.identity)
+    // Workspace identity/persona override — follows the focused workspace too.
+    const identityOverride = activeWorkspace?.identity
+      ? makeIdentitySkill(activeWorkspace.identity)
       : null;
     const requestContextSkills = identityOverride
       ? [...this.contextSkills, identityOverride]

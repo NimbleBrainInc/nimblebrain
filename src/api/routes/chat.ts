@@ -15,15 +15,14 @@ export function chatRoutes(ctx: AppContext) {
   const chatBodyLimit = bodyLimit(1_048_576, {
     multipart: ctx.runtime.getFilesConfig().maxTotalSize,
   });
-  // Stage 2 (T006): `/v1/chat` is identity-bound. We use the optional
-  // workspace middleware so an `X-Workspace-Id` header (sent by web
-  // composer and existing automations clients) still validates against
-  // membership (`400/403` on a malformed or cross-tenant header), but
-  // its value never reaches the chat handler — `handleChat` discards
-  // it. The chat session's tool list comes from
+  // Stage 2: `/v1/chat` is identity-bound — the tool list comes from
   // `aggregateToolList(identityId)` and each call routes via the
-  // orchestrator. See `handlers.ts::parseChatBody` for the
-  // accept-but-ignore docstring.
+  // orchestrator, not from a single session workspace. The optional
+  // workspace middleware validates the `X-Workspace-Id` header against
+  // membership (`400/403` on a malformed or cross-tenant header); its
+  // value flows through `handleChat` into `ChatRequest.workspaceId` as the
+  // *focused* workspace, scoping the prompt briefing (installed apps +
+  // house rules). See `handlers.ts::parseChatBody`.
   return new Hono<AppEnv>()
     .use("*", requireAuth(ctx.authOptions))
     .use("*", optionalWorkspace(ctx.workspaceStore))
