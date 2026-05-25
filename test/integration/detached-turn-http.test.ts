@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type ServerHandle, startServer } from "../../src/api/server.ts";
@@ -116,5 +116,34 @@ describe("detached turn HTTP surface", () => {
       headers: { "X-Workspace-Id": TEST_WORKSPACE_ID },
     });
     expect(res.status).toBe(404);
+  });
+
+  it("start on a pre-migration (ownerless) conversation is 422, not 500", async () => {
+    // Seed a corrupted conversation: line-1 metadata without ownerId makes the
+    // store throw ConversationCorruptedError on load (the resume path).
+    const convId = "conv_dead00000000beef"; // conv_ + 16 hex
+    const convDir = join(testDir, "conversations");
+    mkdirSync(convDir, { recursive: true });
+    const meta = JSON.stringify({
+      id: convId,
+      createdAt: "2025-01-01T00:00:00.000Z",
+      updatedAt: "2025-01-01T00:00:00.000Z",
+      title: null,
+      format: "events",
+    });
+    writeFileSync(join(convDir, `${convId}.jsonl`), `${meta}\n`);
+
+    const res = await fetch(`${baseUrl}/v1/chat/start`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
+      body: JSON.stringify({
+        message: "resume corrupt",
+        conversationId: convId,
+        workspaceId: TEST_WORKSPACE_ID,
+      }),
+    });
+    expect(res.status).toBe(422);
+    const body = await res.json();
+    expect(body.error).toBe("conversation_corrupted");
   });
 });

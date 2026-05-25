@@ -173,6 +173,12 @@ export async function handleChatStart(
         { conversationId: parsed.conversationId },
       );
     }
+    // startTurn → store.load can throw on a pre-migration (ownerless)
+    // conversation. Map to 422 — parity with handleChat / handleChatCancel —
+    // instead of leaking a raw 500.
+    if (err instanceof ConversationCorruptedError) {
+      return conversationCorruptedResponse(err);
+    }
     throw err;
   }
 }
