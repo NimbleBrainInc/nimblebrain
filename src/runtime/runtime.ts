@@ -51,6 +51,7 @@ import { rehydrateUserResources } from "../files/rehydrate.ts";
 import { createFileStore } from "../files/store.ts";
 import { DEFAULT_FILE_CONFIG, type FileConfig } from "../files/types.ts";
 import { FileBackedHostResourcesResolver, TokenBucketRateLimit } from "../host-resources/index.ts";
+import { IdentityContext } from "../identity/context.ts";
 import type { InstanceConfig } from "../identity/instance.ts";
 import { loadInstanceConfig } from "../identity/instance.ts";
 import type { IdentityProvider, UserIdentity } from "../identity/provider.ts";
@@ -62,9 +63,9 @@ import { getProviderFromModel } from "../model/catalog.ts";
 import { buildModelResolver, resolveModelString } from "../model/registry.ts";
 import {
   createToolListAggregator,
-  GlobalScopeNotRoutable,
   routeToolCall,
   type ToolListAggregator,
+  UnknownIdentitySource,
   UnknownNamespacedToolName,
   UnknownToolSource,
   UnknownWorkspace,
@@ -1428,10 +1429,16 @@ export class Runtime {
         } catch (err) {
           return mapOrchestratorErrorToToolResult(err, call.name);
         }
-        // Stamp the dispatch-time workspaceId so the sink wrap can
-        // attribute `tool.progress` / `tool.done` events back to the
-        // right workspace. Cleared in the wrap's `tool.done` handler.
-        perCallWorkspaceMap.set(call.id, routed.context.workspaceId);
+        // Workspace requests carry a wsId for audit attribution; identity
+        // requests have no workspace (the entity carries its own ownership),
+        // so there's nothing to stamp.
+        const routedWsId = routed.kind === "workspace" ? routed.context.workspaceId : null;
+        if (routedWsId !== null) {
+          // Stamp the dispatch-time workspaceId so the sink wrap can attribute
+          // `tool.progress` / `tool.done` back to the right workspace. Cleared
+          // in the wrap's `tool.done` handler.
+          perCallWorkspaceMap.set(call.id, routedWsId);
+        }
         // `routed.toolName` is the inner `<source>__<tool>` form (the
         // namespace primitive only strips the `ws_<id>-` prefix).
         // `ToolSource.execute` takes the bare tool name (no source
@@ -1458,7 +1465,7 @@ export class Runtime {
         const outer = getRequestContext();
         const perCallCtx: RequestContext = {
           identity: outer?.identity ?? null,
-          workspaceId: routed.context.workspaceId,
+          workspaceId: routedWsId,
           workspaceAgents: outer?.workspaceAgents ?? null,
           workspaceModelOverride: outer?.workspaceModelOverride ?? null,
           ...(outer?.conversationId !== undefined ? { conversationId: outer.conversationId } : {}),
@@ -1909,6 +1916,23 @@ export class Runtime {
       );
     }
     return reg;
+  }
+
+  /**
+   * Resolve a kernel identity-scoped source by name. v1 set: `conversations`
+   * (Files / Automations join when their data moves to identity ownership).
+   * Returns `undefined` for an unknown or non-identity source. No workspace:
+   * these dispatch with identity authority and gate reads via `canAccess`.
+   */
+  getIdentitySource(name: string): ToolSource | undefined {
+    const IDENTITY_SOURCES = new Set(["conversations"]);
+    if (!IDENTITY_SOURCES.has(name)) return undefined;
+    return this._platformSources.find((s) => s.name === name);
+  }
+
+  /** Fresh `IdentityContext` for the authenticated identity. No workspace. */
+  getIdentityContext(identityId: string): IdentityContext {
+    return new IdentityContext({ userId: identityId, workDir: this.getWorkDir() });
   }
 
   /** Get the ToolRegistry for the current request's workspace (from AsyncLocalStorage context). */
@@ -2761,18 +2785,18 @@ function mapOrchestratorErrorToToolResult(err: unknown, namespacedName: string):
       },
     };
   }
-  if (err instanceof GlobalScopeNotRoutable) {
+  if (err instanceof UnknownIdentitySource) {
     return {
       content: [
         {
           type: "text",
-          text: `[orchestrator] global tool dispatch is not yet available for "${err.toolName}".`,
+          text: `[orchestrator] no identity source "${err.sourceName}" for "${err.toolName}".`,
         },
       ],
       isError: true,
       structuredContent: {
         error: "orchestrator_error",
-        reason: "global_not_routable",
+        reason: "unknown_identity_source",
         toolName: err.toolName,
       },
     };

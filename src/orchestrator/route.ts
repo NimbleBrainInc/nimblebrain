@@ -40,6 +40,7 @@
  * `getRegistryForWorkspace(wsId)` — all already in place pre-Stage-2.
  */
 
+import type { IdentityContext } from "../identity/context.ts";
 import { parseNamespacedToolName, UnknownNamespacedToolName } from "../tools/namespace.ts";
 import type { ToolSource } from "../tools/types.ts";
 import type { WorkspaceContext } from "../workspace/context.ts";
@@ -119,24 +120,21 @@ export class UnknownToolSource extends Error {
 }
 
 /**
- * Thrown when a tool name parses to global scope (a bare
- * `<source>__<tool>`) but the global/identity dispatch path isn't wired
- * yet.
- *
- * Placeholder until W3 (global dispatch on `IdentityContext` + the
- * kernel global-source validation). Until then the cross-workspace
- * aggregator still namespaces every tool by workspace, so no surface
- * emits a bare global name — this is unreachable in normal flow and
- * exists only to fail closed on a crafted bare `/mcp` call. Replaced by
- * real global routing in W3.
+ * Thrown when a bare (identity-scoped) tool name's source isn't in the
+ * kernel identity-source set — the identity-side parallel to
+ * `UnknownToolSource`. A bare `<source>__<tool>` whose `<source>` is not a
+ * recognized identity source (conversations / files / automations) is a
+ * mis-namespaced call, surfaced rather than silently treated as workspace.
  */
-export class GlobalScopeNotRoutable extends Error {
+export class UnknownIdentitySource extends Error {
   readonly toolName: string;
+  readonly sourceName: string;
 
-  constructor(toolName: string) {
-    super(`[orchestrator] global tool dispatch is not yet available (tool "${toolName}")`);
-    this.name = "GlobalScopeNotRoutable";
+  constructor(toolName: string, sourceName: string) {
+    super(`[orchestrator] no identity source "${sourceName}" (tool "${toolName}")`);
+    this.name = "UnknownIdentitySource";
     this.toolName = toolName;
+    this.sourceName = sourceName;
   }
 }
 
@@ -179,6 +177,18 @@ export interface OrchestratorRuntime {
   getRegistryForWorkspace(wsId: string): {
     getSource(name: string): ToolSource | undefined;
   };
+
+  /**
+   * Resolve a kernel identity-scoped source by name (`conversations`, and
+   * later `files` / `automations`). Returns `undefined` for an unknown or
+   * non-identity source — the orchestrator turns that into
+   * `UnknownIdentitySource`. No workspace: these dispatch with identity
+   * authority and gate their own reads via `canAccess`.
+   */
+  getIdentitySource(name: string): ToolSource | undefined;
+
+  /** Fresh `IdentityContext` for the authenticated identity. No workspace. */
+  getIdentityContext(identityId: string): IdentityContext;
 }
 
 // ── Routing ───────────────────────────────────────────────────────
@@ -189,14 +199,27 @@ export interface OrchestratorRuntime {
  * needs, `toolName` as the bare name to pass into `source.execute`,
  * and `source` as the dispatch target.
  */
-export interface RoutedToolCall {
-  /** Fresh `WorkspaceContext` bound to the parsed namespace's wsId. */
-  context: WorkspaceContext;
-  /** Tool name after stripping the `ws_<id>-` prefix — what the source executes. */
-  toolName: string;
-  /** The dispatch target — the workspace's `ToolSource` registered under the inner tool's source prefix. */
-  source: ToolSource;
-}
+export type RoutedToolCall =
+  | {
+      /** Workspace request: `ws_<id>-<tool>`, authorized by membership. */
+      kind: "workspace";
+      /** Fresh `WorkspaceContext` bound to the parsed namespace's wsId. */
+      context: WorkspaceContext;
+      /** Tool name after stripping the `ws_<id>-` prefix — what the source executes. */
+      toolName: string;
+      /** The workspace's `ToolSource` for the inner tool's source prefix. */
+      source: ToolSource;
+    }
+  | {
+      /** Identity request: bare `<source>__<tool>`, authorized per-entity by `canAccess`. */
+      kind: "identity";
+      /** Fresh `IdentityContext` for the caller — no workspace. */
+      context: IdentityContext;
+      /** The bare `<source>__<tool>` the source executes. */
+      toolName: string;
+      /** The kernel identity source the inner tool dispatches to. */
+      source: ToolSource;
+    };
 
 /**
  * Resolve a namespaced tool call to a workspace context + dispatch
@@ -224,14 +247,23 @@ export async function routeToolCall(opts: {
   // input. We let it propagate; the HTTP / engine layer maps it.
   const { scope, toolName } = parseNamespacedToolName(namespacedName);
 
-  // Global dispatch (a bare `<source>__<tool>`) routes through an
-  // `IdentityContext` against a kernel-owned global-source set, not a
-  // workspace. That path lands in W3; until then no producer emits bare
-  // global names (the aggregator still namespaces every tool by
-  // workspace), so this branch is unreachable in normal flow. A crafted
-  // bare `/mcp` call lands here and fails closed.
-  if (scope.kind === "global") {
-    throw new GlobalScopeNotRoutable(toolName);
+  // Identity request (a bare `<source>__<tool>`): dispatched against the
+  // caller's `IdentityContext` — no workspace. The source must be one of
+  // the kernel identity sources; the handler gates entity reads by
+  // `canAccess` (owner ∪ shares). See ACCESS_MODEL.
+  if (scope.kind === "identity") {
+    const sep = toolName.indexOf("__");
+    const sourceName = sep > 0 ? toolName.slice(0, sep) : toolName;
+    const source = runtime.getIdentitySource(sourceName);
+    if (!source) {
+      throw new UnknownIdentitySource(toolName, sourceName);
+    }
+    return {
+      kind: "identity",
+      context: runtime.getIdentityContext(identityId),
+      toolName,
+      source,
+    };
   }
   const wsId = scope.wsId;
 
@@ -284,5 +316,5 @@ export async function routeToolCall(opts: {
     throw new UnknownToolSource(wsId, toolName, sourceName);
   }
 
-  return { context, toolName, source };
+  return { kind: "workspace", context, toolName, source };
 }

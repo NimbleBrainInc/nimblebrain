@@ -261,11 +261,11 @@ describe("external MCP cross-workspace (Stage 2 T011 smoke)", () => {
   // Pins: a defensive default that silently routes un-prefixed names
   // to the user's personal workspace makes a class of LLM mistakes
   // succeed in the wrong place. A bare `<source>__<tool>` name has no
-  // `ws_<id>-` prefix, so it parses to GLOBAL scope (see
-  // tools/namespace.ts). Global dispatch lands in W3; until then the
-  // orchestrator fails closed with `GlobalScopeNotRoutable`. Either way
-  // the contract is fail-loud: JSON-RPC `-32602` with
-  // `data.reason: "global_not_routable"`, never a fallback route.
+  // `ws_<id>-` prefix, so it parses to IDENTITY scope (see
+  // tools/namespace.ts). A workspace-app source is not a kernel identity
+  // source, so the orchestrator fails closed with `UnknownIdentitySource`.
+  // The contract is fail-loud: JSON-RPC `-32602` with
+  // `data.reason: "unknown_identity_source"`, never a fallback route.
   //
   // Critical adversarial detail: neither workspace's counter may
   // increment. A regression that "fails the call but routes to the
@@ -279,8 +279,8 @@ describe("external MCP cross-workspace (Stage 2 T011 smoke)", () => {
       let dataReason: string | undefined;
       try {
         await client.callTool({
-          // No `ws_<id>-` prefix — bare name parses to global scope, which
-          // the orchestrator refuses to route (no fallback to a workspace).
+          // No `ws_<id>-` prefix — bare name parses to identity scope; a
+          // workspace-app source is refused (no fallback to a workspace).
           name: `${fixture.shared.sourceName}__${fixture.shared.toolName}`,
           arguments: { echo: "noop" },
         });
@@ -291,7 +291,7 @@ describe("external MCP cross-workspace (Stage 2 T011 smoke)", () => {
       }
 
       expect(errorCode).toBe(-32602);
-      expect(dataReason).toBe("global_not_routable");
+      expect(dataReason).toBe("unknown_identity_source");
 
       // Adversarial: a silent fallback would tick the personal counter.
       // Neither side may move.

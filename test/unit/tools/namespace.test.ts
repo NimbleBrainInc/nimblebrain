@@ -170,14 +170,14 @@ describe("global scope (bare names)", () => {
     // name (nothing to strip). The orchestrator validates the source
     // against the kernel global-source set.
     expect(parseNamespacedToolName("nb__search")).toEqual({
-      scope: { kind: "global" },
+      scope: { kind: "identity" },
       toolName: "nb__search",
     });
   });
 
   test("a bare identity-owned app tool parses to global scope", () => {
     expect(parseNamespacedToolName("conversations__search")).toEqual({
-      scope: { kind: "global" },
+      scope: { kind: "identity" },
       toolName: "conversations__search",
     });
   });
@@ -188,7 +188,7 @@ describe("global scope (bare names)", () => {
     // orchestrator later rejects it because `synapse-crm` isn't a global
     // source; the parser doesn't pre-judge that.
     expect(parseNamespacedToolName("synapse-crm__search")).toEqual({
-      scope: { kind: "global" },
+      scope: { kind: "identity" },
       toolName: "synapse-crm__search",
     });
   });
@@ -197,7 +197,7 @@ describe("global scope (bare names)", () => {
     // The old design had a `me` sentinel; bare-global dropped it. `me-foo`
     // is now simply a bare name (head `me` isn't `ws_`-prefixed).
     expect(parseNamespacedToolName("me-foo")).toEqual({
-      scope: { kind: "global" },
+      scope: { kind: "identity" },
       toolName: "me-foo",
     });
   });

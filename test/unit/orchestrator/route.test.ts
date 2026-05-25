@@ -20,7 +20,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import {
-  GlobalScopeNotRoutable,
+  UnknownIdentitySource,
   routeToolCall,
   UnknownToolSource,
   UnknownWorkspace,
@@ -29,6 +29,7 @@ import {
 } from "../../../src/orchestrator/index.ts";
 import type { Tool, ToolSource } from "../../../src/tools/types.ts";
 import type { ToolResult } from "../../../src/engine/types.ts";
+import { IdentityContext } from "../../../src/identity/context.ts";
 import { WorkspaceContext } from "../../../src/workspace/context.ts";
 import { personalWorkspaceIdFor } from "../../../src/workspace/workspace-store.ts";
 
@@ -65,6 +66,8 @@ interface StubRuntimeOpts {
   existingWorkspaces: Set<string>;
   /** Working directory passed to constructed `WorkspaceContext` instances. */
   workDir: string;
+  /** Kernel identity sources by name (conversations, …). The identity door. */
+  identitySources?: Map<string, ToolSource>;
 }
 
 interface StubRuntime extends OrchestratorRuntime {
@@ -104,6 +107,12 @@ function makeStubRuntime(opts: StubRuntimeOpts): StubRuntime {
           return sources.find((s) => s.name === name);
         },
       };
+    },
+    getIdentitySource(name: string): ToolSource | undefined {
+      return opts.identitySources?.get(name);
+    },
+    getIdentityContext(identityId: string): IdentityContext {
+      return new IdentityContext({ userId: identityId, workDir: opts.workDir });
     },
     contextCallCount() {
       return emitted.length;
@@ -186,12 +195,36 @@ describe("routeToolCall — strict invariant (Stage 1 lesson 3)", () => {
     } catch (err) {
       thrown = err;
     }
-    // Bare name → global scope. Until W3 wires global dispatch this fails
-    // closed via GlobalScopeNotRoutable. The load-bearing invariant holds
-    // either way: a bare name is NEVER silently routed to the personal
-    // workspace — no WorkspaceContext is constructed.
-    expect(thrown).toBeInstanceOf(GlobalScopeNotRoutable);
+    // Bare name → identity scope. `crm` is a workspace app, NOT a kernel
+    // identity source, so it's refused with UnknownIdentitySource (a
+    // mis-namespaced workspace app). The invariant holds: a bare name is
+    // NEVER silently routed to a workspace — no WorkspaceContext constructed.
+    expect(thrown).toBeInstanceOf(UnknownIdentitySource);
     expect(runtime.contextCallCount()).toBe(0);
+  });
+
+  test("bare identity-source name routes to identity scope — no WorkspaceContext", async () => {
+    const convSource = makeStubSource("conversations");
+    const runtime = makeStubRuntime({
+      registries: new Map(),
+      memberships: new Map([[USER_ID, [PERSONAL_WS]]]),
+      existingWorkspaces: new Set([PERSONAL_WS]),
+      workDir,
+      identitySources: new Map([["conversations", convSource]]),
+    });
+    const routed = await routeToolCall({
+      identityId: USER_ID,
+      namespacedName: "conversations__list",
+      runtime,
+    });
+    expect(routed.kind).toBe("identity");
+    expect(routed.toolName).toBe("conversations__list");
+    expect(routed.source).toBe(convSource);
+    // Load-bearing: an identity request NEVER constructs a WorkspaceContext.
+    expect(runtime.contextCallCount()).toBe(0);
+    if (routed.kind === "identity") {
+      expect(routed.context).toBeInstanceOf(IdentityContext);
+    }
   });
 });
 

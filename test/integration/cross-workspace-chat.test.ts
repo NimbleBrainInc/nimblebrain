@@ -306,13 +306,12 @@ describe("cross-workspace chat (Stage 2 contract — T001)", () => {
       if (!tc) return; // narrow for TS
       expect(tc.ok).toBe(false);
 
-      // Bare name (no `ws_<id>-`) → global scope. A bare workspace-app
-      // tool isn't a global tool, so it's refused (pre-W3 as "global not
-      // routable"; post-W3 as "unknown global source"). Either way the
-      // error names the failure mode, not a workspace — anchoring a future
-      // search against ever regressing into "fall back to current
-      // workspace" silent routing.
-      expect(tc.output).toMatch(/global|namespac|workspace/i);
+      // Bare name (no `ws_<id>-`) → identity scope. A bare workspace-app
+      // source isn't a kernel identity source, so it's refused
+      // (UnknownIdentitySource). The error names the failure mode, not a
+      // workspace — anchoring against ever regressing into "fall back to
+      // current workspace" silent routing.
+      expect(tc.output).toMatch(/identity|namespac|workspace/i);
 
       // Critical: neither workspace's source was called.
       expect(fixture.shared.callCount()).toBe(0);

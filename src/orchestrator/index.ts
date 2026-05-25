@@ -12,8 +12,8 @@
 
 export type { OrchestratorRuntime, RoutedToolCall } from "./route.ts";
 export {
-  GlobalScopeNotRoutable,
   routeToolCall,
+  UnknownIdentitySource,
   UnknownNamespacedToolName,
   UnknownToolSource,
   UnknownWorkspace,

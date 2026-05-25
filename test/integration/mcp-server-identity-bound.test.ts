@@ -350,9 +350,9 @@ describe("/mcp identity-bound session (Stage 2 T007)", () => {
       let dataReason: string | undefined;
       let errorMessage: string | undefined;
       try {
-        // A bare `<source>__<tool>` for a workspace app. Bare = global
-        // scope; a workspace-app tool isn't a global tool, so it's refused
-        // (pre-W3 as "global not routable") — NOT silently routed to a
+        // A bare `<source>__<tool>` for a workspace app. Bare = identity
+        // scope; a workspace-app source isn't a kernel identity source, so
+        // it's refused (UnknownIdentitySource) — NOT silently routed to a
         // current workspace.
         await client.callTool({
           name: `${SHARED_SOURCE_NAME}__${SHARED_TOOL_BARE}`,
@@ -365,8 +365,8 @@ describe("/mcp identity-bound session (Stage 2 T007)", () => {
         errorMessage = e.message;
       }
       expect(errorCode).toBe(-32602);
-      expect(dataReason).toBe("global_not_routable");
-      expect(errorMessage).toContain("Global tool dispatch");
+      expect(dataReason).toBe("unknown_identity_source");
+      expect(errorMessage).toContain("No identity source");
     } finally {
       await client.close();
     }

@@ -82,12 +82,12 @@ export function ToolCallProvenance({
   // Global tool (bare `<source>__<tool>`): a platform tool (`nb__*`) or a
   // personal, cross-workspace surface (conversations / files / automations).
   // No workspace badge — it doesn't belong to a workspace.
-  if (scope.kind === "global") {
+  if (scope.kind === "identity") {
     return (
       <span
         className="inline-flex items-center gap-1.5"
         data-testid="tool-call-provenance"
-        data-scope="global"
+        data-scope="identity"
       >
         <span className="font-mono text-sm">{friendlyTool}</span>
         <StatusPill status={status} />

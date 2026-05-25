@@ -151,10 +151,10 @@ describe("ToolCallProvenance", () => {
     expect(text).not.toContain("Personal");
   });
 
-  test("bare/global input renders the friendly tool name with no workspace badge", async () => {
-    // Bare platform tools like `nb__resources_search` are global
+  test("bare/identity input renders the friendly tool name with no workspace badge", async () => {
+    // Bare platform tools like `nb__resources_search` are identity-scoped
     // singletons — render the friendly tool name (source prefix stripped),
-    // marked as global scope, with no workspace badge.
+    // marked as identity scope, with no workspace badge.
     mounted = await mount(
       <ToolCallProvenance
         toolName="nb__resources_search"
@@ -162,7 +162,7 @@ describe("ToolCallProvenance", () => {
       />,
     );
     const root = findByTestId(mounted.container, "tool-call-provenance");
-    expect(root?.getAttribute("data-scope")).toBe("global");
+    expect(root?.getAttribute("data-scope")).toBe("identity");
     expect(mounted.container.textContent).toContain("resources_search");
     expect(findByTestId(mounted.container, "workspace-badge")).toBeNull();
   });

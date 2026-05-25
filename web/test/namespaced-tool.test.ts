@@ -36,21 +36,21 @@ describe("parseNamespacedToolName (web)", () => {
 
   test("a bare name parses to global scope, whole name as toolName", () => {
     expect(parseNamespacedToolName("conversations__search")).toEqual({
-      scope: { kind: "global" },
+      scope: { kind: "identity" },
       toolName: "conversations__search",
     });
   });
 
   test("a bare name with no separator is global", () => {
     expect(parseNamespacedToolName("nb__search")).toEqual({
-      scope: { kind: "global" },
+      scope: { kind: "identity" },
       toolName: "nb__search",
     });
   });
 
   test("a bare name whose source contains `-` (not ws_) stays global", () => {
     expect(parseNamespacedToolName("helix-crm__search")).toEqual({
-      scope: { kind: "global" },
+      scope: { kind: "identity" },
       toolName: "helix-crm__search",
     });
   });
@@ -75,7 +75,7 @@ describe("parseNamespacedToolName (web)", () => {
     // A bare name is global, never silently routed to the user's current
     // workspace. The scope is explicit: workspace only when ws_<id>- is present.
     const parsed = parseNamespacedToolName("foo");
-    expect(parsed?.scope.kind).toBe("global");
+    expect(parsed?.scope.kind).toBe("identity");
   });
 });
 
