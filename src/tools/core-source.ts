@@ -1,10 +1,12 @@
 import { readFileSync } from "node:fs";
 import { readFile, rename, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { log } from "../cli/log.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import type { ToolResult } from "../engine/types.ts";
 import { ORG_ADMIN_ROLES } from "../identity/types.ts";
 import { getAvailableModels, isModelAllowed } from "../model/catalog.ts";
+import { type RequestContext, runWithRequestContext } from "../runtime/request-context.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import type { InProcessTool } from "./in-process-app.ts";
 
@@ -735,36 +737,10 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
           try {
             const homeConfig = runtime.getHomeConfig();
             const wsId = runtime.requireWorkspaceId();
-            const wsDir = runtime.getWorkspaceScopedDir(wsId);
 
-            // Per-workspace cache
-            let cache = caches.get(wsId);
-            if (!cache) {
-              cache = new BriefingCache(homeConfig.cacheTtlMinutes);
-              caches.set(wsId, cache);
-            }
-
-            // Check cache first
-            if (!input.force_refresh) {
-              const cached = cache.get();
-              if (cached) {
-                return {
-                  content: textContent("Briefing retrieved from cache."),
-                  structuredContent: cached as unknown as Record<string, unknown>,
-                  isError: false,
-                };
-              }
-            }
-
-            const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-            const until = new Date().toISOString();
-
-            // Collect activity from workspace-scoped logs; conversations
-            // themselves live at the user level post-Stage 1, so the
-            // activity collector reads through the top-level store with
-            // an ownership filter to keep the briefing scoped to the
-            // caller. Without the filter, the briefing would aggregate
-            // every user's conversations in the deployment.
+            // Conversations live at the user level (post-Stage 1); the activity
+            // collector reads the top-level store with an ownership filter so
+            // the briefing stays scoped to the caller, not the whole deployment.
             const identity = runtime.getCurrentIdentity();
             if (!identity) {
               return {
@@ -772,46 +748,97 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
                 isError: true,
               };
             }
-            const logDir = join(wsDir, "logs");
-            const store = runtime.findConversationStore();
-            const collector = new ActivityCollector({
-              logDir,
-              conversations: { kind: "store", store },
-              access: { userId: identity.id },
-            });
-            const activity = await collector.collect({ since });
 
-            // Collect briefing facets — scoped to current workspace
-            const registry = runtime.getRegistryForCurrentWorkspace();
-            const instances = runtime.getBundleInstancesForWorkspace(wsId);
+            // Per-workspace cache
+            let cache = caches.get(wsId);
+            if (!cache) {
+              cache = new BriefingCache(homeConfig.cacheTtlMinutes);
+              caches.set(wsId, cache);
+            }
+            const briefingCache = cache;
 
-            const facetContext = await collectBriefingFacets(instances, registry, {
-              since,
-              until,
-            });
-
-            // Resolve the "fast" slot's model for the briefing call.
-            const modelString = runtime.getModelSlot("fast");
-            const model = runtime.resolveModel(modelString);
-
-            const generator = new BriefingGenerator(model, modelString, {
-              userName: homeConfig.userName,
-              timezone: homeConfig.timezone,
-              cacheTtlMinutes: homeConfig.cacheTtlMinutes,
-            });
-
-            // generate() throws on LLM failure. The outer catch turns
-            // that into an isError tool result, which the home UI
-            // renders as a clear error state with a retry button.
-            // Cache writes only happen on the success path below.
-            const briefing: BriefingOutput = await generator.generate(activity, facetContext);
-            cache.set(briefing);
-
-            return {
-              content: textContent("Briefing generated."),
+            const ok = (briefing: BriefingOutput, note: string): ToolResult => ({
+              content: textContent(note),
               structuredContent: briefing as unknown as Record<string, unknown>,
               isError: false,
+            });
+
+            // The actual generation: collect activity + facets, then run the
+            // fast model (the slow part). Reads request-scoped state (workspace,
+            // identity, model slot), so it must run inside a request context —
+            // the foreground request's, or the re-established one for the
+            // background refresh below.
+            const runGeneration = async (): Promise<BriefingOutput> => {
+              const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+              const until = new Date().toISOString();
+              const collector = new ActivityCollector({
+                logDir: join(runtime.getWorkspaceScopedDir(wsId), "logs"),
+                conversations: { kind: "store", store: runtime.findConversationStore() },
+                access: { userId: identity.id },
+              });
+              const activity = await collector.collect({ since });
+              const registry = runtime.getRegistryForCurrentWorkspace();
+              const instances = runtime.getBundleInstancesForWorkspace(wsId);
+              const facetContext = await collectBriefingFacets(instances, registry, {
+                since,
+                until,
+              });
+              const modelString = runtime.getModelSlot("fast");
+              const generator = new BriefingGenerator(
+                runtime.resolveModel(modelString),
+                modelString,
+                {
+                  userName: homeConfig.userName,
+                  timezone: homeConfig.timezone,
+                  cacheTtlMinutes: homeConfig.cacheTtlMinutes,
+                },
+              );
+              return generator.generate(activity, facetContext);
             };
+
+            if (!input.force_refresh) {
+              // Fresh cache → instant.
+              const fresh = briefingCache.get();
+              if (fresh) return ok(fresh, "Briefing retrieved from cache.");
+
+              // Stale-while-revalidate: serve the last (expired) briefing
+              // immediately and regenerate in the BACKGROUND, so the dashboard
+              // never waits on the LLM after the first generation. The bg task
+              // re-establishes the workspace request context (captured here) —
+              // `collectBriefingFacets` dispatches facet tools via
+              // `registry.execute`, which read `requireWorkspaceId()` / identity
+              // from that context.
+              const stale = briefingCache.getStale();
+              if (stale) {
+                const bgCtx: RequestContext = {
+                  identity,
+                  scope: {
+                    kind: "workspace",
+                    workspaceId: wsId,
+                    workspaceAgents: null,
+                    workspaceModelOverride: null,
+                  },
+                };
+                void runWithRequestContext(bgCtx, runGeneration)
+                  .then((b) => briefingCache.set(b))
+                  .catch((err) =>
+                    log.warn(
+                      `[briefing] background refresh failed for ${wsId}: ${
+                        err instanceof Error ? err.message : String(err)
+                      }`,
+                    ),
+                  );
+                return ok(stale, "Briefing (refreshing in background).");
+              }
+            }
+
+            // No cached briefing yet (first generation), or an explicit
+            // force_refresh: generate synchronously. generate() throws on LLM
+            // failure → the outer catch turns it into an isError result, which
+            // the home UI renders as a retry state.
+            const briefing = await runGeneration();
+            briefingCache.set(briefing);
+            return ok(briefing, "Briefing generated.");
           } catch (err) {
             return {
               content: textContent(

@@ -15,6 +15,19 @@ export class BriefingCache {
     return { ...this.entry.briefing, cached: true };
   }
 
+  /**
+   * Return the last briefing even if it's past its TTL — but not if it was
+   * explicitly invalidated, and not when there's none. For stale-while-
+   * revalidate: serve this instantly while a fresh one regenerates in the
+   * background, so a dashboard load never waits on the LLM after the first
+   * generation.
+   */
+  getStale(): BriefingOutput | null {
+    if (!this.entry) return null;
+    if (this.entry.invalidated) return null;
+    return { ...this.entry.briefing, cached: true };
+  }
+
   set(briefing: BriefingOutput): void {
     this.entry = {
       briefing,

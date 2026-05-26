@@ -76,5 +76,27 @@ describe("BriefingCache", () => {
 			Date.now = originalNow;
 		}
 	});
+
+	test("getStale() returns an expired entry (stale-while-revalidate) while get() returns null", () => {
+		const originalNow = Date.now;
+		try {
+			cache.set(makeBriefing({ lede: "Stale but serviceable" }));
+			Date.now = () => originalNow() + 31 * 60 * 1000; // past the 30 min TTL
+			expect(cache.get()).toBeNull(); // fresh check fails
+			const stale = cache.getStale(); // but stale is still served
+			expect(stale).not.toBeNull();
+			expect(stale!.cached).toBe(true);
+			expect(stale!.lede).toBe("Stale but serviceable");
+		} finally {
+			Date.now = originalNow;
+		}
+	});
+
+	test("getStale() returns null when empty or invalidated", () => {
+		expect(cache.getStale()).toBeNull(); // empty
+		cache.set(makeBriefing());
+		cache.invalidate();
+		expect(cache.getStale()).toBeNull(); // invalidated is not served, even as stale
+	});
 });
 
