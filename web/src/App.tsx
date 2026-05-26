@@ -43,9 +43,9 @@ import { ConnectorDetailPage } from "./pages/settings/ConnectorDetailPage";
 import { ModelTab } from "./pages/settings/ModelTab";
 import { OrgRegistriesTab } from "./pages/settings/OrgRegistriesTab";
 import { OrgSettingsPage } from "./pages/settings/OrgSettingsPage";
+import { OrgUsageTab } from "./pages/settings/OrgUsageTab";
 import { SettingsAppPanel } from "./pages/settings/SettingsAppPanel";
 import { SkillsTab } from "./pages/settings/SkillsTab";
-import { UsageTab } from "./pages/settings/UsageTab";
 import { UsersTab } from "./pages/settings/UsersTab";
 import { WorkspaceAppsTab } from "./pages/settings/WorkspaceAppsTab";
 import { WorkspaceConnectorsTab } from "./pages/settings/WorkspaceConnectorsTab";
@@ -359,7 +359,6 @@ function AuthenticatedAppContent({
                 <Route index element={<Navigate to="general" replace />} />
                 <Route path="general" element={<WorkspaceGeneralTab />} />
                 <Route path="members" element={<WorkspaceMembersTab />} />
-                <Route path="usage" element={<UsageTab />} />
                 <Route path="apps" element={<WorkspaceAppsTab />} />
                 <Route path="apps/:serverName" element={<SettingsAppPanel />} />
                 <Route path="connectors" element={<WorkspaceConnectorsTab />} />
@@ -425,6 +424,14 @@ function AuthenticatedAppContent({
                 element={
                   <RouteGuard role="org_admin">
                     <UsersTab />
+                  </RouteGuard>
+                }
+              />
+              <Route
+                path="usage"
+                element={
+                  <RouteGuard role="org_admin">
+                    <OrgUsageTab />
                   </RouteGuard>
                 }
               />

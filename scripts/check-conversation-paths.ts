@@ -113,6 +113,60 @@ export function isWorkspaceConversationStringLiteral(node: ts.StringLiteral): bo
   return /workspaces\/[^/]+\/conversations(\/|$)/.test(node.text);
 }
 
+/**
+ * Returns true iff `node` is `join(getWorkspaceScopedDir(...), ...,
+ * "conversations", ...)` — building a conversations dir off the
+ * workspace-scoped root. This is the exact regression that produced the
+ * all-zeros usage dashboard (issue: usage read
+ * `join(getWorkspaceScopedDir(), "conversations")`, the empty pre-Stage-1
+ * per-workspace dir). Post-Stage-1 conversations are top-level and
+ * user-scoped — use `runtime.getConversationsDir()` /
+ * `runtime.findConversationStore()` instead.
+ *
+ * The `getWorkspaceScopedDir` call may be a bare identifier
+ * (`getWorkspaceScopedDir(...)`) or a method access
+ * (`runtime.getWorkspaceScopedDir(...)`); both are flagged. Any literal
+ * `"conversations"` argument anywhere in the `join` triggers — the
+ * pairing of the two is the smell.
+ *
+ * Exported for the self-test under `test/unit/scripts/`.
+ */
+export function isWorkspaceScopedConversationJoin(node: ts.CallExpression): boolean {
+  const callee = node.expression;
+  const calleeName = ts.isIdentifier(callee)
+    ? callee.text
+    : ts.isPropertyAccessExpression(callee)
+      ? callee.name.text
+      : null;
+  if (calleeName !== "join") return false;
+
+  const args = node.arguments;
+
+  const firstArgIsWorkspaceScopedDir =
+    args.length > 0 &&
+    args[0] !== undefined &&
+    ts.isCallExpression(args[0]) &&
+    isGetWorkspaceScopedDirCall(args[0]);
+  if (!firstArgIsWorkspaceScopedDir) return false;
+
+  return args.some(
+    (a) =>
+      (ts.isStringLiteral(a) || ts.isNoSubstitutionTemplateLiteral(a)) &&
+      a.text === "conversations",
+  );
+}
+
+/** True iff `node` is a `getWorkspaceScopedDir(...)` or `x.getWorkspaceScopedDir(...)` call. */
+function isGetWorkspaceScopedDirCall(node: ts.CallExpression): boolean {
+  const callee = node.expression;
+  const name = ts.isIdentifier(callee)
+    ? callee.text
+    : ts.isPropertyAccessExpression(callee)
+      ? callee.name.text
+      : null;
+  return name === "getWorkspaceScopedDir";
+}
+
 function hasAllowMarker(node: ts.Node, sourceFile: ts.SourceFile, src: string): boolean {
   const { line } = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
   if (line === 0) return false;
@@ -160,7 +214,10 @@ function scanFile(absPath: string, violations: Violation[]): void {
   }
 
   function visit(node: ts.Node): void {
-    if (ts.isCallExpression(node) && isWorkspaceConversationJoin(node)) {
+    if (
+      ts.isCallExpression(node) &&
+      (isWorkspaceConversationJoin(node) || isWorkspaceScopedConversationJoin(node))
+    ) {
       record(node);
     } else if (ts.isTemplateExpression(node) && isWorkspaceConversationTemplate(node)) {
       record(node);

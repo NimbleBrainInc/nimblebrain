@@ -115,10 +115,11 @@ export declare const PlatformToolCatalog: {
     readonly usage: {
         readonly report: {
             readonly input: import("@sinclair/typebox").TObject<{
+                scope: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"user" | "org">>;
                 period: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"day" | "week" | "month" | "all">>;
                 from: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                 to: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-                groupBy: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"model" | "day" | "conversation">>;
+                groupBy: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"model" | "user" | "day" | "conversation">>;
             }>;
         };
     };

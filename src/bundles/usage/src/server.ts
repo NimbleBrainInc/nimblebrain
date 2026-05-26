@@ -95,7 +95,7 @@ async function main(): Promise<void> {
       const groupBy = (args?.groupBy as string) ?? "day";
       const from = args?.from as string | undefined;
       const to = args?.to as string | undefined;
-      const result = await aggregateUsage(CONVERSATIONS_DIR, period, groupBy, from, to);
+      const result = await aggregateUsage(CONVERSATIONS_DIR, period, groupBy, { from, to });
       return {
         content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
       };

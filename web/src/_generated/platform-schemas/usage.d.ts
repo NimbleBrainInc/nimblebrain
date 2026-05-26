@@ -4,9 +4,53 @@
  */
 import { type Static } from "@sinclair/typebox";
 export declare const UsageReportInput: import("@sinclair/typebox").TObject<{
+    scope: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"user" | "org">>;
     period: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"day" | "week" | "month" | "all">>;
     from: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     to: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-    groupBy: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"model" | "day" | "conversation">>;
+    groupBy: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"model" | "user" | "day" | "conversation">>;
 }>;
 export type UsageReportInput = Static<typeof UsageReportInput>;
+export interface UsageTokenBreakdown {
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
+}
+export interface UsageCostBreakdown {
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
+    total: number;
+}
+export interface UsageModelEntry {
+    model: string;
+    tokens: UsageTokenBreakdown;
+    cost: UsageCostBreakdown;
+    llmCalls: number;
+}
+export interface UsageBreakdownEntry {
+    key: string;
+    tokens: UsageTokenBreakdown;
+    cost: UsageCostBreakdown;
+    llmCalls: number;
+    conversations: number;
+}
+export interface UsageReportOutput {
+    /** Echoes the resolved scope so consumers know whether this is a self or org view. */
+    scope: "user" | "org";
+    period: {
+        from: string;
+        to: string;
+    };
+    totals: {
+        tokens: UsageTokenBreakdown;
+        cost: UsageCostBreakdown;
+        llmCalls: number;
+        llmMs: number;
+        conversations: number;
+    };
+    models: UsageModelEntry[];
+    breakdown: UsageBreakdownEntry[];
+}

@@ -30,7 +30,6 @@ export function WorkspaceSettingsPage() {
   const items: SettingsNavItem[] = [
     { id: "ws-general", label: "General", to: `${base}/general`, minRole: "ws_member" },
     { id: "ws-members", label: "Members", to: `${base}/members`, minRole: "ws_member" },
-    { id: "ws-usage", label: "Usage", to: `${base}/usage`, minRole: "ws_member" },
     {
       id: "ws-apps",
       label: "Apps",

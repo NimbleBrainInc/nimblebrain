@@ -13,6 +13,7 @@ import {
   isWorkspaceConversationJoin,
   isWorkspaceConversationStringLiteral,
   isWorkspaceConversationTemplate,
+  isWorkspaceScopedConversationJoin,
 } from "../../../scripts/check-conversation-paths.ts";
 
 function parse(snippet: string): ts.SourceFile {
@@ -103,6 +104,41 @@ describe("check-conversation-paths — isWorkspaceConversationStringLiteral", ()
     const src = parse(`const p = "/work/conversations/foo.jsonl";`);
     const node = findFirst(src, ts.isStringLiteral);
     expect(isWorkspaceConversationStringLiteral(node!)).toBe(false);
+  });
+});
+
+describe("check-conversation-paths — isWorkspaceScopedConversationJoin", () => {
+  test("matches `join(getWorkspaceScopedDir(), 'conversations')` (the usage-dashboard regression)", () => {
+    const src = parse(`const dir = join(getWorkspaceScopedDir(), "conversations");`);
+    const call = findFirst(src, ts.isCallExpression);
+    expect(call).toBeDefined();
+    expect(isWorkspaceScopedConversationJoin(call!)).toBe(true);
+  });
+
+  test("matches `join(runtime.getWorkspaceScopedDir(wsId), 'conversations', file)` (method form)", () => {
+    const src = parse(
+      `const p = join(runtime.getWorkspaceScopedDir(wsId), "conversations", file);`,
+    );
+    const call = findFirst(src, ts.isCallExpression);
+    expect(isWorkspaceScopedConversationJoin(call!)).toBe(true);
+  });
+
+  test("does NOT match `join(getWorkspaceScopedDir(), 'files')` (different subdir)", () => {
+    const src = parse(`const dir = join(getWorkspaceScopedDir(), "files");`);
+    const call = findFirst(src, ts.isCallExpression);
+    expect(isWorkspaceScopedConversationJoin(call!)).toBe(false);
+  });
+
+  test("does NOT match `join(getConversationsDir())` (the correct top-level accessor)", () => {
+    const src = parse(`const dir = join(getConversationsDir(), "x");`);
+    const call = findFirst(src, ts.isCallExpression);
+    expect(isWorkspaceScopedConversationJoin(call!)).toBe(false);
+  });
+
+  test("does NOT match `join(workDir, 'conversations')` (workDir, not workspace-scoped)", () => {
+    const src = parse(`const dir = join(workDir, "conversations");`);
+    const call = findFirst(src, ts.isCallExpression);
+    expect(isWorkspaceScopedConversationJoin(call!)).toBe(false);
   });
 });
 

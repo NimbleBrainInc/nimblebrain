@@ -2148,9 +2148,23 @@ export class Runtime {
    */
   getUserConversationStore(): ConversationStore {
     return new EventSourcedConversationStore({
-      dir: join(resolveWorkDir(this.config), "conversations"),
+      dir: this.getConversationsDir(),
       logLevel: this.config.logging?.level ?? "normal",
     });
+  }
+
+  /**
+   * Absolute path to the top-level, user-scoped conversations directory
+   * (`{workDir}/conversations`). This is the single source of truth for
+   * conversation storage post-Stage-1 — every conversation lives here
+   * regardless of owner or workspace. Read-side consumers that scan the
+   * raw JSONL files (e.g. the usage aggregator) take this path rather than
+   * hand-building it, so the layout decision stays in one place.
+   *
+   * NOT workspace-scoped — do not pair this with `getWorkspaceScopedDir()`.
+   */
+  getConversationsDir(): string {
+    return join(resolveWorkDir(this.config), "conversations");
   }
 
   /**

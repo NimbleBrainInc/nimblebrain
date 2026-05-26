@@ -24,6 +24,8 @@ import type { TokenUsage } from "../usage/types.ts";
 interface LlmCallRecord {
   ts: string;
   sid?: string;
+  /** Owner of the conversation this call belongs to (line-1 `ownerId`). */
+  ownerId?: string;
   model: string;
   usage: TokenUsage;
   llmMs: number;
@@ -165,20 +167,39 @@ export function resolveDateRange(
 // ---------------------------------------------------------------------------
 
 /**
+ * Optional filters/dimensions layered on top of the date range.
+ *
+ * `ownerFilter` is the authorization boundary for the self-view: when set,
+ * only conversations whose line-1 `ownerId` matches are aggregated. The
+ * caller (the usage tool handler) sets it to the requester's own id so a
+ * non-admin physically cannot aggregate another user's conversations —
+ * the filter runs in the aggregator, below the tool surface, so it can't
+ * be bypassed by a malformed call.
+ */
+export interface AggregateUsageOptions {
+  from?: string;
+  to?: string;
+  /** Restrict to conversations owned by this user id. Omit for all owners. */
+  ownerFilter?: string;
+}
+
+/**
  * Aggregate usage from conversation files in a directory.
  *
  * 1. List all .jsonl files in conversationsDir
  * 2. Read line 1 (metadata) — filter by updatedAt within date range
+ *    (and by `ownerId` when `ownerFilter` is set)
  * 3. For matching files, scan for llm.response events
  * 4. Derive totals, per-model, and breakdown by groupBy key
+ *    (`groupBy: "user"` buckets by the conversation owner)
  */
 export async function aggregateUsage(
   conversationsDir: string,
   period: string,
   groupBy: string,
-  from?: string,
-  to?: string,
+  options: AggregateUsageOptions = {},
 ): Promise<UsageReport> {
+  const { from, to, ownerFilter } = options;
   const range = resolveDateRange(period, from, to);
 
   // List conversation files
@@ -220,6 +241,11 @@ export async function aggregateUsage(
     if (updatedDate < range.from || updatedDate > range.to) continue;
 
     const sid = meta.id as string | undefined;
+    const ownerId = meta.ownerId as string | undefined;
+
+    // Authorization boundary for the self-view: when an ownerFilter is set,
+    // skip any conversation not owned by that user before reading its events.
+    if (ownerFilter !== undefined && ownerId !== ownerFilter) continue;
 
     // Scan events for llm.response
     for (let i = 1; i < lines.length; i++) {
@@ -237,6 +263,7 @@ export async function aggregateUsage(
         records.push({
           ts: (entry.ts as string) ?? "",
           sid,
+          ownerId,
           model: (entry.model as string) ?? "unknown",
           usage: entry.usage as TokenUsage,
           llmMs: (entry.llmMs as number) ?? 0,
@@ -289,7 +316,9 @@ export async function aggregateUsage(
         ? modelKey
         : groupBy === "conversation"
           ? (record.sid ?? "unknown")
-          : record.ts.slice(0, 10);
+          : groupBy === "user"
+            ? (record.ownerId ?? "unknown")
+            : record.ts.slice(0, 10);
 
     if (!breakdownMap.has(key)) {
       breakdownMap.set(key, {

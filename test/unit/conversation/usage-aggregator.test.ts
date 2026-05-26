@@ -31,6 +31,7 @@ function buildJsonl(
   meta: {
     id: string;
     updatedAt: string;
+    ownerId?: string;
     totalInputTokens?: number;
     totalOutputTokens?: number;
   },
@@ -39,6 +40,7 @@ function buildJsonl(
   const metaLine = JSON.stringify({
     id: meta.id,
     updatedAt: meta.updatedAt,
+    ...(meta.ownerId !== undefined ? { ownerId: meta.ownerId } : {}),
     totalInputTokens: meta.totalInputTokens ?? 0,
     totalOutputTokens: meta.totalOutputTokens ?? 0,
   });
@@ -121,7 +123,7 @@ describe("usage-aggregator", () => {
       ]),
     );
 
-    const report = await aggregateUsage(dir, "month", "day", "2026-04-01", "2026-04-30");
+    const report = await aggregateUsage(dir, "month", "day", { from: "2026-04-01", to: "2026-04-30" });
 
     expect(report.totals.tokens.input).toBe(100);
     expect(report.totals.tokens.output).toBe(50);
@@ -224,7 +226,7 @@ describe("usage-aggregator", () => {
       ]),
     );
 
-    const report = await aggregateUsage(dir, "week", "day", "2026-04-10", "2026-04-12");
+    const report = await aggregateUsage(dir, "week", "day", { from: "2026-04-10", to: "2026-04-12" });
 
     expect(report.breakdown).toHaveLength(3);
     expect(report.breakdown[0].key).toBe("2026-04-10");
@@ -320,6 +322,102 @@ describe("usage-aggregator", () => {
     expect(report.breakdown.length).toBeGreaterThan(0);
     const b = report.breakdown[0]!;
     expect(Object.keys(b).sort()).toEqual(["conversations", "cost", "key", "llmCalls", "tokens"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// By-user aggregation + owner filter (org/audit surface)
+// ---------------------------------------------------------------------------
+
+describe("usage-aggregator — by user", () => {
+  /** Two owners, three conversations: alice has two, bob has one. */
+  function seedTwoOwners(dir: string): void {
+    writeFileSync(
+      join(dir, "alice-1.jsonl"),
+      buildJsonl({ id: "alice-1", updatedAt: "2026-04-10T10:00:00Z", ownerId: "usr_alice" }, [
+        llmEvent({ ts: "2026-04-10T10:00:00Z", inputTokens: 100, outputTokens: 50 }),
+      ]),
+    );
+    writeFileSync(
+      join(dir, "alice-2.jsonl"),
+      buildJsonl({ id: "alice-2", updatedAt: "2026-04-11T10:00:00Z", ownerId: "usr_alice" }, [
+        llmEvent({ ts: "2026-04-11T10:00:00Z", inputTokens: 200, outputTokens: 100 }),
+      ]),
+    );
+    writeFileSync(
+      join(dir, "bob-1.jsonl"),
+      buildJsonl({ id: "bob-1", updatedAt: "2026-04-10T11:00:00Z", ownerId: "usr_bob" }, [
+        llmEvent({ ts: "2026-04-10T11:00:00Z", inputTokens: 400, outputTokens: 200 }),
+      ]),
+    );
+  }
+
+  it("groupBy:user buckets the breakdown by conversation owner", async () => {
+    const dir = makeTmpDir();
+    seedTwoOwners(dir);
+
+    const report = await aggregateUsage(dir, "all", "user");
+
+    expect(report.breakdown).toHaveLength(2);
+    const alice = report.breakdown.find((b) => b.key === "usr_alice");
+    const bob = report.breakdown.find((b) => b.key === "usr_bob");
+
+    expect(alice).toBeDefined();
+    // alice: 100 + 200 input, 50 + 100 output, 2 conversations, 2 calls
+    expect(alice!.tokens.input).toBe(300);
+    expect(alice!.tokens.output).toBe(150);
+    expect(alice!.conversations).toBe(2);
+    expect(alice!.llmCalls).toBe(2);
+
+    expect(bob).toBeDefined();
+    expect(bob!.tokens.input).toBe(400);
+    expect(bob!.conversations).toBe(1);
+    expect(bob!.llmCalls).toBe(1);
+
+    // Org totals still span everyone.
+    expect(report.totals.tokens.input).toBe(700);
+    expect(report.totals.conversations).toBe(3);
+  });
+
+  it("ownerFilter restricts aggregation to one owner's conversations", async () => {
+    const dir = makeTmpDir();
+    seedTwoOwners(dir);
+
+    const report = await aggregateUsage(dir, "all", "day", { ownerFilter: "usr_alice" });
+
+    // Only alice's two conversations counted; bob's 400 input is excluded.
+    expect(report.totals.tokens.input).toBe(300);
+    expect(report.totals.tokens.output).toBe(150);
+    expect(report.totals.conversations).toBe(2);
+    expect(report.totals.llmCalls).toBe(2);
+  });
+
+  it("ownerFilter for an owner with no conversations yields an empty report", async () => {
+    const dir = makeTmpDir();
+    seedTwoOwners(dir);
+
+    const report = await aggregateUsage(dir, "all", "user", { ownerFilter: "usr_nobody" });
+
+    expect(report.totals.conversations).toBe(0);
+    expect(report.totals.llmCalls).toBe(0);
+    expect(report.breakdown).toHaveLength(0);
+  });
+
+  it("conversations missing ownerId bucket under 'unknown' for groupBy:user", async () => {
+    const dir = makeTmpDir();
+    // No ownerId on line 1 (legacy/corrupt) — still counted, bucketed as unknown.
+    writeFileSync(
+      join(dir, "legacy.jsonl"),
+      buildJsonl({ id: "legacy", updatedAt: "2026-04-10T10:00:00Z" }, [
+        llmEvent({ ts: "2026-04-10T10:00:00Z", inputTokens: 100, outputTokens: 50 }),
+      ]),
+    );
+
+    const report = await aggregateUsage(dir, "all", "user");
+
+    expect(report.breakdown).toHaveLength(1);
+    expect(report.breakdown[0]!.key).toBe("unknown");
+    expect(report.breakdown[0]!.tokens.input).toBe(100);
   });
 });
 
