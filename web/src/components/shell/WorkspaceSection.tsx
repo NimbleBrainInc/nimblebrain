@@ -70,7 +70,7 @@ export function WorkspaceSection({ collapsed = false }: WorkspaceSectionProps) {
   );
 
   const handleAddWorkspace = useCallback(() => {
-    navigate("/settings/org/workspaces");
+    navigate("/org/workspaces");
   }, [navigate]);
 
   if (wsCtx.loading) {

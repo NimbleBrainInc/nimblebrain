@@ -12,6 +12,8 @@ import {
   TableHeader,
   TableRow,
 } from "../../components/ui/table";
+import { useWorkspaceContext } from "../../context/WorkspaceContext";
+import { toSlug } from "../../lib/workspace-slug";
 import { EmptyState, InlineError, Section, SettingsDashboardPage } from "./components";
 
 interface AppInfo {
@@ -58,6 +60,10 @@ function statusColor(status: string): "default" | "secondary" | "destructive" | 
  */
 export function AboutTab() {
   const { version, buildSha } = getPlatformVersion();
+  const { activeWorkspace } = useWorkspaceContext();
+  const connectorsPath = activeWorkspace
+    ? `/w/${toSlug(activeWorkspace.id)}/settings/connectors`
+    : "/";
   const [apps, setApps] = useState<AppInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [bundlesError, setBundlesError] = useState<string | null>(null);
@@ -103,11 +109,8 @@ export function AboutTab() {
       <Section title="Installed Bundles">
         <p className="text-xs text-muted-foreground mb-3">
           Read-only view. Manage installed bundles in{" "}
-          <Link
-            to="/settings/workspace/connectors"
-            className="text-primary underline-offset-4 hover:underline"
-          >
-            Settings → Workspace → Connectors
+          <Link to={connectorsPath} className="text-primary underline-offset-4 hover:underline">
+            Workspace → Connectors
           </Link>
           .
         </p>

@@ -8,12 +8,12 @@ import { RequireActiveWorkspace, SettingsAppPanelPage } from "./components";
  * `SettingsAppPanelPage` so it inherits page chrome (back-link, title,
  * "provided by" footer) consistent with sibling settings tabs.
  *
- * Route: /settings/workspace/apps/:serverName
+ * Route: /w/:slug/settings/apps/:serverName
  *
- * Workspace-switch behavior: if the active workspace doesn't have the
- * named bundle installed (e.g. user switched workspaces while on this
- * page), redirect to the apps index instead of rendering a "not found"
- * dead-end. This is the locked decision from the IA plan.
+ * Workspace-switch behavior: if the workspace named by the slug doesn't
+ * have the bundle installed (e.g. user navigated to another workspace
+ * while on this page), redirect to the apps index instead of rendering a
+ * "not found" dead-end. This is the locked decision from the IA plan.
  */
 export function SettingsAppPanel() {
   return (
@@ -24,7 +24,7 @@ export function SettingsAppPanel() {
 }
 
 function Inner() {
-  const { serverName } = useParams<{ serverName: string }>();
+  const { serverName, slug } = useParams<{ serverName: string; slug: string }>();
   const shell = useShellContext();
 
   if (!shell || !serverName) {
@@ -35,8 +35,8 @@ function Inner() {
   const panel = panels.find((p) => p.serverName === serverName);
 
   if (!panel) {
-    // Bundle not installed in active workspace — redirect to index per IA contract.
-    return <Navigate to="/settings/workspace/apps" replace />;
+    // Bundle not installed in this workspace — redirect to index per IA contract.
+    return <Navigate to={`/w/${slug}/settings/apps`} replace />;
   }
 
   return (

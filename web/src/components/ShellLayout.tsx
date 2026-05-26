@@ -4,17 +4,17 @@ import { NavLink } from "react-router-dom";
 import { useChatPanelContext } from "../context/ChatPanelContext";
 import { useSidebar } from "../context/SidebarContext";
 import { useWorkspaceContext } from "../context/WorkspaceContext";
-import { identityAppRoute, isIdentityApp } from "../lib/identity-apps";
 import { resolveIcon } from "../lib/icons";
+import { identityAppRoute, isIdentityApp } from "../lib/identity-apps";
 import { cn } from "../lib/utils";
 import { toSlug } from "../lib/workspace-slug";
 import type { PlacementEntry } from "../types";
 import { ChatChrome } from "./ChatChrome";
 import { Logo } from "./Logo";
 import { MobileSidebarDrawer } from "./MobileSidebarDrawer";
+import { SidebarToggle } from "./SidebarToggle";
 import { SidebarSearch } from "./shell/SidebarSearch";
 import { WorkspaceSection } from "./shell/WorkspaceSection";
-import { SidebarToggle } from "./SidebarToggle";
 import { UserMenu } from "./UserMenu";
 
 /**
@@ -252,8 +252,9 @@ export const ShellLayout = memo(function ShellLayout({
 
 /** Resolve a placement to a route path for NavLink. */
 function resolveRoute(p: PlacementEntry, wsSlug?: string): string {
-  // Settings is a core page — /settings (not workspace-scoped)
-  if (p.route === "settings") return "/settings";
+  // Settings is workspace-scoped — `/w/<slug>/settings`. With no workspace
+  // in scope there's no settings page to link to, so fall back to home.
+  if (p.route === "settings") return wsSlug ? `/w/${wsSlug}/settings` : "/";
   // Home is now the global landing at `/` (was workspace-scoped). The
   // workspace overview lives at `/w/<slug>/` and is reached by clicking
   // the workspace row directly.

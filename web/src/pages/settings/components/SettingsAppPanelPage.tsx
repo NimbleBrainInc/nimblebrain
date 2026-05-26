@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { useParams } from "react-router-dom";
 import { resolveIcon } from "../../../lib/icons";
 import type { PlacementEntry } from "../../../types";
 import { SettingsPageHeader } from "./SettingsPageHeader";
@@ -7,7 +8,7 @@ import { SettingsPageHeader } from "./SettingsPageHeader";
  * Layout template for *bundle-provided* settings panels — the iframe-hosted
  * UIs registered by bundles via the `settings` placement slot.
  *
- * Without this template, navigating to `/settings/workspace/apps/<server>`
+ * Without this template, navigating to `/w/<slug>/settings/apps/<server>`
  * dropped the user into a raw, chromeless iframe with no indication that
  * they were still inside settings. This template provides the settings
  * frame consistently — bundle icon and title in the header, back-link to
@@ -33,6 +34,7 @@ export interface SettingsAppPanelPageProps {
 }
 
 export function SettingsAppPanelPage({ panel, children }: SettingsAppPanelPageProps) {
+  const { slug } = useParams<{ slug: string }>();
   const Icon = panel.icon ? resolveIcon(panel.icon) : null;
   const label = panel.label ?? panel.serverName;
 
@@ -42,7 +44,7 @@ export function SettingsAppPanelPage({ panel, children }: SettingsAppPanelPagePr
         <SettingsPageHeader
           title={label}
           icon={Icon ? <Icon className="h-5 w-5" /> : null}
-          back={{ to: "/settings/workspace/apps", label: "Back to apps" }}
+          back={{ to: `/w/${slug}/settings/apps`, label: "Back to apps" }}
         />
       </div>
       <div className="flex-1 min-h-0 overflow-hidden">{children}</div>

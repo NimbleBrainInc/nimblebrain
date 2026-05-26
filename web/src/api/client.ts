@@ -557,19 +557,6 @@ export async function getShell(): Promise<ShellData> {
   return request<ShellData>("/v1/shell");
 }
 
-/**
- * Fetch the bootstrap payload (user, workspaces, shell, config) in one call.
- * `workspaceId` is the client's remembered last-active workspace — sent as
- * a soft hint to the server (unified under X-Workspace-Id). Bootstrap
- * honors it if still valid, silently falls back to the first membership
- * otherwise. Data endpoints treat the same header as authoritative.
- */
-export async function getBootstrap(workspaceId?: string): Promise<BootstrapResponse> {
-  const extra: Record<string, string> = {};
-  if (workspaceId) extra["X-Workspace-Id"] = workspaceId;
-  return request<BootstrapResponse>("/v1/bootstrap", { headers: extra });
-}
-
 /** Attempt to refresh the session using the refresh token cookie. Exposed for SSE modules. */
 export const refreshSession = refreshInterceptor.tryRefresh;
 
@@ -1080,19 +1067,21 @@ export async function logout(): Promise<void> {
  * initFromBootstrap, after this call) so a failed refresh just leaves the
  * 401 in place and we return null — same behavior as before.
  *
- * `workspaceId` is the client's remembered last-active workspace — see
- * {@link getBootstrap} for the server-side contract.
+ * Bootstrap carries NO `X-Workspace-Id`. Which workspace the user is in is
+ * owned by the URL (`/w/:slug`), resolved AFTER bootstrap by the route
+ * guard — not by a remembered selection. Sending a stale remembered id was
+ * the cause of a hard lock-out: a workspace the user had lost access to made
+ * the server reject bootstrap before its permissive default could run. The
+ * server defaults the focus to the user's personal workspace on its own.
  */
-export async function tryBootstrap(workspaceId?: string): Promise<BootstrapResponse | null> {
+export async function tryBootstrap(): Promise<BootstrapResponse | null> {
   try {
-    const extra: Record<string, string> = {};
-    if (workspaceId) extra["X-Workspace-Id"] = workspaceId;
+    // Strip any workspace scope — bootstrap is identity-level discovery.
+    const h = headers();
+    delete h["X-Workspace-Id"];
     const res = await fetchWithRefresh(`${API_BASE}/v1/bootstrap`, {
       credentials: "include",
-      headers: {
-        ...headers(),
-        ...extra,
-      },
+      headers: h,
     });
     if (!res.ok) return null;
     return (await res.json()) as BootstrapResponse;

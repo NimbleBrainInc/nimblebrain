@@ -966,25 +966,14 @@ export async function handleBootstrap(
     );
   }
 
-  // 2. Resolve active workspace — permissive: honor X-Workspace-Id when it
-  // matches a membership, otherwise pick the first. Bootstrap is the one
-  // place the server defaults, because it's the only place a client can
-  // legitimately not yet know a wsId. On data endpoints the same header is
-  // authoritative (unknown wsId → 400); bootstrap is the discovery surface
-  // so the contract is weaker here by design.
-  const requested = req.headers.get("X-Workspace-Id");
-  const activeWorkspace: string =
-    requested && userWorkspaces.some((ws) => ws.id === requested)
-      ? requested
-      : userWorkspaces[0]!.id;
-
-  // 3. Identify the user's personal workspace. Stage 1 invariant:
+  // 2. Identify the user's personal workspace. Stage 1 invariant:
   //    every user has exactly one personal workspace where
   //    `isPersonal === true && ownerUserId === identity.id`. If for any
   //    reason there are multiple (data corruption — shouldn't happen),
   //    pick the earliest-created and log a warning so operators notice.
   //    If there are zero (pre-migration deployment), `personalWorkspaceId`
-  //    is `null` — the UI can fall back to `activeWorkspace`.
+  //    is `null` — the active-workspace fallback below uses the first
+  //    membership instead.
   const personalCandidates = userWorkspaces.filter(
     (ws) => ws.isPersonal === true && ws.ownerUserId === identity.id,
   );
@@ -1015,6 +1004,21 @@ export async function handleBootstrap(
         `Run \`bun run migrate:personal-workspaces\` or trigger a re-login.`,
     );
   }
+
+  // 3. Resolve the active (focused) workspace. The single source of truth
+  // for "which workspace am I in" is the client's URL (`/w/:slug`); the
+  // web shell no longer persists or sends a remembered selection. Bootstrap
+  // therefore just provides a sane default focus for workspace-agnostic
+  // routes (home, conversations): the user's personal workspace, falling
+  // back to the first membership pre-migration. `X-Workspace-Id` is still
+  // honored when present and valid (e.g. a deep-link cold-load) but is no
+  // longer required — its absence is the normal case, not an error. On data
+  // endpoints the same header remains authoritative (unknown wsId → 400).
+  const requested = req.headers.get("X-Workspace-Id");
+  const activeWorkspace: string =
+    requested && userWorkspaces.some((ws) => ws.id === requested)
+      ? requested
+      : (personalWorkspaceId ?? userWorkspaces[0]!.id);
 
   // 4. Shell placements for the active workspace (ambient + scoped, merged).
   const placements = runtime.getPlacementRegistry().forWorkspace(activeWorkspace);

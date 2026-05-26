@@ -196,7 +196,7 @@ export function WorkspacesTab() {
                 <TableRow
                   key={ws.id}
                   className="cursor-pointer"
-                  onClick={() => navigate(`/settings/org/workspaces/${ws.id.replace(/^ws_/, "")}`)}
+                  onClick={() => navigate(`/org/workspaces/${ws.id.replace(/^ws_/, "")}`)}
                 >
                   <TableCell className="font-medium">{ws.name}</TableCell>
                   <TableCell>{ws.memberCount}</TableCell>

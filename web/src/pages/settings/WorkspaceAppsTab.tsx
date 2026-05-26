@@ -40,7 +40,7 @@ function Inner() {
               <Card key={panel.serverName} className="hover:bg-muted/40 transition-colors">
                 <CardContent className="py-3 px-4">
                   <Link
-                    to={`/settings/workspace/apps/${panel.serverName}`}
+                    to={panel.serverName}
                     className="flex items-center gap-3 text-sm font-medium"
                   >
                     {Icon && <Icon className="h-4 w-4 text-muted-foreground" />}

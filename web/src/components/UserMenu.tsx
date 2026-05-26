@@ -1,7 +1,8 @@
-import { ChevronUp, LogOut, Settings, UserCog } from "lucide-react";
+import { Building2, ChevronUp, LogOut, UserCog } from "lucide-react";
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useSession } from "../context/SessionContext";
+import { roleAtLeast, useScopedRole } from "../hooks/useScopedRole";
 import { cn } from "../lib/utils";
 
 // ---------------------------------------------------------------------------
@@ -73,6 +74,7 @@ export const UserMenu = memo(function UserMenu({
 }: UserMenuProps) {
   const session = useSession();
   const navigate = useNavigate();
+  const isOrgAdmin = roleAtLeast(useScopedRole(), "org_admin");
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -101,9 +103,9 @@ export const UserMenu = memo(function UserMenu({
     navigate("/profile");
   }, [navigate]);
 
-  const goToWorkspaceSettings = useCallback(() => {
+  const goToOrgSettings = useCallback(() => {
     setOpen(false);
-    navigate("/settings/workspace/general");
+    navigate("/org");
   }, [navigate]);
 
   const handleLogout = useCallback(() => {
@@ -195,14 +197,16 @@ export const UserMenu = memo(function UserMenu({
               <UserCog className="w-4 h-4 text-sidebar-foreground/60" />
               <span>Profile settings</span>
             </button>
-            <button
-              type="button"
-              onClick={goToWorkspaceSettings}
-              className="flex items-center gap-2.5 w-full rounded-md px-2 py-2 text-sm text-left transition-all duration-150 text-sidebar-foreground hover:bg-sidebar-foreground/5"
-            >
-              <Settings className="w-4 h-4 text-sidebar-foreground/60" />
-              <span>Workspace settings</span>
-            </button>
+            {isOrgAdmin && (
+              <button
+                type="button"
+                onClick={goToOrgSettings}
+                className="flex items-center gap-2.5 w-full rounded-md px-2 py-2 text-sm text-left transition-all duration-150 text-sidebar-foreground hover:bg-sidebar-foreground/5"
+              >
+                <Building2 className="w-4 h-4 text-sidebar-foreground/60" />
+                <span>Organization</span>
+              </button>
+            )}
             <button
               type="button"
               onClick={handleLogout}

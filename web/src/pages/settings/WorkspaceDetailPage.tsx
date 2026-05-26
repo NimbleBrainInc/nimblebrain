@@ -65,7 +65,7 @@ function formatDate(iso?: string): string {
  * three sections) so we don't jam it into a generic FormPage / ListPage —
  * built directly from `SettingsPageHeader` + `Section` instead.
  *
- * Route: /settings/org/workspaces/:slug
+ * Route: /org/workspaces/:slug
  */
 export function WorkspaceDetailPage() {
   const { slug } = useParams<{ slug: string }>();
@@ -183,10 +183,8 @@ export function WorkspaceDetailPage() {
   const isWsAdmin =
     isOrgAdmin || members.some((m) => m.userId === currentUserId && m.role === "admin");
 
-  // The org-scoped Workspaces list lives at /settings/org/workspaces (not
-  // /settings/workspaces — that route doesn't exist). Fixing the back-nav
-  // bug from the previous version.
-  const backTo = "/settings/org/workspaces";
+  // The org-scoped Workspaces list lives at /org/workspaces.
+  const backTo = "/org/workspaces";
 
   // The page header (title + back-nav) renders across all states —
   // loading, notFound, error-without-data, and the loaded view — so the
