@@ -17,6 +17,7 @@
 - **`bun run check:catalog` + PR-gated GitHub Action** for catalog rot detection. Runs the platform's exact OAuth-discovery chain (RFC 9728 protected-resource → RFC 8414 AS metadata → RFC 7591 `registration_endpoint`) against every `auth: dcr` entry in `catalog.yaml`. Fails the PR if a vendor URL goes 5xx, drops DCR support, or moves their well-known metadata path. Network-dependent; not part of `bun run verify`. Triggered by `pull_request` paths-filter on `src/connectors/catalog.yaml`.
 - **Conversations moved to top-level user-owned storage** (Stage 1). Every conversation now lives at `{workDir}/conversations/{convId}.jsonl` instead of `{workDir}/workspaces/{wsId}/conversations/...`, with single-owner authorization (`Conversation.ownerId === access.userId`). The conversation outlives its workspace context — a user removed from workspace A can still read every conversation they own that originated there. Multi-participant / sharing semantics are deferred to a future stage with explicit policy gates. Operator deploy is **breaking** and requires two migration scripts (see Breaking).
 - **Cross-workspace tool calls from a single chat** (Stage 2). Identity-bound chat + `/mcp` sessions; tool list aggregates across the user's workspaces, namespaced `ws_<id>/<tool>`. User-scope credentials migrate to the personal workspace; `oauthScope: "user"` deleted (no compat shim). Header switcher → sidebar workspace+apps navigator. **Breaking** — run `bun run migrate:user-creds` before deploying (the Stage 2 deploy runbook). Gating verification: cross-workspace E2E green in `bun run smoke`.
+- **Conversations are a top-level identity-owned app** (Stage 3). Reachable at `/conversations` (not under `/w/<slug>`) and callable through every door — chat, `/mcp`, REST. Request scope is now a discriminated union (`{kind:"workspace",workspaceId}` | `{kind:"identity"}`): routing and authorization stay separate, but a workspace request with no workspace is unrepresentable — fail-closed by construction ([#279](https://github.com/NimbleBrainInc/nimblebrain/pull/279)).
 
 ### Added
 
@@ -74,6 +75,7 @@
 - Catalog field `defaultScope` renamed to `defaultBinding` with values `"workspace" | "personal"` (Stage 2 / T008). 19 catalog entries updated.
 - Web prop `scope: "user" | "workspace"` renamed to `mode: "personal" | "workspace"` across four UI components (Stage 2 / T009).
 - Tool name display in the conversation transcript renders as a workspace badge + friendly tool name (Stage 2 / Q2); raw `ws_<id>/<tool>` stays in JSONL.
+- **`/mcp` identity-source tools surface as bare names** (`conversations__*`), not workspace-namespaced `ws_<id>-conversations__*` (Stage 3). The chat's active tool set is scoped to the focused workspace plus identity tools, so the platform `nb__*` tools appear once instead of once per workspace; the full cross-workspace union stays reachable via `nb__search`. External `/mcp` clients that pinned a `ws_<id>-conversations__*` name should switch to the bare form.
 
 ### Breaking
 
