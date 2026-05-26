@@ -40,7 +40,7 @@ import { describe, expect, mock, test } from "bun:test";
 // before any later test installs a mock.module replacement.
 import {
   ApiClientError,
-  apiClientError,
+  errorFromResponse,
   setActiveWorkspaceId,
   setOnWorkspaceError,
 } from "../api/client";
@@ -80,7 +80,7 @@ describe("ChatRequest wire shape (T006 contract)", () => {
 // symmetric to the 401 → onAuthError path. The error is still returned so
 // callers' local handling is unchanged.
 //
-// Asserted on `apiClientError` (the seam where the hook fires) rather than
+// Asserted on `errorFromResponse` (the seam where the hook fires) rather than
 // through `callTool` → fetch: this file pins the REAL `../api/client` early,
 // and a pure-function assertion sidesteps the suite's `mock.module(...)` /
 // `globalThis.fetch` fragility that makes a `callTool` round-trip unreliable.
@@ -91,12 +91,12 @@ describe("ChatRequest wire shape (T006 contract)", () => {
 // route guard in front of it.
 // ---------------------------------------------------------------------------
 
-describe("apiClientError → onWorkspaceError recovery hook", () => {
+describe("errorFromResponse → onWorkspaceError recovery hook", () => {
   test("fires onWorkspaceError for a workspace_error body and returns the error", () => {
     const fired = mock(() => {});
     setOnWorkspaceError(fired);
 
-    const err = apiClientError(
+    const err = errorFromResponse(
       { error: "workspace_error", message: 'Workspace "ws_empty" not found.' },
       400,
     );
@@ -112,7 +112,7 @@ describe("apiClientError → onWorkspaceError recovery hook", () => {
     const fired = mock(() => {});
     setOnWorkspaceError(fired);
 
-    apiClientError({ error: "not_found", message: "nope" }, 404);
+    errorFromResponse({ error: "not_found", message: "nope" }, 404);
 
     expect(fired).toHaveBeenCalledTimes(0);
     setOnWorkspaceError(null);
@@ -123,7 +123,7 @@ describe("apiClientError → onWorkspaceError recovery hook", () => {
     setOnWorkspaceError(fired);
     setOnWorkspaceError(null);
 
-    apiClientError({ error: "workspace_error", message: "stale" }, 400);
+    errorFromResponse({ error: "workspace_error", message: "stale" }, 400);
 
     expect(fired).toHaveBeenCalledTimes(0);
   });

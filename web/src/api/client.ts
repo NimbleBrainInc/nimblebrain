@@ -160,7 +160,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       error: "unknown",
       message: res.statusText,
     }));
-    throw apiClientError(body, res.status);
+    throw errorFromResponse(body, res.status);
   }
 
   return res.json() as Promise<T>;
@@ -196,7 +196,7 @@ export class ApiClientError extends Error {
  * `callTool` depending on evaluation order), so tests assert on this pure
  * function instead.
  */
-export function apiClientError(body: ApiError, status: number): ApiClientError {
+export function errorFromResponse(body: ApiError, status: number): ApiClientError {
   if (body.error === "workspace_error") onWorkspaceError?.();
   return new ApiClientError(body.error, body.message, status, body.details);
 }
@@ -248,7 +248,7 @@ export async function getResources(
       error: "unknown",
       message: res.statusText,
     }));
-    throw apiClientError(body, res.status);
+    throw errorFromResponse(body, res.status);
   }
 
   const envelope = (await res.json()) as {
@@ -364,7 +364,7 @@ export async function uploadResource(files: File[]): Promise<UploadResourceResul
       error: "unknown",
       message: res.statusText,
     }));
-    throw apiClientError(body, res.status);
+    throw errorFromResponse(body, res.status);
   }
   return res.json() as Promise<UploadResourceResult>;
 }
@@ -462,7 +462,7 @@ export async function streamChat(
       error: "unknown",
       message: res.statusText,
     }));
-    throw apiClientError(body, res.status);
+    throw errorFromResponse(body, res.status);
   }
 
   await consumeSSEStream(res, onEvent);
@@ -520,7 +520,7 @@ export async function streamChatMultipart(
       error: "unknown",
       message: res.statusText,
     }));
-    throw apiClientError(body, res.status);
+    throw errorFromResponse(body, res.status);
   }
 
   await consumeSSEStream(res, onEvent);
