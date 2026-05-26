@@ -3,9 +3,27 @@ import type { BriefingCacheEntry, BriefingOutput } from "./home-types.ts";
 export class BriefingCache {
   private entry: BriefingCacheEntry | null = null;
   private ttlMs: number;
+  private refreshing = false;
 
   constructor(ttlMinutes: number) {
     this.ttlMs = ttlMinutes * 60 * 1000;
+  }
+
+  /**
+   * In-flight guard for stale-while-revalidate. `beginRefresh()` claims the
+   * single background-regeneration slot — returns `true` for the first caller,
+   * `false` while one is already running — so a burst of dashboard loads
+   * during the regen window doesn't fan out into N concurrent (fast-model)
+   * regenerations. Always pair a successful `beginRefresh()` with `endRefresh()`.
+   */
+  beginRefresh(): boolean {
+    if (this.refreshing) return false;
+    this.refreshing = true;
+    return true;
+  }
+
+  endRefresh(): void {
+    this.refreshing = false;
   }
 
   get(): BriefingOutput | null {

@@ -98,5 +98,12 @@ describe("BriefingCache", () => {
 		cache.invalidate();
 		expect(cache.getStale()).toBeNull(); // invalidated is not served, even as stale
 	});
+
+	test("beginRefresh() is a single-flight guard — blocks a second start until endRefresh()", () => {
+		expect(cache.beginRefresh()).toBe(true); // first caller claims the slot
+		expect(cache.beginRefresh()).toBe(false); // a concurrent caller is turned away
+		cache.endRefresh();
+		expect(cache.beginRefresh()).toBe(true); // released → acquirable again
+	});
 });
 

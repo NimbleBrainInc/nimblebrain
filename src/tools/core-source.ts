@@ -810,24 +810,30 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
               // from that context.
               const stale = briefingCache.getStale();
               if (stale) {
-                const bgCtx: RequestContext = {
-                  identity,
-                  scope: {
-                    kind: "workspace",
-                    workspaceId: wsId,
-                    workspaceAgents: null,
-                    workspaceModelOverride: null,
-                  },
-                };
-                void runWithRequestContext(bgCtx, runGeneration)
-                  .then((b) => briefingCache.set(b))
-                  .catch((err) =>
-                    log.warn(
-                      `[briefing] background refresh failed for ${wsId}: ${
-                        err instanceof Error ? err.message : String(err)
-                      }`,
-                    ),
-                  );
+                // Only one background regeneration at a time — a burst of
+                // dashboard loads during the regen window must not fan out into
+                // N concurrent fast-model calls (thundering herd on a hot path).
+                if (briefingCache.beginRefresh()) {
+                  const bgCtx: RequestContext = {
+                    identity,
+                    scope: {
+                      kind: "workspace",
+                      workspaceId: wsId,
+                      workspaceAgents: null,
+                      workspaceModelOverride: null,
+                    },
+                  };
+                  void runWithRequestContext(bgCtx, runGeneration)
+                    .then((b) => briefingCache.set(b))
+                    .catch((err) =>
+                      log.warn(
+                        `[briefing] background refresh failed for ${wsId}: ${
+                          err instanceof Error ? err.message : String(err)
+                        }`,
+                      ),
+                    )
+                    .finally(() => briefingCache.endRefresh());
+                }
                 return ok(stale, "Briefing (refreshing in background).");
               }
             }
