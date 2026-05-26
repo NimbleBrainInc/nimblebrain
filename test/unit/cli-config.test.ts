@@ -28,7 +28,10 @@ afterEach(async () => {
 
 async function createWorkspace(): Promise<void> {
   const store = new WorkspaceStore(workDir);
-  await store.create("Engineering");
+  // Pass an explicit slug so the id is the well-known `WS_ID`
+  // (`ws_engineering`) this test asserts against. The default no-slug
+  // path now produces an opaque, name-independent id.
+  await store.create("Engineering", WS_ID.slice(3));
 }
 
 // Capture console.log / console.error output into arrays for assertions.

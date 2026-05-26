@@ -65,7 +65,8 @@ export function createManageWorkspacesTool(ctx: ManageWorkspacesContext): InProc
         },
         slug: {
           type: "string",
-          description: "Optional slug override (for create). Derived from name if omitted.",
+          description:
+            "Optional explicit id slug (for create), producing id 'ws_<slug>'. Omit to get an opaque, name-independent id (the default and recommended path — the workspace name stays freely editable without changing the id or URL).",
         },
         workspaceId: {
           type: "string",

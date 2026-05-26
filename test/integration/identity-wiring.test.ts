@@ -76,9 +76,10 @@ describe("Runtime.start() dev mode identity wiring", () => {
     const wsStore = runtime.getWorkspaceStore();
     expect(wsStore).toBeDefined();
 
-    // Verify it's functional — CRUD operations work
+    // Verify it's functional — CRUD operations work. The id is opaque
+    // and name-independent, so assert its shape, not a name-derived value.
     const ws = await wsStore.create("Smoke Workspace");
-    expect(ws.id).toBe("ws_smoke_workspace");
+    expect(ws.id).toMatch(/^ws_[0-9a-f]{16}$/);
 
     const fetched = await wsStore.get(ws.id);
     expect(fetched).not.toBeNull();
