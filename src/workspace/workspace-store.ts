@@ -43,9 +43,45 @@ export class MemberConflictError extends Error {
 // via build-time codegen. Re-exported above. See the pattern module's
 // header for the full rationale.
 
+// ── Opaque id generation ───────────────────────────────────────────
+
+/**
+ * Generate an opaque, name-independent workspace id.
+ *
+ * **Why opaque.** A workspace id is a stable handle, not a label. The
+ * pre-opaque scheme derived the id from the name (`ws_<slugify(name)>`)
+ * and froze it at create time — so renaming a workspace left its URL
+ * (`/w/<old-name-slug>`) and on-disk dir permanently stamped with the
+ * original name. Decoupling the id from the name makes the name a freely
+ * editable field that never moves the id, the dir, or the URL.
+ *
+ * **Alphabet.** The id MUST match `WORKSPACE_ID_PATTERN`
+ * (`^ws_[a-z0-9_]{1,64}$`) — no hyphens, because `-` is the
+ * workspace/tool separator in `ws_<id>-<tool>` (see `src/tools/namespace.ts`).
+ * Lowercase hex (`[a-f0-9]`) is a strict subset of `[a-z0-9_]`, so it
+ * round-trips through `parseNamespacedToolName` cleanly. This mirrors the
+ * established opaque-id idiom for users (`usr_<hex>`, `src/identity/user.ts`)
+ * and files (`fl_<hex>`, `src/files/store.ts`).
+ *
+ * 16 hex chars = 64 bits of entropy. Collisions are astronomically
+ * unlikely, but `create` still does a conflict check and retries against
+ * this generator, so a collision self-heals rather than surfacing.
+ */
+export function generateWorkspaceId(): string {
+  return `ws_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`;
+}
+
 // ── Slugification ──────────────────────────────────────────────────
 
-/** Derive a workspace slug from a human-readable name. */
+/**
+ * Derive a workspace slug from a human-readable name.
+ *
+ * Only used for the **explicit slug-override** path of
+ * `WorkspaceStore.create` (a caller passing `slug` deliberately) and for
+ * personal-workspace slugs (`personalWorkspaceSlugFor`). The default,
+ * no-slug create path produces an opaque id via `generateWorkspaceId` —
+ * the name is NOT derived into the id. See `generateWorkspaceId` for why.
+ */
 export function slugify(name: string): string {
   return name
     .toLowerCase()
@@ -164,11 +200,41 @@ export class WorkspaceStore {
       members?: WorkspaceMember[];
     },
   ): Promise<Workspace> {
-    const derivedSlug = slug ?? slugify(name);
-    const id = `ws_${derivedSlug}`;
-
-    if (!WORKSPACE_ID_RE.test(id)) {
-      throw new Error(`Invalid workspace ID format: "${id}"`);
+    // ID derivation. Two paths:
+    //   1. Explicit `slug` supplied → `ws_<slug>`. Deliberate caller
+    //      intent: personal workspaces (`personalWorkspaceSlugFor`, which
+    //      MUST stay deterministic for O(1) lookup) and any operator/test
+    //      that wants a chosen id. Validated against WORKSPACE_ID_RE.
+    //   2. No `slug` → opaque, name-independent id via
+    //      `generateWorkspaceId`. The name never lands in the id, so a
+    //      later rename leaves the id / dir / URL untouched. A collision
+    //      against an existing id is retried (see the loop below).
+    let id: string;
+    if (slug !== undefined) {
+      id = `ws_${slug}`;
+      if (!WORKSPACE_ID_RE.test(id)) {
+        throw new Error(`Invalid workspace ID format: "${id}"`);
+      }
+    } else {
+      // Generate an opaque id and ensure it doesn't collide with an
+      // existing workspace. 64 bits of entropy makes a collision
+      // astronomically unlikely; the bounded retry is defense-in-depth so
+      // the rare case self-heals instead of surfacing a confusing
+      // conflict to the operator. The generator's alphabet is guaranteed
+      // to satisfy WORKSPACE_ID_RE, so no per-iteration revalidation.
+      const MAX_ID_ATTEMPTS = 5;
+      let candidate = "";
+      for (let attempt = 0; attempt < MAX_ID_ATTEMPTS; attempt++) {
+        candidate = generateWorkspaceId();
+        if (!(await this.get(candidate))) break;
+        candidate = "";
+      }
+      if (candidate === "") {
+        throw new Error(
+          `[workspace-store] create: could not generate a collision-free workspace id after ${MAX_ID_ATTEMPTS} attempts`,
+        );
+      }
+      id = candidate;
     }
 
     // Co-required invariant. A personal workspace MUST declare its owner;
@@ -213,7 +279,10 @@ export class WorkspaceStore {
       members = [{ userId: ownerUserId, role: "admin" }];
     }
 
-    // Slug collision detection
+    // Id collision detection. For the explicit-slug path this is the
+    // only collision guard (two `create(name, "team_a")` calls conflict).
+    // For the opaque path the loop above already retried past collisions,
+    // so this is a redundant-but-cheap final assertion.
     const existing = await this.get(id);
     if (existing) {
       throw new WorkspaceConflictError(id);

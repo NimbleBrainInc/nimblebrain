@@ -119,9 +119,10 @@ describe("Runtime identity stores wiring", () => {
 
     const workspaceStore = rt.getWorkspaceStore();
 
-    // Create a workspace
+    // Create a workspace. The id is opaque and name-independent, so
+    // assert its shape rather than a name-derived value.
     const ws = await workspaceStore.create("Test Workspace");
-    expect(ws.id).toBe("ws_test_workspace");
+    expect(ws.id).toMatch(/^ws_[0-9a-f]{16}$/);
     expect(ws.name).toBe("Test Workspace");
 
     // Get it back

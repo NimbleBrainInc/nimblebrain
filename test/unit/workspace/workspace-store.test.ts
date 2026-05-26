@@ -5,7 +5,9 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { AgentProfile } from "../../../src/runtime/types.ts";
 import type { Workspace } from "../../../src/workspace/types.ts";
+import { parseNamespacedToolName } from "../../../src/tools/namespace.ts";
 import {
+  generateWorkspaceId,
   MemberConflictError,
   personalWorkspaceIdFor,
   personalWorkspaceSlugFor,
@@ -13,6 +15,7 @@ import {
   WorkspaceConflictError,
   WorkspaceStore,
 } from "../../../src/workspace/workspace-store.ts";
+import { WORKSPACE_ID_RE } from "../../../src/workspace/workspace-id-pattern.ts";
 
 let workDir: string;
 let store: WorkspaceStore;
@@ -26,8 +29,44 @@ afterEach(async () => {
   await rm(workDir, { recursive: true, force: true });
 });
 
+// ── Opaque id generation ───────────────────────────────────────────
+
+describe("generateWorkspaceId", () => {
+  test("produces an opaque id matching WORKSPACE_ID_PATTERN", () => {
+    const id = generateWorkspaceId();
+    expect(WORKSPACE_ID_RE.test(id)).toBe(true);
+    // ws_ prefix + 16 lowercase-hex chars (64 bits of entropy).
+    expect(id).toMatch(/^ws_[0-9a-f]{16}$/);
+  });
+
+  test("never contains a hyphen — the namespace separator (ws_<id>-<tool>)", () => {
+    // A hyphen in the id would break `parseNamespacedToolName`, which
+    // splits on the first `-`. Assert the alphabet stays hyphen-free.
+    for (let i = 0; i < 100; i++) {
+      expect(generateWorkspaceId()).not.toContain("-");
+    }
+  });
+
+  test("round-trips cleanly through namespacedToolName / parse", () => {
+    const wsId = generateWorkspaceId();
+    const parsed = parseNamespacedToolName(`${wsId}-crm-tool__search`);
+    expect(parsed.scope).toEqual({ kind: "workspace", wsId });
+    expect(parsed.toolName).toBe("crm-tool__search");
+  });
+
+  test("is name-independent — successive calls differ", () => {
+    const a = generateWorkspaceId();
+    const b = generateWorkspaceId();
+    expect(a).not.toBe(b);
+  });
+});
+
 // ── Slugification ──────────────────────────────────────────────────
 
+// `slugify` is retained for the explicit-slug-override path of `create`
+// and for personal-workspace slugs (`personalWorkspaceSlugFor`). The
+// default, no-slug create path produces an OPAQUE id (see
+// `generateWorkspaceId` tests above) — the name is not derived into the id.
 describe("slugify", () => {
   test("converts spaces to underscores and lowercases", () => {
     expect(slugify("Engineering Team")).toBe("engineering_team");
@@ -45,25 +84,30 @@ describe("slugify", () => {
 // ── CRUD ───────────────────────────────────────────────────────────
 
 describe("WorkspaceStore CRUD", () => {
-  test("create writes workspace.json to correct directory", async () => {
+  test("create assigns an opaque, name-independent id and writes workspace.json under it", async () => {
     const ws = await store.create("Engineering Team");
-    expect(ws.id).toBe("ws_engineering_team");
+    // The id is opaque — NOT derived from the name.
+    expect(ws.id).toMatch(/^ws_[0-9a-f]{16}$/);
+    expect(ws.id).not.toBe("ws_engineering_team");
     expect(ws.name).toBe("Engineering Team");
     expect(ws.members).toEqual([]);
     expect(ws.bundles).toEqual([]);
     expect(ws.createdAt).toBeTruthy();
     expect(ws.updatedAt).toBeTruthy();
 
-    const filePath = join(
-      workDir,
-      "workspaces",
-      "ws_engineering_team",
-      "workspace.json",
-    );
+    // workspace.json lives under the opaque id, not a name slug.
+    const filePath = join(workDir, "workspaces", ws.id, "workspace.json");
     expect(existsSync(filePath)).toBe(true);
   });
 
-  test("create with explicit slug", async () => {
+  test("two workspaces with the same name get distinct opaque ids (no slug collision)", async () => {
+    const a = await store.create("Engineering");
+    const b = await store.create("Engineering");
+    expect(a.id).not.toBe(b.id);
+    expect(a.name).toBe(b.name);
+  });
+
+  test("create with explicit slug uses ws_<slug> (deliberate-override path)", async () => {
     const ws = await store.create("My Workspace", "custom_slug");
     expect(ws.id).toBe("ws_custom_slug");
   });
@@ -118,9 +162,11 @@ describe("WorkspaceStore CRUD", () => {
     expect(result).toBe(false);
   });
 
-  test("duplicate slug on create throws conflict error", async () => {
-    await store.create("Duplicate");
-    await expect(store.create("Duplicate")).rejects.toThrow(
+  test("duplicate explicit slug on create throws conflict error", async () => {
+    // Opaque ids never collide on name, so the conflict path is exercised
+    // via the explicit-slug override (two creates targeting the same id).
+    await store.create("First", "duplicate_slug");
+    await expect(store.create("Second", "duplicate_slug")).rejects.toThrow(
       WorkspaceConflictError,
     );
   });
@@ -343,6 +389,28 @@ describe("WorkspaceStore.create: isPersonal/ownerUserId invariants", () => {
 });
 
 describe("WorkspaceStore.update", () => {
+  test("renaming a workspace keeps its opaque id and on-disk dir stable", async () => {
+    // The core guarantee of opaque ids: the name is freely editable and
+    // does NOT move the id, the directory, or (downstream) the URL.
+    const ws = await store.create("Original Name");
+    const originalId = ws.id;
+    const dirPath = join(workDir, "workspaces", originalId);
+    expect(existsSync(dirPath)).toBe(true);
+
+    const renamed = await store.update(originalId, { name: "Completely Different Name" });
+    expect(renamed?.id).toBe(originalId);
+    expect(renamed?.name).toBe("Completely Different Name");
+
+    // The dir under the original opaque id is untouched; no new dir
+    // derived from the new name appeared.
+    expect(existsSync(dirPath)).toBe(true);
+    expect(existsSync(join(workDir, "workspaces", "ws_completely_different_name"))).toBe(false);
+
+    // The renamed workspace is still reachable by its original id.
+    const reread = await store.get(originalId);
+    expect(reread?.name).toBe("Completely Different Name");
+  });
+
   test("allows patching about", async () => {
     const ws = await store.create("Patch", "patch");
     const updated = await store.update(ws.id, { about: "new description" });

@@ -115,12 +115,13 @@ describe("nb__manage_workspaces", () => {
       const parsed = parseResult(result) as {
         workspace: { id: string; name: string; createdAt: string };
       };
-      expect(parsed.workspace.id).toBe("ws_my_workspace");
+      // The id is opaque and name-independent — NOT derived from the name.
+      expect(parsed.workspace.id).toMatch(/^ws_[0-9a-f]{16}$/);
       expect(parsed.workspace.name).toBe("My Workspace");
       expect(parsed.workspace.createdAt).toBeTruthy();
 
-      // Verify directory was scaffolded
-      const wsDir = join(workDir, "workspaces", "ws_my_workspace");
+      // Verify directory was scaffolded under the opaque id.
+      const wsDir = join(workDir, "workspaces", parsed.workspace.id);
       expect(existsSync(join(wsDir, "data", ".gitkeep"))).toBe(true);
       expect(existsSync(join(wsDir, "skills", ".gitkeep"))).toBe(true);
     });
@@ -159,9 +160,12 @@ describe("nb__manage_workspaces", () => {
       expect(extractText(result)).toContain("name is required");
     });
 
-    test("returns error for duplicate slug", async () => {
-      await tool.handler({ action: "create", name: "Dupe" });
-      const result = await tool.handler({ action: "create", name: "Dupe" });
+    test("returns error for duplicate explicit slug", async () => {
+      // Opaque ids never collide on name, so two same-name creates now
+      // succeed with distinct ids. The conflict path is exercised via an
+      // explicit slug that targets an already-taken id.
+      await tool.handler({ action: "create", name: "Dupe", slug: "dupe_slug" });
+      const result = await tool.handler({ action: "create", name: "Dupe Two", slug: "dupe_slug" });
 
       expect(result.isError).toBe(true);
       expect(extractText(result)).toContain("already exists");
