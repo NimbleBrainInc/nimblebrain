@@ -12,7 +12,6 @@ import type { PlacementEntry } from "../types";
 import { ChatChrome } from "./ChatChrome";
 import { Logo } from "./Logo";
 import { MobileSidebarDrawer } from "./MobileSidebarDrawer";
-import { NavProgress } from "./NavProgress";
 import { SidebarSearch } from "./shell/SidebarSearch";
 import { WorkspaceSection } from "./shell/WorkspaceSection";
 import { SidebarToggle } from "./SidebarToggle";
@@ -109,9 +108,6 @@ export const ShellLayout = memo(function ShellLayout({
 
   return (
     <div className="flex h-dvh overflow-hidden">
-      {/* Route-transition progress cue — feedback on every navigation so a
-          fast content swap never reads as a hang. */}
-      <NavProgress />
       {/* Desktop / tablet sidebar */}
       {!isHidden && (
         <nav
@@ -131,8 +127,14 @@ export const ShellLayout = memo(function ShellLayout({
               session). Hidden when the sidebar is collapsed to icon-only. */}
           {!isCollapsed && <SidebarSearch />}
 
-          {/* Scrolling region — key triggers fade-in on workspace switch */}
-          <div key={wsSlug} className="flex-1 overflow-y-auto py-1 sidebar-scroll sidebar-nav-fade">
+          {/* Scrolling region. The nav is identity-level — the same Home /
+              Conversations / Automations / Files + workspaces list regardless
+              of which workspace is active — so it must NOT remount on a
+              workspace switch (no `key={wsSlug}`). Switching just re-renders the
+              active highlight + the workspace-routed hrefs in place; remounting
+              made the whole left nav visibly flash on every switch. The
+              fade-in runs once, on initial mount. */}
+          <div className="flex-1 overflow-y-auto py-1 sidebar-scroll sidebar-nav-fade">
             {/* Core nav (Home, Conversations, Automations, Files) —
                 global, identity-bound. Siblings of workspaces. */}
             {ungrouped.map((p) => (
