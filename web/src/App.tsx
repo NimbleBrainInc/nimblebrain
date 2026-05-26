@@ -151,6 +151,7 @@ function BootstrappedShell({
   const {
     loading,
     error,
+    shellWorkspaceId,
     forSlot,
     mainRoutes,
     refresh: refreshShell,
@@ -187,6 +188,7 @@ function BootstrappedShell({
             token={token}
             forSlot={forSlot}
             mainRoutes={mainRoutes}
+            shellWorkspaceId={shellWorkspaceId}
             refreshShell={refreshShell}
             onLogout={onLogout}
           />
@@ -208,12 +210,14 @@ function AuthenticatedAppContent({
   token,
   forSlot,
   mainRoutes,
+  shellWorkspaceId,
   refreshShell,
   onLogout,
 }: {
   token: string;
   forSlot: (slot: string) => PlacementEntry[];
   mainRoutes: () => PlacementEntry[];
+  shellWorkspaceId: string | undefined;
   refreshShell: () => Promise<void>;
   onLogout: () => void;
 }) {
@@ -324,7 +328,7 @@ function AuthenticatedAppContent({
   const identityAppPlacements = allRoutable.filter((p) => isIdentityApp(p.serverName));
 
   return (
-    <ShellProvider value={{ forSlot, mainRoutes }}>
+    <ShellProvider value={{ forSlot, mainRoutes, shellWorkspaceId }}>
       {/* ActionBridge handles iframe action events. It consumes ChatContext
           (streaming) but renders nothing, so its re-renders are free. */}
       <ActionBridge handleNavigate={handleNavigate} resolveAppRoute={resolveAppRoute} />

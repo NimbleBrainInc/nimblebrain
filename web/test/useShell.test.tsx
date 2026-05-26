@@ -39,6 +39,8 @@ describe("useShell", () => {
     expect(result.current.shell).toBe(bootstrap);
     expect(result.current.loading).toBe(false);
     expect(result.current.error).toBeNull();
+    // Bootstrap shell is built for the mount-time workspace.
+    expect(result.current.shellWorkspaceId).toBe("ws-1");
     expect(mockGetShell).not.toHaveBeenCalled();
   });
 
@@ -61,11 +63,17 @@ describe("useShell", () => {
 
     expect(result.current.loading).toBe(false);
     expect(result.current.shell).toBe(bootstrap); // still showing old data
+    // ...and shellWorkspaceId still points at the OLD workspace: this is the
+    // window the overview page reads to render a skeleton instead of the old
+    // workspace's apps (loading stays false, so it can't rely on that).
+    expect(result.current.shellWorkspaceId).toBe("ws-1");
 
     await waitFor(() => {
       expect(result.current.shell).toBe(newShell);
     });
 
+    // Once the fetch lands, the shell reflects the new workspace.
+    expect(result.current.shellWorkspaceId).toBe("ws-2");
     expect(result.current.loading).toBe(false);
     expect(result.current.error).toBeNull();
     expect(mockGetShell).toHaveBeenCalled();
@@ -158,10 +166,13 @@ describe("useShell", () => {
     const { result } = renderHook(() => useShell("tok", "ws-1"));
 
     expect(result.current.loading).toBe(true);
+    // No bootstrap → nothing resolved yet, so no workspace is reflected.
+    expect(result.current.shellWorkspaceId).toBeUndefined();
 
     await waitFor(() => expect(result.current.loading).toBe(false));
 
     expect(result.current.shell).toBe(fetched);
+    expect(result.current.shellWorkspaceId).toBe("ws-1");
     expect(mockGetShell).toHaveBeenCalled();
   });
 

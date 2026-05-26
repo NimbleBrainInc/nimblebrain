@@ -7,8 +7,25 @@ export function useShell(_token: string, workspaceId?: string, initialShell?: Sh
   const [shell, setShell] = useState<ShellData | null>(initialShell ?? null);
   const [loading, setLoading] = useState(!initialShell);
   const [error, setError] = useState<string | null>(null);
+  // Which workspace the current `shell` placements reflect. Seeded from the
+  // mount-time workspace, because the bootstrap shell is built server-side for
+  // `bootstrap.activeWorkspace` — the same id passed here on first render.
+  //
+  // Why a separate signal and not just `loading`: on a workspace switch we
+  // deliberately keep the old shell visible and leave `loading === false` (no
+  // sidebar flash). During that window `shell` still holds the *previous*
+  // workspace's placements, so a per-workspace consumer (the overview page's
+  // app grid) needs to know the shell hasn't caught up yet — `loading` can't
+  // tell it. Comparing `shellWorkspaceId` to the target id closes that gap.
+  const [shellWorkspaceId, setShellWorkspaceId] = useState<string | undefined>(
+    initialShell ? workspaceId : undefined,
+  );
   // When bootstrap data is provided, skip the first effect invocation
   const skipNext = useRef(!!initialShell);
+  // Latest workspaceId, readable from the stable `refresh` callback without
+  // making it churn (and re-subscribe its SSE consumer) on every switch.
+  const workspaceIdRef = useRef(workspaceId);
+  workspaceIdRef.current = workspaceId;
 
   /**
    * Refetch the shell payload. Used by bundle lifecycle SSE events so
@@ -20,6 +37,7 @@ export function useShell(_token: string, workspaceId?: string, initialShell?: Sh
     try {
       const data = await getShell();
       setShell(data);
+      setShellWorkspaceId(workspaceIdRef.current);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load shell");
@@ -43,6 +61,7 @@ export function useShell(_token: string, workspaceId?: string, initialShell?: Sh
       .then((data) => {
         if (!cancelled) {
           setShell(data);
+          setShellWorkspaceId(workspaceId);
           setLoading(false);
         }
       })
@@ -80,5 +99,5 @@ export function useShell(_token: string, workspaceId?: string, initialShell?: Sh
     );
   }, [shell]);
 
-  return { shell, loading, error, forSlot, mainRoutes, refresh };
+  return { shell, loading, error, shellWorkspaceId, forSlot, mainRoutes, refresh };
 }

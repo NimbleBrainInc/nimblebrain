@@ -75,17 +75,27 @@ export function WorkspaceOverviewPage() {
     );
   }
 
-  // Apps in this workspace come from the placement registry's grouped
-  // sub-slots (anything under `sidebar.<group>`). Bare `sidebar` items
-  // (Home, Conversations, …) are core nav, not apps. The shell context
-  // is always mounted by the time this page renders (the route lives
-  // under the same provider in `App.tsx`), so a null shell would mean
-  // a real wiring bug — render empty rather than crash.
-  const apps = shell
-    ? shell
-        .forSlot("sidebar")
-        .filter((p) => p.slot.startsWith("sidebar.") && !p.slot.startsWith("sidebar.bottom"))
-    : [];
+  // Apps come from the placement registry's grouped sub-slots (anything under
+  // `sidebar.<group>`). Bare `sidebar` items (Home, Conversations, …) are core
+  // nav, not apps.
+  //
+  // Readiness — not just "is there a shell?". The shell holds ONE workspace's
+  // placements at a time and lags a switch (old data stays visible while the
+  // refetch is in flight, with no `loading` flag — see ShellContext). Compare
+  // the shell's workspace to THIS page's workspace (`workspace.id`, derived
+  // from the route slug — the stable truth; the active workspace converges to
+  // it after the route guard's sync effect). Until they match, the shell is
+  // still showing the previous workspace's apps, so the grid is "not ready"
+  // and must render a skeleton, never the empty state. Placements are
+  // registered eagerly server-side, so a matching shell resolves near-instantly
+  // — apps don't wait on the (slower, async) briefing.
+  const appsReady = shell != null && shell.shellWorkspaceId === workspace.id;
+  const apps =
+    appsReady && shell
+      ? shell
+          .forSlot("sidebar")
+          .filter((p) => p.slot.startsWith("sidebar.") && !p.slot.startsWith("sidebar.bottom"))
+      : [];
 
   return (
     <div className="h-full overflow-y-auto" data-testid="workspace-overview-page">
@@ -102,7 +112,7 @@ export function WorkspaceOverviewPage() {
               {workspace.name}
             </h1>
             <p className="mt-2 text-sm text-muted-foreground italic">
-              {describeWorkspace(workspace, apps.length)}
+              {describeWorkspace(workspace, appsReady ? apps.length : null)}
             </p>
           </div>
           <Link
@@ -131,7 +141,9 @@ export function WorkspaceOverviewPage() {
         <div className="text-[11px] font-bold tracking-[0.08em] uppercase text-muted-foreground mb-3">
           Available apps
         </div>
-        {apps.length === 0 ? (
+        {!appsReady ? (
+          <AppGridSkeleton />
+        ) : apps.length === 0 ? (
           <div
             className="rounded-lg border border-dashed border-border p-8 text-center text-sm text-muted-foreground"
             data-testid="workspace-overview-empty"
@@ -160,10 +172,38 @@ export function WorkspaceOverviewPage() {
   );
 }
 
-function describeWorkspace(workspace: WorkspaceInfo, appCount: number): string {
-  const apps = `${appCount} ${appCount === 1 ? "app installed" : "apps installed"}`;
+// `appCount === null` means the app list hasn't resolved for this workspace
+// yet — show only the member count (known immediately from the workspace
+// list) rather than flashing a wrong "0 apps installed".
+function describeWorkspace(workspace: WorkspaceInfo, appCount: number | null): string {
   const members = `${workspace.memberCount} ${workspace.memberCount === 1 ? "member" : "members"}`;
+  if (appCount === null) return `${members}.`;
+  const apps = `${appCount} ${appCount === 1 ? "app installed" : "apps installed"}`;
   return `${apps}, ${members}.`;
+}
+
+// Loading placeholder for the app grid: shown while the shell hasn't caught up
+// to this workspace (switch / deep-link window). Mirrors AppCard's shape so the
+// grid doesn't jump when real cards replace it. A fixed three-card placeholder
+// — the real count is unknown until the shell resolves.
+function AppGridSkeleton() {
+  return (
+    <div
+      className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3"
+      data-testid="workspace-overview-apps-skeleton"
+      aria-hidden
+    >
+      {[0, 1, 2].map((i) => (
+        <div key={i} className="flex flex-col gap-2 p-4 rounded-lg border border-border bg-card">
+          <div className="flex items-center gap-2">
+            <div className="h-4 w-4 shrink-0 rounded bg-muted animate-pulse" />
+            <div className="h-3.5 w-2/3 rounded bg-muted animate-pulse" />
+          </div>
+          <div className="h-2.5 w-1/3 rounded bg-muted animate-pulse" />
+        </div>
+      ))}
+    </div>
+  );
 }
 
 function AppCard({ placement, onOpen }: { placement: PlacementEntry; onOpen: () => void }) {

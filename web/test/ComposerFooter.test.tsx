@@ -116,6 +116,9 @@ const SHELL_VALUE = {
     },
   ],
   mainRoutes: (): PlacementEntry[] => [],
+  // Unused by ComposerFooter (it reads forSlot directly); present to satisfy
+  // the ShellContextValue contract.
+  shellWorkspaceId: undefined,
 };
 
 function harness({
