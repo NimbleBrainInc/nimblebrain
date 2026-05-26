@@ -103,7 +103,7 @@ describe("parseNamespacedToolName — parsing", () => {
   test("throws on a malformed ws_ prefix — a workspace attempt, not a bare name", () => {
     // A leading `ws_`-prefixed segment that fails WORKSPACE_ID_RE is a
     // malformed/hostile workspace id (typo, traversal, cross-tenant
-    // probe). Surface it rather than silently treating it as global.
+    // probe). Surface it rather than silently treating it as identity-scoped.
     expect(() => parseNamespacedToolName("ws_BAD!-foo")).toThrow(UnknownNamespacedToolName);
   });
 
@@ -164,28 +164,28 @@ describe("round-trip property", () => {
   });
 });
 
-describe("global scope (bare names)", () => {
-  test("a bare platform tool parses to global scope, whole name as toolName", () => {
-    // No `ws_<id>-` prefix → global singleton. The whole name is the tool
+describe("identity scope (bare names)", () => {
+  test("a bare platform tool parses to identity scope, whole name as toolName", () => {
+    // No `ws_<id>-` prefix → identity scope. The whole name is the tool
     // name (nothing to strip). The orchestrator validates the source
-    // against the kernel global-source set.
+    // against the kernel identity-source set.
     expect(parseNamespacedToolName("nb__search")).toEqual({
       scope: { kind: "identity" },
       toolName: "nb__search",
     });
   });
 
-  test("a bare identity-owned app tool parses to global scope", () => {
+  test("a bare identity-owned app tool parses to identity scope", () => {
     expect(parseNamespacedToolName("conversations__search")).toEqual({
       scope: { kind: "identity" },
       toolName: "conversations__search",
     });
   });
 
-  test("a bare name whose source contains `-` stays global (whole name preserved)", () => {
+  test("a bare name whose source contains `-` stays identity-scoped (whole name preserved)", () => {
     // `synapse-crm` doesn't start with `ws_`, so the leading `-` is NOT a
-    // workspace boundary — the entire name is the (global) tool name. The
-    // orchestrator later rejects it because `synapse-crm` isn't a global
+    // workspace boundary — the entire name is the (identity) tool name. The
+    // orchestrator later rejects it because `synapse-crm` isn't an identity
     // source; the parser doesn't pre-judge that.
     expect(parseNamespacedToolName("synapse-crm__search")).toEqual({
       scope: { kind: "identity" },
@@ -193,8 +193,8 @@ describe("global scope (bare names)", () => {
     });
   });
 
-  test("no `me-` prefix exists — `me-foo` is just a bare global name", () => {
-    // The old design had a `me` sentinel; bare-global dropped it. `me-foo`
+  test("no `me-` prefix exists — `me-foo` is just a bare identity name", () => {
+    // The old design had a `me` sentinel; bare-identity dropped it. `me-foo`
     // is now simply a bare name (head `me` isn't `ws_`-prefixed).
     expect(parseNamespacedToolName("me-foo")).toEqual({
       scope: { kind: "identity" },
@@ -202,7 +202,7 @@ describe("global scope (bare names)", () => {
     });
   });
 
-  test("a workspace prefix still wins over global — ws_ takes the route", () => {
+  test("a workspace prefix still wins over identity — ws_ takes the route", () => {
     expect(parseNamespacedToolName("ws_helix-nb__search")).toEqual({
       scope: { kind: "workspace", wsId: "ws_helix" },
       toolName: "nb__search",

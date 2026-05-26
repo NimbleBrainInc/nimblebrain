@@ -359,7 +359,7 @@ describe("/mcp identity-bound session (Stage 2 T007)", () => {
     }
   });
 
-  it("tools/call with a bare name rejects with -32602 (bare → global scope, not silently routed to a workspace)", async () => {
+  it("tools/call with a bare name rejects with -32602 (bare → identity scope, not silently routed to a workspace)", async () => {
     const client = await createIdentityBoundClient();
     try {
       let errorCode: number | undefined;

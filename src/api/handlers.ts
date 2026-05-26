@@ -851,16 +851,15 @@ export async function handleToolCall(
     // Identity tools have no workspace registry — dispatch straight to the
     // source with the bare tool name (owner-gated in the handler), mirroring
     // the `/mcp` identity branch.
-    result = await runWithRequestContext(reqCtx, () =>
-      identitySource
-        ? identitySource.execute(toolName.slice(toolName.indexOf("__") + 2), coercedArgs)
-        : // biome-ignore lint/style/noNonNullAssertion: workspaceRegistry is set whenever identitySource is absent (else we 400'd above)
-          workspaceRegistry!.execute({
-            id: callId,
-            name: toolName,
-            input: coercedArgs,
-          }),
-    );
+    result = await runWithRequestContext(reqCtx, () => {
+      if (identitySource) {
+        return identitySource.execute(toolName.slice(toolName.indexOf("__") + 2), coercedArgs);
+      }
+      // A non-identity source always resolved a workspace registry above (or
+      // we 400'd); the guard narrows the type without a non-null assertion.
+      if (!workspaceRegistry) throw new Error("workspace registry missing for workspace tool");
+      return workspaceRegistry.execute({ id: callId, name: toolName, input: coercedArgs });
+    });
   } catch (err) {
     const ms = Math.round(performance.now() - t0);
     const failEvent = {

@@ -692,12 +692,13 @@ function createServer(
     // ── Stage 2: parse the namespaced tool name + route via orchestrator
     //
     // Strict invariant — no fallback to a "current workspace." A bare
-    // `<source>__<tool>` name (no `ws_<id>-` prefix) parses to global scope;
-    // until W3 wires global dispatch we surface it as `-32602 Invalid params`
-    // per MCP spec with `error.data.reason: "global_not_routable"`. Truly
-    // malformed names (empty, empty tool, bad `ws_` id) surface as
-    // `invalid_tool_name`. Either way the client gets a meaningful reason and
-    // the call never silently routes. The orchestrator's five error classes
+    // `<source>__<tool>` name (no `ws_<id>-` prefix) parses to IDENTITY scope
+    // and routes through the identity door (below); if its source isn't a
+    // kernel identity source it surfaces as `-32602 Invalid params` with
+    // `error.data.reason: "unknown_identity_source"`. Truly malformed names
+    // (empty, empty tool, bad `ws_` id) surface as `invalid_tool_name`. Either
+    // way the client gets a meaningful reason and the call never silently
+    // routes. The orchestrator's five error classes
     // each map to a distinct response shape.
     let routed: Awaited<ReturnType<typeof routeToolCall>>;
     try {
@@ -766,6 +767,17 @@ function createServer(
       if (!isToolEnabled(fullName, features)) {
         return {
           content: [{ type: "text" as const, text: `Tool "${name}" is disabled` }],
+          isError: true,
+        };
+      }
+      // Role-gate at DISPATCH, not just surfacing — the workspace branch and
+      // the REST handler both do, and surfacing already hides role-gated
+      // identity tools, so a crafted bare `tools/call` must not slip past.
+      // (No identity tool is role-gated today; this closes the gap before
+      // files/automations land an admin-gated one.)
+      if (!isToolVisibleToRole(fullName, sessionCtx.identity?.orgRole)) {
+        return {
+          content: [{ type: "text" as const, text: `Tool "${name}" is not available` }],
           isError: true,
         };
       }
