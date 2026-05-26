@@ -182,3 +182,36 @@ describe("POST /v1/tools/call with server=nb", () => {
 		expect(body.error).toBe("tool_not_found");
 	});
 });
+
+describe("POST /v1/tools/call with an identity source (conversations)", () => {
+	// conversations is a kernel identity source — removed from workspace
+	// registries. The REST tool-call path must resolve it through the identity
+	// door (like /mcp), not the workspace registry, which would 404 "not found
+	// on server". Regression guard for the bug where clicking/searching
+	// conversations failed after the registry partition.
+	it("routes conversations__list through the identity door with NO workspace", async () => {
+		const res = await fetch(`${baseUrl}/v1/tools/call`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" }, // no X-Workspace-Id
+			body: JSON.stringify({ server: "conversations", tool: "list", arguments: {} }),
+		});
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		expect(body.isError).toBe(false);
+	});
+
+	it("ignores a (stale) X-Workspace-Id on an identity source — search still routes", async () => {
+		const res = await fetch(`${baseUrl}/v1/tools/call`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
+			body: JSON.stringify({
+				server: "conversations",
+				tool: "search",
+				arguments: { query: "anything" },
+			}),
+		});
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		expect(body.isError).toBe(false);
+	});
+});

@@ -13,12 +13,17 @@ import {
   ConversationCorruptedError,
   RunInProgressError,
 } from "../runtime/errors.ts";
-import { type RequestContext, runWithRequestContext } from "../runtime/request-context.ts";
+import {
+  type RequestContext,
+  type RequestScope,
+  runWithRequestContext,
+} from "../runtime/request-context.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import type { ChatRequest } from "../runtime/types.ts";
 import { coerceInputForSchema } from "../tools/coerce-input.ts";
 import type { HealthMonitor } from "../tools/health-monitor.ts";
-import type { ResourceData } from "../tools/types.ts";
+import type { ToolRegistry } from "../tools/registry.ts";
+import type { ResourceData, ToolSource } from "../tools/types.ts";
 import { validateToolInput } from "../tools/validate-input.ts";
 import { estimateCost } from "../usage/cost.ts";
 import { bytesToBase64 } from "../util/base64.ts";
@@ -719,29 +724,48 @@ export async function handleToolCall(
 
   const { sseManager, eventSink, identity, workspaceId } = options ?? {};
 
-  // Resolve registry: workspace-scoped when available, global otherwise
-  if (!workspaceId) throw new Error("Workspace ID required");
-  const registry = await runtime.ensureWorkspaceRegistry(workspaceId);
-
-  // Check if server exists
-  if (!registry.hasSource(server)) {
-    return apiError(404, "tool_not_found", `Tool "${tool}" not found on server "${server}"`, {
-      server,
-      tool,
-    });
+  // Resolve the source through the two doors — the same decision the
+  // orchestrator makes for `/mcp` (`routeToolCall`). Identity sources
+  // (conversations, …) are owned by the user and live OUTSIDE any workspace:
+  // they resolve from the identity-source set and dispatch with identity
+  // scope, regardless of any (stale) X-Workspace-Id. Everything else resolves
+  // through the workspace registry and keeps its per-workspace permission
+  // gating on execute. Without this, a REST call to an identity source 404s
+  // ("not found on server") because the workspace registry no longer holds it.
+  const identitySource = runtime.getIdentitySource(server);
+  let workspaceRegistry: ToolRegistry | undefined;
+  let source: ToolSource | undefined;
+  let scope: RequestScope;
+  if (identitySource) {
+    source = identitySource;
+    scope = { kind: "identity" };
+  } else {
+    if (!workspaceId) {
+      return apiError(400, "workspace_required", `Tool "${tool}" requires a workspace`, {
+        server,
+        tool,
+      });
+    }
+    workspaceRegistry = await runtime.ensureWorkspaceRegistry(workspaceId);
+    if (!workspaceRegistry.hasSource(server)) {
+      return apiError(404, "tool_not_found", `Tool "${tool}" not found on server "${server}"`, {
+        server,
+        tool,
+      });
+    }
+    source = workspaceRegistry.getSources().find((s) => s.name === server);
+    scope = { kind: "workspace", workspaceId, workspaceAgents: null, workspaceModelOverride: null };
   }
 
-  // Check if tool exists on the server
-  // The tool name may already be prefixed (e.g., "home__briefing" from the bridge)
-  // or bare (e.g., "briefing"). Normalize to full name.
+  // The tool name may already be prefixed (e.g., "home__briefing" from the
+  // bridge) or bare (e.g., "briefing"). Normalize to the full name.
   const toolName = tool.startsWith(`${server}__`) ? tool : `${server}__${tool}`;
 
-  // Coerced args flow through to registry.execute below — validation and
-  // execution must see the same shape. Defaults to the raw args; replaced
-  // with the schema-coerced version once we resolve the tool definition.
+  // Coerced args flow through to execute below — validation and execution must
+  // see the same shape. Defaults to the raw args; replaced with the
+  // schema-coerced version once we resolve the tool definition.
   let coercedArgs: Record<string, unknown> = args ?? {};
 
-  const source = registry.getSources().find((s) => s.name === server);
   if (source) {
     try {
       const tools = await source.tools();
@@ -790,16 +814,12 @@ export async function handleToolCall(
     });
   }
 
-  // Build per-request context for AsyncLocalStorage (concurrency-safe). A
-  // present workspace id is a workspace request; its absence is an identity
-  // request — never a nullable workspace. A workspace-scoped tool invoked
-  // without a workspace then hard-fails via `requireWorkspaceId()` (identity
-  // scope has no workspace), rather than running against a null default.
+  // Build per-request context for AsyncLocalStorage (concurrency-safe). The
+  // scope is the resolved door — identity for a kernel identity source,
+  // workspace otherwise — never a nullable workspace.
   const reqCtx: RequestContext = {
     identity: identity ?? null,
-    scope: workspaceId
-      ? { kind: "workspace", workspaceId, workspaceAgents: null, workspaceModelOverride: null }
-      : { kind: "identity" },
+    scope,
   };
 
   // Audit log
@@ -814,23 +834,32 @@ export async function handleToolCall(
       id: callId,
       server,
       userId: identity?.id ?? null,
-      workspaceId: workspaceId ?? null,
+      workspaceId: scope.kind === "workspace" ? scope.workspaceId : null,
     },
   };
   sseManager?.emit(bridgeCallEvent);
   eventSink?.emit(bridgeCallEvent);
 
   const t0 = performance.now();
-  let result: Awaited<ReturnType<typeof registry.execute>> | undefined;
+  let result: Awaited<ReturnType<ToolRegistry["execute"]>> | undefined;
   try {
     // Identity flows through AsyncLocalStorage via `reqCtx`. Sources that
     // need the caller's identity read it from `getRequestContext()`.
+    //
+    // Workspace tools dispatch through the registry (which applies the
+    // per-workspace permission gating wired via `setPermissionContext`).
+    // Identity tools have no workspace registry — dispatch straight to the
+    // source with the bare tool name (owner-gated in the handler), mirroring
+    // the `/mcp` identity branch.
     result = await runWithRequestContext(reqCtx, () =>
-      registry.execute({
-        id: callId,
-        name: toolName,
-        input: coercedArgs,
-      }),
+      identitySource
+        ? identitySource.execute(toolName.slice(toolName.indexOf("__") + 2), coercedArgs)
+        : // biome-ignore lint/style/noNonNullAssertion: workspaceRegistry is set whenever identitySource is absent (else we 400'd above)
+          workspaceRegistry!.execute({
+            id: callId,
+            name: toolName,
+            input: coercedArgs,
+          }),
     );
   } catch (err) {
     const ms = Math.round(performance.now() - t0);
@@ -842,7 +871,7 @@ export async function handleToolCall(
         ok: false,
         ms,
         userId: identity?.id ?? null,
-        workspaceId: workspaceId ?? null,
+        workspaceId: scope.kind === "workspace" ? scope.workspaceId : null,
       },
     };
     sseManager?.emit(failEvent);
@@ -891,7 +920,7 @@ export async function handleToolCall(
       ok: !result.isError,
       ms,
       userId: identity?.id ?? null,
-      workspaceId: workspaceId ?? null,
+      workspaceId: scope.kind === "workspace" ? scope.workspaceId : null,
     },
   };
   sseManager?.emit(doneEvent);
