@@ -1,21 +1,17 @@
 // ---------------------------------------------------------------------------
-// ChatChrome — the floating chat toggle + sliding chat panel + resize
-// handle, lifted out of AppWithChat so it can be mounted globally from
-// ShellLayout (chat is always available, not just on app routes).
+// ChatChrome — the chat panel chrome: floating toggle, sliding
+// sidebar/fullscreen panel, resize handle, keyboard shortcuts, unread
+// tracking, and deep-link open.
 //
-// Two usage modes:
-//   1. With `appContext`: AppWithChat passes the active app's context
-//      so chats sent from inside an app carry "[App Context: …]"
-//      metadata in the message.
-//   2. Without `appContext` (global mode): ShellLayout mounts this
-//      with no app context; chats sent from non-app routes (Home,
-//      workspace overview, settings, …) are workspace-agnostic.
+// INVARIANT: mounted exactly once, globally, by ShellLayout. A second
+// mount renders a second panel. Nothing else may render it — every route
+// gets chat through this single instance via ChatPanelContext, which is
+// why the panel is identical on home, workspace overview, and app views.
 //
-// Mounted twice would render two panels — ShellLayout's instance is
-// active on every route, so AppWithChat MUST NOT render this directly.
-// AppWithChat's `chat-on-app-route` behavior comes from the same shell
-// instance through ChatPanelContext, plus app-specific iframe
-// coordination (marginRight + resize handle) which stays in AppWithChat.
+// App-context stamping ("[App Context: …]" on a message) is deliberately
+// NOT done here: a global mount has no focused app to attach. That
+// stamping lives where the focus is known — AppWithChat's iframe→chat
+// channel. Messages typed into this panel are workspace-agnostic.
 // ---------------------------------------------------------------------------
 
 import { MessageSquare } from "lucide-react";
@@ -24,7 +20,6 @@ import { useLocation } from "react-router-dom";
 import { useChatContext } from "../context/ChatContext";
 import { useChatPanelContext } from "../context/ChatPanelContext";
 import { useSidebar } from "../context/SidebarContext";
-import type { AppContext } from "../types";
 import type { ChatPanelRef } from "./ChatPanel";
 import { ChatPanel } from "./ChatPanel";
 import { ResizeHandle } from "./ResizeHandle";
@@ -46,12 +41,7 @@ function useIsMobile(): boolean {
   return isMobile;
 }
 
-interface ChatChromeProps {
-  /** App context to stamp on messages, if any. Omit for global mode. */
-  appContext?: AppContext;
-}
-
-export function ChatChrome({ appContext }: ChatChromeProps) {
+export function ChatChrome() {
   const { panelState, panelWidth, setPanelWidth, openPanel, closePanel, toggleFullscreen } =
     useChatPanelContext();
   const panelRef = useRef<ChatPanelRef>(null);
@@ -162,13 +152,10 @@ export function ChatChrome({ appContext }: ChatChromeProps) {
   const handleFullscreen = useCallback(() => toggleFullscreen(), [toggleFullscreen]);
 
   const handleSendMessage = useCallback(
-    (text: string, files?: File[]) => {
-      // App context stamps the message metadata when a chat is sent
-      // from inside an app's iframe (AppWithChat). In global mode no
-      // app context is attached.
-      return chat.sendMessage(text, appContext, files);
-    },
-    [chat, appContext],
+    // No app context: this global mount has no focused app (see file
+    // header). Stamping happens in AppWithChat's iframe→chat channel.
+    (text: string, files?: File[]) => chat.sendMessage(text, undefined, files),
+    [chat],
   );
 
   const isSidebar = panelState === "sidebar";
@@ -236,9 +223,10 @@ export function ChatChrome({ appContext }: ChatChromeProps) {
       </div>
 
       {/* Resize handle — anchored to the panel's left edge. Rendered here at
-          the single panel mount point so EVERY route gets a resizable,
-          collapsible chat sidebar, not just app views. App iframes read
-          `isResizing` from ChatPanelContext to drop pointer-events mid-drag. */}
+          the single panel mount point so EVERY route gets a resizable
+          sidebar, not just app views. ResizeHandle is self-contained: while
+          dragging it renders a full-viewport overlay that captures the mouse
+          over app iframes, so no shared drag flag crosses components. */}
       {isSidebar && !isMobile && (
         <div className="fixed top-0 h-full z-20 hidden sm:block" style={{ right: panelWidth }}>
           <ResizeHandle

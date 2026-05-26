@@ -1,21 +1,18 @@
 // ---------------------------------------------------------------------------
-// AppWithChat — iframe renderer for an app placement, with chat-panel
-// coordination via shared ChatPanelContext.
+// AppWithChat — iframe renderer for a single app placement.
 //
-// The chat panel itself (toggle button, sliding sidebar/fullscreen,
-// keyboard shortcuts, unread tracking, deep-link) lives in
-// `ChatChrome` mounted at the shell level, so chat is always one
-// click away regardless of route. This component keeps only what's
-// iframe-specific:
-//   - `SlotRenderer` for the app placement
-//   - `marginRight: panelWidth` on the iframe area so the app doesn't
-//     get covered when the chat panel is open as a sidebar
-//   - `ResizeHandle` anchored to the chat panel's left edge for
-//     drag-to-resize (the handle coordinates with the iframe's
-//     marginRight via shared ChatPanelContext state)
+// Scope is deliberately narrow. The chat panel — toggle, sliding
+// sidebar/fullscreen, resize handle — and the `marginRight` push-over
+// that makes room for it are all shell-level (`ChatChrome` and
+// `ShellLayout`), so they behave identically on every route. Don't pull
+// any of that back in here; this component renders one app and nothing
+// about the panel's own layout.
+//
+// What stays here, because it needs the focused app:
+//   - `SlotRenderer` — renders the placement's iframe
 //   - `handleChat` / `handlePromptAction` — iframe→shell channels for
-//     "send this message in chat from inside the app"; these stamp
-//     the app's AppContext on outgoing messages
+//     "send this from inside the app". These are the one place a focused
+//     app is known, so they stamp its `AppContext` on outgoing messages.
 // ---------------------------------------------------------------------------
 
 import { useCallback, useEffect, useMemo, useState } from "react";
