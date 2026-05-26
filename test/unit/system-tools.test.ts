@@ -82,6 +82,21 @@ async function makeTodoSearchRegistry(): Promise<ToolRegistry> {
 	return registry;
 }
 
+async function makeManyMatchingToolsRegistry(count: number): Promise<ToolRegistry> {
+	const registry = new ToolRegistry();
+	const source = await makeInProcessSource(
+		"many",
+		Array.from({ length: count }, (_, i) => ({
+			name: `common_tool_${String(i).padStart(2, "0")}`,
+			description: "Common searchable helper",
+			inputSchema: { type: "object", properties: {} },
+			handler: async () => ({ content: textContent("ok"), isError: false }),
+		})),
+	);
+	registry.addSource(source);
+	return registry;
+}
+
 function getStructured<T>(result: { structuredContent?: unknown }): T | undefined {
 	return result.structuredContent as T | undefined;
 }
@@ -98,6 +113,29 @@ describe("System Tools", () => {
 		expect(extractText(result.content)).toContain("test__greet");
 		expect(getStructured<{ tools?: Array<{ name: string }> }>(result)?.tools).toEqual([
 			{ name: "test__greet" },
+		]);
+	});
+
+	it("search with scope=tools preserves single-word prefix substring matches", async () => {
+		const registry = new ToolRegistry();
+		const source = await makeInProcessSource("test", [
+			{
+				name: "greeting",
+				description: "Friendly salutation helper",
+				inputSchema: { type: "object", properties: {} },
+				handler: async () => ({ content: textContent("ok"), isError: false }),
+			},
+		]);
+		registry.addSource(source);
+		const systemTools = await createSystemTools(() => registry);
+		const result = await systemTools.execute("search", {
+			scope: "tools",
+			query: "greet",
+		});
+
+		expect(result.isError).toBe(false);
+		expect(getStructured<{ tools?: Array<{ name: string }> }>(result)?.tools).toEqual([
+			{ name: "test__greeting" },
 		]);
 	});
 
@@ -144,6 +182,23 @@ describe("System Tools", () => {
 		expect(getStructured<{ tools?: Array<{ name: string }> }>(result)?.tools?.[0]).toEqual({
 			name: "synapse-todo-board__create_board_task",
 		});
+	});
+
+	it("search with scope=tools caps broad matches at the top 25 results", async () => {
+		const registry = await makeManyMatchingToolsRegistry(30);
+		const systemTools = await createSystemTools(() => registry);
+		const result = await systemTools.execute("search", {
+			scope: "tools",
+			query: "common",
+		});
+
+		expect(result.isError).toBe(false);
+		expect(extractText(result.content)).toContain(
+			'Found 30 tool(s) for "common" (showing top 25):',
+		);
+		expect(getStructured<{ tools?: Array<{ name: string }> }>(result)?.tools).toHaveLength(25);
+		expect(extractText(result.content)).toContain("many__common_tool_24");
+		expect(extractText(result.content)).not.toContain("many__common_tool_25");
 	});
 
 	it("search with scope=tools and empty query returns all tools grouped", async () => {

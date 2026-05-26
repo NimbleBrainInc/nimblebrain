@@ -159,11 +159,13 @@ export async function createSystemTools(
         const matches = rankToolSearchResults(all, q);
         if (matches.length === 0)
           return { content: textContent(`No tools matched "${query}".`), isError: false };
-        const lines = [`Found ${matches.length} tool(s) for "${query}":\n`];
-        for (const t of matches) lines.push(`- **${t.name}**: ${t.description}`);
+        const shown = matches.slice(0, 25);
+        const suffix = matches.length > shown.length ? ` (showing top ${shown.length})` : "";
+        const lines = [`Found ${matches.length} tool(s) for "${query}"${suffix}:\n`];
+        for (const t of shown) lines.push(`- **${t.name}**: ${t.description}`);
         return {
           content: textContent(lines.join("\n")),
-          structuredContent: { tools: matches.map((t) => ({ name: t.name })) },
+          structuredContent: { tools: shown.map((t) => ({ name: t.name })) },
           isError: false,
         };
       },

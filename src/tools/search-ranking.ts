@@ -51,12 +51,14 @@ export function rankToolSearchResults<T extends ToolSearchResult>(tools: T[], qu
   for (const tool of tools) {
     const name = tool.name.toLowerCase();
     const description = tool.description.toLowerCase();
+    const nameSubstringMatch = name.includes(normalizedQuery);
+    const descriptionSubstringMatch = description.includes(normalizedQuery);
     const nameTokens = tokenSet(tool.name);
     const descriptionTokens = tokenSet(tool.description);
 
     let score = 0;
-    if (name.includes(normalizedQuery)) score += 200;
-    if (description.includes(normalizedQuery)) score += 100;
+    if (nameSubstringMatch) score += 200;
+    if (descriptionSubstringMatch) score += 100;
 
     let matchedTerms = 0;
     for (const term of queryTerms) {
@@ -69,7 +71,7 @@ export function rankToolSearchResults<T extends ToolSearchResult>(tools: T[], qu
       score += descriptionMatch ? 10 : 0;
     }
 
-    if (matchedTerms === 0) continue;
+    if (matchedTerms === 0 && !nameSubstringMatch && !descriptionSubstringMatch) continue;
     const fullCoverage = matchedTerms === queryTerms.length;
     score += matchedTerms * 1000;
     if (fullCoverage) score += 500;
