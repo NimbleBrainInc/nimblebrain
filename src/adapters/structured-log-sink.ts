@@ -39,6 +39,10 @@ export class StructuredLogSink implements EventSink {
   private conversationId: string | undefined;
   private userId: string | undefined;
   private workspaceId: string | undefined;
+  /** True after a write failure surfaced a console.warn; reset on the next
+   *  successful write so a recurring failure (after intermittent recovery)
+   *  warns again. Avoids spamming during a sustained outage. */
+  private writeWarned = false;
 
   constructor(config: StructuredLogConfig) {
     this.dir = config.dir;
@@ -94,10 +98,20 @@ export class StructuredLogSink implements EventSink {
     const filename = `nimblebrain-${today}.jsonl`;
     try {
       appendFileSync(join(this.dir, filename), `${JSON.stringify(record)}\n`);
-    } catch {
+      this.writeWarned = false;
+    } catch (err) {
       // Best-effort logging: a write failure (disk full, perms, or a detached
       // turn emitting after the workdir was torn down) must never throw into
-      // the event-emit path and crash the caller.
+      // the event-emit path and crash the caller. Surface the first failure of
+      // an episode so operators see disk/perms incidents; suppress until a
+      // subsequent success re-arms.
+      if (!this.writeWarned) {
+        this.writeWarned = true;
+        console.warn(
+          `[structured-log-sink] write to ${this.dir} failed (further failures suppressed until recovery):`,
+          err instanceof Error ? err.message : err,
+        );
+      }
     }
   }
 
