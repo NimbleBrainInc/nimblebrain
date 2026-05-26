@@ -34,11 +34,16 @@
 
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { describe, expect, test } from "bun:test";
+import { describe, expect, mock, test } from "bun:test";
 
 // Side-effect import to pin the module in the cache with full exports
 // before any later test installs a mock.module replacement.
-import { setActiveWorkspaceId } from "../api/client";
+import {
+  ApiClientError,
+  errorFromResponse,
+  setActiveWorkspaceId,
+  setOnWorkspaceError,
+} from "../api/client";
 import type { ChatRequest } from "../types";
 
 describe("ChatRequest wire shape (T006 contract)", () => {
@@ -63,6 +68,64 @@ describe("ChatRequest wire shape (T006 contract)", () => {
     // Calling with null is benign and resets state — verify the call
     // doesn't throw.
     expect(() => setActiveWorkspaceId(null)).not.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// workspace_error → onWorkspaceError recovery hook
+//
+// A data call that fails with `workspace_error` (stale/invalid
+// X-Workspace-Id: deleted workspace, lost membership, malformed id) fires the
+// registered handler so the shell can drop the selection and route home —
+// symmetric to the 401 → onAuthError path. The error is still returned so
+// callers' local handling is unchanged.
+//
+// Asserted on `errorFromResponse` (the seam where the hook fires) rather than
+// through `callTool` → fetch: this file pins the REAL `../api/client` early,
+// and a pure-function assertion sidesteps the suite's `mock.module(...)` /
+// `globalThis.fetch` fragility that makes a `callTool` round-trip unreliable.
+//
+// Regression guard: production users hit raw
+// `{"error":"workspace_error","message":"Workspace \"ws_..\" not found."}`
+// JSON mid-session when a stale X-Workspace-Id reached a data fetch with no
+// route guard in front of it.
+// ---------------------------------------------------------------------------
+
+describe("errorFromResponse → onWorkspaceError recovery hook", () => {
+  test("fires onWorkspaceError for a workspace_error body and returns the error", () => {
+    const fired = mock(() => {});
+    setOnWorkspaceError(fired);
+
+    const err = errorFromResponse(
+      { error: "workspace_error", message: 'Workspace "ws_empty" not found.' },
+      400,
+    );
+
+    expect(fired).toHaveBeenCalledTimes(1);
+    expect(err).toBeInstanceOf(ApiClientError);
+    expect(err.code).toBe("workspace_error");
+    expect(err.status).toBe(400);
+    setOnWorkspaceError(null);
+  });
+
+  test("does NOT fire for unrelated errors", () => {
+    const fired = mock(() => {});
+    setOnWorkspaceError(fired);
+
+    errorFromResponse({ error: "not_found", message: "nope" }, 404);
+
+    expect(fired).toHaveBeenCalledTimes(0);
+    setOnWorkspaceError(null);
+  });
+
+  test("does not fire after the handler is cleared", () => {
+    const fired = mock(() => {});
+    setOnWorkspaceError(fired);
+    setOnWorkspaceError(null);
+
+    errorFromResponse({ error: "workspace_error", message: "stale" }, 400);
+
+    expect(fired).toHaveBeenCalledTimes(0);
   });
 });
 

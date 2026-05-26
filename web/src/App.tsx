@@ -15,6 +15,7 @@ import {
   setActiveWorkspaceId,
   setAuthToken,
   setOnAuthError,
+  setOnWorkspaceError,
   setPlatformVersion,
   tryBootstrap,
 } from "./api/client";
@@ -40,6 +41,7 @@ import { useDataSync } from "./hooks/useDataSync";
 import { useEvents } from "./hooks/useEvents";
 import { useShell } from "./hooks/useShell";
 import { bootstrapWorkspacesToInfo } from "./lib/bootstrap";
+import { recoverFromWorkspaceError } from "./lib/workspace-recovery";
 import { toSlug } from "./lib/workspace-slug";
 import { GlobalHomePage } from "./pages/GlobalHomePage";
 import { ProfilePage } from "./pages/ProfilePage";
@@ -248,6 +250,25 @@ function AuthenticatedAppContent({
   const navigate = useNavigate();
   const location = useLocation();
   const activeSlug = wsCtx.activeWorkspace ? toSlug(wsCtx.activeWorkspace.id) : null;
+
+  // Recover from a stale/invalid workspace context. A data call that fires
+  // with an X-Workspace-Id the server rejects (deleted workspace, lost
+  // membership, or a dynamic /w/:slug deep-link the user can't see) returns
+  // `workspace_error`. Bootstrap validates the active workspace on load, so
+  // this is the mid-session net: drop the bad selection (excluding the
+  // rejected id), fall back to a valid workspace, and route home rather than
+  // surface raw error JSON. See recoverFromWorkspaceError for the contract.
+  useEffect(() => {
+    setOnWorkspaceError(() => {
+      recoverFromWorkspaceError(
+        wsCtx.workspaces,
+        wsCtx.activeWorkspace?.id,
+        wsCtx.setActiveWorkspace,
+        () => navigate("/", { replace: true }),
+      );
+    });
+    return () => setOnWorkspaceError(null);
+  }, [wsCtx, navigate]);
 
   const handleNavigate = useCallback(
     (route: string) => {
