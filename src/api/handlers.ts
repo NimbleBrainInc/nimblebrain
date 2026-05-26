@@ -673,9 +673,7 @@ export async function handleReadResource(
   // catches the exception, returning null → 404 to the caller.
   const reqCtx: RequestContext = {
     identity: null,
-    workspaceId,
-    workspaceAgents: null,
-    workspaceModelOverride: null,
+    scope: { kind: "workspace", workspaceId, workspaceAgents: null, workspaceModelOverride: null },
   };
   const resource = await runWithRequestContext(reqCtx, () =>
     runtime.readAppResource(server, uri, workspaceId),
@@ -792,12 +790,16 @@ export async function handleToolCall(
     });
   }
 
-  // Build per-request context for AsyncLocalStorage (concurrency-safe)
+  // Build per-request context for AsyncLocalStorage (concurrency-safe). A
+  // present workspace id is a workspace request; its absence is an identity
+  // request — never a nullable workspace. A workspace-scoped tool invoked
+  // without a workspace then hard-fails via `requireWorkspaceId()` (identity
+  // scope has no workspace), rather than running against a null default.
   const reqCtx: RequestContext = {
     identity: identity ?? null,
-    workspaceId: workspaceId ?? null,
-    workspaceAgents: null,
-    workspaceModelOverride: null,
+    scope: workspaceId
+      ? { kind: "workspace", workspaceId, workspaceAgents: null, workspaceModelOverride: null }
+      : { kind: "identity" },
   };
 
   // Audit log

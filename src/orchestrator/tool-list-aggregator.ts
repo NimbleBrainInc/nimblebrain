@@ -29,6 +29,7 @@
  */
 
 import { namespacedToolName } from "../tools/namespace.ts";
+import type { Tool } from "../tools/types.ts";
 import type { Workspace } from "../workspace/types.ts";
 import {
   type NamespacedToolDescriptor,
@@ -38,6 +39,15 @@ import {
 } from "./tool-list-cache.ts";
 
 export type { NamespacedToolDescriptor, WorkspaceToolLister } from "./tool-list-cache.ts";
+
+/**
+ * Lists the kernel identity sources' tools (conversations, …), source-qualified
+ * (`conversations__list`). Identity tools are owned by the user, not any
+ * workspace, so the aggregator emits them BARE and prepends them to every
+ * identity's union. v1 has no per-tenant identity sources, so the result is
+ * static — listed once and never invalidated (unlike the per-workspace cache).
+ */
+export type IdentityToolLister = () => Promise<readonly Tool[]>;
 
 // ── Surface the aggregator depends on ─────────────────────────────
 
@@ -68,6 +78,12 @@ export interface ToolListAggregatorOptions {
   workDir: string;
   workspaceStore: AggregatorWorkspaceStore;
   listToolsForWorkspace: WorkspaceToolLister;
+  /**
+   * Lists the kernel identity sources' tools, emitted bare and prepended to
+   * every identity's union (see {@link IdentityToolLister}). Optional: tests
+   * and non-identity callers omit it; the union is then workspace-only.
+   */
+  listIdentityTools?: IdentityToolLister;
   cache?: ToolListCacheOptions;
 }
 
@@ -136,6 +152,38 @@ export function createToolListAggregator(options: ToolListAggregatorOptions): To
    */
   const identityMembershipStamp = new Map<string, string>();
 
+  /**
+   * Bare descriptors for the kernel identity sources, listed once. Identity
+   * tools are static (code-defined, not per-tenant install), so unlike the
+   * per-workspace cache they need no FS-watch invalidation — list on first
+   * use, memoize, reuse for every identity. A failed listing drops the memo
+   * so the next call retries.
+   */
+  let identityDescriptorsPromise: Promise<readonly NamespacedToolDescriptor[]> | null = null;
+  const getIdentityDescriptors = (): Promise<readonly NamespacedToolDescriptor[]> => {
+    const lister = options.listIdentityTools;
+    if (!lister) return Promise.resolve([]);
+    if (!identityDescriptorsPromise) {
+      identityDescriptorsPromise = lister().then((tools) =>
+        // Bare: `name === toolName`, `wsId === null`. The orchestrator routes
+        // a bare `<source>__<tool>` through the identity door.
+        tools.map((t) => ({
+          name: t.name,
+          wsId: null,
+          toolName: t.name,
+          description: t.description,
+          inputSchema: t.inputSchema,
+          ...(t.annotations !== undefined ? { annotations: t.annotations } : {}),
+          ...(t.execution !== undefined ? { execution: t.execution } : {}),
+        })),
+      );
+      identityDescriptorsPromise.catch(() => {
+        identityDescriptorsPromise = null;
+      });
+    }
+    return identityDescriptorsPromise;
+  };
+
   const aggregateToolList = async (
     identityId: string,
   ): Promise<readonly NamespacedToolDescriptor[]> => {
@@ -150,7 +198,17 @@ export function createToolListAggregator(options: ToolListAggregatorOptions): To
       cache.invalidateIdentity(identityId);
     }
     identityMembershipStamp.set(identityId, stamp);
-    return cache.getUnionForIdentity(identityId, wsIds, namespacedToolName);
+    // Identity tools (bare, workspace-agnostic) prepend the per-workspace
+    // union. Two independent sources of truth: the cache owns workspace tools
+    // and their invalidation; identity tools are static and live here. When
+    // there are no identity tools, return the cache's memoized union *as-is*
+    // (same reference) — only allocate a fresh array when there's actually
+    // something to prepend.
+    const [identityTools, wsUnion] = await Promise.all([
+      getIdentityDescriptors(),
+      cache.getUnionForIdentity(identityId, wsIds, namespacedToolName),
+    ]);
+    return identityTools.length === 0 ? wsUnion : [...identityTools, ...wsUnion];
   };
 
   const invalidateIdentity = (identityId: string): void => {

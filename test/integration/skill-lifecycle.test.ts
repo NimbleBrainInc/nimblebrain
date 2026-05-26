@@ -43,7 +43,7 @@ async function callTool(
 ): Promise<{ content: string; isError: boolean }> {
 	const registry = runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID);
 	const result = await runWithRequestContext(
-		{ identity: null, workspaceId: TEST_WORKSPACE_ID, workspaceAgents: null, workspaceModelOverride: null },
+		{ identity: null, scope: { kind: "workspace", workspaceId: TEST_WORKSPACE_ID, workspaceAgents: null, workspaceModelOverride: null } },
 		() => registry.execute({
 			id: `test-${Date.now()}`,
 			name: toolName,

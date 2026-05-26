@@ -66,17 +66,20 @@ const DEFAULT_DEBOUNCE_MS = 100;
 /**
  * A tool entry in the aggregated cross-workspace list.
  *
- * The `name` field is the canonical `ws_<id>-<toolName>` form built via
- * `namespacedToolName(wsId, t.name)` — never hand-assembled. `wsId` and
- * `toolName` are carried alongside as derived bookkeeping (so callers
- * don't have to re-parse to render breadcrumbs or attribute audit
- * entries). The remaining fields mirror `Tool` from `src/tools/types.ts`.
+ * For a **workspace** tool the `name` field is the canonical
+ * `ws_<id>-<toolName>` form built via `namespacedToolName(wsId, t.name)` —
+ * never hand-assembled. For a kernel **identity** tool (conversations, …)
+ * there is no workspace: `name` is the bare `<source>__<tool>` and `wsId` is
+ * `null`. `wsId` and `toolName` are derived bookkeeping (so callers don't have
+ * to re-parse to render breadcrumbs or attribute audit entries); no consumer
+ * routes on `wsId` — routing reads the name's shape. The remaining fields
+ * mirror `Tool` from `src/tools/types.ts`.
  */
 export interface NamespacedToolDescriptor {
-  /** Canonical `ws_<id>-<toolName>` form. */
+  /** Canonical `ws_<id>-<toolName>` (workspace) or bare `<source>__<tool>` (identity). */
   name: string;
-  /** Workspace this tool lives in. Same as the `ws_<id>` portion of `name`. */
-  wsId: string;
+  /** Workspace this tool lives in, or `null` for an identity-owned tool. */
+  wsId: string | null;
   /** Bare tool name (no `ws_` prefix, no `__`-prefixed source). */
   toolName: string;
   description: string;

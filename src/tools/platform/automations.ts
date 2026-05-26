@@ -70,7 +70,7 @@ export async function createAutomationsSource(
     const reqCtx = getRequestContext();
     return {
       workspaceId:
-        reqCtx?.workspaceId ??
+        (reqCtx?.scope.kind === "workspace" ? reqCtx.scope.workspaceId : undefined) ??
         automation?.workspaceId ??
         runtime.getCurrentWorkspaceId() ??
         undefined,
@@ -106,7 +106,7 @@ export async function createAutomationsSource(
       defaultTimezone,
       defaultModel: runtime.getDefaultModel(),
       currentUserId: reqCtx?.identity?.id,
-      currentWorkspaceId: reqCtx?.workspaceId ?? undefined,
+      currentWorkspaceId: reqCtx?.scope.kind === "workspace" ? reqCtx.scope.workspaceId : undefined,
     };
   }
 

@@ -634,9 +634,7 @@ describe("skills__active_for", () => {
     const result = await runWithRequestContext(
       {
         identity: null,
-        workspaceId: null,
-        workspaceAgents: null,
-        workspaceModelOverride: null,
+        scope: { kind: "identity" },
         conversationId: conv.id,
       },
       () => client.callTool({ name: "active_for", arguments: {} }),
@@ -682,9 +680,7 @@ describe("skills__active_for", () => {
     const result = await runWithRequestContext(
       {
         identity: null,
-        workspaceId: null,
-        workspaceAgents: null,
-        workspaceModelOverride: null,
+        scope: { kind: "identity" },
         conversationId: ctxConv.id,
       },
       () =>

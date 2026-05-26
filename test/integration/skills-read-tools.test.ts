@@ -43,9 +43,12 @@ async function callTool(
       // ownership gate on skills__active_for / loading_log requires
       // a real identity in the request context.
       identity: DEV_IDENTITY,
-      workspaceId: wsId,
-      workspaceAgents: null,
-      workspaceModelOverride: null,
+      scope: {
+        kind: "workspace",
+        workspaceId: wsId,
+        workspaceAgents: null,
+        workspaceModelOverride: null,
+      },
     },
     () =>
       registry.execute({

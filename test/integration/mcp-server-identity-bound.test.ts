@@ -194,6 +194,22 @@ describe("/mcp identity-bound session (Stage 2 T007)", () => {
     }
   });
 
+  it("identity sources surface BARE in tools/list, never ws-prefixed (one door)", async () => {
+    // `conversations` is a kernel identity source: emitted bare
+    // (`conversations__list`) and NOT composed into any workspace registry, so
+    // it never appears as `ws_<id>-conversations__*`. This is the one-door
+    // guarantee at the list level — the chat reaches conversations through the
+    // identity door only, never the workspace door.
+    const client = await createIdentityBoundClient();
+    try {
+      const names = (await client.listTools()).tools.map((t) => t.name);
+      expect(names).toContain("conversations__list");
+      expect(names.some((n) => n.startsWith("ws_") && n.includes("conversations__"))).toBe(false);
+    } finally {
+      await client.close();
+    }
+  });
+
   it("cross-workspace calls in one session route to distinct sources (failure mode: dispatch-to-current-workspace)", async () => {
     sharedSource.reset();
     personalSource.reset();

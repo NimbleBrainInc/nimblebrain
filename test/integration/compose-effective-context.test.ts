@@ -81,9 +81,12 @@ async function getLatestRunId(
       // `compose__effective_context` refuse the read as a foreign-
       // owner access (Stage 1 single-owner gate).
       identity: DEV_IDENTITY,
-      workspaceId: TEST_WORKSPACE_ID,
-      workspaceAgents: null,
-      workspaceModelOverride: null,
+      scope: {
+        kind: "workspace",
+        workspaceId: TEST_WORKSPACE_ID,
+        workspaceAgents: null,
+        workspaceModelOverride: null,
+      },
     },
     async () => {
       const store = runtime.findConversationStore();
@@ -109,9 +112,12 @@ async function callCompose(
   const result = await runWithRequestContext(
     {
       identity: DEV_IDENTITY,
-      workspaceId: TEST_WORKSPACE_ID,
-      workspaceAgents: null,
-      workspaceModelOverride: null,
+      scope: {
+        kind: "workspace",
+        workspaceId: TEST_WORKSPACE_ID,
+        workspaceAgents: null,
+        workspaceModelOverride: null,
+      },
       ...(ctxConvId ? { conversationId: ctxConvId } : {}),
     },
     () =>

@@ -57,7 +57,7 @@ describe("nb-core registration in Runtime", () => {
 	it("nb__ tools are callable via ToolRegistry.execute()", async () => {
 		const registry = runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID);
 		const result = await runWithRequestContext(
-			{ identity: null, workspaceId: TEST_WORKSPACE_ID, workspaceAgents: null, workspaceModelOverride: null },
+			{ identity: null, scope: { kind: "workspace", workspaceId: TEST_WORKSPACE_ID, workspaceAgents: null, workspaceModelOverride: null } },
 			() => registry.execute({
 				id: "test-core-exec",
 				name: "nb__list_apps",

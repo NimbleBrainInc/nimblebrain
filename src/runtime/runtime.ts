@@ -98,6 +98,7 @@ import type { Skill } from "../skills/types.ts";
 import { TelemetryManager } from "../telemetry/manager.ts";
 import { PostHogEventSink } from "../telemetry/posthog-sink.ts";
 import type { DelegateContext } from "../tools/delegate.ts";
+import { isIdentitySource } from "../tools/identity-sources.ts";
 import { McpSource } from "../tools/mcp-source.ts";
 import { namespacedToolName } from "../tools/namespace.ts";
 import { SharedSourceRef, type ToolRegistry } from "../tools/registry.ts";
@@ -112,6 +113,7 @@ import { PlacementRegistry } from "./placement-registry.ts";
 import {
   getRequestContext,
   type RequestContext,
+  type RequestScope,
   runWithRequestContext,
 } from "./request-context.ts";
 import { buildSkillsLoadedPayload } from "./skills-loaded-payload.ts";
@@ -241,8 +243,21 @@ export class Runtime {
   // Protected sources are captured in start() and passed to startWorkspaceBundles directly.
   /** The system source ("nb") — shared across workspace registries. */
   _systemSource: ToolSource | null;
-  /** Platform sources (home, conversations, files, etc.) — retained for JIT workspace registration. */
+  /**
+   * All platform sources (home, conversations, files, etc.). The WHOLE set —
+   * used for placements, identity-source resolution (`getIdentitySource`), and
+   * listing identity tools. NOT what workspace registries get; see
+   * `_workspaceSources`.
+   */
   private _platformSources: ToolSource[] = [];
+  /**
+   * Platform sources MINUS the kernel identity sources (conversations, …).
+   * This is what workspace registries are composed from, so an identity source
+   * is unreachable through the workspace door — a `ws_<id>-conversations` name
+   * fails closed because the source genuinely isn't in the registry. Identity
+   * sources reach the user only through the identity door.
+   */
+  private _workspaceSources: ToolSource[] = [];
   /**
    * Domain-context getter for the automations bundle. Set by the
    * automations source factory; consumed by internal callers (CLI's
@@ -466,7 +481,8 @@ export class Runtime {
       // Workspace agents merge over (not replace) instance agents.
       // Prefers AsyncLocalStorage context for concurrency safety.
       get agents() {
-        const wsAgents = getRequestContext()?.workspaceAgents ?? null;
+        const scope = getRequestContext()?.scope;
+        const wsAgents = scope?.kind === "workspace" ? scope.workspaceAgents : null;
         if (wsAgents) {
           return { ...(config.agents ?? {}), ...wsAgents };
         }
@@ -523,7 +539,10 @@ export class Runtime {
     // Request-scoped context — all identity/workspace reads go through AsyncLocalStorage.
     // Set via runWithRequestContext() in chat(), handleToolCall(), and MCP handler.
     const getIdentity = (): UserIdentity | null => getRequestContext()?.identity ?? null;
-    const getWorkspaceId = (): string | null => getRequestContext()?.workspaceId ?? null;
+    const getWorkspaceId = (): string | null => {
+      const scope = getRequestContext()?.scope;
+      return scope?.kind === "workspace" ? scope.workspaceId : null;
+    };
 
     // Build management tool contexts using the identity holder + stores from task 001
     // ManageUsersContext is always created. In dev mode (no identity provider),
@@ -597,6 +616,13 @@ export class Runtime {
       workDir: resolveWorkDir(config),
       workspaceStore,
       listToolsForWorkspace: workspaceToolLister,
+      // Identity sources (conversations, …) are emitted bare and prepended to
+      // every identity's union — they're owned by the user, not a workspace.
+      listIdentityTools: async () => {
+        const rt = rtHolder.rt;
+        if (!rt) throw new Error("[runtime] identity-tool listing: runtime not initialized");
+        return rt.listIdentitySourceTools();
+      },
     });
 
     // Create Runtime with empty workspace registries first — needed by system tools
@@ -682,19 +708,33 @@ export class Runtime {
       }
     }
 
+    // Partition: workspace registries get every platform source EXCEPT the
+    // kernel identity sources (conversations, …). Identity sources stay in
+    // `_platformSources` (already started by `createPlatformSources`) and reach
+    // the user only through the identity door — never `ws_<id>-conversations`.
+    const workspaceSources = platformSources.filter((s) => !isIdentitySource(s.name));
+
     // Phase 3: Start workspace bundles with per-workspace registries
     const configDir = config.configPath ? dirname(config.configPath) : undefined;
     const { registries: workspaceRegistries, entries: workspaceBundleEntries } =
-      await startWorkspaceBundles(workspaceStore, platformSources, systemTools, events, configDir, {
-        workDir: resolveWorkDir(config),
-        allowInsecureRemotes: config.allowInsecureRemotes,
-        // Boot re-spawn picks up host-resources handlers per workspace so
-        // a platform restart doesn't silently drop the capability for
-        // already-installed bundles.
-        getBundleMcpDeps: bundleMcpDepsFactory,
-      });
+      await startWorkspaceBundles(
+        workspaceStore,
+        workspaceSources,
+        systemTools,
+        events,
+        configDir,
+        {
+          workDir: resolveWorkDir(config),
+          allowInsecureRemotes: config.allowInsecureRemotes,
+          // Boot re-spawn picks up host-resources handlers per workspace so
+          // a platform restart doesn't silently drop the capability for
+          // already-installed bundles.
+          getBundleMcpDeps: bundleMcpDepsFactory,
+        },
+      );
     rt._workspaceRegistries = workspaceRegistries;
     rt._platformSources = platformSources;
+    rt._workspaceSources = workspaceSources;
 
     // Wire the workspace registries into lifecycle so workspace-scope
     // startAuth / disconnect / install can add+remove sources without
@@ -1291,9 +1331,12 @@ export class Runtime {
     // instead. T008 (credential rebinding) tightens this further.
     const reqCtx: RequestContext = {
       identity: requestIdentity,
-      workspaceId: sessionWsId,
-      workspaceAgents: sessionWorkspace?.agents ?? null,
-      workspaceModelOverride: sessionWorkspace?.models ?? null,
+      scope: {
+        kind: "workspace",
+        workspaceId: sessionWsId,
+        workspaceAgents: sessionWorkspace?.agents ?? null,
+        workspaceModelOverride: sessionWorkspace?.models ?? null,
+      },
       conversationId: conversation.id,
     };
     engineConfig.toolPromotion = this.buildToolPromotionFactory();
@@ -1456,18 +1499,29 @@ export class Runtime {
         // workspace — the failure mode the Group C audit named at
         // `_chatInner`'s RequestContext-creation comment.
         //
-        // The outer `runWithRequestContext` at `_chatInner` still sets
-        // session-level fields (`identity`, `workspaceAgents`,
-        // `workspaceModelOverride`, `conversationId`). We preserve
-        // those here and OVERRIDE only `workspaceId` — handlers that
-        // read session-scoped fields (overlays, file store) keep
-        // working unchanged; per-call handlers see the routed wsId.
+        // The per-call scope IS the routed scope: a workspace-routed call gets
+        // a workspace scope with the routed (non-null) wsId; an identity-routed
+        // call gets an identity scope with NO workspace fields. There is no
+        // nullable workspaceId to leak — `requireWorkspaceId()` hard-fails on
+        // an identity-scoped call by construction. The session workspace's
+        // agent/model overrides (from the outer chat context) ride along on the
+        // workspace arm so session-scoped reads keep working unchanged.
         const outer = getRequestContext();
+        const outerScope = outer?.scope;
+        const perCallScope: RequestScope =
+          routed.kind === "workspace"
+            ? {
+                kind: "workspace",
+                workspaceId: routed.context.workspaceId,
+                workspaceAgents:
+                  outerScope?.kind === "workspace" ? outerScope.workspaceAgents : null,
+                workspaceModelOverride:
+                  outerScope?.kind === "workspace" ? outerScope.workspaceModelOverride : null,
+              }
+            : { kind: "identity" };
         const perCallCtx: RequestContext = {
           identity: outer?.identity ?? null,
-          workspaceId: routedWsId,
-          workspaceAgents: outer?.workspaceAgents ?? null,
-          workspaceModelOverride: outer?.workspaceModelOverride ?? null,
+          scope: perCallScope,
           ...(outer?.conversationId !== undefined ? { conversationId: outer.conversationId } : {}),
           ...(outer?.toolPromotion !== undefined ? { toolPromotion: outer.toolPromotion } : {}),
         };
@@ -1925,9 +1979,35 @@ export class Runtime {
    * these dispatch with identity authority and gate reads via `canAccess`.
    */
   getIdentitySource(name: string): ToolSource | undefined {
-    const IDENTITY_SOURCES = new Set(["conversations"]);
-    if (!IDENTITY_SOURCES.has(name)) return undefined;
+    if (!isIdentitySource(name)) return undefined;
     return this._platformSources.find((s) => s.name === name);
+  }
+
+  /**
+   * List the kernel identity sources' tools (conversations, …), source-
+   * qualified (`conversations__list`). The cross-workspace aggregator emits
+   * these BARE and prepended to every identity's union — they're owned by the
+   * user, not any workspace. Resolved from `_platformSources` (the whole set,
+   * already started by `createPlatformSources`); identity sources are NOT in
+   * any workspace registry, so this is the only path that lists them.
+   * Per-source error containment mirrors the workspace lister.
+   */
+  async listIdentitySourceTools(): Promise<readonly Tool[]> {
+    const all: Tool[] = [];
+    for (const source of this._platformSources) {
+      if (!isIdentitySource(source.name)) continue;
+      try {
+        for (const tool of await source.tools()) all.push(tool);
+      } catch (err) {
+        log.debug(
+          "mcp",
+          `[runtime] identity-source listing: skipping "${source.name}" — ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
+    return all;
   }
 
   /** Fresh `IdentityContext` for the authenticated identity. No workspace. */
@@ -1996,7 +2076,7 @@ export class Runtime {
       throw new Error(`Workspace "${wsId}" does not exist`);
     }
 
-    const wsRegistry = createWorkspaceRegistry(this._platformSources, this._systemSource);
+    const wsRegistry = createWorkspaceRegistry(this._workspaceSources, this._systemSource);
     // Wire permission context so the registry can gate disallowed tools
     // before they reach the source.execute() path.
     wsRegistry.setPermissionContext(wsId, this.getPermissionStore());
@@ -2239,7 +2319,8 @@ export class Runtime {
       reasoning: resolveModelString(models?.reasoning ?? fallback),
     };
     // Merge workspace model overrides from request context (partial — only overrides specified slots)
-    const wsModels = getRequestContext()?.workspaceModelOverride;
+    const scope = getRequestContext()?.scope;
+    const wsModels = scope?.kind === "workspace" ? scope.workspaceModelOverride : null;
     if (wsModels) {
       return {
         default: wsModels.default ? resolveModelString(wsModels.default) : base.default,

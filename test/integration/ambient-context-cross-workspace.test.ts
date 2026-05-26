@@ -60,10 +60,12 @@ function buildContextProbeSource(sourceName: string, toolName: string): ProbeSou
       // keyed on the ROUTED workspace — this observation must reflect
       // that.
       const ctx = getRequestContext();
-      observations.push({ workspaceId: ctx?.workspaceId });
+      const observedWorkspaceId =
+        ctx?.scope.kind === "workspace" ? ctx.scope.workspaceId : undefined;
+      observations.push({ workspaceId: observedWorkspaceId });
       return {
         content: textContent(
-          `observed workspaceId=${ctx?.workspaceId ?? "(undefined)"}`,
+          `observed workspaceId=${observedWorkspaceId ?? "(undefined)"}`,
         ),
         isError: false,
       };
@@ -214,9 +216,12 @@ describe("Stage 2 T008 — ambient RequestContext.workspaceId matches the routed
     await runWithRequestContext(
       {
         identity: { id: TEST_USER_ID, displayName: TEST_USER_DISPLAY },
-        workspaceId: routed.context.workspaceId,
-        workspaceAgents: null,
-        workspaceModelOverride: null,
+        scope: {
+          kind: "workspace",
+          workspaceId: routed.context.workspaceId,
+          workspaceAgents: null,
+          workspaceModelOverride: null,
+        },
       },
       () => routed.source.execute(bareToolName, {}),
     );

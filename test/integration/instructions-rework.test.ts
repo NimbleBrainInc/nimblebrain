@@ -273,7 +273,7 @@ suiteFn("bundle instructions — bundle-side convention", () => {
       capturing.reset();
 
       await runWithRequestContext(
-        { workspaceId: TEST_WORKSPACE_ID, identity: null },
+        { scope: { kind: "workspace", workspaceId: TEST_WORKSPACE_ID, workspaceAgents: null, workspaceModelOverride: null }, identity: null },
         async () => {
           await runtime.chat({
             message: "Tell me about widgets.",
@@ -308,7 +308,7 @@ suiteFn("bundle instructions — bundle-side convention", () => {
       capturing.reset();
 
       await runWithRequestContext(
-        { workspaceId: TEST_WORKSPACE_ID, identity: null },
+        { scope: { kind: "workspace", workspaceId: TEST_WORKSPACE_ID, workspaceAgents: null, workspaceModelOverride: null }, identity: null },
         async () => {
           await runtime.chat({
             message: "What is 8.8.8.8?",
@@ -357,7 +357,7 @@ suiteFn("bundle instructions — bundle-side convention", () => {
 
       // Write via the platform tool (same path agent uses).
       await runWithRequestContext(
-        { workspaceId: TEST_WORKSPACE_ID, identity: null },
+        { scope: { kind: "workspace", workspaceId: TEST_WORKSPACE_ID, workspaceAgents: null, workspaceModelOverride: null }, identity: null },
         async () => {
           const writeResult = await wsRegistry.execute({
             id: "test-write-ws",
@@ -370,7 +370,7 @@ suiteFn("bundle instructions — bundle-side convention", () => {
 
       capturing.reset();
       await runWithRequestContext(
-        { workspaceId: TEST_WORKSPACE_ID, identity: null },
+        { scope: { kind: "workspace", workspaceId: TEST_WORKSPACE_ID, workspaceAgents: null, workspaceModelOverride: null }, identity: null },
         async () => {
           await runtime.chat({
             message: "Hello.",
@@ -395,7 +395,7 @@ suiteFn("bundle instructions — bundle-side convention", () => {
       const wsRegistry = runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID);
 
       await runWithRequestContext(
-        { workspaceId: TEST_WORKSPACE_ID, identity: null },
+        { scope: { kind: "workspace", workspaceId: TEST_WORKSPACE_ID, workspaceAgents: null, workspaceModelOverride: null }, identity: null },
         async () => {
           const clearResult = await wsRegistry.execute({
             id: "test-clear-ws",
@@ -408,7 +408,7 @@ suiteFn("bundle instructions — bundle-side convention", () => {
 
       capturing.reset();
       await runWithRequestContext(
-        { workspaceId: TEST_WORKSPACE_ID, identity: null },
+        { scope: { kind: "workspace", workspaceId: TEST_WORKSPACE_ID, workspaceAgents: null, workspaceModelOverride: null }, identity: null },
         async () => {
           await runtime.chat({
             message: "Hello again.",

@@ -34,7 +34,7 @@ describe("tool discovery is identity-scoped (cross-workspace)", () => {
     // Request context pinned to the PERSONAL workspace — the exact frame
     // the buggy `ws_user_<id>-nb__search` call ran under.
     const names = await runWithRequestContext(
-      { identity: fx.identity, workspaceId: fx.personal.id },
+      { identity: fx.identity, scope: { kind: "workspace", workspaceId: fx.personal.id, workspaceAgents: null, workspaceModelOverride: null } },
       () => fx!.runtime.listDiscoverableTools(),
     ).then((tools) => tools.map((t) => t.name));
 
@@ -49,12 +49,12 @@ describe("tool discovery is identity-scoped (cross-workspace)", () => {
     fx = await createTwoWorkspaceFixture();
 
     const fromShared = await runWithRequestContext(
-      { identity: fx.identity, workspaceId: fx.shared.id },
+      { identity: fx.identity, scope: { kind: "workspace", workspaceId: fx.shared.id, workspaceAgents: null, workspaceModelOverride: null } },
       () => fx!.runtime.listDiscoverableTools(),
     ).then((t) => t.map((x) => x.name).sort());
 
     const fromPersonal = await runWithRequestContext(
-      { identity: fx.identity, workspaceId: fx.personal.id },
+      { identity: fx.identity, scope: { kind: "workspace", workspaceId: fx.personal.id, workspaceAgents: null, workspaceModelOverride: null } },
       () => fx!.runtime.listDiscoverableTools(),
     ).then((t) => t.map((x) => x.name).sort());
 

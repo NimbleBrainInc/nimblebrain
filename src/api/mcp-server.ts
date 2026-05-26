@@ -773,9 +773,7 @@ function createServer(
       const bare = sep >= 0 ? fullName.slice(sep + 2) : fullName;
       const identityCtx: RequestContext = {
         identity: sessionCtx.identity ?? null,
-        workspaceId: null,
-        workspaceAgents: null,
-        workspaceModelOverride: null,
+        scope: { kind: "identity" },
       };
       const idResult = await runWithRequestContext(identityCtx, () =>
         routed.source.execute(bare, (args ?? {}) as Record<string, unknown>),
@@ -852,9 +850,12 @@ function createServer(
     // exists to enforce.
     const reqCtx: RequestContext = {
       identity: sessionCtx.identity ?? null,
-      workspaceId: wsId,
-      workspaceAgents: null,
-      workspaceModelOverride: null,
+      scope: {
+        kind: "workspace",
+        workspaceId: wsId,
+        workspaceAgents: null,
+        workspaceModelOverride: null,
+      },
     };
 
     // ── Task-augmented path ─────────────────────────────────────────────

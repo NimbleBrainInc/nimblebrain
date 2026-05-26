@@ -241,7 +241,11 @@ function buildCounterSource(
       // the counter. Sentinel string when context is absent so the
       // assertion failure mode is unmistakable ("no context" vs wrong id).
       const ctx = getRequestContext();
-      audit.push(ctx?.workspaceId ?? "<no-request-context>");
+      audit.push(
+        ctx?.scope.kind === "workspace"
+          ? ctx.scope.workspaceId
+          : "<no-request-context>",
+      );
       const echo = typeof input.echo === "string" ? input.echo : "";
       // The output text uniquely identifies the originating source so
       // tests can verify the two calls produced distinguishable strings
