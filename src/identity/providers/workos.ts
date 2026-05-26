@@ -353,6 +353,17 @@ export class WorkosIdentityProvider implements IdentityProvider {
         return null;
       }
 
+      // SECURITY: soft-deleted (deactivated) users keep a valid WorkOS identity
+      // but are denied platform access. The tombstone lives in the local profile;
+      // checking here (before we cache) makes the revocation effective on the
+      // next request, and invalidateUser() drops any in-flight cache entry.
+      const localProfile = await this.userStore?.get(workosUserId);
+      if (localProfile?.deletedAt) {
+        console.error(`[workos] DENIED: user ${workosUserId} is deactivated`);
+        this.userCache.delete(workosUserId);
+        return null;
+      }
+
       const displayName =
         [workosUser.firstName, workosUser.lastName].filter(Boolean).join(" ") || workosUser.email;
 

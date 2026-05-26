@@ -294,8 +294,8 @@ describe("nb__manage_users", () => {
     });
   });
 
-  describe("delete", () => {
-    test("deletes user and revokes keys", async () => {
+  describe("delete (soft)", () => {
+    test("deactivates user but retains the record as a tombstone", async () => {
       const createResult = await tool.handler({
         action: "create",
         email: "alice@example.com",
@@ -309,12 +309,37 @@ describe("nb__manage_users", () => {
       });
 
       expect(deleteResult.isError).toBe(false);
-      const parsed = parseResult(deleteResult) as { deleted: boolean; userId: string };
-      expect(parsed.deleted).toBe(true);
+      const parsed = parseResult(deleteResult) as {
+        deactivated: boolean;
+        userId: string;
+        deletedAt: string;
+      };
+      expect(parsed.deactivated).toBe(true);
+      expect(parsed.deletedAt).toBeTruthy();
 
-      // Verify user is gone from store
+      // The record is retained (not purged), with a deletedAt tombstone.
       const user = await userStore.get(created.user.id);
-      expect(user).toBeNull();
+      expect(user).not.toBeNull();
+      expect(user?.deletedAt).toBeTruthy();
+    });
+
+    test("does NOT hard-delete the provider identity", async () => {
+      let providerDeleteCalled = false;
+      provider = {
+        ...createMockProvider(userStore),
+        async deleteUser(): Promise<boolean> {
+          providerDeleteCalled = true;
+          return true;
+        },
+      };
+      tool = createManageUsersTool(makeCtx());
+
+      const created = parseResult(
+        await tool.handler({ action: "create", email: "alice@example.com", displayName: "Alice" }),
+      ) as { user: { id: string } };
+      await tool.handler({ action: "delete", userId: created.user.id });
+
+      expect(providerDeleteCalled).toBe(false);
     });
 
     test("requires userId", async () => {
@@ -354,6 +379,38 @@ describe("nb__manage_users", () => {
       // Verify user still exists
       const user = await userStore.get(owner.user.id);
       expect(user).not.toBeNull();
+    });
+  });
+
+  describe("restore", () => {
+    test("clears the tombstone and re-enables the user", async () => {
+      const created = parseResult(
+        await tool.handler({ action: "create", email: "alice@example.com", displayName: "Alice" }),
+      ) as { user: { id: string } };
+      await tool.handler({ action: "delete", userId: created.user.id });
+
+      const restoreResult = await tool.handler({ action: "restore", userId: created.user.id });
+
+      expect(restoreResult.isError).toBe(false);
+      const parsed = parseResult(restoreResult) as { restored: boolean; userId: string };
+      expect(parsed.restored).toBe(true);
+
+      const user = await userStore.get(created.user.id);
+      expect(user?.deletedAt).toBeUndefined();
+    });
+
+    test("requires userId", async () => {
+      const result = await tool.handler({ action: "restore" });
+
+      expect(result.isError).toBe(true);
+      expect(extractText(result)).toContain("userId is required");
+    });
+
+    test("returns error for non-existent user", async () => {
+      const result = await tool.handler({ action: "restore", userId: "usr_nonexistent00000" });
+
+      expect(result.isError).toBe(true);
+      expect(extractText(result)).toContain("User not found");
     });
   });
 
@@ -409,6 +466,19 @@ describe("nb__manage_users", () => {
 
       const user = parsed.users[0];
       expect(Object.keys(user).sort()).toEqual(["displayName", "email", "id", "orgRole"]);
+    });
+
+    test("surfaces deletedAt for deactivated users", async () => {
+      const created = parseResult(
+        await tool.handler({ action: "create", email: "alice@example.com", displayName: "Alice" }),
+      ) as { user: { id: string } };
+      await tool.handler({ action: "delete", userId: created.user.id });
+
+      const parsed = parseResult(await tool.handler({ action: "list" })) as {
+        users: Array<{ id: string; deletedAt?: string }>;
+      };
+      const alice = parsed.users.find((u) => u.id === created.user.id);
+      expect(alice?.deletedAt).toBeTruthy();
     });
   });
 });

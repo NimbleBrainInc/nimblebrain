@@ -194,4 +194,63 @@ describe("UserStore", () => {
       expect(users).toHaveLength(0);
     });
   });
+
+  describe("softDelete", () => {
+    test("stamps deletedAt and bumps updatedAt", async () => {
+      const user = await store.create({ email: "alice@example.com", displayName: "Alice" });
+      await new Promise((r) => setTimeout(r, 5));
+
+      const result = await store.softDelete(user.id);
+
+      expect(result?.deletedAt).toBeTruthy();
+      expect(result?.updatedAt).not.toBe(user.updatedAt);
+      // Persisted to disk.
+      expect((await store.get(user.id))?.deletedAt).toBe(result?.deletedAt);
+    });
+
+    test("retains the record (still listed)", async () => {
+      const user = await store.create({ email: "alice@example.com", displayName: "Alice" });
+      await store.softDelete(user.id);
+
+      const users = await store.list();
+      expect(users).toHaveLength(1);
+      expect(users[0].deletedAt).toBeTruthy();
+    });
+
+    test("is idempotent — preserves the original deletedAt", async () => {
+      const user = await store.create({ email: "alice@example.com", displayName: "Alice" });
+      const first = await store.softDelete(user.id);
+      const second = await store.softDelete(user.id);
+
+      expect(second?.deletedAt).toBe(first?.deletedAt);
+    });
+
+    test("returns null for a non-existent user", async () => {
+      expect(await store.softDelete("usr_doesnotexist0000")).toBeNull();
+    });
+  });
+
+  describe("restore", () => {
+    test("clears deletedAt and drops the key from persisted JSON", async () => {
+      const user = await store.create({ email: "alice@example.com", displayName: "Alice" });
+      await store.softDelete(user.id);
+
+      const restored = await store.restore(user.id);
+
+      expect(restored?.deletedAt).toBeUndefined();
+      expect((await store.get(user.id))?.deletedAt).toBeUndefined();
+      const raw = await readFile(join(workDir, "users", user.id, "profile.json"), "utf-8");
+      expect(raw).not.toContain("deletedAt");
+    });
+
+    test("is a no-op for an active user", async () => {
+      const user = await store.create({ email: "alice@example.com", displayName: "Alice" });
+      const restored = await store.restore(user.id);
+      expect(restored?.deletedAt).toBeUndefined();
+    });
+
+    test("returns null for a non-existent user", async () => {
+      expect(await store.restore("usr_doesnotexist0000")).toBeNull();
+    });
+  });
 });

@@ -21,6 +21,13 @@ export interface User {
   integrationEntityId?: string;
   createdAt: string;
   updatedAt: string;
+  /**
+   * ISO timestamp set when the user is soft-deleted (deactivated). The profile
+   * is retained as a tombstone — the record still lists in admin views, but the
+   * auth layer denies access while this is set. Cleared by {@link UserStore.restore}.
+   * Absent on active users.
+   */
+  deletedAt?: string;
 }
 
 export type CreateUserData = {
@@ -167,6 +174,45 @@ export class UserStore {
     return updated;
   }
 
+  /**
+   * Soft-delete (deactivate) a user: stamp `deletedAt` on the profile so the
+   * auth layer denies access while the record is retained for audit/restore.
+   * Idempotent — a no-op (returns the existing tombstone) if already deleted.
+   * Returns the updated user, or null if not found.
+   */
+  async softDelete(id: string): Promise<User | null> {
+    const user = await this.get(id);
+    if (!user) return null;
+    if (user.deletedAt) return user;
+
+    const now = new Date().toISOString();
+    const updated: User = { ...user, deletedAt: now, updatedAt: now };
+    await this.atomicWrite(this.profilePath(id), updated);
+    return updated;
+  }
+
+  /**
+   * Restore a soft-deleted user by clearing `deletedAt`. Idempotent — a no-op
+   * (returns the user unchanged) if not currently deleted. Returns the updated
+   * user, or null if not found.
+   */
+  async restore(id: string): Promise<User | null> {
+    const user = await this.get(id);
+    if (!user) return null;
+    if (!user.deletedAt) return user;
+
+    const updated: User = { ...user, updatedAt: new Date().toISOString() };
+    // Drop the tombstone — atomicWrite's JSON.stringify omits undefined keys.
+    updated.deletedAt = undefined;
+    await this.atomicWrite(this.profilePath(id), updated);
+    return updated;
+  }
+
+  /**
+   * Hard-delete a user, removing the profile directory entirely. Prefer
+   * {@link softDelete} for the deactivation flow — this is the irreversible
+   * purge used by migrations and the OIDC provider's directory ownership.
+   */
   async delete(id: string): Promise<boolean> {
     const userDir = join(this.usersDir, id);
     if (!existsSync(userDir)) return false;

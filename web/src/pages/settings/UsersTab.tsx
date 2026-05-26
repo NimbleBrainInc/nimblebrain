@@ -1,4 +1,4 @@
-import { Trash2, UserPlus } from "lucide-react";
+import { RotateCcw, Trash2, UserPlus } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { callTool } from "../../api/client";
 import { parseToolResult } from "../../api/tool-result";
@@ -24,6 +24,8 @@ interface User {
   displayName: string;
   orgRole: string;
   createdAt?: string;
+  /** Set when the user is deactivated (soft-deleted). Such users keep their record but cannot sign in. */
+  deletedAt?: string;
 }
 
 function formatDate(iso?: string): string {
@@ -54,7 +56,7 @@ export function UsersTab() {
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
-  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
 
   const fetchUsers = useCallback(async () => {
     try {
@@ -99,17 +101,32 @@ export function UsersTab() {
   const handleDelete = useCallback(
     async (userId: string, displayName: string) => {
       const confirmed = window.confirm(
-        `Delete user "${displayName}"? This action cannot be undone.`,
+        `Deactivate user "${displayName}"? They will immediately lose access. You can restore them later.`,
       );
       if (!confirmed) return;
-      setDeletingId(userId);
+      setBusyId(userId);
       try {
         await callTool("nb", "manage_users", { action: "delete", userId });
         await fetchUsers();
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to delete user");
+        setError(err instanceof Error ? err.message : "Failed to deactivate user");
       } finally {
-        setDeletingId(null);
+        setBusyId(null);
+      }
+    },
+    [fetchUsers],
+  );
+
+  const handleRestore = useCallback(
+    async (userId: string) => {
+      setBusyId(userId);
+      try {
+        await callTool("nb", "manage_users", { action: "restore", userId });
+        await fetchUsers();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to restore user");
+      } finally {
+        setBusyId(null);
       }
     },
     [fetchUsers],
@@ -224,26 +241,49 @@ export function UsersTab() {
           <TableBody>
             {users.map((u) => {
               const isSelf = u.id === currentUserId;
-              const isDeleting = deletingId === u.id;
+              const isBusy = busyId === u.id;
+              const isDeactivated = Boolean(u.deletedAt);
               return (
-                <TableRow key={u.id}>
-                  <TableCell className="font-medium">{u.displayName}</TableCell>
+                <TableRow key={u.id} className={isDeactivated ? "opacity-60" : undefined}>
+                  <TableCell className="font-medium">
+                    {u.displayName}
+                    {isDeactivated ? (
+                      <span className="ml-2 rounded bg-muted px-1.5 py-0.5 text-xs font-normal text-muted-foreground">
+                        Deactivated
+                      </span>
+                    ) : null}
+                  </TableCell>
                   <TableCell>{u.email}</TableCell>
                   <TableCell>
                     <RoleBadge role={u.orgRole} />
                   </TableCell>
                   <TableCell className="text-muted-foreground">{formatDate(u.createdAt)}</TableCell>
                   <TableCell>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      disabled={isSelf || isDeleting}
-                      title={isSelf ? "Cannot delete yourself" : `Delete ${u.displayName}`}
-                      onClick={() => handleDelete(u.id, u.displayName)}
-                      className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
+                    {isDeactivated ? (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        disabled={isBusy}
+                        title={`Restore ${u.displayName}`}
+                        onClick={() => handleRestore(u.id)}
+                        className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground"
+                      >
+                        <RotateCcw className="h-4 w-4" />
+                      </Button>
+                    ) : (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        disabled={isSelf || isBusy}
+                        title={
+                          isSelf ? "Cannot deactivate yourself" : `Deactivate ${u.displayName}`
+                        }
+                        onClick={() => handleDelete(u.id, u.displayName)}
+                        className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    )}
                   </TableCell>
                 </TableRow>
               );

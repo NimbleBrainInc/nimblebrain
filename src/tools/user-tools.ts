@@ -40,8 +40,9 @@ export function createManageUsersTool(ctx: ManageUsersContext): InProcessTool {
       properties: {
         action: {
           type: "string",
-          enum: ["create", "update", "delete", "list"],
-          description: "Action to perform.",
+          enum: ["create", "update", "delete", "restore", "list"],
+          description:
+            'Action to perform. "delete" deactivates the user (soft delete) and revokes access; "restore" re-enables a deactivated user.',
         },
         email: {
           type: "string",
@@ -78,6 +79,8 @@ export function createManageUsersTool(ctx: ManageUsersContext): InProcessTool {
           return handleUpdate(ctx, input);
         case "delete":
           return handleDelete(ctx, input);
+        case "restore":
+          return handleRestore(ctx, input);
         case "list":
           return handleList(ctx);
         default:
@@ -273,7 +276,7 @@ async function handleDelete(
 
     if (user.orgRole === "owner") {
       const allUsers = await ctx.userStore.list();
-      const ownerCount = allUsers.filter((u) => u.orgRole === "owner").length;
+      const ownerCount = allUsers.filter((u) => u.orgRole === "owner" && !u.deletedAt).length;
       if (ownerCount <= 1) {
         return {
           content: textContent(
@@ -284,23 +287,70 @@ async function handleDelete(
       }
     }
 
-    const deleted = await ctx.provider!.deleteUser(userId);
-    if (!deleted) {
+    // Soft delete: stamp a tombstone and revoke access, but keep the record so
+    // the user still appears (as deactivated) and can be restored. We do NOT
+    // hard-delete the provider identity — that's irreversible and re-creating
+    // the user later mints a new ID, orphaning all prior workspace memberships.
+    const deactivated = await ctx.userStore.softDelete(userId);
+    if (!deactivated) {
       return {
         content: textContent(`User not found: ${userId}`),
         isError: true,
       };
     }
 
+    // Drop any cached identity so the access revocation takes effect immediately.
+    ctx.provider?.invalidateUser?.(userId);
+
     return {
-      content: textContent(`Deleted user ${userId}.`),
-      structuredContent: { deleted: true, userId },
+      content: textContent(
+        `Deactivated user ${userId}. They can no longer sign in. Use action "restore" to re-enable.`,
+      ),
+      structuredContent: { deactivated: true, userId, deletedAt: deactivated.deletedAt },
       isError: false,
     };
   } catch (err) {
     return {
       content: textContent(
         `Failed to delete user: ${err instanceof Error ? err.message : String(err)}`,
+      ),
+      isError: true,
+    };
+  }
+}
+
+async function handleRestore(
+  ctx: ManageUsersContext,
+  input: Record<string, unknown>,
+): Promise<ToolResult> {
+  const userId = input.userId ? String(input.userId) : undefined;
+  if (!userId) {
+    return {
+      content: textContent("userId is required for restore."),
+      isError: true,
+    };
+  }
+
+  try {
+    const restored = await ctx.userStore.restore(userId);
+    if (!restored) {
+      return {
+        content: textContent(`User not found: ${userId}`),
+        isError: true,
+      };
+    }
+
+    ctx.provider?.invalidateUser?.(userId);
+
+    return {
+      content: textContent(`Restored user ${userId}. They can sign in again.`),
+      structuredContent: { restored: true, userId },
+      isError: false,
+    };
+  } catch (err) {
+    return {
+      content: textContent(
+        `Failed to restore user: ${err instanceof Error ? err.message : String(err)}`,
       ),
       isError: true,
     };
@@ -315,6 +365,8 @@ async function handleList(ctx: ManageUsersContext): Promise<ToolResult> {
       email: u.email,
       displayName: u.displayName,
       orgRole: u.orgRole,
+      // Present only for deactivated users so the UI can render a "deleted" state.
+      ...(u.deletedAt ? { deletedAt: u.deletedAt } : {}),
     }));
     return {
       content: textContent(`${result.length} user(s).`),

@@ -199,6 +199,10 @@ export class OidcIdentityProvider implements IdentityProvider {
       });
     }
 
+    // SECURITY: soft-deleted (deactivated) users are denied access. The record
+    // is retained as a tombstone; access resumes only after an admin restores it.
+    if (user.deletedAt) return null;
+
     // Enforce the invariant "authenticated user has ≥1 workspace" on every
     // successful auth, not only first login. Idempotent: happy path is one
     // filesystem read and no writes. Running on every request makes the
