@@ -1,10 +1,12 @@
 import type { ReactNode } from "react";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { useLocation } from "react-router-dom";
 import { callTool } from "../api/client";
 import type { UseChatReturn } from "../hooks/useChat";
 import { useChat } from "../hooks/useChat";
 import { useConversationEvents } from "../hooks/useConversationEvents";
 import type { AppContext, ConfigInfo } from "../types";
+import { useWorkspaceContext } from "./WorkspaceContext";
 
 // ---------------------------------------------------------------------------
 // ChatConfigContext — stable values that change rarely (config, preferences)
@@ -57,7 +59,18 @@ export function ChatProvider({
   initialConfig,
   currentUserId,
 }: ChatProviderProps) {
-  const chat = useChat(initialConversationId, currentUserId);
+  // The chat is FOCUSED on the workspace the user is currently VIEWING — the
+  // `/w/:slug` route. This is situational context for the agent (which
+  // workspace/app is on screen) and the source of the workspace briefing. On
+  // home / identity routes (`/`, `/conversations`) there's no focus, so the
+  // chat is identity-level (no "current workspace"). Route-derived, NOT the
+  // persisted global active workspace.
+  const location = useLocation();
+  const { activeWorkspace } = useWorkspaceContext();
+  const focusWorkspaceId = location.pathname.startsWith("/w/")
+    ? (activeWorkspace?.id ?? null)
+    : null;
+  const chat = useChat(initialConversationId, currentUserId, focusWorkspaceId);
 
   // Dev helper: window.__nb.simulateError("some error message")
   useEffect(() => {

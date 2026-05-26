@@ -965,17 +965,22 @@ export class Runtime {
       }
     }
 
-    // `buildAppsList` populates each app's `customInstructions` from the
-    // bundle's `app://instructions` resource (when published); org and
-    // workspace overlays come from platform-owned storage. Both reflect the
-    // workspace the chat is FOCUSED on (`request.workspaceId`, from
-    // `X-Workspace-Id`) — not the cross-workspace tool union. Absent, they
-    // fall back to the personal workspace as a temporary bridge until the
-    // home control panel exists. Deterministic + workspace-scoped (same for
-    // every member).
-    const activeWsId = request.workspaceId ?? sessionWsId;
-    const apps = await this.buildAppsList(activeWsId);
-    const liveOverlays = await this.readPromptOverlays(activeWsId);
+    // The workspace BRIEFING (apps + workspace overlay + "## Workspace" block
+    // + workspace persona) reflects the workspace the chat is FOCUSED on —
+    // `request.workspaceId`, the `/w/:slug` the user is viewing. On the home
+    // control panel there is NO focus (`request.workspaceId` absent): the chat
+    // is identity-level, so the briefing is empty — cross-workspace tools and
+    // ORG-level house rules only, no single "current workspace". The personal
+    // workspace stays the SILENT session bridge (`sessionWsId`, used for the
+    // dispatch reqCtx + file store), never narrated. Deterministic +
+    // workspace-scoped when focused (same for every member).
+    const focusedWsId = request.workspaceId;
+    const apps = focusedWsId ? await this.buildAppsList(focusedWsId) : [];
+    // Org overlay always applies (org-level, not workspace-specific); the
+    // workspace overlay only when focused.
+    const liveOverlays = focusedWsId
+      ? await this.readPromptOverlays(focusedWsId)
+      : { org: await this.getInstructionsStore().read({ scope: "org" }), workspace: "" };
 
     // Build focusedApp when the request is scoped to a specific app (§7 app-aware chat).
     // Pre-Stage-2 this searched the request's single workspace; post-T006
@@ -1076,11 +1081,17 @@ export class Runtime {
     // house rules the briefing above describes — so the prose, the app list,
     // and the persona all agree. Reuse the already-loaded session workspace
     // when it's the focused one; otherwise load the focused workspace.
-    const activeWorkspace =
-      activeWsId === sessionWsId ? sessionWorkspace : await this._workspaceStore.get(activeWsId);
-    const workspaceContext = activeWorkspace
-      ? { id: activeWorkspace.id, name: activeWorkspace.name }
-      : { id: activeWsId };
+    const activeWorkspace = focusedWsId
+      ? focusedWsId === sessionWsId
+        ? sessionWorkspace
+        : await this._workspaceStore.get(focusedWsId)
+      : undefined;
+    // No focus (home) → undefined → compose omits the "## Workspace" block.
+    const workspaceContext = focusedWsId
+      ? activeWorkspace
+        ? { id: activeWorkspace.id, name: activeWorkspace.name }
+        : { id: focusedWsId }
+      : undefined;
 
     // Workspace identity/persona override — follows the focused workspace too.
     const identityOverride = activeWorkspace?.identity

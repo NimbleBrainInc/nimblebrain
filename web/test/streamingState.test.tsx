@@ -1,6 +1,7 @@
 import { describe, expect, it, mock, beforeEach } from "bun:test";
 import { renderHook, act } from "@testing-library/react";
 import type { ReactNode } from "react";
+import { MemoryRouter } from "react-router-dom";
 import { ChatProvider, useChatContext } from "../src/context/ChatContext.tsx";
 import type { StreamingState } from "../src/hooks/useChat.ts";
 
@@ -30,7 +31,11 @@ mock.module("../src/api/client", () => ({
 // ---------------------------------------------------------------------------
 
 function wrapper({ children }: { children: ReactNode }) {
-	return <ChatProvider>{children}</ChatProvider>;
+	return (
+		<MemoryRouter>
+			<ChatProvider>{children}</ChatProvider>
+		</MemoryRouter>
+	);
 }
 
 function useStreamingState() {

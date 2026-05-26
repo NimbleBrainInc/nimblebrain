@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { renderHook, act } from "@testing-library/react";
 import type { ReactNode } from "react";
+import { MemoryRouter } from "react-router-dom";
 import { ChatProvider, useChatContext, useChatConfigContext } from "../src/context/ChatContext";
 import type { AppContext } from "../src/types";
 
@@ -9,12 +10,20 @@ import type { AppContext } from "../src/types";
 // --------------------------------------------------------------------------
 
 function wrapper({ children }: { children: ReactNode }) {
-	return <ChatProvider>{children}</ChatProvider>;
+	return (
+		<MemoryRouter>
+			<ChatProvider>{children}</ChatProvider>
+		</MemoryRouter>
+	);
 }
 
 function wrapperWithId(id: string) {
 	return function Wrapper({ children }: { children: ReactNode }) {
-		return <ChatProvider initialConversationId={id}>{children}</ChatProvider>;
+		return (
+			<MemoryRouter>
+				<ChatProvider initialConversationId={id}>{children}</ChatProvider>
+			</MemoryRouter>
+		);
 	};
 }
 
@@ -98,15 +107,17 @@ describe("ChatConfigContext", () => {
 	it("accepts initialConfig from bootstrap", () => {
 		function wrapperWithConfig({ children }: { children: ReactNode }) {
 			return (
-				<ChatProvider
-					initialConfig={{
-						configuredProviders: ["anthropic", "openai"],
-						defaultModel: "claude-sonnet-4-5-20250929",
-						preferences: { theme: "dark" },
-					}}
-				>
-					{children}
-				</ChatProvider>
+				<MemoryRouter>
+					<ChatProvider
+						initialConfig={{
+							configuredProviders: ["anthropic", "openai"],
+							defaultModel: "claude-sonnet-4-5-20250929",
+							preferences: { theme: "dark" },
+						}}
+					>
+						{children}
+					</ChatProvider>
+				</MemoryRouter>
 			);
 		}
 
@@ -126,7 +137,11 @@ describe("ChatConfigContext", () => {
 		const refs: unknown[] = [];
 
 		function wrapperBoth({ children }: { children: ReactNode }) {
-			return <ChatProvider>{children}</ChatProvider>;
+			return (
+			<MemoryRouter>
+				<ChatProvider>{children}</ChatProvider>
+			</MemoryRouter>
+		);
 		}
 
 		const { result } = renderHook(

@@ -199,7 +199,11 @@ const updateTool =
         }
       : tc;
 
-export function useChat(initialConversationId?: string, currentUserId?: string): UseChatReturn {
+export function useChat(
+  initialConversationId?: string,
+  currentUserId?: string,
+  focusWorkspaceId?: string | null,
+): UseChatReturn {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const [conversationId, setConversationId] = useState<string | null>(
@@ -209,6 +213,15 @@ export function useChat(initialConversationId?: string, currentUserId?: string):
   const [streamingState, setStreamingState] = useState<StreamingState>(null);
   const [preparingTool, setPreparingTool] = useState<PreparingTool | null>(null);
   const [conversationMeta, setConversationMeta] = useState<LoadedConversationMeta | null>(null);
+
+  // The chat's FOCUSED workspace is what the user is currently VIEWING (the
+  // `/w/:slug`), supplied by the provider from the route. It's situational
+  // context — the agent reasons about which workspace/app is on screen — and
+  // the source of the workspace briefing (apps + house rules). NOT tool scope.
+  // Null on home / identity routes, so the agent correctly sees "no current
+  // workspace". Read via a ref so `sendMessage` doesn't re-memoize on nav.
+  const focusWorkspaceIdRef = useRef(focusWorkspaceId ?? null);
+  focusWorkspaceIdRef.current = focusWorkspaceId ?? null;
 
   // Refs for building the current assistant message during streaming.
   const blocksRef = useRef<ContentBlock[]>([]);
@@ -482,9 +495,9 @@ export function useChat(initialConversationId?: string, currentUserId?: string):
           }
         };
         if (files && files.length > 0) {
-          await streamChatMultipart(req, files, onEvent);
+          await streamChatMultipart(req, files, onEvent, focusWorkspaceIdRef.current);
         } else {
-          await streamChat(req, onEvent);
+          await streamChat(req, onEvent, focusWorkspaceIdRef.current);
         }
         captureEvent("web.chat_sent", {
           is_resume: !!conversationId,

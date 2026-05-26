@@ -387,8 +387,21 @@ async function consumeSSEStream(res: Response, onEvent: ChatStreamCallback): Pro
   }
 }
 
-/** Streaming chat via SSE. Calls onEvent for each event, resolves when done. */
-export async function streamChat(req: ChatRequest, onEvent: ChatStreamCallback): Promise<void> {
+/**
+ * Streaming chat via SSE. Calls onEvent for each event, resolves when done.
+ *
+ * `focusWorkspaceId` is the workspace the chat is FOCUSED on — the `/w/:slug`
+ * the user is viewing — sent as `X-Workspace-Id`. It's additional briefing
+ * context only (the apps list + workspace house rules), not tool scope or auth.
+ * On home / identity routes it's null/absent, so no workspace is sent and the
+ * chat is identity-level (no "current workspace"). Route-derived, NOT the
+ * persisted global active workspace.
+ */
+export async function streamChat(
+  req: ChatRequest,
+  onEvent: ChatStreamCallback,
+  focusWorkspaceId?: string | null,
+): Promise<void> {
   // If a conv-events SSE subscription is open for this conversation,
   // pass its server-issued subscriber id so the broadcast suppresses
   // self-echo. Without this, the sender's own tab double-processes
@@ -397,10 +410,14 @@ export async function streamChat(req: ChatRequest, onEvent: ChatStreamCallback):
   const originSubId = req.conversationId
     ? getConversationSubscriberId(req.conversationId)
     : undefined;
+  const h = headers(originSubId ? { "X-Origin-Subscriber-Id": originSubId } : undefined);
+  // Override the global active workspace: the chat's focus is route-derived.
+  if (focusWorkspaceId) h["X-Workspace-Id"] = focusWorkspaceId;
+  else delete h["X-Workspace-Id"];
   const res = await fetchWithRefresh(`${API_BASE}/v1/chat/stream`, {
     method: "POST",
     credentials: "include",
-    headers: headers(originSubId ? { "X-Origin-Subscriber-Id": originSubId } : undefined),
+    headers: h,
     body: JSON.stringify(req),
   });
 
@@ -428,6 +445,7 @@ export async function streamChatMultipart(
   req: ChatRequest,
   files: File[],
   onEvent: ChatStreamCallback,
+  focusWorkspaceId?: string | null,
 ): Promise<void> {
   const formData = new FormData();
   formData.append("message", req.message);
@@ -443,8 +461,9 @@ export async function streamChatMultipart(
   if (authToken && authToken !== "__cookie__") {
     h.Authorization = `Bearer ${authToken}`;
   }
-  if (activeWorkspaceId) {
-    h["X-Workspace-Id"] = activeWorkspaceId;
+  // Route-derived chat focus (additional briefing context); absent on home.
+  if (focusWorkspaceId) {
+    h["X-Workspace-Id"] = focusWorkspaceId;
   }
   // Suppress self-echo on the conv-events subscription — see
   // `streamChat` above for why this matters.
