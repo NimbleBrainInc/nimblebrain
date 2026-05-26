@@ -307,13 +307,26 @@ export function composeSystemPromptTraced(
   // Layer 1.6: Participants section — removed in Stage 1 (single-owner
   // conversations). Returns in Stage 4 with policy-gated sharing.
 
-  // Layer 1.7: Workspace context.
+  // Layer 1.7: Workspace context. Either the focused workspace, or — at the
+  // identity-level home (no focus) — an EXPLICIT statement that there's no
+  // current workspace. The explicit form matters: without it the prompt is
+  // silent on scope, and an agent asked "which workspace am I in?" reaches for
+  // a workspace-namespaced tool and reports an arbitrary one.
   if (workspaceContext) {
     const wsText = formatWorkspaceContext(workspaceContext);
     layers.push({
       kind: "workspace_context",
       id: "nb:workspace-context",
       source: `runtime — workspace ${workspaceContext.id}`,
+      text: wsText,
+      tokens: approxTokens(wsText),
+    });
+  } else {
+    const wsText = formatNoWorkspaceContext();
+    layers.push({
+      kind: "workspace_context",
+      id: "nb:no-workspace-context",
+      source: "runtime — identity-level home (no focused workspace)",
       text: wsText,
       tokens: approxTokens(wsText),
     });
@@ -621,6 +634,22 @@ function formatWorkspaceContext(ws: WorkspaceContext): string {
   lines.push(`- ID: ${sanitizeLineField(ws.id)}`);
   if (ws.name) lines.push(`- Name: ${sanitizeLineField(ws.name)}`);
   return lines.join("\n");
+}
+
+/**
+ * Workspace block for the identity-level home (no focused workspace). States
+ * plainly that there is no current workspace, so the agent answers "which
+ * workspace am I in?" from context instead of calling a workspace-namespaced
+ * tool and reporting an arbitrary one.
+ */
+function formatNoWorkspaceContext(): string {
+  return [
+    "## Workspace",
+    "",
+    "The user is at their identity-level home — **not in any single workspace**. There is no current workspace.",
+    "",
+    "Your tools span every workspace the user belongs to (each namespaced to its own workspace); use whichever the user names. If the user asks which workspace they're in, tell them they're at their home view — not in a specific workspace — rather than calling a tool to guess.",
+  ].join("\n");
 }
 
 function formatUserPrefs(prefs?: UserPrefs): string {
