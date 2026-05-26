@@ -227,6 +227,40 @@ describe("nb__manage_members", () => {
       expect(result.isError).toBe(false);
     });
 
+    test("cannot remove the last active admin when the other admin is deactivated", async () => {
+      const ws = await wsStore.create("Team DeactivatedCoAdmin");
+      await wsStore.addMember(ws.id, memberUser.id, "admin");
+      await wsStore.addMember(ws.id, anotherUser.id, "admin");
+      // anotherUser is an admin on paper but deactivated — they can't act, so
+      // they don't count. memberUser is the only ACTIVE admin.
+      await userStore.softDelete(anotherUser.id);
+
+      const result = await tool.handler({
+        action: "remove",
+        workspaceId: ws.id,
+        userId: memberUser.id,
+      });
+
+      expect(result.isError).toBe(true);
+      expect(extractText(result)).toContain("Cannot remove the last workspace admin");
+    });
+
+    test("can remove a deactivated admin even though it is an admin entry", async () => {
+      const ws = await wsStore.create("Team RemoveDeactivated");
+      await wsStore.addMember(ws.id, memberUser.id, "admin");
+      await wsStore.addMember(ws.id, anotherUser.id, "admin");
+      await userStore.softDelete(anotherUser.id);
+
+      // Removing the deactivated admin is safe — the active admin remains.
+      const result = await tool.handler({
+        action: "remove",
+        workspaceId: ws.id,
+        userId: anotherUser.id,
+      });
+
+      expect(result.isError).toBe(false);
+    });
+
     test("removing non-member returns error", async () => {
       const ws = await wsStore.create("Team NoMember");
 
@@ -263,6 +297,23 @@ describe("nb__manage_members", () => {
     test("cannot demote last workspace admin", async () => {
       const ws = await wsStore.create("Team DemoteLast");
       await wsStore.addMember(ws.id, memberUser.id, "admin");
+
+      const result = await tool.handler({
+        action: "update",
+        workspaceId: ws.id,
+        userId: memberUser.id,
+        role: "member",
+      });
+
+      expect(result.isError).toBe(true);
+      expect(extractText(result)).toContain("Cannot demote the last workspace admin");
+    });
+
+    test("cannot demote the last active admin when the other admin is deactivated", async () => {
+      const ws = await wsStore.create("Team DemoteActiveLast");
+      await wsStore.addMember(ws.id, memberUser.id, "admin");
+      await wsStore.addMember(ws.id, anotherUser.id, "admin");
+      await userStore.softDelete(anotherUser.id);
 
       const result = await tool.handler({
         action: "update",
@@ -323,6 +374,23 @@ describe("nb__manage_members", () => {
       expect(parsed.members).toHaveLength(2);
       expect(parsed.members[0]).toMatchObject({ userId: memberUser.id, role: "admin" });
       expect(parsed.members[1]).toMatchObject({ userId: anotherUser.id, role: "member" });
+    });
+
+    test("surfaces deletedAt for deactivated members", async () => {
+      const ws = await wsStore.create("Team ListDeactivated");
+      await wsStore.addMember(ws.id, memberUser.id, "admin");
+      await wsStore.addMember(ws.id, anotherUser.id, "member");
+      await userStore.softDelete(anotherUser.id);
+
+      const result = await tool.handler({ action: "list", workspaceId: ws.id });
+
+      const parsed = parseResult(result) as {
+        members: Array<{ userId: string; deletedAt?: string }>;
+      };
+      const active = parsed.members.find((m) => m.userId === memberUser.id);
+      const deactivated = parsed.members.find((m) => m.userId === anotherUser.id);
+      expect(active?.deletedAt).toBeUndefined();
+      expect(deactivated?.deletedAt).toBeTruthy();
     });
 
     test("returns empty array for workspace with no members", async () => {

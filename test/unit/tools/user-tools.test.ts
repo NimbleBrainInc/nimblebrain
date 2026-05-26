@@ -292,6 +292,35 @@ describe("nb__manage_users", () => {
       const updated = parseResult(updateResult) as { user: { orgRole: string } };
       expect(updated.user.orgRole).toBe("member");
     });
+
+    test("a deactivated owner does not count toward the last-owner guard", async () => {
+      // Two owners; deactivate one so only one ACTIVE owner remains.
+      const r1 = await tool.handler({
+        action: "create",
+        email: "owner1@example.com",
+        displayName: "Owner1",
+        orgRole: "owner",
+      });
+      const owner1 = parseResult(r1) as { user: { id: string } };
+      const r2 = await tool.handler({
+        action: "create",
+        email: "owner2@example.com",
+        displayName: "Owner2",
+        orgRole: "owner",
+      });
+      const owner2 = parseResult(r2) as { user: { id: string } };
+      await userStore.softDelete(owner2.user.id);
+
+      // Downgrading the sole active owner must still be blocked.
+      const updateResult = await tool.handler({
+        action: "update",
+        userId: owner1.user.id,
+        orgRole: "member",
+      });
+
+      expect(updateResult.isError).toBe(false);
+      expect(extractText(updateResult)).toContain("Cannot change the role of the last owner");
+    });
   });
 
   describe("delete (soft)", () => {

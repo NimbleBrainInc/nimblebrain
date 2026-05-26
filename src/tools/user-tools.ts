@@ -1,7 +1,7 @@
 import { textContent } from "../engine/content-helpers.ts";
 import type { ToolResult } from "../engine/types.ts";
 import type { CreateUserResult, IdentityProvider, UserIdentity } from "../identity/provider.ts";
-import type { UserStore } from "../identity/user.ts";
+import type { User, UserStore } from "../identity/user.ts";
 import type { InProcessTool } from "./in-process-app.ts";
 
 // ── Types ─────────────────────────────────────────────────────────
@@ -26,6 +26,16 @@ function permissionDenied(): ToolResult {
     content: textContent("You don't have permission to manage users. Ask an org admin."),
     isError: true,
   };
+}
+
+/**
+ * Count org owners that are still active (not soft-deleted). The last-owner
+ * guards on both the update (demote) and delete (deactivate) paths use this so
+ * a deactivated owner can never be mistaken for a live one — otherwise you
+ * could demote/deactivate the last *active* owner and lock the org out.
+ */
+function activeOwnerCount(users: User[]): number {
+  return users.filter((u) => u.orgRole === "owner" && !u.deletedAt).length;
 }
 
 // ── Tool factory ──────────────────────────────────────────────────
@@ -203,13 +213,12 @@ async function handleUpdate(
   }
 
   try {
-    // Safety check: cannot downgrade the last owner
+    // Safety check: cannot downgrade the last active owner
     if (patch.orgRole && patch.orgRole !== "owner") {
       const currentUser = await ctx.userStore.get(userId);
-      if (currentUser?.orgRole === "owner") {
+      if (currentUser?.orgRole === "owner" && !currentUser.deletedAt) {
         const allUsers = await ctx.userStore.list();
-        const ownerCount = allUsers.filter((u) => u.orgRole === "owner").length;
-        if (ownerCount <= 1) {
+        if (activeOwnerCount(allUsers) <= 1) {
           return {
             content: textContent(
               "Cannot change the role of the last owner. Promote another user to owner first.",
@@ -274,10 +283,9 @@ async function handleDelete(
       };
     }
 
-    if (user.orgRole === "owner") {
+    if (user.orgRole === "owner" && !user.deletedAt) {
       const allUsers = await ctx.userStore.list();
-      const ownerCount = allUsers.filter((u) => u.orgRole === "owner" && !u.deletedAt).length;
-      if (ownerCount <= 1) {
+      if (activeOwnerCount(allUsers) <= 1) {
         return {
           content: textContent(
             "Cannot delete the last owner. Promote another user to owner first.",
@@ -312,7 +320,7 @@ async function handleDelete(
   } catch (err) {
     return {
       content: textContent(
-        `Failed to delete user: ${err instanceof Error ? err.message : String(err)}`,
+        `Failed to deactivate user: ${err instanceof Error ? err.message : String(err)}`,
       ),
       isError: true,
     };
