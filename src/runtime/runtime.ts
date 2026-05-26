@@ -1033,27 +1033,52 @@ export class Runtime {
       };
     }
 
-    // Stage 2 (T006) — cross-workspace tool aggregation. The chat's tool
-    // list is the union of every workspace the identity can see, with
-    // each entry namespaced via `namespacedToolName(wsId, name)`. The
-    // aggregator owns a watcher-backed cache so this stays cheap on
-    // warm calls; first call per identity primes per-workspace entries.
-    //
-    // Role-based visibility (`isToolVisibleToRole`) and surface-tier
-    // tiering (`surfaceTools`) still apply but operate on the aggregated
-    // list — the model sees ws-prefixed names. The aggregator returns
-    // descriptors that carry `wsId` / `toolName` separately so audit can
-    // attribute without re-parsing, but the engine only consumes the
-    // ToolSchema-shaped fields.
-    const aggregated = await this._toolListAggregator.aggregateToolList(ownerId);
-    const allTools: ToolSchema[] = aggregated
-      .filter((t) => isToolVisibleToRole(t.toolName, requestIdentity.orgRole))
-      .map((t) => ({
-        name: t.name,
-        description: t.description,
-        inputSchema: t.inputSchema,
-        ...(t.annotations !== undefined ? { annotations: t.annotations } : {}),
-      }));
+    // Tool surfacing — progressive disclosure. The ACTIVE set the model sees
+    // is scoped to the FOCUSED workspace (one copy of the platform `nb__*`
+    // tools + that workspace's apps) plus the identity tools, NOT the
+    // cross-workspace union. The union remains the SEARCH corpus
+    // (`listDiscoverableTools`), reachable on demand via `nb__search`; this is
+    // what keeps the active set under `maxActiveTools` and the system tools
+    // un-duplicated. Role-based visibility (`isToolVisibleToRole`) and
+    // surface-tier tiering (`surfaceTools`) apply to this focused set.
+    // ACTIVE tool set = the FOCUSED workspace's tools (ONE copy of the
+    // platform `nb__*` system tools + that workspace's app tools) plus the
+    // identity tools — NOT the cross-workspace union. The union puts every
+    // workspace's tools into the model's active list, including N duplicated
+    // copies of the system set (one per workspace), which blows past
+    // `maxActiveTools` and floods the prompt. Progressive disclosure instead:
+    // the cross-workspace union is the SEARCH corpus (`listDiscoverableTools`),
+    // and the model promotes out-of-context tools on demand via `nb__search`
+    // (see the workspace-context prompt block). At the identity-level home (no
+    // focus) the personal workspace is the active set — the same silent bridge
+    // used for session reads.
+    const toolsWsId = focusedWsId ?? sessionWsId;
+    const toolsRegistry = await this.ensureWorkspaceRegistry(toolsWsId);
+    const [focusedTools, identityTools] = await Promise.all([
+      toolsRegistry.availableTools(),
+      this.listIdentitySourceTools(),
+    ]);
+    const allTools: ToolSchema[] = [
+      // Workspace tools — namespaced to the focused workspace so the
+      // orchestrator routes them; one copy of `nb__*`, not N.
+      ...focusedTools
+        .filter((t) => isToolVisibleToRole(t.name, requestIdentity.orgRole))
+        .map((t) => ({
+          name: namespacedToolName(toolsWsId, t.name),
+          description: t.description,
+          inputSchema: t.inputSchema,
+          ...(t.annotations !== undefined ? { annotations: t.annotations } : {}),
+        })),
+      // Identity tools (conversations, …) — bare, owned by the user.
+      ...identityTools
+        .filter((t) => isToolVisibleToRole(t.name, requestIdentity.orgRole))
+        .map((t) => ({
+          name: t.name,
+          description: t.description,
+          inputSchema: t.inputSchema,
+          ...(t.annotations !== undefined ? { annotations: t.annotations } : {}),
+        })),
+    ];
     // Post-aggregator the focused-app match key is the WORKSPACE-PREFIXED
     // source name: tools land in the active list as
     // `ws_<id>-<source>__<tool>`, and `surfaceTools.focusedServerName`

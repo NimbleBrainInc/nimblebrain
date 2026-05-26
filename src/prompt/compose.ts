@@ -633,6 +633,10 @@ function formatWorkspaceContext(ws: WorkspaceContext): string {
   const lines = ["## Workspace", ""];
   lines.push(`- ID: ${sanitizeLineField(ws.id)}`);
   if (ws.name) lines.push(`- Name: ${sanitizeLineField(ws.name)}`);
+  lines.push("");
+  lines.push(
+    "Your active tools are this workspace's — its apps plus the platform tools. Tools in the user's OTHER workspaces, and their personal tools (e.g. email), are NOT loaded right now. Find any tool across all of the user's workspaces with `nb__search`; matches are added to your tools on demand. Don't assume a tool is missing — search first.",
+  );
   return lines.join("\n");
 }
 
@@ -640,15 +644,16 @@ function formatWorkspaceContext(ws: WorkspaceContext): string {
  * Workspace block for the identity-level home (no focused workspace). States
  * plainly that there is no current workspace, so the agent answers "which
  * workspace am I in?" from context instead of calling a workspace-namespaced
- * tool and reporting an arbitrary one.
+ * tool and reporting an arbitrary one — and points at `nb__search` for tools
+ * that aren't in the home active set.
  */
 function formatNoWorkspaceContext(): string {
   return [
     "## Workspace",
     "",
-    "The user is at their identity-level home — **not in any single workspace**. There is no current workspace.",
+    "The user is at their identity-level home — **not in any single workspace**. There is no current workspace. If the user asks which workspace they're in, tell them they're at their home view, not a specific one.",
     "",
-    "Your tools span every workspace the user belongs to (each namespaced to its own workspace); use whichever the user names. If the user asks which workspace they're in, tell them they're at their home view — not in a specific workspace — rather than calling a tool to guess.",
+    "Your active tools are the platform tools and the user's own (conversations, personal). Tools that belong to a specific workspace are NOT loaded here. Find any tool across all of the user's workspaces with `nb__search`; matches are added to your tools on demand. Don't assume a tool is missing — search first.",
   ].join("\n");
 }
 
