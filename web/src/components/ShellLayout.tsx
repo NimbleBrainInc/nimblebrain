@@ -12,6 +12,7 @@ import type { PlacementEntry } from "../types";
 import { ChatChrome } from "./ChatChrome";
 import { Logo } from "./Logo";
 import { MobileSidebarDrawer } from "./MobileSidebarDrawer";
+import { NavProgress } from "./NavProgress";
 import { SidebarSearch } from "./shell/SidebarSearch";
 import { WorkspaceSection } from "./shell/WorkspaceSection";
 import { SidebarToggle } from "./SidebarToggle";
@@ -108,6 +109,9 @@ export const ShellLayout = memo(function ShellLayout({
 
   return (
     <div className="flex h-dvh overflow-hidden">
+      {/* Route-transition progress cue — feedback on every navigation so a
+          fast content swap never reads as a hang. */}
+      <NavProgress />
       {/* Desktop / tablet sidebar */}
       {!isHidden && (
         <nav

@@ -62,11 +62,19 @@ export function useWorkspaceBriefing(workspaceId: string | undefined): UseWorksp
 
   // Refetch when the active workspace lands or changes. Clear immediately so a
   // switch never flashes the previous workspace's briefing under the new
-  // header.
+  // header — but set `loading` in the SAME commit so the card paints its
+  // skeleton straight away instead of a blank gap (the fetch's own
+  // `setLoading(true)` runs a microtask later, leaving a one-frame blank
+  // otherwise).
   useEffect(() => {
     setBriefing(null);
     setError(null);
-    if (workspaceId) void load(false);
+    if (workspaceId) {
+      setLoading(true);
+      void load(false);
+    } else {
+      setLoading(false);
+    }
   }, [workspaceId, load]);
 
   const refresh = useCallback(() => {
