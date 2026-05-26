@@ -180,11 +180,11 @@ export const ShellLayout = memo(function ShellLayout({
         <div className="flex-1 min-h-0 overflow-hidden">{children}</div>
       </main>
 
-      {/* Chat chrome (floating toggle + sliding panel) — mounted at
-          the shell level so chat is always one click away from any
-          route. AppWithChat keeps iframe-specific coordination
-          (marginRight, resize handle) but does NOT render its own
-          chat panel — this is the single mount point. */}
+      {/* Chat chrome (toggle + sliding panel + resize handle) — the
+          single, global mount point, so chat is one click away from any
+          route. The push-over that makes room for the panel is the
+          `marginRight` on <main> above; the panel and handle live inside
+          ChatChrome itself. */}
       <ChatChrome />
 
       {/* Mobile drawer — single-column layout mirroring desktop. */}

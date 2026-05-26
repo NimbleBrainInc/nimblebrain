@@ -1,21 +1,18 @@
 // ---------------------------------------------------------------------------
-// AppWithChat — iframe renderer for an app placement, with chat-panel
-// coordination via shared ChatPanelContext.
+// AppWithChat — iframe renderer for a single app placement.
 //
-// The chat panel itself (toggle button, sliding sidebar/fullscreen,
-// keyboard shortcuts, unread tracking, deep-link) lives in
-// `ChatChrome` mounted at the shell level, so chat is always one
-// click away regardless of route. This component keeps only what's
-// iframe-specific:
-//   - `SlotRenderer` for the app placement
-//   - `marginRight: panelWidth` on the iframe area so the app doesn't
-//     get covered when the chat panel is open as a sidebar
-//   - `ResizeHandle` anchored to the chat panel's left edge for
-//     drag-to-resize (the handle coordinates with the iframe's
-//     marginRight via shared ChatPanelContext state)
+// Scope is deliberately narrow. The chat panel — toggle, sliding
+// sidebar/fullscreen, resize handle — and the `marginRight` push-over
+// that makes room for it are all shell-level (`ChatChrome` and
+// `ShellLayout`), so they behave identically on every route. Don't pull
+// any of that back in here; this component renders one app and nothing
+// about the panel's own layout.
+//
+// What stays here, because it needs the focused app:
+//   - `SlotRenderer` — renders the placement's iframe
 //   - `handleChat` / `handlePromptAction` — iframe→shell channels for
-//     "send this message in chat from inside the app"; these stamp
-//     the app's AppContext on outgoing messages
+//     "send this from inside the app". These are the one place a focused
+//     app is known, so they stamp its `AppContext` on outgoing messages.
 // ---------------------------------------------------------------------------
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -23,7 +20,6 @@ import type { UiChatContext } from "../bridge/types";
 import { useChatContext } from "../context/ChatContext";
 import { useChatPanelContext } from "../context/ChatPanelContext";
 import type { AppContext, PlacementEntry } from "../types";
-import { ResizeHandle } from "./ResizeHandle";
 import { SlotRenderer } from "./SlotRenderer";
 
 function useIsMobile(): boolean {
@@ -46,13 +42,11 @@ interface AppWithChatProps {
   forceRefresh?: boolean;
 }
 
-const DEFAULT_WIDTH = 380;
 const TRANSITION_STANDARD = "300ms cubic-bezier(0.33, 1, 0.68, 1)";
 const TRANSITION_FULLSCREEN = "350ms cubic-bezier(0.4, 0, 0.2, 1)";
 
 export function AppWithChat({ placement, onNavigate, forceRefresh }: AppWithChatProps) {
-  const { panelState, panelWidth, setPanelWidth, openPanel } = useChatPanelContext();
-  const [isDragging, setIsDragging] = useState(false);
+  const { panelState, openPanel } = useChatPanelContext();
 
   const chat = useChatContext();
   const isMobile = useIsMobile();
@@ -92,10 +86,6 @@ export function AppWithChat({ placement, onNavigate, forceRefresh }: AppWithChat
     [panelState, openPanel],
   );
 
-  const handleResizeDoubleClick = useCallback(() => {
-    setPanelWidth(DEFAULT_WIDTH);
-  }, [setPanelWidth]);
-
   const isSidebar = panelState === "sidebar";
   const isFullscreen = panelState === "fullscreen";
   const hideMobileApp = isMobile && isSidebar;
@@ -112,9 +102,7 @@ export function AppWithChat({ placement, onNavigate, forceRefresh }: AppWithChat
           className={
             isFullscreen
               ? "flex-1 h-full min-w-0 opacity-30 scale-[0.98] blur-sm pointer-events-none transition-all duration-350 ease-out"
-              : isDragging
-                ? "flex-1 h-full min-w-0 pointer-events-none"
-                : "flex-1 h-full min-w-0"
+              : "flex-1 h-full min-w-0"
           }
           style={{
             transition: isFullscreen
@@ -129,23 +117,6 @@ export function AppWithChat({ placement, onNavigate, forceRefresh }: AppWithChat
             onNavigate={onNavigate}
             onPromptAction={handlePromptAction}
             forceRefresh={forceRefresh}
-          />
-        </div>
-      )}
-
-      {/* Resize handle — anchored to the chat panel's left edge.
-          Coordinates with the iframe's marginRight via the shared
-          panelWidth in ChatPanelContext. The panel itself is rendered
-          by ChatChrome (mounted at the shell level). */}
-      {isSidebar && !isMobile && (
-        <div className="fixed top-0 h-full z-20 hidden sm:block" style={{ right: panelWidth }}>
-          <ResizeHandle
-            initialWidth={panelWidth}
-            onWidthChange={setPanelWidth}
-            onDragStart={() => setIsDragging(true)}
-            onDragEnd={() => setIsDragging(false)}
-            onDoubleClick={handleResizeDoubleClick}
-            className="h-full"
           />
         </div>
       )}
