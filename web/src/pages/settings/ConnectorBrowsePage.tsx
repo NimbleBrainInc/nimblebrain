@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   type DirectoryEntry,
   getInstalledConnectors,
+  type InstalledConnector,
   initiateComposioOAuth,
   initiateMcpOAuth,
-  type InstalledConnector,
   listDirectory,
 } from "../../api/client";
 import { ConnectorIcon } from "../../components/connectors/ConnectorIcon";
@@ -35,9 +35,11 @@ export function ConnectorBrowsePage({ mode }: { mode: "personal" | "workspace" }
   const role = useScopedRole();
   const isWsAdmin = roleAtLeast(role, "ws_admin");
   const navigate = useNavigate();
+  const { slug } = useParams<{ slug: string }>();
 
-  const backPath =
-    mode === "personal" ? "/settings/personal/connectors" : "/settings/workspace/connectors";
+  // Workspace connectors are addressed by the URL slug. (Personal-scope
+  // connectors have no UI surface today; the mode is kept for the API.)
+  const backPath = `/w/${slug}/settings/connectors`;
   const configureBasePath = backPath;
 
   // One fetcher for the page. Stable identity across renders via

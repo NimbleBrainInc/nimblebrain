@@ -1,14 +1,16 @@
 import { Lightbulb } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { callTool } from "../api/client";
-import { parseToolResponse } from "../lib/tool-response";
 // Canonical shapes from `src/tools/platform/schemas/skills.ts`; mirrored
 // here via codegen so server + web can't drift.
 import type {
   ActiveSkillEntry as ActiveSkill,
   SkillsActiveForOutput,
 } from "../_generated/platform-schemas/skills";
+import { callTool } from "../api/client";
+import { useWorkspaceContext } from "../context/WorkspaceContext";
+import { parseToolResponse } from "../lib/tool-response";
+import { toSlug } from "../lib/workspace-slug";
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -44,6 +46,9 @@ export function SkillsPopover({ conversationId }: { conversationId: string | nul
   const [error, setError] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
+  const { activeWorkspace } = useWorkspaceContext();
+  // Skills are workspace-scoped; "Manage" targets the focused workspace.
+  const skillsPath = activeWorkspace ? `/w/${toSlug(activeWorkspace.id)}/settings/skills` : "/";
 
   const refresh = useCallback(async () => {
     if (!conversationId) {
@@ -106,7 +111,7 @@ export function SkillsPopover({ conversationId }: { conversationId: string | nul
           <div className="px-3 py-2 border-b flex items-center justify-between">
             <div className="text-xs font-semibold">Active skills</div>
             <Link
-              to="/settings/workspace/skills"
+              to={skillsPath}
               className="text-[11px] text-muted-foreground hover:text-foreground"
               onClick={() => setOpen(false)}
             >

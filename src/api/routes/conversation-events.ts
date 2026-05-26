@@ -39,11 +39,21 @@ import { optionalWorkspace } from "../middleware/workspace.ts";
 import { type AppContext, type AppEnv, apiError } from "../types.ts";
 
 export function conversationEventRoutes(ctx: AppContext) {
-  return new Hono<AppEnv>()
-    .use("*", requireAuth(ctx.authOptions))
-    .use("*", optionalWorkspace(ctx.workspaceStore))
-    .use("*", errorLog(ctx))
-    .get("/v1/conversations/:id/events", async (c) => {
+  // Middleware is chained on the route itself, NOT via `.use("*")`. Hono
+  // flattens a sub-app's `.use("*")` into a `/*` matcher that runs for
+  // EVERY request reaching the parent after this sub-app is mounted —
+  // including sibling routes like `/v1/bootstrap`. That leak made
+  // `optionalWorkspace`'s membership check (403 for a non-member
+  // `X-Workspace-Id`) fire on the *permissive* bootstrap route, locking
+  // out any user whose remembered workspace they'd lost access to.
+  // Per-route middleware scopes enforcement to exactly this path — same
+  // precedent as `mcp-auth.ts` (per-handler, not `.use("*")`).
+  return new Hono<AppEnv>().get(
+    "/v1/conversations/:id/events",
+    requireAuth(ctx.authOptions),
+    optionalWorkspace(ctx.workspaceStore),
+    errorLog(ctx),
+    async (c) => {
       const conversationId = c.req.param("id");
       const identity = c.var.identity;
 
@@ -107,5 +117,6 @@ export function conversationEventRoutes(ctx: AppContext) {
           Connection: "keep-alive",
         },
       });
-    });
+    },
+  );
 }

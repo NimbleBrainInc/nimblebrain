@@ -28,7 +28,7 @@ export function recoverFromWorkspaceError(
     workspaces.find((w) => w.id !== rejectedId) ??
     null;
   if (!fallback) return;
-  // setActiveWorkspace syncs the api/client header + localStorage.
+  // setActiveWorkspace updates the focused workspace + the api/client header.
   setActiveWorkspace(fallback);
   navigateHome();
 }

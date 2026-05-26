@@ -15,11 +15,11 @@ import { useWorkspaceContext } from "../../context/WorkspaceContext";
 import { EmptyState, RequireActiveWorkspace, SettingsListPage } from "./components";
 
 /**
- * Active-workspace "Members" tab — list view.
+ * Workspace "Members" tab — list view.
  *
  * Edit affordances (add/remove/role-change) live on the admin path
- * (`/settings/org/workspaces/:slug` → `WorkspaceDetailPage`). This page is
- * intentionally read-only because the active-workspace surface is for
+ * (`/org/workspaces/:slug` → `WorkspaceDetailPage`). This page is
+ * intentionally read-only because the workspace settings surface is for
  * everyone, not just admins.
  */
 export function WorkspaceMembersTab() {

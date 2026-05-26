@@ -9,9 +9,9 @@ import {
 } from "./components";
 
 /**
- * Active-workspace "General" tab — name, MCP connection, and custom instructions.
+ * Workspace "General" tab — name, MCP connection, and custom instructions.
  *
- * Route: /settings/workspace/general (active workspace, scoped via header switcher).
+ * Route: /w/:slug/settings/general (the workspace is the URL slug).
  * Permission: any workspace member can read; workspace admins (or org
  * admins/owners) can edit. The `WorkspaceInstructions` editor disables
  * itself when `canEdit` is false; the backend independently enforces.

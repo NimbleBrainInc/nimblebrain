@@ -9,15 +9,15 @@
 // when their data sources are ready, without changing the page shape.
 // ---------------------------------------------------------------------------
 
-import { Link } from "react-router-dom";
 import { Plus } from "lucide-react";
+import { Link } from "react-router-dom";
+import { useSession } from "../context/SessionContext";
 import { useWorkspaceContext, type WorkspaceInfo } from "../context/WorkspaceContext";
 import { getGreeting } from "../lib/greeting";
-import { getWorkspaceAvatar } from "../lib/workspace-avatar";
-import { useSession } from "../context/SessionContext";
-import { toSlug } from "../lib/workspace-slug";
-import { orderWorkspacesForSidebar } from "../lib/workspace-order";
 import { cn } from "../lib/utils";
+import { getWorkspaceAvatar } from "../lib/workspace-avatar";
+import { orderWorkspacesForSidebar } from "../lib/workspace-order";
+import { toSlug } from "../lib/workspace-slug";
 
 export function GlobalHomePage() {
   const wsCtx = useWorkspaceContext();
@@ -102,7 +102,7 @@ function WorkspaceTile({ workspace }: { workspace: WorkspaceInfo }) {
 function NewWorkspaceTile() {
   return (
     <Link
-      to="/settings/org/workspaces"
+      to="/org/workspaces"
       data-testid="home-new-workspace-tile"
       className={cn(
         "flex flex-col items-center justify-center gap-2 p-4 rounded-lg border border-dashed border-border",

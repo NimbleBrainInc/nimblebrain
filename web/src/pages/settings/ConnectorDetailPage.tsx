@@ -37,10 +37,11 @@ import { roleAtLeast, useScopedRole } from "../../hooks/useScopedRole";
  * `mode` comes from the route prefix.
  */
 export function ConnectorDetailPage({ mode }: { mode: "personal" | "workspace" }) {
-  const { serverName = "" } = useParams<{ serverName: string }>();
+  const { serverName = "", slug } = useParams<{ serverName: string; slug: string }>();
   const navigate = useNavigate();
-  const backPath =
-    mode === "personal" ? "/settings/personal/connectors" : "/settings/workspace/connectors";
+  // Workspace connectors are addressed by the URL slug. (Personal-scope
+  // connectors have no UI surface today; the mode is kept for the API.)
+  const backPath = `/w/${slug}/settings/connectors`;
 
   const [installed, setInstalled] = useState<InstalledConnector | null>(null);
   const [loading, setLoading] = useState(true);

@@ -1,13 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  BrowserRouter,
-  Navigate,
-  Route,
-  Routes,
-  useLocation,
-  useNavigate,
-  useParams,
-} from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import type { ShellData } from "./api/client";
 import {
   callTool,
@@ -20,7 +12,6 @@ import {
   tryBootstrap,
 } from "./api/client";
 import { AppWithChat } from "./components/AppWithChat";
-import { identityAppRoute, isIdentityApp } from "./lib/identity-apps";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Login } from "./components/Login";
 import { RouteGuard } from "./components/RouteGuard";
@@ -41,17 +32,17 @@ import { useDataSync } from "./hooks/useDataSync";
 import { useEvents } from "./hooks/useEvents";
 import { useShell } from "./hooks/useShell";
 import { bootstrapWorkspacesToInfo } from "./lib/bootstrap";
+import { identityAppRoute, isIdentityApp } from "./lib/identity-apps";
 import { recoverFromWorkspaceError } from "./lib/workspace-recovery";
 import { toSlug } from "./lib/workspace-slug";
 import { GlobalHomePage } from "./pages/GlobalHomePage";
 import { ProfilePage } from "./pages/ProfilePage";
-import { SettingsPage } from "./pages/SettingsPage";
-import { WorkspaceOverviewPage } from "./pages/WorkspaceOverviewPage";
 import { AboutTab } from "./pages/settings/AboutTab";
 import { ConnectorBrowsePage } from "./pages/settings/ConnectorBrowsePage";
 import { ConnectorDetailPage } from "./pages/settings/ConnectorDetailPage";
 import { ModelTab } from "./pages/settings/ModelTab";
 import { OrgRegistriesTab } from "./pages/settings/OrgRegistriesTab";
+import { OrgSettingsPage } from "./pages/settings/OrgSettingsPage";
 import { SettingsAppPanel } from "./pages/settings/SettingsAppPanel";
 import { SkillsTab } from "./pages/settings/SkillsTab";
 import { UsageTab } from "./pages/settings/UsageTab";
@@ -61,7 +52,9 @@ import { WorkspaceConnectorsTab } from "./pages/settings/WorkspaceConnectorsTab"
 import { WorkspaceDetailPage } from "./pages/settings/WorkspaceDetailPage";
 import { WorkspaceGeneralTab } from "./pages/settings/WorkspaceGeneralTab";
 import { WorkspaceMembersTab } from "./pages/settings/WorkspaceMembersTab";
+import { WorkspaceSettingsPage } from "./pages/settings/WorkspaceSettingsPage";
 import { WorkspacesTab } from "./pages/settings/WorkspacesTab";
+import { WorkspaceOverviewPage } from "./pages/WorkspaceOverviewPage";
 import { initTelemetry } from "./telemetry";
 import type { BootstrapResponse, PlacementEntry } from "./types";
 import "./index.css";
@@ -344,10 +337,14 @@ function AuthenticatedAppContent({
                 user's cross-workspace home. */}
             <Route path="/" element={<GlobalHomePage />} />
 
-            {/* Workspace-scoped routes: /w/:slug/... */}
+            {/* Workspace-scoped routes: /w/:slug/... — the slug is the single
+                source of truth for the focused workspace. WorkspaceRouteGuard
+                validates membership (unknown / non-member slug → home) and
+                syncs the slug into context. Everything workspace-scoped —
+                overview, apps, AND settings — lives here so it can never open
+                on a workspace the user can't see. */}
             <Route path="/w/:slug" element={<WorkspaceRouteGuard />}>
-              {/* Workspace overview — header + app grid. Replaces the
-                  former bundle-home rendering at this index. */}
+              {/* Workspace overview — header + app grid. */}
               <Route index element={<WorkspaceOverviewPage />} />
               {/* Apps within workspace */}
               {appPlacements.map((p) => (
@@ -357,58 +354,9 @@ function AuthenticatedAppContent({
                   element={<AppWithChat placement={p} onNavigate={handleNavigate} />}
                 />
               ))}
-            </Route>
-
-            {/* Identity apps — owned by the user, hosted OUTSIDE any
-                workspace, each at a top-level route (e.g. /conversations).
-                They dispatch their tools bare through the identity door; no
-                /w/<slug> prefix, no workspace required to load. */}
-            {identityAppPlacements.map((p) => (
-              <Route
-                key={p.route}
-                path={identityAppRoute(p.serverName)}
-                element={<AppWithChat placement={p} onNavigate={handleNavigate} />}
-              />
-            ))}
-
-            {/* Profile — top-level, identity-bound, NOT under /settings.
-                Renders inside the main shell with no inner settings nav. */}
-            <Route path="/profile" element={<ProfilePage />} />
-
-            {/* /connections used to live at top-level; redirect any
-                old links to the workspace connectors tab. (Personal
-                connectors UI is parked until there's a real reason for
-                a separate user-scope surface.) */}
-            <Route
-              path="/connections"
-              element={<Navigate to="/settings/workspace/connectors" replace />}
-            />
-
-            {/* Settings routes — personal + workspace + org scopes (Profile lives at /profile) */}
-            <Route path="/settings" element={<SettingsPage />}>
-              <Route index element={<Navigate to="/settings/workspace/general" replace />} />
-
-              {/* Personal connectors UI is parked. Backend user-scope
-                  pathways stay (UserConnectorStore, lifecycle, OAuth
-                  flow) so the abstraction is unbroken — only the UI
-                  surface goes away. Redirect any in-flight links to
-                  the workspace tab. */}
-              <Route
-                path="personal/connectors"
-                element={<Navigate to="/settings/workspace/connectors" replace />}
-              />
-              <Route
-                path="personal/connectors/browse"
-                element={<Navigate to="/settings/workspace/connectors/browse" replace />}
-              />
-              <Route
-                path="personal/connectors/:serverName"
-                element={<Navigate to="/settings/workspace/connectors" replace />}
-              />
-
-              {/* This Workspace — the active workspace, scoped via header switcher */}
-              <Route path="workspace">
-                <Route index element={<Navigate to="/settings/workspace/general" replace />} />
+              {/* Workspace settings — General/Members/Usage/Apps/Connectors/Skills. */}
+              <Route path="settings" element={<WorkspaceSettingsPage />}>
+                <Route index element={<Navigate to="general" replace />} />
                 <Route path="general" element={<WorkspaceGeneralTab />} />
                 <Route path="members" element={<WorkspaceMembersTab />} />
                 <Route path="usage" element={<UsageTab />} />
@@ -425,66 +373,70 @@ function AuthenticatedAppContent({
                 />
                 <Route path="skills" element={<SkillsTab />} />
               </Route>
+            </Route>
 
-              {/* Organization — admin/owner only */}
-              <Route path="org">
-                <Route index element={<Navigate to="/settings/org/workspaces" replace />} />
-                <Route
-                  path="model"
-                  element={
-                    <RouteGuard role="org_admin">
-                      <ModelTab />
-                    </RouteGuard>
-                  }
-                />
-                <Route
-                  path="workspaces"
-                  element={
-                    <RouteGuard role="org_admin">
-                      <WorkspacesTab />
-                    </RouteGuard>
-                  }
-                />
-                <Route
-                  path="workspaces/:slug"
-                  element={
-                    <RouteGuard role="org_admin">
-                      <WorkspaceDetailPage />
-                    </RouteGuard>
-                  }
-                />
-                <Route
-                  path="users"
-                  element={
-                    <RouteGuard role="org_admin">
-                      <UsersTab />
-                    </RouteGuard>
-                  }
-                />
-                <Route
-                  path="registries"
-                  element={
-                    <RouteGuard role="org_admin">
-                      <OrgRegistriesTab />
-                    </RouteGuard>
-                  }
-                />
-              </Route>
+            {/* Identity apps — owned by the user, hosted OUTSIDE any
+                workspace, each at a top-level route (e.g. /conversations).
+                They dispatch their tools bare through the identity door; no
+                /w/<slug> prefix, no workspace required to load. */}
+            {identityAppPlacements.map((p) => (
+              <Route
+                key={p.route}
+                path={identityAppRoute(p.serverName)}
+                element={<AppWithChat placement={p} onNavigate={handleNavigate} />}
+              />
+            ))}
 
-              <Route path="about" element={<AboutTab />} />
+            {/* Profile — top-level, identity-bound. */}
+            <Route path="/profile" element={<ProfilePage />} />
 
-              {/* Backwards-compat redirects from pre-IA-refactor URLs.
-                  `replace` so Back button doesn't return to the old URL. */}
-              <Route path="profile" element={<Navigate to="/profile" replace />} />
-              <Route path="model" element={<Navigate to="/settings/org/model" replace />} />
-              <Route path="usage" element={<Navigate to="/settings/workspace/usage" replace />} />
-              <Route path="users" element={<Navigate to="/settings/org/users" replace />} />
+            {/* Organization settings — dedicated top-level home, org-admin
+                scoped. Everything here affects the org as a whole (global
+                model config, the full workspace/user roster, registries), so
+                it lives outside any workspace URL. About is role-exempt. */}
+            <Route path="/org" element={<OrgSettingsPage />}>
+              <Route index element={<Navigate to="/org/workspaces" replace />} />
+              <Route
+                path="model"
+                element={
+                  <RouteGuard role="org_admin">
+                    <ModelTab />
+                  </RouteGuard>
+                }
+              />
               <Route
                 path="workspaces"
-                element={<Navigate to="/settings/org/workspaces" replace />}
+                element={
+                  <RouteGuard role="org_admin">
+                    <WorkspacesTab />
+                  </RouteGuard>
+                }
               />
-              <Route path="workspaces/:slug" element={<RedirectWorkspaceSlug />} />
-              <Route path="apps/:serverName" element={<RedirectAppPanel />} />
+              <Route
+                path="workspaces/:slug"
+                element={
+                  <RouteGuard role="org_admin">
+                    <WorkspaceDetailPage />
+                  </RouteGuard>
+                }
+              />
+              <Route
+                path="users"
+                element={
+                  <RouteGuard role="org_admin">
+                    <UsersTab />
+                  </RouteGuard>
+                }
+              />
+              <Route
+                path="registries"
+                element={
+                  <RouteGuard role="org_admin">
+                    <OrgRegistriesTab />
+                  </RouteGuard>
+                }
+              />
+              <Route path="about" element={<AboutTab />} />
             </Route>
           </Routes>
         </ErrorBoundary>
@@ -557,25 +509,6 @@ function ActionBridge({
   return null;
 }
 
-/**
- * Backwards-compat: `/settings/workspaces/:slug` (the pre-IA-refactor admin
- * workspace-detail URL) → `/settings/org/workspaces/:slug`. Preserves the
- * slug param. Anyone hitting this without org-admin role gets redirected
- * by the inner RouteGuard, so no extra role check needed here.
- */
-function RedirectWorkspaceSlug() {
-  const { slug } = useParams<{ slug: string }>();
-  return <Navigate to={`/settings/org/workspaces/${slug ?? ""}`} replace />;
-}
-
-/**
- * Backwards-compat: `/settings/apps/:serverName` → `/settings/workspace/apps/:serverName`.
- */
-function RedirectAppPanel() {
-  const { serverName } = useParams<{ serverName: string }>();
-  return <Navigate to={`/settings/workspace/apps/${serverName ?? ""}`} replace />;
-}
-
 export function App() {
   const [bootstrap, setBootstrap] = useState<BootstrapResponse | null>(null);
   const [authenticated, setAuthenticated] = useState(false);
@@ -608,9 +541,10 @@ export function App() {
   );
 
   // Single auth check: try bootstrap. Authenticated → render app. Not → show login.
+  // Bootstrap carries no workspace hint — the focused workspace is owned by
+  // the URL (`/w/:slug`), and login lands on `/` (the workspace-agnostic home).
   useEffect(() => {
-    const preferred = localStorage.getItem("nb_active_workspace") ?? undefined;
-    tryBootstrap(preferred).then((data) => {
+    tryBootstrap().then((data) => {
       if (data) initFromBootstrap(data);
       setChecking(false);
     });
@@ -619,8 +553,7 @@ export function App() {
   const handleLogin = useCallback(() => {
     // After OIDC redirect callback, the page reloads and bootstrap succeeds.
     // This is called when Login detects a successful bootstrap after redirect.
-    const preferred = localStorage.getItem("nb_active_workspace") ?? undefined;
-    tryBootstrap(preferred).then((data) => {
+    tryBootstrap().then((data) => {
       if (data) initFromBootstrap(data);
     });
   }, [initFromBootstrap]);
