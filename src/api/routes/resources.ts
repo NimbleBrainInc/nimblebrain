@@ -3,7 +3,7 @@ import { handleReadResource, handleResourceProxy, handleResourceUpload } from ".
 import { requireAuth } from "../middleware/auth.ts";
 import { bodyLimit } from "../middleware/body-limit.ts";
 import { errorLog } from "../middleware/error-log.ts";
-import { requireWorkspace } from "../middleware/workspace.ts";
+import { optionalWorkspace, requireWorkspace } from "../middleware/workspace.ts";
 import type { AppContext, AppEnv } from "../types.ts";
 
 export function resourceRoutes(ctx: AppContext) {
@@ -14,17 +14,22 @@ export function resourceRoutes(ctx: AppContext) {
   const uploadLimit = bodyLimit(1_048_576, {
     multipart: ctx.runtime.getFilesConfig().maxTotalSize,
   });
+  // Workspace resolution is per-route, not global: reads/uploads are
+  // workspace-scoped (requireWorkspace), but the app-resource GET also serves
+  // identity apps (conversations, …) that have NO workspace — so it uses
+  // optionalWorkspace, which validates an `X-Workspace-Id` if present but
+  // doesn't demand one. `handleResourceProxy` routes identity apps to the
+  // identity host and still requires a workspace for workspace apps.
   return new Hono<AppEnv>()
     .use("*", requireAuth(ctx.authOptions))
-    .use("*", requireWorkspace(ctx.workspaceStore))
     .use("*", errorLog(ctx))
-    .post("/v1/resources/read", bodyLimit(1_048_576), (c) =>
+    .post("/v1/resources/read", requireWorkspace(ctx.workspaceStore), bodyLimit(1_048_576), (c) =>
       handleReadResource(c.req.raw, ctx.runtime, { workspaceId: c.var.workspaceId }),
     )
-    .post("/v1/resources", uploadLimit, (c) =>
+    .post("/v1/resources", requireWorkspace(ctx.workspaceStore), uploadLimit, (c) =>
       handleResourceUpload(c.req.raw, ctx.runtime, ctx.features, c.var.workspaceId),
     )
-    .get("/v1/apps/:name/resources/*", (c) => {
+    .get("/v1/apps/:name/resources/*", optionalWorkspace(ctx.workspaceStore), (c) => {
       const name = decodeURIComponent(c.req.param("name"));
       // Extract the full resource path after /resources/
       const url = new URL(c.req.url);

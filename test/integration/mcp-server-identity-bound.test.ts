@@ -372,6 +372,23 @@ describe("/mcp identity-bound session (Stage 2 T007)", () => {
     }
   });
 
+  it("tools/call with a bare IDENTITY-source name dispatches through the identity door (failure mode: identity tool unreachable)", async () => {
+    // The happy-path counterpart to the rejection above. `conversations` IS a
+    // kernel identity source, so a bare `conversations__list` — no
+    // `X-Workspace-Id`, no `ws_` prefix — routes through the identity door and
+    // executes against the caller's identity. This is the exact wire call the
+    // conversations iframe makes; a fresh workdir yields an empty (but
+    // successful) result, proving the door is open, not just that bare names
+    // parse.
+    const client = await createIdentityBoundClient();
+    try {
+      const result = await client.callTool({ name: "conversations__list", arguments: {} });
+      expect(result.isError).toBeFalsy();
+    } finally {
+      await client.close();
+    }
+  });
+
   it("orchestrator error mapping: UnknownWorkspace → -32602 unknown_workspace", async () => {
     const client = await createIdentityBoundClient();
     try {

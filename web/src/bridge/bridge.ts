@@ -33,6 +33,7 @@ import {
   TaskStatusNotificationSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { getActiveWorkspaceId, uploadResource } from "../api/client";
+import { isIdentityApp } from "../lib/identity-apps";
 import { namespacedToolName } from "../lib/namespaced-tool";
 import { getMcpBridgeClient, withSessionRetry } from "../mcp-bridge-client";
 import { getHostThemeMode, getSpecThemeTokens, getThemeTokens } from "./theme";
@@ -685,33 +686,40 @@ async function callToolViaMcp(
   params: ToolsCallParams,
   id: string,
 ): Promise<UiToolResultResponse | UiToolResultError | Record<string, unknown>> {
-  // The `/mcp` endpoint expects fully namespaced tool names of the form
-  // `ws_<id>-<source>__<tool>` (Stage 2 / T007: orchestrator rejects
-  // bare names with `-32602 invalid_tool_name`). Two transformations:
+  // The `/mcp` endpoint expects a tool name whose shape encodes its scope.
+  // Two transformations:
   //
   //   1. Qualified: iframes pass either `<tool>` (bare) or
-  //      `<source>__<tool>` (already qualified). Normalize to the
-  //      qualified form using the post-INTERNAL_APPS-authz `server`.
-  //   2. Namespaced: prefix with `ws_<active>/`. Per Q3 the bridge
-  //      auto-prefixes by the iframe's host workspace. Today the
-  //      iframe is always mounted under the current URL's workspace
-  //      (`/w/<slug>/app/<bundle>`), so the active workspace == the
-  //      iframe's host workspace. If we ever support side-by-side
-  //      iframes from different workspaces, capture the host at
-  //      bridge construction instead.
+  //      `<source>__<tool>` (already qualified). Normalize to the qualified
+  //      form using the post-INTERNAL_APPS-authz `server`.
+  //   2. Scoped: how the name is scoped depends on the app's door:
+  //      - Identity apps (conversations, …) are owned by the user and live
+  //        OUTSIDE any workspace, so they dispatch BARE — the orchestrator
+  //        routes a bare `<source>__<tool>` through the identity door. No
+  //        active workspace is required (there is none).
+  //      - Workspace apps prefix `ws_<active>-`. The iframe is mounted under
+  //        the current URL's workspace (`/w/<slug>/app/<bundle>`), so the
+  //        active workspace == the iframe's host workspace. (Side-by-side
+  //        iframes from different workspaces would need the host captured at
+  //        bridge construction instead.)
   const qualifiedName = params.name.includes("__") ? params.name : `${server}__${params.name}`;
-  const activeWsId = getActiveWorkspaceId();
-  if (!activeWsId) {
-    return {
-      jsonrpc: "2.0",
-      id,
-      error: {
-        code: -32000,
-        message: "No active workspace; cannot dispatch tool call.",
-      },
-    } satisfies UiToolResultError;
+  let wireName: string;
+  if (isIdentityApp(server)) {
+    wireName = qualifiedName;
+  } else {
+    const activeWsId = getActiveWorkspaceId();
+    if (!activeWsId) {
+      return {
+        jsonrpc: "2.0",
+        id,
+        error: {
+          code: -32000,
+          message: "No active workspace; cannot dispatch tool call.",
+        },
+      } satisfies UiToolResultError;
+    }
+    wireName = namespacedToolName(activeWsId, qualifiedName);
   }
-  const wireName = namespacedToolName(activeWsId, qualifiedName);
 
   return withSessionRetry(async () => {
     const client = await getMcpBridgeClient();

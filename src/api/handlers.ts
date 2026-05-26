@@ -474,20 +474,8 @@ export async function handleResourceProxy(
   runtime: Runtime,
   workspaceId?: string,
 ): Promise<Response> {
-  // Workspace authorization — reject requests for servers not in the active workspace
-  if (workspaceId) {
-    const wsRegistry = await runtime.ensureWorkspaceRegistry(workspaceId);
-    if (!wsRegistry.hasSource(appName)) {
-      return apiError(
-        403,
-        "workspace_access_denied",
-        `App "${appName}" is not available in this workspace`,
-        { app: appName },
-      );
-    }
-  }
-
-  // Dev mode: redirect to local Vite dev server when --app flag is active
+  // Dev mode: redirect to local Vite dev server when --app flag is active.
+  // Applies to both identity and workspace apps, so it runs first.
   const { isDevMode, getAppDevUrl } = await import("../runtime/dev-registry.ts");
   if (isDevMode(appName)) {
     const devUrl = getAppDevUrl(appName)!;
@@ -495,12 +483,46 @@ export async function handleResourceProxy(
     return Response.redirect(`${devUrl}${target}`, 302);
   }
 
-  // Both platform built-ins and user-installed bundles are now MCP servers
-  // (in-process or subprocess); both go through the same `readAppResource`
-  // path. The only branch is for "primary" → resourceUri resolution, which
-  // platform sources expose via the source's mode metadata while external
-  // bundles expose via their `instance.ui.placements`.
-  if (!workspaceId) throw new Error("Workspace ID required");
+  // Identity apps (conversations, …) live OUTSIDE any workspace. They are
+  // authorized by the authenticated session (requireAuth already ran on this
+  // route) and read from the kernel identity source — never a workspace
+  // registry. A stale `X-Workspace-Id` (the last active workspace the shell
+  // sent) is ignored: location is scope, and an identity app has no workspace
+  // location to authorize against.
+  const identitySource = runtime.getIdentitySource(appName);
+  if (identitySource) {
+    let resolvedPath = resourcePath;
+    if (resourcePath === "primary") {
+      const primaryUri = resolveSourcePrimaryResourceUri(identitySource);
+      if (primaryUri) resolvedPath = primaryUri.replace(/^ui:\/\//, "");
+    }
+    const resource = await runtime.readIdentityAppResource(appName, resolvedPath);
+    if (resource === null) {
+      return apiError(404, "resource_not_found", `Resource "ui://${resourcePath}" not found`, {
+        resource: `ui://${resourcePath}`,
+      });
+    }
+    return json({ contents: [buildResourceEnvelopeEntry(`ui://${resolvedPath}`, resource)] });
+  }
+
+  // Workspace apps — require a workspace and authorize membership. Both
+  // platform built-ins and user-installed bundles are MCP servers reachable
+  // through the workspace registry; registry membership is the authoritative
+  // "is this app available to this workspace?" check.
+  if (!workspaceId) {
+    return apiError(400, "workspace_required", `App "${appName}" requires a workspace`, {
+      app: appName,
+    });
+  }
+  const wsRegistry = await runtime.ensureWorkspaceRegistry(workspaceId);
+  if (!wsRegistry.hasSource(appName)) {
+    return apiError(
+      403,
+      "workspace_access_denied",
+      `App "${appName}" is not available in this workspace`,
+      { app: appName },
+    );
+  }
 
   let resolvedPath = resourcePath;
   if (resourcePath === "primary") {
@@ -550,8 +572,19 @@ async function resolvePrimaryResourceUri(
 
   const registry = await runtime.ensureWorkspaceRegistry(workspaceId);
   const source = registry.getSources().find((s) => s.name === appName);
-  if (!source) return null;
-  const fn = (source as { getPlacements?: () => unknown }).getPlacements;
+  return resolveSourcePrimaryResourceUri(source);
+}
+
+/**
+ * Resolve a source's "primary" `resourceUri` by scanning the placements it
+ * declares via `getPlacements()` (the in-process `McpSource` duck-type). Used
+ * directly by the identity-app host (no workspace, no lifecycle instance) and
+ * as the fallback tier of {@link resolvePrimaryResourceUri} for workspace
+ * apps. Returns `null` when the source declares no placement with a
+ * `resourceUri`.
+ */
+function resolveSourcePrimaryResourceUri(source: unknown): string | null {
+  const fn = (source as { getPlacements?: () => unknown } | undefined)?.getPlacements;
   if (typeof fn !== "function") return null;
   const placements = fn.call(source);
   if (!Array.isArray(placements)) return null;

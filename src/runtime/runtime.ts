@@ -2654,6 +2654,34 @@ export class Runtime {
   ): Promise<ResourceData | null> {
     const registry = this.getRegistryForWorkspace(wsId);
     const source = registry.getSources().find((s) => s.name === appName);
+    return this.readResourceFromSource(source, appName, resourcePath);
+  }
+
+  /**
+   * Read a `ui://` resource from a kernel **identity** source (conversations,
+   * …). Identity apps live outside any workspace, so the source is resolved
+   * from the identity-source set — never a workspace registry. The caller
+   * (the resource route) has already authenticated the session; reads here
+   * are not workspace-gated. Returns `null` for an unknown/non-identity app.
+   */
+  async readIdentityAppResource(
+    appName: string,
+    resourcePath: string,
+  ): Promise<ResourceData | null> {
+    return this.readResourceFromSource(this.getIdentitySource(appName), appName, resourcePath);
+  }
+
+  /**
+   * Shared `ui://` read against an already-resolved MCP source — the
+   * workspace and identity hosts differ only in how they resolve the source.
+   * Tries the exact `ui://<path>` first, then the source-namespaced
+   * `ui://<app>/<path>`.
+   */
+  private async readResourceFromSource(
+    source: ToolSource | undefined,
+    appName: string,
+    resourcePath: string,
+  ): Promise<ResourceData | null> {
     if (!(source instanceof McpSource)) return null;
 
     if (resourcePath.includes("://")) {

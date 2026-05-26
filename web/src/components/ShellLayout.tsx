@@ -4,6 +4,7 @@ import { NavLink } from "react-router-dom";
 import { useChatPanelContext } from "../context/ChatPanelContext";
 import { useSidebar } from "../context/SidebarContext";
 import { useWorkspaceContext } from "../context/WorkspaceContext";
+import { identityAppRoute, isIdentityApp } from "../lib/identity-apps";
 import { resolveIcon } from "../lib/icons";
 import { cn } from "../lib/utils";
 import { toSlug } from "../lib/workspace-slug";
@@ -251,6 +252,10 @@ function resolveRoute(p: PlacementEntry, wsSlug?: string): string {
   // workspace overview lives at `/w/<slug>/` and is reached by clicking
   // the workspace row directly.
   if (p.route === "/") return "/";
+  // Identity apps (conversations, …) are owned by the user and live OUTSIDE
+  // any workspace — they render at a top-level root route (e.g.
+  // `/conversations`), never under `/w/<slug>`. Location is scope.
+  if (isIdentityApp(p.serverName)) return identityAppRoute(p.serverName);
   // Other routed placements get /w/<slug>/app/<route>
   const prefix = wsSlug ? `/w/${wsSlug}` : "";
   if (p.route) return `${prefix}/app/${p.route}`;

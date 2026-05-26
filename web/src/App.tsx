@@ -19,6 +19,7 @@ import {
   tryBootstrap,
 } from "./api/client";
 import { AppWithChat } from "./components/AppWithChat";
+import { identityAppRoute, isIdentityApp } from "./lib/identity-apps";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Login } from "./components/Login";
 import { RouteGuard } from "./components/RouteGuard";
@@ -298,7 +299,15 @@ function AuthenticatedAppContent({
   // now `GlobalHomePage` (workspace-agnostic) and `/w/<slug>/` is
   // `WorkspaceOverviewPage` (app grid). The bundle-home concept stays in
   // the placement registry for now in case a future surface needs it.
-  const appPlacements = allRoutable.filter((p) => p.route !== "/");
+  // Identity apps (conversations, …) are also excluded — they render at a
+  // top-level root route outside any workspace (see `identityAppPlacements`).
+  const appPlacements = allRoutable.filter((p) => p.route !== "/" && !isIdentityApp(p.serverName));
+
+  // Identity apps — owned by the user, hosted OUTSIDE any workspace, each at
+  // its own top-level route (e.g. `/conversations`). They route through the
+  // identity door (the bridge dispatches their tools bare), so they don't
+  // belong under `/w/<slug>`.
+  const identityAppPlacements = allRoutable.filter((p) => isIdentityApp(p.serverName));
 
   return (
     <ShellProvider value={{ forSlot, mainRoutes }}>
@@ -328,6 +337,18 @@ function AuthenticatedAppContent({
                 />
               ))}
             </Route>
+
+            {/* Identity apps — owned by the user, hosted OUTSIDE any
+                workspace, each at a top-level route (e.g. /conversations).
+                They dispatch their tools bare through the identity door; no
+                /w/<slug> prefix, no workspace required to load. */}
+            {identityAppPlacements.map((p) => (
+              <Route
+                key={p.route}
+                path={identityAppRoute(p.serverName)}
+                element={<AppWithChat placement={p} onNavigate={handleNavigate} />}
+              />
+            ))}
 
             {/* Profile — top-level, identity-bound, NOT under /settings.
                 Renders inside the main shell with no inner settings nav. */}
