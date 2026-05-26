@@ -15,6 +15,7 @@ import {
   setActiveWorkspaceId,
   setAuthToken,
   setOnAuthError,
+  setOnWorkspaceError,
   setPlatformVersion,
   tryBootstrap,
 } from "./api/client";
@@ -248,6 +249,27 @@ function AuthenticatedAppContent({
   const navigate = useNavigate();
   const location = useLocation();
   const activeSlug = wsCtx.activeWorkspace ? toSlug(wsCtx.activeWorkspace.id) : null;
+
+  // Recover from a stale/invalid workspace context. A data call that fires
+  // with an X-Workspace-Id the server rejects (deleted workspace, lost
+  // membership, or a dynamic /w/:slug deep-link the user can't see) returns
+  // `workspace_error`. Bootstrap validates the active workspace on load, so
+  // this is the mid-session net: drop the bad selection, fall back to a valid
+  // workspace, and route home rather than surface raw error JSON. Home then
+  // re-resolves cleanly — no loop, since the fallback id is valid.
+  useEffect(() => {
+    setOnWorkspaceError(() => {
+      const fallback = wsCtx.workspaces.find((w) => w.isPersonal) ?? wsCtx.workspaces[0] ?? null;
+      // No workspace to recover to — shouldn't happen (bootstrap guarantees at
+      // least one). Bail rather than clear the header and risk a redirect loop;
+      // the bootstrap invariant / login flow owns the truly-zero case.
+      if (!fallback) return;
+      // setActiveWorkspace syncs the api/client header + localStorage.
+      wsCtx.setActiveWorkspace(fallback);
+      navigate("/", { replace: true });
+    });
+    return () => setOnWorkspaceError(null);
+  }, [wsCtx, navigate]);
 
   const handleNavigate = useCallback(
     (route: string) => {

@@ -77,6 +77,19 @@ export function setOnAuthError(callback: (() => void) | null): void {
   onAuthError = callback;
 }
 
+/**
+ * Hook fired when any data call fails with `workspace_error` — the active
+ * `X-Workspace-Id` names a workspace the server rejects (deleted, lost
+ * membership, or malformed). The shell registers a handler that drops the
+ * stale selection and bounces to `/`, where bootstrap re-resolves a valid
+ * workspace. Symmetric to `onAuthError` for 401s: a bad workspace context is
+ * recoverable by re-resolving, not by showing the raw error.
+ */
+let onWorkspaceError: (() => void) | null = null;
+export function setOnWorkspaceError(callback: (() => void) | null): void {
+  onWorkspaceError = callback;
+}
+
 /** Store platform version info from bootstrap. */
 export function setPlatformVersion(version: string, buildSha: string | null): void {
   platformVersion = version;
@@ -147,7 +160,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       error: "unknown",
       message: res.statusText,
     }));
-    throw new ApiClientError(body.error, body.message, res.status, body.details);
+    throw apiClientError(body, res.status);
   }
 
   return res.json() as Promise<T>;
@@ -167,6 +180,25 @@ export class ApiClientError extends Error {
     super(message);
     this.name = "ApiClientError";
   }
+}
+
+/**
+ * Build the `ApiClientError` for a non-ok response, firing the
+ * workspace-error hook as a side effect when the failure is a stale/invalid
+ * workspace. Centralized so every REST helper inherits the redirect-home
+ * behavior rather than re-checking the code at each call site. The error is
+ * still thrown so callers' local error handling runs unchanged; the hook is
+ * additive recovery, not a replacement.
+ *
+ * Exported so the hook-firing seam is unit-testable directly. Driving it
+ * through `callTool` → `request` → fetch is unreliable in the full suite
+ * (the `mock.module("../api/client", ...)` stubs in other test files clobber
+ * `callTool` depending on evaluation order), so tests assert on this pure
+ * function instead.
+ */
+export function apiClientError(body: ApiError, status: number): ApiClientError {
+  if (body.error === "workspace_error") onWorkspaceError?.();
+  return new ApiClientError(body.error, body.message, status, body.details);
 }
 
 // ---------------------------------------------------------------------------
@@ -216,7 +248,7 @@ export async function getResources(
       error: "unknown",
       message: res.statusText,
     }));
-    throw new ApiClientError(body.error, body.message, res.status, body.details);
+    throw apiClientError(body, res.status);
   }
 
   const envelope = (await res.json()) as {
@@ -332,7 +364,7 @@ export async function uploadResource(files: File[]): Promise<UploadResourceResul
       error: "unknown",
       message: res.statusText,
     }));
-    throw new ApiClientError(body.error, body.message, res.status, body.details);
+    throw apiClientError(body, res.status);
   }
   return res.json() as Promise<UploadResourceResult>;
 }
@@ -430,7 +462,7 @@ export async function streamChat(
       error: "unknown",
       message: res.statusText,
     }));
-    throw new ApiClientError(body.error, body.message, res.status, body.details);
+    throw apiClientError(body, res.status);
   }
 
   await consumeSSEStream(res, onEvent);
@@ -488,7 +520,7 @@ export async function streamChatMultipart(
       error: "unknown",
       message: res.statusText,
     }));
-    throw new ApiClientError(body.error, body.message, res.status, body.details);
+    throw apiClientError(body, res.status);
   }
 
   await consumeSSEStream(res, onEvent);
