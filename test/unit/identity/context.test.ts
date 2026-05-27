@@ -46,6 +46,13 @@ describe("IdentityContext — path helpers", () => {
     expect(ctx.getDataPath("skills")).toBe("/tmp/nb-test/users/usr_abc/skills");
   });
 
+  test("automations scope", () => {
+    expect(ctx.getDataPath("automations")).toBe("/tmp/nb-test/users/usr_abc/automations");
+    expect(ctx.getDataPath("automations", "runs", "daily-digest.jsonl")).toBe(
+      "/tmp/nb-test/users/usr_abc/automations/runs/daily-digest.jsonl",
+    );
+  });
+
   test("root scope returns the user root", () => {
     expect(ctx.getDataPath("root")).toBe("/tmp/nb-test/users/usr_abc");
   });
