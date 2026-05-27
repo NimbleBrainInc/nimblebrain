@@ -1,4 +1,3 @@
-import { join } from "node:path";
 import { getMpak } from "../bundles/mpak.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import type { ToolResult } from "../engine/types.ts";
@@ -141,7 +140,7 @@ async function handleCheckUpdates(ctx: ManageAppsContext): Promise<ToolResult> {
       isError: false,
     };
   }
-  const mpak = getMpak(join(ctx.runtime.getWorkDir(), "apps"));
+  const mpak = getMpak(ctx.runtime.getMpakHome());
   const updates: Array<{ bundleName: string; current: string; latest: string }> = [];
   await Promise.all(
     apps.map(async (app) => {

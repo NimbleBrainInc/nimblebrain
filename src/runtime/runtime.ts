@@ -2706,6 +2706,18 @@ export class Runtime {
   }
 
   /**
+   * Absolute mpak home (`<workDir>/apps`). Single source of truth for the
+   * cache path: `getMpak()` is a singleton keyed by this string, so every
+   * caller must pass the SAME (resolved, absolute) form or the singleton
+   * thrashes — `getWorkDir()` is NOT pre-resolved, so callers must use this,
+   * not `join(getWorkDir(), "apps")`. Matches the value handed to the
+   * lifecycle at construction.
+   */
+  getMpakHome(): string {
+    return join(resolve(resolveWorkDir(this.config)), "apps");
+  }
+
+  /**
    * Whether the runtime allows OAuth flows / bundle URLs to target loopback
    * / RFC1918 / cloud-metadata hosts. Mirrors `config.allowInsecureRemotes`;
    * read by `/v1/mcp-auth/initiate` when constructing the workspace OAuth

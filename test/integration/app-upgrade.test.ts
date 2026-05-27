@@ -51,6 +51,7 @@ function buildHarness(): Harness {
   const runtime = {
     getLifecycle: () => lifecycle,
     getWorkDir: () => workDir,
+    getMpakHome: () => join(workDir, "apps"),
     getRegistryForWorkspace: (_id: string) => registry,
   } as unknown as Runtime;
   const toolFor = (identity: UserIdentity | null) =>

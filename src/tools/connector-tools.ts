@@ -580,13 +580,12 @@ async function handleListInstalled(
     userLabelCache.set(userId, label);
     return label;
   };
-  // Use `<workDir>/apps` — same path BundleLifecycleManager is
-  // constructed with in runtime.ts. Dev's local nimblebrain.json
-  // sets `workDir: ".nimblebrain"` so this resolves to the cwd-local
-  // cache; production's default workDir is `~/.nimblebrain`. Matching
-  // the lifecycle's mpakHome means we read from the same singleton
-  // mpak cache the install path populated.
-  const mpak = getMpak(join(workDir, "apps"));
+  // Resolved mpak home — the SAME (absolute) string the lifecycle is
+  // constructed with, so `getMpak()`'s singleton is shared rather than
+  // thrashed. Don't hand-build `join(workDir, "apps")`: `getWorkDir()` isn't
+  // pre-resolved, so under a relative dev `workDir` it would key a second SDK
+  // instance on a relative string for the same dir.
+  const mpak = getMpak(ctx.runtime.getMpakHome());
 
   // Workspace-scope entries: walk every bundle visible in the workspace
   // registry (includes local stdio, local URL, Synapse apps, and remote

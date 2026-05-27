@@ -174,6 +174,7 @@ function buildHarness(opts: { adminId?: string } = {}): Harness {
 
   const runtime = {
     getWorkDir: () => workDir,
+    getMpakHome: () => join(workDir, "apps"),
     getWorkspaceStore: () => workspaceStore,
     getWorkspaceContext: (id: string) => new WorkspaceContext({ wsId: id, workDir }),
     getRegistryStore: () => registryStore,

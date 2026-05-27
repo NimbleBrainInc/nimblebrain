@@ -680,13 +680,13 @@ export class BundleLifecycleManager {
     } catch (err) {
       // Spawn failed: bad binary, prepareServer error, or the refreshed manifest
       // hit the terminal host-manifest gate.
-      this.transition(instance, "dead");
+      await this.failRespawn(instance, name, registry);
       throw err;
     }
     const { sourceName: newSourceName, manifest } = spawn;
     if (!manifest) {
       // Named bundles always carry a manifest; null is a precondition violation.
-      this.transition(instance, "dead");
+      await this.failRespawn(instance, name, registry);
       throw new Error(`No manifest found for ${name} after upgrade fetch`);
     }
 
@@ -732,6 +732,23 @@ export class BundleLifecycleManager {
     });
 
     return { from: fromVersion, to: manifest.version, serverName: newSourceName };
+  }
+
+  /**
+   * Failure cleanup for an interrupted re-spawn. The old source was already
+   * removed, so mark the instance `dead` (no live source) and drop its
+   * now-orphaned automations — otherwise they stay scheduled against the
+   * removed source and error when they fire, until the next boot reload
+   * re-syncs them. Mirrors uninstall's unconditional automation cleanup.
+   * Best-effort: an automation-cleanup error must not mask the spawn failure.
+   */
+  private async failRespawn(
+    instance: BundleInstance,
+    bundleName: string,
+    registry: ToolRegistry,
+  ): Promise<void> {
+    this.transition(instance, "dead");
+    await this.removeBundleAutomations(bundleName, registry).catch(() => {});
   }
 
   /**
