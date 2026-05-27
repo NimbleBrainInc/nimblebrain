@@ -225,6 +225,7 @@ describe.skip("Remote integration: POST /v1/apps/install with url", () => {
 		writeFileSync(configPath, JSON.stringify({ bundles: [] }, null, 2));
 
 		runtime = await Runtime.start({
+			workDir: testDir,
 			model: { provider: "custom", adapter: createEchoModel() },
 			noDefaultBundles: true,
 			logging: { disabled: true },
@@ -350,6 +351,7 @@ describe("Remote integration: registering remote bundles in workspace registry",
 
 	it("remote bundle can be registered into a workspace registry and provides tools", async () => {
 		const runtime = await Runtime.start({
+			workDir: testDir,
 			model: { provider: "custom", adapter: createEchoModel() },
 			noDefaultBundles: true,
 			logging: { disabled: true },
@@ -375,6 +377,7 @@ describe("Remote integration: registering remote bundles in workspace registry",
 
 	it("failed remote bundle does not pollute registry while successful one registers", async () => {
 		const runtime = await Runtime.start({
+			workDir: testDir,
 			model: { provider: "custom", adapter: createEchoModel() },
 			noDefaultBundles: true,
 			logging: { disabled: true },

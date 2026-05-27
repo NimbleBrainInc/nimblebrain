@@ -60,6 +60,7 @@ You are a friendly greeter.
 
     const { model, getSystem } = createCapturingModel();
     const runtime = await Runtime.start({
+      workDir: testDir,
       model: { provider: "custom", adapter: model },
       noDefaultBundles: true,
       skillDirs: [skillDir],
@@ -96,6 +97,7 @@ You are a helper.
 
     const { model, getSystem } = createCapturingModel();
     const runtime = await Runtime.start({
+      workDir: testDir,
       model: { provider: "custom", adapter: model },
       noDefaultBundles: true,
       skillDirs: [skillDir],
@@ -138,6 +140,7 @@ You are a data analyst.
 
     const { model, getSystem } = createCapturingModel();
     const runtime = await Runtime.start({
+      workDir: testDir,
       model: { provider: "custom", adapter: model },
       noDefaultBundles: true,
       skillDirs: [skillDir],
@@ -178,6 +181,7 @@ You use multiple tools.
 
     const { model, getSystem } = createCapturingModel();
     const runtime = await Runtime.start({
+      workDir: testDir,
       model: { provider: "custom", adapter: model },
       noDefaultBundles: true,
       skillDirs: [skillDir],
@@ -223,6 +227,7 @@ Original body.
 
     const { model, getSystem } = createCapturingModel();
     const runtime = await Runtime.start({
+      workDir: testDir,
       model: { provider: "custom", adapter: model },
       noDefaultBundles: true,
       skillDirs: [skillDir],
@@ -265,6 +270,7 @@ Matching body.
 
     const { model } = createCapturingModel();
     const runtime = await Runtime.start({
+      workDir: testDir,
       model: { provider: "custom", adapter: model },
       noDefaultBundles: true,
       skillDirs: [skillDir],

@@ -131,7 +131,22 @@ function parseAliasRef(s: string): ModelSlot | null {
 }
 
 function resolveWorkDir(config: RuntimeConfig): string {
-  return config.workDir ?? DEFAULT_WORK_DIR;
+  if (config.workDir) return config.workDir;
+  // Hard guard: under `bun test` (NODE_ENV=test is set automatically by the
+  // bun test runner), defaulting to `~/.nimblebrain` would pollute the
+  // developer's real workdir with test conversations / workspaces / bundles.
+  // Force every test to pass an explicit (typically tmpdir-based) workDir.
+  // Without this, a test that forgets `workDir` silently writes echo-model
+  // conversations into the user's dev environment and they show up in the
+  // real app's conversations tab.
+  if (process.env.NODE_ENV === "test") {
+    throw new Error(
+      "Runtime.start({}) called without `workDir` under bun test. " +
+        "Pass an explicit tmpdir-based workDir to avoid polluting the developer's ~/.nimblebrain. " +
+        "Example: workDir: join(tmpdir(), 'nb-test-' + Date.now()).",
+    );
+  }
+  return DEFAULT_WORK_DIR;
 }
 
 function globalSkillDir(config: RuntimeConfig): string {

@@ -217,9 +217,12 @@ describe("API full-flow integration", () => {
 	let runtime: Runtime;
 	let handle: ServerHandle;
 	let baseUrl: string;
+	let runtimeWorkDir: string;
 
 	beforeAll(async () => {
+		runtimeWorkDir = tempDir();
 		runtime = await Runtime.start({
+			workDir: runtimeWorkDir,
 			model: { provider: "custom", adapter: createEchoModel() },
 			noDefaultBundles: true,
 			logging: { disabled: true },
@@ -232,6 +235,7 @@ describe("API full-flow integration", () => {
 	afterAll(async () => {
 		handle.stop(true);
 		await runtime.shutdown();
+		rmSync(runtimeWorkDir, { recursive: true, force: true });
 	});
 
 	it.skip("chat → list → rename → search → fork → delete → verify gone", async () => {

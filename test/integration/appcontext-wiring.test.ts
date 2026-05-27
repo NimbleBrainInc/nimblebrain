@@ -4,6 +4,7 @@ import type { ToolSource } from "../../src/tools/types.ts";
 import type { ToolResult } from "../../src/engine/types.ts";
 import { textContent } from "../../src/engine/content-helpers.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
+import { makeTestWorkDir } from "../helpers/test-workdir.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
 
 /** Minimal model adapter that captures the system prompt for assertions. */
@@ -50,9 +51,21 @@ function createFakeSource(name: string, tools: Array<{ localName: string; descri
 }
 
 describe("Runtime.chat() appContext wiring", () => {
+	const cleanups: Array<() => void> = [];
+	afterAll(() => {
+		for (const c of cleanups) c();
+	});
+
+	function freshWorkDir(): string {
+		const { workDir, cleanup } = makeTestWorkDir("appcontext-wiring");
+		cleanups.push(cleanup);
+		return workDir;
+	}
+
 	it("passes focusedApp to composeSystemPrompt when appContext matches a source", async () => {
 		const { adapter, getSystem } = createCapturingModel();
 		const runtime = await Runtime.start({
+			workDir: freshWorkDir(),
 			model: { provider: "custom", adapter },
 			noDefaultBundles: true,
 			logging: { disabled: true },
@@ -86,6 +99,7 @@ describe("Runtime.chat() appContext wiring", () => {
 	it("does not inject focusedApp when appContext is absent", async () => {
 		const { adapter, getSystem } = createCapturingModel();
 		const runtime = await Runtime.start({
+			workDir: freshWorkDir(),
 			model: { provider: "custom", adapter },
 			noDefaultBundles: true,
 			logging: { disabled: true },
@@ -104,6 +118,7 @@ describe("Runtime.chat() appContext wiring", () => {
 	it("skips silently when serverName does not match any source", async () => {
 		const { adapter, getSystem } = createCapturingModel();
 		const runtime = await Runtime.start({
+			workDir: freshWorkDir(),
 			model: { provider: "custom", adapter },
 			noDefaultBundles: true,
 			logging: { disabled: true },

@@ -15,6 +15,7 @@ import { startServer } from "../../src/api/server.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
+import { makeTestWorkDir } from "../helpers/test-workdir.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
 
 interface SSEEvent {
@@ -39,13 +40,22 @@ function parseSSE(text: string): SSEEvent[] {
 describe("POST /v1/chat/stream — concurrency protection", () => {
   let handle: ServerHandle | null = null;
   let runtime: Runtime | null = null;
+  let cleanupDir: (() => void) | null = null;
 
   afterEach(async () => {
     handle?.stop(true);
     await runtime?.shutdown();
+    cleanupDir?.();
     handle = null;
     runtime = null;
+    cleanupDir = null;
   });
+
+  function makeWorkDir(): string {
+    const w = makeTestWorkDir("chat-stream-concurrent");
+    cleanupDir = w.cleanup;
+    return w.workDir;
+  }
 
   test("returns HTTP 409 when pre-check sees an in-flight run on the same conversation", async () => {
     // A gated model lets us hold runtime.chat() open deterministically. The
@@ -67,6 +77,7 @@ describe("POST /v1/chat/stream — concurrency protection", () => {
     });
 
     runtime = await Runtime.start({
+      workDir: makeWorkDir(),
       model: { provider: "custom", adapter: gatedModel },
       noDefaultBundles: true,
       logging: { disabled: true },
@@ -112,6 +123,7 @@ describe("POST /v1/chat/stream — concurrency protection", () => {
 
   test("concurrent stream requests produce exactly one successful run; the rest are rejected", async () => {
     runtime = await Runtime.start({
+      workDir: makeWorkDir(),
       model: { provider: "custom", adapter: createEchoModel() },
       noDefaultBundles: true,
       logging: { disabled: true },

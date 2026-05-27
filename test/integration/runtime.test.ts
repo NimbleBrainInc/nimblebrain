@@ -57,6 +57,7 @@ describe("filterTools", () => {
 describe("Runtime", () => {
   it("starts with echo model and processes a chat", async () => {
     const runtime = await Runtime.start({
+      workDir: testDir,
       model: { provider: "custom", adapter: createEchoModel() },
       noDefaultBundles: true,
     });
@@ -96,6 +97,7 @@ describe("Runtime", () => {
 
   it("creates new conversation when no id provided", async () => {
     const runtime = await Runtime.start({
+      workDir: testDir,
       model: { provider: "custom", adapter: createEchoModel() },
       noDefaultBundles: true,
     });
@@ -182,6 +184,7 @@ You are a friendly greeter. Always respond with enthusiasm!
     );
 
     const runtime = await Runtime.start({
+      workDir: testDir,
       model: { provider: "custom", adapter: createEchoModel() },
       noDefaultBundles: true,
       skillDirs: [skillDir],
@@ -229,6 +232,7 @@ I am Nira, your AI assistant. You work at Acme Corp.
     });
 
     const runtime = await Runtime.start({
+      workDir: testDir,
       model: { provider: "custom", adapter: model },
       noDefaultBundles: true,
       skillDirs: [skillDir],
@@ -244,10 +248,16 @@ I am Nira, your AI assistant. You work at Acme Corp.
   });
 
   it("reloads skills dynamically", async () => {
-    const skillDir = join(testDir, "dynamic-skills");
+    // Isolated workDir — earlier tests in this file write to `testDir/skills`
+    // (the global skill dir), which would otherwise pre-load `greeter` here
+    // and break the "No skills initially" assertion below.
+    const isolatedWorkDir = join(testDir, `reload-skills-${Date.now()}`);
+    mkdirSync(isolatedWorkDir, { recursive: true });
+    const skillDir = join(isolatedWorkDir, "dynamic-skills");
     mkdirSync(skillDir, { recursive: true });
 
     const runtime = await Runtime.start({
+      workDir: isolatedWorkDir,
       model: { provider: "custom", adapter: createEchoModel() },
       noDefaultBundles: true,
       skillDirs: [skillDir],
@@ -290,6 +300,7 @@ Greet with enthusiasm!
     };
 
     const runtime = await Runtime.start({
+      workDir: testDir,
       model: { provider: "custom", adapter: createEchoModel() },
       noDefaultBundles: true,
       events: [sink],
@@ -306,6 +317,7 @@ Greet with enthusiasm!
 
   it("reports available tools (empty when no bundles)", async () => {
     const runtime = await Runtime.start({
+      workDir: testDir,
       model: { provider: "custom", adapter: createEchoModel() },
       noDefaultBundles: true,
     });
