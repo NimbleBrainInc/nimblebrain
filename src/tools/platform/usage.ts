@@ -28,12 +28,12 @@ import type { Runtime } from "../../runtime/runtime.ts";
 import { defineInProcessApp, type InProcessTool } from "../in-process-app.ts";
 import type { McpSource } from "../mcp-source.ts";
 import { loadUsageUi } from "../platform-resources/usage/dashboard.ts";
-import { UsageReportInput, type UsageReportOutput } from "./schemas/usage.ts";
+import { type UsageGroupBy, UsageReportInput, type UsageReportOutput } from "./schemas/usage.ts";
 
 interface UsageReportArgs {
   scope?: "user" | "org";
   period?: string;
-  groupBy?: string;
+  groupBy?: UsageGroupBy | UsageGroupBy[];
   from?: string;
   to?: string;
 }

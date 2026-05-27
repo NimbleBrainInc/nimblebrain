@@ -31,6 +31,8 @@ interface LlmCallRecord {
   llmMs: number;
 }
 
+export type UsageGroupBy = "day" | "conversation" | "model" | "user";
+
 interface TokenBreakdown {
   input: number;
   output: number;
@@ -74,6 +76,14 @@ export interface UsageReport {
   totals: UsageTotals;
   models: ModelUsage[];
   breakdown: BreakdownEntry[];
+  breakdowns: Partial<Record<UsageGroupBy, BreakdownEntry[]>>;
+}
+
+interface BreakdownAccumulator {
+  tokens: TokenBreakdown;
+  cost: CostBreakdown;
+  llmCalls: number;
+  sids: Set<string>;
 }
 
 // ---------------------------------------------------------------------------
@@ -138,6 +148,89 @@ function isDateInRange(date: string, range: { from: string; to: string }): boole
   return date >= range.from && date <= range.to;
 }
 
+function isUsageGroupBy(value: string): value is UsageGroupBy {
+  return value === "day" || value === "conversation" || value === "model" || value === "user";
+}
+
+function normalizeGroupBys(groupBy: string | string[]): UsageGroupBy[] {
+  const requested = Array.isArray(groupBy) ? groupBy : [groupBy];
+  const valid = requested.filter(isUsageGroupBy);
+  return [...new Set(valid.length > 0 ? valid : ["day"])] as UsageGroupBy[];
+}
+
+function groupKeyFor(record: LlmCallRecord, groupBy: UsageGroupBy, modelKey: string): string {
+  switch (groupBy) {
+    case "model":
+      return modelKey;
+    case "conversation":
+      return record.sid ?? "unknown";
+    case "user":
+      return record.ownerId ?? "unknown";
+    case "day":
+      return record.ts.slice(0, 10);
+  }
+}
+
+function getBreakdownAccumulator(
+  map: Map<string, BreakdownAccumulator>,
+  key: string,
+): BreakdownAccumulator {
+  let accumulator = map.get(key);
+  if (!accumulator) {
+    accumulator = {
+      tokens: createTokenBreakdown(),
+      cost: createCostBreakdown(),
+      llmCalls: 0,
+      sids: new Set(),
+    };
+    map.set(key, accumulator);
+  }
+  return accumulator;
+}
+
+function emptyBreakdownEntry(key: string): BreakdownEntry {
+  return {
+    key,
+    tokens: createTokenBreakdown(),
+    cost: createCostBreakdown(),
+    llmCalls: 0,
+    conversations: 0,
+  };
+}
+
+function finalizeBreakdown(
+  map: Map<string, BreakdownAccumulator>,
+  groupBy: UsageGroupBy,
+  period: string,
+  range: { from: string; to: string },
+): BreakdownEntry[] {
+  const breakdown: BreakdownEntry[] = [...map.entries()]
+    .map(([key, data]) => ({
+      key,
+      tokens: data.tokens,
+      cost: data.cost,
+      llmCalls: data.llmCalls,
+      conversations: data.sids.size,
+    }))
+    .sort((a, b) => a.key.localeCompare(b.key));
+
+  // For day grouping over a bounded period, zero-fill missing days so the
+  // chart and table show the full window rather than only days with activity.
+  // Skipped for `all` — the range can span years and noise outweighs signal.
+  if (groupBy !== "day" || period === "all") return breakdown;
+
+  const byKey = new Map(breakdown.map((e) => [e.key, e]));
+  const filled: BreakdownEntry[] = [];
+  const cursor = new Date(`${range.from}T00:00:00Z`);
+  const end = new Date(`${range.to}T00:00:00Z`);
+  while (cursor <= end) {
+    const key = cursor.toISOString().slice(0, 10);
+    filled.push(byKey.get(key) ?? emptyBreakdownEntry(key));
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  return filled;
+}
+
 export function resolveDateRange(
   period: string,
   from?: string,
@@ -200,11 +293,12 @@ export interface AggregateUsageOptions {
 export async function aggregateUsage(
   conversationsDir: string,
   period: string,
-  groupBy: string,
+  groupBy: string | string[],
   options: AggregateUsageOptions = {},
 ): Promise<UsageReport> {
   const { from, to, ownerFilter } = options;
   const range = resolveDateRange(period, from, to);
+  const groupBys = normalizeGroupBys(groupBy);
 
   // List conversation files
   let filenames: string[];
@@ -284,10 +378,8 @@ export async function aggregateUsage(
   };
   const conversationIds = new Set<string>();
   const modelMap = new Map<string, ModelUsage>();
-  const breakdownMap = new Map<
-    string,
-    { tokens: TokenBreakdown; cost: CostBreakdown; llmCalls: number; sids: Set<string> }
-  >();
+  const breakdownMaps = new Map<UsageGroupBy, Map<string, BreakdownAccumulator>>();
+  for (const dimension of groupBys) breakdownMaps.set(dimension, new Map());
 
   for (const record of records) {
     const { tokens, cost } = decomposeUsage(record);
@@ -312,68 +404,25 @@ export async function aggregateUsage(
     addCost(m.cost, cost);
     m.llmCalls++;
 
-    // Breakdown
-    const key =
-      groupBy === "model"
-        ? modelKey
-        : groupBy === "conversation"
-          ? (record.sid ?? "unknown")
-          : groupBy === "user"
-            ? (record.ownerId ?? "unknown")
-            : record.ts.slice(0, 10);
-
-    if (!breakdownMap.has(key)) {
-      breakdownMap.set(key, {
-        tokens: createTokenBreakdown(),
-        cost: createCostBreakdown(),
-        llmCalls: 0,
-        sids: new Set(),
-      });
+    for (const dimension of groupBys) {
+      const map = breakdownMaps.get(dimension)!;
+      const key = groupKeyFor(record, dimension, modelKey);
+      const b = getBreakdownAccumulator(map, key);
+      addTokens(b.tokens, tokens);
+      addCost(b.cost, cost);
+      b.llmCalls++;
+      if (record.sid) b.sids.add(record.sid);
     }
-    const b = breakdownMap.get(key)!;
-    addTokens(b.tokens, tokens);
-    addCost(b.cost, cost);
-    b.llmCalls++;
-    if (record.sid) b.sids.add(record.sid);
   }
 
   totals.conversations = conversationIds.size;
 
   const models = [...modelMap.values()].sort((a, b) => b.cost.total - a.cost.total);
-
-  const breakdown: BreakdownEntry[] = [...breakdownMap.entries()]
-    .map(([key, data]) => ({
-      key,
-      tokens: data.tokens,
-      cost: data.cost,
-      llmCalls: data.llmCalls,
-      conversations: data.sids.size,
-    }))
-    .sort((a, b) => a.key.localeCompare(b.key));
-
-  // For day grouping over a bounded period, zero-fill missing days so the
-  // chart and table show the full window rather than only days with activity.
-  // Skipped for `all` — the range can span years and noise outweighs signal.
-  if (groupBy === "day" && period !== "all") {
-    const byKey = new Map(breakdown.map((e) => [e.key, e]));
-    const filled: BreakdownEntry[] = [];
-    const cursor = new Date(`${range.from}T00:00:00Z`);
-    const end = new Date(`${range.to}T00:00:00Z`);
-    while (cursor <= end) {
-      const key = cursor.toISOString().slice(0, 10);
-      filled.push(
-        byKey.get(key) ?? {
-          key,
-          tokens: createTokenBreakdown(),
-          cost: createCostBreakdown(),
-          llmCalls: 0,
-          conversations: 0,
-        },
-      );
-      cursor.setUTCDate(cursor.getUTCDate() + 1);
-    }
-    return { period: range, totals, models, breakdown: filled };
+  const breakdowns: Partial<Record<UsageGroupBy, BreakdownEntry[]>> = {};
+  for (const [dimension, map] of breakdownMaps) {
+    breakdowns[dimension] = finalizeBreakdown(map, dimension, period, range);
   }
+  const breakdown = breakdowns[groupBys[0]!] ?? [];
 
-  return { period: range, totals, models, breakdown };
+  return { period: range, totals, models, breakdown, breakdowns };
 }

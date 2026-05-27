@@ -1,6 +1,10 @@
 import { type Static, Type } from "@sinclair/typebox";
 import { StringEnum } from "./_shared.ts";
 
+const UsageGroupBy = StringEnum(["day", "conversation", "model", "user"] as const, {
+  description: "Group breakdown. Default: day. `user` buckets by conversation owner (org scope).",
+});
+
 export const UsageReportInput = Type.Object({
   scope: Type.Optional(
     StringEnum(["user", "org"] as const, {
@@ -18,13 +22,19 @@ export const UsageReportInput = Type.Object({
   from: Type.Optional(Type.String({ description: "Start date (YYYY-MM-DD). Overrides period." })),
   to: Type.Optional(Type.String({ description: "End date (YYYY-MM-DD). Default: today." })),
   groupBy: Type.Optional(
-    StringEnum(["day", "conversation", "model", "user"] as const, {
-      description:
-        "Group breakdown. Default: day. `user` buckets by conversation owner (org scope).",
-    }),
+    Type.Union([
+      UsageGroupBy,
+      Type.Array(UsageGroupBy, {
+        minItems: 1,
+        description:
+          'Multiple breakdowns to compute in one aggregation scan, e.g. ["user", "day"].',
+      }),
+    ]),
   ),
 });
 export type UsageReportInput = Static<typeof UsageReportInput>;
+
+export type UsageGroupBy = "day" | "conversation" | "model" | "user";
 
 // ── Output types (§2.1) ────────────────────────────────────────────────
 //
@@ -78,4 +88,5 @@ export interface UsageReportOutput {
   };
   models: UsageModelEntry[];
   breakdown: UsageBreakdownEntry[];
+  breakdowns: Partial<Record<UsageGroupBy, UsageBreakdownEntry[]>>;
 }

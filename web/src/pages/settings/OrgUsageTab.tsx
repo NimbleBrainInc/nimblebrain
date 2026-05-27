@@ -30,10 +30,8 @@ import {
 // personal workspace, not a focused one. So usage moved off workspace
 // settings to the org/audit surface, aggregated BY USER.
 //
-// Two reads per period: one `groupBy: "user"` for the per-user table and
-// totals, one `groupBy: "day"` for the cost-over-time chart. `groupBy` is a
-// single dimension per aggregation call, so the chart and table take
-// separate calls rather than one over-loaded response.
+// One usage read per period asks the backend to bucket the same scan by user
+// and by day. The roster resolves ownerId → name/email for the table.
 
 interface UserRow {
   id: string;
@@ -54,8 +52,7 @@ function resolveUser(
 
 export function OrgUsageTab() {
   const [period, setPeriod] = useState<Period>("month");
-  const [byUser, setByUser] = useState<UsageReport | null>(null);
-  const [byDay, setByDay] = useState<UsageReport | null>(null);
+  const [report, setReport] = useState<UsageReport | null>(null);
   const [users, setUsers] = useState<Map<string, UserRow>>(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -64,17 +61,12 @@ export function OrgUsageTab() {
     setLoading(true);
     setError(null);
     try {
-      // Run the two usage reads + the user roster in parallel. The roster
-      // resolves ownerId → name/email for the table (best-effort; unknown
-      // owners fall back to the raw id).
-      const [userRes, dayRes, usersRes] = await Promise.all([
-        callTool("usage", "report", { scope: "org", period: p, groupBy: "user" }),
-        callTool("usage", "report", { scope: "org", period: p, groupBy: "day" }),
+      const [usageRes, usersRes] = await Promise.all([
+        callTool("usage", "report", { scope: "org", period: p, groupBy: ["user", "day"] }),
         callTool("nb", "manage_users", { action: "list" }).catch(() => null),
       ]);
 
-      setByUser(parseToolResult<UsageReport>(userRes));
-      setByDay(parseToolResult<UsageReport>(dayRes));
+      setReport(parseToolResult<UsageReport>(usageRes));
 
       if (usersRes) {
         const data = parseToolResult<{ users: UserRow[] }>(usersRes);
@@ -85,8 +77,7 @@ export function OrgUsageTab() {
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to load usage data.";
       setError(msg);
-      setByUser(null);
-      setByDay(null);
+      setReport(null);
     } finally {
       setLoading(false);
     }
@@ -121,33 +112,27 @@ export function OrgUsageTab() {
       loadingMessage="Loading usage data..."
       loadError={error}
     >
-      {byUser && byDay ? <OrgUsageBody byUser={byUser} byDay={byDay} users={users} /> : null}
+      {report ? <OrgUsageBody report={report} users={users} /> : null}
     </SettingsDashboardPage>
   );
 }
 
-function OrgUsageBody({
-  byUser,
-  byDay,
-  users,
-}: {
-  byUser: UsageReport;
-  byDay: UsageReport;
-  users: Map<string, UserRow>;
-}) {
-  const hasActivity = byUser.totals.llmCalls > 0;
+function OrgUsageBody({ report, users }: { report: UsageReport; users: Map<string, UserRow> }) {
+  const hasActivity = report.totals.llmCalls > 0;
+  const userBreakdown = report.breakdowns.user ?? [];
+  const dayBreakdown = report.breakdowns.day ?? [];
 
   // Per-user rows sorted by cost descending — the audit question is
   // "who is spending the most."
-  const userRows = [...byUser.breakdown].sort((a, b) => b.cost.total - a.cost.total);
+  const userRows = [...userBreakdown].sort((a, b) => b.cost.total - a.cost.total);
 
   return (
     <div className="space-y-6">
-      <UsageTotalsCards totals={byUser.totals} />
+      <UsageTotalsCards totals={report.totals} />
 
       {hasActivity ? (
         <Section title="Daily Cost" flush>
-          <CostChart data={byDay.breakdown} />
+          <CostChart data={dayBreakdown} />
         </Section>
       ) : null}
 
@@ -188,7 +173,7 @@ function OrgUsageBody({
         )}
       </Section>
 
-      {byUser.models && byUser.models.length > 0 ? (
+      {report.models && report.models.length > 0 ? (
         <Section title="By Model">
           <Table>
             <TableHeader>
@@ -200,7 +185,7 @@ function OrgUsageBody({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {byUser.models.map((m) => (
+              {report.models.map((m) => (
                 <TableRow key={m.model}>
                   <TableCell className="font-mono text-xs">{shortModel(m.model)}</TableCell>
                   <TableCell className="text-right">

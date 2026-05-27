@@ -248,6 +248,41 @@ describe("usage-aggregator", () => {
     expect(report.breakdown[2].key).toBe("2026-04-12");
   });
 
+  it("returns multiple breakdown dimensions from one aggregation", async () => {
+    const dir = makeTmpDir();
+    writeFileSync(
+      join(dir, "alice.jsonl"),
+      buildJsonl({ id: "alice", updatedAt: "2026-04-12T10:00:00Z", ownerId: "usr_alice" }, [
+        llmEvent({ ts: "2026-04-10T08:00:00Z", inputTokens: 100, outputTokens: 50 }),
+        llmEvent({ ts: "2026-04-12T10:00:00Z", inputTokens: 200, outputTokens: 100 }),
+      ]),
+    );
+    writeFileSync(
+      join(dir, "bob.jsonl"),
+      buildJsonl({ id: "bob", updatedAt: "2026-04-11T10:00:00Z", ownerId: "usr_bob" }, [
+        llmEvent({ ts: "2026-04-11T10:00:00Z", inputTokens: 400, outputTokens: 200 }),
+      ]),
+    );
+
+    const report = await aggregateUsage(dir, "week", ["user", "day"], {
+      from: "2026-04-10",
+      to: "2026-04-12",
+    });
+
+    expect(report.breakdown).toEqual(report.breakdowns.user);
+    expect(report.breakdowns.user?.map((b) => b.key)).toEqual(["usr_alice", "usr_bob"]);
+    expect(report.breakdowns.day?.map((b) => b.key)).toEqual([
+      "2026-04-10",
+      "2026-04-11",
+      "2026-04-12",
+    ]);
+    expect(report.breakdowns.day?.[0].tokens.input).toBe(100);
+    expect(report.breakdowns.day?.[1].tokens.input).toBe(400);
+    expect(report.breakdowns.day?.[2].tokens.input).toBe(200);
+    expect(report.totals.tokens.input).toBe(700);
+    expect(report.totals.conversations).toBe(2);
+  });
+
   it("aggregator cost.total matches estimateCost for the same inputs (drift guard)", async () => {
     // Regression: pre-fix, decomposeUsage's cost math diverged from
     // estimateCost on models with cost.reasoning. Today no catalog model
@@ -299,7 +334,14 @@ describe("usage-aggregator", () => {
     const report = await aggregateUsage(dir, "all", "day");
 
     // Top-level
-    expect(Object.keys(report).sort()).toEqual(["breakdown", "models", "period", "totals"]);
+    expect(Object.keys(report).sort()).toEqual([
+      "breakdown",
+      "breakdowns",
+      "models",
+      "period",
+      "totals",
+    ]);
+    expect(report.breakdowns.day).toEqual(report.breakdown);
 
     // totals.tokens — exact bucket set; if a rename happens, this fails
     expect(Object.keys(report.totals.tokens).sort()).toEqual([
