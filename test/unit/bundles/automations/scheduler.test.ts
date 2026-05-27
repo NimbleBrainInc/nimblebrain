@@ -1419,3 +1419,71 @@ describe("computeBudgetResetAt", () => {
 		expect(result).toBeUndefined();
 	});
 });
+
+// ---------------------------------------------------------------------------
+// Multi-owner: the scheduler scans users/*/automations and fires each
+// automation as its owner. Colliding kebab ids across owners must stay
+// isolated (the whole point of composite ${ownerId}/${id} keys).
+// ---------------------------------------------------------------------------
+
+describe("Scheduler — multi-owner", () => {
+	let root: string;
+
+	beforeEach(() => {
+		root = mkdtempSync(join(tmpdir(), "scheduler-multiowner-"));
+	});
+
+	afterEach(() => {
+		rmSync(root, { recursive: true, force: true });
+	});
+
+	const usersDir = () => join(root, "users");
+	const ownerStore = (owner: string) => join(usersDir(), owner, "automations");
+
+	it("loads + fires automations across owners; colliding ids stay isolated per owner", async () => {
+		// Two owners, SAME kebab id — only composite-key isolation keeps them apart.
+		const due = new Date(Date.now() - 1000).toISOString();
+		const a = makeAutomation({ id: "daily-digest", ownerId: "usr_a", nextRunAt: due });
+		const b = makeAutomation({ id: "daily-digest", ownerId: "usr_b", nextRunAt: due });
+		saveDefinitions(new Map([[a.id, a]]), ownerStore("usr_a"));
+		saveDefinitions(new Map([[b.id, b]]), ownerStore("usr_b"));
+
+		const fired: Array<string | undefined> = [];
+		const executor: Executor = mock(async (auto: Automation) => {
+			fired.push(auto.ownerId);
+			return makeSuccessRun(auto.id);
+		}) as Executor;
+
+		const scheduler = new Scheduler(executor, { usersDir: usersDir() });
+		scheduler.start();
+		await scheduler.onTimer();
+		scheduler.stop();
+
+		// Both owners' automations fired, each carrying its own owner identity.
+		expect(fired.sort()).toEqual(["usr_a", "usr_b"]);
+		// Each run persisted to ITS OWN store — no cross-owner clobber.
+		expect(loadDefinitions(ownerStore("usr_a")).get("daily-digest")!.runCount).toBe(1);
+		expect(loadDefinitions(ownerStore("usr_b")).get("daily-digest")!.runCount).toBe(1);
+	});
+
+	it("runNow targets the owner-qualified automation when ids collide", async () => {
+		const a = makeAutomation({ id: "shared", ownerId: "usr_a", enabled: false });
+		const b = makeAutomation({ id: "shared", ownerId: "usr_b", enabled: false });
+		saveDefinitions(new Map([[a.id, a]]), ownerStore("usr_a"));
+		saveDefinitions(new Map([[b.id, b]]), ownerStore("usr_b"));
+
+		const fired: string[] = [];
+		const executor: Executor = mock(async (auto: Automation) => {
+			fired.push(`${auto.ownerId}/${auto.id}`);
+			return makeSuccessRun(auto.id);
+		}) as Executor;
+
+		const scheduler = new Scheduler(executor, { usersDir: usersDir() });
+		scheduler.start();
+		const run = await scheduler.runNow("usr_b", "shared");
+		scheduler.stop();
+
+		expect(run).not.toBeNull();
+		expect(fired).toEqual(["usr_b/shared"]); // only B's automation ran
+	});
+});
