@@ -488,8 +488,6 @@ async function handleListInstalled(
     bundleName: string;
     version: string;
     type: "remote" | "local";
-    /** Install channel — `registry` apps are version-managed at the org level. */
-    installSource?: "registry" | "local" | "remote";
     state: string;
     // Stage 2: only workspace-scope connectors exist. Personal connectors
     // live in the caller's personal workspace; the legacy `"user"` arm was
@@ -653,9 +651,6 @@ async function handleListInstalled(
         bundleName: instance.bundleName,
         version: instance.version,
         type: isRemote ? "remote" : "local",
-        // Install channel — the Configure page uses this to point registry
-        // apps at Org → About for version management (apps are org-versioned).
-        ...(instance.installSource ? { installSource: instance.installSource } : {}),
         state: instance.state,
         // Provisional — overwritten by deriveConnectorStatus below
         // once every probe (operatorOAuth, userConfig, lastError) has

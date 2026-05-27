@@ -130,6 +130,11 @@ export function ConnectorStatusHero({
               </span>
             )}
           </div>
+          {/* Version for stdio bundles (registry/local). Remote connectors have
+              no meaningful bundle version (`installed.version === "remote"`). */}
+          {installed.type !== "remote" && installed.version && (
+            <p className="text-xs text-muted-foreground font-mono mt-0.5">v{installed.version}</p>
+          )}
           {cat?.description && (
             <p className="text-sm text-muted-foreground mt-1">{cat.description}</p>
           )}

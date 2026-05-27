@@ -664,8 +664,6 @@ export interface InstalledConnector {
   bundleName: string;
   version: string;
   type: "remote" | "local";
-  /** Install channel — `registry` apps are version-managed at the org level. */
-  installSource?: "registry" | "local" | "remote";
   state: string;
   scope: "workspace";
   /** Whether this connector exposes a UI surface (auto-mounts a sidebar entry). */

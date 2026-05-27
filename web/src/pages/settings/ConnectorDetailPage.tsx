@@ -180,19 +180,6 @@ export function ConnectorDetailPage({ mode }: { mode: "personal" | "workspace" }
         </div>
       </div>
 
-      {/* Registry apps are version-managed at the org level (the mpak cache is
-          shared platform-wide), so upgrades don't live here — point admins to
-          Org → About. Connect/auth/configure stays on this page. */}
-      {installed.installSource === "registry" && (
-        <p className="text-xs text-muted-foreground">
-          {installed.version ? `v${installed.version} · ` : ""}app version is managed in{" "}
-          <Link to="/org/about" className="text-primary underline-offset-4 hover:underline">
-            Org → About
-          </Link>
-          .
-        </p>
-      )}
-
       {/* Hero — title block plus a status row that absorbs the
           primary CTA. Quiet when ready; anchored when there's
           something to do. */}
