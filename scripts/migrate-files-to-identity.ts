@@ -4,7 +4,7 @@
  * `{workDir}/workspaces/{wsId}/files/` to the identity-scoped store
  * `{workDir}/users/{ownerId}/files/`.
  *
- * Files become identity-owned (see IDENTITY_APP_SURFACE Phase B / ACCESS_MODEL).
+ * Files become identity-owned: a file belongs to the user, not a workspace.
  * The workspace a file was created in is preserved as a provenance breadcrumb
  * (`FileEntry.workspaceId`), never the storage key — mirrors how a
  * conversation's `workspaceId` records tool-scope, not file location.

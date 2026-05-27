@@ -3,7 +3,8 @@
  * Phase C migration: move every automation into the owner-partitioned identity
  * store `{workDir}/users/{ownerId}/automations/` (`automations.json` + `runs/`).
  *
- * Automations become identity-owned (see ACCESS_MODEL / IDENTITY_APP_SURFACE).
+ * Automations become identity-owned: an automation belongs to the user, not a
+ * workspace, and a scheduled run fires as its owner.
  * They are partitioned per owner — not flat top-level like conversations —
  * because automation ids are kebab-case (derived from the name) and collide
  * across owners; partitioning makes ownership structural and ids unique per
