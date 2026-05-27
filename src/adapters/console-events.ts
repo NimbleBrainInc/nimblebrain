@@ -34,7 +34,19 @@ export class ConsoleEventSink implements EventSink {
         console.error(`[engine] run done: ${event.data.stopReason}`);
         break;
       case "run.error": {
-        console.error(`[engine] error: ${event.data.error}`);
+        // `run.error` is overloaded: genuine engine-run failures carry an
+        // `error` message, while McpSource lifecycle events reuse the type with
+        // an `event` discriminator. `source.restarted` is a *successful*
+        // crash-recovery (no error field) — render it as info, not the
+        // misleading "error: undefined" it used to print.
+        if (event.data.event === "source.restarted") {
+          console.error(`[engine] source restarted: ${event.data.source}`);
+          break;
+        }
+        // Never print a bare `undefined`: fall back to the event discriminator
+        // (e.g. "source.crashed") and finally a generic label.
+        const message = event.data.error ?? event.data.event ?? "unknown error";
+        console.error(`[engine] error: ${message}`);
         // Render bundle stderr tail (if any) immediately after the error
         // line, dimmed and indented so it's visually nested under the
         // crash. Issue #116: keeps the cause-of-death visible without
