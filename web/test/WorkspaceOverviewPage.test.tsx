@@ -17,21 +17,24 @@
 // ---------------------------------------------------------------------------
 
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import * as actualClient from "../src/api/client";
 import type { WorkspaceInfo } from "../src/context/WorkspaceContext";
 import type { PlacementEntry } from "../src/types";
+import { realClient } from "./setup";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 // Stub only `callTool` so the briefing fetch hangs in its skeleton (its own
-// async timeline — not what this file tests). Spread the real module so every
-// other export stays intact: a bare `{ callTool }` mock leaks across files in
-// the same test process and strips functions the client/bridge suites depend
-// on (getAuthToken, getActiveWorkspaceId, …). WorkspaceContext skips its list
-// call when given bootstrap data, so the real setActiveWorkspaceId it calls is
-// harmless — sibling suites reset client state in their own beforeEach.
+// async timeline — not what this file tests). Spread the preload's real-module
+// snapshot (see web/test/setup.ts) so every other export stays intact: a bare
+// `{ callTool }` mock leaks across files in the same test process and strips
+// functions the client/bridge suites depend on (getAuthToken,
+// getActiveWorkspaceId, …). The snapshot predates every mock.module, so it
+// can't itself be an incomplete stub the way `import * as` from the registry
+// could. WorkspaceContext skips its list call when given bootstrap data, so the
+// real setActiveWorkspaceId it calls is harmless — sibling suites reset client
+// state in their own beforeEach.
 mock.module("../src/api/client", () => ({
-  ...actualClient,
+  ...realClient,
   callTool: () => new Promise(() => {}),
 }));
 

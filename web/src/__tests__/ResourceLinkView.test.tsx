@@ -26,6 +26,7 @@
 // ---------------------------------------------------------------------------
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { realClient } from "../../test/setup";
 
 // Tell React 19 we're inside an act-aware test environment. Without this
 // flag, every awaited setState inside an async useEffect logs a warning
@@ -36,15 +37,12 @@ const readResourceMock = mock(
   async (_server: string, _uri: string): Promise<{ contents: unknown[] }> => ({ contents: [] }),
 );
 
-// Spread the real module so this whole-module mock exposes every api/client
-// export. Bun's `mock.module` is process-global; a partial stub leaking into
-// another suite mid-run (under CI's parallelism) is what crashed bridge tests
-// with "Export named 'getActiveWorkspaceId' not found". The spread also gives us
-// the real `ApiClientError` constructor that ResourceLinkView's catch branch
-// (`err instanceof ApiClientError`) needs — only `readResource` is overridden.
-const actualClient = await import("../api/client");
+// Spread the preload's real-module snapshot (see web/test/setup.ts) so this
+// whole-module mock exposes every api/client export; only `readResource` is
+// overridden. The snapshot also carries the real `ApiClientError` constructor
+// that ResourceLinkView's catch branch (`err instanceof ApiClientError`) needs.
 mock.module("../api/client", () => ({
-  ...actualClient,
+  ...realClient,
   readResource: readResourceMock,
 }));
 
