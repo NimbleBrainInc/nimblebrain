@@ -36,22 +36,16 @@ const readResourceMock = mock(
   async (_server: string, _uri: string): Promise<{ contents: unknown[] }> => ({ contents: [] }),
 );
 
+// Spread the real module so this whole-module mock exposes every api/client
+// export. Bun's `mock.module` is process-global; a partial stub leaking into
+// another suite mid-run (under CI's parallelism) is what crashed bridge tests
+// with "Export named 'getActiveWorkspaceId' not found". The spread also gives us
+// the real `ApiClientError` constructor that ResourceLinkView's catch branch
+// (`err instanceof ApiClientError`) needs — only `readResource` is overridden.
+const actualClient = await import("../api/client");
 mock.module("../api/client", () => ({
+  ...actualClient,
   readResource: readResourceMock,
-  // ApiClientError is referenced as a value in ResourceLinkView's catch
-  // branch (`err instanceof ApiClientError`), so the mock must export a
-  // real constructor — not just a type — or the import fails at evaluation.
-  ApiClientError: class ApiClientError extends Error {
-    code: string;
-    status: number;
-    details?: unknown;
-    constructor(code: string, message: string, status: number, details?: unknown) {
-      super(message);
-      this.code = code;
-      this.status = status;
-      this.details = details;
-    }
-  },
 }));
 
 const React = await import("react");

@@ -78,10 +78,16 @@ const getClientCalls = { count: 0 };
 // dispatching (Q3 auto-prefix). Mock `getActiveWorkspaceId` to return
 // a stable workspace id so the wire-name assertions below are
 // deterministic.
+// Spread the real module so this whole-module mock exposes every api/client
+// export. Bun's `mock.module` is process-global; a partial stub leaking into
+// another suite mid-run (under CI's parallelism) is what crashed these bridge
+// tests with "Export named 'getActiveWorkspaceId' not found". A complete mock
+// is inert when it leaks — only the two below are overridden.
+const actualClient = await import("../../api/client");
 mock.module("../../api/client", () => ({
+  ...actualClient,
   getActiveWorkspaceId: () => "ws_test",
-  // Other api/client exports the bridge file imports — keep them
-  // benign for this transport test (no upload triggered here).
+  // Keep upload benign for this transport test (no upload triggered here).
   uploadResource: async () => {
     throw new Error("uploadResource not stubbed in this test");
   },

@@ -39,7 +39,14 @@ const installConnector = mock(async (_entry: unknown, _wsId: string) => ({
   wsId: "ws_helix",
 }));
 
+// Spread the real module so this whole-module mock exposes every api/client
+// export. Bun's `mock.module` is process-global; a *partial* stub leaking into
+// another suite mid-run (under CI's parallelism) is what crashed bridge tests
+// with "Export named 'getActiveWorkspaceId' not found". A complete mock is inert
+// when it leaks — only `installConnector` is overridden here.
+const actualClient = await import("../api/client");
 mock.module("../api/client", () => ({
+  ...actualClient,
   installConnector,
 }));
 
