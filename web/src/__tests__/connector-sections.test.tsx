@@ -27,13 +27,14 @@
 // ---------------------------------------------------------------------------
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { realClient } from "../../test/setup";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 // ── api/client mocks ────────────────────────────────────────────────
 // Every section calls into one or two helpers from api/client. We
-// override those helpers but spread the real module (see the mock.module
-// call below) so the stub stays complete.
+// override those helpers but spread the real-module snapshot (see the
+// mock.module call below) so the stub stays complete.
 
 const disconnectConnector = mock(async () => ({
   ok: true,
@@ -60,14 +61,12 @@ const setupConnectorOperator = mock(async () => ({
   clientId: "cid-rotated",
 }));
 
-// Spread the real module so this whole-module mock exposes every api/client
-// export. Bun's `mock.module` is process-global; this 5-export stub previously
-// clobbered `../api/client` for other suites loading concurrently (the
-// `getActiveWorkspaceId`/`setActiveWorkspaceId` "export not found" flake). A
-// complete mock is inert when it leaks — only these five are overridden.
-const actualClient = await import("../api/client");
+// Spread the preload's real-module snapshot (see web/test/setup.ts) so this
+// whole-module mock exposes every api/client export; only these five are
+// overridden. Keeps the process-global mock registry complete even when it
+// leaks into another suite loading concurrently.
 mock.module("../api/client", () => ({
-  ...actualClient,
+  ...realClient,
   disconnectConnector,
   initiateMcpOAuth,
   clearBundleUserConfig,
