@@ -192,7 +192,12 @@ function WorkspaceInlineApps({ workspaceId }: { workspaceId: string }) {
       {shown.map((p) => {
         const label = p.label ?? p.route ?? "App";
         const target = `/w/${slug}/app/${p.route}`;
-        const isActive = !!p.route && location.pathname.startsWith(target);
+        // Exact match, not startsWith: app routes are leaf paths (App.tsx
+        // registers `app/<route>` with no splat), so the current URL maps to
+        // exactly one placement. startsWith would mis-light a `crm` row when
+        // viewing a sibling `crm-archive` (string prefix) or a `crm/board`
+        // sub-view.
+        const isActive = !!p.route && location.pathname === target;
         return (
           <Link
             key={p.resourceUri}

@@ -30,3 +30,20 @@ export function workspaceApps(sidebarPlacements: PlacementEntry[]): PlacementEnt
     .filter((p) => p.slot.startsWith("sidebar.") && !p.slot.startsWith("sidebar.bottom"))
     .sort((a, b) => a.priority - b.priority);
 }
+
+/**
+ * Project the installed-connector list into the `serverName → brand icon URL`
+ * map the sidebar quick-list and overview grid consume. Connectors without an
+ * `iconUrl` are omitted — callers fall back to a letter avatar. Pure (no React,
+ * no fetch) so the map-building contract is testable without the provider's
+ * fetch / SSE wiring; `WorkspaceAppIconsProvider` is the only caller.
+ */
+export function iconMapFromInstalled(
+  installed: ReadonlyArray<{ serverName: string; iconUrl?: string }>,
+): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const c of installed) {
+    if (c.iconUrl) map.set(c.serverName, c.iconUrl);
+  }
+  return map;
+}

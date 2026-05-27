@@ -424,6 +424,28 @@ describe("WorkspaceSection — inline app quick-list", () => {
     expect(active[0]?.getAttribute("data-app-route")).toBe("salesforce");
   });
 
+  test("active highlight is exact — a route that is a string prefix of the current one stays inactive", async () => {
+    // Regression pin: `crm` is a string prefix of `crm-archive`. A
+    // startsWith match would light BOTH rows when viewing crm-archive.
+    // App routes are leaf paths, so the match must be exact.
+    const helix = ws({ id: "ws_helix", name: "Helix" });
+    mounted = await mount({
+      workspaces: [helix],
+      activeId: "ws_helix",
+      initialPath: "/w/helix/app/crm-archive",
+      placements: [
+        appPlacement("crm", { priority: 10 }),
+        appPlacement("crm-archive", { priority: 20 }),
+      ],
+    });
+
+    const active = appRows(mounted.container).filter(
+      (r) => r.getAttribute("data-is-active") === "true",
+    );
+    expect(active).toHaveLength(1);
+    expect(active[0]?.getAttribute("data-app-route")).toBe("crm-archive");
+  });
+
   test("renders nothing when the shell has no placements (null-shell path)", async () => {
     const helix = ws({ id: "ws_helix", name: "Helix" });
     mounted = await mount({

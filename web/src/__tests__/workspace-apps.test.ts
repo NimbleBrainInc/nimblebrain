@@ -10,7 +10,7 @@
 // ---------------------------------------------------------------------------
 
 import { describe, expect, test } from "bun:test";
-import { MAX_INLINE_APPS, workspaceApps } from "../lib/workspace-apps";
+import { iconMapFromInstalled, MAX_INLINE_APPS, workspaceApps } from "../lib/workspace-apps";
 import type { PlacementEntry } from "../types";
 
 function p(over: Partial<PlacementEntry> & { serverName: string; slot: string }): PlacementEntry {
@@ -65,5 +65,23 @@ describe("workspaceApps", () => {
   test("MAX_INLINE_APPS is a small positive cap", () => {
     expect(MAX_INLINE_APPS).toBeGreaterThan(0);
     expect(MAX_INLINE_APPS).toBeLessThanOrEqual(6);
+  });
+});
+
+describe("iconMapFromInstalled", () => {
+  test("maps serverName -> iconUrl, omitting connectors without an icon", () => {
+    const map = iconMapFromInstalled([
+      { serverName: "crm", iconUrl: "https://cdn/crm.png" },
+      { serverName: "todo" }, // no icon → omitted; caller falls back to a letter avatar
+      { serverName: "sf", iconUrl: "https://cdn/sf.svg" },
+    ]);
+    expect(map.get("crm")).toBe("https://cdn/crm.png");
+    expect(map.get("sf")).toBe("https://cdn/sf.svg");
+    expect(map.has("todo")).toBe(false);
+    expect(map.size).toBe(2);
+  });
+
+  test("empty list -> empty map", () => {
+    expect(iconMapFromInstalled([]).size).toBe(0);
   });
 });

@@ -1,6 +1,7 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { getInstalledConnectors } from "../api/client";
 import { useEvents } from "../hooks/useEvents";
+import { iconMapFromInstalled } from "../lib/workspace-apps";
 import { WorkspaceAppIconsContext, type WorkspaceAppIconsValue } from "./WorkspaceAppIconsContext";
 
 /**
@@ -32,11 +33,7 @@ export function WorkspaceAppIconsProvider({
   const refresh = useCallback(async () => {
     try {
       const { installed } = await getInstalledConnectors({ scope: "workspace" });
-      const next = new Map<string, string>();
-      for (const c of installed) {
-        if (c.iconUrl) next.set(c.serverName, c.iconUrl);
-      }
-      setIcons(next);
+      setIcons(iconMapFromInstalled(installed));
     } catch {
       // Icons are decorative. On a failed fetch keep whatever we have and
       // let the letter-avatar fallback cover the gaps — never block the
