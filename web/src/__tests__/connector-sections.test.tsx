@@ -455,7 +455,7 @@ describe("ConnectorStatusHero", () => {
     expect(findButton(mounted.container, "Connect")).toBeNull();
   });
 
-  test("status=connecting / starting → status block visible, no CTA", async () => {
+  test("status=connecting / starting on remote → 'Cancel' CTA (escape a wedged OAuth)", async () => {
     for (const status of ["connecting", "starting"] as const) {
       mounted?.unmount();
       mounted = await mount(
@@ -465,10 +465,41 @@ describe("ConnectorStatusHero", () => {
           onChanged={() => {}}
         />,
       );
-      // Status block is present (with the appropriate label) but no
-      // buttons — the user waits.
-      expect(mounted.container.getElementsByTagName("button").length).toBe(0);
+      // Status block present with the in-flight label, plus a Cancel
+      // button so a stuck connect isn't a dead end (regression: this used
+      // to render no CTA, leaving "Connecting…" on screen forever).
+      expect(findButton(mounted.container, "Cancel")).not.toBeNull();
     }
+  });
+
+  test("Cancel on a wedged connect calls disconnectConnector + onChanged", async () => {
+    const onChanged = mock(() => {});
+    mounted = await mount(
+      <ConnectorStatusHero
+        installed={dcrConnector({ status: "connecting", state: "pending_auth" })}
+        canManage={true}
+        onChanged={onChanged}
+      />,
+    );
+    const cancel = findButton(mounted.container, "Cancel");
+    expect(cancel).not.toBeNull();
+    await act(async () => {
+      cancel?.click();
+      await Promise.resolve();
+    });
+    expect(disconnectConnector).toHaveBeenCalledWith("granola", "workspace");
+    expect(onChanged).toHaveBeenCalled();
+  });
+
+  test("status=starting on a stdio bundle → status visible, no CTA (no OAuth to cancel)", async () => {
+    mounted = await mount(
+      <ConnectorStatusHero
+        installed={stdioBundle({ status: "starting", state: "starting" })}
+        canManage={true}
+        onChanged={() => {}}
+      />,
+    );
+    expect(mounted.container.getElementsByTagName("button").length).toBe(0);
   });
 
   test("status=failed on remote bundle → 'Reconnect' + statusReason", async () => {

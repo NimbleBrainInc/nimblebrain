@@ -3,13 +3,13 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   type DirectoryEntry,
   getInstalledConnectors,
+  installConnector,
   type InstalledConnector,
   initiateComposioOAuth,
   initiateMcpOAuth,
   listDirectory,
 } from "../../api/client";
 import { ConnectorIcon } from "../../components/connectors/ConnectorIcon";
-import { InstallConnectorDialog } from "../../components/connectors/InstallConnectorDialog";
 import { OperatorSetupModal } from "../../components/connectors/OperatorSetupModal";
 import { roleAtLeast, useScopedRole } from "../../hooks/useScopedRole";
 
@@ -111,27 +111,20 @@ export function ConnectorBrowsePage({ mode }: { mode: "personal" | "workspace" }
     // when it changes is what lets newly-installed connectors disappear.
   }, [entries, mode, query, installedByKey]);
 
-  // The pre-T010 install was a one-click side-effect with implicit
-  // scope. Stage 2 splits that into two steps: open the dialog, which
-  // forces the user to pick a target workspace; on confirm the dialog
-  // itself calls `installConnector(entry, wsId)` and reports back.
-  // The dialog returns the picked `wsId` so post-install routing is
-  // workspace-aware (Composio / DCR OAuth flow targets the picked
-  // workspace, not the session's current header value).
-  const [installDialogEntry, setInstallDialogEntry] = useState<DirectoryEntry | null>(null);
-
-  const openInstallDialog = (entry: DirectoryEntry) => {
+  // Install into the workspace the user is already in. The page is
+  // mounted under `/w/<slug>/...`, so the route names an unambiguous
+  // workspace; `installConnector` sends no explicit target and the server
+  // installs into the request's workspace (X-Workspace-Id, derived from
+  // that same route). That's the identical workspace the follow-up
+  // `initiateMcpOAuth` / list_tools / status calls read — so an install
+  // and its connect step can't land in different workspaces. (The prior
+  // target-picker let them diverge, which surfaced as "Bundle not
+  // installed" on Connect.)
+  const onInstall = async (entry: DirectoryEntry) => {
     setLoadError(null);
-    setInstallDialogEntry(entry);
-  };
-
-  const onInstalled = async (
-    entry: DirectoryEntry,
-    result: { serverName: string; wsId: string },
-  ) => {
-    setInstallDialogEntry(null);
     setBusyId(`${entry.registryId}::${entry.id}`);
     try {
+      const result = await installConnector(entry);
       // Remote OAuth: kick the user into the vendor's auth flow.
       // Stdio (mpak-bundle): install completes in-process; route to
       // Configure so the user can fill in any user_config fields.
@@ -208,20 +201,11 @@ export function ConnectorBrowsePage({ mode }: { mode: "personal" | "workspace" }
               entry={entry}
               busy={busyId === `${entry.registryId}::${entry.id}`}
               isWsAdmin={isWsAdmin}
-              onInstall={() => openInstallDialog(entry)}
+              onInstall={() => onInstall(entry)}
               onSetUp={() => setSetupModalEntry(entry)}
             />
           ))}
         </div>
-      )}
-
-      {installDialogEntry && (
-        <InstallConnectorDialog
-          entry={installDialogEntry}
-          open={true}
-          onClose={() => setInstallDialogEntry(null)}
-          onInstalled={(result) => onInstalled(installDialogEntry, result)}
-        />
       )}
 
       {setupModalEntry && (
