@@ -1,10 +1,10 @@
 /**
- * Automation executors: run an automation's prompt through the chat engine.
+ * Automation executor: runs an automation's prompt through the chat engine.
  *
- * Two implementations:
- * - executeDirect: calls runtime.chat() in-process (used by the platform's
- *   in-process automations source)
- * - executeHttp:   calls POST /v1/chat over HTTP (used by standalone MCP server)
+ * `createDirectExecutor` calls `runtime.chat()` in-process — the only path now
+ * that automations is an in-process platform source (the former HTTP executor
+ * + standalone MCP server were removed). A scheduled run fires as the
+ * automation's owner; see `getExecutorContext` in the platform source.
  *
  * No retry logic — the scheduler handles backoff.
  */

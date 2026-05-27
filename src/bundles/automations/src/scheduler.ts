@@ -507,6 +507,10 @@ export class Scheduler {
     const ownerMap = loadDefinitions(storeDir);
     const auto = ownerMap.get(automation.id);
     if (!auto) return;
+    // Stamp the authoritative owner (the store dir IS the owner) — same
+    // backfill `loadAll` does on read, so `keyOf(auto)` below matches the
+    // composite key the timer loaded under and heals any owner-less disk record.
+    auto.ownerId = ownerId;
 
     const now = Date.now();
 
@@ -632,6 +636,9 @@ export class Scheduler {
     const ownerMap = loadDefinitions(storeDir);
     const fresh = ownerMap.get(auto.id);
     if (fresh) {
+      // Stamp the authoritative owner (see updateAfterRun) so the composite
+      // key stays consistent with what `loadAll` keyed under.
+      fresh.ownerId = ownerId;
       const nextRun = computeNextRunAt(fresh, now, this.config.defaultTimezone);
       if (nextRun !== null) {
         // Ensure nextRunAt is in the future — if the computed time is past
