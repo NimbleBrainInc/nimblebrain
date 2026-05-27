@@ -73,6 +73,14 @@ export interface AppContext {
   rateLimiter: LoginRateLimiter;
   chatLimiter: RequestRateLimiter;
   toolCallLimiter: RequestRateLimiter;
+  /** Per-identity limiter for the remote `/mcp` surface (external clients + bundle iframes). */
+  mcpLimiter: RequestRateLimiter;
+  /**
+   * True when no real identity provider is configured (local dev — a
+   * `DevIdentityProvider` is substituted). Request rate limiting is bypassed
+   * in this mode; see `requestRateLimit`.
+   */
+  isDevMode: boolean;
   eventSink: EventSink;
   isLocalhost: boolean;
   appOrigin: string | undefined;

@@ -20,7 +20,7 @@ export function toolRoutes(ctx: AppContext) {
       "/v1/tools/call",
       optionalWorkspace(ctx.workspaceStore),
       bodyLimit(1_048_576),
-      requestRateLimit(ctx.toolCallLimiter),
+      requestRateLimit(ctx.toolCallLimiter, { bypass: ctx.isDevMode }),
       (c) =>
         handleToolCall(c.req.raw, ctx.runtime, ctx.features, {
           sseManager: ctx.sseManager,

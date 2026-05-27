@@ -172,4 +172,29 @@ describe("requestRateLimit middleware", () => {
 		const res2 = await app.request("/v1/chat", { method: "POST" });
 		expect(res2.status).toBe(429);
 	});
+
+	it("bypasses the limit entirely when opts.bypass is true (dev mode)", async () => {
+		// Limit of 1, but bypass set — so even a burst well past the limit is
+		// never throttled. This is the dev-mode behavior: no real identity
+		// provider, single local user, rate limiting is pure friction.
+		const limiter = new RequestRateLimiter(1, 60_000);
+		const app = new Hono();
+		app.use("*", requestRateLimit(limiter, { bypass: true }));
+		app.post("/v1/chat", (c) => c.json({ ok: true }));
+
+		for (let i = 0; i < 5; i++) {
+			const res = await app.request("/v1/chat", { method: "POST" });
+			expect(res.status).toBe(200);
+		}
+	});
+
+	it("still enforces the limit when opts.bypass is false", async () => {
+		const limiter = new RequestRateLimiter(1, 60_000);
+		const app = new Hono();
+		app.use("*", requestRateLimit(limiter, { bypass: false }));
+		app.post("/v1/chat", (c) => c.json({ ok: true }));
+
+		expect((await app.request("/v1/chat", { method: "POST" })).status).toBe(200);
+		expect((await app.request("/v1/chat", { method: "POST" })).status).toBe(429);
+	});
 });
