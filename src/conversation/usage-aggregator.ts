@@ -6,8 +6,8 @@
  *
  * The approach:
  * 1. Scan conversation directory for all .jsonl files
- * 2. Read line 1 (metadata) — check updatedAt against the date range
- * 3. For matching conversations, scan lines 2+ for llm.response events
+ * 2. Read line 1 (metadata) for conversation id / owner attribution
+ * 3. Scan lines 2+ for llm.response events whose own `ts` is in the date range
  * 4. Aggregate tokens, cost, model breakdown
  */
 
@@ -137,6 +137,7 @@ function normalizeModel(model: string): string {
 function isDateInRange(date: string, range: { from: string; to: string }): boolean {
   return date >= range.from && date <= range.to;
 }
+
 export function resolveDateRange(
   period: string,
   from?: string,
