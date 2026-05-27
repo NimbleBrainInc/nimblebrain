@@ -183,6 +183,24 @@ describe("migrate-automations-to-identity", () => {
     expect(await destAutomations("usr_alice")).toHaveLength(1);
   });
 
+  test("re-run cleans up an orphaned source dir whose runs were already migrated", async () => {
+    // First run migrates the automation + its run history and removes the
+    // source dir.
+    await seedWorkspace({ wsId: "ws_user_usr_alice", isPersonal: true, ownerUserId: "usr_alice" });
+    await seedAutomation({ wsId: "ws_user_usr_alice", id: "daily-digest", withRun: true });
+    expect((await runMigrate()).exitCode).toBe(0);
+    expect(existsSync(join(workDir, "workspaces", "ws_user_usr_alice", "automations"))).toBe(false);
+
+    // Simulate an interrupted prior run that left the source behind after the
+    // dest was already populated (dest run-file present). The re-run must still
+    // converge to zero residue — not leave the orphaned source dir.
+    await seedAutomation({ wsId: "ws_user_usr_alice", id: "daily-digest", withRun: true });
+    const rerun = await runMigrate();
+    expect(rerun.exitCode).toBe(0);
+    expect(existsSync(join(workDir, "workspaces", "ws_user_usr_alice", "automations"))).toBe(false);
+    expect(await destAutomations("usr_alice")).toHaveLength(1);
+  });
+
   test("dry-run writes nothing", async () => {
     await seedWorkspace({ wsId: "ws_user_usr_alice", isPersonal: true, ownerUserId: "usr_alice" });
     await seedAutomation({ wsId: "ws_user_usr_alice", id: "daily-digest" });

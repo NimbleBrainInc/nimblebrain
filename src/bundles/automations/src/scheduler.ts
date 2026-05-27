@@ -419,7 +419,11 @@ export class Scheduler {
         continue;
       }
 
-      // Global concurrency limit
+      // Global concurrency limit — shared across ALL owners (one in-process
+      // scheduler per platform process, and the platform runs one process per
+      // tenant). A busy owner can defer other owners' due runs to the next
+      // tick; acceptable under the per-tenant-process model. Revisit with a
+      // per-owner fair-share queue only if multi-tenant fairness becomes a need.
       if (this.activeRuns.size >= this.maxConcurrentRuns) {
         this.recordSkipped(auto, `Global concurrent run limit (${this.maxConcurrentRuns}) reached`);
         continue;

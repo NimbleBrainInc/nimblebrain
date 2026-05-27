@@ -234,7 +234,13 @@ async function moveRunFile(
   const src = join(sourceDir, RUNS_DIR, `${id}.jsonl`);
   if (!existsSync(src)) return false;
   const dest = join(destDir, RUNS_DIR, `${id}.jsonl`);
-  if (existsSync(dest)) return false; // already moved (idempotent)
+  if (existsSync(dest)) {
+    // Already migrated by a prior run. Remove the orphaned source so the
+    // emptied source dir still gets cleaned up — otherwise a re-run leaves the
+    // stale source run-file behind and the dir lingers. Idempotent convergence.
+    if (!dryRun) await rm(src, { force: true });
+    return false;
+  }
   if (dryRun) return true;
   await mkdir(join(destDir, RUNS_DIR), { recursive: true });
   await copyFile(src, dest);

@@ -137,6 +137,11 @@ export class FileBackedHostResourcesResolver implements HostResourcesResolver {
   }
 
   async list(params: ListResourcesParams, ctx: HostResourceContext): Promise<ListResourcesResult> {
+    // Identity-scoped: returns every file the session user owns, across all
+    // their workspaces — a broadening vs. the pre-identity per-workspace list.
+    // In-bounds under the install-time bundle-trust model (same user's data, no
+    // cross-user leak). If the shared-workspace threat model tightens, bound
+    // this to the bundle's provenance workspace via `entry.workspaceId`.
     if (params.filter?.scheme && params.filter.scheme !== FILE_URI_SCHEME) {
       throw new McpError(ErrorCode.InvalidParams, "Unsupported URI scheme", {
         scheme: params.filter.scheme,

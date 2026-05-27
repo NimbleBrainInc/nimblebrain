@@ -54,10 +54,12 @@ function findResourceLink(result: ToolResult): {
 
 function makeRuntime(workDir: string): Runtime {
   // Files are identity-owned: the source resolves its store via
-  // `getCurrentIdentity()` + `getFileStore(userId)`. The mock keeps the
-  // store at `<workDir>/files` so the on-disk assertions are unchanged.
+  // `resolveRequestUserId(getCurrentIdentity())` + `getFileStore(userId)`. The
+  // mock keeps the store at `<workDir>/files` so the on-disk assertions are
+  // unchanged.
   return {
     getCurrentIdentity: () => ({ id: "usr_test" }),
+    resolveRequestUserId: (identity?: { id: string }) => identity?.id ?? "usr_test",
     getFileStore: () => createFileStore(join(workDir, "files")),
     getFilesConfig: () => ({ maxExtractedTextSize: 204_800 }),
   } as unknown as Runtime;

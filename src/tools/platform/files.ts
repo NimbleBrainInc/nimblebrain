@@ -320,14 +320,14 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
    * absence is a misrouted call, not a recoverable state.
    */
   function getStore(): FileStore {
-    const identity = runtime.getCurrentIdentity();
-    if (!identity) {
-      throw new Error(
-        "[files] no authenticated identity in request context — the platform file " +
-          "tools are identity-scoped and require a user-scoped caller.",
-      );
-    }
-    return runtime.getFileStore(identity.id);
+    // Resolve the owner through the one shared rule (`resolveRequestUserId`) —
+    // the same path automations' source, the REST file handlers, and chat
+    // rehydration use, so "who am I" never drifts between sources. Fail-closed
+    // in production (throws when an identity provider is configured but the
+    // request carries no identity); DEV_IDENTITY only in dev.
+    return runtime.getFileStore(
+      runtime.resolveRequestUserId(runtime.getCurrentIdentity() ?? undefined),
+    );
   }
 
   function ok(data: object): ToolResult {

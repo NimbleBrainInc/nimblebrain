@@ -189,6 +189,55 @@ describe("createDirectExecutor", () => {
 });
 
 // ---------------------------------------------------------------------------
+// stopReason → AutomationRun.status mapping (the LIVE scheduled path:
+// createDirectExecutor → mapResultToRun → mapStopReasonToStatus). Run status
+// drives backoff — if a fail-closed branch silently regressed to "success", a
+// perpetually-failing automation would never back off and would hammer the LLM
+// every tick. The mapping isn't exported, so exercise it via the executor.
+// (Restores coverage lost when the executeHttp tests were deleted.)
+// ---------------------------------------------------------------------------
+
+describe("createDirectExecutor — stopReason → status", () => {
+	function chatFnWithStop(stopReason: string): ChatFn {
+		return async (): Promise<ChatFnResult> => ({
+			response: "done",
+			conversationId: "conv_test",
+			toolCalls: [],
+			inputTokens: 10,
+			outputTokens: 5,
+			stopReason,
+			usage: { iterations: 1 },
+		});
+	}
+
+	async function statusFor(stopReason: string): Promise<string> {
+		const executor = createDirectExecutor(chatFnWithStop(stopReason), () => ({}));
+		const run = await executor(makeAutomation());
+		return run.status;
+	}
+
+	test("complete → success", async () => {
+		expect(await statusFor("complete")).toBe("success");
+	});
+
+	test("max_iterations → timeout", async () => {
+		expect(await statusFor("max_iterations")).toBe("timeout");
+	});
+
+	test("length → failure (fail-closed default)", async () => {
+		expect(await statusFor("length")).toBe("failure");
+	});
+
+	test("content_filter → failure (fail-closed default)", async () => {
+		expect(await statusFor("content_filter")).toBe("failure");
+	});
+
+	test("unrecognized stopReason → failure (fail-closed default)", async () => {
+		expect(await statusFor("some_future_reason")).toBe("failure");
+	});
+});
+
+// ---------------------------------------------------------------------------
 // Recursive-call guard at the executor
 // ---------------------------------------------------------------------------
 //
