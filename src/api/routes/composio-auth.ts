@@ -10,7 +10,6 @@ import { log } from "../../cli/log.ts";
 import {
   COMPOSIO_CALLBACK_PATH,
   composioCallbackUrl,
-  composioSuccessRedirectUrl,
   composioUserId,
   findActiveComposioConnection,
   initiateComposioConnection,
@@ -19,6 +18,7 @@ import {
 import { requireAuth } from "../middleware/auth.ts";
 import { requireWorkspace } from "../middleware/workspace.ts";
 import { type AppContext, type AppEnv, apiError } from "../types.ts";
+import { workspaceConnectorsUrl } from "./connectors-redirect.ts";
 
 /**
  * OAuth integration routes for connectors backed by Composio as a
@@ -235,7 +235,7 @@ export function composioAuthRoutes(ctx: AppContext) {
             "running",
           );
           return c.json({
-            authorizationUrl: composioSuccessRedirectUrl(c.req.url),
+            authorizationUrl: workspaceConnectorsUrl(wsId, c.req.url),
             alreadyConnected: true,
           });
         }
@@ -404,23 +404,7 @@ export function composioAuthRoutes(ctx: AppContext) {
     if (!ctx.isLocalhost) expireParts.push("Secure");
     c.header("Set-Cookie", expireParts.join("; "));
 
-    const fallbackOrigin = (() => {
-      try {
-        return new URL(c.req.url).origin;
-      } catch {
-        return "";
-      }
-    })();
-    const webBase = process.env.NB_WEB_URL ?? process.env.NB_API_URL ?? fallbackOrigin;
-    let returnUrl = `${webBase.replace(/\/+$/, "")}/settings/workspace/connectors`;
-    try {
-      const parsed = new URL(returnUrl);
-      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-        returnUrl = "/settings/workspace/connectors";
-      }
-    } catch {
-      returnUrl = "/settings/workspace/connectors";
-    }
+    const returnUrl = workspaceConnectorsUrl(wsId, c.req.url);
     const safeReturnUrl = escapeHtml(returnUrl);
     c.header("Content-Security-Policy", SUCCESS_PAGE_CSP);
     return c.html(

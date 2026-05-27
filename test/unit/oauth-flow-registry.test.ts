@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "bun:test";
 import {
   _clearAll,
+  peekWorkspaceId,
   register,
   rejectFlow,
   resolveWithCode,
@@ -19,6 +20,23 @@ describe("oauth-flow-registry", () => {
 
   it("returns false for unknown state on resolve", () => {
     expect(resolveWithCode("unknown-state", "code")).toBe(false);
+  });
+
+  it("peekWorkspaceId reads the flow's wsId without resolving it", async () => {
+    // The callback peeks the workspace to build the `/w/<slug>` return URL
+    // before it resolves (which deletes the flow). Peek must be read-only:
+    // the subsequent resolve still finds the flow.
+    const p = register("state-peek", "ws_acme", "srv");
+    expect(peekWorkspaceId("state-peek")).toBe("ws_acme");
+    // Still resolvable — peek didn't consume the flow.
+    expect(resolveWithCode("state-peek", "code")).toBe(true);
+    await expect(p).resolves.toBe("code");
+    // Gone after resolve.
+    expect(peekWorkspaceId("state-peek")).toBeNull();
+  });
+
+  it("peekWorkspaceId returns null for an unknown state", () => {
+    expect(peekWorkspaceId("never-registered")).toBeNull();
   });
 
   it("rejects a registered flow with the provided error", async () => {

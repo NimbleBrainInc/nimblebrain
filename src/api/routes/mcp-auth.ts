@@ -9,10 +9,11 @@ import {
   signEnvelope,
   verifyEnvelopeAsTenant,
 } from "../../oauth/envelope.ts";
-import { resolveWithCode } from "../../tools/oauth-flow-registry.ts";
+import { peekWorkspaceId, resolveWithCode } from "../../tools/oauth-flow-registry.ts";
 import { requireAuth } from "../middleware/auth.ts";
 import { requireWorkspace } from "../middleware/workspace.ts";
 import { type AppContext, type AppEnv, apiError } from "../types.ts";
+import { workspaceConnectorsUrl } from "./connectors-redirect.ts";
 
 /**
  * Inline CSS for the OAuth success page. Held in a module constant so the
@@ -321,6 +322,11 @@ export function mcpAuthRoutes(ctx: AppContext) {
       );
     }
 
+    // Recover the workspace the flow was initiated in *before* resolving
+    // (which deletes the registry entry), so we can land the user back on
+    // the right `/w/<slug>/settings/connectors` page. Synchronous + single-
+    // process, so the peek can't race the resolve below.
+    const flowWsId = peekWorkspaceId(state);
     if (!resolveWithCode(state, code)) {
       return c.html(
         "<html><body><h3>Unknown or expired OAuth flow.</h3>" +
@@ -345,41 +351,14 @@ export function mcpAuthRoutes(ctx: AppContext) {
     if (!ctx.isLocalhost) expireParts.push("Secure");
     c.header("Set-Cookie", expireParts.join("; "));
 
-    // Auto-redirect back to the Connectors page (Personal or Workspace
-    // depending on the bundle's scope). The user came from NimbleBrain
-    // and was navigated away to the OAuth provider in their existing
-    // tab — telling them to "close this tab" is wrong because they'd
-    // lose NimbleBrain entirely. We bring them home.
-    //
-    // Resolution order for the return URL:
-    //   1. NB_WEB_URL env (operator config — production should set this
-    //      to the platform's user-facing origin)
-    //   2. NB_API_URL env (in single-origin deployments the API and
-    //      SPA share a host)
-    //   3. The request origin (last-resort: callback hit us at ${origin},
-    //      so the SPA is *probably* on the same origin)
-    const fallbackOrigin = (() => {
-      try {
-        return new URL(c.req.url).origin;
-      } catch {
-        return "";
-      }
-    })();
-    const webBase = process.env.NB_WEB_URL ?? process.env.NB_API_URL ?? fallbackOrigin;
-    let returnUrl = `${webBase.replace(/\/+$/, "")}/settings/workspace/connectors`;
-    // Defense-in-depth: NB_WEB_URL / NB_API_URL are operator-controlled,
-    // but a malformed value with a `javascript:` / `data:` scheme would
-    // survive escapeHtml (which only escapes `&<>"'`) and execute when
-    // the meta-refresh fires. Validate the protocol; fall back to a
-    // same-origin relative path if anything looks off.
-    try {
-      const parsed = new URL(returnUrl);
-      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-        returnUrl = "/settings/workspace/connectors";
-      }
-    } catch {
-      returnUrl = "/settings/workspace/connectors";
-    }
+    // Auto-redirect back to the workspace Connectors page. The user came
+    // from NimbleBrain and was navigated away to the OAuth provider in
+    // their existing tab — telling them to "close this tab" is wrong
+    // because they'd lose NimbleBrain entirely. We bring them home, to the
+    // same `/w/<slug>` workspace the flow was initiated in. `flowWsId` is
+    // non-null here (resolveWithCode succeeded just above ⟹ the flow
+    // existed when we peeked it).
+    const returnUrl = workspaceConnectorsUrl(flowWsId ?? "", c.req.url);
     const safeReturnUrl = escapeHtml(returnUrl);
     // Override the platform-default CSP (`default-src 'none'`) for this
     // response only. Without this the inline <style> below is blocked and
