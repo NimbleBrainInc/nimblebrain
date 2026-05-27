@@ -96,34 +96,47 @@ describe("usage-aggregator", () => {
     expect(report.totals.conversations).toBe(1);
   });
 
-  it("skips conversations outside date range", async () => {
+  it("filters usage by llm.response timestamp, not conversation updatedAt", async () => {
     const dir = makeTmpDir();
 
-    // Inside range
+    // Conversation updated inside range, but its only LLM usage happened before
+    // the report window. It should not make today's usage non-zero.
     writeFileSync(
-      join(dir, "in-range.jsonl"),
-      buildJsonl({ id: "in", updatedAt: "2026-04-10T10:00:00Z" }, [
-        llmEvent({ inputTokens: 100, outputTokens: 50 }),
+      join(dir, "updated-today.jsonl"),
+      buildJsonl({ id: "updated-today", updatedAt: "2026-04-12T10:00:00Z" }, [
+        llmEvent({ ts: "2026-04-11T23:00:00Z", inputTokens: 9999, outputTokens: 9999 }),
       ]),
     );
 
-    // Outside range (too old)
+    const report = await aggregateUsage(dir, "day", "day", {
+      from: "2026-04-12",
+      to: "2026-04-12",
+    });
+
+    expect(report.totals.tokens.input).toBe(0);
+    expect(report.totals.tokens.output).toBe(0);
+    expect(report.totals.llmCalls).toBe(0);
+    expect(report.totals.conversations).toBe(0);
+    expect(report.models).toHaveLength(0);
+    expect(report.breakdown).toHaveLength(1);
+    expect(report.breakdown[0].key).toBe("2026-04-12");
+    expect(report.breakdown[0].llmCalls).toBe(0);
+  });
+
+  it("counts in-range llm.response events even when conversation updatedAt is outside range", async () => {
+    const dir = makeTmpDir();
+
     writeFileSync(
-      join(dir, "too-old.jsonl"),
-      buildJsonl({ id: "old", updatedAt: "2026-03-01T10:00:00Z" }, [
-        llmEvent({ inputTokens: 9999, outputTokens: 9999 }),
+      join(dir, "updated-later.jsonl"),
+      buildJsonl({ id: "updated-later", updatedAt: "2026-05-01T10:00:00Z" }, [
+        llmEvent({ ts: "2026-04-10T12:00:00Z", inputTokens: 100, outputTokens: 50 }),
       ]),
     );
 
-    // Outside range (too new)
-    writeFileSync(
-      join(dir, "too-new.jsonl"),
-      buildJsonl({ id: "new", updatedAt: "2026-05-01T10:00:00Z" }, [
-        llmEvent({ inputTokens: 9999, outputTokens: 9999 }),
-      ]),
-    );
-
-    const report = await aggregateUsage(dir, "month", "day", { from: "2026-04-01", to: "2026-04-30" });
+    const report = await aggregateUsage(dir, "month", "day", {
+      from: "2026-04-01",
+      to: "2026-04-30",
+    });
 
     expect(report.totals.tokens.input).toBe(100);
     expect(report.totals.tokens.output).toBe(50);
