@@ -53,11 +53,11 @@ export interface ListResourcesParams {
 
 /**
  * The single chokepoint a bundle's inbound `ai.nimblebrain/resources/*`
- * request goes through. Wraps the workspace's `FileStore` (today; future
- * schemes like `entities://` would land here as additional read/list
- * paths). Workspace isolation is preserved by construction: every read
- * resolves against the FileStore corresponding to the session's
- * workspace id, never against any wsId the URI might encode.
+ * request goes through. Wraps the session user's identity `FileStore` (today;
+ * future schemes like `entities://` would land here as additional read/list
+ * paths). Files are identity-owned (Phase B): every read/list resolves against
+ * the FileStore of the user whose session the bundle is running in — never
+ * against any wsId the URI might encode, and never a workspace silo.
  */
 export interface HostResourcesResolver {
   read(uri: string, ctx: HostResourceContext): Promise<ReadResourceResult>;
@@ -65,32 +65,36 @@ export interface HostResourcesResolver {
 }
 
 /**
- * Resolves `files://<id>` URIs through a workspace-scoped `FileStore`.
+ * Resolves `files://<id>` URIs through the session user's identity `FileStore`.
  * Reuses `isTextMime`/`fileIdToUri` from the platform's `files` source
  * so the byte/text discrimination matches what the agent sees via
  * `files__read` exactly. Audit events ride the platform's existing
  * event sink alongside other tool activity.
+ *
+ * `getFileStore` resolves the caller's identity store; it takes no workspace
+ * because files are identity-owned. `ctx.workspaceId` survives on read/list
+ * for audit logging (which workspace the bundle ran in), not for storage.
  */
 export class FileBackedHostResourcesResolver implements HostResourcesResolver {
   constructor(
-    private readonly getFileStoreForWorkspace: (workspaceId: string) => FileStore,
+    private readonly getFileStore: () => FileStore,
     private readonly maxReadSize: number = HOST_RESOURCES_MAX_READ_SIZE,
   ) {}
 
   async read(uri: string, ctx: HostResourceContext): Promise<ReadResourceResult> {
     const start = Date.now();
     const fileId = this.requireFileScheme(uri);
-    const store = this.getFileStoreForWorkspace(ctx.workspaceId);
+    const store = this.getFileStore();
 
     let result: Awaited<ReturnType<typeof store.readFile>>;
     try {
       result = await store.readFile(fileId);
     } catch (err) {
       // Multiple failure modes collapse into one error code here on
-      // purpose: file genuinely doesn't exist in this workspace, file
-      // is in a different workspace (we never look across workspaces),
+      // purpose: file genuinely doesn't exist in the user's store, file
+      // belongs to a different user (we never look across identities),
       // disk I/O / permission / corruption errors. The collapse
-      // prevents cross-tenant inventory enumeration AND keeps the wire
+      // prevents cross-identity inventory enumeration AND keeps the wire
       // contract simple for bundle SDKs. But operators chasing a real
       // disk-side issue need visibility — log the actual error before
       // collapsing so the ops trail isn't blind.
@@ -139,7 +143,7 @@ export class FileBackedHostResourcesResolver implements HostResourcesResolver {
         supported: [FILE_URI_SCHEME],
       });
     }
-    // Pagination isn't supported in v1 — listing a workspace's files
+    // Pagination isn't supported in v1 — listing the user's files
     // returns the full set in a single call. A bundle that passes a
     // cursor would otherwise silently get the full set every call,
     // breaking polite pagination loops. Reject loudly so the bundle
@@ -150,7 +154,7 @@ export class FileBackedHostResourcesResolver implements HostResourcesResolver {
       });
     }
 
-    const store = this.getFileStoreForWorkspace(ctx.workspaceId);
+    const store = this.getFileStore();
     const all = await store.readRegistry();
 
     const filteredByMime = params.filter?.mimeType

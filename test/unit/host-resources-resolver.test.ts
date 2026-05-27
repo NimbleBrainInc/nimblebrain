@@ -11,23 +11,28 @@ import { createFileStore, type FileStore } from "../../src/files/store.ts";
 import type { FileEntry } from "../../src/files/types.ts";
 
 // The resolver is the single chokepoint between a bundle's inbound
-// host-resources request and the workspace FileStore. It enforces the
-// scheme allowlist, looks up the store from the bundle's session
-// workspace id (never trusting the URI to encode one), and surfaces the
-// MCP-standard error codes (`-32602` for invalid scheme, `-32002` for
-// resource not found).
+// host-resources request and the caller's identity FileStore. Files are
+// identity-owned (Phase B): the resolver is handed a `() => FileStore`
+// closure yielding the SESSION USER's store — it never trusts the URI (or
+// the ctx workspaceId) to encode a scope. It enforces the scheme allowlist
+// and surfaces the MCP-standard error codes (`-32602` for invalid scheme,
+// `-32002` for resource not found).
 
 const RESOURCE_NOT_FOUND = -32002;
 const INVALID_PARAMS = -32602;
 
 let rootDir: string;
 
-// Seed two workspace stores with different files. The resolver is
-// constructed against a factory that picks the right store per wsId —
-// the same shape Runtime uses in production.
-let wsA: FileStore;
-let wsB: FileStore;
+// Two identity stores standing in for two users. `currentStore` is what the
+// resolver's closure returns — flipped per test to simulate whose session is
+// active, the same shape Runtime uses (resolve the identity per call, hand
+// back that user's store).
+let storeA: FileStore;
+let storeB: FileStore;
+let currentStore: FileStore;
 
+// ctx carries the bundle's workspace for AUDIT logging only — it no longer
+// selects the store (files are identity-owned).
 const ctxA: HostResourceContext = { workspaceId: "ws_a", bundleId: "bundle_x" };
 const ctxB: HostResourceContext = { workspaceId: "ws_b", bundleId: "bundle_x" };
 
@@ -48,8 +53,10 @@ async function seedFile(store: FileStore, name: string, body: string, mime: stri
 
 beforeEach(async () => {
   rootDir = await mkdtemp(join(tmpdir(), "nb-host-resources-resolver-"));
-  wsA = createFileStore(join(rootDir, "ws_a", "files"));
-  wsB = createFileStore(join(rootDir, "ws_b", "files"));
+  storeA = createFileStore(join(rootDir, "usr_a", "files"));
+  storeB = createFileStore(join(rootDir, "usr_b", "files"));
+  // Default to user A's session; isolation tests flip to B explicitly.
+  currentStore = storeA;
 });
 
 afterEach(async () => {
@@ -57,16 +64,12 @@ afterEach(async () => {
 });
 
 function makeResolver(): FileBackedHostResourcesResolver {
-  return new FileBackedHostResourcesResolver((wsId) => {
-    if (wsId === "ws_a") return wsA;
-    if (wsId === "ws_b") return wsB;
-    throw new Error(`unknown workspace ${wsId}`);
-  });
+  return new FileBackedHostResourcesResolver(() => currentStore);
 }
 
 describe("FileBackedHostResourcesResolver.read", () => {
   it("returns text contents for a text mime", async () => {
-    const id = await seedFile(wsA, "brokers.csv", "company,email\nfoo,foo@x", "text/csv");
+    const id = await seedFile(storeA, "brokers.csv", "company,email\nfoo,foo@x", "text/csv");
     const result = await makeResolver().read(`files://${id}`, ctxA);
     expect(result.contents).toHaveLength(1);
     const entry = result.contents[0];
@@ -79,8 +82,8 @@ describe("FileBackedHostResourcesResolver.read", () => {
   it("returns base64 blob contents for a binary mime", async () => {
     const rawBytes = Buffer.from([0x00, 0xff, 0xde, 0xad, 0xbe, 0xef]);
     // Seed directly with raw bytes to avoid UTF-8 reinterpretation.
-    const saved = await wsA.saveFile(rawBytes, "data.bin", "application/octet-stream");
-    await wsA.appendRegistry({
+    const saved = await storeA.saveFile(rawBytes, "data.bin", "application/octet-stream");
+    await storeA.appendRegistry({
       id: saved.id,
       filename: "data.bin",
       mimeType: "application/octet-stream",
@@ -122,12 +125,13 @@ describe("FileBackedHostResourcesResolver.read", () => {
     expect(caught?.code).toBe(RESOURCE_NOT_FOUND);
   });
 
-  it("collapses cross-workspace lookups into -32002 (no info leak)", async () => {
-    // A bundle in ws_a asking for a file id that EXISTS in ws_b. The
-    // resolver dispatches to ws_a's store, which doesn't have it. The
-    // response is "not found" — the SAME response a genuinely-missing
-    // id would get. This prevents cross-tenant inventory enumeration.
-    const idInB = await seedFile(wsB, "secret.txt", "ws_b only", "text/plain");
+  it("collapses cross-identity lookups into -32002 (no info leak)", async () => {
+    // User A's session asking for a file id that EXISTS in user B's store.
+    // The resolver yields A's store, which doesn't have it — "not found",
+    // the SAME response a genuinely-missing id gets. This prevents
+    // cross-identity inventory enumeration.
+    const idInB = await seedFile(storeB, "secret.txt", "usr_b only", "text/plain");
+    currentStore = storeA;
     let caught: McpError | null = null;
     try {
       await makeResolver().read(`files://${idInB}`, ctxA);
@@ -135,15 +139,16 @@ describe("FileBackedHostResourcesResolver.read", () => {
       caught = e as McpError;
     }
     expect(caught?.code).toBe(RESOURCE_NOT_FOUND);
-    // Same lookup from ws_b succeeds, proving the file does exist.
+    // Same lookup in user B's session succeeds, proving the file does exist.
+    currentStore = storeB;
     const ok = await makeResolver().read(`files://${idInB}`, ctxB);
-    expect(ok.contents[0]?.text).toBe("ws_b only");
+    expect(ok.contents[0]?.text).toBe("usr_b only");
   });
 
   it("throws ResponseTooLarge when the file exceeds maxReadSize", async () => {
-    const id = await seedFile(wsA, "big.txt", "x".repeat(100), "text/plain");
+    const id = await seedFile(storeA, "big.txt", "x".repeat(100), "text/plain");
     const resolver = new FileBackedHostResourcesResolver(
-      (wsId) => (wsId === "ws_a" ? wsA : wsB),
+      () => storeA,
       // 10-byte cap, way below the 100-byte fixture
       10,
     );
@@ -165,21 +170,22 @@ describe("FileBackedHostResourcesResolver.read", () => {
 });
 
 describe("FileBackedHostResourcesResolver.list", () => {
-  it("returns workspace-scoped registry entries as resources", async () => {
-    await seedFile(wsA, "a1.csv", "x", "text/csv");
-    await seedFile(wsA, "a2.csv", "y", "text/csv");
-    await seedFile(wsB, "b1.csv", "z", "text/csv");
+  it("returns the session user's registry entries as resources", async () => {
+    await seedFile(storeA, "a1.csv", "x", "text/csv");
+    await seedFile(storeA, "a2.csv", "y", "text/csv");
+    await seedFile(storeB, "b1.csv", "z", "text/csv");
 
+    currentStore = storeA;
     const aList = await makeResolver().list({}, ctxA);
     expect(aList.resources).toHaveLength(2);
     expect(aList.resources.map((r) => r.name).sort()).toEqual(["a1.csv", "a2.csv"]);
-    // Cross-tenant isolation: ws_a's list never includes ws_b's files.
+    // Cross-identity isolation: user A's list never includes user B's files.
     expect(aList.resources.find((r) => r.name === "b1.csv")).toBeUndefined();
   });
 
   it("filters by mimeType when supplied", async () => {
-    await seedFile(wsA, "csv1.csv", "x", "text/csv");
-    await seedFile(wsA, "doc.md", "y", "text/markdown");
+    await seedFile(storeA, "csv1.csv", "x", "text/csv");
+    await seedFile(storeA, "doc.md", "y", "text/markdown");
 
     const result = await makeResolver().list({ filter: { mimeType: "text/csv" } }, ctxA);
     expect(result.resources).toHaveLength(1);

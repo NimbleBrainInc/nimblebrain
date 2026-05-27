@@ -142,4 +142,20 @@ describe("workspace files exposed as MCP resources", () => {
     expect(status).toBeLessThan(500);
     expect(body).toBeDefined();
   });
+
+  it("resolves identity files with NO workspace header (identity-scoped, not workspace-gated)", async () => {
+    const id = await uploadChatFile("cross-workspace\n", "x.txt", "text/plain");
+    // Read with no X-Workspace-Id at all. Files are identity-owned, so the
+    // resource read routes through the identity door — a workspace header is
+    // neither required nor consulted. This is the cross-workspace guarantee:
+    // the file resolves from the owner's store regardless of focus.
+    const res = await fetch(`${baseUrl}/v1/resources/read`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ server: "files", uri: `files://${id}` }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { contents: Array<{ text?: string }> };
+    expect(body.contents[0]?.text).toBe("cross-workspace\n");
+  });
 });

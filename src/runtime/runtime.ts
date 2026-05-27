@@ -48,12 +48,13 @@ import type {
   ToolSchema,
 } from "../engine/types.ts";
 import { rehydrateUserResources } from "../files/rehydrate.ts";
-import { createFileStore } from "../files/store.ts";
+import { createFileStore, type FileStore } from "../files/store.ts";
 import { DEFAULT_FILE_CONFIG, type FileConfig } from "../files/types.ts";
 import { FileBackedHostResourcesResolver, TokenBucketRateLimit } from "../host-resources/index.ts";
 import { IdentityContext } from "../identity/context.ts";
 import type { InstanceConfig } from "../identity/instance.ts";
 import { loadInstanceConfig } from "../identity/instance.ts";
+import { resolveRequestOwnerId } from "../identity/owner.ts";
 import type { IdentityProvider, UserIdentity } from "../identity/provider.ts";
 import { createIdentityProvider } from "../identity/provider.ts";
 import { DEV_IDENTITY } from "../identity/providers/dev.ts";
@@ -410,17 +411,25 @@ export class Runtime {
     // `setBundleMcpDepsFactory`, other install paths consume via
     // `Runtime.getBundleMcpDeps(wsId)`.
     const hostResourcesWorkDir = resolveWorkDir(config);
-    // Memoize FileStore per workspace. FileStore today is closures over
-    // a path (cheap), but if it ever gains state (caches, fd handles,
-    // mtime watchers), per-call construction would leak. Bounded by
-    // active-workspace count.
+    // Files are identity-owned (Phase B): a bundle's `files://` read/list
+    // resolves against the SESSION USER's store (`users/{userId}/files/`), not
+    // the workspace the bundle runs in. The resolver fires inside the request
+    // context the orchestrator set up for the bundle's tool call, so the
+    // identity is in scope here; we resolve it with the same rule `chat()` uses
+    // (`resolveRequestOwnerId`) so reads see exactly the files the agent does.
+    // Memoize per user — FileStore is cheap closures today, but per-call
+    // construction would leak if it ever gains state (fd handles, watchers).
     const hostResourcesFileStoreCache = new Map<string, ReturnType<typeof createFileStore>>();
-    const hostResourcesResolver = new FileBackedHostResourcesResolver((wsId) => {
-      const cached = hostResourcesFileStoreCache.get(wsId);
+    const hostResourcesResolver = new FileBackedHostResourcesResolver(() => {
+      const userId = resolveRequestOwnerId(
+        getRequestContext()?.identity,
+        identityProvider !== null,
+      );
+      const cached = hostResourcesFileStoreCache.get(userId);
       if (cached) return cached;
-      const wsCtx = new WorkspaceContext({ wsId, workDir: hostResourcesWorkDir });
-      const store = createFileStore(wsCtx.getDataPath("files"));
-      hostResourcesFileStoreCache.set(wsId, store);
+      const idCtx = new IdentityContext({ userId, workDir: hostResourcesWorkDir });
+      const store = createFileStore(idCtx.getDataPath("files"));
+      hostResourcesFileStoreCache.set(userId, store);
       return store;
     });
     const hostResourcesRateLimit = new TokenBucketRateLimit();
@@ -805,16 +814,12 @@ export class Runtime {
     // Note: `_chatInner` performs the identity check BEFORE any IO so a
     // bad-state call rejects synchronously (acceptance criterion: identity
     // required).
-    if (!request.identity && this._identityProvider) {
-      throw new Error(
-        "[runtime.chat] no identity on request — the auth middleware must populate " +
-          "request.identity before runtime.chat runs. A misconfigured production " +
-          "deployment with an identity provider but missing middleware would " +
-          "otherwise default every conversation to a sentinel user.",
-      );
-    }
+    // Owner resolution is the shared identity rule (production requires an
+    // identity; dev falls back to DEV_IDENTITY) — see `resolveRequestOwnerId`.
+    // The same rule resolves files for the REST upload/serve handlers and the
+    // host-resources resolver, so an upload and its rehydration share a store.
+    const ownerId = resolveRequestOwnerId(request.identity, this._identityProvider !== null);
     const requestIdentity = request.identity ?? DEV_IDENTITY;
-    const ownerId = requestIdentity.id;
 
     // The personal workspace is the identity-bound chat's "session
     // workspace" — used for overlays, file storage, app-skill reads, and
@@ -1206,11 +1211,11 @@ export class Runtime {
     // where the storage shape (URI references) meets the model-call
     // shape (inline bytes) — see `src/files/rehydrate.ts`.
     const history = await store.history(conversation);
-    // File store is scoped to the session (personal) workspace —
-    // attachments uploaded into the chat live in the user's own workspace
-    // file store. Cross-workspace tool calls that need files from another
-    // workspace must explicitly read via `nb__resources` or equivalent.
-    const fileStore = createFileStore(join(this.getWorkspaceScopedDir(sessionWsId), "files"));
+    // File store is identity-scoped (Phase B): every file the user owns lives
+    // at `users/{userId}/files/`, regardless of which workspace it was created
+    // in. A `files://` URI persisted in any conversation resolves here against
+    // the owner's single store — there is no per-workspace file silo to miss.
+    const fileStore = this.getFileStore(ownerId);
     const messages = await rehydrateUserResources(history, fileStore, {
       model: resolvedModelString,
       maxExtractedTextSize: this.getFilesConfig().maxExtractedTextSize,
@@ -2049,6 +2054,27 @@ export class Runtime {
   /** Fresh `IdentityContext` for the authenticated identity. No workspace. */
   getIdentityContext(identityId: string): IdentityContext {
     return new IdentityContext({ userId: identityId, workDir: this.getWorkDir() });
+  }
+
+  /**
+   * Resolve the owning user id for a request identity, applying the strict
+   * production-vs-dev rule (see `resolveRequestOwnerId`). The thin instance
+   * wrapper that passes whether an identity provider is configured — REST
+   * handlers call this so they resolve the SAME owner `chat()` does.
+   */
+  resolveRequestUserId(identity: UserIdentity | undefined): string {
+    return resolveRequestOwnerId(identity, this._identityProvider !== null);
+  }
+
+  /**
+   * The identity-scoped file store for a user (`users/{userId}/files/`).
+   * Files are identity-owned (Phase B), so this is the single sanctioned
+   * `FileStore` constructor outside the store module itself — `check:file-paths`
+   * rejects any workspace-scoped files dir. Cheap (closures over a path); not
+   * memoized here because callers are per-request.
+   */
+  getFileStore(userId: string): FileStore {
+    return createFileStore(this.getIdentityContext(userId).getDataPath("files"));
   }
 
   /** Get the ToolRegistry for the current request's workspace (from AsyncLocalStorage context). */

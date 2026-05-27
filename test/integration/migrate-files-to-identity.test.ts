@@ -148,6 +148,9 @@ describe("migrate-files-to-identity", () => {
         join(workDir, "workspaces", "ws_user_usr_alice", "files", "fl_aaaaaaaaaaaaaaaaaaaaaaaa_report.txt"),
       ),
     ).toBe(false);
+    // Clean one-way move: the emptied source files dir is removed entirely —
+    // no residue (registry, sidecars, dir).
+    expect(existsSync(join(workDir, "workspaces", "ws_user_usr_alice", "files"))).toBe(false);
 
     // Registry entry carries the provenance workspaceId.
     const reg = await readDestRegistry("usr_alice");

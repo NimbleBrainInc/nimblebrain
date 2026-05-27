@@ -6,19 +6,27 @@ import { bytesToBase64 } from "../../../src/util/base64.ts";
 
 interface StubOptions {
   sources?: string[];
+  identitySources?: string[];
   resource?: ResourceData | null;
   captureCall?: (args: { server: string; uri: string; workspaceId: string }) => void;
+  captureIdentityCall?: (args: { server: string; uri: string }) => void;
 }
 
 function makeStubRuntime(opts: StubOptions = {}): Runtime {
   const sources = new Set(opts.sources ?? ["calendar"]);
+  const identitySources = new Set(opts.identitySources ?? []);
   const registry = {
     hasSource: (name: string) => sources.has(name),
   };
   return {
+    getIdentitySource: (name: string) => (identitySources.has(name) ? { name } : undefined),
     ensureWorkspaceRegistry: async () => registry,
     readAppResource: async (server: string, uri: string, workspaceId: string) => {
       opts.captureCall?.({ server, uri, workspaceId });
+      return opts.resource === undefined ? null : opts.resource;
+    },
+    readIdentityAppResource: async (server: string, uri: string) => {
+      opts.captureIdentityCall?.({ server, uri });
       return opts.resource === undefined ? null : opts.resource;
     },
   } as unknown as Runtime;
@@ -132,6 +140,33 @@ describe("handleReadResource", () => {
       { workspaceId: "w1" },
     );
     expect(calls).toEqual([{ server: "calendar", uri: "custom://whatever/123", workspaceId: "w1" }]);
+  });
+
+  it("routes an identity source to readIdentityAppResource with no workspace", async () => {
+    const calls: Array<{ server: string; uri: string }> = [];
+    const runtime = makeStubRuntime({
+      identitySources: ["files"],
+      resource: { text: "hello world\n", mimeType: "text/plain" },
+      captureIdentityCall: (c) => calls.push(c),
+    });
+    // No workspaceId in options — an identity source must not require one.
+    const res = await handleReadResource(
+      req({ server: "files", uri: "files://fl_abc" }),
+      runtime,
+      {},
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.contents[0].text).toBe("hello world\n");
+    expect(calls).toEqual([{ server: "files", uri: "files://fl_abc" }]);
+  });
+
+  it("returns 404 when an identity resource is missing", async () => {
+    const runtime = makeStubRuntime({ identitySources: ["files"], resource: null });
+    const res = await handleReadResource(req({ server: "files", uri: "files://fl_x" }), runtime, {});
+    expect(res.status).toBe(404);
+    const body = await res.json();
+    expect(body.error).toBe("resource_not_found");
   });
 
   it("returns 400 for invalid JSON body", async () => {

@@ -17,18 +17,17 @@
  *   - No admin, or no readable `workspace.json`: **[FATAL]** — operator must
  *     reconcile. We never invent an owner.
  *
- * Safety model — copy then delete source, idempotent on the destination:
+ * Safety model — clean one-way move, idempotent on the destination:
  *   1. Copy the blob `{id}_{name}` to the destination.
  *   2. Copy the extracted-text sidecar `{id}.extracted.json` if present.
  *   3. Append the (provenance-stamped) registry line to the destination
  *      `registry.jsonl` — this is the commit point.
  *   4. Delete the source blob + sidecar.
+ * After all files are moved, each emptied `workspaces/{wsId}/files/` dir is
+ * removed entirely (registry + dir) — no residue, no deferred cleanup pass.
  * A crash between (1) and (3) is healed on re-run: the destination blob is the
  * sentinel, but we still append a missing registry line (tracked per owner) so
- * the window can't strand a blob without its metadata. The source `registry.jsonl`
- * is left in place; a later cleanup pass removes the per-workspace files dirs
- * once prod verifies every file resolves through the identity path (mirrors the
- * non-destructive posture of `migrate-tenant-files.ts`).
+ * the window can't strand a blob without its metadata.
  *
  * Cross-workspace `fl_` id collisions (the same id under two workspace file
  * dirs) are a `[FATAL]` exit: file ids are random; a collision is corruption.
@@ -41,7 +40,7 @@
  */
 
 import { existsSync } from "node:fs";
-import { appendFile, copyFile, mkdir, readdir, readFile, unlink } from "node:fs/promises";
+import { appendFile, copyFile, mkdir, readdir, readFile, rm, unlink } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { acquireMigrationLock } from "./lib/migration-lock.ts";
@@ -375,6 +374,30 @@ async function main(): Promise<void> {
     }
   }
 
+  // Clean one-way move: remove each emptied source files dir entirely (no
+  // residue, no deferred cleanup). A dir that still holds a blob — e.g. a
+  // sibling of a skipped missing-on-disk entry — is left for operator review.
+  let dirsRemoved = 0;
+  if (!args.dryRun && stats.errors.length === 0) {
+    for (const srcDir of new Set(candidates.map((c) => c.srcDir))) {
+      let remaining: string[];
+      try {
+        remaining = await readdir(srcDir);
+      } catch {
+        continue; // already removed
+      }
+      const blobsLeft = remaining.some(
+        (e) => e.startsWith("fl_") && !e.endsWith(SIDECAR_SUFFIX),
+      );
+      if (blobsLeft) {
+        console.error(`[migrate-files]   left ${srcDir} in place (blobs remain)`);
+        continue;
+      }
+      await rm(srcDir, { recursive: true, force: true });
+      dirsRemoved++;
+    }
+  }
+
   console.error("");
   console.error(`[migrate-files] summary${args.dryRun ? " (dry-run)" : ""}:`);
   console.error(`[migrate-files]   files found (live):  ${stats.found}`);
@@ -382,6 +405,7 @@ async function main(): Promise<void> {
   console.error(`[migrate-files]   already migrated:    ${stats.alreadyMigrated}`);
   console.error(`[migrate-files]   tombstoned (skip):   ${stats.tombstoned}`);
   console.error(`[migrate-files]   missing on disk:     ${stats.missingOnDisk}`);
+  console.error(`[migrate-files]   source dirs removed: ${dirsRemoved}`);
   console.error(`[migrate-files]   collisions:          0`);
   console.error(`[migrate-files]   unresolvable owners: 0`);
   console.error(`[migrate-files]   errors:              ${stats.errors.length}`);

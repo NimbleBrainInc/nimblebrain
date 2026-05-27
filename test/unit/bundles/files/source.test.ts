@@ -12,6 +12,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../../../src/adapters/noop-events.ts";
+import { createFileStore } from "../../../../src/files/store.ts";
 import { createFilesSource } from "../../../../src/tools/platform/files.ts";
 import type { ContentBlock, ToolResult } from "../../../../src/engine/types.ts";
 import type { Runtime } from "../../../../src/runtime/runtime.ts";
@@ -52,8 +53,12 @@ function findResourceLink(result: ToolResult): {
 }
 
 function makeRuntime(workDir: string): Runtime {
+  // Files are identity-owned: the source resolves its store via
+  // `getCurrentIdentity()` + `getFileStore(userId)`. The mock keeps the
+  // store at `<workDir>/files` so the on-disk assertions are unchanged.
   return {
-    getWorkspaceScopedDir: () => workDir,
+    getCurrentIdentity: () => ({ id: "usr_test" }),
+    getFileStore: () => createFileStore(join(workDir, "files")),
     getFilesConfig: () => ({ maxExtractedTextSize: 204_800 }),
   } as unknown as Runtime;
 }
