@@ -73,12 +73,16 @@ export async function handleChat(
   const originSubscriberId = request.headers.get("x-origin-subscriber-id") ?? undefined;
 
   try {
-    // Thread the request's abort signal into the chat so a client
-    // disconnect or upstream timeout actually cancels the in-flight
-    // engine loop and tool calls — instead of orphaning the work until
-    // it eventually finishes writing to disk (the production bug behind
-    // the morning-brief executor lying about timeouts).
-    const result = await runtime.chat({ ...parsed, signal: request.signal });
+    // The run is owned by the runtime, not by this HTTP request — we do
+    // NOT pass `request.signal`. A client disconnect (mobile screen-lock,
+    // backgrounded tab, network blip) must not cancel the in-flight
+    // engine loop; the run completes server-side, persists, and is
+    // replayed to any reconnecting /v1/conversations/:id/events
+    // subscriber. See the detached `.chat(parsed, sink)` in
+    // handleChatStream for the full rationale (PR #251 regression). The
+    // automations executor's deadline cancellation is unaffected — that
+    // path supplies its own AbortController.
+    const result = await runtime.chat(parsed);
     // Cost is derived at the boundary, never stored. Same wire shape as
     // the streaming `done` event so clients see one consistent contract.
     const wireUsage = {
@@ -239,28 +243,41 @@ export async function handleChatStream(
   const convId = parsed.conversationId;
 
   const sink = new CallbackEventSink();
-  let markClosed: () => void;
+  // This HTTP stream is a detachable *observer* of the run, not its
+  // owner. `markTransportClosed` lets the stream's cancel() (client
+  // disconnect) stop writing to this response without touching the run.
+  let markTransportClosed: () => void = () => {};
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
       const encoder = new TextEncoder();
-      let closed = false;
+      // Tracks whether THIS response is still writable. It does not track
+      // the run — the run's lifecycle is the sink subscription, torn down
+      // in `endRun()` when the run actually ends (see the .chat() call).
+      let transportOpen = true;
       // Keep the TCP connection alive during slow tool calls (Typst
       // compile, MCP task-augmented research) — ALB idle-timeout kills
-      // silent streams. Must be created before `markClosed` captures it.
+      // silent streams. Must be created before `markTransportClosed`
+      // captures it.
       const heartbeat = startSseHeartbeat(controller, HEARTBEAT_INTERVAL_MS);
-      markClosed = () => {
-        closed = true;
+      markTransportClosed = () => {
+        if (!transportOpen) return;
+        transportOpen = false;
         heartbeat.stop();
       };
+      // Write to this response. No-op once the client has detached — the
+      // run keeps producing events, which still reach other observers via
+      // the broadcast below and the persisted conversation.
       const send = (event: string, data: unknown) => {
-        if (closed) return;
+        if (!transportOpen) return;
         controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
       };
-      const finish = () => {
-        if (closed) return;
-        closed = true;
+      // Close this response's stream (run finished while the client was
+      // still connected — the happy path). If the client already left,
+      // this is a no-op; the controller is already torn down by cancel().
+      const closeTransport = () => {
+        if (!transportOpen) return;
+        transportOpen = false;
         heartbeat.stop();
-        unsubscribe();
         controller.close();
       };
 
@@ -324,12 +341,28 @@ export async function handleChatStream(
         }
       });
 
+      // Called exactly once when the run terminates (success or error),
+      // independent of transport state. Releasing the sink subscription
+      // here — not on client disconnect — is what lets a run finish in
+      // the background after the phone locks or the tab is backgrounded.
+      const endRun = () => {
+        unsubscribe();
+        closeTransport();
+      };
+
       runtime
-        // Thread the HTTP request's signal so client disconnect cancels
-        // the engine loop + in-flight tool calls (cooperative). The SSE
-        // stream's controller closes on cancellation via `closed` flag;
-        // this propagates the cancellation INTO the chat too.
-        .chat({ ...parsed, signal: request.signal }, sink)
+        // The run is deliberately NOT bound to this HTTP request: we do
+        // not pass `request.signal`. A client disconnect closes the
+        // stream (cancel() → markTransportClosed) but must not cancel the
+        // engine loop. The run completes server-side, persists to the
+        // conversation store, and replays to any reconnecting
+        // /v1/conversations/:id/events subscriber — the "leave and come
+        // back" contract. PR #251 bound the run to the connection and
+        // silently abandoned prompts the moment a mobile client dropped
+        // (run.error "The connection was closed"). The one caller that
+        // must cancel on a deadline — the automations executor — owns its
+        // own AbortController in bundles/automations/src/executor.ts.
+        .chat(parsed, sink)
         .then((result) => {
           // Cost is computed at the API boundary — never stored. The
           // wire-format `usage.costUsd` is what clients display; deriving
@@ -367,7 +400,7 @@ export async function handleChatStream(
               );
             }
           }
-          finish();
+          endRun();
         })
         .catch((err) => {
           if (err instanceof RunInProgressError) {
@@ -375,7 +408,7 @@ export async function handleChatStream(
               error: "run_in_progress",
               message: "This conversation already has an active response.",
             });
-            finish();
+            endRun();
             return;
           }
           if (err instanceof ConversationAccessDeniedError) {
@@ -383,7 +416,7 @@ export async function handleChatStream(
               error: "conversation_access_denied",
               message: "You do not have access to this conversation.",
             });
-            finish();
+            endRun();
             return;
           }
           if (err instanceof ConversationCorruptedError) {
@@ -391,7 +424,7 @@ export async function handleChatStream(
               error: "conversation_corrupted",
               message: err.message,
             });
-            finish();
+            endRun();
             return;
           }
           console.error("[routes] handleChatStream failed:", err);
@@ -401,11 +434,13 @@ export async function handleChatStream(
             error: friendly.code,
             message: friendly.message,
           });
-          finish();
+          endRun();
         });
     },
     cancel() {
-      markClosed();
+      // The client went away (disconnect / phone lock / tab close).
+      // Detach this observer ONLY — the run continues to completion.
+      markTransportClosed();
     },
   });
 
