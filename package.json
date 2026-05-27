@@ -59,6 +59,7 @@
     "migrate:conversations-to-top-level": "bun run scripts/migrate-conversations-to-top-level.ts",
     "migrate:user-creds": "bun run scripts/migrate-user-creds-to-personal-workspace.ts",
     "migrate:files-to-identity": "bun run scripts/migrate-files-to-identity.ts",
+    "migrate:automations-to-identity": "bun run scripts/migrate-automations-to-identity.ts",
     "heal:truncated-personal-workspaces": "bun run scripts/heal-truncated-personal-workspaces.ts",
     "cleanup:personal-workspace-members": "bun run scripts/cleanup-personal-workspace-members.ts",
     "check:cycles": "bun run scripts/check-cycles.ts",

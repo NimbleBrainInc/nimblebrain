@@ -44,6 +44,7 @@ import { appendFile, copyFile, mkdir, readdir, readFile, rm, unlink } from "node
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { acquireMigrationLock } from "./lib/migration-lock.ts";
+import { resolveWorkspaceOwner } from "./lib/resolve-workspace-owner.ts";
 
 /** Local copy of the on-disk registry entry — inlined so the script survives
  * type changes in `src/files/types.ts`. `workspaceId` is the provenance field
@@ -61,13 +62,6 @@ interface FileEntry {
   workspaceId?: string;
   deleted?: boolean;
   deletedAt?: string;
-}
-
-interface WorkspaceMeta {
-  id: string;
-  members?: { userId: string; role: "admin" | "member" }[];
-  isPersonal?: boolean;
-  ownerUserId?: string;
 }
 
 interface Args {
@@ -145,27 +139,6 @@ non-zero with [FATAL]; operators decide.
 `);
 }
 
-/** Resolve the owning user of a workspace from its on-disk metadata.
- * Returns null when ownership can't be determined (caller treats as FATAL). */
-async function resolveOwner(workspacesDir: string, wsId: string): Promise<string | null> {
-  const metaPath = join(workspacesDir, wsId, "workspace.json");
-  if (!existsSync(metaPath)) return null;
-  let meta: WorkspaceMeta;
-  try {
-    meta = JSON.parse(await readFile(metaPath, "utf-8")) as WorkspaceMeta;
-  } catch {
-    return null;
-  }
-  if (meta.isPersonal === true) {
-    return typeof meta.ownerUserId === "string" && meta.ownerUserId.length > 0
-      ? meta.ownerUserId
-      : null;
-  }
-  // Team workspace: earliest admin (members are stored in creation order).
-  const admin = meta.members?.find((m) => m.role === "admin");
-  return admin?.userId ?? null;
-}
-
 /** Collapse a workspace registry to the latest entry per id (last-write-wins),
  * matching the runtime store's read semantics. */
 function latestPerId(entries: FileEntry[]): Map<string, FileEntry> {
@@ -233,7 +206,7 @@ async function plan(
     const live = latestPerId(await readRegistry(join(srcDir, "registry.jsonl")));
     if (live.size === 0) continue;
 
-    if (!ownerCache.has(wsId)) ownerCache.set(wsId, await resolveOwner(workspacesDir, wsId));
+    if (!ownerCache.has(wsId)) ownerCache.set(wsId, await resolveWorkspaceOwner(workspacesDir, wsId));
     const owner = ownerCache.get(wsId) ?? null;
 
     for (const entry of live.values()) {
