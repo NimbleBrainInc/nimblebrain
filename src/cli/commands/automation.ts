@@ -4,6 +4,9 @@ import { Command } from "commander";
 import { ConsoleEventSink } from "../../adapters/console-events.ts";
 import { updateAutomation } from "../../bundles/automations/src/domain.ts";
 import { extractText } from "../../engine/content-helpers.ts";
+import type { ToolResult } from "../../engine/types.ts";
+import { DEV_IDENTITY } from "../../identity/providers/dev.ts";
+import { type RequestContext, runWithRequestContext } from "../../runtime/request-context.ts";
 import { Runtime } from "../../runtime/runtime.ts";
 import type {
   AutomationsListOutput,
@@ -35,15 +38,27 @@ async function callTool(
   toolName: string,
   input: Record<string, unknown> = {},
 ): Promise<unknown> {
-  // CLI uses the first available workspace registry (or _dev in dev mode)
-  const registries = runtime.getWorkspaceRegistries();
-  const registry = registries.values().next().value;
-  if (!registry) throw new Error("No workspace registries available");
-  const result = await registry.execute({
-    id: `cli_${crypto.randomUUID().slice(0, 8)}`,
-    name: toolName,
-    input,
-  });
+  const server = toolName.slice(0, toolName.indexOf("__"));
+  const identitySource = runtime.getIdentitySource(server);
+  let result: ToolResult;
+  if (identitySource) {
+    // Identity-door dispatch: automations / conversations / files live outside
+    // any workspace. The CLI is a local operator tool — it acts as the dev
+    // identity (DEV_IDENTITY); the source resolves the owner's store from it.
+    const reqCtx: RequestContext = { identity: DEV_IDENTITY, scope: { kind: "identity" } };
+    const bare = toolName.slice(toolName.indexOf("__") + 2);
+    result = await runWithRequestContext(reqCtx, () => identitySource.execute(bare, input));
+  } else {
+    // Workspace tools use the first available registry (or _dev in dev mode).
+    const registries = runtime.getWorkspaceRegistries();
+    const registry = registries.values().next().value;
+    if (!registry) throw new Error("No workspace registries available");
+    result = await registry.execute({
+      id: `cli_${crypto.randomUUID().slice(0, 8)}`,
+      name: toolName,
+      input,
+    });
+  }
 
   const text = extractText(result.content);
   if (result.isError) {

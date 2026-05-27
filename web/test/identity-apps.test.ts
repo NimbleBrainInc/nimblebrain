@@ -6,9 +6,10 @@ import { IDENTITY_APP_SOURCES, identityAppRoute, isIdentityApp } from "../src/li
 // `Runtime.getIdentitySource` in src/.
 
 describe("identity-apps", () => {
-  it("recognizes conversations and files as kernel identity apps", () => {
+  it("recognizes conversations, files, and automations as kernel identity apps", () => {
     expect(isIdentityApp("conversations")).toBe(true);
     expect(isIdentityApp("files")).toBe(true);
+    expect(isIdentityApp("automations")).toBe(true);
   });
 
   it("treats workspace apps and the platform nb source as NOT identity apps", () => {
@@ -26,9 +27,10 @@ describe("identity-apps", () => {
   it("maps an identity app to its top-level root route", () => {
     expect(identityAppRoute("conversations")).toBe("/conversations");
     expect(identityAppRoute("files")).toBe("/files");
+    expect(identityAppRoute("automations")).toBe("/automations");
   });
 
-  it("identity set is exactly { conversations, files }", () => {
-    expect([...IDENTITY_APP_SOURCES]).toEqual(["conversations", "files"]);
+  it("identity set is exactly { conversations, files, automations }", () => {
+    expect([...IDENTITY_APP_SOURCES]).toEqual(["conversations", "files", "automations"]);
   });
 });
