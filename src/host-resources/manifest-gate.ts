@@ -3,6 +3,33 @@ import type { BundleManifest, HostManifestMeta } from "../bundles/types.ts";
 import { hostProvidedCapabilityKeys } from "./capability.ts";
 
 /**
+ * Thrown by `assertHostCapabilitiesAvailable` when a bundle's host-manifest
+ * block is rejected. Typed (rather than a bare `Error`) so callers that want
+ * to react specifically to a gate rejection — e.g. the boot/re-spawn
+ * self-heal in `startBundleSource`, which force-refreshes a stale cached
+ * bundle and retries — can do so via `instanceof` without brittle message
+ * matching. The human-readable `message` is unchanged from the previous
+ * `Error` form, so existing log/assert call sites keep working.
+ *
+ * `reason` discriminates the two gate failure modes:
+ * - `"schema-invalid"`: the `_meta["ai.nimblebrain/host"]` block fails the
+ *   JSON Schema (the stale-cache incident — a fixed version may be published).
+ * - `"capability-unavailable"`: a `required: true` capability isn't advertised
+ *   by this platform (a newer version may drop the requirement).
+ * Both are worth one force-refresh-and-retry; neither loops (one pull only).
+ */
+export class HostManifestGateError extends Error {
+  constructor(
+    message: string,
+    readonly reason: "schema-invalid" | "capability-unavailable",
+    readonly bundleName: string,
+  ) {
+    super(message);
+    this.name = "HostManifestGateError";
+  }
+}
+
+/**
  * Validate a bundle's `_meta["ai.nimblebrain/host"]` block at install
  * time. Two layered checks, both fatal:
  *
@@ -34,9 +61,11 @@ export function assertHostCapabilitiesAvailable(
   //    no-op when no host-meta block is present.
   const validation = validateHostMeta(manifest._meta);
   if (!validation.valid) {
-    throw new Error(
+    throw new HostManifestGateError(
       `Bundle "${bundleName}" has an invalid _meta["ai.nimblebrain/host"] block: ` +
         `${validation.errors.join("; ")}. Refusing to install.`,
+      "schema-invalid",
+      bundleName,
     );
   }
 
@@ -54,8 +83,10 @@ export function assertHostCapabilitiesAvailable(
   if (missing.length === 0) return;
 
   const providedLabel = provided.length > 0 ? provided.join(", ") : "(none)";
-  throw new Error(
+  throw new HostManifestGateError(
     `Bundle "${bundleName}" requires host capabilities not provided by this platform: ` +
       `${missing.join(", ")}. Refusing to install. Provided: ${providedLabel}.`,
+    "capability-unavailable",
+    bundleName,
   );
 }

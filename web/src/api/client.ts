@@ -810,6 +810,40 @@ export async function uninstallConnector(
   return unwrapStructured(result, "uninstall");
 }
 
+/** One available update for a registry-installed connector. */
+export interface ConnectorUpdate {
+  serverName: string;
+  bundleName: string;
+  current: string;
+  latest: string;
+}
+
+/**
+ * Poll the mpak registry for newer versions of this workspace's
+ * registry-installed connectors. On-demand (the Connectors UI calls it once on
+ * mount) — server-side this is registry-only, so remote/local connectors never
+ * appear. Best-effort: per-bundle registry failures are swallowed server-side.
+ */
+export async function checkConnectorUpdates(): Promise<{ updates: ConnectorUpdate[] }> {
+  const result = await callTool("nb", "manage_connectors", { action: "check_updates" });
+  return unwrapStructured(result, "check_updates");
+}
+
+/**
+ * Upgrade a registry-installed connector to the latest published version
+ * (hot-swap). Workspace-admin gated server-side. `upgraded` is false when the
+ * bundle was already at the latest version.
+ */
+export async function upgradeConnector(
+  serverName: string,
+): Promise<{ ok: boolean; upgraded: boolean; from: string; to: string; serverName: string }> {
+  const result = await callTool("nb", "manage_connectors", {
+    action: "upgrade",
+    serverName,
+  });
+  return unwrapStructured(result, "upgrade");
+}
+
 /**
  * Install a connector. Pass the full `DirectoryEntry` the user
  * clicked plus the picked target `wsId` (the WorkspaceTargetPicker in

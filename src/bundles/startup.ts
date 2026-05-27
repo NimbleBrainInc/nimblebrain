@@ -9,6 +9,7 @@ import {
 import type { EventSink } from "../engine/types.ts";
 import {
   assertHostCapabilitiesAvailable,
+  HostManifestGateError,
   type HostResourcesRateLimit,
   type HostResourcesResolver,
 } from "../host-resources/index.ts";
@@ -534,7 +535,7 @@ export async function startBundleSource(
     // and resolve credentials BEFORE prepareServer validates them. The mpak
     // cache is populated during install (see BundleLifecycleManager.installNamed
     // or mpak install), so we expect the manifest to be present here.
-    const cachedManifest = mpak.bundleCache.getBundleManifest(ref.name) as BundleManifest | null;
+    let cachedManifest = mpak.bundleCache.getBundleManifest(ref.name) as BundleManifest | null;
     if (cachedManifest) {
       meta = extractBundleMeta(cachedManifest as unknown as Record<string, unknown>);
       manifest = cachedManifest;
@@ -558,6 +559,50 @@ export async function startBundleSource(
           "(http-proxy, host_capabilities, etc.) will be skipped at spawn, including " +
           "the install-time host-resources gate. Reinstall the bundle to repopulate.",
       );
+    }
+
+    // Boot / re-spawn self-heal for the name-only mpak cache. The cache dir is
+    // keyed by bundle name with no version, so a pod that cached a bad version
+    // re-spawns it on every boot — and if that manifest fails the host-manifest
+    // gate, the bundle is rejected forever even after a fixed version ships
+    // (the manual workaround was deleting the cache dir on the pod + restart).
+    // Detect the gate failure here, against the cached manifest, and force ONE
+    // re-pull from the registry so a published fix self-heals on restart. This
+    // sits before prepareServer so the fresh artifact is what gets spawned, and
+    // covers every named re-spawn path (boot reload, JIT install, configure-
+    // restart) since they all funnel through here. We do NOT re-assert the gate
+    // after refreshing — the terminal gate below (post-prepareServer) re-runs on
+    // the refreshed manifest and throws for real if the latest published
+    // version is still invalid.
+    if (cachedManifest) {
+      try {
+        assertHostCapabilitiesAvailable(cachedManifest, cachedManifest.name);
+      } catch (err) {
+        if (!(err instanceof HostManifestGateError)) throw err;
+        log.warn(
+          `[bundles] ${ref.name} failed the host-manifest gate from cache ` +
+            `(${err.reason}); force-refreshing from the registry and retrying.`,
+        );
+        try {
+          await mpak.bundleCache.loadBundle(ref.name, { force: true });
+          const refreshed = mpak.bundleCache.getBundleManifest(ref.name) as BundleManifest | null;
+          if (refreshed) {
+            cachedManifest = refreshed;
+            meta = extractBundleMeta(refreshed as unknown as Record<string, unknown>);
+            manifest = refreshed;
+          }
+        } catch (refreshErr) {
+          // Registry unreachable or pull failed: leave the cached copy intact
+          // and fall through. The terminal gate re-throws the original gate
+          // error, surfacing the actionable "Refusing to install" message
+          // rather than a transient network error — so we're never worse off
+          // than skipping the heal entirely.
+          const detail = refreshErr instanceof Error ? refreshErr.message : String(refreshErr);
+          log.warn(
+            `[bundles] force-refresh of ${ref.name} failed (${detail}); keeping cached copy.`,
+          );
+        }
+      }
     }
 
     // Read host-side credentials from the workspace credential store. The

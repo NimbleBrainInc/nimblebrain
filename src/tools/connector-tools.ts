@@ -214,6 +214,8 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
             "set_user_config",
             "clear_user_config",
             "get_redirect_uri",
+            "check_updates",
+            "upgrade",
           ],
           description: "Action to perform.",
         },
@@ -242,7 +244,7 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
         serverName: {
           type: "string",
           description:
-            "Bundle server name (required for disconnect, list_tools, get_permissions, set_permissions).",
+            "Bundle server name (required for disconnect, list_tools, get_permissions, set_permissions, upgrade).",
         },
         scope: {
           type: "string",
@@ -357,6 +359,10 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
           );
         case "clear_user_config":
           return handleClearUserConfig(ctx, wsId, identity, String(input.serverName ?? ""));
+        case "check_updates":
+          return handleCheckUpdates(ctx, wsId);
+        case "upgrade":
+          return handleUpgrade(ctx, wsId, identity, String(input.serverName ?? ""));
         case "get_redirect_uri":
           // The URL itself is effectively public (it's surfaced in
           // every OAuth flow), so this gate is convention rather than
@@ -1331,6 +1337,35 @@ async function handleInstallMpak(
     }
   }
 
+  // Force-refresh the mpak cache before spawning, but ONLY when a copy is
+  // already cached. The cache dir is keyed by name with no version, so a
+  // previously-pulled (now stale) copy would otherwise be reused silently
+  // instead of the latest published version — the staleness half of the
+  // incident this revival fixes. `installBundleInWorkspace → startBundleSource`
+  // only READS the cache (`getBundleManifest` + `prepareServer`), so the pull
+  // must happen here. A first-time install has nothing cached, so prepareServer's
+  // normal cold download already fetches the latest — forcing there would just
+  // double-pull (and hit the network needlessly in tests). Best-effort: if the
+  // registry is unreachable, fall back to the cached copy (an offline reinstall
+  // should still work; the host-manifest gate downstream protects correctness).
+  const mpak = getMpak(join(ctx.runtime.getWorkDir(), "apps"));
+  let alreadyCached: boolean;
+  try {
+    alreadyCached = mpak.bundleCache.getBundleMetadata(bundleName) != null;
+  } catch {
+    // Corrupt cache metadata — treat as cached so the force-pull below replaces it.
+    alreadyCached = true;
+  }
+  if (alreadyCached) {
+    try {
+      await mpak.bundleCache.loadBundle(bundleName, { force: true });
+    } catch (err) {
+      log.warn(
+        `[connectors] force-refresh of ${bundleName} failed (${err instanceof Error ? err.message : String(err)}); using cached copy.`,
+      );
+    }
+  }
+
   // Persist the slugified canonical reverse-DNS form as the BundleRef's
   // serverName so this install — and every lookup that follows — uses
   // the same opaque, URL-safe, collision-free identifier the catalog
@@ -1540,6 +1575,122 @@ async function handleUninstall(
     };
   } catch (err) {
     return errResult(err instanceof Error ? err.message : String(err));
+  }
+}
+
+/**
+ * Poll the mpak registry for newer versions of this workspace's
+ * registry-installed bundles. Read-only and on-demand — NOT folded into
+ * `list_installed`, which must stay cheap (no per-row network calls). Only
+ * `installSource === "registry"` instances are checked; local dev copies and
+ * remote URL connectors have no mpak version to poll. Per-bundle failures are
+ * swallowed (a bundle pulled from the registry then later delisted shouldn't
+ * fail the whole sweep).
+ */
+async function handleCheckUpdates(
+  ctx: ManageConnectorsContext,
+  wsId: string | null,
+): Promise<ToolResult> {
+  if (!wsId) return errResult("Workspace context required for update checking.");
+  const lifecycle = ctx.runtime.getLifecycle();
+  const registryBundles = lifecycle
+    .getInstances()
+    .filter((i) => i.wsId === wsId && i.installSource === "registry");
+  if (registryBundles.length === 0) {
+    return {
+      content: textContent("No registry bundles installed — nothing to check."),
+      structuredContent: { updates: [] },
+      isError: false,
+    };
+  }
+
+  const mpak = getMpak(join(ctx.runtime.getWorkDir(), "apps"));
+  const updates: Array<{
+    serverName: string;
+    bundleName: string;
+    current: string;
+    latest: string;
+  }> = [];
+  await Promise.all(
+    registryBundles.map(async (instance) => {
+      try {
+        const latest = await mpak.bundleCache.checkForUpdate(instance.bundleName, { force: true });
+        if (latest && latest !== instance.version) {
+          updates.push({
+            serverName: instance.serverName,
+            bundleName: instance.bundleName,
+            current: instance.version,
+            latest,
+          });
+        }
+      } catch {
+        // Skip bundles that fail to check (delisted, registry hiccup).
+      }
+    }),
+  );
+
+  updates.sort((a, b) => a.bundleName.localeCompare(b.bundleName));
+  const summary =
+    updates.length === 0
+      ? "All registry bundles are up to date."
+      : `${updates.length} update(s) available: ${updates.map((u) => `${u.bundleName} ${u.current}→${u.latest}`).join(", ")}.`;
+  return {
+    content: textContent(summary),
+    structuredContent: { updates },
+    isError: false,
+  };
+}
+
+/**
+ * Upgrade a registry-installed bundle to the latest published version
+ * (hot-swap via `BundleLifecycleManager.upgrade`). Workspace-admin gated —
+ * an upgrade swaps the running process for every member of the workspace,
+ * the same blast radius as uninstall.
+ */
+async function handleUpgrade(
+  ctx: ManageConnectorsContext,
+  wsId: string | null,
+  identity: UserIdentity | null,
+  serverName: string,
+): Promise<ToolResult> {
+  if (!serverName) return errResult("serverName is required.");
+  if (!wsId) return errResult("Workspace context required.");
+  if (!identity) return errResult("Authentication required.");
+  const lifecycle = ctx.runtime.getLifecycle();
+  if (!lifecycle.getInstance(serverName, wsId)) {
+    return errResult(`Bundle "${serverName}" not installed in workspace.`);
+  }
+  const ws = await ctx.runtime.getWorkspaceStore().get(wsId);
+  if (!ws) return errResult(`Workspace "${wsId}" not found.`);
+  if (!isWorkspaceAdmin(ws, identity)) {
+    return {
+      content: textContent("Workspace admin role required to upgrade shared connectors."),
+      structuredContent: { error: "permission_denied" },
+      isError: true,
+    };
+  }
+
+  try {
+    const registry = ctx.runtime.getRegistryForWorkspace(wsId);
+    const {
+      from,
+      to,
+      serverName: newServerName,
+    } = await lifecycle.upgrade(serverName, wsId, registry);
+    const upgraded = from !== to;
+    return {
+      content: textContent(
+        upgraded
+          ? `Upgraded "${serverName}": ${from} → ${to}.`
+          : `"${serverName}" is already at the latest version (${from}).`,
+      ),
+      structuredContent: { ok: true, upgraded, from, to, serverName: newServerName },
+      isError: false,
+    };
+  } catch (err) {
+    return errResult(
+      `Failed to upgrade "${serverName}": ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
 }
 

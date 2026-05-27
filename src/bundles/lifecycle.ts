@@ -94,6 +94,12 @@ export class BundleLifecycleManager {
   private instances = new Map<string, BundleInstance>();
   private placementRegistry: PlacementRegistry | null = null;
   /**
+   * `${serverName}|${wsId}` keys for upgrades currently in flight. Guards
+   * against a concurrent double-upgrade of the same instance, which would
+   * `removeSource` then race two `addSource` calls and leave a torn state.
+   */
+  private upgradesInFlight = new Set<string>();
+  /**
    * Getter for a workspace-scoped automations domain context. Set by
    * Runtime after the automations platform source is constructed. Used
    * by `syncBundleAutomations` / `removeBundleAutomations` to bypass the
@@ -233,6 +239,7 @@ export class BundleLifecycleManager {
     const isUpjack = manifest._meta?.["ai.nimblebrain/upjack"] != null;
     const instance = createInstance(sourceName, name, manifest, isUpjack, wsId, bundleDataDir);
     instance.configKey = name;
+    instance.installSource = "registry";
     this.transition(instance, "running");
 
     instance.trustScore = await fetchTrustScore(name, this.mpakHome);
@@ -316,6 +323,7 @@ export class BundleLifecycleManager {
       bundleDataDir,
     );
     instance.configKey = bundlePath; // config entry uses the filesystem path
+    instance.installSource = "local";
     this.transition(instance, "running");
 
     instance.ui = extractUiMeta(manifest);
@@ -384,6 +392,7 @@ export class BundleLifecycleManager {
     const instance: BundleInstance = {
       serverName,
       bundleName: url,
+      installSource: "remote",
       version: "remote",
       state: "starting",
       trustScore: trustScore ?? null,
@@ -613,6 +622,145 @@ export class BundleLifecycleManager {
       type: "bundle.uninstalled",
       data: { serverName, bundleName: nameOrPath, wsId },
     });
+  }
+
+  // ---- Upgrade -----------------------------------------------------------
+
+  /**
+   * Upgrade a registry-installed bundle to the latest published version.
+   *
+   * Best-effort hot-swap: force-pulls the latest artifact from mpak (the
+   * name-only cache is bypassed via `{ force: true }`, so a newer version
+   * actually lands), tears down the running source, then spawns the new
+   * version. Brief sub-second unavailability during the swap — the registry
+   * rejects duplicate source names, so we can't hold both at once.
+   *
+   * Looked up by `serverName` (not re-derived from the package name) so it
+   * works for canonical reverse-DNS serverNames persisted at install, not
+   * just legacy short slugs. The package name for SDK calls comes from
+   * `instance.bundleName`.
+   *
+   * No `protected` guard — protected bundles can be upgraded (only uninstall
+   * is blocked) so they aren't frozen out of security patches.
+   *
+   * Preserves the workspace-scoped data dir, credentials, and config entry.
+   * Emits `bundle.upgraded` on a real version change; a no-op (already latest)
+   * returns `from === to` and emits nothing.
+   */
+  async upgrade(
+    serverName: string,
+    wsId: string,
+    registry: ToolRegistry,
+  ): Promise<{ from: string; to: string; serverName: string }> {
+    const key = `${serverName}|${wsId}`;
+    const instance = this.instances.get(key);
+    if (!instance) {
+      throw new Error(`No bundle instance found for "${serverName}" in workspace "${wsId}"`);
+    }
+    if (instance.installSource !== "registry") {
+      throw new Error(
+        `Bundle "${serverName}" is not a registry install (${instance.installSource ?? "unknown"}) ` +
+          "— only registry bundles can be upgraded from mpak.",
+      );
+    }
+    if (this.upgradesInFlight.has(key)) {
+      throw new Error(`Upgrade already in progress for "${serverName}" in workspace "${wsId}"`);
+    }
+
+    this.upgradesInFlight.add(key);
+    try {
+      const name = instance.bundleName;
+      const mpak = getMpak(this.mpakHome);
+      const fromVersion = instance.version;
+
+      // Is a newer version published? `force` skips the cache-staleness check
+      // so we ask the registry directly.
+      const latest = await mpak.bundleCache.checkForUpdate(name, { force: true });
+      if (!latest) {
+        return { from: fromVersion, to: fromVersion, serverName };
+      }
+
+      // Pull the new artifact into the (name-keyed) cache, replacing the old.
+      await mpak.bundleCache.loadBundle(name, { force: true });
+
+      // Resolve workspace-scoped paths exactly as installNamed does, so the
+      // re-spawned subprocess writes to the same data dir and resolves the
+      // same credentials.
+      const nbWorkDir = defaultWorkDir();
+      const wsContext = new WorkspaceContext({ wsId, workDir: nbWorkDir });
+      const configDir = this.configPath ? dirname(this.configPath) : undefined;
+      const bundleDataDir = resolveBundleDataDirForRef(nbWorkDir, wsId, { name }, configDir);
+
+      // Remove the old source, then spawn the new version. Carry the persisted
+      // serverName through so the re-spawned source keeps the same registry key
+      // and the instance map / placements stay consistent.
+      if (registry.hasSource(serverName)) {
+        await registry.removeSource(serverName);
+      }
+
+      const { sourceName: newSourceName, manifest } = await startBundleSource(
+        { name, serverName },
+        registry,
+        this.eventSink,
+        configDir,
+        {
+          dataDir: bundleDataDir,
+          workspaceContext: wsContext,
+          bundleMcp: this.resolveBundleMcpDeps(wsId),
+        },
+      );
+      if (!manifest) {
+        // Named bundles always carry a manifest; null is a precondition
+        // violation. The old source is already gone — surface to the caller.
+        this.transition(instance, "dead");
+        throw new Error(`No manifest found for ${name} after upgrade fetch`);
+      }
+
+      // Update instance metadata in place.
+      const isUpjack = manifest._meta?.["ai.nimblebrain/upjack"] != null;
+      instance.serverName = newSourceName;
+      instance.version = manifest.version;
+      instance.description = manifest.description;
+      instance.type = isUpjack ? "upjack" : "plain";
+      instance.ui = extractUiMeta(manifest);
+      instance.briefing = extractBriefing(manifest);
+      instance.trustScore = await fetchTrustScore(name, this.mpakHome);
+      this.transition(instance, "running");
+
+      // Re-key the instance map if the spawned serverName diverged (defensive —
+      // it derives from the same persisted ref so it normally matches).
+      if (newSourceName !== serverName) {
+        this.instances.delete(key);
+        this.instances.set(`${newSourceName}|${wsId}`, instance);
+      }
+
+      // Always unregister stale placements first, then re-register whatever the
+      // new manifest declares. Without the unconditional unregister, a version
+      // that drops all placements would leave stale nav entries behind.
+      this.placementRegistry?.unregister(serverName, wsId);
+      this.registerPlacements(newSourceName, instance.ui, wsId);
+
+      // Clean stale automations, then sync from the new manifest — matching the
+      // uninstall→install ordering so a schedule dropped between versions stops
+      // running with a stale prompt.
+      await this.removeBundleAutomations(name, registry);
+      await this.syncBundleAutomations(manifest, name, registry);
+
+      this.eventSink.emit({
+        type: "bundle.upgraded",
+        data: {
+          wsId,
+          serverName: newSourceName,
+          bundleName: name,
+          fromVersion,
+          toVersion: manifest.version,
+        },
+      });
+
+      return { from: fromVersion, to: manifest.version, serverName: newSourceName };
+    } finally {
+      this.upgradesInFlight.delete(key);
+    }
   }
 
   // ---- Start / Stop / Restart -------------------------------------------
@@ -1449,6 +1597,10 @@ export class BundleLifecycleManager {
       protected: ref.protected ?? false,
       type: manifestMeta?.type ?? "plain",
       wsId,
+      // Derive the install channel from the persisted ref shape so both the
+      // connector-install path and the boot reload (which both seed here) get
+      // it with no migration — `check_updates`/`upgrade` filter on this.
+      installSource: "name" in ref ? "registry" : "url" in ref ? "remote" : "local",
       ...(oauthScope !== undefined ? { oauthScope } : {}),
       ...(entityDataRoot !== undefined ? { entityDataRoot } : {}),
       // URL bundles only — needed to reconstruct McpSources on-demand

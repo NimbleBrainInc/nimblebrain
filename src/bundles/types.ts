@@ -339,6 +339,12 @@ export interface BundleInstance {
   bundleName: string;
   /** The config key used to find this bundle in nimblebrain.json (name, path, or url value). */
   configKey?: string;
+  /**
+   * How this bundle was installed. Distinguishes registry bundles (which can be
+   * version-checked / upgraded against mpak) from local dev copies and remote
+   * URL connectors. `check_updates` / `upgrade` apply only to `"registry"`.
+   */
+  installSource?: "registry" | "local" | "remote";
   /** Version from manifest. */
   version: string;
   /** Human-readable description from the manifest. */

@@ -83,6 +83,7 @@ export type EngineEventType =
   | "context.overflow_recovery"
   | "bundle.installed"
   | "bundle.uninstalled"
+  | "bundle.upgraded"
   | "bundle.crashed"
   | "bundle.recovered"
   | "bundle.dead"

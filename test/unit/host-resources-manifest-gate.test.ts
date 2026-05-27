@@ -1,6 +1,9 @@
 import { describe, expect, it } from "bun:test";
 import type { BundleManifest } from "../../src/bundles/types.ts";
-import { assertHostCapabilitiesAvailable } from "../../src/host-resources/index.ts";
+import {
+  assertHostCapabilitiesAvailable,
+  HostManifestGateError,
+} from "../../src/host-resources/index.ts";
 
 // The install gate runs after manifest validation and before the bundle is
 // registered. Its job is to refuse installs of bundles whose host-meta
@@ -186,5 +189,60 @@ describe("assertHostCapabilitiesAvailable", () => {
     } as unknown as BundleManifest;
 
     expect(() => assertHostCapabilitiesAvailable(bad, "version-mismatch")).toThrow(/invalid/i);
+  });
+});
+
+// The boot/re-spawn self-heal in startBundleSource catches gate failures by
+// `instanceof HostManifestGateError` (and only force-refreshes on those), so
+// the typed error + its `reason` discriminator are a load-bearing contract.
+// The human-readable message must stay byte-compatible with the old `Error`
+// form so existing log/assert call sites don't regress.
+describe("HostManifestGateError", () => {
+  // Schema-invalid is the stale-cache incident shape: a cached manifest whose
+  // host-meta fails validation (e.g. a briefing.priority not in the enum).
+  it("throws HostManifestGateError with reason=schema-invalid for a bad host-meta block", () => {
+    const bad = {
+      manifest_version: "0.4",
+      name: "schema-bad",
+      version: "0.0.1",
+      description: "fixture",
+      author: { name: "test" },
+      server: { type: "node", entry_point: "x", mcp_config: { command: "node", args: [] } },
+      _meta: {
+        "ai.nimblebrain/host": {
+          host_version: "1.1",
+          host_capabilities: { "ai.nimblebrain/host-resources": { required: true, oops: "x" } },
+        },
+      },
+    } as unknown as BundleManifest;
+
+    let caught: unknown;
+    try {
+      assertHostCapabilitiesAvailable(bad, "schema-bad");
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(HostManifestGateError);
+    const err = caught as HostManifestGateError;
+    expect(err.reason).toBe("schema-invalid");
+    expect(err.bundleName).toBe("schema-bad");
+    expect(err.message).toContain("Refusing to install");
+  });
+
+  it("throws HostManifestGateError with reason=capability-unavailable for a missing required capability", () => {
+    let caught: unknown;
+    try {
+      assertHostCapabilitiesAvailable(
+        manifestWith({ "ai.nimblebrain/nonexistent": { required: true } }),
+        "cap-bad",
+      );
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(HostManifestGateError);
+    const err = caught as HostManifestGateError;
+    expect(err.reason).toBe("capability-unavailable");
+    expect(err.bundleName).toBe("cap-bad");
+    expect(err.message).toContain("Refusing to install");
   });
 });
