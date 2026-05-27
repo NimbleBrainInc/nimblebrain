@@ -1177,7 +1177,11 @@ export class BundleLifecycleManager {
         }
       })
       .catch((err) => {
-        const msg = err instanceof Error ? err.message : String(err);
+        // The SDK's OAuth error classes (InvalidGrantError, InvalidClientError,
+        // …) carry their detail in `.name` with an EMPTY `.message`, so fall
+        // back to the name — otherwise the surfaced diagnostic is blank, which
+        // is nearly as useless as swallowing it.
+        const msg = err instanceof Error ? err.message || err.name : String(err);
         // Always surface the failure. The interactive path (capturedAuthUrl
         // set) used to be swallowed here: if the background start() failed
         // AFTER the auth URL was returned — the token exchange or reconnect
