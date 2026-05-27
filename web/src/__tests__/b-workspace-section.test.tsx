@@ -47,8 +47,10 @@ const { act } = await import("react");
 const { MemoryRouter, Route, Routes, useLocation } = await import("react-router-dom");
 const { WorkspaceProvider } = await import("../context/WorkspaceContext");
 const { WorkspaceSection } = await import("../components/shell/WorkspaceSection");
+const { ShellProvider } = await import("../context/ShellContext");
 
 import type { WorkspaceInfo } from "../context/WorkspaceContext";
+import type { PlacementEntry } from "../types";
 
 interface Mounted {
   container: HTMLDivElement;
@@ -65,17 +67,35 @@ function NavigationProbe() {
   return null;
 }
 
+// Mirror useShell's forSlot: prefix-match `slot` + `slot.`, priority asc.
+function makeForSlot(placements: PlacementEntry[]) {
+  return (slot: string): PlacementEntry[] =>
+    placements
+      .filter((p) => p.slot === slot || p.slot.startsWith(`${slot}.`))
+      .sort((a, b) => a.priority - b.priority);
+}
+
 async function mount({
   workspaces,
   activeId,
   initialPath = "/",
+  placements,
 }: {
   workspaces: WorkspaceInfo[];
   activeId?: string;
   initialPath?: string;
+  /** When provided, wrap in a ShellProvider so the inline app quick-list
+   *  has placements to render. Omit to exercise the null-shell path. */
+  placements?: PlacementEntry[];
 }): Promise<Mounted> {
   const container = document.createElement("div");
   document.body.appendChild(container);
+
+  const routes = (
+    <Routes>
+      <Route path="*" element={<WorkspaceSection />} />
+    </Routes>
+  );
 
   const root = ReactDOMClient.createRoot(container);
   await act(async () => {
@@ -84,9 +104,21 @@ async function mount({
         <MemoryRouter initialEntries={[initialPath]}>
           <WorkspaceProvider initialWorkspaces={workspaces} initialActiveId={activeId}>
             <NavigationProbe />
-            <Routes>
-              <Route path="*" element={<WorkspaceSection />} />
-            </Routes>
+            {placements ? (
+              <ShellProvider
+                value={{
+                  forSlot: makeForSlot(placements),
+                  mainRoutes: () => [],
+                  // The shell reflects the focused (active) workspace; the
+                  // inline app list gates on shellWorkspaceId === workspaceId.
+                  shellWorkspaceId: activeId,
+                }}
+              >
+                {routes}
+              </ShellProvider>
+            ) : (
+              routes
+            )}
           </WorkspaceProvider>
         </MemoryRouter>
       </React.StrictMode>,
@@ -280,5 +312,127 @@ describe("WorkspaceSection — navigation", () => {
     });
     // toSlug strips the `ws_` prefix: "ws_helix" → "helix".
     expect(mounted.navigationTarget()).toBe("/w/helix/");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// (5) Inline app quick-list
+// ---------------------------------------------------------------------------
+
+function appPlacement(serverName: string, over: Partial<PlacementEntry> = {}): PlacementEntry {
+  return {
+    serverName,
+    slot: "sidebar.apps",
+    resourceUri: `ui://${serverName}/main`,
+    priority: 100,
+    label: serverName,
+    route: serverName,
+    ...over,
+  };
+}
+
+function appRows(container: HTMLElement): HTMLAnchorElement[] {
+  return findAllByTestId(container, "sidebar-workspace-app") as unknown as HTMLAnchorElement[];
+}
+
+describe("WorkspaceSection — inline app quick-list", () => {
+  test("renders the focused workspace's apps, capped at MAX_INLINE_APPS, with a View-all overflow link", async () => {
+    const helix = ws({ id: "ws_helix", name: "Helix" });
+    mounted = await mount({
+      workspaces: [ws({ id: "ws_user_u1", name: "Personal", isPersonal: true }), helix],
+      activeId: "ws_helix",
+      initialPath: "/w/helix/",
+      placements: [
+        appPlacement("collateral", { priority: 10 }),
+        appPlacement("salesforce", { priority: 20 }),
+        appPlacement("apollo", { priority: 30 }),
+        appPlacement("gong", { priority: 40 }),
+        appPlacement("knowledge", { priority: 50 }),
+      ],
+    });
+
+    // 5 apps installed, capped at 4 shown.
+    expect(appRows(mounted.container)).toHaveLength(4);
+    // Container reports the true (uncapped) count for the overflow copy.
+    const group = findAllByTestId(mounted.container, "sidebar-workspace-apps");
+    expect(group).toHaveLength(1);
+    expect(group[0]?.getAttribute("data-app-count")).toBe("5");
+
+    const viewAll = findAllByTestId(mounted.container, "sidebar-workspace-view-all");
+    expect(viewAll).toHaveLength(1);
+    expect(viewAll[0]?.textContent).toContain("View all 5 apps");
+    expect(viewAll[0]?.getAttribute("href")).toBe("/w/helix/");
+  });
+
+  test("no overflow link when apps fit within the cap", async () => {
+    const helix = ws({ id: "ws_helix", name: "Helix" });
+    mounted = await mount({
+      workspaces: [helix],
+      activeId: "ws_helix",
+      initialPath: "/w/helix/",
+      placements: [appPlacement("collateral"), appPlacement("salesforce")],
+    });
+
+    expect(appRows(mounted.container)).toHaveLength(2);
+    expect(findAllByTestId(mounted.container, "sidebar-workspace-view-all")).toHaveLength(0);
+  });
+
+  test("inline apps render only under the focused workspace", async () => {
+    const helix = ws({ id: "ws_helix", name: "Helix" });
+    const personal = ws({ id: "ws_user_u1", name: "Personal", isPersonal: true });
+    mounted = await mount({
+      workspaces: [personal, helix],
+      activeId: "ws_helix",
+      initialPath: "/w/helix/",
+      placements: [appPlacement("collateral")],
+    });
+
+    // Exactly one app group, and it sits under the focused (active) row.
+    expect(findAllByTestId(mounted.container, "sidebar-workspace-apps")).toHaveLength(1);
+  });
+
+  test("each app links into /w/<slug>/app/<route>", async () => {
+    const helix = ws({ id: "ws_helix", name: "Helix" });
+    mounted = await mount({
+      workspaces: [helix],
+      activeId: "ws_helix",
+      initialPath: "/w/helix/",
+      placements: [appPlacement("collateral", { route: "@nb/collateral", label: "Collateral" })],
+    });
+
+    const [row] = appRows(mounted.container);
+    expect(row?.getAttribute("data-app-route")).toBe("@nb/collateral");
+    expect(row?.getAttribute("href")?.startsWith("/w/helix/app/")).toBe(true);
+  });
+
+  test("the app matching the current route is marked active", async () => {
+    const helix = ws({ id: "ws_helix", name: "Helix" });
+    mounted = await mount({
+      workspaces: [helix],
+      activeId: "ws_helix",
+      initialPath: "/w/helix/app/salesforce",
+      placements: [
+        appPlacement("collateral", { priority: 10 }),
+        appPlacement("salesforce", { priority: 20 }),
+      ],
+    });
+
+    const active = appRows(mounted.container).filter(
+      (r) => r.getAttribute("data-is-active") === "true",
+    );
+    expect(active).toHaveLength(1);
+    expect(active[0]?.getAttribute("data-app-route")).toBe("salesforce");
+  });
+
+  test("renders nothing when the shell has no placements (null-shell path)", async () => {
+    const helix = ws({ id: "ws_helix", name: "Helix" });
+    mounted = await mount({
+      workspaces: [helix],
+      activeId: "ws_helix",
+      initialPath: "/w/helix/",
+      // no `placements` → no ShellProvider → useShellContext() is null
+    });
+
+    expect(findAllByTestId(mounted.container, "sidebar-workspace-apps")).toHaveLength(0);
   });
 });

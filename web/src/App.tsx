@@ -21,6 +21,7 @@ import { ChatProvider, useChatConfigContext, useChatContext } from "./context/Ch
 import { ChatPanelProvider, useChatPanelContext } from "./context/ChatPanelContext";
 import { SessionProvider } from "./context/SessionContext";
 import { ShellProvider } from "./context/ShellContext";
+import { WorkspaceAppIconsProvider } from "./context/WorkspaceAppIconsProvider";
 import { SidebarProvider } from "./context/SidebarContext";
 import { ThemeProvider, useTheme } from "./context/ThemeContext.tsx";
 import {
@@ -182,18 +183,20 @@ function BootstrappedShell({
 
   return (
     <SidebarProvider>
-      <ChatProvider initialConfig={initialConfig} currentUserId={currentUserId}>
-        <ChatPanelProvider>
-          <AuthenticatedAppContent
-            token={token}
-            forSlot={forSlot}
-            mainRoutes={mainRoutes}
-            shellWorkspaceId={shellWorkspaceId}
-            refreshShell={refreshShell}
-            onLogout={onLogout}
-          />
-        </ChatPanelProvider>
-      </ChatProvider>
+      <WorkspaceAppIconsProvider token={token} workspaceId={activeWorkspace?.id}>
+        <ChatProvider initialConfig={initialConfig} currentUserId={currentUserId}>
+          <ChatPanelProvider>
+            <AuthenticatedAppContent
+              token={token}
+              forSlot={forSlot}
+              mainRoutes={mainRoutes}
+              shellWorkspaceId={shellWorkspaceId}
+              refreshShell={refreshShell}
+              onLogout={onLogout}
+            />
+          </ChatPanelProvider>
+        </ChatProvider>
+      </WorkspaceAppIconsProvider>
     </SidebarProvider>
   );
 }

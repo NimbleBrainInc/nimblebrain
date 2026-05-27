@@ -2,20 +2,21 @@
 // WorkspaceOverviewPage — workspace landing at `/w/<slug>/`
 //
 // Stage 2 follow-up: the workspace's apps used to surface in a bottom
-// `APPS` group in the sidebar. That section is gone; this page is where
-// app discovery lives now. The sidebar still shows the active workspace's
-// app names inline (quick-access), but the full grid + workspace metadata
-// lives here.
+// `APPS` group in the sidebar. That section is gone; this page is the
+// full app grid + workspace metadata. The sidebar now shows a top-N
+// quick-list under the focused workspace and links here via "View all N
+// apps" (see WorkspaceSection) — both surfaces read the same app set
+// through `workspaceApps()` so the grid and the count agree.
 //
-// v1 scope (per Mat 2026-05-23): header + all-apps grid. Filter chips
-// (All / Pinned / With UI / Tools only), pin/recent state, and "View all
-// N apps" truncation land in follow-ups when the underlying per-user-
-// per-workspace state exists.
+// App data source: `forSlot("sidebar")` → `workspaceApps()`, which keeps
+// the grouped sub-slots (`sidebar.<group>`), one card per placement. The
+// placement registry is already workspace-scoped server-side, so this is
+// the right surface — the same data that fed the old `APPS` group. Icons
+// are the apps' brand icons (registry `icons[].src`) via
+// `useWorkspaceAppIcons`, with a letter-avatar fallback.
 //
-// App data source: `forSlot("sidebar")` filtered to grouped sub-slots
-// (everything under `sidebar.<group>`). The placement registry is
-// already workspace-scoped server-side, so this is the right surface —
-// the same data that used to feed the bottom `APPS` group.
+// Future: filter chips (All / With UI / Tools only) + pin/recency once
+// per-user-per-workspace state exists.
 // ---------------------------------------------------------------------------
 
 import { Settings } from "lucide-react";
@@ -23,11 +24,13 @@ import { useCallback } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import type { BriefingAction } from "../_generated/platform-schemas/home";
 import { BriefingView } from "../components/briefing/BriefingView";
+import { ConnectorIcon } from "../components/connectors/ConnectorIcon";
 import { useShellContext } from "../context/ShellContext";
+import { useWorkspaceAppIcons } from "../context/WorkspaceAppIconsContext";
 import { useWorkspaceContext, type WorkspaceInfo } from "../context/WorkspaceContext";
 import { useWorkspaceBriefing } from "../hooks/useWorkspaceBriefing";
-import { resolveIcon } from "../lib/icons";
 import { cn } from "../lib/utils";
+import { workspaceApps } from "../lib/workspace-apps";
 import { toSlug } from "../lib/workspace-slug";
 import type { PlacementEntry } from "../types";
 
@@ -35,6 +38,7 @@ export function WorkspaceOverviewPage() {
   const { slug } = useParams<{ slug: string }>();
   const wsCtx = useWorkspaceContext();
   const shell = useShellContext();
+  const { iconFor } = useWorkspaceAppIcons();
   const navigate = useNavigate();
 
   const workspace = slug ? wsCtx.workspaces.find((w) => toSlug(w.id) === slug) : undefined;
@@ -75,9 +79,10 @@ export function WorkspaceOverviewPage() {
     );
   }
 
-  // Apps come from the placement registry's grouped sub-slots (anything under
-  // `sidebar.<group>`). Bare `sidebar` items (Home, Conversations, …) are core
-  // nav, not apps.
+  // Apps come from the placement registry's grouped sub-slots via the shared
+  // `workspaceApps()` helper (one card per placement) — so this grid and the
+  // sidebar quick-list agree by construction. Bare `sidebar` items (Home,
+  // Conversations, …) are core nav, not apps.
   //
   // Readiness — not just "is there a shell?". The shell holds ONE workspace's
   // placements at a time and lags a switch (old data stays visible while the
@@ -90,12 +95,7 @@ export function WorkspaceOverviewPage() {
   // registered eagerly server-side, so a matching shell resolves near-instantly
   // — apps don't wait on the (slower, async) briefing.
   const appsReady = shell != null && shell.shellWorkspaceId === workspace.id;
-  const apps =
-    appsReady && shell
-      ? shell
-          .forSlot("sidebar")
-          .filter((p) => p.slot.startsWith("sidebar.") && !p.slot.startsWith("sidebar.bottom"))
-      : [];
+  const apps = appsReady && shell ? workspaceApps(shell.forSlot("sidebar")) : [];
 
   return (
     <div className="h-full overflow-y-auto" data-testid="workspace-overview-page">
@@ -159,6 +159,7 @@ export function WorkspaceOverviewPage() {
               <AppCard
                 key={p.resourceUri}
                 placement={p}
+                iconUrl={iconFor(p.serverName)}
                 onOpen={() => {
                   if (!p.route) return;
                   navigate(`/w/${toSlug(workspace.id)}/app/${p.route}`);
@@ -206,8 +207,16 @@ function AppGridSkeleton() {
   );
 }
 
-function AppCard({ placement, onOpen }: { placement: PlacementEntry; onOpen: () => void }) {
-  const Icon = placement.icon ? resolveIcon(placement.icon) : null;
+function AppCard({
+  placement,
+  iconUrl,
+  onOpen,
+}: {
+  placement: PlacementEntry;
+  iconUrl?: string;
+  onOpen: () => void;
+}) {
+  const label = placement.label ?? placement.route ?? "App";
   return (
     <button
       type="button"
@@ -220,10 +229,8 @@ function AppCard({ placement, onOpen }: { placement: PlacementEntry; onOpen: () 
       )}
     >
       <div className="flex items-center gap-2">
-        {Icon && <Icon className="w-4 h-4 text-muted-foreground shrink-0" />}
-        <div className="truncate text-sm font-medium text-foreground">
-          {placement.label ?? placement.route ?? "App"}
-        </div>
+        <ConnectorIcon name={label} iconUrl={iconUrl} className="h-5 w-5 rounded text-[10px]" />
+        <div className="truncate text-sm font-medium text-foreground">{label}</div>
       </div>
       <div className="text-[10px] font-medium tracking-[0.04em] uppercase text-muted-foreground">
         {describePlacementType(placement)}

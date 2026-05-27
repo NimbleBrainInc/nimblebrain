@@ -10,23 +10,36 @@
 // without inline apps — borrowed the Discord/Slack pattern where the
 // rail IS a parent column; that mismatch broke the metaphor here.
 //
-// Each row: avatar (deterministic letter+color), workspace name, role
-// badge. One click target. Click = setActiveWorkspace + navigate to
-// `/w/<slug>/`. No expand toggle, no inline apps. App discovery lives
-// on the workspace overview page.
+// Each workspace row: avatar (deterministic letter+color), workspace
+// name, role badge. One click target. Click = setActiveWorkspace +
+// navigate to `/w/<slug>/`.
+//
+// Under the FOCUSED workspace (the one matching `activeWorkspace`, whose
+// placements the shell context holds) we render a quick-access list of
+// its top apps — see `WorkspaceInlineApps`. This is the Notion/Linear
+// "teamspace → pages" tree, still not the Discord rail (the section is a
+// sibling of the global nav, not a parent column). Capped at
+// `MAX_INLINE_APPS`; an overflow "View all N apps" link routes to the
+// workspace overview page (the full grid). No pinning / recency yet —
+// it's a priority-ordered top-N. Other rows stay collapsed (their
+// placements aren't loaded).
 //
 // The `+` affordance on the section heading routes to the existing
 // org-workspaces page (no new UX invented).
 // ---------------------------------------------------------------------------
 
-import { Plus } from "lucide-react";
-import { useCallback, useMemo } from "react";
-import { matchPath, useLocation, useNavigate } from "react-router-dom";
+import { ArrowRight, Plus } from "lucide-react";
+import { Fragment, useCallback, useMemo } from "react";
+import { Link, matchPath, useLocation, useNavigate } from "react-router-dom";
+import { useShellContext } from "../../context/ShellContext";
+import { useWorkspaceAppIcons } from "../../context/WorkspaceAppIconsContext";
 import { useWorkspaceContext, type WorkspaceInfo } from "../../context/WorkspaceContext";
 import { cn } from "../../lib/utils";
+import { MAX_INLINE_APPS, workspaceApps } from "../../lib/workspace-apps";
 import { getWorkspaceAvatar } from "../../lib/workspace-avatar";
 import { orderWorkspacesForSidebar } from "../../lib/workspace-order";
 import { toSlug } from "../../lib/workspace-slug";
+import { ConnectorIcon } from "../connectors/ConnectorIcon";
 
 interface WorkspaceSectionProps {
   /**
@@ -122,14 +135,98 @@ export function WorkspaceSection({ collapsed = false }: WorkspaceSectionProps) {
             </div>
           )
         : ordered.map((ws) => (
-            <WorkspaceItem
-              key={ws.id}
-              workspace={ws}
-              isActive={activeRouteSlug === toSlug(ws.id)}
-              onSelect={() => handleSelect(ws)}
-              collapsed={collapsed}
-            />
+            <Fragment key={ws.id}>
+              <WorkspaceItem
+                workspace={ws}
+                isActive={activeRouteSlug === toSlug(ws.id)}
+                onSelect={() => handleSelect(ws)}
+                collapsed={collapsed}
+              />
+              {/* Inline app quick-list under the focused workspace only.
+                  `activeWorkspace` is whose placements the shell context
+                  holds; rendering it under any other row would show the
+                  wrong workspace's apps. Hidden in collapsed (icon-only)
+                  mode — there's no room for labels. */}
+              {!collapsed && ws.id === wsCtx.activeWorkspace?.id && (
+                <WorkspaceInlineApps workspaceId={ws.id} />
+              )}
+            </Fragment>
           ))}
+    </div>
+  );
+}
+
+// Quick-access list of the focused workspace's top apps, rendered under
+// its row. App set + ordering come from the shell placement registry
+// (same source as the overview grid, via `workspaceApps`); brand icons
+// come from `useWorkspaceAppIcons` with a letter-avatar fallback. The
+// workspace is already active here, so each app is a plain `<Link>` into
+// `/w/<slug>/app/<route>` (no setActiveWorkspace dance needed).
+function WorkspaceInlineApps({ workspaceId }: { workspaceId: string }) {
+  const shell = useShellContext();
+  const { iconFor } = useWorkspaceAppIcons();
+  const location = useLocation();
+  const slug = toSlug(workspaceId);
+
+  // Only show apps once the shell's placements reflect THIS workspace.
+  // The shell holds one workspace's placements at a time and lags a
+  // switch (see ShellContext.shellWorkspaceId), so without this gate a
+  // switch would briefly paint the previous workspace's apps under the
+  // newly-focused row. Mirrors the overview grid's readiness check.
+  const ready = shell != null && shell.shellWorkspaceId === workspaceId;
+  const apps = useMemo(
+    () => (ready && shell ? workspaceApps(shell.forSlot("sidebar")) : []),
+    [ready, shell],
+  );
+
+  if (apps.length === 0) return null;
+  const shown = apps.slice(0, MAX_INLINE_APPS);
+  const hasOverflow = apps.length > shown.length;
+
+  return (
+    <div
+      className="ml-4 mr-2 mb-1 mt-px flex flex-col border-l border-sidebar-foreground/10 pl-1"
+      data-testid="sidebar-workspace-apps"
+      data-app-count={apps.length}
+    >
+      {shown.map((p) => {
+        const label = p.label ?? p.route ?? "App";
+        const target = `/w/${slug}/app/${p.route}`;
+        const isActive = !!p.route && location.pathname.startsWith(target);
+        return (
+          <Link
+            key={p.resourceUri}
+            to={target}
+            title={label}
+            data-testid="sidebar-workspace-app"
+            data-app-route={p.route ?? ""}
+            data-is-active={isActive ? "true" : "false"}
+            className={cn(
+              "flex items-center gap-2 text-[13px] transition-colors rounded-md px-2 py-1",
+              isActive
+                ? "bg-sidebar-foreground/10 text-sidebar-foreground"
+                : "text-sidebar-foreground/80 hover:bg-sidebar-foreground/5 hover:text-sidebar-foreground",
+            )}
+          >
+            <ConnectorIcon
+              name={label}
+              iconUrl={iconFor(p.serverName)}
+              className="h-[18px] w-[18px] rounded-[5px] text-[9px]"
+            />
+            <span className="flex-1 truncate">{label}</span>
+          </Link>
+        );
+      })}
+      {hasOverflow && (
+        <Link
+          to={`/w/${slug}/`}
+          data-testid="sidebar-workspace-view-all"
+          className="flex items-center gap-1.5 px-2 py-1 text-[12px] text-sidebar-foreground/55 hover:text-sidebar-foreground transition-colors"
+        >
+          <ArrowRight style={{ width: 12, height: 12 }} className="shrink-0" />
+          <span className="truncate">View all {apps.length} apps</span>
+        </Link>
+      )}
     </div>
   );
 }
