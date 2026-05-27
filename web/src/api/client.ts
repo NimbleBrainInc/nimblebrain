@@ -290,14 +290,14 @@ export interface UploadResourceResult {
  */
 export async function uploadResource(files: File[]): Promise<UploadResourceResult> {
   const formData = new FormData();
-  // Use `files` (plural) to match `streamChatMultipart`; the server
-  // accepts either, but one canonical spelling avoids surprises.
+  // Use `files` (plural) — the server's multipart route accepts either
+  // `files` or `file`, but one canonical spelling avoids surprises.
   for (const file of files) {
     formData.append("files", file, file.name);
   }
 
   // Build headers WITHOUT Content-Type — let the browser set the
-  // multipart boundary. Same pattern as `streamChatMultipart`.
+  // multipart boundary. Standard pattern for FormData uploads.
   const h: Record<string, string> = {};
   if (authToken && authToken !== "__cookie__") {
     h.Authorization = `Bearer ${authToken}`;
@@ -341,7 +341,7 @@ export async function chat(req: ChatRequest): Promise<ChatResult> {
 /**
  * Start a server-authoritative turn. Returns the conversation id immediately;
  * the turn runs to completion on the server regardless of this client. Watch
- * it via `connectConversationStream`. Replaces the streaming `streamChat` path.
+ * it via `connectConversationStream`.
  */
 export async function startChatTurn(req: ChatRequest): Promise<{ conversationId: string }> {
   const res = await fetchWithRefresh(`${API_BASE}/v1/chat/start`, {

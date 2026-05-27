@@ -52,6 +52,13 @@ function checkNoInlineTypeImports(): CheckResult {
 
   for (const file of glob.scanSync({ cwd: SRC_ROOT, absolute: true })) {
     const rel = relative(ROOT, file);
+    // Skip bundle subtrees (their UIs have their own conventions, per the
+    // doc comment) and vendored deps. `bun run build:bundles` installs
+    // node_modules under each bundle's UI, so an unfiltered walk picks
+    // up thousands of vendored `.d.ts` violations that have nothing to
+    // do with our source.
+    if (rel.includes("/node_modules/")) continue;
+    if (rel.startsWith("src/bundles/")) continue;
     const content = readFileSync(file, "utf-8");
     const source = ts.createSourceFile(file, content, ts.ScriptTarget.Latest, true);
 
