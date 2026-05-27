@@ -29,6 +29,18 @@ export function isImage(mimeType: string | undefined): boolean {
   return Boolean(mimeType?.startsWith("image/"));
 }
 
+// Uppercase file extension for the thumbnail caption (e.g. "PDF", "XML").
+// Returns "" when there's no usable extension. Capped at 4 chars so a
+// stray dotted filename can't blow out the label.
+export function fileExtension(filename: string): string {
+  const dot = filename.lastIndexOf(".");
+  if (dot <= 0 || dot >= filename.length - 1) return "";
+  return filename
+    .slice(dot + 1)
+    .toUpperCase()
+    .slice(0, 4);
+}
+
 // Compose-once filter matchers. Used by the type-pill filter and the
 // pill-count tally on each pill.
 export const TYPE_FILTERS: Array<{

@@ -98,6 +98,7 @@ import {
 } from "../orchestrator/index.ts";
 import { type RequestContext, runWithRequestContext } from "../runtime/request-context.ts";
 import type { Runtime } from "../runtime/runtime.ts";
+import { IDENTITY_SOURCES } from "../tools/identity-sources.ts";
 import { McpSource } from "../tools/mcp-source.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
 import {
@@ -982,6 +983,34 @@ function createServer(
     const uri = request.params.uri;
     if (!runtime || !identityId) {
       throw new McpError(RESOURCE_NOT_FOUND_CODE, `Resource not found: ${uri}`, { uri });
+    }
+
+    // Identity sources (files, conversations, automations) are owned by the
+    // user and live OUTSIDE every workspace registry, so the workspace sweep
+    // below can't see them — `files://<id>` would never resolve. Try them
+    // first, within the identity request context so the source reads the
+    // caller's own data (the files source resolves its store via
+    // `getCurrentIdentity()`, mirroring the identity-door tools/call path).
+    const identityReqCtx: RequestContext = {
+      identity: sessionCtx.identity ?? null,
+      scope: { kind: "identity" },
+    };
+    for (const sourceName of IDENTITY_SOURCES) {
+      const src = runtime.getIdentitySource(sourceName);
+      if (!(src instanceof McpSource)) continue;
+      const client = src.getClient();
+      if (!client) continue;
+      try {
+        const result = await runWithRequestContext(identityReqCtx, () =>
+          client.readResource({ uri }),
+        );
+        if (result.contents && result.contents.length > 0) {
+          return result;
+        }
+      } catch {
+        // Not this source, or not found here — fall through to the next
+        // identity source and ultimately the workspace sweep.
+      }
     }
 
     const wsStore = runtime.getWorkspaceStore();

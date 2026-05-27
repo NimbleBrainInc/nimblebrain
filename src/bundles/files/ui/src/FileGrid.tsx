@@ -1,5 +1,6 @@
-import { formatSize, isImage, relativeTime } from "./format";
-import { FileTypeIcon, FolderIcon } from "./icons";
+import { FileThumb } from "./FileThumb";
+import { formatSize, relativeTime } from "./format";
+import { FolderIcon } from "./icons";
 import type { FileEntry } from "./types";
 
 const SKELETON_KEYS = ["s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8"] as const;
@@ -53,13 +54,7 @@ export function FileGrid({ loading, files, searchQuery, hasFilter, onSelect }: P
     <div className="file-grid">
       {files.map((f) => (
         <button type="button" key={f.id} className="file-card" onClick={() => onSelect(f)}>
-          <div className="file-thumb">
-            {isImage(f.mimeType) ? (
-              <img src={`/v1/files/${f.id}`} alt={f.filename} loading="lazy" />
-            ) : (
-              <FileTypeIcon mimeType={f.mimeType} />
-            )}
-          </div>
+          <FileThumb file={f} />
           <div className="file-info">
             <div className="file-name" title={f.filename}>
               {f.filename}

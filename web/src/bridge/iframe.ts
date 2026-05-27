@@ -207,6 +207,10 @@ export function injectCSP(html: string, policy: string): string {
  * - allow-same-origin: Needed for postMessage origin checks
  * - allow-popups: External link opening
  * - allow-popups-to-escape-sandbox: Opened popups are not sandboxed
+ * - allow-downloads: Lets an app save bytes it already holds (e.g. the
+ *   Files app's "Download" action, which fetches via the bridge and saves
+ *   from a blob: URL). Gesture-gated by the browser; without it Chromium
+ *   silently blocks the download.
  *
  * Explicitly NOT allowed: allow-forms, allow-top-navigation, allow-modals.
  */
@@ -223,6 +227,7 @@ export function createAppIframe(
     "allow-same-origin",
     "allow-popups",
     "allow-popups-to-escape-sandbox",
+    "allow-downloads",
   );
 
   // Permissions Policy: clipboard-write always on (gesture-gated by browser).

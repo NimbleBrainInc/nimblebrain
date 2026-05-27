@@ -1,7 +1,8 @@
-import { useEffect, useRef } from "react";
-import { formatSize, isImage } from "./format";
-import { FileTypeIcon } from "./icons";
+import { useEffect, useRef, useState } from "react";
+import { fileExtension, formatSize, isImage } from "./format";
+import { DownloadIcon, FileTypeIcon } from "./icons";
 import type { FileEntry } from "./types";
+import { useFileDownload, useFileObjectUrl } from "./useFileObjectUrl";
 
 interface Props {
   file: FileEntry;
@@ -23,6 +24,9 @@ interface Props {
  */
 export function DetailOverlay({ file, deleting, onClose, onDelete }: Props) {
   const dialogRef = useRef<HTMLDialogElement>(null);
+  const download = useFileDownload();
+  const [downloading, setDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState(false);
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -32,6 +36,19 @@ export function DetailOverlay({ file, deleting, onClose, onDelete }: Props) {
       if (dialog.open) dialog.close();
     };
   }, []);
+
+  async function handleDownload() {
+    if (downloading) return;
+    setDownloading(true);
+    setDownloadError(false);
+    try {
+      await download(file);
+    } catch {
+      setDownloadError(true);
+    } finally {
+      setDownloading(false);
+    }
+  }
 
   return (
     // biome-ignore lint/a11y/useKeyWithClickEvents: <dialog> handles Esc natively via onClose; the click handler is purely a backdrop-dismiss affordance.
@@ -54,11 +71,7 @@ export function DetailOverlay({ file, deleting, onClose, onDelete }: Props) {
         </div>
 
         <div className="detail-preview">
-          {isImage(file.mimeType) ? (
-            <img src={`/v1/files/${file.id}`} alt={file.filename} />
-          ) : (
-            <FileTypeIcon mimeType={file.mimeType} size={56} />
-          )}
+          <DetailPreview file={file} />
         </div>
 
         <div className="detail-fields">
@@ -85,13 +98,48 @@ export function DetailOverlay({ file, deleting, onClose, onDelete }: Props) {
           )}
         </div>
 
+        {downloadError && <div className="detail-error">Couldn’t download this file.</div>}
+
         <div className="detail-actions">
+          <button
+            type="button"
+            className="btn-primary"
+            disabled={downloading}
+            onClick={handleDownload}
+          >
+            <DownloadIcon size={14} />
+            {downloading ? "Downloading…" : "Download"}
+          </button>
           <button type="button" className="btn-danger" disabled={deleting} onClick={onDelete}>
             {deleting ? "Deleting…" : "Delete File"}
           </button>
         </div>
       </div>
     </dialog>
+  );
+}
+
+/**
+ * Full-size preview. Images load through the bridge (same `files://`
+ * resource path as the grid thumbnails); non-images — and images that
+ * fail to load — show the type icon with the extension caption.
+ */
+function DetailPreview({ file }: { file: FileEntry }) {
+  const image = isImage(file.mimeType);
+  const { url, state } = useFileObjectUrl(file.id, file.mimeType, image);
+
+  if (image && url !== null && state === "loaded") {
+    return <img src={url} alt={file.filename} />;
+  }
+  if (image && state !== "error") {
+    return <div className="detail-shimmer" />;
+  }
+  const ext = fileExtension(file.filename);
+  return (
+    <>
+      <FileTypeIcon mimeType={file.mimeType} size={56} />
+      {ext && <span className="detail-preview-ext">{ext}</span>}
+    </>
   );
 }
 
