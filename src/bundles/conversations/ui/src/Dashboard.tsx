@@ -95,6 +95,43 @@ export function Dashboard() {
     }
   });
 
+  // Live conversation-title updates from auto-title generation.
+  //
+  // The host (App.tsx) forwards each `conversation.title` SSE event to this
+  // iframe via a `synapse/conversation-title` postMessage. We patch the
+  // matching row's title in-place instead of refetching the whole list — the
+  // runtime used to fire an extra `data.changed` on title-resolve to force a
+  // refetch, but that triggered a full reload of every row. Listening
+  // directly is cheaper and updates a single row without flicker.
+  //
+  // Raw `window.addEventListener` (not via the synapse SDK) because the SDK
+  // doesn't know this method; the host owns both ends, so the side channel
+  // is safe. The SDK's own `message` listener ignores envelopes whose
+  // `method` it doesn't recognize, so there's no double-handling.
+  useEffect(() => {
+    const handler = (event: MessageEvent) => {
+      const msg = event.data;
+      if (!msg || typeof msg !== "object") return;
+      if (msg.jsonrpc !== "2.0" || msg.method !== "synapse/conversation-title") return;
+      const params = msg.params;
+      if (!params || typeof params !== "object") return;
+      const conversationId = (params as { conversationId?: unknown }).conversationId;
+      const title = (params as { title?: unknown }).title;
+      if (typeof conversationId !== "string" || typeof title !== "string") return;
+      setConversations((prev) => {
+        let changed = false;
+        const next = prev.map((c) => {
+          if (c.id !== conversationId) return c;
+          changed = true;
+          return { ...c, title };
+        });
+        return changed ? next : prev;
+      });
+    };
+    window.addEventListener("message", handler);
+    return () => window.removeEventListener("message", handler);
+  }, []);
+
   const handleSelectFilter = useCallback(
     (key: FilterKey) => {
       setActiveFilter(key);

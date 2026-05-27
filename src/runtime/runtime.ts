@@ -1436,11 +1436,16 @@ export class Runtime {
 
     // Fire-and-forget title generation on first turn (use "fast" slot for cost
     // savings). Decoupled from the turn lifecycle: when it resolves we persist
-    // the title, then broadcast `conversation.title` on the global SSE so any
-    // live viewer's panel header updates in place, and refresh the
-    // conversations list. The global channel (not the turn stream, which the
-    // client closes on `done`) means delivery is reliable after the turn ends
-    // and across tabs — routed to the right conversation by `conversationId`.
+    // the title and broadcast `conversation.title` on the global SSE.
+    //
+    // No `emitConversationsChanged()` here — the conversation-list iframe
+    // listens for `conversation.title` directly (forwarded via postMessage
+    // by the web shell) and patches the matching row in-place. Firing
+    // `data.changed` on title resolve used to trigger a full list refetch,
+    // which was wasteful and caused row flicker. The global channel (not
+    // the turn stream, which the client closes on `done`) means delivery
+    // is reliable after the turn ends and across tabs — routed to the
+    // right conversation by `conversationId`.
     if (conversation.title === null) {
       const titleModel = this.resolveModelFn(this.getModelSlot("fast"));
       const titleInput =
@@ -1453,7 +1458,6 @@ export class Runtime {
             type: "conversation.title",
             data: { conversationId: conversation.id, title, wsId },
           });
-          this.emitConversationsChanged();
         },
         (err) => console.error("[runtime] title generation failed:", err),
       );

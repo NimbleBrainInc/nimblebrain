@@ -38,6 +38,7 @@ import {
 } from "./context/WorkspaceContext";
 import { chatStore } from "./hooks/chat-store";
 import { useDataSync } from "./hooks/useDataSync";
+import { forwardConversationTitleToIframes } from "./lib/forward-conversation-title";
 import { useEvents } from "./hooks/useEvents";
 import { useShell } from "./hooks/useShell";
 import { bootstrapWorkspacesToInfo } from "./lib/bootstrap";
@@ -229,9 +230,12 @@ function AuthenticatedAppContent({
     onDataChanged,
     onConfigChanged: () => config.refreshConfig(),
     // Auto-title arrived — update the matching conversation's slice so the
-    // chat panel header reflects it live (routed by conversationId).
+    // chat panel header reflects it live (routed by conversationId), and
+    // forward to the conversations-list iframe so its sidebar row updates
+    // in place without a full list refetch.
     onConversationTitle: ({ conversationId, title }) => {
       chatStore.setTitle(conversationId, title);
+      forwardConversationTitleToIframes(conversationId, title);
     },
     // Bundle install / uninstall changes the placement set; refetch
     // the shell so the sidebar's Apps group reflects the new state
