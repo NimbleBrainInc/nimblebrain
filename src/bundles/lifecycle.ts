@@ -94,9 +94,11 @@ export class BundleLifecycleManager {
   private instances = new Map<string, BundleInstance>();
   private placementRegistry: PlacementRegistry | null = null;
   /**
-   * `${serverName}|${wsId}` keys for upgrades currently in flight. Guards
-   * against a concurrent double-upgrade of the same instance, which would
-   * `removeSource` then race two `addSource` calls and leave a torn state.
+   * Bundle names with an org-wide upgrade currently in flight, keyed by
+   * `bundleName` — `upgradeApp` swaps the app across every workspace at once,
+   * so the guard is per-app, not per-(serverName, wsId). Prevents a concurrent
+   * double-upgrade, which would `removeSource` then race two `addSource` calls
+   * and leave a torn state.
    */
   private upgradesInFlight = new Set<string>();
   /**
@@ -664,20 +666,26 @@ export class BundleLifecycleManager {
       await registry.removeSource(serverName);
     }
 
-    const { sourceName: newSourceName, manifest } = await startBundleSource(
-      { name, serverName },
-      registry,
-      this.eventSink,
-      configDir,
-      {
+    // The old source is already removed; from here any failure leaves the
+    // instance with no live source, so every failure path must transition it to
+    // `dead` before propagating — otherwise the instance stays `running` while
+    // its tools 404 until the next boot self-heals (torn state).
+    let spawn: Awaited<ReturnType<typeof startBundleSource>>;
+    try {
+      spawn = await startBundleSource({ name, serverName }, registry, this.eventSink, configDir, {
         dataDir: bundleDataDir,
         workspaceContext: wsContext,
         bundleMcp: this.resolveBundleMcpDeps(wsId),
-      },
-    );
+      });
+    } catch (err) {
+      // Spawn failed: bad binary, prepareServer error, or the refreshed manifest
+      // hit the terminal host-manifest gate.
+      this.transition(instance, "dead");
+      throw err;
+    }
+    const { sourceName: newSourceName, manifest } = spawn;
     if (!manifest) {
-      // Named bundles always carry a manifest; null is a precondition
-      // violation. The old source is already gone — surface to the caller.
+      // Named bundles always carry a manifest; null is a precondition violation.
       this.transition(instance, "dead");
       throw new Error(`No manifest found for ${name} after upgrade fetch`);
     }

@@ -590,7 +590,7 @@ async function handleListInstalled(
 
   // Workspace-scope entries: walk every bundle visible in the workspace
   // registry (includes local stdio, local URL, Synapse apps, and remote
-  // OAuth). This is the same view the About tab uses via list_apps.
+  // OAuth). The `list_apps` tool surfaces the same registry-installed set.
   if ((scope === "all" || scope === "workspace") && wsId) {
     const registry = ctx.runtime.getRegistryForWorkspace(wsId);
     // One workspace fetch covers oauthOperatorApps lookups for every
@@ -1331,34 +1331,16 @@ async function handleInstallMpak(
     }
   }
 
-  // Force-refresh the mpak cache before spawning, but ONLY when a copy is
-  // already cached. The cache dir is keyed by name with no version, so a
-  // previously-pulled (now stale) copy would otherwise be reused silently
-  // instead of the latest published version — the staleness half of the
-  // incident this revival fixes. `installBundleInWorkspace → startBundleSource`
-  // only READS the cache (`getBundleManifest` + `prepareServer`), so the pull
-  // must happen here. A first-time install has nothing cached, so prepareServer's
-  // normal cold download already fetches the latest — forcing there would just
-  // double-pull (and hit the network needlessly in tests). Best-effort: if the
-  // registry is unreachable, fall back to the cached copy (an offline reinstall
-  // should still work; the host-manifest gate downstream protects correctness).
-  const mpak = getMpak(join(ctx.runtime.getWorkDir(), "apps"));
-  let alreadyCached: boolean;
-  try {
-    alreadyCached = mpak.bundleCache.getBundleMetadata(bundleName) != null;
-  } catch {
-    // Corrupt cache metadata — treat as cached so the force-pull below replaces it.
-    alreadyCached = true;
-  }
-  if (alreadyCached) {
-    try {
-      await mpak.bundleCache.loadBundle(bundleName, { force: true });
-    } catch (err) {
-      log.warn(
-        `[connectors] force-refresh of ${bundleName} failed (${err instanceof Error ? err.message : String(err)}); using cached copy.`,
-      );
-    }
-  }
+  // Install does NOT force-refresh the shared mpak cache. App *version* is an
+  // org-global concern: the cache is keyed by name only (no version) and shared
+  // across every workspace, so a force-pull here would let a workspace admin
+  // silently bump every workspace's version on its next respawn — bypassing the
+  // org_admin `manage_apps.upgrade` gate. Instead, a ws_admin install adopts
+  // whatever version the org already has cached; a first-ever install cold-
+  // downloads the current release via `prepareServer`. The original "stuck on a
+  // bad version" incident stays cured WITHOUT a force-pull here: a gate-failing
+  // cached manifest self-heals on spawn (`startBundleSource` force-repulls on a
+  // HostManifestGateError, on the install path too).
 
   // Persist the slugified canonical reverse-DNS form as the BundleRef's
   // serverName so this install — and every lookup that follows — uses

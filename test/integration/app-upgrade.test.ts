@@ -142,7 +142,10 @@ describe("manage_apps upgrade", () => {
     expect(extractText(r.content)).toContain("not installed in any workspace");
   });
 
-  test("reports already-latest as a successful no-op", async () => {
+  // No registry is reachable, so checkForUpdate returns null and upgrade
+  // collapses to the no-op branch (which renders "already at the latest
+  // version"). The confirmed already-at-latest-WITH-registry path is manual.
+  test("upgrade is a successful no-op when no newer version is resolvable", async () => {
     h.lifecycle.seedInstance("echo", "@nimblebraininc/echo", { name: "@nimblebraininc/echo" }, REG_META, "ws_a");
     const r = await h.toolFor(ADMIN).handler({ action: "upgrade", bundleName: "@nimblebraininc/echo" });
     expect(r.isError).toBe(false);

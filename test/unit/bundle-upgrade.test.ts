@@ -91,7 +91,7 @@ describe("BundleLifecycleManager.upgradeApp", () => {
     );
   });
 
-  it("is a no-op (from === to, no event) when no newer version is published", async () => {
+  it("is a no-op (from === to, no event) when no update is resolvable (nothing cached / registry unreachable)", async () => {
     const events: EngineEvent[] = [];
     const sink = { emit: (e: EngineEvent) => events.push(e) };
     const lifecycle = new BundleLifecycleManager(sink, undefined, false, mpakHome);
