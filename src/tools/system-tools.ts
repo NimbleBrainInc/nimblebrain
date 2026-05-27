@@ -9,6 +9,7 @@ import { textContent } from "../engine/content-helpers.ts";
 import type { EventSink, ToolPromotionControls, ToolResult, ToolSchema } from "../engine/types.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import type { Skill } from "../skills/types.ts";
+import { createManageAppsTool } from "./app-tools.ts";
 import { createManageConnectorsTool } from "./connector-tools.ts";
 import { buildCoreResourceMap } from "./core-resources/index.ts";
 import { createCoreToolDefs } from "./core-source.ts";
@@ -207,6 +208,15 @@ export async function createSystemTools(
     );
     systemToolDefs.push(
       createManageRegistriesTool({
+        runtime,
+        getIdentity: manageWorkspacesCtx.getIdentity,
+      }),
+    );
+    // Org-scoped app version management (org_admin). Separate from the
+    // per-workspace `manage_connectors` because an app's version is global
+    // (shared name-keyed mpak cache) — see app-tools.ts.
+    systemToolDefs.push(
+      createManageAppsTool({
         runtime,
         getIdentity: manageWorkspacesCtx.getIdentity,
       }),

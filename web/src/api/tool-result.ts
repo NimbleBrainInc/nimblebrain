@@ -11,8 +11,8 @@ import type { ToolCallResult } from "../types";
  *   3. Otherwise fall back to JSON-parsing `content[0].text`.
  *   4. Empty response → throw.
  *
- * Callers that want soft-fail semantics (e.g. AboutTab's "show empty state
- * if list_apps fails") should catch and handle.
+ * Callers that want soft-fail semantics (e.g. OrgAboutTab degrading to "no
+ * updates" if the registry check fails) should catch and handle.
  */
 export function parseToolResult<T>(res: ToolCallResult): T {
   if (res.isError) {

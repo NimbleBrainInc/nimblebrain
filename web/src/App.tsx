@@ -37,10 +37,10 @@ import { recoverFromWorkspaceError } from "./lib/workspace-recovery";
 import { toSlug } from "./lib/workspace-slug";
 import { GlobalHomePage } from "./pages/GlobalHomePage";
 import { ProfilePage } from "./pages/ProfilePage";
-import { AboutTab } from "./pages/settings/AboutTab";
 import { ConnectorBrowsePage } from "./pages/settings/ConnectorBrowsePage";
 import { ConnectorDetailPage } from "./pages/settings/ConnectorDetailPage";
 import { ModelTab } from "./pages/settings/ModelTab";
+import { OrgAboutTab } from "./pages/settings/OrgAboutTab";
 import { OrgRegistriesTab } from "./pages/settings/OrgRegistriesTab";
 import { OrgSettingsPage } from "./pages/settings/OrgSettingsPage";
 import { OrgUsageTab } from "./pages/settings/OrgUsageTab";
@@ -447,7 +447,7 @@ function AuthenticatedAppContent({
                   </RouteGuard>
                 }
               />
-              <Route path="about" element={<AboutTab />} />
+              <Route path="about" element={<OrgAboutTab />} />
             </Route>
           </Routes>
         </ErrorBoundary>

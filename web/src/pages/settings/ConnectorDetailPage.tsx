@@ -1,12 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
-  checkConnectorUpdates,
-  type ConnectorUpdate,
   getInstalledConnector,
   type InstalledConnector,
   uninstallConnector,
-  upgradeConnector,
 } from "../../api/client";
 import { BundleCredentialsModal } from "../../components/connectors/BundleCredentialsModal";
 import { ConnectorStatusHero } from "../../components/connectors/ConnectorStatusHero";
@@ -50,9 +47,6 @@ export function ConnectorDetailPage({ mode }: { mode: "personal" | "workspace" }
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [acting, setActing] = useState<string | null>(null);
-  // Available registry update for THIS connector, or null. Populated
-  // best-effort by `refresh` — a failed update check never blocks the page.
-  const [update, setUpdate] = useState<ConnectorUpdate | null>(null);
   const [configureModalOpen, setConfigureModalOpen] = useState(false);
   // Two-step uninstall: first click arms the button (label changes
   // to "Click again to confirm"), second click runs. Replaces
@@ -76,14 +70,6 @@ export function ConnectorDetailPage({ mode }: { mode: "personal" | "workspace" }
       // arg.
       const res = await getInstalledConnector(serverName);
       setInstalled(res.installed);
-      // Update check is best-effort and registry-only (server-side filter):
-      // a registry hiccup or a non-registry connector just means "no update".
-      try {
-        const upd = await checkConnectorUpdates();
-        setUpdate(upd.updates.find((u) => u.serverName === serverName) ?? null);
-      } catch {
-        setUpdate(null);
-      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -94,22 +80,6 @@ export function ConnectorDetailPage({ mode }: { mode: "personal" | "workspace" }
   useEffect(() => {
     refresh();
   }, [refresh]);
-
-  const onUpgrade = async () => {
-    if (!installed) return;
-    setActing("upgrade");
-    setError(null);
-    try {
-      await upgradeConnector(installed.serverName);
-      // refresh() re-fetches the connector and re-runs the update check, so a
-      // successful upgrade clears the Update button on its own.
-      await refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setActing(null);
-    }
-  };
 
   const onUninstall = async () => {
     if (!installed) return;
@@ -179,17 +149,6 @@ export function ConnectorDetailPage({ mode }: { mode: "personal" | "workspace" }
               Docs ↗
             </a>
           )}
-          {canManage && update && (
-            <button
-              type="button"
-              onClick={onUpgrade}
-              disabled={acting !== null}
-              title={`Update ${update.current} → ${update.latest}`}
-              className="text-xs px-3 py-1.5 rounded border border-primary text-primary bg-background hover:bg-primary/10 disabled:opacity-60"
-            >
-              {acting === "upgrade" ? "Updating…" : `Update → ${update.latest}`}
-            </button>
-          )}
           {showHeaderConfigure && (
             <button
               type="button"
@@ -220,6 +179,19 @@ export function ConnectorDetailPage({ mode }: { mode: "personal" | "workspace" }
           )}
         </div>
       </div>
+
+      {/* Registry apps are version-managed at the org level (the mpak cache is
+          shared platform-wide), so upgrades don't live here — point admins to
+          Org → About. Connect/auth/configure stays on this page. */}
+      {installed.installSource === "registry" && (
+        <p className="text-xs text-muted-foreground">
+          {installed.version ? `v${installed.version} · ` : ""}app version is managed in{" "}
+          <Link to="/org/about" className="text-primary underline-offset-4 hover:underline">
+            Org → About
+          </Link>
+          .
+        </p>
+      )}
 
       {/* Hero — title block plus a status row that absorbs the
           primary CTA. Quiet when ready; anchored when there's

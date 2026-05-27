@@ -664,6 +664,8 @@ export interface InstalledConnector {
   bundleName: string;
   version: string;
   type: "remote" | "local";
+  /** Install channel — `registry` apps are version-managed at the org level. */
+  installSource?: "registry" | "local" | "remote";
   state: string;
   scope: "workspace";
   /** Whether this connector exposes a UI surface (auto-mounts a sidebar entry). */
@@ -810,37 +812,52 @@ export async function uninstallConnector(
   return unwrapStructured(result, "uninstall");
 }
 
-/** One available update for a registry-installed connector. */
-export interface ConnectorUpdate {
-  serverName: string;
+/**
+ * One installed registry app, aggregated org-wide (deduped by bundle name).
+ * App version is org-global because the mpak cache is shared platform-wide —
+ * see `src/tools/app-tools.ts`.
+ */
+export interface OrgApp {
+  bundleName: string;
+  version: string;
+  trustScore: number | null;
+  workspaceCount: number;
+  workspaceIds: string[];
+}
+
+/** One available app update. */
+export interface AppUpdate {
   bundleName: string;
   current: string;
   latest: string;
 }
 
-/**
- * Poll the mpak registry for newer versions of this workspace's
- * registry-installed connectors. On-demand (the Connectors UI calls it once on
- * mount) — server-side this is registry-only, so remote/local connectors never
- * appear. Best-effort: per-bundle registry failures are swallowed server-side.
- */
-export async function checkConnectorUpdates(): Promise<{ updates: ConnectorUpdate[] }> {
-  const result = await callTool("nb", "manage_connectors", { action: "check_updates" });
+/** List installed registry apps across the org (org_admin). */
+export async function listApps(): Promise<{ apps: OrgApp[] }> {
+  const result = await callTool("nb", "manage_apps", { action: "list" });
+  return unwrapStructured(result, "list");
+}
+
+/** Check the registry for newer app versions across the org (org_admin). */
+export async function checkAppUpdates(): Promise<{ updates: AppUpdate[] }> {
+  const result = await callTool("nb", "manage_apps", { action: "check_updates" });
   return unwrapStructured(result, "check_updates");
 }
 
 /**
- * Upgrade a registry-installed connector to the latest published version
- * (hot-swap). Workspace-admin gated server-side. `upgraded` is false when the
- * bundle was already at the latest version.
+ * Upgrade an app to its latest version across every workspace that has it
+ * (org_admin). `upgraded` is false when already at latest; `workspaces` reports
+ * per-workspace success.
  */
-export async function upgradeConnector(
-  serverName: string,
-): Promise<{ ok: boolean; upgraded: boolean; from: string; to: string; serverName: string }> {
-  const result = await callTool("nb", "manage_connectors", {
-    action: "upgrade",
-    serverName,
-  });
+export async function upgradeApp(bundleName: string): Promise<{
+  ok: boolean;
+  upgraded: boolean;
+  bundleName: string;
+  from: string;
+  to: string;
+  workspaces: Array<{ wsId: string; ok: boolean; error?: string }>;
+}> {
+  const result = await callTool("nb", "manage_apps", { action: "upgrade", bundleName });
   return unwrapStructured(result, "upgrade");
 }
 

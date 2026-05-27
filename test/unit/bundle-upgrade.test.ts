@@ -71,19 +71,23 @@ describe("seedInstance installSource derivation", () => {
 // is covered in integration; here we pin the cheap, network-free branches.
 // ---------------------------------------------------------------------------
 
-describe("BundleLifecycleManager.upgrade", () => {
-  it("throws for an unknown instance", async () => {
+describe("BundleLifecycleManager.upgradeApp", () => {
+  const getRegistry = () => new ToolRegistry();
+
+  it("throws when the app isn't installed in any workspace", async () => {
     const lifecycle = new BundleLifecycleManager(noopSink, undefined, false, mpakHome);
-    await expect(lifecycle.upgrade("nope", wsId, new ToolRegistry())).rejects.toThrow(
-      /No bundle instance found/,
+    await expect(lifecycle.upgradeApp("@nope/none", getRegistry)).rejects.toThrow(
+      /not installed in any workspace/,
     );
   });
 
-  it("rejects a non-registry (local) install", async () => {
+  it("ignores non-registry installs (local-only app has no registry target)", async () => {
     const lifecycle = new BundleLifecycleManager(noopSink, undefined, false, mpakHome);
+    // bundleName for a path install is the path; it's installSource=local, so
+    // upgradeApp finds no registry target and treats it as not installed.
     lifecycle.seedInstance("local-dev", "/dev/foo", { path: "/dev/foo" }, undefined, wsId);
-    await expect(lifecycle.upgrade("local-dev", wsId, new ToolRegistry())).rejects.toThrow(
-      /not a registry install/,
+    await expect(lifecycle.upgradeApp("/dev/foo", getRegistry)).rejects.toThrow(
+      /not installed in any workspace/,
     );
   });
 
@@ -91,20 +95,22 @@ describe("BundleLifecycleManager.upgrade", () => {
     const events: EngineEvent[] = [];
     const sink = { emit: (e: EngineEvent) => events.push(e) };
     const lifecycle = new BundleLifecycleManager(sink, undefined, false, mpakHome);
-    // Registry instance, but nothing is in the mpak cache and no registry is
-    // reachable → checkForUpdate returns null → upgrade returns early without
-    // tearing down or re-spawning the source.
-    lifecycle.seedInstance(
-      "upgradeable",
-      "@testscope/upgradeable",
-      { name: "@testscope/upgradeable" },
-      { version: "0.1.0", ui: null, briefing: null, type: "plain", httpProxy: null },
-      wsId,
-    );
-    const registry = new ToolRegistry();
-    const result = await lifecycle.upgrade("upgradeable", wsId, registry);
+    // Registry instances in two workspaces, but nothing is cached and no
+    // registry is reachable → checkForUpdate returns null → upgradeApp returns
+    // early without force-pulling or re-spawning anything.
+    for (const ws of ["ws_a", "ws_b"]) {
+      lifecycle.seedInstance(
+        "upgradeable",
+        "@testscope/upgradeable",
+        { name: "@testscope/upgradeable" },
+        { version: "0.1.0", ui: null, briefing: null, type: "plain", httpProxy: null },
+        ws,
+      );
+    }
+    const result = await lifecycle.upgradeApp("@testscope/upgradeable", getRegistry);
     expect(result.from).toBe("0.1.0");
     expect(result.to).toBe("0.1.0");
+    expect(result.workspaces).toEqual([]);
     expect(events.filter((e) => e.type === "bundle.upgraded")).toHaveLength(0);
   });
 });

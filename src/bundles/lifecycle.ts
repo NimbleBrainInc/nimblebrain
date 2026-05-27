@@ -627,139 +627,178 @@ export class BundleLifecycleManager {
   // ---- Upgrade -----------------------------------------------------------
 
   /**
-   * Upgrade a registry-installed bundle to the latest published version.
+   * Re-spawn one workspace's instance from whatever version is currently in
+   * the (shared, name-keyed) mpak cache. Assumes the caller has ALREADY
+   * force-pulled the desired version into the cache — this does NOT contact the
+   * registry. Tears down the old source and starts the new one, preserving the
+   * workspace data dir, credentials, and config entry; refreshes instance
+   * metadata, placements, and automations; emits `bundle.upgraded`.
    *
-   * Best-effort hot-swap: force-pulls the latest artifact from mpak (the
-   * name-only cache is bypassed via `{ force: true }`, so a newer version
-   * actually lands), tears down the running source, then spawns the new
-   * version. Brief sub-second unavailability during the swap — the registry
-   * rejects duplicate source names, so we can't hold both at once.
+   * Best-effort hot-swap: the registry rejects duplicate source names, so the
+   * old source is removed before the new one starts (sub-second gap). If the
+   * new spawn fails the instance is left `dead` and the error propagates.
    *
-   * Looked up by `serverName` (not re-derived from the package name) so it
-   * works for canonical reverse-DNS serverNames persisted at install, not
-   * just legacy short slugs. The package name for SDK calls comes from
-   * `instance.bundleName`.
-   *
-   * No `protected` guard — protected bundles can be upgraded (only uninstall
-   * is blocked) so they aren't frozen out of security patches.
-   *
-   * Preserves the workspace-scoped data dir, credentials, and config entry.
-   * Emits `bundle.upgraded` on a real version change; a no-op (already latest)
-   * returns `from === to` and emits nothing.
+   * Looked up by the instance's persisted `serverName` (not re-derived) so it
+   * works for canonical reverse-DNS serverNames, not just legacy short slugs.
    */
-  async upgrade(
-    serverName: string,
-    wsId: string,
+  private async respawnInstanceToCachedVersion(
+    instance: BundleInstance,
     registry: ToolRegistry,
   ): Promise<{ from: string; to: string; serverName: string }> {
-    const key = `${serverName}|${wsId}`;
-    const instance = this.instances.get(key);
-    if (!instance) {
-      throw new Error(`No bundle instance found for "${serverName}" in workspace "${wsId}"`);
-    }
-    if (instance.installSource !== "registry") {
-      throw new Error(
-        `Bundle "${serverName}" is not a registry install (${instance.installSource ?? "unknown"}) ` +
-          "— only registry bundles can be upgraded from mpak.",
-      );
-    }
-    if (this.upgradesInFlight.has(key)) {
-      throw new Error(`Upgrade already in progress for "${serverName}" in workspace "${wsId}"`);
+    const wsId = instance.wsId;
+    const serverName = instance.serverName;
+    const name = instance.bundleName;
+    const fromVersion = instance.version;
+
+    // Resolve workspace-scoped paths exactly as installNamed does, so the
+    // re-spawned subprocess writes to the same data dir and resolves the same
+    // credentials.
+    const nbWorkDir = defaultWorkDir();
+    const wsContext = new WorkspaceContext({ wsId, workDir: nbWorkDir });
+    const configDir = this.configPath ? dirname(this.configPath) : undefined;
+    const bundleDataDir = resolveBundleDataDirForRef(nbWorkDir, wsId, { name }, configDir);
+
+    // Remove the old source, then spawn the new version. Carry the persisted
+    // serverName through so the re-spawned source keeps the same registry key.
+    if (registry.hasSource(serverName)) {
+      await registry.removeSource(serverName);
     }
 
-    this.upgradesInFlight.add(key);
+    const { sourceName: newSourceName, manifest } = await startBundleSource(
+      { name, serverName },
+      registry,
+      this.eventSink,
+      configDir,
+      {
+        dataDir: bundleDataDir,
+        workspaceContext: wsContext,
+        bundleMcp: this.resolveBundleMcpDeps(wsId),
+      },
+    );
+    if (!manifest) {
+      // Named bundles always carry a manifest; null is a precondition
+      // violation. The old source is already gone — surface to the caller.
+      this.transition(instance, "dead");
+      throw new Error(`No manifest found for ${name} after upgrade fetch`);
+    }
+
+    // Update instance metadata in place.
+    const isUpjack = manifest._meta?.["ai.nimblebrain/upjack"] != null;
+    instance.serverName = newSourceName;
+    instance.version = manifest.version;
+    instance.description = manifest.description;
+    instance.type = isUpjack ? "upjack" : "plain";
+    instance.ui = extractUiMeta(manifest);
+    instance.briefing = extractBriefing(manifest);
+    instance.trustScore = await fetchTrustScore(name, this.mpakHome);
+    this.transition(instance, "running");
+
+    // Re-key the instance map if the spawned serverName diverged (defensive —
+    // it derives from the same persisted ref so it normally matches).
+    if (newSourceName !== serverName) {
+      this.instances.delete(`${serverName}|${wsId}`);
+      this.instances.set(`${newSourceName}|${wsId}`, instance);
+    }
+
+    // Always unregister stale placements first, then re-register whatever the
+    // new manifest declares. Without the unconditional unregister, a version
+    // that drops all placements would leave stale nav entries behind.
+    this.placementRegistry?.unregister(serverName, wsId);
+    this.registerPlacements(newSourceName, instance.ui, wsId);
+
+    // Clean stale automations, then sync from the new manifest — matching the
+    // uninstall→install ordering so a schedule dropped between versions stops
+    // running with a stale prompt.
+    await this.removeBundleAutomations(name, registry);
+    await this.syncBundleAutomations(manifest, name, registry);
+
+    this.eventSink.emit({
+      type: "bundle.upgraded",
+      data: {
+        wsId,
+        serverName: newSourceName,
+        bundleName: name,
+        fromVersion,
+        toVersion: manifest.version,
+      },
+    });
+
+    return { from: fromVersion, to: manifest.version, serverName: newSourceName };
+  }
+
+  /**
+   * Upgrade a registry app to its latest published version across EVERY
+   * workspace that has it installed.
+   *
+   * App *version* is an org-global concern: the mpak cache is keyed by name
+   * only (no version) and shared platform-wide, so a single force-pull updates
+   * the artifact for everyone. We therefore pull once, then re-spawn every
+   * workspace's instance from the refreshed cache — keeping the running version
+   * consistent platform-wide. Looping the per-workspace path would NOT work:
+   * after the first workspace the cache is already latest, so a per-workspace
+   * `checkForUpdate` returns null and the rest would silently keep running the
+   * old subprocess.
+   *
+   * `getRegistry` resolves a workspace's ToolRegistry (caller wires it to
+   * `runtime.getRegistryForWorkspace`). Per-workspace failures are isolated so
+   * one bad re-spawn doesn't abort the others. No-op (no event) when already at
+   * the latest version. No `protected` guard — security patches must flow.
+   */
+  async upgradeApp(
+    bundleName: string,
+    getRegistry: (wsId: string) => ToolRegistry,
+  ): Promise<{
+    bundleName: string;
+    from: string;
+    to: string;
+    workspaces: Array<{ wsId: string; ok: boolean; error?: string }>;
+  }> {
+    const targets = this.getInstances().filter(
+      (i) => i.bundleName === bundleName && i.installSource === "registry",
+    );
+    const [first] = targets;
+    if (!first) {
+      throw new Error(`App "${bundleName}" is not installed in any workspace.`);
+    }
+    if (this.upgradesInFlight.has(bundleName)) {
+      throw new Error(`Upgrade already in progress for "${bundleName}".`);
+    }
+
+    this.upgradesInFlight.add(bundleName);
     try {
-      const name = instance.bundleName;
       const mpak = getMpak(this.mpakHome);
-      const fromVersion = instance.version;
+      const fromVersion = first.version;
 
-      // Is a newer version published? `force` skips the cache-staleness check
-      // so we ask the registry directly.
-      const latest = await mpak.bundleCache.checkForUpdate(name, { force: true });
+      // Is a newer version published? `force` bypasses the name-keyed cache's
+      // staleness check so we ask the registry directly.
+      const latest = await mpak.bundleCache.checkForUpdate(bundleName, { force: true });
       if (!latest) {
-        return { from: fromVersion, to: fromVersion, serverName };
+        return { bundleName, from: fromVersion, to: fromVersion, workspaces: [] };
       }
 
-      // Pull the new artifact into the (name-keyed) cache, replacing the old.
-      await mpak.bundleCache.loadBundle(name, { force: true });
+      // Pull the new artifact into the shared cache ONCE; every workspace
+      // re-spawns from it below.
+      await mpak.bundleCache.loadBundle(bundleName, { force: true });
 
-      // Resolve workspace-scoped paths exactly as installNamed does, so the
-      // re-spawned subprocess writes to the same data dir and resolves the
-      // same credentials.
-      const nbWorkDir = defaultWorkDir();
-      const wsContext = new WorkspaceContext({ wsId, workDir: nbWorkDir });
-      const configDir = this.configPath ? dirname(this.configPath) : undefined;
-      const bundleDataDir = resolveBundleDataDirForRef(nbWorkDir, wsId, { name }, configDir);
-
-      // Remove the old source, then spawn the new version. Carry the persisted
-      // serverName through so the re-spawned source keeps the same registry key
-      // and the instance map / placements stay consistent.
-      if (registry.hasSource(serverName)) {
-        await registry.removeSource(serverName);
+      const workspaces: Array<{ wsId: string; ok: boolean; error?: string }> = [];
+      let toVersion = latest;
+      for (const instance of targets) {
+        try {
+          const r = await this.respawnInstanceToCachedVersion(instance, getRegistry(instance.wsId));
+          toVersion = r.to;
+          workspaces.push({ wsId: instance.wsId, ok: true });
+        } catch (err) {
+          workspaces.push({
+            wsId: instance.wsId,
+            ok: false,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
       }
 
-      const { sourceName: newSourceName, manifest } = await startBundleSource(
-        { name, serverName },
-        registry,
-        this.eventSink,
-        configDir,
-        {
-          dataDir: bundleDataDir,
-          workspaceContext: wsContext,
-          bundleMcp: this.resolveBundleMcpDeps(wsId),
-        },
-      );
-      if (!manifest) {
-        // Named bundles always carry a manifest; null is a precondition
-        // violation. The old source is already gone — surface to the caller.
-        this.transition(instance, "dead");
-        throw new Error(`No manifest found for ${name} after upgrade fetch`);
-      }
-
-      // Update instance metadata in place.
-      const isUpjack = manifest._meta?.["ai.nimblebrain/upjack"] != null;
-      instance.serverName = newSourceName;
-      instance.version = manifest.version;
-      instance.description = manifest.description;
-      instance.type = isUpjack ? "upjack" : "plain";
-      instance.ui = extractUiMeta(manifest);
-      instance.briefing = extractBriefing(manifest);
-      instance.trustScore = await fetchTrustScore(name, this.mpakHome);
-      this.transition(instance, "running");
-
-      // Re-key the instance map if the spawned serverName diverged (defensive —
-      // it derives from the same persisted ref so it normally matches).
-      if (newSourceName !== serverName) {
-        this.instances.delete(key);
-        this.instances.set(`${newSourceName}|${wsId}`, instance);
-      }
-
-      // Always unregister stale placements first, then re-register whatever the
-      // new manifest declares. Without the unconditional unregister, a version
-      // that drops all placements would leave stale nav entries behind.
-      this.placementRegistry?.unregister(serverName, wsId);
-      this.registerPlacements(newSourceName, instance.ui, wsId);
-
-      // Clean stale automations, then sync from the new manifest — matching the
-      // uninstall→install ordering so a schedule dropped between versions stops
-      // running with a stale prompt.
-      await this.removeBundleAutomations(name, registry);
-      await this.syncBundleAutomations(manifest, name, registry);
-
-      this.eventSink.emit({
-        type: "bundle.upgraded",
-        data: {
-          wsId,
-          serverName: newSourceName,
-          bundleName: name,
-          fromVersion,
-          toVersion: manifest.version,
-        },
-      });
-
-      return { from: fromVersion, to: manifest.version, serverName: newSourceName };
+      return { bundleName, from: fromVersion, to: toVersion, workspaces };
     } finally {
-      this.upgradesInFlight.delete(key);
+      this.upgradesInFlight.delete(bundleName);
     }
   }
 
