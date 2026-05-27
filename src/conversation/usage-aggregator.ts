@@ -287,8 +287,8 @@ export interface AggregateUsageOptions {
  * 2. Read line 1 (metadata) for conversation id / owner attribution
  *    (and filter by `ownerId` when `ownerFilter` is set)
  * 3. Scan for llm.response events whose own `ts` date is in range
- * 4. Derive totals, per-model, and breakdown by groupBy key
- *    (`groupBy: "user"` buckets by the conversation owner)
+ * 4. Derive totals, per-model, and breakdowns for the requested groupBy
+ *    dimensions (`groupBy: "user"` buckets by the conversation owner)
  */
 export async function aggregateUsage(
   conversationsDir: string,

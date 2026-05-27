@@ -18,6 +18,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { NoopEventSink } from "../../../../src/adapters/noop-events.ts";
 import type { McpSource } from "../../../../src/tools/mcp-source.ts";
+import type { UsageReportOutput } from "../../../../src/tools/platform/schemas/usage.ts";
 import { createUsageSource } from "../../../../src/tools/platform/usage.ts";
 
 // ── Fixtures ──────────────────────────────────────────────────────────────
@@ -85,16 +86,9 @@ async function buildSource(): Promise<McpSource> {
   return source;
 }
 
-interface UsageResult {
-  scope: "user" | "org";
-  totals: { tokens: { input: number; output: number }; conversations: number };
-  breakdown: Array<{ key: string }>;
-  breakdowns: Partial<Record<"day" | "conversation" | "model" | "user", Array<{ key: string }>>>;
-}
-
-function parse(result: { content?: Array<{ type: string; text?: string }> }): UsageResult {
+function parse(result: { content?: Array<{ type: string; text?: string }> }): UsageReportOutput {
   const text = result.content?.[0]?.text ?? "{}";
-  return JSON.parse(text) as UsageResult;
+  return JSON.parse(text) as UsageReportOutput;
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────
