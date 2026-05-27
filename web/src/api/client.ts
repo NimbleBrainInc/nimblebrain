@@ -860,18 +860,20 @@ export async function upgradeApp(bundleName: string): Promise<{
 }
 
 /**
- * Install a connector. Pass the full `DirectoryEntry` the user
- * clicked plus the picked target `wsId` (the WorkspaceTargetPicker in
- * the install dialog is the source of truth). The server dispatches by
- * `entry.install.kind` and hard-errors when `wsId` is missing —
- * Stage 1 precedent: `startBundleSource` refuses to default to
- * personal. Idempotent; already-installed connectors return
- * `alreadyInstalled: true`. Does NOT start OAuth — caller follows up
- * with `initiateMcpOAuth(serverName)` for remote-OAuth installs.
+ * Install a connector. Pass the full `DirectoryEntry` the user clicked.
+ * The connector installs into the workspace the shell is currently in —
+ * the `X-Workspace-Id` header `callTool` already sends (set from the
+ * `/w/<slug>` route). That's the same workspace every follow-up call
+ * (`initiateMcpOAuth`, list_tools, status) reads, so install and connect
+ * can't drift apart. Pass an explicit `wsId` only to install into a
+ * different workspace than the one in view (not used by the shell today).
+ * Idempotent; already-installed connectors return `alreadyInstalled: true`.
+ * Does NOT start OAuth — caller follows up with `initiateMcpOAuth(serverName)`
+ * for remote-OAuth installs.
  */
 export async function installConnector(
   entry: DirectoryEntry,
-  wsId: string,
+  wsId?: string,
 ): Promise<{
   ok: boolean;
   alreadyInstalled: boolean;
@@ -882,7 +884,10 @@ export async function installConnector(
   const result = await callTool("nb", "manage_connectors", {
     action: "install",
     entry,
-    wsId,
+    // Omit `wsId` so the server defaults to the request's workspace
+    // (X-Workspace-Id). Only send it when the caller explicitly targets
+    // a different workspace.
+    ...(wsId ? { wsId } : {}),
   });
   return unwrapStructured(result, "install");
 }

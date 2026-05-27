@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import {
   type DirectoryEntry,
+  disconnectConnector,
   initiateComposioOAuth,
   initiateMcpOAuth,
   type InstalledConnector,
@@ -26,10 +27,14 @@ import { OperatorSetupModal } from "./OperatorSetupModal";
  *   - needs_setup + unpopulated user_config → BundleCredentialsModal
  *   - needs_auth (any cause)                → initiateMcpOAuth
  *   - failed + remote OAuth                 → initiateMcpOAuth (same as Reconnect)
+ *   - connecting/starting + remote          → Cancel (reset a wedged OAuth)
  *
- * Disconnect is intentionally NOT here — it's a destructive
- * affordance that lives on the connection details section. The hero
- * only carries forward-motion CTAs.
+ * Disconnecting an *established* connection is intentionally NOT here —
+ * that destructive affordance lives on the connection details section.
+ * The one exception is Cancel on a connector wedged mid-connect: it
+ * resets a connection that never completed (no live session to tear
+ * down), turning a dead-end "Connecting…" back into an actionable
+ * Connect. The hero otherwise carries forward-motion CTAs only.
  */
 export function ConnectorStatusHero({
   installed,
@@ -87,6 +92,22 @@ export function ConnectorStatusHero({
     }
     if (action.kind === "open-operator-modal") {
       setOperatorModalOpen(true);
+      return;
+    }
+    if (action.kind === "cancel") {
+      // Reset a connector wedged mid-connect. `disconnect` flips the
+      // connection back to `not_authenticated` (no established session to
+      // revoke — the OAuth dance never finished), so `onChanged`'s refetch
+      // re-renders the hero with the normal Connect CTA.
+      setActing(true);
+      try {
+        await disconnectConnector(installed.serverName, installed.scope);
+        onChanged();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setActing(false);
+      }
       return;
     }
     if (action.kind === "oauth") {
@@ -240,7 +261,8 @@ function statusLabel(status: InstalledConnector["status"]): string {
 type PrimaryAction =
   | { kind: "open-bundle-modal"; label: string; adminOnly: true }
   | { kind: "open-operator-modal"; label: string; adminOnly: true }
-  | { kind: "oauth"; label: string; adminOnly: false };
+  | { kind: "oauth"; label: string; adminOnly: false }
+  | { kind: "cancel"; label: string; adminOnly: false };
 
 /**
  * Map the connector's status to the appropriate primary CTA. The
@@ -250,8 +272,10 @@ type PrimaryAction =
  * mechanism ("save credentials", "initiate OAuth flow").
  *
  * Returns null when no CTA applies — `ready` (nothing to do),
- * `connecting` / `starting` (wait), or `failed` on a non-remote
- * bundle (admin needs to investigate; no one-click fix).
+ * `connecting` / `starting` on a non-remote bundle (wait it out), or
+ * `failed` on a non-remote bundle (admin needs to investigate; no
+ * one-click fix). A remote connector that's `connecting` / `starting`
+ * gets a Cancel CTA so a wedged OAuth isn't a dead end.
  */
 function resolveAction(
   installed: InstalledConnector,
@@ -261,9 +285,17 @@ function resolveAction(
 
   switch (installed.status) {
     case "ready":
+      return null;
+
     case "connecting":
     case "starting":
-      return null;
+      // A remote connector can wedge mid-OAuth — the auth window was
+      // closed or the callback never returned, leaving `pending_auth` with
+      // a source that never finished starting. Without an escape hatch the
+      // page reads "Connecting…" forever. Cancel disconnects (resets to
+      // `not_authenticated`), after which the normal Connect CTA reappears.
+      // stdio bundles ("starting") have no OAuth to cancel — wait them out.
+      return isRemote ? { kind: "cancel", label: "Cancel", adminOnly: false } : null;
 
     case "needs_setup": {
       // Operator OAuth missing comes first: a static-auth catalog

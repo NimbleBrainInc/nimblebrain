@@ -41,18 +41,21 @@ import { writeFileSync } from "node:fs";
  *      against the helper's output, not a hand-built template.
  *      `check:personal-workspace-id` lint stays silent.
  *
- *   3. **Hard-error on missing wsId**: a tool call with no `wsId`
- *      argument returns a structured error and writes nothing to
- *      `workspace.json`. Adversarial: pinned because a regression
- *      that silently defaulted would still produce a working
- *      connector for the user, but pool credentials across tenants
- *      for any user who tried to install into shared.
+ *   3. **Default to the request workspace; hard-error only with none**:
+ *      a tool call with no `wsId` argument installs into the request's
+ *      workspace (`getWorkspaceId()`, set from the `/w/<slug>` route the
+ *      shell is on) — the same selector every sibling action uses, so an
+ *      install and its later connect / list / status can't diverge. When
+ *      the context carries NO workspace (neither session header nor
+ *      explicit arg) the tool hard-errors and writes nothing: there's
+ *      still no default-to-personal that would pool credentials across
+ *      tenants.
  *
- *   4. **No ambient leak**: `getWorkspaceId()` on the context (the
- *      session-header workspace) is intentionally unrelated to the
- *      picked install target. The install lands in the picked
- *      target, not the session header. Pins Stage 1 lesson 2 (audit
- *      attribution per install).
+ *   4. **Explicit wsId overrides the request workspace**: a caller may
+ *      pass `wsId` to install into a workspace other than the session
+ *      header (direct API / MCP callers). The web shell no longer does
+ *      this — it installs where the route points — but the override
+ *      stays supported. Pins audit attribution per install.
  *
  * The Runtime is stubbed to the handlers' actual usage; the full
  * Runtime.start() pipeline is exercised by `cross-workspace-chat`.
@@ -232,14 +235,14 @@ describe("manage_connectors.install (T010) — persisted shape + hard-error", ()
     expect(installed?.oauthScope).toBe("workspace");
   });
 
-  test("hard-errors when wsId is missing (Stage 1 lesson 3 — no silent fallback)", async () => {
-    // Adversarial: a buggy UI omitted `wsId`. Stage 2's invariant is
-    // no default-to-personal inside the tool — the only legitimate
-    // way to install is for the picker to supply a target. A
-    // regression that silently defaulted would still produce a
-    // working connector for THIS user, but pool credentials across
-    // tenants for any user who tried to install into shared. Pin
-    // hard error + no on-disk writes.
+  test("hard-errors when neither a session workspace nor a wsId arg is present", async () => {
+    // No workspace anywhere: the default harness has a null session
+    // workspace (`getWorkspaceId()` → null) and the call passes no
+    // `wsId`. With nothing to install into, the tool hard-errors and
+    // writes nothing — install defaults to the *request* workspace, but
+    // there's still no default-to-personal that would pool credentials
+    // across tenants when no workspace is in context at all. Pin hard
+    // error + no on-disk writes.
     const result = await h.tool.handler({ action: "install", entry: dcrEntry() });
     expect(result.isError).toBe(true);
     const text = (result.content?.[0] as { text?: string } | undefined)?.text ?? "";
@@ -260,19 +263,37 @@ describe("manage_connectors.install (T010) — persisted shape + hard-error", ()
     expect((personalDoc.bundles as unknown[]).length).toBe(0);
   });
 
-  test("install lands in the picked wsId — NOT the session-header workspace (no ambient leak)", async () => {
-    // Audit attribution (Stage 1 lesson 2): the install reaches
-    // workspace.json for the picked wsId, not the session header's
-    // workspace. We build a fresh harness whose session header
-    // points at sharedWsId, and install into personalWsId via the
-    // explicit arg. After install, sharedWsId/workspace.json has
-    // ZERO bundles; personalWsId/workspace.json has ONE.
+  test("install with no wsId arg defaults to the session-header workspace", async () => {
+    // The fix: with the target picker gone, the web shell sends no
+    // `wsId` and the tool installs into the request's workspace
+    // (`getWorkspaceId()` → the `/w/<slug>` route header). That's the
+    // same workspace the follow-up connect / list / status calls read,
+    // so they can't land in different workspaces — the prior divergence
+    // surfaced as "Bundle not installed" on Connect.
+    h = await buildHarness({ sessionWsId: h.sharedWsId });
+    const result = await h.tool.handler({ action: "install", entry: dcrEntry() });
+    expect(result.isError).toBe(false);
+    const sc = result.structuredContent as { wsId?: string };
+    expect(sc.wsId).toBe(h.sharedWsId);
+    const sharedDoc = JSON.parse(
+      readFileSync(join(h.workDir, "workspaces", h.sharedWsId, "workspace.json"), "utf-8"),
+    );
+    expect((sharedDoc.bundles as unknown[]).length).toBe(1);
+  });
+
+  test("explicit wsId arg overrides the session-header workspace", async () => {
+    // A caller can still target a workspace other than the session
+    // header by passing `wsId` explicitly (direct API / MCP callers).
+    // Session header points at sharedWsId; the explicit arg names
+    // personalWsId, so the install lands in personal and sharedWsId
+    // stays empty. The web shell no longer exercises this (it omits
+    // wsId), but the override must keep working.
     h = await buildHarness({ sessionWsId: h.sharedWsId });
     const personalWsId = personalWorkspaceIdFor(ADMIN.id);
     const result = await h.tool.handler({
       action: "install",
       entry: dcrEntry(),
-      wsId: personalWsId, // picker says personal — session says shared
+      wsId: personalWsId, // explicit target overrides the session header
     });
     expect(result.isError).toBe(false);
     const sharedDoc = JSON.parse(
