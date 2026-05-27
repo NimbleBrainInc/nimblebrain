@@ -196,10 +196,10 @@ function AppGridSkeleton() {
       {[0, 1, 2].map((i) => (
         <div key={i} className="flex flex-col gap-2 p-4 rounded-lg border border-border bg-card">
           <div className="flex items-center gap-2">
-            <div className="h-4 w-4 shrink-0 rounded bg-muted animate-pulse" />
-            <div className="h-3.5 w-2/3 rounded bg-muted animate-pulse" />
+            <div className="h-4 w-4 shrink-0 rounded bg-muted-foreground/20 animate-pulse" />
+            <div className="h-3.5 w-2/3 rounded bg-muted-foreground/20 animate-pulse" />
           </div>
-          <div className="h-2.5 w-1/3 rounded bg-muted animate-pulse" />
+          <div className="h-2.5 w-1/3 rounded bg-muted-foreground/20 animate-pulse" />
         </div>
       ))}
     </div>

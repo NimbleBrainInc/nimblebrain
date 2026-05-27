@@ -86,9 +86,9 @@ function Eyebrow() {
 function Skeleton() {
   return (
     <div className="mt-3 space-y-2.5" aria-hidden>
-      <div className="h-3 w-2/3 rounded bg-muted animate-pulse" />
-      <div className="h-3 w-1/2 rounded bg-muted animate-pulse" />
-      <div className="h-3 w-3/5 rounded bg-muted animate-pulse" />
+      <div className="h-3 w-2/3 rounded bg-muted-foreground/20 animate-pulse" />
+      <div className="h-3 w-1/2 rounded bg-muted-foreground/20 animate-pulse" />
+      <div className="h-3 w-3/5 rounded bg-muted-foreground/20 animate-pulse" />
     </div>
   );
 }
