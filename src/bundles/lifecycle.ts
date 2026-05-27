@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { log } from "../cli/log.ts";
 import { cleanupComposioBundle } from "../composio/sdk.ts";
 import type { EventSink } from "../engine/types.ts";
+import { mcpAuthCallbackUrl } from "../oauth/mcp-callback-url.ts";
 import type { PlacementRegistry } from "../runtime/placement-registry.ts";
 import { FileCredentialStore } from "../tools/credential-store.ts";
 import { McpSource } from "../tools/mcp-source.ts";
@@ -1284,7 +1285,15 @@ export class BundleLifecycleManager {
       serverName,
       workDir: opts.workDir,
       workspaceContext: new WorkspaceContext({ wsId, workDir: opts.workDir }),
-      callbackUrl: "http://_/", // unused for revocation path
+      // Resolve through the single source of truth (bouncer-aware), same as
+      // boot-start and `initiate`. Although revocation doesn't run an
+      // authorize round-trip, constructing the provider loads client.json
+      // and runs the DCR drift check against this `callbackUrl` — a
+      // placeholder (the old `http://_/`) never matches the registered
+      // redirect_uri, so it spuriously discards the client, mints a new
+      // client_id on the next flow, and orphans the refresh token. See
+      // src/oauth/mcp-callback-url.ts.
+      callbackUrl: mcpAuthCallbackUrl(),
       allowInsecureRemotes: opts.allowInsecureRemotes === true,
     });
     const result = await provider.revokeAndDeleteTokens({ bundleUrl: ref.url });

@@ -13,6 +13,7 @@ import {
   type HostResourcesRateLimit,
   type HostResourcesResolver,
 } from "../host-resources/index.ts";
+import { mcpAuthCallbackUrl } from "../oauth/mcp-callback-url.ts";
 import { FileCredentialStore } from "../tools/credential-store.ts";
 import { type BundleMcpContext, McpSource } from "../tools/mcp-source.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
@@ -320,20 +321,25 @@ export async function startBundleSource(
       }
       const wsId = wsContext.workspaceId;
       const workDir = wsContext.workDir;
-      const apiBase = process.env.NB_API_URL;
-      // Startup warning when a URL-ref bundle is being wired but NB_API_URL
-      // isn't set. Default is only safe for local dev — in prod (NB behind a
-      // proxy), the OAuth provider would hand the authorization server a
-      // redirect_uri pointing at the pod's localhost, which the user's
-      // browser can't reach. One-time log per process is enough.
-      if (!apiBase) {
+      // Resolve the OAuth callback through the single source of truth
+      // (bouncer-aware). Boot-start MUST register the same redirect_uri the
+      // interactive `initiate` flow uses — otherwise the provider's DCR
+      // drift check discards client.json, re-registration mints a new
+      // client_id, and the stored refresh token is orphaned (silent refresh
+      // then fails and the bundle falls into a headless interactive flow
+      // that times out at boot). See src/oauth/mcp-callback-url.ts.
+      const callbackUrl = mcpAuthCallbackUrl();
+      // Startup warning when a URL-ref bundle is being wired with no
+      // externally reachable origin and no bouncer. The localhost default is
+      // only safe for local dev — in prod the authorization server would get
+      // a redirect_uri pointing at the pod's localhost. One log per process.
+      if (!process.env.NB_API_URL && callbackUrl.startsWith("http://localhost")) {
         log.warn(
           `[bundles] NB_API_URL not set; OAuth callback defaults to http://localhost:27247. ` +
             "In production (NB behind a proxy / on a different host from the user's browser), " +
             "set NB_API_URL to the platform's externally reachable URL.",
         );
       }
-      const callbackUrl = `${(apiBase ?? "http://localhost:27247").replace(/\/+$/, "")}/v1/mcp-auth/callback`;
 
       // Track A: resolve pre-registered client config when present. The
       // oauthClient.clientSecret is a reference into the workspace

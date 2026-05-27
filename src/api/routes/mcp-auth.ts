@@ -9,6 +9,7 @@ import {
   signEnvelope,
   verifyEnvelopeAsTenant,
 } from "../../oauth/envelope.ts";
+import { mcpAuthCallbackUrl } from "../../oauth/mcp-callback-url.ts";
 import { peekWorkspaceId, resolveWithCode } from "../../tools/oauth-flow-registry.ts";
 import { requireAuth } from "../middleware/auth.ts";
 import { requireWorkspace } from "../middleware/workspace.ts";
@@ -71,28 +72,12 @@ const SUCCESS_PAGE_CSP = `default-src 'none'; style-src 'sha256-${SUCCESS_PAGE_S
  *   design — the user just came back from the AS and the platform's own
  *   session may not be present in this navigation context.
  */
-/**
- * The redirect URI the platform sends to remote authorization servers
- * for outbound OAuth flows. Operators must register this exact URL
- * with the vendor (Asana developer console, Google Cloud console,
- * etc.) — a mismatch yields the vendor-side `redirect_uri does not
- * match` error long after the user has left the platform.
- *
- * Exposed to the web shell via the `manage_connectors.get_redirect_uri`
- * tool action so OperatorSetupModal can show admins the value before
- * they leave to set up the OAuth app.
- */
-export function mcpAuthCallbackUrl(): string {
-  // In bouncer mode every vendor's OAuth Client is registered against
-  // the bouncer's single URL, not this tenant's host. The bouncer
-  // verifies the signed state envelope on the callback leg and 302s
-  // back to this tenant.
-  const bouncer = getBouncerMode();
-  if (bouncer) return bouncer.callbackUrl;
-
-  const apiBase = process.env.NB_API_URL ?? "http://localhost:27247";
-  return `${apiBase.replace(/\/+$/, "")}/v1/mcp-auth/callback`;
-}
+// The redirect URI the platform registers with remote authorization
+// servers is resolved by the single source of truth in
+// `src/oauth/mcp-callback-url.ts` (bouncer-aware). Re-exported here
+// because the web shell reaches it via the `manage_connectors` tool and
+// existing callers import it from this route module.
+export { mcpAuthCallbackUrl };
 
 export function mcpAuthRoutes(ctx: AppContext) {
   // Eagerly validate bouncer config (if any) so a misconfigured
