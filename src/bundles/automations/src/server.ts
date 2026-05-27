@@ -1,22 +1,12 @@
 /**
- * MCP server entry point for @nimblebraininc/automations bundle.
- *
- * Manages scheduled automation definitions and run history.
- * Exposes 7 tools: create, update, delete, list, status, runs, run.
- * Uses stdio transport — stdout is JSON-RPC only, logging goes to stderr.
+ * Automation tool handlers + helpers for the in-process `automations` platform
+ * source (`src/tools/platform/automations.ts`). Exposes the create / update /
+ * delete / list / status / runs / run / cancel handlers and the `ToolContext`
+ * they run against. The former standalone stdio MCP server was removed when
+ * automations moved in-process and identity-owned; this file is handlers +
+ * formatting only.
  */
 
-import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join, resolve } from "node:path";
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import {
-  CallToolRequestSchema,
-  ListResourcesRequestSchema,
-  ListToolsRequestSchema,
-  ReadResourceRequestSchema,
-} from "@modelcontextprotocol/sdk/types.js";
 import { Cron } from "croner";
 import type {
   AutomationSummary,
@@ -27,32 +17,14 @@ import type {
   AutomationsStatusOutput,
 } from "../../../tools/platform/schemas/automations.ts";
 import { createAutomation, deleteAutomation, updateAutomation } from "./domain.ts";
-import { executeHttp } from "./executor.ts";
-import { Scheduler } from "./scheduler.ts";
-import { TOOL_SCHEMAS } from "./schemas.ts";
-import { detectOrphans, loadDefinitions, readAllRuns, readRuns, saveDefinitions } from "./store.ts";
+import { readAllRuns, readRuns } from "./store.ts";
 import type { Automation, AutomationRun, ScheduleSpec } from "./types.ts";
 
 // ---------------------------------------------------------------------------
 // Configuration
 // ---------------------------------------------------------------------------
 
-const WORK_DIR = process.env.NB_WORK_DIR ?? join(homedir(), ".nimblebrain");
-const STORE_DIR = join(WORK_DIR, "automations");
 const DEFAULT_TIMEZONE = process.env.NB_TIMEZONE ?? "Pacific/Honolulu";
-
-// UI: load the built React SPA from ui/dist/index.html
-const UI_DIR = resolve(import.meta.dirname ?? __dirname, "../ui/dist");
-const FALLBACK_HTML =
-  "<html><body><p>UI not built. Run: cd src/bundles/automations/ui && npm install && npm run build</p></body></html>";
-
-function loadUi(): string {
-  const built = join(UI_DIR, "index.html");
-  if (existsSync(built)) {
-    return readFileSync(built, "utf-8");
-  }
-  return FALLBACK_HTML;
-}
 
 function log(msg: string): void {
   process.stderr.write(`[automations] ${msg}\n`);
@@ -254,12 +226,6 @@ export function toKebabCase(name: string): string {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
 }
-
-// ---------------------------------------------------------------------------
-// Tool definitions
-// ---------------------------------------------------------------------------
-
-const TOOLS = TOOL_SCHEMAS;
 
 // ---------------------------------------------------------------------------
 // Tool handler implementations (exported for direct testing)
@@ -669,175 +635,3 @@ function findByName(defs: Map<string, Automation>, name: string): Automation | u
   }
   return undefined;
 }
-
-// ---------------------------------------------------------------------------
-// Tool routing
-// ---------------------------------------------------------------------------
-
-type ToolArgs = Record<string, unknown>;
-
-async function routeToolCall(name: string, args: ToolArgs, ctx: ToolContext): Promise<object> {
-  switch (name) {
-    case "create":
-      return handleCreate(args, ctx);
-    case "update":
-      return handleUpdate(args, ctx);
-    case "delete":
-      return handleDelete(args, ctx);
-    case "list":
-      return handleList(args, ctx);
-    case "status":
-      return handleStatus(args, ctx);
-    case "runs":
-      return handleRuns(args, ctx);
-    case "run":
-      return handleRun(args, ctx);
-    case "cancel":
-      return handleCancel(args, ctx);
-    default:
-      throw new Error(`Unknown tool: ${name}`);
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Server setup
-// ---------------------------------------------------------------------------
-
-async function main(): Promise<void> {
-  log(`Starting with store dir: ${STORE_DIR}`);
-
-  // Step 1: Initialize store
-  const defs = loadDefinitions(STORE_DIR);
-  log(`Loaded ${defs.size} automation definitions`);
-
-  // Step 2: Detect orphans
-  const orphanCount = detectOrphans(STORE_DIR);
-  if (orphanCount > 0) {
-    log(`Fixed ${orphanCount} orphaned run(s)`);
-  }
-
-  // Step 3: Start scheduler
-  const scheduler = new Scheduler(executeHttp, {
-    storeDir: STORE_DIR,
-    defaultTimezone: DEFAULT_TIMEZONE,
-  });
-  scheduler.start();
-  log("Scheduler started");
-
-  // Build the tool context
-  const ctx: ToolContext = {
-    definitions: () => loadDefinitions(STORE_DIR),
-    save: (d) => saveDefinitions(d, STORE_DIR),
-    reloadScheduler: () => scheduler.reload(),
-    runNow: (id) => scheduler.runNow(id),
-    cancelRun: (id) => scheduler.cancelRun(id),
-    storeDir: STORE_DIR,
-    defaultTimezone: DEFAULT_TIMEZONE,
-  };
-
-  // Create MCP server
-  const server = new Server(
-    {
-      name: "@nimblebraininc/automations",
-      version: "0.1.0",
-    },
-    {
-      capabilities: {
-        tools: {},
-        resources: {},
-      },
-    },
-  );
-
-  // Register tool listing handler
-  server.setRequestHandler(ListToolsRequestSchema, async () => {
-    return { tools: TOOLS };
-  });
-
-  // Register tool call handler
-  server.setRequestHandler(CallToolRequestSchema, async (request) => {
-    const { name, arguments: args } = request.params;
-
-    try {
-      const result = await routeToolCall(name, args ?? {}, ctx);
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      log(`Tool error (${name}): ${message}`);
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: JSON.stringify({ error: message }),
-          },
-        ],
-        isError: true,
-      };
-    }
-  });
-
-  // Register resource listing handler
-  server.setRequestHandler(ListResourcesRequestSchema, async () => ({
-    resources: [
-      {
-        uri: "ui://automations/panel",
-        name: "Automations Panel",
-        mimeType: "text/html",
-      },
-    ],
-  }));
-
-  // Register resource read handler
-  server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
-    if (request.params.uri === "ui://automations/panel") {
-      return {
-        contents: [
-          {
-            uri: request.params.uri,
-            mimeType: "text/html",
-            text: loadUi(),
-          },
-        ],
-      };
-    }
-    throw new Error(`Resource not found: ${request.params.uri}`);
-  });
-
-  // Connect via stdio transport
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-
-  log("Server connected via stdio");
-
-  // Graceful shutdown
-  const shutdown = async () => {
-    log("Shutting down...");
-    scheduler.stop();
-    await server.close();
-    process.exit(0);
-  };
-
-  // Exit when the MCP transport closes (parent died / bun --watch restart).
-  // Without this, orphaned processes keep the old scheduler running
-  // with a stale internal token, causing perpetual 401 errors.
-  server.onclose = () => {
-    log("MCP transport closed — parent process gone, exiting.");
-    scheduler.stop();
-    process.exit(0);
-  };
-
-  process.on("SIGTERM", shutdown);
-  process.on("SIGINT", shutdown);
-}
-
-main().catch((err) => {
-  log(`Fatal: ${err instanceof Error ? err.message : String(err)}`);
-  process.exit(1);
-});

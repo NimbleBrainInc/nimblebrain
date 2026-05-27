@@ -28,17 +28,23 @@ import { join } from "node:path";
  *     not a path helper here.
  *
  * What it owns: per-user data directories at `{workDir}/users/{userId}/...`
- * (`files`, `skills`) — the North Star `users/{userId}/files/{fileId}`
- * layout that Phase B migrates onto.
+ * (`files`, `skills`, `automations`) — the North Star `users/{userId}/files/`
+ * layout that Phase B migrates onto, and the owner-partitioned automations
+ * store Phase C migrates onto.
  */
 
 /**
  * Scopes available under a user's root directory (`{workDir}/users/{userId}/`).
- *   - `files`  — user-owned files (North Star `users/{userId}/files/`)
- *   - `skills` — per-user skills (existing layout, `users/<userId>/skills/`)
+ *   - `files`       — user-owned files (North Star `users/{userId}/files/`)
+ *   - `skills`      — per-user skills (existing layout, `users/<userId>/skills/`)
+ *   - `automations` — owner-partitioned automations (`automations.json` +
+ *                     `runs/`). Owner-partitioned rather than flat top-level
+ *                     (the conversations layout) because automation ids are
+ *                     kebab-case and collide across owners; partitioning makes
+ *                     ownership structural and ids unique per owner.
  * `root` returns the user root itself.
  */
-export type IdentityScope = "root" | "files" | "skills";
+export type IdentityScope = "root" | "files" | "skills" | "automations";
 
 const SUBPATH_FORBIDDEN_RE = /\0/;
 

@@ -1,16 +1,17 @@
 /**
- * URI scheme for workspace files.
+ * URI scheme for identity-owned files.
  *
- * Files persisted via the workspace `FileStore` (`src/files/store.ts`) are
- * addressable as MCP resources at `files://<id>`. This is the canonical
- * shape used in MCP `resource_link` content blocks the platform persists
- * in conversation user messages — the blob lives in the file store, the
- * conversation log only carries the URI.
+ * Files persisted via the `FileStore` (`src/files/store.ts`) are addressable
+ * as MCP resources at `files://<id>`. This is the canonical shape used in MCP
+ * `resource_link` content blocks the platform persists in conversation user
+ * messages — the blob lives in the file store, the conversation log only
+ * carries the URI.
  *
- * Workspace isolation is preserved by construction: every `FileStore` is
- * built against a workspace-scoped directory, so a `files://fl_…` URI
- * resolves only against the active workspace's store. The URI itself
- * does not encode the workspace.
+ * Files are identity-owned (Phase B): every `FileStore` is built against the
+ * owner's directory (`users/{userId}/files/`), so a `files://fl_…` URI
+ * resolves against the caller's identity store regardless of which workspace
+ * created the file. The URI itself does not encode the owner — file ids are
+ * globally unique, so the owner's store resolves any of their files.
  */
 
 export const FILE_URI_SCHEME = "files";

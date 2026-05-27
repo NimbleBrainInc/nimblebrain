@@ -1,6 +1,7 @@
 import { describe, expect, it, mock, beforeEach } from "bun:test";
 import { renderHook, act, waitFor } from "@testing-library/react";
 import { useShell } from "../src/hooks/useShell";
+import { realClient } from "./setup";
 
 // ---------------------------------------------------------------------------
 // Mock getShell
@@ -10,7 +11,13 @@ const mockGetShell = mock(() =>
   Promise.resolve({ placements: [], chatEndpoint: "", eventsEndpoint: "" }),
 );
 
+// Spread the preload's real-module snapshot (see web/test/setup.ts) so this
+// whole-module mock exposes every api/client export; only `getShell` is
+// overridden. Bun's mock.module registry is process-global, so an incomplete
+// stub leaking into another suite's module graph is what crashed bridge tests
+// with "Export named 'getActiveWorkspaceId' not found".
 mock.module("../src/api/client", () => ({
+  ...realClient,
   getShell: (...args: unknown[]) => mockGetShell(...args),
 }));
 

@@ -1,10 +1,10 @@
 /**
- * Automation executors: run an automation's prompt through the chat engine.
+ * Automation executor: runs an automation's prompt through the chat engine.
  *
- * Two implementations:
- * - executeDirect: calls runtime.chat() in-process (used by the platform's
- *   in-process automations source)
- * - executeHttp:   calls POST /v1/chat over HTTP (used by standalone MCP server)
+ * `createDirectExecutor` calls `runtime.chat()` in-process — the only path now
+ * that automations is an in-process platform source (the former HTTP executor
+ * + standalone MCP server were removed). A scheduled run fires as the
+ * automation's owner; see `getExecutorContext` in the platform source.
  *
  * No retry logic — the scheduler handles backoff.
  */
@@ -250,63 +250,4 @@ export function createDirectExecutor(
       if (onExternalAbort) externalSignal?.removeEventListener("abort", onExternalAbort);
     }
   };
-}
-
-// ---------------------------------------------------------------------------
-// HTTP executor (for standalone MCP server process)
-// ---------------------------------------------------------------------------
-
-/**
- * Execute a single automation run by calling POST /v1/chat on the host.
- * Used by the standalone MCP server where HTTP is the only path to the runtime.
- */
-export async function executeHttp(
-  automation: Automation,
-  signal?: AbortSignal,
-): Promise<AutomationRun> {
-  const startedAt = new Date().toISOString();
-
-  const hostUrl = process.env.NB_HOST_URL ?? "http://127.0.0.1:27247";
-  const token = process.env.NB_INTERNAL_TOKEN;
-
-  const timeoutMs = automation.maxRunDurationMs ?? DEFAULT_TIMEOUT_MS;
-  const timeoutSignal = AbortSignal.timeout(timeoutMs);
-  const combinedSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
-
-  const body = buildRequest(automation);
-
-  let res: Response;
-  try {
-    res = await fetch(`${hostUrl}/v1/chat`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-      body: JSON.stringify(body),
-      signal: combinedSignal,
-    });
-  } catch (err: unknown) {
-    if (err instanceof DOMException && err.name === "TimeoutError") {
-      throw new Error(
-        `Automation ${automation.id} timed out after ${Math.round(timeoutMs / 1000)}s`,
-      );
-    }
-    const msg = err instanceof Error ? err.message : "Unknown network error";
-    throw new Error(`Automation ${automation.id} network error: ${msg}`);
-  }
-
-  if (!res.ok) {
-    let detail = "";
-    try {
-      const text = await res.text();
-      detail = text ? ` — ${text.slice(0, 200)}` : "";
-    } catch {
-      // ignore body read failures
-    }
-    throw new Error(`Automation ${automation.id} HTTP ${res.status}${detail}`);
-  }
-
-  const data = (await res.json()) as ChatFnResult;
-  return mapResultToRun(automation, startedAt, data);
 }

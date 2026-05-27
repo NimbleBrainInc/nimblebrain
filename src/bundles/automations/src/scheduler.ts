@@ -9,6 +9,8 @@
  * executor function injected at construction time.
  */
 
+import { existsSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 import { Cron } from "croner";
 import { appendRun, loadDefinitions, saveDefinitions } from "./store.ts";
 import type { Automation, AutomationRun } from "./types.ts";
@@ -44,8 +46,12 @@ const TRANSIENT_PATTERNS: RegExp[] = [
 export type Executor = (automation: Automation, signal: AbortSignal) => Promise<AutomationRun>;
 
 export interface SchedulerConfig {
-  /** Directory override for the automations store. */
-  storeDir?: string;
+  /**
+   * Root per-user directory (`{workDir}/users`). The scheduler is multi-owner:
+   * it scans `{usersDir}/<ownerId>/automations/` for every user and fires each
+   * automation as its owner. Automations are identity-owned (Phase C).
+   */
+  usersDir: string;
   /** Maximum concurrent automation runs. Default: 2. */
   maxConcurrentRuns?: number;
   /** Default timezone for cron expressions. Default: system timezone. */
@@ -175,6 +181,11 @@ function getTimezoneOffsetMs(tz: string, date: Date): number {
 // ---------------------------------------------------------------------------
 
 export class Scheduler {
+  /**
+   * Loaded automations across every owner, keyed by `${ownerId}/${id}` — see
+   * `keyOf`. Composite-keyed (not bare id) because automation ids are
+   * kebab-case and collide across owners. `activeRuns` uses the same key.
+   */
   private definitions: Map<string, Automation> = new Map();
   private readonly activeRuns: Map<string, AbortController> = new Map();
   private timer: ReturnType<typeof setTimeout> | null = null;
@@ -184,10 +195,58 @@ export class Scheduler {
   private config: SchedulerConfig;
   private readonly maxConcurrentRuns: number;
 
-  constructor(executor: Executor, config: SchedulerConfig = {}) {
+  constructor(executor: Executor, config: SchedulerConfig) {
     this.executor = executor;
     this.config = config;
     this.maxConcurrentRuns = config.maxConcurrentRuns ?? 2;
+  }
+
+  /** Composite key for the cross-owner definitions/activeRuns maps. */
+  private static keyOf(automation: Pick<Automation, "id" | "ownerId">): string {
+    return `${automation.ownerId ?? ""}/${automation.id}`;
+  }
+
+  /** The owner's identity-scoped automations store dir. */
+  private storeDirFor(ownerId: string): string {
+    return join(this.config.usersDir, ownerId, "automations");
+  }
+
+  /**
+   * Load every owner's automations into one composite-keyed map. Scans
+   * `{usersDir}/<ownerId>/automations/`. An automation's `ownerId` is stamped
+   * at create + migration; we defensively backfill from the directory name so
+   * a legacy record can't land keyed under `""`.
+   */
+  private loadAll(): Map<string, Automation> {
+    const all = new Map<string, Automation>();
+    let owners: string[];
+    try {
+      owners = readdirSync(this.config.usersDir, { withFileTypes: true })
+        .filter((d) => d.isDirectory())
+        .map((d) => d.name);
+    } catch {
+      return all; // usersDir not created yet — nothing scheduled
+    }
+    for (const ownerId of owners) {
+      const dir = this.storeDirFor(ownerId);
+      if (!existsSync(join(dir, "automations.json"))) continue;
+      for (const auto of loadDefinitions(dir).values()) {
+        if (typeof auto.ownerId !== "string" || auto.ownerId.length === 0) {
+          auto.ownerId = ownerId;
+        }
+        all.set(Scheduler.keyOf(auto), auto);
+      }
+    }
+    return all;
+  }
+
+  /** Rebuild one owner's on-disk store from the in-memory composite map. */
+  private persistOwner(ownerId: string): void {
+    const map = new Map<string, Automation>();
+    for (const auto of this.definitions.values()) {
+      if (auto.ownerId === ownerId) map.set(auto.id, auto);
+    }
+    saveDefinitions(map, this.storeDirFor(ownerId));
   }
 
   // -----------------------------------------------------------------------
@@ -200,21 +259,28 @@ export class Scheduler {
   start(): void {
     if (this.running) return;
     this.running = true;
-    this.definitions = loadDefinitions(this.config.storeDir);
+    this.definitions = this.loadAll();
+    this.seedNextRunAt();
+    this.armTimer();
+  }
 
-    // Compute initial nextRunAt for automations that don't have one
+  /**
+   * Compute initial `nextRunAt` for any enabled automation missing one, and
+   * persist the owners whose stores changed. Shared by start + reload.
+   */
+  private seedNextRunAt(): void {
     const now = Date.now();
+    const dirtyOwners = new Set<string>();
     for (const auto of this.definitions.values()) {
-      if (auto.enabled && !auto.nextRunAt) {
+      if (auto.enabled && !auto.nextRunAt && auto.ownerId) {
         const next = computeNextRunAt(auto, now, this.config.defaultTimezone);
         if (next !== null) {
           auto.nextRunAt = new Date(next).toISOString();
+          dirtyOwners.add(auto.ownerId);
         }
       }
     }
-    saveDefinitions(this.definitions, this.config.storeDir);
-
-    this.armTimer();
+    for (const ownerId of dirtyOwners) this.persistOwner(ownerId);
   }
 
   /**
@@ -232,31 +298,13 @@ export class Scheduler {
   }
 
   /**
-   * Reload definitions from the store and re-arm the timer.
-   * Optionally accepts a storeDir override for workspace-scoped reloads.
+   * Re-scan every owner's store and re-arm the timer. Called after a tool
+   * mutates an automation (create/update/delete) so the timer reflects the
+   * change. Multi-owner: always re-reads the full `users/*` set.
    */
-  reload(storeDir?: string): void {
-    if (storeDir) {
-      this.config = { ...this.config, storeDir };
-    }
-    this.definitions = loadDefinitions(this.config.storeDir);
-
-    // Compute nextRunAt for new automations
-    const now = Date.now();
-    let changed = false;
-    for (const auto of this.definitions.values()) {
-      if (auto.enabled && !auto.nextRunAt) {
-        const next = computeNextRunAt(auto, now, this.config.defaultTimezone);
-        if (next !== null) {
-          auto.nextRunAt = new Date(next).toISOString();
-          changed = true;
-        }
-      }
-    }
-    if (changed) {
-      saveDefinitions(this.definitions, this.config.storeDir);
-    }
-
+  reload(): void {
+    this.definitions = this.loadAll();
+    this.seedNextRunAt();
     this.clearTimer();
     if (this.running) {
       this.armTimer();
@@ -267,18 +315,19 @@ export class Scheduler {
    * Trigger an immediate run of a specific automation, bypassing schedule
    * and backoff checks. Respects concurrency guards.
    */
-  async runNow(automationId: string): Promise<AutomationRun | null> {
-    const auto = this.definitions.get(automationId);
+  async runNow(ownerId: string, automationId: string): Promise<AutomationRun | null> {
+    const key = Scheduler.keyOf({ id: automationId, ownerId });
+    const auto = this.definitions.get(key);
     if (!auto) {
-      const ids = Array.from(this.definitions.keys());
+      const keys = Array.from(this.definitions.keys());
       process.stderr.write(
-        `[automations] runNow: "${automationId}" not found in ${ids.length} definitions: [${ids.join(", ")}]. storeDir=${this.config.storeDir ?? "default"}\n`,
+        `[automations] runNow: "${key}" not found in ${keys.length} definitions: [${keys.join(", ")}]\n`,
       );
       return null;
     }
 
     // Still respect per-automation concurrency
-    if (this.activeRuns.has(automationId)) {
+    if (this.activeRuns.has(key)) {
       const skipped = this.recordSkipped(auto, "Already running (runNow)");
       return skipped;
     }
@@ -303,8 +352,8 @@ export class Scheduler {
   /**
    * Cancel an active automation run. Returns true if cancelled, false if not running.
    */
-  cancelRun(automationId: string): boolean {
-    const controller = this.activeRuns.get(automationId);
+  cancelRun(ownerId: string, automationId: string): boolean {
+    const controller = this.activeRuns.get(Scheduler.keyOf({ id: automationId, ownerId }));
     if (!controller) return false;
     controller.abort();
     return true;
@@ -365,12 +414,16 @@ export class Scheduler {
       if (isInBackoff(auto, now)) continue;
 
       // Per-automation concurrency guard
-      if (this.activeRuns.has(auto.id)) {
+      if (this.activeRuns.has(Scheduler.keyOf(auto))) {
         this.recordSkipped(auto, "Previous run still active");
         continue;
       }
 
-      // Global concurrency limit
+      // Global concurrency limit — shared across ALL owners (one in-process
+      // scheduler per platform process, and the platform runs one process per
+      // tenant). A busy owner can defer other owners' due runs to the next
+      // tick; acceptable under the per-tenant-process model. Revisit with a
+      // per-owner fair-share queue only if multi-tenant fairness becomes a need.
       if (this.activeRuns.size >= this.maxConcurrentRuns) {
         this.recordSkipped(auto, `Global concurrent run limit (${this.maxConcurrentRuns}) reached`);
         continue;
@@ -395,8 +448,9 @@ export class Scheduler {
   // -----------------------------------------------------------------------
 
   private async dispatchRun(auto: Automation): Promise<AutomationRun> {
+    const key = Scheduler.keyOf(auto);
     const controller = new AbortController();
-    this.activeRuns.set(auto.id, controller);
+    this.activeRuns.set(key, controller);
     // Capture real dispatch time so synthesized failure records carry an
     // honest elapsed window. Without this, a 5-minute hang and a
     // 100-millisecond setup crash both render as startedAt == completedAt
@@ -406,11 +460,11 @@ export class Scheduler {
 
     try {
       const run = await this.executor(auto, controller.signal);
-      this.activeRuns.delete(auto.id);
+      this.activeRuns.delete(key);
       this.updateAfterRun(auto, run);
       return run;
     } catch (err) {
-      this.activeRuns.delete(auto.id);
+      this.activeRuns.delete(key);
       const isAbort = err instanceof DOMException && err.name === "AbortError";
       const errorMsg = err instanceof Error ? err.message : String(err);
       const isTimeout = !isAbort && errorMsg.includes("timed out");
@@ -444,11 +498,19 @@ export class Scheduler {
    * a run is in flight).
    */
   updateAfterRun(automation: Automation, run: AutomationRun): void {
-    // Re-read from disk to pick up any concurrent changes (pause, config edits)
-    this.definitions = loadDefinitions(this.config.storeDir);
+    const ownerId = automation.ownerId;
+    if (!ownerId) return; // defensive — every fired automation carries its owner
+    const storeDir = this.storeDirFor(ownerId);
 
-    const auto = this.definitions.get(automation.id);
+    // Re-read ONLY this owner's store to pick up concurrent changes (pause,
+    // config edits) without clobbering other owners' in-memory state.
+    const ownerMap = loadDefinitions(storeDir);
+    const auto = ownerMap.get(automation.id);
     if (!auto) return;
+    // Stamp the authoritative owner (the store dir IS the owner) — same
+    // backfill `loadAll` does on read, so `keyOf(auto)` below matches the
+    // composite key the timer loaded under and heals any owner-less disk record.
+    auto.ownerId = ownerId;
 
     const now = Date.now();
 
@@ -540,9 +602,11 @@ export class Scheduler {
       }
     }
 
-    // Persist
-    appendRun(automation.id, run, this.config.storeDir);
-    saveDefinitions(this.definitions, this.config.storeDir);
+    // Persist to the owner's store, then sync the single in-memory entry so
+    // the timer sees the new nextRunAt without re-scanning every owner.
+    appendRun(automation.id, run, storeDir);
+    saveDefinitions(ownerMap, storeDir);
+    this.definitions.set(Scheduler.keyOf(auto), auto);
   }
 
   /**
@@ -562,13 +626,19 @@ export class Scheduler {
       iterations: 0,
       error: reason,
     };
-    appendRun(auto.id, run, this.config.storeDir);
+    const ownerId = auto.ownerId;
+    if (!ownerId) return run; // defensive — can't locate the owner's store
+    const storeDir = this.storeDirFor(ownerId);
+    appendRun(auto.id, run, storeDir);
 
     // Advance nextRunAt so this automation isn't immediately "due" again.
-    // Re-read from disk to avoid overwriting concurrent changes.
-    this.definitions = loadDefinitions(this.config.storeDir);
-    const fresh = this.definitions.get(auto.id);
+    // Re-read ONLY this owner's store to avoid overwriting concurrent changes.
+    const ownerMap = loadDefinitions(storeDir);
+    const fresh = ownerMap.get(auto.id);
     if (fresh) {
+      // Stamp the authoritative owner (see updateAfterRun) so the composite
+      // key stays consistent with what `loadAll` keyed under.
+      fresh.ownerId = ownerId;
       const nextRun = computeNextRunAt(fresh, now, this.config.defaultTimezone);
       if (nextRun !== null) {
         // Ensure nextRunAt is in the future — if the computed time is past
@@ -577,7 +647,8 @@ export class Scheduler {
         fresh.nextRunAt = new Date(effectiveNext).toISOString();
       }
       fresh.updatedAt = new Date(now).toISOString();
-      saveDefinitions(this.definitions, this.config.storeDir);
+      saveDefinitions(ownerMap, storeDir);
+      this.definitions.set(Scheduler.keyOf(fresh), fresh);
     }
 
     return run;

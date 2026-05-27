@@ -39,6 +39,12 @@ import type { AutomationsRunOutput } from "../../src/tools/platform/schemas/auto
 // ---------------------------------------------------------------------------
 
 const TMP_DIR = join(tmpdir(), `automation-e2e-${Date.now()}`);
+// Automations are identity-owned: stored at `{workDir}/users/{owner}/
+// automations/`, the scheduler scans `{workDir}/users/*`. The harness acts as
+// one owner.
+const OWNER = "usr_test";
+const USERS_DIR = join(TMP_DIR, "users");
+const OWNER_STORE = join(USERS_DIR, OWNER, "automations");
 
 /** Records of what the mock executor received. */
 let executorCalls: Array<{ automation: Automation; signal: AbortSignal }>;
@@ -89,23 +95,24 @@ function createHarness(): ToolContext {
 	): Promise<AutomationRun> => {
 		executorCalls.push({ automation, signal });
 		const run = executorResult(automation);
-		appendRun(automation.id, run, TMP_DIR);
+		appendRun(automation.id, run, OWNER_STORE);
 		return run;
 	};
 
 	scheduler = new Scheduler(executor, {
-		storeDir: TMP_DIR,
+		usersDir: USERS_DIR,
 		defaultTimezone: "Pacific/Honolulu",
 	});
 	scheduler.start();
 
 	return {
-		definitions: () => loadDefinitions(TMP_DIR),
-		save: (defs) => saveDefinitions(defs, TMP_DIR),
+		definitions: () => loadDefinitions(OWNER_STORE),
+		save: (defs) => saveDefinitions(defs, OWNER_STORE),
 		reloadScheduler: () => scheduler.reload(),
-		runNow: (id) => scheduler.runNow(id),
-		storeDir: TMP_DIR,
+		runNow: (id) => scheduler.runNow(OWNER, id),
+		storeDir: OWNER_STORE,
 		defaultTimezone: "Pacific/Honolulu",
+		currentUserId: OWNER,
 	};
 }
 
@@ -306,7 +313,7 @@ describe("automation e2e: run records metrics", () => {
 		await handleRun({ name: "Status Check" }, ctx);
 
 		// After run: scheduler.updateAfterRun updates the definition
-		const afterDefs = loadDefinitions(TMP_DIR);
+		const afterDefs = loadDefinitions(OWNER_STORE);
 		const updated = afterDefs.get("status-check")!;
 		expect(updated.runCount).toBe(1);
 		expect(updated.lastRunStatus).toBe("success");

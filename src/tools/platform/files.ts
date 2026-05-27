@@ -1,7 +1,8 @@
 /**
- * Files platform source — in-process MCP server backing the workspace file
- * store. Files are persisted via a JSONL registry and on-disk binary
- * storage.
+ * Files platform source — in-process MCP server backing the caller's
+ * identity-owned file store (`users/{userId}/files/`; Phase B). `files` is a
+ * kernel identity source, so its tools dispatch bare through the identity
+ * door. Files are persisted via a JSONL registry and on-disk binary storage.
  *
  * Both this tool source and the chat multipart ingest path
  * (`src/api/handlers.ts::handleChat` / `handleChatStream`) share a single
@@ -14,13 +15,12 @@
  * Placements: sidebar files link at priority 3
  */
 
-import { join } from "node:path";
 import { textContent } from "../../engine/content-helpers.ts";
 import type { ContentBlock, EventSink, ToolResult } from "../../engine/types.ts";
 import { extractText } from "../../files/extract.ts";
 import { IMAGE_TYPES, isExtractable, PDF_TYPES } from "../../files/ingest.ts";
 import { isTextMime } from "../../files/mime.ts";
-import { createFileStore, type FileStore } from "../../files/store.ts";
+import type { FileStore } from "../../files/store.ts";
 import type { FileEntry } from "../../files/types.ts";
 import { fileIdToUri, uriToFileId } from "../../files/uri.ts";
 import type { Runtime } from "../../runtime/runtime.ts";
@@ -152,7 +152,7 @@ async function handleRead(
 
   // The resource_link is the durable, byte-free reference. Every result
   // includes one so any resource_link-aware consumer can locate the
-  // workspace `files://` resource without re-reading through this tool.
+  // identity-owned `files://` resource without re-reading through this tool.
   // Today `extractTextForModel` filters these out of the LLM-bound text,
   // which is what we want: the model receives the human text block; the
   // link rides alongside for tool-result metadata, UI rendering, and a
@@ -312,8 +312,22 @@ async function handleDelete(store: FileStore, args: { id: string }): Promise<obj
 
 /** Create the "files" platform source — in-process MCP server. */
 export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSource {
+  /**
+   * Resolve the caller's identity-scoped file store. Files are identity-owned
+   * (Phase B): the store lives at `users/{userId}/files/`, not in any
+   * workspace. `files` is a kernel identity source, so the dispatcher always
+   * runs these tools with an authenticated identity in the request context;
+   * absence is a misrouted call, not a recoverable state.
+   */
   function getStore(): FileStore {
-    return createFileStore(join(runtime.getWorkspaceScopedDir(), "files"));
+    // Resolve the owner through the one shared rule (`resolveRequestUserId`) —
+    // the same path automations' source, the REST file handlers, and chat
+    // rehydration use, so "who am I" never drifts between sources. Fail-closed
+    // in production (throws when an identity provider is configured but the
+    // request carries no identity); DEV_IDENTITY only in dev.
+    return runtime.getFileStore(
+      runtime.resolveRequestUserId(runtime.getCurrentIdentity() ?? undefined),
+    );
   }
 
   function ok(data: object): ToolResult {
@@ -327,8 +341,7 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
   const tools: InProcessTool[] = [
     {
       name: "list",
-      description:
-        "List files in the workspace with pagination, filtering by tags or MIME type, and sorting.",
+      description: "List your files with pagination, filtering by tags or MIME type, and sorting.",
       inputSchema: FilesListInput,
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         try {
@@ -356,7 +369,7 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
       description:
         "Read a file by ID. Returns a resource_link reference and a human-readable summary. " +
         "For text-extractable formats (text, code, JSON, Markdown, CSV, HTML, XML, YAML, PDF, " +
-        "DOCX, XLSX) the summary includes the extracted text up to the workspace's " +
+        "DOCX, XLSX) the summary includes the extracted text up to the platform's " +
         "max-extracted-text size. For images and other non-extractable binary, only metadata " +
         "is returned — images attached to a user message are delivered to the model via native " +
         "file input on the next turn, not through this tool.",
@@ -376,7 +389,7 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
     {
       name: "create",
       description:
-        "Create a new file in the workspace. `manifest` is the file metadata; `body` is the base64-encoded content.",
+        "Create a new file in your file store. `manifest` is the file metadata; `body` is the base64-encoded content.",
       inputSchema: FilesCreateInput,
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         try {

@@ -32,8 +32,10 @@ export function toolRoutes(ctx: AppContext) {
     .get("/v1/shell", requireWorkspace(ctx.workspaceStore), (c) =>
       handleShell(ctx.runtime, c.var.workspaceId),
     )
-    .get("/v1/files/:fileId", requireWorkspace(ctx.workspaceStore), (c) => {
+    .get("/v1/files/:fileId", (c) => {
+      // Files are identity-owned (Phase B) — no workspace needed; the store is
+      // resolved from the authenticated identity.
       const fileId = decodeURIComponent(c.req.param("fileId"));
-      return handleFileServe(fileId, ctx.runtime, ctx.features, c.var.workspaceId);
+      return handleFileServe(fileId, ctx.runtime, ctx.features, c.var.identity);
     });
 }

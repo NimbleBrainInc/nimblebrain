@@ -54,13 +54,14 @@ export interface FileStore {
 }
 
 /**
- * Create a workspace-scoped file store.
+ * Create a file store rooted at `filesDir`.
  *
- * `filesDir` must be a resolved, workspace-scoped path — typically
- * `join(runtime.getWorkspaceScopedDir(wsId), "files")`. Passing a
- * tenant-global path (e.g. `runtime.getWorkDir()`) mixes files across
- * workspaces and is the bug that motivated unifying this store; callers
- * must resolve the workspace-scoped path themselves.
+ * Files are identity-owned (Phase B): `filesDir` must be a resolved,
+ * identity-scoped path (`users/{userId}/files/`). Construct it only through
+ * `Runtime.getFileStore(userId)` — the single sanctioned path, enforced by
+ * `check:file-paths`. Passing a workspace-scoped path (the pre-Phase-B
+ * `getWorkspaceScopedDir(wsId)/files`) silos files per workspace, the exact
+ * bug this migration removes.
  */
 export function createFileStore(filesDir: string): FileStore {
   const registryPath = join(filesDir, "registry.jsonl");

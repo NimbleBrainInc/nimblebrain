@@ -33,13 +33,28 @@ import {
 
 let tmpDir: string;
 
+// Automations are identity-owned: the scheduler scans `{usersDir}/<owner>/
+// automations/`. `makeTmpDir` returns the single test owner's store dir;
+// `usersDirOf` recovers the users/ root for the Scheduler; `defOf` looks up
+// the composite-keyed definitions.
+const OWNER = "usr_test";
+
 function makeTmpDir(): string {
-	return mkdtempSync(join(tmpdir(), "backoff-test-"));
+	return join(mkdtempSync(join(tmpdir(), "backoff-test-")), "users", OWNER, "automations");
+}
+
+function usersDirOf(ownerStoreDir: string): string {
+	return join(ownerStoreDir, "..", "..");
+}
+
+function defOf(scheduler: Scheduler, id: string, owner = OWNER): Automation | undefined {
+	return scheduler.getDefinitions().get(`${owner}/${id}`);
 }
 
 function makeAutomation(overrides: Partial<Automation> = {}): Automation {
 	return {
 		id: "backoff-test",
+		ownerId: OWNER,
 		name: "Backoff Test",
 		prompt: "Do the thing",
 		schedule: { type: "interval", intervalMs: 60_000 },
@@ -122,12 +137,12 @@ describe("backoff delay progression", () => {
 			},
 		) as Executor;
 
-		const scheduler = new Scheduler(executor, { storeDir: tmpDir });
+		const scheduler = new Scheduler(executor, { usersDir: usersDirOf(tmpDir) });
 		scheduler.start();
 
 		// --- Failure 1 ---
 		await scheduler.onTimer();
-		let updated = scheduler.getDefinitions().get(auto.id)!;
+		let updated = defOf(scheduler, auto.id)!;
 		expect(updated.consecutiveErrors).toBe(1);
 		const nextAfter1 = new Date(updated.nextRunAt!).getTime();
 		// Should be ~60s from now (natural interval > 30s backoff)
@@ -140,7 +155,7 @@ describe("backoff delay progression", () => {
 		scheduler.reload();
 
 		await scheduler.onTimer();
-		updated = scheduler.getDefinitions().get(auto.id)!;
+		updated = defOf(scheduler, auto.id)!;
 		expect(updated.consecutiveErrors).toBe(2);
 		const nextAfter2 = new Date(updated.nextRunAt!).getTime();
 		// Should be ~60s from now (natural interval = 60s backoff)
@@ -153,7 +168,7 @@ describe("backoff delay progression", () => {
 		scheduler.reload();
 
 		await scheduler.onTimer();
-		updated = scheduler.getDefinitions().get(auto.id)!;
+		updated = defOf(scheduler, auto.id)!;
 		expect(updated.consecutiveErrors).toBe(3);
 		const nextAfter3 = new Date(updated.nextRunAt!).getTime();
 		// Should be ~5m from now (backoff > natural interval)
@@ -183,12 +198,12 @@ describe("backoff reset on success", () => {
 			async (a: Automation, _signal: AbortSignal) => makeSuccessRun(a.id),
 		) as Executor;
 
-		const scheduler = new Scheduler(executor, { storeDir: tmpDir });
+		const scheduler = new Scheduler(executor, { usersDir: usersDirOf(tmpDir) });
 		scheduler.start();
 
 		await scheduler.onTimer();
 
-		const updated = scheduler.getDefinitions().get(auto.id)!;
+		const updated = defOf(scheduler, auto.id)!;
 		expect(updated.consecutiveErrors).toBe(0);
 		expect(updated.lastRunStatus).toBe("success");
 
@@ -268,7 +283,7 @@ describe("backoff prevents premature execution", () => {
 			async (a: Automation, _signal: AbortSignal) => makeSuccessRun(a.id),
 		) as Executor;
 
-		const scheduler = new Scheduler(executor, { storeDir: tmpDir });
+		const scheduler = new Scheduler(executor, { usersDir: usersDirOf(tmpDir) });
 		scheduler.start();
 
 		// Fire the timer — should NOT execute because of backoff
@@ -293,7 +308,7 @@ describe("backoff prevents premature execution", () => {
 			async (a: Automation, _signal: AbortSignal) => makeSuccessRun(a.id),
 		) as Executor;
 
-		const scheduler = new Scheduler(executor, { storeDir: tmpDir });
+		const scheduler = new Scheduler(executor, { usersDir: usersDirOf(tmpDir) });
 		scheduler.start();
 
 		await scheduler.onTimer();

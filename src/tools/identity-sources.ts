@@ -13,10 +13,16 @@
  * read it. The web tier keeps a hand-mirror in `web/src/lib/identity-apps.ts`
  * (it can't import from `src/`); keep the two in lockstep.
  *
- * v1 set: `conversations`. Files and automations join when their data moves to
- * identity ownership (each plugs into the same door — see ACCESS_MODEL).
+ * Set: `conversations`, `files` (Phase B), `automations` (Phase C) — all
+ * identity-owned, each reached through the identity door (see ACCESS_MODEL).
+ * Automations data lives at `users/{userId}/automations/`; a scheduled run
+ * fires as its owner.
  */
-export const IDENTITY_SOURCES: ReadonlySet<string> = new Set(["conversations"]);
+export const IDENTITY_SOURCES: ReadonlySet<string> = new Set([
+  "conversations",
+  "files",
+  "automations",
+]);
 
 /** Whether a source (by name) is a kernel identity source. */
 export function isIdentitySource(name: string): boolean {

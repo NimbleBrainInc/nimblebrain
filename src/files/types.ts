@@ -12,7 +12,7 @@ export interface ExtractedTextSidecar {
   truncated: boolean;
 }
 
-/** Workspace file entry stored in registry.jsonl */
+/** Identity-owned file entry stored in registry.jsonl (`users/{userId}/files/`). */
 export interface FileEntry {
   id: string;
   filename: string;
@@ -23,6 +23,13 @@ export interface FileEntry {
   conversationId: string | null;
   createdAt: string;
   description: string | null;
+  /**
+   * Provenance breadcrumb (Phase B): the workspace whose tools were in scope
+   * when this file was created. Informational only — files are identity-owned,
+   * so this is NEVER the storage key (mirrors `Conversation.workspaceId`).
+   * Absent on files created before the field existed.
+   */
+  workspaceId?: string;
   deleted?: true;
   deletedAt?: string;
 }

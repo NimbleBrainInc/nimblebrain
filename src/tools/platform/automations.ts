@@ -1,3 +1,4 @@
+import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import {
   createDirectExecutor,
@@ -48,31 +49,37 @@ export async function createAutomationsSource(
   eventSink: EventSink,
 ): Promise<McpSource> {
   const initialWorkDir = runtime.getWorkDir();
-  const initialStoreDir = join(initialWorkDir, "automations");
+  const usersDir = join(initialWorkDir, "users");
   const defaultTimezone = process.env.NB_TIMEZONE ?? "Pacific/Honolulu";
 
-  // Detect and fix orphaned runs from previous crashes (uses initial dir for startup)
-  const orphanCount = detectOrphans(initialStoreDir);
+  // Detect and fix orphaned runs from previous crashes, across every owner's
+  // identity-scoped store (automations are identity-owned; Phase C).
+  let orphanCount = 0;
+  try {
+    for (const owner of readdirSync(usersDir, { withFileTypes: true })) {
+      if (!owner.isDirectory()) continue;
+      orphanCount += detectOrphans(join(usersDir, owner.name, "automations"));
+    }
+  } catch {
+    // users/ not created yet — nothing to sweep.
+  }
   if (orphanCount > 0) {
     process.stderr.write(`[automations] Fixed ${orphanCount} orphaned run(s)\n`);
   }
 
-  // Create a direct executor that calls runtime.chat() in-process.
-  // No HTTP round-trip, no auth token needed — the executor runs in the same
-  // process as the runtime. The standalone MCP server (server.ts) uses the
-  // HTTP executor instead.
-  //
-  // getContext is called per-execution to resolve the workspace/identity.
-  // For user-triggered runs (test run button), it reads from the current
-  // request context (AsyncLocalStorage). For scheduled runs (timer), there's
-  // no request context, so it falls back to the runtime's current workspace.
+  // Direct executor: calls runtime.chat() in-process. `getExecutorContext` is
+  // called per run to resolve WHO the run acts as. A user-triggered run (test
+  // button) reads the current request context. A SCHEDULED run has no request
+  // context, so it fires AS THE OWNER — identity = the automation's `ownerId`,
+  // focused on its provenance `workspaceId` — exactly as if the owner had sent
+  // the message into the runtime (full cross-workspace reach, the focused
+  // workspace's tools active).
   function getExecutorContext(automation?: Automation): ExecutorContext {
     const reqCtx = getRequestContext();
     return {
       workspaceId:
         (reqCtx?.scope.kind === "workspace" ? reqCtx.scope.workspaceId : undefined) ??
         automation?.workspaceId ??
-        runtime.getCurrentWorkspaceId() ??
         undefined,
       identity: reqCtx?.identity ?? (automation?.ownerId ? { id: automation.ownerId } : undefined),
     };
@@ -81,31 +88,34 @@ export async function createAutomationsSource(
     (req) => runtime.chat(req as ChatRequest),
     getExecutorContext,
   );
-  const scheduler = new Scheduler(executor, {
-    storeDir: initialStoreDir,
-    defaultTimezone,
-  });
+  const scheduler = new Scheduler(executor, { usersDir, defaultTimezone });
   scheduler.start();
 
-  /** Resolve workspace-scoped store directory per-request. */
-  function getStoreDir(): string {
-    return join(runtime.getWorkspaceScopedDir(), "automations");
+  /**
+   * The caller's owner id. Automations are identity-owned: the tool path
+   * carries the caller's identity in the request context; internal callers
+   * (CLI, bundle lifecycle) resolve to the dev identity in dev. Mirrors files'
+   * owner resolution so an automation's store and its scheduled run agree.
+   */
+  function ownerId(): string {
+    return runtime.resolveRequestUserId(runtime.getCurrentIdentity() ?? undefined);
   }
 
-  /** Build a workspace-scoped ToolContext for per-request use. */
+  /** Build an identity-scoped ToolContext for per-request use. */
   function getToolContext(): ToolContext {
-    const storeDir = getStoreDir();
+    const owner = ownerId();
+    const storeDir = runtime.getIdentityContext(owner).getDataPath("automations");
     const reqCtx = getRequestContext();
     return {
       definitions: () => loadDefinitions(storeDir),
       save: (d) => saveDefinitions(d, storeDir),
-      reloadScheduler: () => scheduler.reload(storeDir),
-      runNow: (id) => scheduler.runNow(id),
-      cancelRun: (id) => scheduler.cancelRun(id),
+      reloadScheduler: () => scheduler.reload(),
+      runNow: (id) => scheduler.runNow(owner, id),
+      cancelRun: (id) => scheduler.cancelRun(owner, id),
       storeDir,
       defaultTimezone,
       defaultModel: runtime.getDefaultModel(),
-      currentUserId: reqCtx?.identity?.id,
+      currentUserId: owner,
       currentWorkspaceId: reqCtx?.scope.kind === "workspace" ? reqCtx.scope.workspaceId : undefined,
     };
   }

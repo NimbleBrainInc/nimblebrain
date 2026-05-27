@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type ServerHandle, startServer } from "../../src/api/server.ts";
+import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
@@ -60,11 +61,11 @@ describe("POST /v1/resources", () => {
     expect(entry.mimeType.split(";")[0]).toBe("text/plain");
     expect(entry.size).toBe(11);
 
-    // Bytes physically land under the authenticated workspace's directory.
-    // This is the "isolation by composition" guarantee — the upload route
-    // never lets the caller pick a different workspace's path.
-    const wsFilesDir = join(testDir, "workspaces", TEST_WORKSPACE_ID, "files");
-    const onDisk = readdirSync(wsFilesDir);
+    // Bytes land under the uploader's IDENTITY store (files are
+    // identity-owned; Phase B) — `users/{userId}/files/`, not the workspace
+    // dir. The dev server authenticates as DEV_IDENTITY.
+    const filesDir = join(testDir, "users", DEV_IDENTITY.id, "files");
+    const onDisk = readdirSync(filesDir);
     expect(onDisk.some((name) => name.startsWith(`${entry.id}_`))).toBe(true);
   });
 

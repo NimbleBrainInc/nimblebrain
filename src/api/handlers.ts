@@ -1,11 +1,10 @@
 import { readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 import { CallbackEventSink } from "../adapters/callback-events.ts";
 import { log } from "../cli/log.ts";
 import { isToolEnabled, isToolVisibleToRole, type ResolvedFeatures } from "../config/features.ts";
 import type { EngineEvent, EventSink } from "../engine/types.ts";
 import { ingestFiles, isAllowedMime, type UploadedFile } from "../files/ingest.ts";
-import { createFileStore } from "../files/store.ts";
 import type { FileEntry } from "../files/types.ts";
 import type { IdentityProvider, UserIdentity } from "../identity/provider.ts";
 import { DEV_IDENTITY } from "../identity/providers/dev.ts";
@@ -29,7 +28,6 @@ import { validateToolInput } from "../tools/validate-input.ts";
 import { estimateCost } from "../usage/cost.ts";
 import { bytesToBase64 } from "../util/base64.ts";
 import { PersonalWorkspaceInvariantError } from "../workspace/errors.ts";
-import { personalWorkspaceIdFor } from "../workspace/workspace-store.ts";
 import type { ConversationEventManager } from "./conversation-events.ts";
 import type { SseEventManager } from "./events.ts";
 import { ChatRequestBody, ToolCallRequestEnvelope } from "./schemas/rest.ts";
@@ -759,7 +757,7 @@ export function buildResourceEnvelopeEntry(
 export async function handleReadResource(
   request: Request,
   runtime: Runtime,
-  options?: { workspaceId?: string },
+  options?: { workspaceId?: string; identity?: UserIdentity },
 ): Promise<Response> {
   const body = await parseJsonBody(request);
   if (body instanceof Response) return body;
@@ -770,6 +768,25 @@ export async function handleReadResource(
   }
   if (!uri || typeof uri !== "string") {
     return apiError(400, "bad_request", "'uri' is required");
+  }
+
+  // Identity sources (conversations, files) live OUTSIDE any workspace —
+  // they're reached through the identity door, the same decision the
+  // orchestrator and `handleToolCall` make. Their resources (e.g. a file's
+  // `files://<id>` bytes) read from the identity host, authorized by the
+  // session identity; a stale X-Workspace-Id is irrelevant. Without this an
+  // identity-source read 403s ("not available in this workspace") because the
+  // source isn't in any workspace registry.
+  const { identity } = options ?? {};
+  if (runtime.getIdentitySource(server)) {
+    const reqCtx: RequestContext = { identity: identity ?? null, scope: { kind: "identity" } };
+    const resource = await runWithRequestContext(reqCtx, () =>
+      runtime.readIdentityAppResource(server, uri),
+    );
+    if (resource === null) {
+      return apiError(404, "resource_not_found", `Resource "${uri}" not found`, { server, uri });
+    }
+    return json({ contents: [buildResourceEnvelopeEntry(uri, resource)] });
   }
 
   const workspaceId = options?.workspaceId;
@@ -1461,12 +1478,13 @@ export function sanitizeFilename(name: string): string {
  */
 const FILE_ID_RE = /^fl_(?:[a-f0-9]{24}|[a-z0-9]+_[a-f0-9]{8})$/;
 
-/** Handle GET /v1/files/:fileId — serve a stored file. */
+/** Handle GET /v1/files/:fileId — serve a stored file from the caller's
+ * identity store (files are identity-owned; Phase B). */
 export async function handleFileServe(
   fileId: string,
   runtime: Runtime,
   features: ResolvedFeatures,
-  workspaceId: string,
+  identity: UserIdentity | undefined,
 ): Promise<Response> {
   if (!features.fileContext) {
     return apiError(404, "not_found", "Not found");
@@ -1476,7 +1494,7 @@ export async function handleFileServe(
     return apiError(400, "bad_request", "Invalid file ID format");
   }
 
-  const store = createFileStore(join(runtime.getWorkspaceScopedDir(workspaceId), "files"));
+  const store = runtime.getFileStore(runtime.resolveRequestUserId(identity));
   try {
     const file = await store.readFile(fileId);
     const safeName = sanitizeFilename(file.filename);
@@ -1614,16 +1632,13 @@ async function parseMultipartChatBody(
 
   // Ingest files: validate, store, extract text, build content parts.
   //
-  // Stage 2: the file store is identity-bound. `runtime.chat()` reads files
-  // from `getWorkspaceScopedDir(personalWorkspaceIdFor(identity.id))/files`;
-  // ingest writes to the SAME location here, ignoring `X-Workspace-Id` for
-  // FILE STORAGE (files are identity-scoped — Phase B moves them fully). The
-  // `workspaceId` parameter still threads into `ChatRequest.workspaceId` (the
-  // focused workspace, for prompt scoping) — it just doesn't route file
-  // storage. Cross-workspace ingest is a later concern (files would need to
-  // be tagged with their target workspace at upload).
-  const ingestWsId = identity?.id ? personalWorkspaceIdFor(identity.id) : workspaceId;
-  const store = createFileStore(join(runtime.getWorkspaceScopedDir(ingestWsId), "files"));
+  // Files are identity-owned (Phase B): ingest writes to the uploader's
+  // identity store (`users/{userId}/files/`), the SAME store `runtime.chat()`
+  // reads from when it rehydrates the conversation — resolved through the one
+  // owner rule so an upload can't land in a store the read won't look in.
+  // `X-Workspace-Id` does not route file storage; it still threads into
+  // `ChatRequest.workspaceId` (the focused workspace, for prompt scoping).
+  const store = runtime.getFileStore(runtime.resolveRequestUserId(identity));
   const filesConfig = runtime.getFilesConfig();
   // Use conversationId if provided, otherwise a placeholder (will be replaced by runtime.chat)
   const convId = (typeof conversationId === "string" && conversationId) || "pending";
@@ -1683,7 +1698,7 @@ export async function handleResourceUpload(
   request: Request,
   runtime: Runtime,
   features: ResolvedFeatures,
-  workspaceId: string,
+  identity: UserIdentity | undefined,
 ): Promise<Response> {
   if (!features.fileContext) {
     return apiError(404, "not_found", "Not found");
@@ -1762,7 +1777,7 @@ export async function handleResourceUpload(
   const conversationId =
     typeof conversationIdRaw === "string" && conversationIdRaw ? conversationIdRaw : null;
 
-  const store = createFileStore(join(runtime.getWorkspaceScopedDir(workspaceId), "files"));
+  const store = runtime.getFileStore(runtime.resolveRequestUserId(identity));
   const entries: FileEntry[] = [];
   const errors: string[] = [];
 
