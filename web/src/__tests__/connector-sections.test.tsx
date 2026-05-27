@@ -32,7 +32,8 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 
 // ── api/client mocks ────────────────────────────────────────────────
 // Every section calls into one or two helpers from api/client. We
-// mock the module wholesale so the components don't try to fetch.
+// override those helpers but spread the real module (see the mock.module
+// call below) so the stub stays complete.
 
 const disconnectConnector = mock(async () => ({
   ok: true,
@@ -59,7 +60,14 @@ const setupConnectorOperator = mock(async () => ({
   clientId: "cid-rotated",
 }));
 
+// Spread the real module so this whole-module mock exposes every api/client
+// export. Bun's `mock.module` is process-global; this 5-export stub previously
+// clobbered `../api/client` for other suites loading concurrently (the
+// `getActiveWorkspaceId`/`setActiveWorkspaceId` "export not found" flake). A
+// complete mock is inert when it leaks — only these five are overridden.
+const actualClient = await import("../api/client");
 mock.module("../api/client", () => ({
+  ...actualClient,
   disconnectConnector,
   initiateMcpOAuth,
   clearBundleUserConfig,

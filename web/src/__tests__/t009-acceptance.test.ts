@@ -25,19 +25,18 @@
 //   - `setAuthToken` fires lifecycle handler, `setActiveWorkspaceId`
 //     does not: `api-client-lifecycle.test.ts`.
 //
-// File is prefixed `a-` to load early — `mock.module(...)` from
-// `connector-sections.test.tsx` later in the suite installs a 5-export
-// stub for `../api/client`, and any file importing `setAuthToken` /
-// `streamChat` after that fails to resolve. Existing
-// `api-client-lifecycle.test.ts` uses the same alphabetical-load trick.
+// This file reads the REAL `../api/client` (it installs no mock.module of its
+// own). The whole-module client mocks in other suites now spread the real
+// module, so they never drop an export even when Bun's process-global mock
+// registry leaks one across concurrently-loading files — no filename-ordering
+// trick required.
 // ---------------------------------------------------------------------------
 
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, mock, test } from "bun:test";
 
-// Side-effect import to pin the module in the cache with full exports
-// before any later test installs a mock.module replacement.
+// Real exports under test — asserted as values/types below.
 import {
   ApiClientError,
   errorFromResponse,

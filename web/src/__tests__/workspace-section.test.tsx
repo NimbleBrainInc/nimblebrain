@@ -13,12 +13,6 @@
 //      lost the guard would silently invalidate the REST cache on
 //      every click.
 //   4. Click navigates to `/w/<slug>/`.
-//
-// Prefixed `b-` (after `a-t009-acceptance.test.ts`) so it loads before
-// the suite's `mock.module("../api/client", ...)` stubs in
-// `connector-sections.test.tsx`. The acceptance file installs partial
-// mocks of the api client surface that would break this test's
-// `setActiveWorkspaceId` import otherwise.
 // ---------------------------------------------------------------------------
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
@@ -35,7 +29,15 @@ const setActiveSpy = mock((id: string | null) => {
 });
 const mockedGetActiveWorkspaceId = (): string | null => mockedActiveId;
 
+// Spread the real module so this whole-module mock exposes every api/client
+// export. Bun's `mock.module` is process-global; a partial stub leaking into
+// another suite mid-run (under CI's parallelism) is what crashed bridge tests
+// with "Export named 'getActiveWorkspaceId' not found" — and is why this file
+// used to need a `b-` filename to win the load order. A complete mock is inert
+// when it leaks; only the three below are overridden.
+const actualClient = await import("../api/client");
 mock.module("../api/client", () => ({
+  ...actualClient,
   setActiveWorkspaceId: setActiveSpy,
   getActiveWorkspaceId: mockedGetActiveWorkspaceId,
   callTool: mock(async () => ({ structuredContent: null, content: [] })),
