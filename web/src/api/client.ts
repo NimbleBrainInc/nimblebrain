@@ -11,7 +11,7 @@ import type {
   PlacementEntry,
   ToolCallResult,
 } from "../types";
-import { getConversationSubscriberId } from "./conversation-sse";
+import { getConversationSubscriberId } from "./conversation-subscribers";
 import { createFetchWithRefresh } from "./fetch-with-refresh";
 
 // ---------------------------------------------------------------------------
