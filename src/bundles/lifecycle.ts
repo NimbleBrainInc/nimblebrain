@@ -1177,14 +1177,29 @@ export class BundleLifecycleManager {
         }
       })
       .catch((err) => {
-        const msg = err instanceof Error ? err.message : String(err);
-        // For UnauthorizedError, the callback path already recorded
-        // pending_auth — we don't want to overwrite that with `dead`.
-        // Other errors (network, SSRF block, server crash) → record dead.
+        // The SDK's OAuth error classes (InvalidGrantError, InvalidClientError,
+        // …) carry their detail in `.name` with an EMPTY `.message`, so fall
+        // back to the name — otherwise the surfaced diagnostic is blank, which
+        // is nearly as useless as swallowing it.
+        const msg = err instanceof Error ? err.message || err.name : String(err);
+        // Always surface the failure. The interactive path (capturedAuthUrl
+        // set) used to be swallowed here: if the background start() failed
+        // AFTER the auth URL was returned — the token exchange or reconnect
+        // threw once the user came back, or the pending flow timed out — the
+        // connection was left stuck in `pending_auth` ("Connecting…") forever
+        // with no log and no tokens. Log it and move the connection to `dead`
+        // (+ lastError) so the UI offers a recoverable Reconnect instead of
+        // an indefinite spinner.
+        log.warn(
+          `[lifecycle] startAuth: ${serverName} start failed for ${principalId} in ${wsId}: ${msg}`,
+        );
+        this.recordConnectionStateChange(serverName, wsId, principalId, "dead", {
+          lastError: msg,
+        });
+        // `authUrlPromise` already resolved on the interactive path, so a
+        // reject there is a no-op; only the headless / pre-auth failure path
+        // (no captured URL) still needs the caller's promise rejected.
         if (!capturedAuthUrl) {
-          this.recordConnectionStateChange(serverName, wsId, principalId, "dead", {
-            lastError: msg,
-          });
           rejectAuthUrl(err instanceof Error ? err : new Error(msg));
         }
       });
@@ -1202,15 +1217,22 @@ export class BundleLifecycleManager {
     });
     try {
       const authorizationUrl = await Promise.race([authUrlPromise, timeout]);
-      return { authorizationUrl };
-    } finally {
       if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
-      // Either branch resolved — cancel any provider fetches still in
-      // flight. Success path: redirect-probe was about to be torn down
-      // anyway. Timeout path: cuts an unresponsive server's TCP read
-      // instead of letting it run its full network timeout in the
-      // background.
+      // SUCCESS: the interactive flow (or a headless completion) continues
+      // in the background `source.start()` — it still has to run the token
+      // exchange + reconnect when the user returns from the authorization
+      // server. Do NOT abort the provider here; that would cancel a
+      // still-pending flow's in-flight fetches mid-dance. The abort below
+      // is only for the give-up paths.
+      return { authorizationUrl };
+    } catch (err) {
+      if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
+      // Timed out, or the background start() rejected before any auth URL
+      // (headless / pre-auth failure). Cancel the provider's in-flight
+      // fetches so an unresponsive auth server's TCP read doesn't linger
+      // for its full network deadline.
       providerAbort.abort();
+      throw err;
     }
   }
 
