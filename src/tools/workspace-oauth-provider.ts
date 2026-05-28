@@ -166,6 +166,24 @@ export interface WorkspaceOAuthProviderOptions {
    * default behavior (no cancellation).
    */
   abortSignal?: AbortSignal;
+  /**
+   * Opt in to the server-side authorize-redirect probe — a HEADLESS-only
+   * optimization. When true, `redirectToAuthorization` fetches the
+   * authorize URL server-side and follows the redirect chain to extract a
+   * code without a browser (Reboot's `Anonymous` dev provider 302s
+   * straight to our callback with `?code=…`).
+   *
+   * Default false, and it MUST stay false for normal interactive
+   * providers. Probing a real OAuth server (Granola, Claude.ai, etc.)
+   * issues a genuine server-side `/authorize` request that spins up a live
+   * authorization session bound to our PKCE `code_challenge` BEFORE the
+   * user acts — which the vendor then treats as a competing/abandoned
+   * attempt and rejects the user's real code at exchange (`invalid_code`)
+   * or strands the flow. A standard client never touches `/authorize`
+   * server-side; it just hands the URL to the browser. So: probe only when
+   * the bundle is known-headless.
+   */
+  headlessAuthProbe?: boolean;
 }
 
 /**
@@ -435,6 +453,7 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
   private readonly scopes?: string[];
   private readonly additionalAuthorizationParams?: Record<string, string>;
   private readonly abortSignal?: AbortSignal;
+  private readonly headlessAuthProbe: boolean;
   /** Cached DCR result + tokens to avoid redundant disk reads within a flow. */
   private cachedClientInfo: OAuthClientInformationFull | null = null;
   private cachedTokens: OAuthTokens | null = null;
@@ -471,6 +490,7 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     validateAdditionalAuthorizationParams(opts.additionalAuthorizationParams);
     this.additionalAuthorizationParams = opts.additionalAuthorizationParams;
     this.abortSignal = opts.abortSignal;
+    this.headlessAuthProbe = opts.headlessAuthProbe === true;
 
     // Resolve the per-owner storage root. Two construction modes:
     //
@@ -747,75 +767,83 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     // Real interactive providers (Granola, Claude.ai hosted) redirect to a
     // login page on a different origin — the loop never lands on our
     // callback and we fall through to the interactive branch.
-    const MAX_HOPS = 10;
-    let current = url;
-    try {
-      for (let hop = 0; hop < MAX_HOPS; hop++) {
-        // SSRF defense: validate EVERY hop (including the initial URL the
-        // server handed us), not just the configured bundle URL. The
-        // authorize URL and every Location header are attacker-controlled —
-        // a compromised remote MCP server could otherwise use our fetch()
-        // as an internal-network probe tool (AWS IMDS, RFC1918 admin
-        // panels, loopback services). Wrap with our marker prefix so the
-        // outer catch rethrows instead of silently falling through to the
-        // interactive branch.
-        try {
-          validateBundleUrl(current, { allowInsecure: this.allowInsecureRemotes });
-        } catch (err) {
-          throw new Error(
-            `[workspace-oauth-provider] SSRF block on ${current.toString()}: ${
-              err instanceof Error ? err.message : String(err)
-            }`,
-          );
-        }
+    // Headless-only (see `headlessAuthProbe`). A standard interactive
+    // provider must NOT be probed server-side: fetching `/authorize`
+    // ourselves spins up a vendor authorization session bound to our PKCE
+    // challenge before the user acts, which makes the vendor reject the
+    // user's real code at exchange (`invalid_code`) or strand the flow.
+    // Default-off; only Reboot-style headless bundles opt in.
+    if (this.headlessAuthProbe) {
+      const MAX_HOPS = 10;
+      let current = url;
+      try {
+        for (let hop = 0; hop < MAX_HOPS; hop++) {
+          // SSRF defense: validate EVERY hop (including the initial URL the
+          // server handed us), not just the configured bundle URL. The
+          // authorize URL and every Location header are attacker-controlled —
+          // a compromised remote MCP server could otherwise use our fetch()
+          // as an internal-network probe tool (AWS IMDS, RFC1918 admin
+          // panels, loopback services). Wrap with our marker prefix so the
+          // outer catch rethrows instead of silently falling through to the
+          // interactive branch.
+          try {
+            validateBundleUrl(current, { allowInsecure: this.allowInsecureRemotes });
+          } catch (err) {
+            throw new Error(
+              `[workspace-oauth-provider] SSRF block on ${current.toString()}: ${
+                err instanceof Error ? err.message : String(err)
+              }`,
+            );
+          }
 
-        // Honor lifecycle's timeout: when the controller aborts, the
-        // in-flight TCP read terminates with an AbortError instead of
-        // running its full network timeout in the background.
-        const res = await fetch(current.toString(), {
-          redirect: "manual",
-          ...(this.abortSignal ? { signal: this.abortSignal } : {}),
-        });
-        if (res.status < 300 || res.status >= 400) {
-          // Non-redirect response — provider sent us a login page (200) or
-          // an error (4xx/5xx). Not headless.
-          break;
-        }
-        const location = res.headers.get("location");
-        if (!location) break;
-        const next = new URL(location, current);
-        if (canonicalEndpoint(next) === this.canonicalCallback) {
-          const code = next.searchParams.get("code");
-          const errParam = next.searchParams.get("error");
-          if (code) {
-            log.debug(
-              "mcp",
-              `[oauth] headless flow: ${this.serverName} got code=${code.slice(0, 8)}… after ${hop + 1} hop(s)`,
-            );
-            d?.resolve(code);
-            return;
+          // Honor lifecycle's timeout: when the controller aborts, the
+          // in-flight TCP read terminates with an AbortError instead of
+          // running its full network timeout in the background.
+          const res = await fetch(current.toString(), {
+            redirect: "manual",
+            ...(this.abortSignal ? { signal: this.abortSignal } : {}),
+          });
+          if (res.status < 300 || res.status >= 400) {
+            // Non-redirect response — provider sent us a login page (200) or
+            // an error (4xx/5xx). Not headless.
+            break;
           }
-          if (errParam) {
-            const err = new Error(
-              `[workspace-oauth-provider] authorization server returned error: ${errParam}`,
-            );
-            d?.reject(err);
-            throw err;
+          const location = res.headers.get("location");
+          if (!location) break;
+          const next = new URL(location, current);
+          if (canonicalEndpoint(next) === this.canonicalCallback) {
+            const code = next.searchParams.get("code");
+            const errParam = next.searchParams.get("error");
+            if (code) {
+              log.debug(
+                "mcp",
+                `[oauth] headless flow: ${this.serverName} got code=${code.slice(0, 8)}… after ${hop + 1} hop(s)`,
+              );
+              d?.resolve(code);
+              return;
+            }
+            if (errParam) {
+              const err = new Error(
+                `[workspace-oauth-provider] authorization server returned error: ${errParam}`,
+              );
+              d?.reject(err);
+              throw err;
+            }
+            break;
           }
-          break;
+          current = next;
         }
-        current = next;
+      } catch (probeErr) {
+        // Rethrow our own explicit errors (authz server error, SSRF block)
+        // so callers see the real cause instead of the generic
+        // interactive-branch surface. Swallow network failures and fall
+        // through to the interactive branch below.
+        if (probeErr instanceof Error && probeErr.message.includes("[workspace-oauth-provider]")) {
+          d?.reject(probeErr);
+          throw probeErr;
+        }
+        log.debug("mcp", `[oauth] ${this.serverName} redirect probe failed: ${String(probeErr)}`);
       }
-    } catch (probeErr) {
-      // Rethrow our own explicit errors (authz server error, SSRF block)
-      // so callers see the real cause instead of the generic
-      // interactive-branch surface. Swallow network failures and fall
-      // through to the interactive branch below.
-      if (probeErr instanceof Error && probeErr.message.includes("[workspace-oauth-provider]")) {
-        d?.reject(probeErr);
-        throw probeErr;
-      }
-      log.debug("mcp", `[oauth] ${this.serverName} redirect probe failed: ${String(probeErr)}`);
     }
 
     // Interactive branch: real browser redirect required. Register the

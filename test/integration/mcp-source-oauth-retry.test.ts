@@ -198,6 +198,9 @@ describe("McpSource — OAuth retry path", () => {
       callbackUrl: CALLBACK,
       // Mock runs on localhost; SSRF validator would otherwise reject.
       allowInsecureRemotes: true,
+      // This test exercises the headless 302→code path, which only runs
+      // when the redirect probe is enabled (off by default now).
+      headlessAuthProbe: true,
     });
 
     const source = new McpSource(

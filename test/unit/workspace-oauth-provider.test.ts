@@ -446,6 +446,8 @@ describe("WorkspaceOAuthProvider — Track A: pre-registered client + scopes + e
         workDir,
         callbackUrl: CALLBACK,
         allowInsecureRemotes: true,
+        // This test inspects the URL the probe's fetch sees, so enable the probe.
+        headlessAuthProbe: true,
         additionalAuthorizationParams: {
           access_type: "offline",
           prompt: "consent",
