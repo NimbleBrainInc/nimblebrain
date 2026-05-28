@@ -95,6 +95,7 @@ describe("multi-model routing", () => {
 				},
 				resolveSlot: (s: string) => s,
 				tools: new ToolRegistry(),
+				defaultActiveTools: async () => [],
 				events: new NoopEventSink(),
 				agents: {
 					researcher: {
@@ -133,6 +134,7 @@ describe("multi-model routing", () => {
 				},
 				resolveSlot: (s: string) => s,
 				tools: new ToolRegistry(),
+				defaultActiveTools: async () => [],
 				events: new NoopEventSink(),
 				agents: {
 					writer: {
@@ -168,6 +170,7 @@ describe("multi-model routing", () => {
 				},
 				resolveSlot: (s: string) => s,
 				tools: new ToolRegistry(),
+				defaultActiveTools: async () => [],
 				events: new NoopEventSink(),
 				agents: {
 					fast_agent: {
@@ -212,6 +215,7 @@ describe("multi-model routing", () => {
 				},
 				resolveSlot: (s: string) => s,
 				tools: new ToolRegistry(),
+				defaultActiveTools: async () => [],
 				events: new NoopEventSink(),
 				getRemainingIterations: () => 10,
 				getParentRunId: () => "parent-run-4",

@@ -28,7 +28,36 @@ export interface DelegateContext {
   resolveModel: (modelString: string) => LanguageModelV3;
   /** Resolve model slot names (e.g., "fast") to actual model IDs. Passes through non-slot strings. */
   resolveSlot: (modelString: string) => string;
+  /**
+   * Tool router used for the child engine's per-call dispatch. Identity-wide
+   * (Stage 2): `availableTools()` returns the cross-workspace namespaced
+   * union for the request's identity; `execute(call, ...)` routes through
+   * the orchestrator, gated by workspace membership.
+   *
+   * The child engine's INITIAL active set is governed by
+   * `defaultActiveTools()` (focused-workspace-scoped) — NOT by
+   * `tools.availableTools()`. Reachability ≠ default visibility. A child
+   * agent can REACH any tool the identity is a member-of-the-workspace-for
+   * (so `manage_tools.add("ws_<B>-...")` works on demand), but its initial
+   * tool list is the focused workspace's set so the prompt stays bounded.
+   *
+   * Globs in `tools: [...]` widen the initial active set: namespaced globs
+   * (`ws_<id>-...`) match against `tools.availableTools()` (identity-wide);
+   * bare globs (`source__*`) match against `defaultActiveTools()` (focused
+   * workspace + identity sources). The asymmetry is deliberate — bare
+   * globs are how existing delegate callers express "the focused
+   * workspace's CRM"; preserving that prevents accidental cross-workspace
+   * fan-out when the same connector is installed in multiple workspaces.
+   */
   tools: ToolRouter;
+  /**
+   * The child engine's default INITIAL active set: namespaced focused-
+   * workspace tools + bare kernel identity tools. Mirrors the composition
+   * the chat surface gives its parent engine (see `Runtime._chatInner`,
+   * the `allTools` construction). Used when the caller didn't supply
+   * `tools: [...]` globs.
+   */
+  defaultActiveTools: () => Promise<ToolSchema[]>;
   events: EventSink;
   agents?: Record<string, AgentProfile>;
   /** Called at execution time to get the parent's remaining iteration budget. */
@@ -187,10 +216,47 @@ export function createDelegateTool(ctx: DelegateContext): InProcessTool {
           Math.max(parentRemaining - 1, 1),
         );
 
-        // Determine tool access
-        const allTools = await ctx.tools.availableTools();
+        // Determine tool access. Two sources, two purposes:
+        //
+        //   - `defaultActiveTools()` — focused-workspace tools (namespaced)
+        //     + bare identity tools. Mirrors the chat surface's initial
+        //     active set. Used as the default when no globs are supplied,
+        //     and as the match corpus for BARE globs (`source__*`).
+        //
+        //   - `ctx.tools.availableTools()` — identity-wide union, namespaced.
+        //     Used as the match corpus for NAMESPACED globs (`ws_<id>-...`)
+        //     so an explicit cross-workspace request can reach across the
+        //     identity's full set.
+        //
+        // Bare globs intentionally don't broaden to cross-workspace: a
+        // caller using `["crm__*"]` from workspace A expects the focused
+        // workspace's CRM, not every workspace's CRM. Namespaced globs are
+        // the opt-in for cross-workspace reach. Mixed glob lists work —
+        // each glob expands against its own corpus and the results union.
         const globs = toolGlobs ?? profile?.tools;
-        const childTools = globs && globs.length > 0 ? filterTools(allTools, globs) : allTools;
+        const defaultTools = await ctx.defaultActiveTools();
+        let childTools: ToolSchema[];
+        if (globs && globs.length > 0) {
+          const namespacedGlobs = globs.filter((g) => g.startsWith("ws_"));
+          const bareGlobs = globs.filter((g) => !g.startsWith("ws_"));
+          const fromBare = bareGlobs.length > 0 ? filterTools(defaultTools, bareGlobs) : [];
+          const fromNamespaced =
+            namespacedGlobs.length > 0
+              ? filterTools(await ctx.tools.availableTools(), namespacedGlobs)
+              : [];
+          // Dedupe by canonical (namespaced) name — `filterTools` may return
+          // the same entry under both corpuses if a focused-workspace tool's
+          // namespaced form is matched by a `ws_<focused>-...` glob.
+          const seen = new Set<string>();
+          childTools = [];
+          for (const t of [...fromBare, ...fromNamespaced]) {
+            if (seen.has(t.name)) continue;
+            seen.add(t.name);
+            childTools.push(t);
+          }
+        } else {
+          childTools = defaultTools;
+        }
 
         // Create child event sink with parent linkage
         const parentRunId = ctx.getParentRunId();

@@ -43,7 +43,6 @@ import type {
   EventSink,
   SkillsLoadedPayload,
   ToolPromotionResult,
-  ToolResult,
   ToolRouter,
   ToolSchema,
 } from "../engine/types.ts";
@@ -63,16 +62,7 @@ import { InstructionsStore } from "../instructions/index.ts";
 import { getProviderFromModel } from "../model/catalog.ts";
 import { buildModelResolver, resolveModelString } from "../model/registry.ts";
 import { installOAuthFetchDebug } from "../oauth/oauth-fetch-debug.ts";
-import {
-  createToolListAggregator,
-  routeToolCall,
-  type ToolListAggregator,
-  UnknownIdentitySource,
-  UnknownNamespacedToolName,
-  UnknownToolSource,
-  UnknownWorkspace,
-  WorkspaceAccessDenied,
-} from "../orchestrator/index.ts";
+import { createToolListAggregator, type ToolListAggregator } from "../orchestrator/index.ts";
 import { PermissionStore } from "../permissions/permission-store.ts";
 import type {
   AppStateInfo,
@@ -111,11 +101,11 @@ import { WorkspaceContext } from "../workspace/context.ts";
 import { ensureUserWorkspace } from "../workspace/provisioning.ts";
 import { personalWorkspaceIdFor, WorkspaceStore } from "../workspace/workspace-store.ts";
 import { ConversationAccessDeniedError, RunInProgressError } from "./errors.ts";
+import { IdentityToolRouter } from "./identity-tool-router.ts";
 import { PlacementRegistry } from "./placement-registry.ts";
 import {
   getRequestContext,
   type RequestContext,
-  type RequestScope,
   runWithRequestContext,
 } from "./request-context.ts";
 import { buildSkillsLoadedPayload } from "./skills-loaded-payload.ts";
@@ -487,9 +477,86 @@ export class Runtime {
     const delegateCtx: DelegateContext = {
       resolveModel: resolveModelFn,
       resolveSlot,
+      // Child engine's per-call ToolRouter.
+      //
+      // Identity-bound when an authenticated identity is in the request
+      // context (the chat / `/mcp` path): the child engine gets the same
+      // cross-workspace reach the parent has, gated per-call by
+      // `routeToolCall`'s membership check. Without this, a delegate
+      // invoked from one workspace couldn't dispatch a tool installed in
+      // another workspace the identity belongs to — even though the
+      // session is identity-bound and the orchestrator already supports
+      // the dispatch. (See `IdentityToolRouter`.)
+      //
+      // Falls back to the current workspace's registry when no identity
+      // is in scope — CLI / dev paths construct delegateCtx without an
+      // authenticated identity, and the workspace registry's bare-name
+      // surface is what they expect. This mirrors
+      // `runtime.listDiscoverableTools`'s identity-vs-fallback split.
+      //
+      // The child's INITIAL active set is governed by `defaultActiveTools`
+      // below, not by this router. Identity-wide reachability without
+      // workspace-scoped defaults would flood the prompt with N copies
+      // of the system tools — see `_chatInner`'s tool-surfacing comment.
       get tools() {
         if (!rtHolder.rt) throw new Error("Runtime not initialized");
-        return rtHolder.rt.getRegistryForCurrentWorkspace();
+        const identity = getRequestContext()?.identity;
+        if (!identity) return rtHolder.rt.getRegistryForCurrentWorkspace();
+        return new IdentityToolRouter({
+          identityId: identity.id,
+          runtime: rtHolder.rt,
+          aggregator: rtHolder.rt.getToolListAggregator(),
+        });
+      },
+      // Default initial active set: focused-workspace tools (namespaced
+      // so the identity router can route them) + bare kernel identity
+      // tools. Mirrors `_chatInner`'s `allTools` composition so a child
+      // agent starts with the same default tool view the parent has.
+      // Bare-name globs in `tools: [...]` match against THIS set, not
+      // against the identity-wide union — see `DelegateContext.tools`.
+      defaultActiveTools: async (): Promise<ToolSchema[]> => {
+        if (!rtHolder.rt) throw new Error("Runtime not initialized");
+        const rt = rtHolder.rt;
+        const wsId = rt._currentWorkspaceId?.();
+        const orgRole = getRequestContext()?.identity?.orgRole;
+        if (!wsId) {
+          // Dev / CLI path without a workspace in scope — return identity
+          // tools only. Hard-failing here would break the existing CLI
+          // delegate path, which currently delegates without any workspace
+          // context. The workspace door simply contributes nothing.
+          const identityTools = await rt.listIdentitySourceTools();
+          return identityTools
+            .filter((t) => isToolVisibleToRole(t.name, orgRole))
+            .map((t) => ({
+              name: t.name,
+              description: t.description,
+              inputSchema: t.inputSchema,
+              ...(t.annotations !== undefined ? { annotations: t.annotations } : {}),
+            }));
+        }
+        const registry = rt.getRegistryForWorkspace(wsId);
+        const [focusedTools, identityTools] = await Promise.all([
+          registry.availableTools(),
+          rt.listIdentitySourceTools(),
+        ]);
+        return [
+          ...focusedTools
+            .filter((t) => isToolVisibleToRole(t.name, orgRole))
+            .map((t) => ({
+              name: namespacedToolName(wsId, t.name),
+              description: t.description,
+              inputSchema: t.inputSchema,
+              ...(t.annotations !== undefined ? { annotations: t.annotations } : {}),
+            })),
+          ...identityTools
+            .filter((t) => isToolVisibleToRole(t.name, orgRole))
+            .map((t) => ({
+              name: t.name,
+              description: t.description,
+              inputSchema: t.inputSchema,
+              ...(t.annotations !== undefined ? { annotations: t.annotations } : {}),
+            })),
+        ];
       },
       events,
       // Use getter so workspace agents override instance agents per-request.
@@ -1447,18 +1514,25 @@ export class Runtime {
       });
     }
 
-    // Fire-and-forget title generation on first turn (use "fast" slot for cost savings)
+    // Fire-and-forget title generation on first turn (use "fast" slot for cost savings).
+    // Returning `store.update(...)` from the fulfillment handler chains the
+    // write into the outer promise so its rejection is caught — without this
+    // chaining, a `void store.update(...)` orphan rejection (e.g. ENOENT when
+    // the conversation was deleted between chat() returning and the title
+    // landing) surfaces as an unhandled rejection and fails the whole run.
     if (conversation.title === null) {
       const titleModel = this.resolveModelFn(this.getModelSlot("fast"));
       const titleInput =
         request.message ||
         `[Uploaded: ${request.fileRefs?.map((f) => f.filename).join(", ") || "files"}]`;
-      void generateTitle(titleModel, titleInput, result.output).then(
-        (title) => {
-          void store.update(conversation.id, { title });
-        },
-        (err) => console.error("[runtime] title generation failed:", err),
-      );
+      void generateTitle(titleModel, titleInput, result.output)
+        .then((title) => store.update(conversation.id, { title }))
+        .catch((err) => {
+          // Title generation is best-effort; a failed write must not crash
+          // the chat. Common causes: model latency timeout (generateTitle),
+          // or ENOENT on the conversation file (deleted concurrently).
+          console.error("[runtime] title generation failed:", err);
+        });
     }
 
     return {
@@ -1474,118 +1548,28 @@ export class Runtime {
   // ── Stage 2 (T006) — identity-bound chat helpers ─────────────────
 
   /**
-   * Build a `ToolRouter` for the identity-bound chat surface.
+   * Construct the chat surface's identity-bound `ToolRouter`.
    *
-   * `availableTools()` calls the cross-workspace aggregator for `identityId`
-   * (cached / watcher-invalidated under the hood). `execute(call, ...)` parses
-   * the namespace, routes through `routeToolCall`, and dispatches the bare
-   * tool name to the resolved source.
-   *
-   * The four orchestrator errors map to distinct `isError: true` tool-call
-   * results with structured `data.reason` payloads:
-   *
-   *  - `UnknownNamespacedToolName` → `data.reason: "invalid_tool_name"`
-   *  - `UnknownWorkspace`          → `data.reason: "unknown_workspace"`
-   *  - `WorkspaceAccessDenied`     → `data.reason: "workspace_access_denied"`
-   *  - `UnknownToolSource`         → `data.reason: "unknown_tool_source"`
-   *
-   * Stage 1 precedent (`PersonalWorkspaceInvariantError → 422
-   * personal_workspace_invariant`): one distinct shape per error class —
-   * conflating them under one symptom hides real failure modes. Per
-   * CLAUDE.md § "MCP App Bridge Rules" tool errors are surfaced as
-   * `isError: true` results, NOT thrown — the engine maps thrown errors
-   * to engine-level run errors, which is the wrong shape here.
-   *
-   * `perCallWorkspaceMap` is the dispatch-time bookkeeping the sink wrap
-   * reads to stamp `workspaceId` on `tool.progress` / `tool.done` events
-   * (audit-attribution contract). We populate it BEFORE calling
-   * `source.execute(...)` so an in-flight progress event from a
-   * task-augmented tool finds the entry.
+   * Thin wrapper around `IdentityToolRouter` (`./identity-tool-router.ts`)
+   * that wires the audit-attribution hook to the chat-session's per-call
+   * workspace map. The map is read by the sink wrap on `tool.progress` /
+   * `tool.done` to stamp `workspaceId` from the ROUTED namespace — not the
+   * session's focused workspace — so cross-workspace dispatches attribute
+   * correctly in audit logs.
    */
   private _buildIdentityToolRouter(opts: {
     identityId: string;
     perCallWorkspaceMap: Map<string, string>;
   }): ToolRouter {
     const { identityId, perCallWorkspaceMap } = opts;
-    return {
-      availableTools: async (): Promise<ToolSchema[]> => {
-        const aggregated = await this._toolListAggregator.aggregateToolList(identityId);
-        return aggregated.map((t) => ({
-          name: t.name,
-          description: t.description,
-          inputSchema: t.inputSchema,
-          ...(t.annotations !== undefined ? { annotations: t.annotations } : {}),
-        }));
+    return new IdentityToolRouter({
+      identityId,
+      runtime: this,
+      aggregator: this._toolListAggregator,
+      onWorkspaceDispatch: (callId, wsId) => {
+        perCallWorkspaceMap.set(callId, wsId);
       },
-      execute: async (call, signal) => {
-        let routed: Awaited<ReturnType<typeof routeToolCall>>;
-        try {
-          routed = await routeToolCall({
-            identityId,
-            namespacedName: call.name,
-            runtime: this,
-          });
-        } catch (err) {
-          return mapOrchestratorErrorToToolResult(err, call.name);
-        }
-        // Workspace requests carry a wsId for audit attribution; identity
-        // requests have no workspace (the entity carries its own ownership),
-        // so there's nothing to stamp.
-        const routedWsId = routed.kind === "workspace" ? routed.context.workspaceId : null;
-        if (routedWsId !== null) {
-          // Stamp the dispatch-time workspaceId so the sink wrap can attribute
-          // `tool.progress` / `tool.done` back to the right workspace. Cleared
-          // in the wrap's `tool.done` handler.
-          perCallWorkspaceMap.set(call.id, routedWsId);
-        }
-        // `routed.toolName` is the inner `<source>__<tool>` form (the
-        // namespace primitive only strips the `ws_<id>-` prefix).
-        // `ToolSource.execute` takes the bare tool name (no source
-        // prefix) — mirroring `ToolRegistry.execute`'s contract and
-        // T007's `/mcp` dispatch path. Split here so cross-workspace
-        // calls reach the source the same way single-workspace ones do.
-        const sepIndex = routed.toolName.indexOf("__");
-        const bareToolName = sepIndex >= 0 ? routed.toolName.slice(sepIndex + 2) : routed.toolName;
-        // T008 ambient-context fix (approach (a) per the task spec):
-        // wrap the source dispatch with `runWithRequestContext` so the
-        // tool handler reading `runtime.requireWorkspaceId()` sees the
-        // ROUTED workspace, not the chat session's personal workspace.
-        // Without this wrap, shared `nb__*` system tools dispatched
-        // cross-workspace would read ambient state from the wrong
-        // workspace — the failure mode the Group C audit named at
-        // `_chatInner`'s RequestContext-creation comment.
-        //
-        // The per-call scope IS the routed scope: a workspace-routed call gets
-        // a workspace scope with the routed (non-null) wsId; an identity-routed
-        // call gets an identity scope with NO workspace fields. There is no
-        // nullable workspaceId to leak — `requireWorkspaceId()` hard-fails on
-        // an identity-scoped call by construction. The session workspace's
-        // agent/model overrides (from the outer chat context) ride along on the
-        // workspace arm so session-scoped reads keep working unchanged.
-        const outer = getRequestContext();
-        const outerScope = outer?.scope;
-        const perCallScope: RequestScope =
-          routed.kind === "workspace"
-            ? {
-                kind: "workspace",
-                workspaceId: routed.context.workspaceId,
-                workspaceAgents:
-                  outerScope?.kind === "workspace" ? outerScope.workspaceAgents : null,
-                workspaceModelOverride:
-                  outerScope?.kind === "workspace" ? outerScope.workspaceModelOverride : null,
-              }
-            : { kind: "identity" };
-        const perCallCtx: RequestContext = {
-          identity: outer?.identity ?? null,
-          scope: perCallScope,
-          ...(outer?.conversationId !== undefined ? { conversationId: outer.conversationId } : {}),
-          ...(outer?.toolPromotion !== undefined ? { toolPromotion: outer.toolPromotion } : {}),
-        };
-        return runWithRequestContext(perCallCtx, () =>
-          routed.source.execute(bareToolName, call.input, signal),
-        );
-      },
-    };
+    });
   }
 
   /**
@@ -2907,117 +2891,6 @@ export class Runtime {
   getToolListAggregator(): ToolListAggregator {
     return this._toolListAggregator;
   }
-}
-
-// --- Stage 2 (T006) helpers ---
-
-/**
- * Map a thrown orchestrator error to an `isError: true` tool-call result.
- *
- * Four distinct `data.reason` values so HTTP / audit consumers can
- * differentiate failure modes without parsing the human message
- * (Stage 1 lesson 2 — conflating errors hides real bugs):
- *
- *   - `UnknownNamespacedToolName` → `invalid_tool_name`  + `{ name, parseReason }`
- *   - `UnknownWorkspace`          → `unknown_workspace`  + `{ wsId }`
- *   - `WorkspaceAccessDenied`     → `workspace_access_denied` + `{ identityId, wsId }`
- *   - `UnknownToolSource`         → `unknown_tool_source` + `{ wsId, sourceName, toolName }`
- *
- * Non-orchestrator errors re-throw — those are real engine failures and
- * should hit the engine's `run.error` path. We deliberately do NOT
- * `?? "unknown"` here: an unrecognized class is a programmer error worth
- * surfacing as a thrown engine error rather than masking as a tool error.
- */
-function mapOrchestratorErrorToToolResult(err: unknown, namespacedName: string): ToolResult {
-  if (err instanceof UnknownNamespacedToolName) {
-    return {
-      content: [
-        {
-          type: "text",
-          text: `[orchestrator] invalid tool name "${err.input}": ${err.message} (no fallback to current workspace — use a fully namespaced tool name).`,
-        },
-      ],
-      isError: true,
-      structuredContent: {
-        error: "orchestrator_error",
-        reason: "invalid_tool_name",
-        name: err.input,
-        parseReason: err.reason,
-      },
-    };
-  }
-  if (err instanceof UnknownWorkspace) {
-    return {
-      content: [
-        {
-          type: "text",
-          text: `[orchestrator] unknown workspace "${err.wsId}" (typo, deleted workspace, or cross-tenant accident) — call refused.`,
-        },
-      ],
-      isError: true,
-      structuredContent: {
-        error: "orchestrator_error",
-        reason: "unknown_workspace",
-        wsId: err.wsId,
-      },
-    };
-  }
-  if (err instanceof WorkspaceAccessDenied) {
-    return {
-      content: [
-        {
-          type: "text",
-          text: `[orchestrator] identity "${err.identityId}" is not a member of workspace "${err.wsId}".`,
-        },
-      ],
-      isError: true,
-      structuredContent: {
-        error: "orchestrator_error",
-        reason: "workspace_access_denied",
-        identityId: err.identityId,
-        wsId: err.wsId,
-      },
-    };
-  }
-  if (err instanceof UnknownToolSource) {
-    return {
-      content: [
-        {
-          type: "text",
-          text: `[orchestrator] no source "${err.sourceName}" registered in workspace "${err.wsId}" for tool "${err.toolName}".`,
-        },
-      ],
-      isError: true,
-      structuredContent: {
-        error: "orchestrator_error",
-        reason: "unknown_tool_source",
-        wsId: err.wsId,
-        sourceName: err.sourceName,
-        toolName: err.toolName,
-      },
-    };
-  }
-  if (err instanceof UnknownIdentitySource) {
-    return {
-      content: [
-        {
-          type: "text",
-          text: `[orchestrator] no identity source "${err.sourceName}" for "${err.toolName}".`,
-        },
-      ],
-      isError: true,
-      structuredContent: {
-        error: "orchestrator_error",
-        reason: "unknown_identity_source",
-        toolName: err.toolName,
-      },
-    };
-  }
-  // Re-throw anything we don't recognize — surfaces via `run.error`.
-  // No silent default reason: that would conflate a regression in the
-  // orchestrator's error taxonomy with the deliberate classes above.
-  void namespacedName;
-  throw err;
 }
 
 // --- Factory helpers (keep Runtime.start() readable) ---

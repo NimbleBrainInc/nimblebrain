@@ -38,6 +38,9 @@ function makeDelegateCtx(opts: {
 		resolveModel: () => model,
 		resolveSlot: (s: string) => s,
 		tools: registry,
+		// Tests don't construct a per-workspace surface — the registry IS
+		// the focused workspace's tool set, so default = registry.
+		defaultActiveTools: () => registry.availableTools(),
 		events: opts.events ?? new NoopEventSink(),
 		agents: opts.agents,
 		getRemainingIterations: () => opts.remainingIterations ?? 10,
@@ -375,6 +378,7 @@ describe("nb__delegate", () => {
 			resolveModel: () => trackingModel,
 			resolveSlot: (s: string) => s,
 			tools: registry,
+			defaultActiveTools: () => registry.availableTools(),
 			events: new NoopEventSink(),
 			agents: undefined,
 			getRemainingIterations: () => 10,
@@ -448,6 +452,7 @@ describe("nb__delegate", () => {
 			resolveModel: () => childModel,
 			resolveSlot: (s: string) => s,
 			tools: registry,
+			defaultActiveTools: () => registry.availableTools(),
 			events: new NoopEventSink(),
 			agents: undefined,
 			getRemainingIterations: () => 10,
@@ -497,6 +502,7 @@ describe("nb__delegate", () => {
 			},
 			resolveSlot: (s: string) => s,
 			tools: registry,
+			defaultActiveTools: () => registry.availableTools(),
 			events: new NoopEventSink(),
 			agents: {
 				specialized: {
@@ -538,6 +544,7 @@ describe("nb__delegate", () => {
 			},
 			resolveSlot: (s: string) => s,
 			tools: registry,
+			defaultActiveTools: () => registry.availableTools(),
 			events: new NoopEventSink(),
 			agents: undefined,
 			getRemainingIterations: () => 10,
@@ -563,6 +570,7 @@ describe("nb__delegate", () => {
 			resolveModel: () => failingModel,
 			resolveSlot: (s: string) => s,
 			tools: registry,
+			defaultActiveTools: () => registry.availableTools(),
 			events: new NoopEventSink(),
 			agents: undefined,
 			getRemainingIterations: () => 10,
@@ -717,6 +725,7 @@ describe("nb__delegate", () => {
 			resolveModel: () => trackingModel,
 			resolveSlot: (s: string) => s,
 			tools: registry,
+			defaultActiveTools: () => registry.availableTools(),
 			events: new NoopEventSink(),
 			agents: {
 				myagent: {
@@ -760,6 +769,7 @@ describe("nb__delegate", () => {
 			resolveModel: () => trackingModel,
 			resolveSlot: (s: string) => s,
 			tools: registry,
+			defaultActiveTools: () => registry.availableTools(),
 			events: new NoopEventSink(),
 			agents: undefined,
 			getRemainingIterations: () => 10,

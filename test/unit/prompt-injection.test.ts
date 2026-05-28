@@ -1056,6 +1056,7 @@ describe("Tier 2: Engine Behavioral — tool results, delegate, hooks", () => {
         resolveModel: () => model,
         resolveSlot: (s) => s,
         tools: router,
+        defaultActiveTools: () => router.availableTools(),
         events: new NoopEventSink(),
         agents: undefined,
         getRemainingIterations: () => 5,
@@ -1108,6 +1109,7 @@ describe("Tier 2: Engine Behavioral — tool results, delegate, hooks", () => {
         resolveModel: () => model,
         resolveSlot: (s) => s,
         tools: router,
+        defaultActiveTools: () => router.availableTools(),
         events: new NoopEventSink(),
         agents: {
           researcher: {
@@ -1159,6 +1161,7 @@ describe("Tier 2: Engine Behavioral — tool results, delegate, hooks", () => {
         resolveModel: () => model,
         resolveSlot: (s) => s,
         tools: router,
+        defaultActiveTools: () => router.availableTools(),
         events: new NoopEventSink(),
         agents: undefined,
         getRemainingIterations: () => 3, // Parent has 3 remaining
