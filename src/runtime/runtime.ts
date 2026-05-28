@@ -62,6 +62,7 @@ import { UserStore } from "../identity/user.ts";
 import { InstructionsStore } from "../instructions/index.ts";
 import { getProviderFromModel } from "../model/catalog.ts";
 import { buildModelResolver, resolveModelString } from "../model/registry.ts";
+import { installOAuthFetchDebug } from "../oauth/oauth-fetch-debug.ts";
 import {
   createToolListAggregator,
   routeToolCall,
@@ -350,6 +351,11 @@ export class Runtime {
 
   /** Create and start a runtime from config. */
   static async start(config: RuntimeConfig): Promise<Runtime> {
+    // Temporary OAuth token-exchange diagnostic (no-op unless
+    // NB_DEBUG_OAUTH_EXCHANGE is set). Installed before any bundle OAuth so
+    // it captures the agent's /token request + the vendor's raw response.
+    installOAuthFetchDebug();
+
     // Derive the override-file path when the caller supplied a configPath
     // but not an explicit override path. The CLI's loadConfig already
     // populates both; this fallback covers embedded callers (tests,
