@@ -1145,8 +1145,17 @@ export class Runtime {
     // workspace-level chat picks them up whenever the bundle's tools are
     // surfaced — no `appContext` scoping required (the prior path only fired
     // under `appContext`, missing cross-app workflows).
+    //
+    // Workspace-tier skills follow the FOCUSED workspace (the `/w/:slug` the
+    // user is viewing), matching the briefing / apps / overlay surfaces.
+    // On the home control panel there is no focus → fall back to the
+    // session (personal) workspace, which is consistent with the rest of
+    // home mode reading from the identity's personal scope. Pre-Stage-2
+    // this was the request's wsId; Stage 2 (#272) inadvertently pinned it
+    // to the personal workspace, silently dropping every shared-workspace
+    // skill marked `loading_strategy: always`.
     const userId = requestIdentity.id;
-    const layer3Pool = this.loadConversationSkills(sessionWsId, userId);
+    const layer3Pool = this.loadConversationSkills(focusedWsId ?? sessionWsId, userId);
     // Stage 2 (T006) — bundle skills are loaded across every workspace
     // the identity can see, not just the session workspace. A bundle
     // installed in a shared workspace whose tools land in the
