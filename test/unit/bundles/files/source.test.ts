@@ -304,4 +304,25 @@ describe("files bundle", () => {
     const body = parseFirst(result) as { error: string };
     expect(body.error).toBe("File is not a PDF: notes.txt (text/plain)");
   });
+
+  test("read_pdf_pages rejects empty page lists at schema validation", async () => {
+    const result = await source.execute("read_pdf_pages", { id: "fl_any", pages: [] });
+
+    expect(result.isError).toBe(true);
+    const body = parseFirst(result) as { error: string };
+    expect(body.error).toContain('Invalid arguments for "read_pdf_pages"');
+    expect(body.error).toContain("/pages: must NOT have fewer than 1 items");
+  });
+
+  test("read_pdf_pages rejects more than 10 pages at schema validation", async () => {
+    const result = await source.execute("read_pdf_pages", {
+      id: "fl_any",
+      pages: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+    });
+
+    expect(result.isError).toBe(true);
+    const body = parseFirst(result) as { error: string };
+    expect(body.error).toContain('Invalid arguments for "read_pdf_pages"');
+    expect(body.error).toContain("/pages: must NOT have more than 10 items");
+  });
 });
