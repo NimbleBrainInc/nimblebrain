@@ -10,6 +10,7 @@
  * entry points and the structured error taxonomy escape.
  */
 
+export { mapOrchestratorErrorToToolResult } from "./error-mapping.ts";
 export type { OrchestratorRuntime, RoutedToolCall } from "./route.ts";
 export {
   routeToolCall,
@@ -19,8 +20,6 @@ export {
   UnknownWorkspace,
   WorkspaceAccessDenied,
 } from "./route.ts";
-
-export { mapOrchestratorErrorToToolResult } from "./error-mapping.ts";
 
 export type {
   AggregatorWorkspaceStore,

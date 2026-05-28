@@ -101,8 +101,8 @@ import { WorkspaceContext } from "../workspace/context.ts";
 import { ensureUserWorkspace } from "../workspace/provisioning.ts";
 import { personalWorkspaceIdFor, WorkspaceStore } from "../workspace/workspace-store.ts";
 import { ConversationAccessDeniedError, RunInProgressError } from "./errors.ts";
-import { PlacementRegistry } from "./placement-registry.ts";
 import { IdentityToolRouter } from "./identity-tool-router.ts";
+import { PlacementRegistry } from "./placement-registry.ts";
 import {
   getRequestContext,
   type RequestContext,

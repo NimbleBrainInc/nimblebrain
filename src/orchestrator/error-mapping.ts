@@ -32,10 +32,7 @@ import {
   WorkspaceAccessDenied,
 } from "./route.ts";
 
-export function mapOrchestratorErrorToToolResult(
-  err: unknown,
-  namespacedName: string,
-): ToolResult {
+export function mapOrchestratorErrorToToolResult(err: unknown, namespacedName: string): ToolResult {
   if (err instanceof UnknownNamespacedToolName) {
     return {
       content: [
