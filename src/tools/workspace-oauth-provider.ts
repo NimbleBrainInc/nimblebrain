@@ -895,17 +895,26 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     // output (URL + verifier from one closure) has the matching
     // SHA256(verifier) == code_challenge relation.
     if (this.pendingFlow.verifier) {
-      const expectedChallenge = createHash("sha256")
-        .update(this.pendingFlow.verifier)
-        .digest("base64url");
-      const urlChallenge = url.searchParams.get("code_challenge");
-      if (urlChallenge && urlChallenge !== expectedChallenge) {
-        // This auth() chain's URL is built from a DIFFERENT verifier than
-        // the one we kept on disk. Throw without capturing — wait for the
-        // matching chain's redirectToAuthorization to win the capture.
-        throw new UnauthorizedError(
-          `Interactive OAuth: this chain's PKCE doesn't match the claimed verifier — deferring to matching chain.`,
-        );
+      // Gate on S256 — the SHA256 derivation only applies to
+      // `code_challenge_method=S256`. For `plain` (rare in modern OAuth,
+      // not used by the MCP SDK today) the challenge equals the verifier
+      // and the SHA256 comparison would falsely reject every chain.
+      // Defensive against a future SDK / vendor that ever surfaces a
+      // non-S256 flow through this provider.
+      const method = url.searchParams.get("code_challenge_method");
+      if (method === "S256") {
+        const expectedChallenge = createHash("sha256")
+          .update(this.pendingFlow.verifier)
+          .digest("base64url");
+        const urlChallenge = url.searchParams.get("code_challenge");
+        if (urlChallenge && urlChallenge !== expectedChallenge) {
+          // This auth() chain's URL is built from a DIFFERENT verifier than
+          // the one we kept on disk. Throw without capturing — wait for the
+          // matching chain's redirectToAuthorization to win the capture.
+          throw new UnauthorizedError(
+            `Interactive OAuth: this chain's PKCE doesn't match the claimed verifier — deferring to matching chain.`,
+          );
+        }
       }
     }
     // Track A: append operator-supplied additional authorize params
