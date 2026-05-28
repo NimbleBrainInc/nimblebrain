@@ -1060,8 +1060,13 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     // Logged at warn so it's visible in prod without a log-level bump;
     // gated behind the env var so it disappears with one flip.
     if (process.env.NB_DEBUG_OAUTH_EXCHANGE) {
+      // state is opaque CSRF protection, not a hard secret, but the env-
+      // gated log lands in operator log aggregation — truncating to 8
+      // chars (matching the existing `state.slice(0, 8)` convention on
+      // the next log line) is enough to correlate flows in a trace
+      // without exposing the full value.
       log.warn(
-        `[oauth-debug] AUTHORIZE ${this.serverName} state=${stateParam} client_id=${url.searchParams.get("client_id")} code_challenge=${url.searchParams.get("code_challenge")} code_challenge_method=${url.searchParams.get("code_challenge_method")} redirect_uri=${url.searchParams.get("redirect_uri")}`,
+        `[oauth-debug] AUTHORIZE ${this.serverName} state=${stateParam.slice(0, 8)}… client_id=${url.searchParams.get("client_id")} code_challenge=${url.searchParams.get("code_challenge")} code_challenge_method=${url.searchParams.get("code_challenge_method")} redirect_uri=${url.searchParams.get("redirect_uri")}`,
       );
     }
     log.debug(
