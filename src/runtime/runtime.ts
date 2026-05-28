@@ -477,9 +477,86 @@ export class Runtime {
     const delegateCtx: DelegateContext = {
       resolveModel: resolveModelFn,
       resolveSlot,
+      // Child engine's per-call ToolRouter.
+      //
+      // Identity-bound when an authenticated identity is in the request
+      // context (the chat / `/mcp` path): the child engine gets the same
+      // cross-workspace reach the parent has, gated per-call by
+      // `routeToolCall`'s membership check. Without this, a delegate
+      // invoked from one workspace couldn't dispatch a tool installed in
+      // another workspace the identity belongs to — even though the
+      // session is identity-bound and the orchestrator already supports
+      // the dispatch. (See `IdentityToolRouter`.)
+      //
+      // Falls back to the current workspace's registry when no identity
+      // is in scope — CLI / dev paths construct delegateCtx without an
+      // authenticated identity, and the workspace registry's bare-name
+      // surface is what they expect. This mirrors
+      // `runtime.listDiscoverableTools`'s identity-vs-fallback split.
+      //
+      // The child's INITIAL active set is governed by `defaultActiveTools`
+      // below, not by this router. Identity-wide reachability without
+      // workspace-scoped defaults would flood the prompt with N copies
+      // of the system tools — see `_chatInner`'s tool-surfacing comment.
       get tools() {
         if (!rtHolder.rt) throw new Error("Runtime not initialized");
-        return rtHolder.rt.getRegistryForCurrentWorkspace();
+        const identity = getRequestContext()?.identity;
+        if (!identity) return rtHolder.rt.getRegistryForCurrentWorkspace();
+        return new IdentityToolRouter({
+          identityId: identity.id,
+          runtime: rtHolder.rt,
+          aggregator: rtHolder.rt.getToolListAggregator(),
+        });
+      },
+      // Default initial active set: focused-workspace tools (namespaced
+      // so the identity router can route them) + bare kernel identity
+      // tools. Mirrors `_chatInner`'s `allTools` composition so a child
+      // agent starts with the same default tool view the parent has.
+      // Bare-name globs in `tools: [...]` match against THIS set, not
+      // against the identity-wide union — see `DelegateContext.tools`.
+      defaultActiveTools: async (): Promise<ToolSchema[]> => {
+        if (!rtHolder.rt) throw new Error("Runtime not initialized");
+        const rt = rtHolder.rt;
+        const wsId = rt._currentWorkspaceId?.();
+        const orgRole = getRequestContext()?.identity?.orgRole;
+        if (!wsId) {
+          // Dev / CLI path without a workspace in scope — return identity
+          // tools only. Hard-failing here would break the existing CLI
+          // delegate path, which currently delegates without any workspace
+          // context. The workspace door simply contributes nothing.
+          const identityTools = await rt.listIdentitySourceTools();
+          return identityTools
+            .filter((t) => isToolVisibleToRole(t.name, orgRole))
+            .map((t) => ({
+              name: t.name,
+              description: t.description,
+              inputSchema: t.inputSchema,
+              ...(t.annotations !== undefined ? { annotations: t.annotations } : {}),
+            }));
+        }
+        const registry = rt.getRegistryForWorkspace(wsId);
+        const [focusedTools, identityTools] = await Promise.all([
+          registry.availableTools(),
+          rt.listIdentitySourceTools(),
+        ]);
+        return [
+          ...focusedTools
+            .filter((t) => isToolVisibleToRole(t.name, orgRole))
+            .map((t) => ({
+              name: namespacedToolName(wsId, t.name),
+              description: t.description,
+              inputSchema: t.inputSchema,
+              ...(t.annotations !== undefined ? { annotations: t.annotations } : {}),
+            })),
+          ...identityTools
+            .filter((t) => isToolVisibleToRole(t.name, orgRole))
+            .map((t) => ({
+              name: t.name,
+              description: t.description,
+              inputSchema: t.inputSchema,
+              ...(t.annotations !== undefined ? { annotations: t.annotations } : {}),
+            })),
+        ];
       },
       events,
       // Use getter so workspace agents override instance agents per-request.
