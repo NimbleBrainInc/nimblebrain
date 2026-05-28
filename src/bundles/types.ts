@@ -351,6 +351,19 @@ export interface BundleInstance {
   description?: string;
   /** Current lifecycle state. */
   state: BundleState;
+  /**
+   * Sticky breadcrumb of the most recent broken state observed since
+   * the last successful recovery to `running`. Owned by
+   * `BundleLifecycleManager.transition()` — set on any transition where
+   * the new (or old, for boot-into-broken instances) state is in the
+   * broken set, cleared on reaching `running` or an operator-driven
+   * `stopped`. Lets the recovery info log fire on multi-step paths the
+   * direct edge check misses — notably the URL bundle reconnect flow
+   * `reauth_required → pending_auth → running`, where neither
+   * transition is `broken → running`. Process-local; no persistence
+   * needed because a fresh process starts a fresh episode.
+   */
+  lastBrokenState?: BundleState;
   /** MTF trust score from mpak (0-100), or null if unavailable. */
   trustScore: number | null;
   /** UI placement metadata from _meta["ai.nimblebrain/host"]. */

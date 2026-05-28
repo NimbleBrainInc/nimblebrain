@@ -17,6 +17,7 @@ import { connectorSlug, hasPersistedComposioConnection } from "./composio-connec
 import {
   type Connection,
   type ConnectionState,
+  isBrokenState,
   summarizeConnectionState,
   WORKSPACE_PRINCIPAL_ID,
 } from "./connection.ts";
@@ -878,9 +879,37 @@ export class BundleLifecycleManager {
   /**
    * Update state on a BundleInstance. Public so HealthMonitor can
    * report crashed/recovered/dead transitions.
+   *
+   * Edge-triggered logging (issue #194):
+   *   - non-broken → broken: one `log.warn` at the moment of transition.
+   *     Subsequent enumerations of the now-stuck source produce zero
+   *     operator-visible noise.
+   *   - broken → running: one `log.info` ("recovered") at the moment of
+   *     recovery, symmetric with the warn.
+   *   - No-op (same state in, same state out): silent.
+   *
+   * "Broken" set lives in `connection.ts::isBrokenState` =
+   * { dead, crashed, reauth_required }. Excludes `pending_auth` (in-flight
+   * OAuth) and `not_authenticated` (resting state).
    */
   transition(instance: BundleInstance, newState: BundleState): void {
+    const oldState = instance.state;
     instance.state = newState;
+    if (oldState === newState) return;
+
+    updateLastBrokenState(instance, oldState, newState);
+
+    if (isBrokenState(newState) && !isBrokenState(oldState)) {
+      log.warn(
+        `[bundles] ${instance.serverName} (ws ${instance.wsId}) entered '${newState}' from '${oldState}'. ` +
+          `Tools unavailable until recovered. ${transitionRecoveryHint(newState)}`,
+      );
+    } else if (newState === "running" && instance.lastBrokenState !== undefined) {
+      log.info(
+        `[bundles] ${instance.serverName} (ws ${instance.wsId}) recovered: '${instance.lastBrokenState}' → 'running'`,
+      );
+      instance.lastBrokenState = undefined;
+    }
   }
 
   /**
@@ -972,7 +1001,9 @@ export class BundleLifecycleManager {
 
     // Recompute summary state so legacy consumers (HealthMonitor,
     // briefing-collector, runtime status API) see the right surface.
-    instance.state = summarizeConnectionState(instance.connections);
+    // Routed through transition() so edge-triggered logging fires on
+    // non-broken → broken / broken → running transitions (issue #194).
+    this.transition(instance, summarizeConnectionState(instance.connections));
 
     this.eventSink.emit({
       type: "connection.state_changed",
@@ -1740,6 +1771,56 @@ interface UpjackScheduleDeclaration {
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Maintain `instance.lastBrokenState` for one transition. Three rules,
+ * in priority order:
+ *
+ *   1. Entering / staying broken    → set to newState (latest wins)
+ *   2. Leaving broken with no label → capture oldState (handles
+ *      instances constructed directly into a broken state, never
+ *      having flowed through this funnel before)
+ *   3. Operator-stop                → clear (explicit end of episode;
+ *      a later boot → running must not emit a stale recovery log)
+ *
+ * The matching "leaving broken to running → clear after logging" case
+ * lives in `transition()` itself because it needs to read the value to
+ * format the recovery message before clearing.
+ *
+ * Split out from `transition()` so the funnel reads top-down as
+ * state-write → sticky maintenance → log decision, without sticky-bit
+ * branching obscuring the log policy.
+ */
+function updateLastBrokenState(
+  instance: BundleInstance,
+  oldState: BundleState,
+  newState: BundleState,
+): void {
+  if (isBrokenState(newState)) {
+    instance.lastBrokenState = newState;
+  } else if (isBrokenState(oldState) && instance.lastBrokenState === undefined) {
+    instance.lastBrokenState = oldState;
+  } else if (newState === "stopped") {
+    instance.lastBrokenState = undefined;
+  }
+}
+
+/**
+ * One-line operator hint appended to the broken-state warn. Tells the
+ * reader what recovery path applies without forcing them to look it up.
+ */
+function transitionRecoveryHint(state: BundleState): string {
+  switch (state) {
+    case "reauth_required":
+      return "User must reconnect via Connectors page.";
+    case "dead":
+      return "Use startBundle to restart.";
+    case "crashed":
+      return "HealthMonitor will attempt auto-restart with exponential backoff.";
+    default:
+      return "";
+  }
+}
 
 function createInstance(
   serverName: string,

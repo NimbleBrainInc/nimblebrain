@@ -1,4 +1,5 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { log } from "../../src/cli/log.ts";
 import { textContent } from "../../src/engine/content-helpers.ts";
 import type { ToolResult } from "../../src/engine/types.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
@@ -75,5 +76,54 @@ describe("ToolRegistry.availableTools — error containment", () => {
     // The whole call resolves rather than rejects — that's the
     // chat-stays-up guarantee the agent loop relies on.
     await expect(registry.availableTools()).resolves.toEqual([]);
+  });
+});
+
+/**
+ * Issue #194: the per-skip log must not be `log.warn`. A connector
+ * stuck in a broken state would otherwise emit one warn per
+ * `availableTools()` call — once per chat turn — flooding operator
+ * stderr and any alerting that hooks the warn rate. The operator
+ * signal lives at the lifecycle transition site (one warn per
+ * non-broken → broken edge); this site is per-turn and must stay
+ * silent at warn level.
+ */
+describe("ToolRegistry.availableTools — log noise", () => {
+  let warnCalls: string[];
+  let originalWarn: (msg: string) => void;
+
+  beforeEach(() => {
+    warnCalls = [];
+    originalWarn = log.warn;
+    log.warn = (msg) => {
+      warnCalls.push(msg);
+    };
+  });
+
+  afterEach(() => {
+    log.warn = originalWarn;
+  });
+
+  test("repeated enumeration of a broken source emits zero warns", async () => {
+    const registry = new ToolRegistry();
+    registry.addSource(new BrokenSource());
+
+    for (let i = 0; i < 100; i++) {
+      await registry.availableTools();
+    }
+
+    expect(warnCalls.length).toBe(0);
+  });
+
+  test("mixed healthy + broken source enumeration also stays quiet at warn", async () => {
+    const registry = new ToolRegistry();
+    registry.addSource(new HealthySource());
+    registry.addSource(new BrokenSource());
+
+    for (let i = 0; i < 25; i++) {
+      await registry.availableTools();
+    }
+
+    expect(warnCalls.length).toBe(0);
   });
 });

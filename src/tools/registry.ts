@@ -109,15 +109,22 @@ export class ToolRegistry implements ToolRouter {
       // workspace source. Surface the failure in the source's own
       // status (Configure page renders it from BundleInstance.state)
       // and leave the chat usable.
+      //
+      // Operator-facing signal lives at the lifecycle transition site
+      // (one warn per non-broken → broken edge — see
+      // `BundleLifecycleManager.transition` and issue #194). This skip
+      // path fires per chat turn; logging at warn level here would
+      // spam stderr for any source stuck in a broken state.
+      // Gated behind `NB_DEBUG=registry` for trace-level diagnosis.
       let tools: Tool[];
       try {
         tools = await source.tools();
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        log.warn(
-          `[registry] availableTools: skipping source "${source.name}" — ${msg}. ` +
-            `The bundle's own state surface (Connectors page) reflects this; the chat list ` +
-            `omits its tools until the source recovers.`,
+        log.debug(
+          "registry",
+          `availableTools: skipping source "${source.name}" — ${msg}. ` +
+            `Operator signal lives at lifecycle transition (warn on enter-broken).`,
         );
         continue;
       }

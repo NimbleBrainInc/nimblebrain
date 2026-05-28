@@ -14,6 +14,8 @@
  * Known namespaces:
  *   - `mcp` — McpSource construction, dispatch decisions (task-augmented vs inline)
  *   - `sse` — Runtime event sink → SSE broadcast (tool.progress, data.changed)
+ *   - `registry` — ToolRegistry.availableTools per-source skips (one line per stuck
+ *     source per enumeration; operator-facing signal lives at lifecycle transition)
  *
  * Keep this list in sync with the CLAUDE.md "Debugging" section so it's
  * discoverable without reading source.

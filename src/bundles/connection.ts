@@ -105,3 +105,30 @@ export function summarizeConnectionState(connections: Map<string, Connection>): 
   if (states.includes("crashed")) return "crashed";
   return states[0]!;
 }
+
+/**
+ * States that warrant operator attention when entered. Transitioning INTO
+ * one of these is the "first failure" signal worth a warn log; staying in
+ * one across many tool-list enumerations is not (that's the spam this set
+ * eliminates — see issue #194).
+ *
+ *   - `dead`            — process / transport gave up
+ *   - `crashed`         — transport closed unexpectedly mid-session
+ *   - `reauth_required` — refresh token rejected; user must reconnect
+ *
+ * Excluded deliberately:
+ *   - `not_authenticated` — silent resting state (fresh install, post-Disconnect)
+ *   - `pending_auth`      — in-flight OAuth, expected during normal Connect
+ *   - `starting`          — transient boot state
+ *   - `stopped`           — operator intent (stopBundle / uninstall)
+ *   - `running`           — healthy
+ */
+const BROKEN_STATES: ReadonlySet<BundleState> = new Set<BundleState>([
+  "dead",
+  "crashed",
+  "reauth_required",
+]);
+
+export function isBrokenState(s: BundleState): boolean {
+  return BROKEN_STATES.has(s);
+}

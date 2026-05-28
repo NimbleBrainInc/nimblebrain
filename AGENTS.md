@@ -214,6 +214,7 @@ Namespaces (`src/cli/log.ts`):
 |---|---|---|
 | `mcp` | McpSource construction; per-call dispatch showing `taskSupport` / `path=task-augmented\|inline` / cached tool count | "Why is my tool going inline vs task-augmented?" "Is my tool cache populated?" |
 | `sse` | Every `tool.progress` / `tool.done` entering the runtime sink wrap; every `data.changed` broadcast with client count | "Are progress events reaching the SSE layer?" "Are broadcasts happening, to how many clients?" |
+| `registry` | Per-source skips inside `ToolRegistry.availableTools` (one line per stuck source per enumeration; operator-facing "first failure" signal lives at the lifecycle transition site as a warn — see issue #194) | "Which sources are being skipped on each chat turn?" "Is enumeration silently dropping a connector?" |
 
 Add a namespace by calling `log.debug("ns", "message")` (from `src/cli/log.ts`). Keep this table and the `log.ts` doc comment in sync.
 
