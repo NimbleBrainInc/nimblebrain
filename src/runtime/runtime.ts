@@ -1505,18 +1505,25 @@ export class Runtime {
       });
     }
 
-    // Fire-and-forget title generation on first turn (use "fast" slot for cost savings)
+    // Fire-and-forget title generation on first turn (use "fast" slot for cost savings).
+    // Returning `store.update(...)` from the fulfillment handler chains the
+    // write into the outer promise so its rejection is caught — without this
+    // chaining, a `void store.update(...)` orphan rejection (e.g. ENOENT when
+    // the conversation was deleted between chat() returning and the title
+    // landing) surfaces as an unhandled rejection and fails the whole run.
     if (conversation.title === null) {
       const titleModel = this.resolveModelFn(this.getModelSlot("fast"));
       const titleInput =
         request.message ||
         `[Uploaded: ${request.fileRefs?.map((f) => f.filename).join(", ") || "files"}]`;
-      void generateTitle(titleModel, titleInput, result.output).then(
-        (title) => {
-          void store.update(conversation.id, { title });
-        },
-        (err) => console.error("[runtime] title generation failed:", err),
-      );
+      void generateTitle(titleModel, titleInput, result.output)
+        .then((title) => store.update(conversation.id, { title }))
+        .catch((err) => {
+          // Title generation is best-effort; a failed write must not crash
+          // the chat. Common causes: model latency timeout (generateTitle),
+          // or ENOENT on the conversation file (deleted concurrently).
+          console.error("[runtime] title generation failed:", err);
+        });
     }
 
     return {
