@@ -693,11 +693,43 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     // client_id from disk-stored client_id — root cause of `invalid_code`
     // on the exchange).
     if (this.dcrInFlight) return this.dcrInFlight.promise;
-    this.dcrInFlight = deferred<OAuthClientInformationFull | undefined>();
+    // Abort guard: if the lifecycle has already aborted (e.g. 15s startAuth
+    // timeout fired before we got here), don't claim the slot — return
+    // undefined so the SDK's auth() chain fails cleanly rather than seeding
+    // a deferred no one will resolve.
+    if (this.abortSignal?.aborted) return undefined;
+    const d = deferred<OAuthClientInformationFull | undefined>();
+    this.dcrInFlight = d;
+    // Liveness: tie the deferred to the lifecycle's abortSignal so an
+    // abort (timeout, explicit cancel, lifecycle teardown after a failed
+    // source.start) unblocks any concurrent `clientInformation()` callers
+    // awaiting this DCR. Without this, a first-caller DCR that throws
+    // (vendor 4xx, network drop, abort) never calls `saveClientInformation`,
+    // and the second concurrent SDK auth() chain on the same provider
+    // awaits `dcrInFlight.promise` forever — orphaned promise + reference
+    // leak even though the lifecycle's user-facing state has transitioned
+    // to dead. Awaiters get `undefined`, which routes them through the
+    // SDK's natural failure path (they'll error too, because the broader
+    // auth() they're inside is already aborting).
+    //
+    // CAS on `this.dcrInFlight === d` so a concurrent
+    // saveClientInformation that already nulled the slot (success path)
+    // can't be undone by a late-firing abort. `{ once: true }` is
+    // belt-and-suspenders for the success-then-abort ordering.
+    this.abortSignal?.addEventListener(
+      "abort",
+      () => {
+        if (this.dcrInFlight === d) {
+          d.resolve(undefined);
+          this.dcrInFlight = null;
+        }
+      },
+      { once: true },
+    );
     // Detach a no-op .catch so a dangling unresolved promise (caller
-    // never calls saveClientInformation) doesn't surface as an unhandled
-    // rejection. Cleared on first save.
-    this.dcrInFlight.promise.catch(() => {});
+    // never calls saveClientInformation AND no abortSignal) doesn't
+    // surface as an unhandled rejection. Cleared on first save.
+    d.promise.catch(() => {});
     return undefined;
   }
 

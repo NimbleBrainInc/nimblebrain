@@ -111,6 +111,48 @@ describe("WorkspaceOAuthProvider — concurrent auth() coalesce", () => {
     expect((await fresh.clientInformation())?.client_id).toBe("client-A");
   });
 
+  it("clientInformation() — awaiting callers unblock when abortSignal fires (liveness, no deadlock)", async () => {
+    // Pre-fix: a concurrent caller awaiting `dcrInFlight` would hang
+    // forever if the first caller's DCR threw before reaching
+    // `saveClientInformation` (vendor 4xx, network drop, abort). The
+    // abortSignal subscription releases the deferred so awaiters proceed
+    // through the SDK's natural failure path.
+    const controller = new AbortController();
+    const p = new WorkspaceOAuthProvider({
+      owner: { type: "workspace", wsId: "ws_test" },
+      serverName: "test-srv",
+      workDir,
+      callbackUrl: CALLBACK,
+      abortSignal: controller.signal,
+    });
+    // First caller claims the in-flight DCR slot
+    expect(await p.clientInformation()).toBeUndefined();
+    // Second caller now awaits
+    const secondPromise = p.clientInformation();
+    // Abort before saveClientInformation is ever called
+    controller.abort();
+    // Second caller resolves to undefined rather than hanging
+    expect(await secondPromise).toBeUndefined();
+  });
+
+  it("clientInformation() — does NOT claim the slot when abortSignal is already aborted", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const p = new WorkspaceOAuthProvider({
+      owner: { type: "workspace", wsId: "ws_test" },
+      serverName: "test-srv",
+      workDir,
+      callbackUrl: CALLBACK,
+      abortSignal: controller.signal,
+    });
+    // Caller gets undefined, but no in-flight slot is claimed (nothing
+    // to seed — we're aborting, the broader auth() chain will fail).
+    expect(await p.clientInformation()).toBeUndefined();
+    // A subsequent caller is also free to do its own DCR rather than
+    // awaiting a stale deferred.
+    expect(await p.clientInformation()).toBeUndefined();
+  });
+
   it("clientInformation() — concurrent callers awaiting a fresh DCR all get the first save's value", async () => {
     const p = makeProvider(workDir);
     // First caller sees the DCR slot empty, returns undefined (SDK would
