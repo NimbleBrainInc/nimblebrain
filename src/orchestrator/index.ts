@@ -20,6 +20,8 @@ export {
   WorkspaceAccessDenied,
 } from "./route.ts";
 
+export { mapOrchestratorErrorToToolResult } from "./error-mapping.ts";
+
 export type {
   AggregatorWorkspaceStore,
   NamespacedToolDescriptor,
