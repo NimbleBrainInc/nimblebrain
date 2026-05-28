@@ -92,8 +92,12 @@ export class IdentityToolRouter implements ToolRouter {
   private readonly onWorkspaceDispatch?: WorkspaceDispatchHook;
 
   constructor(opts: IdentityToolRouterOptions) {
-    if (typeof opts.identityId !== "string" || opts.identityId.length === 0) {
-      throw new Error("[identity-tool-router] identityId is required (non-empty string)");
+    // The type system already pins the shape; we only need to catch the
+    // construction-time bug (an accidental empty string from a boot path
+    // or test fixture). A zero-length id would silently let the router
+    // serve "no tools" for every caller — fail loudly instead.
+    if (opts.identityId.length === 0) {
+      throw new Error("[identity-tool-router] identityId must be a non-empty string");
     }
     this.identityId = opts.identityId;
     this.runtime = opts.runtime;
