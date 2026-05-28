@@ -1007,6 +1007,22 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
       throw err;
     }
 
+    // Diagnostic: capture the exact authorize-URL parameters so a later
+    // /token exchange that fails with `invalid_code` can be correlated
+    // back to the URL the user was sent to. PKCE failures are otherwise
+    // invisible — the SDK doesn't surface which challenge it computed,
+    // and the vendor's error body just says `invalid_code` without
+    // disclosing which check failed. Paired with the token-exchange
+    // fetch logger (also gated on NB_DEBUG_OAUTH_EXCHANGE): comparing
+    // the challenge here to SHA256(verifier) at exchange time pins a
+    // concurrency-race regression versus a vendor-side rejection.
+    // Logged at warn so it's visible in prod without a log-level bump;
+    // gated behind the env var so it disappears with one flip.
+    if (process.env.NB_DEBUG_OAUTH_EXCHANGE) {
+      log.warn(
+        `[oauth-debug] AUTHORIZE ${this.serverName} state=${stateParam} client_id=${url.searchParams.get("client_id")} code_challenge=${url.searchParams.get("code_challenge")} code_challenge_method=${url.searchParams.get("code_challenge_method")} redirect_uri=${url.searchParams.get("redirect_uri")}`,
+      );
+    }
     log.debug(
       "mcp",
       `[oauth] interactive flow: ${this.serverName} registering state=${stateParam.slice(0, 8)}… url=${url.origin}…`,
