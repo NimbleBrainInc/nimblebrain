@@ -1121,6 +1121,7 @@ export class BundleLifecycleManager {
       workspaceContext: new WorkspaceContext({ wsId, workDir: opts.workDir }),
       callbackUrl: opts.callbackUrl,
       allowInsecureRemotes: opts.allowInsecureRemotes === true,
+      headlessAuthProbe: ref.headlessAuthProbe === true,
       onInteractiveAuthRequired: (url) => {
         capturedAuthUrl = url;
         this.recordConnectionStateChange(serverName, wsId, principalId, "pending_auth", {

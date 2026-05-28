@@ -382,6 +382,7 @@ export async function startBundleSource(
         workspaceContext: wsContext,
         callbackUrl,
         allowInsecureRemotes: opts?.allowInsecureRemotes === true,
+        headlessAuthProbe: ref.headlessAuthProbe === true,
         onInteractiveAuthRequired: wrappedCallback,
         ...(staticClient ? { staticClient } : {}),
         ...(ref.scopes ? { scopes: ref.scopes } : {}),
