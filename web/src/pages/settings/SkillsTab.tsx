@@ -53,21 +53,37 @@ const STATUS_BADGE: Record<Status, string> = {
 export function SkillsTab() {
   return (
     <RequireActiveWorkspace>
-      <Inner />
+      <SkillsBrowser />
     </RequireActiveWorkspace>
   );
 }
 
+/**
+ * Shared skills browser. The workspace tab renders it with no lock so users
+ * can see/filter every scope they have access to; the org-admin tab renders
+ * it with `lockedScope="org"` so only org-tier skills are listed, the scope
+ * filter UI is suppressed, and the create form has no scope picker (org is
+ * the only writable target on that surface).
+ *
+ * Per SKILLS_SURFACE.md, Phase 2 will refactor the workspace tab to grouped
+ * sections (workspace + inherited-org + inherited-bundles + personal-footer).
+ * That work touches this same component; the `lockedScope` param is the
+ * minimal Phase 1 hook so we don't ship duplicated state machines.
+ */
 type DetailMode = "view" | "edit";
 
-function Inner() {
+export function SkillsBrowser({ lockedScope }: { lockedScope?: Scope } = {}) {
   const [skills, setSkills] = useState<ListedSkill[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<ReadSkill | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [scopeFilter, setScopeFilter] = useState<Scope | "all">("all");
+  // When the surface is scope-locked, the filter UI is hidden and the lock
+  // value is the effective filter — `setScopeFilter` becomes a no-op via the
+  // hidden control. Default the state to the lock so the first fetch is
+  // already scoped (no flash of "all").
+  const [scopeFilter, setScopeFilter] = useState<Scope | "all">(lockedScope ?? "all");
   const [statusFilter, setStatusFilter] = useState<Status | "all">("active");
   const [mode, setMode] = useState<DetailMode>("view");
   const [creating, setCreating] = useState(false);
@@ -250,10 +266,21 @@ function Inner() {
         </Button>
       </header>
       <p className="text-xs text-muted-foreground">
-        Layer 3 cross-bundle agent orchestration content (voice, workflow, personal, tool routing)
-        plus Layer 1 vendored bundle skills. The agent uses these to shape its behavior; you can
-        also author them as markdown files under <code>~/.nimblebrain/skills/</code> (org),{" "}
-        <code>workspaces/&lt;wsId&gt;/skills/</code>, or <code>users/&lt;userId&gt;/skills/</code>.
+        {lockedScope === "org" ? (
+          <>
+            Organization-wide skills. These load into every workspace's agent context and apply to
+            every member. Authored here or as markdown files under{" "}
+            <code>~/.nimblebrain/skills/</code>.
+          </>
+        ) : (
+          <>
+            Layer 3 cross-bundle agent orchestration content (voice, workflow, personal, tool
+            routing) plus Layer 1 vendored bundle skills. The agent uses these to shape its
+            behavior; you can also author them as markdown files under{" "}
+            <code>~/.nimblebrain/skills/</code> (org), <code>workspaces/&lt;wsId&gt;/skills/</code>,
+            or <code>users/&lt;userId&gt;/skills/</code>.
+          </>
+        )}
       </p>
 
       <Filters
@@ -261,6 +288,7 @@ function Inner() {
         status={statusFilter}
         onScopeChange={setScopeFilter}
         onStatusChange={setStatusFilter}
+        lockedScope={lockedScope}
       />
 
       {loading && <div className="text-sm text-muted-foreground">Loading skills…</div>}
@@ -289,6 +317,11 @@ function Inner() {
           {creating ? (
             <CreateForm
               pending={actionPending}
+              lockedScope={
+                lockedScope === "org" || lockedScope === "workspace" || lockedScope === "user"
+                  ? lockedScope
+                  : undefined
+              }
               onCancel={() => {
                 setCreating(false);
                 setError(null);
@@ -680,14 +713,18 @@ function SkillEditor({
 
 function CreateForm({
   pending,
+  lockedScope,
   onCancel,
   onSubmit,
 }: {
   pending: boolean;
+  /** When set, force the create scope and hide the picker. Org-tier-only
+   * surfaces pass `"org"` so the form can't author into another scope. */
+  lockedScope?: WritableScope;
   onCancel: () => void;
   onSubmit: (input: CreateInput) => void;
 }) {
-  const [scope, setScope] = useState<WritableScope>("workspace");
+  const [scope, setScope] = useState<WritableScope>(lockedScope ?? "workspace");
   const [name, setName] = useState("");
   const [form, setForm] = useState<EditorFormState>({
     description: "",
@@ -725,22 +762,24 @@ function CreateForm({
           </div>
         </header>
 
-        <div className="grid grid-cols-2 gap-3">
-          <div className="space-y-1">
-            <label className="text-xs font-medium" htmlFor="skill-scope">
-              Scope
-            </label>
-            <select
-              id="skill-scope"
-              value={scope}
-              onChange={(e) => setScope(e.target.value as WritableScope)}
-              className="rounded-md border bg-background px-2 py-1 text-xs w-full focus:outline-none focus:ring-1 focus:ring-ring"
-            >
-              <option value="user">User</option>
-              <option value="workspace">Workspace</option>
-              <option value="org">Org</option>
-            </select>
-          </div>
+        <div className={cn("grid gap-3", lockedScope ? "grid-cols-1" : "grid-cols-2")}>
+          {lockedScope === undefined && (
+            <div className="space-y-1">
+              <label className="text-xs font-medium" htmlFor="skill-scope">
+                Scope
+              </label>
+              <select
+                id="skill-scope"
+                value={scope}
+                onChange={(e) => setScope(e.target.value as WritableScope)}
+                className="rounded-md border bg-background px-2 py-1 text-xs w-full focus:outline-none focus:ring-1 focus:ring-ring"
+              >
+                <option value="user">User</option>
+                <option value="workspace">Workspace</option>
+                <option value="org">Org</option>
+              </select>
+            </div>
+          )}
           <div className="space-y-1">
             <label className="text-xs font-medium" htmlFor="skill-name">
               Name
@@ -920,28 +959,33 @@ function Filters({
   status,
   onScopeChange,
   onStatusChange,
+  lockedScope,
 }: {
   scope: Scope | "all";
   status: Status | "all";
   onScopeChange: (s: Scope | "all") => void;
   onStatusChange: (s: Status | "all") => void;
+  /** When set, suppress the scope selector — the surface is scope-locked. */
+  lockedScope?: Scope;
 }) {
   const selectClass =
     "rounded-md border bg-background px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-ring";
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <select
-        value={scope}
-        onChange={(e) => onScopeChange(e.target.value as Scope | "all")}
-        className={selectClass}
-        aria-label="Filter by scope"
-      >
-        {SCOPE_OPTIONS.map((o) => (
-          <option key={o.value} value={o.value}>
-            {o.label}
-          </option>
-        ))}
-      </select>
+      {lockedScope === undefined && (
+        <select
+          value={scope}
+          onChange={(e) => onScopeChange(e.target.value as Scope | "all")}
+          className={selectClass}
+          aria-label="Filter by scope"
+        >
+          {SCOPE_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+      )}
       <select
         value={status}
         onChange={(e) => onStatusChange(e.target.value as Status | "all")}
