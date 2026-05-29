@@ -196,3 +196,79 @@ describe("supervisor — snapshot", () => {
     expect(snap.callCounts.bar).toBe(1);
   });
 });
+
+describe("supervisor — input-aware success fingerprinting", () => {
+  // Success and error are different shapes of "stuck":
+  //  - Success: distinct inputs producing the same payload is progress.
+  //    The classic motivating case is `patch_source(edits=[...])`
+  //    returning a structurally-uniform `{applied:true, compiled:true}`
+  //    across distinct edits — must NOT trip.
+  //  - Error: deterministic-rejection loops should trip whether or not
+  //    the model rotates arg values between retries (documented failure
+  //    mode), so error fingerprints stay input-agnostic.
+
+  it("3 distinct successful inputs with identical output do NOT trip", () => {
+    const sup = createRunSupervisor();
+    const sameOutput = textResult('{"applied":true,"compiled":true,"reason":null}', false);
+    // Three distinct patch_source-style calls, each returns the same
+    // structurally-uniform success payload. Progress, not a loop.
+    expect(sup.observe(call("patch_source", { find: "a", replace: "b" }), sameOutput).type).toBe(
+      "pass",
+    );
+    expect(sup.observe(call("patch_source", { find: "c", replace: "d" }), sameOutput).type).toBe(
+      "pass",
+    );
+    expect(sup.observe(call("patch_source", { find: "e", replace: "f" }), sameOutput).type).toBe(
+      "pass",
+    );
+    expect(sup.snapshot().trippedTools).toEqual([]);
+  });
+
+  it("3 identical successful calls with identical output still trip", () => {
+    // The genuinely-stuck case: same call (name + input) → same output,
+    // repeated. Still a loop; still trips.
+    const sup = createRunSupervisor();
+    const sameInput = { find: "a", replace: "b" };
+    const sameOutput = textResult('{"applied":true,"compiled":true}', false);
+    expect(sup.observe(call("patch_source", sameInput), sameOutput).type).toBe("pass");
+    expect(sup.observe(call("patch_source", sameInput), sameOutput).type).toBe("pass");
+    const v3 = sup.observe(call("patch_source", sameInput), sameOutput);
+    expect(v3.type).toBe("synth");
+  });
+
+  it("3 distinct erroring inputs with identical output STILL trip", () => {
+    // The documented "deterministic-4xx with retry-with-tweaks" loop —
+    // each call has different input but the same rejection text.
+    // Errors are input-agnostic; this still trips.
+    const sup = createRunSupervisor();
+    const sameError = textResult("AxiosError 400: bad request", true);
+    expect(sup.observe(call("foo", { attempt: 1, payload: "a" }), sameError).type).toBe("pass");
+    expect(sup.observe(call("foo", { attempt: 2, payload: "b" }), sameError).type).toBe("pass");
+    const v3 = sup.observe(call("foo", { attempt: 3, payload: "c" }), sameError);
+    expect(v3.type).toBe("synth");
+  });
+
+  it("canonical input form: reordered object keys hash to the same success fingerprint", () => {
+    // Object key insertion order varies across model providers and SDK
+    // serializers; the supervisor must treat semantically identical
+    // inputs as the same call.
+    const sup = createRunSupervisor();
+    const sameOutput = textResult('{"ok":true}', false);
+    expect(sup.observe(call("foo", { a: 1, b: 2 }), sameOutput).type).toBe("pass");
+    // Same semantic input with different key order.
+    expect(sup.observe(call("foo", { b: 2, a: 1 }), sameOutput).type).toBe("pass");
+    const v3 = sup.observe(call("foo", { a: 1, b: 2 }), sameOutput);
+    expect(v3.type).toBe("synth");
+  });
+
+  it("varied successful inputs and outputs do not trip (baseline)", () => {
+    const sup = createRunSupervisor();
+    for (let i = 0; i < 5; i++) {
+      const v = sup.observe(
+        call("foo", { i }),
+        textResult(`{"index":${i},"applied":true}`, false),
+      );
+      expect(v.type).toBe("pass");
+    }
+  });
+});
