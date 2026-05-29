@@ -95,21 +95,22 @@ export function CreateAutomationForm({
       return null;
     }
     setError(null);
-    const args: Record<string, unknown> = {
+    // Server expects { manifest, body } — manifest carries config, body is
+    // the prompt text.
+    const manifest: Record<string, unknown> = {
       name: name.trim(),
-      prompt: prompt.trim(),
       schedule,
       enabled,
       maxIterations,
       maxRunDurationMs: maxRunDurationSec * 1000,
     };
-    if (model.trim()) args.model = model.trim();
+    if (model.trim()) manifest.model = model.trim();
     if (budgetEnabled) {
-      args.tokenBudget = { maxInputTokens: budgetMaxInput, period: "daily" as const };
+      manifest.tokenBudget = { maxInputTokens: budgetMaxInput, period: "daily" as const };
     }
 
     try {
-      const result = await createTool.call(args);
+      const result = await createTool.call({ manifest, body: prompt.trim() });
       const data = asDict(result.data);
       return ((data.automation as Record<string, unknown>)?.name as string) ?? name;
     } catch (err) {
@@ -161,23 +162,18 @@ export function CreateAutomationForm({
       <div className="content">
         {error && <div className="error-banner">{error}</div>}
 
-        {/* Templates */}
+        {/* Templates — stacked-card layout (.template-card) so the title and
+            description wrap properly instead of overlapping inside a
+            single-line .btn pill. */}
         {!name && !prompt && (
           <div className="detail-section">
             <div className="detail-section-title">Start from a template</div>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <div className="template-grid">
               {TEMPLATES.map((t) => (
                 <button
                   type="button"
                   key={t.id}
-                  className="btn"
-                  style={{
-                    textAlign: "left",
-                    padding: "8px 12px",
-                    flex: "1 1 140px",
-                    minWidth: 140,
-                    ...(t.id === "custom" ? { borderStyle: "dashed" } : {}),
-                  }}
+                  className={`template-card${t.id === "custom" ? " dashed" : ""}`}
                   onClick={() => {
                     setName(t.id === "custom" ? "" : t.name);
                     setPrompt(t.prompt);
@@ -196,16 +192,8 @@ export function CreateAutomationForm({
                     }
                   }}
                 >
-                  <div style={{ fontWeight: 500, fontSize: 13 }}>{t.name}</div>
-                  <div
-                    style={{
-                      fontSize: 11,
-                      color: "var(--color-text-secondary, #737373)",
-                      marginTop: 2,
-                    }}
-                  >
-                    {t.description}
-                  </div>
+                  <span className="template-card-name">{t.name}</span>
+                  <span className="template-card-desc">{t.description}</span>
                 </button>
               ))}
             </div>
@@ -328,7 +316,15 @@ export function CreateAutomationForm({
                   </label>
                 </div>
                 {budgetEnabled && (
-                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                      marginTop: 4,
+                      flexWrap: "wrap",
+                    }}
+                  >
                     <span style={{ fontSize: 12, color: "var(--color-text-secondary, #737373)" }}>
                       Max input tokens/day:
                     </span>
@@ -415,7 +411,10 @@ export function CreateAutomationForm({
                 onClick={async () => {
                   setCreating(true);
                   try {
-                    await updateTool.call({ name: name.trim(), enabled: true });
+                    await updateTool.call({
+                      name: name.trim(),
+                      manifest: { enabled: true },
+                    });
                     onCreated(name.trim());
                   } catch (err) {
                     setError(err instanceof Error ? err.message : "Failed to enable");

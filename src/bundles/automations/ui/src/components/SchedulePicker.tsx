@@ -85,8 +85,9 @@ export function SchedulePicker({
   const radioStyle = {
     display: "flex",
     alignItems: "center",
+    flexWrap: "wrap",
     gap: 8,
-    padding: "6px 0",
+    padding: "8px 0",
     fontSize: 13,
     cursor: "pointer",
   } as const;
