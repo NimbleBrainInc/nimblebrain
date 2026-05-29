@@ -27,6 +27,7 @@ import { validateToolInput } from "../tools/validate-input.ts";
 import { estimateCost } from "../usage/cost.ts";
 import { bytesToBase64 } from "../util/base64.ts";
 import { PersonalWorkspaceInvariantError } from "../workspace/errors.ts";
+import type { WorkspaceStore } from "../workspace/workspace-store.ts";
 import type { ConversationEventManager } from "./conversation-events.ts";
 import type { SseEventManager } from "./events.ts";
 import { ChatRequestBody, ToolCallRequestEnvelope } from "./schemas/rest.ts";
@@ -1133,11 +1134,27 @@ export async function handleShell(runtime: Runtime, workspaceId: string): Promis
   });
 }
 
-// --- SSE Event Stream (Task 006) ---
+// --- SSE Event Stream ---
 
-/** Handle GET /v1/events — workspace SSE event stream. */
-export function handleEvents(sseManager: SseEventManager, workspaceId?: string): Response {
-  const stream = sseManager.addClient(workspaceId);
+/**
+ * Handle GET /v1/events — identity-scoped SSE event stream.
+ *
+ * The stream is bound to the caller's identity, not their active
+ * workspace. The manager fans out workspace-scoped events to this
+ * connection only when the wsId is in the identity's current membership
+ * set (cached in the manager, refreshed by membership-change events from
+ * the workspace store). Workspace switches in the UI are a no-op on this
+ * transport — the same shape as `/mcp` (identity-bound session, workspace
+ * context per request).
+ */
+export async function handleEvents(
+  sseManager: SseEventManager,
+  workspaceStore: WorkspaceStore,
+  identityId: string,
+): Promise<Response> {
+  const workspaces = await workspaceStore.getWorkspacesForUser(identityId);
+  const memberships = new Set(workspaces.map((ws) => ws.id));
+  const stream = sseManager.addIdentityClient(identityId, memberships);
   return new Response(stream, {
     headers: {
       "Content-Type": "text/event-stream",
