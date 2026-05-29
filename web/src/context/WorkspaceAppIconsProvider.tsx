@@ -16,8 +16,8 @@ import { WorkspaceAppIconsContext, type WorkspaceAppIconsValue } from "./Workspa
  *
  * Scoped to the active workspace (the connectors list reads the
  * `X-Workspace-Id` header); refetched on workspace switch and on the
- * same bundle-lifecycle / connection-state SSE signals that refresh the
- * shell placements, so icons stay in lockstep with the app set.
+ * bundle-lifecycle SSE signals (install / uninstall) that change the
+ * app set, so icons stay in lockstep with it.
  */
 export function WorkspaceAppIconsProvider({
   token,
@@ -49,14 +49,17 @@ export function WorkspaceAppIconsProvider({
     void refresh();
   }, [workspaceId, refresh]);
 
-  // Brand icons appear / disappear when a bundle is installed or
-  // uninstalled, or when a connection settles — mirror the shell's
-  // refetch triggers.
+  // Brand icons appear / disappear only when a bundle is installed or
+  // uninstalled. We intentionally do NOT refetch on
+  // connection.state_changed: a single install drives the connection
+  // through starting → pending_auth → running, but the icon for a row
+  // resolves from catalog/mpak metadata that's already present at
+  // bundle.installed time — connection state never changes it. Wiring
+  // those transitions to refresh() turned one Install click into a
+  // 3-4× manage_connectors burst (#317). bundle.installed /
+  // bundle.uninstalled are the only events that change the icon set.
   useEvents(token, workspaceId, {
     onBundleLifecycleChanged: () => {
-      void refresh();
-    },
-    onConnectionStateChanged: () => {
       void refresh();
     },
   });
