@@ -1658,7 +1658,14 @@ export class Runtime {
       model: resolvedModelString,
       maxOutputTokens: resolvedMaxOutputTokens,
     });
-    const configMaxInputTokens = this.config.maxInputTokens ?? DEFAULT_MAX_INPUT_TOKENS;
+    // Per-request override beats config beats default. The UI exposes a
+    // per-automation `maxInputTokens` field; honoring it here makes that
+    // setting actually take effect. Chat (_chatInner) has the same field
+    // on ChatRequest but currently ignores it in favor of config-only —
+    // a parallel gap worth a separate, scoped fix to keep semantics
+    // consistent across both invocation modes.
+    const configMaxInputTokens =
+      request.maxInputTokens ?? this.config.maxInputTokens ?? DEFAULT_MAX_INPUT_TOKENS;
     const messageBudget = resolveMessageBudget({
       model: resolvedModelString,
       configMaxInputTokens,
