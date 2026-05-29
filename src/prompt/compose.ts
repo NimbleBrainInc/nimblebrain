@@ -46,6 +46,7 @@ export interface TracedLayer {
 
 export type TracedLayerKind =
   | "default_identity"
+  | "task_identity"
   | "core_skill"
   | "user_context_skill"
   | "user_prefs"
@@ -96,6 +97,25 @@ You have access to tools provided via the API. When a user asks you to do someth
 Be concise and direct. Lead with actions, not explanations.
 
 IMPORTANT: Only use tools that are provided to you via the tools parameter. Never fabricate tool calls as XML, JSON, or any other text format.`;
+
+/**
+ * Identity framing for task-mode invocations (e.g. scheduled automations,
+ * eval runs, future webhook-triggered jobs). Prepended above the core
+ * skills when `composeSystemPrompt({ mode: "task" })`. The runtime owns
+ * this contract; bundles cannot spoof it by wrapping the user message.
+ *
+ * The contract: artifact production, no follow-up questions, factual
+ * gap-handling, markdown by default.
+ */
+export const TASK_IDENTITY = `You are running as an automated task. The user is not present at this time, so there is nobody available to answer questions or confirm choices — decide and proceed using the tools and context available.
+
+Produce a finished, self-contained deliverable as your final response. Format as markdown unless the task description specifies otherwise. Do not greet, acknowledge ("Sure, let me…"), or close with follow-up questions ("Want me to dig deeper?"). If required data is missing or unavailable, state the gap factually within the deliverable and continue with what you can produce — do not stop and ask.
+
+You still have full access to tools and can call them as many times as the task needs. The deliverable is your final assistant message, not an intermediate one.`;
+
+/** Invocation mode. `chat` is the conversational surface; `task` is the
+ *  unattended artifact-production surface (automations, evals, etc.). */
+export type ComposeMode = "chat" | "task";
 
 /** Lightweight app descriptor for system prompt injection. */
 export interface PromptAppInfo {
@@ -201,6 +221,7 @@ export function composeSystemPrompt(
   workspaceContext?: WorkspaceContext,
   overlays?: OverlayLayers,
   layer3Skills?: Layer3SkillEntry[],
+  mode?: ComposeMode,
 ): string {
   return composeSystemPromptTraced(
     contextSkills,
@@ -213,6 +234,7 @@ export function composeSystemPrompt(
     workspaceContext,
     overlays,
     layer3Skills,
+    mode,
   ).text;
 }
 
@@ -240,8 +262,25 @@ export function composeSystemPromptTraced(
   workspaceContext?: WorkspaceContext,
   overlays?: OverlayLayers,
   layer3Skills?: Layer3SkillEntry[],
+  mode: ComposeMode = "chat",
 ): ComposedPrompt {
   const layers: TracedLayer[] = [];
+
+  // Layer 0a (task mode only): TASK_IDENTITY contract. Prepended before
+  // any core skill so the framing is read first. The runtime owns this
+  // layer — bundles cannot remove or override it by wrapping the user
+  // message. Workspace `soul.md` and similar core skills still layer in
+  // below; their domain identity composes with, not against, the task
+  // contract.
+  if (mode === "task") {
+    layers.push({
+      kind: "task_identity",
+      id: "nb:task-identity",
+      source: "platform task-mode contract",
+      text: TASK_IDENTITY,
+      tokens: approxTokens(TASK_IDENTITY),
+    });
+  }
 
   // Separate core context (priority ≤ threshold) from user context (priority > threshold).
   const coreContext: Skill[] = [];
@@ -269,7 +308,10 @@ export function composeSystemPromptTraced(
     }
   }
 
-  // Fallback to default identity if no core context skills produced content.
+  // Fallback to default identity if no core context skills produced
+  // content. In task mode the TASK_IDENTITY layer above already supplies
+  // the framing, so skip the DEFAULT_IDENTITY fallback — the two would
+  // give the model contradictory role definitions.
   if (layers.length === 0) {
     layers.push({
       kind: "default_identity",
