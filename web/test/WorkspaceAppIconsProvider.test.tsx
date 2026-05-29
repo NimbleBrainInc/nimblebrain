@@ -1,5 +1,5 @@
-import { beforeEach, describe, expect, it, mock } from "bun:test";
-import { act, render, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import { act, cleanup, render, waitFor } from "@testing-library/react";
 import type { SseEventType } from "../src/types";
 import { realClient } from "./setup";
 
@@ -37,8 +37,12 @@ mock.module("../src/api/sse", () => ({
 }));
 
 // Imported after the mocks are registered so the provider's dependency graph
-// binds to the stubs.
+// binds to the stubs. The events-client import is dynamic for the same reason:
+// it must resolve to the SAME singleton the provider subscribes through (whose
+// `connectEvents` binding is our mock), so `resetForTest()` drops the very
+// connection + subscriber set the provider shares.
 const { WorkspaceAppIconsProvider } = await import("../src/context/WorkspaceAppIconsProvider");
+const { __internal__: eventsClient } = await import("../src/api/events-client");
 
 function fire(type: SseEventType, data: Record<string, unknown> = {}) {
   if (!capturedOnEvent) throw new Error("connectEvents.onEvent was never registered");
@@ -52,6 +56,22 @@ describe("WorkspaceAppIconsProvider — SSE refetch surface (#317)", () => {
     mockGetInstalled.mockClear();
     mockConnectEvents.mockClear();
     capturedOnEvent = null;
+    // The events-client transport is a tab-lifetime singleton: it invokes the
+    // mocked connectEvents() once, on the first subscribe, then reuses that
+    // connection for every later subscribe. Without a reset between tests only
+    // the first test captures onEvent — every subsequent test mounts against
+    // the already-open singleton, connectEvents never re-runs, and
+    // capturedOnEvent stays null (its `fire` then throws). Resetting drops the
+    // connection and the shared subscriber set so each test re-opens (and
+    // re-captures onEvent) with only its own provider subscribed.
+    eventsClient.resetForTest();
+  });
+
+  afterEach(() => {
+    // Unmount the provider so its SSE subscription doesn't survive into the
+    // next test and double-fire refresh() (inflating the manage_connectors
+    // count the assertions depend on).
+    cleanup();
   });
 
   it("does NOT refetch installed connectors on connection.state_changed", async () => {
