@@ -169,6 +169,12 @@ servers:
           # dashboard, and re-install the connector per workspace so the
           # session is minted with the updated tool filter (the filter
           # is baked at session-create time; see connector-tools.ts).
+          #
+          # GMAIL_DELETE_MESSAGE is deliberately omitted: it permanently
+          # deletes arbitrary mail (users.messages.delete — bypasses
+          # Trash, non-recoverable), exceeds the draft-pruning need, and
+          # GMAIL_MOVE_TO_TRASH already covers reversible removal. Add it
+          # only if a concrete purge-real-mail need surfaces.
           tools:
             - GMAIL_SEND_EMAIL
             - GMAIL_FETCH_EMAILS
@@ -180,7 +186,6 @@ servers:
             - GMAIL_SEND_DRAFT
             - GMAIL_LIST_DRAFTS
             - GMAIL_DELETE_DRAFT
-            - GMAIL_DELETE_MESSAGE
             - GMAIL_REPLY_TO_THREAD
             - GMAIL_FORWARD_MESSAGE
             - GMAIL_ADD_LABEL_TO_EMAIL
