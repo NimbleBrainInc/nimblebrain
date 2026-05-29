@@ -90,7 +90,8 @@
     "@biomejs/biome": "^2.4.10",
     "@types/bun": "latest",
     "@types/react": "^19.2.14",
-    "@types/react-dom": "^19.2.3"
+    "@types/react-dom": "^19.2.3",
+    "happy-dom": "^20.0.0"
   },
   "peerDependencies": {
     "typescript": "^5"
