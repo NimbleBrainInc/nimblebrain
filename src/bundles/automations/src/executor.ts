@@ -17,23 +17,40 @@ const DEFAULT_TIMEOUT_MS = 120_000;
 // Shared types
 // ---------------------------------------------------------------------------
 
-/** Minimal chat request shape (matches runtime ChatRequest). */
-export interface ChatFnRequest {
-  message: string;
+/**
+ * Minimal task request shape (matches runtime `TaskRequest`).
+ *
+ * Automations execute via `runtime.executeTask()`, not `runtime.chat()`:
+ * the agent runs unattended and produces a finished deliverable, with
+ * the runtime supplying the task-mode system prompt that forbids
+ * greetings and follow-up questions. The chat surface is for live user
+ * conversations; this is its sibling primitive for scheduled work.
+ *
+ * Decoupled (locally-typed, structurally compatible) on purpose: keeps
+ * the bundle from importing runtime internals — anything providing this
+ * shape can inject an executor.
+ */
+export interface TaskFnRequest {
+  /** The task description. Goes in as the user message. */
+  prompt: string;
   model?: string;
   maxIterations?: number;
   maxInputTokens?: number;
   allowedTools?: string[];
   metadata?: Record<string, unknown>;
-  /** Workspace scope for this run. Required for workspace-aware tools. */
+  /**
+   * Focused workspace (optional). Set → tools scoped to that workspace
+   * + identity tools, briefing for that workspace. Omitted →
+   * cross-workspace reach, no focused-workspace briefing.
+   */
   workspaceId?: string;
   /** Identity under which this automation runs. */
   identity?: { id: string; name?: string; email?: string; role?: string };
   /**
-   * Cancellation signal forwarded into `runtime.chat()` → engine → tool
-   * calls. When the scheduler's per-run controller aborts (timeout,
-   * explicit cancel, scheduler stop), the in-flight LLM/tool work
-   * actually stops instead of being orphaned. Before this field
+   * Cancellation signal forwarded into `runtime.executeTask()` → engine
+   * → tool calls. When the scheduler's per-run controller aborts
+   * (timeout, explicit cancel, scheduler stop), the in-flight LLM/tool
+   * work actually stops instead of being orphaned. Before this field
    * existed, a chat that exceeded `maxRunDurationMs` ran to completion
    * in the background and wrote a complete conversation to disk
    * minutes after the executor had already synthesized a fake
@@ -42,22 +59,24 @@ export interface ChatFnRequest {
   signal?: AbortSignal;
 }
 
-/** Minimal chat result shape (matches runtime ChatResult). */
-export interface ChatFnResult {
-  response: string;
+/** Minimal task result shape (matches runtime `TaskResult`). */
+export interface TaskFnResult {
+  /** The deliverable — the agent's final assistant message. */
+  output: string;
+  /** Traceability anchor — the fresh conversation backing this task. */
   conversationId: string;
   toolCalls: Array<Record<string, unknown>>;
   stopReason: string;
   usage: { inputTokens: number; outputTokens: number; iterations: number };
 }
 
-/** A function that executes a chat turn. Injected by the caller. */
-export type ChatFn = (request: ChatFnRequest) => Promise<ChatFnResult>;
+/** A function that executes a single task. Injected by the caller. */
+export type TaskFn = (request: TaskFnRequest) => Promise<TaskFnResult>;
 
 /** Runtime context injected into the executor for workspace/identity scoping. */
 export interface ExecutorContext {
   workspaceId?: string;
-  identity?: ChatFnRequest["identity"];
+  identity?: TaskFnRequest["identity"];
 }
 
 // ---------------------------------------------------------------------------
@@ -88,7 +107,7 @@ export function containsRecursiveTool(allowedTools: string[] | undefined): strin
   return null;
 }
 
-function buildRequest(automation: Automation, ctx?: ExecutorContext): ChatFnRequest {
+function buildRequest(automation: Automation, ctx?: ExecutorContext): TaskFnRequest {
   const offending = containsRecursiveTool(automation.allowedTools);
   if (offending !== null) {
     throw new Error(
@@ -98,8 +117,11 @@ function buildRequest(automation: Automation, ctx?: ExecutorContext): ChatFnRequ
     );
   }
 
-  const req: ChatFnRequest = {
-    message: automation.prompt,
+  // The task surface owns the "you are running unattended, produce a
+  // deliverable" framing in its system prompt — the automation's prompt
+  // goes in as the plain task description, not wrapped or prefixed here.
+  const req: TaskFnRequest = {
+    prompt: automation.prompt,
     metadata: {
       source: "automation",
       automationId: automation.id,
@@ -118,7 +140,7 @@ function buildRequest(automation: Automation, ctx?: ExecutorContext): ChatFnRequ
 function mapResultToRun(
   automation: Automation,
   startedAt: string,
-  data: ChatFnResult,
+  data: TaskFnResult,
 ): AutomationRun {
   const stopReason = data.stopReason as AutomationRun["stopReason"];
   const status: AutomationRun["status"] = mapStopReasonToStatus(stopReason);
@@ -134,7 +156,7 @@ function mapResultToRun(
     outputTokens: data.usage.outputTokens,
     toolCalls: Array.isArray(data.toolCalls) ? data.toolCalls.length : 0,
     iterations: data.usage.iterations,
-    resultPreview: data.response ? data.response.slice(0, 500) : undefined,
+    resultPreview: data.output || undefined,
     stopReason,
   };
 }
@@ -169,15 +191,15 @@ function mapStopReasonToStatus(stopReason: AutomationRun["stopReason"]): Automat
 // ---------------------------------------------------------------------------
 
 /**
- * Execute a single automation run by calling the chat function directly.
+ * Execute a single automation run by calling the task function directly.
  * No HTTP, no auth token — pure function call within the same process.
  *
- * @param chatFn     Direct reference to runtime.chat() or equivalent.
+ * @param taskFn      Direct reference to runtime.executeTask() or equivalent.
  * @param getContext  Returns the workspace/identity context for the run.
  *                    Called per-execution so it can read current state.
  */
 export function createDirectExecutor(
-  chatFn: ChatFn,
+  taskFn: TaskFn,
   getContext: (automation?: Automation) => ExecutorContext,
 ) {
   return async function executeDirect(
@@ -191,13 +213,13 @@ export function createDirectExecutor(
     // Combined cancellation: a single controller aborts when EITHER the
     // scheduler's external signal fires (manual cancel, scheduler stop)
     // OR the per-run timeout elapses. The combined signal goes into
-    // chatFn → runtime.chat → engine.run → every tool call, so an
+    // taskFn → runtime.executeTask → engine.run → every tool call, so an
     // abort actually cancels in-flight LLM/tool work instead of
     // orphaning it the way the old `Promise.race` pattern did.
     //
     // Production bug this fixes: `morning-brief-6am-pt` runs took
     // 6–7 minutes while the 5-minute Promise.race rejected at the
-    // 5-minute mark, returning to dispatchRun. The chat kept running,
+    // 5-minute mark, returning to dispatchRun. The task kept running,
     // finished cleanly 1–2 minutes later, wrote a complete conversation
     // to disk — and the result was discarded. The agent saw a "timeout"
     // run record with `iterations: 0, toolCalls: 0` despite the agent
@@ -225,7 +247,7 @@ export function createDirectExecutor(
     }
 
     try {
-      const data = await chatFn({
+      const data = await taskFn({
         ...buildRequest(automation, ctx),
         signal: runController.signal,
       });
@@ -234,7 +256,7 @@ export function createDirectExecutor(
       // Preserve the canonical "timed out after Ns" wording so
       // `Scheduler.dispatchRun` classifies this as `timeout`. If
       // BOTH the external abort AND the timeout fire (narrow race
-      // when chatFn takes a beat to honor cancel near the timeout
+      // when taskFn takes a beat to honor cancel near the timeout
       // boundary), external-cancel wins — the operator-meaningful
       // cause is "I cancelled", not "the clock ran out at the same
       // moment". Drift here would silently restamp a cancel as a
