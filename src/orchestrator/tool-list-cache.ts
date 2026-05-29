@@ -410,7 +410,18 @@ export class ToolListCache {
     }, this.debounceMs);
   }
 
-  private invalidateWorkspace(wsId: string): void {
+  /**
+   * Drop the cached tool list for `wsId` and every identity union that read
+   * from it; the next ask re-lists. Safe to call when nothing is cached for
+   * `wsId` (early-returns). Called by the debounce watcher (external
+   * `workspace.json` edits) AND, post-Stage-2, by the aggregator when a
+   * source-readiness transition fires — see
+   * `ToolRegistry.setInvalidationListener`. Deliberately does NOT touch the
+   * aggregator's membership stamp or reap watchers (that's
+   * `invalidateIdentity`'s job): a source coming online is a tool-set change,
+   * not a membership change.
+   */
+  invalidateWorkspace(wsId: string): void {
     const entry = this.workspaces.get(wsId);
     if (!entry) return;
     entry.toolsPromise = null;

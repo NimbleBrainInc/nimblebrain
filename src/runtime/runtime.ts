@@ -818,6 +818,17 @@ export class Runtime {
     rt._platformSources = platformSources;
     rt._workspaceSources = workspaceSources;
 
+    // Wire each per-workspace registry's invalidation listener to the
+    // aggregator. Done AFTER boot population (not inside createWorkspaceRegistry)
+    // so the boot-time `addSource` storm doesn't fire invalidations before any
+    // union is cached. From here on, a source-set change OR a source-readiness
+    // transition (subprocess (re)connect, deferred/pending-auth start, native
+    // `tools/list_changed`) drops the affected workspace's cached union so the
+    // next discovery re-lists with current tools.
+    for (const [wsId, registry] of workspaceRegistries) {
+      registry.setInvalidationListener(() => toolListAggregator.invalidateWorkspace(wsId));
+    }
+
     // Wire the workspace registries into lifecycle so workspace-scope
     // startAuth / disconnect / install can add+remove sources without
     // each route having to thread the registry through.
@@ -2141,6 +2152,10 @@ export class Runtime {
     // Wire permission context so the registry can gate disallowed tools
     // before they reach the source.execute() path.
     wsRegistry.setPermissionContext(wsId, this.getPermissionStore());
+    // Reactive tool-list invalidation — mirrors the boot wiring so a
+    // JIT-provisioned workspace's union refreshes when its sources change
+    // state (install/uninstall, subprocess (re)connect, native list_changed).
+    wsRegistry.setInvalidationListener(() => this._toolListAggregator.invalidateWorkspace(wsId));
     this._workspaceRegistries.set(wsId, wsRegistry);
     return wsRegistry;
   }

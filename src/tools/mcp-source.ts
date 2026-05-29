@@ -8,6 +8,7 @@ import {
   CallToolResultSchema,
   ListResourcesRequestSchema,
   ReadResourceRequestSchema,
+  ToolListChangedNotificationSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import type { PlacementDeclaration, RemoteTransportConfig } from "../bundles/types.ts";
@@ -288,6 +289,18 @@ export class McpSource implements ToolSource {
   private stopping = false;
 
   /**
+   * Listeners notified when this source's enumerable tool set may have
+   * changed — a successful (re)connect (initial start, HealthMonitor restart,
+   * deferred/pending-auth start completing) or a server-pushed native
+   * `notifications/tools/list_changed`. `ToolRegistry` subscribes one per
+   * registry the source belongs to and bridges the signal to the
+   * cross-workspace tool-list aggregator's per-workspace invalidation, so a
+   * union memoized while the source was unreachable refreshes the moment it
+   * comes online. See {@link ToolSource.subscribeToolsChanged}.
+   */
+  private readonly toolsChangedListeners = new Set<() => void>();
+
+  /**
    * `eventSink` is REQUIRED, not optional. Emitted events include
    * `tool.progress` during task-augmented calls — when those events reach
    * the runtime sink wrap in `src/api/server.ts`, they turn into SSE
@@ -417,6 +430,10 @@ export class McpSource implements ToolSource {
     // ready the moment the bundle issues its first request. No-op for
     // in-process sources that don't pass a bundleContext.
     this.registerBundleHandlers(this.client);
+    // Native `tools/list_changed` subscription — must be on the client before
+    // connect so a notification arriving immediately after `initialize` isn't
+    // dropped.
+    this.registerToolsChangedHandler(this.client);
 
     // Timeout MCP handshake — remote gets shorter timeout (15s vs 30s)
     const CONNECT_TIMEOUT = this.mode.type === "remote" ? 15_000 : 30_000;
@@ -469,6 +486,7 @@ export class McpSource implements ToolSource {
           // Client — handler tables don't carry over from the prior
           // instance.
           this.registerBundleHandlers(this.client);
+          this.registerToolsChangedHandler(this.client);
           // Re-arm crash detection for the retry: cleanupOnStartFailure
           // set `stopping = true` to suppress its own teardown noise; we
           // need it false again before the new transport's onclose can
@@ -507,6 +525,17 @@ export class McpSource implements ToolSource {
     this._instructions = typeof instructions === "string" ? instructions : undefined;
 
     this.startTaskSweeper();
+
+    // Connect succeeded — this source's tools are now enumerable where a
+    // moment ago `tools()` would have thrown "not started". This is the
+    // signal the cross-workspace tool-list aggregator needs: a union memoized
+    // while we were unreachable (slow cold-start, crash + HealthMonitor
+    // restart, deferred/pending-auth start) is now stale and must be dropped.
+    // `start()` is the single success seam for initial start AND `tryRestart`,
+    // so emitting here covers every (re)connect path. Cheap and idempotent
+    // downstream: invalidation is a no-op when nothing is cached yet (e.g.
+    // during boot, before any request has populated the union).
+    this.emitToolsChanged();
   }
 
   private async connectWithTimeout(timeoutMs: number): Promise<void> {
@@ -756,6 +785,55 @@ export class McpSource implements ToolSource {
         { workspaceId: ctx.workspaceId, bundleId: ctx.bundleId },
       );
     });
+  }
+
+  /**
+   * Register the client-side handler for the server's native
+   * `notifications/tools/list_changed`. Per the MCP spec the server emits
+   * this whenever its advertised tool set changes at runtime (dynamic tool
+   * registration); on receipt the client MUST treat its cached list as stale.
+   * We drop `cachedTools` (so the next `tools()` re-fetches via `tools/list`)
+   * and fan out to subscribers so any memoized projection invalidates.
+   *
+   * Called once per Client lifecycle — after `new Client()` (initial start)
+   * and after `buildClient()` (OAuth retry rebuild) — because handler tables
+   * don't carry across SDK Client instances. Unlike `registerBundleHandlers`
+   * this runs for every source (in-process platform sources included): any
+   * MCP server may push the notification.
+   */
+  private registerToolsChangedHandler(client: Client): void {
+    client.setNotificationHandler(ToolListChangedNotificationSchema, () => {
+      this.cachedTools = null;
+      this.emitToolsChanged();
+    });
+  }
+
+  /**
+   * Subscribe to tool-set-change signals (connect/restart/deferred-start/
+   * native list_changed). Returns an unsubscribe function. See
+   * {@link ToolSource.subscribeToolsChanged}.
+   */
+  subscribeToolsChanged(listener: () => void): () => void {
+    this.toolsChangedListeners.add(listener);
+    return () => {
+      this.toolsChangedListeners.delete(listener);
+    };
+  }
+
+  /** Fan out a tool-set-change signal to subscribers, isolating failures. */
+  private emitToolsChanged(): void {
+    for (const listener of this.toolsChangedListeners) {
+      try {
+        listener();
+      } catch (err) {
+        log.debug(
+          "mcp",
+          `[${this.name}] toolsChanged listener threw — ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
   }
 
   /** Check if the transport is still connected. */
