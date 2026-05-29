@@ -118,7 +118,15 @@ import {
   runWithRequestContext,
 } from "./request-context.ts";
 import { buildSkillsLoadedPayload } from "./skills-loaded-payload.ts";
-import type { ChatRequest, ChatResult, ModelSlots, RuntimeConfig, TurnUsage } from "./types.ts";
+import type {
+  ChatRequest,
+  ChatResult,
+  ModelSlots,
+  RuntimeConfig,
+  TaskRequest,
+  TaskResult,
+  TurnUsage,
+} from "./types.ts";
 import { createWorkspaceRegistry, startWorkspaceBundles } from "./workspace-runtime.ts";
 
 const DEFAULT_WORK_DIR = join(homedir(), ".nimblebrain");
@@ -1450,6 +1458,332 @@ export class Runtime {
       response: result.output,
       conversationId: conversation.id,
       skillName: skill?.manifest.name ?? null,
+      toolCalls: result.toolCalls,
+      stopReason: result.stopReason,
+      usage,
+    };
+  }
+
+  /**
+   * Unattended agent execution. Sibling primitive to `chat()` for
+   * scheduled automations, eval runs, and future webhook-triggered jobs.
+   *
+   * Contract differences vs. `chat()`:
+   *  - Each call writes a FRESH conversation; no resume, no concurrency
+   *    lock (a re-entrant scheduler tick on the same automation creates
+   *    two conversations, which is the correct semantic — each tick is
+   *    its own task run).
+   *  - The prompt goes in as a plain user message — no content parts,
+   *    no file refs, no skill matching from prompt. Layer 3 (bundle
+   *    workflow guidance) still applies based on the active tool set.
+   *  - The system prompt is composed with `mode: "task"`, prepending
+   *    `TASK_IDENTITY` so the model produces a deliverable rather than a
+   *    conversational reply. The runtime owns this framing — bundles
+   *    cannot spoof it by wrapping the user message.
+   *  - `workspaceId` is optional: present → focused workspace tool scope
+   *    + briefing; absent → cross-workspace reach with no briefing layer.
+   *  - No title generation, no `chat.start` SSE emit.
+   *
+   * NOTE (intentional duplication): much of the setup below mirrors
+   * `_chatInner()`. The clean extraction (`_agentInvoke` substrate +
+   * thin `chat()` / `executeTask()` siblings) is a planned follow-up PR
+   * — see the conversation in `feat/automations-ux`. Doing the extraction
+   * here would touch ~500 LOC of the most-trafficked code path in the
+   * runtime in the same PR as the UI work, multiplying regression risk
+   * for the chat surface. Shipped pragmatically; extracted properly later.
+   */
+  async executeTask(request: TaskRequest, requestSink?: EventSink): Promise<TaskResult> {
+    // Identity resolution mirrors chat(): in production an identity provider
+    // populates this; in dev mode we fall back to DEV_IDENTITY. Scheduler
+    // callers pass `{ id: automation.ownerId }` as a minimal identity.
+    const ownerId = resolveRequestOwnerId(request.identity, this._identityProvider !== null);
+    const requestIdentity = request.identity ?? DEV_IDENTITY;
+
+    // Session workspace (personal) — used for the silent dispatch reqCtx,
+    // file store, and the workspace-agents / model overrides lookup. Never
+    // narrated by the task prompt; the prompt only mentions the focused
+    // workspace if one is set.
+    const sessionWsId = personalWorkspaceIdFor(requestIdentity.id);
+    await ensureUserWorkspace(this._workspaceStore, {
+      id: requestIdentity.id,
+      ...(requestIdentity.displayName ? { displayName: requestIdentity.displayName } : {}),
+    });
+    await this.ensureWorkspaceRegistry(sessionWsId);
+    const store: ConversationStore = this.findConversationStore();
+    const sessionWorkspace = await this._workspaceStore.get(sessionWsId);
+
+    // Always create a fresh conversation per task. No resume path —
+    // `TaskRequest` has no `conversationId` field by design.
+    const conversation = await store.create({
+      ownerId,
+      workspaceId: sessionWsId,
+      metadata: { source: "task", ...(request.metadata ?? {}) },
+    });
+
+    await store.append(conversation, {
+      role: "user",
+      content: [{ type: "text", text: request.prompt }],
+      timestamp: new Date().toISOString(),
+      userId: requestIdentity.id,
+    });
+
+    // Workspace briefing (apps + overlays + workspace context). Same shape
+    // as chat: gated on `focusedWsId`. When absent the briefing layers are
+    // empty and `TASK_IDENTITY` is the dominant framing.
+    const focusedWsId = request.workspaceId;
+    const apps = focusedWsId ? await this.buildAppsList(focusedWsId) : [];
+    const liveOverlays = focusedWsId
+      ? await this.readPromptOverlays(focusedWsId)
+      : { org: await this.getInstructionsStore().read({ scope: "org" }), workspace: "" };
+
+    // Tool surfacing. Active set = focused workspace's tools (or session
+    // workspace if no focus) + identity tools. Cross-workspace union
+    // remains the discoverable corpus reachable via `nb__search`.
+    const toolsWsId = focusedWsId ?? sessionWsId;
+    const toolsRegistry = await this.ensureWorkspaceRegistry(toolsWsId);
+    const [focusedTools, identityTools] = await Promise.all([
+      toolsRegistry.availableTools(),
+      this.listIdentitySourceTools(),
+    ]);
+    const allTools: ToolSchema[] = [
+      ...focusedTools
+        .filter((t) => isToolVisibleToRole(t.name, requestIdentity.orgRole))
+        .map((t) => ({
+          name: namespacedToolName(toolsWsId, t.name),
+          description: t.description,
+          inputSchema: t.inputSchema,
+          ...(t.annotations !== undefined ? { annotations: t.annotations } : {}),
+        })),
+      ...identityTools
+        .filter((t) => isToolVisibleToRole(t.name, requestIdentity.orgRole))
+        .map((t) => ({
+          name: t.name,
+          description: t.description,
+          inputSchema: t.inputSchema,
+          ...(t.annotations !== undefined ? { annotations: t.annotations } : {}),
+        })),
+    ];
+    const { direct: tools, proxied } = surfaceTools(allTools, null, {
+      ...(request.allowedTools ? { requestAllowedTools: request.allowedTools } : {}),
+    });
+
+    const prefs = {
+      displayName: requestIdentity.displayName ?? "",
+      timezone: requestIdentity.preferences?.timezone ?? "",
+      locale: requestIdentity.preferences?.locale ?? "en-US",
+    };
+
+    const activeWorkspace = focusedWsId
+      ? focusedWsId === sessionWsId
+        ? sessionWorkspace
+        : await this._workspaceStore.get(focusedWsId)
+      : undefined;
+    const workspaceContext = focusedWsId
+      ? activeWorkspace
+        ? { id: activeWorkspace.id, name: activeWorkspace.name }
+        : { id: focusedWsId }
+      : undefined;
+
+    const identityOverride = activeWorkspace?.identity
+      ? makeIdentitySkill(activeWorkspace.identity)
+      : null;
+    const requestContextSkills = identityOverride
+      ? [...this.contextSkills, identityOverride]
+      : this.contextSkills;
+
+    // Layer 3 selection — bundle workflow guidance still applies based on
+    // the active tool set. No `appContextServerName` (tasks don't have
+    // appContext).
+    const userId = requestIdentity.id;
+    const layer3Pool = this.loadConversationSkills(sessionWsId, userId);
+    const accessibleForSkills = await this._workspaceStore.getWorkspacesForUser(ownerId);
+    const bundleSkills = (
+      await Promise.all(accessibleForSkills.map((ws) => this.loadBundleSkills(ws.id, {})))
+    ).flat();
+    const mergedLayer3Pool: Skill[] = [...layer3Pool, ...bundleSkills];
+    const activeToolNames = tools.map((t) => t.name);
+    const selectedLayer3 = selectLayer3Skills({
+      skills: mergedLayer3Pool,
+      activeTools: activeToolNames,
+    });
+    const layer3Entries: Layer3SkillEntry[] = selectedLayer3.map((s) => ({
+      name: s.skill.manifest.name,
+      body: s.skill.body,
+      scope: s.skill.manifest.scope ?? "org",
+      ...(s.skill.sourcePath ? { sourcePath: s.skill.sourcePath } : {}),
+      loadedBy: s.loadedBy,
+      reason: s.reason,
+    }));
+
+    // Compose with mode: "task" — prepends TASK_IDENTITY before core skills.
+    const systemPrompt = composeSystemPrompt(
+      requestContextSkills,
+      null, // no matched skill (task mode doesn't match on prompt)
+      apps,
+      undefined, // no focusedApp
+      undefined, // no appState
+      prefs,
+      proxied.length > 0,
+      workspaceContext,
+      liveOverlays,
+      layer3Entries,
+      "task",
+    );
+
+    // Model resolution — mirrors chat (alias slot + qualification).
+    let resolvedModelString = request.model ?? this.getDefaultModel();
+    const aliasSlot = parseAliasRef(resolvedModelString);
+    if (aliasSlot) {
+      resolvedModelString = this.getModelSlot(aliasSlot);
+    }
+    resolvedModelString = resolveModelString(resolvedModelString);
+
+    // Load the freshly-appended user message and rehydrate (no-op since
+    // there are no file refs — the rehydrate call is a pass-through for
+    // shape consistency with the engine's message contract).
+    const history = await store.history(conversation);
+    const fileStore = this.getFileStore(ownerId);
+    const messages = await rehydrateUserResources(history, fileStore, {
+      model: resolvedModelString,
+      maxExtractedTextSize: this.getFilesConfig().maxExtractedTextSize,
+    });
+
+    const resolvedMaxOutputTokens = resolveMaxOutputTokens({
+      configValue: this.config.maxOutputTokens,
+      model: resolvedModelString,
+    });
+    const resolvedThinking = resolveThinking({
+      configMode: this.config.thinking,
+      configBudgetTokens: this.config.thinkingBudgetTokens,
+      model: resolvedModelString,
+      maxOutputTokens: resolvedMaxOutputTokens,
+    });
+    const configMaxInputTokens = this.config.maxInputTokens ?? DEFAULT_MAX_INPUT_TOKENS;
+    const messageBudget = resolveMessageBudget({
+      model: resolvedModelString,
+      configMaxInputTokens,
+      systemPrompt,
+      tools,
+      maxOutputTokens: resolvedMaxOutputTokens,
+    });
+
+    const maxHistoryMessages = this.config.maxHistoryMessages ?? DEFAULT_MAX_HISTORY_MESSAGES;
+    const replayProvider = getProviderFromModel(resolvedModelString);
+    const perRequestHooks: EngineHooks = {
+      ...this.hooks,
+      transformContext: (historyMessages, opts) => {
+        const attempt = opts?.overflowAttempt ?? 0;
+        const budget =
+          attempt > 0 ? Math.floor(messageBudget.budget / (1 << attempt)) : messageBudget.budget;
+        const sliced = sliceHistory(historyMessages, maxHistoryMessages);
+        const replayReady = applyReasoningReplayPolicy(sliced, replayProvider);
+        return windowMessages(replayReady, budget);
+      },
+    };
+
+    const skillsLoaded = buildSkillsLoadedPayload(selectedLayer3);
+    const contextAssembled = buildContextAssembledPayload({
+      systemPrompt,
+      activeTools: tools,
+      messages,
+      skillsLoaded,
+    });
+
+    const engineConfig: EngineConfig = {
+      model: resolvedModelString,
+      maxIterations: request.maxIterations ?? this.config.maxIterations ?? DEFAULT_MAX_ITERATIONS,
+      maxInputTokens: messageBudget.budget,
+      maxOutputTokens: resolvedMaxOutputTokens,
+      ...(resolvedThinking ? { thinking: resolvedThinking } : {}),
+      maxToolResultSize: this.config.maxToolResultSize,
+      hooks: perRequestHooks,
+      runMetadata: { skillsLoaded, contextAssembled },
+      ...(request.signal ? { signal: request.signal } : {}),
+    };
+
+    // Event store routing — same as chat. The task's conversation is the
+    // active conversation for the global event store unless we're using a
+    // workspace-scoped store.
+    const isWorkspaceRequest =
+      store instanceof EventSourcedConversationStore && store !== this.store;
+    let activeEventStore: EventSourcedConversationStore | null = null;
+    if (isWorkspaceRequest) {
+      if (this.eventStore) this.eventStore.setActiveConversation("");
+      activeEventStore = store as EventSourcedConversationStore;
+      activeEventStore.setActiveConversation(conversation.id);
+    } else if (this.eventStore) {
+      activeEventStore = this.eventStore;
+      this.eventStore.setActiveConversation(conversation.id);
+    }
+
+    const sinks: EventSink[] = requestSink
+      ? [requestSink, this.defaultEvents]
+      : [this.defaultEvents];
+    if (isWorkspaceRequest) {
+      sinks.push(store as EventSourcedConversationStore);
+    }
+
+    const model = engineConfig.model;
+    const resolvedModel = this.resolveModelFn(model);
+    const perCallWorkspaceMap = new Map<string, string>();
+    const wrappedSinks: EventSink[] = sinks.map((inner) =>
+      this._wrapSinkWithWorkspaceAttribution(inner, perCallWorkspaceMap),
+    );
+    const engineSink = new MultiEventSink(wrappedSinks);
+    const identityToolRouter = this._buildIdentityToolRouter({
+      identityId: ownerId,
+      perCallWorkspaceMap,
+    });
+    const engine = new AgentEngine(resolvedModel, identityToolRouter, engineSink);
+
+    const reqCtx: RequestContext = {
+      identity: requestIdentity,
+      scope: {
+        kind: "workspace",
+        workspaceId: sessionWsId,
+        workspaceAgents: sessionWorkspace?.agents ?? null,
+        workspaceModelOverride: sessionWorkspace?.models ?? null,
+      },
+      conversationId: conversation.id,
+    };
+    engineConfig.toolPromotion = this.buildToolPromotionFactory();
+
+    const result = await runWithRequestContext(reqCtx, () =>
+      engine.run(engineConfig, systemPrompt, messages, tools),
+    );
+
+    const usage: TurnUsage = {
+      ...result.usage,
+      model,
+      llmMs: result.llmMs,
+      iterations: result.iterations,
+    };
+
+    // Persist assistant message (the deliverable) so the conversation
+    // trace is complete and the UI's "Open conversation →" affordance
+    // shows the full output. Same eventStoreHandled gate as chat().
+    const eventStoreHandled = !!activeEventStore;
+    if (!eventStoreHandled) {
+      await store.append(conversation, {
+        role: "assistant",
+        content: result.output
+          ? [{ type: "text", text: result.output }]
+          : [{ type: "text", text: "(tool use only)" }],
+        timestamp: new Date().toISOString(),
+        metadata: {
+          skill: null,
+          toolCalls: result.toolCalls,
+          usage: result.usage,
+          model,
+          llmMs: result.llmMs,
+          iterations: result.iterations,
+        },
+      });
+    }
+
+    return {
+      output: result.output,
+      conversationId: conversation.id,
       toolCalls: result.toolCalls,
       stopReason: result.stopReason,
       usage,

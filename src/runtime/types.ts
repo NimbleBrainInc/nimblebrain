@@ -323,3 +323,96 @@ export interface ChatResult {
   /** Detailed usage breakdown for this turn. */
   usage: TurnUsage;
 }
+
+/**
+ * Request shape for `runtime.executeTask()` — the unattended agent
+ * invocation primitive that sits beside `runtime.chat()`. Use this when
+ * the agent runs without a user present (scheduled automations, eval
+ * runs, future webhook triggers). The runtime owns the framing contract
+ * (no greetings, deliverable output, no follow-up questions) via the
+ * task-mode system prompt; callers supply only the task description.
+ *
+ * Two ways to scope tool reach:
+ *  - `workspaceId` set      → tools scoped to that workspace + identity
+ *                             tools; the system prompt's workspace briefing
+ *                             names that workspace.
+ *  - `workspaceId` omitted  → cross-workspace reach: tools aggregate
+ *                             across every workspace the owner can see;
+ *                             no focused-workspace briefing.
+ *
+ * Each call writes a FRESH conversation owned by `identity`. There is no
+ * continuation, no `conversationId` to resume — the returned
+ * `TaskResult.conversationId` is for traceability only. Conversation
+ * history loading, content-parts, file refs, and SSE streaming UI
+ * affordances are chat concerns and intentionally absent here.
+ */
+export interface TaskRequest {
+  /** The task description. Goes in as the user message. */
+  prompt: string;
+  /**
+   * Identity the task runs under. Resolution mirrors `ChatRequest.identity`:
+   * if an identity provider is configured, this MUST be set; in dev mode
+   * an unset identity falls back to `DEV_IDENTITY`. The scheduler builds
+   * a minimal identity from the automation's `ownerId` field.
+   */
+  identity?: UserIdentity;
+  /**
+   * Focused workspace (optional). When set, drives tool scope and the
+   * focused-workspace briefing layer in the system prompt. When omitted,
+   * the task has cross-workspace reach: tools aggregate across every
+   * workspace the owner can access, and the workspace briefing layer is
+   * omitted (the `TASK_IDENTITY` framing already explains the role).
+   */
+  workspaceId?: string;
+  model?: string;
+  maxIterations?: number;
+  maxInputTokens?: number;
+  /** Glob patterns filtering which tools are available. Matches use the same logic as chat. */
+  allowedTools?: string[];
+  /** Arbitrary metadata stored on the conversation's first line. Pass-through. */
+  metadata?: Record<string, unknown>;
+  /**
+   * Cancellation signal forwarded into the engine and threaded down to
+   * every tool call. Same morning-brief contract as `ChatRequest.signal`:
+   * without it, callers racing the task against an external deadline
+   * (notably the automations executor's `Promise.race` against
+   * `maxRunDurationMs`) orphan in-flight LLM/tool work.
+   */
+  signal?: AbortSignal;
+}
+
+/**
+ * Result shape for `runtime.executeTask()`.
+ *
+ * Modeled on `ChatResult` but with chat-specific fields removed:
+ *  - No `skillName` — task mode does not perform skill matching on the
+ *    prompt; bundle-affined skills still surface via Layer 3.
+ *  - `response` renamed to `output` to reflect the deliverable contract.
+ *  - `conversationId` is purely a traceability anchor: the fresh
+ *    conversation that backs this task. The "Open conversation →" UI
+ *    affordance reaches it.
+ *
+ * Always returned on completion — including timeout, max_iterations,
+ * and content_filter stops. Pre-execution failures (identity bad,
+ * recursive-tool guard, validation) throw synchronously; once the
+ * engine starts, every observable outcome returns a `TaskResult` with
+ * `stopReason` telling the caller what happened. Silent abandonment
+ * is the worst failure mode (see `ChatRequest.signal` docstring).
+ */
+export interface TaskResult {
+  /** The deliverable — the agent's final assistant message text. */
+  output: string;
+  /** Traceability anchor — the fresh conversation backing this task. */
+  conversationId: string;
+  /** Tool calls executed during this run. Same shape as ChatResult.toolCalls. */
+  toolCalls: Array<{
+    id: string;
+    name: string;
+    input: Record<string, unknown>;
+    output: string;
+    ok: boolean;
+    ms: number;
+  }>;
+  stopReason: string;
+  usage: TurnUsage;
+}
