@@ -436,3 +436,116 @@ describe("WorkspaceStore.update", () => {
     ).rejects.toThrow(/personal-workspace invariant/i);
   });
 });
+
+// ── Membership-change subscription ─────────────────────────────────
+
+describe("onMembershipChanged", () => {
+  test("fires on create for every initial member", async () => {
+    const seen: string[] = [];
+    store.onMembershipChanged((userId) => seen.push(userId));
+
+    await store.create("Team", undefined, {
+      members: [
+        { userId: "usr_alice", role: "admin" },
+        { userId: "usr_bob", role: "member" },
+      ],
+    });
+
+    expect(seen).toEqual(["usr_alice", "usr_bob"]);
+  });
+
+  test("fires on addMember with the added userId", async () => {
+    const ws = await store.create("Team");
+    const seen: string[] = [];
+    store.onMembershipChanged((userId) => seen.push(userId));
+
+    await store.addMember(ws.id, "usr_charlie", "admin");
+
+    expect(seen).toEqual(["usr_charlie"]);
+  });
+
+  test("does not fire on addMember conflict (already a member)", async () => {
+    const ws = await store.create("Team", undefined, {
+      members: [{ userId: "usr_alice", role: "admin" }],
+    });
+    const seen: string[] = [];
+    store.onMembershipChanged((userId) => seen.push(userId));
+
+    await expect(store.addMember(ws.id, "usr_alice", "member")).rejects.toThrow(
+      MemberConflictError,
+    );
+    expect(seen).toEqual([]);
+  });
+
+  test("fires on removeMember only when the user was actually a member", async () => {
+    const ws = await store.create("Team", undefined, {
+      members: [{ userId: "usr_alice", role: "admin" }],
+    });
+    const seen: string[] = [];
+    store.onMembershipChanged((userId) => seen.push(userId));
+
+    // Real removal — fires.
+    await store.removeMember(ws.id, "usr_alice");
+    expect(seen).toEqual(["usr_alice"]);
+
+    // No-op removal of a non-member — does not fire. Spurious
+    // invalidations would churn every connected client's membership
+    // cache on the SSE side.
+    await store.removeMember(ws.id, "usr_ghost");
+    expect(seen).toEqual(["usr_alice"]);
+  });
+
+  test("fires on delete for every former member", async () => {
+    const ws = await store.create("Team", undefined, {
+      members: [
+        { userId: "usr_alice", role: "admin" },
+        { userId: "usr_bob", role: "member" },
+      ],
+    });
+    const seen: string[] = [];
+    store.onMembershipChanged((userId) => seen.push(userId));
+
+    const ok = await store.delete(ws.id);
+    expect(ok).toBe(true);
+    expect(seen.sort()).toEqual(["usr_alice", "usr_bob"]);
+  });
+
+  test("does not fire on updateMemberRole (role changes don't affect set membership)", async () => {
+    const ws = await store.create("Team", undefined, {
+      members: [{ userId: "usr_alice", role: "member" }],
+    });
+    const seen: string[] = [];
+    store.onMembershipChanged((userId) => seen.push(userId));
+
+    await store.updateMemberRole(ws.id, "usr_alice", "admin");
+
+    expect(seen).toEqual([]);
+  });
+
+  test("unsubscribe stops further notifications", async () => {
+    const ws = await store.create("Team");
+    const seen: string[] = [];
+    const unsub = store.onMembershipChanged((userId) => seen.push(userId));
+
+    await store.addMember(ws.id, "usr_a", "admin");
+    unsub();
+    await store.addMember(ws.id, "usr_b", "admin");
+
+    expect(seen).toEqual(["usr_a"]);
+  });
+
+  test("a throwing handler doesn't break the mutation or other handlers", async () => {
+    const ws = await store.create("Team");
+    const seen: string[] = [];
+    store.onMembershipChanged(() => {
+      throw new Error("boom");
+    });
+    store.onMembershipChanged((userId) => seen.push(userId));
+
+    // Mutation succeeds despite the throwing handler.
+    const updated = await store.addMember(ws.id, "usr_alice", "admin");
+    expect(updated.members.some((m) => m.userId === "usr_alice")).toBe(true);
+    // Non-throwing handler still ran.
+    expect(seen).toEqual(["usr_alice"]);
+  });
+});

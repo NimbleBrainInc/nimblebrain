@@ -11,6 +11,8 @@ import {
   setPlatformVersion,
   tryBootstrap,
 } from "./api/client";
+import { closeAllConversationEvents } from "./api/conversation-events-client";
+import { closeEventsClient } from "./api/events-client";
 import { AppWithChat } from "./components/AppWithChat";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Login } from "./components/Login";
@@ -527,6 +529,22 @@ export function App() {
   const [bootstrap, setBootstrap] = useState<BootstrapResponse | null>(null);
   const [authenticated, setAuthenticated] = useState(false);
   const [checking, setChecking] = useState(true);
+
+  // Tab-lifetime cleanup. `pagehide` fires on tab close, navigation away,
+  // and bfcache enter — earlier and more reliable than `beforeunload`,
+  // and it lets the server reclaim the SSE slots immediately rather than
+  // waiting for the TCP teardown to be noticed by the next failed
+  // enqueue. The TCP teardown path still works as a fallback.
+  useEffect(() => {
+    const onPageHide = (): void => {
+      closeEventsClient();
+      closeAllConversationEvents();
+    };
+    window.addEventListener("pagehide", onPageHide);
+    return () => {
+      window.removeEventListener("pagehide", onPageHide);
+    };
+  }, []);
 
   const handleLogout = useCallback(() => {
     logout();

@@ -4,9 +4,13 @@
  * Connects to GET /v1/conversations/:id/events to receive real-time
  * chat events from other participants in a shared conversation.
  *
- * Same pattern as sse.ts (fetch + ReadableStream for custom auth headers).
- * Auto-reconnects with exponential backoff. On reconnect, calls onReconnect
- * so the caller can reload the full conversation to catch missed messages.
+ * Same pattern and reliability primitives as `sse.ts`:
+ *   - fetch + ReadableStream (for custom auth headers — EventSource
+ *     doesn't carry them)
+ *   - auto-reconnect with jittered exponential backoff
+ *   - heartbeat watchdog (force-reconnect on stale stream)
+ *   - visibility-resume (immediate reconnect when the tab returns)
+ *   - `onReconnect` for state resync (load missed messages)
  */
 
 import { refreshSession } from "./client";
@@ -40,6 +44,9 @@ export interface ConversationSseConnection {
 const INITIAL_BACKOFF_MS = 1_000;
 const MAX_BACKOFF_MS = 30_000;
 const BACKOFF_MULTIPLIER = 2;
+const BACKOFF_JITTER = 0.2;
+const STALE_THRESHOLD_MS = 75_000;
+const WATCHDOG_TICK_MS = 15_000;
 
 export function connectConversationEvents(
   options: ConversationSseOptions,
@@ -57,8 +64,48 @@ export function connectConversationEvents(
   let closed = false;
   let abortController: AbortController | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let watchdogTimer: ReturnType<typeof setInterval> | null = null;
   let backoff = INITIAL_BACKOFF_MS;
   let hasConnectedBefore = false;
+  let lastFrameAt = Date.now();
+
+  function markFrame(): void {
+    lastFrameAt = Date.now();
+  }
+
+  function isStale(): boolean {
+    return Date.now() - lastFrameAt > STALE_THRESHOLD_MS;
+  }
+
+  function forceReconnect(): void {
+    abortController?.abort();
+  }
+
+  function startWatchdog(): void {
+    if (watchdogTimer) return;
+    watchdogTimer = setInterval(() => {
+      if (closed) return;
+      if (isStale()) forceReconnect();
+    }, WATCHDOG_TICK_MS);
+  }
+
+  function stopWatchdog(): void {
+    if (watchdogTimer) {
+      clearInterval(watchdogTimer);
+      watchdogTimer = null;
+    }
+  }
+
+  function onVisibilityChange(): void {
+    if (closed) return;
+    if (typeof document === "undefined") return;
+    if (document.visibilityState !== "visible") return;
+    if (isStale()) forceReconnect();
+  }
+
+  if (typeof document !== "undefined") {
+    document.addEventListener("visibilitychange", onVisibilityChange);
+  }
 
   async function connect(): Promise<void> {
     if (closed) return;
@@ -101,6 +148,8 @@ export function connectConversationEvents(
 
       // Connected successfully — reset backoff
       backoff = INITIAL_BACKOFF_MS;
+      markFrame();
+      startWatchdog();
 
       // If this is a reconnect, notify so caller can reload missed messages
       if (hasConnectedBefore) {
@@ -117,6 +166,7 @@ export function connectConversationEvents(
       for (;;) {
         const { done, value } = await reader.read();
         if (done || closed) break;
+        markFrame();
 
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split("\n");
@@ -151,13 +201,21 @@ export function connectConversationEvents(
 
       // Stream ended — reconnect unless closed
       if (!closed) {
+        stopWatchdog();
         onDisconnect?.();
         scheduleReconnect();
       }
     } catch (err) {
       if (closed) return;
-      if (err instanceof DOMException && err.name === "AbortError") return;
+      if (err instanceof DOMException && err.name === "AbortError") {
+        // Self-aborted (watchdog / visibility) — reschedule.
+        stopWatchdog();
+        onDisconnect?.();
+        scheduleReconnect();
+        return;
+      }
 
+      stopWatchdog();
       onDisconnect?.();
 
       // 403 is unrecoverable (access denied). 401 — try refresh first.
@@ -181,10 +239,13 @@ export function connectConversationEvents(
 
   function scheduleReconnect(): void {
     if (closed) return;
+    if (reconnectTimer) return;
+    const jittered = backoff * (1 - BACKOFF_JITTER + Math.random() * 2 * BACKOFF_JITTER);
     reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
       backoff = Math.min(backoff * BACKOFF_MULTIPLIER, MAX_BACKOFF_MS);
       connect();
-    }, backoff);
+    }, jittered);
   }
 
   connect();
@@ -192,6 +253,10 @@ export function connectConversationEvents(
   return {
     close() {
       closed = true;
+      stopWatchdog();
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", onVisibilityChange);
+      }
       if (reconnectTimer) {
         clearTimeout(reconnectTimer);
         reconnectTimer = null;

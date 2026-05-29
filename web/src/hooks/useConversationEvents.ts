@@ -7,14 +7,16 @@
  * conversation). Stage 4 reintroduces multi-user sharing and this
  * hook's audience widens.
  *
- * Disconnects on cleanup or when the conversation changes. On
- * reconnect, triggers a full conversation reload to catch missed
- * messages.
+ * Transport ownership lives in the keyed singleton at
+ * `api/conversation-events-client.ts`. This hook is a thin subscriber:
+ * the first mount for a given `conversationId` opens the underlying
+ * connection, additional mounts share it, and the last unmount tears
+ * it down. On reconnect, the hook fires `onReconnect` so the caller can
+ * reload the full conversation to catch missed messages.
  */
 
 import { useEffect, useRef } from "react";
-import { getAuthToken } from "../api/client";
-import { type ConversationSseConnection, connectConversationEvents } from "../api/conversation-sse";
+import { subscribeConversation } from "../api/conversation-events-client";
 
 export interface ConversationEventCallbacks {
   /** A user message arrived from another participant. */
@@ -34,21 +36,15 @@ export function useConversationEvents(
   conversationId: string | null,
   callbacks: ConversationEventCallbacks,
 ): void {
-  // Keep callbacks in a ref so we don't reconnect on every render
+  // Keep callbacks in a ref so consumers can re-render without churning
+  // the subscription. The effect re-runs only on conversationId change.
   const callbacksRef = useRef(callbacks);
   callbacksRef.current = callbacks;
 
   useEffect(() => {
-    // Subscribe whenever a conversation is open — same-user cross-tab
-    // sync (and, post-Stage-4, multi-user sharing).
     if (!conversationId) return;
 
-    const token = getAuthToken();
-    let connection: ConversationSseConnection | null = null;
-
-    connection = connectConversationEvents({
-      conversationId,
-      token: token ?? undefined,
+    const unsubscribe = subscribeConversation(conversationId, {
       onEvent: (type, data) => {
         if (type === "user.message") {
           callbacksRef.current.onRemoteUserMessage(
@@ -60,7 +56,7 @@ export function useConversationEvents(
             },
           );
         } else if (type === "heartbeat") {
-          // Ignore heartbeats
+          // Ignore heartbeats — they're keep-alive frames, not chat events.
         } else {
           // text.delta, tool.start, tool.done, llm.done, done
           callbacksRef.current.onRemoteStreamEvent(type, data);
@@ -69,13 +65,8 @@ export function useConversationEvents(
       onReconnect: () => {
         callbacksRef.current.onReconnect();
       },
-      onError: (err) => {
-        console.warn("[conversation-sse] Error:", err.message);
-      },
     });
 
-    return () => {
-      connection?.close();
-    };
+    return unsubscribe;
   }, [conversationId]);
 }

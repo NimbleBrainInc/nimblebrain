@@ -32,29 +32,63 @@ export function getAuthToken(): string | null {
 }
 
 /**
- * Hook fired on logout / auth-token change — used by stateful clients that
- * hold a session bound to the identity. The MCP bridge client
- * (`mcp-bridge-client.ts`) registers here at module load so its cached
- * transport gets dropped on logout instead of silently servicing the next
- * identity. Stateless callers (REST helpers, `fetchWithRefresh`) read the
- * current token per-request and need no hook.
+ * Hooks fired on logout / auth-token change — used by stateful clients
+ * that hold a session bound to the identity. Callers register via
+ * `addAuthLifecycleHandler` and unsubscribe via the returned function;
+ * `setAuthToken` iterates the set so multiple stateful clients (the MCP
+ * bridge, the SSE event clients) each drop their identity-bound state
+ * on logout independently. Stateless callers (REST helpers,
+ * `fetchWithRefresh`) read the current token per-request and need no
+ * hook.
  *
  * Stage 2 / Q3 (locked 2026-05-22): the `/mcp` session is identity-bound,
- * not workspace-bound. Workspace switches do NOT drop the bridge session —
- * `setActiveWorkspaceId` therefore no longer fires this hook. Cross-call
+ * not workspace-bound. Workspace switches do NOT drop these hooks —
+ * `setActiveWorkspaceId` therefore does not fire them. Cross-call
  * workspace context is supplied per-request via the `X-Workspace-Id`
- * header read fresh by the custom fetch in `mcp-bridge-client.ts`.
+ * header read fresh by callers (the MCP bridge, REST helpers).
  */
-let onAuthLifecycleChange: (() => void) | null = null;
+const authLifecycleHandlers = new Set<() => void>();
+
+/**
+ * Register a hook to fire whenever the auth token changes (login,
+ * logout, refresh-to-different-token). Returns an unsubscribe function.
+ *
+ * Idempotent: registering the same callback twice has no effect (Set
+ * semantics). Errors in a handler are caught so a buggy registration
+ * can't break others or block the token update.
+ */
+export function addAuthLifecycleHandler(handler: () => void): () => void {
+  authLifecycleHandlers.add(handler);
+  return () => {
+    authLifecycleHandlers.delete(handler);
+  };
+}
+
+/**
+ * @deprecated Use `addAuthLifecycleHandler`. Single-slot semantics
+ * (clear-all-and-set) are preserved for external callers that haven't
+ * migrated, but the multi-listener API is the supported path.
+ */
 export function setAuthLifecycleHandler(handler: (() => void) | null): void {
-  onAuthLifecycleChange = handler;
+  authLifecycleHandlers.clear();
+  if (handler) authLifecycleHandlers.add(handler);
+}
+
+function fireAuthLifecycle(): void {
+  for (const handler of authLifecycleHandlers) {
+    try {
+      handler();
+    } catch (err) {
+      console.warn("[client] auth lifecycle handler threw:", err);
+    }
+  }
 }
 
 /** Set the bearer token used for all authenticated requests. */
 export function setAuthToken(token: string | null): void {
   if (authToken === token) return;
   authToken = token;
-  onAuthLifecycleChange?.();
+  fireAuthLifecycle();
 }
 
 /**

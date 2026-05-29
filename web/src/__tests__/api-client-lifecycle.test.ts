@@ -27,7 +27,12 @@
 
 import { afterEach, describe, expect, mock, test } from "bun:test";
 
-import { setActiveWorkspaceId, setAuthLifecycleHandler, setAuthToken } from "../api/client";
+import {
+  addAuthLifecycleHandler,
+  setActiveWorkspaceId,
+  setAuthLifecycleHandler,
+  setAuthToken,
+} from "../api/client";
 
 afterEach(() => {
   // Reset module state so tests don't leak handlers / tokens / workspaces
@@ -129,5 +134,71 @@ describe("auth lifecycle handler", () => {
     setActiveWorkspaceId("ws-same");
     setActiveWorkspaceId("ws-different");
     expect(handler).toHaveBeenCalledTimes(0);
+  });
+});
+
+// ── Multi-listener (addAuthLifecycleHandler) ───────────────────────
+
+describe("addAuthLifecycleHandler — multi-listener", () => {
+  test("fires every registered handler on setAuthToken change", () => {
+    // Two stateful clients — the MCP bridge and the SSE event clients —
+    // each register their own teardown. Both must run.
+    const a = mock(() => {});
+    const b = mock(() => {});
+    addAuthLifecycleHandler(a);
+    addAuthLifecycleHandler(b);
+
+    setAuthToken("tok-1");
+    expect(a).toHaveBeenCalledTimes(1);
+    expect(b).toHaveBeenCalledTimes(1);
+
+    setAuthToken("tok-2");
+    expect(a).toHaveBeenCalledTimes(2);
+    expect(b).toHaveBeenCalledTimes(2);
+  });
+
+  test("returned unsubscribe removes the handler", () => {
+    const a = mock(() => {});
+    const unsub = addAuthLifecycleHandler(a);
+
+    setAuthToken("tok-1");
+    expect(a).toHaveBeenCalledTimes(1);
+
+    unsub();
+    setAuthToken("tok-2");
+    expect(a).toHaveBeenCalledTimes(1);
+  });
+
+  test("a throwing handler does not block other handlers or the token update", () => {
+    // Set-based iteration must continue past a throwing subscriber, and
+    // the token must still be updated. Otherwise a buggy MCP bridge
+    // reset would silently strand the SSE event clients on a stale
+    // identity.
+    const thrower = mock(() => {
+      throw new Error("boom");
+    });
+    const good = mock(() => {});
+    addAuthLifecycleHandler(thrower);
+    addAuthLifecycleHandler(good);
+
+    setAuthToken("tok-1");
+
+    expect(thrower).toHaveBeenCalledTimes(1);
+    expect(good).toHaveBeenCalledTimes(1);
+  });
+
+  test("setAuthLifecycleHandler (deprecated) clears the multi-listener set", () => {
+    // Deprecated alias preserves single-slot semantics for external
+    // callers that haven't migrated: clear-all-and-set. Internal callers
+    // should use `addAuthLifecycleHandler`.
+    const added = mock(() => {});
+    const set = mock(() => {});
+    addAuthLifecycleHandler(added);
+
+    setAuthLifecycleHandler(set);
+
+    setAuthToken("tok-1");
+    expect(added).toHaveBeenCalledTimes(0); // cleared
+    expect(set).toHaveBeenCalledTimes(1);
   });
 });

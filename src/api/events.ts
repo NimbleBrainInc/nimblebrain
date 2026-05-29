@@ -1,11 +1,38 @@
 import type { EngineEvent, EngineEventType, EventSink } from "../engine/types.ts";
+import type { WorkspaceStore } from "../workspace/workspace-store.ts";
 
-/** SSE client connection tracked by the event manager. */
+/**
+ * SSE client connection tracked by the event manager.
+ *
+ * Workspace-scoped fan-out is filtered through `workspaceMemberships`:
+ *
+ *   - `undefined` — receive every event regardless of `wsId`. This is the
+ *     legacy `addClient()` no-arg semantic, kept for internal consumers
+ *     (activity dashboards, tests) that need the unfiltered firehose.
+ *   - `Set<string>` — receive only events whose `wsId` is in the set.
+ *
+ * Identity-scoped clients (the `/v1/events` route) carry both an
+ * `identityId` and a memberships set computed from the workspaces the
+ * identity belongs to. The set is refreshed when the injected
+ * `WorkspaceStore` fires a `membershipChanged` for that identity, so a
+ * mid-stream `addMember` / `removeMember` is reflected without a
+ * reconnect.
+ *
+ * Legacy single-workspace clients (`addClient(wsId)`) store a one-element
+ * set. The unified filter delivers identical behavior to the prior
+ * `client.workspaceId === wsId` check, so all existing tests pass.
+ */
 interface SseClient {
   id: string;
   controller: ReadableStreamDefaultController<Uint8Array>;
   closed: boolean;
-  workspaceId?: string;
+  /** Identity the connection is bound to. Only set for `addIdentityClient`. */
+  identityId?: string;
+  /**
+   * Workspaces this client should receive events for. `undefined` = no
+   * filter (legacy firehose); a `Set` is the explicit allowlist.
+   */
+  workspaceMemberships?: Set<string>;
 }
 
 /** A buffered event retained in the in-memory event buffer. */
@@ -23,9 +50,10 @@ const encoder = new TextEncoder();
  *
  *   - `scope: "global"`   — broadcast to every connected client (e.g. shared
  *                            config, skills library, workspace-agnostic events)
- *   - `scope: "workspace"` — broadcast only to clients whose `workspaceId`
- *                             matches `data[wsIdField]`. The named field MUST
- *                             be present on the event's payload; if it's
+ *   - `scope: "workspace"` — broadcast only to clients whose
+ *                             `workspaceMemberships` includes the event's
+ *                             `data[wsIdField]`. The named field MUST be
+ *                             present on the event's payload; if it's
  *                             missing we drop the event rather than fan it
  *                             out to every workspace (the alternative leaks
  *                             one workspace's signals to its neighbors).
@@ -73,13 +101,21 @@ const SSE_ROUTES: Partial<Record<EngineEventType, SseRoute>> = {
 };
 
 /**
- * SSE Event Manager for the workspace-level event stream (PRODUCT_SPEC ss9.3).
+ * SSE Event Manager for the workspace-level event stream.
  *
- * Tracks connected SSE clients, broadcasts events to all clients, and sends
- * heartbeats at a configurable interval (default 30s).
+ * Tracks connected SSE clients, broadcasts events per the `SSE_ROUTES`
+ * table, and sends heartbeats at a configurable interval (default 30s).
  *
  * Maintains a bounded in-memory event buffer so that consumers (e.g.
  * ActivityCollector) can query recent events without being SSE clients.
+ *
+ * **Identity-scoped clients.** The `/v1/events` route uses
+ * `addIdentityClient`, which binds a connection to an identity and caches
+ * the set of workspaces the identity is a member of. The cache is
+ * refreshed in-process when the injected `WorkspaceStore` fires a
+ * membership change, so workspace switches don't churn the SSE.
+ * Authorization happens at emit time against the cached set — same
+ * `WorkspaceStore` that gates every other authorization path.
  */
 export class SseEventManager implements EventSink {
   private clients = new Map<string, SseClient>();
@@ -88,12 +124,22 @@ export class SseEventManager implements EventSink {
   private eventBuffer: BufferedEvent[] = [];
   private readonly MAX_BUFFER_SIZE = 500;
   private localListeners = new Set<(event: string, data: Record<string, unknown>) => void>();
+  private workspaceStore?: WorkspaceStore;
+  private unsubscribeMembership: (() => void) | null = null;
 
-  constructor(heartbeatIntervalMs = 30_000) {
+  /**
+   * @param heartbeatIntervalMs - heartbeat cadence in ms. Default 30s.
+   * @param workspaceStore - optional. When supplied, `addIdentityClient`
+   *   queries it for memberships and the manager refreshes a client's
+   *   cached set on membership-change events. Tests and internal
+   *   consumers that only use `addClient()` may omit it.
+   */
+  constructor(heartbeatIntervalMs = 30_000, workspaceStore?: WorkspaceStore) {
     this.heartbeatIntervalMs = heartbeatIntervalMs;
+    this.workspaceStore = workspaceStore;
   }
 
-  /** Start the heartbeat timer. */
+  /** Start the heartbeat timer and (if a workspace store is wired) the membership-change subscription. */
   start(): void {
     if (this.heartbeatTimer) return;
     this.heartbeatTimer = setInterval(() => {
@@ -101,13 +147,28 @@ export class SseEventManager implements EventSink {
         timestamp: new Date().toISOString(),
       });
     }, this.heartbeatIntervalMs);
+
+    if (this.workspaceStore && !this.unsubscribeMembership) {
+      this.unsubscribeMembership = this.workspaceStore.onMembershipChanged((userId) => {
+        // Fire-and-forget; the refresh is async (disk I/O). Errors are
+        // caught and logged so the workspace mutation that triggered us
+        // never sees an exception bubble out.
+        void this.refreshMembershipsForIdentity(userId).catch((err) => {
+          console.warn("[events] membership refresh failed:", err);
+        });
+      });
+    }
   }
 
-  /** Stop the heartbeat timer and close all clients. */
+  /** Stop timers, unsubscribe membership listener, and close all clients. */
   stop(): void {
     if (this.heartbeatTimer) {
       clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = null;
+    }
+    if (this.unsubscribeMembership) {
+      this.unsubscribeMembership();
+      this.unsubscribeMembership = null;
     }
     for (const client of this.clients.values()) {
       this.closeClient(client);
@@ -121,31 +182,72 @@ export class SseEventManager implements EventSink {
   }
 
   /**
-   * Create a new SSE ReadableStream for a connecting client.
-   * Returns the stream to be used as the Response body.
+   * Create an SSE stream for a legacy workspace-scoped or unfiltered
+   * client.
+   *
+   *   - `addClient()` — no filter; receives every event (used by activity
+   *     dashboards and tests that need the unfiltered firehose).
+   *   - `addClient(wsId)` — single-workspace filter; receives events
+   *     where `event.wsId === wsId` plus all global events.
+   *
+   * Kept for back-compat. New code should use `addIdentityClient`, which
+   * the `/v1/events` route uses — it carries an identity-bound cache that
+   * survives workspace switches and refreshes on membership changes.
    */
   addClient(workspaceId?: string): ReadableStream<Uint8Array> {
-    const id = crypto.randomUUID();
-    let client: SseClient;
+    return this.attachClient({
+      workspaceMemberships: workspaceId ? new Set([workspaceId]) : undefined,
+    });
+  }
 
-    const stream = new ReadableStream<Uint8Array>({
+  /**
+   * Create an SSE stream bound to an identity. The connection receives
+   * events for any workspace currently in the identity's membership set,
+   * plus all global events. The set is refreshed automatically when the
+   * workspace store fires a `membershipChanged` for `identityId`.
+   *
+   * `memberships` is the initial set, typically computed by the caller
+   * via `workspaceStore.getWorkspacesForUser(identityId)`. An empty set
+   * means "global events only" — distinct from legacy `addClient()`
+   * which receives the workspace firehose unfiltered.
+   */
+  addIdentityClient(identityId: string, memberships: Set<string>): ReadableStream<Uint8Array> {
+    return this.attachClient({
+      identityId,
+      workspaceMemberships: memberships,
+    });
+  }
+
+  /** Shared client-attachment path. */
+  private attachClient(opts: {
+    identityId?: string;
+    workspaceMemberships?: Set<string>;
+  }): ReadableStream<Uint8Array> {
+    const id = crypto.randomUUID();
+
+    return new ReadableStream<Uint8Array>({
       start: (controller) => {
-        client = { id, controller, closed: false, workspaceId };
+        const client: SseClient = {
+          id,
+          controller,
+          closed: false,
+          identityId: opts.identityId,
+          workspaceMemberships: opts.workspaceMemberships,
+        };
         this.clients.set(id, client);
       },
       cancel: () => {
         this.removeClient(id);
       },
     });
-
-    return stream;
   }
 
   /**
    * EventSink implementation: forward events to SSE clients per the
    * `SSE_ROUTES` table at the top of this file. Events with no route entry
    * are dropped (kept internal to the runtime); workspace-scoped events
-   * are filtered to clients with a matching workspace id.
+   * are filtered to clients whose cached memberships include the event's
+   * workspace id.
    */
   emit(event: EngineEvent): void {
     const route = SSE_ROUTES[event.type];
@@ -162,7 +264,18 @@ export class SseEventManager implements EventSink {
     this.broadcast(event.type, event.data, wsId);
   }
 
-  /** Broadcast an SSE event to connected clients, optionally filtered by workspace. */
+  /**
+   * Broadcast an SSE event to connected clients, optionally filtered by
+   * workspace.
+   *
+   * Filter rules per client:
+   *   - No `wsId` passed (global / heartbeat) → enqueue unconditionally.
+   *   - `client.workspaceMemberships === undefined` → legacy firehose;
+   *     enqueue. Internal consumers only — the public `/v1/events` route
+   *     never produces this shape.
+   *   - `client.workspaceMemberships.has(wsId)` → enqueue.
+   *   - Otherwise → skip.
+   */
   broadcast(eventType: string, data: Record<string, unknown>, wsId?: string): void {
     const message = `event: ${eventType}\ndata: ${JSON.stringify(data)}\n\n`;
     const encoded = encoder.encode(message);
@@ -172,8 +285,12 @@ export class SseEventManager implements EventSink {
         this.clients.delete(id);
         continue;
       }
-      // Skip clients from other workspaces (null wsId = broadcast to all, e.g. heartbeat)
-      if (wsId && client.workspaceId && client.workspaceId !== wsId) continue;
+      if (wsId !== undefined) {
+        const memberships = client.workspaceMemberships;
+        // `undefined` = legacy firehose; any non-undefined set requires
+        // explicit membership to deliver.
+        if (memberships !== undefined && !memberships.has(wsId)) continue;
+      }
       try {
         client.controller.enqueue(encoded);
       } catch (err) {
@@ -216,6 +333,31 @@ export class SseEventManager implements EventSink {
    */
   onEvent(callback: (event: string, data: Record<string, unknown>) => void): void {
     this.localListeners.add(callback);
+  }
+
+  /**
+   * Refresh the cached workspace-memberships set for every identity-bound
+   * client whose identity matches `userId`. Called from the workspace
+   * store's membership-change listener (wired in `start()`). Idempotent
+   * and tolerant of clients disconnecting mid-refresh.
+   */
+  private async refreshMembershipsForIdentity(userId: string): Promise<void> {
+    if (!this.workspaceStore) return;
+    // Collect matching clients up front so we re-query the store once
+    // even if several connections share an identity.
+    const matching: SseClient[] = [];
+    for (const client of this.clients.values()) {
+      if (client.closed) continue;
+      if (client.identityId === userId) matching.push(client);
+    }
+    if (matching.length === 0) return;
+
+    const workspaces = await this.workspaceStore.getWorkspacesForUser(userId);
+    const fresh = new Set(workspaces.map((ws) => ws.id));
+    for (const client of matching) {
+      if (client.closed) continue;
+      client.workspaceMemberships = fresh;
+    }
   }
 
   private removeClient(id: string): void {

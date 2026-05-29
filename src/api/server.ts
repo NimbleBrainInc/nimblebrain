@@ -65,8 +65,11 @@ export function startServer(options: ServerOptions): ServerHandle {
   const healthMonitor = new HealthMonitor(mcpSources, runtime.getEventSink());
   healthMonitor.start();
 
-  // SSE event manager — listens to runtime events and broadcasts to clients
-  const sseManager = new SseEventManager();
+  // SSE event manager — listens to runtime events and broadcasts to clients.
+  // Wired with the workspace store so `addIdentityClient` (the /v1/events
+  // route) can compute initial memberships and the manager can refresh a
+  // connected client's cached set on in-process membership-change events.
+  const sseManager = new SseEventManager(undefined, runtime.getWorkspaceStore());
   sseManager.start();
 
   // Per-conversation event manager — streams chat events to conversation participants
