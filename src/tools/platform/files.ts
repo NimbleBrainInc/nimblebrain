@@ -228,7 +228,7 @@ async function handleRead(
 
 async function handleReadPdfPages(
   store: FileStore,
-  args: { id: string; pages: number[] },
+  args: FilesReadPdfPagesInput,
 ): Promise<ToolResult> {
   const entry = await store.findEntry(args.id);
   if (!entry) {
@@ -249,15 +249,6 @@ async function handleReadPdfPages(
 
   const requestedPages = Array.from(new Set(args.pages)).sort((a, b) => a - b);
   const read = await store.readFile(args.id);
-  if (!PDF_TYPES.has(read.mimeType)) {
-    return {
-      content: textContent(
-        JSON.stringify({ error: `File is not a PDF: ${read.filename} (${read.mimeType})` }),
-      ),
-      isError: true,
-    };
-  }
-
   const extracted = await extractPdfPages(read.data, requestedPages);
   if (!extracted) {
     return {
@@ -481,10 +472,7 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
       inputSchema: FilesReadPdfPagesInput,
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         try {
-          return await handleReadPdfPages(
-            getStore(),
-            input as unknown as { id: string; pages: number[] },
-          );
+          return await handleReadPdfPages(getStore(), input as unknown as FilesReadPdfPagesInput);
         } catch (err) {
           return fail(err instanceof Error ? err.message : String(err));
         }
