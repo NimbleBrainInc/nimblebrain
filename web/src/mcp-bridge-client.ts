@@ -14,7 +14,7 @@
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { getActiveWorkspaceId, getAuthToken, setAuthLifecycleHandler } from "./api/client";
+import { addAuthLifecycleHandler, getActiveWorkspaceId, getAuthToken } from "./api/client";
 
 // ---------------------------------------------------------------------------
 // Module-level singleton
@@ -94,8 +94,10 @@ export function resetMcpBridgeClient(): void {
 
 // Register at module load — the side effect runs the first time anything
 // in the bridge dependency graph imports this file (which is exactly when
-// we'd want lifecycle resets to start firing).
-setAuthLifecycleHandler(resetMcpBridgeClient);
+// we'd want lifecycle resets to start firing). Multi-listener registration
+// (`addAuthLifecycleHandler`) so the SSE event clients can register their
+// own teardown alongside ours without one wiping the other.
+addAuthLifecycleHandler(resetMcpBridgeClient);
 
 // ---------------------------------------------------------------------------
 // Session-not-found recovery

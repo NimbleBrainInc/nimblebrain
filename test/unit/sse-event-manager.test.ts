@@ -193,3 +193,184 @@ describe("SseEventManager — routing table", () => {
     expect(wsB.events).not.toContain("bridge.tool.call");
   });
 });
+
+// ── Identity-scoped clients (the /v1/events route) ────────────────
+
+/**
+ * Minimal stand-in for the bits of `WorkspaceStore` the manager touches:
+ * `getWorkspacesForUser` and `onMembershipChanged`. Avoids spinning up a
+ * full store + temp dir for routing-only assertions.
+ *
+ * `setMemberships` mutates the per-user table and synchronously fires
+ * the registered handlers, mirroring how the real store does it post-
+ * write — that's the precise contract the manager depends on.
+ */
+function fakeWorkspaceStore() {
+  const byUser = new Map<string, string[]>();
+  const handlers = new Set<(userId: string) => void>();
+  return {
+    setMemberships(userId: string, wsIds: string[]): void {
+      byUser.set(userId, wsIds);
+      for (const h of handlers) h(userId);
+    },
+    // Subset of WorkspaceStore that SseEventManager uses. Cast at the
+    // injection site to avoid pulling the real store's full surface
+    // into the test.
+    async getWorkspacesForUser(userId: string) {
+      const ids = byUser.get(userId) ?? [];
+      return ids.map((id) => ({ id }) as { id: string });
+    },
+    onMembershipChanged(handler: (userId: string) => void): () => void {
+      handlers.add(handler);
+      return () => handlers.delete(handler);
+    },
+  };
+}
+
+describe("SseEventManager — identity-scoped clients", () => {
+  let store: ReturnType<typeof fakeWorkspaceStore>;
+  let mgr: SseEventManager;
+  const released: Array<() => void> = [];
+
+  beforeEach(() => {
+    store = fakeWorkspaceStore();
+    // biome-ignore lint/suspicious/noExplicitAny: minimal store stub, see fakeWorkspaceStore docblock
+    mgr = new SseEventManager(1_000_000, store as any);
+    mgr.start();
+  });
+
+  afterEach(() => {
+    for (const r of released.splice(0)) r();
+    mgr.stop();
+  });
+
+  test("identity client receives workspace-scoped events only for member workspaces", async () => {
+    // Alice is in ws_a; Bob is in ws_b. Each opens an identity-scoped
+    // /v1/events stream. The fan-out gate is the cached membership set.
+    const alice = collect(mgr.addIdentityClient("usr_alice", new Set(["ws_a"])));
+    const bob = collect(mgr.addIdentityClient("usr_bob", new Set(["ws_b"])));
+    released.push(alice.release, bob.release);
+
+    mgr.emit({
+      type: "bundle.installed",
+      data: { wsId: "ws_a", serverName: "ipinfo", bundleName: "@nb/ipinfo" },
+    });
+    mgr.emit({
+      type: "bundle.installed",
+      data: { wsId: "ws_b", serverName: "granola", bundleName: "@nb/granola" },
+    });
+    await flush();
+
+    expect(alice.events).toEqual(["bundle.installed"]);
+    expect(bob.events).toEqual(["bundle.installed"]);
+  });
+
+  test("multi-workspace identity client receives events for any member workspace", async () => {
+    // A user with membership in both workspaces — the everyday case for
+    // an operator with a personal and a team workspace.
+    const both = collect(mgr.addIdentityClient("usr_op", new Set(["ws_a", "ws_b"])));
+    released.push(both.release);
+
+    mgr.emit({
+      type: "bundle.installed",
+      data: { wsId: "ws_a", serverName: "ipinfo", bundleName: "@nb/ipinfo" },
+    });
+    mgr.emit({
+      type: "connection.state_changed",
+      data: {
+        wsId: "ws_b",
+        serverName: "granola",
+        bundleName: "https://granola.test/",
+        principalId: "_workspace",
+        state: "running",
+      },
+    });
+    await flush();
+
+    expect(both.events).toEqual(["bundle.installed", "connection.state_changed"]);
+  });
+
+  test("global events still reach identity clients regardless of memberships", async () => {
+    // Even a client with an empty membership set sees global broadcasts —
+    // global events have no `wsId` and skip the membership filter.
+    const empty = collect(mgr.addIdentityClient("usr_x", new Set()));
+    released.push(empty.release);
+
+    mgr.emit({ type: "config.changed", data: { key: "models.default" } });
+    await flush();
+
+    expect(empty.events).toEqual(["config.changed"]);
+  });
+
+  test("membership-change refresh delivers events for newly-added workspaces", async () => {
+    // Alice starts with no workspaces. Workspace add → manager re-queries
+    // and the next emit reaches her. This is the workspace-switch /
+    // newly-invited path post-Stage-2, without an SSE reconnect.
+    store.setMemberships("usr_alice", []);
+    const alice = collect(mgr.addIdentityClient("usr_alice", new Set()));
+    released.push(alice.release);
+
+    mgr.emit({
+      type: "bundle.installed",
+      data: { wsId: "ws_a", serverName: "x", bundleName: "y" },
+    });
+    await flush();
+    expect(alice.events).toEqual([]); // not yet a member
+
+    // The workspace store fires a membership change — manager refreshes.
+    store.setMemberships("usr_alice", ["ws_a"]);
+    // Refresh is async (awaits getWorkspacesForUser); flush twice so the
+    // promise-then microtask runs before the next emit.
+    await flush();
+    await flush();
+
+    mgr.emit({
+      type: "bundle.installed",
+      data: { wsId: "ws_a", serverName: "x", bundleName: "z" },
+    });
+    await flush();
+
+    expect(alice.events).toEqual(["bundle.installed"]);
+  });
+
+  test("membership-change refresh drops events for removed workspaces", async () => {
+    // Alice was a member; removal → manager re-queries to an empty set;
+    // subsequent emits for ws_a no longer reach her.
+    store.setMemberships("usr_alice", ["ws_a"]);
+    const alice = collect(mgr.addIdentityClient("usr_alice", new Set(["ws_a"])));
+    released.push(alice.release);
+
+    store.setMemberships("usr_alice", []);
+    await flush();
+    await flush();
+
+    mgr.emit({
+      type: "bundle.installed",
+      data: { wsId: "ws_a", serverName: "x", bundleName: "y" },
+    });
+    await flush();
+
+    expect(alice.events).toEqual([]);
+  });
+
+  test("identity client unaffected by other identities' membership changes", async () => {
+    // Membership-change fires per-userId; the manager scans only matching
+    // clients. Alice's set must not be churned by Bob's mutations.
+    store.setMemberships("usr_alice", ["ws_a"]);
+    store.setMemberships("usr_bob", ["ws_b"]);
+    const alice = collect(mgr.addIdentityClient("usr_alice", new Set(["ws_a"])));
+    released.push(alice.release);
+
+    store.setMemberships("usr_bob", []);
+    await flush();
+    await flush();
+
+    mgr.emit({
+      type: "bundle.installed",
+      data: { wsId: "ws_a", serverName: "x", bundleName: "y" },
+    });
+    await flush();
+
+    expect(alice.events).toEqual(["bundle.installed"]);
+  });
+});

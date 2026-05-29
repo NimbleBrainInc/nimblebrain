@@ -160,6 +160,21 @@ servers:
           # ~60 tools; exposing all of them blows up the agent's
           # tool-search context. Add to this list when a user need
           # surfaces; default tight.
+          #
+          # NOTE: the allowlist is necessary but not sufficient for the
+          # destructive tools below. Composio gates delete/trash at the
+          # project level — an allowlisted-but-disabled tool returns
+          # "execution disabled for this project" rather than running.
+          # Enable them on the gmail auth_config in the Composio
+          # dashboard, and re-install the connector per workspace so the
+          # session is minted with the updated tool filter (the filter
+          # is baked at session-create time; see connector-tools.ts).
+          #
+          # GMAIL_DELETE_MESSAGE is deliberately omitted: it permanently
+          # deletes arbitrary mail (users.messages.delete — bypasses
+          # Trash, non-recoverable), exceeds the draft-pruning need, and
+          # GMAIL_MOVE_TO_TRASH already covers reversible removal. Add it
+          # only if a concrete purge-real-mail need surfaces.
           tools:
             - GMAIL_SEND_EMAIL
             - GMAIL_FETCH_EMAILS
@@ -170,6 +185,7 @@ servers:
             - GMAIL_CREATE_EMAIL_DRAFT
             - GMAIL_SEND_DRAFT
             - GMAIL_LIST_DRAFTS
+            - GMAIL_DELETE_DRAFT
             - GMAIL_REPLY_TO_THREAD
             - GMAIL_FORWARD_MESSAGE
             - GMAIL_ADD_LABEL_TO_EMAIL
