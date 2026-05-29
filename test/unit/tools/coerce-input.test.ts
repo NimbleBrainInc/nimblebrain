@@ -163,3 +163,226 @@ describe("coerceInputForSchema — depth and edge cases", () => {
     expect(out.edits).toEqual([{ find: "a" }]);
   });
 });
+
+describe("coerceInputForSchema — anyOf / oneOf union resolution", () => {
+  // Pydantic v2 encodes `Optional[T]` (= `T | None`) as
+  // `{anyOf: [{type: T-shape}, {type: "null"}]}` — the canonical shape
+  // for any optional structural parameter on a FastMCP bundle. These
+  // tests pin the behavior that recovers stringified values arriving at
+  // such properties (the live `patch_source(edits=...)` bug).
+
+  it("anyOf [array, null]: parses a stringified array (Pydantic Optional[list[...]])", () => {
+    const schema = {
+      type: "object" as const,
+      properties: {
+        edits: {
+          anyOf: [
+            {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  find: { type: "string" },
+                  replace: { type: "string" },
+                },
+              },
+            },
+            { type: "null" },
+          ],
+        },
+      },
+    };
+    const input = {
+      edits: '[{"find":"a","replace":"b"},{"find":"c","replace":"d"}]',
+    };
+    const out = coerceInputForSchema(input, schema);
+    expect(out.edits).toEqual([
+      { find: "a", replace: "b" },
+      { find: "c", replace: "d" },
+    ]);
+  });
+
+  it("anyOf [object, null]: parses a stringified object (Pydantic Optional[dict])", () => {
+    const schema = {
+      type: "object" as const,
+      properties: {
+        manifest: {
+          anyOf: [
+            {
+              type: "object",
+              properties: {
+                name: { type: "string" },
+                description: { type: "string" },
+              },
+            },
+            { type: "null" },
+          ],
+        },
+      },
+    };
+    const input = { manifest: '{"name":"foo","description":"bar"}' };
+    const out = coerceInputForSchema(input, schema);
+    expect(out.manifest).toEqual({ name: "foo", description: "bar" });
+  });
+
+  it("oneOf [array, null]: parses a stringified array", () => {
+    const schema = {
+      type: "object" as const,
+      properties: {
+        edits: {
+          oneOf: [{ type: "array", items: { type: "object" } }, { type: "null" }],
+        },
+      },
+    };
+    const input = { edits: '[{"find":"a"}]' };
+    const out = coerceInputForSchema(input, schema);
+    expect(out.edits).toEqual([{ find: "a" }]);
+  });
+
+  it("anyOf [array, null]: leaves an already-correct array unchanged (idempotent)", () => {
+    const schema = {
+      type: "object" as const,
+      properties: {
+        edits: {
+          anyOf: [
+            { type: "array", items: { type: "object" } },
+            { type: "null" },
+          ],
+        },
+      },
+    };
+    const input = { edits: [{ find: "a" }] };
+    const out = coerceInputForSchema(input, schema);
+    expect(out).toEqual(input);
+  });
+
+  it("anyOf [array, null]: leaves null unchanged (still a valid value for the union)", () => {
+    const schema = {
+      type: "object" as const,
+      properties: {
+        edits: {
+          anyOf: [
+            { type: "array", items: { type: "object" } },
+            { type: "null" },
+          ],
+        },
+      },
+    };
+    const input = { edits: null };
+    const out = coerceInputForSchema(input, schema);
+    expect(out.edits).toBeNull();
+  });
+
+  it("anyOf [array, null]: recurses through array items after collapsing the union", () => {
+    // The recovered array's elements are themselves stringified objects —
+    // we should keep walking after resolving the union, not stop at the
+    // outer-shape recovery.
+    const schema = {
+      type: "object" as const,
+      properties: {
+        edits: {
+          anyOf: [
+            {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  find: { type: "string" },
+                  replace: { type: "string" },
+                },
+              },
+            },
+            { type: "null" },
+          ],
+        },
+      },
+    };
+    const input = {
+      edits: ['{"find":"a","replace":"b"}', '{"find":"c","replace":"d"}'],
+    };
+    const out = coerceInputForSchema(input, schema);
+    expect(out.edits).toEqual([
+      { find: "a", replace: "b" },
+      { find: "c", replace: "d" },
+    ]);
+  });
+
+  it("anyOf with multiple structural branches: picks the array branch for `[...]` input", () => {
+    const schema = {
+      type: "object" as const,
+      properties: {
+        payload: {
+          anyOf: [
+            { type: "array", items: { type: "string" } },
+            { type: "object", properties: { kind: { type: "string" } } },
+            { type: "null" },
+          ],
+        },
+      },
+    };
+    const input = { payload: '["a","b","c"]' };
+    const out = coerceInputForSchema(input, schema);
+    expect(out.payload).toEqual(["a", "b", "c"]);
+  });
+
+  it("anyOf with multiple structural branches: picks the object branch for `{...}` input", () => {
+    const schema = {
+      type: "object" as const,
+      properties: {
+        payload: {
+          anyOf: [
+            { type: "array", items: { type: "string" } },
+            { type: "object", properties: { kind: { type: "string" } } },
+            { type: "null" },
+          ],
+        },
+      },
+    };
+    const input = { payload: '{"kind":"x"}' };
+    const out = coerceInputForSchema(input, schema);
+    expect(out.payload).toEqual({ kind: "x" });
+  });
+
+  it("anyOf wrapping the root: nested coercion still finds the property branch", () => {
+    // Realistic shape if a future Upjack/FastMCP tool emits an outer
+    // `anyOf` at root (e.g. result-union from `# type: <X> | <Y>`). The
+    // resolver must walk through to find the structural object branch
+    // before walking its properties.
+    const schema = {
+      anyOf: [
+        {
+          type: "object",
+          properties: {
+            edits: {
+              anyOf: [
+                { type: "array", items: { type: "object" } },
+                { type: "null" },
+              ],
+            },
+          },
+        },
+        { type: "null" },
+      ],
+    };
+    const input = { edits: '[{"find":"a"}]' };
+    const out = coerceInputForSchema(input, schema as Record<string, unknown>);
+    expect(out.edits).toEqual([{ find: "a" }]);
+  });
+
+  it("non-JSON string at an anyOf property passes through unchanged for the validator", () => {
+    const schema = {
+      type: "object" as const,
+      properties: {
+        edits: {
+          anyOf: [
+            { type: "array", items: { type: "object" } },
+            { type: "null" },
+          ],
+        },
+      },
+    };
+    const input = { edits: "not json" };
+    const out = coerceInputForSchema(input, schema);
+    expect(out.edits).toBe("not json");
+  });
+});
