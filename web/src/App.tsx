@@ -239,6 +239,14 @@ function AuthenticatedAppContent({
     onBundleLifecycleChanged: () => {
       void refreshShell();
     },
+    // After a reconnect, any bundle / config events emitted during the
+    // disconnect gap were dropped (the workspace stream has no
+    // Last-Event-Id replay). Refetch the two state owners that consume
+    // those events so the UI snaps back to truth.
+    onReconnect: () => {
+      void refreshShell();
+      config.refreshConfig();
+    },
   });
 
   // Sync server-side theme preference to the client theme context

@@ -43,13 +43,7 @@ mock.module("../api/sse", () => ({
 
 // Import AFTER mocking so the singleton sees the fake.
 import { setAuthLifecycleHandler, setAuthToken } from "../api/client";
-import {
-  __internal__,
-  closeEventsClient,
-  onReconnect,
-  onStatus,
-  subscribe,
-} from "../api/events-client";
+import { __internal__, closeEventsClient, onReconnect, subscribe } from "../api/events-client";
 
 function resetCounters(): void {
   connectCalls = 0;
@@ -166,25 +160,6 @@ describe("events-client — onReconnect", () => {
     lastOptions!.onReconnect?.();
 
     expect(a).toHaveBeenCalledTimes(0);
-  });
-});
-
-describe("events-client — onStatus", () => {
-  test("fires current status synchronously on subscribe", () => {
-    const seen: string[] = [];
-    onStatus((s) => seen.push(s));
-    // Connection hasn't opened yet — initial status is "disconnected".
-    expect(seen).toEqual(["disconnected"]);
-  });
-
-  test("transitions to connecting then open on first subscribe", async () => {
-    const seen: string[] = [];
-    onStatus((s) => seen.push(s));
-    subscribe("data.changed", () => {});
-    // Drain microtasks so the queued onOpen runs.
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(seen).toEqual(["disconnected", "connecting", "open"]);
   });
 });
 

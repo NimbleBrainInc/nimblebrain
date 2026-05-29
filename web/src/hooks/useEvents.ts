@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { subscribe } from "../api/events-client";
+import { onReconnect, subscribe } from "../api/events-client";
 import type { ConfigChangedEvent, ConnectionStateChangedEvent, DataChangedEvent } from "../types";
 
 export interface UseEventsOptions {
@@ -16,6 +16,15 @@ export interface UseEventsOptions {
    * downstream action is the same.
    */
   onBundleLifecycleChanged?: () => void;
+  /**
+   * Called after every successful reconnection (NOT the initial
+   * connect). The workspace stream has no `Last-Event-Id` replay, so
+   * during the disconnect gap consumers can miss `bundle.installed` /
+   * `config.changed` / state-change events and silently drift out of
+   * sync. Consumers wire this to a refetch of whatever state they
+   * derive from those events (typically the shell + workspace config).
+   */
+  onReconnect?: () => void;
 }
 
 /**
@@ -47,6 +56,8 @@ export function useEvents(
   onConnectionStateChangedRef.current = options?.onConnectionStateChanged;
   const onBundleLifecycleChangedRef = useRef(options?.onBundleLifecycleChanged);
   onBundleLifecycleChangedRef.current = options?.onBundleLifecycleChanged;
+  const onReconnectRef = useRef(options?.onReconnect);
+  onReconnectRef.current = options?.onReconnect;
 
   useEffect(() => {
     // One subscription per event type. Each handler dispatches through
@@ -77,6 +88,11 @@ export function useEvents(
     unsubs.push(
       subscribe("bundle.uninstalled", () => {
         onBundleLifecycleChangedRef.current?.();
+      }),
+    );
+    unsubs.push(
+      onReconnect(() => {
+        onReconnectRef.current?.();
       }),
     );
 

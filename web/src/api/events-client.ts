@@ -16,7 +16,6 @@
 // The contract:
 //   - subscribe<K>(type, handler) → unsubscribe
 //   - onReconnect(handler)        → unsubscribe   (state-resync hook)
-//   - onStatus(handler)           → unsubscribe   (UI banners)
 //   - closeEventsClient()         — for `pagehide` + tests
 //
 // Lifecycle:
@@ -38,28 +37,12 @@ import { connectEvents, type EventConnection } from "./sse";
 
 type Handler<K extends SseEventType> = (data: SseEventMap[K]) => void;
 type ReconnectHandler = () => void;
-type StatusHandler = (status: ConnectionStatus) => void;
-export type ConnectionStatus = "connecting" | "open" | "disconnected";
 
 // biome-ignore lint/suspicious/noExplicitAny: subscriber set is keyed by event type; type-safety is enforced by `subscribe<K>` at the public boundary
 const eventHandlers = new Map<SseEventType, Set<Handler<any>>>();
 const reconnectHandlers = new Set<ReconnectHandler>();
-const statusHandlers = new Set<StatusHandler>();
 
 let connection: EventConnection | null = null;
-let currentStatus: ConnectionStatus = "disconnected";
-
-function setStatus(s: ConnectionStatus): void {
-  if (currentStatus === s) return;
-  currentStatus = s;
-  for (const h of statusHandlers) {
-    try {
-      h(s);
-    } catch (err) {
-      console.warn("[events-client] status handler threw:", err);
-    }
-  }
-}
 
 function hasAnySubscribers(): boolean {
   if (reconnectHandlers.size > 0) return true;
@@ -71,7 +54,6 @@ function hasAnySubscribers(): boolean {
 
 function ensureOpen(): void {
   if (connection) return;
-  setStatus("connecting");
   connection = connectEvents({
     token: getAuthToken() ?? undefined,
     onEvent: <K extends SseEventType>(type: K, data: SseEventMap[K]) => {
@@ -85,8 +67,6 @@ function ensureOpen(): void {
         }
       }
     },
-    onOpen: () => setStatus("open"),
-    onDisconnect: () => setStatus("disconnected"),
     onReconnect: () => {
       for (const h of reconnectHandlers) {
         try {
@@ -111,7 +91,6 @@ export function closeEventsClient(): void {
   const c = connection;
   connection = null;
   c?.close();
-  setStatus("disconnected");
 }
 
 // Auth lifecycle: identity rotation closes the connection and (if
@@ -150,31 +129,17 @@ export function subscribe<K extends SseEventType>(type: K, handler: Handler<K>):
 }
 
 /**
- * Register a handler invoked after every successful reconnection (not
- * the initial connect). Consumers use this to refetch state that may
- * have drifted during a gap — bundles, workspace config, skills.
+ * Register a handler invoked after every successful reconnection (NOT
+ * the initial connect). Consumers wire this to refetch state that may
+ * have drifted during the disconnect gap — bundles, workspace config —
+ * since the workspace stream has no `Last-Event-Id` replay. `useEvents`
+ * routes this through to its `onReconnect` option (currently consumed
+ * by `App.tsx` to call `refreshShell` + `refreshConfig`).
  */
 export function onReconnect(handler: ReconnectHandler): () => void {
   reconnectHandlers.add(handler);
   return () => {
     reconnectHandlers.delete(handler);
-  };
-}
-
-/**
- * Register a handler invoked on connection state transitions. The
- * current status is fired synchronously on subscribe so consumers see
- * the state immediately without waiting for the next transition.
- */
-export function onStatus(handler: StatusHandler): () => void {
-  statusHandlers.add(handler);
-  try {
-    handler(currentStatus);
-  } catch (err) {
-    console.warn("[events-client] status handler threw on subscribe:", err);
-  }
-  return () => {
-    statusHandlers.delete(handler);
   };
 }
 
@@ -188,7 +153,7 @@ export const __internal__ = {
     return connection !== null;
   },
   subscriberCount(): number {
-    let n = reconnectHandlers.size + statusHandlers.size;
+    let n = reconnectHandlers.size;
     for (const set of eventHandlers.values()) n += set.size;
     return n;
   },
@@ -196,8 +161,6 @@ export const __internal__ = {
     closeEventsClient();
     eventHandlers.clear();
     reconnectHandlers.clear();
-    statusHandlers.clear();
-    currentStatus = "disconnected";
     // Other test files in the suite may have called
     // `setAuthLifecycleHandler(null)` to neutralize the MCP bridge's
     // handler — which also clears ours. Re-register idempotently so

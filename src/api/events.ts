@@ -185,14 +185,19 @@ export class SseEventManager implements EventSink {
    * Create an SSE stream for a legacy workspace-scoped or unfiltered
    * client.
    *
-   *   - `addClient()` — no filter; receives every event (used by activity
-   *     dashboards and tests that need the unfiltered firehose).
+   *   - `addClient()` — no filter; receives every event.
    *   - `addClient(wsId)` — single-workspace filter; receives events
    *     where `event.wsId === wsId` plus all global events.
    *
-   * Kept for back-compat. New code should use `addIdentityClient`, which
-   * the `/v1/events` route uses — it carries an identity-bound cache that
-   * survives workspace switches and refreshes on membership changes.
+   * **No production caller today.** Both forms are kept solely as the
+   * surface that the V5 workspace-isolation security regression tests
+   * (`test/integration/security/workspace-isolation.test.ts`) and the
+   * `SseEventManager` routing-table unit tests
+   * (`test/unit/sse-event-manager.test.ts`) were written against. Those
+   * suites lock in the workspace-isolation contract under the legacy
+   * frozen-workspace model; migrating them to `addIdentityClient` would
+   * subtly change what they assert. Production code uses
+   * `addIdentityClient` via the `/v1/events` route.
    */
   addClient(workspaceId?: string): ReadableStream<Uint8Array> {
     return this.attachClient({

@@ -73,6 +73,14 @@ function ensureEntry(conversationId: string): ConversationEntry {
         }
       }
     },
+    // Surface unrecoverable transport errors (403 after participant
+    // removal, persistent auth failure) the way the pre-singleton hook
+    // did — silent failure makes a dying conversation stream
+    // undiagnosable. Drop the entry so a later subscribe re-attempts.
+    onError: (err) => {
+      console.warn(`[conv-events-client] stream error for ${conversationId}:`, err.message);
+      entries.delete(conversationId);
+    },
   });
 
   return entry;
