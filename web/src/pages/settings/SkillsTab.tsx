@@ -1,5 +1,6 @@
-import { Lightbulb, Plus, Trash2 } from "lucide-react";
+import { Lightbulb, Plus, Trash2, User } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import type { ToolInput } from "../../_generated/platform-schemas/catalog";
 import { callTool } from "../../api/client";
 import { Badge } from "../../components/ui/badge";
@@ -53,37 +54,65 @@ const STATUS_BADGE: Record<Status, string> = {
 export function SkillsTab() {
   return (
     <RequireActiveWorkspace>
-      <SkillsBrowser />
+      <SkillsBrowser surface="workspace" />
     </RequireActiveWorkspace>
   );
 }
 
 /**
- * Shared skills browser. The workspace tab renders it with no lock so users
- * can see/filter every scope they have access to; the org-admin tab renders
- * it with `lockedScope="org"` so only org-tier skills are listed, the scope
- * filter UI is suppressed, and the create form has no scope picker (org is
- * the only writable target on that surface).
+ * Shared skills browser. Three surfaces:
  *
- * Per SKILLS_SURFACE.md, Phase 2 will refactor the workspace tab to grouped
- * sections (workspace + inherited-org + inherited-bundles + personal-footer).
- * That work touches this same component; the `lockedScope` param is the
- * minimal Phase 1 hook so we don't ship duplicated state machines.
+ *   - Workspace tab (`surface: "workspace"`) — grouped sections (workspace
+ *     editable, inherited-from-org disabled, inherited-from-bundles disabled),
+ *     plus a personal-skills footer link. Scope filter and create-scope
+ *     picker are suppressed; create is locked to "workspace".
+ *   - Org-admin tab (`lockedScope: "org"`) — single-section view of org-tier
+ *     skills only. Scope filter and create-scope picker are suppressed;
+ *     create is locked to "org".
+ *   - Default (no prop) — every scope visible with filter UI. No live
+ *     route uses this today; kept for the Phase 1 test seam and as a
+ *     debugging surface.
+ *
+ * Per SKILLS_SURFACE.md (Phase 2). The `surface` prop is intentionally
+ * additive to `lockedScope` so the two surfaces can evolve independently
+ * — they share the underlying state machine but render different layouts.
  */
 type DetailMode = "view" | "edit";
 
-export function SkillsBrowser({ lockedScope }: { lockedScope?: Scope } = {}) {
+interface SkillsBrowserProps {
+  /** Single-scope view. Hides the scope filter; locks the create form to
+   * the given writable scope when "org" / "workspace" / "user". */
+  lockedScope?: Scope;
+  /** Layout variant. `"workspace"` renders the four-section workspace tab
+   * (workspace editable + inherited-org + inherited-bundles + personal
+   * footer) with the scope filter hidden and create locked to workspace. */
+  surface?: "workspace";
+}
+
+export function SkillsBrowser({ lockedScope, surface }: SkillsBrowserProps = {}) {
+  const isWorkspaceSurface = surface === "workspace";
+  // Workspace surface needs every scope's skills in one fetch so the
+  // inherited sections and personal-footer count are accurate. Org surface
+  // continues to pre-scope its fetch via `lockedScope`. The default ("show
+  // everything") path uses whatever the user selects in the filter.
+  const initialScopeFilter: Scope | "all" = isWorkspaceSurface ? "all" : (lockedScope ?? "all");
+  const createLockedScope: WritableScope | undefined = isWorkspaceSurface
+    ? "workspace"
+    : lockedScope === "org"
+      ? "org"
+      : undefined;
   const [skills, setSkills] = useState<ListedSkill[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<ReadSkill | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  // When the surface is scope-locked, the filter UI is hidden and the lock
-  // value is the effective filter — `setScopeFilter` becomes a no-op via the
-  // hidden control. Default the state to the lock so the first fetch is
-  // already scoped (no flash of "all").
-  const [scopeFilter, setScopeFilter] = useState<Scope | "all">(lockedScope ?? "all");
+  // When the surface is scope-locked OR is the workspace tab, the scope
+  // filter UI is hidden. For the lock case, default the state to the lock
+  // so the first fetch is already scoped (no flash of "all"). For the
+  // workspace tab, default to "all" — the grouped layout pulls every scope
+  // in one request and partitions in the renderer.
+  const [scopeFilter, setScopeFilter] = useState<Scope | "all">(initialScopeFilter);
   const [statusFilter, setStatusFilter] = useState<Status | "all">("active");
   const [mode, setMode] = useState<DetailMode>("view");
   const [creating, setCreating] = useState(false);
@@ -246,7 +275,36 @@ export function SkillsBrowser({ lockedScope }: { lockedScope?: Scope } = {}) {
     [runMutation],
   );
 
-  const grouped = useMemo(() => groupByScope(skills), [skills]);
+  const grouped = useMemo(
+    () => groupByScope(skills, { excludeUser: isWorkspaceSurface }),
+    [skills, isWorkspaceSurface],
+  );
+  // Personal-skills count for the workspace-surface footer. Computed from
+  // the same fetch — the workspace tab already pulls every scope so the
+  // count is free.
+  const personalCount = useMemo(
+    () => (isWorkspaceSurface ? skills.filter((s) => s.scope === "user").length : 0),
+    [skills, isWorkspaceSurface],
+  );
+  // Workspace surface: only "workspace" skills are editable in place; org
+  // and bundle rows show their detail body read-only, with org rows
+  // surfacing a deep link to /org/skills (the org-admin surface) so admins
+  // can edit there. Org surface: only "org" is editable; bundles
+  // read-only. Anything outside those rules falls through to the existing
+  // bundle-as-read-only behavior in SkillDetailView.
+  const detailReadOnly = ((): boolean => {
+    if (!detail) return false;
+    if (detail.scope === "bundle") return true;
+    if (isWorkspaceSurface) return detail.scope !== "workspace";
+    if (lockedScope) return detail.scope !== lockedScope;
+    return false;
+  })();
+  const detailInheritedFrom = ((): { label: string; href: string } | undefined => {
+    if (!detail || !detailReadOnly) return undefined;
+    if (detail.scope === "org") return { label: "Edit in org settings", href: "/org/skills" };
+    if (detail.scope === "user") return { label: "Edit in your profile", href: "/profile" };
+    return undefined;
+  })();
 
   return (
     <div className="space-y-4">
@@ -272,6 +330,12 @@ export function SkillsBrowser({ lockedScope }: { lockedScope?: Scope } = {}) {
             every member. Authored here or as markdown files under{" "}
             <code>~/.nimblebrain/skills/</code>.
           </>
+        ) : isWorkspaceSurface ? (
+          <>
+            Skills shape your agent's behavior in this workspace. Workspace skills are editable
+            here; organization and bundle skills are inherited and read-only. Personal skills follow
+            you across every workspace and are managed in your profile.
+          </>
         ) : (
           <>
             Layer 3 cross-bundle agent orchestration content (voice, workflow, personal, tool
@@ -289,6 +353,7 @@ export function SkillsBrowser({ lockedScope }: { lockedScope?: Scope } = {}) {
         onScopeChange={setScopeFilter}
         onStatusChange={setStatusFilter}
         lockedScope={lockedScope}
+        hideScopeFilter={isWorkspaceSurface}
       />
 
       {loading && <div className="text-sm text-muted-foreground">Loading skills…</div>}
@@ -313,14 +378,19 @@ export function SkillsBrowser({ lockedScope }: { lockedScope?: Scope } = {}) {
 
       {!loading && (creating || skills.length > 0) && (
         <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
-          <SkillList grouped={grouped} selectedId={selectedId} onSelect={handleSelect} />
+          <div className="space-y-4">
+            <SkillList
+              grouped={grouped}
+              selectedId={selectedId}
+              onSelect={handleSelect}
+              surface={surface}
+            />
+            {isWorkspaceSurface && <PersonalFooter count={personalCount} />}
+          </div>
           {creating ? (
             <CreateForm
               pending={actionPending}
-              // Only "org" is a live caller today (Phase 1). Phase 2 will
-              // add "workspace" / "user" callers and broaden this narrowing
-              // when those branches actually ship.
-              lockedScope={lockedScope === "org" ? "org" : undefined}
+              lockedScope={createLockedScope}
               onCancel={() => {
                 setCreating(false);
                 setError(null);
@@ -334,6 +404,8 @@ export function SkillsBrowser({ lockedScope }: { lockedScope?: Scope } = {}) {
               loading={detailLoading}
               mode={mode}
               actionPending={actionPending}
+              readOnly={detailReadOnly}
+              inheritedFrom={detailInheritedFrom}
               onEdit={() => {
                 setError(null);
                 setMode("edit");
@@ -372,10 +444,23 @@ interface GroupedSkills {
   skills: ListedSkill[];
 }
 
-function groupByScope(skills: ListedSkill[]): GroupedSkills[] {
-  const order: Scope[] = ["user", "workspace", "org", "bundle"];
+/**
+ * Group skills by scope, in the order each surface wants to see them.
+ *
+ *   - Workspace surface (`excludeUser: true`) shows workspace first
+ *     (editable), then org and bundle (inherited / read-only). User-tier
+ *     skills are surfaced separately via the personal-footer count, not
+ *     as a section in the main list.
+ *   - Other surfaces (`excludeUser: false`) show every scope, ordered
+ *     user → workspace → org → bundle — the historical browse order.
+ */
+function groupByScope(skills: ListedSkill[], opts?: { excludeUser?: boolean }): GroupedSkills[] {
+  const order: Scope[] = opts?.excludeUser
+    ? ["workspace", "org", "bundle"]
+    : ["user", "workspace", "org", "bundle"];
   const map = new Map<Scope, ListedSkill[]>();
   for (const s of skills) {
+    if (opts?.excludeUser && s.scope === "user") continue;
     const list = map.get(s.scope) ?? [];
     list.push(s);
     map.set(s.scope, list);
@@ -393,36 +478,96 @@ const SCOPE_LABEL: Record<Scope, string> = {
   bundle: "Bundle (Layer 1)",
 };
 
+/**
+ * Section header label on the workspace surface — names that make the
+ * inheritance relationship explicit ("Inherited from org") rather than
+ * the bare scope name. Falls back to SCOPE_LABEL on other surfaces.
+ */
+const WORKSPACE_SURFACE_SECTION_LABEL: Record<Scope, string> = {
+  workspace: "Workspace",
+  org: "Inherited from organization",
+  bundle: "Inherited from bundles",
+  user: "User", // unreachable in practice — workspace surface excludes user
+};
+
 function SkillList({
   grouped,
   selectedId,
   onSelect,
+  surface,
 }: {
   grouped: GroupedSkills[];
   selectedId: string | null;
   onSelect: (id: string) => void;
+  surface?: "workspace";
 }) {
+  const labelFor = (scope: Scope) =>
+    surface === "workspace" ? WORKSPACE_SURFACE_SECTION_LABEL[scope] : SCOPE_LABEL[scope];
   return (
     <div className="space-y-4">
-      {grouped.map((group) => (
-        <section key={group.scope} className="space-y-1.5">
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground px-1">
-            {SCOPE_LABEL[group.scope]}{" "}
-            <span className="text-muted-foreground/60 font-normal">({group.skills.length})</span>
-          </h3>
-          <div className="grid gap-1">
-            {group.skills.map((s) => (
-              <SkillRow
-                key={s.id}
-                skill={s}
-                selected={s.id === selectedId}
-                onSelect={() => onSelect(s.id)}
-              />
-            ))}
-          </div>
-        </section>
-      ))}
+      {grouped.map((group) => {
+        // Workspace surface: workspace is the only editable scope. Org and
+        // bundle rows render dimmed to communicate "you can't edit these
+        // from here" — the selected detail panel surfaces the deep-link
+        // alternative.
+        const inherited = surface === "workspace" && group.scope !== "workspace";
+        return (
+          <section key={group.scope} className="space-y-1.5">
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground px-1">
+              {labelFor(group.scope)}{" "}
+              <span className="text-muted-foreground/60 font-normal">({group.skills.length})</span>
+            </h3>
+            <div className="grid gap-1">
+              {group.skills.map((s) => (
+                <SkillRow
+                  key={s.id}
+                  skill={s}
+                  selected={s.id === selectedId}
+                  onSelect={() => onSelect(s.id)}
+                  inherited={inherited}
+                />
+              ))}
+            </div>
+          </section>
+        );
+      })}
     </div>
+  );
+}
+
+/**
+ * Workspace-tab footer summarizing the user's personal skills.
+ *
+ * Personal (user-tier) skills follow the identity across every workspace,
+ * so they're authored at the identity-level surface (`/profile`), not
+ * inside any one workspace. The workspace tab surfaces them here as a
+ * count plus a link out, matching the spec's "footer summary, not an
+ * authoring affordance" framing.
+ *
+ * Phase 3 will promote `/profile` to a tabbed surface and route this link
+ * at `/profile/skills`; for now `/profile` is the stable target.
+ */
+function PersonalFooter({ count }: { count: number }) {
+  return (
+    <Card className="border-dashed">
+      <CardContent className="py-3 px-4 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <User className="h-3.5 w-3.5" />
+          <span>
+            {count === 0
+              ? "No personal skills active here"
+              : `${count} personal skill${count === 1 ? "" : "s"} active here`}
+          </span>
+          <span className="text-muted-foreground/60">— follow you across every workspace</span>
+        </div>
+        <Link
+          to="/profile"
+          className="text-xs text-primary underline-offset-4 hover:underline whitespace-nowrap"
+        >
+          Edit in profile →
+        </Link>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -430,16 +575,22 @@ function SkillRow({
   skill,
   selected,
   onSelect,
+  inherited,
 }: {
   skill: ListedSkill;
   selected: boolean;
   onSelect: () => void;
+  /** When true, render dimmed so the read-only relationship is visible
+   * before the user clicks. The row stays clickable so the detail panel
+   * still shows the body. */
+  inherited?: boolean;
 }) {
   return (
     <Card
       className={cn(
         "cursor-pointer transition-colors",
         selected ? "ring-1 ring-primary border-primary/40" : "hover:bg-muted/40",
+        inherited && !selected && "opacity-70",
       )}
     >
       <CardContent className="py-2.5 px-3">
@@ -492,6 +643,13 @@ interface SkillDetailProps {
   onToggleStatus: () => void;
   onMoveScope: (target: WritableScope) => void;
   placeholder: boolean;
+  /** When true, hide edit / delete / status / move-scope affordances and
+   * (optionally) surface `inheritedFrom` as a deep-link out to the surface
+   * where the skill IS editable. Bundles are always read-only; this
+   * extends that treatment to org-tier skills viewed from the workspace
+   * surface (or any scope viewed from outside its writable surface). */
+  readOnly?: boolean;
+  inheritedFrom?: { label: string; href: string };
 }
 
 function SkillDetail(props: SkillDetailProps) {
@@ -512,7 +670,7 @@ function SkillDetail(props: SkillDetailProps) {
       </Card>
     );
   }
-  if (mode === "edit") {
+  if (mode === "edit" && !props.readOnly) {
     return (
       <SkillEditor
         detail={detail}
@@ -526,6 +684,8 @@ function SkillDetail(props: SkillDetailProps) {
     <SkillDetailView
       detail={detail}
       actionPending={props.actionPending}
+      readOnly={props.readOnly ?? false}
+      inheritedFrom={props.inheritedFrom}
       onEdit={props.onEdit}
       onDelete={props.onDelete}
       onToggleStatus={props.onToggleStatus}
@@ -541,7 +701,9 @@ function SkillDetailView({
   onDelete,
   onToggleStatus,
   onMoveScope,
-}: { detail: ReadSkill } & Pick<
+  readOnly,
+  inheritedFrom,
+}: { detail: ReadSkill; readOnly: boolean; inheritedFrom?: { label: string; href: string } } & Pick<
   SkillDetailProps,
   "actionPending" | "onEdit" | "onDelete" | "onToggleStatus" | "onMoveScope"
 >) {
@@ -562,7 +724,7 @@ function SkillDetailView({
                 {currentStatus}
               </Badge>
             </div>
-            {!isBundle && (
+            {!readOnly && (
               <div className="flex items-center gap-1">
                 <Button size="sm" variant="outline" onClick={onEdit} disabled={actionPending}>
                   Edit
@@ -591,11 +753,24 @@ function SkillDetailView({
                 </Button>
               </div>
             )}
+            {readOnly && inheritedFrom && (
+              <Link
+                to={inheritedFrom.href}
+                className="text-xs text-primary underline-offset-4 hover:underline"
+              >
+                {inheritedFrom.label} →
+              </Link>
+            )}
           </div>
           {m.description && <p className="text-xs text-muted-foreground">{m.description}</p>}
-          {isBundle && (
+          {readOnly && isBundle && (
             <p className="text-[11px] text-muted-foreground italic">
               Bundle (Layer 1) skills are vendored — edit them through the bundle's own settings.
+            </p>
+          )}
+          {readOnly && !isBundle && (
+            <p className="text-[11px] text-muted-foreground italic">
+              Inherited from {detail.scope} scope — read-only from this surface.
             </p>
           )}
         </header>
@@ -959,6 +1134,7 @@ function Filters({
   onScopeChange,
   onStatusChange,
   lockedScope,
+  hideScopeFilter,
 }: {
   scope: Scope | "all";
   status: Status | "all";
@@ -966,12 +1142,16 @@ function Filters({
   onStatusChange: (s: Status | "all") => void;
   /** When set, suppress the scope selector — the surface is scope-locked. */
   lockedScope?: Scope;
+  /** When true, suppress the scope selector for a grouped layout that
+   * partitions scopes in the renderer rather than filtering at fetch time. */
+  hideScopeFilter?: boolean;
 }) {
   const selectClass =
     "rounded-md border bg-background px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-ring";
+  const showScopeFilter = lockedScope === undefined && !hideScopeFilter;
   return (
     <div className="flex flex-wrap items-center gap-2">
-      {lockedScope === undefined && (
+      {showScopeFilter && (
         <select
           value={scope}
           onChange={(e) => onScopeChange(e.target.value as Scope | "all")}
