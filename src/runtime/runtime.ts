@@ -1486,11 +1486,11 @@ export class Runtime {
    *
    * NOTE (intentional duplication): much of the setup below mirrors
    * `_chatInner()`. The clean extraction (`_agentInvoke` substrate +
-   * thin `chat()` / `executeTask()` siblings) is a planned follow-up PR
-   * — see the conversation in `feat/automations-ux`. Doing the extraction
-   * here would touch ~500 LOC of the most-trafficked code path in the
-   * runtime in the same PR as the UI work, multiplying regression risk
-   * for the chat surface. Shipped pragmatically; extracted properly later.
+   * thin `chat()` / `executeTask()` siblings) is tracked as a planned
+   * follow-up — see #334. Doing the extraction here would touch ~500
+   * LOC of the most-trafficked code path in the runtime in the same PR
+   * as the UI work, multiplying regression risk for the chat surface.
+   * Shipped pragmatically; extracted properly in #334.
    */
   async executeTask(request: TaskRequest, requestSink?: EventSink): Promise<TaskResult> {
     // Identity resolution mirrors chat(): in production an identity provider
@@ -1662,8 +1662,8 @@ export class Runtime {
     // per-automation `maxInputTokens` field; honoring it here makes that
     // setting actually take effect. Chat (_chatInner) has the same field
     // on ChatRequest but currently ignores it in favor of config-only —
-    // a parallel gap worth a separate, scoped fix to keep semantics
-    // consistent across both invocation modes.
+    // tracked as #335 (parallel scoped fix to bring chat into semantic
+    // consistency with task).
     const configMaxInputTokens =
       request.maxInputTokens ?? this.config.maxInputTokens ?? DEFAULT_MAX_INPUT_TOKENS;
     const messageBudget = resolveMessageBudget({
