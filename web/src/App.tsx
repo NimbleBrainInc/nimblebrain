@@ -14,16 +14,18 @@ import {
 import { AppWithChat } from "./components/AppWithChat";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Login } from "./components/Login";
+import { CommandPalette } from "./components/palette/CommandPalette";
 import { RouteGuard } from "./components/RouteGuard";
 import { ShellLayout } from "./components/ShellLayout";
 import { WorkspaceRouteGuard } from "./components/WorkspaceRouteGuard";
 import { ChatProvider, useChatConfigContext, useChatContext } from "./context/ChatContext";
 import { ChatPanelProvider, useChatPanelContext } from "./context/ChatPanelContext";
+import { PaletteProvider } from "./context/PaletteContext";
 import { SessionProvider } from "./context/SessionContext";
 import { ShellProvider } from "./context/ShellContext";
-import { WorkspaceAppIconsProvider } from "./context/WorkspaceAppIconsProvider";
 import { SidebarProvider } from "./context/SidebarContext";
 import { ThemeProvider, useTheme } from "./context/ThemeContext.tsx";
+import { WorkspaceAppIconsProvider } from "./context/WorkspaceAppIconsProvider";
 import {
   useWorkspaceContext,
   type WorkspaceInfo,
@@ -186,14 +188,16 @@ function BootstrappedShell({
       <WorkspaceAppIconsProvider token={token} workspaceId={activeWorkspace?.id}>
         <ChatProvider initialConfig={initialConfig} currentUserId={currentUserId}>
           <ChatPanelProvider>
-            <AuthenticatedAppContent
-              token={token}
-              forSlot={forSlot}
-              mainRoutes={mainRoutes}
-              shellWorkspaceId={shellWorkspaceId}
-              refreshShell={refreshShell}
-              onLogout={onLogout}
-            />
+            <PaletteProvider>
+              <AuthenticatedAppContent
+                token={token}
+                forSlot={forSlot}
+                mainRoutes={mainRoutes}
+                shellWorkspaceId={shellWorkspaceId}
+                refreshShell={refreshShell}
+                onLogout={onLogout}
+              />
+            </PaletteProvider>
           </ChatPanelProvider>
         </ChatProvider>
       </WorkspaceAppIconsProvider>
@@ -335,6 +339,9 @@ function AuthenticatedAppContent({
       {/* ActionBridge handles iframe action events. It consumes ChatContext
           (streaming) but renders nothing, so its re-renders are free. */}
       <ActionBridge handleNavigate={handleNavigate} resolveAppRoute={resolveAppRoute} />
+      {/* Command palette (⌘P) — global surface, sibling of the shell layout
+          and chat chrome, so it's reachable from any route. */}
+      <CommandPalette onLogout={onLogout} />
       <ShellLayout forSlot={forSlot} onLogout={onLogout}>
         <ErrorBoundary resetKeys={[location.pathname]}>
           <Routes>
