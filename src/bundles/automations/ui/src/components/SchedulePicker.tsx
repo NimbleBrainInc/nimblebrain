@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 export interface ScheduleSpec {
   type: "cron" | "interval";
@@ -68,18 +68,29 @@ export function SchedulePicker({
   // The state atoms above are seeded once at mount; without this, an external
   // `value` change would leave the radio/fields showing stale state while the
   // parent submits the new value — the picker would show "Every 30 minutes"
-  // but save the template's "Daily at 8". `emit` records the spec it emits into
-  // `syncedValue`, so the picker's OWN onChange echoes don't re-derive here
-  // (which would clobber cross-mode field memory mid-edit); only a value the
-  // picker did not emit — i.e. an external change — re-seeds the display.
-  const [syncedValue, setSyncedValue] = useState<ScheduleSpec | null>(value);
-  if (value !== syncedValue) {
-    setSyncedValue(value);
-    setMode(detectMode(value));
-    if (value?.type === "interval" && value.intervalMs) setMinutes(value.intervalMs / 60_000);
-    setTime(parseTime(value));
-    setDow(parseDow(value));
-    setCronExpr(value?.expression ?? "");
+  // but save the template's "Daily at 8".
+  //
+  // We must NOT re-derive on the picker's own edits, or switching modes would
+  // clobber cross-mode field memory (e.g. a typed-but-unsubmitted weekly time).
+  // The discriminator is provenance, not value identity: `emit` sets
+  // `justEmitted` so the parent's echo of our own change is skipped, while any
+  // value the picker did not emit — an external change — re-seeds the display.
+  // Using a provenance flag (rather than comparing `value` to the spec we
+  // emitted) means this holds even for a caller that clones/normalizes in
+  // `onChange` instead of echoing our object by reference.
+  const [prevValue, setPrevValue] = useState<ScheduleSpec | null>(value);
+  const justEmitted = useRef(false);
+  if (value !== prevValue) {
+    setPrevValue(value);
+    if (justEmitted.current) {
+      justEmitted.current = false;
+    } else {
+      setMode(detectMode(value));
+      if (value?.type === "interval" && value.intervalMs) setMinutes(value.intervalMs / 60_000);
+      setTime(parseTime(value));
+      setDow(parseDow(value));
+      setCronExpr(value?.expression ?? "");
+    }
   }
 
   function emit(m: ScheduleMode, mins: number, t: string, d: string, cron: string) {
@@ -95,10 +106,9 @@ export function SchedulePicker({
     } else {
       spec = { type: "cron", expression: cron, timezone };
     }
-    // Mark this spec as ours so the reconcile above treats the parent's echo of
-    // it as internal (no re-derive). The parent stores the same reference back
-    // into `value`, so `value === syncedValue` on the next render.
-    setSyncedValue(spec);
+    // Mark this change as ours so the reconcile above skips re-deriving when the
+    // resulting `value` update flows back in.
+    justEmitted.current = true;
     onChange(spec);
   }
 
