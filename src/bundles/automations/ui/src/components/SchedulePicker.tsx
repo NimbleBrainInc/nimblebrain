@@ -6,6 +6,9 @@ export interface ScheduleSpec {
   timezone?: string;
   intervalMs?: number;
 }
+// NOTE: if you add a field here, add it to `specEqual` below — the reconcile
+// relies on a structural compare, and an unaccounted field silently reintroduces
+// the display-desync bug this component was fixed for.
 
 export type ScheduleMode = "interval" | "daily" | "weekly" | "cron";
 
