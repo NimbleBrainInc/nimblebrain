@@ -38,6 +38,14 @@ jobs:
         run: bun install
       - name: Install web dependencies
         run: cd web && bun install
+      # Bundle UI deps must be installed so unit tests that import from
+      # src/bundles/*/ui/src/ (e.g. the markdown sanitizer test) can
+      # resolve their npm dependencies (marked, dompurify, etc.). Mirrors
+      # the install loop inside build:bundles. Local `bun run build:bundles`
+      # installs these as a side effect; CI doesn't build bundles for the
+      # unit job, so the install must be explicit.
+      - name: Install bundle UI dependencies
+        run: bun run install:bundles
       - name: Verify (unit + web tests)
         run: bun run verify:test-unit
 
