@@ -4,7 +4,14 @@ import { HealthMonitor } from "../../src/tools/health-monitor.ts";
 import type { McpSource } from "../../src/tools/mcp-source.ts";
 
 /** Minimal mock of McpSource exposing only what HealthMonitor needs. */
-function makeMockSource(name: string): McpSource & { alive: boolean; restartResult: boolean; restartCalls: number } {
+function makeMockSource(
+  name: string,
+): McpSource & {
+  alive: boolean;
+  restartResult: boolean;
+  restartCalls: number;
+  setUptime: (ms: number) => void;
+} {
   let startedAt: number | null = Date.now();
   const mock = {
     name,
@@ -17,6 +24,10 @@ function makeMockSource(name: string): McpSource & { alive: boolean; restartResu
     uptime() {
       return startedAt !== null ? Date.now() - startedAt : null;
     },
+    /** Test helper: age the source so `uptime()` reports `ms` of continuous run. */
+    setUptime(ms: number) {
+      startedAt = Date.now() - ms;
+    },
     async restart() {
       mock.restartCalls++;
       if (mock.restartResult) {
@@ -25,7 +36,12 @@ function makeMockSource(name: string): McpSource & { alive: boolean; restartResu
       }
       return mock.restartResult;
     },
-  } as unknown as McpSource & { alive: boolean; restartResult: boolean; restartCalls: number };
+  } as unknown as McpSource & {
+    alive: boolean;
+    restartResult: boolean;
+    restartCalls: number;
+    setUptime: (ms: number) => void;
+  };
   return mock;
 }
 
@@ -97,6 +113,73 @@ describe("HealthMonitor", () => {
     const restartsBefore = source.restartCalls;
     await monitor.check();
     expect(source.restartCalls).toBe(restartsBefore);
+
+    monitor.stop();
+  });
+
+  it("resets restartCount after sustained recovery so a flapping-but-recovering source never dies", async () => {
+    const source = makeMockSource("flapping-bundle");
+    const sink = makeEventCollector();
+    const checkIntervalMs = 1000;
+    const monitor = new HealthMonitor([source], sink, { checkIntervalMs, baseDelayMs: 1 });
+
+    // Eight independent drop episodes (> MAX_RESTARTS), each followed by a
+    // SUSTAINED recovery: the source stays up beyond one full check interval
+    // before the next drop. Under the lifetime-counter bug this dies at the
+    // 6th episode; with the fix the counter clears on each sustained
+    // recovery, so it never escalates to dead.
+    for (let i = 0; i < 8; i++) {
+      source.alive = false;
+      await monitor.check(); // crashed → restarting → recovered (restartCount = 1)
+      expect(monitor.getStatus()[0]!.state).toBe("healthy");
+      expect(monitor.getStatus()[0]!.restartCount).toBe(1);
+
+      // Source has now stayed up for a full check interval — next sweep
+      // observes it alive + sustained and clears the counter.
+      source.setUptime(checkIntervalMs);
+      await monitor.check();
+      expect(monitor.getStatus()[0]!.restartCount).toBe(0);
+    }
+
+    expect(monitor.getStatus()[0]!.state).toBe("healthy");
+    expect(eventNames(sink)).not.toContain("bundle.dead");
+
+    // Backoff resets between episodes: every restarting attempt fires at the
+    // base delay (2 ** 0), never the escalated delays a climbing counter
+    // would produce.
+    const delays = sink.events
+      .map((e) => e.data as { event: string; delayMs?: number })
+      .filter((d) => d.event === "bundle.restarting")
+      .map((d) => d.delayMs);
+    expect(delays.length).toBe(8);
+    for (const d of delays) expect(d).toBe(1);
+
+    monitor.stop();
+  });
+
+  it("does not reset restartCount when recovery is not sustained — still escalates to dead", async () => {
+    const source = makeMockSource("brief-flapper");
+    const sink = makeEventCollector();
+    const checkIntervalMs = 1000;
+    const monitor = new HealthMonitor([source], sink, { checkIntervalMs, baseDelayMs: 1 });
+
+    // Recovery is real but never sustained: the source is briefly alive with
+    // sub-interval uptime, so it must NOT earn the reset. This guards against
+    // an unconditional reset that would let a fast-flapping source loop
+    // forever instead of escalating to dead.
+    for (let i = 0; i < 5; i++) {
+      source.alive = false;
+      await monitor.check(); // recovers, counter climbs
+      source.setUptime(10); // alive, but only 10ms << 1000ms interval
+      await monitor.check(); // observed alive but NOT sustained → no reset
+      expect(monitor.getStatus()[0]!.restartCount).toBe(i + 1);
+    }
+
+    // 6th drop hits the limit.
+    source.alive = false;
+    await monitor.check();
+    expect(monitor.getStatus()[0]!.state).toBe("dead");
+    expect(eventNames(sink)).toContain("bundle.dead");
 
     monitor.stop();
   });

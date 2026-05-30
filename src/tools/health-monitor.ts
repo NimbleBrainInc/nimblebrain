@@ -83,8 +83,27 @@ export class HealthMonitor {
     // Dead is terminal — no more restart attempts
     if (record.state === "dead") return;
 
-    // Skip if source is alive
-    if (record.source.isAlive()) return;
+    // Skip if source is alive. A source that has stayed up for at least one
+    // full check interval has demonstrably recovered, so clear the
+    // consecutive-failure counter: `MAX_RESTARTS` must bound CONSECUTIVE
+    // failures, not lifetime drops, and the exponential backoff must start
+    // fresh for the next independent crash episode. Without this, a remote
+    // connector that periodically drops and cleanly reconnects (e.g. a
+    // server that idle-closes long-lived streams) accrues restarts across
+    // its whole life and is wrongly killed after `MAX_RESTARTS` total drops
+    // despite every reconnect succeeding. The reset is gated on SUSTAINED
+    // uptime, not a single successful reconnect, on purpose: a source that
+    // recovers then immediately re-drops never earns the reset, so it still
+    // escalates to `dead` instead of looping forever.
+    if (record.source.isAlive()) {
+      if (record.restartCount > 0) {
+        const uptime = record.source.uptime();
+        if (uptime !== null && uptime >= this.checkIntervalMs) {
+          record.restartCount = 0;
+        }
+      }
+      return;
+    }
 
     const remote = isRemoteSource(record.source);
 
