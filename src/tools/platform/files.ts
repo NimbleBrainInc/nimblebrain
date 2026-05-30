@@ -10,14 +10,14 @@
  * directory layout, ID scheme, registry semantics — lives there. This
  * module only defines the tool schemas and adapts calls into the store.
  *
- * Tools (7): list, search, read, create, info, tag, delete
+ * Tools (8): list, search, read, read_pdf_pages, create, info, tag, delete
  * Resources: ui://files/browser (React SPA)
  * Placements: sidebar files link at priority 3
  */
 
 import { textContent } from "../../engine/content-helpers.ts";
 import type { ContentBlock, EventSink, ToolResult } from "../../engine/types.ts";
-import { extractText } from "../../files/extract.ts";
+import { extractPdfPages, extractText } from "../../files/extract.ts";
 import { IMAGE_TYPES, isExtractable, PDF_TYPES } from "../../files/ingest.ts";
 import { isTextMime } from "../../files/mime.ts";
 import type { FileStore } from "../../files/store.ts";
@@ -38,6 +38,8 @@ import {
   FilesInfoInput,
   FilesListInput,
   FilesReadInput,
+  FilesReadPdfPagesInput,
+  type FilesReadPdfPagesOutput,
   FilesSearchInput,
   FilesTagInput,
 } from "./schemas/files.ts";
@@ -224,6 +226,81 @@ async function handleRead(
   };
 }
 
+async function handleReadPdfPages(
+  store: FileStore,
+  args: FilesReadPdfPagesInput,
+): Promise<ToolResult> {
+  const entry = await store.findEntry(args.id);
+  if (!entry) {
+    return {
+      content: textContent(JSON.stringify({ error: `File not found: ${args.id}` })),
+      isError: true,
+    };
+  }
+
+  if (!PDF_TYPES.has(entry.mimeType)) {
+    return {
+      content: textContent(
+        JSON.stringify({ error: `File is not a PDF: ${entry.filename} (${entry.mimeType})` }),
+      ),
+      isError: true,
+    };
+  }
+
+  const requestedPages = Array.from(new Set(args.pages)).sort((a, b) => a - b);
+  const read = await store.readFile(args.id);
+  const extracted = await extractPdfPages(read.data, requestedPages);
+  if (!extracted) {
+    return {
+      content: textContent(
+        JSON.stringify({ error: `PDF page text extraction failed: ${entry.id}` }),
+      ),
+      isError: true,
+    };
+  }
+
+  const sizeText = humanSize(entry.size);
+  const link: ContentBlock = {
+    type: "resource_link",
+    uri: fileIdToUri(args.id),
+    name: entry.filename,
+    mimeType: entry.mimeType,
+    size: entry.size,
+    description: sizeText,
+  } as ContentBlock;
+
+  const out: FilesReadPdfPagesOutput = {
+    id: entry.id,
+    filename: entry.filename,
+    mimeType: entry.mimeType,
+    size: entry.size,
+    totalPages: extracted.totalPages,
+    requestedPages,
+    missingPages: extracted.missingPages,
+    pages: extracted.pages,
+  };
+
+  const pageText = extracted.pages
+    .map(
+      (page) => `--- Page ${page.page} ---\n${page.text || "[No extractable text on this page]"}`,
+    )
+    .join("\n\n");
+  const missingText =
+    extracted.missingPages.length > 0
+      ? `\n\nMissing pages: ${extracted.missingPages.join(", ")} (PDF has ${extracted.totalPages} ${extracted.totalPages === 1 ? "page" : "pages"}).`
+      : "";
+  const text =
+    `Read PDF pages ${requestedPages.join(", ")} from ${entry.filename} (${sizeText}, ${entry.mimeType}; ${extracted.totalPages} pages).` +
+    (pageText ? `\n\n${pageText}` : "") +
+    missingText;
+
+  return {
+    content: [link, { type: "text", text }],
+    structuredContent: out as unknown as Record<string, unknown>,
+    isError: false,
+  };
+}
+
 /**
  * Strict input shape for `files__create`. Mirrors the JSON Schema:
  * `manifest` holds the file metadata; `body` is the base64-encoded
@@ -381,6 +458,21 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
             runtime.getFilesConfig().maxExtractedTextSize,
             input as unknown as { id: string },
           );
+        } catch (err) {
+          return fail(err instanceof Error ? err.message : String(err));
+        }
+      },
+    },
+    {
+      name: "read_pdf_pages",
+      description:
+        "Read extracted text from specific 1-based pages of a PDF by file ID. " +
+        "Use this for oversized PDFs or when the user asks about pages beyond the truncated attachment preview. " +
+        "Returns bounded per-page text only, never the whole PDF or base64 bytes. Max 10 pages per call.",
+      inputSchema: FilesReadPdfPagesInput,
+      handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
+        try {
+          return await handleReadPdfPages(getStore(), input as unknown as FilesReadPdfPagesInput);
         } catch (err) {
           return fail(err instanceof Error ? err.message : String(err));
         }
