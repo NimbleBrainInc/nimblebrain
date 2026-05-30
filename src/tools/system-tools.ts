@@ -466,13 +466,19 @@ async function handleSkillStatus(
 
   // Overview: categorize all skills
   const coreContext = context.filter((s) => s.sourcePath.includes(CORE_SKILL_MARKER));
+  const coreNames = new Set(coreContext.map((s) => s.manifest.name));
   // Non-core boot context skills, minus any that ALSO surface in the
   // per-request Layer-3 set below — otherwise the same skill lists twice.
   const userContext = context.filter(
     (s) => !s.sourcePath.includes(CORE_SKILL_MARKER) && !layer3Names.has(s.manifest.name),
   );
-  const alwaysLoaded = layer3.filter((s) => s.loadedBy === "always");
-  const toolAffined = layer3.filter((s) => s.loadedBy === "tool_affinity");
+  // A skill already shown under "Core Skills (immutable)" is not repeated in
+  // the Layer-3 sections — Core is authoritative. Deduped BY NAME (not by a
+  // `/skills/core/` path marker), so a non-core skill that merely lives under
+  // a `core/` subfolder keeps its own name and is never wrongly hidden.
+  const layer3Visible = layer3.filter((s) => !coreNames.has(s.skill.manifest.name));
+  const alwaysLoaded = layer3Visible.filter((s) => s.loadedBy === "always");
+  const toolAffined = layer3Visible.filter((s) => s.loadedBy === "tool_affinity");
   const sections: string[] = [];
 
   if (coreContext.length > 0) {
