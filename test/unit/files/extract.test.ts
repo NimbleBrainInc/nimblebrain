@@ -97,6 +97,13 @@ describe("extractText", () => {
     expect(result).toBeNull();
   });
 
+  test("any text/* subtype is decoded as UTF-8", async () => {
+    // A .typ recovered to a text type extracts its source like any text file.
+    const src = "#set page(width: 10cm)\n= Heading";
+    const result = await extractText(Buffer.from(src), "text/x-typst");
+    expect(result).toEqual({ text: src, truncated: false });
+  });
+
   test("corrupted PDF returns null without throwing", async () => {
     const result = await extractText(Buffer.from("not a real pdf"), "application/pdf");
     expect(result).toBeNull();
