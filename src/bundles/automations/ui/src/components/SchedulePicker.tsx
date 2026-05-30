@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useState } from "react";
 
 export interface ScheduleSpec {
   type: "cron" | "interval";
@@ -46,6 +46,17 @@ export function parseDow(spec: ScheduleSpec | null): string {
   return parts.length >= 5 && parts[4] !== "*" ? parts[4]! : "1";
 }
 
+export function specEqual(a: ScheduleSpec | null, b: ScheduleSpec | null): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return (
+    a.type === b.type &&
+    a.expression === b.expression &&
+    a.timezone === b.timezone &&
+    a.intervalMs === b.intervalMs
+  );
+}
+
 export function SchedulePicker({
   value,
   onChange,
@@ -72,25 +83,21 @@ export function SchedulePicker({
   //
   // We must NOT re-derive on the picker's own edits, or switching modes would
   // clobber cross-mode field memory (e.g. a typed-but-unsubmitted weekly time).
-  // The discriminator is provenance, not value identity: `emit` sets
-  // `justEmitted` so the parent's echo of our own change is skipped, while any
-  // value the picker did not emit — an external change — re-seeds the display.
-  // Using a provenance flag (rather than comparing `value` to the spec we
-  // emitted) means this holds even for a caller that clones/normalizes in
-  // `onChange` instead of echoing our object by reference.
-  const [prevValue, setPrevValue] = useState<ScheduleSpec | null>(value);
-  const justEmitted = useRef(false);
-  if (value !== prevValue) {
-    setPrevValue(value);
-    if (justEmitted.current) {
-      justEmitted.current = false;
-    } else {
-      setMode(detectMode(value));
-      if (value?.type === "interval" && value.intervalMs) setMinutes(value.intervalMs / 60_000);
-      setTime(parseTime(value));
-      setDow(parseDow(value));
-      setCronExpr(value?.expression ?? "");
-    }
+  // The discriminator is provenance-by-value: we track the last spec the picker
+  // emitted in state and re-derive only when the incoming `value` doesn't match
+  // it — i.e. an external change. A structural compare (not reference identity)
+  // means this holds even for a caller that clones/normalizes in `onChange`,
+  // and keeping it in state (not a ref) keeps this render pure / StrictMode-safe
+  // — `setState` during render is replayed idempotently; a render-phase ref
+  // write would not be.
+  const [lastSpec, setLastSpec] = useState<ScheduleSpec | null>(value);
+  if (!specEqual(value, lastSpec)) {
+    setLastSpec(value);
+    setMode(detectMode(value));
+    if (value?.type === "interval" && value.intervalMs) setMinutes(value.intervalMs / 60_000);
+    setTime(parseTime(value));
+    setDow(parseDow(value));
+    setCronExpr(value?.expression ?? "");
   }
 
   function emit(m: ScheduleMode, mins: number, t: string, d: string, cron: string) {
@@ -106,9 +113,9 @@ export function SchedulePicker({
     } else {
       spec = { type: "cron", expression: cron, timezone };
     }
-    // Mark this change as ours so the reconcile above skips re-deriving when the
-    // resulting `value` update flows back in.
-    justEmitted.current = true;
+    // Record what we emitted so the reconcile above recognizes the parent's
+    // resulting `value` update as ours (structurally equal) and skips re-derive.
+    setLastSpec(spec);
     onChange(spec);
   }
 
