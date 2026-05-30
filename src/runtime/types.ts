@@ -332,13 +332,22 @@ export interface ChatResult {
  * (no greetings, deliverable output, no follow-up questions) via the
  * task-mode system prompt; callers supply only the task description.
  *
- * Two ways to scope tool reach:
- *  - `workspaceId` set      → tools scoped to that workspace + identity
- *                             tools; the system prompt's workspace briefing
- *                             names that workspace.
- *  - `workspaceId` omitted  → cross-workspace reach: tools aggregate
- *                             across every workspace the owner can see;
- *                             no focused-workspace briefing.
+ * Two ways to scope tool reach (mirrors chat's active-vs-discoverable
+ * pattern — progressive disclosure keeps the active set under
+ * `maxActiveTools`):
+ *  - `workspaceId` set      → active tools are that workspace's tools
+ *                             + identity tools; the system prompt's
+ *                             workspace briefing names that workspace.
+ *  - `workspaceId` omitted  → active tools are the owner's personal-
+ *                             workspace tools + identity tools (no
+ *                             focused-workspace briefing). The full
+ *                             cross-workspace tool union is the
+ *                             DISCOVERABLE corpus reached on demand via
+ *                             `nb__search`, not the active toolset.
+ *                             (Bundle workflow guidance via Layer 3
+ *                             DOES aggregate across every workspace the
+ *                             owner can see, so a discovered tool's
+ *                             usage skill is available when it lands.)
  *
  * Each call writes a FRESH conversation owned by `identity`. There is no
  * continuation, no `conversationId` to resume — the returned
@@ -357,11 +366,14 @@ export interface TaskRequest {
    */
   identity?: UserIdentity;
   /**
-   * Focused workspace (optional). When set, drives tool scope and the
-   * focused-workspace briefing layer in the system prompt. When omitted,
-   * the task has cross-workspace reach: tools aggregate across every
-   * workspace the owner can access, and the workspace briefing layer is
-   * omitted (the `TASK_IDENTITY` framing already explains the role).
+   * Focused workspace (optional). When set, drives the active tool set
+   * (that workspace's tools + identity tools) and the focused-workspace
+   * briefing layer in the system prompt. When omitted, the active tool
+   * set is the owner's personal-workspace tools + identity tools; the
+   * full cross-workspace tool union is the discoverable corpus via
+   * `nb__search`, NOT the active toolset (progressive disclosure, same
+   * shape as chat at the identity-level home). The focused-workspace
+   * briefing layer is skipped — `TASK_IDENTITY` carries the framing.
    */
   workspaceId?: string;
   model?: string;

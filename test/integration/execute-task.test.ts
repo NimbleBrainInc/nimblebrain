@@ -7,8 +7,14 @@
  *  - The deliverable persists to the conversation (so the UI's
  *    "Open conversation →" affordance can show it).
  *  - `workspaceId` set    → focused workspace tool scope.
- *  - `workspaceId` absent → cross-workspace reach across every
- *                            workspace the owner can see.
+ *  - `workspaceId` absent → the orchestrator still routes a namespaced
+ *                            cross-workspace tool call (dispatch
+ *                            contract). The ACTIVE tool list shown to
+ *                            the model is the personal workspace's
+ *                            tools + identity tools; cross-workspace
+ *                            tools are reachable via `nb__search` as
+ *                            the discoverable corpus, NOT preloaded
+ *                            into the active set.
  *
  * Carrying duplication with `_chatInner` is the deferred follow-up
  * captured in runtime.ts; the safety net is THIS test catching any
@@ -191,14 +197,23 @@ describe("runtime.executeTask", () => {
     expect(result.toolCalls[0]?.ok).toBe(true);
   });
 
-  it("with workspaceId omitted, cross-workspace tools are reachable", async () => {
+  it("with workspaceId omitted, the orchestrator dispatches a namespaced cross-workspace tool call", async () => {
     const probe = buildProbeSource();
     await probe.source.start();
 
-    // The probe lives in the SHARED workspace only. With no focused
-    // workspace, the model still has cross-workspace reach: it should
-    // be able to call probe__ping in ws_shared_tasks even though the
-    // task wasn't scoped to that workspace.
+    // Pins the DISPATCH contract: when a task without a focused
+    // workspace issues a tool call namespaced to ws_shared_tasks, the
+    // orchestrator must route it to that workspace's source and execute
+    // it (the identity is a member, so authorization passes).
+    //
+    // What this test does NOT verify, and is documented on
+    // `TaskRequest.workspaceId`: that the model would DISCOVER probe__ping
+    // in its active tool list without `workspaceId`. It would not. With
+    // no focus, the active toolset is the personal-workspace tools +
+    // identity tools (same as chat at the identity-level home). The
+    // cross-workspace union is the search corpus reached via `nb__search`.
+    // Here the echo model is scripted to emit the namespaced call
+    // directly — the test pins what happens when one lands.
     const namespacedPing = namespacedToolName(SHARED_WS_ID, "probe__ping");
     runtime = await bootRuntime({
       responses: [
@@ -221,7 +236,8 @@ describe("runtime.executeTask", () => {
     const result = await runtime.executeTask({
       prompt: "ping anywhere you can reach",
       identity: { id: TEST_USER_ID, displayName: TEST_USER_DISPLAY },
-      // No workspaceId — cross-workspace reach.
+      // No workspaceId — unscoped task; the orchestrator's per-call
+      // routing still resolves the namespaced tool to ws_shared_tasks.
     });
 
     expect(result.toolCalls.length).toBeGreaterThan(0);
