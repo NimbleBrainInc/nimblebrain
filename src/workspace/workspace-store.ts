@@ -140,6 +140,23 @@ export function personalWorkspaceSlugFor(userId: string): string {
   return personalWorkspaceIdFor(userId).slice(3);
 }
 
+/**
+ * True iff `userId` is a member of `ws`.
+ *
+ * Accepts a nullish `ws` on purpose: a caller that just did a `.get()` can fold
+ * "workspace doesn't exist" and "exists but caller isn't a member" into one
+ * branch — a non-existent workspace is, trivially, one nobody is a member of.
+ * Folding the two is a deliberate information-disclosure mitigation (issue #17):
+ * the API must not let an authenticated caller distinguish those states, or the
+ * status/message becomes an oracle for probing other tenants' workspace ids.
+ * This is the single definition of "is a member" for every authorization gate —
+ * keep membership checks routed through it so the two states can't drift apart
+ * on one surface and stay folded on another.
+ */
+export function isWorkspaceMember(ws: Workspace | null | undefined, userId: string): boolean {
+  return ws?.members.some((m) => m.userId === userId) ?? false;
+}
+
 // ── WorkspaceStore ─────────────────────────────────────────────────
 
 export class WorkspaceStore {

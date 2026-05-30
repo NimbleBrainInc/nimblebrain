@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { log } from "../../cli/log.ts";
+import { isWorkspaceMember } from "../../workspace/workspace-store.ts";
 import { WORKSPACE_ID_RE } from "../auth-middleware.ts";
 import { requireAuth } from "../middleware/auth.ts";
 import { errorLog } from "../middleware/error-log.ts";
@@ -74,21 +75,24 @@ export function proxyRoutes(ctx: AppContext) {
       }
 
       const ws = await ctx.workspaceStore.get(wsId);
-      if (!ws) {
-        log.info(`[proxy] ${method} ${requestPath} → 400 (workspace not found)`);
-        return apiError(400, "workspace_error", `Workspace "${wsId}" not found.`);
-      }
       const identity = c.var.identity;
-      if (identity) {
-        const isMember = ws.members.some((m) => m.userId === identity.id);
-        if (!isMember) {
-          log.info(`[proxy] ${method} ${requestPath} → 403 (not a member of ${wsId})`);
-          return apiError(
-            403,
-            "workspace_error",
-            `Access denied: not a member of workspace "${wsId}".`,
-          );
-        }
+
+      // Authenticated callers: fold "unknown workspace" and "not a member" into
+      // one generic 403 with no ID echo, so they can't probe for workspace
+      // existence/membership (issue #17). This mirrors `resolveWorkspace` — the
+      // proxy reimplements the check here because the wsId is a path param, not
+      // the X-Workspace-Id header. Server-side logs keep the wsId; logs aren't
+      // the disclosure surface.
+      if (identity && !isWorkspaceMember(ws, identity.id)) {
+        log.info(`[proxy] ${method} ${requestPath} → 403 (access denied to ${wsId})`);
+        return apiError(403, "workspace_error", "Access denied to workspace.");
+      }
+      // `ws` is non-null past here for authenticated callers (membership implies
+      // existence). It can still be null in dev mode (no identity), where there
+      // is no disclosure surface — guard before dereferencing below.
+      if (!ws) {
+        log.info(`[proxy] ${method} ${requestPath} → 404 (workspace not found)`);
+        return apiError(404, "workspace_error", "Workspace not found.");
       }
       c.set("workspaceId", wsId);
 

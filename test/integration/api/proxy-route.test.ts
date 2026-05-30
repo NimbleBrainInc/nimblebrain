@@ -3,8 +3,9 @@
  *
  * Covers:
  *   - Workspace ID validation (path-traversal guard)
- *   - Workspace existence check
- *   - Membership enforcement (DevIdentityProvider sets identity = usr_default)
+ *   - Membership enforcement (DevIdentityProvider sets identity = usr_default);
+ *     non-existent and non-member workspaces return the same generic 403 with
+ *     no ID echo, so a caller can't probe for workspace existence (issue #17)
  *   - Per-workspace kill switch (allowHttpProxy = false)
  *   - Bundle / mount existence checks
  *   - Upstream unreachable → 502
@@ -177,20 +178,28 @@ describe("proxy route — workspace ID validation", () => {
     expect(body.error).toBe("workspace_error");
   });
 
-  it("400 when wsId references a workspace that doesn't exist", async () => {
-    const res = await fetch(`${baseUrl}/v1/ws/ws_does_not_exist/apps/${BUNDLE_NAME}/${MOUNT}/`);
-    expect(res.status).toBe(400);
-    const body = (await res.json()) as { error: string };
+  it("403 (not 400) when wsId references a non-existent workspace — no existence oracle (#17)", async () => {
+    const ghostId = "ws_does_not_exist";
+    const res = await fetch(`${baseUrl}/v1/ws/${ghostId}/apps/${BUNDLE_NAME}/${MOUNT}/`);
+    // Same response as the not-a-member case below: an authenticated caller
+    // can't distinguish "doesn't exist" from "exists but forbidden".
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { error: string; message: string };
     expect(body.error).toBe("workspace_error");
+    expect(body.message).toBe("Access denied to workspace.");
+    expect(JSON.stringify(body)).not.toContain(ghostId);
   });
 });
 
 describe("proxy route — auth / membership", () => {
-  it("403 when authenticated identity is not a member of the workspace", async () => {
+  it("403 with a generic, ID-free message when identity is not a member (#17)", async () => {
     const res = await fetch(proxyUrl(NON_MEMBER_WS));
     expect(res.status).toBe(403);
-    const body = (await res.json()) as { error: string };
+    const body = (await res.json()) as { error: string; message: string };
     expect(body.error).toBe("workspace_error");
+    expect(body.message).toBe("Access denied to workspace.");
+    // Must not echo the workspace id back to a non-member.
+    expect(JSON.stringify(body)).not.toContain(NON_MEMBER_WS);
   });
 });
 

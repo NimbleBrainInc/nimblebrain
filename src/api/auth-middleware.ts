@@ -1,6 +1,6 @@
 import type { EventSink } from "../engine/types.ts";
 import type { IdentityProvider, UserIdentity } from "../identity/provider.ts";
-import type { WorkspaceStore } from "../workspace/workspace-store.ts";
+import { isWorkspaceMember, type WorkspaceStore } from "../workspace/workspace-store.ts";
 import { constantTimeEqual, validateInternalToken } from "./auth-utils.ts";
 
 // ── Auth mode detection ───────────────────────────────────────────
@@ -140,8 +140,7 @@ export async function resolveWorkspace(
   // Validate membership. Unauthorized access and non-existence are reported identically
   // — same message, same status — so callers cannot probe for workspace existence.
   const workspace = await workspaceStore.get(workspaceId);
-  const isMember = workspace?.members.some((m) => m.userId === identity.id) ?? false;
-  if (!workspace || !isMember) {
+  if (!isWorkspaceMember(workspace, identity.id)) {
     throw new WorkspaceResolutionError("Access denied to workspace.", 403);
   }
 

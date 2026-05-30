@@ -28,7 +28,7 @@ import { validateToolInput } from "../tools/validate-input.ts";
 import { estimateCost } from "../usage/cost.ts";
 import { bytesToBase64 } from "../util/base64.ts";
 import { PersonalWorkspaceInvariantError } from "../workspace/errors.ts";
-import type { WorkspaceStore } from "../workspace/workspace-store.ts";
+import { isWorkspaceMember, type WorkspaceStore } from "../workspace/workspace-store.ts";
 import type { ConversationEventManager } from "./conversation-events.ts";
 import type { SseEventManager } from "./events.ts";
 import { ChatRequestBody, ToolCallRequestEnvelope } from "./schemas/rest.ts";
@@ -1004,9 +1004,7 @@ export async function handleBootstrap(
 
   // 1. Workspaces the user is a member of
   const allWorkspaces = await runtime.getWorkspaceStore().list();
-  const userWorkspaces = allWorkspaces.filter((ws) =>
-    ws.members.some((m) => m.userId === identity.id),
-  );
+  const userWorkspaces = allWorkspaces.filter((ws) => isWorkspaceMember(ws, identity.id));
 
   // Invariant (Phase 1): authenticated users have at least one workspace.
   // Provisioning runs at the identity boundary (provider.provisionUser →
