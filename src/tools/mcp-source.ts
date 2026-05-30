@@ -496,6 +496,19 @@ export class McpSource implements ToolSource {
 
           await this.connectWithTimeout(CONNECT_TIMEOUT);
           this.startedAt = Date.now();
+          // This early-return is a SECOND success seam (the headless OAuth
+          // auto-resolve retry). The source is now enumerable, so it must emit
+          // the same tools-changed signal as the bottom seam — otherwise a
+          // union memoized while a remote OAuth source was unreachable (e.g.
+          // `tryRestart` re-auth, or a union cached between addSource and
+          // connect-completion on a post-boot startAuth) stays stale: the exact
+          // bug this signal exists to kill, on the one branch that skipped it.
+          // FOLLOW-UP: this branch also skips `dead = false`, the onclose
+          // rewiring, instructions capture, and `startTaskSweeper()` from the
+          // bottom seam — a pre-existing asymmetry (tracked separately). The
+          // right long-term shape is to converge this path onto the bottom seam
+          // instead of early-returning.
+          this.emitToolsChanged();
           return;
         } catch (retryErr) {
           await this.cleanupOnStartFailure();
@@ -531,10 +544,10 @@ export class McpSource implements ToolSource {
     // signal the cross-workspace tool-list aggregator needs: a union memoized
     // while we were unreachable (slow cold-start, crash + HealthMonitor
     // restart, deferred/pending-auth start) is now stale and must be dropped.
-    // `start()` is the single success seam for initial start AND `tryRestart`,
-    // so emitting here covers every (re)connect path. Cheap and idempotent
-    // downstream: invalidation is a no-op when nothing is cached yet (e.g.
-    // during boot, before any request has populated the union).
+    // This is the PRIMARY success seam (initial start + `tryRestart`); the
+    // OAuth-retry early-return above is the secondary seam and emits there too.
+    // Cheap and idempotent downstream: invalidation is a no-op when nothing is
+    // cached yet (e.g. during boot, before any request has populated the union).
     this.emitToolsChanged();
   }
 
