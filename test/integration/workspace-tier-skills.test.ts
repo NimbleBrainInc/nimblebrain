@@ -107,6 +107,20 @@ describe("Layer 3 — workspace-tier `loading_strategy: always` skills", () => {
     expect(entry?.loadedBy).toBe("always");
   });
 
+  it("reports the focused workspace's `always` skill on the status surface (describeRequestSkills)", async () => {
+    // Regression for the second half of the shared-workspace report: a
+    // workspace-tier `always` skill composed into the prompt (asserted above)
+    // but `nb__status scope:skills` showed only platform/core skills, because
+    // the status path read a boot-time cache instead of the per-request Layer-3
+    // set. `describeRequestSkills` now reports through the SAME path `chat`
+    // composes with, so the two surfaces can no longer disagree.
+    const { layer3 } = await runtime.describeRequestSkills(TEST_WORKSPACE_ID);
+    const entry = layer3.find((s) => s.skill.manifest.name === SHARED_SKILL_NAME);
+    expect(entry).toBeDefined();
+    expect(entry?.skill.manifest.scope).toBe("workspace");
+    expect(entry?.loadedBy).toBe("always");
+  });
+
   it("does NOT load the focused workspace's skill when chatting from home (no focus)", async () => {
     // Home control panel = no `workspaceId` on the request. Layer 3
     // workspace-tier skills should fall back to the session (personal)

@@ -83,7 +83,7 @@ import {
   partitionSkills,
 } from "../skills/loader.ts";
 import { SkillMatcher } from "../skills/matcher.ts";
-import { selectLayer3Skills } from "../skills/select.ts";
+import { type SelectedSkill, selectLayer3Skills } from "../skills/select.ts";
 import { approxTokens } from "../skills/tokens.ts";
 import { truncateMarkdownToBudget } from "../skills/truncate.ts";
 import type { Skill } from "../skills/types.ts";
@@ -1222,30 +1222,14 @@ export class Runtime {
     // to the personal workspace, silently dropping every shared-workspace
     // skill marked `loading_strategy: always`.
     const userId = requestIdentity.id;
-    const layer3Pool = this.loadConversationSkills(focusedWsId ?? sessionWsId, userId);
-    // Stage 2 (T006) — bundle skills are loaded across every workspace
-    // the identity can see, not just the session workspace. A bundle
-    // installed in a shared workspace whose tools land in the
-    // cross-workspace tool list must also surface its `skill://<name>/usage`
-    // body in Layer 3, otherwise the model is given the namespaced
-    // tool name but no workflow guidance.
-    const accessibleForSkills = await this._workspaceStore.getWorkspacesForUser(ownerId);
-    const bundleSkills = (
-      await Promise.all(
-        accessibleForSkills.map((ws) =>
-          this.loadBundleSkills(ws.id, {
-            ...(request.appContext?.serverName
-              ? { appContextServerName: request.appContext.serverName }
-              : {}),
-          }),
-        ),
-      )
-    ).flat();
-    const mergedLayer3Pool: Skill[] = [...layer3Pool, ...bundleSkills];
-    const activeToolNames = tools.map((t) => t.name);
-    const selectedLayer3 = selectLayer3Skills({
-      skills: mergedLayer3Pool,
-      activeTools: activeToolNames,
+    const selectedLayer3 = await this.selectRequestLayer3({
+      wsId: focusedWsId ?? sessionWsId,
+      ownerId,
+      userId,
+      activeToolNames: tools.map((t) => t.name),
+      ...(request.appContext?.serverName
+        ? { appContextServerName: request.appContext.serverName }
+        : {}),
     });
     const layer3Entries: Layer3SkillEntry[] = selectedLayer3.map((s) => ({
       name: s.skill.manifest.name,
@@ -2622,6 +2606,81 @@ export class Runtime {
     }
 
     return mergeScopedSkills(orgPool, workspacePool, userPool);
+  }
+
+  /**
+   * Build the Layer-3 skill pool for a request and run the selection.
+   *
+   * Single source of truth for both prompt composition (`chat`) and the
+   * `nb__status scope:skills` reporter (`describeRequestSkills`). Keeping the
+   * pool construction in one place is deliberate: the bug this method exists to
+   * prevent was status and composition reading skills through two divergent
+   * paths, so the status surface reported only boot-time skills while the
+   * prompt received the workspace/user-tier set.
+   *
+   * The pool merges per-conversation tier skills (org + workspace + user, via
+   * {@link loadConversationSkills}) with bundle-exposed `skill://<name>/usage`
+   * skills across every workspace the identity can reach — a bundle installed
+   * in a shared workspace whose tools land in the cross-workspace tool list
+   * must also surface its workflow guidance, else the model gets the namespaced
+   * tool name with no instructions. `selectLayer3Skills` then filters to the
+   * `always` and `tool_affined` strategies against `activeToolNames`.
+   */
+  async selectRequestLayer3(params: {
+    /** Focused workspace (or session/personal in home mode) for workspace-tier skills. */
+    wsId: string;
+    /** Owner identity for cross-workspace reach (accessible workspaces + bundle skills). */
+    ownerId: string;
+    /** Identity for user-tier skills; null in non-identity-bound paths. */
+    userId: string | null;
+    /** Names of tools in the set tool-affinity is evaluated against. */
+    activeToolNames: string[];
+    /** Skip a server's usage skill when its `<app-guide>` is already injected. */
+    appContextServerName?: string;
+  }): Promise<SelectedSkill[]> {
+    const layer3Pool = this.loadConversationSkills(params.wsId, params.userId);
+    const accessibleForSkills = await this._workspaceStore.getWorkspacesForUser(params.ownerId);
+    const bundleSkills = (
+      await Promise.all(
+        accessibleForSkills.map((ws) =>
+          this.loadBundleSkills(ws.id, {
+            ...(params.appContextServerName
+              ? { appContextServerName: params.appContextServerName }
+              : {}),
+          }),
+        ),
+      )
+    ).flat();
+    return selectLayer3Skills({
+      skills: [...layer3Pool, ...bundleSkills],
+      activeTools: params.activeToolNames,
+    });
+  }
+
+  /**
+   * The Layer-3 skills the CURRENT request would compose into the prompt, plus
+   * the boot-time context skills — for `nb__status scope:skills`.
+   *
+   * Reports through {@link selectRequestLayer3} (the same path `chat` composes
+   * with) so the status surface reflects the workspace- and user-tier skills
+   * actually loaded, not the boot-time cache. Identity and the focused
+   * workspace come from the active request context.
+   *
+   * Active-tool input is the focused workspace's *available* tools. Under
+   * progressive disclosure the live run's active subset may be smaller, but for
+   * a status view "loads when this installed tool is active" is the signal a
+   * reader wants — and it never under-reports an always-loaded skill.
+   */
+  async describeRequestSkills(
+    wsId: string,
+  ): Promise<{ context: readonly Skill[]; layer3: readonly SelectedSkill[] }> {
+    const identity = getRequestContext()?.identity ?? undefined;
+    const ownerId = this.resolveRequestUserId(identity);
+    const userId = identity?.id ?? ownerId;
+    const registry = await this.ensureWorkspaceRegistry(wsId);
+    const activeToolNames = (await registry.availableTools()).map((t) => t.name);
+    const layer3 = await this.selectRequestLayer3({ wsId, ownerId, userId, activeToolNames });
+    return { context: this.contextSkills, layer3 };
   }
 
   /** Get the path to the nimblebrain.json config file (Helm-managed seed). */

@@ -8,6 +8,7 @@ import type { ConfirmationGate } from "../config/privilege.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import type { EventSink, ToolPromotionControls, ToolResult, ToolSchema } from "../engine/types.ts";
 import type { Runtime } from "../runtime/runtime.ts";
+import type { SelectedSkill } from "../skills/select.ts";
 import type { Skill } from "../skills/types.ts";
 import { createManageAppsTool } from "./app-tools.ts";
 import { createManageConnectorsTool } from "./connector-tools.ts";
@@ -363,14 +364,11 @@ function createStatusTool(
         }
 
         if (scope === "skills") {
-          if (!getSkills) {
+          const wsId = runtime?.requireWorkspaceId();
+          if (!runtime || !wsId) {
             return { content: textContent("Skill status not available."), isError: false };
           }
-          const wsId = runtime?.requireWorkspaceId();
-          if (!wsId) {
-            return { content: textContent("Workspace context required."), isError: true };
-          }
-          return handleSkillStatus(getSkills, lifecycle, nameQuery, wsId);
+          return await handleSkillStatus(runtime, getSkills, lifecycle, nameQuery, wsId);
         }
 
         if (scope === "config") {
@@ -435,17 +433,25 @@ async function handleBundleStatus(
   return { content: textContent(entries.join("\n\n")), isError: false };
 }
 
-function handleSkillStatus(
-  getSkills: GetSkillsFn,
+async function handleSkillStatus(
+  runtime: Runtime,
+  getSkills: GetSkillsFn | undefined,
   lifecycle: BundleLifecycleManager | undefined,
   nameQuery: string | null,
   wsId: string,
-): ToolResult {
-  const { context, matchable } = getSkills();
+): Promise<ToolResult> {
+  // Report through the SAME per-request path `chat` composes with
+  // (`describeRequestSkills` → `selectRequestLayer3`), so workspace- and
+  // user-tier skills that actually load into the prompt appear here — the old
+  // path read a boot-time cache and reported only platform/core skills.
+  const { context, layer3 } = await runtime.describeRequestSkills(wsId);
+  // Legacy trigger-matched skills still come from the boot matcher cache.
+  const matchable = getSkills?.().matchable ?? [];
+  const layer3Names = new Set(layer3.map((s) => s.skill.manifest.name));
 
   // Single skill detail view
   if (nameQuery) {
-    const all = [...context, ...matchable];
+    const all = [...context, ...layer3.map((s) => s.skill), ...matchable];
     const skill = all.find((s) => s.manifest.name.toLowerCase() === nameQuery.toLowerCase());
     if (!skill) {
       return {
@@ -460,7 +466,13 @@ function handleSkillStatus(
 
   // Overview: categorize all skills
   const coreContext = context.filter((s) => s.sourcePath.includes(CORE_SKILL_MARKER));
-  const userContext = context.filter((s) => !s.sourcePath.includes(CORE_SKILL_MARKER));
+  // Non-core boot context skills, minus any that ALSO surface in the
+  // per-request Layer-3 set below — otherwise the same skill lists twice.
+  const userContext = context.filter(
+    (s) => !s.sourcePath.includes(CORE_SKILL_MARKER) && !layer3Names.has(s.manifest.name),
+  );
+  const alwaysLoaded = layer3.filter((s) => s.loadedBy === "always");
+  const toolAffined = layer3.filter((s) => s.loadedBy === "tool_affinity");
   const sections: string[] = [];
 
   if (coreContext.length > 0) {
@@ -471,6 +483,16 @@ function handleSkillStatus(
   if (userContext.length > 0) {
     const lines = ["## User Context Skills (always active)"];
     for (const s of userContext) lines.push(formatSkillSummary(s));
+    sections.push(lines.join("\n"));
+  }
+  if (alwaysLoaded.length > 0) {
+    const lines = ["## Workspace & User Skills (always loaded)"];
+    for (const s of alwaysLoaded) lines.push(formatLayer3Summary(s));
+    sections.push(lines.join("\n"));
+  }
+  if (toolAffined.length > 0) {
+    const lines = ["## Tool-Affined Skills (active)"];
+    for (const s of toolAffined) lines.push(formatLayer3Summary(s));
     sections.push(lines.join("\n"));
   }
   if (matchable.length > 0) {
@@ -549,6 +571,13 @@ async function handleOverviewStatus(
 function formatSkillSummary(skill: Skill): string {
   const m = skill.manifest;
   return `- ${m.name} (${m.type}, priority ${m.priority}) — ${m.description || "(no description)"}`;
+}
+
+/** Summary line for a per-request Layer-3 skill, including why it loaded. */
+function formatLayer3Summary(selected: SelectedSkill): string {
+  const m = selected.skill.manifest;
+  const scope = m.scope ?? "org";
+  return `- ${m.name} (${scope}, priority ${m.priority}) — ${m.description || "(no description)"}\n  Loaded: ${selected.reason}`;
 }
 
 function formatMatchableSummary(
