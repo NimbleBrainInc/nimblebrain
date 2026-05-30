@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { isTextMime, resolveMimeType } from "../../../src/files/mime.ts";
+import { EXTENSION_MIME, isTextMime, resolveMimeType } from "../../../src/files/mime.ts";
 import { isExtractable } from "../../../src/files/ingest.ts";
 
 describe("resolveMimeType", () => {
@@ -28,9 +28,11 @@ describe("resolveMimeType", () => {
   });
 
   test("every mapped type passes both read gates (no store-then-fail-to-read)", () => {
-    // INVARIANT guard: anything the map produces must be readable everywhere.
-    for (const ext of ["typ", "md", "json", "yaml", "xml", "html", "csv", "py", "toml", "ts"]) {
+    // INVARIANT guard: iterate the actual map, not a sample — a new entry
+    // whose value isn't readable everywhere fails here automatically.
+    for (const [ext, expected] of Object.entries(EXTENSION_MIME)) {
       const resolved = resolveMimeType(`file.${ext}`, "");
+      expect(resolved).toBe(expected);
       expect(isTextMime(resolved)).toBe(true);
       expect(isExtractable(resolved)).toBe(true);
     }

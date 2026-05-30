@@ -55,8 +55,11 @@ const GENERIC_BINARY = "application/octet-stream";
  *      mislabel real binary as text and corrupt it on UTF-8 decode.
  * Source/code/config formats with no registered text subtype map to
  * `text/plain` — they are plain UTF-8 and `text/plain` is accepted everywhere.
+ *
+ * Exported so a test can assert the invariant over every value (not a
+ * hand-picked sample) — a new entry that breaks it is caught automatically.
  */
-const EXTENSION_MIME: Record<string, string> = {
+export const EXTENSION_MIME: Record<string, string> = {
   // Structured text formats with a registered type in the allowlists.
   md: "text/markdown",
   markdown: "text/markdown",
