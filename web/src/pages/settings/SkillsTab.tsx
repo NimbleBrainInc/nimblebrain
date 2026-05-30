@@ -317,11 +317,10 @@ export function SkillsBrowser({ lockedScope }: { lockedScope?: Scope } = {}) {
           {creating ? (
             <CreateForm
               pending={actionPending}
-              lockedScope={
-                lockedScope === "org" || lockedScope === "workspace" || lockedScope === "user"
-                  ? lockedScope
-                  : undefined
-              }
+              // Only "org" is a live caller today (Phase 1). Phase 2 will
+              // add "workspace" / "user" callers and broaden this narrowing
+              // when those branches actually ship.
+              lockedScope={lockedScope === "org" ? "org" : undefined}
               onCancel={() => {
                 setCreating(false);
                 setError(null);
