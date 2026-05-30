@@ -471,8 +471,12 @@ async function handleSkillStatus(
   const userContext = context.filter(
     (s) => !s.sourcePath.includes(CORE_SKILL_MARKER) && !layer3Names.has(s.manifest.name),
   );
-  const alwaysLoaded = layer3.filter((s) => s.loadedBy === "always");
-  const toolAffined = layer3.filter((s) => s.loadedBy === "tool_affinity");
+  // A core skill is shown only under "Core Skills (immutable)", the more
+  // meaningful category. Should one ever carry a Layer-3 loading strategy,
+  // drop it from the Layer-3 sections so it can't list twice — Core wins.
+  const layer3Visible = layer3.filter((s) => !s.skill.sourcePath?.includes(CORE_SKILL_MARKER));
+  const alwaysLoaded = layer3Visible.filter((s) => s.loadedBy === "always");
+  const toolAffined = layer3Visible.filter((s) => s.loadedBy === "tool_affinity");
   const sections: string[] = [];
 
   if (coreContext.length > 0) {

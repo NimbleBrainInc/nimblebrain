@@ -588,6 +588,33 @@ describe("status tool — scope: skills", () => {
 		expect(text).toContain("workspace");
 	});
 
+	it("lists a skill present in both boot context and the Layer-3 set exactly once", async () => {
+		// A boot-context skill (non-core) whose name also surfaces in the
+		// per-request Layer-3 set must render once — under the Layer-3 section,
+		// not duplicated in "User Context". Guards the userContext dedup branch.
+		const dup: Skill = {
+			manifest: {
+				name: "dual-listed",
+				description: "Appears in both sources",
+				version: "1.0.0",
+				type: "context",
+				priority: 25,
+				scope: "workspace",
+			},
+			body: "Body.",
+			sourcePath: "/home/.nimblebrain/workspaces/ws_test/skills/dual-listed.md",
+		};
+		const source = await makeStatusSource({ context: [coreSkill, dup], matchable: [] }, undefined, [
+			{ skill: dup, loadedBy: "always", reason: "loading_strategy: always" },
+		]);
+		const result = await source.execute("status", { scope: "skills" });
+		expect(result.isError).toBe(false);
+		const text = extractText(result.content);
+		expect(text.split("dual-listed").length - 1).toBe(1);
+		expect(text).toContain("Workspace & User Skills (always loaded)");
+		expect(text).not.toContain("User Context");
+	});
+
 	it("shows matchable skills with triggers", async () => {
 		const source = await makeStatusSource({ context: [], matchable: [matchableSkill] });
 		const result = await source.execute("status", { scope: "skills" });
