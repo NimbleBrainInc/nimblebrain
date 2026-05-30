@@ -63,7 +63,7 @@ export function RailRunItem({
   const snippet = run.error
     ? `Error: ${run.error}`
     : run.resultPreview
-        ?.replace(/[#*`>_~\-]/g, "")
+        ?.replace(/[#*`>_~-]/g, "")
         .trim()
         .slice(0, 90) || "";
   return (
