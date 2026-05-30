@@ -213,7 +213,10 @@ describe("Stage 1 — conversations outlive their workspace context", () => {
     expect(refusedRes.status).toBe(403);
     const refusedBody = await refusedRes.json();
     expect(refusedBody.error).toBe("workspace_error");
-    expect(refusedBody.message).toMatch(/not a member/i);
+    // Generic, ID-free message: workspace resolution failures don't reveal
+    // whether the workspace is unknown or merely denies membership (issue #17).
+    expect(refusedBody.message).toBe("Access denied to workspace.");
+    expect(refusedBody.message).not.toContain(sharedA);
 
     // 6. Continuing the same conversation in a DIFFERENT workspace
     //    Alice is still a member of works. The conversation is
