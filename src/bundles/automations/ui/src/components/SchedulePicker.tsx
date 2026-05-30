@@ -63,18 +63,43 @@ export function SchedulePicker({
   const [dow, setDow] = useState(() => parseDow(value));
   const [cronExpr, setCronExpr] = useState(() => value?.expression ?? "");
 
+  // Reconcile display state to externally-driven `value` changes (e.g. choosing
+  // a template pre-fills the parent's schedule after this picker has mounted).
+  // The state atoms above are seeded once at mount; without this, an external
+  // `value` change would leave the radio/fields showing stale state while the
+  // parent submits the new value — the picker would show "Every 30 minutes"
+  // but save the template's "Daily at 8". `emit` records the spec it emits into
+  // `syncedValue`, so the picker's OWN onChange echoes don't re-derive here
+  // (which would clobber cross-mode field memory mid-edit); only a value the
+  // picker did not emit — i.e. an external change — re-seeds the display.
+  const [syncedValue, setSyncedValue] = useState<ScheduleSpec | null>(value);
+  if (value !== syncedValue) {
+    setSyncedValue(value);
+    setMode(detectMode(value));
+    if (value?.type === "interval" && value.intervalMs) setMinutes(value.intervalMs / 60_000);
+    setTime(parseTime(value));
+    setDow(parseDow(value));
+    setCronExpr(value?.expression ?? "");
+  }
+
   function emit(m: ScheduleMode, mins: number, t: string, d: string, cron: string) {
+    let spec: ScheduleSpec;
     if (m === "interval") {
-      onChange({ type: "interval", intervalMs: Math.max(1, mins) * 60_000 });
+      spec = { type: "interval", intervalMs: Math.max(1, mins) * 60_000 };
     } else if (m === "daily") {
       const [h, min] = t.split(":").map(Number);
-      onChange({ type: "cron", expression: `${min} ${h} * * *`, timezone });
+      spec = { type: "cron", expression: `${min} ${h} * * *`, timezone };
     } else if (m === "weekly") {
       const [h, min] = t.split(":").map(Number);
-      onChange({ type: "cron", expression: `${min} ${h} * * ${d}`, timezone });
+      spec = { type: "cron", expression: `${min} ${h} * * ${d}`, timezone };
     } else {
-      onChange({ type: "cron", expression: cron, timezone });
+      spec = { type: "cron", expression: cron, timezone };
     }
+    // Mark this spec as ours so the reconcile above treats the parent's echo of
+    // it as internal (no re-derive). The parent stores the same reference back
+    // into `value`, so `value === syncedValue` on the next render.
+    setSyncedValue(spec);
+    onChange(spec);
   }
 
   function handleMode(m: ScheduleMode) {
