@@ -5,6 +5,7 @@ import { log } from "../cli/log.ts";
 import { isToolEnabled, isToolVisibleToRole, type ResolvedFeatures } from "../config/features.ts";
 import type { EngineEvent, EventSink } from "../engine/types.ts";
 import { ingestFiles, isAllowedMime, type UploadedFile } from "../files/ingest.ts";
+import { resolveMimeType } from "../files/mime.ts";
 import type { FileEntry } from "../files/types.ts";
 import type { IdentityProvider, UserIdentity } from "../identity/provider.ts";
 import {
@@ -1541,7 +1542,10 @@ async function parseMultipartChatBody(
     uploadedFiles.push({
       data: buffer,
       filename: entry.name || "unnamed",
-      mimeType: entry.type || "application/octet-stream",
+      // Browsers leave the part's Content-Type empty for extensions they
+      // don't recognise (.typ etc.); recover a text type from the filename
+      // so the file isn't stored as opaque binary. See resolveMimeType.
+      mimeType: resolveMimeType(entry.name, entry.type),
     });
   }
 
@@ -1663,7 +1667,10 @@ export async function handleResourceUpload(
       uploads.push({
         data: Buffer.from(await entry.arrayBuffer()),
         filename: entry.name || "unnamed",
-        mimeType: entry.type || "application/octet-stream",
+        // Recover a text type from the filename when the browser sent no
+        // usable Content-Type (see resolveMimeType) — same recovery as the
+        // chat-multipart path.
+        mimeType: resolveMimeType(entry.name, entry.type),
       });
     }
   } catch {

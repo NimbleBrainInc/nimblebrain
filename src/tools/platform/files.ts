@@ -19,7 +19,7 @@ import { textContent } from "../../engine/content-helpers.ts";
 import type { ContentBlock, EventSink, ToolResult } from "../../engine/types.ts";
 import { extractPdfPages, extractText } from "../../files/extract.ts";
 import { IMAGE_TYPES, isExtractable, PDF_TYPES } from "../../files/ingest.ts";
-import { isTextMime } from "../../files/mime.ts";
+import { isTextMime, resolveMimeType } from "../../files/mime.ts";
 import type { FileStore } from "../../files/store.ts";
 import type { FileEntry } from "../../files/types.ts";
 import { fileIdToUri, uriToFileId } from "../../files/uri.ts";
@@ -325,11 +325,16 @@ async function handleCreate(store: FileStore, args: CreateInput): Promise<object
   // store-unification PR that introduced this comment — track separately.
   const { manifest, body } = args;
   const decoded = Buffer.from(body, "base64");
-  const saved = await store.saveFile(decoded, manifest.filename, manifest.mimeType);
+  // Recover a text type from the filename when the agent supplies a generic
+  // `application/octet-stream` (or empty) for a known text/source extension;
+  // a specific type is trusted as-is. Same recovery as the upload handlers,
+  // so an agent-written `.typ` is readable just like an uploaded one.
+  const mimeType = resolveMimeType(manifest.filename, manifest.mimeType);
+  const saved = await store.saveFile(decoded, manifest.filename, mimeType);
   const entry: FileEntry = {
     id: saved.id,
     filename: manifest.filename,
-    mimeType: manifest.mimeType,
+    mimeType,
     size: saved.size,
     tags: manifest.tags ?? [],
     // The LLM invokes this tool; human-uploaded-via-UI is "manual",
