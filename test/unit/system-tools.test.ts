@@ -615,6 +615,22 @@ describe("status tool — scope: skills", () => {
 		expect(text).not.toContain("User Context");
 	});
 
+	it("shows a core skill that also enters the Layer-3 set once, under Core", async () => {
+		// If a core skill ever carries a Layer-3 loading strategy it can appear in
+		// both the boot context (Core) and the per-request Layer-3 set. Core is
+		// authoritative: it must render once, under "Core Skills", never also in
+		// the Layer-3 sections. Guards the name-based coreNames dedup.
+		const source = await makeStatusSource({ context: [coreSkill], matchable: [] }, undefined, [
+			{ skill: coreSkill, loadedBy: "always", reason: "loading_strategy: always" },
+		]);
+		const result = await source.execute("status", { scope: "skills" });
+		expect(result.isError).toBe(false);
+		const text = extractText(result.content);
+		expect(text.split("soul").length - 1).toBe(1);
+		expect(text).toContain("Core Skills");
+		expect(text).not.toContain("Workspace & User Skills");
+	});
+
 	it("shows matchable skills with triggers", async () => {
 		const source = await makeStatusSource({ context: [], matchable: [matchableSkill] });
 		const result = await source.execute("status", { scope: "skills" });
