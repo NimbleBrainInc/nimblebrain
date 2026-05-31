@@ -33,15 +33,16 @@ WORKDIR /app
 COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile --production --ignore-scripts
 
-COPY src/ src/
-COPY scripts/ scripts/
+COPY --chown=1000:1000 src/ src/
+COPY --chown=1000:1000 scripts/ scripts/
 
-# Build bundle UIs (dist/ is gitignored, must build in container)
+# Build bundle UIs (dist/ is gitignored, must build in container).
+# UI deps are installed fresh here and removed after build — the source tree's
+# nested node_modules are excluded by .dockerignore (**/node_modules) so they
+# never enter the build context or bloat the COPY layer.
 RUN for ui in src/bundles/*/ui; do \
       [ -f "$ui/package.json" ] && (cd "$ui" && bun install && bun run build && rm -rf node_modules); \
     done
-
-RUN chown -R nimblebrain:nimblebrain /app
 
 USER 1000
 
