@@ -554,7 +554,9 @@ export async function handleResourceProxy(
   // `ws_<id>-<app>` (a cross-workspace app icon / primary preview surfaced
   // from another workspace) resolves to its own workspace by name + member-
   // ship; a bare app name uses the ambient X-Workspace-Id.
-  const resolved = await resolveRestSourceWorkspace(runtime, appName, identity, workspaceId);
+  const resolved = await resolveRestSourceWorkspace(runtime, appName, identity, workspaceId, () =>
+    apiError(400, "workspace_required", `App "${appName}" requires a workspace`, { app: appName }),
+  );
   if (!resolved.ok) return resolved.response;
   const { workspaceId: wsId, sourceName } = resolved;
   const wsRegistry = await runtime.ensureWorkspaceRegistry(wsId);
@@ -701,6 +703,11 @@ async function resolveRestSourceWorkspace(
   server: string,
   identity: UserIdentity | null | undefined,
   ambientWorkspaceId: string | undefined,
+  // Each endpoint had its own error for "bare source, no ambient workspace"
+  // before this resolver existed (read: `bad_request`; tool-call / proxy:
+  // `workspace_required` with a server/app detail). Let callers keep their
+  // original contract so this refactor doesn't silently change error codes.
+  missingWorkspaceError?: () => Response,
 ): Promise<
   { ok: true; workspaceId: string; sourceName: string } | { ok: false; response: Response }
 > {
@@ -718,7 +725,11 @@ async function resolveRestSourceWorkspace(
   if (!qualified) {
     // Bare source — ambient-workspace behavior.
     if (!ambientWorkspaceId) {
-      return { ok: false, response: apiError(400, "bad_request", "Workspace ID required") };
+      return {
+        ok: false,
+        response:
+          missingWorkspaceError?.() ?? apiError(400, "bad_request", "Workspace ID required"),
+      };
     }
     return { ok: true, workspaceId: ambientWorkspaceId, sourceName: server };
   }
@@ -885,7 +896,9 @@ export async function handleToolCall(
     // A qualified `ws_<id>-<source>` resolves to its own workspace by name +
     // membership (cross-workspace tool surfaced via nb__search); a bare source
     // uses the ambient X-Workspace-Id. Same resolution as the resource read.
-    const resolved = await resolveRestSourceWorkspace(runtime, server, identity, workspaceId);
+    const resolved = await resolveRestSourceWorkspace(runtime, server, identity, workspaceId, () =>
+      apiError(400, "workspace_required", `Tool "${tool}" requires a workspace`, { server, tool }),
+    );
     if (!resolved.ok) return resolved.response;
     resolvedSourceName = resolved.sourceName;
     workspaceRegistry = await runtime.ensureWorkspaceRegistry(resolved.workspaceId);
