@@ -8,6 +8,8 @@ interface StubOptions {
   sources?: string[];
   identitySources?: string[];
   resource?: ResourceData | null;
+  /** Workspace ids the calling identity is a member of (for qualified-name resolution). */
+  memberOf?: string[];
   captureCall?: (args: { server: string; uri: string; workspaceId: string }) => void;
   captureIdentityCall?: (args: { server: string; uri: string }) => void;
 }
@@ -15,12 +17,16 @@ interface StubOptions {
 function makeStubRuntime(opts: StubOptions = {}): Runtime {
   const sources = new Set(opts.sources ?? ["calendar"]);
   const identitySources = new Set(opts.identitySources ?? []);
+  const memberOf = opts.memberOf ?? [];
   const registry = {
     hasSource: (name: string) => sources.has(name),
   };
   return {
     getIdentitySource: (name: string) => (identitySources.has(name) ? { name } : undefined),
     ensureWorkspaceRegistry: async () => registry,
+    getWorkspaceStore: () => ({
+      getWorkspacesForUser: async () => memberOf.map((id) => ({ id })),
+    }),
     readAppResource: async (server: string, uri: string, workspaceId: string) => {
       opts.captureCall?.({ server, uri, workspaceId });
       return opts.resource === undefined ? null : opts.resource;
@@ -181,6 +187,57 @@ describe("handleReadResource", () => {
       { workspaceId: "w1" },
     );
     expect(res.status).toBe(400);
+  });
+
+  // Cross-workspace: a qualified `ws_<id>-<source>` server names its OWN
+  // workspace. The owning workspace — not the ambient X-Workspace-Id — is
+  // authoritative, and the registry/readAppResource are keyed on the BARE
+  // source name. Regression for the preview-from-another-workspace 403.
+  it("resolves a qualified server to its owning workspace, ignoring X-Workspace-Id", async () => {
+    const calls: Array<{ server: string; uri: string; workspaceId: string }> = [];
+    const runtime = makeStubRuntime({
+      sources: ["synapse-collateral"], // registry keyed on the bare source name
+      memberOf: ["ws_nimblebrain_shared"],
+      resource: { text: "ok", mimeType: "text/plain" },
+      captureCall: (c) => calls.push(c),
+    });
+    const res = await handleReadResource(
+      req({ server: "ws_nimblebrain_shared-synapse-collateral", uri: "collateral://exports/e.pdf" }),
+      runtime,
+      // Ambient workspace is the user's PERSONAL workspace, not where the doc lives.
+      { workspaceId: "ws_user_u1", identity: { id: "u1" } as never },
+    );
+    expect(res.status).toBe(200);
+    // readAppResource gets the bare source + the workspace parsed from the name.
+    expect(calls).toEqual([
+      { server: "synapse-collateral", uri: "collateral://exports/e.pdf", workspaceId: "ws_nimblebrain_shared" },
+    ]);
+  });
+
+  it("returns 403 for a qualified server the caller is not a member of", async () => {
+    const runtime = makeStubRuntime({
+      sources: ["synapse-collateral"],
+      memberOf: ["ws_some_other"], // not a member of ws_nimblebrain_shared
+      resource: { text: "ok", mimeType: "text/plain" },
+    });
+    const res = await handleReadResource(
+      req({ server: "ws_nimblebrain_shared-synapse-collateral", uri: "collateral://exports/e.pdf" }),
+      runtime,
+      { workspaceId: "ws_user_u1", identity: { id: "u1" } as never },
+    );
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body.error).toBe("workspace_access_denied");
+  });
+
+  it("returns 401 for a qualified server with no identity", async () => {
+    const runtime = makeStubRuntime({ sources: ["synapse-collateral"], memberOf: ["ws_x"] });
+    const res = await handleReadResource(
+      req({ server: "ws_x-synapse-collateral", uri: "collateral://exports/e.pdf" }),
+      runtime,
+      { workspaceId: "ws_x" },
+    );
+    expect(res.status).toBe(401);
   });
 });
 

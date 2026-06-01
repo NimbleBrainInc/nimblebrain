@@ -252,3 +252,30 @@ export function bareToolName(s: string): string {
     return s;
   }
 }
+
+/**
+ * Parse a workspace-qualified **source** (server) name.
+ *
+ * A source name has the same `ws_<id>-<rest>` shape as a tool name, but its
+ * `<rest>` is a bare source name (`synapse-collateral`) with no `__<tool>`
+ * suffix — the cross-workspace aggregator namespaces *tool* names while
+ * registry *sources* keep their bare name. So a cross-workspace tool
+ * `ws_<id>-synapse-collateral__preview` surfaces an `appName`/`server` of
+ * `ws_<id>-synapse-collateral`, which the REST resource/tool endpoints must
+ * split into its owning workspace (`ws_<id>`) and the bare source the
+ * registry is keyed on (`synapse-collateral`).
+ *
+ * Returns `null` for a bare (unqualified) source name — the caller falls back
+ * to the ambient request workspace. Throws (via `parseNamespacedToolName`)
+ * only for a malformed `ws_`-prefixed id, which is a probe/typo the caller
+ * should reject rather than treat as bare.
+ *
+ * Built on `parseNamespacedToolName` so the separator and `WORKSPACE_ID_RE`
+ * boundary stay defined once (and `check:tool-namespace` keeps the parse in
+ * this module).
+ */
+export function parseNamespacedSourceName(s: string): { wsId: string; sourceName: string } | null {
+  const parsed = parseNamespacedToolName(s);
+  if (parsed.scope.kind !== "workspace") return null;
+  return { wsId: parsed.scope.wsId, sourceName: parsed.toolName };
+}
