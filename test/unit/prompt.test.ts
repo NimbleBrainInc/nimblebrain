@@ -1087,6 +1087,35 @@ describe("composeSystemPromptTraced", () => {
   });
 });
 
+describe("composeSystemPrompt — files are identity-scoped, not workspace-scoped", () => {
+  // Regression: an agent told a user "which workspace does <file> live in? I
+  // can check all three." Files are identity-owned; the workspace blocks must
+  // say so explicitly so the workspace TOOL-scoping model isn't generalised
+  // onto files.
+  const wsCtx: WorkspaceContext = { id: "ws_test", name: "Test" };
+
+  it("focused-workspace block states files/conversations are not workspace-scoped", () => {
+    const result = composeSystemPrompt(
+      [],
+      null,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      wsCtx,
+    );
+    expect(result).toContain("Files and conversations are NOT workspace-scoped");
+    expect(result).toContain("Never ask the user which workspace a file lives in");
+  });
+
+  it("identity-home block (no focused workspace) states the same", () => {
+    const result = composeSystemPrompt([]);
+    expect(result).toContain("Files and conversations are NOT workspace-scoped");
+    expect(result).toContain("Never ask the user which workspace a file lives in");
+  });
+});
+
 describe("composeSystemPrompt — task mode", () => {
   it("prepends TASK_IDENTITY when mode is 'task'", () => {
     const result = composeSystemPrompt(

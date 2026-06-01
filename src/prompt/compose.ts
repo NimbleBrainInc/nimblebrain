@@ -671,6 +671,19 @@ function formatLayer3SkillsSection(entries: Layer3SkillEntry[]): string | null {
   return `## Skills\n\n${blocks.join("\n\n")}`;
 }
 
+/**
+ * Workspace-scoping applies to TOOLS, not to files or conversations. Both
+ * workspace blocks narrate that tools are workspace-scoped (find others with
+ * `nb__search`); without an explicit counter-statement an agent overgeneralises
+ * that model onto files and asks the user "which workspace does this file live
+ * in?" — a real failure observed in production. Files and conversations are
+ * identity-owned (one store at `users/{userId}/files/`, regardless of
+ * workspace), so the always-loaded `files__*`/`conversations__*` tools already
+ * see all of them. State that plainly in both blocks.
+ */
+const IDENTITY_SCOPE_NOTE =
+  "Files and conversations are NOT workspace-scoped — they're identity-owned and the same in every workspace. The `files__*` and `conversations__*` tools are always loaded and search across all of your files/conversations at once. Never ask the user which workspace a file lives in, and don't use `nb__search` to find files — just call `files__search`/`files__list`.";
+
 function formatWorkspaceContext(ws: WorkspaceContext): string {
   const lines = ["## Workspace", ""];
   lines.push(`- ID: ${sanitizeLineField(ws.id)}`);
@@ -679,6 +692,8 @@ function formatWorkspaceContext(ws: WorkspaceContext): string {
   lines.push(
     "Your active tools are this workspace's — its apps plus the platform tools. Tools in the user's OTHER workspaces, and their personal tools (e.g. email), are NOT loaded right now. Find any tool across all of the user's workspaces with `nb__search`; matches are added to your tools on demand. Don't assume a tool is missing — search first.",
   );
+  lines.push("");
+  lines.push(IDENTITY_SCOPE_NOTE);
   return lines.join("\n");
 }
 
@@ -696,6 +711,8 @@ function formatNoWorkspaceContext(): string {
     "The user is at their identity-level home — **not in any single workspace**. There is no current workspace. If the user asks which workspace they're in, tell them they're at their home view, not a specific one.",
     "",
     "Your active tools are the platform tools and the user's own (conversations, personal). Tools that belong to a specific workspace are NOT loaded here. Find any tool across all of the user's workspaces with `nb__search`; matches are added to your tools on demand. Don't assume a tool is missing — search first.",
+    "",
+    IDENTITY_SCOPE_NOTE,
   ].join("\n");
 }
 
