@@ -149,6 +149,20 @@ describe("getAvailableModels", () => {
 		expect(result.anthropic[0].id).toBe("claude-sonnet-4-6");
 		expect(result.openai.length).toBeGreaterThan(1);
 	});
+
+	it("excludes deprecated models from the picker", () => {
+		// gemini-3-pro-preview was retired by Google 2026-03-09. It stays in the
+		// catalog (so existing references still resolve for cost/display) but
+		// must never be offered as a selectable model.
+		const deprecated = getModelByString("google:gemini-3-pro-preview");
+		expect(deprecated?.deprecated).toBe(true);
+
+		const result = getAvailableModels({ google: {} });
+		expect(result.google.length).toBeGreaterThan(0);
+		expect(result.google.some((m) => m.id === "gemini-3-pro-preview")).toBe(false);
+		// The live successor is still offered.
+		expect(result.google.some((m) => m.id === "gemini-3.1-pro-preview")).toBe(true);
+	});
 });
 
 describe("estimateCost from catalog", () => {

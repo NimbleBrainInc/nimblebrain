@@ -168,14 +168,21 @@ export function isModelAllowed(
 }
 
 /**
- * Get the list of available models for configured providers, respecting allowlists.
+ * Get the list of available models for configured providers, respecting
+ * allowlists. Deprecated models are excluded — this feeds the settings
+ * model picker, and a model the upstream provider has shut down (e.g.
+ * `google:gemini-3-pro-preview`, retired 2026-03-09) must not be
+ * re-selectable. `listModels` stays honest as "all models for a provider";
+ * the "available to pick" filter lives here. Note this does not retroactively
+ * fix a slot already pointing at a deprecated model — that override must be
+ * repointed in workspace/tenant config separately.
  */
 export function getAvailableModels(
   configuredProviders: Record<string, { models?: string[] }>,
 ): Record<string, CatalogModel[]> {
   const result: Record<string, CatalogModel[]> = {};
   for (const [provider, config] of Object.entries(configuredProviders)) {
-    result[provider] = listModels(provider, config.models);
+    result[provider] = listModels(provider, config.models).filter((m) => !m.deprecated);
   }
   return result;
 }

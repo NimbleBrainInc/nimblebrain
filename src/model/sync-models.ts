@@ -18,6 +18,8 @@ const OUTPUT_PATH = join(dirname(new URL(import.meta.url).pathname), "catalog-da
 // Models the upstream API hasn't flagged yet but we know are scheduled for shutdown.
 // Format: "<provider>:<modelId>". Remove an entry once models.dev catches up.
 const MANUAL_DEPRECATIONS = new Set<string>([
+  // Google shutdown 2026-03-09 (successor: gemini-3.1-pro-preview)
+  "google:gemini-3-pro-preview",
   // OpenAI shutdown 2026-07-23
   "openai:gpt-5-chat-latest",
   "openai:gpt-5-codex",
