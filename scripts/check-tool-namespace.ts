@@ -29,15 +29,26 @@
  *      and throws on malformed input.
  *
  * What it allows:
- *   - `src/tools/namespace.ts` itself — the primitive defines the
- *     format and is the only legal construction/parse site.
+ *   - `src/tools/namespace.ts` and its web mirror
+ *     `web/src/lib/namespaced-tool.ts` — the primitives define the
+ *     format and are the only legal construction/parse sites.
  *   - A `// lint-ok:tool-namespace` marker on the line immediately
  *     above the construction, for the rare future case where the
  *     helper genuinely can't be used (e.g. a wire-format adapter that
  *     must accept the legacy shape unchanged).
  *
- * Scope: `src/**\/*.ts`. Tests are out of scope (fixtures construct
- * the shape deliberately).
+ * Scope: `src/**\/*.ts` and `web/src/**\/*.{ts,tsx}`. The web client
+ * mirrors the same contract (it can't import from `src/`), so the same
+ * discipline applies there — a web-side hand-parse is exactly what
+ * slipped through when this lint scanned `src/` only. Tests are out of
+ * scope (fixtures construct the shape deliberately).
+ *
+ * Known gap: this catches `ws_<id>-` *construction* and `.split("-")`
+ * *parsing*. It does NOT catch slicing the bare source out of a wire
+ * name via `indexOf("__")` / `slice(0, …)` — the canonical fix for
+ * that is the `appNameFromToolName` / `parseNamespacedToolName` helper,
+ * not a linter predicate (a `__`-slice predicate false-positives on
+ * legitimate display-only suffix extraction like `stripServerPrefix`).
  */
 
 import { readFileSync } from "node:fs";
@@ -47,9 +58,20 @@ import * as ts from "typescript";
 
 const ROOT = join(import.meta.dirname ?? __dirname, "..");
 const SRC_ROOT = join(ROOT, "src");
+const WEB_SRC_ROOT = join(ROOT, "web", "src");
+// Both the platform `src/` and the web client `web/src/` are scanned. The
+// web tier mirrors the namespaced-tool contract in
+// `web/src/lib/namespaced-tool.ts` (it can't import from `src/`), so the same
+// construction/parse discipline applies — and a web-side hand-parse is exactly
+// the regression that slipped through when this lint scanned `src/` only.
+const SCAN_ROOTS = [SRC_ROOT, WEB_SRC_ROOT];
 const ALLOW_MARKER = "lint-ok:tool-namespace";
 
-const ALLOWED_FILES = new Set(["tools/namespace.ts"].map((f) => f.split("/").join(sep)));
+// Relative to their respective scan root: the platform primitive and the web
+// mirror are the only legal construction/parse sites.
+const ALLOWED_FILES = new Set(
+  ["tools/namespace.ts", "lib/namespaced-tool.ts"].map((f) => f.split("/").join(sep)),
+);
 
 /**
  * Identifiers whose name suggests "this is a namespaced tool name."
@@ -219,8 +241,8 @@ function hasAllowMarker(node: ts.Node, sourceFile: ts.SourceFile, src: string): 
   return false;
 }
 
-function scanFile(absPath: string, violations: Violation[]): void {
-  const relPath = relative(SRC_ROOT, absPath);
+function scanFile(absPath: string, scanRoot: string, violations: Violation[]): void {
+  const relPath = relative(scanRoot, absPath);
   if (ALLOWED_FILES.has(relPath)) return;
   const src = readFileSync(absPath, "utf-8");
   const sourceFile = ts.createSourceFile(
@@ -263,19 +285,32 @@ function scanFile(absPath: string, violations: Violation[]): void {
 
 async function main(): Promise<void> {
   const violations: Violation[] = [];
-  const glob = new Glob("**/*.ts");
+  // `.tsx` included so the web client's React components are covered, not just
+  // its plain `.ts` modules.
+  const glob = new Glob("**/*.{ts,tsx}");
   let scanned = 0;
 
-  for await (const rel of glob.scan({ cwd: SRC_ROOT })) {
-    const abs = join(SRC_ROOT, rel);
-    if (abs.includes("/node_modules/") || abs.includes("/dist/")) continue;
-    if (abs.endsWith(".d.ts")) continue;
-    scanned++;
-    scanFile(abs, violations);
+  for (const scanRoot of SCAN_ROOTS) {
+    for await (const rel of glob.scan({ cwd: scanRoot })) {
+      const abs = join(scanRoot, rel);
+      if (abs.includes("/node_modules/") || abs.includes("/dist/")) continue;
+      if (abs.endsWith(".d.ts")) continue;
+      // Tests construct/parse the shape deliberately (fixtures) — out of scope,
+      // matching the platform-side `test/` exclusion.
+      if (abs.includes("/__tests__/") || abs.endsWith(".test.ts") || abs.endsWith(".test.tsx")) {
+        continue;
+      }
+      // Generated mirrors of the workspace-id pattern are not hand-written.
+      if (abs.includes("/_generated/")) continue;
+      scanned++;
+      scanFile(abs, scanRoot, violations);
+    }
   }
 
   if (violations.length > 0) {
-    console.error(`✗ Found ${violations.length} hand-built namespaced tool name(s) in src/:\n`);
+    console.error(
+      `✗ Found ${violations.length} hand-built namespaced tool name(s) in src/ + web/src/:\n`,
+    );
     for (const v of violations) {
       console.error(`  ${v.file}:${v.line}:${v.column} — ${v.reason}`);
       console.error(`    ${v.snippet}\n`);
@@ -283,14 +318,17 @@ async function main(): Promise<void> {
     console.error(
       "Cross-workspace tool names must flow through `namespacedToolName(wsId, name)` /",
     );
-    console.error("`parseNamespacedToolName(s)` from `src/tools/namespace.ts`.");
+    console.error(
+      "`parseNamespacedToolName(s)` — `src/tools/namespace.ts` (platform) or",
+    );
+    console.error("`web/src/lib/namespaced-tool.ts` (web mirror).");
     console.error(
       `Legitimate exceptions (rare) require a // ${ALLOW_MARKER} comment on the line above the construction.`,
     );
     process.exit(1);
   }
 
-  console.log(`✓ No hand-built namespaced tool names in ${scanned} src/ files`);
+  console.log(`✓ No hand-built namespaced tool names in ${scanned} src/ + web/src/ files`);
 }
 
 // Gate the side effect on direct invocation. Unit tests `import` this
