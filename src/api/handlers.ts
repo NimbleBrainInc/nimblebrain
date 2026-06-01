@@ -22,6 +22,7 @@ import type { Runtime } from "../runtime/runtime.ts";
 import type { ChatRequest } from "../runtime/types.ts";
 import { coerceInputForSchema } from "../tools/coerce-input.ts";
 import type { HealthMonitor } from "../tools/health-monitor.ts";
+import { parseNamespacedSourceName } from "../tools/namespace.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
 import type { ResourceData, ToolSource } from "../tools/types.ts";
 import { validateToolInput } from "../tools/validate-input.ts";
@@ -513,6 +514,7 @@ export async function handleResourceProxy(
   resourcePath: string,
   runtime: Runtime,
   workspaceId?: string,
+  identity?: UserIdentity,
 ): Promise<Response> {
   // Dev mode: redirect to local Vite dev server when --app flag is active.
   // Applies to both identity and workspace apps, so it runs first.
@@ -545,17 +547,18 @@ export async function handleResourceProxy(
     return json({ contents: [buildResourceEnvelopeEntry(`ui://${resolvedPath}`, resource)] });
   }
 
-  // Workspace apps — require a workspace and authorize membership. Both
+  // Workspace apps — resolve the workspace and authorize membership. Both
   // platform built-ins and user-installed bundles are MCP servers reachable
   // through the workspace registry; registry membership is the authoritative
-  // "is this app available to this workspace?" check.
-  if (!workspaceId) {
-    return apiError(400, "workspace_required", `App "${appName}" requires a workspace`, {
-      app: appName,
-    });
-  }
-  const wsRegistry = await runtime.ensureWorkspaceRegistry(workspaceId);
-  if (!wsRegistry.hasSource(appName)) {
+  // "is this app available to this workspace?" check. A qualified
+  // `ws_<id>-<app>` (a cross-workspace app icon / primary preview surfaced
+  // from another workspace) resolves to its own workspace by name + member-
+  // ship; a bare app name uses the ambient X-Workspace-Id.
+  const resolved = await resolveRestSourceWorkspace(runtime, appName, identity, workspaceId);
+  if (!resolved.ok) return resolved.response;
+  const { workspaceId: wsId, sourceName } = resolved;
+  const wsRegistry = await runtime.ensureWorkspaceRegistry(wsId);
+  if (!wsRegistry.hasSource(sourceName)) {
     return apiError(
       403,
       "workspace_access_denied",
@@ -566,13 +569,13 @@ export async function handleResourceProxy(
 
   let resolvedPath = resourcePath;
   if (resourcePath === "primary") {
-    const primaryUri = await resolvePrimaryResourceUri(runtime, appName, workspaceId);
+    const primaryUri = await resolvePrimaryResourceUri(runtime, sourceName, wsId);
     if (primaryUri) {
       resolvedPath = primaryUri.replace(/^ui:\/\//, "");
     }
   }
 
-  const resource = await runtime.readAppResource(appName, resolvedPath, workspaceId);
+  const resource = await runtime.readAppResource(sourceName, resolvedPath, wsId);
   if (resource === null) {
     return apiError(404, "resource_not_found", `Resource "ui://${resourcePath}" not found`, {
       resource: `ui://${resourcePath}`,
@@ -667,6 +670,80 @@ export function buildResourceEnvelopeEntry(
 }
 
 /**
+ * Resolve which workspace + bare source a REST resource/tool request targets.
+ *
+ * The first-party web shell speaks stateless REST and names a source one of
+ * two ways:
+ *
+ *   - **Qualified** `ws_<id>-<source>` — a cross-workspace tool surfaced by
+ *     `nb__search` (the aggregator namespaces tool names; the surfaced
+ *     `appName`/`server` carries the workspace). The NAME is authoritative:
+ *     resolve the owning workspace from it and authorize by MEMBERSHIP —
+ *     exactly as the engine's `routeToolCall` does ("derived ONLY from the
+ *     parsed wsId; we never reach for any ambient current-workspace
+ *     pointer"). The ambient `X-Workspace-Id` is irrelevant here — a preview
+ *     link minted in one workspace must read back from a conversation focused
+ *     on another. This is the same principle that already lets identity
+ *     sources (`files`, `conversations`) ignore the header.
+ *
+ *   - **Bare** `<source>` — a focused-workspace tool; its workspace is the
+ *     ambient `X-Workspace-Id` (unchanged legacy behavior).
+ *
+ * Returns the bare source name the workspace registry is keyed on (registry
+ * sources keep their bare name; only tool names get the `ws_<id>-` prefix), so
+ * callers must use `sourceName` — never the raw qualified `server` — for
+ * `hasSource` / `getSources` / `readAppResource`.
+ *
+ * Identity sources are handled by the caller BEFORE this and never reach here.
+ */
+async function resolveRestSourceWorkspace(
+  runtime: Runtime,
+  server: string,
+  identity: UserIdentity | null | undefined,
+  ambientWorkspaceId: string | undefined,
+): Promise<
+  { ok: true; workspaceId: string; sourceName: string } | { ok: false; response: Response }
+> {
+  let qualified: { wsId: string; sourceName: string } | null;
+  try {
+    qualified = parseNamespacedSourceName(server);
+  } catch {
+    // A `ws_`-prefixed but malformed id is a probe/typo, not a bare name.
+    return {
+      ok: false,
+      response: apiError(400, "bad_request", `Invalid server "${server}"`, { server }),
+    };
+  }
+
+  if (!qualified) {
+    // Bare source — ambient-workspace behavior.
+    if (!ambientWorkspaceId) {
+      return { ok: false, response: apiError(400, "bad_request", "Workspace ID required") };
+    }
+    return { ok: true, workspaceId: ambientWorkspaceId, sourceName: server };
+  }
+
+  // Qualified — the name names its workspace; authorize by membership and
+  // ignore the ambient X-Workspace-Id.
+  if (!identity) {
+    return { ok: false, response: apiError(401, "unauthorized", "Authentication required") };
+  }
+  const accessible = await runtime.getWorkspaceStore().getWorkspacesForUser(identity.id);
+  if (!accessible.some((w) => w.id === qualified.wsId)) {
+    return {
+      ok: false,
+      response: apiError(
+        403,
+        "workspace_access_denied",
+        `Server "${server}" is not available in this workspace`,
+        { server },
+      ),
+    };
+  }
+  return { ok: true, workspaceId: qualified.wsId, sourceName: qualified.sourceName };
+}
+
+/**
  * Handle POST /v1/resources/read — MCP resources/read proxy.
  *
  * Body: { server, uri }
@@ -708,14 +785,21 @@ export async function handleReadResource(
     return json({ contents: [buildResourceEnvelopeEntry(uri, resource)] });
   }
 
-  const workspaceId = options?.workspaceId;
-  if (!workspaceId) {
-    return apiError(400, "bad_request", "Workspace ID required");
-  }
+  // Workspace scoping. A qualified `ws_<id>-<source>` server resolves to its
+  // OWN workspace by name + membership (cross-workspace preview links); a bare
+  // source uses the ambient X-Workspace-Id. `sourceName` is the bare name the
+  // registry is keyed on.
+  const resolved = await resolveRestSourceWorkspace(
+    runtime,
+    server,
+    identity,
+    options?.workspaceId,
+  );
+  if (!resolved.ok) return resolved.response;
+  const { workspaceId, sourceName } = resolved;
 
-  // Workspace scoping — reject servers not in the active workspace.
   const wsRegistry = await runtime.ensureWorkspaceRegistry(workspaceId);
-  if (!wsRegistry.hasSource(server)) {
+  if (!wsRegistry.hasSource(sourceName)) {
     return apiError(
       403,
       "workspace_access_denied",
@@ -735,7 +819,7 @@ export async function handleReadResource(
     scope: { kind: "workspace", workspaceId, workspaceAgents: null, workspaceModelOverride: null },
   };
   const resource = await runWithRequestContext(reqCtx, () =>
-    runtime.readAppResource(server, uri, workspaceId),
+    runtime.readAppResource(sourceName, uri, workspaceId),
   );
   if (resource === null) {
     return apiError(404, "resource_not_found", `Resource "${uri}" not found`, {
@@ -790,30 +874,45 @@ export async function handleToolCall(
   let workspaceRegistry: ToolRegistry | undefined;
   let source: ToolSource | undefined;
   let scope: RequestScope;
+  // The bare source name the registry is keyed on. For a qualified
+  // `ws_<id>-<source>` server it's the `<source>` portion; for a bare
+  // identity/workspace source it's `server` unchanged.
+  let resolvedSourceName = server;
   if (identitySource) {
     source = identitySource;
     scope = { kind: "identity" };
   } else {
-    if (!workspaceId) {
-      return apiError(400, "workspace_required", `Tool "${tool}" requires a workspace`, {
-        server,
-        tool,
-      });
-    }
-    workspaceRegistry = await runtime.ensureWorkspaceRegistry(workspaceId);
-    if (!workspaceRegistry.hasSource(server)) {
+    // A qualified `ws_<id>-<source>` resolves to its own workspace by name +
+    // membership (cross-workspace tool surfaced via nb__search); a bare source
+    // uses the ambient X-Workspace-Id. Same resolution as the resource read.
+    const resolved = await resolveRestSourceWorkspace(runtime, server, identity, workspaceId);
+    if (!resolved.ok) return resolved.response;
+    resolvedSourceName = resolved.sourceName;
+    workspaceRegistry = await runtime.ensureWorkspaceRegistry(resolved.workspaceId);
+    if (!workspaceRegistry.hasSource(resolvedSourceName)) {
       return apiError(404, "tool_not_found", `Tool "${tool}" not found on server "${server}"`, {
         server,
         tool,
       });
     }
-    source = workspaceRegistry.getSources().find((s) => s.name === server);
-    scope = { kind: "workspace", workspaceId, workspaceAgents: null, workspaceModelOverride: null };
+    source = workspaceRegistry.getSources().find((s) => s.name === resolvedSourceName);
+    scope = {
+      kind: "workspace",
+      workspaceId: resolved.workspaceId,
+      workspaceAgents: null,
+      workspaceModelOverride: null,
+    };
   }
 
-  // The tool name may already be prefixed (e.g., "home__briefing" from the
-  // bridge) or bare (e.g., "briefing"). Normalize to the full name.
-  const toolName = tool.startsWith(`${server}__`) ? tool : `${server}__${tool}`;
+  // Normalize `tool` to the registry's `<bareSource>__<tool>` form. It may
+  // arrive bare ("preview"), source-prefixed ("calendar__main"), or fully
+  // qualified ("ws_<id>-calendar__main" from the bridge) — strip a leading
+  // qualified-server prefix first, then ensure the bare-source prefix.
+  let innerTool = tool;
+  if (innerTool.startsWith(`${server}__`)) innerTool = innerTool.slice(server.length + 2);
+  const toolName = innerTool.startsWith(`${resolvedSourceName}__`)
+    ? innerTool
+    : `${resolvedSourceName}__${innerTool}`;
 
   // Coerced args flow through to execute below — validation and execution must
   // see the same shape. Defaults to the raw args; replaced with the

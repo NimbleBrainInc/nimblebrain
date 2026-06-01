@@ -22,6 +22,7 @@ import { describe, expect, test } from "bun:test";
 import {
   InvalidNamespacedToolNameInput,
   namespacedToolName,
+  parseNamespacedSourceName,
   parseNamespacedToolName,
   UnknownNamespacedToolName,
 } from "../../../src/tools/namespace.ts";
@@ -207,5 +208,37 @@ describe("identity scope (bare names)", () => {
       scope: { kind: "workspace", wsId: "ws_helix" },
       toolName: "nb__search",
     });
+  });
+});
+
+describe("parseNamespacedSourceName — server (source) names", () => {
+  test("splits a qualified source into wsId + bare source name", () => {
+    // A cross-workspace tool `ws_<id>-synapse-collateral__preview` surfaces a
+    // server `ws_<id>-synapse-collateral` (no `__tool`). The bare source is
+    // what the registry is keyed on.
+    expect(parseNamespacedSourceName("ws_nimblebrain_shared-synapse-collateral")).toEqual({
+      wsId: "ws_nimblebrain_shared",
+      sourceName: "synapse-collateral",
+    });
+  });
+
+  test("keeps hyphenated source names intact (first hyphen is the ws boundary)", () => {
+    expect(parseNamespacedSourceName("ws_helix-crm-plus")).toEqual({
+      wsId: "ws_helix",
+      sourceName: "crm-plus",
+    });
+  });
+
+  test("returns null for a bare source name (caller uses the ambient workspace)", () => {
+    expect(parseNamespacedSourceName("synapse-collateral")).toBeNull();
+    expect(parseNamespacedSourceName("calendar")).toBeNull();
+  });
+
+  test("throws on a malformed ws_-prefixed id (probe/typo, not a bare name)", () => {
+    // Mirrors parseNamespacedToolName: a `ws_` head that isn't a valid id is
+    // surfaced, never silently treated as a bare source.
+    expect(() => parseNamespacedSourceName("ws_BAD ID-collateral")).toThrow(
+      UnknownNamespacedToolName,
+    );
   });
 });

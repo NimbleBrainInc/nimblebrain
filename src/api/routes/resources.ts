@@ -50,7 +50,13 @@ export function resourceRoutes(ctx: AppContext) {
         const url = new URL(c.req.url);
         const prefix = `/v1/apps/${c.req.param("name")}/resources/`;
         const resourcePath = decodeURIComponent(url.pathname.slice(prefix.length));
-        return handleResourceProxy(name, resourcePath, ctx.runtime, c.var.workspaceId);
+        return handleResourceProxy(
+          name,
+          resourcePath,
+          ctx.runtime,
+          c.var.workspaceId,
+          c.var.identity,
+        );
       })
   );
 }
