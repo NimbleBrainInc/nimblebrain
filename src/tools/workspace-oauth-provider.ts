@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import { chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -166,6 +166,24 @@ export interface WorkspaceOAuthProviderOptions {
    * default behavior (no cancellation).
    */
   abortSignal?: AbortSignal;
+  /**
+   * Opt in to the server-side authorize-redirect probe — a HEADLESS-only
+   * optimization. When true, `redirectToAuthorization` fetches the
+   * authorize URL server-side and follows the redirect chain to extract a
+   * code without a browser (Reboot's `Anonymous` dev provider 302s
+   * straight to our callback with `?code=…`).
+   *
+   * Default false, and it MUST stay false for normal interactive
+   * providers. Probing a real OAuth server (Granola, Claude.ai, etc.)
+   * issues a genuine server-side `/authorize` request that spins up a live
+   * authorization session bound to our PKCE `code_challenge` BEFORE the
+   * user acts — which the vendor then treats as a competing/abandoned
+   * attempt and rejects the user's real code at exchange (`invalid_code`)
+   * or strands the flow. A standard client never touches `/authorize`
+   * server-side; it just hands the URL to the browser. So: probe only when
+   * the bundle is known-headless.
+   */
+  headlessAuthProbe?: boolean;
 }
 
 /**
@@ -435,20 +453,58 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
   private readonly scopes?: string[];
   private readonly additionalAuthorizationParams?: Record<string, string>;
   private readonly abortSignal?: AbortSignal;
+  private readonly headlessAuthProbe: boolean;
   /** Cached DCR result + tokens to avoid redundant disk reads within a flow. */
   private cachedClientInfo: OAuthClientInformationFull | null = null;
   private cachedTokens: OAuthTokens | null = null;
   /**
-   * The promise for the in-flight authorization. Set by `state()` to a
-   * provider-local deferred (used by headless flows that resolve in
-   * `redirectToAuthorization`). On the interactive branch, it's REPLACED
-   * with the `oauth-flow-registry` promise — that one resolves when the
-   * HTTP callback route receives the code from the user's browser.
-   *
+   * In-flight DCR coalesce. Set in `clientInformation()` just before it
+   * returns `undefined` (which tells the SDK to do DCR). Resolved by the
+   * first `saveClientInformation()` call. Concurrent `clientInformation()`
+   * callers await this instead of independently returning undefined and
+   * causing the SDK to do parallel DCRs whose results overwrite each
+   * other's `client.json`. Without coalescing here, the URL we capture in
+   * `redirectToAuthorization` can carry one DCR's `client_id` while
+   * `client.json` on disk holds another's — vendor issues the code for
+   * the URL's client, we exchange with disk's client, vendor returns
+   * `invalid_code`. DCR runs BEFORE `state()` in the SDK's auth() flow,
+   * so the `pendingFlow`-keyed coalesce (state/verifier/url) can't cover
+   * it — DCR needs its own coalesce slot. Cleared after first save.
+   */
+  private dcrInFlight: Deferred<OAuthClientInformationFull | undefined> | null = null;
+  /**
+   * The in-flight OAuth flow. Set by `state()` to a provider-local deferred
+   * (used by headless flows that resolve in `redirectToAuthorization`). On
+   * the interactive branch, `.promise` is REPLACED with the
+   * `oauth-flow-registry` promise — that one resolves when the HTTP
+   * callback route receives the code from the user's browser.
    * `awaitPendingFlow()` reads `.promise` so it works for both branches
    * uniformly.
+   *
+   * **Why the extra `verifier` / `urlCaptured` fields**: the MCP SDK's
+   * HTTP transport opens a connection with multiple parallel requests
+   * (POST initialize, POST initialized notification, GET for SSE stream).
+   * When OAuth is required, EACH request 401s and EACH 401 independently
+   * triggers `auth()` on this provider, so `state()` / `saveCodeVerifier`
+   * / `redirectToAuthorization` run 2–3× concurrently for one logical
+   * connect. Without coalescing, each run generates fresh PKCE,
+   * overwrites `verifier.json`, and captures a new auth URL — the user
+   * opens the FIRST URL, vendor binds the code to challenge #1, exchange
+   * uses verifier #N from disk, vendor returns `invalid_code`. These
+   * fields let the first concurrent call claim the flow and subsequent
+   * calls observe the claim and no-op, so all callers share one PKCE
+   * pair and one auth URL. The check-then-claim is synchronous (no
+   * `await` between read and assignment), so JS single-threading makes
+   * it atomic — no lock primitives needed.
    */
-  private pendingFlow: { promise: Promise<string>; deferred?: Deferred<string> } | null = null;
+  private pendingFlow: {
+    promise: Promise<string>;
+    deferred?: Deferred<string>;
+    /** First saveCodeVerifier wins; subsequent concurrent calls no-op. */
+    verifier?: string;
+    /** First redirectToAuthorization wins; subsequent calls throw without re-capturing. */
+    urlCaptured?: boolean;
+  } | null = null;
   /**
    * The latest state value generated by `state()`. Captured so the
    * interactive branch of `redirectToAuthorization` can register the
@@ -471,6 +527,7 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     validateAdditionalAuthorizationParams(opts.additionalAuthorizationParams);
     this.additionalAuthorizationParams = opts.additionalAuthorizationParams;
     this.abortSignal = opts.abortSignal;
+    this.headlessAuthProbe = opts.headlessAuthProbe === true;
 
     // Resolve the per-owner storage root. Two construction modes:
     //
@@ -552,6 +609,16 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
   }
 
   state(): string {
+    // Coalesce concurrent SDK `auth()` invocations. If a flow is already
+    // in progress on this provider (typical: the SDK transport's parallel
+    // initialize / initialized / SSE-GET each 401 and each calls auth()),
+    // return the SAME state so all callers join one flow instead of
+    // generating their own and racing each other's verifier / URL. See
+    // `pendingFlow` field comment for the full rationale. Sync — no
+    // await between the check and the early return.
+    if (this.pendingFlow && this.currentState) {
+      return this.currentState;
+    }
     const s = randomBytes(32).toString("base64url");
     // Create the deferred early so `awaitPendingFlow()` is safe to call any
     // time after `state()` runs. The headless branch resolves this in
@@ -600,8 +667,11 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     // member of the workspace authenticates as the same NimbleBrain
     // OAuth client.
     const data = await this.readJson<OAuthClientInformationFull>(this.dataDir, "client.json");
-    if (!data) return undefined;
-    if (!this.isClientInfoUsable(data)) {
+    if (data && this.isClientInfoUsable(data)) {
+      this.cachedClientInfo = data;
+      return data;
+    }
+    if (data && !this.isClientInfoUsable(data)) {
       // Drift detection: the platform's redirect_uri (derived from
       // NB_API_URL) doesn't match what was registered with the
       // authorization server when this client was DCR'd. Returning the
@@ -615,10 +685,52 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
         }, current=${this.callbackUrl}) — discarding cached client.json so the next flow re-registers`,
       );
       await this.unlinkIfExists(this.dataDir, "client.json");
-      return undefined;
     }
-    this.cachedClientInfo = data;
-    return data;
+    // No usable client info on disk → SDK will DCR. Coalesce concurrent
+    // callers so only ONE DCR happens; second caller awaits the first's
+    // result instead of triggering its own parallel DCR (which would
+    // overwrite the first's client.json and decouple URL-captured
+    // client_id from disk-stored client_id — root cause of `invalid_code`
+    // on the exchange).
+    if (this.dcrInFlight) return this.dcrInFlight.promise;
+    // Abort guard: if the lifecycle has already aborted (e.g. 15s startAuth
+    // timeout fired before we got here), don't claim the slot — return
+    // undefined so the SDK's auth() chain fails cleanly rather than seeding
+    // a deferred no one will resolve.
+    if (this.abortSignal?.aborted) return undefined;
+    const d = deferred<OAuthClientInformationFull | undefined>();
+    this.dcrInFlight = d;
+    // Liveness: tie the deferred to the lifecycle's abortSignal so an
+    // abort (timeout, explicit cancel, lifecycle teardown after a failed
+    // source.start) unblocks any concurrent `clientInformation()` callers
+    // awaiting this DCR. Without this, a first-caller DCR that throws
+    // (vendor 4xx, network drop, abort) never calls `saveClientInformation`,
+    // and the second concurrent SDK auth() chain on the same provider
+    // awaits `dcrInFlight.promise` forever — orphaned promise + reference
+    // leak even though the lifecycle's user-facing state has transitioned
+    // to dead. Awaiters get `undefined`, which routes them through the
+    // SDK's natural failure path (they'll error too, because the broader
+    // auth() they're inside is already aborting).
+    //
+    // CAS on `this.dcrInFlight === d` so a concurrent
+    // saveClientInformation that already nulled the slot (success path)
+    // can't be undone by a late-firing abort. `{ once: true }` is
+    // belt-and-suspenders for the success-then-abort ordering.
+    this.abortSignal?.addEventListener(
+      "abort",
+      () => {
+        if (this.dcrInFlight === d) {
+          d.resolve(undefined);
+          this.dcrInFlight = null;
+        }
+      },
+      { once: true },
+    );
+    // Detach a no-op .catch so a dangling unresolved promise (caller
+    // never calls saveClientInformation AND no abortSignal) doesn't
+    // surface as an unhandled rejection. Cleared on first save.
+    d.promise.catch(() => {});
+    return undefined;
   }
 
   /**
@@ -651,8 +763,32 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
       );
       return;
     }
-    this.cachedClientInfo = info;
-    await this.writeJson(this.dataDir, "client.json", info);
+    // Coalesce concurrent DCR results. The MCP SDK's parallel transport
+    // requests each independently 401, trigger their own auth() flow, and
+    // do their own DCR — N concurrent saveClientInformation calls follow,
+    // each with a DIFFERENT freshly-registered client_id. Without
+    // first-writer-wins, the last save overwrites disk + cache, but the
+    // URL captured in `redirectToAuthorization` (which the user opens) was
+    // built using a DIFFERENT call's client_id. Vendor issues the code
+    // for URL-client, we exchange with disk-client, vendor returns
+    // `invalid_code`. First-wins ensures both the disk and the captured
+    // URL use the SAME client_id (the first DCR's), because subsequent
+    // SDK calls' `clientInformation()` returns the first-coalesced value
+    // (via `dcrInFlight`) instead of triggering a parallel DCR. Sync
+    // check-then-claim — JS single-threading makes it atomic.
+    const isFirstSave = !this.cachedClientInfo;
+    if (isFirstSave) {
+      this.cachedClientInfo = info;
+      await this.writeJson(this.dataDir, "client.json", info);
+    }
+    // Release any callers blocked in `clientInformation()` awaiting this
+    // DCR. They receive the first save's info (whether we wrote it just
+    // now or another caller had already populated `cachedClientInfo`),
+    // skip their own DCR, and proceed with the same client_id.
+    if (this.dcrInFlight) {
+      this.dcrInFlight.resolve(this.cachedClientInfo ?? info);
+      this.dcrInFlight = null;
+    }
   }
 
   async tokens(): Promise<OAuthTokens | undefined> {
@@ -704,6 +840,25 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
   }
 
   async saveCodeVerifier(codeVerifier: string): Promise<void> {
+    // Coalesce concurrent SDK `auth()` invocations. The SDK calls this
+    // after `startAuthorization` generates a fresh PKCE pair — if N
+    // concurrent auth() calls run on this provider, each calls us with
+    // its own verifier and the last writer to disk wins. The user has
+    // already been committed to the FIRST flow's auth URL (returned by
+    // the first state() / redirectToAuthorization), so its challenge is
+    // what the vendor stored. Overwriting verifier.json with a later
+    // call's value desynchronizes verifier from challenge → vendor
+    // returns `invalid_code` on exchange.
+    //
+    // Claim the slot synchronously (no `await` between check and set) so
+    // JS single-threading makes the first-writer-wins atomic. The disk
+    // write that follows is best-effort — even if it races with another
+    // tick, the in-memory claim is the source of truth for which
+    // verifier is part of this flow.
+    if (this.pendingFlow) {
+      if (this.pendingFlow.verifier) return; // already claimed by an earlier concurrent auth()
+      this.pendingFlow.verifier = codeVerifier;
+    }
     await this.writeJson(this.dataDir, "verifier.json", { codeVerifier });
   }
 
@@ -719,6 +874,49 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
         "[workspace-oauth-provider] redirectToAuthorization called without an active flow",
       );
     }
+    // Coalesce concurrent SDK `auth()` invocations. If an earlier concurrent
+    // call already captured a URL and registered the flow with the
+    // oauth-flow-registry, this call MUST NOT capture a different URL.
+    if (this.pendingFlow.urlCaptured) {
+      throw new UnauthorizedError(
+        `Interactive OAuth already in progress for ${this.serverName} (concurrent auth() call coalesced).`,
+      );
+    }
+    // **PKCE coupling check.** `saveCodeVerifier` and `redirectToAuthorization`
+    // are decoupled in time — different concurrent auth() chains can win each
+    // race independently. If chain A's verifier is on disk but chain B's URL
+    // captures (different `code_challenge`), the user opens URL_B → vendor
+    // binds the code to challenge_B → exchange POSTs verifier_A → vendor
+    // rejects. To preserve PKCE correctness we let ONLY the chain whose
+    // verifier matches this URL's challenge proceed to capture. Other
+    // chains throw and let the matching chain win. The matching chain is
+    // uniquely identified: the saveCodeVerifier winner stored its verifier
+    // in `pendingFlow.verifier`, and only that chain's startAuthorization
+    // output (URL + verifier from one closure) has the matching
+    // SHA256(verifier) == code_challenge relation.
+    if (this.pendingFlow.verifier) {
+      // Gate on S256 — the SHA256 derivation only applies to
+      // `code_challenge_method=S256`. For `plain` (rare in modern OAuth,
+      // not used by the MCP SDK today) the challenge equals the verifier
+      // and the SHA256 comparison would falsely reject every chain.
+      // Defensive against a future SDK / vendor that ever surfaces a
+      // non-S256 flow through this provider.
+      const method = url.searchParams.get("code_challenge_method");
+      if (method === "S256") {
+        const expectedChallenge = createHash("sha256")
+          .update(this.pendingFlow.verifier)
+          .digest("base64url");
+        const urlChallenge = url.searchParams.get("code_challenge");
+        if (urlChallenge && urlChallenge !== expectedChallenge) {
+          // This auth() chain's URL is built from a DIFFERENT verifier than
+          // the one we kept on disk. Throw without capturing — wait for the
+          // matching chain's redirectToAuthorization to win the capture.
+          throw new UnauthorizedError(
+            `Interactive OAuth: this chain's PKCE doesn't match the claimed verifier — deferring to matching chain.`,
+          );
+        }
+      }
+    }
     // Track A: append operator-supplied additional authorize params
     // (e.g. Google's access_type=offline + prompt=consent for refresh-
     // token issuance). Reserved keys are blocked at construction so we
@@ -728,6 +926,11 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
         url.searchParams.set(k, v);
       }
     }
+    // Claim the URL-capture slot synchronously, BEFORE any await. The
+    // headless probe loop and interactive branch below both `await`, so
+    // without this claim two concurrent calls could both reach the
+    // capture phase and the second would clobber the first's state.
+    this.pendingFlow.urlCaptured = true;
     // Local deferred for the headless branch. The interactive branch
     // doesn't use this — it swaps `pendingFlow.promise` for the flow
     // registry's promise instead.
@@ -747,75 +950,83 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     // Real interactive providers (Granola, Claude.ai hosted) redirect to a
     // login page on a different origin — the loop never lands on our
     // callback and we fall through to the interactive branch.
-    const MAX_HOPS = 10;
-    let current = url;
-    try {
-      for (let hop = 0; hop < MAX_HOPS; hop++) {
-        // SSRF defense: validate EVERY hop (including the initial URL the
-        // server handed us), not just the configured bundle URL. The
-        // authorize URL and every Location header are attacker-controlled —
-        // a compromised remote MCP server could otherwise use our fetch()
-        // as an internal-network probe tool (AWS IMDS, RFC1918 admin
-        // panels, loopback services). Wrap with our marker prefix so the
-        // outer catch rethrows instead of silently falling through to the
-        // interactive branch.
-        try {
-          validateBundleUrl(current, { allowInsecure: this.allowInsecureRemotes });
-        } catch (err) {
-          throw new Error(
-            `[workspace-oauth-provider] SSRF block on ${current.toString()}: ${
-              err instanceof Error ? err.message : String(err)
-            }`,
-          );
-        }
+    // Headless-only (see `headlessAuthProbe`). A standard interactive
+    // provider must NOT be probed server-side: fetching `/authorize`
+    // ourselves spins up a vendor authorization session bound to our PKCE
+    // challenge before the user acts, which makes the vendor reject the
+    // user's real code at exchange (`invalid_code`) or strand the flow.
+    // Default-off; only Reboot-style headless bundles opt in.
+    if (this.headlessAuthProbe) {
+      const MAX_HOPS = 10;
+      let current = url;
+      try {
+        for (let hop = 0; hop < MAX_HOPS; hop++) {
+          // SSRF defense: validate EVERY hop (including the initial URL the
+          // server handed us), not just the configured bundle URL. The
+          // authorize URL and every Location header are attacker-controlled —
+          // a compromised remote MCP server could otherwise use our fetch()
+          // as an internal-network probe tool (AWS IMDS, RFC1918 admin
+          // panels, loopback services). Wrap with our marker prefix so the
+          // outer catch rethrows instead of silently falling through to the
+          // interactive branch.
+          try {
+            validateBundleUrl(current, { allowInsecure: this.allowInsecureRemotes });
+          } catch (err) {
+            throw new Error(
+              `[workspace-oauth-provider] SSRF block on ${current.toString()}: ${
+                err instanceof Error ? err.message : String(err)
+              }`,
+            );
+          }
 
-        // Honor lifecycle's timeout: when the controller aborts, the
-        // in-flight TCP read terminates with an AbortError instead of
-        // running its full network timeout in the background.
-        const res = await fetch(current.toString(), {
-          redirect: "manual",
-          ...(this.abortSignal ? { signal: this.abortSignal } : {}),
-        });
-        if (res.status < 300 || res.status >= 400) {
-          // Non-redirect response — provider sent us a login page (200) or
-          // an error (4xx/5xx). Not headless.
-          break;
-        }
-        const location = res.headers.get("location");
-        if (!location) break;
-        const next = new URL(location, current);
-        if (canonicalEndpoint(next) === this.canonicalCallback) {
-          const code = next.searchParams.get("code");
-          const errParam = next.searchParams.get("error");
-          if (code) {
-            log.debug(
-              "mcp",
-              `[oauth] headless flow: ${this.serverName} got code=${code.slice(0, 8)}… after ${hop + 1} hop(s)`,
-            );
-            d?.resolve(code);
-            return;
+          // Honor lifecycle's timeout: when the controller aborts, the
+          // in-flight TCP read terminates with an AbortError instead of
+          // running its full network timeout in the background.
+          const res = await fetch(current.toString(), {
+            redirect: "manual",
+            ...(this.abortSignal ? { signal: this.abortSignal } : {}),
+          });
+          if (res.status < 300 || res.status >= 400) {
+            // Non-redirect response — provider sent us a login page (200) or
+            // an error (4xx/5xx). Not headless.
+            break;
           }
-          if (errParam) {
-            const err = new Error(
-              `[workspace-oauth-provider] authorization server returned error: ${errParam}`,
-            );
-            d?.reject(err);
-            throw err;
+          const location = res.headers.get("location");
+          if (!location) break;
+          const next = new URL(location, current);
+          if (canonicalEndpoint(next) === this.canonicalCallback) {
+            const code = next.searchParams.get("code");
+            const errParam = next.searchParams.get("error");
+            if (code) {
+              log.debug(
+                "mcp",
+                `[oauth] headless flow: ${this.serverName} got code=${code.slice(0, 8)}… after ${hop + 1} hop(s)`,
+              );
+              d?.resolve(code);
+              return;
+            }
+            if (errParam) {
+              const err = new Error(
+                `[workspace-oauth-provider] authorization server returned error: ${errParam}`,
+              );
+              d?.reject(err);
+              throw err;
+            }
+            break;
           }
-          break;
+          current = next;
         }
-        current = next;
+      } catch (probeErr) {
+        // Rethrow our own explicit errors (authz server error, SSRF block)
+        // so callers see the real cause instead of the generic
+        // interactive-branch surface. Swallow network failures and fall
+        // through to the interactive branch below.
+        if (probeErr instanceof Error && probeErr.message.includes("[workspace-oauth-provider]")) {
+          d?.reject(probeErr);
+          throw probeErr;
+        }
+        log.debug("mcp", `[oauth] ${this.serverName} redirect probe failed: ${String(probeErr)}`);
       }
-    } catch (probeErr) {
-      // Rethrow our own explicit errors (authz server error, SSRF block)
-      // so callers see the real cause instead of the generic
-      // interactive-branch surface. Swallow network failures and fall
-      // through to the interactive branch below.
-      if (probeErr instanceof Error && probeErr.message.includes("[workspace-oauth-provider]")) {
-        d?.reject(probeErr);
-        throw probeErr;
-      }
-      log.debug("mcp", `[oauth] ${this.serverName} redirect probe failed: ${String(probeErr)}`);
     }
 
     // Interactive branch: real browser redirect required. Register the
@@ -837,6 +1048,27 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
       throw err;
     }
 
+    // Diagnostic: capture the exact authorize-URL parameters so a later
+    // /token exchange that fails with `invalid_code` can be correlated
+    // back to the URL the user was sent to. PKCE failures are otherwise
+    // invisible — the SDK doesn't surface which challenge it computed,
+    // and the vendor's error body just says `invalid_code` without
+    // disclosing which check failed. Paired with the token-exchange
+    // fetch logger (also gated on NB_DEBUG_OAUTH_EXCHANGE): comparing
+    // the challenge here to SHA256(verifier) at exchange time pins a
+    // concurrency-race regression versus a vendor-side rejection.
+    // Logged at warn so it's visible in prod without a log-level bump;
+    // gated behind the env var so it disappears with one flip.
+    if (process.env.NB_DEBUG_OAUTH_EXCHANGE) {
+      // state is opaque CSRF protection, not a hard secret, but the env-
+      // gated log lands in operator log aggregation — truncating to 8
+      // chars (matching the existing `state.slice(0, 8)` convention on
+      // the next log line) is enough to correlate flows in a trace
+      // without exposing the full value.
+      log.warn(
+        `[oauth-debug] AUTHORIZE ${this.serverName} state=${stateParam.slice(0, 8)}… client_id=${url.searchParams.get("client_id")} code_challenge=${url.searchParams.get("code_challenge")} code_challenge_method=${url.searchParams.get("code_challenge_method")} redirect_uri=${url.searchParams.get("redirect_uri")}`,
+      );
+    }
     log.debug(
       "mcp",
       `[oauth] interactive flow: ${this.serverName} registering state=${stateParam.slice(0, 8)}… url=${url.origin}…`,
@@ -850,7 +1082,16 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     const ownerKey =
       this.owner.type === "workspace" ? this.owner.wsId : `user:${this.owner.userId}`;
     const registryPromise = registerInteractiveFlow(stateParam, ownerKey, this.serverName);
-    this.pendingFlow = { promise: registryPromise };
+    // Swap the promise to the registry's (which resolves on HTTP callback
+    // delivering the code) and drop the headless-branch deferred (no longer
+    // applicable on the interactive path). MUTATE rather than replace the
+    // object — the existing flow's claim bits (`verifier`, `urlCaptured`)
+    // belong to the same single in-flight flow and must remain observable
+    // to any concurrent `saveCodeVerifier` / `redirectToAuthorization` that
+    // arrives after this point. Replacement loses them and re-opens the
+    // race this file is built to prevent.
+    this.pendingFlow.promise = registryPromise;
+    this.pendingFlow.deferred = undefined;
 
     // Notify the lifecycle / UI so the bundle transitions to pending_auth
     // and the banner appears. Errors from the callback must not break the
@@ -881,6 +1122,15 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     if (scope === "all" || scope === "client") {
       this.cachedClientInfo = null;
       await this.unlinkIfExists(this.dataDir, "client.json");
+      // Release any in-flight DCR coalesce so the SDK's post-invalidate
+      // retry path can do a FRESH DCR. Without this, the retry's
+      // clientInformation() would await the stale `dcrInFlight` promise
+      // forever (it was meant to resolve from saveClientInformation, but
+      // that already happened with the now-invalidated client).
+      if (this.dcrInFlight) {
+        this.dcrInFlight.resolve(undefined);
+        this.dcrInFlight = null;
+      }
     }
     if (scope === "all" || scope === "tokens") {
       this.cachedTokens = null;

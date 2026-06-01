@@ -48,6 +48,9 @@ describe("WorkspaceOAuthProvider — abortSignal threading", () => {
         workDir,
         callbackUrl: CALLBACK,
         allowInsecureRemotes: true,
+        // The abort threads into the redirect-probe fetch, which only runs
+        // when the probe is enabled (off by default now).
+        headlessAuthProbe: true,
         abortSignal: controller.signal,
       });
 
@@ -89,6 +92,7 @@ describe("WorkspaceOAuthProvider — abortSignal threading", () => {
         workDir,
         callbackUrl: CALLBACK,
         allowInsecureRemotes: true,
+        headlessAuthProbe: true,
         // no abortSignal
       });
       const authUrl = new URL(`http://localhost:${mockServer.port}/authorize`);

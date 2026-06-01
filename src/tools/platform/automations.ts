@@ -27,7 +27,7 @@ import { textContent } from "../../engine/content-helpers.ts";
 import type { EventSink } from "../../engine/types.ts";
 import { getRequestContext } from "../../runtime/request-context.ts";
 import type { Runtime } from "../../runtime/runtime.ts";
-import type { ChatRequest } from "../../runtime/types.ts";
+import type { TaskRequest } from "../../runtime/types.ts";
 import { defineInProcessApp, type InProcessTool } from "../in-process-app.ts";
 import type { McpSource } from "../mcp-source.ts";
 import { AUTOMATIONS_PANEL_HTML } from "../platform-resources/automations/panel.ts";
@@ -67,13 +67,14 @@ export async function createAutomationsSource(
     process.stderr.write(`[automations] Fixed ${orphanCount} orphaned run(s)\n`);
   }
 
-  // Direct executor: calls runtime.chat() in-process. `getExecutorContext` is
-  // called per run to resolve WHO the run acts as. A user-triggered run (test
-  // button) reads the current request context. A SCHEDULED run has no request
-  // context, so it fires AS THE OWNER — identity = the automation's `ownerId`,
-  // focused on its provenance `workspaceId` — exactly as if the owner had sent
-  // the message into the runtime (full cross-workspace reach, the focused
-  // workspace's tools active).
+  // Direct executor: calls runtime.executeTask() in-process — the unattended
+  // sibling of chat() that frames the agent as producing a deliverable, not
+  // a conversation turn. `getExecutorContext` is called per run to resolve
+  // WHO the run acts as. A user-triggered run (test button) reads the
+  // current request context. A SCHEDULED run has no request context, so it
+  // fires AS THE OWNER — identity = the automation's `ownerId`, focused on
+  // its provenance `workspaceId` if set — exactly as if the owner had
+  // queued the task themselves.
   function getExecutorContext(automation?: Automation): ExecutorContext {
     const reqCtx = getRequestContext();
     return {
@@ -85,7 +86,7 @@ export async function createAutomationsSource(
     };
   }
   const executor = createDirectExecutor(
-    (req) => runtime.chat(req as ChatRequest),
+    (req) => runtime.executeTask(req as TaskRequest),
     getExecutorContext,
   );
   const scheduler = new Scheduler(executor, { usersDir, defaultTimezone });

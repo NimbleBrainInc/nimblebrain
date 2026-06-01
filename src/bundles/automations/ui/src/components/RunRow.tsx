@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { ChevronIcon } from "../icons.tsx";
+import { renderMarkdown } from "../markdown.ts";
 import type { AutomationRun } from "../types.ts";
 import { formatDuration, formatTokens, relativeTime, statusDotClass } from "../utils.ts";
 
@@ -40,7 +41,13 @@ export function RunRow({ run, showName }: { run: AutomationRun; showName?: boole
               >
                 Result
               </div>
-              <pre>{run.resultPreview}</pre>
+              <div
+                className="out-md"
+                // biome-ignore lint/security/noDangerouslySetInnerHtml: sanitized via DOMPurify in renderMarkdown
+                dangerouslySetInnerHTML={{
+                  __html: renderMarkdown(run.resultPreview),
+                }}
+              />
             </div>
           )}
           {run.error && (

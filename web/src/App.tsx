@@ -11,19 +11,23 @@ import {
   setPlatformVersion,
   tryBootstrap,
 } from "./api/client";
+import { closeAllConversationEvents } from "./api/conversation-events-client";
+import { closeEventsClient } from "./api/events-client";
 import { AppWithChat } from "./components/AppWithChat";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Login } from "./components/Login";
+import { CommandPalette } from "./components/palette/CommandPalette";
 import { RouteGuard } from "./components/RouteGuard";
 import { ShellLayout } from "./components/ShellLayout";
 import { WorkspaceRouteGuard } from "./components/WorkspaceRouteGuard";
 import { ChatProvider, useChatConfigContext, useChatContext } from "./context/ChatContext";
 import { ChatPanelProvider, useChatPanelContext } from "./context/ChatPanelContext";
+import { PaletteProvider } from "./context/PaletteContext";
 import { SessionProvider } from "./context/SessionContext";
 import { ShellProvider } from "./context/ShellContext";
-import { WorkspaceAppIconsProvider } from "./context/WorkspaceAppIconsProvider";
 import { SidebarProvider } from "./context/SidebarContext";
 import { ThemeProvider, useTheme } from "./context/ThemeContext.tsx";
+import { WorkspaceAppIconsProvider } from "./context/WorkspaceAppIconsProvider";
 import {
   useWorkspaceContext,
   type WorkspaceInfo,
@@ -46,6 +50,7 @@ import { ModelTab } from "./pages/settings/ModelTab";
 import { OrgAboutTab } from "./pages/settings/OrgAboutTab";
 import { OrgRegistriesTab } from "./pages/settings/OrgRegistriesTab";
 import { OrgSettingsPage } from "./pages/settings/OrgSettingsPage";
+import { OrgSkillsTab } from "./pages/settings/OrgSkillsTab";
 import { OrgUsageTab } from "./pages/settings/OrgUsageTab";
 import { SettingsAppPanel } from "./pages/settings/SettingsAppPanel";
 import { SkillsTab } from "./pages/settings/SkillsTab";
@@ -188,14 +193,16 @@ function BootstrappedShell({
       <WorkspaceAppIconsProvider token={token} workspaceId={activeWorkspace?.id}>
         <ChatProvider initialConfig={initialConfig} currentUserId={currentUserId}>
           <ChatPanelProvider>
-            <AuthenticatedAppContent
-              token={token}
-              forSlot={forSlot}
-              mainRoutes={mainRoutes}
-              shellWorkspaceId={shellWorkspaceId}
-              refreshShell={refreshShell}
-              onLogout={onLogout}
-            />
+            <PaletteProvider>
+              <AuthenticatedAppContent
+                token={token}
+                forSlot={forSlot}
+                mainRoutes={mainRoutes}
+                shellWorkspaceId={shellWorkspaceId}
+                refreshShell={refreshShell}
+                onLogout={onLogout}
+              />
+            </PaletteProvider>
           </ChatPanelProvider>
         </ChatProvider>
       </WorkspaceAppIconsProvider>
@@ -246,6 +253,14 @@ function AuthenticatedAppContent({
     // without a page reload.
     onBundleLifecycleChanged: () => {
       void refreshShell();
+    },
+    // After a reconnect, any bundle / config events emitted during the
+    // disconnect gap were dropped (the workspace stream has no
+    // Last-Event-Id replay). Refetch the two state owners that consume
+    // those events so the UI snaps back to truth.
+    onReconnect: () => {
+      void refreshShell();
+      config.refreshConfig();
     },
   });
 
@@ -345,6 +360,9 @@ function AuthenticatedAppContent({
       {/* ActionBridge handles iframe action events. It consumes ChatContext
           (streaming) but renders nothing, so its re-renders are free. */}
       <ActionBridge handleNavigate={handleNavigate} resolveAppRoute={resolveAppRoute} />
+      {/* Command palette (⌘P) — global surface, sibling of the shell layout
+          and chat chrome, so it's reachable from any route. */}
+      <CommandPalette onLogout={onLogout} />
       <ShellLayout forSlot={forSlot} onLogout={onLogout}>
         <ErrorBoundary resetKeys={[location.pathname]}>
           <Routes>
@@ -460,6 +478,14 @@ function AuthenticatedAppContent({
                   </RouteGuard>
                 }
               />
+              <Route
+                path="skills"
+                element={
+                  <RouteGuard role="org_admin">
+                    <OrgSkillsTab />
+                  </RouteGuard>
+                }
+              />
               <Route path="about" element={<OrgAboutTab />} />
             </Route>
           </Routes>
@@ -537,6 +563,22 @@ export function App() {
   const [bootstrap, setBootstrap] = useState<BootstrapResponse | null>(null);
   const [authenticated, setAuthenticated] = useState(false);
   const [checking, setChecking] = useState(true);
+
+  // Tab-lifetime cleanup. `pagehide` fires on tab close, navigation away,
+  // and bfcache enter — earlier and more reliable than `beforeunload`,
+  // and it lets the server reclaim the SSE slots immediately rather than
+  // waiting for the TCP teardown to be noticed by the next failed
+  // enqueue. The TCP teardown path still works as a fallback.
+  useEffect(() => {
+    const onPageHide = (): void => {
+      closeEventsClient();
+      closeAllConversationEvents();
+    };
+    window.addEventListener("pagehide", onPageHide);
+    return () => {
+      window.removeEventListener("pagehide", onPageHide);
+    };
+  }, []);
 
   const handleLogout = useCallback(() => {
     logout();

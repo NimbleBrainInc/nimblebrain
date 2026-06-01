@@ -7,6 +7,9 @@
  * Coverage:
  * - text MIME → returned as `text` (utf-8 decoded)
  * - binary MIME → returned as `blob` (base64-encoded)
+ * - `/mcp` JSON-RPC `resources/read` (the iframe-bridge path) resolves
+ *   identity-owned `files://` URIs even though `files` lives outside every
+ *   workspace registry
  * - non-existent URI → 404 / not-found
  */
 
@@ -14,6 +17,8 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { type ServerHandle, startServer } from "../../src/api/server.ts";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
@@ -133,6 +138,31 @@ describe("workspace files exposed as MCP resources", () => {
     expect(first.text).toBeUndefined();
     expect(first.blob).toBeDefined();
     expect(Buffer.from(first.blob!, "base64").equals(PNG_BYTES)).toBe(true);
+  });
+
+  it("resolves identity files over the /mcp JSON-RPC surface (iframe-bridge path)", async () => {
+    // Regression: the iframe bridge reads `files://<id>` through `/mcp`
+    // `resources/read` (bare URI, no `server` param) — NOT the REST endpoint
+    // the other cases above exercise. The `/mcp` handler used to search only
+    // workspace registries, but `files` is a kernel identity source that
+    // lives outside them, so the read never resolved and the request hung.
+    // This drives the real MCP SDK client end-to-end to lock in the fix.
+    const id = await uploadChatFile(PNG_BYTES, "bridge.png", "image/png");
+
+    const transport = new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp`));
+    const client = new Client({ name: "files-mcp-bridge-test", version: "1.0.0" });
+    await client.connect(transport);
+    try {
+      const result = await client.readResource({ uri: `files://${id}` });
+      expect(result.contents).toHaveLength(1);
+      const first = result.contents[0]!;
+      expect(first.uri).toBe(`files://${id}`);
+      expect(first.mimeType).toBe("image/png");
+      expect(typeof first.blob).toBe("string");
+      expect(Buffer.from(first.blob as string, "base64").equals(PNG_BYTES)).toBe(true);
+    } finally {
+      await client.close();
+    }
   });
 
   it("missing files:// URI surfaces as not-found", async () => {

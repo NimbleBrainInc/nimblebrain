@@ -1,6 +1,7 @@
 import { useCallTool, useDataSync } from "@nimblebrain/synapse/react";
 import { useCallback, useEffect, useState } from "react";
 import { BackArrowIcon, WarningIcon } from "../icons.tsx";
+import { renderMarkdown } from "../markdown.ts";
 import type { AutomationDetail, AutomationRun } from "../types.ts";
 import {
   asDict,
@@ -274,9 +275,13 @@ export function AutomationDetailView({
                 )}
               </div>
               {testResult.resultPreview && (
-                <pre style={{ whiteSpace: "pre-wrap", fontSize: 12 }}>
-                  {testResult.resultPreview}
-                </pre>
+                <div
+                  className="out-md"
+                  // biome-ignore lint/security/noDangerouslySetInnerHtml: sanitized via DOMPurify in renderMarkdown
+                  dangerouslySetInnerHTML={{
+                    __html: renderMarkdown(testResult.resultPreview as string),
+                  }}
+                />
               )}
               {testResult.error && (
                 <pre style={{ color: "var(--nb-color-danger, #dc2626)", fontSize: 12 }}>

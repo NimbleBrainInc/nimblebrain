@@ -28,11 +28,10 @@ export function bootstrapWorkspacesToInfo(
     memberCount: ws.memberCount,
     bundles: [],
     userRole: ws.role,
-    // `isPersonal` flows through unchanged from bootstrap. T010's
-    // WorkspaceTargetPicker reads it to preselect the personal
-    // workspace for personal-typical (`defaultBinding: "personal"`)
-    // connectors. Pre-Stage-1 deployments return `false` for every
-    // workspace; the picker degrades to "no preselection" gracefully.
+    // `isPersonal` flows through unchanged from bootstrap. The shell uses
+    // it to badge the personal workspace and to enforce the personal-
+    // workspace invariants in workspace settings. Pre-Stage-1 deployments
+    // return `false` for every workspace.
     isPersonal: ws.isPersonal,
   }));
 }

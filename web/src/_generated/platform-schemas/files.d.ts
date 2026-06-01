@@ -22,6 +22,26 @@ export declare const FilesReadInput: import("@sinclair/typebox").TObject<{
     id: import("@sinclair/typebox").TString;
 }>;
 export type FilesReadInput = Static<typeof FilesReadInput>;
+export declare const FilesReadPdfPagesInput: import("@sinclair/typebox").TObject<{
+    id: import("@sinclair/typebox").TString;
+    pages: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TInteger>;
+}>;
+export type FilesReadPdfPagesInput = Static<typeof FilesReadPdfPagesInput>;
+export interface FilesReadPdfPagesOutput {
+    id: string;
+    filename: string;
+    mimeType: string;
+    size: number;
+    totalPages: number;
+    requestedPages: number[];
+    missingPages: number[];
+    pages: Array<{
+        page: number;
+        text: string;
+        truncated: boolean;
+        empty: boolean;
+    }>;
+}
 export declare const FilesCreateInput: import("@sinclair/typebox").TObject<{
     manifest: import("@sinclair/typebox").TObject<{
         filename: import("@sinclair/typebox").TString;

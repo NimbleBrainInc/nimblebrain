@@ -30,6 +30,10 @@ function makeProvider(
     // blocks by default. Each test opts in explicitly; the "SSRF block" test
     // flips this off to assert the blocker works.
     allowInsecureRemotes: overrides.allowInsecureRemotes ?? true,
+    // This whole suite exercises the headless authorize-redirect probe, so
+    // it must opt in — the probe is off by default now (interactive
+    // providers never fetch /authorize server-side; see `headlessAuthProbe`).
+    headlessAuthProbe: true,
   });
 }
 
@@ -170,6 +174,7 @@ describe("WorkspaceOAuthProvider — authorize redirect probe (interactive)", ()
         workDir,
         callbackUrl: CALLBACK,
         allowInsecureRemotes: true,
+        headlessAuthProbe: true,
         onInteractiveAuthRequired: (url) => callbackUrls.push(url),
       });
       const state = p.state();
@@ -213,6 +218,7 @@ describe("WorkspaceOAuthProvider — authorize redirect probe (interactive)", ()
         workDir,
         callbackUrl: CALLBACK,
         allowInsecureRemotes: true,
+        headlessAuthProbe: true,
         onInteractiveAuthRequired: (url) => {
           captured = url;
         },

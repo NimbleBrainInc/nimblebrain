@@ -72,6 +72,18 @@ export function register(
   return promise;
 }
 
+/**
+ * Read the workspace id a pending flow was registered under, without
+ * resolving or removing it. The `/v1/mcp-auth/callback` route peeks this to
+ * build the workspace-scoped return URL (`/w/<slug>/settings/connectors`)
+ * before calling `resolveWithCode` (which deletes the flow). Single-process
+ * and synchronous, so peek-then-resolve has no TOCTOU. Returns null when no
+ * flow is registered for `state`.
+ */
+export function peekWorkspaceId(state: string): string | null {
+  return flows.get(state)?.wsId ?? null;
+}
+
 /** Resolve a pending flow by state. Returns true if found. */
 export function resolveWithCode(state: string, code: string): boolean {
   const flow = flows.get(state);

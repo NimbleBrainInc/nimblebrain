@@ -3,11 +3,11 @@ import { useCallback, useEffect, useState } from "react";
 import { ClockIcon, PlusIcon } from "../icons.tsx";
 import type { AutomationRun, AutomationSummary } from "../types.ts";
 import { asDict } from "../utils.ts";
-import { AutomationCard } from "./AutomationCard.tsx";
 import { AutomationDetailView } from "./AutomationDetailView.tsx";
 import { ConfirmDialog } from "./ConfirmDialog.tsx";
 import { CreateAutomationForm, TEMPLATES } from "./CreateAutomationForm.tsx";
-import { RunRow } from "./RunRow.tsx";
+import { RailAutomationItem, RailRunItem } from "./RailItem.tsx";
+import { ReaderPane } from "./ReaderPane.tsx";
 import { SkeletonCards, SkeletonRows } from "./Skeleton.tsx";
 
 export function AutomationsUI() {
@@ -19,14 +19,23 @@ export function AutomationsUI() {
   const deleteTool = useCallTool<string>("delete");
   const cancelTool = useCallTool<string>("cancel");
 
-  // State
+  // Data state
   const [automations, setAutomations] = useState<AutomationSummary[]>([]);
   const [runs, setRuns] = useState<AutomationRun[]>([]);
   const [loading, setLoading] = useState(true);
   const [runsLoading, setRunsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // UI state
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [actionInProgress, setActionInProgress] = useState<Record<string, string>>({});
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  // `userOpenedReader` only flips on explicit run click / back. On desktop
+  // both panes render regardless (no media query applies), so this only
+  // matters at <720px where the rail and reader stack and one is hidden.
+  // Without this, the auto-select of the most recent run would push the
+  // user straight into the reader on first load and hide the lists.
+  const [userOpenedReader, setUserOpenedReader] = useState(false);
   const [selectedAutomation, setSelectedAutomation] = useState<string | null>(null);
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [createTemplate, setCreateTemplate] = useState<(typeof TEMPLATES)[0] | null>(null);
@@ -75,6 +84,18 @@ export function AutomationsUI() {
     loadAll();
   });
 
+  // Auto-select the most recent run when one isn't selected (first load,
+  // or after the previously selected run was pruned from the 20-deep window).
+  useEffect(() => {
+    if (runs.length === 0) {
+      if (selectedRunId) setSelectedRunId(null);
+      return;
+    }
+    if (!selectedRunId || !runs.some((r) => r.id === selectedRunId)) {
+      setSelectedRunId(runs[0].id);
+    }
+  }, [runs, selectedRunId]);
+
   // Actions
   async function handleRunNow(name: string) {
     setActionInProgress((prev) => ({ ...prev, [name]: "running" }));
@@ -96,7 +117,7 @@ export function AutomationsUI() {
     const action = currentlyEnabled ? "pausing" : "resuming";
     setActionInProgress((prev) => ({ ...prev, [name]: action }));
     try {
-      await updateTool.call({ name, enabled: !currentlyEnabled });
+      await updateTool.call({ name, manifest: { enabled: !currentlyEnabled } });
     } catch {
       // silent
     } finally {
@@ -126,8 +147,21 @@ export function AutomationsUI() {
   }
 
   async function handleUpdate(name: string, fields: Record<string, unknown>) {
+    // Server's update tool expects { name, manifest?, body? }. The detail
+    // view's saveField() passes a flat { [field]: value } — split it: the
+    // prompt goes into `body`, everything else into `manifest`.
+    const args: Record<string, unknown> = { name };
+    const manifest: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(fields)) {
+      if (k === "prompt") {
+        args.body = v;
+      } else if (k !== "name") {
+        manifest[k] = v;
+      }
+    }
+    if (Object.keys(manifest).length > 0) args.manifest = manifest;
     try {
-      await updateTool.call({ name, ...fields });
+      await updateTool.call(args);
     } catch {
       // silent
     } finally {
@@ -164,7 +198,12 @@ export function AutomationsUI() {
     setShowCreateForm(true);
   }
 
-  // Create form
+  function pickTemplate(t: (typeof TEMPLATES)[0]) {
+    setCreateTemplate(t);
+    setShowCreateForm(true);
+  }
+
+  // Create form (full-panel)
   if (showCreateForm) {
     return (
       <CreateAutomationForm
@@ -183,7 +222,7 @@ export function AutomationsUI() {
     );
   }
 
-  // Detail view
+  // Automation config view (full-panel)
   if (selectedAutomation) {
     const summary = automations.find((a) => a.name === selectedAutomation);
     return (
@@ -209,7 +248,16 @@ export function AutomationsUI() {
     );
   }
 
-  // List view
+  // Two-pane reader (default)
+  const selectedRun = runs.find((r) => r.id === selectedRunId) || null;
+  const selectedRunAutomation = selectedRun
+    ? automations.find((a) => a.id === selectedRun.automationId)
+    : undefined;
+  // Mobile pane visibility is driven by explicit navigation, not selection.
+  // See the comment on `userOpenedReader` above.
+  const paneShow: "rail" | "reader" = userOpenedReader ? "reader" : "rail";
+  const automationNameById = new Map(automations.map((a) => [a.id, a.name]));
+
   return (
     <div className="app">
       <div className="header">
@@ -225,87 +273,122 @@ export function AutomationsUI() {
         </div>
       </div>
 
-      <div className="content">
-        {error && <div className="error-banner">{error}</div>}
+      {error && (
+        <div style={{ padding: "0 20px" }}>
+          <div className="error-banner">{error}</div>
+        </div>
+      )}
 
-        <div className="section-header">Automations</div>
-
-        {loading ? (
-          <SkeletonCards count={3} />
-        ) : automations.length === 0 ? (
-          <div className="empty-state">
-            <div className="empty-state-icon">
-              <ClockIcon />
-            </div>
-            <div className="empty-state-title">No automations yet</div>
-            <div className="empty-state-desc">
-              Create your first automation to run tasks on a schedule.
-            </div>
-            <div
-              style={{
-                display: "flex",
-                gap: 8,
-                flexWrap: "wrap",
-                marginTop: 16,
-                justifyContent: "center",
-              }}
-            >
-              {TEMPLATES.map((t) => (
-                <button
-                  type="button"
-                  key={t.id}
-                  className="btn"
-                  style={{
-                    textAlign: "left",
-                    padding: "8px 12px",
-                    ...(t.id === "custom" ? { borderStyle: "dashed" } : {}),
-                  }}
-                  onClick={() => {
-                    setCreateTemplate(t);
-                    setShowCreateForm(true);
-                  }}
-                >
-                  <div style={{ fontWeight: 500, fontSize: 13 }}>{t.name}</div>
-                  <div style={{ fontSize: 11, color: "var(--color-text-secondary, #737373)" }}>
-                    {t.description}
-                  </div>
-                </button>
-              ))}
-            </div>
+      <div className="two-pane" data-show={paneShow}>
+        <aside className="rail">
+          <div className="rail-section">
+            <span>Automations</span>
+            {automations.length > 0 && (
+              <span
+                style={{
+                  fontSize: 11,
+                  color: "var(--color-text-secondary, #737373)",
+                  textTransform: "none",
+                  letterSpacing: 0,
+                  fontWeight: 400,
+                }}
+              >
+                {automations.length}
+              </span>
+            )}
           </div>
-        ) : (
-          <div className="auto-list">
-            {automations.map((a) => (
-              <AutomationCard
+          {loading ? (
+            <div style={{ padding: "4px 16px" }}>
+              <SkeletonCards count={2} />
+            </div>
+          ) : automations.length === 0 ? (
+            <div className="rail-empty">
+              No automations yet. Start from a template:
+              <div className="template-grid" style={{ marginTop: 8 }}>
+                {TEMPLATES.map((t) => (
+                  <button
+                    type="button"
+                    key={t.id}
+                    className={`template-card${t.id === "custom" ? " dashed" : ""}`}
+                    onClick={() => pickTemplate(t)}
+                  >
+                    <span className="template-card-name">{t.name}</span>
+                    <span className="template-card-desc">{t.description}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : (
+            automations.map((a) => (
+              <RailAutomationItem
                 key={a.id}
                 automation={a}
-                actionInProgress={actionInProgress[a.name]}
+                active={selectedAutomation === a.name}
                 onClick={() => setSelectedAutomation(a.name)}
-                onRunNow={() => handleRunNow(a.name)}
-                onToggle={() => handleToggle(a.name, a.enabled)}
-                onDelete={() => handleDelete(a.name)}
-                onCancel={() => handleCancel(a.name)}
               />
-            ))}
+            ))
+          )}
+
+          <div className="rail-section">
+            <span>Recent Runs</span>
+            {runs.length > 0 && (
+              <span
+                style={{
+                  fontSize: 11,
+                  color: "var(--color-text-secondary, #737373)",
+                  textTransform: "none",
+                  letterSpacing: 0,
+                  fontWeight: 400,
+                }}
+              >
+                {runs.length}
+              </span>
+            )}
           </div>
-        )}
+          {runsLoading && runs.length === 0 ? (
+            <div style={{ padding: "4px 16px" }}>
+              <SkeletonRows count={3} />
+            </div>
+          ) : runs.length === 0 ? (
+            <div className="rail-empty">No runs yet.</div>
+          ) : (
+            runs.map((run) => (
+              <RailRunItem
+                key={run.id}
+                run={run}
+                automationName={automationNameById.get(run.automationId)}
+                active={selectedRunId === run.id}
+                onClick={() => {
+                  setSelectedRunId(run.id);
+                  setUserOpenedReader(true);
+                }}
+              />
+            ))
+          )}
+        </aside>
 
-        <div className="section-header" style={{ marginTop: 24 }}>
-          Recent Runs
-        </div>
-
-        {runsLoading && runs.length === 0 ? (
-          <SkeletonRows count={4} />
-        ) : runs.length === 0 ? (
-          <div className="empty-state" style={{ padding: "32px 24px" }}>
-            <div className="empty-state-desc">No run history yet.</div>
+        {runs.length === 0 && !runsLoading && !loading ? (
+          <div className="reader">
+            <div className="reader-empty">
+              <ClockIcon />
+              <div className="reader-empty-title" style={{ marginTop: 12 }}>
+                No runs yet
+              </div>
+              <div className="reader-empty-desc">
+                {automations.length === 0
+                  ? "Create an automation from a template in the left panel to get started."
+                  : "Your automations haven't run yet. Pick one and Run now, or wait for the schedule."}
+              </div>
+            </div>
           </div>
         ) : (
-          <div className="run-list">
-            {runs.map((run) => (
-              <RunRow key={run.id} run={run} showName />
-            ))}
-          </div>
+          <ReaderPane
+            run={selectedRun}
+            automation={selectedRunAutomation}
+            onRerun={handleRunNow}
+            onOpenConfig={(name) => setSelectedAutomation(name)}
+            onBack={() => setUserOpenedReader(false)}
+          />
         )}
       </div>
 

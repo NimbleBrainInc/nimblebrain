@@ -97,8 +97,19 @@ export function createRunSupervisor(config: SupervisorConfig = {}): RunSuperviso
     // false-positive on tools that return a long stable preamble (e.g. a
     // verbose header) followed by a short varying field. Two semantically
     // distinct results may collapse to the same fingerprint and trip the
-    // supervisor early. Addressable later by hashing head+tail or
-    // structuredContent when present; out of scope here.
+    // supervisor early. If that bites, hash head+tail rather than head-only.
+    //
+    // Deliberately NOT addressed by folding `structuredContent` into the hash.
+    // Tempting (a mutating tool's varying data often lives there), but it
+    // regresses this guard's core job: a paginated tool with an advancing
+    // cursor, or any tool that stamps a timestamp / request-id into its
+    // structured payload, would then produce a unique fingerprint on every
+    // call and never trip — even in a genuine loop. The contract is the
+    // inverse: a mutating tool must emit a per-call-varying field that reaches
+    // `content`. FastMCP serializes a structured return into both `content`
+    // and `structuredContent`, so a field like synapse-collateral's
+    // WorkspaceState.source_sha (a hash of the edited document) satisfies it.
+    // Fix a falsely-tripping tool at the tool, not by weakening the guard.
     const text = extractTextForModel(result.content).trim().slice(0, textCap);
     return createHash("sha1")
       .update(`${call.name}\0${result.isError ? "E" : "S"}\0${text}`)

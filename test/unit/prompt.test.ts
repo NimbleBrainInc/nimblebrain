@@ -8,6 +8,7 @@ import {
   type Layer3SkillEntry,
   type OverlayLayers,
   type PromptAppInfo,
+  TASK_IDENTITY,
   type UserPrefs,
   type WorkspaceContext,
 } from "../../src/prompt/compose.ts";
@@ -1083,5 +1084,102 @@ describe("composeSystemPromptTraced", () => {
     const sum = traced.layers.reduce((s, l) => s + l.tokens, 0);
     expect(traced.totalTokens).toBe(sum);
     expect(traced.totalTokens).toBeGreaterThan(0);
+  });
+});
+
+describe("composeSystemPrompt — task mode", () => {
+  it("prepends TASK_IDENTITY when mode is 'task'", () => {
+    const result = composeSystemPrompt(
+      [],
+      null,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      "task",
+    );
+    expect(result).toContain(TASK_IDENTITY);
+    expect(result).toContain("automated task");
+    expect(result).toContain("not present");
+    expect(result).toContain("deliverable");
+  });
+
+  it("does NOT use DEFAULT_IDENTITY fallback in task mode", () => {
+    // No core context skills → chat mode would emit DEFAULT_IDENTITY.
+    // Task mode emits TASK_IDENTITY instead — emitting both would give
+    // the model contradictory role definitions.
+    const result = composeSystemPrompt(
+      [],
+      null,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      "task",
+    );
+    expect(result).not.toContain(DEFAULT_IDENTITY);
+  });
+
+  it("defaults to chat mode when mode is omitted (existing call sites unchanged)", () => {
+    const result = composeSystemPrompt([]);
+    expect(result).toContain(DEFAULT_IDENTITY);
+    expect(result).not.toContain(TASK_IDENTITY);
+  });
+
+  it("layers TASK_IDENTITY ABOVE core skills (framing precedence by position)", () => {
+    const soul = makeContextSkill("soul", 0, "I am Nira.");
+    const result = composeSystemPrompt(
+      [soul],
+      null,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      "task",
+    );
+    const taskIdx = result.indexOf(TASK_IDENTITY);
+    const soulIdx = result.indexOf("I am Nira.");
+    expect(taskIdx).toBeGreaterThanOrEqual(0);
+    expect(soulIdx).toBeGreaterThanOrEqual(0);
+    expect(taskIdx).toBeLessThan(soulIdx);
+  });
+
+  it("task identity contract forbids greetings and follow-up questions", () => {
+    // These phrases are the literal contract — if they ever disappear,
+    // the conversational regression from before this PR returns.
+    expect(TASK_IDENTITY).toMatch(/do not greet/i);
+    expect(TASK_IDENTITY).toMatch(/follow-up questions/i);
+    expect(TASK_IDENTITY).toMatch(/finished, self-contained deliverable/i);
+  });
+
+  it("traced output records the task_identity layer kind", () => {
+    const traced = composeSystemPromptTraced(
+      [],
+      null,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      "task",
+    );
+    const taskLayer = traced.layers.find((l) => l.kind === "task_identity");
+    expect(taskLayer).toBeDefined();
+    expect(taskLayer?.text).toBe(TASK_IDENTITY);
   });
 });

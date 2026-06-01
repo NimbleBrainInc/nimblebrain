@@ -175,34 +175,6 @@ export function composioCallbackUrl(): string {
   return `${apiBase.replace(/\/+$/, "")}/v1/composio-auth/callback`;
 }
 
-/**
- * Build the post-success redirect URL the SPA navigates to after a
- * "reuse existing connection" short-circuit. Same target the
- * `/v1/composio-auth/callback` page meta-refreshes to; centralized so
- * the two paths can't drift. Resolution order: `NB_WEB_URL` →
- * `NB_API_URL` → request origin → same-origin relative path.
- */
-export function composioSuccessRedirectUrl(requestUrl: string): string {
-  const fallbackOrigin = (() => {
-    try {
-      return new URL(requestUrl).origin;
-    } catch {
-      return "";
-    }
-  })();
-  const webBase = process.env.NB_WEB_URL ?? process.env.NB_API_URL ?? fallbackOrigin;
-  const url = `${webBase.replace(/\/+$/, "")}/settings/workspace/connectors`;
-  try {
-    const parsed = new URL(url);
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-      return "/settings/workspace/connectors";
-    }
-  } catch {
-    return "/settings/workspace/connectors";
-  }
-  return url;
-}
-
 // ── SDK call wrappers ───────────────────────────────────────────────
 
 /**

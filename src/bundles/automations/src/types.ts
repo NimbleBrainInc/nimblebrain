@@ -149,7 +149,8 @@ export interface AutomationRun {
   error?: string;
   /** Whether this failure was classified as transient (eligible for backoff retry). */
   transient?: boolean;
-  /** Final agent response (truncated to 500 chars). */
+  /** Final agent response. Field name kept for backward compatibility with
+   *  existing JSONL records; current writes store the full response. */
   resultPreview?: string;
   /**
    * Engine-level stop reason. Mirrors `StopReason` from `src/engine/types.ts`

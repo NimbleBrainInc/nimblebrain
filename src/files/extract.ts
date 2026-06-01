@@ -1,7 +1,35 @@
 import mammoth from "mammoth";
-import { extractText as extractPdfText } from "unpdf";
+import { extractText as extractPdfText, getDocumentProxy } from "unpdf";
 import * as XLSX from "xlsx";
 import { isTextMime } from "./mime.ts";
+
+export interface ExtractedPdfPage {
+  page: number;
+  text: string;
+  truncated: boolean;
+  empty: boolean;
+}
+
+export interface ExtractPdfPagesResult {
+  totalPages: number;
+  pages: ExtractedPdfPage[];
+  missingPages: number[];
+}
+
+interface PdfTextItem {
+  str?: string;
+  hasEOL?: boolean;
+}
+
+interface PdfPageProxy {
+  getTextContent(): Promise<{ items: PdfTextItem[] }>;
+}
+
+interface PdfDocumentProxy {
+  numPages: number;
+  getPage(pageNumber: number): Promise<PdfPageProxy>;
+  destroy?: () => Promise<void> | void;
+}
 
 /**
  * Truncation suffix used by callers that route extracted text into the
@@ -49,6 +77,57 @@ export async function extractText(
   } catch (err) {
     console.error(`[files/extract] Failed to extract text from ${mimeType}:`, err);
     return null;
+  }
+}
+
+/**
+ * Extract text from specific 1-based PDF pages without materialising every
+ * page's text into the tool result. The caller still provides the PDF bytes,
+ * but extraction work and output are bounded by the requested page count.
+ */
+export async function extractPdfPages(
+  data: Buffer,
+  pages: number[],
+  options: { maxPageTextSize?: number } = {},
+): Promise<ExtractPdfPagesResult | null> {
+  const maxPageTextSize = options.maxPageTextSize ?? 20_480;
+  let pdf: PdfDocumentProxy | null = null;
+
+  try {
+    pdf = (await getDocumentProxy(new Uint8Array(data))) as PdfDocumentProxy;
+    const resultPages: ExtractedPdfPage[] = [];
+    const missingPages: number[] = [];
+
+    for (const page of pages) {
+      if (page < 1 || page > pdf.numPages) {
+        missingPages.push(page);
+        continue;
+      }
+
+      const pageProxy = await pdf.getPage(page);
+      const content = await pageProxy.getTextContent();
+      const rawText = content.items
+        .filter((item) => item.str != null)
+        .map((item) => `${item.str}${item.hasEOL ? "\n" : ""}`)
+        .join("");
+      const extracted = truncate(rawText, maxPageTextSize, {
+        truncatedSuffix: (kb) => `\n[... page text truncated at ${kb} KB]`,
+      });
+
+      resultPages.push({
+        page,
+        text: extracted.text,
+        truncated: extracted.truncated,
+        empty: rawText.trim().length === 0,
+      });
+    }
+
+    return { totalPages: pdf.numPages, pages: resultPages, missingPages };
+  } catch (err) {
+    console.error("[files/extract] PDF page extraction failed:", err);
+    return null;
+  } finally {
+    await pdf?.destroy?.();
   }
 }
 

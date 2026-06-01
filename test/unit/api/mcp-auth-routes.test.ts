@@ -217,6 +217,13 @@ describe("GET /v1/mcp-auth/callback", () => {
     const html = await res.text();
     expect(html).toContain("Authorization complete");
 
+    // Redirect back to the workspace-scoped connectors page for the
+    // workspace the flow was initiated in (WS_ID = "ws_test" → slug
+    // "test"). The pre-scoping `/settings/workspace/connectors` path is
+    // gone — landing there 404s now that connectors live under `/w/<slug>`.
+    expect(html).toContain("/w/test/settings/connectors");
+    expect(html).not.toContain("/settings/workspace/connectors");
+
     // Cookie cleared: Max-Age=0
     const setCookie = res.headers.get("Set-Cookie");
     expect(setCookie).not.toBeNull();

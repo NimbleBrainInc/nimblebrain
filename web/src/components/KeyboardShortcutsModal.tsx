@@ -14,6 +14,10 @@ interface ShortcutGroup {
 
 const shortcutGroups: ShortcutGroup[] = [
   {
+    title: "Navigation",
+    shortcuts: [{ keys: ["⌘", "P"], description: "Open command palette" }],
+  },
+  {
     title: "Chat",
     shortcuts: [
       { keys: ["⌘", "K"], description: "Open / close chat" },

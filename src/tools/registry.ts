@@ -54,6 +54,11 @@ export class SharedSourceRef implements ToolSource {
   ): Promise<ToolResult> {
     return this.inner.execute(toolName, input, signal);
   }
+  /** Forward readiness subscriptions to the shared underlying source so a
+   *  per-workspace registry wrapping it still learns when its tools change. */
+  subscribeToolsChanged(listener: () => void): () => void {
+    return this.inner.subscribeToolsChanged?.(listener) ?? (() => {});
+  }
   /** Unwrap to the underlying source — used by task-aware dispatch. */
   unwrap(): ToolSource {
     return this.inner;
@@ -70,6 +75,18 @@ export class ToolRegistry implements ToolRouter {
   private wsId: string | null = null;
   /** Permission store for tool-level policy enforcement (set by Runtime). */
   private permissionStore: PermissionStore | null = null;
+  /**
+   * Fired when this registry's enumerable tool set may have changed — a
+   * source added/removed, or an existing source's tools transitioning
+   * (subprocess (re)connect, native `tools/list_changed`). The Runtime wires
+   * this to the cross-workspace tool-list aggregator's per-workspace
+   * invalidation so a memoized union refreshes reactively. Null for
+   * registries with no consumer (tests, CLI flows).
+   */
+  private invalidationListener: (() => void) | null = null;
+  /** Per-source unsubscribe handles for readiness subscriptions, so
+   *  `removeSource` can detach the listener it attached in `addSource`. */
+  private toolsChangedUnsubs = new Map<string, () => void>();
 
   /**
    * Configure permission enforcement context. Called once when the
@@ -82,18 +99,45 @@ export class ToolRegistry implements ToolRouter {
     this.permissionStore = permissionStore;
   }
 
+  /**
+   * Wire the invalidation listener (typically
+   * `() => aggregator.invalidateWorkspace(wsId)`). Set by the Runtime AFTER
+   * boot population so the boot-time `addSource` storm doesn't fire
+   * invalidations before any union is cached; post-boot mutations and
+   * source-readiness transitions then invalidate reactively. Idempotent.
+   */
+  setInvalidationListener(listener: () => void): void {
+    this.invalidationListener = listener;
+  }
+
+  private fireInvalidation(): void {
+    this.invalidationListener?.();
+  }
+
   addSource(source: ToolSource): void {
     if (this.sources.has(source.name)) {
       throw new Error(`Source "${source.name}" is already registered`);
     }
     this.sources.set(source.name, source);
+    // Bridge the source's own readiness transitions (subprocess (re)connect,
+    // native `tools/list_changed`) to this registry's invalidation listener.
+    // Crucially this covers paths that do NOT re-enter `addSource` — a
+    // HealthMonitor restart reuses the same source object, and a deferred /
+    // pending-auth start completes long after the source was registered.
+    const unsub = source.subscribeToolsChanged?.(() => this.fireInvalidation());
+    if (unsub) this.toolsChangedUnsubs.set(source.name, unsub);
+    // The membership change itself is also an invalidation trigger.
+    this.fireInvalidation();
   }
 
   async removeSource(name: string): Promise<void> {
     const source = this.sources.get(name);
     if (source) {
+      this.toolsChangedUnsubs.get(name)?.();
+      this.toolsChangedUnsubs.delete(name);
       await source.stop();
       this.sources.delete(name);
+      this.fireInvalidation();
     }
   }
 

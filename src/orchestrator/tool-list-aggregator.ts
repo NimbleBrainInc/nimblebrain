@@ -109,6 +109,17 @@ export interface ToolListAggregator {
    * `aggregateToolList` call to discover the drift.
    */
   invalidateIdentity(identityId: string): void;
+  /**
+   * Drop the cached tool list for one workspace and every identity union that
+   * read from it. The reactive counterpart to {@link invalidateIdentity}:
+   * that handles membership changes (a workspace left the identity's set);
+   * this handles tool-set changes WITHIN a workspace that the
+   * `workspace.json` watcher can't see — a bundle subprocess (re)connecting,
+   * a deferred/pending-auth start completing, or a native
+   * `tools/list_changed`. Wired from `ToolRegistry.setInvalidationListener`.
+   * Does NOT touch the membership stamp (membership is unchanged).
+   */
+  invalidateWorkspace(wsId: string): void;
   /** Number of active per-workspace watchers — for the leak test. */
   activeWatcherCount(): number;
   /** Close every watcher, clear every cache. Idempotent. */
@@ -156,15 +167,15 @@ export function createToolListAggregator(options: ToolListAggregatorOptions): To
    * Bare descriptors for the kernel identity sources, listed once. Identity
    * tools are static (code-defined, not per-tenant install), so unlike the
    * per-workspace cache they need no FS-watch invalidation — list on first
-   * use, memoize, reuse for every identity. A failed listing drops the memo
-   * so the next call retries.
+   * use, memoize, reuse for every identity. A failed OR empty listing drops
+   * the memo so the next call retries (see below).
    */
   let identityDescriptorsPromise: Promise<readonly NamespacedToolDescriptor[]> | null = null;
   const getIdentityDescriptors = (): Promise<readonly NamespacedToolDescriptor[]> => {
     const lister = options.listIdentityTools;
     if (!lister) return Promise.resolve([]);
     if (!identityDescriptorsPromise) {
-      identityDescriptorsPromise = lister().then((tools) =>
+      const p = lister().then((tools) =>
         // Bare: `name === toolName`, `wsId === null`. The orchestrator routes
         // a bare `<source>__<tool>` through the identity door.
         tools.map((t) => ({
@@ -177,9 +188,30 @@ export function createToolListAggregator(options: ToolListAggregatorOptions): To
           ...(t.execution !== undefined ? { execution: t.execution } : {}),
         })),
       );
-      identityDescriptorsPromise.catch(() => {
-        identityDescriptorsPromise = null;
-      });
+      identityDescriptorsPromise = p;
+      // Clear the memo on rejection (retry next call) — AND on an empty
+      // result. The kernel identity sources (conversations/files/automations)
+      // are code-defined and always present, so an empty list is never a
+      // legitimate steady state: it means the in-process sources weren't yet
+      // enumerable when the first call landed (e.g. an aggregateToolList that
+      // raced `Runtime.start`'s `_platformSources` assignment). Memoizing []
+      // here would strand `files__read` & friends out of every session's tool
+      // union for the whole process lifetime — the identity-side half of the
+      // stale-union bug. Retrying while empty is bounded: it stops the instant
+      // a non-empty list resolves (sources finish connecting), so steady state
+      // is a single memoized non-empty promise, not a re-list loop. (A
+      // deployment that genuinely ships zero identity sources omits
+      // `listIdentityTools` entirely and never reaches this branch.)
+      p.then(
+        (descriptors) => {
+          if (descriptors.length === 0 && identityDescriptorsPromise === p) {
+            identityDescriptorsPromise = null;
+          }
+        },
+        () => {
+          if (identityDescriptorsPromise === p) identityDescriptorsPromise = null;
+        },
+      );
     }
     return identityDescriptorsPromise;
   };
@@ -216,6 +248,10 @@ export function createToolListAggregator(options: ToolListAggregatorOptions): To
     identityMembershipStamp.delete(identityId);
   };
 
+  const invalidateWorkspace = (wsId: string): void => {
+    cache.invalidateWorkspace(wsId);
+  };
+
   const dispose = (): void => {
     cache.dispose();
     identityMembershipStamp.clear();
@@ -226,6 +262,7 @@ export function createToolListAggregator(options: ToolListAggregatorOptions): To
   return {
     aggregateToolList,
     invalidateIdentity,
+    invalidateWorkspace,
     activeWatcherCount,
     dispose,
   };

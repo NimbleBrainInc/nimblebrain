@@ -83,10 +83,16 @@ export function isAllowedMime(mimeType: string): boolean {
  * `handleRead` route PDFs through their own (capability-aware) policy,
  * not the generic ingest extraction path, so the set stays focused on
  * formats where the only useful surface to the model is extracted text.
+ *
+ * Mirrors `isTextMime`'s `text/*` prefix rule: `extractText` UTF-8-decodes
+ * any `text/*` type, so the read gate (`files__read`) must admit the same set
+ * it can actually extract. Without this, a correctly-typed `text/x-*` source
+ * file would pass `isTextMime` inside `extractText` but never reach it,
+ * because this predicate gated it out first.
  */
 export function isExtractable(mimeType: string): boolean {
   const bare = normalizeMime(mimeType);
-  return EXTRACTABLE_TEXT.has(bare) || EXTRACTABLE_DOCS.has(bare);
+  return bare.startsWith("text/") || EXTRACTABLE_TEXT.has(bare) || EXTRACTABLE_DOCS.has(bare);
 }
 
 function isImage(mimeType: string): boolean {

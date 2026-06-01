@@ -523,3 +523,148 @@ describe("aggregateToolList — graceful degradation (one workspace fails)", () 
     expect(out.some((d) => parseWs(d.name).wsId === wsBad)).toBe(false);
   });
 });
+
+// ── Reactive invalidation on source-readiness transitions ─────────
+//
+// Regression for the stale-union bug: a workspace's tool set can change
+// WITHOUT `workspace.json` changing — a bundle subprocess (re)connecting after
+// a slow boot or a HealthMonitor restart makes new tools enumerable. Before
+// the fix the only invalidation channels were the `workspace.json` fs.watch +
+// membership change, so a union memoized while a source was unreachable was
+// served stale for the process lifetime. `invalidateWorkspace(wsId)` is the
+// reactive channel `ToolRegistry.setInvalidationListener` drives.
+describe("aggregateToolList — invalidateWorkspace re-lists after a source comes online", () => {
+  test("union memoized while a bundle was unreachable refreshes after invalidateWorkspace", async () => {
+    const wsId = "ws_shared";
+    const workDir = trackDir(makeWorkDir([wsId]));
+    // Simulate the prod sequence: at first the bundle subprocess isn't
+    // connected, so the workspace lists only the platform `nb` tools; after it
+    // comes online the same workspace lists nb + the bundle's tools.
+    let bundleOnline = false;
+    const { lister, callCount } = spyingLister(async () =>
+      bundleOnline
+        ? buildTools(["nb__search", "synapse_collateral__create_document"], "src")
+        : buildTools(["nb__search"], "src"),
+    );
+    const store = buildStore({ user_1: [wsId] });
+    const agg = track(
+      createToolListAggregator({
+        workDir,
+        workspaceStore: store,
+        listToolsForWorkspace: lister,
+      }),
+    );
+
+    const before = await agg.aggregateToolList("user_1");
+    expect(before.map((d) => parseWs(d.name).toolName)).toEqual(["nb__search"]);
+    // Second call without any change is a cache hit — lister fired once.
+    await agg.aggregateToolList("user_1");
+    expect(callCount(wsId)).toBe(1);
+
+    // The bundle subprocess finishes connecting and the registry fires its
+    // readiness signal → aggregator.invalidateWorkspace(wsId).
+    bundleOnline = true;
+    agg.invalidateWorkspace(wsId);
+
+    const after = await agg.aggregateToolList("user_1");
+    expect(after.map((d) => parseWs(d.name).toolName)).toEqual([
+      "nb__search",
+      "synapse_collateral__create_document",
+    ]);
+    // Re-listed exactly once on invalidation (not on every call).
+    expect(callCount(wsId)).toBe(2);
+  });
+
+  test("invalidateWorkspace is a no-op when nothing is cached for that workspace", async () => {
+    const wsId = "ws_shared";
+    const workDir = trackDir(makeWorkDir([wsId]));
+    const { lister } = spyingLister(async () => buildTools(["nb__search"], "src"));
+    const agg = track(
+      createToolListAggregator({
+        workDir,
+        workspaceStore: buildStore({ user_1: [wsId] }),
+        listToolsForWorkspace: lister,
+      }),
+    );
+    // No aggregateToolList yet → nothing cached. Must not throw (covers the
+    // boot-time `addSource` storm firing invalidations before any union exists).
+    expect(() => agg.invalidateWorkspace(wsId)).not.toThrow();
+    expect(() => agg.invalidateWorkspace("ws_never_seen")).not.toThrow();
+  });
+});
+
+// ── Identity-descriptor memo must not stick on empty ──────────────
+//
+// The identity-side half of the stale-union bug: `getIdentityDescriptors`
+// memoized its first result, clearing only on rejection. An empty read at
+// boot (in-process identity sources not yet enumerable) stranded
+// `files__read` & friends out of every session for the process lifetime.
+// Kernel identity sources always exist, so an empty list is always transient.
+describe("aggregateToolList — identity descriptors retry while empty, memoize when present", () => {
+  test("an empty identity listing is not memoized; the next call picks up the tools", async () => {
+    const wsId = "ws_a";
+    const workDir = trackDir(makeWorkDir([wsId]));
+    const { lister } = spyingLister(async () => buildTools(["ws_tool"], "src"));
+
+    // First identity listing returns [] (sources not ready), then the real set.
+    let identityReady = false;
+    let identityCalls = 0;
+    const agg = track(
+      createToolListAggregator({
+        workDir,
+        workspaceStore: buildStore({ user_1: [wsId] }),
+        listToolsForWorkspace: lister,
+        listIdentityTools: async () => {
+          identityCalls++;
+          return identityReady ? buildTools(["files__read", "conversations__list"], "identity") : [];
+        },
+      }),
+    );
+
+    const before = await agg.aggregateToolList("user_1");
+    // Only the workspace tool — identity prepend was empty.
+    expect(before.map((d) => d.name)).toEqual([parseAny(before, "ws_tool")]);
+    expect(before.some((d) => d.name === "files__read")).toBe(false);
+
+    // Sources finish connecting.
+    identityReady = true;
+    const after = await agg.aggregateToolList("user_1");
+    // Bare identity tools now prepend the union (no `ws_` prefix, wsId null).
+    const bareNames = after.filter((d) => d.wsId === null).map((d) => d.name);
+    expect(bareNames).toEqual(["files__read", "conversations__list"]);
+    // Retried because the first result was empty — not stuck on the empty memo.
+    expect(identityCalls).toBeGreaterThanOrEqual(2);
+  });
+
+  test("a non-empty identity listing is memoized (no re-list loop in steady state)", async () => {
+    const wsId = "ws_a";
+    const workDir = trackDir(makeWorkDir([wsId]));
+    const { lister } = spyingLister(async () => buildTools(["ws_tool"], "src"));
+    let identityCalls = 0;
+    const agg = track(
+      createToolListAggregator({
+        workDir,
+        workspaceStore: buildStore({ user_1: [wsId] }),
+        listToolsForWorkspace: lister,
+        listIdentityTools: async () => {
+          identityCalls++;
+          return buildTools(["files__read"], "identity");
+        },
+      }),
+    );
+
+    await agg.aggregateToolList("user_1");
+    await agg.aggregateToolList("user_1");
+    await agg.aggregateToolList("user_1");
+    // Non-empty from the first call → memoized once, never re-listed.
+    expect(identityCalls).toBe(1);
+  });
+});
+
+// Helper: identity-descriptor test asserts a bare workspace tool's namespaced
+// name without hand-building it.
+function parseAny(out: readonly { name: string }[], bareToolName: string): string {
+  const match = out.find((d) => d.name.endsWith(`-${bareToolName}`) || d.name === bareToolName);
+  if (!match) throw new Error(`no aggregated entry for "${bareToolName}"`);
+  return match.name;
+}

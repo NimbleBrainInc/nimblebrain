@@ -6,8 +6,8 @@
  *
  * The approach:
  * 1. Scan conversation directory for all .jsonl files
- * 2. Read line 1 (metadata) — check updatedAt against the date range
- * 3. For matching conversations, scan lines 2+ for llm.response events
+ * 2. Read line 1 (metadata) for conversation id / owner attribution
+ * 3. Scan lines 2+ for llm.response events whose own `ts` is in the date range
  * 4. Aggregate tokens, cost, model breakdown
  */
 
@@ -134,6 +134,10 @@ function normalizeModel(model: string): string {
   return model.replace(/^(anthropic:|openai:|google:)/, "").replace(/-\d{8}$/, "");
 }
 
+function isDateInRange(date: string, range: { from: string; to: string }): boolean {
+  return date >= range.from && date <= range.to;
+}
+
 export function resolveDateRange(
   period: string,
   from?: string,
@@ -187,9 +191,9 @@ export interface AggregateUsageOptions {
  * Aggregate usage from conversation files in a directory.
  *
  * 1. List all .jsonl files in conversationsDir
- * 2. Read line 1 (metadata) — filter by updatedAt within date range
- *    (and by `ownerId` when `ownerFilter` is set)
- * 3. For matching files, scan for llm.response events
+ * 2. Read line 1 (metadata) for conversation id / owner attribution
+ *    (and filter by `ownerId` when `ownerFilter` is set)
+ * 3. Scan for llm.response events whose own `ts` date is in range
  * 4. Derive totals, per-model, and breakdown by groupBy key
  *    (`groupBy: "user"` buckets by the conversation owner)
  */
@@ -210,7 +214,7 @@ export async function aggregateUsage(
     filenames = [];
   }
 
-  // Collect LLM call records from conversations in the date range
+  // Collect LLM call records whose event timestamp is in the date range.
   const records: LlmCallRecord[] = [];
 
   for (const filename of filenames) {
@@ -226,19 +230,14 @@ export async function aggregateUsage(
     const firstLine = lines[0];
     if (!firstLine?.trim()) continue;
 
-    // Parse metadata (line 1) — filter by date range
+    // Parse metadata (line 1) for identity/owner attribution. Usage date
+    // range filtering is done per llm.response event below, not by updatedAt.
     let meta: Record<string, unknown>;
     try {
       meta = JSON.parse(firstLine);
     } catch {
       continue;
     }
-
-    const updatedAt = (meta.updatedAt as string) ?? "";
-    const updatedDate = updatedAt.slice(0, 10);
-
-    // Skip conversations outside the date range
-    if (updatedDate < range.from || updatedDate > range.to) continue;
 
     const sid = meta.id as string | undefined;
     const ownerId = meta.ownerId as string | undefined;
@@ -260,8 +259,11 @@ export async function aggregateUsage(
       }
 
       if (entry.type === "llm.response" && entry.usage) {
+        const ts = (entry.ts as string) ?? "";
+        if (!isDateInRange(ts.slice(0, 10), range)) continue;
+
         records.push({
-          ts: (entry.ts as string) ?? "",
+          ts,
           sid,
           ownerId,
           model: (entry.model as string) ?? "unknown",

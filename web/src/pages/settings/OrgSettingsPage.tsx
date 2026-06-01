@@ -13,6 +13,7 @@ const ORG_ITEMS: SettingsNavItem[] = [
   { id: "org-model", label: "Model", to: "/org/model", minRole: "org_admin" },
   { id: "org-workspaces", label: "Workspaces", to: "/org/workspaces", minRole: "org_admin" },
   { id: "org-users", label: "Users", to: "/org/users", minRole: "org_admin" },
+  { id: "org-skills", label: "Skills", to: "/org/skills", minRole: "org_admin" },
   { id: "org-usage", label: "Usage", to: "/org/usage", minRole: "org_admin" },
   { id: "org-registries", label: "Registries", to: "/org/registries", minRole: "org_admin" },
 ];

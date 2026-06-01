@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { log } from "../cli/log.ts";
 import { cleanupComposioBundle } from "../composio/sdk.ts";
 import type { EventSink } from "../engine/types.ts";
+import { mcpAuthCallbackUrl } from "../oauth/mcp-callback-url.ts";
 import type { PlacementRegistry } from "../runtime/placement-registry.ts";
 import { FileCredentialStore } from "../tools/credential-store.ts";
 import { McpSource } from "../tools/mcp-source.ts";
@@ -84,6 +85,33 @@ export function assertBundleRefIsPostStage2(ref: BundleRef): void {
   }
 }
 
+// Connection states that end an OAuth flow's lifetime from the
+// coalesce-mutex's perspective. `starting` and `pending_auth` are
+// deliberately omitted — they are the in-flight states that the mutex
+// exists to coalesce across. Used by `recordConnectionStateChange` to
+// release `authFlowsInFlight` slots; see the field comment for the full
+// invariant.
+const AUTH_FLOW_TERMINAL_STATES: ReadonlySet<ConnectionState> = new Set<ConnectionState>([
+  "running",
+  "dead",
+  "crashed",
+  "stopped",
+  "not_authenticated",
+  "reauth_required",
+]);
+
+/**
+ * Single source of truth for the `authFlowsInFlight` Map key. The mutex
+ * is keyed on the unique tuple `(serverName, wsId, principalId)` — any
+ * caller assembling the key by hand would risk drifting from the
+ * canonical shape (extra delimiters, wrong order) and silently breaking
+ * the coalesce. One helper, two call sites: the wrapper's set/delete
+ * and `recordConnectionStateChange`'s terminal-state delete.
+ */
+function authFlowKey(serverName: string, wsId: string, principalId: string): string {
+  return `${serverName}|${wsId}|${principalId}`;
+}
+
 // ---------------------------------------------------------------------------
 // BundleLifecycleManager — owns the state of all installed bundles and
 // provides the formal install / uninstall / start / stop / restart flows
@@ -101,6 +129,37 @@ export class BundleLifecycleManager {
    * and leave a torn state.
    */
   private upgradesInFlight = new Set<string>();
+  /**
+   * In-flight OAuth flows, keyed by `${serverName}|${wsId}|${principalId}`.
+   *
+   * **Invariant: at most one OAuth flow is alive per key at a time.**
+   *
+   * A flow's lifetime is bounded by the connection state machine, NOT by
+   * promise resolution. The slot is set when `startAuth` constructs a fresh
+   * flow and cleared from `recordConnectionStateChange` when the connection
+   * reaches a terminal state (running / dead / crashed / not_authenticated /
+   * reauth_required / stopped). While the slot is held, every subsequent
+   * `startAuth` for the same key coalesces — returning the SAME promise the
+   * first call returned, so concurrent callers all see the same
+   * `authorizationUrl`. No second flow runs, so no second DCR or
+   * `startAuthorization` runs, so the shared `verifier.json` and `client.json`
+   * on disk are never clobbered mid-flight.
+   *
+   * This is the structural correctness story for the multi-fire / multi-tab
+   * scenarios (UI hammering Connect via a re-render loop; two tabs both
+   * clicking Connect simultaneously). Pre-fix, every inbound call started a
+   * fresh flow that overwrote disk state — the user's chosen auth URL then
+   * exchanged with someone else's verifier and the vendor returned
+   * `invalid_code`. Coalescing eliminates the race by collapsing N calls into
+   * 1 flow rather than trying to make N flows coexist on shared disk state.
+   *
+   * Lifetime authority: terminal state transitions in
+   * `recordConnectionStateChange`. The `.catch(clear)` in the wrapper is a
+   * fallback for pre-state-record sync failures (instance not found, invalid
+   * principal) where no state transition will ever fire — without it, those
+   * paths would lock the slot forever.
+   */
+  private authFlowsInFlight = new Map<string, Promise<{ authorizationUrl: string }>>();
   /**
    * Getter for a workspace-scoped automations domain context. Set by
    * Runtime after the automations platform source is constructed. Used
@@ -974,6 +1033,22 @@ export class BundleLifecycleManager {
     // briefing-collector, runtime status API) see the right surface.
     instance.state = summarizeConnectionState(instance.connections);
 
+    // Release the OAuth-flow coalesce slot on terminal transitions. The
+    // slot is held from the first `startAuth` call until the connection
+    // definitively resolves, so concurrent inbound `startAuth` calls
+    // coalesce to one flow and never clobber shared on-disk PKCE / DCR
+    // state. `starting` and `pending_auth` are NOT terminal — they are
+    // exactly the windows where coalescing matters. See the
+    // `authFlowsInFlight` field comment for the full rationale.
+    //
+    // `Map.delete` is idempotent and unconditional here is safe: if the
+    // key isn't present (no flow was in-flight) it's a no-op; if the key
+    // is present, the flow has reached a terminal state and is no longer
+    // racing with future calls.
+    if (AUTH_FLOW_TERMINAL_STATES.has(newState)) {
+      this.authFlowsInFlight.delete(authFlowKey(serverName, wsId, principalId));
+    }
+
     this.eventSink.emit({
       type: "connection.state_changed",
       data: {
@@ -1015,6 +1090,41 @@ export class BundleLifecycleManager {
    * promise rejects (the caller wasn't expecting that path).
    */
   async startAuth(
+    serverName: string,
+    wsId: string,
+    principalId: string,
+    opts: { workDir: string; callbackUrl: string; allowInsecureRemotes?: boolean },
+  ): Promise<{ authorizationUrl: string }> {
+    // In-flight coalesce: if a startAuth for this key is mid-flight, return
+    // its promise. See `authFlowsInFlight` field comment for the race this
+    // closes (DCR + verifier.json clobber by a second startAuth that slips
+    // past the pending_auth debounce while the first is still in `starting`).
+    const key = authFlowKey(serverName, wsId, principalId);
+    const existingFlow = this.authFlowsInFlight.get(key);
+    if (existingFlow) return existingFlow;
+
+    const flow = this.startAuthInner(serverName, wsId, principalId, opts);
+    this.authFlowsInFlight.set(key, flow);
+    // Fallback clear for pre-state-record sync failures only (instance not
+    // found, wrong principal, missing ref). Successful flows and async
+    // failures clear the slot via `recordConnectionStateChange`'s terminal-
+    // state branch — see the `authFlowsInFlight` field comment. We must NOT
+    // clear on success here: that would re-introduce the very race this
+    // closes (slot empty during the user's OAuth window → next inbound call
+    // starts a fresh flow → verifier.json clobbered → invalid_code).
+    //
+    // CAS guards against a later flow that won the race being cleared by an
+    // earlier one's catch. Idempotent — Map.delete on a key cleared by the
+    // state transition is a no-op.
+    flow.catch(() => {
+      if (this.authFlowsInFlight.get(key) === flow) {
+        this.authFlowsInFlight.delete(key);
+      }
+    });
+    return flow;
+  }
+
+  private async startAuthInner(
     serverName: string,
     wsId: string,
     principalId: string,
@@ -1120,6 +1230,7 @@ export class BundleLifecycleManager {
       workspaceContext: new WorkspaceContext({ wsId, workDir: opts.workDir }),
       callbackUrl: opts.callbackUrl,
       allowInsecureRemotes: opts.allowInsecureRemotes === true,
+      headlessAuthProbe: ref.headlessAuthProbe === true,
       onInteractiveAuthRequired: (url) => {
         capturedAuthUrl = url;
         this.recordConnectionStateChange(serverName, wsId, principalId, "pending_auth", {
@@ -1176,14 +1287,29 @@ export class BundleLifecycleManager {
         }
       })
       .catch((err) => {
-        const msg = err instanceof Error ? err.message : String(err);
-        // For UnauthorizedError, the callback path already recorded
-        // pending_auth — we don't want to overwrite that with `dead`.
-        // Other errors (network, SSRF block, server crash) → record dead.
+        // The SDK's OAuth error classes (InvalidGrantError, InvalidClientError,
+        // …) carry their detail in `.name` with an EMPTY `.message`, so fall
+        // back to the name — otherwise the surfaced diagnostic is blank, which
+        // is nearly as useless as swallowing it.
+        const msg = err instanceof Error ? err.message || err.name : String(err);
+        // Always surface the failure. The interactive path (capturedAuthUrl
+        // set) used to be swallowed here: if the background start() failed
+        // AFTER the auth URL was returned — the token exchange or reconnect
+        // threw once the user came back, or the pending flow timed out — the
+        // connection was left stuck in `pending_auth` ("Connecting…") forever
+        // with no log and no tokens. Log it and move the connection to `dead`
+        // (+ lastError) so the UI offers a recoverable Reconnect instead of
+        // an indefinite spinner.
+        log.warn(
+          `[lifecycle] startAuth: ${serverName} start failed for ${principalId} in ${wsId}: ${msg}`,
+        );
+        this.recordConnectionStateChange(serverName, wsId, principalId, "dead", {
+          lastError: msg,
+        });
+        // `authUrlPromise` already resolved on the interactive path, so a
+        // reject there is a no-op; only the headless / pre-auth failure path
+        // (no captured URL) still needs the caller's promise rejected.
         if (!capturedAuthUrl) {
-          this.recordConnectionStateChange(serverName, wsId, principalId, "dead", {
-            lastError: msg,
-          });
           rejectAuthUrl(err instanceof Error ? err : new Error(msg));
         }
       });
@@ -1201,15 +1327,22 @@ export class BundleLifecycleManager {
     });
     try {
       const authorizationUrl = await Promise.race([authUrlPromise, timeout]);
-      return { authorizationUrl };
-    } finally {
       if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
-      // Either branch resolved — cancel any provider fetches still in
-      // flight. Success path: redirect-probe was about to be torn down
-      // anyway. Timeout path: cuts an unresponsive server's TCP read
-      // instead of letting it run its full network timeout in the
-      // background.
+      // SUCCESS: the interactive flow (or a headless completion) continues
+      // in the background `source.start()` — it still has to run the token
+      // exchange + reconnect when the user returns from the authorization
+      // server. Do NOT abort the provider here; that would cancel a
+      // still-pending flow's in-flight fetches mid-dance. The abort below
+      // is only for the give-up paths.
+      return { authorizationUrl };
+    } catch (err) {
+      if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
+      // Timed out, or the background start() rejected before any auth URL
+      // (headless / pre-auth failure). Cancel the provider's in-flight
+      // fetches so an unresponsive auth server's TCP read doesn't linger
+      // for its full network deadline.
       providerAbort.abort();
+      throw err;
     }
   }
 
@@ -1284,7 +1417,15 @@ export class BundleLifecycleManager {
       serverName,
       workDir: opts.workDir,
       workspaceContext: new WorkspaceContext({ wsId, workDir: opts.workDir }),
-      callbackUrl: "http://_/", // unused for revocation path
+      // Resolve through the single source of truth (bouncer-aware), same as
+      // boot-start and `initiate`. Although revocation doesn't run an
+      // authorize round-trip, constructing the provider loads client.json
+      // and runs the DCR drift check against this `callbackUrl` — a
+      // placeholder (the old `http://_/`) never matches the registered
+      // redirect_uri, so it spuriously discards the client, mints a new
+      // client_id on the next flow, and orphans the refresh token. See
+      // src/oauth/mcp-callback-url.ts.
+      callbackUrl: mcpAuthCallbackUrl(),
       allowInsecureRemotes: opts.allowInsecureRemotes === true,
     });
     const result = await provider.revokeAndDeleteTokens({ bundleUrl: ref.url });

@@ -5,6 +5,7 @@ import { log } from "../cli/log.ts";
 import { isToolEnabled, isToolVisibleToRole, type ResolvedFeatures } from "../config/features.ts";
 import type { EngineEvent, EventSink } from "../engine/types.ts";
 import { ingestFiles, isAllowedMime, type UploadedFile } from "../files/ingest.ts";
+import { resolveMimeType } from "../files/mime.ts";
 import type { FileEntry } from "../files/types.ts";
 import type { IdentityProvider, UserIdentity } from "../identity/provider.ts";
 import { DEV_IDENTITY } from "../identity/providers/dev.ts";
@@ -28,6 +29,7 @@ import { validateToolInput } from "../tools/validate-input.ts";
 import { estimateCost } from "../usage/cost.ts";
 import { bytesToBase64 } from "../util/base64.ts";
 import { PersonalWorkspaceInvariantError } from "../workspace/errors.ts";
+import type { WorkspaceStore } from "../workspace/workspace-store.ts";
 import type { ConversationEventManager } from "./conversation-events.ts";
 import type { SseEventManager } from "./events.ts";
 import { ChatRequestBody, ToolCallRequestEnvelope } from "./schemas/rest.ts";
@@ -1216,11 +1218,27 @@ export async function handleShell(runtime: Runtime, workspaceId: string): Promis
   });
 }
 
-// --- SSE Event Stream (Task 006) ---
+// --- SSE Event Stream ---
 
-/** Handle GET /v1/events — workspace SSE event stream. */
-export function handleEvents(sseManager: SseEventManager, workspaceId?: string): Response {
-  const stream = sseManager.addClient(workspaceId);
+/**
+ * Handle GET /v1/events — identity-scoped SSE event stream.
+ *
+ * The stream is bound to the caller's identity, not their active
+ * workspace. The manager fans out workspace-scoped events to this
+ * connection only when the wsId is in the identity's current membership
+ * set (cached in the manager, refreshed by membership-change events from
+ * the workspace store). Workspace switches in the UI are a no-op on this
+ * transport — the same shape as `/mcp` (identity-bound session, workspace
+ * context per request).
+ */
+export async function handleEvents(
+  sseManager: SseEventManager,
+  workspaceStore: WorkspaceStore,
+  identityId: string,
+): Promise<Response> {
+  const workspaces = await workspaceStore.getWorkspacesForUser(identityId);
+  const memberships = new Set(workspaces.map((ws) => ws.id));
+  const stream = sseManager.addIdentityClient(identityId, memberships);
   return new Response(stream, {
     headers: {
       "Content-Type": "text/event-stream",
@@ -1607,7 +1625,10 @@ async function parseMultipartChatBody(
     uploadedFiles.push({
       data: buffer,
       filename: entry.name || "unnamed",
-      mimeType: entry.type || "application/octet-stream",
+      // Browsers leave the part's Content-Type empty for extensions they
+      // don't recognise (.typ etc.); recover a text type from the filename
+      // so the file isn't stored as opaque binary. See resolveMimeType.
+      mimeType: resolveMimeType(entry.name, entry.type),
     });
   }
 
@@ -1729,7 +1750,10 @@ export async function handleResourceUpload(
       uploads.push({
         data: Buffer.from(await entry.arrayBuffer()),
         filename: entry.name || "unnamed",
-        mimeType: entry.type || "application/octet-stream",
+        // Recover a text type from the filename when the browser sent no
+        // usable Content-Type (see resolveMimeType) — same recovery as the
+        // chat-multipart path.
+        mimeType: resolveMimeType(entry.name, entry.type),
       });
     }
   } catch {

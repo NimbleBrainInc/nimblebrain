@@ -6,6 +6,9 @@ export interface ScheduleSpec {
   timezone?: string;
   intervalMs?: number;
 }
+// NOTE: if you add a field here, add it to `specEqual` below — the reconcile
+// relies on a structural compare, and an unaccounted field silently reintroduces
+// the display-desync bug this component was fixed for.
 
 export type ScheduleMode = "interval" | "daily" | "weekly" | "cron";
 
@@ -46,6 +49,17 @@ export function parseDow(spec: ScheduleSpec | null): string {
   return parts.length >= 5 && parts[4] !== "*" ? parts[4]! : "1";
 }
 
+export function specEqual(a: ScheduleSpec | null, b: ScheduleSpec | null): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return (
+    a.type === b.type &&
+    a.expression === b.expression &&
+    a.timezone === b.timezone &&
+    a.intervalMs === b.intervalMs
+  );
+}
+
 export function SchedulePicker({
   value,
   onChange,
@@ -63,18 +77,49 @@ export function SchedulePicker({
   const [dow, setDow] = useState(() => parseDow(value));
   const [cronExpr, setCronExpr] = useState(() => value?.expression ?? "");
 
+  // Reconcile display state to externally-driven `value` changes (e.g. choosing
+  // a template pre-fills the parent's schedule after this picker has mounted).
+  // The state atoms above are seeded once at mount; without this, an external
+  // `value` change would leave the radio/fields showing stale state while the
+  // parent submits the new value — the picker would show "Every 30 minutes"
+  // but save the template's "Daily at 8".
+  //
+  // We must NOT re-derive on the picker's own edits, or switching modes would
+  // clobber cross-mode field memory (e.g. a typed-but-unsubmitted weekly time).
+  // The discriminator is provenance-by-value: we track the last spec the picker
+  // emitted in state and re-derive only when the incoming `value` doesn't match
+  // it — i.e. an external change. A structural compare (not reference identity)
+  // means this holds even for a caller that clones/normalizes in `onChange`,
+  // and keeping it in state (not a ref) keeps this render pure / StrictMode-safe
+  // — `setState` during render is replayed idempotently; a render-phase ref
+  // write would not be.
+  const [lastSpec, setLastSpec] = useState<ScheduleSpec | null>(value);
+  if (!specEqual(value, lastSpec)) {
+    setLastSpec(value);
+    setMode(detectMode(value));
+    if (value?.type === "interval" && value.intervalMs) setMinutes(value.intervalMs / 60_000);
+    setTime(parseTime(value));
+    setDow(parseDow(value));
+    setCronExpr(value?.expression ?? "");
+  }
+
   function emit(m: ScheduleMode, mins: number, t: string, d: string, cron: string) {
+    let spec: ScheduleSpec;
     if (m === "interval") {
-      onChange({ type: "interval", intervalMs: Math.max(1, mins) * 60_000 });
+      spec = { type: "interval", intervalMs: Math.max(1, mins) * 60_000 };
     } else if (m === "daily") {
       const [h, min] = t.split(":").map(Number);
-      onChange({ type: "cron", expression: `${min} ${h} * * *`, timezone });
+      spec = { type: "cron", expression: `${min} ${h} * * *`, timezone };
     } else if (m === "weekly") {
       const [h, min] = t.split(":").map(Number);
-      onChange({ type: "cron", expression: `${min} ${h} * * ${d}`, timezone });
+      spec = { type: "cron", expression: `${min} ${h} * * ${d}`, timezone };
     } else {
-      onChange({ type: "cron", expression: cron, timezone });
+      spec = { type: "cron", expression: cron, timezone };
     }
+    // Record what we emitted so the reconcile above recognizes the parent's
+    // resulting `value` update as ours (structurally equal) and skips re-derive.
+    setLastSpec(spec);
+    onChange(spec);
   }
 
   function handleMode(m: ScheduleMode) {
@@ -85,8 +130,9 @@ export function SchedulePicker({
   const radioStyle = {
     display: "flex",
     alignItems: "center",
+    flexWrap: "wrap",
     gap: 8,
-    padding: "6px 0",
+    padding: "8px 0",
     fontSize: 13,
     cursor: "pointer",
   } as const;

@@ -49,6 +49,22 @@ export interface ToolSource {
     input: Record<string, unknown>,
     signal?: AbortSignal,
   ): Promise<ToolResult>;
+  /**
+   * Subscribe to "my tool list may have changed" signals — fired when the
+   * source's enumerable tool set transitions (a subprocess (re)connects after
+   * a crash/slow boot, a deferred/pending-auth start completes, or the server
+   * pushes a native `notifications/tools/list_changed`). Returns an
+   * unsubscribe function.
+   *
+   * Optional: only async sources whose tool set materializes AFTER
+   * construction implement it. The contract exists so callers that memoize a
+   * projection of the tool list (e.g. the cross-workspace tool-list
+   * aggregator) can invalidate reactively instead of polling — a source
+   * becoming reachable is NOT a workspace-config change, so it can't be caught
+   * by watching `workspace.json`. `ToolRegistry` is the single consumer; it
+   * bridges this per-source signal to its own invalidation listener.
+   */
+  subscribeToolsChanged?(listener: () => void): () => void;
 }
 
 export type { ToolResult } from "../engine/types.ts";

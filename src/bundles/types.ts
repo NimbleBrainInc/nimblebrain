@@ -123,6 +123,17 @@ export type BundleRef =
        */
       oauthScope?: "workspace";
       /**
+       * Opt in to the headless authorize-redirect probe. Default false.
+       * Set only for bundles whose OAuth provider 302s straight to our
+       * callback with a code (Reboot's `Anonymous` dev provider). MUST stay
+       * false for normal interactive providers — a server-side `/authorize`
+       * probe spins up a vendor auth session bound to our PKCE challenge
+       * before the user acts and makes the vendor reject the user's real
+       * code (`invalid_code`). See `headlessAuthProbe` in
+       * `WorkspaceOAuthProvider`.
+       */
+      headlessAuthProbe?: boolean;
+      /**
        * Pre-registered OAuth client config. Required for vendors that don't
        * support Dynamic Client Registration (RFC 7591) — Gmail, Outlook,
        * HubSpot, Asana, Zoom Marketplace user-OAuth apps. Operator pre-

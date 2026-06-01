@@ -298,7 +298,7 @@ describe("rehydrateUserResources", () => {
     if (msg.role !== "user") return;
     expect(msg.content[0]?.type).toBe("text");
     if (msg.content[0]?.type !== "text") return;
-    expect(msg.content[0].text).not.toContain("files__read");
+    expect(msg.content[0].text).not.toContain("files__read to access");
     expect(store.readFileCalls).toEqual(["fl_big"]);
   });
 
@@ -336,7 +336,7 @@ describe("rehydrateUserResources", () => {
     expect(msg.content[0]?.type).toBe("file");
     expect(msg.content[1]?.type).toBe("text");
     if (msg.content[1]?.type !== "text") return;
-    expect(msg.content[1].text).not.toContain("files__read");
+    expect(msg.content[1].text).not.toContain("files__read to access");
     expect(store.readFileCalls).toEqual(["fl_a", "fl_b"]);
   });
 
@@ -365,7 +365,10 @@ describe("rehydrateUserResources", () => {
     expect(historical.content[0]?.type).toBe("text");
     if (historical.content[0]?.type !== "text") return;
     expect(historical.content[0].text).toContain("cached page text");
-    expect(historical.content[0].text).not.toContain("files__read");
+    expect(historical.content[0].text).toContain("files__read_pdf_pages");
+    expect(historical.content[0].text).toContain('id "fl_pdf1"');
+    expect(historical.content[0].text).toContain("specific 1-based page numbers");
+    expect(historical.content[0].text).not.toContain("files__read to access");
     expect(store.readFileCalls).toEqual([]); // bytes never loaded
     expect(store.writeSidecarCalls).toEqual([]); // cache hit, no rewrite
     expect(store.readSidecarCalls).toEqual(["fl_pdf1"]);

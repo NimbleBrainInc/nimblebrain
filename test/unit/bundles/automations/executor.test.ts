@@ -8,9 +8,9 @@ import {
 } from "bun:test";
 import {
 	createDirectExecutor,
-	type ChatFn,
-	type ChatFnResult,
 	type ExecutorContext,
+	type TaskFn,
+	type TaskFnResult,
 } from "../../../../src/bundles/automations/src/executor.ts";
 import type { Automation } from "../../../../src/bundles/automations/src/types.ts";
 
@@ -96,15 +96,13 @@ afterEach(() => {
 // createDirectExecutor — context resolution
 // ---------------------------------------------------------------------------
 
-function makeDirectChatFn(): ChatFn {
-	return async (req): Promise<ChatFnResult> => ({
-		response: `echo: ${req.message}`,
+function makeDirectTaskFn(): TaskFn {
+	return async (req): Promise<TaskFnResult> => ({
+		output: `echo: ${req.prompt}`,
 		conversationId: "conv_test",
 		toolCalls: [],
-		inputTokens: 100,
-		outputTokens: 50,
 		stopReason: "complete",
-		usage: { iterations: 1 },
+		usage: { inputTokens: 100, outputTokens: 50, iterations: 1 },
 	});
 }
 
@@ -117,7 +115,7 @@ describe("createDirectExecutor", () => {
 			return { workspaceId: "ws_test", identity: { id: "usr_owner" } };
 		};
 
-		const executor = createDirectExecutor(makeDirectChatFn(), getContext);
+		const executor = createDirectExecutor(makeDirectTaskFn(), getContext);
 		const automation = makeAutomation({
 			ownerId: "usr_owner",
 			workspaceId: "ws_test",
@@ -131,21 +129,19 @@ describe("createDirectExecutor", () => {
 		expect(receivedAutomation!.workspaceId).toBe("ws_test");
 	});
 
-	test("forwards workspaceId and identity from context to chat request", async () => {
+	test("forwards workspaceId and identity from context to task request", async () => {
 		let capturedWsId: string | undefined;
 		let capturedIdentity: { id: string } | undefined;
 
-		const chatFn: ChatFn = async (req) => {
+		const taskFn: TaskFn = async (req) => {
 			capturedWsId = req.workspaceId;
 			capturedIdentity = req.identity;
 			return {
-				response: "ok",
+				output: "ok",
 				conversationId: "conv_test",
 				toolCalls: [],
-				inputTokens: 100,
-				outputTokens: 50,
 				stopReason: "complete",
-				usage: { iterations: 1 },
+				usage: { inputTokens: 100, outputTokens: 50, iterations: 1 },
 			};
 		};
 
@@ -154,7 +150,7 @@ describe("createDirectExecutor", () => {
 			identity: { id: "usr_alice" },
 		});
 
-		const executor = createDirectExecutor(chatFn, getContext);
+		const executor = createDirectExecutor(taskFn, getContext);
 		await executor(makeAutomation());
 
 		expect(capturedWsId).toBe("ws_eng");
@@ -164,22 +160,20 @@ describe("createDirectExecutor", () => {
 	test("omits workspaceId and identity when context is empty", async () => {
 		let capturedRequest: Record<string, unknown> | undefined;
 
-		const chatFn: ChatFn = async (req) => {
+		const taskFn: TaskFn = async (req) => {
 			capturedRequest = req as unknown as Record<string, unknown>;
 			return {
-				response: "ok",
+				output: "ok",
 				conversationId: "conv_test",
 				toolCalls: [],
-				inputTokens: 100,
-				outputTokens: 50,
 				stopReason: "complete",
-				usage: { iterations: 1 },
+				usage: { inputTokens: 100, outputTokens: 50, iterations: 1 },
 			};
 		};
 
 		const getContext = (): ExecutorContext => ({});
 
-		const executor = createDirectExecutor(chatFn, getContext);
+		const executor = createDirectExecutor(taskFn, getContext);
 		await executor(makeAutomation());
 
 		expect(capturedRequest).toBeDefined();
@@ -198,20 +192,18 @@ describe("createDirectExecutor", () => {
 // ---------------------------------------------------------------------------
 
 describe("createDirectExecutor — stopReason → status", () => {
-	function chatFnWithStop(stopReason: string): ChatFn {
-		return async (): Promise<ChatFnResult> => ({
-			response: "done",
+	function taskFnWithStop(stopReason: string): TaskFn {
+		return async (): Promise<TaskFnResult> => ({
+			output: "done",
 			conversationId: "conv_test",
 			toolCalls: [],
-			inputTokens: 10,
-			outputTokens: 5,
 			stopReason,
-			usage: { iterations: 1 },
+			usage: { inputTokens: 10, outputTokens: 5, iterations: 1 },
 		});
 	}
 
 	async function statusFor(stopReason: string): Promise<string> {
-		const executor = createDirectExecutor(chatFnWithStop(stopReason), () => ({}));
+		const executor = createDirectExecutor(taskFnWithStop(stopReason), () => ({}));
 		const run = await executor(makeAutomation());
 		return run.status;
 	}
@@ -249,7 +241,7 @@ describe("createDirectExecutor — stopReason → status", () => {
 describe("createDirectExecutor — recursive-call guard", () => {
 	test("refuses to run when allowedTools includes automations__create", async () => {
 		const executor = createDirectExecutor(
-			makeDirectChatFn(),
+			makeDirectTaskFn(),
 			() => ({ workspaceId: "ws_test", identity: { id: "u" } }),
 		);
 		const automation = makeAutomation({
@@ -261,7 +253,7 @@ describe("createDirectExecutor — recursive-call guard", () => {
 
 	test("refuses to run when allowedTools includes automations__update", async () => {
 		const executor = createDirectExecutor(
-			makeDirectChatFn(),
+			makeDirectTaskFn(),
 			() => ({ workspaceId: "ws_test", identity: { id: "u" } }),
 		);
 		const automation = makeAutomation({
@@ -273,7 +265,7 @@ describe("createDirectExecutor — recursive-call guard", () => {
 
 	test("permits non-recursive allowedTools", async () => {
 		const executor = createDirectExecutor(
-			makeDirectChatFn(),
+			makeDirectTaskFn(),
 			() => ({ workspaceId: "ws_test", identity: { id: "u" } }),
 		);
 		const automation = makeAutomation({
@@ -284,16 +276,16 @@ describe("createDirectExecutor — recursive-call guard", () => {
 		expect(result.status).toBe("success");
 	});
 
-	test("forwards a combined signal into chatFn so timeouts cancel in-flight chat work", async () => {
+	test("forwards a combined signal into taskFn so timeouts cancel in-flight task work", async () => {
 		// Regression: the old Promise.race pattern rejected at the timeout
-		// but didn't propagate cancellation to the chatFn. The chat kept
+		// but didn't propagate cancellation to the task fn. The task kept
 		// running, finished cleanly minutes later, and the result was
-		// silently discarded. Now the chatFn receives a signal that
+		// silently discarded. Now the taskFn receives a signal that
 		// aborts on the same timeout — so it can cooperatively stop.
 		let receivedSignal: AbortSignal | undefined;
-		let signalFiredDuringChat = false;
+		let signalFiredDuringTask = false;
 
-		const slowChatFn: ChatFn = async (req) => {
+		const slowTaskFn: TaskFn = async (req) => {
 			receivedSignal = req.signal;
 			// Wait up to 500ms but bail on abort so the test runs fast.
 			await new Promise<void>((resolve) => {
@@ -301,50 +293,48 @@ describe("createDirectExecutor — recursive-call guard", () => {
 				req.signal?.addEventListener(
 					"abort",
 					() => {
-						signalFiredDuringChat = true;
+						signalFiredDuringTask = true;
 						clearTimeout(timer);
 						resolve();
 					},
 					{ once: true },
 				);
 			});
-			// On abort the chat throws — matches engine.run behavior under
+			// On abort the task throws — matches engine.run behavior under
 			// signal-driven cancellation.
 			if (req.signal?.aborted) {
 				throw new DOMException("The operation was aborted.", "AbortError");
 			}
 			return {
-				response: "ok",
+				output: "ok",
 				conversationId: "conv_test",
 				toolCalls: [],
-				inputTokens: 100,
-				outputTokens: 50,
 				stopReason: "complete",
-				usage: { iterations: 1 },
+				usage: { inputTokens: 100, outputTokens: 50, iterations: 1 },
 			};
 		};
 
-		const executor = createDirectExecutor(slowChatFn, () => ({
+		const executor = createDirectExecutor(slowTaskFn, () => ({
 			workspaceId: "ws_test",
 		}));
 		const automation = makeAutomation({ maxRunDurationMs: 50 });
 
 		await expect(executor(automation)).rejects.toThrow(/timed out after/);
 		expect(receivedSignal).toBeDefined();
-		expect(signalFiredDuringChat).toBe(true);
+		expect(signalFiredDuringTask).toBe(true);
 	});
 
-	test("external cancel propagates into chatFn signal as AbortError", async () => {
+	test("external cancel propagates into taskFn signal as AbortError", async () => {
 		// Symmetric to the timeout case: when the scheduler aborts the
-		// run controller (manual cancel, scheduler.stop()), the chatFn's
+		// run controller (manual cancel, scheduler.stop()), the taskFn's
 		// signal must also fire so the in-flight engine work cancels.
-		let chatSawAbort = false;
-		const slowChatFn: ChatFn = async (req) => {
+		let taskSawAbort = false;
+		const slowTaskFn: TaskFn = async (req) => {
 			await new Promise<void>((resolve) => {
 				req.signal?.addEventListener(
 					"abort",
 					() => {
-						chatSawAbort = true;
+						taskSawAbort = true;
 						resolve();
 					},
 					{ once: true },
@@ -354,17 +344,17 @@ describe("createDirectExecutor — recursive-call guard", () => {
 			throw new DOMException("The operation was aborted.", "AbortError");
 		};
 
-		const executor = createDirectExecutor(slowChatFn, () => ({ workspaceId: "ws_test" }));
+		const executor = createDirectExecutor(slowTaskFn, () => ({ workspaceId: "ws_test" }));
 		const externalController = new AbortController();
 		const automation = makeAutomation({ maxRunDurationMs: 10_000 });
 
 		const runPromise = executor(automation, externalController.signal);
-		// Give the chat a tick to start, then cancel.
+		// Give the task a tick to start, then cancel.
 		await new Promise((r) => setTimeout(r, 10));
 		externalController.abort();
 
 		await expect(runPromise).rejects.toThrow();
-		expect(chatSawAbort).toBe(true);
+		expect(taskSawAbort).toBe(true);
 	});
 
 	test("external-cancel wins the race when timeout fires concurrently — no false 'timeout' status", async () => {
@@ -374,7 +364,7 @@ describe("createDirectExecutor — recursive-call guard", () => {
 		// "timed out after Ns" — so the scheduler stamps `status:
 		// "timeout"` on what was really a cancel. Narrow window, but
 		// the whole point of the PR is honest status records.
-		const chatFn: ChatFn = async (req) => {
+		const taskFn: TaskFn = async (req) => {
 			await new Promise<void>((resolve) => {
 				req.signal?.addEventListener("abort", () => resolve(), { once: true });
 				setTimeout(resolve, 5000);
@@ -382,7 +372,7 @@ describe("createDirectExecutor — recursive-call guard", () => {
 			throw new DOMException("The operation was aborted.", "AbortError");
 		};
 
-		const executor = createDirectExecutor(chatFn, () => ({ workspaceId: "ws_test" }));
+		const executor = createDirectExecutor(taskFn, () => ({ workspaceId: "ws_test" }));
 		const externalController = new AbortController();
 		// Make the timeout extremely tight so it fires very close to the
 		// external cancel — exercises the race the flag is meant to

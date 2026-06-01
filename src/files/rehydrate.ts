@@ -314,9 +314,10 @@ function formatPdfFallback(
   size: number,
   text: string,
 ): LanguageModelV3TextPart {
+  const hint = `To inspect pages beyond this preview, call files__read_pdf_pages with id "${id}" and specific 1-based page numbers.`;
   return {
     type: "text",
-    text: `--- Attached PDF: ${name} (${id}, ${humanSize(size)}) ---\n${text}`,
+    text: `--- Attached PDF: ${name} (${id}, ${humanSize(size)}) ---\n${text}\n${hint}`,
   };
 }
 

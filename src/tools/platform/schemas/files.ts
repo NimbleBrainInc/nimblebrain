@@ -39,6 +39,35 @@ export const FilesReadInput = Type.Object(
 );
 export type FilesReadInput = Static<typeof FilesReadInput>;
 
+export const FilesReadPdfPagesInput = Type.Object(
+  {
+    id: Type.String({ description: "PDF file ID." }),
+    pages: Type.Array(Type.Integer({ minimum: 1, description: "1-based PDF page number." }), {
+      minItems: 1,
+      maxItems: 10,
+      description: "Specific 1-based PDF pages to extract text from. Max 10 pages per call.",
+    }),
+  },
+  { required: ["id", "pages"] },
+);
+export type FilesReadPdfPagesInput = Static<typeof FilesReadPdfPagesInput>;
+
+export interface FilesReadPdfPagesOutput {
+  id: string;
+  filename: string;
+  mimeType: string;
+  size: number;
+  totalPages: number;
+  requestedPages: number[];
+  missingPages: number[];
+  pages: Array<{
+    page: number;
+    text: string;
+    truncated: boolean;
+    empty: boolean;
+  }>;
+}
+
 export const FilesCreateInput = Type.Object(
   {
     manifest: Type.Object(

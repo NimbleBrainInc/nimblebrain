@@ -520,10 +520,17 @@ describe("status tool — scope: skills", () => {
 	async function makeStatusSource(
 		skills: { context: Skill[]; matchable: Skill[] },
 		lifecycleMock?: { getInstance: (name: string, wsId: string) => unknown },
+		layer3?: Array<{ skill: Skill; loadedBy: "always" | "tool_affinity"; reason: string }>,
 	) {
 		const registry = await makeRegistry();
 		const getSkills = () => skills;
-		const runtimeMock = { requireWorkspaceId: () => "ws_test" } as unknown as import("../../src/runtime/runtime.ts").Runtime;
+		// Status reads workspace/user-tier skills through `describeRequestSkills`
+		// (the same per-request path `chat` composes with); `context` carries the
+		// boot context skills, `layer3` the per-request selection.
+		const runtimeMock = {
+			requireWorkspaceId: () => "ws_test",
+			describeRequestSkills: async () => ({ context: skills.context, layer3: layer3 ?? [] }),
+		} as unknown as import("../../src/runtime/runtime.ts").Runtime;
 		return await createSystemTools(
 			() => registry,
 			undefined,
@@ -555,6 +562,73 @@ describe("status tool — scope: skills", () => {
 		expect(extractText(result.content)).toContain("User Context");
 		expect(extractText(result.content)).toContain("spanish");
 		expect(extractText(result.content)).toContain("priority 20");
+	});
+
+	it("shows per-request Layer-3 workspace/user skills (regression: status read a boot cache)", async () => {
+		const workspaceSkill: Skill = {
+			manifest: {
+				name: "team-voice",
+				description: "Team voice rules",
+				version: "1.0.0",
+				type: "context",
+				priority: 30,
+				scope: "workspace",
+			},
+			body: "Match the team voice.",
+			sourcePath: "/home/.nimblebrain/workspaces/ws_test/skills/team-voice.md",
+		};
+		const source = await makeStatusSource({ context: [coreSkill], matchable: [] }, undefined, [
+			{ skill: workspaceSkill, loadedBy: "always", reason: "loading_strategy: always" },
+		]);
+		const result = await source.execute("status", { scope: "skills" });
+		expect(result.isError).toBe(false);
+		const text = extractText(result.content);
+		expect(text).toContain("Workspace & User Skills (always loaded)");
+		expect(text).toContain("team-voice");
+		expect(text).toContain("workspace");
+	});
+
+	it("lists a skill present in both boot context and the Layer-3 set exactly once", async () => {
+		// A boot-context skill (non-core) whose name also surfaces in the
+		// per-request Layer-3 set must render once — under the Layer-3 section,
+		// not duplicated in "User Context". Guards the userContext dedup branch.
+		const dup: Skill = {
+			manifest: {
+				name: "dual-listed",
+				description: "Appears in both sources",
+				version: "1.0.0",
+				type: "context",
+				priority: 25,
+				scope: "workspace",
+			},
+			body: "Body.",
+			sourcePath: "/home/.nimblebrain/workspaces/ws_test/skills/dual-listed.md",
+		};
+		const source = await makeStatusSource({ context: [coreSkill, dup], matchable: [] }, undefined, [
+			{ skill: dup, loadedBy: "always", reason: "loading_strategy: always" },
+		]);
+		const result = await source.execute("status", { scope: "skills" });
+		expect(result.isError).toBe(false);
+		const text = extractText(result.content);
+		expect(text.split("dual-listed").length - 1).toBe(1);
+		expect(text).toContain("Workspace & User Skills (always loaded)");
+		expect(text).not.toContain("User Context");
+	});
+
+	it("shows a core skill that also enters the Layer-3 set once, under Core", async () => {
+		// If a core skill ever carries a Layer-3 loading strategy it can appear in
+		// both the boot context (Core) and the per-request Layer-3 set. Core is
+		// authoritative: it must render once, under "Core Skills", never also in
+		// the Layer-3 sections. Guards the name-based coreNames dedup.
+		const source = await makeStatusSource({ context: [coreSkill], matchable: [] }, undefined, [
+			{ skill: coreSkill, loadedBy: "always", reason: "loading_strategy: always" },
+		]);
+		const result = await source.execute("status", { scope: "skills" });
+		expect(result.isError).toBe(false);
+		const text = extractText(result.content);
+		expect(text.split("soul").length - 1).toBe(1);
+		expect(text).toContain("Core Skills");
+		expect(text).not.toContain("Workspace & User Skills");
 	});
 
 	it("shows matchable skills with triggers", async () => {

@@ -36,6 +36,21 @@ export class MemberConflictError extends Error {
   }
 }
 
+// ── Membership-change subscription ─────────────────────────────────
+
+/**
+ * Fired after a successful mutation that changes which workspaces a
+ * user is a member of: `addMember`, `removeMember`, `delete` (for every
+ * former member), and `create` (for every initial member). NOT fired
+ * for `updateMemberRole` — role changes don't affect set membership,
+ * and the SSE manager's only consumer cares about presence, not role.
+ *
+ * Handlers run synchronously after the atomic write succeeds. Errors
+ * in a handler are caught and logged so a buggy subscriber can't
+ * derail a workspace mutation.
+ */
+export type MembershipChangeHandler = (userId: string) => void;
+
 // ── Workspace ID validation ────────────────────────────────────────
 
 // `WORKSPACE_ID_RE` lives in `./workspace-id-pattern.ts` so the web
@@ -129,6 +144,7 @@ export function personalWorkspaceSlugFor(userId: string): string {
 
 export class WorkspaceStore {
   private workspacesDir: string;
+  private membershipChangeHandlers = new Set<MembershipChangeHandler>();
 
   constructor(workDir: string) {
     this.workspacesDir = join(workDir, "workspaces");
@@ -306,6 +322,11 @@ export class WorkspaceStore {
     await this.atomicWrite(this.wsPath(id), workspace);
     await scaffoldWorkspace(wsDir);
 
+    // Initial members gain a workspace from their POV; notify subscribers
+    // (the SSE manager re-queries memberships for any connected client
+    // whose identity matches).
+    for (const m of members) this.fireMembershipChanged(m.userId);
+
     return workspace;
   }
 
@@ -425,7 +446,14 @@ export class WorkspaceStore {
   async delete(id: string): Promise<boolean> {
     const wsDir = join(this.workspacesDir, id);
     if (!existsSync(wsDir)) return false;
+    // Read members BEFORE removing — we need them to fire change
+    // notifications. A corrupted dir (missing workspace.json) yields
+    // `null` and we simply don't fire; nothing to invalidate.
+    const ws = await this.get(id);
     await rm(wsDir, { recursive: true, force: true });
+    if (ws) {
+      for (const m of ws.members) this.fireMembershipChanged(m.userId);
+    }
     return true;
   }
 
@@ -457,6 +485,7 @@ export class WorkspaceStore {
     };
 
     await this.atomicWrite(this.wsPath(wsId), updated);
+    this.fireMembershipChanged(userId);
     return updated;
   }
 
@@ -472,6 +501,7 @@ export class WorkspaceStore {
       );
     }
 
+    const wasMember = ws.members.some((m) => m.userId === userId);
     const updated: Workspace = {
       ...ws,
       members: ws.members.filter((m) => m.userId !== userId),
@@ -479,6 +509,10 @@ export class WorkspaceStore {
     };
 
     await this.atomicWrite(this.wsPath(wsId), updated);
+    // Only fire if this was an actual removal — a no-op removeMember
+    // (user wasn't a member to start with) shouldn't generate spurious
+    // cache invalidations.
+    if (wasMember) this.fireMembershipChanged(userId);
     return updated;
   }
 
@@ -507,6 +541,38 @@ export class WorkspaceStore {
   async getWorkspacesForUser(userId: string): Promise<Workspace[]> {
     const all = await this.list();
     return all.filter((ws) => ws.members.some((m) => m.userId === userId));
+  }
+
+  // ── Membership-change subscriptions ────────────────────────────
+
+  /**
+   * Subscribe to membership-change notifications. Returns an unsubscribe
+   * function. Fires after `addMember`, `removeMember`, `create`, and
+   * `delete` for every affected `userId` (see `MembershipChangeHandler`).
+   * The SSE event manager uses this to invalidate its per-client cached
+   * workspace-membership set without polling the store on every emit.
+   */
+  onMembershipChanged(handler: MembershipChangeHandler): () => void {
+    this.membershipChangeHandlers.add(handler);
+    return () => {
+      this.membershipChangeHandlers.delete(handler);
+    };
+  }
+
+  /**
+   * Fire all registered membership-change handlers for a userId. Handler
+   * errors are caught and logged so a buggy subscriber can't break a
+   * workspace mutation. Synchronous — handlers themselves may schedule
+   * async work (e.g. the SSE manager refreshes a client's cached set).
+   */
+  private fireMembershipChanged(userId: string): void {
+    for (const handler of this.membershipChangeHandlers) {
+      try {
+        handler(userId);
+      } catch (err) {
+        console.warn("[workspace-store] membership change handler threw:", err);
+      }
+    }
   }
 
   // ── Private helpers ────────────────────────────────────────────

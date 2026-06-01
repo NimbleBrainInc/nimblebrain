@@ -286,6 +286,13 @@ describe("GET /v1/composio-auth/callback", () => {
       expect(res.status).toBe(200);
       expect(res.headers.get("content-type") ?? "").toContain("text/html");
 
+      // Redirect back to the workspace-scoped connectors page for the
+      // workspace the connection landed in (ws_test → slug "test"), not the
+      // pre-scoping `/settings/workspace/connectors` (which 404s now).
+      const html = await res.text();
+      expect(html).toContain("/w/test/settings/connectors");
+      expect(html).not.toContain("/settings/workspace/connectors");
+
       const stored = await readComposioConnection(dir, wsId, cid);
       expect(stored).not.toBeNull();
       expect(stored?.connectedAccountId).toBe("ca_xyz");

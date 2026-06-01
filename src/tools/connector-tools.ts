@@ -229,7 +229,7 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
         wsId: {
           type: "string",
           description:
-            "Target workspace id (required for `install`). The UI picks the workspace via the install dialog's WorkspaceTargetPicker and passes it explicitly; the tool hard-errors when missing. Stage 2: no default-to-personal fallback inside the tool — `defaultBinding` on the catalog entry is a UX hint the picker may consult, never read by this action.",
+            "Target workspace for `install`. Optional: defaults to the request's workspace (X-Workspace-Id), so the web shell installs into the workspace it's viewing without passing this. Supply it only to install into a different workspace. There is no default-to-personal fallback — if neither the header nor this arg names a workspace, install hard-errors.",
         },
         clientId: {
           type: "string",
@@ -301,7 +301,16 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
             ctx,
             identity,
             input.entry as unknown,
-            input.wsId === undefined ? undefined : String(input.wsId),
+            // Default the install target to the request's workspace — the
+            // same `ctx.getWorkspaceId()` (X-Workspace-Id, set from the
+            // `/w/<slug>` route) every other action on this tool uses. The
+            // web shell installs into the workspace the user is viewing; it
+            // no longer carries a separately-picked target. An explicit
+            // `wsId` arg still wins for direct API callers. Keeping install
+            // on the same workspace selector as connect / list / status is
+            // what closes the "Bundle not installed" scope mismatch (an
+            // install seeded under one workspace, then read under another).
+            input.wsId === undefined ? (wsId ?? undefined) : String(input.wsId),
           );
         case "disconnect":
           return handleDisconnect(
@@ -806,19 +815,22 @@ async function handleInstall(
   if (!entry) return errResult("entry with install action is required.");
   if (!identity) return errResult("Authentication required.");
 
-  // Stage 2: `wsId` is REQUIRED for every install — the UI picks the
-  // target workspace via WorkspaceTargetPicker and passes it explicitly.
-  // No default-to-personal fallback inside the tool (Stage 1 precedent:
-  // `startBundleSource` hard-errors on missing wsId; pooling credentials
-  // across tenants via a silent default is the failure mode this guard
-  // forecloses).
+  // `wsId` is REQUIRED for every install, but it resolves to the request's
+  // workspace by default (X-Workspace-Id, set from the `/w/<slug>` route the
+  // web shell is on) — the dispatcher passes `ctx.getWorkspaceId()` when no
+  // explicit arg is given. There is still no default-to-personal fallback
+  // (Stage 1 precedent: `startBundleSource` hard-errors on missing wsId;
+  // pooling credentials across tenants via a silent default is the failure
+  // mode this guard forecloses). A client that calls this action with
+  // neither a workspace header nor a `wsId` arg hits the guard below.
   const wsId = wsIdArg?.trim() ? wsIdArg.trim() : null;
   if (!wsId) {
     return errResult(
-      "wsId is required for install. The web shell's install dialog picks " +
-        "a target workspace via WorkspaceTargetPicker; clients calling this " +
-        "action directly must supply one explicitly. There is no default-to- " +
-        "personal fallback inside this tool.",
+      "wsId is required for install. The web shell installs into the " +
+        "workspace named by the request (X-Workspace-Id / the /w/<slug> " +
+        "route); clients calling this action directly must supply a " +
+        "workspace via that header or an explicit wsId argument. There is " +
+        "no default-to-personal fallback inside this tool.",
     );
   }
   const ws = await ctx.runtime.getWorkspaceStore().get(wsId);

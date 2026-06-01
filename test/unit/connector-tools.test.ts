@@ -793,15 +793,15 @@ describe("manage_connectors.install", () => {
     expect(text).toContain("not visible in this workspace");
   });
 
-  test("install hard-errors when wsId is missing (Stage 1 lesson 3)", async () => {
-    // Stage 2: the UI's install dialog picks a target workspace via
-    // WorkspaceTargetPicker and supplies it explicitly. A buggy client
-    // (or a tampered MCP call) that omits `wsId` must NOT silently fall
-    // back to "current workspace" or "personal" — credential layouts
-    // would pool across tenants. Hard-error, naming the missing arg.
-    // Adversarial: pin "what if no wsId was sent" — neither session
-    // context, identity, nor catalog `defaultBinding` may be consulted
-    // to recover a target.
+  test("install hard-errors when there is no workspace in context (no session, no wsId arg)", async () => {
+    // Install defaults to the request's workspace (`getWorkspaceId()`),
+    // but here the session workspace is explicitly null (third arg to
+    // buildTool) and the call omits `wsId` — so there is no workspace
+    // anywhere. The tool must NOT recover a target from identity or the
+    // catalog's `defaultBinding`; with nothing in context it hard-errors,
+    // naming the missing arg. (This is the no-default-to-personal guard:
+    // it fires only when no workspace is in scope at all, not on the
+    // normal path where the route supplies one.)
     const tool = buildTool(h, ADMIN_USER, null);
     const result = await tool.handler({ action: "install", entry: mpakEntry() });
     expect(result.isError).toBe(true);

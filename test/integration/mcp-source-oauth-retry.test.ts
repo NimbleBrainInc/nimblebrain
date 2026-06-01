@@ -198,6 +198,9 @@ describe("McpSource — OAuth retry path", () => {
       callbackUrl: CALLBACK,
       // Mock runs on localhost; SSRF validator would otherwise reject.
       allowInsecureRemotes: true,
+      // This test exercises the headless 302→code path, which only runs
+      // when the redirect probe is enabled (off by default now).
+      headlessAuthProbe: true,
     });
 
     const source = new McpSource(
@@ -210,10 +213,21 @@ describe("McpSource — OAuth retry path", () => {
       new NoopEventSink(),
     );
 
+    // The OAuth-retry success path is a SECOND success seam inside start().
+    // It must emit the readiness signal (subscribeToolsChanged) just like the
+    // normal seam, or a union memoized while this remote OAuth source was
+    // unreachable would never refresh — the stale-union bug, on this branch.
+    let readinessFires = 0;
+    source.subscribeToolsChanged(() => {
+      readinessFires++;
+    });
+
     await source.start();
     const tools = await source.tools();
     expect(tools.length).toBe(1);
     expect(tools[0]?.name).toBe("retry-test__noop");
+    // Connect completed via the retry seam → exactly one readiness emit.
+    expect(readinessFires).toBe(1);
 
     await source.stop();
   }, 15_000);
