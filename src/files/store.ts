@@ -1,7 +1,31 @@
 import { randomBytes } from "node:crypto";
 import { appendFile, mkdir, readdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { basename, join, relative, resolve } from "node:path";
+import { resolveMimeType } from "./mime.ts";
 import type { ExtractedTextSidecar, FileEntry } from "./types.ts";
+
+/**
+ * Recover a usable MIME type for an entry whose stored type is empty or the
+ * generic `application/octet-stream`. Mirrors the ingest-time recovery in
+ * `resolveMimeType` (the three mint sites) but at the READ seam, so files
+ * written before that fix — stored as opaque binary and therefore unreadable
+ * by every text path (`extractText`, `isExtractable`, `files://` delivery,
+ * the REST download `Content-Type`, chat rehydration) — become readable with
+ * no migration required.
+ *
+ * Recovery is MONOTONIC: `resolveMimeType` only ever turns a generic/empty
+ * type into a text type for a known text/source extension (its EXTENSION_MIME
+ * invariant); a specific stored type is returned verbatim. So real binary
+ * (`.bin`, images, PDFs, archives) is never mislabelled, and re-applying it is
+ * idempotent. Applied at `findEntry` and `readRegistry` (and thus
+ * `readFileById`, which reads through `findEntry`) so every reader agrees on
+ * one type. Mutations that read-then-re-append (`tag`, `delete`) persist the
+ * corrected type — an intended, idempotent lazy backfill.
+ */
+function withResolvedMime(entry: FileEntry): FileEntry {
+  const resolved = resolveMimeType(entry.filename, entry.mimeType);
+  return resolved === entry.mimeType ? entry : { ...entry, mimeType: resolved };
+}
 
 /** Sanitize a filename: strip path separators, null bytes, and control chars (0x00-0x1F). */
 export function sanitizeFilename(name: string): string {
@@ -152,7 +176,9 @@ export function createFileStore(filesDir: string): FileStore {
     for (const entry of raw) {
       latest.set(entry.id, entry);
     }
-    return Array.from(latest.values()).filter((e) => !e.deleted);
+    return Array.from(latest.values())
+      .filter((e) => !e.deleted)
+      .map(withResolvedMime);
   }
 
   async function findEntry(id: string): Promise<FileEntry | null> {
@@ -162,7 +188,7 @@ export function createFileStore(filesDir: string): FileStore {
       if (entry.id === id) found = entry;
     }
     if (!found || found.deleted) return null;
-    return found;
+    return withResolvedMime(found);
   }
 
   /**

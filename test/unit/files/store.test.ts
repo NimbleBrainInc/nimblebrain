@@ -185,3 +185,85 @@ describe("sanitizeFilename", () => {
     expect(sanitizeFilename("\x00\x01")).toBe("unnamed");
   });
 });
+
+describe("FileStore — read-time MIME recovery", () => {
+  // A text/source file uploaded before ingest-time recovery existed is stored
+  // as application/octet-stream and is unreadable by every text path. The read
+  // accessors re-derive a text type from the filename so it reads back without
+  // a migration. See `withResolvedMime` in store.ts.
+  async function registerOctetStream(
+    store: ReturnType<typeof createFileStore>,
+    filename: string,
+  ): Promise<string> {
+    const saved = await store.saveFile(Buffer.from("= Heading\n"), filename, "text/plain");
+    const entry: FileEntry = {
+      id: saved.id,
+      filename,
+      // The bug: stored as opaque binary despite being text.
+      mimeType: "application/octet-stream",
+      size: saved.size,
+      tags: [],
+      source: "chat",
+      conversationId: null,
+      createdAt: new Date().toISOString(),
+      description: null,
+    };
+    await store.appendRegistry(entry);
+    return saved.id;
+  }
+
+  test("findEntry recovers a text type for a .typ stored as octet-stream", async () => {
+    const store = createFileStore(join(workDir, "files"));
+    const id = await registerOctetStream(store, "engagement-plan.typ");
+    const entry = await store.findEntry(id);
+    expect(entry?.mimeType).toBe("text/plain");
+  });
+
+  test("readFile recovers the type so bytes come back as text", async () => {
+    const store = createFileStore(join(workDir, "files"));
+    const id = await registerOctetStream(store, "engagement-plan.typ");
+    const read = await store.readFile(id);
+    expect(read.mimeType).toBe("text/plain");
+    expect(read.data.toString("utf-8")).toBe("= Heading\n");
+  });
+
+  test("readRegistry recovers the type for list/search consumers", async () => {
+    const store = createFileStore(join(workDir, "files"));
+    await registerOctetStream(store, "report.md");
+    const [entry] = await store.readRegistry();
+    expect(entry.mimeType).toBe("text/markdown");
+  });
+
+  test("genuine binary with an unmapped extension stays octet-stream", async () => {
+    const store = createFileStore(join(workDir, "files"));
+    const id = await registerOctetStream(store, "payload.bin");
+    const entry = await store.findEntry(id);
+    expect(entry?.mimeType).toBe("application/octet-stream");
+  });
+
+  test("a specific stored type is never overridden", async () => {
+    const store = createFileStore(join(workDir, "files"));
+    const saved = await store.saveFile(Buffer.from("x"), "photo.png", "image/png");
+    await store.appendRegistry({
+      id: saved.id,
+      filename: "photo.png",
+      mimeType: "image/png",
+      size: saved.size,
+      tags: [],
+      source: "chat",
+      conversationId: null,
+      createdAt: new Date().toISOString(),
+      description: null,
+    });
+    const entry = await store.findEntry(saved.id);
+    expect(entry?.mimeType).toBe("image/png");
+  });
+
+  test("recovery never resurrects a deleted file", async () => {
+    const store = createFileStore(join(workDir, "files"));
+    const id = await registerOctetStream(store, "deleted.typ");
+    await store.deleteFile(id);
+    expect(await store.findEntry(id)).toBeNull();
+    expect(await store.readRegistry()).toHaveLength(0);
+  });
+});
