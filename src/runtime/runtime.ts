@@ -40,6 +40,7 @@ import type {
   EngineConfig,
   EngineEvent,
   EngineHooks,
+  EngineResult,
   EventSink,
   SkillsLoadedPayload,
   ToolPromotionResult,
@@ -1814,6 +1815,40 @@ export class Runtime {
       sinks.push(store as EventSourcedConversationStore);
     }
 
+    // Per-run usage accumulator. The engine returns its cumulative usage only
+    // on a clean exit; on an abort it throws and discards it (engine.ts run.error
+    // path). But `executeTask`'s contract (see `TaskResult` docstring) promises a
+    // result on completion "including timeout" — silent abandonment is the worst
+    // failure mode. So we mirror the engine's per-call accounting from the events
+    // it emits (same llm.done/tool.done shape PostHogEventSink reads) and retain
+    // it across the throw, letting a timed-out automation report the work it
+    // actually did instead of 0/0/0/0. Drops with the process — a real SIGKILL
+    // still reports zero (the on-disk conversation JSONL remains the post-mortem).
+    const partial = { inputTokens: 0, outputTokens: 0, iterations: 0, llmMs: 0 };
+    const partialToolCalls: TaskResult["toolCalls"] = [];
+    const usageAccumulator: EventSink = {
+      emit(event: EngineEvent): void {
+        const { type, data } = event;
+        if (type === "llm.done") {
+          partial.iterations += 1;
+          partial.llmMs += (data.llmMs as number) ?? 0;
+          const usage = (data.usage ?? {}) as { inputTokens?: number; outputTokens?: number };
+          partial.inputTokens += usage.inputTokens ?? 0;
+          partial.outputTokens += usage.outputTokens ?? 0;
+        } else if (type === "tool.done") {
+          partialToolCalls.push({
+            id: (data.id as string) ?? "",
+            name: (data.name as string) ?? "",
+            input: {},
+            output: (data.output as string) ?? "",
+            ok: (data.ok as boolean) ?? false,
+            ms: (data.ms as number) ?? 0,
+          });
+        }
+      },
+    };
+    sinks.push(usageAccumulator);
+
     const model = engineConfig.model;
     const resolvedModel = this.resolveModelFn(model);
     const perCallWorkspaceMap = new Map<string, string>();
@@ -1839,9 +1874,36 @@ export class Runtime {
     };
     engineConfig.toolPromotion = this.buildToolPromotionFactory();
 
-    const result = await runWithRequestContext(reqCtx, () =>
-      engine.run(engineConfig, systemPrompt, messages, tools),
-    );
+    let result: EngineResult;
+    try {
+      result = await runWithRequestContext(reqCtx, () =>
+        engine.run(engineConfig, systemPrompt, messages, tools),
+      );
+    } catch (err) {
+      // Non-abort errors are genuine failures — rethrow so the caller
+      // records a real failure. An abort (wall-clock timeout or external
+      // cancel from the automations executor) is NOT a failure to be
+      // discarded: honor the `TaskResult` contract and return what the run
+      // accomplished before it was stopped, tagged `stopReason: "aborted"`
+      // so the caller classifies timeout-vs-cancel from its own signal.
+      if (!engineConfig.signal?.aborted) throw err;
+      return {
+        output: "",
+        conversationId: conversation.id,
+        toolCalls: partialToolCalls,
+        stopReason: "aborted",
+        usage: {
+          inputTokens: partial.inputTokens,
+          outputTokens: partial.outputTokens,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+          reasoningTokens: 0,
+          model,
+          llmMs: partial.llmMs,
+          iterations: partial.iterations,
+        },
+      };
+    }
 
     const usage: TurnUsage = {
       ...result.usage,

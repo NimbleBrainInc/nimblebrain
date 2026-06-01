@@ -251,16 +251,38 @@ export function createDirectExecutor(
         ...buildRequest(automation, ctx),
         signal: runController.signal,
       });
-      return mapResultToRun(automation, startedAt, data);
+      const run = mapResultToRun(automation, startedAt, data);
+      // An aborted run comes back as a normal result (stopReason "aborted")
+      // carrying the partial usage accumulated before the abort — see
+      // runtime.executeTask. The task layer can't know WHY it was aborted, so
+      // classify it here from our own cancellation flags: external cancel wins
+      // over the timeout for the same reason it does in the throw path below.
+      // The run keeps its real inputTokens/outputTokens/toolCalls/iterations
+      // and conversationId instead of the 0/0/0/0 a synthesized record carries.
+      if (data.stopReason === "aborted") {
+        if (externallyAborted) {
+          run.status = "cancelled";
+          run.error = "Cancelled by user";
+        } else {
+          run.status = "timeout";
+          run.error = `Automation ${automation.id} timed out after ${Math.round(timeoutMs / 1000)}s`;
+        }
+        // "aborted" is not part of AutomationRun's stopReason union; the status
+        // field carries the operational outcome. Record the engine's stop as
+        // "other" (no natural completion) to keep the persisted record valid.
+        run.stopReason = "other";
+      }
+      return run;
     } catch (err) {
-      // Preserve the canonical "timed out after Ns" wording so
-      // `Scheduler.dispatchRun` classifies this as `timeout`. If
-      // BOTH the external abort AND the timeout fire (narrow race
-      // when taskFn takes a beat to honor cancel near the timeout
-      // boundary), external-cancel wins — the operator-meaningful
-      // cause is "I cancelled", not "the clock ran out at the same
-      // moment". Drift here would silently restamp a cancel as a
-      // timeout in the run record.
+      // Reaching here now means a genuine non-abort failure, OR an abort that
+      // still surfaced as a throw (defensive: a real process kill, or any path
+      // that bypasses executeTask's contract). Preserve the canonical
+      // "timed out after Ns" wording so `Scheduler.dispatchRun` classifies it
+      // as `timeout`. If BOTH the external abort AND the timeout fire (narrow
+      // race when taskFn takes a beat to honor cancel near the timeout
+      // boundary), external-cancel wins — the operator-meaningful cause is
+      // "I cancelled", not "the clock ran out at the same moment". Drift here
+      // would silently restamp a cancel as a timeout in the run record.
       if (timedOut && !externallyAborted) {
         throw new Error(
           `Automation ${automation.id} timed out after ${Math.round(timeoutMs / 1000)}s`,

@@ -230,6 +230,70 @@ describe("createDirectExecutor — stopReason → status", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Aborted-run telemetry — the timeout/cancel path now RETURNS a result (not a
+// throw) carrying the partial usage accumulated before the abort. Regression
+// for the 0/0/0/0 "timeout" records: a run that did real work (even sent its
+// email) before the wall clock killed it must report its real counters +
+// conversationId, not zeros — otherwise cost monitoring and budget auto-disable
+// are blind. runtime.executeTask honors its contract by returning
+// `stopReason: "aborted"`; the executor classifies timeout-vs-cancel from its
+// own cancellation flags.
+// ---------------------------------------------------------------------------
+
+describe("createDirectExecutor — aborted run preserves partial usage", () => {
+	// Mirrors runtime.executeTask under signal-driven abort: wait for the
+	// abort, then RETURN the work done so far tagged "aborted" instead of
+	// throwing it away.
+	function abortingTaskFn(): TaskFn {
+		return async (req): Promise<TaskFnResult> => {
+			await new Promise<void>((resolve) => {
+				if (req.signal?.aborted) resolve();
+				else req.signal?.addEventListener("abort", () => resolve(), { once: true });
+			});
+			return {
+				output: "",
+				conversationId: "conv_partial",
+				toolCalls: [
+					{ id: "t1", name: "gmail__send_message", input: {}, output: "sent", ok: true, ms: 80 },
+				],
+				stopReason: "aborted",
+				usage: { inputTokens: 4096, outputTokens: 512, iterations: 4 },
+			};
+		};
+	}
+
+	test("wall-clock timeout records status=timeout with the real counters and conversationId", async () => {
+		const executor = createDirectExecutor(abortingTaskFn(), () => ({ workspaceId: "ws_test" }));
+		const run = await executor(makeAutomation({ maxRunDurationMs: 30 }));
+
+		expect(run.status).toBe("timeout");
+		expect(run.inputTokens).toBe(4096);
+		expect(run.outputTokens).toBe(512);
+		expect(run.iterations).toBe(4);
+		expect(run.toolCalls).toBe(1);
+		expect(run.conversationId).toBe("conv_partial");
+		expect(run.error).toMatch(/timed out after/);
+		// "aborted" is not a valid persisted stopReason — normalized to "other".
+		expect(run.stopReason).toBe("other");
+	});
+
+	test("external cancel records status=cancelled with the real counters", async () => {
+		// Already-aborted external signal → executor sets externallyAborted and
+		// aborts the run controller immediately; the timer never fires.
+		const externalSignal = AbortSignal.abort();
+		const executor = createDirectExecutor(abortingTaskFn(), () => ({ workspaceId: "ws_test" }));
+		const run = await executor(makeAutomation({ maxRunDurationMs: 600_000 }), externalSignal);
+
+		expect(run.status).toBe("cancelled");
+		expect(run.inputTokens).toBe(4096);
+		expect(run.outputTokens).toBe(512);
+		expect(run.iterations).toBe(4);
+		expect(run.conversationId).toBe("conv_partial");
+		expect(run.error).toBe("Cancelled by user");
+	});
+});
+
+// ---------------------------------------------------------------------------
 // Recursive-call guard at the executor
 // ---------------------------------------------------------------------------
 //
