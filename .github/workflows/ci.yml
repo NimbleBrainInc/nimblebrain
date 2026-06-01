@@ -83,3 +83,51 @@ jobs:
         run: npm install -g @nimblebrain/mpak@latest
       - name: Smoke tests
         run: bun run smoke
+
+  # Build + push a SHA-tagged image for every commit that lands on main, so
+  # `make deploy` can roll out any main commit without a manual local push.
+  # This is the everyday counterpart to release.yml (which builds on `v*`
+  # tags): same ECR repos, same `:<short-sha>` tag — a `v*` release just adds
+  # the version tag and GHCR/`:latest` on top. Gating on every check above
+  # means an image only exists in ECR if it built green, which closes the
+  # "deployed a tag that was never pushed" hole.
+  #
+  # `if` restricts this to direct pushes to main (post-merge), never PRs — so
+  # the OIDC/ECR credentials are never exposed to fork PRs, and only verified
+  # main commits get published.
+  build-and-push:
+    name: Build & Push Images
+    needs: [lint-and-check, test-unit, test-integration, smoke]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+      - uses: aws-actions/amazon-ecr-login@v2
+        id: ecr
+      - name: Set image tag
+        id: tag
+        run: echo "sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Build and push platform image
+        run: |
+          docker build --platform linux/amd64 \
+            --build-arg BUILD_SHA=${{ steps.tag.outputs.sha }} \
+            -t ${{ steps.ecr.outputs.registry }}/nimblebrain/agent-platform:${{ steps.tag.outputs.sha }} \
+            -f Dockerfile .
+          docker push ${{ steps.ecr.outputs.registry }}/nimblebrain/agent-platform:${{ steps.tag.outputs.sha }}
+      # NOTE: web is built without VITE_TURNSTILE_SITE_KEY (a build-time Vite
+      # var), matching release.yml. The Makefile `push` target injects a
+      # per-env key from 1Password; if a build-time Turnstile key is required
+      # in prod, this image won't carry it. See the deployments Makefile.
+      - name: Build and push web image
+        run: |
+          docker build --platform linux/amd64 \
+            -t ${{ steps.ecr.outputs.registry }}/nimblebrain/agent-web:${{ steps.tag.outputs.sha }} \
+            -f web/Dockerfile web/
+          docker push ${{ steps.ecr.outputs.registry }}/nimblebrain/agent-web:${{ steps.tag.outputs.sha }}
