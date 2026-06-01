@@ -31,6 +31,7 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { textContent } from "../../src/engine/content-helpers.ts";
+import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { defineInProcessApp, type InProcessTool } from "../../src/tools/in-process-app.ts";
 import { namespacedToolName } from "../../src/tools/namespace.ts";
@@ -243,6 +244,71 @@ describe("runtime.executeTask", () => {
     expect(result.toolCalls.length).toBeGreaterThan(0);
     expect(result.toolCalls[0]?.name).toBe(namespacedPing);
     expect(result.toolCalls[0]?.ok).toBe(true);
+  });
+
+  it("returns partial usage + conversationId tagged 'aborted' when the run is aborted mid-flight", async () => {
+    // Pins the event-shape contract the per-run usage accumulator in
+    // runtime.executeTask depends on. The accumulator reads `data.usage`
+    // off `llm.done` and counts `tool.done`; if either shape drifts it
+    // silently captures zeros — reverting automations to the exact 0/0/0/0
+    // regression this whole change exists to kill, with the suite still
+    // green. This test boots a REAL engine + echo model, aborts after the
+    // first tool turn completes, and asserts the abort-return path carries
+    // the real work done before the abort instead of zeros.
+    const probe = buildProbeSource();
+    await probe.source.start();
+
+    const namespacedPing = namespacedToolName(SHARED_WS_ID, "probe__ping");
+    runtime = await bootRuntime({
+      responses: [
+        // Turn 1: text (so the echo model reports nonzero usage) + a tool
+        // call (so the loop continues past this turn to a second
+        // iteration-boundary check, where the abort is observed).
+        {
+          text: "pinging the probe",
+          toolCalls: [
+            { toolCallId: "call_abort", toolName: namespacedPing, input: JSON.stringify({}) },
+          ],
+        },
+        // Turn 2 is never reached — the abort fires after turn 1's tool.done.
+        { text: "done" },
+      ],
+    });
+    await provisionWorkspaces(runtime);
+    const reg = await runtime.ensureWorkspaceRegistry(SHARED_WS_ID);
+    reg.addSource(probe.source);
+
+    // Abort once the first tool call has completed: by tool.done, both the
+    // turn's llm.done (usage) and the tool.done (toolCall) have been
+    // accumulated. The engine throws at the next iteration boundary; the
+    // executeTask catch returns the partial result instead of rethrowing.
+    const controller = new AbortController();
+    const abortAfterFirstTool: EventSink = {
+      emit(event: EngineEvent): void {
+        if (event.type === "tool.done") controller.abort();
+      },
+    };
+
+    const result = await runtime.executeTask(
+      {
+        prompt: "ping the probe, then keep going",
+        identity: { id: TEST_USER_ID, displayName: TEST_USER_DISPLAY },
+        workspaceId: SHARED_WS_ID,
+        signal: controller.signal,
+      },
+      abortAfterFirstTool,
+    );
+
+    expect(result.stopReason).toBe("aborted");
+    // The real work done before the abort — NOT 0/0/0/0.
+    expect(result.usage.inputTokens).toBeGreaterThan(0);
+    expect(result.usage.outputTokens).toBeGreaterThan(0);
+    expect(result.usage.iterations).toBeGreaterThan(0);
+    expect(result.toolCalls.length).toBeGreaterThan(0);
+    expect(result.toolCalls[0]?.name).toBe(namespacedPing);
+    // A real conversation anchor for post-mortem (the gap the synthesized
+    // 0/0/0/0 record left behind).
+    expect(result.conversationId).toMatch(/^[a-z0-9_-]+$/i);
   });
 
   it("stamps source: 'task' on the conversation metadata", async () => {

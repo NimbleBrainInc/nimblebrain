@@ -9,6 +9,7 @@
  * No retry logic — the scheduler handles backoff.
  */
 
+import { isTransientError } from "./scheduler.ts";
 import type { Automation, AutomationRun } from "./types.ts";
 
 const DEFAULT_TIMEOUT_MS = 120_000;
@@ -263,14 +264,20 @@ export function createDirectExecutor(
         if (externallyAborted) {
           run.status = "cancelled";
           run.error = "Cancelled by user";
+          run.transient = false;
         } else {
           run.status = "timeout";
           run.error = `Automation ${automation.id} timed out after ${Math.round(timeoutMs / 1000)}s`;
+          run.transient = isTransientError(run.error);
         }
         // "aborted" is not part of AutomationRun's stopReason union; the status
         // field carries the operational outcome. Record the engine's stop as
         // "other" (no natural completion) to keep the persisted record valid.
         run.stopReason = "other";
+        // Match the synthesized-record path (`Scheduler.dispatchRun`) so the two
+        // ways a run can end up timeout/cancelled carry identical metadata. The
+        // field is currently write-only; setting it keeps the paths from drifting
+        // if a future reader (e.g. retry policy) starts consuming it.
       }
       return run;
     } catch (err) {
