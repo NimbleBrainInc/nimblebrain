@@ -16,7 +16,33 @@ import {
   WORKSPACE_ID_FLAGS,
   WORKSPACE_ID_PATTERN,
 } from "../src/_generated/workspace-id-pattern.ts";
-import { parseNamespacedToolName } from "../src/lib/namespaced-tool";
+import { appNameFromToolName, parseNamespacedToolName } from "../src/lib/namespaced-tool";
+
+describe("appNameFromToolName (web)", () => {
+  test("drops the ws_<id>- prefix AND the __<tool> tail → bare source name", () => {
+    // Regression: the chat transcript used to slice on `__` alone, leaving
+    // the `ws_<id>-` prefix attached. The bare name is what the REST
+    // resource-read surfaces key the registry by; the namespaced form 403s.
+    expect(appNameFromToolName("ws_nimblebrain_shared-synapse-collateral__export_pdf")).toBe(
+      "synapse-collateral",
+    );
+  });
+
+  test("hyphenated source names survive (only the ws_<id>- head is removed)", () => {
+    expect(appNameFromToolName("ws_helix-synapse-todo-board__create_task")).toBe(
+      "synapse-todo-board",
+    );
+  });
+
+  test("bare (identity) tool name → bare source", () => {
+    expect(appNameFromToolName("conversations__search")).toBe("conversations");
+  });
+
+  test("no __ separator → undefined (not an app-owned call)", () => {
+    expect(appNameFromToolName("ws_helix-nb")).toBeUndefined();
+    expect(appNameFromToolName("plain")).toBeUndefined();
+  });
+});
 
 describe("parseNamespacedToolName (web)", () => {
   test("parses ws_<id>-<tool> to workspace scope", () => {

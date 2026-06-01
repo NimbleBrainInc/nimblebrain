@@ -92,3 +92,23 @@ export function namespacedToolName(wsId: string, toolName: string): string {
 
 // Identity tools have no builder: an identity tool's wire name IS its bare
 // `<source>__<tool>` form. Absence of a `ws_<id>-` prefix makes it identity-scoped.
+
+/**
+ * Extract the **bare source/app name** from a full wire tool name.
+ *
+ * A wire name is `[ws_<id>-]<source>__<tool>`. The REST surfaces that own a
+ * resource — `POST /v1/resources/read`, `GET /v1/apps/:name/resources/*` —
+ * key the workspace registry by the **bare** source name (`synapse-collateral`),
+ * NOT the namespaced one. Hand-slicing on `__` alone leaves the `ws_<id>-`
+ * prefix attached (`ws_<id>-synapse-collateral`), which then fails
+ * `registry.hasSource()` with a 403 "not available in this workspace". Parse
+ * the namespace via the sanctioned primitive first, then drop the `__<tool>`
+ * tail. Returns `undefined` when there's no `__` (not an app-owned call).
+ */
+export function appNameFromToolName(wireName: string): string | undefined {
+  const parsed = parseNamespacedToolName(wireName);
+  // `toolName` is the post-`ws_<id>-` remainder (or the whole bare name).
+  const rest = parsed ? parsed.toolName : wireName;
+  const sep = rest.indexOf("__");
+  return sep > 0 ? rest.slice(0, sep) : undefined;
+}

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiClientError, callTool, streamChat, streamChatMultipart } from "../api/client";
 import { formatSendError } from "../api/format-error";
+import { appNameFromToolName } from "../lib/namespaced-tool.ts";
 import { captureEvent } from "../telemetry";
 import type {
   AppContext,
@@ -362,14 +363,15 @@ export function useChat(
               const evt = data as ToolStartEvent;
               setStreamingState("working");
               setPreparingTool(null);
-              const separatorIdx = evt.name.indexOf("__");
               const newTool: ToolCallDisplay = {
                 id: evt.id,
                 name: evt.name,
                 status: "running",
                 resourceUri: evt.resourceUri,
                 input: evt.input,
-                appName: separatorIdx !== -1 ? evt.name.slice(0, separatorIdx) : undefined,
+                // Bare source name (drop any `ws_<id>-` prefix) — the REST
+                // resource-read surfaces key the registry by bare name.
+                appName: appNameFromToolName(evt.name),
               };
               // Flat ref
               toolCallsRef.current = [...toolCallsRef.current, newTool];
@@ -670,14 +672,15 @@ export function useChat(
           const evt = data as ToolStartEvent;
           setStreamingState("working");
           setPreparingTool(null);
-          const separatorIdx = evt.name.indexOf("__");
           const newTool: ToolCallDisplay = {
             id: evt.id,
             name: evt.name,
             status: "running",
             resourceUri: evt.resourceUri,
             input: evt.input,
-            appName: separatorIdx !== -1 ? evt.name.slice(0, separatorIdx) : undefined,
+            // Bare source name (drop any `ws_<id>-` prefix) — the REST
+            // resource-read surfaces key the registry by bare name.
+            appName: appNameFromToolName(evt.name),
           };
           toolCallsRef.current = [...toolCallsRef.current, newTool];
           const blocks = blocksRef.current;
