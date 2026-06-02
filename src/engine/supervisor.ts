@@ -192,7 +192,11 @@ export function createRunSupervisor(config: SupervisorConfig = {}): RunSuperviso
     // "end the run") — those rot when reread in a later turn where other
     // tools are still callable.
     const directive =
-      `[NB supervisor] Tool \`${toolName}\` returned the same result ${repeats} times in a row; ` +
+      // "made no progress" rather than "returned the same result": accurate
+      // across all three trip modes — identical errors, identical empty
+      // success, AND the non-advancing case where the results vary textually
+      // (different "no match" strings) but represent the same dead end.
+      `[NB supervisor] Tool \`${toolName}\` made no progress ${repeats} times in a row; ` +
       `this tool has been disabled for the rest of this run.\n\n` +
       `Underlying output (last call):\n${originalText}\n\n` +
       `Other tools remain available. Consider an alternative approach or summarize current findings ` +
