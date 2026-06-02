@@ -546,7 +546,36 @@ export function createChatStore(): ChatStore {
         applyStreamEvent(slice, type, data);
       },
       onError: () => {
-        // Leave the slice intact; the persisted history still renders.
+        // The stream gave up unrecoverably (events route 403/404 or auth fail
+        // after refresh; transient network / 5xx reconnect via backoff instead
+        // and never reach here). The turn itself runs to completion
+        // server-side and persists — this is a failure to WATCH it, not to run
+        // it, so we must NOT drop the optimistic placeholder pair the way a
+        // start-failure does (the user's message really was sent).
+        //
+        // For an idle resume (no live turn) there's nothing to clean up — the
+        // loaded disk history renders fine; leave it intact.
+        if (!slice.isStreaming) return;
+        // A fresh/active turn was being watched: without this the optimistic
+        // assistant placeholder spins forever with no feed and no error.
+        // Stop the spinner and stamp a recoverable error; the result is on
+        // disk, so reopening / reloading the conversation surfaces it.
+        slice.isStreaming = false;
+        slice.streamingState = null;
+        slice.preparingTool = null;
+        slice.pendingEcho = false;
+        const updated = [...slice.messages];
+        const last = updated[updated.length - 1];
+        if (last?.role === "assistant" && !last.content && (last.blocks?.length ?? 0) === 0) {
+          updated[updated.length - 1] = {
+            ...last,
+            error: "Lost the connection to this response. Reload to view it.",
+          };
+          slice.messages = updated;
+        } else {
+          slice.error = "Lost the connection to this response.";
+        }
+        commit(slice);
       },
     });
   }

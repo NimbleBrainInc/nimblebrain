@@ -15,6 +15,7 @@ interface CapturedStream {
   conversationId: string;
   onEvent: (type: string, data: unknown, seq: number) => void;
   onSubscribed?: (info: { isActive: boolean; activeSeq: number }) => void;
+  onError?: (error: Error) => void;
   closed: boolean;
 }
 let streams: CapturedStream[] = [];
@@ -36,11 +37,13 @@ mock.module("../src/api/conversation-stream", () => ({
     conversationId: string;
     onEvent: (type: string, data: unknown, seq: number) => void;
     onSubscribed?: (info: { isActive: boolean; activeSeq: number }) => void;
+    onError?: (error: Error) => void;
   }) => {
     const entry: CapturedStream = {
       conversationId: opts.conversationId,
       onEvent: opts.onEvent,
       onSubscribed: opts.onSubscribed,
+      onError: opts.onError,
       closed: false,
     };
     streams.push(entry);
@@ -163,6 +166,29 @@ describe("chat-store viewer", () => {
     expect(snap.isStreaming).toBe(false);
     expect(lastAssistant(snap.messages)?.content).toBe("final answer");
     expect(s.closed).toBe(true);
+  });
+
+  it("recovers from an unwatchable turn: stops the spinner, keeps the sent message, stamps a recoverable error", async () => {
+    const store = createChatStore();
+    await store.sendTurn("kA", { text: "go" });
+    const s = latestStream();
+    expect(store.getSnapshot("kA").isStreaming).toBe(true);
+
+    // The turn started server-side (startChatTurn resolved), but the event
+    // stream fails unrecoverably (events route 403/404/auth) before any frame.
+    s.onError?.(new Error("Conversation stream access denied: 403"));
+
+    const snap = store.getSnapshot("kA");
+    // Spinner cleared — no infinite hang.
+    expect(snap.isStreaming).toBe(false);
+    expect(snap.streamingState).toBeNull();
+    // The user's message is NOT dropped (the turn really ran + persisted).
+    const users = snap.messages.filter((m) => m.role === "user");
+    expect(users).toHaveLength(1);
+    expect(users[0].content).toBe("go");
+    // The empty assistant placeholder carries a recoverable error.
+    const assistant = lastAssistant(snap.messages);
+    expect(assistant?.error).toContain("Reload");
   });
 
   it("does not clobber a slice that is streaming on loadConversation", async () => {
