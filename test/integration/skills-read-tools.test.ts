@@ -159,6 +159,16 @@ describe("skills read tools — end-to-end", () => {
       expect(readSC.metadata.loadingStrategy).toBe("always");
       expect(readSC.content).toContain("Speak plainly");
 
+      // Regression (skills__read body-in-content): the engine surfaces only
+      // `content` to the model, never `structuredContent`. The body and the
+      // promised manifest fields must reach the MODEL-visible text, or an
+      // in-agent caller sees only the one-line header and cannot read the
+      // skill. `read.content` here is `extractText(result.content)` — exactly
+      // what the engine feeds the model.
+      expect(read.content).toContain("Speak plainly");
+      expect(read.content).toContain("voice-rules");
+      expect(read.content).toContain("loads: always");
+
       // skills__active_for — the most recent skills.loaded for the conv must
       // include voice-rules (loading_strategy: always).
       const active = await callTool(

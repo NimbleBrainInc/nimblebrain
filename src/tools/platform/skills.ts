@@ -78,10 +78,10 @@ const SKILLS_LIST_DESCRIPTION =
 
 const SKILLS_READ_DESCRIPTION =
   "Read one skill by id. The `id` is either a filesystem path (returned by `skills__list`) " +
-  "or a bundle skill:// URI. Returns the markdown body plus parsed manifest fields (name, " +
-  "description, version, type, priority, scope, layer, loading_strategy, applies_to_tools, " +
-  "status, allowed_tools, requires_bundles, metadata). Always call `skills__list` first to " +
-  "discover ids — bare names and scope-prefixed forms (e.g. `org/foo`) are NOT valid input.";
+  "or a bundle skill:// URI. Returns the full markdown body plus parsed manifest fields (name, " +
+  "description, type, priority, scope, layer, loading_strategy, applies_to_tools, status). " +
+  "Always call `skills__list` first to discover ids — bare names and scope-prefixed forms " +
+  "(e.g. `org/foo`) are NOT valid input.";
 
 const SKILLS_ACTIVE_FOR_DESCRIPTION =
   "Show which Layer 3 skills are currently loaded for a conversation. " +
@@ -263,7 +263,11 @@ export function createSkillsSource(runtime: Runtime, eventSink: EventSink): McpS
           // the same shim explained in the `list` handler.
           const out: SkillsReadOutput = result;
           return {
-            content: textContent(summarizeRead(result)),
+            // `content` carries the full body + manifest because the
+            // engine never surfaces `structuredContent` to the model;
+            // `structuredContent` keeps the typed copy for `/mcp` clients
+            // and the UI. See `renderRead`.
+            content: textContent(renderRead(result)),
             structuredContent: out as unknown as Record<string, unknown>,
             isError: false,
           };
@@ -1000,12 +1004,19 @@ function errorResult(err: unknown): ToolResult {
   };
 }
 
-// ── Human-readable summaries for tool `content` field ──────────────────
+// ── Human-readable renderings for tool `content` field ─────────────────
 //
-// Per AGENTS.md, `content` carries a short human-readable summary; the
-// full structured payload lives only in `structuredContent`. Each summary
-// is one or two short lines optimized for a debug log or a CLI render —
-// agents and UI clients consume the structured form.
+// The engine surfaces only `content` to the model — `structuredContent`
+// reaches `/mcp` clients and the UI but never the in-process agent loop.
+// So `content` must carry everything the model needs to act:
+//
+//   - For *status/enumeration* tools (`active_for`, `loading_log`) a short
+//     summary line is sufficient; the model only needs the gist.
+//   - For *enumeration the model must read* (`list`) and *document fetch*
+//     (`read`) the payload itself goes in `content` — IDs for `list`, the
+//     full body + manifest for `read` — because the structured copy is
+//     invisible to the model. `files__read` and `conversations__get` embed
+//     their bodies the same way.
 
 function summarizeList(skills: ListedSkill[]): string {
   if (skills.length === 0) return "0 skills";
@@ -1038,6 +1049,32 @@ function summarizeRead(skill: ReadResult): string {
   if (m.loadingStrategy) parts.push(`loads: ${m.loadingStrategy}`);
   if (m.status && m.status !== "active") parts.push(`status: ${m.status}`);
   return parts.join(" · ");
+}
+
+// Render the full skill for the model-visible `content` field: header,
+// then the parsed manifest fields the description promises, then the
+// markdown body. `read`'s entire purpose is to deliver the skill to the
+// caller, and the body lives only here for the in-process agent (the
+// structured copy never reaches the model). Manifest leads and the body
+// trails so that if `boundToolResultForModel` trims at
+// MAX_TOOL_RESULT_CHARS the metadata survives and only the body tail is
+// cut — the same small-first ordering `conversations__get` uses.
+function renderRead(skill: ReadResult): string {
+  const m = skill.metadata;
+  const fields = [summarizeRead(skill), `id: ${skill.id}`, `source: ${skill.source}`];
+  if (m.description) fields.push(`description: ${m.description}`);
+  if (m.type) fields.push(`type: ${m.type}`);
+  if (m.priority != null) fields.push(`priority: ${m.priority}`);
+  if (m.appliesToTools?.length) fields.push(`applies_to_tools: ${m.appliesToTools.join(", ")}`);
+  if (m.derivedFrom) fields.push(`derived_from: ${m.derivedFrom}`);
+  if (m.overrides?.length) {
+    const overrides = m.overrides
+      .map((o) => `${o.bundle ?? "?"}/${o.skill ?? "?"} — ${o.reason}`)
+      .join("; ");
+    fields.push(`overrides: ${overrides}`);
+  }
+  if (skill.modifiedAt) fields.push(`modified: ${skill.modifiedAt}`);
+  return `${fields.join("\n")}\n\n---\n\n${skill.content}`;
 }
 
 function summarizeActive(active: ActiveForEntry[]): string {
