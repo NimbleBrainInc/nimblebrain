@@ -495,6 +495,64 @@ describe("aggregateToolList — incomplete listings are not memoized", () => {
     expect(cached).toHaveLength(1);
     expect(calls).toBe(2);
   });
+
+  test("an invalidation landing mid-compute is not lost (no stale memo, re-subscribes)", async () => {
+    const wsA = "ws_a";
+    const workDir = trackDir(makeWorkDir([wsA]));
+
+    // Hand-controlled lister: the first call parks on a promise we resolve
+    // manually, so we can fire an invalidation while the union compute is
+    // mid-flight. Later calls resolve immediately.
+    let calls = 0;
+    let releaseFirst: (() => void) | null = null;
+    const lister: WorkspaceToolLister = (wsId) => {
+      calls += 1;
+      if (calls === 1) {
+        return new Promise<{ tools: Tool[]; complete: boolean }>((resolve) => {
+          releaseFirst = () => resolve({ tools: buildTools(["sole"], wsId), complete: true });
+        });
+      }
+      return Promise.resolve({ tools: buildTools(["sole"], wsId), complete: true });
+    };
+    const agg = track(
+      createToolListAggregator({
+        workDir,
+        workspaceStore: buildStore({ user_1: [wsA] }),
+        listToolsForWorkspace: lister,
+      }),
+    );
+
+    // Kick off the first compute; it subscribes user_1 to wsA, then parks on
+    // the first (unresolved) listing.
+    const firstAsk = agg.aggregateToolList("user_1");
+    const tick = () => new Promise((r) => setTimeout(r, 0));
+    for (let i = 0; i < 50 && calls < 1; i++) await tick();
+    expect(calls).toBe(1);
+
+    // An FS invalidation lands while the compute is still in flight.
+    agg.invalidateWorkspace(wsA);
+
+    // Let the now-superseded first listing resolve and the first ask finish.
+    releaseFirst?.();
+    await firstAsk;
+
+    // The mid-flight invalidation must NOT have been lost: the next ask
+    // re-lists rather than serving a memoized stale union.
+    const second = await agg.aggregateToolList("user_1");
+    expect(second).toHaveLength(1);
+    expect(calls).toBe(2);
+
+    // …and user_1 must have been RE-subscribed to wsA — a subsequent wsA
+    // change still drops its union (re-lists), proving the subscription the
+    // invalidation cleared was restored.
+    agg.invalidateWorkspace(wsA);
+    await agg.aggregateToolList("user_1");
+    expect(calls).toBe(3);
+
+    // With no further change, the union is now memoized — no re-list.
+    await agg.aggregateToolList("user_1");
+    expect(calls).toBe(3);
+  });
 });
 
 // ── 7. Namespace primitive is the only constructor ────────────────

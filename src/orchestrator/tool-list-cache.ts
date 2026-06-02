@@ -149,6 +149,13 @@ interface WorkspaceWatchEntry {
    * Cleared when it settles.
    */
   listingInFlight: Promise<WorkspaceToolListing> | null;
+  /**
+   * Bumped on every invalidation. A listing captures it before calling the
+   * lister and refuses to memoize if it changed while in flight — so an
+   * invalidation that lands DURING a compute can't be overwritten by the
+   * now-stale result that compute is about to produce.
+   */
+  generation: number;
   pendingDebounce: ReturnType<typeof setTimeout> | null;
   /**
    * Identities currently caching a union that includes this workspace.
@@ -183,6 +190,17 @@ export class ToolListCache {
     string,
     Promise<{ union: readonly NamespacedToolDescriptor[]; complete: boolean }>
   >();
+
+  /**
+   * Per-identity generation counter — the union-level analog of
+   * `WorkspaceWatchEntry.generation`. Bumped whenever an invalidation touches
+   * the identity (a workspace it subscribes to changed, or its membership
+   * changed). A union compute captures it up front and refuses to memoize if
+   * it changed mid-flight, so an invalidation during the compute can't be
+   * clobbered by the stale union about to resolve. Monotonic; never deleted
+   * outside `dispose` (resetting could let a stale in-flight read as current).
+   */
+  private readonly identityEpochs = new Map<string, number>();
 
   private disposed = false;
 
@@ -221,22 +239,21 @@ export class ToolListCache {
     }
     // Share an in-flight listing across concurrent first-askers.
     if (entry.listingInFlight !== null) return entry.listingInFlight;
+    // Capture the generation before listing. If an invalidation lands while
+    // the lister runs it bumps `generation`, and we refuse to memoize the
+    // now-stale result below — the next ask re-lists against current state.
+    const gen = entry.generation;
     const inFlight = this.lister(wsId);
     entry.listingInFlight = inFlight;
     try {
       const listing = await inFlight;
-      if (listing.complete && entry.toolsPromise === null) {
+      if (listing.complete && entry.generation === gen && entry.toolsPromise === null) {
         entry.toolsPromise = Promise.resolve(listing.tools);
       }
       return listing;
     } finally {
       if (entry.listingInFlight === inFlight) entry.listingInFlight = null;
     }
-  }
-
-  /** Bare tools for `wsId` (drops the completeness flag). */
-  async getWorkspaceTools(wsId: string): Promise<readonly Tool[]> {
-    return (await this.getWorkspaceListing(wsId)).tools;
   }
 
   // ── Per-identity union ────────────────────────────────────────────
@@ -249,7 +266,7 @@ export class ToolListCache {
    * the workspace loop entirely.
    *
    * Watcher attachment for each workspace happens inside
-   * `getWorkspaceTools` → `ensureWatchEntry`, so this call site
+   * `getWorkspaceListing` → `ensureWatchEntry`, so this call site
    * doesn't have to know FS layout. Membership tracking
    * (`subscribedIdentities`) is updated here because the workspace
    * watcher needs to know which identity unions to drop when its
@@ -262,12 +279,20 @@ export class ToolListCache {
   ): Promise<readonly NamespacedToolDescriptor[]> {
     this.assertOpen();
     const existing = this.identityUnions.get(identityId);
-    // A memoized union was built entirely from COMPLETE listings (we never
-    // cache a partial one), so it's safe to serve directly.
+    // A memoized union was built entirely from COMPLETE listings AND no
+    // invalidation touched this identity while it was built (the epoch guard
+    // below) — so it's both complete and fresh, safe to serve directly.
     if (existing) return existing;
     // Share an in-flight fan-out across concurrent first-askers.
     const inFlight = this.unionInFlight.get(identityId);
     if (inFlight) return inFlight.then((r) => r.union);
+
+    // Capture the identity's generation before computing. An invalidation
+    // landing mid-compute (a subscribed workspace changed, or membership
+    // changed) bumps it, and we refuse to memoize below — leaving the union
+    // uncached so the next ask rebuilds AND re-subscribes to the workspace
+    // whose watcher set this identity was just cleared from.
+    const epoch = this.identityEpochs.get(identityId) ?? 0;
 
     const compute = (async (): Promise<{
       union: readonly NamespacedToolDescriptor[];
@@ -327,12 +352,17 @@ export class ToolListCache {
     this.unionInFlight.set(identityId, compute);
     try {
       const { union, complete } = await compute;
-      // Memoize ONLY a union with no partial contributing workspace. If any
-      // workspace was still warming up (or its whole listing failed), leave
-      // the union uncached so the next ask rebuilds it once sources are
-      // ready — instead of serving a sticky empty/partial union until an
-      // unrelated invalidation fires (the production outage this fixes).
-      if (complete) this.identityUnions.set(identityId, Promise.resolve(union));
+      // Memoize ONLY when (a) no contributing workspace was partial, and (b)
+      // no invalidation touched this identity while we were computing
+      // (epoch unchanged). (a) keeps a cold-start partial out of the cache;
+      // (b) keeps a result that an invalidation already superseded out — and,
+      // critically, leaves it uncached so the next ask re-subscribes to any
+      // workspace this identity was unsubscribed from mid-compute. Without (b)
+      // we'd memoize a stale union with a broken watcher subscription — the
+      // very "stale until an unrelated invalidation" failure this PR kills.
+      if (complete && (this.identityEpochs.get(identityId) ?? 0) === epoch) {
+        this.identityUnions.set(identityId, Promise.resolve(union));
+      }
       return union;
     } finally {
       if (this.unionInFlight.get(identityId) === compute) {
@@ -357,6 +387,9 @@ export class ToolListCache {
    */
   invalidateIdentity(identityId: string): void {
     this.identityUnions.delete(identityId);
+    // Bump the identity epoch so an in-flight union compute for this identity
+    // refuses to memoize a result built before this membership change.
+    this.bumpIdentityEpoch(identityId);
     const orphaned: string[] = [];
     for (const [wsId, entry] of this.workspaces) {
       entry.subscribedIdentities.delete(identityId);
@@ -380,7 +413,7 @@ export class ToolListCache {
   /**
    * Close every watcher, clear every debounce timer, drop every
    * cache entry. Idempotent. After `dispose()` the cache is closed —
-   * further `getWorkspaceTools` / `getUnionForIdentity` calls throw.
+   * further `getWorkspaceListing` / `getUnionForIdentity` calls throw.
    *
    * The `index-cache` analog is `stopWatching()`. We close more here
    * (the per-identity union map is cleared too) because the cache
@@ -400,6 +433,13 @@ export class ToolListCache {
     this.workspaces.clear();
     this.identityUnions.clear();
     this.unionInFlight.clear();
+    this.identityEpochs.clear();
+  }
+
+  /** Bump an identity's generation so any in-flight union compute for it
+   *  refuses to memoize a now-superseded result. */
+  private bumpIdentityEpoch(identityId: string): void {
+    this.identityEpochs.set(identityId, (this.identityEpochs.get(identityId) ?? 0) + 1);
   }
 
   // ── Test / inspection helpers ─────────────────────────────────────
@@ -455,6 +495,7 @@ export class ToolListCache {
       watcher,
       toolsPromise: null,
       listingInFlight: null,
+      generation: 0,
       pendingDebounce: null,
       subscribedIdentities: new Set(),
     };
@@ -493,10 +534,19 @@ export class ToolListCache {
   invalidateWorkspace(wsId: string): void {
     const entry = this.workspaces.get(wsId);
     if (!entry) return;
+    // Bump generation and clear any in-flight listing so a listing already
+    // running against the old state can't memoize, and a caller arriving
+    // after this point starts a fresh listing rather than sharing the stale
+    // in-flight one.
+    entry.generation += 1;
     entry.toolsPromise = null;
-    // Drop every identity union that read from this workspace.
+    entry.listingInFlight = null;
+    // Drop every identity union that read from this workspace, and bump each
+    // identity's epoch so an in-flight union compute for it refuses to memoize
+    // a result built before this change.
     for (const identityId of entry.subscribedIdentities) {
       this.identityUnions.delete(identityId);
+      this.bumpIdentityEpoch(identityId);
     }
     entry.subscribedIdentities.clear();
   }
