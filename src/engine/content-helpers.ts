@@ -154,9 +154,14 @@ export function boundToolResultForModel(
   const limit = opts.limit ?? MAX_TOOL_RESULT_CHARS;
   if (limit <= 0 || text.length <= limit) return text;
 
+  // Pin the locale so the marker is byte-stable regardless of host locale —
+  // this text lands in the cached prompt prefix on replay, and a locale-
+  // dependent separator would shift the prefix and bust the cache.
+  const n = (v: number) => v.toLocaleString("en-US");
+
   if (opts.hasUiResource) {
     return (
-      `[Tool completed successfully. Result (${text.length.toLocaleString()} chars) is ` +
+      `[Tool completed successfully. Result (${n(text.length)} chars) is ` +
       `displayed in the inline UI. Do not ask the user to view it separately — it is ` +
       `already visible.]`
     );
@@ -166,8 +171,8 @@ export function boundToolResultForModel(
   const omitted = text.length - head.length;
   return (
     head +
-    `\n\n[Result bounded for model context: showing ${head.length.toLocaleString()} of ` +
-    `${text.length.toLocaleString()} chars (${omitted.toLocaleString()} omitted). The full ` +
+    `\n\n[Result bounded for model context: showing ${n(head.length)} of ` +
+    `${n(text.length)} chars (${n(omitted)} omitted). The full ` +
     `result is on the user's screen. Re-query with a filter, a narrower scope, or a ` +
     `pagination cursor to bring specific items into context.]`
   );
