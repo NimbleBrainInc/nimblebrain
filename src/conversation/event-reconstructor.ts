@@ -7,6 +7,7 @@
  */
 
 import type { LanguageModelV3Content, LanguageModelV3ReasoningPart } from "@ai-sdk/provider";
+import { boundToolResultForModel } from "../engine/content-helpers.ts";
 import { normalizeForReplay } from "../model/inbound-fit.ts";
 import { estimateCost } from "../usage/cost.ts";
 import type {
@@ -290,7 +291,16 @@ function buildMessagesFromEvents(events: readonly ConversationEvent[]): StoredMe
                   type: "tool-result" as const,
                   toolCallId: tc.toolCallId,
                   toolName: tc.toolName,
-                  output: { type: "text", value: done.output ?? "" },
+                  // Replay the BOUNDED model view, not the full output. New
+                  // events carry `modelOutput` (exactly what the model saw
+                  // live); legacy events without it are bounded here at read
+                  // time. This stops large tool results from re-entering the
+                  // prompt at full size on every subsequent run — the primary
+                  // driver of runaway context growth and cache-write churn.
+                  output: {
+                    type: "text",
+                    value: done.modelOutput ?? boundToolResultForModel(done.output ?? ""),
+                  },
                 },
               ],
               timestamp: done.ts ?? llmResp.ts,

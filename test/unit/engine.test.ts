@@ -2489,7 +2489,7 @@ describe("prompt caching", () => {
     const systemMsg = capturedPrompt.find((m) => m.role === "system");
     expect(systemMsg).toBeDefined();
     expect((systemMsg as Record<string, unknown>).providerOptions).toEqual({
-      anthropic: { cacheControl: { type: "ephemeral" } },
+      anthropic: { cacheControl: { type: "ephemeral", ttl: "1h" } },
     });
   });
 
@@ -2518,7 +2518,7 @@ describe("prompt caching", () => {
     // System message has cache control
     const systemMsg = capturedPrompt[0]!;
     expect((systemMsg as Record<string, unknown>).providerOptions).toEqual({
-      anthropic: { cacheControl: { type: "ephemeral" } },
+      anthropic: { cacheControl: { type: "ephemeral", ttl: "1h" } },
     });
 
     // First user message does NOT have cache control
@@ -2528,7 +2528,7 @@ describe("prompt caching", () => {
     // Last user message has cache control
     const lastUser = capturedPrompt[2]!;
     expect((lastUser as Record<string, unknown>).providerOptions).toEqual({
-      anthropic: { cacheControl: { type: "ephemeral" } },
+      anthropic: { cacheControl: { type: "ephemeral", ttl: "1h" } },
     });
   });
 

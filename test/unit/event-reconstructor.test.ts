@@ -9,6 +9,7 @@ import type {
   RunDoneEvent,
   RunErrorEvent,
   RunStartEvent,
+  StoredMessage,
   ToolDoneEvent,
   ToolStartEvent,
   UserMessageEvent,
@@ -116,8 +117,19 @@ function toolDone(
   output = "result",
   ok = true,
   ms = 100,
+  modelOutput?: string,
 ): ToolDoneEvent {
-  return { ts: ts(4), type: "tool.done", runId, name, id, ok, ms, output };
+  return {
+    ts: ts(4),
+    type: "tool.done",
+    runId,
+    name,
+    id,
+    ok,
+    ms,
+    output,
+    ...(modelOutput !== undefined ? { modelOutput } : {}),
+  };
 }
 
 function runDone(runId: string, totalMs = 1000): RunDoneEvent {
@@ -1047,5 +1059,71 @@ describe("reconstructMessages structural invariants", () => {
         m.content.some((p) => "type" in p && p.type === "text"),
     );
     expect(textMsg).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tool-result bounding on replay
+// ---------------------------------------------------------------------------
+
+/** Pull the text value of the first tool-result message from a reconstruction. */
+function toolResultValue(messages: StoredMessage[]): string {
+  const toolMsg = messages.find((m) => m.role === "tool");
+  if (!toolMsg) throw new Error("no tool message in reconstruction");
+  const part = (toolMsg.content as Array<Record<string, unknown>>)[0]!;
+  return ((part.output as Record<string, unknown>).value as string) ?? "";
+}
+
+/** Pull the UI-metadata tool output carried on the assistant message. */
+function assistantToolMetaOutput(messages: StoredMessage[]): string {
+  const asst = messages.find((m) => m.role === "assistant");
+  const meta = asst?.metadata?.toolCalls as Array<{ output: string }> | undefined;
+  return meta?.[0]?.output ?? "";
+}
+
+describe("reconstructMessages — tool-result bounding on replay", () => {
+  // A result well over the 50K-char model bound, on line boundaries.
+  const bigOutput = `${"item line\n".repeat(8000)}`; // ~80K chars
+
+  function eventsWithToolOutput(output: string, modelOutput?: string): ConversationEvent[] {
+    return [
+      userMessage("Do the thing"),
+      runStart("run-1"),
+      llmToolCall("run-1", "tc-1", "list_things", {}),
+      toolStart("run-1", "tc-1", "list_things"),
+      toolDone("run-1", "tc-1", "list_things", output, true, 100, modelOutput),
+      llmText("run-1", "Done."),
+      runDone("run-1"),
+    ];
+  }
+
+  it("bounds a large legacy tool result (no modelOutput) when replayed into model context", () => {
+    const messages = reconstructMessages(eventsWithToolOutput(bigOutput));
+    const value = toolResultValue(messages);
+    // The model view is bounded well below the full payload...
+    expect(value.length).toBeLessThan(bigOutput.length);
+    // ...and tells the model it was bounded (so it doesn't blindly re-call).
+    expect(value).toContain("bounded for model context");
+    // The full payload is preserved for the UI/display metadata.
+    expect(assistantToolMetaOutput(messages)).toBe(bigOutput);
+  });
+
+  it("replays modelOutput verbatim when the event carries it (fidelity to the live turn)", () => {
+    const digest = "[bounded digest the model actually saw live]";
+    const messages = reconstructMessages(eventsWithToolOutput(bigOutput, digest));
+    expect(toolResultValue(messages)).toBe(digest);
+    // Display metadata still carries the full output.
+    expect(assistantToolMetaOutput(messages)).toBe(bigOutput);
+  });
+
+  it("leaves a small tool result unchanged on replay", () => {
+    const messages = reconstructMessages(eventsWithToolOutput("small result"));
+    expect(toolResultValue(messages)).toBe("small result");
+  });
+
+  it("is deterministic — replaying the same events twice yields identical model views", () => {
+    const a = toolResultValue(reconstructMessages(eventsWithToolOutput(bigOutput)));
+    const b = toolResultValue(reconstructMessages(eventsWithToolOutput(bigOutput)));
+    expect(a).toBe(b);
   });
 });

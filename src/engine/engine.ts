@@ -8,7 +8,7 @@ import type {
   SharedV3ProviderOptions,
 } from "@ai-sdk/provider";
 import { log } from "../cli/log.ts";
-import { DEFAULT_MAX_DIRECT_TOOLS, MAX_ITERATIONS, MAX_TOOL_RESULT_CHARS } from "../limits.ts";
+import { DEFAULT_MAX_DIRECT_TOOLS, MAX_ITERATIONS } from "../limits.ts";
 import { getProviderFromModel, supportsEnabledThinking } from "../model/catalog.ts";
 import { normalizeForReplay } from "../model/inbound-fit.ts";
 import { callModel, type StreamResult } from "../model/stream.ts";
@@ -18,6 +18,7 @@ import { validateToolInput } from "../tools/validate-input.ts";
 import type { TokenUsage } from "../usage/types.ts";
 import { addUsage, emptyUsage } from "../usage/types.ts";
 import {
+  boundToolResultForModel,
   estimateContentSize,
   extractResourceLinks,
   extractTextForModel,
@@ -189,8 +190,15 @@ function sanitizeMessages(messages: LanguageModelV3Message[]): LanguageModelV3Me
   });
 }
 
+// 1-hour cache TTL (vs Anthropic's 5-minute default). Agentic runs pause
+// between turns far longer than 5 minutes (a user steps away; an automation
+// waits on I/O), so a 5-minute prefix lapses constantly and the next turn
+// re-WRITES the whole cached prefix at the write rate. A 1-hour TTL keeps the
+// prefix alive across those gaps, converting full re-writes into cheap cache
+// reads. The 1-hour write rate is 2x base input vs 1.25x for 5-minute, but
+// that is paid once per write and is dwarfed by the reads it unlocks.
 const CACHE_CONTROL_EPHEMERAL = {
-  anthropic: { cacheControl: { type: "ephemeral" } },
+  anthropic: { cacheControl: { type: "ephemeral", ttl: "1h" } },
 } as const;
 
 /**
@@ -552,10 +560,11 @@ export class AgentEngine {
                   prompt: [
                     {
                       role: "system",
+                      // Same ephemeral 1-hour cache control as the last-user
+                      // breakpoint — reuse the const so the TTL lives in one
+                      // place. See CACHE_CONTROL_EPHEMERAL.
                       content: callPrompt,
-                      providerOptions: {
-                        anthropic: { cacheControl: { type: "ephemeral" } },
-                      },
+                      providerOptions: CACHE_CONTROL_EPHEMERAL,
                     },
                     ...addCacheBreakpoint(msgs),
                   ],
@@ -833,6 +842,28 @@ export class AgentEngine {
             // text output is always needed for conversation history reconstruction.
             const outputText = extractTextForModel(finalResult.content);
 
+            // Bound the text the MODEL sees. `outputText` (full) is persisted
+            // for the UI and the record; `modelOutput` (bounded) is what enters
+            // the prompt — both on this live turn AND on every replay. Computing
+            // it once here and persisting it keeps the live view and the
+            // replayed view byte-identical. See boundToolResultForModel.
+            const modelOutput = boundToolResultForModel(outputText, {
+              hasUiResource: !!resourceUri,
+            });
+            const bounded = modelOutput !== outputText;
+            if (bounded) {
+              this.events.emit({
+                type: "tool.progress",
+                data: {
+                  runId,
+                  id: gatedCall.id,
+                  message: resourceUri
+                    ? `Tool result bounded for model context (${outputText.length.toLocaleString()} chars → pointer). Full result rendered in inline UI.`
+                    : `Tool result bounded for model context (${outputText.length.toLocaleString()} chars → ${modelOutput.length.toLocaleString()}). Full result persisted for the UI.`,
+                },
+              });
+            }
+
             // Per-call resource_link blocks (MCP 2025-11-25). Distinct from the
             // static `resourceUri` tool annotation used for inline UI binding —
             // resource_link points at a file/resource the client should fetch.
@@ -848,6 +879,10 @@ export class AgentEngine {
                 ms,
                 resourceUri,
                 output: outputText,
+                // Persisted only when it actually differs from `output`, so
+                // small results don't carry a duplicate field. Replay falls
+                // back to bounding `output` for legacy events without it.
+                ...(bounded ? { modelOutput } : {}),
                 result: resourceUri ? finalResult : undefined,
                 ...(resourceLinks.length > 0 ? { resourceLinks } : {}),
                 ...(verdict.type === "synth"
@@ -860,14 +895,22 @@ export class AgentEngine {
               },
             });
 
-            return { toolCall, gatedCall, result: finalResult, ms, resourceUri, resourceLinks };
+            return {
+              toolCall,
+              gatedCall,
+              result: finalResult,
+              ms,
+              resourceUri,
+              resourceLinks,
+              modelOutput,
+            };
           }),
         );
 
-        // Build result arrays from parallel results.
-        // For tools with a UI resource, cap the content sent back to the LLM
-        // to avoid token explosion from large binary payloads (e.g., base64 PNGs).
-        // The full result is still available to the inline UI via tool.done event.
+        // Build result arrays from parallel results. `modelOutput` is the
+        // already-bounded text the model sees (computed once, above, and
+        // persisted on tool.done) — so the live prompt and the replayed
+        // prompt carry the identical bounded result.
         const toolResultParts: LanguageModelV3ToolResultPart[] = [];
 
         for (const {
@@ -876,28 +919,14 @@ export class AgentEngine {
           ms,
           resourceUri: uri,
           resourceLinks: links,
+          modelOutput,
         } of toolResults) {
-          let llmText = extractTextForModel(result.content);
-
-          if (uri && llmText.length > MAX_TOOL_RESULT_CHARS) {
-            // Tool has inline UI — the UI handles display.
-            // Give the LLM a summary instead of the raw binary payload.
-            this.events.emit({
-              type: "tool.progress",
-              data: {
-                runId,
-                id: toolCall.toolCallId,
-                message: `Tool result truncated for LLM (${llmText.length.toLocaleString()} chars → summary). Full result rendered in inline UI.`,
-              },
-            });
-            llmText = `[Tool completed successfully. Result (${llmText.length.toLocaleString()} chars) is displayed in the inline UI. Do not ask the user to view it separately — it is already visible.]`;
-          } else if (llmText.length > MAX_TOOL_RESULT_CHARS) {
-            // No UI resource — truncate with a warning.
-            llmText =
-              llmText.slice(0, MAX_TOOL_RESULT_CHARS) +
-              `\n\n[Result truncated: ${llmText.length.toLocaleString()} chars exceeded ${MAX_TOOL_RESULT_CHARS.toLocaleString()} char limit.]`;
-          }
-
+          // `modelOutput` is present for every executed tool (bounded once,
+          // above). Early-return paths that skip execution (e.g. policy-denied)
+          // omit it; bound their small result here so the type stays a string.
+          const llmText =
+            modelOutput ??
+            boundToolResultForModel(extractTextForModel(result.content), { hasUiResource: !!uri });
           allToolCalls.push({
             id: toolCall.toolCallId,
             name: toolCall.toolName,
