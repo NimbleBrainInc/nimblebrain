@@ -3,13 +3,13 @@ import { resolve } from "node:path";
 import { CallbackEventSink } from "../adapters/callback-events.ts";
 import { log } from "../cli/log.ts";
 import { isToolEnabled, isToolVisibleToRole, type ResolvedFeatures } from "../config/features.ts";
+import { CONVERSATION_ID_RE } from "../conversation/types.ts";
 import type { EngineEvent, EventSink } from "../engine/types.ts";
 import { ingestFiles, isAllowedMime, type UploadedFile } from "../files/ingest.ts";
 import { resolveMimeType } from "../files/mime.ts";
 import type { FileEntry } from "../files/types.ts";
 import type { IdentityProvider, UserIdentity } from "../identity/provider.ts";
 import { DEV_IDENTITY } from "../identity/providers/dev.ts";
-import { CONVERSATION_ID_RE } from "../conversation/types.ts";
 import {
   ConversationAccessDeniedError,
   ConversationCorruptedError,
@@ -80,10 +80,8 @@ export async function handleChat(
     // backgrounded tab, network blip) must not cancel the in-flight
     // engine loop; the run completes server-side, persists, and is
     // replayed to any reconnecting /v1/conversations/:id/events
-    // subscriber. See the detached `.chat(parsed, sink)` in
-    // handleChatStream for the full rationale (PR #251 regression). The
-    // automations executor's deadline cancellation is unaffected — that
-    // path supplies its own AbortController.
+    // subscriber. (The automations executor's deadline cancellation is
+    // unaffected — that path supplies its own AbortController.)
     const result = await runtime.chat(parsed);
     // Cost is derived at the boundary, never stored. Same wire shape as
     // the streaming `done` event so clients see one consistent contract.
@@ -441,11 +439,10 @@ export async function handleChatStream(
         // engine loop. The run completes server-side, persists to the
         // conversation store, and replays to any reconnecting
         // /v1/conversations/:id/events subscriber — the "leave and come
-        // back" contract. PR #251 bound the run to the connection and
-        // silently abandoned prompts the moment a mobile client dropped
-        // (run.error "The connection was closed"). The one caller that
-        // must cancel on a deadline — the automations executor — owns its
-        // own AbortController in bundles/automations/src/executor.ts.
+        // back" contract. Binding the run to the connection would silently
+        // abandon a prompt the moment a mobile client dropped. The one
+        // caller that must cancel on a deadline — the automations executor —
+        // owns its own AbortController in bundles/automations/src/executor.ts.
         .chat(parsed, sink)
         .then((result) => {
           // Cost is computed at the API boundary — never stored. The

@@ -1189,14 +1189,10 @@ export class Runtime {
     };
 
     // Resume an existing conversation only if the caller owns it.
-    // Stage 1 single-owner invariant: a conversation's ownerId must
-    // match the requesting identity. Today this is implicitly
-    // workspace-bounded because the store dir is per-wsId, but Task 005
-    // collapses every conversation onto a top-level store — at which
-    // point this owner check is the ONLY barrier between users and
-    // each other's conversations. Enforce it now, in the load-bearing
-    // chat path, so the invariant doesn't have a window of being
-    // workspace-discipline-only.
+    // Conversations live on a single top-level store (not per-workspace),
+    // so this ownerId check is the ONLY barrier between users and each
+    // other's conversations — it runs in the load-bearing chat path, not
+    // just at a higher layer.
     //
     // The disambiguation between "doesn't exist" (→ create new) and
     // "exists but isn't yours" (→ throw) matters: silently creating a
@@ -1772,6 +1768,21 @@ export class Runtime {
       void generateTitle(titleModel, titleInput, result.output)
         .then(async (title) => {
           await store.update(conversation.id, { title });
+          // `wsId: sessionWsId` (the owner's personal workspace) — NOT
+          // `conversation.workspaceId`. The SSE layer (events.ts) scopes
+          // `scope: "workspace"` events to clients whose membership set
+          // contains this wsId. Conversations are owner-scoped, and the owner
+          // is always a member of their own personal workspace, so this
+          // reaches exactly the owner's tabs. Using the conversation's
+          // workspaceId would be WRONG here: when the chat was focused on a
+          // team workspace, that id fans the title out to every member of the
+          // team — none of whom can see this owner-scoped conversation, so it
+          // leaks the title string to their browsers for no benefit.
+          // (The iframe list patch is routed by `conversationId`, not wsId, so
+          // it's unaffected either way.) Stage 4 cross-user sharing must
+          // revisit this — route by the conversation's ACL, not the owner's
+          // personal ws — so an org-admin viewing another user's conversation
+          // receives the live title.
           this.defaultEvents.emit({
             type: "conversation.title",
             data: { conversationId: conversation.id, title, wsId: sessionWsId },

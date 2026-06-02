@@ -153,22 +153,14 @@ export class ConversationEventManager {
   /**
    * Broadcast an event to all subscribers of a specific conversation.
    *
-   * Stage 1 single-owner: every legitimate subscriber to a given
-   * conversation is the same user (the owner) connected from another
-   * tab/device. Filtering on `userId` would skip every subscriber
-   * (round-3 had this bug); not filtering at all double-delivers to
-   * the sender's own tab (round-4 had this bug — the sender's tab
-   * receives via both `/v1/chat/stream` and its own
-   * `/v1/conversations/:id/events` subscription).
-   *
-   * The correct filter key is the **subscriber id**: the sender
-   * passes its current conv-events subscriber id as
-   * `excludeSubscriberId`, so its own subscription is skipped while
-   * peer tabs (different subscriber ids, same userId) still receive.
-   *
-   * Stage 4 will reintroduce multi-participant semantics with
-   * explicit policy gates; until then, this is the only exclusion
-   * shape needed.
+   * Conversations are single-owner (Stage 1): every subscriber is the same
+   * user on another tab/device. The exclusion key is the **subscriber id**,
+   * not `userId` — filtering by `userId` would skip every tab; not filtering
+   * double-delivers to the sender (it receives via both `/v1/chat/stream` and
+   * its own `/v1/conversations/:id/events` subscription). The sender passes
+   * its conv-events subscriber id as `excludeSubscriberId` so its own
+   * subscription is skipped while peer tabs still receive. (Stage 4
+   * multi-participant semantics will need explicit policy gates here.)
    *
    * Seq-less: unlike {@link publishEvent} (the RunBus path), these frames carry
    * no `id:` sequence. A seq-tracking `conversation-stream` viewer applies them
@@ -179,8 +171,7 @@ export class ConversationEventManager {
    * @param eventType - SSE event type (e.g. "text.delta", "user.message")
    * @param data - Event data payload
    * @param excludeSubscriberId - Optional subscriber id to skip
-   *   (typically the sender's own subscriber id, to prevent
-   *   self-echo on chat-stream-originated broadcasts).
+   *   (typically the sender's own, to prevent self-echo).
    */
   broadcastToConversation(
     conversationId: string,
