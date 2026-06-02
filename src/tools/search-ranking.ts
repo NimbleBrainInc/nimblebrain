@@ -15,6 +15,12 @@ function tokenize(value: string): string[] {
     .filter(Boolean);
 }
 
+// Best-effort plural folding: a token longer than 3 chars ending in "s" also
+// matches its singular ("boards" → "board"). Applied symmetrically to both
+// query and corpus tokens, so an over-stripped junk variant ("status" →
+// "statu") only matches if some other real token stems to the same string —
+// which doesn't occur in the tool corpus. Intentionally naive; a real stemmer
+// isn't worth a dependency for discovery ranking.
 function tokenVariants(token: string): string[] {
   if (token.length > 3 && token.endsWith("s")) return [token, token.slice(0, -1)];
   return [token];
@@ -72,10 +78,12 @@ export function rankToolSearchResults<T extends ToolSearchResult>(tools: T[], qu
     }
 
     if (matchedTerms === 0 && !nameSubstringMatch && !descriptionSubstringMatch) continue;
-    const fullCoverage = matchedTerms === queryTerms.length;
-    score += matchedTerms * 1000;
-    if (fullCoverage) score += 500;
 
+    // `score` carries only the substring + per-term signal. Query-term
+    // *coverage* is the comparator's primary sort key (below), so it is
+    // deliberately not folded into `score` too — within any matchedTerms
+    // tie-group the coverage contribution is constant and cancels, so
+    // encoding it here would never change ordering.
     scored.push({ tool, score, matchedTerms });
   }
 
