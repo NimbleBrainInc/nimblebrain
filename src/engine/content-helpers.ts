@@ -146,6 +146,10 @@ function sliceOnLineBoundary(text: string, limit: number): string {
  *   that the full version is on the user's screen, and how to retrieve
  *   specific items (filter / narrower scope / pagination) without blindly
  *   re-calling the same tool.
+ *
+ * `limit` is a soft target: when trimming occurs the returned string exceeds
+ * it by the marker length (~200 chars). Callers needing a hard ceiling must
+ * clamp the result themselves.
  */
 export function boundToolResultForModel(
   text: string,
