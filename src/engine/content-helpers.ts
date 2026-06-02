@@ -1,3 +1,4 @@
+import { MAX_TOOL_RESULT_CHARS } from "../limits.ts";
 import type { ContentBlock, TextContent } from "./types.ts";
 
 /** A resource_link content block surfaced from an MCP tool result. */
@@ -104,4 +105,70 @@ export function extractTextForModel(blocks: ContentBlock[]): string {
     )
     .map((b) => b.text)
     .join("\n");
+}
+
+/**
+ * Trim `text` to at most `limit` chars, preferring a newline boundary so a
+ * record/JSON line is never cut in half. Falls back to a hard slice when the
+ * first line alone already exceeds the limit (e.g. minified JSON on one line).
+ */
+function sliceOnLineBoundary(text: string, limit: number): string {
+  if (text.length <= limit) return text;
+  const slice = text.slice(0, limit);
+  const lastNewline = slice.lastIndexOf("\n");
+  // Only honor the boundary when it still keeps a meaningful chunk; otherwise
+  // a single huge first line would collapse the result to almost nothing.
+  if (lastNewline > limit * 0.5) return slice.slice(0, lastNewline);
+  return slice;
+}
+
+/**
+ * Bound a tool result's text to the model-context budget.
+ *
+ * Tool results are persisted in full (for the UI and the conversation
+ * record), but they must be bounded before they enter MODEL context — both
+ * in the live engine loop AND on history replay. Without a bound on replay,
+ * a large result re-enters the prompt on every subsequent turn and dominates
+ * token cost (and, with prompt caching, gets re-written into the cache each
+ * time the prefix lapses). This is the single source of truth for that
+ * bound: the engine and the history reconstructor both call it, so the
+ * model's live view and its replayed view of a result are identical.
+ *
+ * Pure and deterministic — the same input always yields the same output, so
+ * the replayed prompt prefix stays byte-stable and cacheable.
+ *
+ * - Text at or under `limit` is returned unchanged.
+ * - With an inline-UI resource, the model gets a short pointer instead of the
+ *   payload (the UI renders the full result), matching the existing inline-UI
+ *   truncation behavior.
+ * - Otherwise the text is trimmed on a line boundary up to `limit`, with an
+ *   explicit, actionable marker so the model knows the result was bounded,
+ *   that the full version is on the user's screen, and how to retrieve
+ *   specific items (filter / narrower scope / pagination) without blindly
+ *   re-calling the same tool.
+ */
+export function boundToolResultForModel(
+  text: string,
+  opts: { hasUiResource?: boolean; limit?: number } = {},
+): string {
+  const limit = opts.limit ?? MAX_TOOL_RESULT_CHARS;
+  if (limit <= 0 || text.length <= limit) return text;
+
+  if (opts.hasUiResource) {
+    return (
+      `[Tool completed successfully. Result (${text.length.toLocaleString()} chars) is ` +
+      `displayed in the inline UI. Do not ask the user to view it separately — it is ` +
+      `already visible.]`
+    );
+  }
+
+  const head = sliceOnLineBoundary(text, limit);
+  const omitted = text.length - head.length;
+  return (
+    head +
+    `\n\n[Result bounded for model context: showing ${head.length.toLocaleString()} of ` +
+    `${text.length.toLocaleString()} chars (${omitted.toLocaleString()} omitted). The full ` +
+    `result is on the user's screen. Re-query with a filter, a narrower scope, or a ` +
+    `pagination cursor to bring specific items into context.]`
+  );
 }

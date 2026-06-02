@@ -340,8 +340,19 @@ export interface ToolDoneEvent {
   id: string;
   ok: boolean;
   ms: number;
-  /** Present only when logging.level is "debug". */
+  /**
+   * Full tool output text (audience-filtered). Always persisted — it drives
+   * the UI/display and the conversation record.
+   */
   output?: string;
+  /**
+   * Bounded text the MODEL saw on the live turn, present only when it differs
+   * from `output` (i.e. the result exceeded the model-context bound). History
+   * replay uses this verbatim so the model's replayed view matches its live
+   * view; when absent (small result, or a legacy event) replay bounds
+   * `output` at read time. See boundToolResultForModel.
+   */
+  modelOutput?: string;
 }
 
 export interface ToolProgressEvent {

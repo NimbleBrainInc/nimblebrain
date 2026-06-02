@@ -530,6 +530,10 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
         // Always persist the text output for conversation history reconstruction.
         // The engine now sends `output` (extracted text) alongside `result` (full structured).
         const output = typeof d.output === "string" ? d.output : undefined;
+        // Bounded model-view text, present only when the result exceeded the
+        // model-context bound. Replay uses it verbatim so the replayed prompt
+        // matches what the model saw live. See boundToolResultForModel.
+        const modelOutput = typeof d.modelOutput === "string" ? d.modelOutput : undefined;
         const e: ToolDoneEvent = {
           ts,
           type: "tool.done",
@@ -539,6 +543,7 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
           ok: (d.ok as boolean) ?? true,
           ms: (d.ms as number) ?? 0,
           ...(output !== undefined ? { output } : {}),
+          ...(modelOutput !== undefined ? { modelOutput } : {}),
         };
         return e;
       }
