@@ -3,6 +3,13 @@
  * Regenerate: bun run codegen. AI agents: edit the source, not this file.
  */
 import { type Static } from "@sinclair/typebox";
+/**
+ * Canonical list of usage breakdown dimensions. Single source of truth —
+ * the TypeBox enum, the `UsageGroupBy` type, and the aggregator's runtime
+ * guard (`src/conversation/usage-aggregator.ts`) all derive from this array
+ * so a new dimension is added in exactly one place.
+ */
+export declare const USAGE_GROUP_BYS: readonly ["day", "conversation", "model", "user"];
 export declare const UsageReportInput: import("@sinclair/typebox").TObject<{
     scope: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"user" | "org">>;
     period: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"day" | "week" | "month" | "all">>;
@@ -11,7 +18,7 @@ export declare const UsageReportInput: import("@sinclair/typebox").TObject<{
     groupBy: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TUnsafe<"model" | "user" | "day" | "conversation">, import("@sinclair/typebox").TArray<import("@sinclair/typebox").TUnsafe<"model" | "user" | "day" | "conversation">>]>>;
 }>;
 export type UsageReportInput = Static<typeof UsageReportInput>;
-export type UsageGroupBy = "day" | "conversation" | "model" | "user";
+export type UsageGroupBy = (typeof USAGE_GROUP_BYS)[number];
 export interface UsageTokenBreakdown {
     input: number;
     output: number;

@@ -1,7 +1,15 @@
 import { type Static, Type } from "@sinclair/typebox";
 import { StringEnum } from "./_shared.ts";
 
-const UsageGroupBy = StringEnum(["day", "conversation", "model", "user"] as const, {
+/**
+ * Canonical list of usage breakdown dimensions. Single source of truth —
+ * the TypeBox enum, the `UsageGroupBy` type, and the aggregator's runtime
+ * guard (`src/conversation/usage-aggregator.ts`) all derive from this array
+ * so a new dimension is added in exactly one place.
+ */
+export const USAGE_GROUP_BYS = ["day", "conversation", "model", "user"] as const;
+
+const UsageGroupBy = StringEnum(USAGE_GROUP_BYS, {
   description: "Group breakdown. Default: day. `user` buckets by conversation owner (org scope).",
 });
 
@@ -34,7 +42,7 @@ export const UsageReportInput = Type.Object({
 });
 export type UsageReportInput = Static<typeof UsageReportInput>;
 
-export type UsageGroupBy = "day" | "conversation" | "model" | "user";
+export type UsageGroupBy = (typeof USAGE_GROUP_BYS)[number];
 
 // ── Output types (§2.1) ────────────────────────────────────────────────
 //

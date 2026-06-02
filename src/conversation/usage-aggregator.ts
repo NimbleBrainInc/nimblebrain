@@ -14,6 +14,7 @@
 import { readdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { USAGE_GROUP_BYS, type UsageGroupBy } from "../tools/platform/schemas/usage.ts";
 import { costBreakdown } from "../usage/cost.ts";
 import type { TokenUsage } from "../usage/types.ts";
 
@@ -30,8 +31,6 @@ interface LlmCallRecord {
   usage: TokenUsage;
   llmMs: number;
 }
-
-export type UsageGroupBy = "day" | "conversation" | "model" | "user";
 
 interface TokenBreakdown {
   input: number;
@@ -149,13 +148,14 @@ function isDateInRange(date: string, range: { from: string; to: string }): boole
 }
 
 function isUsageGroupBy(value: string): value is UsageGroupBy {
-  return value === "day" || value === "conversation" || value === "model" || value === "user";
+  return (USAGE_GROUP_BYS as readonly string[]).includes(value);
 }
 
 function normalizeGroupBys(groupBy: string | string[]): UsageGroupBy[] {
   const requested = Array.isArray(groupBy) ? groupBy : [groupBy];
   const valid = requested.filter(isUsageGroupBy);
-  return [...new Set(valid.length > 0 ? valid : ["day"])] as UsageGroupBy[];
+  const fallback: UsageGroupBy[] = ["day"];
+  return [...new Set(valid.length > 0 ? valid : fallback)];
 }
 
 function groupKeyFor(record: LlmCallRecord, groupBy: UsageGroupBy, modelKey: string): string {
