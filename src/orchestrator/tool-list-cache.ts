@@ -91,16 +91,29 @@ export interface NamespacedToolDescriptor {
 }
 
 /**
- * Per-workspace tool lister. Caller supplies one of these (typically
- * `(wsId) => runtime.getRegistryForWorkspace(wsId).availableTools()` in
- * production). The lister is treated as the source of truth and is the
- * only function the cache invokes for a given workspace until the
- * watcher fires.
- *
- * Returns `Tool[]` (bare names) — the cache namespaces every entry via
- * `namespacedToolName` before handing it to a consumer.
+ * One workspace's listing: the bare-named tools plus whether enumeration
+ * was COMPLETE. `complete: false` means at least one source was skipped
+ * because it wasn't ready yet (cold start, subprocess restart, pending
+ * auth), so the list is partial — the cache must not memoize it.
  */
-export type WorkspaceToolLister = (wsId: string) => Promise<readonly Tool[]>;
+export interface WorkspaceToolListing {
+  tools: readonly Tool[];
+  complete: boolean;
+}
+
+/**
+ * Per-workspace tool lister. Caller supplies one of these (typically a
+ * wrapper over `runtime.getRegistryForWorkspace(wsId)` in production). The
+ * lister is treated as the source of truth and is the only function the
+ * cache invokes for a given workspace until the watcher fires.
+ *
+ * Returns a {@link WorkspaceToolListing}: bare-named `Tool[]` (the cache
+ * namespaces every entry via `namespacedToolName` before handing it to a
+ * consumer) plus a `complete` flag. The cache refuses to memoize a listing
+ * whose `complete` is false, so a partial cold-start snapshot can never go
+ * sticky and starve discovery until an unrelated invalidation fires.
+ */
+export type WorkspaceToolLister = (wsId: string) => Promise<WorkspaceToolListing>;
 
 export interface ToolListCacheOptions {
   /** Override the 100ms default. Lower for tests, higher in production. */
@@ -123,7 +136,19 @@ export interface ToolListCacheOptions {
  */
 interface WorkspaceWatchEntry {
   watcher: FSWatcher;
+  /**
+   * Memoized listing — only ever a COMPLETE one. `null` means "next ask
+   * re-lists." A partial (cold-start) listing is never stored here, so a
+   * present `toolsPromise` is complete by construction.
+   */
   toolsPromise: Promise<readonly Tool[]> | null;
+  /**
+   * Shared in-flight listing so concurrent first-askers don't each hit the
+   * lister. Carries the `complete` flag (unlike `toolsPromise`, which holds
+   * complete listings only) so the awaiter can decide whether to memoize.
+   * Cleared when it settles.
+   */
+  listingInFlight: Promise<WorkspaceToolListing> | null;
   pendingDebounce: ReturnType<typeof setTimeout> | null;
   /**
    * Identities currently caching a union that includes this workspace.
@@ -142,8 +167,22 @@ export class ToolListCache {
   /** Per-workspace cache + watcher. */
   private readonly workspaces = new Map<string, WorkspaceWatchEntry>();
 
-  /** Per-identity union cache — the public answer the aggregator hands out. */
+  /**
+   * Per-identity union cache — the public answer the aggregator hands out.
+   * Only ever holds a union built entirely from COMPLETE workspace listings.
+   */
   private readonly identityUnions = new Map<string, Promise<readonly NamespacedToolDescriptor[]>>();
+
+  /**
+   * Shared in-flight union computations, keyed by identity, so concurrent
+   * first-askers share one fan-out. Carries the union's `complete` flag so
+   * the awaiter only memoizes a union with no partial contributing
+   * workspace. Cleared when it settles.
+   */
+  private readonly unionInFlight = new Map<
+    string,
+    Promise<{ union: readonly NamespacedToolDescriptor[]; complete: boolean }>
+  >();
 
   private disposed = false;
 
@@ -156,39 +195,48 @@ export class ToolListCache {
   // ── Per-workspace ─────────────────────────────────────────────────
 
   /**
-   * Return the cached `Tool[]` for `wsId`, populating on first ask.
+   * Return the listing for `wsId`, populating on first ask.
    *
-   * Wraps the lister call in a memoized promise so concurrent callers
-   * during the first listing all share one in-flight request — the same
-   * pattern `index-cache` relies on for cold-start fan-in.
+   * Concurrent first-askers share one in-flight request (`listingInFlight`)
+   * — the cold-start fan-in pattern `index-cache` relies on.
    *
-   * If the lister rejects, the rejection is propagated to the awaiter
-   * and the cached slot is cleared so a subsequent call retries. This
-   * mirrors the registry's per-source error containment in
-   * `ToolRegistry.availableTools` (one stuck source shouldn't poison
-   * the cache forever).
+   * Memoization is gated on completeness: a COMPLETE listing is cached in
+   * `toolsPromise` (served directly on the next ask); a PARTIAL listing (a
+   * source skipped because it wasn't ready) is returned to this caller but
+   * left uncached, so the next ask re-lists once the source is up. This is
+   * the core of the stale-empty-union fix — an incomplete snapshot can never
+   * become sticky and starve discovery until some unrelated invalidation
+   * happens to fire.
+   *
+   * If the lister rejects, the rejection propagates and nothing is cached, so
+   * a subsequent call retries — mirroring `ToolRegistry.availableTools`'
+   * per-source containment (one stuck source shouldn't poison the cache).
    */
-  async getWorkspaceTools(wsId: string): Promise<readonly Tool[]> {
+  async getWorkspaceListing(wsId: string): Promise<WorkspaceToolListing> {
     this.assertOpen();
     const entry = this.ensureWatchEntry(wsId);
-    if (entry.toolsPromise === null) {
-      // Holder pattern: declare a mutable holder so the catch can
-      // self-identify against the cached slot without a forward
-      // reference to the variable that captures it. A naked IIFE
-      // referencing its own outer-let binding trips
-      // `used before assignment`.
-      const holder: { p: Promise<readonly Tool[]> | null } = { p: null };
-      holder.p = this.lister(wsId).catch((err: unknown) => {
-        // Drop the cached slot so the next call retries instead of
-        // serving a permanently-poisoned rejection — same posture as
-        // `ToolRegistry.availableTools` (one-source-down doesn't
-        // poison the cache forever).
-        if (entry.toolsPromise === holder.p) entry.toolsPromise = null;
-        throw err;
-      });
-      entry.toolsPromise = holder.p;
+    // Memoized hit — present `toolsPromise` is complete by construction.
+    if (entry.toolsPromise !== null) {
+      return { tools: await entry.toolsPromise, complete: true };
     }
-    return entry.toolsPromise;
+    // Share an in-flight listing across concurrent first-askers.
+    if (entry.listingInFlight !== null) return entry.listingInFlight;
+    const inFlight = this.lister(wsId);
+    entry.listingInFlight = inFlight;
+    try {
+      const listing = await inFlight;
+      if (listing.complete && entry.toolsPromise === null) {
+        entry.toolsPromise = Promise.resolve(listing.tools);
+      }
+      return listing;
+    } finally {
+      if (entry.listingInFlight === inFlight) entry.listingInFlight = null;
+    }
+  }
+
+  /** Bare tools for `wsId` (drops the completeness flag). */
+  async getWorkspaceTools(wsId: string): Promise<readonly Tool[]> {
+    return (await this.getWorkspaceListing(wsId)).tools;
   }
 
   // ── Per-identity union ────────────────────────────────────────────
@@ -214,9 +262,17 @@ export class ToolListCache {
   ): Promise<readonly NamespacedToolDescriptor[]> {
     this.assertOpen();
     const existing = this.identityUnions.get(identityId);
+    // A memoized union was built entirely from COMPLETE listings (we never
+    // cache a partial one), so it's safe to serve directly.
     if (existing) return existing;
+    // Share an in-flight fan-out across concurrent first-askers.
+    const inFlight = this.unionInFlight.get(identityId);
+    if (inFlight) return inFlight.then((r) => r.union);
 
-    const p = (async (): Promise<readonly NamespacedToolDescriptor[]> => {
+    const compute = (async (): Promise<{
+      union: readonly NamespacedToolDescriptor[];
+      complete: boolean;
+    }> => {
       // Record interest BEFORE listing so an FS event during listing
       // invalidates correctly. Order matters: the watcher needs the
       // identity in its set the moment any one workspace's listing
@@ -233,11 +289,16 @@ export class ToolListCache {
       // lister already contains per-SOURCE failures one level down; this
       // catches the rarer whole-WORKSPACE listing failure.
       const settled = await Promise.allSettled(
-        wsIds.map(async (wsId) => ({ wsId, tools: await this.getWorkspaceTools(wsId) })),
+        wsIds.map(async (wsId) => ({ wsId, listing: await this.getWorkspaceListing(wsId) })),
       );
       const out: NamespacedToolDescriptor[] = [];
+      // The union is complete only if every workspace listing succeeded AND
+      // was itself complete. A rejected whole-workspace listing or a partial
+      // (cold-start) one makes the union partial — see below.
+      let complete = true;
       for (const result of settled) {
         if (result.status === "rejected") {
+          complete = false;
           log.debug(
             "mcp",
             `[tool-list-cache] dropping a workspace from the union for identity "${identityId}": ${
@@ -246,8 +307,9 @@ export class ToolListCache {
           );
           continue;
         }
-        const { wsId, tools } = result.value;
-        for (const t of tools) {
+        const { wsId, listing } = result.value;
+        if (!listing.complete) complete = false;
+        for (const t of listing.tools) {
           out.push({
             name: namespace(wsId, t.name),
             wsId,
@@ -259,19 +321,24 @@ export class ToolListCache {
           });
         }
       }
-      return out;
+      return { union: out, complete };
     })();
-    this.identityUnions.set(identityId, p);
-    // If the union failed, drop it so the next call retries — same
-    // posture as `getWorkspaceTools`. The clearer pattern is to await
-    // here, but doing so would serialize unrelated identities; instead
-    // we hang an error-handler off the cached promise.
-    p.catch(() => {
-      if (this.identityUnions.get(identityId) === p) {
-        this.identityUnions.delete(identityId);
+
+    this.unionInFlight.set(identityId, compute);
+    try {
+      const { union, complete } = await compute;
+      // Memoize ONLY a union with no partial contributing workspace. If any
+      // workspace was still warming up (or its whole listing failed), leave
+      // the union uncached so the next ask rebuilds it once sources are
+      // ready — instead of serving a sticky empty/partial union until an
+      // unrelated invalidation fires (the production outage this fixes).
+      if (complete) this.identityUnions.set(identityId, Promise.resolve(union));
+      return union;
+    } finally {
+      if (this.unionInFlight.get(identityId) === compute) {
+        this.unionInFlight.delete(identityId);
       }
-    });
-    return p;
+    }
   }
 
   /**
@@ -332,6 +399,7 @@ export class ToolListCache {
     }
     this.workspaces.clear();
     this.identityUnions.clear();
+    this.unionInFlight.clear();
   }
 
   // ── Test / inspection helpers ─────────────────────────────────────
@@ -386,6 +454,7 @@ export class ToolListCache {
     const entry: WorkspaceWatchEntry = {
       watcher,
       toolsPromise: null,
+      listingInFlight: null,
       pendingDebounce: null,
       subscribedIdentities: new Set(),
     };

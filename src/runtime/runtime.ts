@@ -63,7 +63,11 @@ import { InstructionsStore } from "../instructions/index.ts";
 import { getProviderFromModel } from "../model/catalog.ts";
 import { buildModelResolver, resolveModelString } from "../model/registry.ts";
 import { installOAuthFetchDebug } from "../oauth/oauth-fetch-debug.ts";
-import { createToolListAggregator, type ToolListAggregator } from "../orchestrator/index.ts";
+import {
+  createToolListAggregator,
+  type ToolListAggregator,
+  type WorkspaceToolListing,
+} from "../orchestrator/index.ts";
 import { PermissionStore } from "../permissions/permission-store.ts";
 import type {
   AppStateInfo,
@@ -674,19 +678,28 @@ export class Runtime {
     // (acceptance criterion of T006). It must outlive every chat turn so the
     // per-identity cache is reused; constructing one per call would defeat
     // the cache and re-attach a fresh `fs.watch` per workspace per call.
-    const workspaceToolLister = async (wsId: string): Promise<readonly Tool[]> => {
+    const workspaceToolLister = async (wsId: string): Promise<WorkspaceToolListing> => {
       const rt = rtHolder.rt;
       if (!rt) throw new Error("[runtime] tool-list aggregator: runtime not initialized");
       // Workspaces created post-boot need a JIT registry — mirrors what
       // `runtime.chat` does for the request's own workspace.
       const registry = await rt.ensureWorkspaceRegistry(wsId);
       const all: Tool[] = [];
+      // `complete` flips to false the moment any source can't be enumerated
+      // (still starting / restarting / pending auth). The cache uses this to
+      // refuse to memoize a partial cold-start snapshot, so the next ask
+      // re-lists once the source is up rather than serving a sticky empty
+      // list. Without it, a single not-yet-ready source at first-ask time
+      // poisons discovery for the whole identity until an unrelated event
+      // invalidates the union.
+      let complete = true;
       for (const source of registry.getSources()) {
         try {
           for (const tool of await source.tools()) {
             all.push(tool);
           }
         } catch (err) {
+          complete = false;
           // Per-source error containment, mirroring
           // `ToolRegistry.availableTools` — one stuck source must not poison
           // the cross-workspace listing. Surface in the source's own state
@@ -701,7 +714,7 @@ export class Runtime {
           );
         }
       }
-      return all;
+      return { tools: all, complete };
     };
     const toolListAggregator = createToolListAggregator({
       workDir: resolveWorkDir(config),
