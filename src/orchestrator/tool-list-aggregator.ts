@@ -38,7 +38,11 @@ import {
   type WorkspaceToolLister,
 } from "./tool-list-cache.ts";
 
-export type { NamespacedToolDescriptor, WorkspaceToolLister } from "./tool-list-cache.ts";
+export type {
+  NamespacedToolDescriptor,
+  WorkspaceToolLister,
+  WorkspaceToolListing,
+} from "./tool-list-cache.ts";
 
 /**
  * Lists the kernel identity sources' tools (conversations, …), source-qualified

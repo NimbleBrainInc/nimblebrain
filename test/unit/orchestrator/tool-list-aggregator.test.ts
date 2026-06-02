@@ -115,15 +115,18 @@ function buildTools(bareNames: readonly string[], sourceTag: string): Tool[] {
  * so tests can assert per-workspace call counts. The wrapped lister is
  * still asynchronous to keep concurrency semantics realistic.
  */
-function spyingLister(impl: WorkspaceToolLister): {
+function spyingLister(impl: (wsId: string) => Promise<readonly Tool[]>): {
   lister: WorkspaceToolLister;
   callCount: (wsId: string) => number;
   totalCalls: () => number;
 } {
   const counts = new Map<string, number>();
+  // Adapt the legacy `Tool[]`-returning impl into the listing shape; these
+  // stubs always enumerate fully, so `complete: true`. Tests that need a
+  // partial (cold-start) listing supply a `WorkspaceToolLister` directly.
   const lister: WorkspaceToolLister = async (wsId) => {
     counts.set(wsId, (counts.get(wsId) ?? 0) + 1);
-    return impl(wsId);
+    return { tools: await impl(wsId), complete: true };
   };
   return {
     lister,
@@ -352,7 +355,7 @@ describe("aggregateToolList — concurrent enumeration", () => {
     const DELAY_MS = 100;
     const lister: WorkspaceToolLister = async (wsId) => {
       await new Promise((r) => setTimeout(r, DELAY_MS));
-      return buildTools(["sole"], wsId);
+      return { tools: buildTools(["sole"], wsId), complete: true };
     };
     const store = buildStore({ user_1: wsIds });
     const agg = track(
@@ -450,6 +453,108 @@ describe("aggregateToolList — per-identity isolation", () => {
   });
 });
 
+// ── 6b. Partial (cold-start) listings are never memoized ──────────
+
+describe("aggregateToolList — incomplete listings are not memoized", () => {
+  test("a partial cold-start listing re-lists until complete, then memoizes", async () => {
+    const wsA = "ws_a";
+    const workDir = trackDir(makeWorkDir([wsA]));
+    // Simulate a workspace whose sole source is still warming up: the first
+    // listing is empty AND flagged incomplete; once the source is up the
+    // listing is full and complete.
+    let ready = false;
+    let calls = 0;
+    const lister: WorkspaceToolLister = async (wsId) => {
+      calls += 1;
+      return ready
+        ? { tools: buildTools(["sole"], wsId), complete: true }
+        : { tools: [], complete: false };
+    };
+    const store = buildStore({ user_1: [wsA] });
+    const agg = track(
+      createToolListAggregator({ workDir, workspaceStore: store, listToolsForWorkspace: lister }),
+    );
+
+    // Cold start: union is empty — and must NOT be memoized.
+    const cold = await agg.aggregateToolList("user_1");
+    expect(cold).toHaveLength(0);
+    expect(calls).toBe(1);
+
+    // Source is up. The next ask must re-list (not serve the sticky empty
+    // union) and surface the now-available tool. This is the regression
+    // guard for the production stale-empty-union outage.
+    ready = true;
+    const warm = await agg.aggregateToolList("user_1");
+    expect(warm).toHaveLength(1);
+    expect(parseWs(warm[0]?.name ?? "").wsId).toBe(wsA);
+    expect(calls).toBe(2);
+
+    // Now that the listing was complete, the union is memoized — a third ask
+    // does not re-list.
+    const cached = await agg.aggregateToolList("user_1");
+    expect(cached).toHaveLength(1);
+    expect(calls).toBe(2);
+  });
+
+  test("an invalidation landing mid-compute is not lost (no stale memo, re-subscribes)", async () => {
+    const wsA = "ws_a";
+    const workDir = trackDir(makeWorkDir([wsA]));
+
+    // Hand-controlled lister: the first call parks on a promise we resolve
+    // manually, so we can fire an invalidation while the union compute is
+    // mid-flight. Later calls resolve immediately.
+    let calls = 0;
+    let releaseFirst: (() => void) | null = null;
+    const lister: WorkspaceToolLister = (wsId) => {
+      calls += 1;
+      if (calls === 1) {
+        return new Promise<{ tools: Tool[]; complete: boolean }>((resolve) => {
+          releaseFirst = () => resolve({ tools: buildTools(["sole"], wsId), complete: true });
+        });
+      }
+      return Promise.resolve({ tools: buildTools(["sole"], wsId), complete: true });
+    };
+    const agg = track(
+      createToolListAggregator({
+        workDir,
+        workspaceStore: buildStore({ user_1: [wsA] }),
+        listToolsForWorkspace: lister,
+      }),
+    );
+
+    // Kick off the first compute; it subscribes user_1 to wsA, then parks on
+    // the first (unresolved) listing.
+    const firstAsk = agg.aggregateToolList("user_1");
+    const tick = () => new Promise((r) => setTimeout(r, 0));
+    for (let i = 0; i < 50 && calls < 1; i++) await tick();
+    expect(calls).toBe(1);
+
+    // An FS invalidation lands while the compute is still in flight.
+    agg.invalidateWorkspace(wsA);
+
+    // Let the now-superseded first listing resolve and the first ask finish.
+    releaseFirst?.();
+    await firstAsk;
+
+    // The mid-flight invalidation must NOT have been lost: the next ask
+    // re-lists rather than serving a memoized stale union.
+    const second = await agg.aggregateToolList("user_1");
+    expect(second).toHaveLength(1);
+    expect(calls).toBe(2);
+
+    // …and user_1 must have been RE-subscribed to wsA — a subsequent wsA
+    // change still drops its union (re-lists), proving the subscription the
+    // invalidation cleared was restored.
+    agg.invalidateWorkspace(wsA);
+    await agg.aggregateToolList("user_1");
+    expect(calls).toBe(3);
+
+    // With no further change, the union is now memoized — no re-list.
+    await agg.aggregateToolList("user_1");
+    expect(calls).toBe(3);
+  });
+});
+
 // ── 7. Namespace primitive is the only constructor ────────────────
 
 describe("aggregateToolList — namespacing primitive enforcement", () => {
@@ -500,8 +605,8 @@ describe("aggregateToolList — graceful degradation (one workspace fails)", () 
     const toolsA = buildTools(["alpha", "beta"], "src_a");
     const toolsC = buildTools(["gamma"], "src_c");
     const lister: WorkspaceToolLister = async (wsId) => {
-      if (wsId === wsA) return toolsA;
-      if (wsId === wsC) return toolsC;
+      if (wsId === wsA) return { tools: toolsA, complete: true };
+      if (wsId === wsC) return { tools: toolsC, complete: true };
       throw new Error(`registry construction failed for ${wsId}`);
     };
     const store = buildStore({ user_1: [wsA, wsBad, wsC] });

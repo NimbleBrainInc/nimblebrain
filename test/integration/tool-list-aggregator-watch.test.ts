@@ -178,7 +178,7 @@ describe("aggregateToolList — FS-watch invalidation", () => {
     const agg = (liveAggregator = createToolListAggregator({
       workDir,
       workspaceStore: store,
-      listToolsForWorkspace: async (wsId) => toolSets[wsId] ?? [],
+      listToolsForWorkspace: async (wsId) => ({ tools: toolSets[wsId] ?? [], complete: true }),
       cache: { debounceMs: DEBOUNCE_MS },
     }));
 
@@ -233,7 +233,7 @@ describe("aggregateToolList — workspace removal", () => {
     const agg = (liveAggregator = createToolListAggregator({
       workDir,
       workspaceStore: store,
-      listToolsForWorkspace: async (wsId) => toolSets[wsId] ?? [],
+      listToolsForWorkspace: async (wsId) => ({ tools: toolSets[wsId] ?? [], complete: true }),
       cache: { debounceMs: DEBOUNCE_MS },
     }));
 
@@ -276,7 +276,7 @@ describe("aggregateToolList — watcher lifecycle", () => {
     const agg = createToolListAggregator({
       workDir,
       workspaceStore: store,
-      listToolsForWorkspace: async (wsId) => buildTools(["echo"], wsId),
+      listToolsForWorkspace: async (wsId) => ({ tools: buildTools(["echo"], wsId), complete: true }),
       cache: { debounceMs: DEBOUNCE_MS },
     });
 

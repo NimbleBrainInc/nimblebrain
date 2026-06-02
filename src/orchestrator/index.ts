@@ -27,6 +27,7 @@ export type {
   ToolListAggregator,
   ToolListAggregatorOptions,
   WorkspaceToolLister,
+  WorkspaceToolListing,
 } from "./tool-list-aggregator.ts";
 export { createToolListAggregator } from "./tool-list-aggregator.ts";
 
