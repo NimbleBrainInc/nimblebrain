@@ -5,27 +5,47 @@ import type { ToolCall, ToolResult } from "./types.ts";
 /**
  * Per-run loop supervisor.
  *
- * Watches the (toolName, isError, content) fingerprint of every tool result
- * inside an engine run. If a single tool returns the same fingerprint N
- * times in a row, the supervisor declares that tool stuck and replaces its
- * next result with a synthetic directive instructing the model to stop
- * calling the tool and produce a final response.
+ * Watches the per-call fingerprint of every tool result inside an engine
+ * run. If a single tool returns the same fingerprint N times in a row,
+ * the supervisor declares that tool stuck and replaces its next result
+ * with a synthetic directive instructing the model to stop calling the
+ * tool and produce a final response.
  *
  * Two failure modes this catches:
- *  - Upstream returns identical 4xx errors on every call (e.g. a tool whose
- *    schema-derived args trigger a deterministic server-side rejection).
- *  - Upstream returns identical "empty success" payloads (pagination dead-ends).
+ *  - Upstream returns identical 4xx errors on every call (e.g. a tool
+ *    whose schema-derived args trigger a deterministic server-side
+ *    rejection). The model often retries with cosmetic argument tweaks
+ *    and gets the same rejection each time.
+ *  - Upstream returns identical "empty success" payloads to the same
+ *    call (pagination dead-ends; idempotent lookups against an
+ *    unchanged state).
  *
- * Per-tool isolation: a stuck tool doesn't trip the supervisor on unrelated
- * tools. Reset-on-different-fingerprint preserves legitimate adaptive retry
- * behaviour (a tool that fails once with error A, then once with error B,
- * then succeeds, never trips).
+ * Fingerprint composition (success vs. error are different shapes of
+ * "stuck"):
  *
- * The supervisor itself never aborts the run; the engine reads the verdict
- * and decides what to surface. On a trip the engine also filters the
- * tripped tool out of the model's toolset for the rest of the run, so the
- * model can't call the broken tool again regardless of how it reads the
- * synth directive.
+ *  - SUCCESS: (toolName, S, content, canonical(input)).
+ *    A successful call advances state; "stuck" means the model invoked
+ *    the same call (same name + same input) and got the same answer
+ *    back, repeatedly. Distinct inputs producing structurally-uniform
+ *    success output (e.g. `patch_source(edits=...)` returning
+ *    `applied:true, compiled:true` for each of several edits in a row)
+ *    is progress, not a loop, and must not trip.
+ *
+ *  - ERROR: (toolName, E, content). Input is deliberately omitted so
+ *    the "model retries-with-tweaks against a deterministic rejection"
+ *    failure mode still trips at N repeats — the canonical case the
+ *    supervisor was originally written to catch.
+ *
+ * Per-tool isolation: a stuck tool doesn't trip the supervisor on
+ * unrelated tools. Reset-on-different-fingerprint preserves legitimate
+ * adaptive retry behaviour (a tool that fails once with error A, then
+ * once with error B, then succeeds, never trips).
+ *
+ * The supervisor itself never aborts the run; the engine reads the
+ * verdict and decides what to surface. On a trip the engine also
+ * filters the tripped tool out of the model's toolset for the rest of
+ * the run, so the model can't call the broken tool again regardless of
+ * how it reads the synth directive.
  */
 
 export interface SupervisorConfig {
@@ -77,6 +97,27 @@ interface ToolState {
 const DEFAULT_MAX_REPEATS = 3;
 const DEFAULT_FINGERPRINT_CAP = 512;
 
+/**
+ * Canonical (stable) JSON encoding for the supervisor's input-aware
+ * success fingerprint. Object keys are sorted so that two semantically
+ * identical inputs that arrived with different key orderings hash to
+ * the same value; arrays preserve order (positional). Bypasses
+ * `JSON.stringify`'s implementation-defined key order.
+ *
+ * Not a public utility — the supervisor only needs this for repeat
+ * detection. Inputs are bounded upstream by the model's output limit,
+ * so we don't cap here; if that ever changes, cap to `textCap` to
+ * match the result-text policy.
+ */
+function canonicalJson(value: unknown): string {
+  if (value === undefined) return "null";
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  const obj = value as Record<string, unknown>;
+  const keys = Object.keys(obj).sort();
+  return `{${keys.map((k) => `${JSON.stringify(k)}:${canonicalJson(obj[k])}`).join(",")}}`;
+}
+
 export function createRunSupervisor(config: SupervisorConfig = {}): RunSupervisor {
   const maxRepeats = config.maxConsecutiveRepeats ?? DEFAULT_MAX_REPEATS;
   const textCap = config.fingerprintTextCap ?? DEFAULT_FINGERPRINT_CAP;
@@ -111,8 +152,12 @@ export function createRunSupervisor(config: SupervisorConfig = {}): RunSuperviso
     // WorkspaceState.source_sha (a hash of the edited document) satisfies it.
     // Fix a falsely-tripping tool at the tool, not by weakening the guard.
     const text = extractTextForModel(result.content).trim().slice(0, textCap);
+    // Input is part of the fingerprint for SUCCESS results only — see the
+    // file header for the rationale. Errors stay input-agnostic so the
+    // "deterministic-4xx with retry-with-tweaks" loop still trips.
+    const inputKey = result.isError ? "" : canonicalJson(call.input);
     return createHash("sha1")
-      .update(`${call.name}\0${result.isError ? "E" : "S"}\0${text}`)
+      .update(`${call.name}\0${result.isError ? "E" : "S"}\0${text}\0${inputKey}`)
       .digest("hex");
   }
 
