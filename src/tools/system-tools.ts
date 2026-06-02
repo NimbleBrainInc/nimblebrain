@@ -7,6 +7,7 @@ import { isToolEnabled, type ResolvedFeatures } from "../config/features.ts";
 import type { ConfirmationGate } from "../config/privilege.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import type { EventSink, ToolPromotionControls, ToolResult, ToolSchema } from "../engine/types.ts";
+import { NON_ADVANCING_META_KEY } from "../engine/types.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import type { SelectedSkill } from "../skills/select.ts";
 import type { Skill } from "../skills/types.ts";
@@ -158,7 +159,15 @@ export async function createSystemTools(
         if (!q) return groupToolsBySource(all);
         const matches = rankToolSearchResults(all, q);
         if (matches.length === 0)
-          return { content: textContent(`No tools matched "${query}".`), isError: false };
+          // Mark non-advancing (out-of-band, via `_meta`) so repeated empty
+          // searches trip the loop supervisor even as the model varies the
+          // query each call — which otherwise yields a fresh fingerprint every
+          // time and never trips.
+          return {
+            content: textContent(`No tools matched "${query}".`),
+            isError: false,
+            _meta: { [NON_ADVANCING_META_KEY]: true },
+          };
         const shown = matches.slice(0, 25);
         const suffix = matches.length > shown.length ? ` (showing top ${shown.length})` : "";
         const lines = [`Found ${matches.length} tool(s) for "${query}"${suffix}:\n`];
