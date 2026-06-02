@@ -21,6 +21,7 @@ import { McpSource } from "./mcp-source.ts";
 import { createManageToolsToolDefs } from "./platform/manage-tools.ts";
 import type { ToolRegistry } from "./registry.ts";
 import { createManageRegistriesTool } from "./registry-tools.ts";
+import { rankToolSearchResults } from "./search-ranking.ts";
 import { createManageUsersTool, type ManageUsersContext } from "./user-tools.ts";
 import {
   createManageWorkspacesTool,
@@ -97,7 +98,7 @@ export async function createSystemTools(
           query: {
             type: "string",
             description:
-              "Search query (substring match on name + description). Optional — omit to list everything in scope.",
+              "Search query (natural-language terms over name + description). Optional — omit to list everything in scope.",
           },
         },
         required: ["scope"],
@@ -138,7 +139,7 @@ export async function createSystemTools(
         }
 
         // scope === "tools" (default)
-        const q = query.toLowerCase();
+        const q = query.toLowerCase().trim();
         // Identity-level discovery: search the identity's full
         // cross-workspace tool union (the aggregator), not just the
         // calling workspace. The aggregator namespaces nb__search per
@@ -155,16 +156,16 @@ export async function createSystemTools(
             toolEligibilityCtx?.isToolEligible(t) ?? !t.annotations?.["ai.nimblebrain/internal"],
         );
         if (!q) return groupToolsBySource(all);
-        const matches = all.filter(
-          (t) => t.name.toLowerCase().includes(q) || t.description.toLowerCase().includes(q),
-        );
+        const matches = rankToolSearchResults(all, q);
         if (matches.length === 0)
           return { content: textContent(`No tools matched "${query}".`), isError: false };
-        const lines = [`Found ${matches.length} tool(s) for "${query}":\n`];
-        for (const t of matches) lines.push(`- **${t.name}**: ${t.description}`);
+        const shown = matches.slice(0, 25);
+        const suffix = matches.length > shown.length ? ` (showing top ${shown.length})` : "";
+        const lines = [`Found ${matches.length} tool(s) for "${query}"${suffix}:\n`];
+        for (const t of shown) lines.push(`- **${t.name}**: ${t.description}`);
         return {
           content: textContent(lines.join("\n")),
-          structuredContent: { tools: matches.map((t) => ({ name: t.name })) },
+          structuredContent: { tools: shown.map((t) => ({ name: t.name })) },
           isError: false,
         };
       },
