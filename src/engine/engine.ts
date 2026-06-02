@@ -913,12 +913,20 @@ export class AgentEngine {
         // prompt carry the identical bounded result.
         const toolResultParts: LanguageModelV3ToolResultPart[] = [];
 
-        for (const { toolCall, result, ms, resourceUri: uri, resourceLinks: links, modelOutput } of toolResults) {
+        for (const {
+          toolCall,
+          result,
+          ms,
+          resourceUri: uri,
+          resourceLinks: links,
+          modelOutput,
+        } of toolResults) {
           // `modelOutput` is present for every executed tool (bounded once,
           // above). Early-return paths that skip execution (e.g. policy-denied)
           // omit it; bound their small result here so the type stays a string.
           const llmText =
-            modelOutput ?? boundToolResultForModel(extractTextForModel(result.content), { hasUiResource: !!uri });
+            modelOutput ??
+            boundToolResultForModel(extractTextForModel(result.content), { hasUiResource: !!uri });
           allToolCalls.push({
             id: toolCall.toolCallId,
             name: toolCall.toolName,
