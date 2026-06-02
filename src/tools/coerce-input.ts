@@ -96,34 +96,24 @@ function structuralBranches(schema: Schema): Array<Record<string, unknown>> {
 }
 
 /**
- * Resolve a possibly-union schema to the concrete sub-schema we'll
- * coerce against, picked by the runtime value's shape. For `T | null`
- * (Pydantic's canonical `Optional[T]` shape) this collapses to T. For a
- * schema that's already concrete, returns it unchanged.
+ * Resolve a possibly-union schema to the concrete sub-schema we'll coerce
+ * against. For `T | null` (Pydantic's canonical `Optional[T]` shape) this
+ * drops the `null` branch and collapses to T. A schema that's already
+ * concrete is returned unchanged.
  *
- * Returns the original schema (not a structural branch) when no
- * structural branch is reachable; the caller's existing logic then
- * passes the value through.
+ * When two or more structural branches remain (e.g. `str | list`, `list |
+ * dict`) we deliberately do NOT pick one. Coercion's premise is that a
+ * stringified value is a misencoding — which only holds when the schema
+ * can't accept a string. A union that includes a `string` branch accepts
+ * the string as-is, so coercing it would silently change a legitimate
+ * value's type. Return the original union and let the validator adjudicate;
+ * the caller's pass-through then leaves the value untouched. Disambiguation
+ * can be added additively if a real bundle ever ships such a param.
  */
-function effectiveSchemaFor(value: unknown, schema: Schema): Schema {
+function effectiveSchemaFor(schema: Schema): Schema {
   if (!schema || schema.type !== undefined) return schema;
   const branches = structuralBranches(schema);
-  if (branches.length === 0) return schema;
-  if (branches.length === 1) return branches[0];
-
-  // Multiple structural branches — disambiguate by runtime shape.
-  if (Array.isArray(value)) {
-    return branches.find((b) => declaresType(b, "array")) ?? branches[0];
-  }
-  if (isPlainObject(value)) {
-    return branches.find((b) => declaresType(b, "object")) ?? branches[0];
-  }
-  if (typeof value === "string") {
-    const first = value.trim()[0];
-    if (first === "[") return branches.find((b) => declaresType(b, "array")) ?? branches[0];
-    if (first === "{") return branches.find((b) => declaresType(b, "object")) ?? branches[0];
-  }
-  return branches[0];
+  return branches.length === 1 ? branches[0] : schema;
 }
 
 /** Try to parse a string as JSON; return undefined on failure. */
@@ -154,11 +144,11 @@ function tryJsonParse(s: string): unknown {
 function coerceValue(value: unknown, schema: Schema): unknown {
   if (!schema) return value;
 
-  // Collapse union schemas down to the structural branch matched against
-  // this value. For Pydantic `Optional[T]` this resolves the canonical
-  // `anyOf: [{type: T}, {type: null}]` to the T branch before the rest
-  // of the function runs.
-  const effective = effectiveSchemaFor(value, schema);
+  // Collapse a single-structural-branch union to that branch (dropping
+  // `null`). For Pydantic `Optional[T]` this resolves the canonical
+  // `anyOf: [{type: T}, {type: null}]` to the T branch before the rest of
+  // the function runs; multi-branch unions pass through unchanged.
+  const effective = effectiveSchemaFor(schema);
   if (!effective) return value;
 
   // String → object/array recovery via schema-declared expected type.

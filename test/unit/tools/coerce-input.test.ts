@@ -307,7 +307,28 @@ describe("coerceInputForSchema — anyOf / oneOf union resolution", () => {
     ]);
   });
 
-  it("anyOf with multiple structural branches: picks the array branch for `[...]` input", () => {
+  it("does not coerce a JSON-looking string when a `string` branch is present (str | list)", () => {
+    // A union that accepts a string accepts the value as-is, so coercion's
+    // "stringified misencoding" premise doesn't hold. Leave it untouched and
+    // let the validator adjudicate — coercing would silently change a
+    // legitimate string into a list.
+    const schema = {
+      type: "object" as const,
+      properties: {
+        value: {
+          anyOf: [{ type: "string" }, { type: "array", items: { type: "string" } }],
+        },
+      },
+    };
+    const input = { value: "[draft]" };
+    const out = coerceInputForSchema(input, schema);
+    expect(out.value).toBe("[draft]");
+  });
+
+  it("leaves a multi-structural union (array | object, no null) untouched", () => {
+    // We deliberately do not disambiguate 2+ structural branches; the value
+    // passes through for the validator. Re-add disambiguation additively if a
+    // real bundle ever ships such a param.
     const schema = {
       type: "object" as const,
       properties: {
@@ -315,32 +336,13 @@ describe("coerceInputForSchema — anyOf / oneOf union resolution", () => {
           anyOf: [
             { type: "array", items: { type: "string" } },
             { type: "object", properties: { kind: { type: "string" } } },
-            { type: "null" },
           ],
         },
       },
     };
     const input = { payload: '["a","b","c"]' };
     const out = coerceInputForSchema(input, schema);
-    expect(out.payload).toEqual(["a", "b", "c"]);
-  });
-
-  it("anyOf with multiple structural branches: picks the object branch for `{...}` input", () => {
-    const schema = {
-      type: "object" as const,
-      properties: {
-        payload: {
-          anyOf: [
-            { type: "array", items: { type: "string" } },
-            { type: "object", properties: { kind: { type: "string" } } },
-            { type: "null" },
-          ],
-        },
-      },
-    };
-    const input = { payload: '{"kind":"x"}' };
-    const out = coerceInputForSchema(input, schema);
-    expect(out.payload).toEqual({ kind: "x" });
+    expect(out.payload).toBe('["a","b","c"]');
   });
 
   it("anyOf wrapping the root: nested coercion still finds the property branch", () => {
