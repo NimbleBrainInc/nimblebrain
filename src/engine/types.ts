@@ -38,7 +38,33 @@ export interface ToolResult {
   content: ContentBlock[];
   structuredContent?: Record<string, unknown>;
   isError: boolean;
+  /**
+   * Free-form out-of-band metadata, mirroring MCP's `CallToolResult._meta`.
+   * Round-trips across the tool boundary in both directions: in-process tools
+   * set it on their `ToolResult`, MCP bundle results carry it from the wire.
+   * It is NOT the tool's data payload (that's `content` / `structuredContent`)
+   * — it's metadata *about* the result, keyed by reverse-DNS namespace per the
+   * MCP convention (`io.modelcontextprotocol/...`, `ai.nimblebrain/...`).
+   */
+  _meta?: Record<string, unknown>;
 }
+
+/**
+ * Reverse-DNS `_meta` key a tool sets (to `true`) to mark its result as making
+ * no forward progress — e.g. a discovery search that matched nothing, or a
+ * lookup against unchanged state.
+ *
+ * The loop supervisor collapses consecutive non-advancing results from the
+ * same tool to one fingerprint and trips regardless of how input or output
+ * varied between calls — the counterpart to the input-aware success
+ * fingerprint, which treats a varied input as progress and so never trips a
+ * flailing discovery loop (model varies the query every call, same dead end).
+ *
+ * It rides in `_meta` — the MCP-blessed channel for metadata-about-a-result —
+ * rather than `structuredContent` (the tool's data) or a bespoke top-level
+ * field (dropped at the boundary). Any tool, in-process or bundle, can set it.
+ */
+export const NON_ADVANCING_META_KEY = "ai.nimblebrain/non-advancing";
 
 export interface ToolPromotionResult {
   ok: boolean;

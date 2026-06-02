@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { extractTextForModel, textContent } from "./content-helpers.ts";
-import type { ToolCall, ToolResult } from "./types.ts";
+import { NON_ADVANCING_META_KEY, type ToolCall, type ToolResult } from "./types.ts";
 
 /**
  * Per-run loop supervisor.
@@ -11,7 +11,7 @@ import type { ToolCall, ToolResult } from "./types.ts";
  * with a synthetic directive instructing the model to stop calling the
  * tool and produce a final response.
  *
- * Two failure modes this catches:
+ * Three failure modes this catches:
  *  - Upstream returns identical 4xx errors on every call (e.g. a tool
  *    whose schema-derived args trigger a deterministic server-side
  *    rejection). The model often retries with cosmetic argument tweaks
@@ -19,9 +19,17 @@ import type { ToolCall, ToolResult } from "./types.ts";
  *  - Upstream returns identical "empty success" payloads to the same
  *    call (pagination dead-ends; idempotent lookups against an
  *    unchanged state).
+ *  - A tool reports it made no progress (a discovery search matching
+ *    nothing) while the model keeps varying the query — so input AND
+ *    content differ every call, defeating the two fingerprints below.
  *
- * Fingerprint composition (success vs. error are different shapes of
- * "stuck"):
+ * Fingerprint composition (three shapes of "stuck"):
+ *
+ *  - NON-ADVANCING: (toolName, NONADVANCING). When `result._meta` carries
+ *    `NON_ADVANCING_META_KEY`, the fingerprint ignores input and content,
+ *    so a tool that keeps reporting no progress trips at N regardless of how
+ *    the model varied the call. Catches the flailing-discovery loop the
+ *    input-aware SUCCESS path deliberately lets through.
  *
  *  - SUCCESS: (toolName, S, content, canonical(input)).
  *    A successful call advances state; "stuck" means the model invoked
@@ -134,6 +142,22 @@ export function createRunSupervisor(config: SupervisorConfig = {}): RunSuperviso
   }
 
   function fingerprint(call: ToolCall, result: ToolResult): string {
+    // A result a tool explicitly flags as non-advancing (a search that
+    // matched nothing, a lookup against unchanged state) collapses to ONE
+    // canonical fingerprint per tool — input- AND content-agnostic. This is
+    // the counterpart to the input-aware success path below: that path treats
+    // a varied input as progress and never trips, which is right for a tool
+    // doing real work but wrong for a discovery loop where the model varies
+    // the query every call and keeps hitting the same dead end. Flagged
+    // results trip after `maxRepeats` no matter how input/content varied.
+    //
+    // The flag is a single explicit opt-in boolean read by key from `_meta`
+    // (the MCP-blessed metadata channel that survives the tool boundary) —
+    // NOT a fold of the whole result into the hash, which would regress the
+    // guard the way the SUCCESS comment below warns against.
+    if (result._meta?.[NON_ADVANCING_META_KEY] === true) {
+      return createHash("sha1").update(`${call.name}\0NONADVANCING`).digest("hex");
+    }
     // Known limitation: hashing only the first `textCap` chars can
     // false-positive on tools that return a long stable preamble (e.g. a
     // verbose header) followed by a short varying field. Two semantically

@@ -1,6 +1,10 @@
 import { describe, expect, it } from "bun:test";
 import { createRunSupervisor } from "../../../src/engine/supervisor.ts";
-import type { ToolCall, ToolResult } from "../../../src/engine/types.ts";
+import {
+  NON_ADVANCING_META_KEY,
+  type ToolCall,
+  type ToolResult,
+} from "../../../src/engine/types.ts";
 
 function call(name: string, input: Record<string, unknown> = {}): ToolCall {
   return { id: `call-${Math.random().toString(36).slice(2, 8)}`, name, input };
@@ -270,5 +274,82 @@ describe("supervisor — input-aware success fingerprinting", () => {
       );
       expect(v.type).toBe("pass");
     }
+  });
+});
+
+describe("supervisor — non-advancing results", () => {
+  const nonAdvancing = (text: string): ToolResult => ({
+    content: [{ type: "text", text }],
+    isError: false,
+    _meta: { [NON_ADVANCING_META_KEY]: true },
+  });
+
+  it("trips after 3 non-advancing results even when input AND output both vary", () => {
+    const sup = createRunSupervisor();
+    // Mirrors the nb__search discovery loop: a fresh query each call and a
+    // distinct "no match" string each time. The input-aware success and
+    // content fingerprints would never collapse these — the `_meta`
+    // non-advancing flag is what does.
+    expect(
+      sup.observe(call("nb__search", { query: "preview" }), nonAdvancing('No tools matched "preview".'))
+        .type,
+    ).toBe("pass");
+    expect(
+      sup.observe(
+        call("nb__search", { query: "collateral" }),
+        nonAdvancing('No tools matched "collateral".'),
+      ).type,
+    ).toBe("pass");
+    const v3 = sup.observe(
+      call("nb__search", { query: "document" }),
+      nonAdvancing('No tools matched "document".'),
+    );
+    expect(v3.type).toBe("synth");
+    if (v3.type === "synth") {
+      expect(v3.trippedTool).toBe("nb__search");
+      expect(v3.consecutiveRepeats).toBe(3);
+    }
+  });
+
+  it("an advancing result between non-advancing ones resets the counter", () => {
+    const sup = createRunSupervisor();
+    expect(
+      sup.observe(call("nb__search", { query: "a" }), nonAdvancing('No tools matched "a".')).type,
+    ).toBe("pass");
+    expect(
+      sup.observe(call("nb__search", { query: "b" }), nonAdvancing('No tools matched "b".')).type,
+    ).toBe("pass");
+    // A real match advances — different fingerprint, resets the streak.
+    expect(
+      sup.observe(call("nb__search", { query: "crm" }), textResult('Found 2 tool(s) for "crm"')).type,
+    ).toBe("pass");
+    expect(
+      sup.observe(call("nb__search", { query: "c" }), nonAdvancing('No tools matched "c".')).type,
+    ).toBe("pass");
+    expect(
+      sup.observe(call("nb__search", { query: "d" }), nonAdvancing('No tools matched "d".')).type,
+    ).toBe("pass");
+    // Only the 3rd CONSECUTIVE non-advancing result trips.
+    expect(
+      sup.observe(call("nb__search", { query: "e" }), nonAdvancing('No tools matched "e".')).type,
+    ).toBe("synth");
+  });
+
+  it("preserves the input-aware success path: varied-input real work never trips", () => {
+    const sup = createRunSupervisor();
+    // patch_source: structurally-uniform success output, distinct inputs each
+    // call — progress, not a loop. The non-advancing flag (absent here) must
+    // not perturb the input-aware success fingerprint.
+    const ok = (): ToolResult => textResult('{"applied":true,"compiled":true}');
+    expect(
+      sup.observe(call("patch_source", { edits: [{ find: "a", replace: "b" }] }), ok()).type,
+    ).toBe("pass");
+    expect(
+      sup.observe(call("patch_source", { edits: [{ find: "c", replace: "d" }] }), ok()).type,
+    ).toBe("pass");
+    expect(
+      sup.observe(call("patch_source", { edits: [{ find: "e", replace: "f" }] }), ok()).type,
+    ).toBe("pass");
+    expect(sup.snapshot().trippedTools).toEqual([]);
   });
 });

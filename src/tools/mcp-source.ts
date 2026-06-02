@@ -1194,6 +1194,10 @@ export class McpSource implements ToolSource {
         | Record<string, unknown>
         | undefined,
       isError: Boolean(result.isError),
+      // Surface result-level `_meta` (loose object on the wire) so out-of-band
+      // hints from the bundle — e.g. the supervisor's non-advancing marker —
+      // reach the engine instead of being dropped at this projection.
+      _meta: (result as { _meta?: Record<string, unknown> })._meta,
     };
     const promoted = promoteHiddenErrors(toolResult);
     if (promoted !== toolResult) {
@@ -1244,6 +1248,9 @@ export class McpSource implements ToolSource {
         : [],
       structuredContent: callToolResult.structuredContent as Record<string, unknown> | undefined,
       isError: Boolean(callToolResult.isError),
+      // Surface result-level `_meta` (loose object on the wire) so out-of-band
+      // hints from the bundle reach the engine — same as the inline path.
+      _meta: (callToolResult as { _meta?: Record<string, unknown> })._meta,
     };
     const promoted = promoteHiddenErrors(toolResult);
     if (promoted !== toolResult) {

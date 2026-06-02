@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { extractText } from "../../src/engine/content-helpers.ts";
+import { NON_ADVANCING_META_KEY } from "../../src/engine/types.ts";
 import { createSystemTools } from "../../src/tools/system-tools.ts";
 import type {
 	GetSkillsFn,
@@ -225,6 +226,9 @@ describe("System Tools", () => {
 		});
 		expect(result.isError).toBe(false);
 		expect(extractText(result.content)).toContain('No tools matched "nonexistent"');
+		// Flagged non-advancing (via `_meta`) so repeated empty searches trip
+		// the loop supervisor even as the model varies the query each call.
+		expect(result._meta?.[NON_ADVANCING_META_KEY]).toBe(true);
 	});
 
 	it("search with scope=tools excludes internal tools from results", async () => {
@@ -257,6 +261,8 @@ describe("System Tools", () => {
 		expect(getStructured<{ tools?: Array<{ name: string }> }>(result)?.tools).toEqual([
 			{ name: "test__visible" },
 		]);
+		// A search that matched is advancing — must not be flagged.
+		expect(result._meta?.[NON_ADVANCING_META_KEY]).toBeUndefined();
 	});
 
 	it("search with scope=tools excludes tools that are not eligible", async () => {

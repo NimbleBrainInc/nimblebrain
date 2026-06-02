@@ -245,6 +245,11 @@ export function defineInProcessApp(
             content: result.content,
             ...(result.structuredContent ? { structuredContent: result.structuredContent } : {}),
             ...(result.isError ? { isError: true } : {}),
+            // Forward result `_meta` onto the wire so it round-trips back to
+            // the caller as `ToolResult._meta` (e.g. the supervisor's
+            // non-advancing hint). `CallToolResult._meta` is a loose object, so
+            // arbitrary reverse-DNS keys survive the round-trip.
+            ...(result._meta ? { _meta: result._meta } : {}),
           };
         });
 
