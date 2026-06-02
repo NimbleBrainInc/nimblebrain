@@ -197,7 +197,17 @@ export class ToolListCache {
    * the identity (a workspace it subscribes to changed, or its membership
    * changed). A union compute captures it up front and refuses to memoize if
    * it changed mid-flight, so an invalidation during the compute can't be
-   * clobbered by the stale union about to resolve. Monotonic; never deleted
+   * clobbered by the stale union about to resolve.
+   *
+   * Deliberately the one structure here that does NOT reap (unlike orphaned
+   * watchers or `identityUnions`): it's monotonic and only cleared in
+   * `dispose`. Growth is bounded by distinct identities over the process
+   * lifetime (a tenant's user count) at one small int each — not a leak worth
+   * chasing. Reaping it would be actively unsafe unless guarded: a plain
+   * delete resets the entry to 0, and if that 0 happens to equal an in-flight
+   * compute's captured epoch the guard reads "unchanged" and memoizes a result
+   * the invalidation should have rejected. A correctness-sensitive conditional
+   * to reclaim kilobytes is a bad trade, so we don't. Monotonic; never deleted
    * outside `dispose` (resetting could let a stale in-flight read as current).
    */
   private readonly identityEpochs = new Map<string, number>();
