@@ -8,7 +8,7 @@ import { HealthMonitor } from "../tools/health-monitor.ts";
 import { createApp } from "./app.ts";
 import { resolveAuthMode } from "./auth-middleware.ts";
 import { ConversationEventManager } from "./conversation-events.ts";
-import { SseEventManager } from "./events.ts";
+import { deriveDataChangedTarget, SseEventManager } from "./events.ts";
 import { McpServerHost } from "./mcp-server.ts";
 import { LoginRateLimiter, RequestRateLimiter } from "./rate-limiter.ts";
 import { InMemorySessionRegistry, type SessionRegistry } from "./session-store/index.ts";
@@ -128,42 +128,25 @@ export function startServer(options: ServerOptions): ServerHandle {
     //                             result. Without this, a `useDataSync`-driven
     //                             view stays stale for the full task duration.
     //
-    // System tools (`nb__*`) are filtered out of both paths — they don't
-    // modify app data, and broadcasting data.changed for them would make
-    // iframes re-fetch during every streaming chunk (flicker + tool-call
-    // amplification).
-    const progressOrDone =
-      (event.type === "tool.done" && event.data.ok === true) || event.type === "tool.progress";
-    if (progressOrDone) {
-      const toolName =
-        (event.data.name as string | undefined) ??
-        // tool.progress uses `source`+`tool` (McpSource emits them separately)
-        // while tool.done uses a single qualified `name`. Handle both shapes.
-        ((): string | undefined => {
-          const src = event.data.source as string | undefined;
-          const tool = event.data.tool as string | undefined;
-          return src && tool ? `${src}__${tool}` : undefined;
-        })();
-      if (toolName) {
-        const sepIndex = toolName.indexOf("__");
-        const server = sepIndex !== -1 ? toolName.slice(0, sepIndex) : toolName;
-        const tool = sepIndex !== -1 ? toolName.slice(sepIndex + 2) : toolName;
-        if (server !== "nb") {
-          // Confirms `data.changed` is actually being broadcast, and to how
-          // many clients. If this fires but the browser never sees the
-          // event, the break is in the SSE connection or the
-          // parent `useDataSync` forwarder — not here.
-          log.debug(
-            "sse",
-            `broadcast data.changed from=${event.type} server=${server} tool=${tool} clients=${sseManager.clientCount}`,
-          );
-          sseManager.broadcast("data.changed", {
-            server,
-            tool,
-            timestamp: new Date().toISOString(),
-          });
-        }
-      }
+    // `deriveDataChangedTarget` normalizes both event shapes to the bare
+    // source name (stripping the Stage-2 `ws_<id>-` namespace) and drops
+    // system tools (`nb__*`) — see its doc comment for why the bare form is
+    // required for the iframe data-app match.
+    const target = deriveDataChangedTarget(event);
+    if (target) {
+      // Confirms `data.changed` is actually being broadcast, and to how
+      // many clients. If this fires but the browser never sees the
+      // event, the break is in the SSE connection or the
+      // parent `useDataSync` forwarder — not here.
+      log.debug(
+        "sse",
+        `broadcast data.changed from=${event.type} server=${target.server} tool=${target.tool} clients=${sseManager.clientCount}`,
+      );
+      sseManager.broadcast("data.changed", {
+        server: target.server,
+        tool: target.tool,
+        timestamp: new Date().toISOString(),
+      });
     }
   };
 

@@ -1,4 +1,5 @@
 import type { EngineEvent, EngineEventType, EventSink } from "../engine/types.ts";
+import { bareToolName } from "../tools/namespace.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
 
 /**
@@ -99,6 +100,63 @@ const SSE_ROUTES: Partial<Record<EngineEventType, SseRoute>> = {
   "bridge.tool.call": { scope: "workspace", wsIdField: "workspaceId" },
   "bridge.tool.done": { scope: "workspace", wsIdField: "workspaceId" },
 };
+
+/**
+ * Derive the `data.changed` broadcast target (`{ server, tool }`) from a tool
+ * lifecycle event, or `null` when the event must not broadcast.
+ *
+ * Two event shapes feed this, and they carry the source name differently:
+ *   - `tool.done` (ok) → a single qualified `name`. This is the name the
+ *     MODEL called, which post-Stage-2 is workspace-namespaced
+ *     (`ws_<id>-<source>__<tool>`).
+ *   - `tool.progress` → separate `source` + `tool`; `McpSource` emits the
+ *     bare source name there.
+ *
+ * Both are normalized to the **bare** source name via `bareToolName` before
+ * the `__` split. This is load-bearing: the Synapse `useDataSync` consumer
+ * matches the broadcast `server` against the iframe's `data-app`, which is the
+ * bare placement `serverName` (see `PlacementRegistry` — serverName and wsId
+ * are stored as separate fields). A namespaced `server` never matches, so the
+ * iframe would only refresh on remount (the "click off and back" symptom).
+ * Stripping the prefix also restores the `nb` system-tool guard:
+ * `ws_<id>-nb__x` → `nb__x` → server `nb`, which we skip (system tools don't
+ * mutate app data, and broadcasting for them re-fetches every streaming chunk).
+ *
+ * `data.changed` remains workspace-blind (`scope: "global"`, matched on bare
+ * server) — the pre-Stage-2 contract. Growing `wsId` into the payload for
+ * true per-workspace scoping is tracked separately (see `SSE_ROUTES`).
+ */
+export function deriveDataChangedTarget(
+  event: EngineEvent,
+): { server: string; tool: string } | null {
+  const isBroadcast =
+    (event.type === "tool.done" && event.data.ok === true) || event.type === "tool.progress";
+  if (!isBroadcast) return null;
+
+  const { name, source, tool: toolField } = event.data;
+  const rawName =
+    typeof name === "string"
+      ? name
+      : typeof source === "string" && typeof toolField === "string"
+        ? `${source}__${toolField}`
+        : undefined;
+  if (!rawName) return null;
+
+  // Strip any `ws_<id>-` workspace prefix, then split source from tool on the
+  // first `__`. A bare source name with hyphens (`synapse-db-query`) is left
+  // intact — `bareToolName` only strips a leading segment matching the
+  // workspace-id pattern.
+  const bare = bareToolName(rawName);
+  const sepIndex = bare.indexOf("__");
+  const server = sepIndex !== -1 ? bare.slice(0, sepIndex) : bare;
+  const tool = sepIndex !== -1 ? bare.slice(sepIndex + 2) : bare;
+
+  // System tools (`nb__*`) don't modify app data; broadcasting for them makes
+  // iframes re-fetch on every streaming chunk (flicker + tool-call amplification).
+  if (server === "nb") return null;
+
+  return { server, tool };
+}
 
 /**
  * SSE Event Manager for the workspace-level event stream.
