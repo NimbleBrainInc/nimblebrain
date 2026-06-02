@@ -38,11 +38,14 @@
  * concrete branch and the rest of the coercer operates as if the property
  * had been declared with a plain `type` from the start.
  *
- * Unions with multiple structural branches (rare; e.g. `list | dict`) are
- * disambiguated by the runtime value's shape — an array (or a string
- * starting with `[`) selects the array branch, an object (or `{`) the
- * object branch. The first-character heuristic mirrors `tryJsonParse`;
- * both lean on the model's intent being legible from the leading byte.
+ * Unions with two or more structural branches (rare; e.g. `list | dict`, or
+ * any union that also includes a `string` branch) pass through unchanged —
+ * we deliberately do not guess. Coercion's premise is that a stringified
+ * value is a misencoding, which only holds when the schema can't accept a
+ * string; a union that accepts a string accepts the value as-is, so coercing
+ * it would silently change a legitimate value's type. The validator
+ * adjudicates. Disambiguation can be added additively if a real bundle ever
+ * ships such a param.
  *
  * `allOf` and `$ref` are out of scope. A property declared with either
  * passes through unchanged at that level — the validator still gets to
