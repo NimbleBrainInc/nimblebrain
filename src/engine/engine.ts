@@ -560,11 +560,11 @@ export class AgentEngine {
                   prompt: [
                     {
                       role: "system",
+                      // Same ephemeral 1-hour cache control as the last-user
+                      // breakpoint — reuse the const so the TTL lives in one
+                      // place. See CACHE_CONTROL_EPHEMERAL.
                       content: callPrompt,
-                      providerOptions: {
-                        // 1-hour TTL — see CACHE_CONTROL_EPHEMERAL rationale.
-                        anthropic: { cacheControl: { type: "ephemeral", ttl: "1h" } },
-                      },
+                      providerOptions: CACHE_CONTROL_EPHEMERAL,
                     },
                     ...addCacheBreakpoint(msgs),
                   ],
