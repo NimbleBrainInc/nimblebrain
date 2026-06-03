@@ -1487,3 +1487,61 @@ describe("Scheduler — multi-owner", () => {
 		expect(fired).toEqual(["usr_b/shared"]); // only B's automation ran
 	});
 });
+
+// ---------------------------------------------------------------------------
+// Tests: Scheduler — run trigger propagation
+// ---------------------------------------------------------------------------
+
+describe("Scheduler — run trigger", () => {
+	let tmpDir: string;
+
+	beforeEach(() => {
+		tmpDir = makeTmpDir();
+	});
+
+	afterEach(() => {
+		rmSync(join(tmpDir, "..", "..", ".."), { recursive: true, force: true });
+	});
+
+	/** Executor that records the `trigger` it was dispatched with. */
+	function recordingExecutor(triggers: string[]): Executor {
+		return (async (auto: Automation, _signal: AbortSignal, trigger: string) => {
+			triggers.push(trigger);
+			return makeSuccessRun(auto.id);
+		}) as Executor;
+	}
+
+	it("dispatches scheduled (timer) runs with trigger 'scheduled'", async () => {
+		const auto = makeAutomation({
+			schedule: { type: "interval", intervalMs: 60_000 },
+			lastRunAt: new Date(Date.now() - 60_001).toISOString(),
+			nextRunAt: new Date(Date.now() - 1).toISOString(),
+		});
+		const defs = new Map<string, Automation>();
+		defs.set(auto.id, auto);
+		saveDefinitions(defs, tmpDir);
+
+		const triggers: string[] = [];
+		const scheduler = new Scheduler(recordingExecutor(triggers), { usersDir: usersDirOf(tmpDir) });
+		scheduler.start();
+		await scheduler.onTimer();
+		scheduler.stop();
+
+		expect(triggers).toEqual(["scheduled"]);
+	});
+
+	it("dispatches runNow (test button) runs with trigger 'manual'", async () => {
+		const auto = makeAutomation();
+		const defs = new Map<string, Automation>();
+		defs.set(auto.id, auto);
+		saveDefinitions(defs, tmpDir);
+
+		const triggers: string[] = [];
+		const scheduler = new Scheduler(recordingExecutor(triggers), { usersDir: usersDirOf(tmpDir) });
+		scheduler.start();
+		await scheduler.runNow(OWNER, auto.id);
+		scheduler.stop();
+
+		expect(triggers).toEqual(["manual"]);
+	});
+});

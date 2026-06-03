@@ -42,8 +42,21 @@ const TRANSIENT_PATTERNS: RegExp[] = [
 // Types
 // ---------------------------------------------------------------------------
 
+/**
+ * What initiated a run. A `scheduled` run fires from the timer with no user
+ * present, so it must act as the automation's owner/provenance and must NOT
+ * inherit any ambient request context (the timer can capture a stale one — see
+ * `getExecutorContext`). A `manual` run is a user clicking "test", dispatched
+ * synchronously inside that user's request context, which it legitimately uses.
+ */
+export type AutomationRunTrigger = "scheduled" | "manual";
+
 /** The executor function that the scheduler delegates to. */
-export type Executor = (automation: Automation, signal: AbortSignal) => Promise<AutomationRun>;
+export type Executor = (
+  automation: Automation,
+  signal: AbortSignal,
+  trigger: AutomationRunTrigger,
+) => Promise<AutomationRun>;
 
 export interface SchedulerConfig {
   /**
@@ -332,7 +345,7 @@ export class Scheduler {
       return skipped;
     }
 
-    return this.dispatchRun(auto);
+    return this.dispatchRun(auto, "manual");
   }
 
   /**
@@ -429,7 +442,7 @@ export class Scheduler {
         continue;
       }
 
-      dispatched.push(this.dispatchRun(auto));
+      dispatched.push(this.dispatchRun(auto, "scheduled"));
     }
 
     // Wait for all dispatched runs to complete so updateAfterRun sets
@@ -447,7 +460,10 @@ export class Scheduler {
   // Run dispatch
   // -----------------------------------------------------------------------
 
-  private async dispatchRun(auto: Automation): Promise<AutomationRun> {
+  private async dispatchRun(
+    auto: Automation,
+    trigger: AutomationRunTrigger,
+  ): Promise<AutomationRun> {
     const key = Scheduler.keyOf(auto);
     const controller = new AbortController();
     this.activeRuns.set(key, controller);
@@ -459,7 +475,7 @@ export class Scheduler {
     const startedAt = new Date().toISOString();
 
     try {
-      const run = await this.executor(auto, controller.signal);
+      const run = await this.executor(auto, controller.signal, trigger);
       this.activeRuns.delete(key);
       this.updateAfterRun(auto, run);
       return run;
