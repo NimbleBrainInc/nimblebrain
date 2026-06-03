@@ -1,6 +1,7 @@
 import type {
   JSONSchema7,
   LanguageModelV3,
+  LanguageModelV3Content,
   LanguageModelV3FunctionTool,
   LanguageModelV3Message,
   LanguageModelV3ToolCall,
@@ -8,7 +9,7 @@ import type {
   SharedV3ProviderOptions,
 } from "@ai-sdk/provider";
 import { log } from "../cli/log.ts";
-import { DEFAULT_MAX_DIRECT_TOOLS, MAX_ITERATIONS } from "../limits.ts";
+import { DEFAULT_MAX_DIRECT_TOOLS, MAX_ITERATIONS, MAX_LENGTH_CONTINUATIONS } from "../limits.ts";
 import { getProviderFromModel, supportsEnabledThinking } from "../model/catalog.ts";
 import { normalizeForReplay } from "../model/inbound-fit.ts";
 import { callModel, type StreamResult } from "../model/stream.ts";
@@ -130,6 +131,29 @@ function buildThinkingProviderOptions(
   // openai / google: not yet wired. The provider falls back to its own
   // default behavior. Tracked for follow-up.
   return {};
+}
+
+/**
+ * True if any reasoning (extended-thinking) block in the content lacks its
+ * provider signature. A signed thinking block round-trips on replay; an
+ * unsigned one — produced when `finishReason: "length"` cuts the model off
+ * mid-thinking, before the signature arrives (src/model/stream.ts) — cannot
+ * be replayed as the trailing assistant message: Anthropic rejects it
+ * ("thinking blocks in the latest assistant message cannot be modified",
+ * src/model/inbound-fit.ts). The signature lives at
+ * `providerMetadata.anthropic.signature`. Conservative for other providers:
+ * any reasoning block we can't confirm is signed counts as unsigned, so the
+ * caller surfaces the truncation instead of risking a 400.
+ */
+function hasUnsignedReasoning(content: LanguageModelV3Content[]): boolean {
+  for (const block of content) {
+    if (block.type !== "reasoning") continue;
+    const meta = (block as { providerMetadata?: Record<string, unknown> }).providerMetadata;
+    const anthropic = meta?.anthropic as { signature?: unknown } | undefined;
+    const signed = typeof anthropic?.signature === "string" && anthropic.signature.length > 0;
+    if (!signed) return true;
+  }
+  return false;
 }
 
 /**
@@ -477,6 +501,17 @@ export class AgentEngine {
     // content filter, etc.) rather than always reporting "complete".
     let lastFinishReason: FinishReason | undefined;
 
+    // Auto-resume bookkeeping for output-ceiling truncations. When a turn
+    // is cut off at the model's max output tokens (`finishReason: "length"`)
+    // with no pending tool call, the engine re-prompts the model to continue
+    // from its partial text instead of ending the run with a half-written
+    // answer (see the `toolCalls.length === 0` branch). `lengthContinuations`
+    // bounds that to `MAX_LENGTH_CONTINUATIONS`; `resumingFromLength`
+    // suppresses the inter-turn blank line so the resumed text stitches
+    // seamlessly onto the partial.
+    let lengthContinuations = 0;
+    let resumingFromLength = false;
+
     const unregisterToolControls = config.toolPromotion?.registerControls(toolControls);
     try {
       while (iteration < maxIter) {
@@ -647,16 +682,29 @@ export class AgentEngine {
         }
         const llmMs = Math.round(performance.now() - llmStart);
 
-        // Accumulate text output (add newline between turns if needed)
+        // Accumulate text output (add newline between turns if needed).
+        // When this turn is the resumption of a length-truncated one, stitch
+        // directly onto the partial with no separator — the model is
+        // continuing mid-thought, so a blank line would inject a false break.
         for (const block of response.content) {
           if (block.type === "text") {
-            if (output.length > 0 && !output.endsWith("\n") && block.text.length > 0) {
+            if (
+              !resumingFromLength &&
+              output.length > 0 &&
+              !output.endsWith("\n") &&
+              block.text.length > 0
+            ) {
               output += "\n\n";
               this.events.emit({ type: "text.delta", data: { runId, text: "\n\n" } });
             }
             output += block.text;
           }
         }
+        // Consume the resume flag unconditionally: it must not leak into a
+        // later iteration if this resumed turn produced no text block (e.g.
+        // tool-call- or reasoning-only), which would wrongly glue a genuinely
+        // new turn onto the previous one.
+        resumingFromLength = false;
 
         // Map the AI SDK V3 usage shape into our canonical TokenUsage.
         // V3's `inputTokens.total` is the grand total (noCache+cacheRead+
@@ -698,6 +746,44 @@ export class AgentEngine {
         );
 
         if (toolCalls.length === 0) {
+          // A turn with no tool call usually means the model is done — but
+          // `finishReason: "length"` means it was cut off at the output
+          // ceiling mid-answer, not finished. Re-prompt it to continue from
+          // its partial text instead of ending the run with a truncated
+          // response. Bounded by MAX_LENGTH_CONTINUATIONS so a pathologically
+          // long answer can't spin forever (it then ends as stopReason
+          // "length", same as before this fix). Only fires for text
+          // truncation: a length cut with tool calls present takes the normal
+          // tool path below.
+          //
+          // Guard: never resume a turn whose reasoning was cut off mid-stream.
+          // A thinking block only carries its provider signature once the
+          // block completes; a length cut during thinking drains an UNSIGNED
+          // reasoning block (see src/model/stream.ts). Replaying an unsigned
+          // thinking block as the trailing assistant message is exactly what
+          // Anthropic rejects ("thinking blocks in the latest assistant
+          // message cannot be modified" — src/model/inbound-fit.ts). In that
+          // case fall through to `break` and surface stopReason "length"; the
+          // user re-prompts and the model starts a fresh, fully-signed turn.
+          if (
+            lastFinishReason === "length" &&
+            lengthContinuations < MAX_LENGTH_CONTINUATIONS &&
+            !hasUnsignedReasoning(response.content)
+          ) {
+            lengthContinuations += 1;
+            // Seed history with the partial assistant text so the next call
+            // continues from where it stopped (Anthropic resumes an assistant
+            // turn when it's the trailing message). `normalizeForReplay`
+            // fixes the stream→prompt shape, same as the tool path below.
+            history.push({ role: "assistant", content: normalizeForReplay(response.content) });
+            resumingFromLength = true;
+            this.events.emit({
+              type: "context.length_continuation",
+              data: { runId, continuation: lengthContinuations },
+            });
+            iteration++;
+            continue;
+          }
           break; // Model is done
         }
 

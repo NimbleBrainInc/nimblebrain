@@ -114,6 +114,14 @@ export type EngineEventType =
    * Payload: { runId, attempt, previousMessageCount, errorMessage }.
    */
   | "context.overflow_recovery"
+  /**
+   * Emitted when a turn is cut off at the model's output ceiling
+   * (`finishReason: "length"`) with no pending tool call and the engine
+   * auto-resumes it from the partial text rather than ending the run.
+   * Payload: { runId, continuation } where `continuation` is the 1-based
+   * resume count (bounded by MAX_LENGTH_CONTINUATIONS).
+   */
+  | "context.length_continuation"
   | "bundle.installed"
   | "bundle.uninstalled"
   | "bundle.upgraded"

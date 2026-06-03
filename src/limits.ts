@@ -6,6 +6,17 @@ export const MAX_ITERATIONS = 50;
 /** Maximum characters in a tool result before truncation for the LLM. */
 export const MAX_TOOL_RESULT_CHARS = 50_000;
 
+/**
+ * Maximum number of times the engine will auto-resume a single assistant
+ * turn that was cut off at the model's output ceiling (`finishReason:
+ * "length"`) with no pending tool call. Each resume re-prompts the model to
+ * continue from its partial text and consumes one iteration. Past this cap
+ * the run ends with `stopReason: "length"` so a pathologically long answer
+ * can't spin forever. Sized so normal long-form answers complete while a
+ * runaway is bounded.
+ */
+export const MAX_LENGTH_CONTINUATIONS = 4;
+
 // --- Runtime Defaults ---
 
 export const DEFAULT_MAX_ITERATIONS = 25;
