@@ -772,9 +772,23 @@ export class AgentEngine {
           ) {
             lengthContinuations += 1;
             // Seed history with the partial assistant text so the next call
-            // continues from where it stopped (Anthropic resumes an assistant
-            // turn when it's the trailing message). `normalizeForReplay`
-            // fixes the stream→prompt shape, same as the tool path below.
+            // continues from where it stopped. `normalizeForReplay` fixes the
+            // stream→prompt shape, same as the tool path below.
+            //
+            // Provider note: this relies on assistant-message *prefill
+            // continuation* — a trailing assistant message is the turn to
+            // continue. That's Anthropic semantics (the configured default
+            // and the model this fix was written against). OpenAI/Google
+            // instead treat a trailing assistant message as context and start
+            // a fresh turn, which `resumingFromLength` would then glue on with
+            // no separator — a mildly disjoint resume, still bounded by
+            // MAX_LENGTH_CONTINUATIONS and no worse than a crash. We don't gate
+            // by provider here on purpose: this engine is provider-agnostic
+            // (provider-specific replay lives in the runtime hook, e.g.
+            // applyReasoningReplayPolicy). If a non-Anthropic model ever
+            // becomes a default, thread a `supportsAssistantPrefillContinuation`
+            // capability through EngineConfig and gate on it rather than
+            // string-matching the provider in here.
             history.push({ role: "assistant", content: normalizeForReplay(response.content) });
             resumingFromLength = true;
             this.events.emit({
