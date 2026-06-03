@@ -13,12 +13,16 @@
 //   - `handleChat` / `handlePromptAction` — iframe→shell channels for
 //     "send this from inside the app". These are the one place a focused
 //     app is known, so they stamp its `AppContext` on outgoing messages.
+//   - publishing the focused app to `FocusedAppContext`, so the globally
+//     mounted chat panel can stamp the same `AppContext` on messages
+//     typed into the main composer (not just the in-app channel).
 // ---------------------------------------------------------------------------
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { UiChatContext } from "../bridge/types";
 import { useChatContext } from "../context/ChatContext";
 import { useChatPanelContext } from "../context/ChatPanelContext";
+import { useFocusedApp } from "../context/FocusedAppContext";
 import type { AppContext, PlacementEntry } from "../types";
 import { SlotRenderer } from "./SlotRenderer";
 
@@ -50,6 +54,7 @@ export function AppWithChat({ placement, onNavigate, forceRefresh }: AppWithChat
 
   const chat = useChatContext();
   const isMobile = useIsMobile();
+  const { setFocusedApp } = useFocusedApp();
 
   const appContext = useMemo<AppContext>(
     () => ({
@@ -58,6 +63,15 @@ export function AppWithChat({ placement, onNavigate, forceRefresh }: AppWithChat
     }),
     [placement.label, placement.serverName],
   );
+
+  // Publish this app as the focused one while it's mounted, so messages
+  // typed into the global chat panel carry its `AppContext` (the panel
+  // can't know the focused app on its own — see ChatChrome's header).
+  // Clear on unmount / route change so non-app routes stamp nothing.
+  useEffect(() => {
+    setFocusedApp(appContext);
+    return () => setFocusedApp(null);
+  }, [appContext, setFocusedApp]);
 
   const handleChat = useCallback(
     (message: string, context?: UiChatContext) => {

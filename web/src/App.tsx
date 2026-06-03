@@ -22,6 +22,7 @@ import { ShellLayout } from "./components/ShellLayout";
 import { WorkspaceRouteGuard } from "./components/WorkspaceRouteGuard";
 import { ChatProvider, useChatConfigContext, useChatContext } from "./context/ChatContext";
 import { ChatPanelProvider, useChatPanelContext } from "./context/ChatPanelContext";
+import { FocusedAppProvider } from "./context/FocusedAppContext";
 import { PaletteProvider } from "./context/PaletteContext";
 import { SessionProvider } from "./context/SessionContext";
 import { ShellProvider } from "./context/ShellContext";
@@ -192,14 +193,16 @@ function BootstrappedShell({
         <ChatProvider initialConfig={initialConfig} currentUserId={currentUserId}>
           <ChatPanelProvider>
             <PaletteProvider>
-              <AuthenticatedAppContent
-                token={token}
-                forSlot={forSlot}
-                mainRoutes={mainRoutes}
-                shellWorkspaceId={shellWorkspaceId}
-                refreshShell={refreshShell}
-                onLogout={onLogout}
-              />
+              <FocusedAppProvider>
+                <AuthenticatedAppContent
+                  token={token}
+                  forSlot={forSlot}
+                  mainRoutes={mainRoutes}
+                  shellWorkspaceId={shellWorkspaceId}
+                  refreshShell={refreshShell}
+                  onLogout={onLogout}
+                />
+              </FocusedAppProvider>
             </PaletteProvider>
           </ChatPanelProvider>
         </ChatProvider>
