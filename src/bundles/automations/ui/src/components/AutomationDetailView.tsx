@@ -76,7 +76,12 @@ export function AutomationDetailView({
 
   async function saveField(field: string, value: unknown) {
     setEditing(null);
-    await onUpdate(automationName, { [field]: value });
+    setError(null);
+    try {
+      await onUpdate(automationName, { [field]: value });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save change.");
+    }
     loadDetail();
   }
 

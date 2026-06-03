@@ -856,18 +856,24 @@ describe("validateAutomationFields", () => {
 	test("rejects maxIterations below 1", () => {
 		expect(() =>
 			validateAutomationFields({ maxIterations: 0 }),
-		).toThrow("between 1 and 15");
+		).toThrow("between 1 and 50");
 	});
 
-	test("rejects maxIterations above 15", () => {
+	test("rejects maxIterations above 50", () => {
 		expect(() =>
-			validateAutomationFields({ maxIterations: 16 }),
-		).toThrow("between 1 and 15");
+			validateAutomationFields({ maxIterations: 51 }),
+		).toThrow("between 1 and 50");
 	});
 
-	test("accepts maxIterations at 5", () => {
+	test("accepts maxIterations at the 50 cap", () => {
 		expect(() =>
-			validateAutomationFields({ maxIterations: 5 }),
+			validateAutomationFields({ maxIterations: 50 }),
+		).not.toThrow();
+	});
+
+	test("accepts maxIterations at 25", () => {
+		expect(() =>
+			validateAutomationFields({ maxIterations: 25 }),
 		).not.toThrow();
 	});
 

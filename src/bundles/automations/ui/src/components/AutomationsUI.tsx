@@ -160,10 +160,12 @@ export function AutomationsUI() {
       }
     }
     if (Object.keys(manifest).length > 0) args.manifest = manifest;
+    // Refresh the list either way, but let the error propagate so the caller
+    // (e.g. the detail view's saveField) can surface it. Swallowing it here
+    // made a rejected update — like an out-of-range maxIterations — look like
+    // a silent no-op: the field just snapped back to its old value.
     try {
       await updateTool.call(args);
-    } catch {
-      // silent
     } finally {
       loadAll();
     }

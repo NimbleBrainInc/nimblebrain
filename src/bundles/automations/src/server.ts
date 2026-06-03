@@ -297,8 +297,8 @@ export function validateAutomationFields(args: ValidatableAutomationFields): voi
 
   // maxIterations validation
   const { maxIterations } = args;
-  if (maxIterations != null && (maxIterations < 1 || maxIterations > 15)) {
-    throw new Error("maxIterations must be between 1 and 15");
+  if (maxIterations != null && (maxIterations < 1 || maxIterations > 50)) {
+    throw new Error("maxIterations must be between 1 and 50");
   }
 
   // maxInputTokens validation

@@ -65,7 +65,7 @@ const ManifestFields = {
     Type.String({ description: "Model override. Omit to use the workspace default." }),
   ),
   maxIterations: Type.Optional(
-    Type.Number({ description: "Max LLM iterations per run. Default 5, hard cap 15." }),
+    Type.Number({ description: "Max LLM iterations per run. Default 25, hard cap 50." }),
   ),
   maxInputTokens: Type.Optional(
     Type.Number({ description: "Max input tokens per run. Default 200000." }),
