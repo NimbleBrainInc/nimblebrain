@@ -1261,7 +1261,7 @@ async function handleInstallRemoteOAuth(
           }. Source eager-start failed (${startWarning}) — click Connect to retry.`
         : isPersonalTarget
           ? `Installed "${entry.name}" in your personal workspace.`
-          : `Installed "${entry.name}" for this workspace.`,
+          : `Installed "${entry.name}" in this workspace.`,
     ),
     structuredContent: {
       ok: true,
