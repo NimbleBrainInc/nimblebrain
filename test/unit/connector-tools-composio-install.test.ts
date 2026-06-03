@@ -86,8 +86,12 @@ import {
   type ManageConnectorsContext,
 } from "../../src/tools/connector-tools.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
-import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
+import { personalWorkspaceIdFor, WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 import { _resetComposioConfigForTest } from "../../src/composio/sdk.ts";
+import {
+  hasPersistedComposioConnection,
+  saveComposioConnection,
+} from "../../src/bundles/composio-connection.ts";
 
 // ── Catalog fixture ─────────────────────────────────────────────────
 //
@@ -481,5 +485,94 @@ describe("manage_connectors.install (composio-auth)", () => {
     // BundleRef can't carry a session URL we never received.
     const ws = await h.workspaceStore.get(h.wsId);
     expect(ws?.bundles ?? []).toHaveLength(0);
+  });
+
+  // ── personal-workspace target ─────────────────────────────────────
+  //
+  // The path this whole change unblocks: composio-auth install into a
+  // personal workspace. A stale guard used to reject it inside the
+  // `auth === "composio"` branch; dcr/static were never gated, so a
+  // dcr fixture would NOT cover this. These two tests pin the composio
+  // path specifically — install succeeds, and disconnect cleanup is
+  // keyed on the personal `wsId` with no `isPersonal` special-casing
+  // (the invariant the removed guard's safety argument rests on).
+
+  test("(g) composio install into a personal workspace persists the ref (the path the removed guard blocked)", async () => {
+    process.env.COMPOSIO_API_KEY = "k_test";
+    process.env.COMPOSIO_GMAIL_AUTH_CONFIG_ID = "ac_gmail";
+
+    const personalWsId = personalWorkspaceIdFor(ADMIN.id);
+    await h.workspaceStore.create("Admin Personal", `user_${ADMIN.id}`, {
+      isPersonal: true,
+      ownerUserId: ADMIN.id,
+    });
+
+    const tool = buildTool(h);
+    const result = await tool.handler({
+      action: "install",
+      entry: gmailEntry(),
+      wsId: personalWsId,
+    });
+
+    // Eager startBundleSource fails on the fake session URL (same as
+    // the shared-workspace path), so this returns success-with-warning,
+    // NOT the old "cannot install into a personal workspace" error.
+    expect(result.isError).toBe(false);
+    const sc = result.structuredContent as { scope?: string; wsId?: string };
+    expect(sc.scope).toBe("workspace");
+    expect(sc.wsId).toBe(personalWsId);
+
+    // The ref landed in the personal workspace with the composio marker
+    // and the post-T008 workspace scope.
+    const personalWs = await h.workspaceStore.get(personalWsId);
+    const installed = personalWs?.bundles.find(
+      (b): b is Extract<BundleRef, { url: string }> => "url" in b && "composio" in b,
+    );
+    expect(installed).toBeDefined();
+    expect(installed?.composio?.connectorId).toBe(GMAIL_ID);
+    expect(installed?.oauthScope).toBe("workspace");
+  });
+
+  test("(h) disconnect of a personal-workspace composio bundle runs cleanup keyed on that wsId (no isPersonal gate)", async () => {
+    process.env.COMPOSIO_API_KEY = "k_test";
+    process.env.COMPOSIO_GMAIL_AUTH_CONFIG_ID = "ac_gmail";
+
+    const personalWsId = personalWorkspaceIdFor(ADMIN.id);
+    await h.workspaceStore.create("Admin Personal", `user_${ADMIN.id}`, {
+      isPersonal: true,
+      ownerUserId: ADMIN.id,
+    });
+
+    // Install seeds the BundleRef + lifecycle instance for the personal
+    // workspace (the eager-start failure is caught and logged after).
+    const tool = buildTool(h);
+    await tool.handler({ action: "install", entry: gmailEntry(), wsId: personalWsId });
+
+    // Simulate a completed Composio OAuth: a connection.json under the
+    // personal workspace's credential path. Cleanup must find and remove
+    // THIS file — proving it resolves by wsId, personal included.
+    await saveComposioConnection(h.workDir, personalWsId, GMAIL_ID, {
+      connectedAccountId: "ca_personal",
+      toolkit: "gmail",
+      userId: ADMIN.id,
+      connectedAt: "2026-06-02T00:00:00.000Z",
+      status: "ACTIVE",
+    });
+    expect(hasPersistedComposioConnection(h.workDir, personalWsId, GMAIL_ID)).toBe(true);
+
+    // Drop the API key so cleanup skips the upstream revoke (offline);
+    // the local-delete branch is the part that pins the wsId routing.
+    delete process.env.COMPOSIO_API_KEY;
+
+    // Disconnect through the real lifecycle caller (serverName is the
+    // slug of GMAIL_ID; principal is the workspace principal). If a
+    // future change gated this caller on `isPersonal`, the personal
+    // workspace's connection would survive and orphan upstream — this
+    // assertion fails first.
+    await h.runtime
+      .getLifecycle()
+      .disconnect("com-google-gmail", personalWsId, "_workspace", { workDir: h.workDir });
+
+    expect(hasPersistedComposioConnection(h.workDir, personalWsId, GMAIL_ID)).toBe(false);
   });
 });
