@@ -176,23 +176,32 @@ beforeAll(async () => {
 
   handle = startServer({ runtime, port: 0 });
   baseUrl = `http://localhost:${handle.port}`;
-});
+  // Generous hook timeout: this setup starts a Runtime, provisions two
+  // workspaces, and spawns two Node MCP subprocesses. The 5s default hook
+  // timeout is too tight under CI load and flaked on subprocess spawn
+  // ("killed 1 dangling process"). 30s leaves ample headroom without
+  // masking a genuine hang.
+}, 30_000);
 
 afterAll(async () => {
-  handle.stop(true);
+  // Optional-chain every teardown step: if `beforeAll` timed out partway,
+  // these vars may be unassigned. Without the guards a setup flake surfaces
+  // as a misleading `TypeError: undefined is not an object` from teardown,
+  // burying the real cause (the spawn timeout).
+  handle?.stop(true);
   try {
-    await fixtureSource.stop();
+    await fixtureSource?.stop();
   } catch {
     // already stopped
   }
   try {
-    await otherSource.stop();
+    await otherSource?.stop();
   } catch {
     // already stopped
   }
-  await runtime.shutdown();
+  await runtime?.shutdown();
   if (existsSync(testDir)) rmSync(testDir, { recursive: true });
-});
+}, 30_000);
 
 async function createMcpClient(workspaceId: string = TEST_WORKSPACE_ID): Promise<Client> {
   const transport = new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp`), {
