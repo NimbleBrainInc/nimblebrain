@@ -42,7 +42,6 @@ function seedInstance(
     trustScore: null,
     ui: null,
     briefing: null,
-    httpProxy: null,
     protected: false,
     type: "plain",
     wsId,

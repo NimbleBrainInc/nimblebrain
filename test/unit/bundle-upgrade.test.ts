@@ -103,7 +103,7 @@ describe("BundleLifecycleManager.upgradeApp", () => {
         "upgradeable",
         "@testscope/upgradeable",
         { name: "@testscope/upgradeable" },
-        { version: "0.1.0", ui: null, briefing: null, type: "plain", httpProxy: null },
+        { version: "0.1.0", ui: null, briefing: null, type: "plain" },
         ws,
       );
     }

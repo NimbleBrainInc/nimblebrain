@@ -1,13 +1,4 @@
-import type {
-  BundleRef,
-  BundleUiMeta,
-  HostManifestMeta,
-  HttpProxyConfig,
-  LocalBundleMeta,
-} from "./types.ts";
-
-/** Hostnames that resolve to the bundle's own loopback interface. */
-const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "[::1]", "localhost"]);
+import type { BundleRef, BundleUiMeta, HostManifestMeta, LocalBundleMeta } from "./types.ts";
 
 /**
  * Bundles included by default as MCP subprocesses.
@@ -53,60 +44,5 @@ export function extractBundleMeta(manifest: Record<string, unknown>): LocalBundl
     briefing: hostMeta?.briefing ?? null,
     type: isUpjack ? "upjack" : "plain",
     upjackNamespace: upjackMeta?.namespace,
-    httpProxy: extractHttpProxy(meta),
-  };
-}
-
-/**
- * Parse and validate `_meta["ai.nimblebrain/http-proxy"]`.
- *
- * Targets are restricted to loopback hosts. The proxy primitive exists so a
- * bundle can expose its OWN local HTTP server (an `astro dev` it spawned, a
- * Jupyter kernel, etc.) — there is no legitimate reason for a target to point
- * at any other host. Allowing arbitrary hosts would turn the proxy into an
- * SSRF gadget capable of reaching cloud metadata services (169.254.169.254),
- * internal/RFC1918 networks, or arbitrary external hosts, with the
- * authenticated user's credentials attached.
- */
-export function extractHttpProxy(
-  meta: Record<string, unknown> | undefined,
-): HttpProxyConfig | null {
-  const raw = meta?.["ai.nimblebrain/http-proxy"];
-  if (!raw || typeof raw !== "object") return null;
-  const r = raw as Record<string, unknown>;
-  const target = typeof r.target === "string" ? r.target : undefined;
-  const mount = typeof r.mount === "string" ? r.mount : undefined;
-  if (!target || !mount) {
-    console.warn("[bundles] http-proxy declaration missing target or mount — ignoring");
-    return null;
-  }
-  let parsed: URL;
-  try {
-    parsed = new URL(target);
-  } catch {
-    console.warn(`[bundles] http-proxy target is not a valid URL — got ${target}, ignoring`);
-    return null;
-  }
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    console.warn(`[bundles] http-proxy target must be http(s):// — got ${target}, ignoring`);
-    return null;
-  }
-  if (!LOOPBACK_HOSTS.has(parsed.hostname.toLowerCase())) {
-    console.warn(
-      `[bundles] http-proxy target must point to a loopback host (127.0.0.1, ::1, or localhost) — got ${parsed.hostname}, ignoring`,
-    );
-    return null;
-  }
-  const normalizedMount = mount.replace(/^\/+/, "").replace(/\/+$/, "");
-  if (!normalizedMount || normalizedMount.includes("/")) {
-    console.warn(
-      `[bundles] http-proxy mount must be a single path segment (no slashes) — got ${mount}, ignoring`,
-    );
-    return null;
-  }
-  return {
-    target,
-    mount: normalizedMount,
-    websocket: r.websocket === true,
   };
 }

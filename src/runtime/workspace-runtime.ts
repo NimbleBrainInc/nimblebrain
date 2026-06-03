@@ -231,7 +231,6 @@ export async function startWorkspaceBundles(
             version: "remote",
             ui: entry.bundle.ui ?? null,
             briefing: null,
-            httpProxy: null,
             type: "plain" as const,
           },
         };

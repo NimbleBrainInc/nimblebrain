@@ -34,7 +34,7 @@ const MEMBER: UserIdentity = {
   preferences: {},
 };
 
-const REG_META = { version: "0.1.0", ui: null, briefing: null, type: "plain" as const, httpProxy: null };
+const REG_META = { version: "0.1.0", ui: null, briefing: null, type: "plain" as const };
 
 interface Harness {
   workDir: string;
