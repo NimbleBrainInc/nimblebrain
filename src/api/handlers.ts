@@ -1506,17 +1506,17 @@ export async function handleOidcRefresh(
     // invalid_grant = refresh token expired/revoked (e.g. session ended due to
     // inactivity). Expected; the client re-authenticates. Log terse, no stack.
     // Anything else is unexpected — log the message (still no bundled-source dump).
-    const reason = err instanceof Error ? err.message : String(err);
     const expired =
       typeof err === "object" &&
       err !== null &&
       "error" in err &&
       (err as { error?: unknown }).error === "invalid_grant";
     if (expired) {
-      console.info(
+      console.warn(
         "[nimblebrain] Token refresh rejected (session expired) — client will re-authenticate",
       );
     } else {
+      const reason = err instanceof Error ? err.message : String(err);
       console.error("[nimblebrain] Token refresh failed:", reason);
     }
     return apiError(401, "refresh_failed", "Token refresh failed");
