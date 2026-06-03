@@ -265,11 +265,10 @@ export class BundleLifecycleManager {
     wsId: string,
     env?: Record<string, string>,
   ): Promise<BundleInstance> {
-    // Pre-load so the manifest is in the mpak cache before startBundleSource
-    // reads it. (startBundleSource itself only calls prepareServer; it
-    // assumes the manifest is already cached.)
-    const mpak = getMpak(this.mpakHome);
-    await mpak.bundleCache.loadBundle(name);
+    // No cache pre-warm here: startBundleSource warms the mpak cache itself
+    // before reading the manifest (see its named-bundle branch, #60), so a
+    // cold first-install registers placements without a restart on every
+    // path, not just this one.
 
     // Workspace-scoped data dir keeps two workspaces installing the same
     // bundle from stomping on each other's entity data. Slug source is
