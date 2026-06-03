@@ -1047,7 +1047,6 @@ function summarizeRead(skill: ReadResult): string {
   const m = skill.metadata;
   const parts = [`${m.name} (L${skill.layer} ${skill.scope})`];
   if (m.loadingStrategy) parts.push(`loads: ${m.loadingStrategy}`);
-  if (m.status && m.status !== "active") parts.push(`status: ${m.status}`);
   return parts.join(" · ");
 }
 
@@ -1059,12 +1058,22 @@ function summarizeRead(skill: ReadResult): string {
 // trails so that if `boundToolResultForModel` trims at
 // MAX_TOOL_RESULT_CHARS the metadata survives and only the body tail is
 // cut — the same small-first ordering `conversations__get` uses.
+//
+// The field list is explicit (not a spread of `metadata`) so it stays a
+// deliberate subset — the same minimum-sufficient-surface contract the
+// schema uses. Keep it in sync with `SKILLS_READ_DESCRIPTION` and
+// `SkillDetail.metadata` when adding a field: type, description, renderer,
+// and tests move together.
 function renderRead(skill: ReadResult): string {
   const m = skill.metadata;
   const fields = [summarizeRead(skill), `id: ${skill.id}`, `source: ${skill.source}`];
   if (m.description) fields.push(`description: ${m.description}`);
   if (m.type) fields.push(`type: ${m.type}`);
   if (m.priority != null) fields.push(`priority: ${m.priority}`);
+  // `status` always renders — `buildReadResult` defaults it to "active", so
+  // the description's promise of a `status` field holds for every skill
+  // (an audit's first question is "active or disabled?").
+  if (m.status) fields.push(`status: ${m.status}`);
   if (m.appliesToTools?.length) fields.push(`applies_to_tools: ${m.appliesToTools.join(", ")}`);
   if (m.derivedFrom) fields.push(`derived_from: ${m.derivedFrom}`);
   if (m.overrides?.length) {

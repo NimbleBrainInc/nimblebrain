@@ -418,6 +418,9 @@ describe("skills__read", () => {
     expect(text).toContain("voice-rules");
     expect(text).toContain("loads: always");
     expect(text).toContain("priority: 25");
+    // `status` is promised by the description and must render even for an
+    // active skill (the default) — not only when non-active.
+    expect(text).toContain("status: active");
     expect(text).toContain("Speak plainly.");
     expect(text.indexOf("priority: 25")).toBeLessThan(text.indexOf("Speak plainly."));
   });
