@@ -65,6 +65,11 @@ const ManifestFields = {
     Type.String({ description: "Model override. Omit to use the workspace default." }),
   ),
   maxIterations: Type.Optional(
+    // Default/cap mirror DEFAULT_MAX_ITERATIONS / MAX_ITERATIONS in src/limits.ts.
+    // Kept as a literal because this schema is codegen'd under a strict rootDir
+    // (scripts/tsconfig.codegen-web.json) that forbids importing from outside
+    // src/tools/platform/schemas/. The enforcement path (server.ts) imports the
+    // real constant; this is documentation only.
     Type.Number({ description: "Max LLM iterations per run. Default 25, hard cap 50." }),
   ),
   maxInputTokens: Type.Optional(
