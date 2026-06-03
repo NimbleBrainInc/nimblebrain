@@ -91,12 +91,6 @@ export interface DirectoryEntry {
   description: string;
   iconUrl?: string;
   tags?: string[];
-  /**
-   * Default install target. UI uses this to filter Personal vs Workspace
-   * browse. `"workspace"` installs into the active workspace; `"personal"`
-   * installs into the caller's personal workspace.
-   */
-  defaultBinding: "personal" | "workspace";
   install: InstallAction;
   /**
    * For static-auth entries: whether the workspace has operator OAuth

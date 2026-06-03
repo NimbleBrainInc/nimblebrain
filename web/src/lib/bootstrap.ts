@@ -70,10 +70,10 @@ export function parseWorkspaceListResponse(raw: unknown): WorkspaceInfo[] {
           : [],
         ...(userRole ? { userRole } : {}),
         // Pass through `isPersonal` from either contract. Bootstrap
-        // returns it directly; `manage_workspaces.list` is expected to
-        // surface it now that T010's install dialog depends on it for
-        // preselection. Missing field gracefully degrades to "not
-        // identified as personal" — the picker shows no preselection.
+        // returns it directly; `manage_workspaces.list` surfaces it too.
+        // It no longer gates connector installs (every workspace is a
+        // valid target) — it only marks the sole-owner workspace for
+        // display. Missing field degrades to "not identified as personal."
         ...(typeof ws.isPersonal === "boolean" ? { isPersonal: ws.isPersonal } : {}),
       };
     });

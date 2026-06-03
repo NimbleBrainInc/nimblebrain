@@ -67,7 +67,6 @@ export function ConnectorStatusHero({
       description: cat.description,
       ...(installed.iconUrl ? { iconUrl: installed.iconUrl } : {}),
       tags: cat.tags,
-      defaultBinding: cat.defaultBinding,
       install: {
         kind: "remote-oauth",
         url: cat.url,

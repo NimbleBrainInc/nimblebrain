@@ -654,7 +654,6 @@ export interface ConnectorCatalogEntry {
   iconUrl: string;
   url: string;
   auth: "dcr" | "static" | "composio";
-  defaultBinding: "workspace" | "personal";
   requiredScopes?: string[];
   additionalAuthorizationParams?: Record<string, string>;
   operatorSetup?: { portalUrl: string; hint: string; clientSecretKey: string };
@@ -945,7 +944,6 @@ export interface DirectoryEntry {
   description: string;
   iconUrl?: string;
   tags?: string[];
-  defaultBinding: "personal" | "workspace";
   /**
    * Static-auth entries: true when the workspace has both clientId and
    * client_secret configured. Undefined for entries where operator

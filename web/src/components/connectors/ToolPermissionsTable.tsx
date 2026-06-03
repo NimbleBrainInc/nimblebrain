@@ -23,19 +23,7 @@ import {
  * a Configure page with 10+ tools. A heavy border made the page feel
  * walled off; lighter chrome lets it sit alongside the other sections.
  */
-export function ToolPermissionsTable({
-  serverName,
-  mode: _mode,
-}: {
-  serverName: string;
-  /**
-   * UI affordance — which settings page is rendering us. The REST
-   * helpers always read/write workspace-scope permissions (Stage 2:
-   * personal connectors live in the user's personal workspace,
-   * addressed by setting it active before navigating here).
-   */
-  mode: "personal" | "workspace";
-}) {
+export function ToolPermissionsTable({ serverName }: { serverName: string }) {
   const [tools, setTools] = useState<ConnectorTool[]>([]);
   const [policies, setPolicies] = useState<Record<string, ToolPolicy>>({});
   const [loading, setLoading] = useState(true);
