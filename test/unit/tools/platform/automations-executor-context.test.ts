@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import type { AutomationRunTrigger } from "../../../../src/bundles/automations/src/scheduler.ts";
 import type { Automation } from "../../../../src/bundles/automations/src/types.ts";
 import type { UserIdentity } from "../../../../src/identity/provider.ts";
 import { resolveExecutorContext } from "../../../../src/tools/platform/automations.ts";
@@ -69,5 +70,19 @@ describe("resolveExecutorContext", () => {
     const ctx = resolveExecutorContext({ id: "x" } as Automation, "scheduled", otherWorkspaceCtx);
     expect(ctx.workspaceId).toBeUndefined();
     expect(ctx.identity).toBeUndefined();
+  });
+
+  // Fail-closed: only an explicit "manual" reads ambient context. An unknown or
+  // missing trigger (e.g. an untyped/test caller, or a future trigger value)
+  // must fall through to the isolated owner/provenance path — never the ambient
+  // workspace — so a new dispatch path that forgets to opt in can't leak.
+  test("an unknown/undefined trigger does NOT read ambient context", () => {
+    const ctx = resolveExecutorContext(
+      automation,
+      undefined as unknown as AutomationRunTrigger,
+      otherWorkspaceCtx,
+    );
+    expect(ctx.workspaceId).toBe("ws_a_shared");
+    expect(ctx.identity).toEqual({ id: "usr_owner_a" });
   });
 });

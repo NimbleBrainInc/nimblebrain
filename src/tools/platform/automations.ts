@@ -38,31 +38,38 @@ import { AUTOMATIONS_PANEL_HTML } from "../platform-resources/automations/panel.
  * without a live AsyncLocalStorage scope — `getExecutorContext` is the thin
  * wrapper that supplies `getRequestContext()`.
  *
- * - `scheduled`: act as the automation's owner, focused on its provenance
- *   workspace. The ambient context is IGNORED — a scheduled run that inherits a
- *   stale timer context (see `getExecutorContext`) must not be steered by it,
- *   which would run one tenant's automation in another tenant's workspace.
  * - `manual`: the clicking user's request context wins (falling back to the
  *   automation's owner/provenance), because a test-button run is dispatched
  *   synchronously inside that user's genuine context.
+ * - everything else (`scheduled`, and any future/unknown value): act as the
+ *   automation's owner, focused on its provenance workspace, with the ambient
+ *   context IGNORED — a scheduled run can inherit a stale timer context (see
+ *   `getExecutorContext`) that would otherwise run one tenant's automation in
+ *   another tenant's workspace.
+ *
+ * Reading ambient context is **fail-closed**: it requires an explicit `manual`
+ * opt-in. Anything else — including `undefined` from an untyped/test caller, or
+ * a trigger added later — falls through to the isolated owner/provenance path,
+ * so a new dispatch path that forgets to opt in can never leak another tenant's
+ * context.
  */
 export function resolveExecutorContext(
   automation: Automation | undefined,
   trigger: AutomationRunTrigger,
   reqCtx: RequestContext | undefined,
 ): ExecutorContext {
-  if (trigger === "scheduled") {
+  if (trigger === "manual") {
     return {
-      workspaceId: automation?.workspaceId ?? undefined,
-      identity: automation?.ownerId ? { id: automation.ownerId } : undefined,
+      workspaceId:
+        (reqCtx?.scope.kind === "workspace" ? reqCtx.scope.workspaceId : undefined) ??
+        automation?.workspaceId ??
+        undefined,
+      identity: reqCtx?.identity ?? (automation?.ownerId ? { id: automation.ownerId } : undefined),
     };
   }
   return {
-    workspaceId:
-      (reqCtx?.scope.kind === "workspace" ? reqCtx.scope.workspaceId : undefined) ??
-      automation?.workspaceId ??
-      undefined,
-    identity: reqCtx?.identity ?? (automation?.ownerId ? { id: automation.ownerId } : undefined),
+    workspaceId: automation?.workspaceId ?? undefined,
+    identity: automation?.ownerId ? { id: automation.ownerId } : undefined,
   };
 }
 
