@@ -145,7 +145,6 @@ function composioEntry(id: string) {
     iconUrl: "https://example.com/icon.png",
     url: "https://backend.composio.dev/v3/mcp/SERVER",
     auth: "composio" as const,
-    defaultBinding: "workspace" as const,
     composio: {
       toolkit: "gmail",
       authConfigEnv: "COMPOSIO_GMAIL_AUTH_CONFIG_ID",
@@ -706,7 +705,6 @@ describe("POST /v1/composio-auth/initiate", () => {
       iconUrl: "https://example.com/icon.png",
       url: "https://mcp.example.com/mcp",
       auth: "dcr" as const,
-      defaultBinding: "workspace" as const,
     };
     const { app } = makeApp(entry as unknown as ReturnType<typeof composioEntry>);
     const res = await app.request("http://nb.test/v1/composio-auth/initiate", {

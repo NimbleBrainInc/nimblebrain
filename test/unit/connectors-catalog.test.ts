@@ -92,7 +92,7 @@ describe("validateServerDetail", () => {
   test("accepts _meta with arbitrary reverse-DNS extension keys", () => {
     const detail = makeValid({
       _meta: {
-        "ai.nimblebrain/connector": { defaultBinding: "workspace", auth: "dcr" },
+        "ai.nimblebrain/connector": { auth: "dcr" },
         "dev.mpak/registry": { downloads: 42 },
       },
     });

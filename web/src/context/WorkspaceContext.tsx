@@ -16,12 +16,11 @@ export interface WorkspaceInfo {
   userRole?: "admin" | "member";
   /**
    * `true` for the user's personal workspace (auto-provisioned at first
-   * login, sole-owner-by-design). Drives the install dialog's preselection
-   * heuristic — personal-typical connectors (`defaultBinding: "personal"`)
-   * default to the personal workspace; non-personal workspaces require an
-   * explicit pick. The platform's bootstrap endpoint sets this; the
-   * `parseWorkspaceListResponse` fallback also propagates it so the
-   * shell mounted via either path agrees.
+   * login, sole-owner-by-design). Connectors install into whichever
+   * workspace is active, personal or shared; this flag only marks the
+   * sole-owner workspace for display. The platform's bootstrap endpoint
+   * sets this; the `parseWorkspaceListResponse` fallback also propagates
+   * it so the shell mounted via either path agrees.
    */
   isPersonal?: boolean;
 }

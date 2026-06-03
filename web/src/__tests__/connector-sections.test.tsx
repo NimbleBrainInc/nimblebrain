@@ -180,7 +180,6 @@ function dcrConnector(over: Partial<InstalledConnector> = {}): InstalledConnecto
       iconUrl: "",
       url: "https://api.granola.test/mcp",
       auth: "dcr",
-      defaultBinding: "workspace",
     },
     ...over,
   };
@@ -207,7 +206,6 @@ function staticAuthConnector(over: Partial<InstalledConnector> = {}): InstalledC
       iconUrl: "",
       url: "https://app.asana.com/api/mcp",
       auth: "static",
-      defaultBinding: "workspace",
       operatorSetup: {
         portalUrl: "https://app.asana.com/0/developer-console",
         hint: "Create OAuth app",

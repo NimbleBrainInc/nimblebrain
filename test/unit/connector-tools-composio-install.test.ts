@@ -105,7 +105,6 @@ function gmailEntry(): import("../../src/registries/types.ts").DirectoryEntry {
     registryType: "static",
     name: "Gmail",
     description: "Read, send, and draft mail",
-    defaultBinding: "workspace",
     install: {
       kind: "remote-oauth",
       url: GMAIL_URL,
