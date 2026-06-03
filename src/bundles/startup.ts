@@ -92,10 +92,6 @@ export function composeBundleMcpContext(
 export interface PlatformContext {
   /** Workspace this bundle is being spawned for. Undefined outside a workspace. */
   workspaceId: string | undefined;
-  /** Stable name the platform addresses this bundle by — composes into proxy URLs. */
-  serverName: string;
-  /** Manifest `_meta` — read for capability declarations (e.g. `ai.nimblebrain/http-proxy`). */
-  manifestMeta: Record<string, unknown> | undefined;
   /** Browser-facing origin of the platform (e.g. https://hq.platform.nimblebrain.ai). */
   publicOrigin: string;
 }
@@ -104,26 +100,13 @@ export interface PlatformContext {
  * Build the NB_* env vars every bundle subprocess receives.
  *
  * Both spawn paths in this file (registry + local) call this so the contract
- * cannot drift. The previous implementation duplicated this logic inline in
- * only the local branch, which silently broke registry-installed bundles that
- * declared `ai.nimblebrain/http-proxy` — preview URLs came back null with no
- * error in the logs.
+ * cannot drift.
  */
 export function buildPlatformEnv(ctx: PlatformContext): Record<string, string> {
   const env: Record<string, string> = {};
 
   if (ctx.workspaceId) {
     env.NB_WORKSPACE_ID = ctx.workspaceId;
-  }
-
-  const httpProxyMeta = ctx.manifestMeta?.["ai.nimblebrain/http-proxy"] as
-    | { mount?: string }
-    | undefined;
-  if (httpProxyMeta?.mount && ctx.workspaceId) {
-    const mount = String(httpProxyMeta.mount).replace(/^\/+|\/+$/g, "");
-    if (mount && !/\//.test(mount)) {
-      env.NB_PROXY_PREFIX = `/v1/ws/${ctx.workspaceId}/apps/${ctx.serverName}/${mount}`;
-    }
   }
 
   if (ctx.publicOrigin) {
@@ -440,7 +423,6 @@ export async function startBundleSource(
             version: `remote (${tools.length} tools)`,
             ui: ref.ui ?? null,
             briefing: null,
-            httpProxy: null,
             type: "plain" as const,
           },
           sourceName,
@@ -483,7 +465,6 @@ export async function startBundleSource(
           version: "remote (pending auth)",
           ui: ref.ui ?? null,
           briefing: null,
-          httpProxy: null,
           type: "plain" as const,
         },
         sourceName,
@@ -568,9 +549,8 @@ export async function startBundleSource(
       manifest = cachedManifest;
     } else {
       // With no manifest in cache we can't read `_meta` capability
-      // declarations, so http-proxy and host_capabilities get silently
-      // skipped at spawn. Surface it loudly instead of letting operators
-      // chase phantom UI bugs.
+      // declarations, so host_capabilities gets silently skipped at spawn.
+      // Surface it loudly instead of letting operators chase phantom UI bugs.
       //
       // The cache-warm step above (#60) closes the common cause of this —
       // a cold first-install no longer reaches here, since the warm either
@@ -583,7 +563,7 @@ export async function startBundleSource(
       // manifest once prepareServer has re-populated it.
       log.warn(
         `[bundles] manifest cache miss for ${ref.name} — capability declarations ` +
-          "(http-proxy, host_capabilities, etc.) will be skipped at spawn, including " +
+          "(host_capabilities, etc.) will be skipped at spawn, including " +
           "the install-time host-resources gate. Reinstall the bundle to repopulate.",
       );
     }
@@ -662,8 +642,6 @@ export async function startBundleSource(
     // workspace's identity flows through one validated path.
     const platformEnv = buildPlatformEnv({
       workspaceId: wsContext.workspaceId,
-      serverName: sourceName,
-      manifestMeta: cachedManifest?._meta as Record<string, unknown> | undefined,
       publicOrigin: resolvePublicOrigin(),
     });
 
@@ -816,8 +794,6 @@ function buildLocalSource(
     spawnEnv,
     buildPlatformEnv({
       workspaceId: wsId,
-      serverName,
-      manifestMeta: manifest._meta as Record<string, unknown> | undefined,
       publicOrigin: resolvePublicOrigin(),
     }),
   );

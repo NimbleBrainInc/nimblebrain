@@ -61,12 +61,6 @@ export interface Workspace {
   /** Optional markdown identity override for this workspace's agent persona. */
   identity?: string;
   /**
-   * Allow bundles in this workspace to expose HTTP proxy routes (declared via
-   * `_meta["ai.nimblebrain/http-proxy"]` in their manifests). Default true.
-   * Set false to block all proxy routes in security-sensitive workspaces.
-   */
-  allowHttpProxy?: boolean;
-  /**
    * Per-workspace catalog allow-list. When set, only catalog entries
    * whose `id` is in this array appear on the Connections page for
    * this workspace. When unset (default), the full loaded catalog is

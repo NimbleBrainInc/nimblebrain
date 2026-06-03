@@ -34,7 +34,6 @@ import type {
   BundleState,
   BundleUiMeta,
   HostManifestMeta,
-  HttpProxyConfig,
   RemoteTransportConfig,
 } from "./types.ts";
 
@@ -458,7 +457,6 @@ export class BundleLifecycleManager {
       trustScore: trustScore ?? null,
       ui: ui ?? null,
       briefing: null,
-      httpProxy: null,
       protected: false,
       type: "plain",
       wsId,
@@ -1750,7 +1748,6 @@ export class BundleLifecycleManager {
           description?: string;
           ui: BundleUiMeta | null;
           briefing?: BriefingBlock | null;
-          httpProxy?: HttpProxyConfig | null;
           type: "upjack" | "plain";
           upjackNamespace?: string;
         }
@@ -1797,7 +1794,6 @@ export class BundleLifecycleManager {
       trustScore: ref.trustScore ?? null,
       ui: ref.ui ?? manifestMeta?.ui ?? null,
       briefing: manifestMeta?.briefing ?? null,
-      httpProxy: manifestMeta?.httpProxy ?? null,
       protected: ref.protected ?? false,
       type: manifestMeta?.type ?? "plain",
       wsId,
@@ -1907,7 +1903,6 @@ function createInstance(
     trustScore: null,
     ui: null,
     briefing: null,
-    httpProxy: null,
     protected: false,
     type: isUpjack ? "upjack" : "plain",
     wsId,
