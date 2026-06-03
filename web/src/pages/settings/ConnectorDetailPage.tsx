@@ -33,14 +33,13 @@ import { roleAtLeast, useScopedRole } from "../../hooks/useScopedRole";
  *     for any ready connector — that's what users come here for once
  *     setup is past.
  *
- * Reachable from `/settings/{personal,workspace}/connectors/:serverName`;
- * `mode` comes from the route prefix.
+ * Reachable from `/w/:slug/settings/connectors/:serverName`.
  */
-export function ConnectorDetailPage({ mode }: { mode: "personal" | "workspace" }) {
+export function ConnectorDetailPage() {
   const { serverName = "", slug } = useParams<{ serverName: string; slug: string }>();
   const navigate = useNavigate();
-  // Workspace connectors are addressed by the URL slug. (Personal-scope
-  // connectors have no UI surface today; the mode is kept for the API.)
+  // Connectors are addressed by the URL slug — the page acts on whichever
+  // workspace (personal or shared) the slug names.
   const backPath = `/w/${slug}/settings/connectors`;
 
   const [installed, setInstalled] = useState<InstalledConnector | null>(null);
@@ -55,10 +54,10 @@ export function ConnectorDetailPage({ mode }: { mode: "personal" | "workspace" }
   const [uninstallArmed, setUninstallArmed] = useState(false);
 
   const role = useScopedRole();
-  // Workspace-mode edit gates ride on ws_admin. Personal-mode is
-  // always editable by the owner — it's their personal workspace, and
-  // the workspace store enforces sole-owner membership invariants.
-  const canManage = mode === "personal" ? true : roleAtLeast(role, "ws_admin");
+  // Edit gates ride on ws_admin. In a personal workspace the sole owner
+  // is its admin (the workspace store enforces that invariant), so the
+  // same check covers both cases.
+  const canManage = roleAtLeast(role, "ws_admin");
 
   const refresh = useCallback(async () => {
     setError(null);
@@ -66,8 +65,7 @@ export function ConnectorDetailPage({ mode }: { mode: "personal" | "workspace" }
       // Targeted single-connector fetch — avoids building entries
       // (and tools() round-trips) for every other installed bundle
       // when we only render one. Server resolves the connector from
-      // serverName; the page `mode` is a UI affordance, not a server
-      // arg.
+      // serverName.
       const res = await getInstalledConnector(serverName);
       setInstalled(res.installed);
     } catch (err) {
@@ -193,7 +191,7 @@ export function ConnectorDetailPage({ mode }: { mode: "personal" | "workspace" }
       <div className="space-y-6">
         <OAuthConnectionSection installed={installed} canManage={canManage} onChanged={refresh} />
         <OperatorOAuthSection installed={installed} canManage={canManage} onChanged={refresh} />
-        <ToolPermissionsTable serverName={installed.serverName} mode={mode} />
+        <ToolPermissionsTable serverName={installed.serverName} />
       </div>
 
       {configureModalOpen && (

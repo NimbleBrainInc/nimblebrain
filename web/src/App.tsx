@@ -388,10 +388,7 @@ function AuthenticatedAppContent({
                 <Route path="apps/:serverName" element={<SettingsAppPanel />} />
                 <Route path="connectors" element={<WorkspaceConnectorsTab />} />
                 <Route path="connectors/browse" element={<ConnectorBrowsePage />} />
-                <Route
-                  path="connectors/:serverName"
-                  element={<ConnectorDetailPage mode="workspace" />}
-                />
+                <Route path="connectors/:serverName" element={<ConnectorDetailPage />} />
                 <Route path="skills" element={<SkillsTab />} />
               </Route>
             </Route>
