@@ -41,4 +41,31 @@ describe("api metrics", () => {
     const body = await (await app.request("/metrics")).text();
     expect(body).not.toMatch(/http_requests_total\{[^}]*route="\/metrics"/);
   });
+
+  // Load-bearing: the whole point of this endpoint is to feed error-rate
+  // alerting. A thrown handler must still be counted as status="500" — this
+  // relies on Hono's compose catching the throw (via app.onError) so the
+  // middleware's `await next()` resolves rather than re-throwing. Lock it in so
+  // a refactor that wraps next() in try/catch can't silently kill 500-counting.
+  it("counts thrown errors as status 500", async () => {
+    const app = new Hono();
+    app.use("*", metricsMiddleware());
+    app.route("/", metricsRoutes());
+    app.onError((_err, c) => c.json({ error: "boom" }, 500));
+    app.get("/v1/boom", () => {
+      throw new Error("boom");
+    });
+
+    const res = await app.request("/v1/boom");
+    expect(res.status).toBe(500);
+
+    const body = await (await app.request("/metrics")).text();
+    expect(body).toMatch(
+      /http_requests_total\{[^}]*route="\/v1\/boom"[^}]*status="500"[^}]*\} [1-9]/,
+    );
+    // duration histogram observed the errored request too
+    expect(body).toMatch(
+      /http_request_duration_seconds_count\{[^}]*route="\/v1\/boom"[^}]*status="500"[^}]*\} [1-9]/,
+    );
+  });
 });
