@@ -1,0 +1,57 @@
+/**
+ * Prometheus metrics for the platform API.
+ *
+ * Exposed at bare `GET /metrics` (see routes/metrics.ts) and scraped in-cluster
+ * by the kube-prometheus-stack ServiceMonitor on the platform service's `http`
+ * port. It is NOT public: the ingress targets the web (Caddy) service, and the
+ * Caddyfile only proxies `/v1/*`, `/mcp*`, and `/.well-known/*` to the
+ * platform — `/metrics` falls through to the SPA catch-all and never reaches
+ * this process from outside the cluster. Keep this endpoint at `/metrics`, NOT
+ * `/v1/metrics`, or Caddy would proxy it publicly.
+ *
+ * Uses a dedicated Registry (not the global default) so importing this module
+ * has no global side effects (importing it must not register the GC
+ * PerformanceObserver that collectDefaultMetrics installs — that perturbs
+ * timing-sensitive tests). Default process metrics are opt-in via
+ * enableDefaultMetrics(), called once at server start.
+ */
+import { Counter, collectDefaultMetrics, Histogram, Registry } from "prom-client";
+
+export const metricsRegistry = new Registry();
+
+let defaultMetricsEnabled = false;
+
+/**
+ * Enable process/runtime metrics (CPU, memory, GC). Idempotent — safe to call
+ * on every createApp(); only the first call registers the collectors. Call at
+ * server start, never at import time.
+ */
+export function enableDefaultMetrics(): void {
+  if (defaultMetricsEnabled) return;
+  collectDefaultMetrics({ register: metricsRegistry });
+  defaultMetricsEnabled = true;
+}
+
+/**
+ * RED: request count by method, matched route pattern, and status code.
+ *
+ * `route` is the *matched route pattern* (e.g. `/v1/chat`), never the raw path,
+ * so path params like conversation ids don't explode label cardinality.
+ * `method` is clamped to the standard verb set (else "OTHER") and `route`
+ * collapses unmatched paths to "/*", so neither label is client-unbounded.
+ */
+export const httpRequestsTotal = new Counter({
+  name: "http_requests_total",
+  help: "Total HTTP requests handled by the platform API.",
+  labelNames: ["method", "route", "status"] as const,
+  registers: [metricsRegistry],
+});
+
+/** RED: request duration in seconds, same label set. */
+export const httpRequestDurationSeconds = new Histogram({
+  name: "http_request_duration_seconds",
+  help: "HTTP request duration in seconds.",
+  labelNames: ["method", "route", "status"] as const,
+  buckets: [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10],
+  registers: [metricsRegistry],
+});
