@@ -42,6 +42,17 @@ describe("api metrics", () => {
     expect(body).not.toMatch(/http_requests_total\{[^}]*route="\/metrics"/);
   });
 
+  it("clamps non-standard HTTP methods to OTHER", async () => {
+    const app = new Hono();
+    app.use("*", metricsMiddleware());
+    app.route("/", metricsRoutes());
+    app.all("/v1/any", (c) => c.json({ ok: true }));
+
+    await app.request("/v1/any", { method: "PROPFIND" });
+    const body = await (await app.request("/metrics")).text();
+    expect(body).toMatch(/http_requests_total\{[^}]*method="OTHER"[^}]*route="\/v1\/any"[^}]*\} [1-9]/);
+  });
+
   // Load-bearing: the whole point of this endpoint is to feed error-rate
   // alerting. A thrown handler must still be counted as status="500" — this
   // relies on Hono's compose catching the throw (via app.onError) so the

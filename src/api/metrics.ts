@@ -33,10 +33,12 @@ export function enableDefaultMetrics(): void {
 }
 
 /**
- * RED: request count by method, matched route pattern, and status class.
+ * RED: request count by method, matched route pattern, and status code.
  *
  * `route` is the *matched route pattern* (e.g. `/v1/chat`), never the raw path,
  * so path params like conversation ids don't explode label cardinality.
+ * `method` is clamped to the standard verb set (else "OTHER") and `route`
+ * collapses unmatched paths to "/*", so neither label is client-unbounded.
  */
 export const httpRequestsTotal = new Counter({
   name: "http_requests_total",

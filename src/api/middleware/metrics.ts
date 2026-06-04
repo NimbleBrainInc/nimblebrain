@@ -1,6 +1,20 @@
 import { createMiddleware } from "hono/factory";
 import { httpRequestDurationSeconds, httpRequestsTotal } from "../metrics.ts";
 
+// HTTP method is the one label sourced from the raw request. The verb set is
+// effectively fixed, but the HTTP grammar allows arbitrary method tokens, and
+// this middleware runs before auth — so a client could otherwise inflate
+// `method` cardinality. Clamp to the standard verbs; bucket anything else.
+const STANDARD_METHODS = new Set([
+  "GET",
+  "HEAD",
+  "POST",
+  "PUT",
+  "PATCH",
+  "DELETE",
+  "OPTIONS",
+]);
+
 /**
  * Records request count and duration for every request into the Prometheus
  * registry. Registered first so it times the full handler chain.
@@ -23,7 +37,7 @@ export function metricsMiddleware() {
     await next();
     const seconds = (performance.now() - start) / 1000;
     const labels = {
-      method: c.req.method,
+      method: STANDARD_METHODS.has(c.req.method) ? c.req.method : "OTHER",
       route: c.req.routePath || "unmatched",
       status: String(c.res.status),
     };
