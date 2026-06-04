@@ -1,6 +1,8 @@
 import { Hono } from "hono";
 import { WorkspaceResolutionError } from "./auth-middleware.ts";
+import { enableDefaultMetrics } from "./metrics.ts";
 import { corsMiddleware } from "./middleware/cors.ts";
+import { metricsMiddleware } from "./middleware/metrics.ts";
 import { securityHeaders } from "./middleware/security-headers.ts";
 import { authRoutes } from "./routes/auth.ts";
 import { bootstrapRoutes } from "./routes/bootstrap.ts";
@@ -11,6 +13,7 @@ import { eventRoutes } from "./routes/events.ts";
 import { healthRoutes } from "./routes/health.ts";
 import { mcpRoutes } from "./routes/mcp.ts";
 import { mcpAuthRoutes } from "./routes/mcp-auth.ts";
+import { metricsRoutes } from "./routes/metrics.ts";
 import { resourceRoutes } from "./routes/resources.ts";
 import { toolRoutes } from "./routes/tools.ts";
 import { wellKnownRoutes } from "./routes/well-known.ts";
@@ -23,6 +26,12 @@ export function createApp(
 ) {
   const app = new Hono();
 
+  // Turn on process/runtime metrics for this server (idempotent).
+  enableDefaultMetrics();
+
+  // Request metrics first so it times the full handler chain.
+  app.use("*", metricsMiddleware());
+
   // Global CORS middleware
   app.use("*", corsMiddleware(authConfigured, allowedOrigins));
   app.use("*", securityHeaders());
@@ -30,6 +39,9 @@ export function createApp(
   // Route groups — well-known endpoints first (unauthenticated, no body limit needed)
   app.route("/", wellKnownRoutes(ctx));
   app.route("/", healthRoutes(ctx));
+  // Prometheus scrape endpoint. Bare /metrics (never /v1/metrics) so the web
+  // Caddy proxy doesn't expose it publicly; scraped in-cluster only.
+  app.route("/", metricsRoutes());
   app.route("/", authRoutes(ctx));
   // Outbound-OAuth callback for remote MCP servers. Unauthenticated by
   // design — state param guards against unsolicited codes. Must be
