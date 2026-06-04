@@ -5,15 +5,7 @@ import { httpRequestDurationSeconds, httpRequestsTotal } from "../metrics.ts";
 // effectively fixed, but the HTTP grammar allows arbitrary method tokens, and
 // this middleware runs before auth — so a client could otherwise inflate
 // `method` cardinality. Clamp to the standard verbs; bucket anything else.
-const STANDARD_METHODS = new Set([
-  "GET",
-  "HEAD",
-  "POST",
-  "PUT",
-  "PATCH",
-  "DELETE",
-  "OPTIONS",
-]);
+const STANDARD_METHODS = new Set(["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]);
 
 /**
  * Records request count and duration for every request into the Prometheus
@@ -38,7 +30,7 @@ export function metricsMiddleware() {
     const seconds = (performance.now() - start) / 1000;
     const labels = {
       method: STANDARD_METHODS.has(c.req.method) ? c.req.method : "OTHER",
-      route: c.req.routePath || "unmatched",
+      route: c.req.routePath || "/*",
       status: String(c.res.status),
     };
     httpRequestsTotal.inc(labels);
