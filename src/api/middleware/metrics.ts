@@ -8,6 +8,11 @@ import { httpRequestDurationSeconds, httpRequestsTotal } from "../metrics.ts";
  * The `route` label is the matched route pattern (`c.req.routePath`), not the
  * raw path, to keep label cardinality bounded. The `/metrics` scrape itself is
  * skipped so it doesn't pollute the histogram or count Prometheus' own polling.
+ *
+ * Streaming responses (SSE: /v1/events, conversation-events) do NOT skew the
+ * latency histogram: next() resolves when the streaming Response is returned,
+ * not when the stream closes, so this records time-to-first-byte. Verified — a
+ * stream held open 300ms records ~1ms here, not 300ms.
  */
 export function metricsMiddleware() {
   return createMiddleware(async (c, next) => {
