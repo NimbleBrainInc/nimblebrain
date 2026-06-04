@@ -59,7 +59,7 @@ export function CreateAutomationForm({
   const [prompt, setPrompt] = useState("");
   const [schedule, setSchedule] = useState<ScheduleSpec | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const [maxIterations, setMaxIterations] = useState(5);
+  const [maxIterations, setMaxIterations] = useState(25);
   const [maxRunDurationSec, setMaxRunDurationSec] = useState(120);
   const [model, setModel] = useState("");
   const [budgetEnabled, setBudgetEnabled] = useState(false);
@@ -283,7 +283,7 @@ export function CreateAutomationForm({
                   className="inline-edit-input"
                   type="number"
                   min={1}
-                  max={15}
+                  max={50}
                   value={maxIterations}
                   onChange={(e) => setMaxIterations(Number(e.target.value))}
                 />

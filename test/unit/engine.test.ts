@@ -1518,9 +1518,16 @@ describe("AgentEngine", () => {
       expect(result.finishReason).toBe("stop");
     });
 
-    it("derives stopReason='length' when the model is truncated", async () => {
+    it("derives stopReason='length' when truncation persists past auto-resume", async () => {
+      // A single recoverable length-truncation now auto-resumes rather than
+      // ending the run (see engine-length-continuation.test.ts). The run only
+      // surfaces stopReason 'length' once the bounded resume is exhausted, so
+      // drive a model that keeps hitting the ceiling.
       const model = createEchoModel({
-        responses: [{ text: "Building now.", finishReason: "length" }],
+        responses: Array.from({ length: 8 }, () => ({
+          text: "x",
+          finishReason: "length" as const,
+        })),
       });
       const result = await makeEngine(model).run(
         defaultConfig,

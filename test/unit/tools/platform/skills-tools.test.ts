@@ -407,6 +407,22 @@ describe("skills__read", () => {
     expect(metadata.loadingStrategy).toBe("always");
     expect(sc.scope).toBe("org");
     expect(sc.layer).toBe(3);
+
+    // The model-visible `content` text (not just `structuredContent`, which
+    // the engine never surfaces to the model) must carry the body and the
+    // promised manifest fields. Manifest leads, body trails after `---`.
+    const text = (result.content as Array<{ type: string; text?: string }>)
+      .filter((b) => b.type === "text")
+      .map((b) => b.text ?? "")
+      .join("\n");
+    expect(text).toContain("voice-rules");
+    expect(text).toContain("loads: always");
+    expect(text).toContain("priority: 25");
+    // `status` is promised by the description and must render even for an
+    // active skill (the default) — not only when non-active.
+    expect(text).toContain("status: active");
+    expect(text).toContain("Speak plainly.");
+    expect(text.indexOf("priority: 25")).toBeLessThan(text.indexOf("Speak plainly."));
   });
 
   test("skill:// URI → resolves the authoring guide", async () => {

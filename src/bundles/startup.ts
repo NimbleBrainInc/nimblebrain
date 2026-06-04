@@ -92,10 +92,6 @@ export function composeBundleMcpContext(
 export interface PlatformContext {
   /** Workspace this bundle is being spawned for. Undefined outside a workspace. */
   workspaceId: string | undefined;
-  /** Stable name the platform addresses this bundle by — composes into proxy URLs. */
-  serverName: string;
-  /** Manifest `_meta` — read for capability declarations (e.g. `ai.nimblebrain/http-proxy`). */
-  manifestMeta: Record<string, unknown> | undefined;
   /** Browser-facing origin of the platform (e.g. https://hq.platform.nimblebrain.ai). */
   publicOrigin: string;
 }
@@ -104,26 +100,13 @@ export interface PlatformContext {
  * Build the NB_* env vars every bundle subprocess receives.
  *
  * Both spawn paths in this file (registry + local) call this so the contract
- * cannot drift. The previous implementation duplicated this logic inline in
- * only the local branch, which silently broke registry-installed bundles that
- * declared `ai.nimblebrain/http-proxy` — preview URLs came back null with no
- * error in the logs.
+ * cannot drift.
  */
 export function buildPlatformEnv(ctx: PlatformContext): Record<string, string> {
   const env: Record<string, string> = {};
 
   if (ctx.workspaceId) {
     env.NB_WORKSPACE_ID = ctx.workspaceId;
-  }
-
-  const httpProxyMeta = ctx.manifestMeta?.["ai.nimblebrain/http-proxy"] as
-    | { mount?: string }
-    | undefined;
-  if (httpProxyMeta?.mount && ctx.workspaceId) {
-    const mount = String(httpProxyMeta.mount).replace(/^\/+|\/+$/g, "");
-    if (mount && !/\//.test(mount)) {
-      env.NB_PROXY_PREFIX = `/v1/ws/${ctx.workspaceId}/apps/${ctx.serverName}/${mount}`;
-    }
   }
 
   if (ctx.publicOrigin) {
@@ -440,7 +423,6 @@ export async function startBundleSource(
             version: `remote (${tools.length} tools)`,
             ui: ref.ui ?? null,
             briefing: null,
-            httpProxy: null,
             type: "plain" as const,
           },
           sourceName,
@@ -483,7 +465,6 @@ export async function startBundleSource(
           version: "remote (pending auth)",
           ui: ref.ui ?? null,
           briefing: null,
-          httpProxy: null,
           type: "plain" as const,
         },
         sourceName,
@@ -538,32 +519,51 @@ export async function startBundleSource(
     const mpakHome = process.env.MPAK_HOME ?? join(homedir(), ".mpak");
     const mpak = getMpak(mpakHome);
 
+    // Warm the mpak cache so the up-front manifest read below is a hit on a
+    // cold/first-ever install. Without this, getBundleManifest() returns null
+    // the first time a bundle is installed on a pod; meta/manifest stay null,
+    // so placement registration AND user_config resolution silently no-op
+    // until a process restart re-reads the now-warm cache (#60 — the bundle
+    // shows under Connectors but never under Apps). Doing it here, at the one
+    // chokepoint every named install/respawn path funnels through (connector
+    // UI, installNamed, boot reload, JIT), fixes the whole class instead of
+    // relying on each caller to pre-warm — a contract callers silently broke.
+    //
+    // Guard on getBundleManifest (the same manifest.json the read below uses),
+    // NOT on loadBundle's own short-circuit: loadBundle keys its no-op on a
+    // separate .mpak-meta.json, so a manifest-only cache (offline-warm starts,
+    // test fixtures) would wrongly trigger a network pull. Skipping when the
+    // manifest is already on disk keeps warm boots and offline starts
+    // network-free, exactly as today; prepareServer re-reads and re-validates.
+    if (!mpak.bundleCache.getBundleManifest(ref.name)) {
+      await mpak.bundleCache.loadBundle(ref.name);
+    }
+
     // Read cached manifest up-front so we can discover the user_config schema
-    // and resolve credentials BEFORE prepareServer validates them. The mpak
-    // cache is populated during install (see BundleLifecycleManager.installNamed
-    // or mpak install), so we expect the manifest to be present here.
+    // and resolve credentials BEFORE prepareServer validates them. The warm
+    // step above guarantees the manifest is present here on every path that
+    // can reach the registry; a miss now means a genuinely unexpected state.
     let cachedManifest = mpak.bundleCache.getBundleManifest(ref.name) as BundleManifest | null;
     if (cachedManifest) {
       meta = extractBundleMeta(cachedManifest as unknown as Record<string, unknown>);
       manifest = cachedManifest;
     } else {
-      // Same silent-failure shape as the bug this file's helper extraction
-      // was written to fix: with no manifest in cache we can't read `_meta`
-      // capability declarations, so http-proxy and host_capabilities get
-      // silently skipped at spawn. Surface it loudly instead of letting
-      // operators chase phantom UI bugs.
+      // With no manifest in cache we can't read `_meta` capability
+      // declarations, so host_capabilities gets silently skipped at spawn.
+      // Surface it loudly instead of letting operators chase phantom UI bugs.
       //
-      // The host-capability gate is also degraded by this path. Fail-closed
-      // was considered for Phase 2a and reverted: the boot-reload path
-      // (workspace.json carries a bundle ref whose manifest was never
-      // mpak-cached, or whose cache was wiped between sessions) hits this
-      // legitimately, and refusing the spawn there breaks workspaces that
-      // were valid before the platform restart. A proper resolution
-      // requires a cache-warm step before the check; tracked for a
-      // follow-up.
+      // The cache-warm step above (#60) closes the common cause of this —
+      // a cold first-install no longer reaches here, since the warm either
+      // populates the manifest or throws on a truly cold + offline cache.
+      // Reaching this branch now means an unexpected state (e.g. the cache
+      // dir was wiped between the warm and this read), not the normal
+      // first-install path. We still fall through rather than fail-closed:
+      // refusing the spawn would break workspaces that were valid before a
+      // restart, and the terminal host-capability gate below re-checks the
+      // manifest once prepareServer has re-populated it.
       log.warn(
         `[bundles] manifest cache miss for ${ref.name} — capability declarations ` +
-          "(http-proxy, host_capabilities, etc.) will be skipped at spawn, including " +
+          "(host_capabilities, etc.) will be skipped at spawn, including " +
           "the install-time host-resources gate. Reinstall the bundle to repopulate.",
       );
     }
@@ -642,8 +642,6 @@ export async function startBundleSource(
     // workspace's identity flows through one validated path.
     const platformEnv = buildPlatformEnv({
       workspaceId: wsContext.workspaceId,
-      serverName: sourceName,
-      manifestMeta: cachedManifest?._meta as Record<string, unknown> | undefined,
       publicOrigin: resolvePublicOrigin(),
     });
 
@@ -796,8 +794,6 @@ function buildLocalSource(
     spawnEnv,
     buildPlatformEnv({
       workspaceId: wsId,
-      serverName,
-      manifestMeta: manifest._meta as Record<string, unknown> | undefined,
       publicOrigin: resolvePublicOrigin(),
     }),
   );

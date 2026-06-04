@@ -8,6 +8,7 @@
  */
 
 import { Cron } from "croner";
+import { MAX_ITERATIONS } from "../../../limits.ts";
 import type {
   AutomationSummary,
   AutomationsCancelOutput,
@@ -297,8 +298,8 @@ export function validateAutomationFields(args: ValidatableAutomationFields): voi
 
   // maxIterations validation
   const { maxIterations } = args;
-  if (maxIterations != null && (maxIterations < 1 || maxIterations > 15)) {
-    throw new Error("maxIterations must be between 1 and 15");
+  if (maxIterations != null && (maxIterations < 1 || maxIterations > MAX_ITERATIONS)) {
+    throw new Error(`maxIterations must be between 1 and ${MAX_ITERATIONS}`);
   }
 
   // maxInputTokens validation

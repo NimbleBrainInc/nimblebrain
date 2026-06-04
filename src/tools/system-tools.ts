@@ -203,10 +203,9 @@ export async function createSystemTools(
     systemToolDefs.push(createManageWorkspacesTool(mergedCtx));
   }
 
-  // Connectors tool. Single surface for both workspace-targeted and
-  // personal-workspace-targeted connectors — the install destination
-  // is chosen by the catalog entry's `defaultBinding`, and disconnects
-  // look up the binding workspace from the installed ref.
+  // Connectors tool. Single surface for all connectors — the install
+  // destination is the request's active workspace (personal or shared),
+  // and disconnects look up the binding workspace from the installed ref.
   if (runtime && manageWorkspacesCtx) {
     systemToolDefs.push(
       createManageConnectorsTool({

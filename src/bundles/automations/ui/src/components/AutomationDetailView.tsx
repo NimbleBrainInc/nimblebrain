@@ -76,8 +76,19 @@ export function AutomationDetailView({
 
   async function saveField(field: string, value: unknown) {
     setEditing(null);
-    await onUpdate(automationName, { [field]: value });
-    loadDetail();
+    setError(null);
+    try {
+      await onUpdate(automationName, { [field]: value });
+      // Refresh ONLY on success. loadDetail() calls setError(null) before its
+      // first await, so calling it after a failed save runs in the same
+      // synchronous continuation as the catch's setError(message) — React
+      // batches them and the null wins, silently clearing the banner. On
+      // failure we keep the error and let the closed editor (setEditing(null))
+      // re-render the field at its unchanged saved value.
+      loadDetail();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save change.");
+    }
   }
 
   if (loading && !detail) {

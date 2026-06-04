@@ -28,13 +28,11 @@ import type { InProcessTool } from "./in-process-app.ts";
  * shell, and keeping one tool minimizes route bloat.
  *
  * Stage 2: every install is workspace-scoped. The `install` action
- * REQUIRES an explicit `wsId` argument — the UI picks the target
- * workspace and passes it in; the tool hard-errors on missing `wsId`,
- * mirroring Stage 1's `startBundleSource` precedent. No
- * default-to-personal fallback inside the tool. `defaultBinding` on a
- * catalog entry is a UX hint the picker consults to preselect a
- * workspace; the tool itself never reads it to pick a target. The
- * bundle ref's `oauthScope` is always `"workspace"`.
+ * targets the request's active workspace (`ctx.getWorkspaceId()`, set
+ * from the `/w/<slug>` route); an explicit `wsId` arg overrides it for
+ * direct API callers. Any workspace — personal or shared — is a valid
+ * target; the tool never special-cases the target's `isPersonal` flag.
+ * The bundle ref's `oauthScope` is always `"workspace"`.
  *
  * Persistence: `WorkspaceStore.bundles[]` +
  * `workspaces/<wsId>/credentials/...` for tokens.
@@ -946,12 +944,14 @@ function parseDirectoryEntry(input: unknown): DirectoryEntry | null {
 
 /**
  * Remote OAuth install — targets the explicit `wsId` passed in by the
- * dispatcher. Composio-auth entries additionally require a non-personal
- * (shared) target workspace because their credential layout under
- * `credentials/composio/<connectorId>/` only fits the shared-workspace
- * shape today. Static-auth entries require operator OAuth client config
- * persisted under `workspace.json#oauthOperatorApps[entry.id]` + the
- * matching client_secret in the credential store before this can proceed.
+ * dispatcher (the request's active workspace). Every workspace — personal
+ * or shared — is a valid target: install, boot-state derivation, and
+ * disconnect cleanup are all keyed purely on `wsId`, so the credential
+ * layout under `credentials/composio/<connectorId>/` works identically
+ * regardless of the target's `isPersonal` flag. Static-auth entries
+ * require operator OAuth client config persisted under
+ * `workspace.json#oauthOperatorApps[entry.id]` + the matching
+ * client_secret in the credential store before this can proceed.
  */
 async function handleInstallRemoteOAuth(
   ctx: ManageConnectorsContext,
@@ -972,22 +972,6 @@ async function handleInstallRemoteOAuth(
   if (action.auth === "composio") {
     if (!action.composio) {
       return errResult(`"${entry.name}" is composio-auth but missing composio config block.`);
-    }
-    // Composio's state lives at workspace scope only:
-    // `credentials/composio/<connectorId>/connection.json` is under
-    // `workspaces/<wsId>/`, and `lifecycle.disconnect`'s composio
-    // cleanup branch gates on `isWorkspaceScope`. A personal-workspace
-    // target would silently bypass that cleanup and orphan the upstream
-    // Composio account on disconnect. Reject at install time rather
-    // than ship the latent footgun. The source of truth is the target
-    // workspace record's `isPersonal` flag (NOT the catalog's
-    // `defaultBinding` — that's a UX hint, not an authority).
-    if (ws.isPersonal === true) {
-      return errResult(
-        `"${entry.name}" is composio-auth and cannot install into a personal workspace — ` +
-          "the credential layout does not yet support personal-workspace bindings. " +
-          "Pick a shared workspace from the install dialog instead.",
-      );
     }
     const { authConfigEnv } = action.composio;
     if (!process.env.COMPOSIO_API_KEY?.trim()) {
@@ -1117,10 +1101,9 @@ async function handleInstallRemoteOAuth(
       // for vendors whose remote `type` is `sse` — PayPal / Cloudflare /
       // Webflow / Wix in the bundled catalog today.
       transport: composioWiring?.transport ?? { type: action.transportType },
-      // Post-Stage-2: every ref's oauthScope is "workspace". The catalog's
-      // `defaultBinding` selects which workspace the install targets
-      // (personal vs active), NOT a per-ref scope literal — see the
-      // dispatch logic above.
+      // Post-Stage-2: every ref's oauthScope is "workspace". The install
+      // targets the request's active workspace (see the dispatch logic
+      // above); the ref carries no per-target scope literal.
       oauthScope: "workspace",
       ...(action.requiredScopes ? { scopes: action.requiredScopes } : {}),
       ...(action.additionalAuthorizationParams
@@ -1273,10 +1256,12 @@ async function handleInstallRemoteOAuth(
   return {
     content: textContent(
       startWarning
-        ? `Installed "${entry.name}" in the target workspace. Source eager-start failed (${startWarning}) — click Connect to retry.`
+        ? `Installed "${entry.name}" in ${
+            isPersonalTarget ? "your personal workspace" : "this workspace"
+          }. Source eager-start failed (${startWarning}) — click Connect to retry.`
         : isPersonalTarget
           ? `Installed "${entry.name}" in your personal workspace.`
-          : `Installed "${entry.name}" for this workspace.`,
+          : `Installed "${entry.name}" in this workspace.`,
     ),
     structuredContent: {
       ok: true,

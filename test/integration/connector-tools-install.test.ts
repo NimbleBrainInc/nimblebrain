@@ -150,7 +150,6 @@ function dcrEntry(): DirectoryEntry {
     registryType: "static",
     name: "Granola",
     description: "Meeting notes",
-    defaultBinding: "personal",
     install: {
       kind: "remote-oauth",
       url: "https://api.granola.test/mcp",

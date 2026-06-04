@@ -8,10 +8,13 @@
 // gets chat through this single instance via ChatPanelContext, which is
 // why the panel is identical on home, workspace overview, and app views.
 //
-// App-context stamping ("[App Context: …]" on a message) is deliberately
-// NOT done here: a global mount has no focused app to attach. That
-// stamping lives where the focus is known — AppWithChat's iframe→chat
-// channel. Messages typed into this panel are workspace-agnostic.
+// A global mount can't know the focused app on its own, so the active
+// app view publishes itself to FocusedAppContext (AppWithChat) and this
+// panel reads it to stamp `AppContext` on messages typed into the main
+// composer. Without it, the backend resolves no focused app and the
+// agent can't see the app's visible state (e.g. the open document).
+// The inline "[App Context: …]" text prefix is a separate concern and
+// still lives in AppWithChat's in-app channel.
 // ---------------------------------------------------------------------------
 
 import { MessageSquare } from "lucide-react";
@@ -19,6 +22,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { useChatContext } from "../context/ChatContext";
 import { useChatPanelContext } from "../context/ChatPanelContext";
+import { useFocusedApp } from "../context/FocusedAppContext";
 import { useSidebar } from "../context/SidebarContext";
 import type { ChatPanelRef } from "./ChatPanel";
 import { ChatPanel } from "./ChatPanel";
@@ -49,6 +53,7 @@ export function ChatChrome() {
   const sidebar = useSidebar();
   const isMobile = useIsMobile();
   const location = useLocation();
+  const { focusedApp } = useFocusedApp();
 
   // Collapse fullscreen when the route changes — same logic AppWithChat
   // had; lifting it here makes it work globally.
@@ -152,10 +157,12 @@ export function ChatChrome() {
   const handleFullscreen = useCallback(() => toggleFullscreen(), [toggleFullscreen]);
 
   const handleSendMessage = useCallback(
-    // No app context: this global mount has no focused app (see file
-    // header). Stamping happens in AppWithChat's iframe→chat channel.
-    (text: string, files?: File[]) => chat.sendMessage(text, undefined, files),
-    [chat],
+    // Stamp the focused app (published by the active AppWithChat) so the
+    // backend resolves it and injects its visible state. `null` on
+    // non-app routes → no appContext, same as before. useChat enriches
+    // appContext with the app's latest visible state from the bridge.
+    (text: string, files?: File[]) => chat.sendMessage(text, focusedApp ?? undefined, files),
+    [chat, focusedApp],
   );
 
   const isSidebar = panelState === "sidebar";

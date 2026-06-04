@@ -9,7 +9,7 @@
  * No retry logic — the scheduler handles backoff.
  */
 
-import { isTransientError } from "./scheduler.ts";
+import { type AutomationRunTrigger, isTransientError } from "./scheduler.ts";
 import type { Automation, AutomationRun } from "./types.ts";
 
 const DEFAULT_TIMEOUT_MS = 120_000;
@@ -196,20 +196,26 @@ function mapStopReasonToStatus(stopReason: AutomationRun["stopReason"]): Automat
  * No HTTP, no auth token — pure function call within the same process.
  *
  * @param taskFn      Direct reference to runtime.executeTask() or equivalent.
- * @param getContext  Returns the workspace/identity context for the run.
- *                    Called per-execution so it can read current state.
+ * @param getContext  Returns the workspace/identity context for the run. Called
+ *                    per-execution so it can read current state. The `trigger`
+ *                    tells it whether to act as the automation's owner
+ *                    (`scheduled`) or the current request's user (`manual`).
  */
 export function createDirectExecutor(
   taskFn: TaskFn,
-  getContext: (automation?: Automation) => ExecutorContext,
+  getContext: (
+    automation: Automation | undefined,
+    trigger: AutomationRunTrigger,
+  ) => ExecutorContext,
 ) {
   return async function executeDirect(
     automation: Automation,
     externalSignal?: AbortSignal,
+    trigger: AutomationRunTrigger = "scheduled",
   ): Promise<AutomationRun> {
     const startedAt = new Date().toISOString();
     const timeoutMs = automation.maxRunDurationMs ?? DEFAULT_TIMEOUT_MS;
-    const ctx = getContext(automation);
+    const ctx = getContext(automation, trigger);
 
     // Combined cancellation: a single controller aborts when EITHER the
     // scheduler's external signal fires (manual cancel, scheduler stop)

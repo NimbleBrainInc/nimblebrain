@@ -52,7 +52,7 @@ const NOTION_ID = "com.notion/mcp";
  * Build a DirectoryEntry shaped like what `StaticSource` projects for
  * Asana — used by install tests since the install API takes the full
  * entry, not an id. Field set matches the real source output; tests
- * can override pieces (operatorSetup, defaultBinding) per case.
+ * can override pieces (operatorSetup, install) per case.
  */
 function asanaEntry(over: Partial<DirectoryEntry> = {}): DirectoryEntry {
   return {
@@ -61,7 +61,6 @@ function asanaEntry(over: Partial<DirectoryEntry> = {}): DirectoryEntry {
     registryType: "static",
     name: "Asana",
     description: "Tasks, projects, and team workflows",
-    defaultBinding: "workspace",
     install: {
       kind: "remote-oauth",
       url: ASANA_URL,
@@ -94,7 +93,6 @@ function mpakEntry(over: { id?: string; pkg?: string; name?: string } = {}): Dir
     registryType: "mpak",
     name: over.name ?? "Echo",
     description: "Reference MCP server for testing",
-    defaultBinding: "workspace",
     install: {
       kind: "mpak-bundle",
       package: over.pkg ?? "@nimblebraininc/echo",
@@ -797,11 +795,10 @@ describe("manage_connectors.install", () => {
     // Install defaults to the request's workspace (`getWorkspaceId()`),
     // but here the session workspace is explicitly null (third arg to
     // buildTool) and the call omits `wsId` — so there is no workspace
-    // anywhere. The tool must NOT recover a target from identity or the
-    // catalog's `defaultBinding`; with nothing in context it hard-errors,
-    // naming the missing arg. (This is the no-default-to-personal guard:
-    // it fires only when no workspace is in scope at all, not on the
-    // normal path where the route supplies one.)
+    // anywhere. The tool must NOT recover a target from identity; with
+    // nothing in context it hard-errors, naming the missing arg. (This is
+    // the no-default-to-personal guard: it fires only when no workspace is
+    // in scope at all, not on the normal path where the route supplies one.)
     const tool = buildTool(h, ADMIN_USER, null);
     const result = await tool.handler({ action: "install", entry: mpakEntry() });
     expect(result.isError).toBe(true);
@@ -872,7 +869,6 @@ describe("manage_connectors.install", () => {
         registryType: "static",
         name: "Evil",
         description: "x",
-        defaultBinding: "workspace",
         install: {
           kind: "remote-oauth",
           url: "javascript:alert(1)",
@@ -904,7 +900,6 @@ describe("manage_connectors.install", () => {
         registryType: "static",
         name: "Evil",
         description: "x",
-        defaultBinding: "workspace",
         install: {
           kind: "remote-oauth",
           url: "https://mcp.evil.test/mcp",
@@ -918,12 +913,11 @@ describe("manage_connectors.install", () => {
     expect(text.toLowerCase()).toContain("install action is required");
   });
 
-  test("personal-workspace install: wsId picked by the dialog targets personalWorkspaceIdFor(userId); stored ref has oauthScope=workspace", async () => {
-    // Stage 2 / T010: the install dialog's WorkspaceTargetPicker picks
-    // the personal workspace by `defaultBinding === "personal"` and
-    // supplies its id explicitly. The tool itself never reads the
-    // catalog's `defaultBinding` to pick a target — that is the picker
-    // UI's job. Pin three things:
+  test("personal-workspace install: an explicit personal wsId targets personalWorkspaceIdFor(userId); stored ref has oauthScope=workspace", async () => {
+    // Any workspace is a valid install target, personal included — the
+    // caller supplies the target wsId (from the active `/w/<slug>` route
+    // or an explicit arg) and the tool installs there with no special-
+    // casing of `isPersonal`. Pin three things:
     //   - The recorded `wsId` IS `personalWorkspaceIdFor(callerId)`
     //     (the canonical helper, NOT a hand-built `ws_user_<id>`
     //     template literal — `check:personal-workspace-id` is `src/`-
@@ -949,7 +943,6 @@ describe("manage_connectors.install", () => {
         registryType: "static",
         name: "Canva",
         description: "x",
-        defaultBinding: "personal",
         install: {
           kind: "remote-oauth",
           url: "https://mcp.canva.com/mcp",

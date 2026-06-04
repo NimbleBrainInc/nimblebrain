@@ -34,7 +34,6 @@ import type {
   BundleState,
   BundleUiMeta,
   HostManifestMeta,
-  HttpProxyConfig,
   RemoteTransportConfig,
 } from "./types.ts";
 
@@ -265,11 +264,10 @@ export class BundleLifecycleManager {
     wsId: string,
     env?: Record<string, string>,
   ): Promise<BundleInstance> {
-    // Pre-load so the manifest is in the mpak cache before startBundleSource
-    // reads it. (startBundleSource itself only calls prepareServer; it
-    // assumes the manifest is already cached.)
-    const mpak = getMpak(this.mpakHome);
-    await mpak.bundleCache.loadBundle(name);
+    // No cache pre-warm here: startBundleSource warms the mpak cache itself
+    // before reading the manifest (see its named-bundle branch, #60), so a
+    // cold first-install registers placements without a restart on every
+    // path, not just this one.
 
     // Workspace-scoped data dir keeps two workspaces installing the same
     // bundle from stomping on each other's entity data. Slug source is
@@ -459,7 +457,6 @@ export class BundleLifecycleManager {
       trustScore: trustScore ?? null,
       ui: ui ?? null,
       briefing: null,
-      httpProxy: null,
       protected: false,
       type: "plain",
       wsId,
@@ -1751,7 +1748,6 @@ export class BundleLifecycleManager {
           description?: string;
           ui: BundleUiMeta | null;
           briefing?: BriefingBlock | null;
-          httpProxy?: HttpProxyConfig | null;
           type: "upjack" | "plain";
           upjackNamespace?: string;
         }
@@ -1798,7 +1794,6 @@ export class BundleLifecycleManager {
       trustScore: ref.trustScore ?? null,
       ui: ref.ui ?? manifestMeta?.ui ?? null,
       briefing: manifestMeta?.briefing ?? null,
-      httpProxy: manifestMeta?.httpProxy ?? null,
       protected: ref.protected ?? false,
       type: manifestMeta?.type ?? "plain",
       wsId,
@@ -1908,7 +1903,6 @@ function createInstance(
     trustScore: null,
     ui: null,
     briefing: null,
-    httpProxy: null,
     protected: false,
     type: isUpjack ? "upjack" : "plain",
     wsId,

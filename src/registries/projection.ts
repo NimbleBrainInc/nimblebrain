@@ -34,7 +34,6 @@ export interface ProjectionContext {
  *   - `description`   ← `ServerDetail.description`
  *   - `iconUrl`       ← `ServerDetail.icons[0].src` (theme-aware picker is a follow-up)
  *   - `tags`          ← `_meta.ai.nimblebrain/connector.tags`
- *   - `defaultBinding` ← `_meta.ai.nimblebrain/connector.defaultBinding` ?? `"workspace"`
  *   - `install`       ← derived from `packages[]` (mpak-bundle) or `remotes[]` (remote-oauth)
  *
  * Returns null if the entry isn't installable (no packages, no remotes,
@@ -59,7 +58,6 @@ export function projectServerDetailToDirectoryEntry(
     description: s.description,
     ...(iconUrl ? { iconUrl } : {}),
     ...(meta?.tags && meta.tags.length > 0 ? { tags: meta.tags } : {}),
-    defaultBinding: meta?.defaultBinding ?? "workspace",
     install,
   };
 }
@@ -112,7 +110,6 @@ export interface ConnectorCatalogEntry {
   /** Remote MCP server URL — the value that goes into the bundle `url`. */
   url: string;
   auth: "dcr" | "static" | "composio";
-  defaultBinding: "workspace" | "personal";
   requiredScopes?: string[];
   additionalAuthorizationParams?: Record<string, string>;
   operatorSetup?: { portalUrl: string; hint: string; clientSecretKey: string };
@@ -149,7 +146,6 @@ export function serverDetailToCatalogEntry(s: ServerDetail): ConnectorCatalogEnt
     iconUrl,
     url: remote.url,
     auth: meta?.auth ?? "dcr",
-    defaultBinding: meta?.defaultBinding ?? "workspace",
     ...(meta?.requiredScopes ? { requiredScopes: meta.requiredScopes } : {}),
     ...(meta?.additionalAuthorizationParams
       ? { additionalAuthorizationParams: meta.additionalAuthorizationParams }

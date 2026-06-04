@@ -22,7 +22,7 @@ import { roleAtLeast, useScopedRole } from "../../hooks/useScopedRole";
  * because the catalog is long enough that a single column wastes
  * horizontal space.
  */
-export function ConnectorBrowsePage({ mode }: { mode: "personal" | "workspace" }) {
+export function ConnectorBrowsePage() {
   const [entries, setEntries] = useState<DirectoryEntry[]>([]);
   const [errors, setErrors] = useState<Array<{ registryId: string; message: string }>>([]);
   const [installed, setInstalled] = useState<InstalledConnector[]>([]);
@@ -37,8 +37,8 @@ export function ConnectorBrowsePage({ mode }: { mode: "personal" | "workspace" }
   const navigate = useNavigate();
   const { slug } = useParams<{ slug: string }>();
 
-  // Workspace connectors are addressed by the URL slug. (Personal-scope
-  // connectors have no UI surface today; the mode is kept for the API.)
+  // Connectors are addressed by the URL slug — install targets whichever
+  // workspace (personal or shared) the user is currently viewing.
   const backPath = `/w/${slug}/settings/connectors`;
   const configureBasePath = backPath;
 
@@ -92,16 +92,14 @@ export function ConnectorBrowsePage({ mode }: { mode: "personal" | "workspace" }
     return false;
   }
 
-  // Filter to mode, drop installed, apply search. The UI `mode` is a
-  // page-view discriminator (`"personal"` vs `"workspace"`) — both
-  // values map 1:1 onto the catalog entry's `defaultBinding`. The
-  // legacy `"user"` literal was renamed in T009 (Group D audit) because
-  // a route/page mode indicator is not an oauthScope.
+  // One unified browse list: every connector is installable into any
+  // workspace, so the only filtering is dropping already-installed
+  // entries and applying the search query.
   const visibleEntries = useMemo(() => {
-    const inScope = entries.filter((e) => e.defaultBinding === mode && !isInstalled(e));
-    if (!query.trim()) return inScope;
+    const available = entries.filter((e) => !isInstalled(e));
+    if (!query.trim()) return available;
     const q = query.trim().toLowerCase();
-    return inScope.filter(
+    return available.filter(
       (e) =>
         e.name.toLowerCase().includes(q) ||
         e.description.toLowerCase().includes(q) ||
@@ -109,7 +107,7 @@ export function ConnectorBrowsePage({ mode }: { mode: "personal" | "workspace" }
     );
     // installedByKey is captured by isInstalled via closure; re-running
     // when it changes is what lets newly-installed connectors disappear.
-  }, [entries, mode, query, installedByKey]);
+  }, [entries, query, installedByKey]);
 
   // Install into the workspace the user is already in. The page is
   // mounted under `/w/<slug>/...`, so the route names an unambiguous
@@ -161,9 +159,7 @@ export function ConnectorBrowsePage({ mode }: { mode: "personal" | "workspace" }
       <div>
         <h1 className="text-xl font-semibold tracking-tight">Browse connectors</h1>
         <p className="text-sm text-muted-foreground mt-1">
-          {mode === "personal"
-            ? "Personal services to connect to your account."
-            : "Tools and services to add to this workspace."}
+          Tools and services to add to this workspace.
         </p>
       </div>
 

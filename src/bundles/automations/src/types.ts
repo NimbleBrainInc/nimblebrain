@@ -32,7 +32,7 @@ export interface Automation {
   /** Tool allowlist (glob patterns). Passed as allowedTools on chat request. */
   allowedTools?: string[];
 
-  /** Max agentic iterations per run. Default: 5. Hard cap: 15. */
+  /** Max agentic iterations per run. Default: 25. Hard cap: 50. */
   maxIterations?: number;
 
   /** Max input tokens per run. Default: 200_000. */

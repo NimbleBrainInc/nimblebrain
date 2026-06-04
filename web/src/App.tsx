@@ -21,6 +21,7 @@ import { ShellLayout } from "./components/ShellLayout";
 import { WorkspaceRouteGuard } from "./components/WorkspaceRouteGuard";
 import { ChatProvider, useChatConfigContext, useChatContext } from "./context/ChatContext";
 import { ChatPanelProvider, useChatPanelContext } from "./context/ChatPanelContext";
+import { FocusedAppProvider } from "./context/FocusedAppContext";
 import { PaletteProvider } from "./context/PaletteContext";
 import { SessionProvider } from "./context/SessionContext";
 import { ShellProvider } from "./context/ShellContext";
@@ -193,14 +194,16 @@ function BootstrappedShell({
         <ChatProvider initialConfig={initialConfig} currentUserId={currentUserId}>
           <ChatPanelProvider>
             <PaletteProvider>
-              <AuthenticatedAppContent
-                token={token}
-                forSlot={forSlot}
-                mainRoutes={mainRoutes}
-                shellWorkspaceId={shellWorkspaceId}
-                refreshShell={refreshShell}
-                onLogout={onLogout}
-              />
+              <FocusedAppProvider>
+                <AuthenticatedAppContent
+                  token={token}
+                  forSlot={forSlot}
+                  mainRoutes={mainRoutes}
+                  shellWorkspaceId={shellWorkspaceId}
+                  refreshShell={refreshShell}
+                  onLogout={onLogout}
+                />
+              </FocusedAppProvider>
             </PaletteProvider>
           </ChatPanelProvider>
         </ChatProvider>
@@ -396,14 +399,8 @@ function AuthenticatedAppContent({
                 <Route path="apps" element={<WorkspaceAppsTab />} />
                 <Route path="apps/:serverName" element={<SettingsAppPanel />} />
                 <Route path="connectors" element={<WorkspaceConnectorsTab />} />
-                <Route
-                  path="connectors/browse"
-                  element={<ConnectorBrowsePage mode="workspace" />}
-                />
-                <Route
-                  path="connectors/:serverName"
-                  element={<ConnectorDetailPage mode="workspace" />}
-                />
+                <Route path="connectors/browse" element={<ConnectorBrowsePage />} />
+                <Route path="connectors/:serverName" element={<ConnectorDetailPage />} />
                 <Route path="skills" element={<SkillsTab />} />
               </Route>
             </Route>

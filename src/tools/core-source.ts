@@ -23,6 +23,7 @@ import { ActivityCollector } from "../services/activity-collector.ts";
 import { BriefingCache } from "../services/briefing-cache.ts";
 import { collectBriefingFacets } from "../services/briefing-collector.ts";
 import { BriefingGenerator } from "../services/briefing-generator.ts";
+import { renderBriefingText } from "../services/briefing-render.ts";
 import type { BriefingOutput } from "../services/home-types.ts";
 
 /**
@@ -757,8 +758,12 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
             }
             const briefingCache = cache;
 
+            // `content` carries the rendered briefing (the only field the model
+            // sees — the engine never feeds `structuredContent` to the prompt),
+            // prefixed with the status note. `structuredContent` keeps the typed
+            // payload for the dashboard, unchanged.
             const ok = (briefing: BriefingOutput, note: string): ToolResult => ({
-              content: textContent(note),
+              content: textContent(`${note}\n\n${renderBriefingText(briefing)}`),
               structuredContent: briefing as unknown as Record<string, unknown>,
               isError: false,
             });

@@ -4,7 +4,7 @@ import {
   createDirectExecutor,
   type ExecutorContext,
 } from "../../bundles/automations/src/executor.ts";
-import { Scheduler } from "../../bundles/automations/src/scheduler.ts";
+import { type AutomationRunTrigger, Scheduler } from "../../bundles/automations/src/scheduler.ts";
 import { TOOL_SCHEMAS } from "../../bundles/automations/src/schemas.ts";
 import {
   handleCancel,
@@ -25,12 +25,53 @@ import {
 import type { Automation } from "../../bundles/automations/src/types.ts";
 import { textContent } from "../../engine/content-helpers.ts";
 import type { EventSink } from "../../engine/types.ts";
-import { getRequestContext } from "../../runtime/request-context.ts";
+import { getRequestContext, type RequestContext } from "../../runtime/request-context.ts";
 import type { Runtime } from "../../runtime/runtime.ts";
 import type { TaskRequest } from "../../runtime/types.ts";
 import { defineInProcessApp, type InProcessTool } from "../in-process-app.ts";
 import type { McpSource } from "../mcp-source.ts";
 import { AUTOMATIONS_PANEL_HTML } from "../platform-resources/automations/panel.ts";
+
+/**
+ * Resolve WHO an automation run acts as, from the run's trigger and the ambient
+ * request context. Pure (no ALS read) so the isolation contract is unit-testable
+ * without a live AsyncLocalStorage scope — `getExecutorContext` is the thin
+ * wrapper that supplies `getRequestContext()`.
+ *
+ * - `manual`: the clicking user's request context wins (falling back to the
+ *   automation's owner/provenance), because a test-button run is dispatched
+ *   synchronously inside that user's genuine context.
+ * - everything else (`scheduled`, and any future/unknown value): act as the
+ *   automation's owner, focused on its provenance workspace, with the ambient
+ *   context IGNORED — a scheduled run can inherit a stale timer context (see
+ *   `getExecutorContext`) that would otherwise run one tenant's automation in
+ *   another tenant's workspace.
+ *
+ * Reading ambient context is **fail-closed**: it requires an explicit `manual`
+ * opt-in. Anything else — including `undefined` from an untyped/test caller, or
+ * a trigger added later — falls through to the isolated owner/provenance path,
+ * so a new dispatch path that forgets to opt in can never leak another tenant's
+ * context.
+ */
+export function resolveExecutorContext(
+  automation: Automation | undefined,
+  trigger: AutomationRunTrigger,
+  reqCtx: RequestContext | undefined,
+): ExecutorContext {
+  if (trigger === "manual") {
+    return {
+      workspaceId:
+        (reqCtx?.scope.kind === "workspace" ? reqCtx.scope.workspaceId : undefined) ??
+        automation?.workspaceId ??
+        undefined,
+      identity: reqCtx?.identity ?? (automation?.ownerId ? { id: automation.ownerId } : undefined),
+    };
+  }
+  return {
+    workspaceId: automation?.workspaceId ?? undefined,
+    identity: automation?.ownerId ? { id: automation.ownerId } : undefined,
+  };
+}
 
 /**
  * Create the "automations" platform source — an in-process MCP server.
@@ -68,23 +109,15 @@ export async function createAutomationsSource(
   }
 
   // Direct executor: calls runtime.executeTask() in-process — the unattended
-  // sibling of chat() that frames the agent as producing a deliverable, not
-  // a conversation turn. `getExecutorContext` is called per run to resolve
-  // WHO the run acts as. A user-triggered run (test button) reads the
-  // current request context. A SCHEDULED run has no request context, so it
-  // fires AS THE OWNER — identity = the automation's `ownerId`, focused on
-  // its provenance `workspaceId` if set — exactly as if the owner had
-  // queued the task themselves.
-  function getExecutorContext(automation?: Automation): ExecutorContext {
-    const reqCtx = getRequestContext();
-    return {
-      workspaceId:
-        (reqCtx?.scope.kind === "workspace" ? reqCtx.scope.workspaceId : undefined) ??
-        automation?.workspaceId ??
-        undefined,
-      identity: reqCtx?.identity ?? (automation?.ownerId ? { id: automation.ownerId } : undefined),
-    };
-  }
+  // sibling of chat() that frames the agent as producing a deliverable, not a
+  // conversation turn. `getExecutorContext` resolves WHO each run acts as; the
+  // ALS read is isolated here so the decision logic stays pure and testable in
+  // `resolveExecutorContext`. A `scheduled` run ignores the ambient context
+  // because the timer can carry a stale one (see `resolveExecutorContext`).
+  const getExecutorContext = (
+    automation: Automation | undefined,
+    trigger: AutomationRunTrigger,
+  ): ExecutorContext => resolveExecutorContext(automation, trigger, getRequestContext());
   const executor = createDirectExecutor(
     (req) => runtime.executeTask(req as TaskRequest),
     getExecutorContext,

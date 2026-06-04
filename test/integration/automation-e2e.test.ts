@@ -47,7 +47,7 @@ const USERS_DIR = join(TMP_DIR, "users");
 const OWNER_STORE = join(USERS_DIR, OWNER, "automations");
 
 /** Records of what the mock executor received. */
-let executorCalls: Array<{ automation: Automation; signal: AbortSignal }>;
+let executorCalls: Array<{ automation: Automation; signal: AbortSignal; trigger: string }>;
 
 /** Configurable executor result. */
 let executorResult: (auto: Automation) => AutomationRun;
@@ -92,8 +92,9 @@ function createHarness(): ToolContext {
 	const executor = async (
 		automation: Automation,
 		signal: AbortSignal,
+		trigger: string,
 	): Promise<AutomationRun> => {
-		executorCalls.push({ automation, signal });
+		executorCalls.push({ automation, signal, trigger });
 		const run = executorResult(automation);
 		appendRun(automation.id, run, OWNER_STORE);
 		return run;
@@ -207,6 +208,10 @@ describe("automation e2e: create -> run -> verify", () => {
 
 		// Signal should not be aborted
 		expect(executorCalls[0]!.signal.aborted).toBe(false);
+
+		// The `run` tool is a user-triggered (manual) dispatch — it must NOT be
+		// treated as a scheduled run.
+		expect(executorCalls[0]!.trigger).toBe("manual");
 	});
 
 	test("allowedTools passed through to executor when set on the stored automation", async () => {

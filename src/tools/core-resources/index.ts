@@ -9,8 +9,6 @@
 import { renderResource } from "./render.tsx";
 import { APP_NAV_SCRIPT } from "./scripts/app-nav.ts";
 import { CONVERSATIONS_SCRIPT } from "./scripts/conversations.ts";
-import { HOME_BRIEFING_INLINE_SCRIPT } from "./scripts/home-briefing-inline.ts";
-import { HOME_DASHBOARD_SCRIPT } from "./scripts/home-dashboard.ts";
 import { MODEL_SELECTOR_SCRIPT } from "./scripts/model-selector.ts";
 import { SETTINGS_SCRIPT } from "./scripts/settings.ts";
 import { SETTINGS_LINK_SCRIPT } from "./scripts/settings-link.ts";
@@ -19,8 +17,6 @@ import { USAGE_DASHBOARD_SCRIPT } from "./scripts/usage-dashboard.ts";
 import {
   APP_NAV_STYLES,
   CONVERSATIONS_STYLES,
-  HOME_BRIEFING_INLINE_STYLES,
-  HOME_DASHBOARD_STYLES,
   MODEL_SELECTOR_STYLES,
   SETTINGS_LINK_STYLES,
   SETTINGS_STYLES,
@@ -36,9 +32,6 @@ const resources: Record<string, () => string> = {
   "usage-dashboard": () => renderResource(USAGE_DASHBOARD_STYLES, USAGE_DASHBOARD_SCRIPT),
   settings: () => renderResource(SETTINGS_STYLES, SETTINGS_SCRIPT),
   "model-selector": () => renderResource(MODEL_SELECTOR_STYLES, MODEL_SELECTOR_SCRIPT),
-  "home-dashboard": () => renderResource(HOME_DASHBOARD_STYLES, HOME_DASHBOARD_SCRIPT),
-  "home-briefing-inline": () =>
-    renderResource(HOME_BRIEFING_INLINE_STYLES, HOME_BRIEFING_INLINE_SCRIPT),
 };
 
 /**

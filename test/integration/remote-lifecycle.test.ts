@@ -263,14 +263,36 @@ describe("BundleLifecycleManager — remote connection failure", () => {
 
 describe("startBundleSource — remote url entries", () => {
 	let mockServer: MockRemoteServer;
+	let prevMpakHome: string | undefined;
 
 	beforeEach(() => {
 		setupTestDir();
 		mockServer = startMockRemoteServer(2);
+
+		// Isolate mpak so an unresolvable `{ name }` ref fails fast and
+		// offline. Without this, resolving a name cache-misses and the SDK
+		// fetches the public registry (https://registry.mpak.dev); under a
+		// slow CI network that round-trip blows the test's 15s budget and
+		// flakes. Point the registry at a closed local port so the lookup
+		// returns ECONNREFUSED immediately instead of hanging.
+		const mpakHome = join(testDir, "mpak-home");
+		mkdirSync(mpakHome, { recursive: true });
+		writeFileSync(
+			join(mpakHome, "config.json"),
+			JSON.stringify({
+				version: "1.0.0",
+				lastUpdated: new Date(0).toISOString(),
+				registryUrl: "http://127.0.0.1:1",
+			}),
+		);
+		prevMpakHome = process.env.MPAK_HOME;
+		process.env.MPAK_HOME = mpakHome;
 	});
 
 	afterEach(() => {
 		mockServer?.close();
+		if (prevMpakHome === undefined) delete process.env.MPAK_HOME;
+		else process.env.MPAK_HOME = prevMpakHome;
 	});
 
 	it("starts a remote bundle from a url BundleRef", async () => {

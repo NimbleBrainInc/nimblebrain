@@ -62,7 +62,13 @@ export interface RuntimeConfig {
   /** Max input tokens per request. Default: 500_000. */
   maxInputTokens?: number;
 
-  /** Max output tokens per LLM call. Default: 16_384. */
+  /**
+   * Max output tokens per LLM call. When unset, resolves to the model's
+   * catalog output ceiling (e.g. 128k for Opus 4.6+, 64k for Sonnet 4.6) —
+   * see `resolveMaxOutputTokens`. The static 16_384 is only the last-resort
+   * fallback for a model that isn't in the catalog. Pinning a value here
+   * caps DOWN from the catalog ceiling.
+   */
   maxOutputTokens?: number;
 
   /**

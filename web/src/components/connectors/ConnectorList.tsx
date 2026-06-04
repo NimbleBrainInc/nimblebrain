@@ -7,28 +7,20 @@ import { EmptyState } from "../../pages/settings/components";
 import { ConnectorIcon } from "./ConnectorIcon";
 
 /**
- * Lists installed connectors for a single page mode (Personal or
- * Workspace). The list is intentionally minimal — icon, name, status
- * + action verb when something needs attention, chevron link to
- * Configure. Type / interactive / version metadata is deferred to
- * the Configure page so the list stays scannable.
+ * Lists installed connectors for the active workspace. The list is
+ * intentionally minimal — icon, name, status + action verb when
+ * something needs attention, chevron link to Configure. Type /
+ * interactive / version metadata is deferred to the Configure page so
+ * the list stays scannable.
  *
  * Browsing for new connectors lives on a separate /browse page
  * reached via the action in the page header — the list itself only
  * shows what's already installed.
  *
- * `mode` is a UI affordance (which settings page is rendering us);
- * `getInstalledConnectors` always reads from the active workspace
- * (Stage 2: personal connectors live in the user's personal
- * workspace, addressed by setting it active before navigating here).
+ * `getInstalledConnectors` reads from the active workspace, whichever
+ * (personal or shared) the current `/w/:slug` route names.
  */
-export function ConnectorList({
-  mode: _mode,
-  configureBasePath,
-}: {
-  mode: "personal" | "workspace";
-  configureBasePath: string;
-}) {
+export function ConnectorList({ configureBasePath }: { configureBasePath: string }) {
   const [installed, setInstalled] = useState<InstalledConnector[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

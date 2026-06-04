@@ -25,7 +25,7 @@ export function WorkspaceConnectorsTab() {
         }
       />
       <RequireActiveWorkspace>
-        <ConnectorList mode="workspace" configureBasePath={base} />
+        <ConnectorList configureBasePath={base} />
       </RequireActiveWorkspace>
     </div>
   );
