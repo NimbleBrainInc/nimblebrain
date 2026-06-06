@@ -9,7 +9,7 @@ import { type SettingsNavItem, SettingsShell } from "./settings/SettingsShell";
 // instructions, model preferences) slots in alongside.
 
 const PROFILE_ITEMS: SettingsNavItem[] = [
-  { id: "profile-general", label: "Profile", to: "/profile/general", minRole: "none" },
+  { id: "profile-general", label: "General", to: "/profile/general", minRole: "none" },
   { id: "profile-skills", label: "Skills", to: "/profile/skills", minRole: "none" },
 ];
 
