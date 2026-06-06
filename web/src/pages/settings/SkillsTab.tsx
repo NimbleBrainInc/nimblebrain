@@ -1,6 +1,7 @@
 import { Lightbulb, Trash2, User } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
+import { Streamdown } from "streamdown";
 import type { ToolInput } from "../../_generated/platform-schemas/catalog";
 import { callTool } from "../../api/client";
 import { Card, CardContent } from "../../components/ui/card";
@@ -257,7 +258,13 @@ export function SkillsBrowser({ lockedScope, surface }: SkillsBrowserProps = {})
         </p>
       </header>
 
-      {loading && <div className="text-sm text-muted-foreground py-4">Loading rules…</div>}
+      {/* Loading message only when we have nothing to render yet — a
+       * refetch triggered by a toggle/edit keeps the list mounted so the
+       * accordion's per-row `shellH` state doesn't reset to 0 mid-flight
+       * (which manifested as a flicker collapse). */}
+      {loading && skills.length === 0 && (
+        <div className="text-sm text-muted-foreground py-4">Loading rules…</div>
+      )}
       {error && (
         <Card className="mb-4">
           <CardContent className="py-3 px-4">
@@ -276,7 +283,7 @@ export function SkillsBrowser({ lockedScope, surface }: SkillsBrowserProps = {})
         </Card>
       )}
 
-      {!loading && skills.length > 0 && (
+      {skills.length > 0 && (
         <div className="border-t border-border">
           {grouped.map((group) => {
             const inherited = isWorkspaceSurface && group.scope !== "workspace";
@@ -288,12 +295,13 @@ export function SkillsBrowser({ lockedScope, surface }: SkillsBrowserProps = {})
                     group.scope === "org"
                       ? "From your organization"
                       : group.scope === "bundle"
-                        ? "From installed apps"
+                        ? "From the system"
                         : `From ${group.scope}`
                   }
                   rules={group.skills}
                   deepLinkLabel={group.scope === "org" ? "Edit in org settings" : undefined}
                   deepLinkTo={group.scope === "org" ? "/org/skills" : undefined}
+                  ambient={group.scope === "bundle"}
                   expandedId={selectedId}
                   onSelect={handleSelect}
                   detail={detail}
@@ -359,9 +367,20 @@ function groupByScope(skills: ListedSkill[], opts?: { excludeUser?: boolean }): 
 
 // ── Rule row ─────────────────────────────────────────────────────────────
 
-function firstSentence(s: string): string {
-  const m = s.match(/^[^.\n]*[.!?]/);
-  return m ? m[0].trim() : s.trim();
+/**
+ * Resting-state label for a row.
+ *
+ * The body is rendered as full markdown in the expanded view, so using
+ * the body's first sentence as the label duplicates content the moment
+ * the row opens. Instead: prefer the (short) description if the author
+ * wrote one, otherwise fall back to the on-disk identifier (kebab-name).
+ * The author-controlled name is the closest thing to a meaningful label
+ * for rules without a description.
+ */
+function rowLabel(skill: ListedSkill): string {
+  const desc = skill.description?.trim();
+  if (desc && desc.length > 0 && desc.length <= 140) return desc;
+  return skill.name;
 }
 
 function Rule({
@@ -399,13 +418,8 @@ function Rule({
     });
   }, [expanded, detail]);
 
-  // Resting label = first sentence of the body when we have it; otherwise
-  // the summary description; otherwise the name. We don't fetch the body
-  // just for the label — only the expanded row has body content available.
-  const restingLabel =
-    detail && detail.id === skill.id
-      ? firstSentence(detail.content)
-      : firstSentence(skill.description ?? "") || skill.name;
+  const label = rowLabel(skill);
+  const labelIsName = label === skill.name;
 
   return (
     <div className={cn("py-5 sm:py-6 border-b border-border", inherited && "opacity-80")}>
@@ -415,15 +429,20 @@ function Rule({
         className="w-full text-left grid items-center gap-[clamp(20px,6vw,56px)] grid-cols-[1fr_auto]"
       >
         <div className="min-w-0 pr-1">
-          <div className="text-[15.5px] sm:text-[16px] leading-[1.5] tracking-[-0.005em] text-foreground">
-            {restingLabel}
+          <div
+            className={cn(
+              "text-[15.5px] sm:text-[16px] leading-[1.5] tracking-[-0.005em] text-foreground",
+              labelIsName && "font-mono text-[14px] sm:text-[14.5px]",
+            )}
+          >
+            {label}
           </div>
         </div>
         <div className="justify-self-end">
           <Toggle
             on={skill.status === "active"}
             onChange={onToggle}
-            locked={inherited || pending}
+            disabled={inherited}
             label={skill.name}
           />
         </div>
@@ -438,12 +457,16 @@ function Rule({
           {detailLoading && <p className="text-xs text-muted-foreground">Loading…</p>}
           {!detailLoading && detail && detail.id === skill.id && (
             <>
-              <p className="text-[14.5px] leading-relaxed text-foreground/80 max-w-[60ch] whitespace-pre-wrap">
-                {detail.content}
-              </p>
-              <div className="flex flex-wrap items-baseline gap-x-5 gap-y-1 mt-4 text-[11.5px] text-muted-foreground">
-                <span className="font-mono">{skill.name}</span>
+              <div className="max-w-[60ch] text-[14.5px] text-foreground/80">
+                <Streamdown className="streamdown-container presence-assistant-message">
+                  {detail.content}
+                </Streamdown>
               </div>
+              {!labelIsName && (
+                <div className="flex flex-wrap items-baseline gap-x-5 gap-y-1 mt-4 text-[11.5px] text-muted-foreground">
+                  <span className="font-mono">{skill.name}</span>
+                </div>
+              )}
               {!inherited && (
                 <div className="flex gap-6 mt-3">
                   <button
@@ -483,12 +506,12 @@ function Rule({
 function Toggle({
   on,
   onChange,
-  locked,
+  disabled,
   label,
 }: {
   on: boolean;
   onChange: () => void;
-  locked?: boolean;
+  disabled?: boolean;
   label: string;
 }) {
   return (
@@ -496,25 +519,19 @@ function Toggle({
       type="button"
       onClick={(e) => {
         e.stopPropagation();
-        if (!locked) onChange();
+        if (!disabled) onChange();
       }}
-      disabled={locked}
+      disabled={disabled}
       aria-label={`${on ? "Turn off" : "Turn on"} ${label}`}
       className={cn(
-        "inline-flex items-center gap-2 px-2 py-1.5 sm:py-1 rounded text-[12.5px] font-medium tabular-nums select-none transition-colors",
-        locked
-          ? "text-muted-foreground/70 cursor-not-allowed"
-          : "text-foreground hover:bg-muted active:bg-muted/80",
+        "inline-flex items-center gap-2 px-2 py-1 rounded text-[12.5px] font-medium select-none",
+        disabled ? "text-muted-foreground/70 cursor-not-allowed" : "text-foreground hover:bg-muted",
       )}
     >
       <span
-        className={cn(
-          "w-2 h-2 rounded-full transition-colors",
-          on ? "bg-emerald-500" : "bg-muted-foreground/60",
-        )}
+        className={cn("w-2 h-2 rounded-full", on ? "bg-emerald-500" : "bg-muted-foreground/60")}
       />
       {on ? "On" : "Off"}
-      {locked && <span className="ml-1 text-muted-foreground/60 text-[10.5px]">locked</span>}
     </button>
   );
 }
@@ -526,6 +543,7 @@ function InheritedSection({
   rules,
   deepLinkLabel,
   deepLinkTo,
+  ambient,
   expandedId,
   onSelect,
   detail,
@@ -535,6 +553,10 @@ function InheritedSection({
   rules: ListedSkill[];
   deepLinkLabel?: string;
   deepLinkTo?: string;
+  /** Ambient sections (system / bundle) carry no editorial relationship
+   * to the operator. Render quieter — smaller header, tighter spacing,
+   * dimmed rows so the section sits below the conscious foreground. */
+  ambient?: boolean;
   expandedId: string | null;
   onSelect: (id: string) => void;
   detail: ReadSkill | null;
@@ -543,29 +565,43 @@ function InheritedSection({
   const [open, setOpen] = useState(false);
   const activeCount = rules.filter((r) => r.status === "active").length;
   return (
-    <section className="mt-10 first:mt-0">
+    <section className={cn(ambient ? "mt-6 first:mt-0" : "mt-10 first:mt-0")}>
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="w-full flex items-center justify-between py-3 group"
+        className={cn("w-full flex items-center justify-between group", ambient ? "py-2" : "py-3")}
       >
         <div className="flex items-center gap-3">
           <span
             className={cn(
-              "text-xs text-muted-foreground transition-transform",
+              "text-xs transition-transform",
+              ambient ? "text-muted-foreground/60" : "text-muted-foreground",
               open && "rotate-90",
             )}
           >
             ▸
           </span>
-          <span className="text-[13px] text-muted-foreground group-hover:text-foreground">
+          <span
+            className={cn(
+              "group-hover:text-foreground",
+              ambient
+                ? "text-[12px] text-muted-foreground/70"
+                : "text-[13px] text-muted-foreground",
+            )}
+          >
             {title}
           </span>
         </div>
-        <span className="text-xs text-muted-foreground">{activeCount} active</span>
+        <span
+          className={cn(
+            ambient ? "text-[11px] text-muted-foreground/60" : "text-xs text-muted-foreground",
+          )}
+        >
+          {activeCount} active
+        </span>
       </button>
       {open && (
-        <div className="mt-1 border-t border-border">
+        <div className={cn("mt-1 border-t border-border", ambient && "opacity-90")}>
           {rules.map((r) => (
             <Rule
               key={r.id}
@@ -607,7 +643,7 @@ function PersonalFooter({ count }: { count: number }) {
           : `${count} personal rule${count === 1 ? "" : "s"} active here · follow you across every workspace.`}
       </div>
       <Link
-        to="/profile"
+        to="/profile/skills"
         className="text-[12.5px] text-foreground hover:opacity-70 underline-offset-4 hover:underline self-start sm:self-auto"
       >
         Edit in your profile →
@@ -620,6 +656,23 @@ function PersonalFooter({ count }: { count: number }) {
 
 type CreateInput = ToolInput<"skills", "create">;
 export type { CreateInput };
+
+/**
+ * Slugify a user-typed name into the on-disk identifier shape the server
+ * accepts (`^[a-zA-Z0-9_-]+$`). Lowercases, replaces runs of disallowed
+ * characters with a single `-`, strips leading/trailing dashes.
+ *
+ *   "Test 123"          → "test-123"
+ *   "Voice / Tone"      → "voice-tone"
+ *   "  Already-Good_1"  → "already-good_1"
+ */
+function slugifyName(input: string): string {
+  return input
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^[-_]+|[-_]+$/g, "");
+}
 
 function EditView({
   existing,
@@ -666,7 +719,14 @@ function EditView({
     }
   }, [existing]);
 
-  const valid = name.trim().length > 0 && body.trim().length > 0;
+  // The user types anything they want ("Test 123") and we slugify before
+  // it reaches the server (which enforces `^[a-zA-Z0-9_-]+$` because the
+  // value becomes a filename). Show the slugified form as a hint when it
+  // differs from the typed value so the on-disk identity is honest.
+  const slug = slugifyName(name);
+  const showSlugHint = isNew && slug.length > 0 && slug !== name.trim();
+
+  const valid = slug.length > 0 && body.trim().length > 0;
 
   return (
     <main className="max-w-[760px] mx-auto pt-2 sm:pt-6 px-1 sm:px-2">
@@ -701,11 +761,15 @@ function EditView({
               ref={nameRef}
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="voice-rules"
-              pattern="[a-zA-Z0-9_-]+"
+              placeholder="Voice rules"
               disabled={!isNew}
-              className="font-mono"
+              className={isNew ? "" : "font-mono"}
             />
+            {showSlugHint && (
+              <p className="text-[11.5px] text-muted-foreground mt-1.5">
+                Saved as <span className="font-mono">{slug}</span>
+              </p>
+            )}
             {!isNew && (
               <p className="text-[11.5px] text-muted-foreground mt-1.5">
                 Names are immutable — they're the filename on disk.
@@ -805,7 +869,7 @@ function EditView({
         <button
           type="button"
           onClick={() =>
-            valid && onSubmit({ name: name.trim(), body: body.trim(), loadingStrategy, priority })
+            valid && onSubmit({ name: slug, body: body.trim(), loadingStrategy, priority })
           }
           disabled={!valid || pending}
           className={cn(

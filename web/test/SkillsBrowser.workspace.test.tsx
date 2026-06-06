@@ -189,13 +189,13 @@ describe("SkillsBrowser with surface='workspace' (workspace settings tab)", () =
     mounted = await mount(React.createElement(SkillsBrowser, { surface: "workspace" }));
     const text = mounted.container.textContent ?? "";
     expect(text).toContain("From your organization");
-    expect(text).toContain("From installed apps");
+    expect(text).toContain("From the system");
     // User-tier skills never appear as a section — only as the
     // personal-footer count.
     expect(text).not.toMatch(/From user/);
   });
 
-  test("personal-skills footer shows the correct count and links to /profile", async () => {
+  test("personal-skills footer shows the correct count and links to /profile/skills", async () => {
     mounted = await mount(React.createElement(SkillsBrowser, { surface: "workspace" }));
     const text = mounted.container.textContent ?? "";
     expect(text).toContain("2 personal rules active here");
@@ -203,7 +203,7 @@ describe("SkillsBrowser with surface='workspace' (workspace settings tab)", () =
       a.textContent?.includes("Edit in your profile"),
     );
     expect(link).toBeDefined();
-    expect(link?.getAttribute("href")).toBe("/profile");
+    expect(link?.getAttribute("href")).toBe("/profile/skills");
   });
 
   test("submitting + Add a rule sends scope='workspace' regardless of internal state", async () => {
