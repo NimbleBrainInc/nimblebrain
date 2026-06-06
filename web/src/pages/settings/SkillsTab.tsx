@@ -921,9 +921,7 @@ function EditView({
               ...(advancedOpen || existing?.metadata.loadingStrategy === "always"
                 ? { loadingStrategy }
                 : {}),
-              ...(advancedOpen || existing?.metadata.priority !== undefined
-                ? { priority }
-                : {}),
+              ...(advancedOpen || existing?.metadata.priority !== undefined ? { priority } : {}),
             })
           }
           disabled={!valid || pending}
