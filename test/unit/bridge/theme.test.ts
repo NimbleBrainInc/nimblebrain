@@ -56,6 +56,11 @@ const EXPECTED_KEYS = [
   "--nb-color-danger",
   "--nb-color-success",
   "--nb-color-warning",
+  "--nb-color-warm",
+  "--nb-color-warm-light",
+  "--nb-color-processing",
+  "--nb-color-processing-light",
+  "--nb-color-info-light",
   "--nb-font-heading",
 ];
 
@@ -166,8 +171,8 @@ describe("buildThemeStyleBlock", () => {
     expect(block).toContain("box-sizing: border-box;");
   });
 
-  test("font token uses Inter system fallback", () => {
+  test("font token uses the Satoshi system fallback", () => {
     const tokens = getThemeTokens("light");
-    expect(tokens["--font-sans"]).toBe("'Inter', system-ui, sans-serif");
+    expect(tokens["--font-sans"]).toBe("'Satoshi', system-ui, sans-serif");
   });
 });
