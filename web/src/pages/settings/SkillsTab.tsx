@@ -168,18 +168,16 @@ export function SkillsBrowser({ lockedScope, surface }: SkillsBrowserProps = {})
   );
 
   const handleSubmit = useCallback(
-    async (patch: {
-      name: string;
-      body: string;
-      loadingStrategy: "auto" | "always";
-      priority: number;
-    }) => {
+    async (patch: { name: string; body: string }) => {
+      // type=context + no applies-to-tools → loader infers
+      // loading_strategy=always. Priority defaults to 50 server-side.
+      // No "Advanced" overrides are exposed: the prior toggle was a
+      // no-op (audit finding #2) and priority isn't a meaningful knob
+      // for the non-technical operator this surface is built for.
       const manifest: Record<string, unknown> = {
         name: patch.name,
         description: "",
         type: "context",
-        priority: patch.priority,
-        ...(patch.loadingStrategy === "always" ? { loadingStrategy: "always" } : {}),
       };
       if (editingId) {
         await runMutation("update", { id: editingId, manifest, body: patch.body }, () => {
@@ -687,21 +685,11 @@ function EditView({
   pending: boolean;
   error: string | null;
   onCancel: () => void;
-  onSubmit: (patch: {
-    name: string;
-    body: string;
-    loadingStrategy: "auto" | "always";
-    priority: number;
-  }) => void;
+  onSubmit: (patch: { name: string; body: string }) => void;
 }) {
   const isNew = existing === null && !loading;
   const [name, setName] = useState(existing?.metadata.name ?? "");
   const [body, setBody] = useState(existing?.content ?? "");
-  const [advancedOpen, setAdvancedOpen] = useState(false);
-  const [loadingStrategy, setLoadingStrategy] = useState<"auto" | "always">(
-    existing?.metadata.loadingStrategy === "always" ? "always" : "auto",
-  );
-  const [priority, setPriority] = useState<number>(existing?.metadata.priority ?? 50);
 
   const nameRef = useRef<HTMLInputElement | null>(null);
   useEffect(() => {
@@ -714,8 +702,6 @@ function EditView({
     if (existing) {
       setName(existing.metadata.name);
       setBody(existing.content);
-      setLoadingStrategy(existing.metadata.loadingStrategy === "always" ? "always" : "auto");
-      setPriority(existing.metadata.priority ?? 50);
     }
   }, [existing]);
 
@@ -794,66 +780,6 @@ function EditView({
               ideas.
             </p>
           </div>
-
-          <div>
-            <button
-              type="button"
-              onClick={() => setAdvancedOpen((v) => !v)}
-              className="text-[12.5px] text-muted-foreground hover:text-foreground inline-flex items-center gap-2"
-            >
-              <span
-                className={cn(
-                  "text-muted-foreground/60 transition-transform inline-block",
-                  advancedOpen && "rotate-90",
-                )}
-              >
-                ▸
-              </span>
-              Advanced
-              <span className="text-muted-foreground/60">— when to load, priority</span>
-            </button>
-            {advancedOpen && (
-              <div className="mt-4 pl-5 space-y-4 border-l border-border">
-                <div>
-                  <label
-                    className="block text-[12.5px] text-muted-foreground mb-1"
-                    htmlFor="loading-strategy"
-                  >
-                    When to load
-                  </label>
-                  <select
-                    id="loading-strategy"
-                    value={loadingStrategy}
-                    onChange={(e) => setLoadingStrategy(e.target.value as "auto" | "always")}
-                    className="text-[13px] bg-background border-b border-border pb-1 outline-none focus:border-foreground"
-                  >
-                    <option value="auto">Let the system decide</option>
-                    <option value="always">Always</option>
-                  </select>
-                </div>
-                <div>
-                  <label
-                    className="block text-[12.5px] text-muted-foreground mb-1"
-                    htmlFor="priority"
-                  >
-                    Priority
-                  </label>
-                  <input
-                    id="priority"
-                    type="number"
-                    min={1}
-                    max={100}
-                    value={priority}
-                    onChange={(e) => setPriority(parseInt(e.target.value, 10) || 50)}
-                    className="text-[13px] bg-background border-b border-border pb-1 w-20 outline-none focus:border-foreground"
-                  />
-                  <span className="text-[11.5px] text-muted-foreground ml-3">
-                    lower = read first
-                  </span>
-                </div>
-              </div>
-            )}
-          </div>
         </div>
       )}
 
@@ -868,9 +794,7 @@ function EditView({
         </button>
         <button
           type="button"
-          onClick={() =>
-            valid && onSubmit({ name: slug, body: body.trim(), loadingStrategy, priority })
-          }
+          onClick={() => valid && onSubmit({ name: slug, body: body.trim() })}
           disabled={!valid || pending}
           className={cn(
             "min-h-[44px] sm:min-h-0 px-4 py-2 rounded-md text-[13px] transition-colors",
