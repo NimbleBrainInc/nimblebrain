@@ -168,16 +168,25 @@ export function SkillsBrowser({ lockedScope, surface }: SkillsBrowserProps = {})
   );
 
   const handleSubmit = useCallback(
-    async (patch: { name: string; body: string }) => {
-      // type=context + no applies-to-tools → loader infers
-      // loading_strategy=always. Priority defaults to 50 server-side.
-      // No "Advanced" overrides are exposed: the prior toggle was a
-      // no-op (audit finding #2) and priority isn't a meaningful knob
-      // for the non-technical operator this surface is built for.
+    async (patch: {
+      name: string;
+      body: string;
+      loadingStrategy?: "auto" | "always";
+      priority?: number;
+    }) => {
+      // For NEW rules: type=context + no applies-to-tools makes the
+      // loader auto-infer loading_strategy=always, so the default
+      // submission omits both overrides (audit finding #2 — they'd be
+      // a no-op for new rules). For EDITED rules: the user may have
+      // touched the Advanced expander to override an existing skill's
+      // priority or pin loadingStrategy=always explicitly; include
+      // those fields when set so the patch reaches disk.
       const manifest: Record<string, unknown> = {
         name: patch.name,
         description: "",
         type: "context",
+        ...(patch.loadingStrategy === "always" ? { loadingStrategy: "always" } : {}),
+        ...(patch.priority !== undefined ? { priority: patch.priority } : {}),
       };
       if (editingId) {
         await runMutation("update", { id: editingId, manifest, body: patch.body }, () => {
@@ -282,7 +291,7 @@ export function SkillsBrowser({ lockedScope, surface }: SkillsBrowserProps = {})
       )}
 
       {skills.length > 0 && (
-        <div className="border-t border-border">
+        <div>
           {grouped.map((group) => {
             const inherited = isWorkspaceSurface && group.scope !== "workspace";
             if (inherited) {
@@ -307,20 +316,45 @@ export function SkillsBrowser({ lockedScope, surface }: SkillsBrowserProps = {})
                 />
               );
             }
-            return group.skills.map((s) => (
-              <Rule
-                key={s.id}
-                skill={s}
-                expanded={selectedId === s.id}
-                detail={selectedId === s.id ? detail : null}
-                detailLoading={selectedId === s.id && detailLoading}
-                onSelect={() => handleSelect(s.id)}
-                onToggle={() => handleToggle(s)}
-                onEdit={() => startEdit(s.id)}
-                onDelete={() => handleDelete(s.id)}
-                pending={actionPending}
-              />
-            ));
+            // Own (editable) section — matches the inherited-section
+            // header shape so the hierarchy reads as "three peer
+            // sections under the page title" rather than "implicit
+            // primary content followed by labelled buckets". No
+            // chevron; this section is always open.
+            const ownTitle = isWorkspaceSurface
+              ? "From your workspace"
+              : group.scope === "org"
+                ? "Organization rules"
+                : group.scope === "user"
+                  ? "Your rules"
+                  : null;
+            const activeCount = group.skills.filter((s) => s.status === "active").length;
+            return (
+              <section key={group.scope} className="mt-0 first:mt-0">
+                {ownTitle && (
+                  <div className="flex items-center justify-between py-3">
+                    <span className="text-[13px] text-foreground">{ownTitle}</span>
+                    <span className="text-xs text-muted-foreground">{activeCount} active</span>
+                  </div>
+                )}
+                <div className="border-t border-border">
+                  {group.skills.map((s) => (
+                    <Rule
+                      key={s.id}
+                      skill={s}
+                      expanded={selectedId === s.id}
+                      detail={selectedId === s.id ? detail : null}
+                      detailLoading={selectedId === s.id && detailLoading}
+                      onSelect={() => handleSelect(s.id)}
+                      onToggle={() => handleToggle(s)}
+                      onEdit={() => startEdit(s.id)}
+                      onDelete={() => handleDelete(s.id)}
+                      pending={actionPending}
+                    />
+                  ))}
+                </div>
+              </section>
+            );
           })}
         </div>
       )}
@@ -685,11 +719,26 @@ function EditView({
   pending: boolean;
   error: string | null;
   onCancel: () => void;
-  onSubmit: (patch: { name: string; body: string }) => void;
+  onSubmit: (patch: {
+    name: string;
+    body: string;
+    loadingStrategy?: "auto" | "always";
+    priority?: number;
+  }) => void;
 }) {
   const isNew = existing === null && !loading;
   const [name, setName] = useState(existing?.metadata.name ?? "");
   const [body, setBody] = useState(existing?.content ?? "");
+  // Advanced state — only consulted in the edit path, where the user
+  // may want to see/modify on-disk loading_strategy or priority that
+  // existed before the redesign or was authored outside the UI.
+  // For create, the loader's auto-inference is the right default, so
+  // we leave these absent unless the user explicitly opens Advanced.
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [loadingStrategy, setLoadingStrategy] = useState<"auto" | "always">(
+    existing?.metadata.loadingStrategy === "always" ? "always" : "auto",
+  );
+  const [priority, setPriority] = useState<number>(existing?.metadata.priority ?? 50);
 
   const nameRef = useRef<HTMLInputElement | null>(null);
   useEffect(() => {
@@ -702,6 +751,8 @@ function EditView({
     if (existing) {
       setName(existing.metadata.name);
       setBody(existing.content);
+      setLoadingStrategy(existing.metadata.loadingStrategy === "always" ? "always" : "auto");
+      setPriority(existing.metadata.priority ?? 50);
     }
   }, [existing]);
 
@@ -780,6 +831,69 @@ function EditView({
               ideas.
             </p>
           </div>
+
+          <div>
+            <button
+              type="button"
+              onClick={() => setAdvancedOpen((v) => !v)}
+              className="text-[12.5px] text-muted-foreground hover:text-foreground inline-flex items-center gap-2"
+            >
+              <span
+                className={cn(
+                  "inline-block text-muted-foreground/60 transition-transform",
+                  advancedOpen && "rotate-90",
+                )}
+              >
+                ▸
+              </span>
+              Advanced
+            </button>
+            {advancedOpen && (
+              <div className="mt-4 pl-5 space-y-4 border-l border-border">
+                <div>
+                  <label
+                    className="block text-[12.5px] text-muted-foreground mb-1"
+                    htmlFor="loading-strategy"
+                  >
+                    When to load
+                  </label>
+                  <select
+                    id="loading-strategy"
+                    value={loadingStrategy}
+                    onChange={(e) => setLoadingStrategy(e.target.value as "auto" | "always")}
+                    className="text-[13px] bg-background border-b border-border pb-1 outline-none focus:border-foreground"
+                  >
+                    <option value="auto">Let the system decide</option>
+                    <option value="always">Always</option>
+                  </select>
+                  <p className="text-[11px] text-muted-foreground/70 mt-1.5 max-w-[48ch]">
+                    "Let the system decide" is the right default for short prose rules — the loader
+                    picks "always" automatically.
+                  </p>
+                </div>
+                <div>
+                  <label
+                    className="block text-[12.5px] text-muted-foreground mb-1"
+                    htmlFor="priority"
+                  >
+                    Priority
+                  </label>
+                  <input
+                    id="priority"
+                    type="number"
+                    min={1}
+                    max={100}
+                    value={priority}
+                    onChange={(e) => setPriority(parseInt(e.target.value, 10) || 50)}
+                    className="text-[13px] bg-background border-b border-border pb-1 w-20 outline-none focus:border-foreground"
+                  />
+                  <span className="text-[11.5px] text-muted-foreground ml-3">
+                    lower = read first (default 50)
+                  </span>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       )}
 
@@ -794,7 +908,24 @@ function EditView({
         </button>
         <button
           type="button"
-          onClick={() => valid && onSubmit({ name: slug, body: body.trim() })}
+          onClick={() =>
+            valid &&
+            onSubmit({
+              name: slug,
+              body: body.trim(),
+              // Only forward Advanced fields when the user actually
+              // touched them (or when editing a rule that already had
+              // them set on disk). For a fresh create with Advanced
+              // never opened, omit both so the loader's auto-default
+              // applies — the audit's no-op finding stays honoured.
+              ...(advancedOpen || existing?.metadata.loadingStrategy === "always"
+                ? { loadingStrategy }
+                : {}),
+              ...(advancedOpen || existing?.metadata.priority !== undefined
+                ? { priority }
+                : {}),
+            })
+          }
           disabled={!valid || pending}
           className={cn(
             "min-h-[44px] sm:min-h-0 px-4 py-2 rounded-md text-[13px] transition-colors",
