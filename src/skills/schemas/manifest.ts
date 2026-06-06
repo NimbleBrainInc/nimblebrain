@@ -39,12 +39,7 @@ const SkillScope = Type.Union([
   Type.Literal("bundle"),
 ]);
 
-const SkillStatus = Type.Union([
-  Type.Literal("active"),
-  Type.Literal("draft"),
-  Type.Literal("disabled"),
-  Type.Literal("archived"),
-]);
+const SkillStatus = Type.Union([Type.Literal("active"), Type.Literal("disabled")]);
 
 const SkillLoadingStrategy = Type.Union([
   Type.Literal("always"),

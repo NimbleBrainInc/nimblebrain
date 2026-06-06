@@ -51,7 +51,6 @@ import {
   SkillsDeleteInput,
   SkillsListInput,
   SkillsLoadingLogInput,
-  SkillsMoveScopeInput,
   SkillsReadInput,
   SkillsUpdateInput,
 } from "./schemas/skills.ts";
@@ -134,13 +133,6 @@ const SKILLS_ACTIVATE_DESCRIPTION =
 const SKILLS_DEACTIVATE_DESCRIPTION =
   "Deactivate a skill (set status=disabled). The skill stays on disk but is skipped during Layer 3 " +
   "selection. Reactivate with `activate`. Use to mute a skill mid-incident without deleting it.";
-
-const SKILLS_MOVE_SCOPE_DESCRIPTION =
-  "Relocate a Layer 3 skill across scope tiers (e.g. workspace → org to promote a " +
-  "workspace-local skill that should apply org-wide). The `id` is the filesystem path returned " +
-  "by `skills__list`. Snapshots the original to `_versions/` in the source scope, writes to " +
-  "the target scope, then deletes the source. Permissions: caller must satisfy both source " +
-  "and target scope rules.";
 
 // ── Source factory ───────────────────────────────────────────────────────
 
@@ -397,18 +389,6 @@ export function createSkillsSource(runtime: Runtime, eventSink: EventSink): McpS
         }
       },
     },
-    {
-      name: "move_scope",
-      description: SKILLS_MOVE_SCOPE_DESCRIPTION,
-      inputSchema: SkillsMoveScopeInput,
-      handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
-        try {
-          return await moveScopeHandler(runtime, input, eventSink, authoringGuidePath);
-        } catch (err) {
-          return errorResult(err);
-        }
-      },
-    },
   ];
 
   // Layer 1 vendored authoring guide. Callback-form `text` so the file is
@@ -658,7 +638,7 @@ function realPathUnderAnyRootOrThrow(target: string, roots: string[]): string {
  *   3. realUserId === lexicalUserId for user scope — same for
  *      `{workDir}/users/`.
  *
- * Called from update / delete / move_scope (after existsSync, before
+ * Called from update / delete (after existsSync, before
  * any FS read or write that follows symlinks) and from skills__read.
  */
 function assertSymlinkBoundaryOrThrow(
@@ -1101,7 +1081,6 @@ function summarizeLog(events: LoadingLogEntry[]): string {
 // ── Mutation handlers ────────────────────────────────────────────────────
 
 type WritableScope = "org" | "workspace" | "user";
-const WRITABLE_SCOPES = new Set<WritableScope>(["org", "workspace", "user"]);
 
 interface PermissionDecision {
   allowed: boolean;
@@ -1672,88 +1651,6 @@ async function setStatusHandler(
     eventSink,
     authoringGuidePath,
   );
-}
-
-async function moveScopeHandler(
-  runtime: Runtime,
-  input: Record<string, unknown>,
-  eventSink: EventSink,
-  authoringGuidePath: string,
-): Promise<ToolResult> {
-  const { id, target_scope } = input as { id?: string; target_scope?: string };
-  if (!id) return errorResult(new Error("`id` is required"));
-  if (!target_scope || !WRITABLE_SCOPES.has(target_scope as WritableScope)) {
-    return errorResult(
-      new Error(`target_scope must be one of org | workspace | user (got "${target_scope}")`),
-    );
-  }
-  if (id.startsWith(SKILL_URI_PREFIX)) return bundleNotMutable();
-  const sourceScope = scopeOfPath(runtime, id, authoringGuidePath);
-  if (sourceScope === "bundle") return bundleNotMutable();
-  if (!sourceScope) {
-    return errorResult(new Error(unrecognizedIdMessage(id)));
-  }
-  const target = target_scope as WritableScope;
-  if (sourceScope === target) {
-    return errorResult(new Error(`Skill is already in ${target} scope`));
-  }
-
-  // Source permission — derived from the *source path's* workspace/user
-  // segment. A workspace admin in wsA cannot move a skill out of wsB.
-  const sourceCheck = await checkPathAccess(runtime, id, sourceScope, "write");
-  if (!sourceCheck.allowed) return permissionDenied(sourceCheck.reason ?? "Permission denied");
-
-  // Target permission — derived from the destination path. For
-  // workspace/user targets, scopeDir() picks the caller's own
-  // workspace/user dir, so this is naturally bound to the caller's
-  // identity (no cross-tenant promotion possible).
-  let targetDir: string;
-  try {
-    targetDir = scopeDir(runtime, target);
-  } catch (err) {
-    return errorResult(err);
-  }
-  const targetCheck = await checkPathAccess(runtime, targetDir, target, "write");
-  if (!targetCheck.allowed) return permissionDenied(targetCheck.reason ?? "Permission denied");
-
-  if (!existsSync(id)) return errorResult(new Error(`Skill not found: ${id}`));
-
-  // Symlink-boundary defense on the source path before reading +
-  // copying. parseSkillFile + snapshotVersion both follow symlinks, so
-  // a cross-tenant link would otherwise leak content into the target
-  // location and into _versions/. See updateSkillHandler for full
-  // rationale.
-  try {
-    assertSymlinkBoundaryOrThrow(runtime, id, sourceScope);
-  } catch (err) {
-    return errorResult(err);
-  }
-
-  const skill = parseSkillFile(id);
-  if (!skill) return errorResult(new Error(`Failed to parse skill at ${id}`));
-  const name = skill.manifest.name;
-  const targetPath = join(targetDir, `${name}.md`);
-  if (existsSync(targetPath)) {
-    return errorResult(new Error(`A skill named "${name}" already exists in ${target} scope`));
-  }
-
-  snapshotVersion(id);
-  // Strip the source scope from the manifest so the target dir's loader
-  // stamp wins without conflicting with a stale frontmatter value.
-  const { scope: _drop, ...manifestWithoutScope } = skill.manifest;
-  writeSkill(targetDir, name, manifestWithoutScope as typeof skill.manifest, skill.body);
-  deleteSkill(dirname(id), name);
-  await reloadBootSkills(runtime);
-
-  eventSink.emit({
-    type: "skill.updated",
-    data: { id: targetPath, name, scope: target, action: "move_scope", from: sourceScope },
-  });
-  return {
-    content: textContent(`Moved skill "${name}" from ${sourceScope} → ${target}`),
-    structuredContent: { id: targetPath, name, scope: target, fromScope: sourceScope },
-    isError: false,
-  };
 }
 
 function extractUserIdFromPath(path: string, workDir: string): string | null {

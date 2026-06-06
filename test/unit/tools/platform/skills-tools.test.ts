@@ -317,35 +317,35 @@ describe("skills__list", () => {
   test("status filter excludes other statuses", async () => {
     const wsDir = join(workDir, "workspaces", "ws_a", "skills");
     mkdirSync(wsDir, { recursive: true });
-    const draft = writeSkill(
-      join(wsDir, "drafty.md"),
+    const disabled = writeSkill(
+      join(wsDir, "off.md"),
       {
-        name: "drafty",
+        name: "off-skill",
         description: "x",
         version: "1.0.0",
         type: "skill",
         priority: 50,
-        status: "draft",
+        status: "disabled",
       },
       "body",
     );
-    draft.manifest.scope = "workspace";
+    disabled.manifest.scope = "workspace";
     const active = writeSkill(
       join(wsDir, "live.md"),
       { name: "live", description: "x", version: "1.0.0", type: "skill", priority: 50 },
       "body",
     );
     active.manifest.scope = "workspace";
-    runtime.conversationOverlay = [draft, active];
+    runtime.conversationOverlay = [disabled, active];
     runtime.wsId = "ws_a";
 
     const src = await buildSource();
     const client = src.getClient()!;
-    const result = await client.callTool({ name: "list", arguments: { status: "draft" } });
+    const result = await client.callTool({ name: "list", arguments: { status: "disabled" } });
     const skills = (result as { structuredContent?: { skills?: unknown[] } }).structuredContent
       ?.skills as Array<{ name: string; status: string }>;
-    expect(skills.every((s) => s.status === "draft")).toBe(true);
-    expect(skills.map((s) => s.name)).toContain("drafty");
+    expect(skills.every((s) => s.status === "disabled")).toBe(true);
+    expect(skills.map((s) => s.name)).toContain("off-skill");
     expect(skills.map((s) => s.name)).not.toContain("live");
   });
 

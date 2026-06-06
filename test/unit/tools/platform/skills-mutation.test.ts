@@ -3,7 +3,7 @@
  *
  * Per-tool: happy path + at least one error/permission edge. Versioning
  * (`_versions/{name}.{iso}.md` snapshots) is verified as a side-effect of
- * update / delete / move_scope. The fake runtime is intentionally close to
+ * update / delete. The fake runtime is intentionally close to
  * the read-tool tests' fixture so behavioral parity stays obvious.
  */
 
@@ -484,87 +484,6 @@ describe("skills__activate / skills__deactivate", () => {
   });
 });
 
-// ── move_scope ───────────────────────────────────────────────────────────
-
-describe("skills__move_scope", () => {
-  test("relocates from workspace → platform; original deleted, version snapshot kept", async () => {
-    runtime.wsId = "ws_demo";
-    const src = await buildSource();
-    const client = src.getClient()!;
-    const create = await client.callTool({
-      name: "create",
-      arguments: {
-        scope: "workspace",
-        manifest: { name: "promote-me", description: "test", type: "skill" },
-        body: "wide value",
-      },
-    });
-    expect(create.isError).toBeFalsy();
-    const sourcePath = join(workDir, "workspaces", "ws_demo", "skills", "promote-me.md");
-    expect(existsSync(sourcePath)).toBe(true);
-
-    const result = await client.callTool({
-      name: "move_scope",
-      arguments: { id: sourcePath, target_scope: "org" },
-    });
-    expect(result.isError).toBeFalsy();
-    expect(existsSync(sourcePath)).toBe(false);
-    const targetPath = join(workDir, "skills", "promote-me.md");
-    expect(existsSync(targetPath)).toBe(true);
-    expect(readFileSync(targetPath, "utf-8")).toContain("wide value");
-
-    const versions = readdirSync(join(workDir, "workspaces", "ws_demo", "skills", "_versions"));
-    expect(versions.length).toBe(1);
-  });
-
-  test("refuses no-op move", async () => {
-    const src = await buildSource();
-    const client = src.getClient()!;
-    await client.callTool({
-      name: "create",
-      arguments: {
-        scope: "org",
-        manifest: { name: "stay", description: "test", type: "skill" },
-        body: "x",
-      },
-    });
-    const id = join(workDir, "skills", "stay.md");
-    const result = await client.callTool({
-      name: "move_scope",
-      arguments: { id, target_scope: "org" },
-    });
-    expect(result.isError).toBe(true);
-  });
-
-  test("refuses to overwrite an existing skill at the target", async () => {
-    runtime.wsId = "ws_demo";
-    const src = await buildSource();
-    const client = src.getClient()!;
-    await client.callTool({
-      name: "create",
-      arguments: {
-        scope: "org",
-        manifest: { name: "collide", description: "test", type: "skill" },
-        body: "org",
-      },
-    });
-    await client.callTool({
-      name: "create",
-      arguments: {
-        scope: "workspace",
-        manifest: { name: "collide", description: "test", type: "skill" },
-        body: "workspace",
-      },
-    });
-    const wsPath = join(workDir, "workspaces", "ws_demo", "skills", "collide.md");
-    const result = await client.callTool({
-      name: "move_scope",
-      arguments: { id: wsPath, target_scope: "org" },
-    });
-    expect(result.isError).toBe(true);
-  });
-});
-
 // ── Cross-tenant access regressions ──────────────────────────────────────
 //
 // These exercise the strict access policy: workspace skills are scoped
@@ -646,18 +565,6 @@ describe("cross-workspace access — regression", () => {
     expect(off.isError).toBe(true);
     const on = await client.callTool({ name: "activate", arguments: { id: otherPath } });
     expect(on.isError).toBe(true);
-  });
-
-  test("move_scope from another workspace is permission_denied (source check)", async () => {
-    const otherPath = configureCrossWorkspaceFixture();
-    const src = await buildSource();
-    const client = src.getClient()!;
-    const result = await client.callTool({
-      name: "move_scope",
-      arguments: { id: otherPath, target_scope: "org" },
-    });
-    expect(result.isError).toBe(true);
-    expect(existsSync(otherPath)).toBe(true);
   });
 
   test("read against another workspace's path is permission_denied", async () => {

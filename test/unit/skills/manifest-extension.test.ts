@@ -52,7 +52,7 @@ loading-strategy: tool_affined
 applies-to-tools:
   - synapse-collateral__*
   - "*__patch_source"
-status: draft
+status: disabled
 derived-from: skill://platform/voice-rules
 ---
 Body.
@@ -63,7 +63,7 @@ Body.
       "synapse-collateral__*",
       "*__patch_source",
     ]);
-    expect(skill.manifest.status).toBe("draft");
+    expect(skill.manifest.status).toBe("disabled");
     expect(skill.manifest.derivedFrom).toBe("skill://platform/voice-rules");
   });
 
@@ -219,7 +219,7 @@ describe("Phase 2 manifest fields — round-trip", () => {
       scope: "user",
       loadingStrategy: "tool_affined",
       appliesToTools: ["synapse-collateral__*"],
-      status: "draft",
+      status: "disabled",
       overrides: [{ bundle: "x", skill: "y", reason: "because" }],
       derivedFrom: "skill://platform/parent",
       metadata: {
@@ -235,7 +235,7 @@ describe("Phase 2 manifest fields — round-trip", () => {
     expect(read?.manifest.scope).toBe("user");
     expect(read?.manifest.loadingStrategy).toBe("tool_affined");
     expect(read?.manifest.appliesToTools).toEqual(["synapse-collateral__*"]);
-    expect(read?.manifest.status).toBe("draft");
+    expect(read?.manifest.status).toBe("disabled");
     expect(read?.manifest.overrides).toEqual([
       { bundle: "x", skill: "y", reason: "because" },
     ]);

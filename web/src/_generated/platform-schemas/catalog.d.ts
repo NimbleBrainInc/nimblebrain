@@ -19,7 +19,7 @@ export declare const PlatformToolCatalog: {
                 layer: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<3 | 1>>;
                 type: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                 tool_affinity: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-                status: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"active" | "draft" | "disabled" | "archived">>;
+                status: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"active" | "disabled">>;
                 modified_since: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
             }>;
         };
@@ -49,7 +49,7 @@ export declare const PlatformToolCatalog: {
                     description: import("@sinclair/typebox").TString;
                     type: import("@sinclair/typebox").TUnsafe<"skill" | "context">;
                     priority: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
-                    status: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"active" | "draft" | "disabled" | "archived">>;
+                    status: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"active" | "disabled">>;
                     version: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                     metadata: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
                         keywords: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
@@ -68,7 +68,7 @@ export declare const PlatformToolCatalog: {
                     description: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                     type: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"skill" | "context">>;
                     priority: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
-                    status: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"active" | "draft" | "disabled" | "archived">>;
+                    status: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"active" | "disabled">>;
                     version: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                     metadata: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
                         keywords: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
@@ -93,12 +93,6 @@ export declare const PlatformToolCatalog: {
         readonly deactivate: {
             readonly input: import("@sinclair/typebox").TObject<{
                 id: import("@sinclair/typebox").TString;
-            }>;
-        };
-        readonly move_scope: {
-            readonly input: import("@sinclair/typebox").TObject<{
-                id: import("@sinclair/typebox").TString;
-                target_scope: import("@sinclair/typebox").TUnsafe<"user" | "org" | "workspace">;
             }>;
         };
     };

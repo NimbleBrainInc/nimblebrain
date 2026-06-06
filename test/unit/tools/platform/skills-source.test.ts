@@ -96,7 +96,6 @@ describe("skills source — tools list", () => {
       "delete",
       "list",
       "loading_log",
-      "move_scope",
       "read",
       "update",
     ]);

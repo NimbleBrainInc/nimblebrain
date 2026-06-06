@@ -2987,14 +2987,13 @@ export class Runtime {
    * deduplicated by `manifest.name` with later scopes overriding earlier
    * ones (user > workspace > platform).
    *
-   * All three tiers are evaluated fresh per call so authoring or moving
-   * a skill takes effect mid-session without a process restart:
+   * All three tiers are evaluated fresh per call so authoring a skill
+   * takes effect mid-session without a process restart:
    *
    *   - bundled (core + builtin from the source tree) — from the boot-
    *     time `contextSkills` cache, since those files are immutable.
    *   - platform (`{workDir}/skills/`) — fresh disk read, so writes via
-   *     `skills__create` / `skills__update` / `move_scope → platform`
-   *     surface immediately.
+   *     `skills__create` / `skills__update` surface immediately.
    *   - workspace (`{workDir}/workspaces/{wsId}/skills/`) — fresh.
    *   - user (`{workDir}/users/{userId}/skills/`) — fresh.
    *

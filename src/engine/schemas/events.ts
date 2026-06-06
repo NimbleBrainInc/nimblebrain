@@ -126,10 +126,6 @@ export type SkillCreatedPayload = Static<typeof SkillCreatedPayload>;
 
 export const SkillUpdatedPayload = Type.Object({
   ...SkillEventCommonFields,
-  /** Set by move_scope to indicate the source-of-update; absent on regular updates. */
-  action: Type.Optional(Type.Literal("move_scope")),
-  /** Original scope when action="move_scope". */
-  from: Type.Optional(WritableSkillScope),
 });
 export type SkillUpdatedPayload = Static<typeof SkillUpdatedPayload>;
 

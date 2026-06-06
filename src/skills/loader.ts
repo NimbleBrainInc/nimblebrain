@@ -24,7 +24,16 @@ const VALID_LOADING_STRATEGIES = new Set<SkillLoadingStrategy>([
   "retrieval",
   "explicit",
 ]);
-const VALID_STATUSES = new Set<SkillStatus>(["active", "draft", "disabled", "archived"]);
+const VALID_STATUSES = new Set<SkillStatus>(["active", "disabled"]);
+/**
+ * Status rename — the legacy 4-value enum collapsed to a binary.
+ * `draft` and `archived` files keep loading; their value normalises
+ * to `disabled`. The writer never emits the legacy labels.
+ */
+const STATUS_ALIASES: Record<string, SkillStatus> = {
+  draft: "disabled",
+  archived: "disabled",
+};
 const VALID_SCOPES = new Set<SkillScope>(["org", "workspace", "user", "bundle"]);
 /**
  * Scope rename — `platform` was the original Phase-2 label for the
@@ -237,10 +246,15 @@ export function parseSkillContent(raw: string, sourcePath: string): Skill | null
     }
   }
 
-  // `status` defaults to "active" when missing or invalid.
+  // `status` defaults to "active" when missing or invalid. Legacy
+  // values (`draft`, `archived`) normalise to `disabled` silently so
+  // existing files keep loading without a migration.
   let status: SkillStatus = "active";
   if (typeof data.status === "string") {
-    if (VALID_STATUSES.has(data.status as SkillStatus)) {
+    const aliased = STATUS_ALIASES[data.status];
+    if (aliased) {
+      status = aliased;
+    } else if (VALID_STATUSES.has(data.status as SkillStatus)) {
       status = data.status as SkillStatus;
     } else {
       console.error(

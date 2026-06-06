@@ -15,8 +15,8 @@ const SkillType = StringEnum(["skill", "context"] as const, {
   description: "`skill` for procedural how-to content; `context` for declarative facts.",
 });
 
-const SkillStatus = StringEnum(["active", "draft", "disabled", "archived"] as const, {
-  description: "`active` to load. `draft` while authoring. Default `active`.",
+const SkillStatus = StringEnum(["active", "disabled"] as const, {
+  description: "`active` to load, `disabled` to suppress. Default `active`.",
 });
 
 const SkillManifestMetadata = Type.Object({
@@ -69,8 +69,8 @@ export const SkillsListInput = Type.Object({
     }),
   ),
   status: Type.Optional(
-    StringEnum(["active", "draft", "disabled", "archived"] as const, {
-      description: "Filter by lifecycle status. Defaults to all statuses when omitted.",
+    StringEnum(["active", "disabled"] as const, {
+      description: "Filter by enablement state. Defaults to all statuses when omitted.",
     }),
   ),
   modified_since: Type.Optional(
@@ -174,17 +174,6 @@ export type SkillsActivateInput = Static<typeof SkillsActivateInput>;
 export const SkillsDeactivateInput = IdOnlyInput;
 export type SkillsDeactivateInput = Static<typeof SkillsDeactivateInput>;
 
-export const SkillsMoveScopeInput = Type.Object(
-  {
-    id: Type.String({ description: "Filesystem path returned by `skills__list`." }),
-    target_scope: StringEnum(["org", "workspace", "user"] as const, {
-      description: "Tier to relocate the skill into.",
-    }),
-  },
-  { required: ["id", "target_scope"] },
-);
-export type SkillsMoveScopeInput = Static<typeof SkillsMoveScopeInput>;
-
 // ── Tool output types ────────────────────────────────────────────────────
 //
 // Same convention as `automations.ts` §2.1 in `tools/platform/AGENTS.md`:
@@ -202,8 +191,8 @@ export type SkillScope = "org" | "workspace" | "user" | "bundle";
 /** Skill layer per the loading-strategy spec. */
 export type SkillLayer = 1 | 3;
 
-/** Per-skill lifecycle status. */
-export type SkillStatus = "active" | "draft" | "disabled" | "archived";
+/** Per-skill enablement state. */
+export type SkillStatus = "active" | "disabled";
 
 /**
  * Source provenance for a skill — where it came from on disk or via

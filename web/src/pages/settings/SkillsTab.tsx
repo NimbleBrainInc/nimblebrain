@@ -1,9 +1,8 @@
-import { Lightbulb, Plus, Trash2 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Lightbulb, Trash2, User } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import type { ToolInput } from "../../_generated/platform-schemas/catalog";
 import { callTool } from "../../api/client";
-import { Badge } from "../../components/ui/badge";
-import { Button } from "../../components/ui/button";
 import { Card, CardContent } from "../../components/ui/card";
 import { Input } from "../../components/ui/input";
 import { Textarea } from "../../components/ui/textarea";
@@ -11,119 +10,94 @@ import { parseToolResponse } from "../../lib/tool-response";
 import { cn } from "../../lib/utils";
 import { RequireActiveWorkspace } from "./components/RequireActiveWorkspace";
 
-// ── Types ────────────────────────────────────────────────────────────────
-//
-// Canonical shapes from `src/tools/platform/schemas/skills.ts`, mirrored
-// here via codegen at `web/src/_generated/platform-schemas/`. Server and
-// web both import from the same declarations so a shape change in one
-// place can't silently drift from the other (the pattern §2.1 in
-// `src/tools/platform/AGENTS.md` exists to enforce). Local aliases keep
-// the diff small for historical readers.
 import type {
   SkillDetail as ReadSkill,
   SkillScope as Scope,
   SkillsListOutput,
-  SkillStatus as Status,
   SkillSummary as ListedSkill,
 } from "../../_generated/platform-schemas/skills";
 
-// ── Helpers ──────────────────────────────────────────────────────────────
+// ── Wrappers ─────────────────────────────────────────────────────────────
 
-function formatTokens(n: number): string {
-  if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
-  return String(n);
-}
-
-const SCOPE_BADGE: Record<Scope, string> = {
-  org: "border-blue-300/30 text-blue-400",
-  workspace: "border-emerald-300/30 text-emerald-400",
-  user: "border-violet-300/30 text-violet-400",
-  bundle: "border-amber-300/30 text-amber-400",
-};
-
-const STATUS_BADGE: Record<Status, string> = {
-  active: "border-emerald-300/30 text-emerald-500",
-  draft: "border-amber-300/30 text-amber-500",
-  disabled: "border-muted text-muted-foreground",
-  archived: "border-muted text-muted-foreground",
-};
-
-// ── Component ────────────────────────────────────────────────────────────
-
+/** Workspace settings tab — `/w/:slug/settings/skills`. */
 export function SkillsTab() {
   return (
     <RequireActiveWorkspace>
-      <SkillsBrowser />
+      <SkillsBrowser surface="workspace" />
     </RequireActiveWorkspace>
   );
 }
 
 /**
- * Shared skills browser. The workspace tab renders it with no lock so users
- * can see/filter every scope they have access to; the org-admin tab renders
- * it with `lockedScope="org"` so only org-tier skills are listed, the scope
- * filter UI is suppressed, and the create form has no scope picker (org is
- * the only writable target on that surface).
+ * Shared skills browser.
  *
- * Per SKILLS_SURFACE.md, Phase 2 will refactor the workspace tab to grouped
- * sections (workspace + inherited-org + inherited-bundles + personal-footer).
- * That work touches this same component; the `lockedScope` param is the
- * minimal Phase 1 hook so we don't ship duplicated state machines.
+ *   - `surface="workspace"` — grouped sections (workspace editable +
+ *     inherited org disabled + inherited bundles disabled) + personal
+ *     footer + create locked to workspace.
+ *   - `lockedScope="org"` — single-scope org-tier view + create locked
+ *     to org. (Org-admin tab calls this directly via OrgSkillsTab.)
+ *
+ * The two props are independent. No-prop callers fall through to the
+ * legacy "show every scope" view, kept only for the test seam — no
+ * production route uses it.
  */
-type DetailMode = "view" | "edit";
+interface SkillsBrowserProps {
+  lockedScope?: Scope;
+  surface?: "workspace";
+}
 
-export function SkillsBrowser({ lockedScope }: { lockedScope?: Scope } = {}) {
+type WritableScope = "org" | "workspace" | "user";
+
+export function SkillsBrowser({ lockedScope, surface }: SkillsBrowserProps = {}) {
+  const isWorkspaceSurface = surface === "workspace";
+  const initialScopeFilter: Scope | "all" = isWorkspaceSurface ? "all" : (lockedScope ?? "all");
+  const createLockedScope: WritableScope | undefined = isWorkspaceSurface
+    ? "workspace"
+    : lockedScope === "org" || lockedScope === "workspace" || lockedScope === "user"
+      ? lockedScope
+      : undefined;
+
   const [skills, setSkills] = useState<ListedSkill[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<ReadSkill | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  // When the surface is scope-locked, the filter UI is hidden and the lock
-  // value is the effective filter — `setScopeFilter` becomes a no-op via the
-  // hidden control. Default the state to the lock so the first fetch is
-  // already scoped (no flash of "all").
-  const [scopeFilter, setScopeFilter] = useState<Scope | "all">(lockedScope ?? "all");
-  const [statusFilter, setStatusFilter] = useState<Status | "all">("active");
-  const [mode, setMode] = useState<DetailMode>("view");
-  const [creating, setCreating] = useState(false);
   const [actionPending, setActionPending] = useState(false);
+  const [view, setView] = useState<"list" | "edit">("list");
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   const fetchSkills = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       const args: Record<string, unknown> = {};
-      if (scopeFilter !== "all") args.scope = scopeFilter;
-      if (statusFilter !== "all") args.status = statusFilter;
+      if (initialScopeFilter !== "all") args.scope = initialScopeFilter;
+      // List both active and disabled so the user can see Off rules and
+      // turn them back on. The per-row toggle reflects the current state.
       const res = await callTool("skills", "list", args);
       const data = parseToolResponse<SkillsListOutput>(res);
       setSkills(data.skills);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Failed to load skills.";
-      setError(msg);
+      setError(err instanceof Error ? err.message : "Failed to load skills.");
       setSkills([]);
     } finally {
       setLoading(false);
     }
-  }, [scopeFilter, statusFilter]);
+  }, [initialScopeFilter]);
 
   useEffect(() => {
     void fetchSkills();
   }, [fetchSkills]);
 
-  // When the catalog reloads, refresh the open detail panel if its skill is
-  // still in view; otherwise drop the selection.
   useEffect(() => {
     if (!selectedId) return;
     if (!skills.some((s) => s.id === selectedId)) {
       setSelectedId(null);
       setDetail(null);
-      setMode("view");
     }
   }, [skills, selectedId]);
 
-  // Fetch the detail body whenever selection changes.
   const fetchDetail = useCallback(async (id: string) => {
     setDetailLoading(true);
     try {
@@ -131,8 +105,7 @@ export function SkillsBrowser({ lockedScope }: { lockedScope?: Scope } = {}) {
       const data = parseToolResponse<ReadSkill>(res);
       setDetail(data);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Failed to read skill.";
-      setError(msg);
+      setError(err instanceof Error ? err.message : "Failed to read skill.");
       setDetail(null);
     } finally {
       setDetailLoading(false);
@@ -142,25 +115,14 @@ export function SkillsBrowser({ lockedScope }: { lockedScope?: Scope } = {}) {
   useEffect(() => {
     if (!selectedId) {
       setDetail(null);
-      setMode("view");
       return;
     }
     void fetchDetail(selectedId);
   }, [selectedId, fetchDetail]);
 
   const handleSelect = useCallback((id: string) => {
-    setMode("view");
-    setCreating(false);
     setError(null);
-    setSelectedId(id);
-  }, []);
-
-  const handleStartCreate = useCallback(() => {
-    setSelectedId(null);
-    setDetail(null);
-    setMode("view");
-    setCreating(true);
-    setError(null);
+    setSelectedId((prev) => (prev === id ? null : id));
   }, []);
 
   const runMutation = useCallback(
@@ -177,8 +139,7 @@ export function SkillsBrowser({ lockedScope }: { lockedScope?: Scope } = {}) {
         await fetchSkills();
         onSuccess?.(data);
       } catch (err) {
-        const msg = err instanceof Error ? err.message : `Failed to ${tool} skill.`;
-        setError(msg);
+        setError(err instanceof Error ? err.message : `Failed to ${tool} skill.`);
       } finally {
         setActionPending(false);
       }
@@ -186,817 +147,677 @@ export function SkillsBrowser({ lockedScope }: { lockedScope?: Scope } = {}) {
     [fetchSkills],
   );
 
-  const handleCreate = useCallback(
-    async (input: CreateInput) => {
-      await runMutation("create", input, (result) => {
-        setCreating(false);
-        if (result.id) setSelectedId(result.id);
-      });
+  const handleToggle = useCallback(
+    async (skill: ListedSkill) => {
+      const tool = skill.status === "active" ? "deactivate" : "activate";
+      await runMutation(tool, { id: skill.id });
     },
     [runMutation],
-  );
-
-  const handleSaveEdit = useCallback(
-    async (id: string, patch: { manifest: Record<string, unknown>; body: string }) => {
-      await runMutation("update", { id, manifest: patch.manifest, body: patch.body }, async () => {
-        setMode("view");
-        await fetchDetail(id);
-      });
-    },
-    [runMutation, fetchDetail],
   );
 
   const handleDelete = useCallback(
     async (id: string) => {
-      if (!window.confirm("Delete this skill? It will be snapshotted to _versions/ first.")) {
-        return;
-      }
+      if (!window.confirm("Delete this rule? It will be snapshotted to _versions/ first.")) return;
       await runMutation("delete", { id }, () => {
         setSelectedId(null);
         setDetail(null);
-        setMode("view");
       });
     },
     [runMutation],
   );
 
-  const handleToggleStatus = useCallback(
-    async (id: string, currentStatus: string | undefined) => {
-      const tool = currentStatus === "active" ? "deactivate" : "activate";
-      await runMutation(tool, { id }, () => {
-        void fetchDetail(id);
-      });
-    },
-    [runMutation, fetchDetail],
-  );
-
-  const handleMoveScope = useCallback(
-    async (id: string, targetScope: WritableScope) => {
-      if (
-        !window.confirm(
-          `Move skill to ${targetScope} scope? The original location is removed (snapshotted first).`,
-        )
-      ) {
-        return;
+  const handleSubmit = useCallback(
+    async (patch: {
+      name: string;
+      body: string;
+      loadingStrategy: "auto" | "always";
+      priority: number;
+    }) => {
+      const manifest: Record<string, unknown> = {
+        name: patch.name,
+        description: "",
+        type: "context",
+        priority: patch.priority,
+        ...(patch.loadingStrategy === "always" ? { loadingStrategy: "always" } : {}),
+      };
+      if (editingId) {
+        await runMutation("update", { id: editingId, manifest, body: patch.body }, () => {
+          setView("list");
+          setEditingId(null);
+        });
+      } else {
+        await runMutation(
+          "create",
+          { scope: createLockedScope ?? "workspace", manifest, body: patch.body },
+          (result) => {
+            setView("list");
+            setEditingId(null);
+            if (result.id) setSelectedId(result.id);
+          },
+        );
       }
-      await runMutation("move_scope", { id, target_scope: targetScope }, (result) => {
-        if (result.id) setSelectedId(result.id);
-      });
     },
-    [runMutation],
+    [editingId, createLockedScope, runMutation],
   );
 
-  const grouped = useMemo(() => groupByScope(skills), [skills]);
+  const startCreate = useCallback(() => {
+    setEditingId(null);
+    setView("edit");
+    setError(null);
+  }, []);
+
+  const startEdit = useCallback((id: string) => {
+    setEditingId(id);
+    setView("edit");
+    setError(null);
+  }, []);
+
+  const cancelEdit = useCallback(() => {
+    setEditingId(null);
+    setView("list");
+    setError(null);
+  }, []);
+
+  const grouped = useMemo(
+    () => groupByScope(skills, { excludeUser: isWorkspaceSurface }),
+    [skills, isWorkspaceSurface],
+  );
+  const personalCount = useMemo(
+    () => (isWorkspaceSurface ? skills.filter((s) => s.scope === "user").length : 0),
+    [skills, isWorkspaceSurface],
+  );
+
+  if (view === "edit") {
+    const existing = editingId && detail?.id === editingId ? detail : null;
+    return (
+      <EditView
+        existing={existing}
+        loading={editingId !== null && (!detail || detail.id !== editingId)}
+        pending={actionPending}
+        error={error}
+        onCancel={cancelEdit}
+        onSubmit={handleSubmit}
+      />
+    );
+  }
 
   return (
-    <div className="space-y-4">
-      <header className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
+    <main className="max-w-[760px] mx-auto pt-2 sm:pt-6 px-1 sm:px-2">
+      <header className="mb-8 sm:mb-12">
+        <h2 className="flex items-center gap-2 text-[22px] tracking-tight text-foreground">
           <Lightbulb className="h-4 w-4 text-muted-foreground" />
-          <h2 className="text-base font-semibold">Skills</h2>
-        </div>
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={handleStartCreate}
-          disabled={creating || actionPending}
-        >
-          <Plus className="h-3.5 w-3.5 mr-1" />
-          New skill
-        </Button>
+          Skills
+        </h2>
+        <p className="text-sm text-muted-foreground mt-2 max-w-[52ch]">
+          {lockedScope === "org"
+            ? "Organization-wide rules. These apply to every workspace."
+            : isWorkspaceSurface
+              ? "Rules that shape what your agent says and how it works in this workspace."
+              : "Rules that shape your agent's behavior."}
+        </p>
       </header>
-      <p className="text-xs text-muted-foreground">
-        {lockedScope === "org" ? (
-          <>
-            Organization-wide skills. These load into every workspace's agent context and apply to
-            every member. Authored here or as markdown files under{" "}
-            <code>~/.nimblebrain/skills/</code>.
-          </>
-        ) : (
-          <>
-            Layer 3 cross-bundle agent orchestration content (voice, workflow, personal, tool
-            routing) plus Layer 1 vendored bundle skills. The agent uses these to shape its
-            behavior; you can also author them as markdown files under{" "}
-            <code>~/.nimblebrain/skills/</code> (org), <code>workspaces/&lt;wsId&gt;/skills/</code>,
-            or <code>users/&lt;userId&gt;/skills/</code>.
-          </>
-        )}
-      </p>
 
-      <Filters
-        scope={scopeFilter}
-        status={statusFilter}
-        onScopeChange={setScopeFilter}
-        onStatusChange={setStatusFilter}
-        lockedScope={lockedScope}
-      />
-
-      {loading && <div className="text-sm text-muted-foreground">Loading skills…</div>}
+      {loading && <div className="text-sm text-muted-foreground py-4">Loading rules…</div>}
       {error && (
-        <Card>
+        <Card className="mb-4">
           <CardContent className="py-3 px-4">
             <p className="text-sm text-destructive">{error}</p>
           </CardContent>
         </Card>
       )}
 
-      {!loading && !creating && skills.length === 0 && (
+      {!loading && skills.length === 0 && (
         <Card>
           <CardContent className="py-8 text-center">
             <p className="text-sm text-muted-foreground">
-              No skills match the current filters. Click <strong>New skill</strong> to create one,
-              or drop a markdown file under any of the skills directories above.
+              No rules here yet. Click <strong>+ Add a rule</strong> below to write one.
             </p>
           </CardContent>
         </Card>
       )}
 
-      {!loading && (creating || skills.length > 0) && (
-        <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
-          <SkillList grouped={grouped} selectedId={selectedId} onSelect={handleSelect} />
-          {creating ? (
-            <CreateForm
-              pending={actionPending}
-              // Only "org" is a live caller today (Phase 1). Phase 2 will
-              // add "workspace" / "user" callers and broaden this narrowing
-              // when those branches actually ship.
-              lockedScope={lockedScope === "org" ? "org" : undefined}
-              onCancel={() => {
-                setCreating(false);
-                setError(null);
-              }}
-              onSubmit={handleCreate}
-            />
-          ) : (
-            <SkillDetail
-              selectedId={selectedId}
-              detail={detail}
-              loading={detailLoading}
-              mode={mode}
-              actionPending={actionPending}
-              onEdit={() => {
-                setError(null);
-                setMode("edit");
-              }}
-              onCancelEdit={() => {
-                setMode("view");
-                setError(null);
-              }}
-              onSave={(patch) => selectedId && handleSaveEdit(selectedId, patch)}
-              onDelete={() => selectedId && handleDelete(selectedId)}
-              onToggleStatus={() =>
-                selectedId && handleToggleStatus(selectedId, detail?.metadata.status)
-              }
-              onMoveScope={(target) => selectedId && handleMoveScope(selectedId, target)}
-              placeholder={skills.length > 0}
-            />
-          )}
+      {!loading && skills.length > 0 && (
+        <div className="border-t border-border">
+          {grouped.map((group) => {
+            const inherited = isWorkspaceSurface && group.scope !== "workspace";
+            if (inherited) {
+              return (
+                <InheritedSection
+                  key={group.scope}
+                  title={
+                    group.scope === "org"
+                      ? "From your organization"
+                      : group.scope === "bundle"
+                        ? "From installed apps"
+                        : `From ${group.scope}`
+                  }
+                  rules={group.skills}
+                  deepLinkLabel={group.scope === "org" ? "Edit in org settings" : undefined}
+                  deepLinkTo={group.scope === "org" ? "/org/skills" : undefined}
+                  expandedId={selectedId}
+                  onSelect={handleSelect}
+                  detail={detail}
+                  detailLoading={detailLoading}
+                />
+              );
+            }
+            return group.skills.map((s) => (
+              <Rule
+                key={s.id}
+                skill={s}
+                expanded={selectedId === s.id}
+                detail={selectedId === s.id ? detail : null}
+                detailLoading={selectedId === s.id && detailLoading}
+                onSelect={() => handleSelect(s.id)}
+                onToggle={() => handleToggle(s)}
+                onEdit={() => startEdit(s.id)}
+                onDelete={() => handleDelete(s.id)}
+                pending={actionPending}
+              />
+            ));
+          })}
         </div>
       )}
-    </div>
+
+      {!loading && (
+        <button
+          type="button"
+          onClick={startCreate}
+          disabled={actionPending}
+          className="mt-6 py-2 text-[13px] text-foreground hover:opacity-70 underline-offset-4 hover:underline disabled:opacity-40"
+        >
+          + Add a rule
+        </button>
+      )}
+
+      {isWorkspaceSurface && <PersonalFooter count={personalCount} />}
+    </main>
   );
 }
 
-type WritableScope = "org" | "workspace" | "user";
-
-// Args shape derived from the schema catalog. `name` lives inside `manifest`
-// because that's where the on-disk frontmatter has it — see the original
-// SkillsTab incident where the form was sending name at the root and the
-// validator rejected it.
-type CreateInput = ToolInput<"skills", "create">;
-
-// ── List view ────────────────────────────────────────────────────────────
+// ── Group / partition ────────────────────────────────────────────────────
 
 interface GroupedSkills {
   scope: Scope;
   skills: ListedSkill[];
 }
 
-function groupByScope(skills: ListedSkill[]): GroupedSkills[] {
-  const order: Scope[] = ["user", "workspace", "org", "bundle"];
+function groupByScope(skills: ListedSkill[], opts?: { excludeUser?: boolean }): GroupedSkills[] {
+  const order: Scope[] = opts?.excludeUser
+    ? ["workspace", "org", "bundle"]
+    : ["user", "workspace", "org", "bundle"];
   const map = new Map<Scope, ListedSkill[]>();
   for (const s of skills) {
+    if (opts?.excludeUser && s.scope === "user") continue;
     const list = map.get(s.scope) ?? [];
     list.push(s);
     map.set(s.scope, list);
   }
-  for (const list of map.values()) {
-    list.sort((a, b) => a.name.localeCompare(b.name));
-  }
+  for (const list of map.values()) list.sort((a, b) => a.name.localeCompare(b.name));
   return order.filter((s) => map.has(s)).map((scope) => ({ scope, skills: map.get(scope)! }));
 }
 
-const SCOPE_LABEL: Record<Scope, string> = {
-  user: "User",
-  workspace: "Workspace",
-  org: "Org",
-  bundle: "Bundle (Layer 1)",
-};
+// ── Rule row ─────────────────────────────────────────────────────────────
 
-function SkillList({
-  grouped,
-  selectedId,
+function firstSentence(s: string): string {
+  const m = s.match(/^[^.\n]*[.!?]/);
+  return m ? m[0].trim() : s.trim();
+}
+
+function Rule({
+  skill,
+  expanded,
+  detail,
+  detailLoading,
+  inherited,
   onSelect,
+  onToggle,
+  onEdit,
+  onDelete,
+  pending,
 }: {
-  grouped: GroupedSkills[];
-  selectedId: string | null;
-  onSelect: (id: string) => void;
+  skill: ListedSkill;
+  expanded: boolean;
+  detail: ReadSkill | null;
+  detailLoading: boolean;
+  inherited?: boolean;
+  onSelect: () => void;
+  onToggle: () => void;
+  onEdit?: () => void;
+  onDelete?: () => void;
+  pending: boolean;
 }) {
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+  const [shellH, setShellH] = useState(0);
+  useEffect(() => {
+    if (!expanded) {
+      setShellH(0);
+      return;
+    }
+    requestAnimationFrame(() => {
+      if (bodyRef.current) setShellH(bodyRef.current.scrollHeight);
+    });
+  }, [expanded, detail]);
+
+  // Resting label = first sentence of the body when we have it; otherwise
+  // the summary description; otherwise the name. We don't fetch the body
+  // just for the label — only the expanded row has body content available.
+  const restingLabel =
+    detail && detail.id === skill.id
+      ? firstSentence(detail.content)
+      : firstSentence(skill.description ?? "") || skill.name;
+
   return (
-    <div className="space-y-4">
-      {grouped.map((group) => (
-        <section key={group.scope} className="space-y-1.5">
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground px-1">
-            {SCOPE_LABEL[group.scope]}{" "}
-            <span className="text-muted-foreground/60 font-normal">({group.skills.length})</span>
-          </h3>
-          <div className="grid gap-1">
-            {group.skills.map((s) => (
-              <SkillRow
-                key={s.id}
-                skill={s}
-                selected={s.id === selectedId}
-                onSelect={() => onSelect(s.id)}
-              />
-            ))}
+    <div className={cn("py-5 sm:py-6 border-b border-border", inherited && "opacity-80")}>
+      <button
+        type="button"
+        onClick={onSelect}
+        className="w-full text-left grid items-center gap-[clamp(20px,6vw,56px)] grid-cols-[1fr_auto]"
+      >
+        <div className="min-w-0 pr-1">
+          <div className="text-[15.5px] sm:text-[16px] leading-[1.5] tracking-[-0.005em] text-foreground">
+            {restingLabel}
           </div>
-        </section>
-      ))}
+        </div>
+        <div className="justify-self-end">
+          <Toggle
+            on={skill.status === "active"}
+            onChange={onToggle}
+            locked={inherited || pending}
+            label={skill.name}
+          />
+        </div>
+      </button>
+
+      <div
+        style={{ maxHeight: shellH, opacity: expanded ? 1 : 0 }}
+        className="overflow-hidden transition-[max-height,opacity] duration-300 ease-out"
+        aria-hidden={!expanded}
+      >
+        <div ref={bodyRef} className="pt-4">
+          {detailLoading && <p className="text-xs text-muted-foreground">Loading…</p>}
+          {!detailLoading && detail && detail.id === skill.id && (
+            <>
+              <p className="text-[14.5px] leading-relaxed text-foreground/80 max-w-[60ch] whitespace-pre-wrap">
+                {detail.content}
+              </p>
+              <div className="flex flex-wrap items-baseline gap-x-5 gap-y-1 mt-4 text-[11.5px] text-muted-foreground">
+                <span className="font-mono">{skill.name}</span>
+              </div>
+              {!inherited && (
+                <div className="flex gap-6 mt-3">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onEdit?.();
+                    }}
+                    disabled={pending}
+                    className="py-2 text-[12.5px] text-foreground hover:opacity-70 underline-offset-4 hover:underline disabled:opacity-40"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onDelete?.();
+                    }}
+                    disabled={pending}
+                    className="py-2 text-[12.5px] text-muted-foreground hover:text-destructive underline-offset-4 hover:underline disabled:opacity-40 inline-flex items-center gap-1.5"
+                  >
+                    <Trash2 className="h-3 w-3" /> Delete
+                  </button>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
 
-function SkillRow({
-  skill,
-  selected,
-  onSelect,
+// ── Toggle ───────────────────────────────────────────────────────────────
+
+function Toggle({
+  on,
+  onChange,
+  locked,
+  label,
 }: {
-  skill: ListedSkill;
-  selected: boolean;
-  onSelect: () => void;
+  on: boolean;
+  onChange: () => void;
+  locked?: boolean;
+  label: string;
 }) {
   return (
-    <Card
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        if (!locked) onChange();
+      }}
+      disabled={locked}
+      aria-label={`${on ? "Turn off" : "Turn on"} ${label}`}
       className={cn(
-        "cursor-pointer transition-colors",
-        selected ? "ring-1 ring-primary border-primary/40" : "hover:bg-muted/40",
+        "inline-flex items-center gap-2 px-2 py-1.5 sm:py-1 rounded text-[12.5px] font-medium tabular-nums select-none transition-colors",
+        locked
+          ? "text-muted-foreground/70 cursor-not-allowed"
+          : "text-foreground hover:bg-muted active:bg-muted/80",
       )}
     >
-      <CardContent className="py-2.5 px-3">
-        <button
-          type="button"
-          onClick={onSelect}
-          className="w-full flex items-center gap-3 text-left"
-        >
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-medium truncate">{skill.name}</span>
-              {skill.status !== "active" && (
-                <Badge variant="outline" className={cn("text-[10px]", STATUS_BADGE[skill.status])}>
-                  {skill.status}
-                </Badge>
-              )}
-            </div>
-            {skill.description && (
-              <div className="text-xs text-muted-foreground truncate mt-0.5">
-                {skill.description}
-              </div>
-            )}
-          </div>
-          <div className="flex flex-col items-end gap-1 shrink-0">
-            <Badge variant="outline" className={cn("text-[10px]", SCOPE_BADGE[skill.scope])}>
-              L{skill.layer} · {skill.scope}
-            </Badge>
-            <span className="text-[10px] text-muted-foreground tabular-nums">
-              {formatTokens(skill.tokens)} tok
-            </span>
-          </div>
-        </button>
-      </CardContent>
-    </Card>
-  );
-}
-
-// ── Detail panel ─────────────────────────────────────────────────────────
-
-interface SkillDetailProps {
-  selectedId: string | null;
-  detail: ReadSkill | null;
-  loading: boolean;
-  mode: DetailMode;
-  actionPending: boolean;
-  onEdit: () => void;
-  onCancelEdit: () => void;
-  onSave: (patch: { manifest: Record<string, unknown>; body: string }) => void;
-  onDelete: () => void;
-  onToggleStatus: () => void;
-  onMoveScope: (target: WritableScope) => void;
-  placeholder: boolean;
-}
-
-function SkillDetail(props: SkillDetailProps) {
-  const { selectedId, detail, loading, mode, placeholder } = props;
-  if (!selectedId) {
-    return (
-      <Card className="lg:sticky lg:top-4 self-start">
-        <CardContent className="py-12 text-center text-sm text-muted-foreground">
-          {placeholder ? "Select a skill to see its body and metadata." : null}
-        </CardContent>
-      </Card>
-    );
-  }
-  if (loading || !detail) {
-    return (
-      <Card className="lg:sticky lg:top-4 self-start">
-        <CardContent className="py-8 text-sm text-muted-foreground">Loading…</CardContent>
-      </Card>
-    );
-  }
-  if (mode === "edit") {
-    return (
-      <SkillEditor
-        detail={detail}
-        actionPending={props.actionPending}
-        onCancelEdit={props.onCancelEdit}
-        onSave={props.onSave}
-      />
-    );
-  }
-  return (
-    <SkillDetailView
-      detail={detail}
-      actionPending={props.actionPending}
-      onEdit={props.onEdit}
-      onDelete={props.onDelete}
-      onToggleStatus={props.onToggleStatus}
-      onMoveScope={props.onMoveScope}
-    />
-  );
-}
-
-function SkillDetailView({
-  detail,
-  actionPending,
-  onEdit,
-  onDelete,
-  onToggleStatus,
-  onMoveScope,
-}: { detail: ReadSkill } & Pick<
-  SkillDetailProps,
-  "actionPending" | "onEdit" | "onDelete" | "onToggleStatus" | "onMoveScope"
->) {
-  const m = detail.metadata;
-  const isBundle = detail.scope === "bundle";
-  const currentStatus = (m.status ?? "active") as Status;
-  return (
-    <Card className="lg:sticky lg:top-4 self-start">
-      <CardContent className="py-4 px-4 space-y-4">
-        <header className="space-y-2">
-          <div className="flex items-center justify-between gap-2 flex-wrap">
-            <div className="flex items-center gap-2 flex-wrap">
-              <h3 className="text-sm font-semibold">{m.name}</h3>
-              <Badge variant="outline" className={cn("text-[10px]", SCOPE_BADGE[detail.scope])}>
-                L{detail.layer} · {detail.scope}
-              </Badge>
-              <Badge variant="outline" className={cn("text-[10px]", STATUS_BADGE[currentStatus])}>
-                {currentStatus}
-              </Badge>
-            </div>
-            {!isBundle && (
-              <div className="flex items-center gap-1">
-                <Button size="sm" variant="outline" onClick={onEdit} disabled={actionPending}>
-                  Edit
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={onToggleStatus}
-                  disabled={actionPending}
-                >
-                  {currentStatus === "active" ? "Deactivate" : "Activate"}
-                </Button>
-                <ScopeMover
-                  current={detail.scope as WritableScope}
-                  pending={actionPending}
-                  onMove={onMoveScope}
-                />
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={onDelete}
-                  disabled={actionPending}
-                  aria-label="Delete skill"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </Button>
-              </div>
-            )}
-          </div>
-          {m.description && <p className="text-xs text-muted-foreground">{m.description}</p>}
-          {isBundle && (
-            <p className="text-[11px] text-muted-foreground italic">
-              Bundle (Layer 1) skills are vendored — edit them through the bundle's own settings.
-            </p>
-          )}
-        </header>
-
-        <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
-          {m.type && <Row label="Type" value={m.type} />}
-          {m.priority !== undefined && <Row label="Priority" value={String(m.priority)} />}
-          {m.loadingStrategy && <Row label="Loads" value={m.loadingStrategy} />}
-          {m.appliesToTools && m.appliesToTools.length > 0 && (
-            <Row label="Tool affinity" value={m.appliesToTools.join(", ")} mono />
-          )}
-          {detail.modifiedAt && <Row label="Modified" value={formatTime(detail.modifiedAt)} />}
-          {detail.source.path && <Row label="Path" value={detail.source.path} mono />}
-          {detail.source.uri && <Row label="URI" value={detail.source.uri} mono />}
-          {m.derivedFrom && <Row label="Derived from" value={m.derivedFrom} mono />}
-        </dl>
-
-        {m.overrides && m.overrides.length > 0 && (
-          <div className="space-y-1">
-            <div className="text-xs font-medium text-muted-foreground">Overrides</div>
-            <ul className="text-xs space-y-1 list-disc list-inside">
-              {m.overrides.map((o) => (
-                <li key={`${o.bundle ?? ""}-${o.skill ?? ""}-${o.reason}`}>
-                  {o.bundle && <code className="text-[11px]">{o.bundle}</code>}
-                  {o.bundle && o.skill && " / "}
-                  {o.skill && <code className="text-[11px]">{o.skill}</code>}
-                  {(o.bundle || o.skill) && " — "}
-                  <span className="text-muted-foreground">{o.reason}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
+      <span
+        className={cn(
+          "w-2 h-2 rounded-full transition-colors",
+          on ? "bg-emerald-500" : "bg-muted-foreground/60",
         )}
-
-        <div className="space-y-1">
-          <div className="text-xs font-medium text-muted-foreground">Body</div>
-          <pre className="rounded border bg-muted/30 p-3 text-[11px] leading-relaxed whitespace-pre-wrap break-words font-mono max-h-[500px] overflow-auto">
-            {detail.content}
-          </pre>
-        </div>
-      </CardContent>
-    </Card>
+      />
+      {on ? "On" : "Off"}
+      {locked && <span className="ml-1 text-muted-foreground/60 text-[10.5px]">locked</span>}
+    </button>
   );
 }
 
-// ── Editor (shared by edit + create) ─────────────────────────────────────
+// ── Inherited section ────────────────────────────────────────────────────
 
-interface EditorFormState {
-  description: string;
-  type: "context" | "skill";
-  priority: string; // string for input; parsed on save
-  status: Status;
-  body: string;
-}
-
-function SkillEditor({
+function InheritedSection({
+  title,
+  rules,
+  deepLinkLabel,
+  deepLinkTo,
+  expandedId,
+  onSelect,
   detail,
-  actionPending,
-  onCancelEdit,
-  onSave,
-}: { detail: ReadSkill } & Pick<SkillDetailProps, "actionPending" | "onCancelEdit" | "onSave">) {
-  const m = detail.metadata;
-  const [form, setForm] = useState<EditorFormState>({
-    description: m.description ?? "",
-    type: (m.type as "context" | "skill") ?? "skill",
-    priority: m.priority !== undefined ? String(m.priority) : "50",
-    status: (m.status as Status) ?? "active",
-    body: detail.content,
-  });
-
-  const handleSave = () => {
-    const priorityNum = Number.parseInt(form.priority, 10);
-    const patch: NonNullable<ToolInput<"skills", "update">["manifest"]> = {
-      description: form.description,
-      type: form.type,
-      status: form.status,
-      ...(Number.isFinite(priorityNum) ? { priority: priorityNum } : {}),
-    };
-    onSave({ manifest: patch, body: form.body });
-  };
-
+  detailLoading,
+}: {
+  title: string;
+  rules: ListedSkill[];
+  deepLinkLabel?: string;
+  deepLinkTo?: string;
+  expandedId: string | null;
+  onSelect: (id: string) => void;
+  detail: ReadSkill | null;
+  detailLoading: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const activeCount = rules.filter((r) => r.status === "active").length;
   return (
-    <Card className="lg:sticky lg:top-4 self-start">
-      <CardContent className="py-4 px-4 space-y-4">
-        <header className="flex items-center justify-between gap-2">
-          <h3 className="text-sm font-semibold">Edit {m.name}</h3>
-          <div className="flex gap-1">
-            <Button size="sm" variant="outline" onClick={onCancelEdit} disabled={actionPending}>
-              Cancel
-            </Button>
-            <Button size="sm" onClick={handleSave} disabled={actionPending}>
-              {actionPending ? "Saving…" : "Save"}
-            </Button>
-          </div>
-        </header>
-
-        <ManifestForm form={form} setForm={setForm} />
-
-        <div className="space-y-1">
-          <label className="text-xs font-medium" htmlFor="skill-body-edit">
-            Body
-          </label>
-          <Textarea
-            id="skill-body-edit"
-            value={form.body}
-            onChange={(e) => setForm({ ...form, body: e.target.value })}
-            className="font-mono text-[11px] min-h-[300px]"
-          />
+    <section className="mt-10 first:mt-0">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center justify-between py-3 group"
+      >
+        <div className="flex items-center gap-3">
+          <span
+            className={cn(
+              "text-xs text-muted-foreground transition-transform",
+              open && "rotate-90",
+            )}
+          >
+            ▸
+          </span>
+          <span className="text-[13px] text-muted-foreground group-hover:text-foreground">
+            {title}
+          </span>
         </div>
-      </CardContent>
-    </Card>
+        <span className="text-xs text-muted-foreground">{activeCount} active</span>
+      </button>
+      {open && (
+        <div className="mt-1 border-t border-border">
+          {rules.map((r) => (
+            <Rule
+              key={r.id}
+              skill={r}
+              expanded={expandedId === r.id}
+              detail={expandedId === r.id ? detail : null}
+              detailLoading={expandedId === r.id && detailLoading}
+              onSelect={() => onSelect(r.id)}
+              onToggle={() => {}}
+              inherited
+              pending={false}
+            />
+          ))}
+          {deepLinkLabel && deepLinkTo && (
+            <div className="py-3">
+              <Link
+                to={deepLinkTo}
+                className="text-[12.5px] text-foreground hover:opacity-70 underline-offset-4 hover:underline"
+              >
+                {deepLinkLabel} →
+              </Link>
+            </div>
+          )}
+        </div>
+      )}
+    </section>
   );
 }
 
-function CreateForm({
+// ── Personal footer ──────────────────────────────────────────────────────
+
+function PersonalFooter({ count }: { count: number }) {
+  return (
+    <div className="mt-12 pt-6 border-t border-border flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+      <div className="text-xs text-muted-foreground flex items-center gap-2">
+        <User className="h-3.5 w-3.5" />
+        {count === 0
+          ? "No personal rules active here."
+          : `${count} personal rule${count === 1 ? "" : "s"} active here · follow you across every workspace.`}
+      </div>
+      <Link
+        to="/profile"
+        className="text-[12.5px] text-foreground hover:opacity-70 underline-offset-4 hover:underline self-start sm:self-auto"
+      >
+        Edit in your profile →
+      </Link>
+    </div>
+  );
+}
+
+// ── Edit view ────────────────────────────────────────────────────────────
+
+type CreateInput = ToolInput<"skills", "create">;
+export type { CreateInput };
+
+function EditView({
+  existing,
+  loading,
   pending,
-  lockedScope,
+  error,
   onCancel,
   onSubmit,
 }: {
+  existing: ReadSkill | null;
+  loading: boolean;
   pending: boolean;
-  /** When set, force the create scope and hide the picker. Org-tier-only
-   * surfaces pass `"org"` so the form can't author into another scope. */
-  lockedScope?: WritableScope;
+  error: string | null;
   onCancel: () => void;
-  onSubmit: (input: CreateInput) => void;
+  onSubmit: (patch: {
+    name: string;
+    body: string;
+    loadingStrategy: "auto" | "always";
+    priority: number;
+  }) => void;
 }) {
-  const [scope, setScope] = useState<WritableScope>(lockedScope ?? "workspace");
-  const [name, setName] = useState("");
-  const [form, setForm] = useState<EditorFormState>({
-    description: "",
-    type: "skill",
-    priority: "50",
-    status: "active",
-    body: "",
-  });
+  const isNew = existing === null && !loading;
+  const [name, setName] = useState(existing?.metadata.name ?? "");
+  const [body, setBody] = useState(existing?.content ?? "");
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [loadingStrategy, setLoadingStrategy] = useState<"auto" | "always">(
+    existing?.metadata.loadingStrategy === "always" ? "always" : "auto",
+  );
+  const [priority, setPriority] = useState<number>(existing?.metadata.priority ?? 50);
 
-  const handleSubmit = () => {
-    if (!name.trim()) return;
-    const priorityNum = Number.parseInt(form.priority, 10);
-    const manifest: CreateInput["manifest"] = {
-      name: name.trim(),
-      description: form.description,
-      type: form.type,
-      status: form.status,
-      ...(Number.isFinite(priorityNum) ? { priority: priorityNum } : {}),
-    };
-    onSubmit({ scope, manifest, body: form.body });
-  };
+  const nameRef = useRef<HTMLInputElement | null>(null);
+  useEffect(() => {
+    if (isNew) nameRef.current?.focus();
+  }, [isNew]);
+
+  // Sync form to a freshly-loaded detail (e.g. user clicked Edit on a
+  // different rule before the prior read resolved).
+  useEffect(() => {
+    if (existing) {
+      setName(existing.metadata.name);
+      setBody(existing.content);
+      setLoadingStrategy(existing.metadata.loadingStrategy === "always" ? "always" : "auto");
+      setPriority(existing.metadata.priority ?? 50);
+    }
+  }, [existing]);
+
+  const valid = name.trim().length > 0 && body.trim().length > 0;
 
   return (
-    <Card className="lg:sticky lg:top-4 self-start">
-      <CardContent className="py-4 px-4 space-y-4">
-        <header className="flex items-center justify-between gap-2">
-          <h3 className="text-sm font-semibold">New skill</h3>
-          <div className="flex gap-1">
-            <Button size="sm" variant="outline" onClick={onCancel} disabled={pending}>
-              Cancel
-            </Button>
-            <Button size="sm" onClick={handleSubmit} disabled={pending || !name.trim()}>
-              {pending ? "Creating…" : "Create"}
-            </Button>
-          </div>
-        </header>
+    <main className="max-w-[760px] mx-auto pt-2 sm:pt-6 px-1 sm:px-2">
+      <button
+        type="button"
+        onClick={onCancel}
+        className="py-2 text-[13px] text-muted-foreground hover:text-foreground underline-offset-4 hover:underline"
+      >
+        ← back to your rules
+      </button>
 
-        <div className={cn("grid gap-3", lockedScope ? "grid-cols-1" : "grid-cols-2")}>
-          {lockedScope === undefined && (
-            <div className="space-y-1">
-              <label className="text-xs font-medium" htmlFor="skill-scope">
-                Scope
-              </label>
-              <select
-                id="skill-scope"
-                value={scope}
-                onChange={(e) => setScope(e.target.value as WritableScope)}
-                className="rounded-md border bg-background px-2 py-1 text-xs w-full focus:outline-none focus:ring-1 focus:ring-ring"
-              >
-                <option value="user">User</option>
-                <option value="workspace">Workspace</option>
-                <option value="org">Org</option>
-              </select>
-            </div>
-          )}
-          <div className="space-y-1">
-            <label className="text-xs font-medium" htmlFor="skill-name">
-              Name
+      <h2 className="text-[22px] tracking-tight text-foreground mt-6 sm:mt-8">
+        {loading ? "Loading…" : isNew ? "A new rule for your agent" : "Edit this rule"}
+      </h2>
+
+      {error && (
+        <Card className="mt-6">
+          <CardContent className="py-3 px-4">
+            <p className="text-sm text-destructive">{error}</p>
+          </CardContent>
+        </Card>
+      )}
+
+      {!loading && (
+        <div className="mt-10 sm:mt-12 space-y-8 sm:space-y-10">
+          <div>
+            <label className="block text-[12.5px] text-muted-foreground mb-2" htmlFor="rule-name">
+              Name it
             </label>
             <Input
-              id="skill-name"
+              id="rule-name"
+              ref={nameRef}
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="voice-rules"
               pattern="[a-zA-Z0-9_-]+"
+              disabled={!isNew}
+              className="font-mono"
             />
+            {!isNew && (
+              <p className="text-[11.5px] text-muted-foreground mt-1.5">
+                Names are immutable — they're the filename on disk.
+              </p>
+            )}
+          </div>
+
+          <div>
+            <label className="block text-[12.5px] text-muted-foreground mb-2" htmlFor="rule-body">
+              What should the agent do?
+            </label>
+            <Textarea
+              id="rule-body"
+              value={body}
+              onChange={(e) => setBody(e.target.value)}
+              rows={8}
+              placeholder="Match my writing voice. Avoid em-dashes."
+              className="text-[15px] leading-relaxed"
+            />
+            <p className="text-xs text-muted-foreground mt-3">
+              The agent reads this as a rule. Plain English works. Use line breaks for separate
+              ideas.
+            </p>
+          </div>
+
+          <div>
+            <button
+              type="button"
+              onClick={() => setAdvancedOpen((v) => !v)}
+              className="text-[12.5px] text-muted-foreground hover:text-foreground inline-flex items-center gap-2"
+            >
+              <span
+                className={cn(
+                  "text-muted-foreground/60 transition-transform inline-block",
+                  advancedOpen && "rotate-90",
+                )}
+              >
+                ▸
+              </span>
+              Advanced
+              <span className="text-muted-foreground/60">— when to load, priority</span>
+            </button>
+            {advancedOpen && (
+              <div className="mt-4 pl-5 space-y-4 border-l border-border">
+                <div>
+                  <label
+                    className="block text-[12.5px] text-muted-foreground mb-1"
+                    htmlFor="loading-strategy"
+                  >
+                    When to load
+                  </label>
+                  <select
+                    id="loading-strategy"
+                    value={loadingStrategy}
+                    onChange={(e) => setLoadingStrategy(e.target.value as "auto" | "always")}
+                    className="text-[13px] bg-background border-b border-border pb-1 outline-none focus:border-foreground"
+                  >
+                    <option value="auto">Let the system decide</option>
+                    <option value="always">Always</option>
+                  </select>
+                </div>
+                <div>
+                  <label
+                    className="block text-[12.5px] text-muted-foreground mb-1"
+                    htmlFor="priority"
+                  >
+                    Priority
+                  </label>
+                  <input
+                    id="priority"
+                    type="number"
+                    min={1}
+                    max={100}
+                    value={priority}
+                    onChange={(e) => setPriority(parseInt(e.target.value, 10) || 50)}
+                    className="text-[13px] bg-background border-b border-border pb-1 w-20 outline-none focus:border-foreground"
+                  />
+                  <span className="text-[11.5px] text-muted-foreground ml-3">
+                    lower = read first
+                  </span>
+                </div>
+              </div>
+            )}
           </div>
         </div>
-
-        <ManifestForm form={form} setForm={setForm} />
-
-        <div className="space-y-1">
-          <label className="text-xs font-medium" htmlFor="skill-body-new">
-            Body
-          </label>
-          <Textarea
-            id="skill-body-new"
-            value={form.body}
-            onChange={(e) => setForm({ ...form, body: e.target.value })}
-            className="font-mono text-[11px] min-h-[200px]"
-            placeholder="Markdown content of the skill…"
-          />
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-function ManifestForm({
-  form,
-  setForm,
-}: {
-  form: EditorFormState;
-  setForm: (f: EditorFormState) => void;
-}) {
-  const selectClass =
-    "rounded-md border bg-background px-2 py-1 text-xs w-full focus:outline-none focus:ring-1 focus:ring-ring";
-  return (
-    <div className="space-y-3">
-      <div className="space-y-1">
-        <label className="text-xs font-medium" htmlFor="skill-description">
-          Description
-        </label>
-        <Input
-          id="skill-description"
-          value={form.description}
-          onChange={(e) => setForm({ ...form, description: e.target.value })}
-          placeholder="One-line summary of what this skill does"
-        />
-      </div>
-      <div className="grid grid-cols-3 gap-3">
-        <div className="space-y-1">
-          <label className="text-xs font-medium" htmlFor="skill-type">
-            Type
-          </label>
-          <select
-            id="skill-type"
-            value={form.type}
-            onChange={(e) => setForm({ ...form, type: e.target.value as EditorFormState["type"] })}
-            className={selectClass}
-          >
-            <option value="skill">skill (triggered)</option>
-            <option value="context">context (always-on)</option>
-          </select>
-        </div>
-        <div className="space-y-1">
-          <label className="text-xs font-medium" htmlFor="skill-priority">
-            Priority
-          </label>
-          <Input
-            id="skill-priority"
-            type="number"
-            min="11"
-            max="99"
-            value={form.priority}
-            onChange={(e) => setForm({ ...form, priority: e.target.value })}
-          />
-        </div>
-        <div className="space-y-1">
-          <label className="text-xs font-medium" htmlFor="skill-status">
-            Status
-          </label>
-          <select
-            id="skill-status"
-            value={form.status}
-            onChange={(e) => setForm({ ...form, status: e.target.value as Status })}
-            className={selectClass}
-          >
-            <option value="active">active</option>
-            <option value="draft">draft</option>
-            <option value="disabled">disabled</option>
-            <option value="archived">archived</option>
-          </select>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function ScopeMover({
-  current,
-  pending,
-  onMove,
-}: {
-  current: WritableScope;
-  pending: boolean;
-  onMove: (target: WritableScope) => void;
-}) {
-  const targets: WritableScope[] = (["org", "workspace", "user"] as WritableScope[]).filter(
-    (s) => s !== current,
-  );
-  return (
-    <select
-      onChange={(e) => {
-        const v = e.target.value as WritableScope | "";
-        if (v) onMove(v);
-        e.target.value = "";
-      }}
-      defaultValue=""
-      disabled={pending}
-      aria-label="Move skill to a different scope"
-      className="rounded-md border bg-background px-2 py-1 text-xs h-8 disabled:opacity-50"
-    >
-      <option value="">Move to…</option>
-      {targets.map((t) => (
-        <option key={t} value={t}>
-          {t}
-        </option>
-      ))}
-    </select>
-  );
-}
-
-function Row({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
-  return (
-    <>
-      <dt className="text-muted-foreground">{label}</dt>
-      <dd className={cn("break-all", mono && "font-mono text-[11px]")}>{value}</dd>
-    </>
-  );
-}
-
-function formatTime(iso: string): string {
-  try {
-    const d = new Date(iso);
-    return d.toLocaleString();
-  } catch {
-    return iso;
-  }
-}
-
-// ── Filters ──────────────────────────────────────────────────────────────
-
-const SCOPE_OPTIONS: Array<{ value: Scope | "all"; label: string }> = [
-  { value: "all", label: "All scopes" },
-  { value: "user", label: "User" },
-  { value: "workspace", label: "Workspace" },
-  { value: "org", label: "Org" },
-  { value: "bundle", label: "Bundle (L1)" },
-];
-
-const STATUS_OPTIONS: Array<{ value: Status | "all"; label: string }> = [
-  { value: "active", label: "Active" },
-  { value: "draft", label: "Draft" },
-  { value: "disabled", label: "Disabled" },
-  { value: "archived", label: "Archived" },
-  { value: "all", label: "All statuses" },
-];
-
-function Filters({
-  scope,
-  status,
-  onScopeChange,
-  onStatusChange,
-  lockedScope,
-}: {
-  scope: Scope | "all";
-  status: Status | "all";
-  onScopeChange: (s: Scope | "all") => void;
-  onStatusChange: (s: Status | "all") => void;
-  /** When set, suppress the scope selector — the surface is scope-locked. */
-  lockedScope?: Scope;
-}) {
-  const selectClass =
-    "rounded-md border bg-background px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-ring";
-  return (
-    <div className="flex flex-wrap items-center gap-2">
-      {lockedScope === undefined && (
-        <select
-          value={scope}
-          onChange={(e) => onScopeChange(e.target.value as Scope | "all")}
-          className={selectClass}
-          aria-label="Filter by scope"
-        >
-          {SCOPE_OPTIONS.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </select>
       )}
-      <select
-        value={status}
-        onChange={(e) => onStatusChange(e.target.value as Status | "all")}
-        className={selectClass}
-        aria-label="Filter by status"
-      >
-        {STATUS_OPTIONS.map((o) => (
-          <option key={o.value} value={o.value}>
-            {o.label}
-          </option>
-        ))}
-      </select>
-    </div>
+
+      <div className="mt-12 sm:mt-16 flex items-center justify-between border-t border-border pt-6">
+        <button
+          type="button"
+          onClick={onCancel}
+          disabled={pending}
+          className="min-h-[44px] sm:min-h-0 py-2 text-[13px] text-muted-foreground hover:text-foreground underline-offset-4 hover:underline disabled:opacity-40"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={() =>
+            valid && onSubmit({ name: name.trim(), body: body.trim(), loadingStrategy, priority })
+          }
+          disabled={!valid || pending}
+          className={cn(
+            "min-h-[44px] sm:min-h-0 px-4 py-2 rounded-md text-[13px] transition-colors",
+            valid && !pending
+              ? "bg-foreground text-background hover:opacity-80"
+              : "bg-muted text-muted-foreground cursor-not-allowed",
+          )}
+        >
+          {pending ? "Saving…" : "Save"}
+        </button>
+      </div>
+    </main>
   );
 }

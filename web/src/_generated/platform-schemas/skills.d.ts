@@ -8,7 +8,7 @@ export declare const SkillsListInput: import("@sinclair/typebox").TObject<{
     layer: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<3 | 1>>;
     type: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     tool_affinity: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-    status: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"active" | "draft" | "disabled" | "archived">>;
+    status: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"active" | "disabled">>;
     modified_since: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
 }>;
 export type SkillsListInput = Static<typeof SkillsListInput>;
@@ -34,7 +34,7 @@ export declare const SkillsCreateInput: import("@sinclair/typebox").TObject<{
         description: import("@sinclair/typebox").TString;
         type: import("@sinclair/typebox").TUnsafe<"skill" | "context">;
         priority: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
-        status: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"active" | "draft" | "disabled" | "archived">>;
+        status: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"active" | "disabled">>;
         version: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         metadata: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
             keywords: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
@@ -52,7 +52,7 @@ export declare const SkillsUpdateInput: import("@sinclair/typebox").TObject<{
         description: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         type: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"skill" | "context">>;
         priority: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
-        status: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"active" | "draft" | "disabled" | "archived">>;
+        status: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"active" | "disabled">>;
         version: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         metadata: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
             keywords: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
@@ -76,17 +76,12 @@ export declare const SkillsDeactivateInput: import("@sinclair/typebox").TObject<
     id: import("@sinclair/typebox").TString;
 }>;
 export type SkillsDeactivateInput = Static<typeof SkillsDeactivateInput>;
-export declare const SkillsMoveScopeInput: import("@sinclair/typebox").TObject<{
-    id: import("@sinclair/typebox").TString;
-    target_scope: import("@sinclair/typebox").TUnsafe<"user" | "org" | "workspace">;
-}>;
-export type SkillsMoveScopeInput = Static<typeof SkillsMoveScopeInput>;
 /** Tier a skill lives in. */
 export type SkillScope = "org" | "workspace" | "user" | "bundle";
 /** Skill layer per the loading-strategy spec. */
 export type SkillLayer = 1 | 3;
-/** Per-skill lifecycle status. */
-export type SkillStatus = "active" | "draft" | "disabled" | "archived";
+/** Per-skill enablement state. */
+export type SkillStatus = "active" | "disabled";
 /**
  * Source provenance for a skill — where it came from on disk or via
  * a bundle. Optional fields; at least one is populated.

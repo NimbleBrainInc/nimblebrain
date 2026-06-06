@@ -31,11 +31,10 @@ export interface ConfirmationGate {
  *
  * The set is small on purpose: only ops with persistent or destructive
  * effects make it here. Read tools and idempotent state changes don't
- * need confirmation. `skills__delete` and `skills__move_scope` qualify
- * because both can lose data (delete removes the live file, move_scope
- * replaces the source location's skill); `skills__update` does too,
- * but its versioning snapshot makes it trivially recoverable so we lean
- * on description-as-policy there.
+ * need confirmation. `skills__delete` qualifies because it removes the
+ * live file; `skills__update` does too, but its versioning snapshot
+ * makes it trivially recoverable so we lean on description-as-policy
+ * there.
  */
 interface PrivilegeEntry {
   tool: string;
@@ -59,12 +58,6 @@ const PRIVILEGE_CANDIDATES: PrivilegeEntry[] = [
     tool: "skills__delete",
     feature: "skillManagement",
     describe: (input) => `Delete skill ${input.id}? Snapshots to _versions/ before removal.`,
-  },
-  {
-    tool: "skills__move_scope",
-    feature: "skillManagement",
-    describe: (input) =>
-      `Move skill ${input.id} to ${input.target_scope} scope? Source location is removed.`,
   },
 ];
 
@@ -97,8 +90,8 @@ export function createPrivilegeHook(
     const description = entry.describe(call.input);
     const approved = await gate.confirm(description, call.input);
     if (!approved) {
-      // Audit label: the unprefixed tool name (`create`, `delete`,
-      // `move_scope`) so consumers always see a non-empty action.
+      // Audit label: the unprefixed tool name (`create`, `delete`)
+      // so consumers always see a non-empty action.
       const action = call.name.split("__").pop() ?? call.name;
       const target = call.input.name ?? call.input.id ?? null;
       eventSink.emit({
