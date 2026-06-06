@@ -4,12 +4,13 @@ import { Link } from "react-router-dom";
 import { Streamdown } from "streamdown";
 import type { ToolInput } from "../../_generated/platform-schemas/catalog";
 import { callTool } from "../../api/client";
+import { Button } from "../../components/ui/button";
 import { Card, CardContent } from "../../components/ui/card";
 import { Input } from "../../components/ui/input";
 import { Textarea } from "../../components/ui/textarea";
 import { parseToolResponse } from "../../lib/tool-response";
 import { cn } from "../../lib/utils";
-import { RequireActiveWorkspace } from "./components/RequireActiveWorkspace";
+import { RequireActiveWorkspace, Section, SettingsPageHeader } from "./components";
 
 import type {
   SkillDetail as ReadSkill,
@@ -250,20 +251,18 @@ export function SkillsBrowser({ lockedScope, surface }: SkillsBrowserProps = {})
   }
 
   return (
-    <main className="max-w-[760px] mx-auto pt-2 sm:pt-6 px-1 sm:px-2">
-      <header className="mb-8 sm:mb-12">
-        <h2 className="flex items-center gap-2 text-[22px] tracking-tight text-foreground">
-          <Lightbulb className="h-4 w-4 text-muted-foreground" />
-          Skills
-        </h2>
-        <p className="text-sm text-muted-foreground mt-2 max-w-[52ch]">
-          {lockedScope === "org"
+    <div className="max-w-3xl mx-auto space-y-6">
+      <SettingsPageHeader
+        title="Skills"
+        description={
+          lockedScope === "org"
             ? "Organization-wide rules. These apply to every workspace."
             : isWorkspaceSurface
               ? "Rules that shape what your agent says and how it works in this workspace."
-              : "Rules that shape your agent's behavior."}
-        </p>
-      </header>
+              : "Rules that shape your agent's behavior."
+        }
+        icon={<Lightbulb className="h-5 w-5" />}
+      />
 
       {/* Loading message only when we have nothing to render yet — a
        * refetch triggered by a toggle/edit keeps the list mounted so the
@@ -290,88 +289,81 @@ export function SkillsBrowser({ lockedScope, surface }: SkillsBrowserProps = {})
         </Card>
       )}
 
-      {skills.length > 0 && (
-        <div>
-          {grouped.map((group) => {
-            const inherited = isWorkspaceSurface && group.scope !== "workspace";
-            if (inherited) {
-              return (
-                <InheritedSection
-                  key={group.scope}
-                  title={
-                    group.scope === "org"
-                      ? "From your organization"
-                      : group.scope === "bundle"
-                        ? "From the system"
-                        : `From ${group.scope}`
-                  }
-                  rules={group.skills}
-                  deepLinkLabel={group.scope === "org" ? "Edit in org settings" : undefined}
-                  deepLinkTo={group.scope === "org" ? "/org/skills" : undefined}
-                  ambient={group.scope === "bundle"}
-                  expandedId={selectedId}
-                  onSelect={handleSelect}
-                  detail={detail}
-                  detailLoading={detailLoading}
-                />
-              );
-            }
-            // Own (editable) section — matches the inherited-section
-            // header shape so the hierarchy reads as "three peer
-            // sections under the page title" rather than "implicit
-            // primary content followed by labelled buckets". No
-            // chevron; this section is always open.
-            const ownTitle = isWorkspaceSurface
-              ? "From your workspace"
-              : group.scope === "org"
-                ? "Organization rules"
-                : group.scope === "user"
-                  ? "Your rules"
-                  : null;
-            const activeCount = group.skills.filter((s) => s.status === "active").length;
+      {skills.length > 0 &&
+        grouped.map((group, idx) => {
+          const inherited = isWorkspaceSurface && group.scope !== "workspace";
+          const activeCount = group.skills.filter((s) => s.status === "active").length;
+          if (inherited) {
             return (
-              <section key={group.scope} className="mt-0 first:mt-0">
-                {ownTitle && (
-                  <div className="flex items-center justify-between py-3">
-                    <span className="text-[13px] text-foreground">{ownTitle}</span>
-                    <span className="text-xs text-muted-foreground">{activeCount} active</span>
-                  </div>
-                )}
-                <div className="border-t border-border">
-                  {group.skills.map((s) => (
-                    <Rule
-                      key={s.id}
-                      skill={s}
-                      expanded={selectedId === s.id}
-                      detail={selectedId === s.id ? detail : null}
-                      detailLoading={selectedId === s.id && detailLoading}
-                      onSelect={() => handleSelect(s.id)}
-                      onToggle={() => handleToggle(s)}
-                      onEdit={() => startEdit(s.id)}
-                      onDelete={() => handleDelete(s.id)}
-                      pending={actionPending}
-                    />
-                  ))}
-                </div>
-              </section>
+              <InheritedSection
+                key={group.scope}
+                flush={idx === 0}
+                title={
+                  group.scope === "org"
+                    ? "From your organization"
+                    : group.scope === "bundle"
+                      ? "From the system"
+                      : `From ${group.scope}`
+                }
+                rules={group.skills}
+                deepLinkLabel={group.scope === "org" ? "Edit in org settings" : undefined}
+                deepLinkTo={group.scope === "org" ? "/org/skills" : undefined}
+                ambient={group.scope === "bundle"}
+                expandedId={selectedId}
+                onSelect={handleSelect}
+                detail={detail}
+                detailLoading={detailLoading}
+              />
             );
-          })}
-        </div>
-      )}
+          }
+          const ownTitle = isWorkspaceSurface
+            ? "From your workspace"
+            : group.scope === "org"
+              ? "Organization rules"
+              : group.scope === "user"
+                ? "Your rules"
+                : "Rules";
+          return (
+            <Section
+              key={group.scope}
+              flush={idx === 0}
+              title={ownTitle}
+              action={<span className="text-xs text-muted-foreground">{activeCount} active</span>}
+            >
+              <div className="border-t border-border">
+                {group.skills.map((s) => (
+                  <Rule
+                    key={s.id}
+                    skill={s}
+                    expanded={selectedId === s.id}
+                    detail={selectedId === s.id ? detail : null}
+                    detailLoading={selectedId === s.id && detailLoading}
+                    onSelect={() => handleSelect(s.id)}
+                    onToggle={() => handleToggle(s)}
+                    onEdit={() => startEdit(s.id)}
+                    onDelete={() => handleDelete(s.id)}
+                    pending={actionPending}
+                  />
+                ))}
+              </div>
+            </Section>
+          );
+        })}
 
       {!loading && (
-        <button
-          type="button"
+        <Button
+          variant="outline"
+          size="sm"
           onClick={startCreate}
           disabled={actionPending}
-          className="mt-6 py-2 text-[13px] text-foreground hover:opacity-70 underline-offset-4 hover:underline disabled:opacity-40"
+          className="self-start"
         >
           + Add a rule
-        </button>
+        </Button>
       )}
 
       {isWorkspaceSurface && <PersonalFooter count={personalCount} />}
-    </main>
+    </div>
   );
 }
 
@@ -454,19 +446,14 @@ function Rule({
   const labelIsName = label === skill.name;
 
   return (
-    <div className={cn("py-5 sm:py-6 border-b border-border", inherited && "opacity-80")}>
+    <div className={cn("py-4 border-b border-border", inherited && "opacity-80")}>
       <button
         type="button"
         onClick={onSelect}
-        className="w-full text-left grid items-center gap-[clamp(20px,6vw,56px)] grid-cols-[1fr_auto]"
+        className="w-full text-left grid items-center gap-4 sm:gap-6 grid-cols-[1fr_auto]"
       >
         <div className="min-w-0 pr-1">
-          <div
-            className={cn(
-              "text-[15.5px] sm:text-[16px] leading-[1.5] tracking-[-0.005em] text-foreground",
-              labelIsName && "font-mono text-[14px] sm:text-[14.5px]",
-            )}
-          >
+          <div className={cn("text-sm leading-snug text-foreground", labelIsName && "font-mono")}>
             {label}
           </div>
         </div>
@@ -485,44 +472,47 @@ function Rule({
         className="overflow-hidden transition-[max-height,opacity] duration-300 ease-out"
         aria-hidden={!expanded}
       >
-        <div ref={bodyRef} className="pt-4">
+        <div ref={bodyRef} className="pt-3">
           {detailLoading && <p className="text-xs text-muted-foreground">Loading…</p>}
           {!detailLoading && detail && detail.id === skill.id && (
             <>
-              <div className="max-w-[60ch] text-[14.5px] text-foreground/80">
+              <div className="max-w-prose text-sm text-foreground/80">
                 <Streamdown className="streamdown-container presence-assistant-message">
                   {detail.content}
                 </Streamdown>
               </div>
               {!labelIsName && (
-                <div className="flex flex-wrap items-baseline gap-x-5 gap-y-1 mt-4 text-[11.5px] text-muted-foreground">
+                <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 mt-3 text-xs text-muted-foreground">
                   <span className="font-mono">{skill.name}</span>
                 </div>
               )}
               {!inherited && (
-                <div className="flex gap-6 mt-3">
-                  <button
+                <div className="flex gap-4 mt-3">
+                  <Button
                     type="button"
+                    variant="ghost"
+                    size="xs"
                     onClick={(e) => {
                       e.stopPropagation();
                       onEdit?.();
                     }}
                     disabled={pending}
-                    className="py-2 text-[12.5px] text-foreground hover:opacity-70 underline-offset-4 hover:underline disabled:opacity-40"
                   >
                     Edit
-                  </button>
-                  <button
+                  </Button>
+                  <Button
                     type="button"
+                    variant="ghost"
+                    size="xs"
                     onClick={(e) => {
                       e.stopPropagation();
                       onDelete?.();
                     }}
                     disabled={pending}
-                    className="py-2 text-[12.5px] text-muted-foreground hover:text-destructive underline-offset-4 hover:underline disabled:opacity-40 inline-flex items-center gap-1.5"
+                    className="text-muted-foreground hover:text-destructive"
                   >
                     <Trash2 className="h-3 w-3" /> Delete
-                  </button>
+                  </Button>
                 </div>
               )}
             </>
@@ -556,7 +546,7 @@ function Toggle({
       disabled={disabled}
       aria-label={`${on ? "Turn off" : "Turn on"} ${label}`}
       className={cn(
-        "inline-flex items-center gap-2 px-2 py-1 rounded text-[12.5px] font-medium select-none",
+        "inline-flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium select-none",
         disabled ? "text-muted-foreground/70 cursor-not-allowed" : "text-foreground hover:bg-muted",
       )}
     >
@@ -570,7 +560,19 @@ function Toggle({
 
 // ── Inherited section ────────────────────────────────────────────────────
 
+/**
+ * Inherited (read-only) section — a quiet sibling of `Section` that
+ * collapses by default. Uses Section's chrome for consistency: same
+ * top-border separator, same `text-sm font-semibold` title vocabulary.
+ * The header acts as a button (click toggles open/closed); a chevron
+ * sits left of the title to telegraph "this expands".
+ *
+ * `ambient` shrinks the visual weight further (muted title, slightly
+ * dimmed rows) for sections the operator has zero editorial agency
+ * over (bundle / system).
+ */
 function InheritedSection({
+  flush,
   title,
   rules,
   deepLinkLabel,
@@ -581,13 +583,11 @@ function InheritedSection({
   detail,
   detailLoading,
 }: {
+  flush?: boolean;
   title: string;
   rules: ListedSkill[];
   deepLinkLabel?: string;
   deepLinkTo?: string;
-  /** Ambient sections (system / bundle) carry no editorial relationship
-   * to the operator. Render quieter — smaller header, tighter spacing,
-   * dimmed rows so the section sits below the conscious foreground. */
   ambient?: boolean;
   expandedId: string | null;
   onSelect: (id: string) => void;
@@ -597,43 +597,34 @@ function InheritedSection({
   const [open, setOpen] = useState(false);
   const activeCount = rules.filter((r) => r.status === "active").length;
   return (
-    <section className={cn(ambient ? "mt-6 first:mt-0" : "mt-10 first:mt-0")}>
+    <section className={cn("space-y-3", !flush && "pt-6 border-t border-border/60")}>
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className={cn("w-full flex items-center justify-between group", ambient ? "py-2" : "py-3")}
+        className="w-full flex items-start justify-between gap-4 group"
       >
-        <div className="flex items-center gap-3">
+        <h3
+          className={cn(
+            "flex items-center gap-2 text-sm font-semibold transition-colors",
+            ambient
+              ? "text-muted-foreground/80 group-hover:text-foreground"
+              : "text-foreground/80 group-hover:text-foreground",
+          )}
+        >
           <span
             className={cn(
-              "text-xs transition-transform",
-              ambient ? "text-muted-foreground/60" : "text-muted-foreground",
+              "text-xs text-muted-foreground transition-transform",
               open && "rotate-90",
             )}
           >
             ▸
           </span>
-          <span
-            className={cn(
-              "group-hover:text-foreground",
-              ambient
-                ? "text-[12px] text-muted-foreground/70"
-                : "text-[13px] text-muted-foreground",
-            )}
-          >
-            {title}
-          </span>
-        </div>
-        <span
-          className={cn(
-            ambient ? "text-[11px] text-muted-foreground/60" : "text-xs text-muted-foreground",
-          )}
-        >
-          {activeCount} active
-        </span>
+          {title}
+        </h3>
+        <span className="text-xs text-muted-foreground shrink-0">{activeCount} active</span>
       </button>
       {open && (
-        <div className={cn("mt-1 border-t border-border", ambient && "opacity-90")}>
+        <div className={cn("border-t border-border", ambient && "opacity-90")}>
           {rules.map((r) => (
             <Rule
               key={r.id}
@@ -651,7 +642,7 @@ function InheritedSection({
             <div className="py-3">
               <Link
                 to={deepLinkTo}
-                className="text-[12.5px] text-foreground hover:opacity-70 underline-offset-4 hover:underline"
+                className="text-sm text-foreground hover:opacity-70 underline-offset-4 hover:underline"
               >
                 {deepLinkLabel} →
               </Link>
@@ -667,7 +658,7 @@ function InheritedSection({
 
 function PersonalFooter({ count }: { count: number }) {
   return (
-    <div className="mt-12 pt-6 border-t border-border flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+    <div className="pt-6 border-t border-border/60 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
       <div className="text-xs text-muted-foreground flex items-center gap-2">
         <User className="h-3.5 w-3.5" />
         {count === 0
@@ -676,7 +667,7 @@ function PersonalFooter({ count }: { count: number }) {
       </div>
       <Link
         to="/profile/skills"
-        className="text-[12.5px] text-foreground hover:opacity-70 underline-offset-4 hover:underline self-start sm:self-auto"
+        className="text-sm text-foreground hover:opacity-70 underline-offset-4 hover:underline self-start sm:self-auto"
       >
         Edit in your profile →
       </Link>
@@ -766,21 +757,14 @@ function EditView({
   const valid = slug.length > 0 && body.trim().length > 0;
 
   return (
-    <main className="max-w-[760px] mx-auto pt-2 sm:pt-6 px-1 sm:px-2">
-      <button
-        type="button"
-        onClick={onCancel}
-        className="py-2 text-[13px] text-muted-foreground hover:text-foreground underline-offset-4 hover:underline"
-      >
-        ← back to your rules
-      </button>
-
-      <h2 className="text-[22px] tracking-tight text-foreground mt-6 sm:mt-8">
-        {loading ? "Loading…" : isNew ? "A new rule for your agent" : "Edit this rule"}
-      </h2>
+    <div className="max-w-3xl mx-auto space-y-6">
+      <SettingsPageHeader
+        title={loading ? "Loading…" : isNew ? "A new rule for your agent" : "Edit this rule"}
+        back={{ to: "..", label: "Back to skills" }}
+      />
 
       {error && (
-        <Card className="mt-6">
+        <Card>
           <CardContent className="py-3 px-4">
             <p className="text-sm text-destructive">{error}</p>
           </CardContent>
@@ -788,9 +772,9 @@ function EditView({
       )}
 
       {!loading && (
-        <div className="mt-10 sm:mt-12 space-y-8 sm:space-y-10">
-          <div>
-            <label className="block text-[12.5px] text-muted-foreground mb-2" htmlFor="rule-name">
+        <div className="space-y-6">
+          <div className="space-y-2">
+            <label className="block text-sm font-medium" htmlFor="rule-name">
               Name it
             </label>
             <Input
@@ -803,19 +787,19 @@ function EditView({
               className={isNew ? "" : "font-mono"}
             />
             {showSlugHint && (
-              <p className="text-[11.5px] text-muted-foreground mt-1.5">
+              <p className="text-xs text-muted-foreground">
                 Saved as <span className="font-mono">{slug}</span>
               </p>
             )}
             {!isNew && (
-              <p className="text-[11.5px] text-muted-foreground mt-1.5">
+              <p className="text-xs text-muted-foreground">
                 Names are immutable — they're the filename on disk.
               </p>
             )}
           </div>
 
-          <div>
-            <label className="block text-[12.5px] text-muted-foreground mb-2" htmlFor="rule-body">
+          <div className="space-y-2">
+            <label className="block text-sm font-medium" htmlFor="rule-body">
               What should the agent do?
             </label>
             <Textarea
@@ -824,9 +808,8 @@ function EditView({
               onChange={(e) => setBody(e.target.value)}
               rows={8}
               placeholder="Match my writing voice. Avoid em-dashes."
-              className="text-[15px] leading-relaxed"
             />
-            <p className="text-xs text-muted-foreground mt-3">
+            <p className="text-xs text-muted-foreground">
               The agent reads this as a rule. Plain English works. Use line breaks for separate
               ideas.
             </p>
@@ -836,7 +819,7 @@ function EditView({
             <button
               type="button"
               onClick={() => setAdvancedOpen((v) => !v)}
-              className="text-[12.5px] text-muted-foreground hover:text-foreground inline-flex items-center gap-2"
+              className="text-sm text-muted-foreground hover:text-foreground inline-flex items-center gap-2"
             >
               <span
                 className={cn(
@@ -850,46 +833,42 @@ function EditView({
             </button>
             {advancedOpen && (
               <div className="mt-4 pl-5 space-y-4 border-l border-border">
-                <div>
-                  <label
-                    className="block text-[12.5px] text-muted-foreground mb-1"
-                    htmlFor="loading-strategy"
-                  >
+                <div className="space-y-1">
+                  <label className="block text-sm font-medium" htmlFor="loading-strategy">
                     When to load
                   </label>
                   <select
                     id="loading-strategy"
                     value={loadingStrategy}
                     onChange={(e) => setLoadingStrategy(e.target.value as "auto" | "always")}
-                    className="text-[13px] bg-background border-b border-border pb-1 outline-none focus:border-foreground"
+                    className="text-sm bg-background border-b border-border pb-1 outline-none focus:border-foreground"
                   >
                     <option value="auto">Let the system decide</option>
                     <option value="always">Always</option>
                   </select>
-                  <p className="text-[11px] text-muted-foreground/70 mt-1.5 max-w-[48ch]">
+                  <p className="text-xs text-muted-foreground max-w-prose">
                     "Let the system decide" is the right default for short prose rules — the loader
                     picks "always" automatically.
                   </p>
                 </div>
-                <div>
-                  <label
-                    className="block text-[12.5px] text-muted-foreground mb-1"
-                    htmlFor="priority"
-                  >
+                <div className="space-y-1">
+                  <label className="block text-sm font-medium" htmlFor="priority">
                     Priority
                   </label>
-                  <input
-                    id="priority"
-                    type="number"
-                    min={1}
-                    max={100}
-                    value={priority}
-                    onChange={(e) => setPriority(parseInt(e.target.value, 10) || 50)}
-                    className="text-[13px] bg-background border-b border-border pb-1 w-20 outline-none focus:border-foreground"
-                  />
-                  <span className="text-[11.5px] text-muted-foreground ml-3">
-                    lower = read first (default 50)
-                  </span>
+                  <div className="flex items-baseline gap-3">
+                    <input
+                      id="priority"
+                      type="number"
+                      min={1}
+                      max={100}
+                      value={priority}
+                      onChange={(e) => setPriority(parseInt(e.target.value, 10) || 50)}
+                      className="text-sm bg-background border-b border-border pb-1 w-20 outline-none focus:border-foreground"
+                    />
+                    <span className="text-xs text-muted-foreground">
+                      lower = read first (default 50)
+                    </span>
+                  </div>
                 </div>
               </div>
             )}
@@ -897,16 +876,11 @@ function EditView({
         </div>
       )}
 
-      <div className="mt-12 sm:mt-16 flex items-center justify-between border-t border-border pt-6">
-        <button
-          type="button"
-          onClick={onCancel}
-          disabled={pending}
-          className="min-h-[44px] sm:min-h-0 py-2 text-[13px] text-muted-foreground hover:text-foreground underline-offset-4 hover:underline disabled:opacity-40"
-        >
+      <div className="flex items-center justify-between border-t border-border pt-6">
+        <Button type="button" variant="ghost" onClick={onCancel} disabled={pending}>
           Cancel
-        </button>
-        <button
+        </Button>
+        <Button
           type="button"
           onClick={() =>
             valid &&
@@ -925,16 +899,10 @@ function EditView({
             })
           }
           disabled={!valid || pending}
-          className={cn(
-            "min-h-[44px] sm:min-h-0 px-4 py-2 rounded-md text-[13px] transition-colors",
-            valid && !pending
-              ? "bg-foreground text-background hover:opacity-80"
-              : "bg-muted text-muted-foreground cursor-not-allowed",
-          )}
         >
           {pending ? "Saving…" : "Save"}
-        </button>
+        </Button>
       </div>
-    </main>
+    </div>
   );
 }
