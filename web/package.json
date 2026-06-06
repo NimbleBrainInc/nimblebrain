@@ -5,10 +5,12 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "gen:theme": "bun run scripts/gen-theme-css.ts",
+    "build": "bun run gen:theme && tsc --noEmit && vite build",
     "preview": "vite preview",
     "test": "bun test",
-    "check": "bunx tsc --noEmit"
+    "check": "bunx tsc --noEmit",
+    "check:theme": "bun run gen:theme && git diff --exit-code src/theme/tokens.generated.css"
   },
   "dependencies": {
     "@base-ui/react": "^1.3.0",
