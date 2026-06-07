@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "gen:theme": "bun run scripts/gen-theme-css.ts",
-    "build": "bun run gen:theme && tsc --noEmit && vite build",
+    "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "test": "bun test",
     "check": "bunx tsc --noEmit",
