@@ -169,12 +169,7 @@ export function SkillsBrowser({ lockedScope, surface }: SkillsBrowserProps = {})
   );
 
   const handleSubmit = useCallback(
-    async (patch: {
-      name: string;
-      body: string;
-      loadingStrategy?: "auto" | "always";
-      priority?: number;
-    }) => {
+    async (patch: { name: string; body: string; priority?: number }) => {
       // CRITICAL: update is a partial patch — any field present in the
       // manifest is written to disk and overwrites the prior value.
       // So we MUST NOT include description, type, or name on update:
@@ -190,8 +185,14 @@ export function SkillsBrowser({ lockedScope, surface }: SkillsBrowserProps = {})
       // the file doesn't exist yet — and the loader's auto-inference
       // (type=context + no applies-to-tools → always) is the right
       // default for the prose rules this UI authors.
+      //
+      // `loadingStrategy` is NOT plumbed through either path. It's
+      // intentionally absent from the LLM-facing schema
+      // (schemas/skills.ts ManifestFields; cited rationale at
+      // skills.ts:116). Even if we sent it, the validator would
+      // strip it and the writer would never see it. The previous
+      // "When to load" dropdown was decorative — removed.
       const advancedOverrides = {
-        ...(patch.loadingStrategy === "always" ? { loadingStrategy: "always" } : {}),
         ...(patch.priority !== undefined ? { priority: patch.priority } : {}),
       };
       if (editingId) {
@@ -725,25 +726,16 @@ function EditView({
   pending: boolean;
   error: string | null;
   onCancel: () => void;
-  onSubmit: (patch: {
-    name: string;
-    body: string;
-    loadingStrategy?: "auto" | "always";
-    priority?: number;
-  }) => void;
+  onSubmit: (patch: { name: string; body: string; priority?: number }) => void;
 }) {
   const isNew = existing === null && !loading;
   const [name, setName] = useState(existing?.metadata.name ?? "");
   const [body, setBody] = useState(existing?.content ?? "");
-  // Advanced state — only consulted in the edit path, where the user
-  // may want to see/modify on-disk loading_strategy or priority that
-  // existed before the redesign or was authored outside the UI.
-  // For create, the loader's auto-inference is the right default, so
-  // we leave these absent unless the user explicitly opens Advanced.
+  // Priority is the only Advanced field that actually persists —
+  // `loadingStrategy` is intentionally absent from the LLM-facing
+  // schema (schemas/skills.ts) so any value sent here is dropped at
+  // the validator. Don't expose a decorative control.
   const [advancedOpen, setAdvancedOpen] = useState(false);
-  const [loadingStrategy, setLoadingStrategy] = useState<"auto" | "always">(
-    existing?.metadata.loadingStrategy === "always" ? "always" : "auto",
-  );
   const [priority, setPriority] = useState<number>(existing?.metadata.priority ?? 50);
 
   const nameRef = useRef<HTMLInputElement | null>(null);
@@ -757,7 +749,6 @@ function EditView({
     if (existing) {
       setName(existing.metadata.name);
       setBody(existing.content);
-      setLoadingStrategy(existing.metadata.loadingStrategy === "always" ? "always" : "auto");
       setPriority(existing.metadata.priority ?? 50);
     }
   }, [existing]);
@@ -849,24 +840,6 @@ function EditView({
             {advancedOpen && (
               <div className="mt-4 pl-5 space-y-4 border-l border-border">
                 <div className="space-y-1">
-                  <label className="block text-sm font-medium" htmlFor="loading-strategy">
-                    When to load
-                  </label>
-                  <select
-                    id="loading-strategy"
-                    value={loadingStrategy}
-                    onChange={(e) => setLoadingStrategy(e.target.value as "auto" | "always")}
-                    className="text-sm bg-background border-b border-border pb-1 outline-none focus:border-foreground"
-                  >
-                    <option value="auto">Let the system decide</option>
-                    <option value="always">Always</option>
-                  </select>
-                  <p className="text-xs text-muted-foreground max-w-prose">
-                    "Let the system decide" is the right default for short prose rules — the loader
-                    picks "always" automatically.
-                  </p>
-                </div>
-                <div className="space-y-1">
                   <label className="block text-sm font-medium" htmlFor="priority">
                     Priority
                   </label>
@@ -902,14 +875,11 @@ function EditView({
             onSubmit({
               name: slug,
               body: body.trim(),
-              // Only forward Advanced fields when the user actually
-              // touched them (or when editing a rule that already had
-              // them set on disk). For a fresh create with Advanced
-              // never opened, omit both so the loader's auto-default
-              // applies — the audit's no-op finding stays honoured.
-              ...(advancedOpen || existing?.metadata.loadingStrategy === "always"
-                ? { loadingStrategy }
-                : {}),
+              // Only forward priority when the user explicitly opened
+              // Advanced (or when editing a rule that already had a
+              // priority set on disk). For fresh creates with Advanced
+              // never opened, omit so the server's default (50) lands —
+              // sending `priority: 50` ourselves would be redundant.
               ...(advancedOpen || existing?.metadata.priority !== undefined ? { priority } : {}),
             })
           }

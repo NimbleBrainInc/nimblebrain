@@ -322,5 +322,10 @@ describe("SkillsBrowser with surface='workspace' (workspace settings tab)", () =
     expect(manifest.description).toBeUndefined();
     expect(manifest.type).toBeUndefined();
     expect(manifest.name).toBeUndefined();
+    // `loadingStrategy` is intentionally absent from the LLM-facing
+    // schema (schemas/skills.ts ManifestFields). Sending it would be
+    // a silent no-op (validator strips it) and was misleading in the
+    // UI as a "When to load" override. The dropdown is gone.
+    expect(manifest.loadingStrategy).toBeUndefined();
   });
 });
