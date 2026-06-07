@@ -7,6 +7,7 @@ import {
   UnauthorizedError,
 } from "@modelcontextprotocol/sdk/client/auth.js";
 import type {
+  AuthorizationServerMetadata,
   OAuthClientInformationFull,
   OAuthClientInformationMixed,
   OAuthClientMetadata,
@@ -14,6 +15,7 @@ import type {
 } from "@modelcontextprotocol/sdk/shared/auth.js";
 import { validateBundleUrl } from "../bundles/url-validator.ts";
 import { log } from "../cli/log.ts";
+import { buildTenantAssertion } from "../oauth/fleet-assertion.ts";
 import { validateAdditionalAuthorizationParams } from "../util/oauth-params.ts";
 import type { WorkspaceContext } from "../workspace/context.ts";
 import { register as registerInteractiveFlow } from "./oauth-flow-registry.ts";
@@ -184,6 +186,17 @@ export interface WorkspaceOAuthProviderOptions {
    * the bundle is known-headless.
    */
   headlessAuthProbe?: boolean;
+  /**
+   * Issuer of the MCP fleet authorizer (`mcp-authorizer`), e.g.
+   * `https://mcp-authorizer.mcp-shared.svc`. When set, the provider attaches a
+   * signed tenant assertion (infra#16) to the `/token` request — but ONLY when
+   * the token endpoint belongs to this issuer. It is NEVER attached to a vendor
+   * authorization server (Granola, Google, …): a tenant key signature must not
+   * leak to a third party. Leave unset for every provider except the one
+   * driving the fleet-token flow; the assertion also no-ops when the tenant key
+   * (`NB_MCP_AUTHORIZER_TENANT_KEY`) isn't provisioned (rollout phase 1).
+   */
+  fleetAuthorizerIssuer?: string;
 }
 
 /**
@@ -197,6 +210,15 @@ function canonicalEndpoint(u: URL): string {
   const origin = u.origin.toLowerCase();
   const path = u.pathname.replace(/\/+$/, "") || "/";
   return `${origin}${path}`;
+}
+
+/** Lowercased origin of a URL string, or undefined if it doesn't parse. */
+function originOf(value: string | URL): string | undefined {
+  try {
+    return new URL(value).origin.toLowerCase();
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -454,6 +476,8 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
   private readonly additionalAuthorizationParams?: Record<string, string>;
   private readonly abortSignal?: AbortSignal;
   private readonly headlessAuthProbe: boolean;
+  /** Canonical origin of the fleet authorizer issuer, or undefined (off). */
+  private readonly fleetAuthorizerOrigin?: string;
   /** Cached DCR result + tokens to avoid redundant disk reads within a flow. */
   private cachedClientInfo: OAuthClientInformationFull | null = null;
   private cachedTokens: OAuthTokens | null = null;
@@ -528,6 +552,12 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     this.additionalAuthorizationParams = opts.additionalAuthorizationParams;
     this.abortSignal = opts.abortSignal;
     this.headlessAuthProbe = opts.headlessAuthProbe === true;
+    // Pin the fleet authorizer's origin once, at construction — the token-auth
+    // hook compares against this and never against caller-supplied values, so a
+    // vendor token endpoint can't trick the provider into attaching the assertion.
+    this.fleetAuthorizerOrigin = opts.fleetAuthorizerIssuer
+      ? originOf(opts.fleetAuthorizerIssuer)
+      : undefined;
 
     // Resolve the per-owner storage root. Two construction modes:
     //
@@ -866,6 +896,42 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     const data = await this.readJson<{ codeVerifier: string }>(this.dataDir, "verifier.json");
     if (!data) throw new Error("PKCE code verifier missing — OAuth flow corrupted");
     return data.codeVerifier;
+  }
+
+  /**
+   * SDK hook: inject client-auth material into the `/token` request. Used here
+   * to present the fleet tenant assertion (infra#16) — and ONLY to the fleet
+   * authorizer. The assertion binds this tenant's identity to the flow's PKCE
+   * `code_challenge` (= SHA256(code_verifier)); the authorizer verifies the MAC
+   * and mints the proven `tenant_id`.
+   *
+   * Guards, in order:
+   *   1. Off unless `fleetAuthorizerIssuer` was configured on this provider.
+   *   2. Attach only when the token endpoint's origin matches that issuer —
+   *      a tenant key signature must never leak to a vendor token endpoint.
+   *   3. No-op when the tenant key isn't provisioned (rollout phase 1).
+   */
+  async addClientAuthentication(
+    _headers: Headers,
+    params: URLSearchParams,
+    url: string | URL,
+    metadata?: AuthorizationServerMetadata,
+  ): Promise<void> {
+    if (!this.fleetAuthorizerOrigin) return;
+    // The token endpoint we're POSTing to must belong to the fleet authorizer.
+    // Prefer the concrete request URL; fall back to the discovered issuer.
+    const target = originOf(url) ?? (metadata?.issuer ? originOf(metadata.issuer) : undefined);
+    if (target !== this.fleetAuthorizerOrigin) return;
+
+    // `inner` binds the assertion to THIS PKCE flow. The token request already
+    // carries `code_verifier`; the bound challenge is its S256 hash, which is
+    // exactly what the authorizer stored at /authorize.
+    const verifier = params.get("code_verifier");
+    if (!verifier) return;
+    const inner = createHash("sha256").update(verifier).digest("base64url");
+
+    const assertion = buildTenantAssertion({ inner });
+    if (assertion) params.set("tenant_assertion", assertion);
   }
 
   async redirectToAuthorization(url: URL): Promise<void> {

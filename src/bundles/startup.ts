@@ -366,6 +366,12 @@ export async function startBundleSource(
         callbackUrl,
         allowInsecureRemotes: opts?.allowInsecureRemotes === true,
         headlessAuthProbe: ref.headlessAuthProbe === true,
+        // Fleet tenant binding (infra#16). Safe for every server: the provider
+        // only attaches an assertion when the token endpoint's origin matches
+        // this issuer (the fleet authorizer), never to a vendor.
+        ...(process.env.NB_FLEET_AUTHORIZER_ISSUER
+          ? { fleetAuthorizerIssuer: process.env.NB_FLEET_AUTHORIZER_ISSUER }
+          : {}),
         onInteractiveAuthRequired: wrappedCallback,
         ...(staticClient ? { staticClient } : {}),
         ...(ref.scopes ? { scopes: ref.scopes } : {}),

@@ -1,0 +1,111 @@
+import { createHash, randomBytes } from "node:crypto";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { buildTenantAssertion } from "../../src/oauth/fleet-assertion.ts";
+import { verifyEnvelopeAsTenant } from "../../src/oauth/envelope.ts";
+import { WorkspaceOAuthProvider } from "../../src/tools/workspace-oauth-provider.ts";
+
+const KEY = randomBytes(32);
+const KEY_B64 = KEY.toString("base64");
+const FLEET_ISSUER = "https://mcp-authorizer.mcp-shared.svc";
+
+const savedTid = process.env.NB_TENANT_ID;
+const savedKey = process.env.NB_MCP_AUTHORIZER_TENANT_KEY;
+function setEnv(tid?: string, key?: string) {
+  if (tid === undefined) delete process.env.NB_TENANT_ID;
+  else process.env.NB_TENANT_ID = tid;
+  if (key === undefined) delete process.env.NB_MCP_AUTHORIZER_TENANT_KEY;
+  else process.env.NB_MCP_AUTHORIZER_TENANT_KEY = key;
+}
+afterEach(() => setEnv(savedTid, savedKey));
+
+const s256 = (v: string) => createHash("sha256").update(v).digest("base64url");
+
+describe("buildTenantAssertion", () => {
+  it("returns null when the tenant id or key is not provisioned", () => {
+    setEnv(undefined, undefined);
+    expect(buildTenantAssertion({ inner: "chal" })).toBeNull();
+    setEnv("tenant-x", undefined);
+    expect(buildTenantAssertion({ inner: "chal" })).toBeNull();
+    setEnv(undefined, KEY_B64);
+    expect(buildTenantAssertion({ inner: "chal" })).toBeNull();
+  });
+
+  it("signs an assertion the tenant key verifies, carrying the bound inner", () => {
+    setEnv("tenant-x", KEY_B64);
+    const wire = buildTenantAssertion({ inner: "challenge-abc" });
+    expect(wire).not.toBeNull();
+    const payload = verifyEnvelopeAsTenant({
+      wire: wire as string,
+      tenantKey: KEY,
+      expectedTid: "tenant-x",
+    });
+    expect(payload.inner).toBe("challenge-abc");
+  });
+
+  it("throws on a truncated key rather than minting a junk assertion", () => {
+    setEnv("tenant-x", randomBytes(16).toString("base64"));
+    expect(() => buildTenantAssertion({ inner: "chal" })).toThrow();
+  });
+});
+
+describe("WorkspaceOAuthProvider.addClientAuthentication", () => {
+  let workDir: string;
+  beforeEach(() => {
+    workDir = mkdtempSync(join(tmpdir(), "nb-fleet-test-"));
+  });
+
+  function provider(fleetAuthorizerIssuer?: string) {
+    return new WorkspaceOAuthProvider({
+      owner: { type: "workspace", wsId: "ws_test" },
+      serverName: "fleet-srv",
+      workDir,
+      callbackUrl: "http://localhost:27247/v1/mcp-auth/callback",
+      ...(fleetAuthorizerIssuer ? { fleetAuthorizerIssuer } : {}),
+    });
+  }
+  function params(verifier = "the-verifier") {
+    return new URLSearchParams({ grant_type: "authorization_code", code: "c", code_verifier: verifier });
+  }
+
+  it("attaches an assertion bound to the PKCE challenge for the fleet token endpoint", async () => {
+    setEnv("tenant-x", KEY_B64);
+    const p = params();
+    await provider(FLEET_ISSUER).addClientAuthentication(
+      new Headers(),
+      p,
+      `${FLEET_ISSUER}/token`,
+    );
+    const wire = p.get("tenant_assertion");
+    expect(wire).toBeTruthy();
+    const payload = verifyEnvelopeAsTenant({ wire: wire as string, tenantKey: KEY, expectedTid: "tenant-x" });
+    expect(payload.inner).toBe(s256("the-verifier"));
+  });
+
+  it("never attaches to a vendor token endpoint (no key-signature leak)", async () => {
+    setEnv("tenant-x", KEY_B64);
+    const p = params();
+    await provider(FLEET_ISSUER).addClientAuthentication(
+      new Headers(),
+      p,
+      "https://oauth2.googleapis.com/token",
+    );
+    expect(p.get("tenant_assertion")).toBeNull();
+  });
+
+  it("is off when no fleet issuer is configured", async () => {
+    setEnv("tenant-x", KEY_B64);
+    const p = params();
+    await provider(undefined).addClientAuthentication(new Headers(), p, `${FLEET_ISSUER}/token`);
+    expect(p.get("tenant_assertion")).toBeNull();
+  });
+
+  it("no-ops gracefully when the tenant key is not provisioned (rollout phase 1)", async () => {
+    setEnv("tenant-x", undefined);
+    const p = params();
+    await provider(FLEET_ISSUER).addClientAuthentication(new Headers(), p, `${FLEET_ISSUER}/token`);
+    expect(p.get("tenant_assertion")).toBeNull();
+  });
+});
