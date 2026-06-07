@@ -156,12 +156,29 @@ describe("WorkspaceOAuthProvider — authorize redirect probe (interactive)", ()
   });
 
   it("302 to a non-self-target login page registers flow + fires callback + throws UnauthorizedError", async () => {
+    // The login page is a SECOND loopback mock on its own port — a genuinely
+    // non-self target (the callback lives on :27247) that the probe will
+    // actually fetch. Must stay on loopback: redirecting to a public domain
+    // (e.g. login.example.com) makes the headless probe's hop-1 fetch escape
+    // to the internet, and with no abortSignal in this test it hangs until the
+    // 5s test timeout wherever egress is dropped (CI firewalls DROP, so the
+    // connection never rejects). The 200 login page ends the probe loop
+    // (non-redirect) and the provider falls through to the interactive branch.
+    const loginPage = Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response("<html>login form</html>", {
+          status: 200,
+          headers: { "content-type": "text/html" },
+        });
+      },
+    });
     const mockAuthServer = Bun.serve({
       port: 0,
       fetch(_req: Request) {
         return new Response(null, {
           status: 302,
-          headers: { location: "https://login.example.com/authenticate" },
+          headers: { location: `http://localhost:${loginPage.port}/authenticate` },
         });
       },
     });
@@ -196,6 +213,7 @@ describe("WorkspaceOAuthProvider — authorize redirect probe (interactive)", ()
       expect(await pending).toBe("the-code-123");
     } finally {
       mockAuthServer.stop(true);
+      loginPage.stop(true);
     }
   });
 
