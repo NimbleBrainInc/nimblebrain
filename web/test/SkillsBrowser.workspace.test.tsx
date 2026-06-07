@@ -328,4 +328,63 @@ describe("SkillsBrowser with surface='workspace' (workspace settings tab)", () =
     // UI as a "When to load" override. The dropdown is gone.
     expect(manifest.loadingStrategy).toBeUndefined();
   });
+
+  test("edit-view back arrow returns to the list (not up the route tree)", async () => {
+    // CRITICAL regression guard. EditView is component state on
+    // SkillsBrowser — when `view === "edit"` the parent returns
+    // <EditView /> instead of the list. The URL stays the same.
+    //
+    // An earlier version of EditView passed
+    // `back={{ to: "..", ... }}` to SettingsPageHeader, which renders
+    // a <Link to=".."> — a router link that navigates UP one route
+    // segment. From /w/:slug/settings/skills that goes to
+    // /w/:slug/settings (out of skills); from /profile/skills that
+    // goes to /profile/general; from /org/skills it leaves
+    // entirely. Each navigation silently discards the form state.
+    //
+    // The fix routes through SettingsPageHeader's `onBack` prop,
+    // which renders a <button> that calls a handler the parent
+    // controls (onCancel, which flips view back to "list").
+    //
+    // This test pins it: open the edit view, click the back arrow,
+    // assert the URL is unchanged AND the list view is back.
+    mounted = await mount(React.createElement(SkillsBrowser, { surface: "workspace" }));
+
+    await act(async () => {
+      clickByText(mounted!.container, "Workspace-tier rule.");
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await act(async () => {
+      clickByText(mounted!.container, "Edit");
+    });
+
+    // We're in the edit view now.
+    expect(mounted.container.querySelector("#rule-name")).not.toBeNull();
+
+    // Click the back-arrow button (aria-label="Back to skills").
+    const backButton = mounted.container.querySelector(
+      'button[aria-label="Back to skills"]',
+    ) as HTMLButtonElement | null;
+    expect(backButton).not.toBeNull();
+    await act(async () => {
+      backButton!.click();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // List view is back — the "+ Add a rule" affordance only renders
+    // on the list, not the edit view.
+    const hasAddRule = Array.from(mounted.container.querySelectorAll("button")).some((b) =>
+      b.textContent?.includes("+ Add a rule"),
+    );
+    expect(hasAddRule).toBe(true);
+    // And we're NOT still in edit mode — the rule-name input is gone.
+    expect(mounted.container.querySelector("#rule-name")).toBeNull();
+  });
 });

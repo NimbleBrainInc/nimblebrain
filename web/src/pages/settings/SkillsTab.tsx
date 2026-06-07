@@ -31,33 +31,30 @@ export function SkillsTab() {
 }
 
 /**
- * Shared skills browser.
+ * Shared skills browser. Each surface picks exactly one prop:
  *
  *   - `surface="workspace"` — grouped sections (workspace editable +
  *     inherited org disabled + inherited bundles disabled) + personal
  *     footer + create locked to workspace.
  *   - `lockedScope="org"` — single-scope org-tier view + create locked
- *     to org. (Org-admin tab calls this directly via OrgSkillsTab.)
+ *     to org. (OrgSkillsTab.)
+ *   - `lockedScope="user"` — single-scope user-tier view + create locked
+ *     to user. (ProfileSkillsTab.)
  *
- * The two props are independent. No-prop callers fall through to the
- * legacy "show every scope" view, kept only for the test seam — no
- * production route uses it.
+ * The discriminated union prevents a caller from passing neither — the
+ * "show every scope" fallback isn't reachable from any route.
  */
-interface SkillsBrowserProps {
-  lockedScope?: Scope;
-  surface?: "workspace";
-}
+type SkillsBrowserProps =
+  | { surface: "workspace"; lockedScope?: never }
+  | { lockedScope: "org" | "user"; surface?: never };
 
 type WritableScope = "org" | "workspace" | "user";
 
-export function SkillsBrowser({ lockedScope, surface }: SkillsBrowserProps = {}) {
-  const isWorkspaceSurface = surface === "workspace";
-  const initialScopeFilter: Scope | "all" = isWorkspaceSurface ? "all" : (lockedScope ?? "all");
-  const createLockedScope: WritableScope | undefined = isWorkspaceSurface
-    ? "workspace"
-    : lockedScope === "org" || lockedScope === "workspace" || lockedScope === "user"
-      ? lockedScope
-      : undefined;
+export function SkillsBrowser(props: SkillsBrowserProps) {
+  const isWorkspaceSurface = props.surface === "workspace";
+  const lockedScope = isWorkspaceSurface ? undefined : props.lockedScope;
+  const initialScopeFilter: Scope | "all" = isWorkspaceSurface ? "all" : lockedScope!;
+  const createLockedScope: WritableScope = isWorkspaceSurface ? "workspace" : lockedScope!;
 
   const [skills, setSkills] = useState<ListedSkill[]>([]);
   const [loading, setLoading] = useState(true);
@@ -213,7 +210,7 @@ export function SkillsBrowser({ lockedScope, surface }: SkillsBrowserProps = {})
         };
         await runMutation(
           "create",
-          { scope: createLockedScope ?? "workspace", manifest: createManifest, body: patch.body },
+          { scope: createLockedScope, manifest: createManifest, body: patch.body },
           (result) => {
             setView("list");
             setEditingId(null);
@@ -332,13 +329,13 @@ export function SkillsBrowser({ lockedScope, surface }: SkillsBrowserProps = {})
               />
             );
           }
+          // Own (editable) section title — `group.scope` always matches
+          // one of these three because the list fetch is pre-scoped.
           const ownTitle = isWorkspaceSurface
             ? "From your workspace"
             : group.scope === "org"
               ? "Organization rules"
-              : group.scope === "user"
-                ? "Your rules"
-                : "Rules";
+              : "Your rules";
           return (
             <Section
               key={group.scope}
@@ -766,7 +763,11 @@ function EditView({
     <div className="max-w-3xl mx-auto space-y-6">
       <SettingsPageHeader
         title={loading ? "Loading…" : isNew ? "A new rule for your agent" : "Edit this rule"}
-        back={{ to: "..", label: "Back to skills" }}
+        // `onBack` (not `back`) because EditView is component state on
+        // SkillsBrowser, not a routed sub-page — the URL stays on
+        // .../skills while editing. A router Link would navigate UP the
+        // tree (out of skills) and silently drop the form state.
+        onBack={{ onClick: onCancel, label: "Back to skills" }}
       />
 
       {error && (
