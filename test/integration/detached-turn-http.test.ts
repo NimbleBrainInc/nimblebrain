@@ -175,4 +175,61 @@ describe("detached turn HTTP surface", () => {
     const body = await res.json();
     expect(body.error).toBe("bad_request");
   });
+
+  /**
+   * Seed a well-formed conversation owned by a *different* user. The HTTP
+   * suite runs in dev mode (caller is always `usr_default`), so a mismatched
+   * `ownerId` is the way to drive the ownership 403 branch without an identity
+   * provider. `findConversation` (no access ctx) returns the row regardless of
+   * owner; the route's own ownership check is what must 403.
+   */
+  function seedOtherUserConversation(convId: string): void {
+    const convDir = join(testDir, "conversations");
+    mkdirSync(convDir, { recursive: true });
+    const meta = JSON.stringify({
+      id: convId,
+      createdAt: "2025-01-01T00:00:00.000Z",
+      updatedAt: "2025-01-01T00:00:00.000Z",
+      title: null,
+      format: "events",
+      ownerId: "usr_someone_else",
+    });
+    writeFileSync(join(convDir, `${convId}.jsonl`), `${meta}\n`);
+  }
+
+  it("GET /v1/conversations/:id/events on another user's conversation is 403", async () => {
+    const convId = "conv_0a0a0a0a0a0a0a0a";
+    seedOtherUserConversation(convId);
+    const res = await fetch(`${baseUrl}/v1/conversations/${convId}/events`, {
+      headers: { "X-Workspace-Id": TEST_WORKSPACE_ID },
+    });
+    expect(res.status).toBe(403);
+    expect((await res.json()).error).toBe("conversation_access_denied");
+  });
+
+  it("POST /v1/conversations/:id/cancel on another user's conversation is 403", async () => {
+    const convId = "conv_0b0b0b0b0b0b0b0b";
+    seedOtherUserConversation(convId);
+    const res = await fetch(`${baseUrl}/v1/conversations/${convId}/cancel`, {
+      method: "POST",
+      headers: { "X-Workspace-Id": TEST_WORKSPACE_ID },
+    });
+    expect(res.status).toBe(403);
+    expect((await res.json()).error).toBe("conversation_access_denied");
+  });
+
+  it("malformed conversationId on the events + cancel routes is 400, not 500", async () => {
+    const evRes = await fetch(`${baseUrl}/v1/conversations/bogus/events`, {
+      headers: { "X-Workspace-Id": TEST_WORKSPACE_ID },
+    });
+    expect(evRes.status).toBe(400);
+    expect((await evRes.json()).error).toBe("bad_request");
+
+    const cancelRes = await fetch(`${baseUrl}/v1/conversations/not-a-conv-id/cancel`, {
+      method: "POST",
+      headers: { "X-Workspace-Id": TEST_WORKSPACE_ID },
+    });
+    expect(cancelRes.status).toBe(400);
+    expect((await cancelRes.json()).error).toBe("bad_request");
+  });
 });

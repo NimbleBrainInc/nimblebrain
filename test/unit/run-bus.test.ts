@@ -204,4 +204,24 @@ describe("RunBus", () => {
     expect(events[events.length - 1]?.type).toBe("error");
     expect((events[events.length - 1]?.data as { error: string }).error).toBe("buffer_overflow");
   });
+
+  it("evict(id, signal) drops only the run that owns that signal", () => {
+    const bus = new RunBus();
+    // Reservation A — capture its signal, then end + replace it with a fresh
+    // run B at the same id (legal: a terminal log is replaced on begin).
+    const signalA = bus.begin("c1");
+    bus.cancel("c1"); // A is now terminal, lingering in its grace window
+    const signalB = bus.begin("c1"); // B replaces A
+    expect(signalB).not.toBe(signalA);
+    expect(bus.isActive("c1")).toBe(true);
+
+    // A's late failure-path evict, scoped to A's signal, must NOT drop B.
+    bus.evict("c1", signalA);
+    expect(bus.isActive("c1")).toBe(true);
+    expect(bus.getStatus("c1")).toBe("running");
+
+    // Evict scoped to the live run's own signal drops it.
+    bus.evict("c1", signalB);
+    expect(bus.getStatus("c1")).toBeUndefined();
+  });
 });
