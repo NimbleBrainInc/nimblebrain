@@ -28,8 +28,22 @@ export interface SettingsPageHeaderProps {
   icon?: ReactNode;
   /** Right-aligned action — typically a primary button (Create, Save, etc). */
   action?: ReactNode;
-  /** Optional back-nav rendered as an arrow button to the left of the title. */
+  /**
+   * Optional back-nav rendered as an arrow button to the left of the
+   * title.
+   *
+   * Use `back` (a router Link) for pages that are real routed sub-pages
+   * — the back arrow navigates UP one route segment.
+   *
+   * Use `onBack` for pages that are component state inside a parent
+   * surface (e.g. an inline edit view rendered when local state flips,
+   * NOT a /:id child route). A router Link can't flip parent component
+   * state, so the click would silently leave the page entirely — at
+   * best surprising, at worst data-loss (unsaved edits dropped).
+   * `onBack` renders a button that calls the supplied handler instead.
+   */
   back?: { to: string; label?: string };
+  onBack?: { onClick: () => void; label?: string };
 }
 
 export function SettingsPageHeader({
@@ -38,18 +52,27 @@ export function SettingsPageHeader({
   icon,
   action,
   back,
+  onBack,
 }: SettingsPageHeaderProps) {
+  const backButtonClass =
+    "-ml-1 shrink-0 inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50";
   return (
     <header className="flex items-start justify-between gap-4">
       <div className="flex items-start gap-2 min-w-0">
         {back ? (
-          <Link
-            to={back.to}
-            aria-label={back.label ?? "Back"}
-            className="-ml-1 shrink-0 inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
-          >
+          <Link to={back.to} aria-label={back.label ?? "Back"} className={backButtonClass}>
             <ArrowLeft className="h-4 w-4" />
           </Link>
+        ) : null}
+        {onBack ? (
+          <button
+            type="button"
+            onClick={onBack.onClick}
+            aria-label={onBack.label ?? "Back"}
+            className={backButtonClass}
+          >
+            <ArrowLeft className="h-4 w-4" />
+          </button>
         ) : null}
         {icon ? (
           <span

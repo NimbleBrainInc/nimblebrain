@@ -26,8 +26,6 @@ customizations, use the `nb__skills` tool surface:
 - `skills__delete` — remove a skill (snapshots to `_versions/` first)
 - `skills__activate` / `skills__deactivate` — flip status without
   deleting the file
-- `skills__move_scope` — relocate a skill across tiers (e.g. workspace
-  → org to promote)
 - `skills__list` / `skills__read` — inspect what exists before changing
   anything
 

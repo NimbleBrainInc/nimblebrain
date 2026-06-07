@@ -89,18 +89,6 @@ describe("event schemas — accept representative payloads", () => {
     ).toBe(true);
   });
 
-  test("skill.updated — move_scope variant", () => {
-    expect(
-      Value.Check(SkillUpdatedPayload, {
-        id: "/data/skills/foo.md",
-        name: "foo",
-        scope: "org",
-        action: "move_scope",
-        from: "workspace",
-      }),
-    ).toBe(true);
-  });
-
   test("skill.deleted — required fields", () => {
     expect(
       Value.Check(SkillDeletedPayload, {

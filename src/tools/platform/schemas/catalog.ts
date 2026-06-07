@@ -27,7 +27,6 @@ export const PlatformToolCatalog = {
     delete: { input: Skills.SkillsDeleteInput },
     activate: { input: Skills.SkillsActivateInput },
     deactivate: { input: Skills.SkillsDeactivateInput },
-    move_scope: { input: Skills.SkillsMoveScopeInput },
   },
   home: {
     activity: { input: Home.HomeActivityInput },

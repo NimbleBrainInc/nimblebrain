@@ -1692,8 +1692,15 @@ export class Runtime {
     // Layer 3 selection — bundle workflow guidance still applies based on
     // the active tool set. No `appContextServerName` (tasks don't have
     // appContext).
+    //
+    // Workspace-tier skills follow the FOCUSED workspace, falling back
+    // to the session (personal) workspace only when the task has no
+    // focus. This mirrors `_chatInner` (line ~1259, fixed in PR #315);
+    // tasks scheduled against a shared workspace were silently dropping
+    // every `loading_strategy: always` skill in that workspace before
+    // this parity fix.
     const userId = requestIdentity.id;
-    const layer3Pool = this.loadConversationSkills(sessionWsId, userId);
+    const layer3Pool = this.loadConversationSkills(focusedWsId ?? sessionWsId, userId);
     const accessibleForSkills = await this._workspaceStore.getWorkspacesForUser(ownerId);
     const bundleSkills = (
       await Promise.all(accessibleForSkills.map((ws) => this.loadBundleSkills(ws.id, {})))
@@ -2987,14 +2994,13 @@ export class Runtime {
    * deduplicated by `manifest.name` with later scopes overriding earlier
    * ones (user > workspace > platform).
    *
-   * All three tiers are evaluated fresh per call so authoring or moving
-   * a skill takes effect mid-session without a process restart:
+   * All three tiers are evaluated fresh per call so authoring a skill
+   * takes effect mid-session without a process restart:
    *
    *   - bundled (core + builtin from the source tree) — from the boot-
    *     time `contextSkills` cache, since those files are immutable.
    *   - platform (`{workDir}/skills/`) — fresh disk read, so writes via
-   *     `skills__create` / `skills__update` / `move_scope → platform`
-   *     surface immediately.
+   *     `skills__create` / `skills__update` surface immediately.
    *   - workspace (`{workDir}/workspaces/{wsId}/skills/`) — fresh.
    *   - user (`{workDir}/users/{userId}/skills/`) — fresh.
    *

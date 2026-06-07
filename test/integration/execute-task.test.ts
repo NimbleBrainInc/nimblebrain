@@ -27,7 +27,7 @@
  */
 
 import { afterEach, describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { textContent } from "../../src/engine/content-helpers.ts";
@@ -327,5 +327,51 @@ describe("runtime.executeTask", () => {
     expect(convo!.metadata?.source).toBe("task");
     // Caller's metadata passes through alongside the source tag.
     expect(convo!.metadata?.automationId).toBe("auto_test_123");
+  });
+
+  it("loads the focused workspace's `always` skill into Layer 3 (parity with chat path)", async () => {
+    // Regression guard for the executeTask analog of the chat-path bug
+    // PR #315 fixed in `_chatInner`. Before this fix,
+    // `loadConversationSkills(sessionWsId, ...)` at runtime.ts:1703
+    // pulled workspace-tier skills from the user's personal workspace,
+    // so any scheduled task focused on a shared workspace silently
+    // dropped that workspace's `loading_strategy: always` skills.
+    //
+    // Fix: `loadConversationSkills(focusedWsId ?? sessionWsId, ...)`.
+    // This test plants a workspace-tier skill in the SHARED workspace
+    // (different dir than the personal workspace), runs an
+    // executeTask focused on the shared workspace, and asserts the
+    // skill lands in the recorded `skills.loaded` event.
+    runtime = await bootRuntime(undefined);
+    const { personalWsId } = await provisionWorkspaces(runtime);
+    expect(personalWsId).not.toBe(SHARED_WS_ID);
+
+    const SKILL_NAME = "shared-task-voice";
+    const sharedSkillsDir = join(workDir, "workspaces", SHARED_WS_ID, "skills");
+    mkdirSync(sharedSkillsDir, { recursive: true });
+    writeFileSync(
+      join(sharedSkillsDir, `${SKILL_NAME}.md`),
+      `---\nname: ${SKILL_NAME}\ndescription: voice for the shared workspace\nversion: 1.0.0\ntype: context\npriority: 30\nloading_strategy: always\n---\n\nAlways answer in plain English.\n`,
+    );
+
+    const result = await runtime.executeTask({
+      prompt: "do a thing",
+      identity: { id: TEST_USER_ID, displayName: TEST_USER_DISPLAY },
+      workspaceId: SHARED_WS_ID,
+    });
+
+    const store = runtime.findConversationStore();
+    const events = await store.readEvents(result.conversationId);
+    const skillsLoaded = events.find((e) => e.type === "skills.loaded");
+    expect(skillsLoaded).toBeDefined();
+
+    const payload = skillsLoaded as unknown as {
+      skills: Array<{ id: string; scope: string; loadedBy: string }>;
+    };
+    const expectedPath = join(sharedSkillsDir, `${SKILL_NAME}.md`);
+    const entry = payload.skills.find((s) => s.id === expectedPath);
+    expect(entry).toBeDefined();
+    expect(entry?.scope).toBe("workspace");
+    expect(entry?.loadedBy).toBe("always");
   });
 });

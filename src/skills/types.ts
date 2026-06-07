@@ -15,7 +15,14 @@ export type SkillType = "context" | "skill";
  */
 export type SkillScope = "org" | "workspace" | "user" | "bundle";
 export type SkillLoadingStrategy = "always" | "tool_affined" | "retrieval" | "explicit";
-export type SkillStatus = "active" | "draft" | "disabled" | "archived";
+/**
+ * Skill enablement state. Collapsed from the legacy 4-value enum
+ * (`active | draft | disabled | archived`) to a binary that matches the
+ * UI's single On/Off toggle. The loader normalizes any legacy `draft`
+ * or `archived` value to `disabled` on read so existing files keep
+ * loading without a migration.
+ */
+export type SkillStatus = "active" | "disabled";
 
 export interface SkillOverride {
   bundle?: string;

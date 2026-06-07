@@ -1,129 +1,102 @@
-import { Lightbulb, Plus, Trash2 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Lightbulb, Trash2, User } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Link } from "react-router-dom";
+import { Streamdown } from "streamdown";
 import type { ToolInput } from "../../_generated/platform-schemas/catalog";
 import { callTool } from "../../api/client";
-import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent } from "../../components/ui/card";
 import { Input } from "../../components/ui/input";
 import { Textarea } from "../../components/ui/textarea";
 import { parseToolResponse } from "../../lib/tool-response";
 import { cn } from "../../lib/utils";
-import { RequireActiveWorkspace } from "./components/RequireActiveWorkspace";
+import { RequireActiveWorkspace, Section, SettingsPageHeader } from "./components";
 
-// ── Types ────────────────────────────────────────────────────────────────
-//
-// Canonical shapes from `src/tools/platform/schemas/skills.ts`, mirrored
-// here via codegen at `web/src/_generated/platform-schemas/`. Server and
-// web both import from the same declarations so a shape change in one
-// place can't silently drift from the other (the pattern §2.1 in
-// `src/tools/platform/AGENTS.md` exists to enforce). Local aliases keep
-// the diff small for historical readers.
 import type {
   SkillDetail as ReadSkill,
   SkillScope as Scope,
   SkillsListOutput,
-  SkillStatus as Status,
   SkillSummary as ListedSkill,
 } from "../../_generated/platform-schemas/skills";
 
-// ── Helpers ──────────────────────────────────────────────────────────────
+// ── Wrappers ─────────────────────────────────────────────────────────────
 
-function formatTokens(n: number): string {
-  if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
-  return String(n);
-}
-
-const SCOPE_BADGE: Record<Scope, string> = {
-  org: "border-blue-300/30 text-blue-400",
-  workspace: "border-emerald-300/30 text-emerald-400",
-  user: "border-violet-300/30 text-violet-400",
-  bundle: "border-amber-300/30 text-amber-400",
-};
-
-const STATUS_BADGE: Record<Status, string> = {
-  active: "border-emerald-300/30 text-emerald-500",
-  draft: "border-amber-300/30 text-amber-500",
-  disabled: "border-muted text-muted-foreground",
-  archived: "border-muted text-muted-foreground",
-};
-
-// ── Component ────────────────────────────────────────────────────────────
-
+/** Workspace settings tab — `/w/:slug/settings/skills`. */
 export function SkillsTab() {
   return (
     <RequireActiveWorkspace>
-      <SkillsBrowser />
+      <SkillsBrowser surface="workspace" />
     </RequireActiveWorkspace>
   );
 }
 
 /**
- * Shared skills browser. The workspace tab renders it with no lock so users
- * can see/filter every scope they have access to; the org-admin tab renders
- * it with `lockedScope="org"` so only org-tier skills are listed, the scope
- * filter UI is suppressed, and the create form has no scope picker (org is
- * the only writable target on that surface).
+ * Shared skills browser. Each surface picks exactly one prop:
  *
- * Per SKILLS_SURFACE.md, Phase 2 will refactor the workspace tab to grouped
- * sections (workspace + inherited-org + inherited-bundles + personal-footer).
- * That work touches this same component; the `lockedScope` param is the
- * minimal Phase 1 hook so we don't ship duplicated state machines.
+ *   - `surface="workspace"` — grouped sections (workspace editable +
+ *     inherited org disabled + inherited bundles disabled) + personal
+ *     footer + create locked to workspace.
+ *   - `lockedScope="org"` — single-scope org-tier view + create locked
+ *     to org. (OrgSkillsTab.)
+ *   - `lockedScope="user"` — single-scope user-tier view + create locked
+ *     to user. (ProfileSkillsTab.)
+ *
+ * The discriminated union prevents a caller from passing neither — the
+ * "show every scope" fallback isn't reachable from any route.
  */
-type DetailMode = "view" | "edit";
+type SkillsBrowserProps =
+  | { surface: "workspace"; lockedScope?: never }
+  | { lockedScope: "org" | "user"; surface?: never };
 
-export function SkillsBrowser({ lockedScope }: { lockedScope?: Scope } = {}) {
+type WritableScope = "org" | "workspace" | "user";
+
+export function SkillsBrowser(props: SkillsBrowserProps) {
+  const isWorkspaceSurface = props.surface === "workspace";
+  const lockedScope = isWorkspaceSurface ? undefined : props.lockedScope;
+  const initialScopeFilter: Scope | "all" = isWorkspaceSurface ? "all" : lockedScope!;
+  const createLockedScope: WritableScope = isWorkspaceSurface ? "workspace" : lockedScope!;
+
   const [skills, setSkills] = useState<ListedSkill[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<ReadSkill | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  // When the surface is scope-locked, the filter UI is hidden and the lock
-  // value is the effective filter — `setScopeFilter` becomes a no-op via the
-  // hidden control. Default the state to the lock so the first fetch is
-  // already scoped (no flash of "all").
-  const [scopeFilter, setScopeFilter] = useState<Scope | "all">(lockedScope ?? "all");
-  const [statusFilter, setStatusFilter] = useState<Status | "all">("active");
-  const [mode, setMode] = useState<DetailMode>("view");
-  const [creating, setCreating] = useState(false);
   const [actionPending, setActionPending] = useState(false);
+  const [view, setView] = useState<"list" | "edit">("list");
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   const fetchSkills = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       const args: Record<string, unknown> = {};
-      if (scopeFilter !== "all") args.scope = scopeFilter;
-      if (statusFilter !== "all") args.status = statusFilter;
+      if (initialScopeFilter !== "all") args.scope = initialScopeFilter;
+      // List both active and disabled so the user can see Off rules and
+      // turn them back on. The per-row toggle reflects the current state.
       const res = await callTool("skills", "list", args);
       const data = parseToolResponse<SkillsListOutput>(res);
       setSkills(data.skills);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Failed to load skills.";
-      setError(msg);
+      setError(err instanceof Error ? err.message : "Failed to load skills.");
       setSkills([]);
     } finally {
       setLoading(false);
     }
-  }, [scopeFilter, statusFilter]);
+  }, [initialScopeFilter]);
 
   useEffect(() => {
     void fetchSkills();
   }, [fetchSkills]);
 
-  // When the catalog reloads, refresh the open detail panel if its skill is
-  // still in view; otherwise drop the selection.
   useEffect(() => {
     if (!selectedId) return;
     if (!skills.some((s) => s.id === selectedId)) {
       setSelectedId(null);
       setDetail(null);
-      setMode("view");
     }
   }, [skills, selectedId]);
 
-  // Fetch the detail body whenever selection changes.
   const fetchDetail = useCallback(async (id: string) => {
     setDetailLoading(true);
     try {
@@ -131,8 +104,7 @@ export function SkillsBrowser({ lockedScope }: { lockedScope?: Scope } = {}) {
       const data = parseToolResponse<ReadSkill>(res);
       setDetail(data);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Failed to read skill.";
-      setError(msg);
+      setError(err instanceof Error ? err.message : "Failed to read skill.");
       setDetail(null);
     } finally {
       setDetailLoading(false);
@@ -142,25 +114,14 @@ export function SkillsBrowser({ lockedScope }: { lockedScope?: Scope } = {}) {
   useEffect(() => {
     if (!selectedId) {
       setDetail(null);
-      setMode("view");
       return;
     }
     void fetchDetail(selectedId);
   }, [selectedId, fetchDetail]);
 
   const handleSelect = useCallback((id: string) => {
-    setMode("view");
-    setCreating(false);
     setError(null);
-    setSelectedId(id);
-  }, []);
-
-  const handleStartCreate = useCallback(() => {
-    setSelectedId(null);
-    setDetail(null);
-    setMode("view");
-    setCreating(true);
-    setError(null);
+    setSelectedId((prev) => (prev === id ? null : id));
   }, []);
 
   const runMutation = useCallback(
@@ -177,8 +138,7 @@ export function SkillsBrowser({ lockedScope }: { lockedScope?: Scope } = {}) {
         await fetchSkills();
         onSuccess?.(data);
       } catch (err) {
-        const msg = err instanceof Error ? err.message : `Failed to ${tool} skill.`;
-        setError(msg);
+        setError(err instanceof Error ? err.message : `Failed to ${tool} skill.`);
       } finally {
         setActionPending(false);
       }
@@ -186,112 +146,630 @@ export function SkillsBrowser({ lockedScope }: { lockedScope?: Scope } = {}) {
     [fetchSkills],
   );
 
-  const handleCreate = useCallback(
-    async (input: CreateInput) => {
-      await runMutation("create", input, (result) => {
-        setCreating(false);
-        if (result.id) setSelectedId(result.id);
-      });
+  const handleToggle = useCallback(
+    async (skill: ListedSkill) => {
+      const tool = skill.status === "active" ? "deactivate" : "activate";
+      await runMutation(tool, { id: skill.id });
     },
     [runMutation],
-  );
-
-  const handleSaveEdit = useCallback(
-    async (id: string, patch: { manifest: Record<string, unknown>; body: string }) => {
-      await runMutation("update", { id, manifest: patch.manifest, body: patch.body }, async () => {
-        setMode("view");
-        await fetchDetail(id);
-      });
-    },
-    [runMutation, fetchDetail],
   );
 
   const handleDelete = useCallback(
     async (id: string) => {
-      if (!window.confirm("Delete this skill? It will be snapshotted to _versions/ first.")) {
-        return;
-      }
+      if (!window.confirm("Delete this rule? It will be snapshotted to _versions/ first.")) return;
       await runMutation("delete", { id }, () => {
         setSelectedId(null);
         setDetail(null);
-        setMode("view");
       });
     },
     [runMutation],
   );
 
-  const handleToggleStatus = useCallback(
-    async (id: string, currentStatus: string | undefined) => {
-      const tool = currentStatus === "active" ? "deactivate" : "activate";
-      await runMutation(tool, { id }, () => {
-        void fetchDetail(id);
-      });
-    },
-    [runMutation, fetchDetail],
-  );
-
-  const handleMoveScope = useCallback(
-    async (id: string, targetScope: WritableScope) => {
-      if (
-        !window.confirm(
-          `Move skill to ${targetScope} scope? The original location is removed (snapshotted first).`,
-        )
-      ) {
-        return;
+  const handleSubmit = useCallback(
+    async (patch: { name: string; body: string; priority?: number }) => {
+      // CRITICAL: update is a partial patch — any field present in the
+      // manifest is written to disk and overwrites the prior value.
+      // So we MUST NOT include description, type, or name on update:
+      //   - description: "" would wipe an author-curated description
+      //     authored via CLI / markdown / OrgSkillsTab. Also breaks
+      //     this very PR's `rowLabel`, which uses description as the
+      //     row's display text — every edit would erase its own label.
+      //   - type would coerce a procedural skill into a context skill,
+      //     changing Layer-3 loading inference.
+      //   - name is immutable (it's the filename); sending it is at
+      //     best a no-op, at worst a silent rename attempt.
+      // For NEW rules, the create handler needs all three set because
+      // the file doesn't exist yet — and the loader's auto-inference
+      // (type=context + no applies-to-tools → always) is the right
+      // default for the prose rules this UI authors.
+      //
+      // `loadingStrategy` is NOT plumbed through either path. It's
+      // intentionally absent from the LLM-facing schema
+      // (schemas/skills.ts ManifestFields; cited rationale at
+      // skills.ts:116). Even if we sent it, the validator would
+      // strip it and the writer would never see it. The previous
+      // "When to load" dropdown was decorative — removed.
+      const advancedOverrides = {
+        ...(patch.priority !== undefined ? { priority: patch.priority } : {}),
+      };
+      if (editingId) {
+        await runMutation(
+          "update",
+          { id: editingId, manifest: advancedOverrides, body: patch.body },
+          () => {
+            setView("list");
+            setEditingId(null);
+          },
+        );
+      } else {
+        const createManifest = {
+          name: patch.name,
+          description: "",
+          type: "context",
+          ...advancedOverrides,
+        };
+        await runMutation(
+          "create",
+          { scope: createLockedScope, manifest: createManifest, body: patch.body },
+          (result) => {
+            setView("list");
+            setEditingId(null);
+            if (result.id) setSelectedId(result.id);
+          },
+        );
       }
-      await runMutation("move_scope", { id, target_scope: targetScope }, (result) => {
-        if (result.id) setSelectedId(result.id);
-      });
     },
-    [runMutation],
+    [editingId, createLockedScope, runMutation],
   );
 
-  const grouped = useMemo(() => groupByScope(skills), [skills]);
+  const startCreate = useCallback(() => {
+    setEditingId(null);
+    setView("edit");
+    setError(null);
+  }, []);
+
+  const startEdit = useCallback((id: string) => {
+    setEditingId(id);
+    setView("edit");
+    setError(null);
+  }, []);
+
+  const cancelEdit = useCallback(() => {
+    setEditingId(null);
+    setView("list");
+    setError(null);
+  }, []);
+
+  const grouped = useMemo(
+    () => groupByScope(skills, { excludeUser: isWorkspaceSurface }),
+    [skills, isWorkspaceSurface],
+  );
+  const personalCount = useMemo(
+    () => (isWorkspaceSurface ? skills.filter((s) => s.scope === "user").length : 0),
+    [skills, isWorkspaceSurface],
+  );
+
+  if (view === "edit") {
+    const existing = editingId && detail?.id === editingId ? detail : null;
+    return (
+      <EditView
+        existing={existing}
+        loading={editingId !== null && (!detail || detail.id !== editingId)}
+        pending={actionPending}
+        error={error}
+        onCancel={cancelEdit}
+        onSubmit={handleSubmit}
+      />
+    );
+  }
 
   return (
-    <div className="space-y-4">
-      <header className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <Lightbulb className="h-4 w-4 text-muted-foreground" />
-          <h2 className="text-base font-semibold">Skills</h2>
-        </div>
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={handleStartCreate}
-          disabled={creating || actionPending}
-        >
-          <Plus className="h-3.5 w-3.5 mr-1" />
-          New skill
-        </Button>
-      </header>
-      <p className="text-xs text-muted-foreground">
-        {lockedScope === "org" ? (
-          <>
-            Organization-wide skills. These load into every workspace's agent context and apply to
-            every member. Authored here or as markdown files under{" "}
-            <code>~/.nimblebrain/skills/</code>.
-          </>
-        ) : (
-          <>
-            Layer 3 cross-bundle agent orchestration content (voice, workflow, personal, tool
-            routing) plus Layer 1 vendored bundle skills. The agent uses these to shape its
-            behavior; you can also author them as markdown files under{" "}
-            <code>~/.nimblebrain/skills/</code> (org), <code>workspaces/&lt;wsId&gt;/skills/</code>,
-            or <code>users/&lt;userId&gt;/skills/</code>.
-          </>
-        )}
-      </p>
-
-      <Filters
-        scope={scopeFilter}
-        status={statusFilter}
-        onScopeChange={setScopeFilter}
-        onStatusChange={setStatusFilter}
-        lockedScope={lockedScope}
+    <div className="max-w-3xl mx-auto space-y-6">
+      <SettingsPageHeader
+        title="Skills"
+        description={
+          lockedScope === "org"
+            ? "Organization-wide rules. These apply to every workspace."
+            : isWorkspaceSurface
+              ? "Rules that shape what your agent says and how it works in this workspace."
+              : "Rules that shape your agent's behavior."
+        }
+        icon={<Lightbulb className="h-5 w-5" />}
       />
 
-      {loading && <div className="text-sm text-muted-foreground">Loading skills…</div>}
+      {/* Loading message only when we have nothing to render yet — a
+       * refetch triggered by a toggle/edit keeps the list mounted so the
+       * accordion's per-row `shellH` state doesn't reset to 0 mid-flight
+       * (which manifested as a flicker collapse). */}
+      {loading && skills.length === 0 && (
+        <div className="text-sm text-muted-foreground py-4">Loading rules…</div>
+      )}
+      {error && (
+        <Card className="mb-4">
+          <CardContent className="py-3 px-4">
+            <p className="text-sm text-destructive">{error}</p>
+          </CardContent>
+        </Card>
+      )}
+
+      {!loading && skills.length === 0 && (
+        <Card>
+          <CardContent className="py-8 text-center">
+            <p className="text-sm text-muted-foreground">
+              No rules here yet. Click <strong>+ Add a rule</strong> below to write one.
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
+      {skills.length > 0 &&
+        grouped.map((group, idx) => {
+          const inherited = isWorkspaceSurface && group.scope !== "workspace";
+          const activeCount = group.skills.filter((s) => s.status === "active").length;
+          if (inherited) {
+            return (
+              <InheritedSection
+                key={group.scope}
+                flush={idx === 0}
+                title={
+                  group.scope === "org"
+                    ? "From your organization"
+                    : group.scope === "bundle"
+                      ? "From the system"
+                      : `From ${group.scope}`
+                }
+                rules={group.skills}
+                deepLinkLabel={group.scope === "org" ? "Edit in org settings" : undefined}
+                deepLinkTo={group.scope === "org" ? "/org/skills" : undefined}
+                ambient={group.scope === "bundle"}
+                expandedId={selectedId}
+                onSelect={handleSelect}
+                detail={detail}
+                detailLoading={detailLoading}
+              />
+            );
+          }
+          // Own (editable) section title — `group.scope` always matches
+          // one of these three because the list fetch is pre-scoped.
+          const ownTitle = isWorkspaceSurface
+            ? "From your workspace"
+            : group.scope === "org"
+              ? "Organization rules"
+              : "Your rules";
+          return (
+            <Section
+              key={group.scope}
+              flush={idx === 0}
+              title={ownTitle}
+              action={<span className="text-xs text-muted-foreground">{activeCount} active</span>}
+            >
+              <div className="divide-y divide-border">
+                {group.skills.map((s) => (
+                  <Rule
+                    key={s.id}
+                    skill={s}
+                    expanded={selectedId === s.id}
+                    detail={selectedId === s.id ? detail : null}
+                    detailLoading={selectedId === s.id && detailLoading}
+                    onSelect={() => handleSelect(s.id)}
+                    onToggle={() => handleToggle(s)}
+                    onEdit={() => startEdit(s.id)}
+                    onDelete={() => handleDelete(s.id)}
+                    pending={actionPending}
+                  />
+                ))}
+              </div>
+            </Section>
+          );
+        })}
+
+      {!loading && (
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={startCreate}
+          disabled={actionPending}
+          className="self-start"
+        >
+          + Add a rule
+        </Button>
+      )}
+
+      {isWorkspaceSurface && <PersonalFooter count={personalCount} />}
+    </div>
+  );
+}
+
+// ── Group / partition ────────────────────────────────────────────────────
+
+interface GroupedSkills {
+  scope: Scope;
+  skills: ListedSkill[];
+}
+
+function groupByScope(skills: ListedSkill[], opts?: { excludeUser?: boolean }): GroupedSkills[] {
+  const order: Scope[] = opts?.excludeUser
+    ? ["workspace", "org", "bundle"]
+    : ["user", "workspace", "org", "bundle"];
+  const map = new Map<Scope, ListedSkill[]>();
+  for (const s of skills) {
+    if (opts?.excludeUser && s.scope === "user") continue;
+    const list = map.get(s.scope) ?? [];
+    list.push(s);
+    map.set(s.scope, list);
+  }
+  for (const list of map.values()) list.sort((a, b) => a.name.localeCompare(b.name));
+  return order.filter((s) => map.has(s)).map((scope) => ({ scope, skills: map.get(scope)! }));
+}
+
+// ── Rule row ─────────────────────────────────────────────────────────────
+
+/**
+ * Resting-state label for a row.
+ *
+ * The body is rendered as full markdown in the expanded view, so using
+ * the body's first sentence as the label duplicates content the moment
+ * the row opens. Instead: prefer the (short) description if the author
+ * wrote one, otherwise fall back to the on-disk identifier (kebab-name).
+ * The author-controlled name is the closest thing to a meaningful label
+ * for rules without a description.
+ */
+function rowLabel(skill: ListedSkill): string {
+  const desc = skill.description?.trim();
+  if (desc && desc.length > 0 && desc.length <= 140) return desc;
+  return skill.name;
+}
+
+function Rule({
+  skill,
+  expanded,
+  detail,
+  detailLoading,
+  inherited,
+  onSelect,
+  onToggle,
+  onEdit,
+  onDelete,
+  pending,
+}: {
+  skill: ListedSkill;
+  expanded: boolean;
+  detail: ReadSkill | null;
+  detailLoading: boolean;
+  inherited?: boolean;
+  onSelect: () => void;
+  onToggle: () => void;
+  onEdit?: () => void;
+  onDelete?: () => void;
+  pending: boolean;
+}) {
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+  const [shellH, setShellH] = useState(0);
+  useEffect(() => {
+    if (!expanded) {
+      setShellH(0);
+      return;
+    }
+    requestAnimationFrame(() => {
+      if (bodyRef.current) setShellH(bodyRef.current.scrollHeight);
+    });
+  }, [expanded, detail]);
+
+  const label = rowLabel(skill);
+  const labelIsName = label === skill.name;
+
+  return (
+    <div className={cn("py-4", inherited && "opacity-80")}>
+      <button
+        type="button"
+        onClick={onSelect}
+        className="w-full text-left grid items-center gap-4 sm:gap-6 grid-cols-[1fr_auto]"
+      >
+        <div className="min-w-0 pr-1">
+          <div className={cn("text-sm leading-snug text-foreground", labelIsName && "font-mono")}>
+            {label}
+          </div>
+        </div>
+        <div className="justify-self-end">
+          <Toggle
+            on={skill.status === "active"}
+            onChange={onToggle}
+            disabled={inherited}
+            label={skill.name}
+          />
+        </div>
+      </button>
+
+      <div
+        style={{ maxHeight: shellH, opacity: expanded ? 1 : 0 }}
+        className="overflow-hidden transition-[max-height,opacity] duration-300 ease-out"
+        aria-hidden={!expanded}
+      >
+        <div ref={bodyRef} className="pt-3">
+          {detailLoading && <p className="text-xs text-muted-foreground">Loading…</p>}
+          {!detailLoading && detail && detail.id === skill.id && (
+            <>
+              <div className="max-w-prose text-sm text-foreground/80">
+                <Streamdown className="streamdown-container presence-assistant-message">
+                  {detail.content}
+                </Streamdown>
+              </div>
+              {!labelIsName && (
+                <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 mt-3 text-xs text-muted-foreground">
+                  <span className="font-mono">{skill.name}</span>
+                </div>
+              )}
+              {!inherited && (
+                <div className="flex gap-4 mt-3">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="xs"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onEdit?.();
+                    }}
+                    disabled={pending}
+                  >
+                    Edit
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="xs"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onDelete?.();
+                    }}
+                    disabled={pending}
+                    className="text-muted-foreground hover:text-destructive"
+                  >
+                    <Trash2 className="h-3 w-3" /> Delete
+                  </Button>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Toggle ───────────────────────────────────────────────────────────────
+
+function Toggle({
+  on,
+  onChange,
+  disabled,
+  label,
+}: {
+  on: boolean;
+  onChange: () => void;
+  disabled?: boolean;
+  label: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        if (!disabled) onChange();
+      }}
+      disabled={disabled}
+      aria-label={`${on ? "Turn off" : "Turn on"} ${label}`}
+      className={cn(
+        "inline-flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium select-none",
+        disabled ? "text-muted-foreground/70 cursor-not-allowed" : "text-foreground hover:bg-muted",
+      )}
+    >
+      <span
+        className={cn("w-2 h-2 rounded-full", on ? "bg-emerald-500" : "bg-muted-foreground/60")}
+      />
+      {on ? "On" : "Off"}
+    </button>
+  );
+}
+
+// ── Inherited section ────────────────────────────────────────────────────
+
+/**
+ * Inherited (read-only) section — a quiet sibling of `Section` that
+ * collapses by default. Uses Section's chrome for consistency: same
+ * top-border separator, same `text-sm font-semibold` title vocabulary.
+ * The header acts as a button (click toggles open/closed); a chevron
+ * sits left of the title to telegraph "this expands".
+ *
+ * `ambient` shrinks the visual weight further (muted title, slightly
+ * dimmed rows) for sections the operator has zero editorial agency
+ * over (bundle / system).
+ */
+function InheritedSection({
+  flush,
+  title,
+  rules,
+  deepLinkLabel,
+  deepLinkTo,
+  ambient,
+  expandedId,
+  onSelect,
+  detail,
+  detailLoading,
+}: {
+  flush?: boolean;
+  title: string;
+  rules: ListedSkill[];
+  deepLinkLabel?: string;
+  deepLinkTo?: string;
+  ambient?: boolean;
+  expandedId: string | null;
+  onSelect: (id: string) => void;
+  detail: ReadSkill | null;
+  detailLoading: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const activeCount = rules.filter((r) => r.status === "active").length;
+  return (
+    <section className={cn("space-y-3", !flush && "pt-6 border-t border-border/60")}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-start justify-between gap-4 group"
+      >
+        <h3
+          className={cn(
+            "flex items-center gap-2 text-sm font-semibold transition-colors",
+            ambient
+              ? "text-muted-foreground/80 group-hover:text-foreground"
+              : "text-foreground/80 group-hover:text-foreground",
+          )}
+        >
+          <span
+            className={cn(
+              "text-xs text-muted-foreground transition-transform",
+              open && "rotate-90",
+            )}
+          >
+            ▸
+          </span>
+          {title}
+        </h3>
+        <span className="text-xs text-muted-foreground shrink-0">{activeCount} active</span>
+      </button>
+      {open && (
+        <div className={cn("divide-y divide-border", ambient && "opacity-90")}>
+          {rules.map((r) => (
+            <Rule
+              key={r.id}
+              skill={r}
+              expanded={expandedId === r.id}
+              detail={expandedId === r.id ? detail : null}
+              detailLoading={expandedId === r.id && detailLoading}
+              onSelect={() => onSelect(r.id)}
+              onToggle={() => {}}
+              inherited
+              pending={false}
+            />
+          ))}
+          {deepLinkLabel && deepLinkTo && (
+            <div className="py-3">
+              <Link
+                to={deepLinkTo}
+                className="text-sm text-foreground hover:opacity-70 underline-offset-4 hover:underline"
+              >
+                {deepLinkLabel} →
+              </Link>
+            </div>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
+// ── Personal footer ──────────────────────────────────────────────────────
+
+function PersonalFooter({ count }: { count: number }) {
+  return (
+    <div className="pt-6 border-t border-border/60 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+      <div className="text-xs text-muted-foreground flex items-center gap-2">
+        <User className="h-3.5 w-3.5" />
+        {count === 0
+          ? "No personal rules active here."
+          : `${count} personal rule${count === 1 ? "" : "s"} active here · follow you across every workspace.`}
+      </div>
+      <Link
+        to="/profile/skills"
+        className="text-sm text-foreground hover:opacity-70 underline-offset-4 hover:underline self-start sm:self-auto"
+      >
+        Edit in your profile →
+      </Link>
+    </div>
+  );
+}
+
+// ── Edit view ────────────────────────────────────────────────────────────
+
+type CreateInput = ToolInput<"skills", "create">;
+export type { CreateInput };
+
+/**
+ * Slugify a user-typed name into the on-disk identifier shape the server
+ * accepts (`^[a-zA-Z0-9_-]+$`). Lowercases, replaces runs of disallowed
+ * characters with a single `-`, strips leading/trailing dashes.
+ *
+ *   "Test 123"          → "test-123"
+ *   "Voice / Tone"      → "voice-tone"
+ *   "  Already-Good_1"  → "already-good_1"
+ */
+function slugifyName(input: string): string {
+  return input
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^[-_]+|[-_]+$/g, "");
+}
+
+function EditView({
+  existing,
+  loading,
+  pending,
+  error,
+  onCancel,
+  onSubmit,
+}: {
+  existing: ReadSkill | null;
+  loading: boolean;
+  pending: boolean;
+  error: string | null;
+  onCancel: () => void;
+  onSubmit: (patch: { name: string; body: string; priority?: number }) => void;
+}) {
+  const isNew = existing === null && !loading;
+  const [name, setName] = useState(existing?.metadata.name ?? "");
+  const [body, setBody] = useState(existing?.content ?? "");
+  // Priority is the only Advanced field that actually persists —
+  // `loadingStrategy` is intentionally absent from the LLM-facing
+  // schema (schemas/skills.ts) so any value sent here is dropped at
+  // the validator. Don't expose a decorative control.
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [priority, setPriority] = useState<number>(existing?.metadata.priority ?? 50);
+
+  const nameRef = useRef<HTMLInputElement | null>(null);
+  useEffect(() => {
+    if (isNew) nameRef.current?.focus();
+  }, [isNew]);
+
+  // Sync form to a freshly-loaded detail (e.g. user clicked Edit on a
+  // different rule before the prior read resolved).
+  useEffect(() => {
+    if (existing) {
+      setName(existing.metadata.name);
+      setBody(existing.content);
+      setPriority(existing.metadata.priority ?? 50);
+    }
+  }, [existing]);
+
+  // The user types anything they want ("Test 123") and we slugify before
+  // it reaches the server (which enforces `^[a-zA-Z0-9_-]+$` because the
+  // value becomes a filename). Show the slugified form as a hint when it
+  // differs from the typed value so the on-disk identity is honest.
+  const slug = slugifyName(name);
+  const showSlugHint = isNew && slug.length > 0 && slug !== name.trim();
+
+  const valid = slug.length > 0 && body.trim().length > 0;
+
+  return (
+    <div className="max-w-3xl mx-auto space-y-6">
+      <SettingsPageHeader
+        title={loading ? "Loading…" : isNew ? "A new rule for your agent" : "Edit this rule"}
+        // `onBack` (not `back`) because EditView is component state on
+        // SkillsBrowser, not a routed sub-page — the URL stays on
+        // .../skills while editing. A router Link would navigate UP the
+        // tree (out of skills) and silently drop the form state.
+        onBack={{ onClick: onCancel, label: "Back to skills" }}
+      />
+
       {error && (
         <Card>
           <CardContent className="py-3 px-4">
@@ -300,703 +778,117 @@ export function SkillsBrowser({ lockedScope }: { lockedScope?: Scope } = {}) {
         </Card>
       )}
 
-      {!loading && !creating && skills.length === 0 && (
-        <Card>
-          <CardContent className="py-8 text-center">
-            <p className="text-sm text-muted-foreground">
-              No skills match the current filters. Click <strong>New skill</strong> to create one,
-              or drop a markdown file under any of the skills directories above.
-            </p>
-          </CardContent>
-        </Card>
-      )}
-
-      {!loading && (creating || skills.length > 0) && (
-        <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
-          <SkillList grouped={grouped} selectedId={selectedId} onSelect={handleSelect} />
-          {creating ? (
-            <CreateForm
-              pending={actionPending}
-              // Only "org" is a live caller today (Phase 1). Phase 2 will
-              // add "workspace" / "user" callers and broaden this narrowing
-              // when those branches actually ship.
-              lockedScope={lockedScope === "org" ? "org" : undefined}
-              onCancel={() => {
-                setCreating(false);
-                setError(null);
-              }}
-              onSubmit={handleCreate}
-            />
-          ) : (
-            <SkillDetail
-              selectedId={selectedId}
-              detail={detail}
-              loading={detailLoading}
-              mode={mode}
-              actionPending={actionPending}
-              onEdit={() => {
-                setError(null);
-                setMode("edit");
-              }}
-              onCancelEdit={() => {
-                setMode("view");
-                setError(null);
-              }}
-              onSave={(patch) => selectedId && handleSaveEdit(selectedId, patch)}
-              onDelete={() => selectedId && handleDelete(selectedId)}
-              onToggleStatus={() =>
-                selectedId && handleToggleStatus(selectedId, detail?.metadata.status)
-              }
-              onMoveScope={(target) => selectedId && handleMoveScope(selectedId, target)}
-              placeholder={skills.length > 0}
-            />
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-type WritableScope = "org" | "workspace" | "user";
-
-// Args shape derived from the schema catalog. `name` lives inside `manifest`
-// because that's where the on-disk frontmatter has it — see the original
-// SkillsTab incident where the form was sending name at the root and the
-// validator rejected it.
-type CreateInput = ToolInput<"skills", "create">;
-
-// ── List view ────────────────────────────────────────────────────────────
-
-interface GroupedSkills {
-  scope: Scope;
-  skills: ListedSkill[];
-}
-
-function groupByScope(skills: ListedSkill[]): GroupedSkills[] {
-  const order: Scope[] = ["user", "workspace", "org", "bundle"];
-  const map = new Map<Scope, ListedSkill[]>();
-  for (const s of skills) {
-    const list = map.get(s.scope) ?? [];
-    list.push(s);
-    map.set(s.scope, list);
-  }
-  for (const list of map.values()) {
-    list.sort((a, b) => a.name.localeCompare(b.name));
-  }
-  return order.filter((s) => map.has(s)).map((scope) => ({ scope, skills: map.get(scope)! }));
-}
-
-const SCOPE_LABEL: Record<Scope, string> = {
-  user: "User",
-  workspace: "Workspace",
-  org: "Org",
-  bundle: "Bundle (Layer 1)",
-};
-
-function SkillList({
-  grouped,
-  selectedId,
-  onSelect,
-}: {
-  grouped: GroupedSkills[];
-  selectedId: string | null;
-  onSelect: (id: string) => void;
-}) {
-  return (
-    <div className="space-y-4">
-      {grouped.map((group) => (
-        <section key={group.scope} className="space-y-1.5">
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground px-1">
-            {SCOPE_LABEL[group.scope]}{" "}
-            <span className="text-muted-foreground/60 font-normal">({group.skills.length})</span>
-          </h3>
-          <div className="grid gap-1">
-            {group.skills.map((s) => (
-              <SkillRow
-                key={s.id}
-                skill={s}
-                selected={s.id === selectedId}
-                onSelect={() => onSelect(s.id)}
-              />
-            ))}
-          </div>
-        </section>
-      ))}
-    </div>
-  );
-}
-
-function SkillRow({
-  skill,
-  selected,
-  onSelect,
-}: {
-  skill: ListedSkill;
-  selected: boolean;
-  onSelect: () => void;
-}) {
-  return (
-    <Card
-      className={cn(
-        "cursor-pointer transition-colors",
-        selected ? "ring-1 ring-primary border-primary/40" : "hover:bg-muted/40",
-      )}
-    >
-      <CardContent className="py-2.5 px-3">
-        <button
-          type="button"
-          onClick={onSelect}
-          className="w-full flex items-center gap-3 text-left"
-        >
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-medium truncate">{skill.name}</span>
-              {skill.status !== "active" && (
-                <Badge variant="outline" className={cn("text-[10px]", STATUS_BADGE[skill.status])}>
-                  {skill.status}
-                </Badge>
-              )}
-            </div>
-            {skill.description && (
-              <div className="text-xs text-muted-foreground truncate mt-0.5">
-                {skill.description}
-              </div>
-            )}
-          </div>
-          <div className="flex flex-col items-end gap-1 shrink-0">
-            <Badge variant="outline" className={cn("text-[10px]", SCOPE_BADGE[skill.scope])}>
-              L{skill.layer} · {skill.scope}
-            </Badge>
-            <span className="text-[10px] text-muted-foreground tabular-nums">
-              {formatTokens(skill.tokens)} tok
-            </span>
-          </div>
-        </button>
-      </CardContent>
-    </Card>
-  );
-}
-
-// ── Detail panel ─────────────────────────────────────────────────────────
-
-interface SkillDetailProps {
-  selectedId: string | null;
-  detail: ReadSkill | null;
-  loading: boolean;
-  mode: DetailMode;
-  actionPending: boolean;
-  onEdit: () => void;
-  onCancelEdit: () => void;
-  onSave: (patch: { manifest: Record<string, unknown>; body: string }) => void;
-  onDelete: () => void;
-  onToggleStatus: () => void;
-  onMoveScope: (target: WritableScope) => void;
-  placeholder: boolean;
-}
-
-function SkillDetail(props: SkillDetailProps) {
-  const { selectedId, detail, loading, mode, placeholder } = props;
-  if (!selectedId) {
-    return (
-      <Card className="lg:sticky lg:top-4 self-start">
-        <CardContent className="py-12 text-center text-sm text-muted-foreground">
-          {placeholder ? "Select a skill to see its body and metadata." : null}
-        </CardContent>
-      </Card>
-    );
-  }
-  if (loading || !detail) {
-    return (
-      <Card className="lg:sticky lg:top-4 self-start">
-        <CardContent className="py-8 text-sm text-muted-foreground">Loading…</CardContent>
-      </Card>
-    );
-  }
-  if (mode === "edit") {
-    return (
-      <SkillEditor
-        detail={detail}
-        actionPending={props.actionPending}
-        onCancelEdit={props.onCancelEdit}
-        onSave={props.onSave}
-      />
-    );
-  }
-  return (
-    <SkillDetailView
-      detail={detail}
-      actionPending={props.actionPending}
-      onEdit={props.onEdit}
-      onDelete={props.onDelete}
-      onToggleStatus={props.onToggleStatus}
-      onMoveScope={props.onMoveScope}
-    />
-  );
-}
-
-function SkillDetailView({
-  detail,
-  actionPending,
-  onEdit,
-  onDelete,
-  onToggleStatus,
-  onMoveScope,
-}: { detail: ReadSkill } & Pick<
-  SkillDetailProps,
-  "actionPending" | "onEdit" | "onDelete" | "onToggleStatus" | "onMoveScope"
->) {
-  const m = detail.metadata;
-  const isBundle = detail.scope === "bundle";
-  const currentStatus = (m.status ?? "active") as Status;
-  return (
-    <Card className="lg:sticky lg:top-4 self-start">
-      <CardContent className="py-4 px-4 space-y-4">
-        <header className="space-y-2">
-          <div className="flex items-center justify-between gap-2 flex-wrap">
-            <div className="flex items-center gap-2 flex-wrap">
-              <h3 className="text-sm font-semibold">{m.name}</h3>
-              <Badge variant="outline" className={cn("text-[10px]", SCOPE_BADGE[detail.scope])}>
-                L{detail.layer} · {detail.scope}
-              </Badge>
-              <Badge variant="outline" className={cn("text-[10px]", STATUS_BADGE[currentStatus])}>
-                {currentStatus}
-              </Badge>
-            </div>
-            {!isBundle && (
-              <div className="flex items-center gap-1">
-                <Button size="sm" variant="outline" onClick={onEdit} disabled={actionPending}>
-                  Edit
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={onToggleStatus}
-                  disabled={actionPending}
-                >
-                  {currentStatus === "active" ? "Deactivate" : "Activate"}
-                </Button>
-                <ScopeMover
-                  current={detail.scope as WritableScope}
-                  pending={actionPending}
-                  onMove={onMoveScope}
-                />
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={onDelete}
-                  disabled={actionPending}
-                  aria-label="Delete skill"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </Button>
-              </div>
-            )}
-          </div>
-          {m.description && <p className="text-xs text-muted-foreground">{m.description}</p>}
-          {isBundle && (
-            <p className="text-[11px] text-muted-foreground italic">
-              Bundle (Layer 1) skills are vendored — edit them through the bundle's own settings.
-            </p>
-          )}
-        </header>
-
-        <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
-          {m.type && <Row label="Type" value={m.type} />}
-          {m.priority !== undefined && <Row label="Priority" value={String(m.priority)} />}
-          {m.loadingStrategy && <Row label="Loads" value={m.loadingStrategy} />}
-          {m.appliesToTools && m.appliesToTools.length > 0 && (
-            <Row label="Tool affinity" value={m.appliesToTools.join(", ")} mono />
-          )}
-          {detail.modifiedAt && <Row label="Modified" value={formatTime(detail.modifiedAt)} />}
-          {detail.source.path && <Row label="Path" value={detail.source.path} mono />}
-          {detail.source.uri && <Row label="URI" value={detail.source.uri} mono />}
-          {m.derivedFrom && <Row label="Derived from" value={m.derivedFrom} mono />}
-        </dl>
-
-        {m.overrides && m.overrides.length > 0 && (
-          <div className="space-y-1">
-            <div className="text-xs font-medium text-muted-foreground">Overrides</div>
-            <ul className="text-xs space-y-1 list-disc list-inside">
-              {m.overrides.map((o) => (
-                <li key={`${o.bundle ?? ""}-${o.skill ?? ""}-${o.reason}`}>
-                  {o.bundle && <code className="text-[11px]">{o.bundle}</code>}
-                  {o.bundle && o.skill && " / "}
-                  {o.skill && <code className="text-[11px]">{o.skill}</code>}
-                  {(o.bundle || o.skill) && " — "}
-                  <span className="text-muted-foreground">{o.reason}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-
-        <div className="space-y-1">
-          <div className="text-xs font-medium text-muted-foreground">Body</div>
-          <pre className="rounded border bg-muted/30 p-3 text-[11px] leading-relaxed whitespace-pre-wrap break-words font-mono max-h-[500px] overflow-auto">
-            {detail.content}
-          </pre>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-// ── Editor (shared by edit + create) ─────────────────────────────────────
-
-interface EditorFormState {
-  description: string;
-  type: "context" | "skill";
-  priority: string; // string for input; parsed on save
-  status: Status;
-  body: string;
-}
-
-function SkillEditor({
-  detail,
-  actionPending,
-  onCancelEdit,
-  onSave,
-}: { detail: ReadSkill } & Pick<SkillDetailProps, "actionPending" | "onCancelEdit" | "onSave">) {
-  const m = detail.metadata;
-  const [form, setForm] = useState<EditorFormState>({
-    description: m.description ?? "",
-    type: (m.type as "context" | "skill") ?? "skill",
-    priority: m.priority !== undefined ? String(m.priority) : "50",
-    status: (m.status as Status) ?? "active",
-    body: detail.content,
-  });
-
-  const handleSave = () => {
-    const priorityNum = Number.parseInt(form.priority, 10);
-    const patch: NonNullable<ToolInput<"skills", "update">["manifest"]> = {
-      description: form.description,
-      type: form.type,
-      status: form.status,
-      ...(Number.isFinite(priorityNum) ? { priority: priorityNum } : {}),
-    };
-    onSave({ manifest: patch, body: form.body });
-  };
-
-  return (
-    <Card className="lg:sticky lg:top-4 self-start">
-      <CardContent className="py-4 px-4 space-y-4">
-        <header className="flex items-center justify-between gap-2">
-          <h3 className="text-sm font-semibold">Edit {m.name}</h3>
-          <div className="flex gap-1">
-            <Button size="sm" variant="outline" onClick={onCancelEdit} disabled={actionPending}>
-              Cancel
-            </Button>
-            <Button size="sm" onClick={handleSave} disabled={actionPending}>
-              {actionPending ? "Saving…" : "Save"}
-            </Button>
-          </div>
-        </header>
-
-        <ManifestForm form={form} setForm={setForm} />
-
-        <div className="space-y-1">
-          <label className="text-xs font-medium" htmlFor="skill-body-edit">
-            Body
-          </label>
-          <Textarea
-            id="skill-body-edit"
-            value={form.body}
-            onChange={(e) => setForm({ ...form, body: e.target.value })}
-            className="font-mono text-[11px] min-h-[300px]"
-          />
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-function CreateForm({
-  pending,
-  lockedScope,
-  onCancel,
-  onSubmit,
-}: {
-  pending: boolean;
-  /** When set, force the create scope and hide the picker. Org-tier-only
-   * surfaces pass `"org"` so the form can't author into another scope. */
-  lockedScope?: WritableScope;
-  onCancel: () => void;
-  onSubmit: (input: CreateInput) => void;
-}) {
-  const [scope, setScope] = useState<WritableScope>(lockedScope ?? "workspace");
-  const [name, setName] = useState("");
-  const [form, setForm] = useState<EditorFormState>({
-    description: "",
-    type: "skill",
-    priority: "50",
-    status: "active",
-    body: "",
-  });
-
-  const handleSubmit = () => {
-    if (!name.trim()) return;
-    const priorityNum = Number.parseInt(form.priority, 10);
-    const manifest: CreateInput["manifest"] = {
-      name: name.trim(),
-      description: form.description,
-      type: form.type,
-      status: form.status,
-      ...(Number.isFinite(priorityNum) ? { priority: priorityNum } : {}),
-    };
-    onSubmit({ scope, manifest, body: form.body });
-  };
-
-  return (
-    <Card className="lg:sticky lg:top-4 self-start">
-      <CardContent className="py-4 px-4 space-y-4">
-        <header className="flex items-center justify-between gap-2">
-          <h3 className="text-sm font-semibold">New skill</h3>
-          <div className="flex gap-1">
-            <Button size="sm" variant="outline" onClick={onCancel} disabled={pending}>
-              Cancel
-            </Button>
-            <Button size="sm" onClick={handleSubmit} disabled={pending || !name.trim()}>
-              {pending ? "Creating…" : "Create"}
-            </Button>
-          </div>
-        </header>
-
-        <div className={cn("grid gap-3", lockedScope ? "grid-cols-1" : "grid-cols-2")}>
-          {lockedScope === undefined && (
-            <div className="space-y-1">
-              <label className="text-xs font-medium" htmlFor="skill-scope">
-                Scope
-              </label>
-              <select
-                id="skill-scope"
-                value={scope}
-                onChange={(e) => setScope(e.target.value as WritableScope)}
-                className="rounded-md border bg-background px-2 py-1 text-xs w-full focus:outline-none focus:ring-1 focus:ring-ring"
-              >
-                <option value="user">User</option>
-                <option value="workspace">Workspace</option>
-                <option value="org">Org</option>
-              </select>
-            </div>
-          )}
-          <div className="space-y-1">
-            <label className="text-xs font-medium" htmlFor="skill-name">
-              Name
+      {!loading && (
+        <div className="space-y-6">
+          <div className="space-y-2">
+            <label className="block text-sm font-medium" htmlFor="rule-name">
+              Name it
             </label>
             <Input
-              id="skill-name"
+              id="rule-name"
+              ref={nameRef}
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="voice-rules"
-              pattern="[a-zA-Z0-9_-]+"
+              placeholder="Voice rules"
+              disabled={!isNew}
+              className={isNew ? "" : "font-mono"}
             />
+            {showSlugHint && (
+              <p className="text-xs text-muted-foreground">
+                Saved as <span className="font-mono">{slug}</span>
+              </p>
+            )}
+            {!isNew && (
+              <p className="text-xs text-muted-foreground">
+                Names are immutable — they're the filename on disk.
+              </p>
+            )}
+          </div>
+
+          <div className="space-y-2">
+            <label className="block text-sm font-medium" htmlFor="rule-body">
+              What should the agent do?
+            </label>
+            <Textarea
+              id="rule-body"
+              value={body}
+              onChange={(e) => setBody(e.target.value)}
+              rows={8}
+              placeholder="Match my writing voice. Avoid em-dashes."
+            />
+            <p className="text-xs text-muted-foreground">
+              The agent reads this as a rule. Plain English works. Use line breaks for separate
+              ideas.
+            </p>
+          </div>
+
+          <div>
+            <button
+              type="button"
+              onClick={() => setAdvancedOpen((v) => !v)}
+              className="text-sm text-muted-foreground hover:text-foreground inline-flex items-center gap-2"
+            >
+              <span
+                className={cn(
+                  "inline-block text-muted-foreground/60 transition-transform",
+                  advancedOpen && "rotate-90",
+                )}
+              >
+                ▸
+              </span>
+              Advanced
+            </button>
+            {advancedOpen && (
+              <div className="mt-4 pl-5 space-y-4 border-l border-border">
+                <div className="space-y-1">
+                  <label className="block text-sm font-medium" htmlFor="priority">
+                    Priority
+                  </label>
+                  <div className="flex items-baseline gap-3">
+                    <input
+                      id="priority"
+                      type="number"
+                      min={1}
+                      max={100}
+                      value={priority}
+                      onChange={(e) => setPriority(parseInt(e.target.value, 10) || 50)}
+                      className="text-sm bg-background border-b border-border pb-1 w-20 outline-none focus:border-foreground"
+                    />
+                    <span className="text-xs text-muted-foreground">
+                      lower = read first (default 50)
+                    </span>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
-
-        <ManifestForm form={form} setForm={setForm} />
-
-        <div className="space-y-1">
-          <label className="text-xs font-medium" htmlFor="skill-body-new">
-            Body
-          </label>
-          <Textarea
-            id="skill-body-new"
-            value={form.body}
-            onChange={(e) => setForm({ ...form, body: e.target.value })}
-            className="font-mono text-[11px] min-h-[200px]"
-            placeholder="Markdown content of the skill…"
-          />
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-function ManifestForm({
-  form,
-  setForm,
-}: {
-  form: EditorFormState;
-  setForm: (f: EditorFormState) => void;
-}) {
-  const selectClass =
-    "rounded-md border bg-background px-2 py-1 text-xs w-full focus:outline-none focus:ring-1 focus:ring-ring";
-  return (
-    <div className="space-y-3">
-      <div className="space-y-1">
-        <label className="text-xs font-medium" htmlFor="skill-description">
-          Description
-        </label>
-        <Input
-          id="skill-description"
-          value={form.description}
-          onChange={(e) => setForm({ ...form, description: e.target.value })}
-          placeholder="One-line summary of what this skill does"
-        />
-      </div>
-      <div className="grid grid-cols-3 gap-3">
-        <div className="space-y-1">
-          <label className="text-xs font-medium" htmlFor="skill-type">
-            Type
-          </label>
-          <select
-            id="skill-type"
-            value={form.type}
-            onChange={(e) => setForm({ ...form, type: e.target.value as EditorFormState["type"] })}
-            className={selectClass}
-          >
-            <option value="skill">skill (triggered)</option>
-            <option value="context">context (always-on)</option>
-          </select>
-        </div>
-        <div className="space-y-1">
-          <label className="text-xs font-medium" htmlFor="skill-priority">
-            Priority
-          </label>
-          <Input
-            id="skill-priority"
-            type="number"
-            min="11"
-            max="99"
-            value={form.priority}
-            onChange={(e) => setForm({ ...form, priority: e.target.value })}
-          />
-        </div>
-        <div className="space-y-1">
-          <label className="text-xs font-medium" htmlFor="skill-status">
-            Status
-          </label>
-          <select
-            id="skill-status"
-            value={form.status}
-            onChange={(e) => setForm({ ...form, status: e.target.value as Status })}
-            className={selectClass}
-          >
-            <option value="active">active</option>
-            <option value="draft">draft</option>
-            <option value="disabled">disabled</option>
-            <option value="archived">archived</option>
-          </select>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function ScopeMover({
-  current,
-  pending,
-  onMove,
-}: {
-  current: WritableScope;
-  pending: boolean;
-  onMove: (target: WritableScope) => void;
-}) {
-  const targets: WritableScope[] = (["org", "workspace", "user"] as WritableScope[]).filter(
-    (s) => s !== current,
-  );
-  return (
-    <select
-      onChange={(e) => {
-        const v = e.target.value as WritableScope | "";
-        if (v) onMove(v);
-        e.target.value = "";
-      }}
-      defaultValue=""
-      disabled={pending}
-      aria-label="Move skill to a different scope"
-      className="rounded-md border bg-background px-2 py-1 text-xs h-8 disabled:opacity-50"
-    >
-      <option value="">Move to…</option>
-      {targets.map((t) => (
-        <option key={t} value={t}>
-          {t}
-        </option>
-      ))}
-    </select>
-  );
-}
-
-function Row({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
-  return (
-    <>
-      <dt className="text-muted-foreground">{label}</dt>
-      <dd className={cn("break-all", mono && "font-mono text-[11px]")}>{value}</dd>
-    </>
-  );
-}
-
-function formatTime(iso: string): string {
-  try {
-    const d = new Date(iso);
-    return d.toLocaleString();
-  } catch {
-    return iso;
-  }
-}
-
-// ── Filters ──────────────────────────────────────────────────────────────
-
-const SCOPE_OPTIONS: Array<{ value: Scope | "all"; label: string }> = [
-  { value: "all", label: "All scopes" },
-  { value: "user", label: "User" },
-  { value: "workspace", label: "Workspace" },
-  { value: "org", label: "Org" },
-  { value: "bundle", label: "Bundle (L1)" },
-];
-
-const STATUS_OPTIONS: Array<{ value: Status | "all"; label: string }> = [
-  { value: "active", label: "Active" },
-  { value: "draft", label: "Draft" },
-  { value: "disabled", label: "Disabled" },
-  { value: "archived", label: "Archived" },
-  { value: "all", label: "All statuses" },
-];
-
-function Filters({
-  scope,
-  status,
-  onScopeChange,
-  onStatusChange,
-  lockedScope,
-}: {
-  scope: Scope | "all";
-  status: Status | "all";
-  onScopeChange: (s: Scope | "all") => void;
-  onStatusChange: (s: Status | "all") => void;
-  /** When set, suppress the scope selector — the surface is scope-locked. */
-  lockedScope?: Scope;
-}) {
-  const selectClass =
-    "rounded-md border bg-background px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-ring";
-  return (
-    <div className="flex flex-wrap items-center gap-2">
-      {lockedScope === undefined && (
-        <select
-          value={scope}
-          onChange={(e) => onScopeChange(e.target.value as Scope | "all")}
-          className={selectClass}
-          aria-label="Filter by scope"
-        >
-          {SCOPE_OPTIONS.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </select>
       )}
-      <select
-        value={status}
-        onChange={(e) => onStatusChange(e.target.value as Status | "all")}
-        className={selectClass}
-        aria-label="Filter by status"
-      >
-        {STATUS_OPTIONS.map((o) => (
-          <option key={o.value} value={o.value}>
-            {o.label}
-          </option>
-        ))}
-      </select>
+
+      <div className="flex items-center justify-between border-t border-border pt-6">
+        <Button type="button" variant="ghost" onClick={onCancel} disabled={pending}>
+          Cancel
+        </Button>
+        <Button
+          type="button"
+          onClick={() =>
+            valid &&
+            onSubmit({
+              name: slug,
+              body: body.trim(),
+              // Only forward priority when the user explicitly opened
+              // Advanced (or when editing a rule that already had a
+              // priority set on disk). For fresh creates with Advanced
+              // never opened, omit so the server's default (50) lands —
+              // sending `priority: 50` ourselves would be redundant.
+              ...(advancedOpen || existing?.metadata.priority !== undefined ? { priority } : {}),
+            })
+          }
+          disabled={!valid || pending}
+        >
+          {pending ? "Saving…" : "Save"}
+        </Button>
+      </div>
     </div>
   );
 }

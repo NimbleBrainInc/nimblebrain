@@ -24,7 +24,16 @@ const VALID_LOADING_STRATEGIES = new Set<SkillLoadingStrategy>([
   "retrieval",
   "explicit",
 ]);
-const VALID_STATUSES = new Set<SkillStatus>(["active", "draft", "disabled", "archived"]);
+const VALID_STATUSES = new Set<SkillStatus>(["active", "disabled"]);
+/**
+ * Status rename — the legacy 4-value enum collapsed to a binary.
+ * `draft` and `archived` files keep loading; their value normalises
+ * to `disabled`. The writer never emits the legacy labels.
+ */
+const STATUS_ALIASES: Record<string, SkillStatus> = {
+  draft: "disabled",
+  archived: "disabled",
+};
 const VALID_SCOPES = new Set<SkillScope>(["org", "workspace", "user", "bundle"]);
 /**
  * Scope rename — `platform` was the original Phase-2 label for the
@@ -237,10 +246,20 @@ export function parseSkillContent(raw: string, sourcePath: string): Skill | null
     }
   }
 
-  // `status` defaults to "active" when missing or invalid.
+  // `status` defaults to "active" when missing or invalid. Legacy
+  // values (`draft`, `archived`) normalise to `disabled` silently so
+  // existing files keep loading without a migration.
   let status: SkillStatus = "active";
   if (typeof data.status === "string") {
-    if (VALID_STATUSES.has(data.status as SkillStatus)) {
+    // `Object.hasOwn` is the prototype-safe lookup; bare `obj[k]`
+    // would return `Object.prototype.toString` (truthy) for a value
+    // of `data.status === "toString"`. Same below for SCOPE_ALIASES.
+    const aliased = Object.hasOwn(STATUS_ALIASES, data.status)
+      ? STATUS_ALIASES[data.status]
+      : undefined;
+    if (aliased) {
+      status = aliased;
+    } else if (VALID_STATUSES.has(data.status as SkillStatus)) {
       status = data.status as SkillStatus;
     } else {
       console.error(
@@ -255,7 +274,9 @@ export function parseSkillContent(raw: string, sourcePath: string): Skill | null
   // the field without losing it.
   let scope: SkillScope | undefined;
   if (typeof data.scope === "string") {
-    const aliased = SCOPE_ALIASES[data.scope];
+    const aliased = Object.hasOwn(SCOPE_ALIASES, data.scope)
+      ? SCOPE_ALIASES[data.scope]
+      : undefined;
     if (aliased) {
       scope = aliased;
     } else if (VALID_SCOPES.has(data.scope as SkillScope)) {

@@ -43,6 +43,8 @@ import { recoverFromWorkspaceError } from "./lib/workspace-recovery";
 import { toSlug } from "./lib/workspace-slug";
 import { GlobalHomePage } from "./pages/GlobalHomePage";
 import { ProfilePage } from "./pages/ProfilePage";
+import { ProfileSkillsTab } from "./pages/settings/ProfileSkillsTab";
+import { ProfileTab } from "./pages/settings/ProfileTab";
 import { ConnectorBrowsePage } from "./pages/settings/ConnectorBrowsePage";
 import { ConnectorDetailPage } from "./pages/settings/ConnectorDetailPage";
 import { ModelTab } from "./pages/settings/ModelTab";
@@ -408,8 +410,15 @@ function AuthenticatedAppContent({
               />
             ))}
 
-            {/* Profile — top-level, identity-bound. */}
-            <Route path="/profile" element={<ProfilePage />} />
+            {/* Profile — top-level, identity-bound. Tabbed surface
+                following the /org/* pattern. Future identity-level
+                config (custom instructions, model prefs) slots in
+                alongside the Skills tab. */}
+            <Route path="/profile" element={<ProfilePage />}>
+              <Route index element={<Navigate to="/profile/general" replace />} />
+              <Route path="general" element={<ProfileTab />} />
+              <Route path="skills" element={<ProfileSkillsTab />} />
+            </Route>
 
             {/* Organization settings — dedicated top-level home, org-admin
                 scoped. Everything here affects the org as a whole (global

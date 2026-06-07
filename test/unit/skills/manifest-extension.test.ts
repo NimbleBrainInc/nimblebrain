@@ -52,7 +52,7 @@ loading-strategy: tool_affined
 applies-to-tools:
   - synapse-collateral__*
   - "*__patch_source"
-status: draft
+status: disabled
 derived-from: skill://platform/voice-rules
 ---
 Body.
@@ -63,7 +63,7 @@ Body.
       "synapse-collateral__*",
       "*__patch_source",
     ]);
-    expect(skill.manifest.status).toBe("draft");
+    expect(skill.manifest.status).toBe("disabled");
     expect(skill.manifest.derivedFrom).toBe("skill://platform/voice-rules");
   });
 
@@ -194,6 +194,57 @@ status: weird
     expect(skill.manifest.status).toBe("active");
   });
 
+  // Pre-Phase-3 SkillStatus was `active | draft | disabled | archived`.
+  // The redesign collapsed to `active | disabled`. Existing files on
+  // disk with `draft` / `archived` keep loading without a migration by
+  // normalising silently to `disabled`. This pair pins that contract —
+  // if the loader's STATUS_ALIASES path ever regresses, these break.
+  test("legacy status 'draft' normalises to 'disabled' on read", () => {
+    const skill = parse(`---
+name: legacy-draft
+description: x
+version: 1.0.0
+type: skill
+priority: 50
+status: draft
+---
+`);
+    expect(skill.manifest.status).toBe("disabled");
+  });
+
+  test("legacy status 'archived' normalises to 'disabled' on read", () => {
+    const skill = parse(`---
+name: legacy-archived
+description: x
+version: 1.0.0
+type: skill
+priority: 50
+status: archived
+---
+`);
+    expect(skill.manifest.status).toBe("disabled");
+  });
+
+  // Object.hasOwn guard — the alias map must not expose
+  // Object.prototype members like `toString` or `constructor`. A
+  // frontmatter value matching a prototype key used to return a
+  // truthy function under bare `obj[k]` lookup, which would coerce
+  // the status into garbage.
+  test("status matching Object.prototype keys does NOT alias", () => {
+    const skill = parse(`---
+name: proto-status
+description: x
+version: 1.0.0
+type: skill
+priority: 50
+status: toString
+---
+`);
+    // "toString" isn't a valid status, so the loader falls back to
+    // active and logs a warning — never sets status to a function.
+    expect(skill.manifest.status).toBe("active");
+  });
+
   test("invalid scope is ignored (left undefined for the multi-scope loader to stamp)", () => {
     const skill = parse(`---
 name: bad-scope
@@ -219,7 +270,7 @@ describe("Phase 2 manifest fields — round-trip", () => {
       scope: "user",
       loadingStrategy: "tool_affined",
       appliesToTools: ["synapse-collateral__*"],
-      status: "draft",
+      status: "disabled",
       overrides: [{ bundle: "x", skill: "y", reason: "because" }],
       derivedFrom: "skill://platform/parent",
       metadata: {
@@ -235,7 +286,7 @@ describe("Phase 2 manifest fields — round-trip", () => {
     expect(read?.manifest.scope).toBe("user");
     expect(read?.manifest.loadingStrategy).toBe("tool_affined");
     expect(read?.manifest.appliesToTools).toEqual(["synapse-collateral__*"]);
-    expect(read?.manifest.status).toBe("draft");
+    expect(read?.manifest.status).toBe("disabled");
     expect(read?.manifest.overrides).toEqual([
       { bundle: "x", skill: "y", reason: "because" },
     ]);
