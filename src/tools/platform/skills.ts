@@ -71,7 +71,7 @@ const SKILLS_LIST_DESCRIPTION =
   "List Layer 3 skills (cross-bundle agent orchestration content) and Layer 1 vendored bundle skills. " +
   "Filter by `scope` (org | workspace | user | bundle), `layer` (1 | 3), `type` (context | skill), " +
   "`tool_affinity` (a tool name; returns skills whose `applies_to_tools` glob matches it), " +
-  "`status` (active | draft | disabled | archived), or `modified_since` (ISO 8601). " +
+  "`status` (active | disabled), or `modified_since` (ISO 8601). " +
   "Returns id, name, layer, scope, status, token count, and source metadata for each skill. " +
   "Use this to answer 'what skills do I have?' or 'what's available for the active tool set?'";
 
