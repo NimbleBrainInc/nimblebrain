@@ -411,9 +411,9 @@ function AuthenticatedAppContent({
             ))}
 
             {/* Profile — top-level, identity-bound. Tabbed surface
-                following the /org/* pattern. Phase 3 of SKILLS_SURFACE.md
-                added the Skills tab; future identity-level config
-                (custom instructions, model prefs) slots in alongside. */}
+                following the /org/* pattern. Future identity-level
+                config (custom instructions, model prefs) slots in
+                alongside the Skills tab. */}
             <Route path="/profile" element={<ProfilePage />}>
               <Route index element={<Navigate to="/profile/general" replace />} />
               <Route path="general" element={<ProfileTab />} />
