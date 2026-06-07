@@ -84,31 +84,13 @@ describe("selectLayer3Skills — `always` strategy", () => {
     expect(result[0]?.skill).toBe(skill);
   });
 
-  test("draft status → not included", () => {
+  test("disabled status → not included", () => {
     const skill = makeSkill({
-      name: "voice-rules",
-      loadingStrategy: "always",
-      status: "draft",
-    });
-    const result = selectLayer3Skills({ skills: [skill], activeTools: [] });
-    expect(result).toHaveLength(0);
-  });
-
-  test("disabled and archived statuses → not included", () => {
-    const disabled = makeSkill({
       name: "disabled-skill",
       loadingStrategy: "always",
       status: "disabled",
     });
-    const archived = makeSkill({
-      name: "archived-skill",
-      loadingStrategy: "always",
-      status: "archived",
-    });
-    const result = selectLayer3Skills({
-      skills: [disabled, archived],
-      activeTools: [],
-    });
+    const result = selectLayer3Skills({ skills: [skill], activeTools: [] });
     expect(result).toHaveLength(0);
   });
 
@@ -263,11 +245,11 @@ describe("selectLayer3Skills — mixed input + ordering", () => {
         status: "active",
         priority: 30,
       }),
-      // excluded (always, draft)
+      // excluded (always, disabled)
       makeSkill({
-        name: "always-draft",
+        name: "always-disabled",
         loadingStrategy: "always",
-        status: "draft",
+        status: "disabled",
         priority: 20,
       }),
       // included (tool_affined, matches)

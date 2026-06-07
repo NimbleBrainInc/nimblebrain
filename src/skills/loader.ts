@@ -251,7 +251,12 @@ export function parseSkillContent(raw: string, sourcePath: string): Skill | null
   // existing files keep loading without a migration.
   let status: SkillStatus = "active";
   if (typeof data.status === "string") {
-    const aliased = STATUS_ALIASES[data.status];
+    // `Object.hasOwn` is the prototype-safe lookup; bare `obj[k]`
+    // would return `Object.prototype.toString` (truthy) for a value
+    // of `data.status === "toString"`. Same below for SCOPE_ALIASES.
+    const aliased = Object.hasOwn(STATUS_ALIASES, data.status)
+      ? STATUS_ALIASES[data.status]
+      : undefined;
     if (aliased) {
       status = aliased;
     } else if (VALID_STATUSES.has(data.status as SkillStatus)) {
@@ -269,7 +274,9 @@ export function parseSkillContent(raw: string, sourcePath: string): Skill | null
   // the field without losing it.
   let scope: SkillScope | undefined;
   if (typeof data.scope === "string") {
-    const aliased = SCOPE_ALIASES[data.scope];
+    const aliased = Object.hasOwn(SCOPE_ALIASES, data.scope)
+      ? SCOPE_ALIASES[data.scope]
+      : undefined;
     if (aliased) {
       scope = aliased;
     } else if (VALID_SCOPES.has(data.scope as SkillScope)) {

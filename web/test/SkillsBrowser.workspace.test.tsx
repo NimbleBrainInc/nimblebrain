@@ -107,18 +107,27 @@ mock.module("../src/api/client", () => ({
     if (server === "skills" && tool === "create") {
       return { structuredContent: { id: "/tmp/skills/ws/test-skill.md" }, isError: false };
     }
+    if (server === "skills" && tool === "update") {
+      return { structuredContent: { id: args.id }, isError: false };
+    }
     if (server === "skills" && tool === "read") {
+      // The fixture's editable rule is "workflow" (a `type: skill` with
+      // a curated description). The update-path test below relies on
+      // this: a hardcoded description: "" or type: "context" on update
+      // would silently wipe these values, which is the regression PR
+      // QA caught.
       return {
         structuredContent: {
           id: args.id,
-          content: "Test body.",
+          content: "Original body content.",
           layer: 3,
           scope: "workspace",
           source: { path: args.id },
           metadata: {
-            name: "x",
-            type: "context",
-            priority: 50,
+            name: "workflow",
+            description: "Workspace-tier rule.",
+            type: "skill",
+            priority: 75,
             status: "active",
           },
         },
@@ -253,5 +262,65 @@ describe("SkillsBrowser with surface='workspace' (workspace settings tab)", () =
     const listCall = callToolCalls.find((c) => c.server === "skills" && c.tool === "list");
     expect(listCall).toBeDefined();
     expect(listCall!.args.scope).toBeUndefined();
+  });
+
+  test("editing an existing rule does NOT send description or type (would wipe on-disk values)", async () => {
+    // CRITICAL regression guard. skills__update is a partial-patch
+    // merge: any field present in the manifest is written to disk and
+    // overwrites the prior value. Earlier in this PR the UI was sending
+    // `{ description: "", type: "context", ... }` identically on create
+    // and update — which silently wiped author-curated descriptions and
+    // coerced `type: skill` rules into `type: context`, changing
+    // Layer-3 loading inference. (It was also self-defeating because
+    // the redesigned row's display label IS the description.)
+    //
+    // The fix at SkillsTab.tsx::handleSubmit splits the manifest by
+    // branch: update only carries fields the user explicitly touched
+    // via the Advanced expander; create carries the full set.
+    mounted = await mount(React.createElement(SkillsBrowser, { surface: "workspace" }));
+
+    // Expand the workspace rule (the "workflow" fixture), wait for the
+    // read, then click Edit.
+    await act(async () => {
+      clickByText(mounted!.container, "Workspace-tier rule.");
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await act(async () => {
+      clickByText(mounted!.container, "Edit");
+    });
+
+    // Modify the body so there's a real edit to ship.
+    const bodyInput = mounted.container.querySelector("#rule-body") as HTMLTextAreaElement | null;
+    expect(bodyInput).not.toBeNull();
+    const WindowEvent = (globalThis as unknown as { window: { Event: typeof Event } }).window
+      .Event;
+    await act(async () => {
+      const setTa = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+      setTa?.call(bodyInput, "Edited body content.");
+      bodyInput!.dispatchEvent(new WindowEvent("input", { bubbles: true }));
+    });
+    await act(async () => {
+      clickByText(mounted!.container, "Save");
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const updateCall = callToolCalls.find((c) => c.server === "skills" && c.tool === "update");
+    expect(updateCall).toBeDefined();
+    // The body change goes through.
+    expect(updateCall!.args.body).toBe("Edited body content.");
+    // THE load-bearing assertions — the manifest patch MUST NOT carry
+    // description, type, or name. If any of these appear, the partial
+    // patch silently overwrites disk and we're back in the bug.
+    const manifest = updateCall!.args.manifest as Record<string, unknown>;
+    expect(manifest.description).toBeUndefined();
+    expect(manifest.type).toBeUndefined();
+    expect(manifest.name).toBeUndefined();
   });
 });

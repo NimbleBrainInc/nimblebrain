@@ -175,29 +175,44 @@ export function SkillsBrowser({ lockedScope, surface }: SkillsBrowserProps = {})
       loadingStrategy?: "auto" | "always";
       priority?: number;
     }) => {
-      // For NEW rules: type=context + no applies-to-tools makes the
-      // loader auto-infer loading_strategy=always, so the default
-      // submission omits both overrides (audit finding #2 — they'd be
-      // a no-op for new rules). For EDITED rules: the user may have
-      // touched the Advanced expander to override an existing skill's
-      // priority or pin loadingStrategy=always explicitly; include
-      // those fields when set so the patch reaches disk.
-      const manifest: Record<string, unknown> = {
-        name: patch.name,
-        description: "",
-        type: "context",
+      // CRITICAL: update is a partial patch — any field present in the
+      // manifest is written to disk and overwrites the prior value.
+      // So we MUST NOT include description, type, or name on update:
+      //   - description: "" would wipe an author-curated description
+      //     authored via CLI / markdown / OrgSkillsTab. Also breaks
+      //     this very PR's `rowLabel`, which uses description as the
+      //     row's display text — every edit would erase its own label.
+      //   - type would coerce a procedural skill into a context skill,
+      //     changing Layer-3 loading inference.
+      //   - name is immutable (it's the filename); sending it is at
+      //     best a no-op, at worst a silent rename attempt.
+      // For NEW rules, the create handler needs all three set because
+      // the file doesn't exist yet — and the loader's auto-inference
+      // (type=context + no applies-to-tools → always) is the right
+      // default for the prose rules this UI authors.
+      const advancedOverrides = {
         ...(patch.loadingStrategy === "always" ? { loadingStrategy: "always" } : {}),
         ...(patch.priority !== undefined ? { priority: patch.priority } : {}),
       };
       if (editingId) {
-        await runMutation("update", { id: editingId, manifest, body: patch.body }, () => {
-          setView("list");
-          setEditingId(null);
-        });
+        await runMutation(
+          "update",
+          { id: editingId, manifest: advancedOverrides, body: patch.body },
+          () => {
+            setView("list");
+            setEditingId(null);
+          },
+        );
       } else {
+        const createManifest = {
+          name: patch.name,
+          description: "",
+          type: "context",
+          ...advancedOverrides,
+        };
         await runMutation(
           "create",
-          { scope: createLockedScope ?? "workspace", manifest, body: patch.body },
+          { scope: createLockedScope ?? "workspace", manifest: createManifest, body: patch.body },
           (result) => {
             setView("list");
             setEditingId(null);
@@ -330,7 +345,7 @@ export function SkillsBrowser({ lockedScope, surface }: SkillsBrowserProps = {})
               title={ownTitle}
               action={<span className="text-xs text-muted-foreground">{activeCount} active</span>}
             >
-              <div className="border-t border-border">
+              <div className="divide-y divide-border">
                 {group.skills.map((s) => (
                   <Rule
                     key={s.id}
@@ -446,7 +461,7 @@ function Rule({
   const labelIsName = label === skill.name;
 
   return (
-    <div className={cn("py-4 border-b border-border", inherited && "opacity-80")}>
+    <div className={cn("py-4", inherited && "opacity-80")}>
       <button
         type="button"
         onClick={onSelect}
@@ -624,7 +639,7 @@ function InheritedSection({
         <span className="text-xs text-muted-foreground shrink-0">{activeCount} active</span>
       </button>
       {open && (
-        <div className={cn("border-t border-border", ambient && "opacity-90")}>
+        <div className={cn("divide-y divide-border", ambient && "opacity-90")}>
           {rules.map((r) => (
             <Rule
               key={r.id}
