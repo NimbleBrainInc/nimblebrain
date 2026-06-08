@@ -133,13 +133,13 @@ export const ChatPanel = forwardRef<ChatPanelRef, ChatPanelProps>(function ChatP
       <header
         className={`flex items-center justify-between border-b border-border shrink-0 ${compact ? "h-14 px-4" : "h-14 px-6"}`}
       >
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 min-w-0 flex-1">
           {onBack && (
             <button
               onClick={onBack}
               type="button"
               aria-label="Back"
-              className="p-1.5 hover:bg-muted rounded-lg transition-all text-muted-foreground hover:text-foreground sm:hidden"
+              className="p-1.5 hover:bg-muted rounded-lg transition-all text-muted-foreground hover:text-foreground sm:hidden shrink-0"
             >
               <ArrowLeft style={{ width: 18, height: 18 }} />
             </button>
@@ -148,7 +148,7 @@ export const ChatPanel = forwardRef<ChatPanelRef, ChatPanelProps>(function ChatP
             type="button"
             onClick={handleCopyConversationId}
             disabled={!conversationId}
-            className={`font-heading text-base font-medium text-foreground flex items-center gap-1.5 transition-all duration-200 truncate max-w-[200px] ${
+            className={`font-heading text-base font-medium text-foreground flex items-center gap-1.5 transition-all duration-200 min-w-0 truncate ${
               conversationId
                 ? "cursor-pointer hover:text-primary active:scale-95"
                 : "cursor-default"
@@ -161,7 +161,7 @@ export const ChatPanel = forwardRef<ChatPanelRef, ChatPanelProps>(function ChatP
             )}
           </button>
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1 shrink-0">
           <button
             onClick={handleNewChat}
             type="button"

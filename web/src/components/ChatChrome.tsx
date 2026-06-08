@@ -233,9 +233,17 @@ export function ChatChrome() {
           the single panel mount point so EVERY route gets a resizable
           sidebar, not just app views. ResizeHandle is self-contained: while
           dragging it renders a full-viewport overlay that captures the mouse
-          over app iframes, so no shared drag flag crosses components. */}
+          over app iframes, so no shared drag flag crosses components.
+
+          z-[9] keeps the handle BELOW the chat panel (z-10). The handle sits
+          just outside the panel's left edge (right: panelWidth), so the panel
+          never covers it — but in-panel overlays that overflow leftward (e.g.
+          the SkillsPopover, z-50 trapped inside the panel's z-10 stacking
+          context) now render ABOVE the handle instead of having the handle's
+          hover/active bar (bg-ring / bg-primary) paint a blue stripe over them.
+          The drag overlay (ResizeHandle, z-[60]) is unaffected. */}
       {isSidebar && !isMobile && (
-        <div className="fixed top-0 h-full z-20 hidden sm:block" style={{ right: panelWidth }}>
+        <div className="fixed top-0 h-full z-[9] hidden sm:block" style={{ right: panelWidth }}>
           <ResizeHandle
             initialWidth={panelWidth}
             onWidthChange={setPanelWidth}
