@@ -387,7 +387,6 @@ servers:
             - BOX_UPDATE_FILE
             - BOX_DELETE_FILE
             - BOX_COPY_FILE
-            - BOX_MOVE_FILE
             - BOX_CREATE_FOLDER
             - BOX_GET_FOLDER
             - BOX_LIST_ITEMS_IN_FOLDER
@@ -762,7 +761,7 @@ servers:
           # with `nb__search hubspot` and expand as needs surface.
           tools:
             - HUBSPOT_SEARCH_CONTACTS_BY_CRITERIA
-            - HUBSPOT_GET_CONTACTS
+            - HUBSPOT_LIST_CONTACTS
             - HUBSPOT_CREATE_CONTACT
             - HUBSPOT_CREATE_DEAL
             - HUBSPOT_CREATE_COMPANY
@@ -810,10 +809,10 @@ servers:
           authConfigEnv: COMPOSIO_ZOOM_AUTH_CONFIG_ID
           tools:
             - ZOOM_LIST_MEETINGS
-            - ZOOM_GET_MEETING
+            - ZOOM_GET_A_MEETING
             - ZOOM_GET_MEETING_RECORDINGS
             - ZOOM_LIST_ALL_RECORDINGS
-            - ZOOM_GET_MEETING_SUMMARY
+            - ZOOM_GET_A_MEETING_SUMMARY
             - ZOOM_GET_PAST_MEETING_PARTICIPANTS
             - ZOOM_LIST_PAST_MEETING_INSTANCES
             - ZOOM_GET_USER
