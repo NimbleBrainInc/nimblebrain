@@ -33,9 +33,7 @@ beforeAll(async () => {
   (globalThis as any).HTMLElement = window.HTMLElement;
   // biome-ignore lint/suspicious/noExplicitAny: test-only DOM shim
   (globalThis as any).Node = window.Node;
-  ({ renderMarkdown } = await import(
-    "../../../../src/bundles/automations/ui/src/markdown.ts"
-  ));
+  ({ renderMarkdown } = await import("./markdown.ts"));
 });
 
 describe("renderMarkdown — sanitization contract", () => {
