@@ -1,10 +1,13 @@
 import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EventSourcedConversationStore } from "../../src/conversation/event-sourced-store.ts";
 import type { ConversationAccessContext } from "../../src/conversation/types.ts";
-import { RunInProgressError } from "../../src/runtime/errors.ts";
+import {
+  ConversationAccessDeniedError,
+  RunInProgressError,
+} from "../../src/runtime/errors.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import type { BufferedRunEvent, RunStatus } from "../../src/runtime/run-bus.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
@@ -30,17 +33,19 @@ afterAll(async () => {
   rmSync(testDir, { recursive: true, force: true });
 });
 
-/** Attach to a turn and resolve with all events once it ends. */
-function awaitTurn(conversationId: string): Promise<{ events: BufferedRunEvent[]; status: RunStatus }> {
-  return new Promise((resolve) => {
-    const events: BufferedRunEvent[] = [];
-    runtime.attachTurn(
-      conversationId,
-      0,
-      (e) => events.push(e),
-      (status) => resolve({ events, status }),
-    );
-  });
+/** Wait for a turn to finish, then snapshot its full buffered event log. The
+ *  terminal frame (done/error/cancelled) is the last published event, so the
+ *  status is read off it — same view a late SSE viewer reconstructs from the
+ *  grace buffer. */
+async function awaitTurn(
+  conversationId: string,
+): Promise<{ events: BufferedRunEvent[]; status: RunStatus }> {
+  await waitFor(() => !runtime.isTurnActive(conversationId));
+  const events = runtime.getTurnReplay(conversationId, 0);
+  const last = events[events.length - 1];
+  const status: RunStatus =
+    last?.type === "done" ? "done" : last?.type === "cancelled" ? "cancelled" : "error";
+  return { events, status };
 }
 
 async function waitFor(pred: () => boolean, timeoutMs = 2000): Promise<void> {
@@ -119,6 +124,32 @@ describe("detached turns (server-authoritative streaming)", () => {
       loadSpy.mockRestore();
       createSpy.mockRestore();
     }
+  });
+
+  it("authorizes a provided conversationId BEFORE reserving the run", async () => {
+    // Seed a conversation owned by a different user. startTurn must reject on
+    // ownership BEFORE runBus.begin() flips the run active — otherwise an
+    // unauthorized caller could mutate another user's run state.
+    const convId = "conv_d00dd00dd00dd00d";
+    const convDir = join(testDir, "conversations");
+    mkdirSync(convDir, { recursive: true });
+    writeFileSync(
+      join(convDir, `${convId}.jsonl`),
+      `${JSON.stringify({
+        id: convId,
+        createdAt: "2025-01-01T00:00:00.000Z",
+        updatedAt: "2025-01-01T00:00:00.000Z",
+        title: null,
+        format: "events",
+        ownerId: "usr_someone_else",
+      })}\n`,
+    );
+
+    await expect(
+      runtime.startTurn({ message: "hijack", conversationId: convId, workspaceId: TEST_WORKSPACE_ID }),
+    ).rejects.toBeInstanceOf(ConversationAccessDeniedError);
+    // The run was never reserved.
+    expect(runtime.isTurnActive(convId)).toBe(false);
   });
 
   it("allows a new turn on the same conversation once idle", async () => {

@@ -3,15 +3,19 @@
  *
  * A chat turn runs to completion on the server regardless of any client
  * connection. The RunBus is the in-memory source of truth for an in-flight
- * turn: it owns the turn's cancellation handle, an ordered event log with
- * monotonic sequence numbers, and the set of live subscribers.
+ * turn: it owns the turn's cancellation handle and an ordered event log with
+ * monotonic sequence numbers.
+ *
+ * Delivery is the runtime's job, not the bus's: {@link RunBus.publish} buffers
+ * each event and returns it, and the runtime fans that return value out to live
+ * SSE subscribers (`onTurnEvent`). A freshly connecting viewer first replays
+ * the buffer via {@link RunBus.bufferedSince} (so a refresh reconstructs the
+ * in-progress message), then tails. The bus stays a pure buffer + lifecycle —
+ * one delivery path, no parallel subscriber set to keep in sync.
  *
  * Why it exists (issue #254 follow-up — conversation-tab rewrite):
- *   - The client is a *viewer*. It attaches to a run, replays everything
- *     emitted so far (so a page refresh reconstructs the in-progress
- *     assistant message), then tails live events. Disconnect / refresh /
- *     conversation-switch never lose or duplicate work — they just detach
- *     and re-attach.
+ *   - The client is a *viewer*. Disconnect / refresh / conversation-switch
+ *     never lose or duplicate work — they just replay-from-seq and re-tail.
  *   - The turn's lifecycle is decoupled from the originating HTTP request.
  *     Closing the tab does NOT abort generation; only an explicit
  *     {@link RunBus.cancel} (the Stop button) does.
@@ -40,8 +44,6 @@ interface RunLog {
   startedAt: number;
   endedAt?: number;
   abort: AbortController;
-  eventListeners: Set<(e: BufferedRunEvent) => void>;
-  endListeners: Set<(s: RunStatus) => void>;
   gcTimer?: ReturnType<typeof setTimeout>;
   /** Set once when the per-run event cap is exceeded, so the overflow
    *  handler only fires once per run (subsequent publishes during the
@@ -63,9 +65,6 @@ interface RunLog {
  * pick up from persisted history.
  */
 const DEFAULT_MAX_EVENTS_PER_RUN = 500_000;
-
-/** Detach callback returned by {@link RunBus.attach}. */
-export type DetachFn = () => void;
 
 export class RunBus {
   private runs = new Map<string, RunLog>();
@@ -101,8 +100,6 @@ export class RunBus {
       status: "running",
       startedAt: Date.now(),
       abort: new AbortController(),
-      eventListeners: new Set(),
-      endListeners: new Set(),
     };
     this.runs.set(conversationId, log);
     return log.abort.signal;
@@ -133,15 +130,15 @@ export class RunBus {
   }
 
   /**
-   * Append an event to the run's log and fan it out to live subscribers.
-   * No-op if the run isn't active (defensive — late engine events after a
-   * cancel shouldn't resurrect a terminated log).
+   * Append an event to the run's log and return it (the caller delivers it to
+   * live viewers). No-op — returns null — if the run isn't active (defensive:
+   * late engine events after a cancel shouldn't resurrect a terminated log).
    *
-   * If appending this event would exceed {@link maxEventsPerRun}, the run
-   * is aborted, a synthetic terminal `error` event is appended and fanned
-   * out (so viewers see the cause rather than a silent stop), and the run
-   * is marked `error`. Subsequent publishes during the same tick are
-   * dropped by the standard `status !== "running"` guard.
+   * If appending this event would exceed {@link maxEventsPerRun}, the run is
+   * aborted, a synthetic terminal `error` event is appended and returned (so
+   * viewers see the cause rather than a silent stop), and the run is marked
+   * `error`. Subsequent publishes during the same tick are dropped by the
+   * standard `status !== "running"` guard.
    */
   publish(conversationId: string, type: string, data: unknown): BufferedRunEvent | null {
     const log = this.runs.get(conversationId);
@@ -168,13 +165,6 @@ export class RunBus {
         },
       };
       log.events.push(errEvt);
-      for (const fn of log.eventListeners) {
-        try {
-          fn(errEvt);
-        } catch {
-          // A failing subscriber must not break the fan-out to others.
-        }
-      }
       this.end(conversationId, "error");
       return errEvt;
     }
@@ -182,13 +172,6 @@ export class RunBus {
     log.seq += 1;
     const evt: BufferedRunEvent = { seq: log.seq, type, data };
     log.events.push(evt);
-    for (const fn of log.eventListeners) {
-      try {
-        fn(evt);
-      } catch {
-        // A failing subscriber must not break the fan-out to others.
-      }
-    }
     return evt;
   }
 
@@ -203,19 +186,15 @@ export class RunBus {
     return log.events.filter((e) => e.seq > afterSeq);
   }
 
-  /** Mark a run terminal, notify end-listeners, and schedule log GC. */
+  /** Mark a run terminal and schedule log GC. The terminal frame itself is a
+   *  published event (delivered + replayable like any other); `end` only flips
+   *  the lifecycle so `isActive`/`getStatus` reflect it and the buffer is GC'd
+   *  after the grace window. */
   end(conversationId: string, status: Exclude<RunStatus, "running">): void {
     const log = this.runs.get(conversationId);
     if (!log || log.status !== "running") return;
     log.status = status;
     log.endedAt = Date.now();
-    for (const fn of log.endListeners) {
-      try {
-        fn(status);
-      } catch {
-        // ignore
-      }
-    }
     this.scheduleGc(log);
   }
 
@@ -229,51 +208,6 @@ export class RunBus {
     log.abort.abort();
     this.end(conversationId, "cancelled");
     return true;
-  }
-
-  /**
-   * Attach a viewer. Synchronously replays every buffered event with
-   * `seq > afterSeq`, then streams live events as they're published. If the
-   * run is already terminal, replays the tail then fires `onEnd`.
-   *
-   * Pass `afterSeq = 0` for a fresh attach (full replay), or the highest seq
-   * the client already rendered (from a prior connection) to resume without
-   * gaps or duplicates.
-   *
-   * Returns a detach function. No-op attach (returns a noop) when there's no
-   * retained run for the conversation — the caller then renders only
-   * persisted history.
-   */
-  attach(
-    conversationId: string,
-    afterSeq: number,
-    onEvent: (e: BufferedRunEvent) => void,
-    onEnd?: (s: RunStatus) => void,
-  ): DetachFn {
-    const log = this.runs.get(conversationId);
-    if (!log) return () => {};
-
-    // Snapshot the replay set before registering the live listener. JS is
-    // single-threaded and publish() is synchronous, so nothing can interleave
-    // between the filter and the add — no gaps, no double-delivery.
-    const replay = log.events.filter((e) => e.seq > afterSeq);
-    const liveListener = (e: BufferedRunEvent) => onEvent(e);
-    log.eventListeners.add(liveListener);
-
-    let endListener: ((s: RunStatus) => void) | undefined;
-    if (onEnd) {
-      endListener = (s) => onEnd(s);
-      log.endListeners.add(endListener);
-    }
-
-    for (const e of replay) onEvent(e);
-    // Already-terminal run: deliver the terminal status after the replay.
-    if (log.status !== "running" && onEnd) onEnd(log.status);
-
-    return () => {
-      log.eventListeners.delete(liveListener);
-      if (endListener) log.endListeners.delete(endListener);
-    };
   }
 
   /**

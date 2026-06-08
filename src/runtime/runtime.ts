@@ -113,7 +113,7 @@ import {
   type RequestContext,
   runWithRequestContext,
 } from "./request-context.ts";
-import { type BufferedRunEvent, RunBus, type RunStatus } from "./run-bus.ts";
+import { type BufferedRunEvent, RunBus } from "./run-bus.ts";
 import { buildSkillsLoadedPayload } from "./skills-loaded-payload.ts";
 import type {
   ChatRequest,
@@ -927,8 +927,9 @@ export class Runtime {
   // `startTurn` runs a chat turn to completion regardless of the caller's
   // connection. The conversation id is resolved up front and returned
   // immediately; the engine run continues in the background, publishing every
-  // event to the RunBus. Clients are viewers — they `attachTurn` to replay +
-  // tail. Client disconnect does NOT abort; only `cancelTurn` (Stop) does.
+  // event to the RunBus. Clients are viewers — they replay buffered events via
+  // `getTurnReplay` then tail live ones via the `onTurnEvent` SSE fan-out.
+  // Client disconnect does NOT abort; only `cancelTurn` (Stop) does.
   // ===========================================================================
 
   /** Whether a detached turn is currently generating for this conversation. */
@@ -944,20 +945,6 @@ export class Runtime {
   /** Highest event sequence number for a conversation's current/last run. */
   turnSeq(conversationId: string): number {
     return this.runBus.currentSeq(conversationId);
-  }
-
-  /**
-   * Attach a viewer to a conversation's in-flight turn: replays buffered
-   * events with `seq > afterSeq`, then tails live ones. Returns a detach fn
-   * (a safe no-op when nothing is running). Detaching never cancels the turn.
-   */
-  attachTurn(
-    conversationId: string,
-    afterSeq: number,
-    onEvent: (e: BufferedRunEvent) => void,
-    onEnd?: (s: RunStatus) => void,
-  ): () => void {
-    return this.runBus.attach(conversationId, afterSeq, onEvent, onEnd);
   }
 
   /** Explicitly cancel an in-flight turn (the Stop button). */
@@ -976,8 +963,9 @@ export class Runtime {
    * Start a chat turn that runs to completion server-side, decoupled from the
    * caller's connection. Resolves (creating if new) the conversation id up
    * front, reserves the run on the RunBus, then runs the engine in the
-   * background — publishing every event to the bus so viewers can replay +
-   * tail via {@link attachTurn}. Returns once the id is known; the turn keeps
+   * background — publishing every event to the bus so viewers can replay via
+   * {@link getTurnReplay} and tail via the `onTurnEvent` fan-out. Returns once
+   * the id is known; the turn keeps
    * running after the HTTP request that called this returns. Throws
    * {@link RunInProgressError} if a turn is already active for the conversation.
    */
