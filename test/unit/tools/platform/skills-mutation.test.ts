@@ -23,6 +23,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { NoopEventSink } from "../../../../src/adapters/noop-events.ts";
 import { EventSourcedConversationStore } from "../../../../src/conversation/event-sourced-store.ts";
 import type { EngineEvent, EventSink } from "../../../../src/engine/types.ts";
+import { parseSkillContent } from "../../../../src/skills/loader.ts";
+import { selectLayer3Skills } from "../../../../src/skills/select.ts";
 import { McpSource } from "../../../../src/tools/mcp-source.ts";
 import { createSkillsSource } from "../../../../src/tools/platform/skills.ts";
 import { WorkspaceContext } from "../../../../src/workspace/context.ts";
@@ -243,6 +245,110 @@ describe("skills__create", () => {
     });
     expect(result.isError).toBeFalsy();
     expect(existsSync(join(workDir, "workspaces", "ws_demo", "skills", "ws-only.md"))).toBe(true);
+  });
+});
+
+// ── create-time loading-strategy derivation (issue #391) ───────────────────
+
+describe("skills__create — loading-strategy derivation", () => {
+  test("type: skill with no triggers/keywords gets loading-strategy: always and is Layer-3 selectable", async () => {
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const result = await client.callTool({
+      name: "create",
+      arguments: {
+        scope: "org",
+        manifest: { name: "dead-otherwise", description: "would be inert", type: "skill" },
+        body: "Do the thing.",
+      },
+    });
+    expect(result.isError).toBeFalsy();
+
+    const path = join(workDir, "skills", "dead-otherwise.md");
+    const parsed = parseSkillContent(readFileSync(path, "utf-8"), path);
+    expect(parsed).not.toBeNull();
+    expect(parsed?.manifest.loadingStrategy).toBe("always");
+
+    // The derived strategy makes it reachable by the Layer-3 selector.
+    const selected = selectLayer3Skills({ skills: [parsed!], activeTools: [] });
+    expect(selected.map((s) => s.skill.manifest.name)).toContain("dead-otherwise");
+
+    // structuredContent advertises the derived strategy.
+    expect(
+      (result as { structuredContent?: { loadingStrategy?: string } }).structuredContent
+        ?.loadingStrategy,
+    ).toBe("always");
+  });
+
+  test("type: skill WITH triggers does NOT get a loading-strategy (rides the matcher)", async () => {
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const result = await client.callTool({
+      name: "create",
+      arguments: {
+        scope: "org",
+        manifest: {
+          name: "trigger-skill",
+          description: "matches on triggers",
+          type: "skill",
+          metadata: { triggers: ["deploy", "ship"] },
+        },
+        body: "Deploy guidance.",
+      },
+    });
+    expect(result.isError).toBeFalsy();
+
+    const path = join(workDir, "skills", "trigger-skill.md");
+    const parsed = parseSkillContent(readFileSync(path, "utf-8"), path);
+    expect(parsed?.manifest.loadingStrategy).toBeUndefined();
+
+    expect(
+      (result as { structuredContent?: { loadingStrategy?: string } }).structuredContent
+        ?.loadingStrategy,
+    ).toBeUndefined();
+  });
+
+  test("type: context is unchanged — no injected loading-strategy: always", async () => {
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const result = await client.callTool({
+      name: "create",
+      arguments: {
+        scope: "org",
+        manifest: { name: "ctx-skill", description: "always-by-type", type: "context" },
+        body: "Always-on context.",
+      },
+    });
+    expect(result.isError).toBeFalsy();
+
+    const path = join(workDir, "skills", "ctx-skill.md");
+    // `type: context` is always-by-type; the handler must not stamp a redundant
+    // strategy, so the on-disk frontmatter stays free of `loading-strategy`.
+    // (The loader *infers* `always` for context at parse time, so the parsed
+    // manifest would show `always` — the meaningful assertion is that the
+    // handler didn't write the key to disk.)
+    expect(readManifestField(path, "loading-strategy")).toBeUndefined();
+
+    expect(
+      (result as { structuredContent?: { loadingStrategy?: string } }).structuredContent
+        ?.loadingStrategy,
+    ).toBeUndefined();
+  });
+
+  test("success message names the resolved loading mechanism", async () => {
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const result = await client.callTool({
+      name: "create",
+      arguments: {
+        scope: "org",
+        manifest: { name: "named-mechanism", description: "x", type: "skill" },
+        body: "y",
+      },
+    });
+    const text = (result.content as Array<{ text: string }>)[0]?.text ?? "";
+    expect(text).toMatch(/loads: always/);
+    expect(text).toMatch(/no triggers or tool affinity/i);
   });
 });
 

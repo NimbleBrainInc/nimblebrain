@@ -1048,7 +1048,29 @@ export class Runtime {
       ...(request.fileRefs?.length ? { metadata: { files: request.fileRefs } } : {}),
     });
 
-    let skill = this.skillMatcher.match(request.message);
+    // The workspace the chat is FOCUSED on (the `/w/:slug` being viewed);
+    // absent on the home control panel. Hoisted above the per-request skill
+    // match below because the conversation pool is keyed on it. Reused
+    // unchanged by the briefing / apps / overlay surfaces further down.
+    const focusedWsId = request.workspaceId;
+
+    // Per-request trigger/keyword match. The boot-time `this.skillMatcher`
+    // only ever scans org-tier dirs (`config.skillDirs` + `globalSkillDir`),
+    // never `workspaces/<id>/skills/` or `users/<id>/skills/`, so those tiers
+    // could never trigger-match. Build the matcher from the merged
+    // conversation pool instead — org + workspace + user, which already folds
+    // in the boot matchable + builtin skills (see `loadConversationSkills`) —
+    // so the match is a superset of today's plus the workspace/user tiers fire.
+    //
+    // The pool is computed ONCE here and threaded into `selectRequestLayer3`
+    // below so the disk read happens a single time per turn. `userId` is
+    // hoisted from its later definition site for this reason; keep it a single
+    // definition (the layer-3 call reuses it).
+    const userId = requestIdentity.id;
+    const layer3Pool = this.loadConversationSkills(focusedWsId ?? sessionWsId, userId);
+    const requestMatcher = new SkillMatcher();
+    requestMatcher.load(layer3Pool);
+    let skill = requestMatcher.match(request.message);
 
     // Dependency checking: warn if a matched skill requires bundles that aren't installed
     // anywhere the identity can reach. Pre-Stage-2 this checked only the
@@ -1078,14 +1100,13 @@ export class Runtime {
 
     // The workspace BRIEFING (apps + workspace overlay + "## Workspace" block
     // + workspace persona) reflects the workspace the chat is FOCUSED on —
-    // `request.workspaceId`, the `/w/:slug` the user is viewing. On the home
+    // `focusedWsId` (= `request.workspaceId`, hoisted above). On the home
     // control panel there is NO focus (`request.workspaceId` absent): the chat
     // is identity-level, so the briefing is empty — cross-workspace tools and
     // ORG-level house rules only, no single "current workspace". The personal
     // workspace stays the SILENT session bridge (`sessionWsId`, used for the
     // dispatch reqCtx + file store), never narrated. Deterministic +
     // workspace-scoped when focused (same for every member).
-    const focusedWsId = request.workspaceId;
     const apps = focusedWsId ? await this.buildAppsList(focusedWsId) : [];
     // Org overlay always applies (org-level, not workspace-specific); the
     // workspace overlay only when focused.
@@ -1254,12 +1275,15 @@ export class Runtime {
     // this was the request's wsId; Stage 2 (#272) inadvertently pinned it
     // to the personal workspace, silently dropping every shared-workspace
     // skill marked `loading_strategy: always`.
-    const userId = requestIdentity.id;
+    // Reuse the pool computed for the per-request matcher above — same
+    // `wsId` and `userId` — so the conversation-skill disk read happens once
+    // per turn, not twice.
     const selectedLayer3 = await this.selectRequestLayer3({
       wsId: focusedWsId ?? sessionWsId,
       ownerId,
       userId,
       activeToolNames: tools.map((t) => t.name),
+      layer3Pool,
       ...(request.appContext?.serverName
         ? { appContextServerName: request.appContext.serverName }
         : {}),
@@ -3074,8 +3098,15 @@ export class Runtime {
     activeToolNames: string[];
     /** Skip a server's usage skill when its `<app-guide>` is already injected. */
     appContextServerName?: string;
+    /**
+     * Precomputed conversation-skill pool (org + workspace + user). When the
+     * caller already built it for the per-request matcher, thread it through
+     * so the disk read isn't repeated. Omitted callers (e.g.
+     * `describeRequestSkills`) load it internally — behavior unchanged.
+     */
+    layer3Pool?: Skill[];
   }): Promise<SelectedSkill[]> {
-    const layer3Pool = this.loadConversationSkills(params.wsId, params.userId);
+    const layer3Pool = params.layer3Pool ?? this.loadConversationSkills(params.wsId, params.userId);
     const accessibleForSkills = await this._workspaceStore.getWorkspacesForUser(params.ownerId);
     const bundleSkills = (
       await Promise.all(

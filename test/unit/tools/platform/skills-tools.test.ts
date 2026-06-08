@@ -372,6 +372,111 @@ describe("skills__list", () => {
       ?.skills as Array<{ name: string }>;
     expect(skills.map((s) => s.name)).not.toContain("old-skill");
   });
+
+  // ── loading-visibility field (issue #391) ───────────────────────────────
+
+  test("dead type: skill (no strategy/triggers) reports loading.wouldLoad=false / mechanism=none", async () => {
+    const wsDir = join(workDir, "workspaces", "ws_a", "skills");
+    mkdirSync(wsDir, { recursive: true });
+    // No loading-strategy, no triggers, no applies-to-tools → reaches no
+    // loader path. This is the silently-inert population issue #391 targets.
+    const dead = writeSkill(
+      join(wsDir, "dead.md"),
+      { name: "dead-skill", description: "inert", version: "1.0.0", type: "skill", priority: 50 },
+      "body",
+    );
+    dead.manifest.scope = "workspace";
+    runtime.conversationOverlay = [dead];
+    runtime.wsId = "ws_a";
+
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const result = await client.callTool({ name: "list", arguments: { layer: 3 } });
+    const skills = (result as { structuredContent?: { skills?: unknown[] } }).structuredContent
+      ?.skills as Array<{
+      name: string;
+      loading?: { wouldLoad: boolean; mechanism: string };
+    }>;
+    const row = skills.find((s) => s.name === "dead-skill")!;
+    expect(row.loading).toEqual({ wouldLoad: false, mechanism: "none" });
+
+    // The model-visible content carries the warning marker.
+    const text = (result.content as Array<{ text: string }>)[0]?.text ?? "";
+    expect(text).toContain("⚠ never loads");
+  });
+
+  test("loadable skill reports loading.wouldLoad=true with the correct mechanism", async () => {
+    const wsDir = join(workDir, "workspaces", "ws_a", "skills");
+    mkdirSync(wsDir, { recursive: true });
+    const live = writeSkill(
+      join(wsDir, "live.md"),
+      {
+        name: "live-skill",
+        description: "loads always",
+        version: "1.0.0",
+        type: "skill",
+        priority: 50,
+        "loading-strategy": "always",
+      },
+      "body",
+    );
+    live.manifest.scope = "workspace";
+    runtime.conversationOverlay = [live];
+    runtime.wsId = "ws_a";
+
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const result = await client.callTool({ name: "list", arguments: { layer: 3 } });
+    const skills = (result as { structuredContent?: { skills?: unknown[] } }).structuredContent
+      ?.skills as Array<{
+      name: string;
+      loading?: { wouldLoad: boolean; mechanism: string };
+    }>;
+    const row = skills.find((s) => s.name === "live-skill")!;
+    expect(row.loading).toEqual({ wouldLoad: true, mechanism: "always" });
+
+    const text = (result.content as Array<{ text: string }>)[0]?.text ?? "";
+    expect(text).not.toContain("⚠ never loads");
+  });
+
+  test("trigger skill reports mechanism=trigger; vendored guide reports always", async () => {
+    const wsDir = join(workDir, "workspaces", "ws_a", "skills");
+    mkdirSync(wsDir, { recursive: true });
+    const trig = writeSkill(
+      join(wsDir, "trig.md"),
+      {
+        name: "trigger-skill",
+        description: "rides the matcher",
+        version: "1.0.0",
+        type: "skill",
+        priority: 50,
+        metadata: { triggers: ["deploy"] },
+      },
+      "body",
+    );
+    trig.manifest.scope = "workspace";
+    runtime.conversationOverlay = [trig];
+    runtime.wsId = "ws_a";
+
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const result = await client.callTool({ name: "list", arguments: {} });
+    const skills = (result as { structuredContent?: { skills?: unknown[] } }).structuredContent
+      ?.skills as Array<{
+      name: string;
+      loading?: { wouldLoad: boolean; mechanism: string };
+    }>;
+    expect(skills.find((s) => s.name === "trigger-skill")!.loading).toEqual({
+      wouldLoad: true,
+      mechanism: "trigger",
+    });
+    // Layer-1 vendored authoring guide declares applies-to-tools (skills__*),
+    // so it resolves to tool_affinity — and is always loadable.
+    expect(skills.find((s) => s.name === "authoring-guide")!.loading).toEqual({
+      wouldLoad: true,
+      mechanism: "tool_affinity",
+    });
+  });
 });
 
 // ── skills__read ─────────────────────────────────────────────────────────

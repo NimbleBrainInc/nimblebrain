@@ -9,6 +9,8 @@ export {
   partitionSkills,
   readSkillMtime,
 } from "./loader.ts";
+export type { SkillLoadingMechanism } from "./loading.ts";
+export { resolveLoadingMechanism, wouldLoad } from "./loading.ts";
 export { SkillMatcher } from "./matcher.ts";
 export type { LoadedBy, SelectedSkill, SelectInput } from "./select.ts";
 export { selectLayer3Skills, toolMatches } from "./select.ts";
