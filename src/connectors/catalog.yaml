@@ -810,10 +810,10 @@ servers:
           authConfigEnv: COMPOSIO_ZOOM_AUTH_CONFIG_ID
           tools:
             - ZOOM_LIST_MEETINGS
-            - ZOOM_GET_MEETING
+            - ZOOM_GET_A_MEETING
             - ZOOM_GET_MEETING_RECORDINGS
             - ZOOM_LIST_ALL_RECORDINGS
-            - ZOOM_GET_MEETING_SUMMARY
+            - ZOOM_GET_A_MEETING_SUMMARY
             - ZOOM_GET_PAST_MEETING_PARTICIPANTS
             - ZOOM_LIST_PAST_MEETING_INSTANCES
             - ZOOM_GET_USER
