@@ -256,8 +256,16 @@ function applyClientAuthentication(
     case "none":
       params.set("client_id", client_id);
       return;
-    default:
-      throw new Error(`Unsupported client authentication method: ${method}`);
+    default: {
+      // Compile-time drift canary. `method` is the SDK's exported
+      // `ClientAuthMethod` union; once the three cases above are handled it
+      // narrows to `never` here. If a future SDK bump adds an auth method, this
+      // assignment stops compiling and the typecheck job fails — forcing this
+      // mirror to be updated alongside the SDK, rather than silently throwing at
+      // runtime in a fleet deployment.
+      const unsupported: never = method;
+      throw new Error(`Unsupported client authentication method: ${String(unsupported)}`);
+    }
   }
 }
 
