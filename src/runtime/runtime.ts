@@ -1459,9 +1459,10 @@ export class Runtime {
     const identityOverride = activeWorkspace?.identity
       ? makeIdentitySkill(activeWorkspace.identity)
       : null;
+    const contextBase = this.activeContextSkills();
     const requestContextSkills = identityOverride
-      ? [...this.contextSkills, identityOverride]
-      : this.contextSkills;
+      ? [...contextBase, identityOverride]
+      : contextBase;
 
     // Layer 3 selection — pick skills with `loading_strategy: always` and
     // `tool_affined` strategies based on the active tool set. The merged pool
@@ -1947,9 +1948,10 @@ export class Runtime {
     const identityOverride = activeWorkspace?.identity
       ? makeIdentitySkill(activeWorkspace.identity)
       : null;
+    const contextBase = this.activeContextSkills();
     const requestContextSkills = identityOverride
-      ? [...this.contextSkills, identityOverride]
-      : this.contextSkills;
+      ? [...contextBase, identityOverride]
+      : contextBase;
 
     // Layer 3 selection — bundle workflow guidance still applies based on
     // the active tool set. No `appContextServerName` (tasks don't have
@@ -3239,9 +3241,39 @@ export class Runtime {
     }
   }
 
-  /** Get loaded context skills (for skill_status tool). */
+  /**
+   * Raw boot-time context skills, INCLUDING any toggled Off. Audit/management
+   * surfaces that must show disabled rules (e.g. `skills__list`) use this.
+   * Anything that mirrors what the prompt actually contains must use
+   * {@link activeContextSkills} instead — see its doc.
+   */
   getContextSkills(): Skill[] {
     return this.contextSkills;
+  }
+
+  /**
+   * Boot-time context skills with any toggled Off (`status: "disabled"`)
+   * removed — the canonical always-on context channel.
+   *
+   * `compose` injects every context-skill body verbatim (Layer 0 / Layer 1)
+   * with NO status check; the disable filter otherwise lives only on the
+   * Layer-3 path (`selectLayer3Skills`, `select.ts`). Without this, a context
+   * rule (e.g. an org "rule" authored as `type: "context"`) toggled Off in the
+   * UI keeps being injected — it rides this channel while being correctly
+   * dropped from the Layer-3 `skills.loaded` set. Mirrors `select.ts`'s keep-
+   * predicate exactly. `reloadSkills()` refreshes `this.contextSkills` on every
+   * skills-tool mutation, so the toggle is reflected here on the next turn.
+   *
+   * EVERY surface that mirrors prompt composition must read through here, not
+   * `getContextSkills()`, or status and composition diverge — the failure
+   * {@link selectRequestLayer3} exists to prevent. Today that's the two
+   * `composeSystemPrompt` call sites, `describeRequestSkills` (`nb__status`),
+   * and `composeLive` (`compose_effective_context`).
+   */
+  activeContextSkills(): Skill[] {
+    return this.contextSkills.filter(
+      (s) => s.manifest.status === undefined || s.manifest.status === "active",
+    );
   }
 
   /** Get loaded matchable skills (for skill_status tool). */
@@ -3386,7 +3418,10 @@ export class Runtime {
     const registry = await this.ensureWorkspaceRegistry(wsId);
     const activeToolNames = (await registry.availableTools()).map((t) => t.name);
     const layer3 = await this.selectRequestLayer3({ wsId, ownerId, userId, activeToolNames });
-    return { context: this.contextSkills, layer3 };
+    // Filtered, not raw `this.contextSkills`: the status surface must match what
+    // compose actually injects, or a rule toggled Off still prints as "always
+    // active" here — the divergence this reporter's own design exists to kill.
+    return { context: this.activeContextSkills(), layer3 };
   }
 
   /** Get the path to the nimblebrain.json config file (Helm-managed seed). */

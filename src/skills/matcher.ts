@@ -13,6 +13,12 @@ import type { Skill } from "./types.ts";
  * hitting 2 and a skill with 10 keywords hitting 3 both qualify.
  *
  * Only type: "skill" skills are loaded; context skills are excluded.
+ *
+ * Disabled skills (`status: "disabled"` — toggled Off in the UI) are also
+ * excluded here. A matched skill is injected straight into the prompt's
+ * Layer-4 (`<skill-instructions>`) by the runtime without any further status
+ * check, so this is the only place the matched-skill channel honors the
+ * toggle. Mirrors the Layer-3 filter in `select.ts` (`selectLayer3Skills`).
  */
 
 const MIN_KEYWORD_HITS = 2;
@@ -21,7 +27,15 @@ export class SkillMatcher {
   private skills: Skill[] = [];
 
   load(skills: Skill[]): void {
-    this.skills = skills.filter((s) => s.manifest.type === "skill");
+    // Allowlist on status (active/undefined), matching `select.ts` and
+    // `Runtime.activeContextSkills` exactly — not a `!== "disabled"` denylist,
+    // which would silently leak a future third status (e.g. "archived") into
+    // Layer-4 while the other two channels dropped it.
+    this.skills = skills.filter(
+      (s) =>
+        s.manifest.type === "skill" &&
+        (s.manifest.status === undefined || s.manifest.status === "active"),
+    );
   }
 
   /** Return the loaded matchable skills (read-only snapshot). */

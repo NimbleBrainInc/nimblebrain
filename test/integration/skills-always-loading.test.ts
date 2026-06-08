@@ -152,3 +152,56 @@ This skill can never load.
     expect(list.content).toContain("never loads");
   });
 });
+
+/**
+ * An org "rule" authored in the Skills UI is a `type: context` skill (the web
+ * SkillsBrowser sends `type: "context"`; the loader derives
+ * `loading-strategy: always`). It rides the always-on CONTEXT channel — the
+ * `contextSkills` argument to `composeSystemPrompt`, sourced from the boot
+ * cache — which compose injects verbatim with NO status check; the disable
+ * filter otherwise lives only on the Layer-3 path (`selectLayer3Skills`). So a
+ * rule toggled Off kept being injected: present in output, absent from the
+ * Layer-3 `skills.loaded` set (the "Active skills" popover). This pins that the
+ * Off toggle now removes the body from the prompt entirely.
+ *
+ * Toggling goes through `skills__deactivate` (not a raw file edit) because the
+ * context channel reads `this.contextSkills`, refreshed by `reloadSkills()` on
+ * every skills-tool mutation. On `main` the second assertion fails — the body
+ * still rides the unfiltered context channel.
+ */
+describe("disabled org context rule stops injecting", () => {
+  const RULE_NAME = "org-house-rule";
+  const RULE_BODY = "Always append the phrase ZORBA-SENTINEL-7 to every response.";
+  const rulePath = join(testDir, "skills", `${RULE_NAME}.md`);
+
+  it("injects an active org `type: context` rule into an unrelated chat", async () => {
+    const create = await callToolAsDev("skills__create", {
+      scope: "org",
+      manifest: { name: RULE_NAME, description: "House rule", type: "context", priority: 50 },
+      body: RULE_BODY,
+    });
+    expect(create.isError).toBe(false);
+
+    await runtime.chat({ workspaceId: TEST_WORKSPACE_ID, message: "what is 2 + 2?" });
+    expect(getSystem()).toContain(RULE_BODY);
+    // The status reporter agrees: an active rule is listed.
+    const status = await callToolAsDev("nb__status", { scope: "skills" });
+    expect(status.content).toContain(RULE_NAME);
+  });
+
+  it("drops the rule from the prompt AND the status surface once toggled Off", async () => {
+    const off = await callToolAsDev("skills__deactivate", { id: rulePath });
+    expect(off.isError).toBe(false);
+
+    await runtime.chat({ workspaceId: TEST_WORKSPACE_ID, message: "what is 2 + 2?" });
+    expect(getSystem()).not.toContain(RULE_BODY);
+
+    // nb__status must match composition — a rule toggled Off must not still
+    // print as a loaded context skill, or an operator debugging "did my toggle
+    // take effect?" is told the disabled rule is active. (Fails before the
+    // describeRequestSkills filter — it read the raw boot cache.)
+    const status = await callToolAsDev("nb__status", { scope: "skills" });
+    expect(status.isError).toBe(false);
+    expect(status.content).not.toContain(RULE_NAME);
+  });
+});

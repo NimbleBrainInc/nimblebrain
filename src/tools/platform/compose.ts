@@ -210,9 +210,12 @@ async function composeLive(runtime: Runtime, convId: string): Promise<ComposeRes
   const ws = await runtime.getWorkspaceStore().get(wsId);
   const workspaceContext: WorkspaceContext = ws ? { id: ws.id, name: ws.name } : { id: wsId };
   const identityOverride = ws?.identity ? makeIdentitySkill(ws.identity) : null;
+  // `activeContextSkills`, not the raw getter: this trace must equal what
+  // `runtime.chat()` composes, which filters disabled context skills. Reading
+  // the raw cache here would report a toggled-Off rule as present in the prompt.
   const requestContextSkills = identityOverride
-    ? [...runtime.getContextSkills(), identityOverride]
-    : runtime.getContextSkills();
+    ? [...runtime.activeContextSkills(), identityOverride]
+    : runtime.activeContextSkills();
 
   // Gather inputs in parallel where possible.
   const [apps, overlays] = await Promise.all([
