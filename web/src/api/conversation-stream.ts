@@ -130,6 +130,24 @@ export function connectConversationStream(
     document.addEventListener("visibilitychange", onVisibilityChange);
   }
 
+  /** Release every resource: stop reconnects, the watchdog, the document
+   *  listener, and the in-flight fetch. Idempotent. Both `close()` (caller
+   *  teardown) and the terminal-error branches go through this so a stream
+   *  that gives up never leaks its `visibilitychange` listener. */
+  function teardown(): void {
+    closed = true;
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+    stopWatchdog();
+    if (typeof document !== "undefined") {
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    }
+    abortController?.abort();
+    abortController = null;
+  }
+
   async function connect(): Promise<void> {
     if (closed) return;
     abortController = new AbortController();
@@ -147,11 +165,13 @@ export function connectConversationStream(
       if (res.status === 401) {
         const refreshed = await refreshSession();
         if (refreshed) return void scheduleReconnect();
+        teardown();
         onError?.(new Error("Conversation stream auth failed after token refresh"));
         return;
       }
       if (!res.ok) {
         if (res.status === 403 || res.status === 404) {
+          teardown();
           onError?.(new Error(`Conversation stream access denied: ${res.status}`));
           return;
         }
@@ -218,6 +238,7 @@ export function connectConversationStream(
         return;
       }
       if (err instanceof Error && err.message.includes("403")) {
+        teardown();
         onError?.(err);
         return;
       }
@@ -236,18 +257,6 @@ export function connectConversationStream(
   connect();
 
   return {
-    close() {
-      closed = true;
-      if (reconnectTimer) {
-        clearTimeout(reconnectTimer);
-        reconnectTimer = null;
-      }
-      stopWatchdog();
-      if (typeof document !== "undefined") {
-        document.removeEventListener("visibilitychange", onVisibilityChange);
-      }
-      abortController?.abort();
-      abortController = null;
-    },
+    close: teardown,
   };
 }

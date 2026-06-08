@@ -180,6 +180,14 @@ interface ConversationSlice {
   /** The next streamed `user.message` echoes a turn we optimistically added —
    *  consume it instead of appending a duplicate. */
   pendingEcho: boolean;
+  /** The params of the last `sendTurn` on this slice. Retry replays these
+   *  verbatim — same text, model, and appContext — so it reproduces the
+   *  original send instead of re-deriving model/context from current UI state
+   *  (which silently downgraded the model on retry). */
+  lastSend?: StartTurnParams;
+  /** Stop pressed before `/v1/chat/start` resolved (no conversationId yet).
+   *  `sendTurn` fires the cancel as soon as it has the id. */
+  cancelRequested: boolean;
   /** First `subscribed` frame of a resume should trim a stale in-flight turn
    *  from disk history (the replay rebuilds it). */
   resumeOnSubscribe: boolean;
@@ -285,7 +293,9 @@ export interface ChatStore {
   setTitle(conversationId: string, title: string): void;
   /** Stop an in-flight turn (the only thing that aborts generation). */
   cancelTurn(key: string): void;
-  retryLastMessage(key: string): string | null;
+  /** Re-send the last message on this slice, replaying its original send
+   *  params (text + model + appContext). No-op if nothing was sent yet. */
+  retryLastMessage(key: string): void;
   simulateError(key: string, message: string): void;
   reset(): void;
   /** Close every per-slice SSE socket WITHOUT clearing slice state. For
@@ -391,6 +401,7 @@ export function createChatStore(): ChatStore {
       iteration: undefined,
       connection: null,
       pendingEcho: false,
+      cancelRequested: false,
       resumeOnSubscribe: false,
       // A fresh draft is fully "loaded" (empty IS its full history); a slice
       // keyed by a real conversation id starts unhydrated until fetched.
@@ -494,14 +505,20 @@ export function createChatStore(): ChatStore {
           slice.resumeOnSubscribe = false;
           const pendingTail = hasPendingTail(slice);
           if (info.isActive || (pendingTail && info.activeSeq > 0)) {
-            // Either a live turn, OR a turn that finished in the load→subscribe
-            // window but is still retained in the RunBus grace buffer (partial
-            // disk tail + a retained run). Either way the replay carries the
-            // full trailing turn — trim the stale/partial disk copy so the
-            // replay rebuilds it without duplicating. For a live turn, reflect
-            // the streaming indicator immediately; for a just-finished one the
-            // replayed `done` finalizes it.
-            trimTrailingTurn(slice);
+            // A turn needs reconciling: a live one (`isActive`), or one that
+            // finished in the load→subscribe window but is still in the grace
+            // buffer (`pendingTail && activeSeq>0`). The replay carries the full
+            // trailing turn.
+            //
+            // Trim the disk tail ONLY when it's `pending` — the server's
+            // authoritative "this turn has no terminal event yet" flag, i.e. the
+            // in-flight turn's own partial copy. The replay then rebuilds it
+            // without duplicating. When the tail is NOT pending it's a COMPLETED
+            // prior turn and the active turn simply isn't on disk yet (it began
+            // after this snapshot); keep it and let the replay append the new
+            // turn. Trimming a complete turn here silently drops it — the
+            // resume-race transcript-loss bug.
+            if (pendingTail) trimTrailingTurn(slice);
             resetScratch(slice);
             if (info.isActive) {
               slice.isStreaming = true;
@@ -554,6 +571,11 @@ export function createChatStore(): ChatStore {
         // it, so we must NOT drop the optimistic placeholder pair the way a
         // start-failure does (the user's message really was sent).
         //
+        // Null the connection like every other terminal path. Otherwise
+        // `loadConversation` / `probeConversation` see a truthy `connection`
+        // and skip refetching, so reopening the conversation in-app can't
+        // recover the persisted result (only a full page reload would).
+        closeConnection(slice);
         // For an idle resume (no live turn) there's nothing to clean up — the
         // loaded disk history renders fine; leave it intact.
         if (!slice.isStreaming) return;
@@ -792,10 +814,13 @@ export function createChatStore(): ChatStore {
     const slice = byKey.get(key);
     if (!slice || slice.isStreaming) return;
 
+    // Capture the send so retry can replay it verbatim (text + model + context).
+    slice.lastSend = params;
     slice.error = null;
     slice.isStreaming = true;
     slice.streamingState = "thinking";
     slice.pendingEcho = true;
+    slice.cancelRequested = false;
     // Authoring a turn means the full conversation lives in memory.
     slice.hydrated = true;
     resetScratch(slice);
@@ -858,6 +883,16 @@ export function createChatStore(): ChatStore {
 
     // Watch the turn we just started (fresh turn — not a resume).
     openConnection(slice, conversationId, false);
+
+    // Stop was pressed before we had a conversationId — honor it now. The
+    // server's `cancelled` frame arrives on the connection just opened and
+    // clears the streaming state.
+    if (slice.cancelRequested) {
+      slice.cancelRequested = false;
+      void cancelChatTurn(conversationId).catch((err) => {
+        console.warn("[chat-store] deferred cancel failed", err);
+      });
+    }
   }
 
   function handleTurnError(slice: ConversationSlice, err: unknown): void {
@@ -924,10 +959,19 @@ export function createChatStore(): ChatStore {
 
   function cancelTurn(key: string): void {
     const slice = byKey.get(key);
-    if (!slice?.conversationId) return;
-    void cancelChatTurn(slice.conversationId);
+    if (!slice) return;
+    if (!slice.conversationId) {
+      // Stop pressed before `/v1/chat/start` resolved — latch it; `sendTurn`
+      // fires the cancel as soon as it has the id.
+      slice.cancelRequested = true;
+      return;
+    }
     // The server emits a terminal `cancelled` event which finalizes the slice;
-    // no optimistic mutation needed.
+    // no optimistic mutation needed. Surface a failed cancel — without this the
+    // turn keeps running, Stop silently did nothing, and the rejection is lost.
+    void cancelChatTurn(slice.conversationId).catch((err) => {
+      console.warn("[chat-store] cancel failed", err);
+    });
   }
 
   /**
@@ -948,13 +992,17 @@ export function createChatStore(): ChatStore {
 
   // -- retry / simulate --
 
-  function retryLastMessage(key: string): string | null {
+  function retryLastMessage(key: string): void {
     const slice = byKey.get(key);
-    if (!slice) return null;
-    let text: string | null = null;
+    // Replay the original send verbatim — same text, model, and appContext.
+    // Re-deriving from current UI state (the old path) silently retried on the
+    // workspace-default model, ignoring the user's selection.
+    const params = slice?.lastSend;
+    if (!slice || !params) return;
+    // Drop the errored turn (trailing user message + after) so the replay
+    // re-adds it cleanly.
     for (let i = slice.messages.length - 1; i >= 0; i--) {
       if (slice.messages[i].role === "user") {
-        text = slice.messages[i].content;
         slice.messages = slice.messages.slice(0, i);
         break;
       }
@@ -964,7 +1012,7 @@ export function createChatStore(): ChatStore {
     slice.streamingState = null;
     slice.preparingTool = null;
     commit(slice);
-    return text;
+    void sendTurn(key, params);
   }
 
   function simulateError(key: string, message: string): void {

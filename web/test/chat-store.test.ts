@@ -55,18 +55,40 @@ mock.module("../src/api/conversation-stream", () => ({
   },
 }));
 
+// Captured calls into the turn transport (asserted by the retry / cancel tests).
+let startCalls: Array<{ conversationId?: string; model?: string }> = [];
+let cancelCalls: string[] = [];
+// When true, startChatTurn parks until `resolvePendingStart()` is called — lets
+// a test open the "Stop before /v1/chat/start resolves" window deterministically.
+let deferStart = false;
+let pendingStartResolvers: Array<() => void> = [];
+function resolvePendingStart(): void {
+  for (const r of pendingStartResolvers) r();
+  pendingStartResolvers = [];
+}
+
 const actualClient = await import("../src/api/client");
 mock.module("../src/api/client", () => ({
   ...actualClient,
-  startChatTurn: (req: { conversationId?: string }) => {
+  startChatTurn: (req: { conversationId?: string; model?: string }) => {
+    startCalls.push(req);
     convCounter += 1;
-    return Promise.resolve({ conversationId: req.conversationId ?? `conv_${convCounter}` });
+    const id = req.conversationId ?? `conv_${convCounter}`;
+    if (deferStart) {
+      return new Promise<{ conversationId: string }>((resolve) => {
+        pendingStartResolvers.push(() => resolve({ conversationId: id }));
+      });
+    }
+    return Promise.resolve({ conversationId: id });
   },
   startChatTurnMultipart: (req: { conversationId?: string }) => {
     convCounter += 1;
     return Promise.resolve({ conversationId: req.conversationId ?? `conv_${convCounter}` });
   },
-  cancelChatTurn: () => Promise.resolve(),
+  cancelChatTurn: (id: string) => {
+    cancelCalls.push(id);
+    return Promise.resolve();
+  },
   callTool: (_server: string, _action: string, args?: Record<string, unknown>) =>
     Promise.resolve({
       isError: false,
@@ -95,6 +117,10 @@ describe("chat-store viewer", () => {
   beforeEach(() => {
     streams = [];
     convCounter = 0;
+    startCalls = [];
+    cancelCalls = [];
+    deferStart = false;
+    pendingStartResolvers = [];
   });
 
   it("renders a sent turn from the server stream (echo consumed, no dup)", async () => {
@@ -201,23 +227,45 @@ describe("chat-store viewer", () => {
     expect(lastAssistant(store.getSnapshot("conv_1").messages)?.content).toBe("streaming-text");
   });
 
-  it("loads persisted history into an idle slice and trims a stale in-flight turn on resume", async () => {
+  it("resumes a live turn whose partial copy is on disk: trims the pending tail, replay rebuilds it", async () => {
     const store = createChatStore();
-    await store.loadConversation("conv_X");
+    // conv_pending's disk tail is an in-flight turn (assistant flagged pending).
+    await store.loadConversation("conv_pending");
     const s = latestStream();
-    // Server says a turn is in flight → the stale in-flight turn (last user
-    // message + after) is trimmed, then replay rebuilds it.
+    // Server says the turn is live. The disk tail IS that turn's partial copy
+    // (pending) → trim it so the replay rebuilds it without duplicating.
     s.onSubscribed?.({ isActive: true, activeSeq: 2 });
-    // After trim, the loaded "loaded-q"/"loaded-a" pair: "loaded-q" is the last
-    // user message, so it + the trailing assistant are dropped.
-    expect(store.getSnapshot("conv_X").messages).toHaveLength(0);
-    // Server says a turn is active → the streaming indicator shows immediately,
-    // before any replayed event arrives.
-    expect(store.getSnapshot("conv_X").isStreaming).toBe(true);
+    expect(store.getSnapshot("conv_pending").messages).toHaveLength(0);
+    // Streaming indicator shows immediately, before any replayed event arrives.
+    expect(store.getSnapshot("conv_pending").isStreaming).toBe(true);
 
     s.onEvent("user.message", { content: "loaded-q" }, 1);
     s.onEvent("text.delta", { text: "fresh" }, 2);
-    expect(lastAssistant(store.getSnapshot("conv_X").messages)?.content).toBe("fresh");
+    expect(lastAssistant(store.getSnapshot("conv_pending").messages)?.content).toBe("fresh");
+    expect(store.getSnapshot("conv_pending").messages.filter((m) => m.role === "user")).toHaveLength(
+      1,
+    );
+  });
+
+  it("preserves a completed prior turn when a new turn goes active mid-resume (no transcript loss)", async () => {
+    const store = createChatStore();
+    // conv_X's disk tail is a COMPLETE prior turn (assistant, not pending).
+    await store.loadConversation("conv_X");
+    const s = latestStream();
+    // The resume race: a NEW turn began on the server but hasn't persisted yet,
+    // so the disk still shows only the finished prior turn. `isActive` is true,
+    // but the trailing turn is NOT this active turn — it's a completed one and
+    // must survive. The replay (per-run) carries only the new turn and appends
+    // it after the preserved history. Trimming here was the transcript-loss bug.
+    s.onSubscribed?.({ isActive: true, activeSeq: 1 });
+    expect(store.getSnapshot("conv_X").messages).toEqual(LOADED);
+    expect(store.getSnapshot("conv_X").isStreaming).toBe(true);
+
+    s.onEvent("user.message", { content: "new-q" }, 1);
+    s.onEvent("text.delta", { text: "new-a" }, 2);
+    const msgs = store.getSnapshot("conv_X").messages;
+    expect(msgs.map((m) => m.content)).toEqual(["loaded-q", "loaded-a", "new-q", "new-a"]);
+    expect(msgs.filter((m) => m.role === "user")).toHaveLength(2);
   });
 
   it("closes an idle resume connection when nothing is in flight", async () => {
@@ -368,5 +416,63 @@ describe("chat-store viewer", () => {
     s.onEvent("done", { conversationId: "conv_done", response: "loaded-a" }, 3);
 
     expect(store.getSnapshot("conv_done").messages).toEqual(LOADED);
+  });
+
+  it("retry replays the original send (same model), not the workspace default", async () => {
+    const store = createChatStore();
+    await store.sendTurn("kA", { text: "explain", model: "anthropic:claude-opus-4-6" });
+    latestStream().onEvent("error", { error: "crash", message: "Engine crashed" }, 1);
+
+    store.retryLastMessage("kA");
+    await Promise.resolve(); // let the retry's sendTurn run
+
+    // Two starts: the original + the retry, both carrying the selected model.
+    expect(startCalls).toHaveLength(2);
+    expect(startCalls[1].model).toBe("anthropic:claude-opus-4-6");
+    // The failed pair was dropped and re-added — exactly one user message.
+    expect(store.getSnapshot("kA").messages.filter((m) => m.role === "user")).toHaveLength(1);
+  });
+
+  it("retry is a no-op when nothing was sent on the slice", async () => {
+    const store = createChatStore();
+    await store.loadConversation("conv_X"); // loaded from disk, never sent in this tab
+    store.retryLastMessage("conv_X");
+    await Promise.resolve();
+    expect(startCalls).toHaveLength(0);
+    expect(store.getSnapshot("conv_X").messages).toEqual(LOADED);
+  });
+
+  it("Stop pressed before /v1/chat/start resolves cancels once the id arrives", async () => {
+    const store = createChatStore();
+    deferStart = true;
+    // A fresh draft has no conversationId until the POST resolves — exactly the
+    // window where Stop used to be a silent no-op.
+    const key = freshDraftKey();
+    const sent = store.sendTurn(key, { text: "go" });
+    // The POST is parked — no conversationId yet. Press Stop.
+    store.cancelTurn(key);
+    expect(cancelCalls).toHaveLength(0); // nothing to cancel yet — latched
+
+    resolvePendingStart();
+    await sent;
+
+    // The deferred cancel fired with the now-known conversationId.
+    expect(cancelCalls).toHaveLength(1);
+    expect(cancelCalls[0]).toBe("conv_1");
+  });
+
+  it("onError closes the stream so reopening refetches the persisted result", async () => {
+    const store = createChatStore();
+    await store.sendTurn("kA", { text: "watch me" });
+    const s = latestStream();
+    s.onEvent("text.delta", { text: "partial" }, 1);
+    expect(store.getSnapshot("kA").isStreaming).toBe(true);
+
+    // The viewer stream dies (e.g. 403/404 on the events route). The turn ran
+    // server-side; this is a watch failure. The connection must be closed so a
+    // later open isn't blocked from refetching.
+    s.onError?.(new Error("Conversation stream access denied: 404"));
+    expect(s.closed).toBe(true);
+    expect(store.getSnapshot("kA").isStreaming).toBe(false);
   });
 });
