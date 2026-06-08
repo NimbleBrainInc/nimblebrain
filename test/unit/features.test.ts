@@ -63,4 +63,14 @@ describe("isToolVisibleToRole", () => {
 		expect(isToolVisibleToRole("nb__set_model_config", null)).toBe(false);
 		expect(isToolVisibleToRole("nb__search", null)).toBe(true);
 	});
+
+	it("hides admin tools when role is undefined", () => {
+		expect(isToolVisibleToRole("nb__set_model_config", undefined)).toBe(false);
+		expect(isToolVisibleToRole("nb__search", undefined)).toBe(true);
+	});
+
+	it("treats an unrecognized role string as non-admin", () => {
+		expect(isToolVisibleToRole("nb__set_model_config", "superuser")).toBe(false);
+		expect(isToolVisibleToRole("nb__search", "superuser")).toBe(true);
+	});
 });

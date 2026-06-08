@@ -25,6 +25,7 @@ import { EventSourcedConversationStore } from "../../conversation/event-sourced-
 import type { ConversationEvent, SkillsLoadedEvent } from "../../conversation/types.ts";
 import { textContent } from "../../engine/content-helpers.ts";
 import type { EventSink, ToolResult } from "../../engine/types.ts";
+import { ORG_ADMIN_ROLES } from "../../identity/types.ts";
 import { getRequestContext } from "../../runtime/request-context.ts";
 import type { Runtime } from "../../runtime/runtime.ts";
 import { parseSkillFile, readSkillMtime } from "../../skills/loader.ts";
@@ -1086,8 +1087,6 @@ interface PermissionDecision {
   allowed: boolean;
   reason?: string;
 }
-
-const ORG_ADMIN_ROLES = new Set(["admin", "owner"]);
 
 type AccessMode = "read" | "write";
 

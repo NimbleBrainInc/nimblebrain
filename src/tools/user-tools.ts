@@ -1,6 +1,7 @@
 import { textContent } from "../engine/content-helpers.ts";
 import type { ToolResult } from "../engine/types.ts";
 import type { CreateUserResult, IdentityProvider, UserIdentity } from "../identity/provider.ts";
+import { ORG_ADMIN_ROLES } from "../identity/types.ts";
 import type { User, UserStore } from "../identity/user.ts";
 import type { InProcessTool } from "./in-process-app.ts";
 
@@ -15,10 +16,8 @@ export interface ManageUsersContext {
 
 // ── Permission check ──────────────────────────────────────────────
 
-const ADMIN_ROLES = new Set(["admin", "owner"]);
-
 function isAdmin(identity: UserIdentity | null): boolean {
-  return identity !== null && ADMIN_ROLES.has(identity.orgRole);
+  return identity !== null && ORG_ADMIN_ROLES.has(identity.orgRole);
 }
 
 function permissionDenied(): ToolResult {

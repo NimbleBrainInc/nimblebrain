@@ -12,6 +12,7 @@ import type { UserConfigFieldDef } from "../config/workspace-credentials.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import type { ToolResult } from "../engine/types.ts";
 import type { UserIdentity } from "../identity/provider.ts";
+import { ORG_ADMIN_ROLES } from "../identity/types.ts";
 import type { ConnectorCatalogEntry } from "../registries/projection.ts";
 import type { DirectoryEntry } from "../registries/types.ts";
 import type { Runtime } from "../runtime/runtime.ts";
@@ -2197,7 +2198,7 @@ function isWorkspaceAdmin(
   ws: { members?: Array<{ userId: string; role: string }> },
   identity: UserIdentity,
 ): boolean {
-  if (identity.orgRole === "admin" || identity.orgRole === "owner") return true;
+  if (ORG_ADMIN_ROLES.has(identity.orgRole)) return true;
   const members = Array.isArray(ws.members) ? ws.members : [];
   const member = members.find((m) => m.userId === identity.id);
   return member?.role === "admin";

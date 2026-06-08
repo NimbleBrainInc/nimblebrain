@@ -23,10 +23,8 @@ export type ManageMembersContext = ManageWorkspacesContext & { userStore: UserSt
 
 // ── Permission check ──────────────────────────────────────────────
 
-const ADMIN_ROLES = new Set(["admin", "owner"]);
-
 function isAdmin(identity: UserIdentity | null): boolean {
-  return identity !== null && ADMIN_ROLES.has(identity.orgRole);
+  return identity !== null && ORG_ADMIN_ROLES.has(identity.orgRole);
 }
 
 function permissionDenied(): ToolResult {
