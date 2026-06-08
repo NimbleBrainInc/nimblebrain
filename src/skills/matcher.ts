@@ -27,8 +27,14 @@ export class SkillMatcher {
   private skills: Skill[] = [];
 
   load(skills: Skill[]): void {
+    // Allowlist on status (active/undefined), matching `select.ts` and
+    // `Runtime.activeContextSkills` exactly — not a `!== "disabled"` denylist,
+    // which would silently leak a future third status (e.g. "archived") into
+    // Layer-4 while the other two channels dropped it.
     this.skills = skills.filter(
-      (s) => s.manifest.type === "skill" && s.manifest.status !== "disabled",
+      (s) =>
+        s.manifest.type === "skill" &&
+        (s.manifest.status === undefined || s.manifest.status === "active"),
     );
   }
 

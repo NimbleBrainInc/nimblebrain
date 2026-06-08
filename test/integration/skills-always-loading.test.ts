@@ -184,13 +184,24 @@ describe("disabled org context rule stops injecting", () => {
 
     await runtime.chat({ workspaceId: TEST_WORKSPACE_ID, message: "what is 2 + 2?" });
     expect(getSystem()).toContain(RULE_BODY);
+    // The status reporter agrees: an active rule is listed.
+    const status = await callToolAsDev("nb__status", { scope: "skills" });
+    expect(status.content).toContain(RULE_NAME);
   });
 
-  it("drops the rule from the prompt once toggled Off", async () => {
+  it("drops the rule from the prompt AND the status surface once toggled Off", async () => {
     const off = await callToolAsDev("skills__deactivate", { id: rulePath });
     expect(off.isError).toBe(false);
 
     await runtime.chat({ workspaceId: TEST_WORKSPACE_ID, message: "what is 2 + 2?" });
     expect(getSystem()).not.toContain(RULE_BODY);
+
+    // nb__status must match composition — a rule toggled Off must not still
+    // print as a loaded context skill, or an operator debugging "did my toggle
+    // take effect?" is told the disabled rule is active. (Fails before the
+    // describeRequestSkills filter — it read the raw boot cache.)
+    const status = await callToolAsDev("nb__status", { scope: "skills" });
+    expect(status.isError).toBe(false);
+    expect(status.content).not.toContain(RULE_NAME);
   });
 });
