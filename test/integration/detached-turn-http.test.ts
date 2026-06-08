@@ -232,4 +232,20 @@ describe("detached turn HTTP surface", () => {
     expect(cancelRes.status).toBe(400);
     expect((await cancelRes.json()).error).toBe("bad_request");
   });
+
+  it("POST /v1/chat/start on another user's conversation is 403", async () => {
+    const convId = "conv_0c0c0c0c0c0c0c0c";
+    seedOtherUserConversation(convId);
+    const res = await fetch(`${baseUrl}/v1/chat/start`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
+      body: JSON.stringify({
+        message: "hijack attempt",
+        conversationId: convId,
+        workspaceId: TEST_WORKSPACE_ID,
+      }),
+    });
+    expect(res.status).toBe(403);
+    expect((await res.json()).error).toBe("conversation_access_denied");
+  });
 });

@@ -1,5 +1,5 @@
-import { describe, expect, it, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { WorkspaceLogSink } from "../../src/adapters/workspace-log-sink.ts";
@@ -116,5 +116,31 @@ describe("WorkspaceLogSink", () => {
   it("close() is a no-op", () => {
     const sink = new WorkspaceLogSink({ dir });
     expect(() => sink.close()).not.toThrow();
+  });
+
+  it("never throws into emit on a write failure, and warns once per episode", () => {
+    // A detached turn outlives its HTTP request, so an unhandled throw in the
+    // sink crashes the turn. Block the write by parking a directory at the
+    // log-file path (appendFileSync → EISDIR).
+    const sink = new WorkspaceLogSink({ dir });
+    const today = new Date().toISOString().slice(0, 10);
+    const logFile = join(dir, "workspace", `${today}.jsonl`);
+    mkdirSync(logFile);
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      expect(() => sink.emit(makeEvent("bundle.installed", { name: "@a" }))).not.toThrow();
+      expect(() => sink.emit(makeEvent("bundle.uninstalled", { name: "@b" }))).not.toThrow();
+      expect(warn).toHaveBeenCalledTimes(1); // suppressed after the first
+
+      // A successful write re-arms the warning for the next failure episode.
+      rmSync(logFile, { recursive: true });
+      sink.emit(makeEvent("data.changed", { source: "x" })); // writes → reset
+      rmSync(logFile);
+      mkdirSync(logFile); // block again
+      sink.emit(makeEvent("config.changed", { key: "m" }));
+      expect(warn).toHaveBeenCalledTimes(2);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
