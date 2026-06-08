@@ -416,6 +416,32 @@ describe("SkillMatcher", () => {
     expect(matcher.match("find a lead")).toBeNull();
   });
 
+  // --- Status filter (toggled Off must not reach the matched-skill channel) ---
+
+  it("excludes disabled skills from trigger and keyword matching", () => {
+    const matcher = new SkillMatcher();
+    matcher.load([
+      makeSkill({
+        name: "disabled-rule",
+        status: "disabled",
+        metadata: { keywords: ["lead", "prospect"], triggers: ["find leads"] },
+      }),
+      makeSkill({
+        name: "active-rule",
+        status: "active",
+        metadata: { keywords: [], triggers: ["search prospects"] },
+      }),
+    ]);
+
+    // A disabled skill matched here would be injected straight into the
+    // prompt's Layer-4, bypassing the Off toggle — neither its trigger nor
+    // its keywords may match.
+    expect(matcher.match("find leads for me")).toBeNull();
+    expect(matcher.match("a lead and a prospect")).toBeNull();
+    // Active siblings still match normally.
+    expect(matcher.match("search prospects now")?.manifest.name).toBe("active-rule");
+  });
+
   it("picks skill with most keyword hits", () => {
     const matcher = new SkillMatcher();
     matcher.load([

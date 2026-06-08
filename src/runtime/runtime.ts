@@ -1459,9 +1459,10 @@ export class Runtime {
     const identityOverride = activeWorkspace?.identity
       ? makeIdentitySkill(activeWorkspace.identity)
       : null;
+    const contextBase = this.activeContextSkills();
     const requestContextSkills = identityOverride
-      ? [...this.contextSkills, identityOverride]
-      : this.contextSkills;
+      ? [...contextBase, identityOverride]
+      : contextBase;
 
     // Layer 3 selection — pick skills with `loading_strategy: always` and
     // `tool_affined` strategies based on the active tool set. The merged pool
@@ -1947,9 +1948,10 @@ export class Runtime {
     const identityOverride = activeWorkspace?.identity
       ? makeIdentitySkill(activeWorkspace.identity)
       : null;
+    const contextBase = this.activeContextSkills();
     const requestContextSkills = identityOverride
-      ? [...this.contextSkills, identityOverride]
-      : this.contextSkills;
+      ? [...contextBase, identityOverride]
+      : contextBase;
 
     // Layer 3 selection — bundle workflow guidance still applies based on
     // the active tool set. No `appContextServerName` (tasks don't have
@@ -3242,6 +3244,25 @@ export class Runtime {
   /** Get loaded context skills (for skill_status tool). */
   getContextSkills(): Skill[] {
     return this.contextSkills;
+  }
+
+  /**
+   * Boot-time context skills with any toggled Off (`status: "disabled"`)
+   * removed — the always-on context channel fed to `composeSystemPrompt`.
+   *
+   * `compose` injects every context-skill body verbatim (Layer 0 / Layer 1)
+   * with NO status check; the disable filter otherwise lives only on the
+   * Layer-3 path (`selectLayer3Skills`, `select.ts`). Without this, a context
+   * rule (e.g. an org "rule" authored as `type: "context"`) toggled Off in the
+   * UI keeps being injected — it rides this channel while being correctly
+   * dropped from the Layer-3 `skills.loaded` set. Mirrors `select.ts`'s keep-
+   * predicate exactly. `reloadSkills()` refreshes `this.contextSkills` on every
+   * skills-tool mutation, so the toggle is reflected here on the next turn.
+   */
+  private activeContextSkills(): Skill[] {
+    return this.contextSkills.filter(
+      (s) => s.manifest.status === undefined || s.manifest.status === "active",
+    );
   }
 
   /** Get loaded matchable skills (for skill_status tool). */
