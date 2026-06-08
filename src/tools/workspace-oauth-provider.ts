@@ -596,6 +596,13 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     this.fleetAuthorizerOrigin = opts.fleetAuthorizerIssuer
       ? originOf(opts.fleetAuthorizerIssuer)
       : undefined;
+    if (opts.fleetAuthorizerIssuer && !this.fleetAuthorizerOrigin) {
+      // Configured but unparseable: the feature disables itself (fails closed).
+      // Warn so a misconfigured NB_FLEET_AUTHORIZER_ISSUER is visible, not silent.
+      log.warn(
+        `[oauth] fleetAuthorizerIssuer is set but not a valid URL (${opts.fleetAuthorizerIssuer}) — fleet tenant assertion disabled`,
+      );
+    }
 
     // Resolve the per-owner storage root. Two construction modes:
     //
@@ -980,13 +987,14 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     // (2) Fleet tenant assertion — only for the fleet authorizer's endpoint.
     if (!this.fleetAuthorizerOrigin) return;
     // The token endpoint we're POSTing to must belong to the fleet authorizer.
-    // Prefer the concrete request URL; fall back to the discovered issuer.
-    const target = originOf(url) ?? (metadata?.issuer ? originOf(metadata.issuer) : undefined);
-    if (target !== this.fleetAuthorizerOrigin) return;
+    if (originOf(url) !== this.fleetAuthorizerOrigin) return;
 
     // `inner` binds the assertion to THIS PKCE flow. The token request already
     // carries `code_verifier`; the bound challenge is its S256 hash, which is
-    // exactly what the authorizer stored at /authorize.
+    // exactly what the authorizer stored at /authorize. The SDK also invokes
+    // this hook on the refresh grant, which has no `code_verifier` — so refresh
+    // requests are intentionally left unasserted (PKCE binding can't exist on
+    // refresh). The fleet authorizer must not require an assertion on refresh.
     const verifier = params.get("code_verifier");
     if (!verifier) return;
     const inner = createHash("sha256").update(verifier).digest("base64url");
