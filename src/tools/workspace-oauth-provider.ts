@@ -4,6 +4,7 @@ import { chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promi
 import { join } from "node:path";
 import {
   type OAuthClientProvider,
+  selectClientAuthMethod,
   UnauthorizedError,
 } from "@modelcontextprotocol/sdk/client/auth.js";
 import type {
@@ -218,6 +219,43 @@ function originOf(value: string | URL): string | undefined {
     return new URL(value).origin.toLowerCase();
   } catch {
     return undefined;
+  }
+}
+
+/**
+ * Apply OAuth 2.1 client authentication to a token request. This mirrors the
+ * MCP SDK's internal `applyClientAuthentication` (in
+ * `@modelcontextprotocol/sdk/client/auth.js`), which the SDK runs by default
+ * but which is NOT exported. We reproduce it because defining
+ * `addClientAuthentication` on the provider REPLACES the SDK's default for
+ * every token endpoint — so the provider must re-apply client auth itself.
+ * The method-selection half (`selectClientAuthMethod`) IS exported and is
+ * reused. Kept faithful to RFC 6749 §2.3.1; the OAuth integration tests fail
+ * if this drifts from the SDK.
+ */
+function applyClientAuthentication(
+  method: ReturnType<typeof selectClientAuthMethod>,
+  clientInformation: OAuthClientInformationMixed,
+  headers: Headers,
+  params: URLSearchParams,
+): void {
+  const { client_id, client_secret } = clientInformation;
+  switch (method) {
+    case "client_secret_basic":
+      if (!client_secret) {
+        throw new Error("client_secret_basic authentication requires a client_secret");
+      }
+      headers.set("Authorization", `Basic ${btoa(`${client_id}:${client_secret}`)}`);
+      return;
+    case "client_secret_post":
+      params.set("client_id", client_id);
+      if (client_secret) params.set("client_secret", client_secret);
+      return;
+    case "none":
+      params.set("client_id", client_id);
+      return;
+    default:
+      throw new Error(`Unsupported client authentication method: ${method}`);
   }
 }
 
@@ -899,24 +937,47 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
   }
 
   /**
-   * SDK hook: inject client-auth material into the `/token` request. Used here
-   * to present the fleet tenant assertion — and ONLY to the fleet
-   * authorizer. The assertion binds this tenant's identity to the flow's PKCE
-   * `code_challenge` (= SHA256(code_verifier)); the authorizer verifies the MAC
-   * and mints the proven `tenant_id`.
+   * SDK hook: authenticate the `/token` request. The SDK calls this IN PLACE OF
+   * its built-in client authentication (auth.js executeTokenRequest:
+   * `if (addClientAuthentication) … else <default> …`), so defining it makes
+   * this provider responsible for client auth on EVERY token endpoint — vendor
+   * and fleet alike. We therefore:
+   *   1. always apply the standard OAuth 2.1 client auth the SDK would have
+   *      (client_id / client_secret per the negotiated method), then
+   *   2. additionally present the fleet tenant assertion — but ONLY to the
+   *      fleet authorizer's token endpoint.
    *
-   * Guards, in order:
-   *   1. Off unless `fleetAuthorizerIssuer` was configured on this provider.
-   *   2. Attach only when the token endpoint's origin matches that issuer —
-   *      a tenant key signature must never leak to a vendor token endpoint.
-   *   3. No-op when the tenant key isn't provisioned (rollout phase 1).
+   * The assertion binds this tenant's identity to the flow's PKCE
+   * `code_challenge` (= SHA256(code_verifier)); the authorizer verifies the MAC
+   * and mints the proven `tenant_id`. A tenant-key signature must never leak to
+   * a vendor token endpoint, hence the origin guard.
+   *
+   * Declared as a bound arrow property, NOT a prototype method: the SDK's
+   * `auth()` flow destructures this off the provider
+   * (`addClientAuthentication: provider.addClientAuthentication`) and invokes it
+   * unbound, so a plain method would lose `this`. The other provider hooks are
+   * always called as `provider.x()`, so only this one needs binding.
    */
-  async addClientAuthentication(
-    _headers: Headers,
+  addClientAuthentication = async (
+    headers: Headers,
     params: URLSearchParams,
     url: string | URL,
     metadata?: AuthorizationServerMetadata,
-  ): Promise<void> {
+  ): Promise<void> => {
+    // (1) Reproduce the SDK's default client authentication. Without this, the
+    // token request would carry no client_id/secret and every exchange fails.
+    const clientInformation = await this.clientInformation();
+    if (clientInformation) {
+      const supported = metadata?.token_endpoint_auth_methods_supported ?? [];
+      applyClientAuthentication(
+        selectClientAuthMethod(clientInformation, supported),
+        clientInformation,
+        headers,
+        params,
+      );
+    }
+
+    // (2) Fleet tenant assertion — only for the fleet authorizer's endpoint.
     if (!this.fleetAuthorizerOrigin) return;
     // The token endpoint we're POSTing to must belong to the fleet authorizer.
     // Prefer the concrete request URL; fall back to the discovered issuer.
@@ -932,7 +993,7 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
 
     const assertion = buildTenantAssertion({ inner });
     if (assertion) params.set("tenant_assertion", assertion);
-  }
+  };
 
   async redirectToAuthorization(url: URL): Promise<void> {
     if (!this.pendingFlow) {
