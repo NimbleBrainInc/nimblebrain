@@ -15,8 +15,8 @@
  * the setup run first.
  */
 
-import { Window } from "happy-dom";
 import { beforeAll, describe, expect, test } from "bun:test";
+import { Window } from "happy-dom";
 
 let renderMarkdown: (text: string) => string;
 
@@ -64,14 +64,12 @@ describe("renderMarkdown — sanitization contract", () => {
   });
 
   test("strips javascript: URLs", () => {
-    const html = renderMarkdown('[click](javascript:alert(1))');
+    const html = renderMarkdown("[click](javascript:alert(1))");
     expect(html).not.toMatch(/javascript:/i);
   });
 
   test("preserves safe markdown structure (headings, lists, emphasis, code)", () => {
-    const html = renderMarkdown(
-      "# Heading\n\n**bold** and *italic*\n\n- one\n- two\n\n`code`",
-    );
+    const html = renderMarkdown("# Heading\n\n**bold** and *italic*\n\n- one\n- two\n\n`code`");
     expect(html).toMatch(/<h1/);
     expect(html).toMatch(/<strong>/);
     expect(html).toMatch(/<em>/);
