@@ -670,20 +670,28 @@ servers:
 
   - name: us.zoom/mcp
     title: Zoom
-    description: Meetings, recordings, contacts
+    description: Meetings, recordings, contacts (via Composio)
     version: "1.0.0"
     icons:
       - src: https://static.nimblebrain.ai/icons/zoom.png
         sizes: ["any"]
     remotes:
       - type: streamable-http
-        url: https://mcp.zoom.us/mcp
+        url: https://backend.composio.dev/v3/mcp
     _meta:
       ai.nimblebrain/connector:
-        auth: static
-        requiredScopes: [meeting:read, recording:read]
-        operatorSetup:
-          portalUrl: https://marketplace.zoom.us/develop/create
-          hint: Create an OAuth User-Managed app in Zoom Marketplace; add scopes; copy client_id + client_secret
-          clientSecretKey: zoom.client_secret
-        tags: [meetings, video]
+        auth: composio
+        composio:
+          toolkit: zoom
+          authConfigEnv: COMPOSIO_ZOOM_AUTH_CONFIG_ID
+          tools:
+            - ZOOM_LIST_MEETINGS
+            - ZOOM_GET_MEETING
+            - ZOOM_GET_MEETING_RECORDINGS
+            - ZOOM_LIST_ALL_RECORDINGS
+            - ZOOM_GET_MEETING_SUMMARY
+            - ZOOM_GET_PAST_MEETING_PARTICIPANTS
+            - ZOOM_LIST_PAST_MEETING_INSTANCES
+            - ZOOM_GET_USER
+            - ZOOM_SEARCH_COMPANY_CONTACTS
+        tags: [meetings, video, composio]
