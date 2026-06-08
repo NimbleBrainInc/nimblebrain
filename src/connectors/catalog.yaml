@@ -600,50 +600,174 @@ servers:
             - WHATSAPP_UPLOAD_MEDIA
         tags: [messaging, composio]
 
-  # ── Member-scoped (personal account per user) ─────────────────
-  - name: com.google.gmail/mcp
-    title: Gmail
-    description: Read, send, label your email
-    version: "1.0.0"
+  - name: com.zoho/crm
+    title: Zoho CRM
+    description: Contacts, leads, deals, and modules (via Composio)
+    version: "0.1.0"
     icons:
-      - src: https://static.nimblebrain.ai/icons/gmail.png
+      - src: https://static.nimblebrain.ai/icons/zoho.png
         sizes: ["any"]
     remotes:
       - type: streamable-http
-        url: https://gmailmcp.googleapis.com/mcp/v1
+        url: https://backend.composio.dev/v3/mcp
     _meta:
       ai.nimblebrain/connector:
-        auth: static
-        requiredScopes:
-          - https://www.googleapis.com/auth/gmail.readonly
-          - https://www.googleapis.com/auth/gmail.send
-        additionalAuthorizationParams:
-          access_type: offline
-          prompt: consent
-        operatorSetup:
-          portalUrl: https://console.cloud.google.com/apis/credentials
-          hint: Create an OAuth 2.0 Client ID (web application) in Google Cloud Console; add the NimbleBrain callback URL as an authorized redirect URI
-          clientSecretKey: google.client_secret
-        tags: [email, google]
+        auth: composio
+        composio:
+          toolkit: zoho
+          authConfigEnv: COMPOSIO_ZOHO_AUTH_CONFIG_ID
+          tools:
+            - ZOHO_GET_ZOHO_RECORDS
+            - ZOHO_SEARCH_ZOHO_RECORDS
+            - ZOHO_CREATE_ZOHO_RECORD
+            - ZOHO_UPDATE_ZOHO_RECORD
+            - ZOHO_CONVERT_ZOHO_LEAD
+            - ZOHO_LIST_MODULES
+            - ZOHO_GET_MODULE_FIELDS
+            - ZOHO_GET_RELATED_RECORDS
+            - ZOHO_GET_ZOHO_USERS
+            - ZOHO_CREATE_ZOHO_TAG
+        tags: [crm, sales, composio]
+
+  - name: com.google/drive
+    title: Google Drive
+    description: Find, read, and manage Drive files (via Composio)
+    version: "0.1.0"
+    icons:
+      - src: https://static.nimblebrain.ai/icons/googledrive.png
+        sizes: ["any"]
+    remotes:
+      - type: streamable-http
+        url: https://backend.composio.dev/v3/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        auth: composio
+        composio:
+          toolkit: googledrive
+          authConfigEnv: COMPOSIO_GOOGLEDRIVE_AUTH_CONFIG_ID
+          tools:
+            - GOOGLEDRIVE_FIND_FILE
+            - GOOGLEDRIVE_LIST_FILES
+            - GOOGLEDRIVE_GET_FILE_METADATA
+            - GOOGLEDRIVE_DOWNLOAD_FILE
+            - GOOGLEDRIVE_CREATE_FILE_FROM_TEXT
+            - GOOGLEDRIVE_CREATE_FOLDER
+            - GOOGLEDRIVE_FIND_FOLDER
+            - GOOGLEDRIVE_CREATE_PERMISSION
+            - GOOGLEDRIVE_COPY_FILE_ADVANCED
+            - GOOGLEDRIVE_MOVE_FILE
+        tags: [files, google, composio]
+
+  - name: com.google/sheets
+    title: Google Sheets
+    description: Read and write spreadsheet data (via Composio)
+    version: "0.1.0"
+    icons:
+      - src: https://static.nimblebrain.ai/icons/googlesheets.png
+        sizes: ["any"]
+    remotes:
+      - type: streamable-http
+        url: https://backend.composio.dev/v3/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        auth: composio
+        composio:
+          toolkit: googlesheets
+          authConfigEnv: COMPOSIO_GOOGLESHEETS_AUTH_CONFIG_ID
+          tools:
+            - GOOGLESHEETS_GET_SPREADSHEET_INFO
+            - GOOGLESHEETS_BATCH_GET
+            - GOOGLESHEETS_VALUES_UPDATE
+            - GOOGLESHEETS_BATCH_UPDATE
+            - GOOGLESHEETS_SPREADSHEETS_VALUES_APPEND
+            - GOOGLESHEETS_CLEAR_VALUES
+            - GOOGLESHEETS_CREATE_GOOGLE_SHEET1
+            - GOOGLESHEETS_ADD_SHEET
+            - GOOGLESHEETS_GET_SHEET_NAMES
+        tags: [productivity, google, composio]
+
+  - name: com.google/docs
+    title: Google Docs
+    description: Create, read, and edit documents (via Composio)
+    version: "0.1.0"
+    icons:
+      - src: https://static.nimblebrain.ai/icons/googledocs.png
+        sizes: ["any"]
+    remotes:
+      - type: streamable-http
+        url: https://backend.composio.dev/v3/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        auth: composio
+        composio:
+          toolkit: googledocs
+          authConfigEnv: COMPOSIO_GOOGLEDOCS_AUTH_CONFIG_ID
+          tools:
+            - GOOGLEDOCS_CREATE_DOCUMENT
+            - GOOGLEDOCS_CREATE_DOCUMENT_MARKDOWN
+            - GOOGLEDOCS_GET_DOCUMENT_BY_ID
+            - GOOGLEDOCS_GET_DOCUMENT_PLAINTEXT
+            - GOOGLEDOCS_SEARCH_DOCUMENTS
+            - GOOGLEDOCS_INSERT_TEXT_ACTION
+            - GOOGLEDOCS_REPLACE_ALL_TEXT
+            - GOOGLEDOCS_UPDATE_DOCUMENT_MARKDOWN
+            - GOOGLEDOCS_COPY_DOCUMENT
+            - GOOGLEDOCS_EXPORT_DOCUMENT_AS_PDF
+        tags: [productivity, google, composio]
+
+  - name: com.google/slides
+    title: Google Slides
+    description: Create and edit presentations (via Composio)
+    version: "0.1.0"
+    icons:
+      - src: https://static.nimblebrain.ai/icons/googleslides.png
+        sizes: ["any"]
+    remotes:
+      - type: streamable-http
+        url: https://backend.composio.dev/v3/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        auth: composio
+        composio:
+          toolkit: googleslides
+          authConfigEnv: COMPOSIO_GOOGLESLIDES_AUTH_CONFIG_ID
+          tools:
+            - GOOGLESLIDES_CREATE_PRESENTATION
+            - GOOGLESLIDES_CREATE_SLIDES_MARKDOWN
+            - GOOGLESLIDES_PRESENTATIONS_GET
+            - GOOGLESLIDES_PRESENTATIONS_PAGES_GET
+            - GOOGLESLIDES_PRESENTATIONS_BATCH_UPDATE
+            - GOOGLESLIDES_PRESENTATIONS_COPY_FROM_TEMPLATE
+            - GOOGLESLIDES_GET_PAGE_THUMBNAIL2
+        tags: [productivity, google, composio]
 
   - name: com.hubspot/mcp
     title: HubSpot
-    description: CRM contacts, deals, and pipeline
+    description: CRM contacts, deals, and pipeline (via Composio)
     version: "1.0.0"
     icons:
       - src: https://static.nimblebrain.ai/icons/hubspot.png
         sizes: ["any"]
     remotes:
       - type: streamable-http
-        url: https://mcp.hubspot.com
+        url: https://backend.composio.dev/v3/mcp
     _meta:
       ai.nimblebrain/connector:
-        auth: static
-        operatorSetup:
-          portalUrl: https://developers.hubspot.com/docs/apps/developer-platform/build-apps/integrate-with-the-remote-hubspot-mcp-server
-          hint: Create an MCP Auth App in HubSpot Developer Portal; copy client_id + client_secret
-          clientSecretKey: hubspot.client_secret
-        tags: [crm, sales]
+        auth: composio
+        composio:
+          toolkit: hubspot
+          authConfigEnv: COMPOSIO_HUBSPOT_AUTH_CONFIG_ID
+          # HubSpot publishes 200+ verbose tool slugs — curate tightly.
+          # Slugs from Composio's published catalog; verify the live set
+          # with `nb__search hubspot` and expand as needs surface.
+          tools:
+            - HUBSPOT_SEARCH_CONTACTS_BY_CRITERIA
+            - HUBSPOT_GET_CONTACTS
+            - HUBSPOT_CREATE_CONTACT
+            - HUBSPOT_CREATE_DEAL
+            - HUBSPOT_CREATE_COMPANY
+            - HUBSPOT_BATCH_READ_COMPANIES_BY_PROPERTIES
+        tags: [crm, sales, composio]
 
   - name: com.microsoft.outlook/mcp
     title: Outlook
