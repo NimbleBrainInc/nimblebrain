@@ -1,6 +1,7 @@
 import { textContent } from "../engine/content-helpers.ts";
 import type { ToolResult } from "../engine/types.ts";
 import type { UserIdentity } from "../identity/provider.ts";
+import { ORG_ADMIN_ROLES } from "../identity/types.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import type { InProcessTool } from "./in-process-app.ts";
 
@@ -60,7 +61,7 @@ export function createManageRegistriesTool(ctx: ManageRegistriesContext): InProc
       // All write actions require an admin caller. Reads above already
       // returned by this point, so the gate is correctly scoped.
       const identity = ctx.getIdentity();
-      if (!identity || (identity.orgRole !== "admin" && identity.orgRole !== "owner")) {
+      if (!identity || !ORG_ADMIN_ROLES.has(identity.orgRole)) {
         return {
           content: textContent("Org admin or owner role required to modify registries."),
           isError: true,

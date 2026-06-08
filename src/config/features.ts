@@ -1,3 +1,5 @@
+import { ORG_ADMIN_ROLES, type OrgRole } from "../identity/types.ts";
+
 /**
  * Feature flags for controlling which capabilities are available.
  * Most flags default to true for backward compatibility.
@@ -107,5 +109,7 @@ const ADMIN_ONLY_TOOLS = new Set([
  */
 export function isToolVisibleToRole(toolName: string, orgRole: string | null | undefined): boolean {
   if (!ADMIN_ONLY_TOOLS.has(toolName)) return true;
-  return orgRole === "admin" || orgRole === "owner";
+  // orgRole arrives as a free string from web/API callers; the OrgRole-typed
+  // set needs the narrowing. A non-OrgRole string just misses and returns false.
+  return orgRole != null && ORG_ADMIN_ROLES.has(orgRole as OrgRole);
 }
