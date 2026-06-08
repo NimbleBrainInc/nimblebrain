@@ -408,6 +408,103 @@ describe("nb__manage_workspaces", () => {
     });
   });
 
+  describe("claim_admin (stranded-workspace recovery)", () => {
+    test("org admin claims admin on a membered shared workspace that has no admin", async () => {
+      // A shared workspace populated only with default-role members under the
+      // old org-admin bypass — no admin member. This is the stranded state.
+      const ws = await store.create("Stranded");
+      await store.addMember(ws.id, "usr_member00000001", "member");
+
+      const result = await tool.handler({ action: "claim_admin", workspaceId: ws.id });
+
+      expect(result.isError).toBe(false);
+      const parsed = parseResult(result) as {
+        workspace: { memberCount: number };
+        claimedAdmin: { userId: string };
+      };
+      expect(parsed.claimedAdmin.userId).toBe(currentIdentity!.id);
+      expect(parsed.workspace.memberCount).toBe(2);
+
+      const persisted = await store.get(ws.id);
+      expect(persisted?.members.find((m) => m.userId === currentIdentity!.id)?.role).toBe("admin");
+    });
+
+    test("recovery restores manageability: after claim_admin the operator can manage members with org role dropped", async () => {
+      const member: User = await userStore.create({
+        email: "m@example.com",
+        displayName: "M",
+        orgRole: "member",
+      });
+      const ws = await store.create("Stranded");
+      // Seat the future operator as a plain member to exercise the promote path.
+      await store.addMember(ws.id, currentIdentity!.id, "member");
+
+      const claim = await tool.handler({ action: "claim_admin", workspaceId: ws.id });
+      expect(claim.isError).toBe(false);
+      // Promotion in place — no duplicate member row.
+      expect((parseResult(claim) as { workspace: { memberCount: number } }).workspace.memberCount).toBe(1);
+
+      // Drop org-admin entirely; the operator now relies solely on the seated
+      // workspace-admin membership the recovery granted.
+      currentIdentity = { ...currentIdentity!, orgRole: "member" };
+      tool = createManageWorkspacesTool(makeCtx());
+
+      const add = await tool.handler({
+        action: "add_member",
+        workspaceId: ws.id,
+        userId: member.id,
+      });
+      expect(add.isError).toBe(false);
+      expect((parseResult(add) as { workspace: { memberCount: number } }).workspace.memberCount).toBe(2);
+    });
+
+    test("claim_admin seats the operator as first admin of a memberless shared workspace", async () => {
+      const ws = await store.create("Empty");
+
+      const result = await tool.handler({ action: "claim_admin", workspaceId: ws.id });
+
+      expect(result.isError).toBe(false);
+      expect((parseResult(result) as { workspace: { memberCount: number } }).workspace.memberCount).toBe(1);
+    });
+
+    test("refuses when the workspace already has an admin (not a backdoor into healthy workspaces)", async () => {
+      const ws = await store.create("Healthy");
+      await store.addMember(ws.id, "usr_other00000001", "admin");
+
+      const result = await tool.handler({ action: "claim_admin", workspaceId: ws.id });
+
+      expect(result.isError).toBe(true);
+      expect(extractText(result)).toContain("already has an admin");
+      // The operator was NOT seated.
+      const persisted = await store.get(ws.id);
+      expect(persisted?.members.some((m) => m.userId === currentIdentity!.id)).toBe(false);
+    });
+
+    test("refuses on a personal workspace", async () => {
+      const ws = await store.create("Personal", "personal_usr_owner0001", {
+        isPersonal: true,
+        ownerUserId: "usr_owner0001",
+      });
+
+      const result = await tool.handler({ action: "claim_admin", workspaceId: ws.id });
+
+      expect(result.isError).toBe(true);
+      expect(extractText(result)).toContain("Personal workspaces");
+    });
+
+    test("non-org-admin cannot claim_admin", async () => {
+      const ws = await store.create("Stranded");
+      await store.addMember(ws.id, "usr_member00000001", "member");
+
+      currentIdentity = { ...currentIdentity!, orgRole: "member" };
+      tool = createManageWorkspacesTool(makeCtx());
+
+      const result = await tool.handler({ action: "claim_admin", workspaceId: ws.id });
+
+      expect(extractText(result)).toContain("don't have permission");
+    });
+  });
+
   describe("unknown action", () => {
     test("returns error for unknown action", async () => {
       const result = await tool.handler({ action: "invalid" });

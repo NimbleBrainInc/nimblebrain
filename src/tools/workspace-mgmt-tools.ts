@@ -24,7 +24,7 @@ export type ManageMembersContext = ManageWorkspacesContext & { userStore: UserSt
 
 // ── Permission check ──────────────────────────────────────────────
 
-function isAdmin(identity: UserIdentity | null): boolean {
+function isAdmin(identity: UserIdentity | null): identity is UserIdentity {
   return identity !== null && ORG_ADMIN_ROLES.has(identity.orgRole);
 }
 
@@ -41,7 +41,7 @@ export function createManageWorkspacesTool(ctx: ManageWorkspacesContext): InProc
   return {
     name: "manage_workspaces",
     description:
-      "Manage workspaces and their members. Workspace CRUD requires org admin. Member management requires workspace or org admin. Conversation sharing was removed in Stage 1 of the cross-workspace refactor and returns in Stage 4 with policy-gated primitives.",
+      "Manage workspaces and their members. Workspace CRUD and claim_admin require org admin. Member management requires workspace admin membership. claim_admin lets an org admin seat themselves as admin of a shared workspace that has no admin member, to recover one that would otherwise be unmanageable. Conversation sharing was removed in Stage 1 of the cross-workspace refactor and returns in Stage 4 with policy-gated primitives.",
     inputSchema: {
       type: "object",
       properties: {
@@ -52,6 +52,7 @@ export function createManageWorkspacesTool(ctx: ManageWorkspacesContext): InProc
             "update",
             "delete",
             "list",
+            "claim_admin",
             "add_member",
             "remove_member",
             "update_member",
@@ -98,8 +99,8 @@ export function createManageWorkspacesTool(ctx: ManageWorkspacesContext): InProc
     handler: async (input): Promise<ToolResult> => {
       const action = String(input.action);
 
-      // Workspace CRUD — requires org admin
-      if (["create", "update", "delete", "list"].includes(action)) {
+      // Workspace CRUD + admin recovery — requires org admin
+      if (["create", "update", "delete", "list", "claim_admin"].includes(action)) {
         const identity = ctx.getIdentity();
         if (!isAdmin(identity)) return permissionDenied();
 
@@ -112,6 +113,8 @@ export function createManageWorkspacesTool(ctx: ManageWorkspacesContext): InProc
             return handleDelete(ctx, input);
           case "list":
             return handleList(ctx);
+          case "claim_admin":
+            return handleClaimAdmin(ctx, identity, input);
         }
       }
 
@@ -215,6 +218,90 @@ async function handleCreate(
     return {
       content: textContent(
         `Failed to create workspace: ${err instanceof Error ? err.message : String(err)}`,
+      ),
+      isError: true,
+    };
+  }
+}
+
+/**
+ * Org-admin recovery for a shared workspace that has no admin member.
+ *
+ * Under the strict workspace-write policy, member management requires a
+ * workspace admin member and org role grants no bypass. A shared workspace
+ * with no admin (e.g. created before the bootstrap fix seated the creator,
+ * or one an org admin populated with default-role members under the old
+ * org-admin override) would be unmanageable: nobody could add or promote a
+ * member, write instructions/identity/skills, or install connectors, and the
+ * only blunt recovery — delete + recreate — discards the workspace's content.
+ *
+ * This action lets an org admin/owner deliberately seat *themselves* as an
+ * admin member of such a workspace, restoring a valid actor. It is a narrow,
+ * auditable recovery lever, NOT a per-write override: it refuses unless the
+ * workspace genuinely has no admin member, so it cannot be used to reach into
+ * a healthy workspace the operator simply hasn't joined.
+ */
+async function handleClaimAdmin(
+  ctx: ManageWorkspacesContext,
+  identity: UserIdentity,
+  input: Record<string, unknown>,
+): Promise<ToolResult> {
+  const workspaceId = input.workspaceId ? String(input.workspaceId) : undefined;
+  if (!workspaceId) {
+    return { content: textContent("workspaceId is required for claim_admin."), isError: true };
+  }
+
+  const ws = await ctx.workspaceStore.get(workspaceId);
+  if (!ws) {
+    return { content: textContent(`Workspace "${workspaceId}" not found.`), isError: true };
+  }
+
+  // Personal workspaces are sole-owner and always have the owner seated as
+  // admin at creation, so they can never be stranded — and mutating their
+  // membership violates the personal-workspace invariant.
+  if (ws.isPersonal === true) {
+    return {
+      content: textContent(
+        "Personal workspaces always have an admin owner; claim_admin does not apply.",
+      ),
+      isError: true,
+    };
+  }
+
+  // Narrow the lever: only a workspace with NO admin member is recoverable.
+  // Refusing otherwise keeps this from becoming a backdoor org-admin override
+  // into a healthy workspace.
+  if (ws.members.some((m) => m.role === "admin")) {
+    return {
+      content: textContent(
+        "Workspace already has an admin member. Use add_member / update_member to manage it (requires workspace admin membership).",
+      ),
+      isError: true,
+    };
+  }
+
+  try {
+    const existing = ws.members.find((m) => m.userId === identity.id);
+    const updated = existing
+      ? await ctx.workspaceStore.updateMemberRole(workspaceId, identity.id, "admin")
+      : await ctx.workspaceStore.addMember(workspaceId, identity.id, "admin");
+
+    const data = {
+      workspace: { id: updated.id, name: updated.name, memberCount: updated.members.length },
+      claimedAdmin: { userId: identity.id },
+    };
+    return {
+      content: textContent(`Seated ${identity.id} as admin of workspace '${updated.name}'.`),
+      structuredContent: data,
+      isError: false,
+    };
+  } catch (err) {
+    if (err instanceof PersonalWorkspaceInvariantError) {
+      return personalWorkspaceInvariantToolResult(err);
+    }
+    return {
+      content: textContent(
+        `Failed to claim admin: ${err instanceof Error ? err.message : String(err)}`,
       ),
       isError: true,
     };
