@@ -24,6 +24,19 @@ import { signEnvelope } from "./envelope.ts";
  * (rather than accepting-but-not-requiring), an unprovisioned tenant fails
  * closed at the authorizer, which is correct.
  */
+/**
+ * Provider option that turns on the fleet tenant assertion, derived from
+ * `NB_FLEET_AUTHORIZER_ISSUER`. Spread into every `WorkspaceOAuthProvider`
+ * construction at a token-exchanging site: `...fleetIssuerOption()`. Returns an
+ * empty object when unset, so the provider leaves its token-auth hook
+ * uninstalled (the SDK's own client auth runs). Centralized here so a new
+ * token-exchanging site can't silently omit it.
+ */
+export function fleetIssuerOption(): { fleetAuthorizerIssuer?: string } {
+  const issuer = process.env.NB_FLEET_AUTHORIZER_ISSUER;
+  return issuer ? { fleetAuthorizerIssuer: issuer } : {};
+}
+
 export function buildTenantAssertion(opts: { inner: string; ttlSeconds?: number }): string | null {
   const tid = process.env.NB_TENANT_ID;
   const keyB64 = process.env.NB_MCP_AUTHORIZER_TENANT_KEY;

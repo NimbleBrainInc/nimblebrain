@@ -230,8 +230,10 @@ function originOf(value: string | URL): string | undefined {
  * `addClientAuthentication` on the provider REPLACES the SDK's default for
  * every token endpoint — so the provider must re-apply client auth itself.
  * The method-selection half (`selectClientAuthMethod`) IS exported and is
- * reused. Kept faithful to RFC 6749 §2.3.1; the OAuth integration tests fail
- * if this drifts from the SDK.
+ * reused. Kept faithful to RFC 6749 §2.3.1; pinned against the SDK by
+ * fleet-assertion.test.ts ("fleet hook — SDK client-auth parity"), which
+ * exercises all three auth methods. If the SDK changes its apply logic, update
+ * this mirror and those tests together.
  */
 function applyClientAuthentication(
   method: ReturnType<typeof selectClientAuthMethod>,

@@ -2,6 +2,7 @@ import { createHash, hkdfSync, randomBytes } from "node:crypto";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { AuthorizationServerMetadata } from "@modelcontextprotocol/sdk/shared/auth.js";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { buildTenantAssertion } from "../../src/oauth/fleet-assertion.ts";
 import { signEnvelope, verifyEnvelopeAsTenant } from "../../src/oauth/envelope.ts";
@@ -135,5 +136,79 @@ describe("WorkspaceOAuthProvider.addClientAuthentication", () => {
     const p = params();
     await fleetHook(FLEET_ISSUER)(new Headers(), p, `${FLEET_ISSUER}/token`);
     expect(p.get("tenant_assertion")).toBeNull();
+  });
+});
+
+// Step 1 of the fleet hook reproduces the SDK's default client authentication
+// (applyClientAuthentication), which the SDK does NOT export. Once the hook is
+// installed it owns client auth for EVERY token endpoint in a fleet deployment
+// (the authorizer AND every vendor), so a drifted mirror would break all token
+// exchanges. These tests pin the mirror against the SDK's exported
+// selectClientAuthMethod across all three auth methods. A static client supplies
+// client info without disk DCR. (Before the hook was gated, this path was
+// covered incidentally by the OAuth integration tests; gating removed that, so
+// it must be covered explicitly here.)
+describe("fleet hook — SDK client-auth parity (step 1)", () => {
+  let workDir: string;
+  beforeEach(() => {
+    workDir = mkdtempSync(join(tmpdir(), "nb-fleet-clientauth-"));
+    setEnv(undefined, undefined); // step 1 only; no tenant assertion
+  });
+
+  function hookWithStaticClient(staticClient: {
+    clientId: string;
+    clientSecret?: string;
+  }) {
+    const provider = new WorkspaceOAuthProvider({
+      owner: { type: "workspace", wsId: "ws_test" },
+      serverName: "fleet-srv",
+      workDir,
+      callbackUrl: "http://localhost:27247/v1/mcp-auth/callback",
+      fleetAuthorizerIssuer: FLEET_ISSUER,
+      staticClient,
+    });
+    const hook = provider.addClientAuthentication;
+    expect(hook).toBeDefined();
+    return hook as NonNullable<typeof hook>;
+  }
+
+  const tokenParams = () => new URLSearchParams({ grant_type: "authorization_code" });
+
+  it("public client (no secret) → client_id in body (method 'none')", async () => {
+    const p = tokenParams();
+    await hookWithStaticClient({ clientId: "pub-client" })(new Headers(), p, `${FLEET_ISSUER}/token`);
+    expect(p.get("client_id")).toBe("pub-client");
+    expect(p.get("client_secret")).toBeNull();
+  });
+
+  it("confidential client, no server metadata → HTTP Basic (method 'client_secret_basic')", async () => {
+    const headers = new Headers();
+    const p = tokenParams();
+    await hookWithStaticClient({ clientId: "cid", clientSecret: "s3cret" })(
+      headers,
+      p,
+      `${FLEET_ISSUER}/token`,
+    );
+    expect(headers.get("Authorization")).toBe(`Basic ${btoa("cid:s3cret")}`);
+    // Basic auth carries the id in the header, NOT the body.
+    expect(p.get("client_id")).toBeNull();
+  });
+
+  it("confidential client, server advertises client_secret_post → id+secret in body", async () => {
+    const headers = new Headers();
+    const p = tokenParams();
+    const metadata = {
+      issuer: FLEET_ISSUER,
+      token_endpoint_auth_methods_supported: ["client_secret_post"],
+    } as AuthorizationServerMetadata;
+    await hookWithStaticClient({ clientId: "cid", clientSecret: "s3cret" })(
+      headers,
+      p,
+      `${FLEET_ISSUER}/token`,
+      metadata,
+    );
+    expect(p.get("client_id")).toBe("cid");
+    expect(p.get("client_secret")).toBe("s3cret");
+    expect(headers.get("Authorization")).toBeNull();
   });
 });

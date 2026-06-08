@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { log } from "../cli/log.ts";
 import { cleanupComposioBundle } from "../composio/sdk.ts";
 import type { EventSink } from "../engine/types.ts";
+import { fleetIssuerOption } from "../oauth/fleet-assertion.ts";
 import { mcpAuthCallbackUrl } from "../oauth/mcp-callback-url.ts";
 import type { PlacementRegistry } from "../runtime/placement-registry.ts";
 import { FileCredentialStore } from "../tools/credential-store.ts";
@@ -1228,12 +1229,10 @@ export class BundleLifecycleManager {
       callbackUrl: opts.callbackUrl,
       allowInsecureRemotes: opts.allowInsecureRemotes === true,
       headlessAuthProbe: ref.headlessAuthProbe === true,
-      // Fleet tenant binding. Safe to pass for every server: the
-      // provider only attaches an assertion when the token endpoint's origin
-      // matches this issuer (the fleet authorizer), never to a vendor.
-      ...(process.env.NB_FLEET_AUTHORIZER_ISSUER
-        ? { fleetAuthorizerIssuer: process.env.NB_FLEET_AUTHORIZER_ISSUER }
-        : {}),
+      // Fleet tenant binding. Safe to pass for every server: the provider only
+      // attaches an assertion when the token endpoint's origin matches this
+      // issuer (the fleet authorizer), never to a vendor.
+      ...fleetIssuerOption(),
       onInteractiveAuthRequired: (url) => {
         capturedAuthUrl = url;
         this.recordConnectionStateChange(serverName, wsId, principalId, "pending_auth", {
