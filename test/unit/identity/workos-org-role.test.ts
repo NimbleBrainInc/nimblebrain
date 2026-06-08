@@ -15,6 +15,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { WorkosAuth } from "../../../src/identity/instance.ts";
 import { WorkosIdentityProvider } from "../../../src/identity/providers/workos.ts";
+import type { UserIdentity } from "../../../src/identity/provider.ts";
 import type { OrgRole } from "../../../src/identity/types.ts";
 import { UserStore } from "../../../src/identity/user.ts";
 import { WorkspaceStore } from "../../../src/workspace/workspace-store.ts";
@@ -85,6 +86,16 @@ function resolveOrgRole(provider: WorkosIdentityProvider, userId: string): Promi
   return (
     provider as unknown as { resolveOrgRole: (id: string) => Promise<OrgRole | null> }
   ).resolveOrgRole.call(provider, userId);
+}
+
+/** Invoke the private `resolveUser` to inspect the live session identity it builds. */
+function resolveUser(
+  provider: WorkosIdentityProvider,
+  userId: string,
+): Promise<UserIdentity | null> {
+  return (
+    provider as unknown as { resolveUser: (id: string) => Promise<UserIdentity | null> }
+  ).resolveUser.call(provider, userId);
 }
 
 describe("WorkOS resolveOrgRole slug mapping", () => {
@@ -164,6 +175,23 @@ describe("WorkOS syncLocalProfile owner preservation", () => {
 
     const profile = await userStore.get("user_owner");
     expect(profile?.orgRole).toBe("owner");
+  });
+
+  it("surfaces a preserved owner into the live session identity, not just the store", async () => {
+    // The store record is necessary but not sufficient: authz gates read the
+    // live session `identity.orgRole`. If resolveUser built it from the raw
+    // resolveOrgRole value (member), the preserved owner would be inert.
+    await userStore.create({
+      id: "user_owner",
+      email: "user_owner@test.com",
+      displayName: "Owner",
+      orgRole: "owner",
+    });
+
+    const provider = makeProvider(new Map([["user_owner", "member"]]));
+    const identity = await resolveUser(provider, "user_owner");
+
+    expect(identity?.orgRole).toBe("owner");
   });
 
   it("still syncs the WorkOS-derived role for a non-owner on login", async () => {

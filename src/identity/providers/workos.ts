@@ -390,7 +390,12 @@ export class WorkosIdentityProvider implements IdentityProvider {
       const displayName =
         [workosUser.firstName, workosUser.lastName].filter(Boolean).join(" ") || workosUser.email;
 
-      const preferences = await this.syncLocalProfile(workosUserId, {
+      // The effective role (not the raw `orgRole`) is what gates the live
+      // session: `syncLocalProfile` may preserve a local `owner` that
+      // `resolveOrgRole` can't produce. Building the identity from the raw
+      // value would leave a preserved owner inert (store says owner, session
+      // says member) — see syncLocalProfile's contract.
+      const { preferences, orgRole: effectiveRole } = await this.syncLocalProfile(workosUserId, {
         email: workosUser.email,
         displayName,
         orgRole,
@@ -400,7 +405,7 @@ export class WorkosIdentityProvider implements IdentityProvider {
         id: workosUser.id,
         email: workosUser.email,
         displayName,
-        orgRole,
+        orgRole: effectiveRole,
         preferences,
       };
       this.userCache.set(workosUserId, { identity, fetchedAt: nowMs });
@@ -429,13 +434,18 @@ export class WorkosIdentityProvider implements IdentityProvider {
    * (email, displayName, orgRole) on each login while preserving
    * user-owned data (preferences).
    *
-   * Returns the user's current preferences.
+   * Returns both the user's preferences AND the **effective** org role — the
+   * post-preservation value, which may be `owner` even though `resolveOrgRole`
+   * never yields `owner`. The caller MUST build the live session identity from
+   * this returned role, not from the raw `data.orgRole`; otherwise a preserved
+   * owner exists only in the store and the live session is gated as a lesser
+   * role (store and session disagree).
    */
   private async syncLocalProfile(
     workosUserId: string,
     data: { email: string; displayName: string; orgRole: OrgRole },
-  ): Promise<UserPreferences> {
-    if (!this.userStore) return {};
+  ): Promise<{ preferences: UserPreferences; orgRole: OrgRole }> {
+    if (!this.userStore) return { preferences: {}, orgRole: data.orgRole };
 
     const existing = await this.userStore.get(workosUserId);
     if (existing) {
@@ -459,10 +469,11 @@ export class WorkosIdentityProvider implements IdentityProvider {
           orgRole: effectiveRole,
         });
       }
-      return existing.preferences;
+      return { preferences: existing.preferences, orgRole: effectiveRole };
     }
 
-    // First login — create local profile
+    // First login — create local profile. No existing record means no owner to
+    // preserve, so the effective role is the WorkOS-derived one.
     try {
       const user = await this.userStore.create({
         id: workosUserId,
@@ -470,11 +481,14 @@ export class WorkosIdentityProvider implements IdentityProvider {
         displayName: data.displayName,
         orgRole: data.orgRole,
       });
-      return user.preferences;
+      return { preferences: user.preferences, orgRole: user.orgRole };
     } catch {
-      // UserConflictError — race condition, profile was created between get and create
+      // UserConflictError — race condition, profile was created between get and
+      // create. Preserve the raced record's owner the same way the existing
+      // branch does, so a concurrent login can't strip it either.
       const raced = await this.userStore.get(workosUserId);
-      return raced?.preferences ?? {};
+      const racedRole: OrgRole = raced?.orgRole === "owner" ? "owner" : data.orgRole;
+      return { preferences: raced?.preferences ?? {}, orgRole: racedRole };
     }
   }
 
