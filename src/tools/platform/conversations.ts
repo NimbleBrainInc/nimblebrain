@@ -61,6 +61,10 @@ export async function createConversationsSource(
       await cachedIndex.build(dir);
       cachedIndex.startWatching(dir);
     }
+    // Pick up brand-new conversations deterministically rather than racing the
+    // fs.watch debounce — a `data.changed` refresh fires the instant a turn
+    // starts, before the watch has re-indexed the new file.
+    await cachedIndex.flushPending();
     return { index: cachedIndex, dir };
   }
 

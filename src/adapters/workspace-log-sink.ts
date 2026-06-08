@@ -44,6 +44,8 @@ export interface WorkspaceLogConfig {
  */
 export class WorkspaceLogSink implements EventSink {
   private dir: string;
+  /** First-failure-of-an-episode flag — see structured-log-sink. */
+  private writeWarned = false;
 
   constructor(config: WorkspaceLogConfig) {
     this.dir = join(config.dir, "workspace");
@@ -65,7 +67,23 @@ export class WorkspaceLogSink implements EventSink {
 
     const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
     const filename = `${today}.jsonl`;
-    appendFileSync(join(this.dir, filename), `${JSON.stringify(record)}\n`);
+    try {
+      appendFileSync(join(this.dir, filename), `${JSON.stringify(record)}\n`);
+      this.writeWarned = false;
+    } catch (err) {
+      // Best-effort logging: a write failure (disk full, perms, or a detached
+      // turn emitting after the workdir was torn down) must never throw into
+      // the event-emit path and crash the caller. Surface the first failure of
+      // an episode so operators see disk/perms incidents; suppress until a
+      // subsequent success re-arms.
+      if (!this.writeWarned) {
+        this.writeWarned = true;
+        console.warn(
+          `[workspace-log-sink] write to ${this.dir} failed (further failures suppressed until recovery):`,
+          err instanceof Error ? err.message : err,
+        );
+      }
+    }
   }
 
   /** No-op — kept for API compatibility. Writes are synchronous. */

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useSyncExternalStore } from "react";
 import { getResources, uiPathFromUri } from "../api/client";
 import type { BridgeHandle } from "../bridge/bridge";
 import { createBridge } from "../bridge/bridge";
@@ -7,6 +7,7 @@ import { createAppIframe } from "../bridge/iframe";
 import type { UiChatContext } from "../bridge/types";
 import { useTheme } from "../context/ThemeContext";
 import { useWorkspaceContext } from "../context/WorkspaceContext";
+import { chatStore } from "../hooks/chat-store";
 import type { PlacementEntry } from "../types";
 
 interface SlotRendererProps {
@@ -61,6 +62,17 @@ export function SlotRenderer({
   const forceRefreshRef = useRef(forceRefresh);
   forceRefreshRef.current = forceRefresh;
 
+  // Conversations currently streaming an assistant turn in this tab. Pushed
+  // into hostContext so the conversations list can show a per-row indicator.
+  // The store identity is stable between membership changes, so this only
+  // re-pushes when a conversation starts/stops streaming — not per delta.
+  const streamingIds = useSyncExternalStore(
+    chatStore.subscribeStreamingIds,
+    chatStore.getStreamingIds,
+  );
+  const streamingIdsRef = useRef(streamingIds);
+  streamingIdsRef.current = streamingIds;
+
   const filtered = routeFilter ? placements.filter((p) => p.route === routeFilter) : placements;
 
   // Stable key: only re-mount iframes when the actual placements change
@@ -111,7 +123,11 @@ export function SlotRenderer({
             onNavigate: (...args) => onNavigateRef.current?.(...args),
             onPromptAction: (...args) => onPromptActionRef.current?.(...args),
             getHostExtensions: () =>
-              buildHostExtensions(workspaceRef.current, forceRefreshRef.current),
+              buildHostExtensions(
+                workspaceRef.current,
+                forceRefreshRef.current,
+                streamingIdsRef.current,
+              ),
           });
           bridges.push(bridge);
         } catch (err) {
@@ -140,11 +156,11 @@ export function SlotRenderer({
   // mounted; apps that observe `useHostContext()` (or `useTheme()`) re-render
   // and refetch workspace-scoped data without losing local state.
   useEffect(() => {
-    const ctx = buildHostContext(mode, activeWorkspace);
+    const ctx = buildHostContext(mode, activeWorkspace, streamingIds);
     for (const bridge of bridgesRef.current) {
       bridge.setHostContext(ctx);
     }
-  }, [mode, activeWorkspace]);
+  }, [mode, activeWorkspace, streamingIds]);
 
   if (filtered.length === 0) return null;
 

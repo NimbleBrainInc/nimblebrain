@@ -1,195 +1,129 @@
-import { describe, expect, it, mock, beforeEach } from "bun:test";
+import { act, renderHook } from "@testing-library/react";
+import { beforeEach, describe, expect, it, mock } from "bun:test";
 import { realClient } from "./setup";
-import { renderHook, act } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { MemoryRouter } from "react-router-dom";
 import { ChatProvider, useChatContext } from "../src/context/ChatContext.tsx";
 
 // ---------------------------------------------------------------------------
-// Mock streamChat so we can control SSE events in tests
+// Inline error UX under the server-authoritative path. We capture the turn
+// stream's onEvent and push synthetic server events.
 // ---------------------------------------------------------------------------
 
-type StreamCallback = (type: string, data: unknown) => void;
+type StreamCb = (type: string, data: unknown, seq: number) => void;
+let capturedOnEvent: StreamCb | null = null;
 
-let capturedCallback: StreamCallback | null = null;
-let resolveStream: (() => void) | null = null;
-let rejectStream: ((err: Error) => void) | null = null;
+mock.module("../src/api/conversation-stream", () => ({
+  connectConversationStream: (opts: { onEvent: StreamCb }) => {
+    capturedOnEvent = opts.onEvent;
+    return { close() {} };
+  },
+}));
 
 // Spread the preload's real-module snapshot (see web/test/setup.ts) so this
-// whole-module mock exposes every api/client export; only the two below are
+// whole-module mock exposes every api/client export; only the three below are
 // overridden. Bun's mock.module registry is process-global, so an incomplete
 // stub leaking into another suite's module graph is what crashed bridge tests
 // with "Export named 'getActiveWorkspaceId' not found".
 mock.module("../src/api/client", () => ({
-	...realClient,
-	streamChat: (_req: unknown, cb: StreamCallback) => {
-		capturedCallback = cb;
-		return new Promise<void>((resolve, reject) => {
-			resolveStream = resolve;
-			rejectStream = reject;
-		});
-	},
-	getConversationHistory: mock(() =>
-		Promise.resolve({ conversationId: "c1", messages: [] }),
-	),
+  ...realClient,
+  startChatTurn: () => Promise.resolve({ conversationId: "c1" }),
+  startChatTurnMultipart: () => Promise.resolve({ conversationId: "c1" }),
+  cancelChatTurn: () => Promise.resolve(),
 }));
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 function wrapper({ children }: { children: ReactNode }) {
-	return (
-		<MemoryRouter>
-			<ChatProvider>{children}</ChatProvider>
-		</MemoryRouter>
-	);
+  return (
+    <MemoryRouter>
+      <ChatProvider>{children}</ChatProvider>
+    </MemoryRouter>
+  );
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
+let seq = 0;
+function emit(type: string, data: unknown): void {
+  seq += 1;
+  capturedOnEvent?.(type, data, seq);
+}
 
 describe("inline error UX", () => {
-	beforeEach(() => {
-		capturedCallback = null;
-		resolveStream = null;
-		rejectStream = null;
-	});
+  beforeEach(() => {
+    capturedOnEvent = null;
+    seq = 0;
+  });
 
-	it("stream error event stamps error on last assistant message, not banner", async () => {
-		const { result } = renderHook(() => useChatContext(), { wrapper });
+  it("stream error event stamps error on last assistant message, not banner", async () => {
+    const { result } = renderHook(() => useChatContext(), { wrapper });
+    await act(async () => {
+      await result.current.sendMessage("hello");
+    });
 
-		act(() => {
-			result.current.sendMessage("hello");
-		});
-		await act(async () => {});
+    act(() => emit("text.delta", { text: "Here is my response" }));
+    act(() =>
+      emit("error", {
+        error: "json_parse",
+        message: "JSON Parse error: Unable to parse JSON string",
+      }),
+    );
 
-		// Simulate some streaming content first
-		act(() => {
-			capturedCallback?.("text.delta", { text: "Here is my response" });
-		});
+    const lastMsg = result.current.messages[result.current.messages.length - 1];
+    expect(lastMsg?.role).toBe("assistant");
+    expect(lastMsg?.error).toBe("JSON Parse error: Unable to parse JSON string");
+    expect(result.current.error).toBeNull();
+  });
 
-		// Fire SSE error event
-		act(() => {
-			capturedCallback?.("error", {
-				error: "json_parse",
-				message: "JSON Parse error: Unable to parse JSON string",
-			});
-		});
+  it("simulateError is a no-op when there are no messages", () => {
+    const { result } = renderHook(() => useChatContext(), { wrapper });
+    expect(result.current.messages).toHaveLength(0);
+    act(() => {
+      result.current.simulateError("Something broke");
+    });
+    expect(result.current.messages).toHaveLength(0);
+    expect(result.current.isStreaming).toBe(false);
+    expect(result.current.streamingState).toBeNull();
+  });
 
-		// Error should be on the last assistant message
-		const lastMsg = result.current.messages[result.current.messages.length - 1];
-		expect(lastMsg?.role).toBe("assistant");
-		expect(lastMsg?.error).toBe("JSON Parse error: Unable to parse JSON string");
+  it("simulateError stamps on existing assistant message", async () => {
+    const { result } = renderHook(() => useChatContext(), { wrapper });
+    await act(async () => {
+      await result.current.sendMessage("hello");
+    });
+    act(() => emit("text.delta", { text: "response text" }));
+    act(() =>
+      emit("done", {
+        response: "response text",
+        conversationId: "c1",
+        toolCalls: [],
+        stopReason: "complete",
+      }),
+    );
 
-		// Banner error should NOT be set
-		expect(result.current.error).toBeNull();
-	});
+    const msgCountBefore = result.current.messages.length;
+    act(() => {
+      result.current.simulateError("Simulated crash");
+    });
+    expect(result.current.messages).toHaveLength(msgCountBefore);
+    const lastMsg = result.current.messages[result.current.messages.length - 1];
+    expect(lastMsg?.role).toBe("assistant");
+    expect(lastMsg?.error).toBe("Simulated crash");
+  });
 
-	it("simulateError is a no-op when there are no messages", () => {
-		const { result } = renderHook(() => useChatContext(), { wrapper });
+  it("retryLastMessage removes failed pair and re-sends", async () => {
+    const { result } = renderHook(() => useChatContext(), { wrapper });
+    await act(async () => {
+      await result.current.sendMessage("try this");
+    });
+    act(() => emit("text.delta", { text: "partial" }));
+    act(() => emit("error", { error: "crash", message: "Engine crashed" }));
 
-		expect(result.current.messages).toHaveLength(0);
+    expect(result.current.messages).toHaveLength(2);
+    expect(result.current.messages[1].error).toBe("Engine crashed");
 
-		act(() => {
-			result.current.simulateError("Something broke");
-		});
+    await act(async () => {
+      result.current.retryLastMessage();
+    });
+    await act(async () => {});
 
-		// No messages to stamp on — stays empty
-		expect(result.current.messages).toHaveLength(0);
-		expect(result.current.isStreaming).toBe(false);
-		expect(result.current.streamingState).toBeNull();
-	});
-
-	it("simulateError stamps on existing assistant message", async () => {
-		const { result } = renderHook(() => useChatContext(), { wrapper });
-
-		act(() => {
-			result.current.sendMessage("hello");
-		});
-		await act(async () => {});
-
-		act(() => {
-			capturedCallback?.("text.delta", { text: "response text" });
-		});
-
-		// Complete the stream so isStreaming is false
-		act(() => {
-			capturedCallback?.("done", {
-				response: "response text",
-				conversationId: "c1",
-				toolCalls: [],
-				inputTokens: 10,
-				outputTokens: 5,
-				stopReason: "complete",
-			});
-		});
-		act(() => {
-			resolveStream?.();
-		});
-		await act(async () => {});
-
-		const msgCountBefore = result.current.messages.length;
-
-		act(() => {
-			result.current.simulateError("Simulated crash");
-		});
-
-		// Should stamp on existing message, not add a new one
-		expect(result.current.messages).toHaveLength(msgCountBefore);
-		const lastMsg = result.current.messages[result.current.messages.length - 1];
-		expect(lastMsg?.role).toBe("assistant");
-		expect(lastMsg?.error).toBe("Simulated crash");
-	});
-
-	it("retryLastMessage removes failed pair and re-sends", async () => {
-		const { result } = renderHook(() => useChatContext(), { wrapper });
-
-		// Send a message
-		act(() => {
-			result.current.sendMessage("try this");
-		});
-		await act(async () => {});
-
-		// Simulate some content then error
-		act(() => {
-			capturedCallback?.("text.delta", { text: "partial" });
-		});
-		act(() => {
-			capturedCallback?.("error", {
-				error: "crash",
-				message: "Engine crashed",
-			});
-		});
-
-		// Complete the stream promise so isStreaming clears
-		act(() => {
-			resolveStream?.();
-		});
-		await act(async () => {});
-
-		// Should have user + errored assistant
-		expect(result.current.messages).toHaveLength(2);
-		expect(result.current.messages[1].error).toBe("Engine crashed");
-
-		// Reset mocks for the retry
-		capturedCallback = null;
-		resolveStream = null;
-
-		// Retry
-		act(() => {
-			result.current.retryLastMessage();
-		});
-		await act(async () => {});
-
-		// retryLastMessage removes the failed pair and triggers a new send.
-		// After retry fires, we should have a new user + assistant placeholder.
-		// The callback should be captured again from the new sendMessage call.
-		// Give it another tick for the effect to fire sendMessage
-		await act(async () => {});
-
-		// The retry effect should have fired sendMessage, creating new messages
-		expect(result.current.isStreaming).toBe(true);
-	});
+    expect(result.current.isStreaming).toBe(true);
+  });
 });

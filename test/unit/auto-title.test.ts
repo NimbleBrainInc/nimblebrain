@@ -131,6 +131,14 @@ describe("generateTitle", () => {
 		expect(title.length).toBeLessThanOrEqual(60);
 		expect(longMsg.startsWith(title.trimEnd())).toBe(true);
 	});
+
+	it("returns the model's title text (trimmed)", async () => {
+		const model = createMockModel(() => ({
+			content: [{ type: "text", text: "  Library Paranoia Joke  " }],
+		}));
+		const title = await generateTitle(model, "Write something funny", "A man walks in...");
+		expect(title).toBe("Library Paranoia Joke");
+	});
 });
 
 describe("sanitizeGeneratedTitle", () => {

@@ -3,11 +3,13 @@ import { resolve } from "node:path";
 import { CallbackEventSink } from "../adapters/callback-events.ts";
 import { log } from "../cli/log.ts";
 import { isToolEnabled, isToolVisibleToRole, type ResolvedFeatures } from "../config/features.ts";
+import { CONVERSATION_ID_RE } from "../conversation/types.ts";
 import type { EngineEvent, EventSink } from "../engine/types.ts";
 import { ingestFiles, isAllowedMime, type UploadedFile } from "../files/ingest.ts";
 import { resolveMimeType } from "../files/mime.ts";
 import type { FileEntry } from "../files/types.ts";
 import type { IdentityProvider, UserIdentity } from "../identity/provider.ts";
+import { DEV_IDENTITY } from "../identity/providers/dev.ts";
 import {
   ConversationAccessDeniedError,
   ConversationCorruptedError,
@@ -79,10 +81,8 @@ export async function handleChat(
     // backgrounded tab, network blip) must not cancel the in-flight
     // engine loop; the run completes server-side, persists, and is
     // replayed to any reconnecting /v1/conversations/:id/events
-    // subscriber. See the detached `.chat(parsed, sink)` in
-    // handleChatStream for the full rationale (PR #251 regression). The
-    // automations executor's deadline cancellation is unaffected — that
-    // path supplies its own AbortController.
+    // subscriber. (The automations executor's deadline cancellation is
+    // unaffected — that path supplies its own AbortController.)
     const result = await runtime.chat(parsed);
     // Cost is derived at the boundary, never stored. Same wire shape as
     // the streaming `done` event so clients see one consistent contract.
@@ -155,6 +155,94 @@ function runInProgressResponse(conversationId: string): Response {
     "This conversation already has an active response. Wait for it to finish before sending another message.",
     { conversationId },
   );
+}
+
+/**
+ * Handle POST /v1/chat/start — kick off a detached, server-authoritative turn
+ * and return the conversation id immediately. The turn runs to completion on
+ * the server regardless of this request's lifecycle (closing the tab does NOT
+ * cancel it). Clients watch the turn via GET /v1/conversations/:id/events,
+ * which replays the in-flight turn then tails live.
+ */
+export async function handleChatStart(
+  request: Request,
+  runtime: Runtime,
+  features: ResolvedFeatures,
+  identity?: UserIdentity,
+  workspaceId?: string,
+): Promise<Response> {
+  const parsed = await parseChatBody(request, runtime, features, identity, workspaceId);
+  if (parsed instanceof Response) return parsed;
+  try {
+    const { conversationId } = await runtime.startTurn(parsed);
+    return Response.json({ conversationId });
+  } catch (err) {
+    if (err instanceof RunInProgressError) {
+      return runInProgressResponse(parsed.conversationId ?? "");
+    }
+    if (err instanceof ConversationAccessDeniedError) {
+      return apiError(
+        403,
+        "conversation_access_denied",
+        "You do not have access to this conversation.",
+        { conversationId: parsed.conversationId },
+      );
+    }
+    // startTurn → store.load can throw on a pre-migration (ownerless)
+    // conversation. Map to 422 — parity with handleChat / handleChatCancel —
+    // instead of leaking a raw 500.
+    if (err instanceof ConversationCorruptedError) {
+      return conversationCorruptedResponse(err);
+    }
+    throw err;
+  }
+}
+
+/**
+ * Handle POST /v1/conversations/:id/cancel — the explicit Stop button. The
+ * ONLY thing that aborts generation; client disconnect does not. Ownership is
+ * enforced (same posture as the events route).
+ */
+export async function handleChatCancel(
+  conversationId: string,
+  runtime: Runtime,
+  identity?: UserIdentity,
+): Promise<Response> {
+  // Reject a malformed id with 400 before it reaches the store, where
+  // `validateConversationId` would throw a plain Error that bubbles to a 500.
+  // Mirrors the `/v1/chat/start` schema guard and the events route.
+  if (!CONVERSATION_ID_RE.test(conversationId)) {
+    return apiError(400, "bad_request", "Invalid conversationId format");
+  }
+  const callerId = identity?.id ?? (runtime.getIdentityProvider() ? null : DEV_IDENTITY.id);
+  if (!callerId) {
+    return apiError(401, "authentication_required", "Authentication required.");
+  }
+  const conversation = await runtime.findConversation(conversationId).catch((err) => {
+    if (err instanceof ConversationCorruptedError) return err;
+    throw err;
+  });
+  if (conversation instanceof ConversationCorruptedError) {
+    return apiError(422, "conversation_corrupted", conversation.message, {
+      conversationId: conversation.conversationId,
+      reason: conversation.reason,
+    });
+  }
+  if (!conversation) {
+    return apiError(404, "not_found", "Conversation not found");
+  }
+  if (conversation.ownerId !== callerId) {
+    return apiError(
+      403,
+      "conversation_access_denied",
+      "You do not have access to this conversation.",
+      {
+        conversationId,
+      },
+    );
+  }
+  const cancelled = runtime.cancelTurn(conversationId);
+  return Response.json({ cancelled });
 }
 
 function conversationAccessDeniedResponse(conversationId: string): Response {
@@ -358,11 +446,10 @@ export async function handleChatStream(
         // engine loop. The run completes server-side, persists to the
         // conversation store, and replays to any reconnecting
         // /v1/conversations/:id/events subscriber — the "leave and come
-        // back" contract. PR #251 bound the run to the connection and
-        // silently abandoned prompts the moment a mobile client dropped
-        // (run.error "The connection was closed"). The one caller that
-        // must cancel on a deadline — the automations executor — owns its
-        // own AbortController in bundles/automations/src/executor.ts.
+        // back" contract. Binding the run to the connection would silently
+        // abandon a prompt the moment a mobile client dropped. The one
+        // caller that must cancel on a deadline — the automations executor —
+        // owns its own AbortController in bundles/automations/src/executor.ts.
         .chat(parsed, sink)
         .then((result) => {
           // Cost is computed at the API boundary — never stored. The
@@ -1642,6 +1729,17 @@ async function parseMultipartChatBody(
   const message = typeof messageRaw === "string" ? messageRaw : "";
 
   const conversationId = formData.get("conversationId");
+  // Reject a malformed conversationId before it reaches store path-building
+  // / ingestFiles (convId feeds the file-store path). The JSON surface gets
+  // this from the ChatRequestBody schema pattern; multipart parses raw, so
+  // validate the same shape here. Mirrors the canonical conv_<16 hex> regex.
+  if (
+    typeof conversationId === "string" &&
+    conversationId &&
+    !CONVERSATION_ID_RE.test(conversationId)
+  ) {
+    return apiError(400, "bad_request", "Invalid conversationId format");
+  }
   const model = formData.get("model");
 
   let appContext: { appName: string; serverName: string } | undefined;

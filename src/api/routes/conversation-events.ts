@@ -31,6 +31,7 @@
  */
 
 import { Hono } from "hono";
+import { CONVERSATION_ID_RE } from "../../conversation/types.ts";
 import { DEV_IDENTITY } from "../../identity/providers/dev.ts";
 import { ConversationCorruptedError } from "../../runtime/errors.ts";
 import { requireAuth } from "../middleware/auth.ts";
@@ -55,6 +56,13 @@ export function conversationEventRoutes(ctx: AppContext) {
     errorLog(ctx),
     async (c) => {
       const conversationId = c.req.param("id");
+      // Reject a malformed id with 400 before it reaches the store, where
+      // `validateConversationId` would throw a plain Error that bubbles to a
+      // 500. Mirrors the `/v1/chat/start` schema guard so a typo or a
+      // path-traversal probe gets a clean bad-request, not a 5xx.
+      if (!CONVERSATION_ID_RE.test(conversationId)) {
+        return apiError(400, "bad_request", "Invalid conversationId format");
+      }
       const identity = c.var.identity;
 
       // Resolve the caller id. Authenticated request → identity.id.
@@ -102,13 +110,28 @@ export function conversationEventRoutes(ctx: AppContext) {
         );
       }
 
-      // Create SSE stream for this subscriber. The first frame
-      // (event: subscribed) carries the server-generated subscriberId
-      // so the client can pass it back as `X-Origin-Subscriber-Id` on
-      // any chat-stream POST it originates — that prevents the
-      // chat-stream's broadcast from echoing back to this same
-      // subscription.
-      const { stream } = ctx.conversationEventManager.addSubscriber(conversationId, callerId);
+      // Resume point: the client passes the highest sequence number it has
+      // already rendered (0 / absent = full replay of the in-flight turn).
+      const afterSeqRaw = c.req.query("afterSeq");
+      const afterSeq = afterSeqRaw ? Number.parseInt(afterSeqRaw, 10) : 0;
+      const replay = ctx.runtime.getTurnReplay(
+        conversationId,
+        Number.isFinite(afterSeq) ? afterSeq : 0,
+      );
+
+      // Create the SSE stream. The manager replays the buffered in-flight turn
+      // (events with seq > afterSeq) before registering for live fan-out, so a
+      // page refresh reconstructs the in-progress assistant message and then
+      // tails the rest with no gap or duplication.
+      const { stream } = ctx.conversationEventManager.addSubscriber(
+        conversationId,
+        callerId,
+        replay,
+        {
+          isActive: ctx.runtime.isTurnActive(conversationId),
+          activeSeq: ctx.runtime.turnSeq(conversationId),
+        },
+      );
 
       return new Response(stream, {
         headers: {

@@ -1,5 +1,5 @@
-import { describe, expect, it, beforeEach } from "bun:test";
-import { mkdtempSync, readFileSync, readdirSync } from "node:fs";
+import { beforeEach, describe, expect, it, spyOn } from "bun:test";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { StructuredLogSink } from "../../src/adapters/structured-log-sink.ts";
@@ -221,5 +221,32 @@ describe("StructuredLogSink", () => {
     expect((llmA!.usage as { inputTokens: number }).inputTokens).toBe(100);
     expect(llmB!.model).toBe("model-b");
     expect((llmB!.usage as { inputTokens: number }).inputTokens).toBe(200);
+  });
+
+  it("never throws into emit on a write failure, and warns once per episode", () => {
+    // A detached turn outlives its HTTP request, so an unhandled throw in the
+    // sink crashes the turn (nothing catches it). Block the write by parking a
+    // directory at the log-file path (appendFileSync → EISDIR).
+    const sink = new StructuredLogSink({ dir: logDir });
+    const today = new Date().toISOString().slice(0, 10);
+    const logFile = join(logDir, `nimblebrain-${today}.jsonl`);
+    mkdirSync(logFile);
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      expect(() => sink.emit({ type: "run.start", data: { runId: "r1" } })).not.toThrow();
+      expect(() => sink.emit({ type: "run.done", data: { runId: "r1" } })).not.toThrow();
+      expect(warn).toHaveBeenCalledTimes(1); // suppressed after the first
+
+      // A successful write re-arms the warning for the next failure episode.
+      rmSync(logFile, { recursive: true });
+      sink.emit({ type: "run.start", data: { runId: "r2" } }); // writes the file → reset
+      rmSync(logFile);
+      mkdirSync(logFile); // block again
+      sink.emit({ type: "run.done", data: { runId: "r2" } });
+      expect(warn).toHaveBeenCalledTimes(2);
+    } finally {
+      warn.mockRestore();
+      rmSync(logFile, { recursive: true, force: true });
+    }
   });
 });

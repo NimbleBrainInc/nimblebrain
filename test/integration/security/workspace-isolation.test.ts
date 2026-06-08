@@ -11,6 +11,9 @@
  *    install the same bundle (the briefing/nav leak class)
  */
 
+import { mkdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import type {
   BriefingBlock,
@@ -31,10 +34,14 @@ import type { Tool, ToolSource } from "../../../src/tools/types.ts";
 let runtime: Runtime;
 let handle: ServerHandle;
 let baseUrl: string;
+let workDir: string;
 const TEST_KEY = "security-test-key-12345";
 
 beforeAll(async () => {
+  workDir = join(tmpdir(), `nb-workspace-isolation-${Date.now()}`);
+  mkdirSync(workDir, { recursive: true });
   runtime = await Runtime.start({
+    workDir,
     model: { provider: "custom", adapter: createEchoModel() },
     noDefaultBundles: true,
     logging: { disabled: true },
@@ -51,6 +58,7 @@ beforeAll(async () => {
 afterAll(async () => {
   handle.stop(true);
   await runtime.shutdown();
+  rmSync(workDir, { recursive: true, force: true });
 });
 
 function authHeaders(extra?: Record<string, string>): Record<string, string> {

@@ -23,8 +23,9 @@ export interface ConnectEventsOptions {
   /**
    * Called on successful reconnection (NOT the initial connect). Lets
    * consumers refetch state that may have drifted during the gap —
-   * bundles, config, skills. Mirrors the same hook on
-   * `conversation-sse.ts` so call sites can route both with one pattern.
+   * bundles, config, skills. (The per-conversation turn stream handles its
+   * own gap recovery via seq-based replay in `conversation-stream.ts`; this
+   * hook is the workspace stream's equivalent, which has no seq cursor.)
    */
   onReconnect?: () => void;
   /** Called on unrecoverable error. */

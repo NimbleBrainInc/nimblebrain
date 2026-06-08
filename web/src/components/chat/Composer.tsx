@@ -24,6 +24,8 @@ export interface ComposerProps {
   disabled: boolean;
   onNewConversation?: () => void;
   streamingState?: StreamingState;
+  /** Stop the in-flight turn — wired to the Stop button in MessageInput. */
+  onStop?: () => void;
   /**
    * Hide the footer (e.g. for embedded / popover compositions where
    * vertical space is at a premium). Default: show.
@@ -36,6 +38,7 @@ export function Composer({
   disabled,
   onNewConversation,
   streamingState,
+  onStop,
   hideFooter = false,
 }: ComposerProps) {
   return (
@@ -45,6 +48,7 @@ export function Composer({
         disabled={disabled}
         onNewConversation={onNewConversation}
         streamingState={streamingState}
+        onStop={onStop}
       />
       {!hideFooter && <ComposerFooter />}
     </div>

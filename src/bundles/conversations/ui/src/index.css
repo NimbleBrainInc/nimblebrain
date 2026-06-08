@@ -189,6 +189,24 @@ body {
   color: var(--color-text-secondary, #737373);
   flex-shrink: 0;
 }
+/* Live indicator: a conversation with an in-flight assistant turn. */
+.conv-streaming-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 7px;
+  border-radius: 50%;
+  background: var(--color-text-accent, #0055ff);
+  vertical-align: middle;
+  animation: conv-streaming-pulse 1.2s ease-in-out infinite;
+}
+@keyframes conv-streaming-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.7); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .conv-streaming-dot { animation: none; }
+}
 .conv-preview {
   margin-top: 4px; font-size: 13px;
   color: var(--color-text-secondary, #737373);

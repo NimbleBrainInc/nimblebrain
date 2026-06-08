@@ -1,137 +1,27 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { ApiClientError, callTool, streamChat, streamChatMultipart } from "../api/client";
-import { formatSendError } from "../api/format-error";
-import { appNameFromToolName } from "../lib/namespaced-tool.ts";
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { captureEvent } from "../telemetry";
+import type { AppContext } from "../types";
 import type {
-  AppContext,
-  ChatRequest,
-  ChatResult,
-  ChatStreamEventMap,
-  ChatStreamEventType,
-  LlmDoneEvent,
-  ReasoningDeltaEvent,
-  StreamErrorEvent,
-  TextDeltaEvent,
-  ToolDoneEvent,
-  ToolPreparingEvent,
-  ToolStartEvent,
-} from "../types";
+  ChatMessage,
+  LoadedConversationMeta,
+  PreparingTool,
+  StreamingState,
+} from "./chat-store";
+import { chatStore, freshDraftKey } from "./chat-store";
 
-/**
- * Streaming state machine:
- *
- *   null → thinking → streaming ↔ preparing → working → analyzing → streaming → null
- *                                                              ↘ working (next tool.start)
- *
- * `analyzing` fills the gap between the last tool.done (all tools finished)
- * and the next text.delta / tool.start, when the model is inferring on tool
- * results but the UI would otherwise look frozen.
- *
- * `preparing` fills the model-side gap: after text/reasoning has streamed
- * within an iteration, the model may continue emitting a large tool-call
- * input block (45 KB+ for full-document writes). No deltas fire during
- * that window — without `preparing`, the indicator goes dark for as long
- * as it takes the LLM to emit the args. `tool.preparing` fires on
- * `tool-input-start` from the AI SDK; `tool.start` follows once the
- * iteration finishes and the engine begins execution.
- *
- * Any `tool.start` can re-enter `working` from a non-terminal state.
- */
-export type StreamingState =
-  | null
-  | "thinking"
-  | "streaming"
-  | "preparing"
-  | "working"
-  | "analyzing";
-
-/** Identifies the tool the model is currently building a call for. */
-export interface PreparingTool {
-  id: string;
-  name: string;
-}
-
-/** Typed tool result shape forwarded through the bridge. */
-export interface ToolResultForUI {
-  content: Array<{ type: string; text?: string; [key: string]: unknown }>;
-  structuredContent?: Record<string, unknown>;
-  isError: boolean;
-}
-
-/** Tool call with UI state for streaming display. */
-export interface ToolCallDisplay {
-  id: string;
-  name: string;
-  status: "running" | "done" | "error";
-  ok?: boolean;
-  ms?: number;
-  resourceUri?: string;
-  /** MCP `resource_link` blocks returned by the tool result, if any. */
-  resourceLinks?: Array<{
-    uri: string;
-    name?: string;
-    mimeType?: string;
-    description?: string;
-  }>;
-  result?: ToolResultForUI;
-  input?: Record<string, unknown>;
-  appName?: string;
-}
-
-/** A block in the assistant message stream — text, reasoning, or tool call group, in temporal order. */
-export type ContentBlock =
-  | { type: "text"; text: string }
-  | { type: "reasoning"; text: string }
-  | { type: "tool"; toolCalls: ToolCallDisplay[] };
-
-/** Live iteration progress during streaming. */
-export interface IterationProgress {
-  n: number;
-  inputTokens: number;
-  outputTokens: number;
-}
-
-/** File metadata attached to a message. */
-export interface MessageFileAttachment {
-  id: string;
-  filename: string;
-  mimeType: string;
-  size: number;
-  extracted: boolean;
-}
-
-/** A chat message with ordered content blocks for display. */
-export interface ChatMessage {
-  role: "user" | "assistant";
-  content: string;
-  blocks?: ContentBlock[];
-  toolCalls?: ToolCallDisplay[];
-  iteration?: IterationProgress;
-  timestamp?: string;
-  userId?: string;
-  files?: MessageFileAttachment[];
-  stopReason?: string;
-  /** Set when the engine errors mid-stream — renders inline on the message. */
-  error?: string;
-  usage?: {
-    inputTokens: number;
-    outputTokens: number;
-    cacheReadTokens?: number;
-    cacheWriteTokens?: number;
-    reasoningTokens?: number;
-    model: string;
-    llmMs: number;
-  };
-}
-
-/**
- * Conversation-level metadata. Stage 1: single-owner only — sharing
- * was removed (returns in Stage 4 with policy gating).
- */
-export interface LoadedConversationMeta {
-  ownerId?: string;
-}
+// Re-export the display types so existing `from "../hooks/useChat"` imports
+// keep working — the slice store now owns the definitions.
+export type {
+  ChatMessage,
+  ContentBlock,
+  IterationProgress,
+  LoadedConversationMeta,
+  MessageFileAttachment,
+  PreparingTool,
+  StreamingState,
+  ToolCallDisplay,
+  ToolResultForUI,
+} from "./chat-store";
 
 export interface UseChatReturn {
   messages: ChatMessage[];
@@ -140,6 +30,8 @@ export interface UseChatReturn {
   /** Set while streamingState === "preparing"; null otherwise. */
   preparingTool: PreparingTool | null;
   conversationId: string | null;
+  /** Server-generated title; null until generated/loaded. */
+  title: string | null;
   conversationMeta: LoadedConversationMeta | null;
   error: string | null;
   sendMessage: (
@@ -150,702 +42,129 @@ export interface UseChatReturn {
   ) => Promise<void>;
   newConversation: () => void;
   loadConversation: (id: string) => Promise<void>;
-  /** Inject a user message from another participant (remote stream). */
-  injectRemoteUserMessage: (userId: string, displayName: string, content: string) => void;
-  /** Process a streaming event from a remote participant's assistant response. */
-  processRemoteStreamEvent: (type: string, data: unknown) => void;
+  /** Stop the in-flight turn (the only thing that aborts generation). */
+  stop: () => void;
   /** Retry the last failed message (removes errored pair and re-sends). */
   retryLastMessage: () => void;
   /** Inject a synthetic error for demoing the error UX (dev only). */
   simulateError: (message: string) => void;
 }
 
-/** Deep-copy blocks for immutable state updates. */
-function cloneBlocks(blocks: ContentBlock[]): ContentBlock[] {
-  return blocks.map((b) => {
-    if (b.type === "tool") return { ...b, toolCalls: [...b.toolCalls] };
-    return { ...b }; // text or reasoning — both shaped { type, text }
-  });
-}
-
-/** Derive full visible text from blocks. Reasoning is NOT included
- *  (it's collapsed-by-default UI and shouldn't pollute the message body). */
-function textFromBlocks(blocks: ContentBlock[]): string {
-  return blocks
-    .filter((b): b is ContentBlock & { type: "text" } => b.type === "text")
-    .map((b) => b.text)
-    .join("");
-}
-
-/** Wrap a plain string result into a ToolResultForUI. */
-function wrapStringResult(text: string, isError = false): ToolResultForUI {
-  return { content: [{ type: "text", text }], isError };
-}
-
-const updateTool =
-  (evt: ToolDoneEvent) =>
-  (tc: ToolCallDisplay): ToolCallDisplay =>
-    tc.id === evt.id
-      ? {
-          ...tc,
-          status: evt.ok ? ("done" as const) : ("error" as const),
-          ok: evt.ok,
-          ms: evt.ms,
-          resourceUri: tc.resourceUri ?? evt.resourceUri,
-          resourceLinks:
-            evt.resourceLinks != null && evt.resourceLinks.length > 0
-              ? evt.resourceLinks
-              : tc.resourceLinks,
-          result: evt.result != null ? (evt.result as ToolResultForUI) : tc.result,
-        }
-      : tc;
-
+/**
+ * Per-conversation chat state, backed by the module-singleton {@link chatStore}.
+ *
+ * `activeKey` selects which conversation's slice this hook renders. A stream
+ * started for one conversation writes only into that conversation's slice
+ * (captured at send time), so switching conversations mid-turn never bleeds
+ * the in-flight response into the destination chat (issue #254). Switching
+ * back shows the still-arriving response because the background stream kept
+ * filling its origin slice.
+ *
+ * `focusWorkspaceId` is the workspace the chat is FOCUSED on (the `/w/:slug`
+ * the user is viewing). Currently unused on this path — the chat-store
+ * dispatches via `startChatTurn`, which picks up the global active
+ * workspace from `headers()`. Accepted as a param for API compatibility
+ * with the ChatProvider; route-derived focus override is tracked as a
+ * follow-up.
+ */
 export function useChat(
   initialConversationId?: string,
   currentUserId?: string,
-  focusWorkspaceId?: string | null,
+  _focusWorkspaceId?: string | null,
 ): UseChatReturn {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [isStreaming, setIsStreaming] = useState(false);
-  const [conversationId, setConversationId] = useState<string | null>(
-    initialConversationId ?? null,
+  const [activeKey, setActiveKey] = useState(() => {
+    const key = initialConversationId ?? freshDraftKey();
+    chatStore.ensureSlice(
+      key,
+      initialConversationId ? { conversationId: initialConversationId } : undefined,
+    );
+    return key;
+  });
+
+  const subscribe = useCallback(
+    (cb: () => void) => chatStore.subscribeSlice(activeKey, cb),
+    [activeKey],
   );
-  const [error, setError] = useState<string | null>(null);
-  const [streamingState, setStreamingState] = useState<StreamingState>(null);
-  const [preparingTool, setPreparingTool] = useState<PreparingTool | null>(null);
-  const [conversationMeta, setConversationMeta] = useState<LoadedConversationMeta | null>(null);
+  const getSnapshot = useCallback(() => chatStore.getSnapshot(activeKey), [activeKey]);
+  const snap = useSyncExternalStore(subscribe, getSnapshot);
 
-  // The chat's FOCUSED workspace is what the user is currently VIEWING (the
-  // `/w/:slug`), supplied by the provider from the route. It's situational
-  // context — the agent reasons about which workspace/app is on screen — and
-  // the source of the workspace briefing (apps + house rules). NOT tool scope.
-  // Null on home / identity routes, so the agent correctly sees "no current
-  // workspace". Read via a ref so `sendMessage` doesn't re-memoize on nav.
-  const focusWorkspaceIdRef = useRef(focusWorkspaceId ?? null);
-  focusWorkspaceIdRef.current = focusWorkspaceId ?? null;
-
-  // Refs for building the current assistant message during streaming.
-  const blocksRef = useRef<ContentBlock[]>([]);
-  const toolCallsRef = useRef<ToolCallDisplay[]>([]);
-  const iterationRef = useRef<IterationProgress | undefined>(undefined);
-
-  /** Push current refs into the last assistant message. */
-  function flushToMessage() {
-    const currentBlocks = cloneBlocks(blocksRef.current);
-    const currentText = textFromBlocks(blocksRef.current);
-    const currentTools = [...toolCallsRef.current];
-    const currentIteration = iterationRef.current ? { ...iterationRef.current } : undefined;
-    setMessages((prev) => {
-      const updated = [...prev];
-      updated[updated.length - 1] = {
-        role: "assistant",
-        content: currentText,
-        blocks: currentBlocks,
-        toolCalls: currentTools,
-        iteration: currentIteration,
-      };
-      return updated;
-    });
-  }
+  // Mark the active slice so the LRU never evicts what the user is viewing.
+  useEffect(() => {
+    chatStore.markActive(activeKey);
+    return () => chatStore.markInactive(activeKey);
+  }, [activeKey]);
 
   const sendMessage = useCallback(
     async (text: string, appContext?: AppContext, model?: string, files?: File[]) => {
-      if (isStreaming) return;
-
-      setError(null);
-      setIsStreaming(true);
-      setStreamingState("thinking");
-      blocksRef.current = [];
-      toolCallsRef.current = [];
-      iterationRef.current = undefined;
-
-      // Add user message (with file previews if attached)
-      const userFiles: MessageFileAttachment[] | undefined = files?.map((f) => ({
-        id: `pending_${f.name}_${f.size}`,
-        filename: f.name,
-        mimeType: f.type || "application/octet-stream",
-        size: f.size,
-        extracted: false,
-      }));
-      const userMsg: ChatMessage = {
-        role: "user",
-        content: text,
-        timestamp: new Date().toISOString(),
-        ...(currentUserId ? { userId: currentUserId } : {}),
-        ...(userFiles && userFiles.length > 0 ? { files: userFiles } : {}),
-      };
-      setMessages((prev) => [...prev, userMsg]);
-
-      // Add placeholder assistant message
-      const assistantMsg: ChatMessage = {
-        role: "assistant",
-        content: "",
-        blocks: [],
-        toolCalls: [],
-        timestamp: new Date().toISOString(),
-      };
-      setMessages((prev) => [...prev, assistantMsg]);
-
-      // Enrich appContext with latest app state from the bridge (Synapse Feature 2)
+      // Enrich appContext with the latest app state from the bridge
+      // (Synapse Feature 2). Kept here — the store stays bridge-agnostic.
       let enrichedContext = appContext;
       if (appContext) {
         const { getAppState } = await import("../bridge/bridge");
         const appStateEntry = getAppState(appContext.serverName);
-        if (appStateEntry) {
-          enrichedContext = { ...appContext, appState: appStateEntry };
-        }
+        if (appStateEntry) enrichedContext = { ...appContext, appState: appStateEntry };
       }
-
-      const req: ChatRequest = {
-        message: text,
-        ...(conversationId ? { conversationId } : {}),
-        ...(enrichedContext ? { appContext: enrichedContext } : {}),
-        ...(model ? { model } : {}),
-      };
-
-      try {
-        const onEvent = <K extends ChatStreamEventType>(type: K, data: ChatStreamEventMap[K]) => {
-          switch (type) {
-            case "chat.start": {
-              const evt = data as { conversationId: string };
-              if (evt.conversationId) {
-                setConversationId(evt.conversationId);
-              }
-              break;
-            }
-            case "text.delta": {
-              const evt = data as TextDeltaEvent;
-              setStreamingState((prev) => (prev !== "streaming" ? "streaming" : prev));
-              // Defensive: keeps `preparingTool` paired with the
-              // `"preparing"` streamingState. Render sites gate on the
-              // state, so stale data never shows today, but a future
-              // caller reading `preparingTool` directly would otherwise
-              // see a tool name from a long-finished iteration.
-              setPreparingTool(null);
-              // Append to last text block or create a new one
-              const blocks = blocksRef.current;
-              const lastBlock = blocks[blocks.length - 1];
-              if (lastBlock && lastBlock.type === "text") {
-                lastBlock.text += evt.text;
-              } else {
-                blocks.push({ type: "text", text: evt.text });
-              }
-              flushToMessage();
-              break;
-            }
-            case "reasoning.delta": {
-              const evt = data as ReasoningDeltaEvent;
-              setStreamingState((prev) => (prev !== "streaming" ? "streaming" : prev));
-              setPreparingTool(null);
-              const blocks = blocksRef.current;
-              const lastBlock = blocks[blocks.length - 1];
-              if (lastBlock && lastBlock.type === "reasoning") {
-                lastBlock.text += evt.text;
-              } else {
-                blocks.push({ type: "reasoning", text: evt.text });
-              }
-              flushToMessage();
-              break;
-            }
-            case "tool.preparing": {
-              const evt = data as ToolPreparingEvent;
-              setStreamingState("preparing");
-              setPreparingTool({ id: evt.id, name: evt.name });
-              break;
-            }
-            case "tool.preparing.done": {
-              // No state change — `tool.start` follows once the iteration
-              // ends and the engine begins execution. Holding `preparing`
-              // through the gap keeps the indicator stable.
-              break;
-            }
-            case "tool.start": {
-              const evt = data as ToolStartEvent;
-              setStreamingState("working");
-              setPreparingTool(null);
-              const newTool: ToolCallDisplay = {
-                id: evt.id,
-                name: evt.name,
-                status: "running",
-                resourceUri: evt.resourceUri,
-                input: evt.input,
-                // Bare source name (drop any `ws_<id>-` prefix) — the REST
-                // resource-read surfaces key the registry by bare name.
-                appName: appNameFromToolName(evt.name),
-              };
-              // Flat ref
-              toolCallsRef.current = [...toolCallsRef.current, newTool];
-              // Blocks — group consecutive tool calls
-              const blocks = blocksRef.current;
-              const lastBlock = blocks[blocks.length - 1];
-              if (lastBlock && lastBlock.type === "tool") {
-                lastBlock.toolCalls = [...lastBlock.toolCalls, newTool];
-              } else {
-                blocks.push({ type: "tool", toolCalls: [newTool] });
-              }
-              flushToMessage();
-              break;
-            }
-            case "tool.done": {
-              const evt = data as ToolDoneEvent;
-              const updater = updateTool(evt);
-              // Update flat ref
-              toolCallsRef.current = toolCallsRef.current.map(updater);
-              // Update in blocks
-              for (const block of blocksRef.current) {
-                if (block.type === "tool") {
-                  block.toolCalls = block.toolCalls.map(updater);
-                }
-              }
-              // Hold `working` while other parallel tools are still running;
-              // only flip to `analyzing` when the last tool in the batch lands,
-              // so the indicator reflects "model is inferring on results."
-              const anyRunning = toolCallsRef.current.some((tc) => tc.status === "running");
-              setStreamingState(anyRunning ? "working" : "analyzing");
-              flushToMessage();
-              break;
-            }
-            case "llm.done": {
-              const evt = data as LlmDoneEvent;
-              iterationRef.current = {
-                n: (iterationRef.current?.n ?? 0) + 1,
-                inputTokens:
-                  (iterationRef.current?.inputTokens ?? 0) + (evt.usage?.inputTokens ?? 0),
-                outputTokens:
-                  (iterationRef.current?.outputTokens ?? 0) + (evt.usage?.outputTokens ?? 0),
-              };
-              flushToMessage();
-              break;
-            }
-            case "done": {
-              const result = data as ChatResult;
-              setStreamingState(null);
-              setPreparingTool(null);
-              setConversationId(result.conversationId);
-
-              // Backfill tool results from done event
-              if (result.toolCalls) {
-                const outputMap = new Map(result.toolCalls.map((tc) => [tc.id, tc.output]));
-                const backfill = (tc: ToolCallDisplay): ToolCallDisplay => {
-                  if (tc.result != null) return tc;
-                  const output = outputMap.get(tc.id);
-                  return output != null ? { ...tc, result: wrapStringResult(output) } : tc;
-                };
-                for (const block of blocksRef.current) {
-                  if (block.type === "tool") {
-                    block.toolCalls = block.toolCalls.map(backfill);
-                  }
-                }
-                toolCallsRef.current = toolCallsRef.current.map(backfill);
-              }
-
-              const finalBlocks = cloneBlocks(blocksRef.current);
-              const finalTools =
-                toolCallsRef.current.length > 0 ? [...toolCallsRef.current] : undefined;
-              const usage = result.usage
-                ? {
-                    inputTokens: result.usage.inputTokens,
-                    outputTokens: result.usage.outputTokens,
-                    cacheReadTokens: result.usage.cacheReadTokens,
-                    cacheWriteTokens: result.usage.cacheWriteTokens,
-                    reasoningTokens: result.usage.reasoningTokens,
-                    model: result.usage.model,
-                    llmMs: result.usage.llmMs,
-                  }
-                : undefined;
-              // Parse file attachments from done event metadata
-              const resultFiles = (result as unknown as Record<string, unknown>).files as
-                | MessageFileAttachment[]
-                | undefined;
-
-              setMessages((prev) => {
-                const updated = [...prev];
-                updated[updated.length - 1] = {
-                  role: "assistant",
-                  content: result.response,
-                  blocks: finalBlocks,
-                  toolCalls: finalTools,
-                  usage,
-                  ...(result.stopReason && result.stopReason !== "complete"
-                    ? { stopReason: result.stopReason }
-                    : {}),
-                  ...(resultFiles && resultFiles.length > 0 ? { files: resultFiles } : {}),
-                };
-                return updated;
-              });
-              break;
-            }
-            case "error": {
-              const evt = data as StreamErrorEvent;
-              setStreamingState(null);
-              setPreparingTool(null);
-              // Stamp the error on the last assistant message so it renders
-              // inline — not as a disconnected banner at the top.
-              setMessages((prev) => {
-                const updated = [...prev];
-                const last = updated[updated.length - 1];
-                if (last?.role === "assistant") {
-                  updated[updated.length - 1] = { ...last, error: evt.message };
-                } else {
-                  // No assistant message to attach to — fall back to banner
-                  setError(evt.message);
-                }
-                return updated;
-              });
-              break;
-            }
-          }
-        };
-        if (files && files.length > 0) {
-          await streamChatMultipart(req, files, onEvent, focusWorkspaceIdRef.current);
-        } else {
-          await streamChat(req, onEvent, focusWorkspaceIdRef.current);
-        }
-        captureEvent("web.chat_sent", {
-          is_resume: !!conversationId,
-          has_app_context: !!appContext,
-        });
-      } catch (err) {
-        if (err instanceof ApiClientError && err.code === "run_in_progress") {
-          // Server rejected because a previous run is still in flight.
-          // Drop the optimistic user+assistant placeholders so the failed
-          // message doesn't stick in history as if it had succeeded.
-          setMessages((prev) => prev.slice(0, -2));
-          captureEvent("web.chat_run_in_progress", {
-            conversation_id: conversationId ?? null,
-            has_app_context: !!appContext,
-          });
-          // Banner only — nothing in this turn to mark inline
-          setError(formatSendError(err));
-          return;
-        }
-        const msg = formatSendError(err);
-        // Stamp on the last assistant message if one exists;
-        // only fall back to banner when there's no message to attach to.
-        setMessages((prev) => {
-          const last = prev[prev.length - 1];
-          if (last?.role === "assistant") {
-            const updated = [...prev];
-            updated[updated.length - 1] = { ...last, error: msg };
-            return updated;
-          }
-          // No assistant message — fall back to banner
-          setError(msg);
-          return prev;
-        });
-      } finally {
-        setIsStreaming(false);
-        setStreamingState(null);
-        setPreparingTool(null);
-      }
+      const hadConversation = !!chatStore.getSnapshot(activeKey).conversationId;
+      await chatStore.sendTurn(
+        activeKey,
+        { text, appContext: enrichedContext, model, files, currentUserId },
+        { onConversationId: (id) => setActiveKey(id) },
+      );
+      captureEvent("web.chat_sent", {
+        is_resume: hadConversation,
+        has_app_context: !!appContext,
+      });
     },
-    // biome-ignore lint/correctness/useExhaustiveDependencies: sendMessage captures streaming/conversation state via refs
-    [isStreaming, conversationId, currentUserId, flushToMessage],
+    [activeKey, currentUserId],
   );
 
   const newConversation = useCallback(() => {
-    setMessages([]);
-    setConversationId(null);
-    setConversationMeta(null);
-    setError(null);
-    setIsStreaming(false);
-    setStreamingState(null);
-    setPreparingTool(null);
-    blocksRef.current = [];
-    toolCallsRef.current = [];
-    iterationRef.current = undefined;
+    const key = freshDraftKey();
+    chatStore.ensureSlice(key);
+    setActiveKey(key);
   }, []);
 
   const loadConversation = useCallback(async (id: string) => {
-    setError(null);
-    try {
-      // expand:"full" — the shell is rendering the entire chat, not
-      // sampling for an LLM. The bounded default (`expand:"messages"`,
-      // last 20) exists to keep agent tool-results small; the trusted
-      // web shell needs every turn or the UI silently shows only the tail.
-      const res = await callTool("conversations", "get", { id, expand: "full" });
-      if (res.isError) {
-        const errText = res.content
-          ?.map((b) => b.text ?? "")
-          .filter(Boolean)
-          .join("\n");
-        throw new Error(errText || "Failed to load conversation");
-      }
-      // Prefer structuredContent; fall back to parsing first text block.
-      let raw: unknown = res.structuredContent;
-      if (!raw && res.content?.[0]?.text) {
-        try {
-          raw = JSON.parse(res.content[0].text);
-        } catch {
-          raw = {};
-        }
-      }
-      // The API already returns DisplayMessage[] in the exact shape ChatMessage
-      // expects — one message per turn, blocks in iteration order, tool calls
-      // hydrated with status+result. No reshaping needed here.
-      const data = raw as {
-        metadata: {
-          id: string;
-          ownerId?: string;
-        };
-        messages: ChatMessage[];
-      };
-      setConversationId(data.metadata.id);
-      setConversationMeta({ ownerId: data.metadata.ownerId });
-      setMessages(data.messages);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Failed to load conversation";
-      setError(msg);
-    }
+    setActiveKey(id);
+    await chatStore.loadConversation(id);
   }, []);
 
-  // --- Remote participant event injection ---
-
-  const injectRemoteUserMessage = useCallback(
-    (userId: string, _displayName: string, content: string) => {
-      // Reset streaming refs for the incoming remote assistant response
-      blocksRef.current = [];
-      toolCallsRef.current = [];
-      iterationRef.current = undefined;
-
-      const userMsg: ChatMessage = {
-        role: "user",
-        content,
-        timestamp: new Date().toISOString(),
-        userId,
-      };
-      const assistantMsg: ChatMessage = {
-        role: "assistant",
-        content: "",
-        blocks: [],
-        toolCalls: [],
-        timestamp: new Date().toISOString(),
-      };
-      setMessages((prev) => [...prev, userMsg, assistantMsg]);
-      setIsStreaming(true);
-      setStreamingState("thinking");
-    },
-    [],
-  );
-
-  const processRemoteStreamEvent = useCallback(
-    (type: string, data: unknown) => {
-      switch (type) {
-        case "text.delta": {
-          const evt = data as TextDeltaEvent;
-          setStreamingState((prev) => (prev !== "streaming" ? "streaming" : prev));
-          setPreparingTool(null);
-          const blocks = blocksRef.current;
-          const lastBlock = blocks[blocks.length - 1];
-          if (lastBlock && lastBlock.type === "text") {
-            lastBlock.text += evt.text;
-          } else {
-            blocks.push({ type: "text", text: evt.text });
-          }
-          flushToMessage();
-          break;
-        }
-        case "reasoning.delta": {
-          const evt = data as ReasoningDeltaEvent;
-          setStreamingState((prev) => (prev !== "streaming" ? "streaming" : prev));
-          setPreparingTool(null);
-          const blocks = blocksRef.current;
-          const lastBlock = blocks[blocks.length - 1];
-          if (lastBlock && lastBlock.type === "reasoning") {
-            lastBlock.text += evt.text;
-          } else {
-            blocks.push({ type: "reasoning", text: evt.text });
-          }
-          flushToMessage();
-          break;
-        }
-        case "tool.preparing": {
-          const evt = data as ToolPreparingEvent;
-          setStreamingState("preparing");
-          setPreparingTool({ id: evt.id, name: evt.name });
-          break;
-        }
-        case "tool.preparing.done": {
-          break;
-        }
-        case "tool.start": {
-          const evt = data as ToolStartEvent;
-          setStreamingState("working");
-          setPreparingTool(null);
-          const newTool: ToolCallDisplay = {
-            id: evt.id,
-            name: evt.name,
-            status: "running",
-            resourceUri: evt.resourceUri,
-            input: evt.input,
-            // Bare source name (drop any `ws_<id>-` prefix) — the REST
-            // resource-read surfaces key the registry by bare name.
-            appName: appNameFromToolName(evt.name),
-          };
-          toolCallsRef.current = [...toolCallsRef.current, newTool];
-          const blocks = blocksRef.current;
-          const lastBlock = blocks[blocks.length - 1];
-          if (lastBlock && lastBlock.type === "tool") {
-            lastBlock.toolCalls = [...lastBlock.toolCalls, newTool];
-          } else {
-            blocks.push({ type: "tool", toolCalls: [newTool] });
-          }
-          flushToMessage();
-          break;
-        }
-        case "tool.done": {
-          const evt = data as ToolDoneEvent;
-          const updater = updateTool(evt);
-          toolCallsRef.current = toolCallsRef.current.map(updater);
-          for (const block of blocksRef.current) {
-            if (block.type === "tool") {
-              block.toolCalls = block.toolCalls.map(updater);
-            }
-          }
-          const anyRunning = toolCallsRef.current.some((tc) => tc.status === "running");
-          setStreamingState(anyRunning ? "working" : "analyzing");
-          flushToMessage();
-          break;
-        }
-        case "llm.done": {
-          const evt = data as LlmDoneEvent;
-          iterationRef.current = {
-            n: (iterationRef.current?.n ?? 0) + 1,
-            inputTokens: (iterationRef.current?.inputTokens ?? 0) + (evt.usage?.inputTokens ?? 0),
-            outputTokens:
-              (iterationRef.current?.outputTokens ?? 0) + (evt.usage?.outputTokens ?? 0),
-          };
-          flushToMessage();
-          break;
-        }
-        case "done": {
-          const result = data as ChatResult;
-          setStreamingState(null);
-          setPreparingTool(null);
-          setIsStreaming(false);
-
-          if (result.toolCalls) {
-            const outputMap = new Map(result.toolCalls.map((tc) => [tc.id, tc.output]));
-            const backfill = (tc: ToolCallDisplay): ToolCallDisplay => {
-              if (tc.result != null) return tc;
-              const output = outputMap.get(tc.id);
-              return output != null ? { ...tc, result: wrapStringResult(output) } : tc;
-            };
-            for (const block of blocksRef.current) {
-              if (block.type === "tool") {
-                block.toolCalls = block.toolCalls.map(backfill);
-              }
-            }
-            toolCallsRef.current = toolCallsRef.current.map(backfill);
-          }
-
-          const finalBlocks = cloneBlocks(blocksRef.current);
-          const finalTools =
-            toolCallsRef.current.length > 0 ? [...toolCallsRef.current] : undefined;
-          const usage = result.usage
-            ? {
-                inputTokens: result.usage.inputTokens,
-                outputTokens: result.usage.outputTokens,
-                cacheReadTokens: result.usage.cacheReadTokens,
-                cacheWriteTokens: result.usage.cacheWriteTokens,
-                reasoningTokens: result.usage.reasoningTokens,
-                model: result.usage.model,
-                llmMs: result.usage.llmMs,
-              }
-            : undefined;
-
-          setMessages((prev) => {
-            const updated = [...prev];
-            updated[updated.length - 1] = {
-              role: "assistant",
-              content: result.response,
-              blocks: finalBlocks,
-              toolCalls: finalTools,
-              usage,
-              ...(result.stopReason && result.stopReason !== "complete"
-                ? { stopReason: result.stopReason }
-                : {}),
-            };
-            return updated;
-          });
-          break;
-        }
-      }
-      // biome-ignore lint/correctness/useExhaustiveDependencies: SSE handler intentionally captures only flushToMessage
-    },
-    [flushToMessage],
-  );
-
-  // Pending retry text — set by retryLastMessage, consumed by an effect
-  const retryRef = useRef<string | null>(null);
+  const stop = useCallback(() => {
+    chatStore.cancelTurn(activeKey);
+  }, [activeKey]);
 
   const retryLastMessage = useCallback(() => {
-    // Find the last user message, stash its text, remove the failed pair
-    setMessages((prev) => {
-      for (let i = prev.length - 1; i >= 0; i--) {
-        if (prev[i].role === "user") {
-          retryRef.current = prev[i].content;
-          return prev.slice(0, i);
-        }
-      }
-      return prev;
-    });
-    // Clear error + streaming state so sendMessage's guard passes
-    setError(null);
-    setIsStreaming(false);
-    setStreamingState(null);
-    setPreparingTool(null);
-  }, []);
+    // The store replays the original send (text + model + appContext) itself —
+    // no re-routing through sendMessage, which dropped the model selection.
+    chatStore.retryLastMessage(activeKey);
+  }, [activeKey]);
 
-  // Effect: once isStreaming is false and there's a pending retry, fire it.
-  // We can't call sendMessage synchronously from retryLastMessage because
-  // sendMessage is memoized with isStreaming in its dep list — the closure
-  // still sees isStreaming=true until React re-renders with the new state.
-  // This effect fires after React flushes the state updates, at which point
-  // sendMessage has been recreated with isStreaming=false.
-  // NOTE: this depends on sendMessage's identity changing when isStreaming
-  // changes (via flushToMessage in its dep list). Do not memoize
-  // flushToMessage without verifying this still fires.
-  useEffect(() => {
-    if (!isStreaming && retryRef.current) {
-      const text = retryRef.current;
-      retryRef.current = null;
-      sendMessage(text);
-    }
-  }, [isStreaming, sendMessage]);
+  const simulateError = useCallback(
+    (message: string) => {
+      chatStore.simulateError(activeKey, message);
+    },
+    [activeKey],
+  );
 
-  const simulateError = useCallback((message: string) => {
-    setMessages((prev) => {
-      if (prev.length === 0) return prev;
-      const updated = [...prev];
-      const last = updated[updated.length - 1];
-      if (last?.role === "assistant") {
-        updated[updated.length - 1] = { ...last, error: message };
-      } else {
-        // Append a synthetic assistant message with the error
-        updated.push({ role: "assistant", content: "", error: message });
-      }
-      return updated;
-    });
-    setStreamingState(null);
-    setPreparingTool(null);
-    setIsStreaming(false);
-  }, []);
-
-  return {
-    messages,
-    isStreaming,
-    streamingState,
-    preparingTool,
-    conversationId,
-    conversationMeta,
-    error,
-    sendMessage,
-    newConversation,
-    loadConversation,
-    injectRemoteUserMessage,
-    processRemoteStreamEvent,
-    retryLastMessage,
-    simulateError,
-  };
+  return useMemo<UseChatReturn>(
+    () => ({
+      messages: snap.messages,
+      isStreaming: snap.isStreaming,
+      streamingState: snap.streamingState,
+      preparingTool: snap.preparingTool,
+      // Drafts carry a null conversationId on the slice, so this is null until
+      // the server assigns a real id on chat.start.
+      conversationId: snap.conversationId,
+      title: snap.title,
+      conversationMeta: snap.meta,
+      error: snap.error,
+      sendMessage,
+      newConversation,
+      loadConversation,
+      stop,
+      retryLastMessage,
+      simulateError,
+    }),
+    [snap, sendMessage, newConversation, loadConversation, stop, retryLastMessage, simulateError],
+  );
 }

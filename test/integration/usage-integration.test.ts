@@ -14,10 +14,12 @@ describe("ChatResult.usage", () => {
 
 	afterAll(async () => {
 		await runtime.shutdown();
+		if (existsSync(usageTestDir)) rmSync(usageTestDir, { recursive: true });
 	});
 
 	it("is populated with all TurnUsage fields after Runtime.chat()", async () => {
 		runtime = await Runtime.start({
+			workDir: usageTestDir,
 			model: { provider: "custom", adapter: createEchoModel() },
 			noDefaultBundles: true,
 			logging: { disabled: true },

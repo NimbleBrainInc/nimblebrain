@@ -16,15 +16,39 @@
 //   - publishing the focused app to `FocusedAppContext`, so the globally
 //     mounted chat panel can stamp the same `AppContext` on messages
 //     typed into the main composer (not just the in-app channel).
+//   - First-page-load chat-store restoration. `getSavedConversationId`
+//     fires once per module evaluation (= per page load) and re-attaches
+//     to the last in-flight conversation so the SSE viewer reconnects.
 // ---------------------------------------------------------------------------
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useLocation } from "react-router-dom";
 import type { UiChatContext } from "../bridge/types";
 import { useChatContext } from "../context/ChatContext";
 import { useChatPanelContext } from "../context/ChatPanelContext";
 import { useFocusedApp } from "../context/FocusedAppContext";
+import { chatStore } from "../hooks/chat-store";
+import {
+  getSavedConversationId,
+  getSavedStreamingIds,
+  setSavedConversationId,
+  setSavedStreamingIds,
+} from "../lib/active-conversation-storage";
 import type { AppContext, PlacementEntry } from "../types";
 import { SlotRenderer } from "./SlotRenderer";
+
+/**
+ * Module-once guard: restore conversation state only on a fresh page load, not
+ * on every client-side app navigation (which remounts AppWithChat). A page
+ * reload resets the module, re-arming the restore.
+ */
+let restoredLastConversation = false;
+/**
+ * Snapshot of the persisted streaming-id set captured at module-eval time
+ * (page load), before any persist effect overwrites sessionStorage with the
+ * post-reload (empty) set.
+ */
+const initialSavedStreamingIds = getSavedStreamingIds();
 
 function useIsMobile(): boolean {
   const [isMobile, setIsMobile] = useState(
@@ -50,11 +74,71 @@ const TRANSITION_STANDARD = "300ms cubic-bezier(0.33, 1, 0.68, 1)";
 const TRANSITION_FULLSCREEN = "350ms cubic-bezier(0.4, 0, 0.2, 1)";
 
 export function AppWithChat({ placement, onNavigate, forceRefresh }: AppWithChatProps) {
-  const { panelState, openPanel } = useChatPanelContext();
+  const { panelState, openPanel, toggleFullscreen } = useChatPanelContext();
 
   const chat = useChatContext();
   const isMobile = useIsMobile();
   const { setFocusedApp } = useFocusedApp();
+  const location = useLocation();
+
+  // Collapse fullscreen when navigating to a different route
+  const prevPathnameRef = useRef(location.pathname);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: only react to pathname changes, panelState/toggleFullscreen are intentionally excluded
+  useEffect(() => {
+    if (location.pathname !== prevPathnameRef.current) {
+      prevPathnameRef.current = location.pathname;
+      if (panelState === "fullscreen") {
+        toggleFullscreen();
+      }
+    }
+  }, [location.pathname]);
+
+  // Deep-link: open chat from ?chat=<conversationId> on mount. Otherwise, on a
+  // fresh page load, reopen the last-viewed conversation (per-tab, via
+  // sessionStorage) so an in-flight turn's stream/indicator resumes —
+  // loadConversation re-subscribes and the server's `isActive` drives the
+  // bubble. Module-once so app-to-app navigation doesn't re-trigger it.
+  const deepLinkHandled = useRef(false);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentionally runs only on mount
+  useEffect(() => {
+    if (deepLinkHandled.current) return;
+    deepLinkHandled.current = true;
+    const chatId = new URLSearchParams(window.location.search).get("chat");
+    if (chatId) {
+      openPanel(chatId);
+      return;
+    }
+    if (!restoredLastConversation) {
+      restoredLastConversation = true;
+      const saved = getSavedConversationId();
+      // Hydrate without forcing the panel open — its visibility is restored
+      // independently from ChatPanelContext's persisted state. When the panel
+      // is (re)opened it shows this conversation.
+      if (saved) void chat.loadConversation(saved);
+      // Restore background streaming dots: probe each conversation that was
+      // generating before reload. Still-active ones light up; finished ones
+      // self-heal (probe → not active → no dot).
+      for (const id of initialSavedStreamingIds) {
+        if (id !== saved) chatStore.probeConversation(id);
+      }
+    }
+  }, []);
+
+  // Persist the active conversation id (per-tab) so a reload can reopen it.
+  // Cleared automatically when a new/draft chat is active (conversationId null).
+  useEffect(() => {
+    setSavedConversationId(chat.conversationId);
+  }, [chat.conversationId]);
+
+  // Persist the set of conversations with an in-flight turn so a reload can
+  // restore their streaming dots (re-probed against the server above).
+  const streamingIds = useSyncExternalStore(
+    chatStore.subscribeStreamingIds,
+    chatStore.getStreamingIds,
+  );
+  useEffect(() => {
+    setSavedStreamingIds(streamingIds);
+  }, [streamingIds]);
 
   const appContext = useMemo<AppContext>(
     () => ({

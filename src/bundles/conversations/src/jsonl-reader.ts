@@ -47,6 +47,13 @@ export interface DisplayMessage {
   files?: DisplayFile[];
   /** Non-"complete" run terminations bubble up here ("max_iterations", "error"). */
   stopReason?: string;
+  /**
+   * True when this assistant turn has no terminal event yet (no run.done /
+   * run.error) — i.e. the run was still in flight when the file was read. Lets
+   * a live viewer tell a partial disk snapshot from a finished turn and decide
+   * whether to reconcile against the server's replay.
+   */
+  pending?: boolean;
 }
 
 export type DisplayBlock =
@@ -452,6 +459,10 @@ function collectRun(
 
   let endTs = events[start]?.ts ?? "";
   let stopReason: string | undefined;
+  // A run is "terminated" only when we see its run.done/run.error. If the loop
+  // runs out of events first, the turn was still in flight when the file was
+  // read → mark the message pending.
+  let terminated = false;
 
   let i = start + 1;
   while (i < events.length) {
@@ -459,12 +470,14 @@ function collectRun(
     if (isRunDone(inner) && inner.runId === runId) {
       endTs = inner.ts;
       stopReason = inner.stopReason;
+      terminated = true;
       i++;
       break;
     }
     if (isRunError(inner) && inner.runId === runId) {
       endTs = inner.ts;
       stopReason = "error";
+      terminated = true;
       i++;
       break;
     }
@@ -588,6 +601,7 @@ function collectRun(
     ...(flatToolCalls.length > 0 ? { toolCalls: flatToolCalls } : {}),
     usage,
     ...(stopReason && stopReason !== "complete" ? { stopReason } : {}),
+    ...(terminated ? {} : { pending: true }),
   };
   return [msg, i];
 }

@@ -163,6 +163,13 @@ export interface ConfigChangedEvent {
   timestamp: string;
 }
 
+/** Live auto-generated conversation title (routed to a slice by conversationId). */
+export interface ConversationTitleEvent {
+  conversationId: string;
+  title: string;
+  wsId?: string;
+}
+
 /** SSE event type to payload mapping. */
 export interface SseEventMap {
   "bundle.installed": BundleInstalledEvent;
@@ -172,6 +179,7 @@ export interface SseEventMap {
   "bundle.dead": BundleDeadEvent;
   "connection.state_changed": ConnectionStateChangedEvent;
   "data.changed": DataChangedEvent;
+  "conversation.title": ConversationTitleEvent;
   "config.changed": ConfigChangedEvent;
   heartbeat: HeartbeatEvent;
 }

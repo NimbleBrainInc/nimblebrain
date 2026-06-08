@@ -136,6 +136,7 @@ export type EngineEventType =
    */
   | "connection.state_changed"
   | "data.changed"
+  | "conversation.title"
   | "config.changed"
   | "skill.created"
   | "skill.updated"

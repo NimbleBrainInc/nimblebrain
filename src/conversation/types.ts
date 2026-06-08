@@ -75,6 +75,10 @@ export interface CreateConversationOptions {
   workspaceId?: string;
   ownerId: string;
   metadata?: Record<string, unknown>;
+  /** Create with a specific id instead of a generated one. Used by the
+   *  detached-turn path so the conversation id is known to the caller before
+   *  the engine run starts. */
+  id?: string;
 }
 
 /** Fields that can be updated on a conversation. */

@@ -254,6 +254,53 @@ describe("readConversation (event format)", () => {
 		expect(assistant.timestamp).toBe("2025-06-01T00:00:06.000Z");
 	});
 
+	test("flags an in-flight run (no run.done) as pending", async () => {
+		const runId = "run_pending";
+		const lines = [
+			JSON.stringify(eventMeta("conv_pending01")),
+			JSON.stringify({ ts: "2025-06-01T00:00:00.000Z", type: "run.start", runId }),
+			JSON.stringify({
+				ts: "2025-06-01T00:00:01.000Z",
+				type: "llm.response",
+				runId,
+				model: "m1",
+				content: [{ type: "text", text: "partial" }],
+				usage: { inputTokens: 5, outputTokens: 2 },
+				llmMs: 30,
+			}),
+			// No run.done — the run was still in flight when the file was read.
+		];
+		const path = writeTmpFile("conv_pending01.jsonl", lines);
+
+		const result = await readConversation(path);
+		expect(result).not.toBeNull();
+		const asst = result!.messages.at(-1)!;
+		expect(asst.role).toBe("assistant");
+		expect(asst.pending).toBe(true);
+	});
+
+	test("a completed run (run.done) is not pending", async () => {
+		const runId = "run_complete";
+		const lines = [
+			JSON.stringify(eventMeta("conv_complete01")),
+			JSON.stringify({ ts: "2025-06-01T00:00:00.000Z", type: "run.start", runId }),
+			JSON.stringify({
+				ts: "2025-06-01T00:00:01.000Z",
+				type: "llm.response",
+				runId,
+				model: "m1",
+				content: [{ type: "text", text: "done" }],
+				usage: { inputTokens: 5, outputTokens: 2 },
+				llmMs: 30,
+			}),
+			JSON.stringify({ ts: "2025-06-01T00:00:02.000Z", type: "run.done", runId, stopReason: "complete" }),
+		];
+		const path = writeTmpFile("conv_complete01.jsonl", lines);
+
+		const result = await readConversation(path);
+		expect(result!.messages.at(-1)!.pending).toBeUndefined();
+	});
+
 	test("sets status='error' and isError=true for a failed tool call", async () => {
 		const runId = "run_b";
 		const lines = [

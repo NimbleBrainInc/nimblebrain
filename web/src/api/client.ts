@@ -5,13 +5,10 @@ import type {
   BootstrapResponse,
   ChatRequest,
   ChatResult,
-  ChatStreamEventMap,
-  ChatStreamEventType,
   HealthInfo,
   PlacementEntry,
   ToolCallResult,
 } from "../types";
-import { getConversationSubscriberId } from "./conversation-subscribers";
 import { createFetchWithRefresh } from "./fetch-with-refresh";
 
 // ---------------------------------------------------------------------------
@@ -367,14 +364,14 @@ export interface UploadResourceResult {
  */
 export async function uploadResource(files: File[]): Promise<UploadResourceResult> {
   const formData = new FormData();
-  // Use `files` (plural) to match `streamChatMultipart`; the server
-  // accepts either, but one canonical spelling avoids surprises.
+  // Use `files` (plural) — the server's multipart route accepts either
+  // `files` or `file`, but one canonical spelling avoids surprises.
   for (const file of files) {
     formData.append("files", file, file.name);
   }
 
   // Build headers WITHOUT Content-Type — let the browser set the
-  // multipart boundary. Same pattern as `streamChatMultipart`.
+  // multipart boundary. Standard pattern for FormData uploads.
   const h: Record<string, string> = {};
   if (authToken && authToken !== "__cookie__") {
     h.Authorization = `Bearer ${authToken}`;
@@ -415,82 +412,19 @@ export async function chat(req: ChatRequest): Promise<ChatResult> {
   });
 }
 
-type ChatStreamCallback = <K extends ChatStreamEventType>(
-  type: K,
-  data: ChatStreamEventMap[K],
-) => void;
-
-/** Parse SSE events from a streaming response body. */
-async function consumeSSEStream(res: Response, onEvent: ChatStreamCallback): Promise<void> {
-  const reader = res.body?.getReader();
-  if (!reader) throw new Error("No response body");
-
-  const decoder = new TextDecoder();
-  let buffer = "";
-
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() ?? "";
-
-    let currentEvent = "";
-    for (const line of lines) {
-      if (line.startsWith("event: ")) {
-        currentEvent = line.slice(7).trim();
-      } else if (line.startsWith("data: ") && currentEvent) {
-        try {
-          const data = JSON.parse(line.slice(6));
-          onEvent(currentEvent as ChatStreamEventType, data);
-        } catch {
-          // Skip malformed data lines
-        }
-        currentEvent = "";
-      }
-    }
-  }
-}
-
 /**
- * Streaming chat via SSE. Calls onEvent for each event, resolves when done.
- *
- * `focusWorkspaceId` is the workspace the chat is FOCUSED on — the `/w/:slug`
- * the user is viewing — sent as `X-Workspace-Id`. It's additional briefing
- * context only (the apps list + workspace house rules), not tool scope or auth.
- * On home / identity routes it's null/absent, so no workspace is sent and the
- * chat is identity-level (no "current workspace"). Route-derived, NOT the
- * persisted global active workspace.
+ * Start a server-authoritative turn. Returns the conversation id immediately;
+ * the turn runs to completion on the server regardless of this client. Watch
+ * it via `connectConversationStream`.
  */
-export async function streamChat(
-  req: ChatRequest,
-  onEvent: ChatStreamCallback,
-  focusWorkspaceId?: string | null,
-): Promise<void> {
-  // If a conv-events SSE subscription is open for this conversation,
-  // pass its server-issued subscriber id so the broadcast suppresses
-  // self-echo. Without this, the sender's own tab double-processes
-  // every event (once via the streamed HTTP response below, once via
-  // its conv-events subscription).
-  const originSubId = req.conversationId
-    ? getConversationSubscriberId(req.conversationId)
-    : undefined;
-  const h = headers(originSubId ? { "X-Origin-Subscriber-Id": originSubId } : undefined);
-  // Override the global active workspace: the chat's focus is route-derived.
-  if (focusWorkspaceId) h["X-Workspace-Id"] = focusWorkspaceId;
-  else delete h["X-Workspace-Id"];
-  const res = await fetchWithRefresh(`${API_BASE}/v1/chat/stream`, {
+export async function startChatTurn(req: ChatRequest): Promise<{ conversationId: string }> {
+  const res = await fetchWithRefresh(`${API_BASE}/v1/chat/start`, {
     method: "POST",
     credentials: "include",
-    headers: h,
+    headers: headers(),
     body: JSON.stringify(req),
   });
-
-  if (res.status === 401) {
-    throw new ApiClientError("unauthorized", "Unauthorized", 401);
-  }
-
+  if (res.status === 401) throw new ApiClientError("unauthorized", "Unauthorized", 401);
   if (!res.ok) {
     const body: ApiError = await res.json().catch(() => ({
       error: "unknown",
@@ -498,57 +432,32 @@ export async function streamChat(
     }));
     throw errorFromResponse(body, res.status);
   }
-
-  await consumeSSEStream(res, onEvent);
+  return res.json() as Promise<{ conversationId: string }>;
 }
 
-/**
- * Streaming chat via SSE with file attachments (multipart/form-data).
- * When files are present, sends a FormData body instead of JSON.
- * SSE streaming works identically for both content types.
- */
-export async function streamChatMultipart(
+/** Start a server-authoritative turn with file attachments (multipart). */
+export async function startChatTurnMultipart(
   req: ChatRequest,
   files: File[],
-  onEvent: ChatStreamCallback,
-  focusWorkspaceId?: string | null,
-): Promise<void> {
+): Promise<{ conversationId: string }> {
   const formData = new FormData();
   formData.append("message", req.message);
   if (req.conversationId) formData.append("conversationId", req.conversationId);
   if (req.model) formData.append("model", req.model);
   if (req.appContext) formData.append("appContext", JSON.stringify(req.appContext));
-  for (const file of files) {
-    formData.append("files", file, file.name);
-  }
+  for (const file of files) formData.append("files", file, file.name);
 
-  // Build headers WITHOUT Content-Type — let the browser set multipart boundary
   const h: Record<string, string> = {};
-  if (authToken && authToken !== "__cookie__") {
-    h.Authorization = `Bearer ${authToken}`;
-  }
-  // Route-derived chat focus (additional briefing context); absent on home.
-  if (focusWorkspaceId) {
-    h["X-Workspace-Id"] = focusWorkspaceId;
-  }
-  // Suppress self-echo on the conv-events subscription — see
-  // `streamChat` above for why this matters.
-  if (req.conversationId) {
-    const originSubId = getConversationSubscriberId(req.conversationId);
-    if (originSubId) h["X-Origin-Subscriber-Id"] = originSubId;
-  }
+  if (authToken && authToken !== "__cookie__") h.Authorization = `Bearer ${authToken}`;
+  if (activeWorkspaceId) h["X-Workspace-Id"] = activeWorkspaceId;
 
-  const res = await fetchWithRefresh(`${API_BASE}/v1/chat/stream`, {
+  const res = await fetchWithRefresh(`${API_BASE}/v1/chat/start`, {
     method: "POST",
     credentials: "include",
     headers: h,
     body: formData,
   });
-
-  if (res.status === 401) {
-    throw new ApiClientError("unauthorized", "Unauthorized", 401);
-  }
-
+  if (res.status === 401) throw new ApiClientError("unauthorized", "Unauthorized", 401);
   if (!res.ok) {
     const body: ApiError = await res.json().catch(() => ({
       error: "unknown",
@@ -556,8 +465,17 @@ export async function streamChatMultipart(
     }));
     throw errorFromResponse(body, res.status);
   }
+  return res.json() as Promise<{ conversationId: string }>;
+}
 
-  await consumeSSEStream(res, onEvent);
+/** Explicitly stop an in-flight turn (the Stop button). */
+export async function cancelChatTurn(conversationId: string): Promise<void> {
+  await fetchWithRefresh(
+    `${API_BASE}/v1/conversations/${encodeURIComponent(conversationId)}/cancel`,
+    { method: "POST", credentials: "include", headers: headers() },
+  ).catch(() => {
+    // Best-effort — the turn may have already finished.
+  });
 }
 
 // ---------------------------------------------------------------------------

@@ -10,6 +10,8 @@ interface Props {
   groups: DateGroup[];
   activeFilter: FilterKey;
   totalConversations: number;
+  /** Conversation ids with an in-flight assistant turn (host-pushed). */
+  streamingIds?: Set<string>;
   onOpen: (id: string) => void;
 }
 
@@ -18,6 +20,7 @@ export function ConversationList({
   groups,
   activeFilter,
   totalConversations,
+  streamingIds,
   onOpen,
 }: Props) {
   if (loading) {
@@ -60,10 +63,21 @@ export function ConversationList({
           {showSectionLabels && <div className="section-label">{group.label}</div>}
           {group.items.map((c) => {
             const title = c.title || c.preview || c.id;
+            const isStreaming = streamingIds?.has(c.id) ?? false;
             return (
               <button type="button" key={c.id} className="conv-item" onClick={() => onOpen(c.id)}>
                 <div className="conv-item-top">
-                  <span className="conv-title">{truncate(title, 80)}</span>
+                  <span className="conv-title">
+                    {isStreaming && (
+                      <span
+                        className="conv-streaming-dot"
+                        role="img"
+                        aria-label="Responding"
+                        title="Responding…"
+                      />
+                    )}
+                    {truncate(title, 80)}
+                  </span>
                   <span className="conv-time">{relativeTime(c.updatedAt || c.createdAt)}</span>
                 </div>
                 {c.preview && <div className="conv-preview">{truncate(c.preview, 120)}</div>}

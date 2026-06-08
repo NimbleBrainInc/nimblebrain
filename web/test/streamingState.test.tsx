@@ -1,317 +1,203 @@
-import { describe, expect, it, mock, beforeEach } from "bun:test";
+import { act, renderHook } from "@testing-library/react";
+import { beforeEach, describe, expect, it, mock } from "bun:test";
 import { realClient } from "./setup";
-import { renderHook, act } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { MemoryRouter } from "react-router-dom";
 import { ChatProvider, useChatContext } from "../src/context/ChatContext.tsx";
 import type { StreamingState } from "../src/hooks/useChat.ts";
 
 // ---------------------------------------------------------------------------
-// Mock streamChat so we can control SSE events in tests
+// Drive the streaming state machine through the server-authoritative path:
+// sendMessage → startChatTurn (POST) → subscribe via connectConversationStream.
+// We capture the stream's onEvent and push synthetic server events.
 // ---------------------------------------------------------------------------
 
-type StreamCallback = (type: string, data: unknown) => void;
+type StreamCb = (type: string, data: unknown, seq: number) => void;
+let capturedOnEvent: StreamCb | null = null;
 
-let capturedCallback: StreamCallback | null = null;
-let resolveStream: (() => void) | null = null;
+mock.module("../src/api/conversation-stream", () => ({
+  connectConversationStream: (opts: { onEvent: StreamCb }) => {
+    capturedOnEvent = opts.onEvent;
+    return { close() {} };
+  },
+}));
 
 // Spread the preload's real-module snapshot (see web/test/setup.ts) so this
-// whole-module mock exposes every api/client export; only the two below are
+// whole-module mock exposes every api/client export; only the three below are
 // overridden. Bun's mock.module registry is process-global, so an incomplete
 // stub leaking into another suite's module graph is what crashed bridge tests
 // with "Export named 'getActiveWorkspaceId' not found".
 mock.module("../src/api/client", () => ({
-	...realClient,
-	streamChat: (_req: unknown, cb: StreamCallback) => {
-		capturedCallback = cb;
-		return new Promise<void>((resolve) => {
-			resolveStream = resolve;
-		});
-	},
-	getConversationHistory: mock(() =>
-		Promise.resolve({ conversationId: "c1", messages: [] }),
-	),
+  ...realClient,
+  startChatTurn: () => Promise.resolve({ conversationId: "c1" }),
+  startChatTurnMultipart: () => Promise.resolve({ conversationId: "c1" }),
+  cancelChatTurn: () => Promise.resolve(),
 }));
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 function wrapper({ children }: { children: ReactNode }) {
-	return (
-		<MemoryRouter>
-			<ChatProvider>{children}</ChatProvider>
-		</MemoryRouter>
-	);
+  return (
+    <MemoryRouter>
+      <ChatProvider>{children}</ChatProvider>
+    </MemoryRouter>
+  );
 }
 
-function useStreamingState() {
-	const ctx = useChatContext();
-	return ctx;
+let seq = 0;
+function emit(type: string, data: unknown): void {
+  seq += 1;
+  capturedOnEvent?.(type, data, seq);
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 describe("streamingState state machine", () => {
-	beforeEach(() => {
-		capturedCallback = null;
-		resolveStream = null;
-	});
+  beforeEach(() => {
+    capturedOnEvent = null;
+    seq = 0;
+  });
 
-	it("starts as null", () => {
-		const { result } = renderHook(() => useStreamingState(), { wrapper });
-		expect(result.current.streamingState).toBeNull();
-	});
+  it("starts as null", () => {
+    const { result } = renderHook(() => useChatContext(), { wrapper });
+    expect(result.current.streamingState).toBeNull();
+  });
 
-	it("transitions to thinking when sendMessage is called", async () => {
-		const { result } = renderHook(() => useStreamingState(), { wrapper });
+  it("transitions to thinking when sendMessage is called", async () => {
+    const { result } = renderHook(() => useChatContext(), { wrapper });
+    await act(async () => {
+      await result.current.sendMessage("hello");
+    });
+    expect(result.current.streamingState).toBe("thinking" as StreamingState);
+  });
 
-		// sendMessage returns a promise; don't await (stream is pending)
-		act(() => {
-			result.current.sendMessage("hello");
-		});
+  it("transitions thinking → streaming on first text.delta", async () => {
+    const { result } = renderHook(() => useChatContext(), { wrapper });
+    await act(async () => {
+      await result.current.sendMessage("hello");
+    });
+    expect(result.current.streamingState).toBe("thinking");
+    act(() => emit("text.delta", { text: "Hi" }));
+    expect(result.current.streamingState).toBe("streaming");
+  });
 
-		// Wait a tick for state to settle
-		await act(async () => {});
+  it("transitions streaming → working on tool.start", async () => {
+    const { result } = renderHook(() => useChatContext(), { wrapper });
+    await act(async () => {
+      await result.current.sendMessage("hello");
+    });
+    act(() => emit("text.delta", { text: "Let me check" }));
+    expect(result.current.streamingState).toBe("streaming");
+    act(() => emit("tool.start", { id: "t1", name: "search" }));
+    expect(result.current.streamingState).toBe("working");
+  });
 
-		expect(result.current.streamingState).toBe("thinking" as StreamingState);
-	});
+  it("transitions working → analyzing on last tool.done", async () => {
+    const { result } = renderHook(() => useChatContext(), { wrapper });
+    await act(async () => {
+      await result.current.sendMessage("hello");
+    });
+    act(() => emit("text.delta", { text: "x" }));
+    act(() => emit("tool.start", { id: "t1", name: "search" }));
+    expect(result.current.streamingState).toBe("working");
+    act(() => emit("tool.done", { id: "t1", name: "search", ok: true, ms: 100 }));
+    expect(result.current.streamingState).toBe("analyzing");
+  });
 
-	it("transitions thinking → streaming on first text.delta", async () => {
-		const { result } = renderHook(() => useStreamingState(), { wrapper });
+  it("holds working while parallel tools are still in flight, then analyzing", async () => {
+    const { result } = renderHook(() => useChatContext(), { wrapper });
+    await act(async () => {
+      await result.current.sendMessage("hello");
+    });
+    act(() => {
+      emit("tool.start", { id: "a", name: "search" });
+      emit("tool.start", { id: "b", name: "fetch" });
+    });
+    expect(result.current.streamingState).toBe("working");
+    act(() => emit("tool.done", { id: "a", name: "search", ok: true, ms: 10 }));
+    expect(result.current.streamingState).toBe("working");
+    act(() => emit("tool.done", { id: "b", name: "fetch", ok: false, ms: 725 }));
+    expect(result.current.streamingState).toBe("analyzing");
+  });
 
-		act(() => {
-			result.current.sendMessage("hello");
-		});
-		await act(async () => {});
+  it("transitions analyzing → streaming on the next text.delta", async () => {
+    const { result } = renderHook(() => useChatContext(), { wrapper });
+    await act(async () => {
+      await result.current.sendMessage("hello");
+    });
+    act(() => {
+      emit("tool.start", { id: "t1", name: "search" });
+      emit("tool.done", { id: "t1", name: "search", ok: true, ms: 10 });
+    });
+    expect(result.current.streamingState).toBe("analyzing");
+    act(() => emit("text.delta", { text: "Based on that…" }));
+    expect(result.current.streamingState).toBe("streaming");
+  });
 
-		expect(result.current.streamingState).toBe("thinking");
+  it("transitions analyzing → working when the model calls another tool", async () => {
+    const { result } = renderHook(() => useChatContext(), { wrapper });
+    await act(async () => {
+      await result.current.sendMessage("hello");
+    });
+    act(() => {
+      emit("tool.start", { id: "t1", name: "search" });
+      emit("tool.done", { id: "t1", name: "search", ok: true, ms: 10 });
+    });
+    expect(result.current.streamingState).toBe("analyzing");
+    act(() => emit("tool.start", { id: "t2", name: "fetch" }));
+    expect(result.current.streamingState).toBe("working");
+  });
 
-		act(() => {
-			capturedCallback?.("text.delta", { text: "Hi" });
-		});
+  it("transitions to null on done event", async () => {
+    const { result } = renderHook(() => useChatContext(), { wrapper });
+    await act(async () => {
+      await result.current.sendMessage("hello");
+    });
+    act(() => emit("text.delta", { text: "Hi" }));
+    expect(result.current.streamingState).toBe("streaming");
+    act(() => emit("done", { conversationId: "c1", response: "Hi" }));
+    expect(result.current.streamingState).toBeNull();
+  });
 
-		expect(result.current.streamingState).toBe("streaming");
-	});
+  it("transitions to null on error event", async () => {
+    const { result } = renderHook(() => useChatContext(), { wrapper });
+    await act(async () => {
+      await result.current.sendMessage("hello");
+    });
+    expect(result.current.streamingState).toBe("thinking");
+    act(() => emit("error", { error: "fail", message: "fail" }));
+    expect(result.current.streamingState).toBeNull();
+  });
 
-	it("transitions streaming → working on tool.start", async () => {
-		const { result } = renderHook(() => useStreamingState(), { wrapper });
+  it("transitions to null on cancelled event", async () => {
+    const { result } = renderHook(() => useChatContext(), { wrapper });
+    await act(async () => {
+      await result.current.sendMessage("hello");
+    });
+    expect(result.current.streamingState).toBe("thinking");
+    act(() => emit("cancelled", {}));
+    expect(result.current.streamingState).toBeNull();
+  });
 
-		act(() => {
-			result.current.sendMessage("hello");
-		});
-		await act(async () => {});
+  it("newConversation resets streamingState to null", () => {
+    const { result } = renderHook(() => useChatContext(), { wrapper });
+    act(() => {
+      result.current.newConversation();
+    });
+    expect(result.current.streamingState).toBeNull();
+  });
 
-		act(() => {
-			capturedCallback?.("text.delta", { text: "Let me check" });
-		});
-		expect(result.current.streamingState).toBe("streaming");
-
-		act(() => {
-			capturedCallback?.("tool.start", { id: "t1", name: "search" });
-		});
-		expect(result.current.streamingState).toBe("working");
-	});
-
-	it("transitions working → analyzing on last tool.done", async () => {
-		const { result } = renderHook(() => useStreamingState(), { wrapper });
-
-		act(() => {
-			result.current.sendMessage("hello");
-		});
-		await act(async () => {});
-
-		act(() => {
-			capturedCallback?.("text.delta", { text: "x" });
-		});
-		act(() => {
-			capturedCallback?.("tool.start", { id: "t1", name: "search" });
-		});
-		expect(result.current.streamingState).toBe("working");
-
-		act(() => {
-			capturedCallback?.("tool.done", { id: "t1", name: "search", ok: true, ms: 100 });
-		});
-		// No in-flight tools remain → model is inferring on the result.
-		expect(result.current.streamingState).toBe("analyzing");
-	});
-
-	it("holds working while parallel tools are still in flight, then analyzing", async () => {
-		const { result } = renderHook(() => useStreamingState(), { wrapper });
-
-		act(() => {
-			result.current.sendMessage("hello");
-		});
-		await act(async () => {});
-
-		act(() => {
-			capturedCallback?.("tool.start", { id: "a", name: "search" });
-			capturedCallback?.("tool.start", { id: "b", name: "fetch" });
-		});
-		expect(result.current.streamingState).toBe("working");
-
-		// First of two completes — the other is still running, so stay `working`.
-		act(() => {
-			capturedCallback?.("tool.done", { id: "a", name: "search", ok: true, ms: 10 });
-		});
-		expect(result.current.streamingState).toBe("working");
-
-		// Last one lands → flip to `analyzing`.
-		act(() => {
-			capturedCallback?.("tool.done", { id: "b", name: "fetch", ok: false, ms: 725 });
-		});
-		expect(result.current.streamingState).toBe("analyzing");
-	});
-
-	it("transitions analyzing → streaming on the next text.delta", async () => {
-		const { result } = renderHook(() => useStreamingState(), { wrapper });
-
-		act(() => {
-			result.current.sendMessage("hello");
-		});
-		await act(async () => {});
-
-		act(() => {
-			capturedCallback?.("tool.start", { id: "t1", name: "search" });
-			capturedCallback?.("tool.done", { id: "t1", name: "search", ok: true, ms: 10 });
-		});
-		expect(result.current.streamingState).toBe("analyzing");
-
-		act(() => {
-			capturedCallback?.("text.delta", { text: "Based on that…" });
-		});
-		expect(result.current.streamingState).toBe("streaming");
-	});
-
-	it("transitions analyzing → working when the model calls another tool", async () => {
-		const { result } = renderHook(() => useStreamingState(), { wrapper });
-
-		act(() => {
-			result.current.sendMessage("hello");
-		});
-		await act(async () => {});
-
-		act(() => {
-			capturedCallback?.("tool.start", { id: "t1", name: "search" });
-			capturedCallback?.("tool.done", { id: "t1", name: "search", ok: true, ms: 10 });
-		});
-		expect(result.current.streamingState).toBe("analyzing");
-
-		act(() => {
-			capturedCallback?.("tool.start", { id: "t2", name: "fetch" });
-		});
-		expect(result.current.streamingState).toBe("working");
-	});
-
-	it("transitions to null on done event", async () => {
-		const { result } = renderHook(() => useStreamingState(), { wrapper });
-
-		act(() => {
-			result.current.sendMessage("hello");
-		});
-		await act(async () => {});
-
-		act(() => {
-			capturedCallback?.("text.delta", { text: "Hi" });
-		});
-		expect(result.current.streamingState).toBe("streaming");
-
-		act(() => {
-			capturedCallback?.("done", {
-				conversationId: "c1",
-				response: "Hi",
-			});
-		});
-		expect(result.current.streamingState).toBeNull();
-	});
-
-	it("transitions to null on error event", async () => {
-		const { result } = renderHook(() => useStreamingState(), { wrapper });
-
-		act(() => {
-			result.current.sendMessage("hello");
-		});
-		await act(async () => {});
-
-		expect(result.current.streamingState).toBe("thinking");
-
-		act(() => {
-			capturedCallback?.("error", { error: "fail", message: "fail" });
-		});
-		expect(result.current.streamingState).toBeNull();
-	});
-
-	it("transitions to null in finally after stream resolves", async () => {
-		const { result } = renderHook(() => useStreamingState(), { wrapper });
-
-		act(() => {
-			result.current.sendMessage("hello");
-		});
-		await act(async () => {});
-
-		expect(result.current.streamingState).toBe("thinking");
-
-		// Resolve the stream promise (triggers finally block)
-		await act(async () => {
-			resolveStream?.();
-		});
-
-		expect(result.current.streamingState).toBeNull();
-	});
-
-	it("newConversation resets streamingState to null", async () => {
-		const { result } = renderHook(() => useStreamingState(), { wrapper });
-
-		act(() => {
-			result.current.newConversation();
-		});
-
-		expect(result.current.streamingState).toBeNull();
-	});
-
-	it("full cycle: thinking → streaming → working → analyzing → streaming → null", async () => {
-		const { result } = renderHook(() => useStreamingState(), { wrapper });
-
-		act(() => {
-			result.current.sendMessage("hello");
-		});
-		await act(async () => {});
-		expect(result.current.streamingState).toBe("thinking");
-
-		act(() => {
-			capturedCallback?.("text.delta", { text: "Let me " });
-		});
-		expect(result.current.streamingState).toBe("streaming");
-
-		act(() => {
-			capturedCallback?.("tool.start", { id: "t1", name: "lookup" });
-		});
-		expect(result.current.streamingState).toBe("working");
-
-		act(() => {
-			capturedCallback?.("tool.done", { id: "t1", name: "lookup", ok: true, ms: 50 });
-		});
-		expect(result.current.streamingState).toBe("analyzing");
-
-		act(() => {
-			capturedCallback?.("text.delta", { text: "here you go" });
-		});
-		expect(result.current.streamingState).toBe("streaming");
-
-		act(() => {
-			capturedCallback?.("done", {
-				conversationId: "c1",
-				response: "Let me here you go",
-			});
-		});
-		expect(result.current.streamingState).toBeNull();
-
-		// Resolve the stream so the finally block runs
-		await act(async () => {
-			resolveStream?.();
-		});
-		expect(result.current.streamingState).toBeNull();
-	});
+  it("full cycle: thinking → streaming → working → analyzing → streaming → null", async () => {
+    const { result } = renderHook(() => useChatContext(), { wrapper });
+    await act(async () => {
+      await result.current.sendMessage("hello");
+    });
+    expect(result.current.streamingState).toBe("thinking");
+    act(() => emit("text.delta", { text: "Let me " }));
+    expect(result.current.streamingState).toBe("streaming");
+    act(() => emit("tool.start", { id: "t1", name: "lookup" }));
+    expect(result.current.streamingState).toBe("working");
+    act(() => emit("tool.done", { id: "t1", name: "lookup", ok: true, ms: 50 }));
+    expect(result.current.streamingState).toBe("analyzing");
+    act(() => emit("text.delta", { text: "here you go" }));
+    expect(result.current.streamingState).toBe("streaming");
+    act(() => emit("done", { conversationId: "c1", response: "Let me here you go" }));
+    expect(result.current.streamingState).toBeNull();
+  });
 });

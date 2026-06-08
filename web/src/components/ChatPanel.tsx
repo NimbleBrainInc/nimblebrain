@@ -48,11 +48,12 @@ export const ChatPanel = forwardRef<ChatPanelRef, ChatPanelProps>(function ChatP
   const inputWrapperRef = useRef<HTMLDivElement>(null);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [copiedId, setCopiedId] = useState(false);
-  const { conversationId, streamingState, preparingTool } = useChatContext();
+  const { conversationId, title, streamingState, preparingTool, stop } = useChatContext();
   const { currentUserId, participantMap } = useChatConfigContext();
 
-  // Derive a title from the first user message, stripping markdown syntax
-  const rawTitle = messages.find((m) => m.role === "user")?.content || null;
+  // Prefer the server-generated title (updates live when it arrives); fall back
+  // to the first user message, stripping markdown syntax, until then.
+  const rawTitle = title ?? messages.find((m) => m.role === "user")?.content ?? null;
   const plainTitle = rawTitle
     ? rawTitle
         .replace(/^#{1,6}\s+/gm, "") // headings
@@ -65,9 +66,9 @@ export const ChatPanel = forwardRef<ChatPanelRef, ChatPanelProps>(function ChatP
         .replace(/\n/g, " ") // newlines to spaces
         .trim()
     : null;
-  const conversationTitle = plainTitle?.slice(0, 30) || null;
+  const conversationTitle = plainTitle?.slice(0, 40) || null;
   const displayTitle = conversationTitle
-    ? plainTitle && plainTitle.length > 30
+    ? plainTitle && plainTitle.length > 40
       ? `${conversationTitle}…`
       : conversationTitle
     : null;
@@ -230,6 +231,7 @@ export const ChatPanel = forwardRef<ChatPanelRef, ChatPanelProps>(function ChatP
           disabled={isStreaming}
           onNewConversation={handleNewChat}
           streamingState={streamingState}
+          onStop={stop}
           // Compact (popover/embedded) ChatPanel hides the footer —
           // the breadcrumb strip is sized for the full chat surface,
           // and stealing rows from the embedded composer made the

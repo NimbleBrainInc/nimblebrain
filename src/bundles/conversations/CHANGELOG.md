@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.4.0
+
+### Changed
+
+- List no longer flickers on live updates. `data.changed` refreshes now run in
+  the background (no skeleton swap) and only for conversation changes — other
+  apps' `data.changed` are ignored. Initial load and view switches still show
+  the skeleton.
+
+## 0.3.0
+
+### Added
+
+- Live streaming indicator: a pulsing dot marks any conversation with an
+  in-flight assistant turn. Driven by host-pushed `streamingConversationIds`
+  (`useHostContext`), so it reflects real-time tab state without polling.
+
 ## 0.2.0
 
 **Breaking — tool output shape.** The bundle now returns a display-oriented

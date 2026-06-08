@@ -113,6 +113,7 @@ import {
   type RequestContext,
   runWithRequestContext,
 } from "./request-context.ts";
+import { type BufferedRunEvent, RunBus } from "./run-bus.ts";
 import { buildSkillsLoadedPayload } from "./skills-loaded-payload.ts";
 import type {
   ChatRequest,
@@ -155,7 +156,22 @@ function parseAliasRef(s: string): ModelSlot | null {
 }
 
 function resolveWorkDir(config: RuntimeConfig): string {
-  return config.workDir ?? DEFAULT_WORK_DIR;
+  if (config.workDir) return config.workDir;
+  // Hard guard: under `bun test` (NODE_ENV=test is set automatically by the
+  // bun test runner), defaulting to `~/.nimblebrain` would pollute the
+  // developer's real workdir with test conversations / workspaces / bundles.
+  // Force every test to pass an explicit (typically tmpdir-based) workDir.
+  // Without this, a test that forgets `workDir` silently writes echo-model
+  // conversations into the user's dev environment and they show up in the
+  // real app's conversations tab.
+  if (process.env.NODE_ENV === "test") {
+    throw new Error(
+      "Runtime.start({}) called without `workDir` under bun test. " +
+        "Pass an explicit tmpdir-based workDir to avoid polluting the developer's ~/.nimblebrain. " +
+        "Example: workDir: join(tmpdir(), 'nb-test-' + Date.now()).",
+    );
+  }
+  return DEFAULT_WORK_DIR;
 }
 
 function globalSkillDir(config: RuntimeConfig): string {
@@ -305,6 +321,14 @@ export class Runtime {
    * so the two would need to be addressed together.
    */
   private readonly activeConversations = new Set<string>();
+
+  /**
+   * Server-authoritative, replayable log of in-flight turns. Detached web
+   * chats run through {@link startTurn}; their engine events are published
+   * here so any viewer (live, reconnecting, or cross-tab) can replay + tail.
+   * The turn's cancellation lives here too — client disconnect does NOT abort.
+   */
+  private readonly runBus = new RunBus();
 
   private constructor(
     resolveModelFn: (modelString: string) => LanguageModelV3,
@@ -897,6 +921,191 @@ export class Runtime {
     }
   }
 
+  // ===========================================================================
+  // Detached, server-authoritative turns (conversation-tab rewrite).
+  //
+  // `startTurn` runs a chat turn to completion regardless of the caller's
+  // connection. The conversation id is resolved up front and returned
+  // immediately; the engine run continues in the background, publishing every
+  // event to the RunBus. Clients are viewers — they replay buffered events via
+  // `getTurnReplay` then tail live ones via the `onTurnEvent` SSE fan-out.
+  // Client disconnect does NOT abort; only `cancelTurn` (Stop) does.
+  // ===========================================================================
+
+  /** Whether a detached turn is currently generating for this conversation. */
+  isTurnActive(conversationId: string): boolean {
+    return this.runBus.isActive(conversationId);
+  }
+
+  /** Highest event sequence number for a conversation's current/last run. */
+  turnSeq(conversationId: string): number {
+    return this.runBus.currentSeq(conversationId);
+  }
+
+  /** Explicitly cancel an in-flight turn (the Stop button). */
+  cancelTurn(conversationId: string): boolean {
+    if (!this.runBus.isActive(conversationId)) return false;
+    // Publish the terminal `cancelled` frame to live viewers BEFORE ending the
+    // run. `RunBus.cancel` flips status to terminal synchronously, after which
+    // `publish` is a no-op — so the engine's own post-abort `cancelled` publish
+    // (in startTurn's catch) never reaches the SSE. Without this, the Stop
+    // button aborts generation but the UI stays stuck streaming until a reload.
+    this.publishTurnEvent(conversationId, "cancelled", {});
+    return this.runBus.cancel(conversationId);
+  }
+
+  /**
+   * Start a chat turn that runs to completion server-side, decoupled from the
+   * caller's connection. Resolves (creating if new) the conversation id up
+   * front, reserves the run on the RunBus, then runs the engine in the
+   * background — publishing every event to the bus so viewers can replay via
+   * {@link getTurnReplay} and tail via the `onTurnEvent` fan-out. Returns once
+   * the id is known; the turn keeps
+   * running after the HTTP request that called this returns. Throws
+   * {@link RunInProgressError} if a turn is already active for the conversation.
+   */
+  async startTurn(request: ChatRequest): Promise<{ conversationId: string }> {
+    const store = this.findConversationStore();
+    // Same strict production-vs-dev owner rule as `chat()` and the REST
+    // handlers — one shared resolver, no forked copy to drift out of sync.
+    const ownerId = resolveRequestOwnerId(request.identity, this._identityProvider !== null);
+    // `workspaceId` is the FOCUSED workspace (the `/w/:slug` the user is
+    // viewing), optional — exactly as the sync `chat()` path treats it. On a
+    // home / identity route there's no focus, so the turn is identity-level;
+    // fall back to the caller's personal workspace for the conversation
+    // metadata breadcrumb, matching `chat()`'s `sessionWsId` resolution. This
+    // is delegated to `chat()` below, which re-resolves the same fallback for
+    // tool scope. (Pre-Stage-2 this hard-threw; that surfaced as a raw 500 on
+    // a legitimate workspaceless chat-start.)
+    const wsId = request.workspaceId ?? personalWorkspaceIdFor(ownerId);
+    const createOpts: CreateConversationOptions = {
+      ownerId,
+      workspaceId: wsId,
+      ...(request.metadata ? { metadata: request.metadata } : {}),
+    };
+
+    // Reserve the run (throws RunInProgressError if one is already active). The
+    // returned signal is the RunBus's — NOT the HTTP request's — so a client
+    // disconnect won't abort generation.
+    //
+    // For a provided id: authorize, THEN reserve the run. Ownership is checked
+    // before `begin` mutates shared run state — an unauthorized caller never
+    // flips `isActive`. There is no `await` between the load+ownership check and
+    // `begin` (the check is synchronous), so nothing can create the conversation
+    // in that gap; `begin` is still the serialization point for `create` (a
+    // concurrent same-id start throws `RunInProgressError` at `begin` before it
+    // can reach the truncating write). On a create failure we `evict` OUR
+    // reservation — passing the signal `begin` returned so that if the create
+    // await let a cancel + a fresh same-id `begin` slip in, we don't evict that
+    // newer live run. A fresh conversation has no id until create(), so that
+    // path begins after.
+    const isNew = !request.conversationId;
+    let conversationId: string;
+    let signal: AbortSignal;
+    if (request.conversationId) {
+      const existing = await store.load(request.conversationId);
+      if (existing && existing.ownerId !== ownerId) {
+        throw new ConversationAccessDeniedError(request.conversationId, ownerId);
+      }
+      signal = this.runBus.begin(request.conversationId);
+      try {
+        conversationId =
+          existing?.id ?? (await store.create({ ...createOpts, id: request.conversationId })).id;
+      } catch (err) {
+        this.runBus.evict(request.conversationId, signal);
+        throw err;
+      }
+    } else {
+      conversationId = (await store.create(createOpts)).id;
+      signal = this.runBus.begin(conversationId);
+    }
+
+    // Seed the run stream with the user's message so the turn is
+    // self-contained: any viewer (sender, other tab, post-refresh) can
+    // reconstruct user + assistant from replay alone, no optimistic client
+    // state required.
+    this.publishTurnEvent(conversationId, "user.message", {
+      content: request.message,
+      ...(ownerId ? { userId: ownerId } : {}),
+      timestamp: new Date().toISOString(),
+    });
+
+    // Tell conversation-list UIs a new conversation exists (so the row + its
+    // streaming dot appear immediately). Resolved-existing turns already have
+    // a row.
+    if (isNew) this.emitConversationsChanged();
+
+    const busSink = this.createRunBusSink(conversationId);
+    // Detached: run to completion regardless of the caller's connection.
+    void this.chat({ ...request, conversationId, signal }, busSink)
+      .then((result) => {
+        // Publish a terminal `done` carrying the final result so viewers
+        // finalize the assistant message, then close the run.
+        this.publishTurnEvent(conversationId, "done", {
+          response: result.response,
+          conversationId: result.conversationId,
+          toolCalls: result.toolCalls,
+          stopReason: result.stopReason,
+          usage: result.usage,
+        });
+        this.runBus.end(conversationId, "done");
+      })
+      .catch((err) => {
+        if (signal.aborted) {
+          this.publishTurnEvent(conversationId, "cancelled", {});
+          this.runBus.end(conversationId, "cancelled");
+        } else {
+          this.publishTurnEvent(conversationId, "error", {
+            error: "engine_error",
+            message: err instanceof Error ? err.message : String(err),
+          });
+          this.runBus.end(conversationId, "error");
+        }
+      })
+      .finally(() => {
+        // Refresh list UIs so the row's dot clears and the final title shows.
+        this.emitConversationsChanged();
+      });
+
+    return { conversationId };
+  }
+
+  /**
+   * Live fan-out hook for detached-turn events. The API layer sets this to
+   * forward each published event to the per-conversation SSE manager so
+   * connected viewers tail in real time. Buffering/replay stays in the RunBus;
+   * this is purely the live edge.
+   */
+  onTurnEvent?: (conversationId: string, event: BufferedRunEvent) => void;
+
+  /** Replay snapshot of an in-flight turn for a newly connecting viewer. */
+  getTurnReplay(conversationId: string, afterSeq: number): BufferedRunEvent[] {
+    return this.runBus.bufferedSince(conversationId, afterSeq);
+  }
+
+  /** Publish to the RunBus (buffer/replay) and fan out live (SSE viewers). */
+  private publishTurnEvent(conversationId: string, type: string, data: unknown): void {
+    const buffered = this.runBus.publish(conversationId, type, data);
+    if (buffered) this.onTurnEvent?.(conversationId, buffered);
+  }
+
+  /** EventSink that forwards engine events into the RunBus for one turn. */
+  private createRunBusSink(conversationId: string): EventSink {
+    return {
+      emit: (event: EngineEvent) => {
+        this.publishTurnEvent(conversationId, event.type, event.data);
+      },
+    };
+  }
+
+  /** Broadcast a conversations-list change on the global sink (→ SSE → iframe). */
+  private emitConversationsChanged(): void {
+    this.defaultEvents.emit({
+      type: "data.changed",
+      data: { server: "conversations", tool: "list" },
+    });
+  }
+
   private async _chatInner(request: ChatRequest, requestSink?: EventSink): Promise<ChatResult> {
     // Stage 2 (T006) — identity-bound chat session.
     //
@@ -974,14 +1183,10 @@ export class Runtime {
     };
 
     // Resume an existing conversation only if the caller owns it.
-    // Stage 1 single-owner invariant: a conversation's ownerId must
-    // match the requesting identity. Today this is implicitly
-    // workspace-bounded because the store dir is per-wsId, but Task 005
-    // collapses every conversation onto a top-level store — at which
-    // point this owner check is the ONLY barrier between users and
-    // each other's conversations. Enforce it now, in the load-bearing
-    // chat path, so the invariant doesn't have a window of being
-    // workspace-discipline-only.
+    // Conversations live on a single top-level store (not per-workspace),
+    // so this ownerId check is the ONLY barrier between users and each
+    // other's conversations — it runs in the load-bearing chat path, not
+    // just at a higher layer.
     //
     // The disambiguation between "doesn't exist" (→ create new) and
     // "exists but isn't yours" (→ throw) matters: silently creating a
@@ -1555,19 +1760,52 @@ export class Runtime {
       });
     }
 
-    // Fire-and-forget title generation on first turn (use "fast" slot for cost savings).
-    // Returning `store.update(...)` from the fulfillment handler chains the
-    // write into the outer promise so its rejection is caught — without this
-    // chaining, a `void store.update(...)` orphan rejection (e.g. ENOENT when
-    // the conversation was deleted between chat() returning and the title
-    // landing) surfaces as an unhandled rejection and fails the whole run.
+    // Fire-and-forget title generation on first turn (use "fast" slot for cost
+    // savings). Decoupled from the turn lifecycle: when it resolves we persist
+    // the title and broadcast `conversation.title` on the global SSE.
+    //
+    // No `emitConversationsChanged()` here — the conversation-list iframe
+    // listens for `conversation.title` directly (forwarded via postMessage
+    // by the web shell) and patches the matching row in-place. Firing
+    // `data.changed` on title resolve used to trigger a full list refetch,
+    // which was wasteful and caused row flicker. The global channel (not
+    // the turn stream, which the client closes on `done`) means delivery
+    // is reliable after the turn ends and across tabs — routed to the
+    // right conversation by `conversationId`.
+    //
+    // Chaining `store.update(...).then(emit)` from the fulfillment handler
+    // and a single `.catch()` on the outer promise means any rejection (model
+    // timeout, ENOENT when the conversation was deleted between chat() returning
+    // and the title landing) surfaces in the catch instead of as an unhandled
+    // rejection that would fail the whole run.
     if (conversation.title === null) {
       const titleModel = this.resolveModelFn(this.getModelSlot("fast"));
       const titleInput =
         request.message ||
         `[Uploaded: ${request.fileRefs?.map((f) => f.filename).join(", ") || "files"}]`;
       void generateTitle(titleModel, titleInput, result.output)
-        .then((title) => store.update(conversation.id, { title }))
+        .then(async (title) => {
+          await store.update(conversation.id, { title });
+          // `wsId: sessionWsId` (the owner's personal workspace) — NOT
+          // `conversation.workspaceId`. The SSE layer (events.ts) scopes
+          // `scope: "workspace"` events to clients whose membership set
+          // contains this wsId. Conversations are owner-scoped, and the owner
+          // is always a member of their own personal workspace, so this
+          // reaches exactly the owner's tabs. Using the conversation's
+          // workspaceId would be WRONG here: when the chat was focused on a
+          // team workspace, that id fans the title out to every member of the
+          // team — none of whom can see this owner-scoped conversation, so it
+          // leaks the title string to their browsers for no benefit.
+          // (The iframe list patch is routed by `conversationId`, not wsId, so
+          // it's unaffected either way.) Stage 4 cross-user sharing must
+          // revisit this — route by the conversation's ACL, not the owner's
+          // personal ws — so an org-admin viewing another user's conversation
+          // receives the live title.
+          this.defaultEvents.emit({
+            type: "conversation.title",
+            data: { conversationId: conversation.id, title, wsId: sessionWsId },
+          });
+        })
         .catch((err) => {
           // Title generation is best-effort; a failed write must not crash
           // the chat. Common causes: model latency timeout (generateTitle),
@@ -3394,6 +3632,15 @@ export class Runtime {
 
   async shutdown(): Promise<void> {
     await this.telemetryManager.shutdown();
+    // Abort every in-flight detached turn BEFORE removing the sources they
+    // depend on. A detached turn's lifecycle is decoupled from any HTTP
+    // request (it runs to completion server-side), so without this a turn
+    // mid-`doStream()` keeps issuing tool calls into workspace sources that
+    // the loop below is concurrently tearing down — late calls hit removed
+    // sources. RunBus.reset() aborts each run's signal (the engine stops
+    // cooperatively) and clears the run map. Order matters: stop the
+    // producers first, then dismantle their dependencies.
+    this.runBus.reset();
     // Stop all sources across all workspace registries
     for (const [_wsId, reg] of this._workspaceRegistries) {
       for (const name of reg.sourceNames()) {

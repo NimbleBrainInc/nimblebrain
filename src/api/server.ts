@@ -76,6 +76,13 @@ export function startServer(options: ServerOptions): ServerHandle {
   const conversationEventManager = new ConversationEventManager();
   conversationEventManager.start();
 
+  // Bridge detached-turn events (RunBus) to the per-conversation SSE manager
+  // so connected viewers tail live. Replay-on-connect is sourced separately
+  // from the RunBus buffer (see the conversation-events route).
+  runtime.onTurnEvent = (conversationId, event) => {
+    conversationEventManager.publishEvent(conversationId, event);
+  };
+
   // Login rate limiter — per-IP brute-force protection
   const rateLimiter = new LoginRateLimiter();
   rateLimiter.start();

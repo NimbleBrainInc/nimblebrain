@@ -21,6 +21,7 @@
 // ---------------------------------------------------------------------------
 
 import { type Static, Type } from "@sinclair/typebox";
+import { CONVERSATION_ID_RE } from "../../conversation/types.ts";
 
 // ── /v1/tools/call ───────────────────────────────────────────────────────
 
@@ -66,7 +67,15 @@ export const ChatRequestBody = Type.Object(
       description: "The user's message. Must be non-empty.",
     }),
     conversationId: Type.Optional(
-      Type.String({ description: "Existing conversation id; omit to start a new one." }),
+      Type.String({
+        // Constrain to the canonical `conv_<16 hex>` shape at the schema
+        // boundary so a malformed id (e.g. a path-traversal probe like
+        // `../../foo`) is a 400 at every JSON chat surface, rather than
+        // bubbling a raw Error out of `validateConversationId` → 500. The
+        // multipart path validates the same regex in parseMultipartChatBody.
+        pattern: CONVERSATION_ID_RE.source,
+        description: "Existing conversation id; omit to start a new one.",
+      }),
     ),
     model: Type.Optional(
       Type.String({ description: "Model override; omit to use the workspace default." }),

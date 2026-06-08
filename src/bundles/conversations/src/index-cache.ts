@@ -105,6 +105,29 @@ export class ConversationIndex {
     });
   }
 
+  /**
+   * Bring the index up to date NOW, bypassing the fs.watch debounce.
+   *
+   * Processes any queued watch events immediately, then scans the directory
+   * for files not yet indexed (a just-created conversation whose watch event
+   * hasn't fired or debounced yet). Called on the read path so a
+   * `data.changed`-driven list refresh reflects a brand-new conversation
+   * deterministically, instead of racing the 500ms watch debounce.
+   */
+  async flushPending(): Promise<void> {
+    if (this.debounceTimer) {
+      clearTimeout(this.debounceTimer);
+      this.debounceTimer = null;
+    }
+    await this.processPendingFiles();
+    if (!this.dir) return;
+    for (const filePath of listConversationFiles(this.dir)) {
+      if (!this.fileToId.has(basename(filePath))) {
+        await this.indexFile(filePath);
+      }
+    }
+  }
+
   /** Stop watching. */
   stopWatching(): void {
     if (this.watcher) {

@@ -129,7 +129,7 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
   // =========================================================================
 
   async create(options: CreateConversationOptions): Promise<Conversation> {
-    const id = `conv_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`;
+    const id = options.id ?? `conv_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`;
     const now = new Date().toISOString();
     const conversation: Conversation = {
       id,

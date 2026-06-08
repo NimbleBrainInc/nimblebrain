@@ -11,7 +11,6 @@ import {
   setPlatformVersion,
   tryBootstrap,
 } from "./api/client";
-import { closeAllConversationEvents } from "./api/conversation-events-client";
 import { closeEventsClient } from "./api/events-client";
 import { AppWithChat } from "./components/AppWithChat";
 import { ErrorBoundary } from "./components/ErrorBoundary";
@@ -34,7 +33,9 @@ import {
   type WorkspaceInfo,
   WorkspaceProvider,
 } from "./context/WorkspaceContext";
+import { chatStore } from "./hooks/chat-store";
 import { useDataSync } from "./hooks/useDataSync";
+import { forwardConversationTitleToIframes } from "./lib/forward-conversation-title";
 import { useEvents } from "./hooks/useEvents";
 import { useShell } from "./hooks/useShell";
 import { bootstrapWorkspacesToInfo } from "./lib/bootstrap";
@@ -243,6 +244,14 @@ function AuthenticatedAppContent({
   useEvents(token, wsCtx.activeWorkspace?.id, {
     onDataChanged,
     onConfigChanged: () => config.refreshConfig(),
+    // Auto-title arrived — update the matching conversation's slice so the
+    // chat panel header reflects it live (routed by conversationId), and
+    // forward to the conversations-list iframe so its sidebar row updates
+    // in place without a full list refetch.
+    onConversationTitle: ({ conversationId, title }) => {
+      chatStore.setTitle(conversationId, title);
+      forwardConversationTitleToIframes(conversationId, title);
+    },
     // Bundle install / uninstall changes the placement set; refetch
     // the shell so the sidebar's Apps group reflects the new state
     // without a page reload.
@@ -568,11 +577,23 @@ export function App() {
   useEffect(() => {
     const onPageHide = (): void => {
       closeEventsClient();
-      closeAllConversationEvents();
+      // Close per-conversation turn-stream sockets so the server reclaims
+      // SSE slots immediately. Slices stay intact for a bfcache restore.
+      chatStore.closeAllConnections();
+    };
+    // bfcache restore: the page is revived from memory with sockets closed but
+    // slice state (incl. `isStreaming`) intact, and React effects do NOT re-run.
+    // Re-open a resume stream for every still-streaming slice — otherwise the
+    // spinner is wedged forever (no connection, isStreaming pinned true). The
+    // resume reconciles: still-running turns re-tail; finished ones clear.
+    const onPageShow = (e: PageTransitionEvent): void => {
+      if (e.persisted) chatStore.reattachStreaming();
     };
     window.addEventListener("pagehide", onPageHide);
+    window.addEventListener("pageshow", onPageShow);
     return () => {
       window.removeEventListener("pagehide", onPageHide);
+      window.removeEventListener("pageshow", onPageShow);
     };
   }, []);
 

@@ -27,6 +27,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 
 import { Runtime } from "../../../src/runtime/runtime.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
+import { makeTestWorkDir } from "../../helpers/test-workdir.ts";
 import {
   createTwoWorkspaceFixture,
   type TwoWorkspaceFixture,
@@ -61,7 +62,9 @@ describe("runtime shutdown — tool-list aggregator disposal (T006)", () => {
   it("aggregator dispose is idempotent across multiple shutdowns", async () => {
     // Defense-in-depth: a future refactor that double-calls shutdown
     // (e.g. graceful + force) must not double-throw.
+    const { workDir, cleanup } = makeTestWorkDir("t006-aggregator-dispose");
     const runtime = await Runtime.start({
+      workDir,
       model: { provider: "custom", adapter: createEchoModel() },
       noDefaultBundles: true,
       logging: { disabled: true },
@@ -72,6 +75,7 @@ describe("runtime shutdown — tool-list aggregator disposal (T006)", () => {
     // Second call must not throw.
     await runtime.shutdown();
     expect(aggregator.activeWatcherCount()).toBe(0);
+    cleanup();
   });
 });
 

@@ -20,6 +20,17 @@ import * as realApiClient from "../src/api/client";
 
 export const realClient = { ...realApiClient };
 
+// Same defense for `conversation-stream`. chat-store.test / chatBleed /
+// inlineError all `mock.module("../api/conversation-stream", ...)` with a
+// fake `connectConversationStream` (they test chat-store without real SSE).
+// That mock is process-global and never unwinds, so conversation-stream's
+// OWN test — which needs the real watchdog/visibility implementation — gets
+// the fake if it runs after any of them. Capturing the real module here, in
+// the preload before any mock exists, gives that test a stable handle.
+import * as realConversationStreamMod from "../src/api/conversation-stream";
+
+export const realConversationStream = { ...realConversationStreamMod };
+
 const window = new Window({ url: "http://localhost" });
 
 // Register DOM globals that React and testing-library need
