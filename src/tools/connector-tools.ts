@@ -12,12 +12,12 @@ import type { UserConfigFieldDef } from "../config/workspace-credentials.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import type { ToolResult } from "../engine/types.ts";
 import type { UserIdentity } from "../identity/provider.ts";
-import { ORG_ADMIN_ROLES } from "../identity/types.ts";
 import type { ConnectorCatalogEntry } from "../registries/projection.ts";
 import type { DirectoryEntry } from "../registries/types.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import { validateAdditionalAuthorizationParams } from "../util/oauth-params.ts";
 import { isHttpUrl } from "../util/url.ts";
+import { canWriteWorkspaceScoped } from "../workspace/authz.ts";
 import type { Workspace } from "../workspace/types.ts";
 import { FileCredentialStore } from "./credential-store.ts";
 import type { InProcessTool } from "./in-process-app.ts";
@@ -2184,24 +2184,16 @@ async function respawnBundleAfterCredentialChange(
 }
 
 /**
- * Workspace admin gate. Returns true if the identity is a workspace
- * admin — explicitly via `members[].role === "admin"`, or implicitly
- * because their org role (admin / owner) outranks any per-workspace
- * gate. Workspace member without an admin role gets denied.
+ * Workspace-scoped write gate for connector mutations.
  *
- * Defensive against a malformed workspace record (missing `members`
- * array): an org admin / owner still gets through; otherwise we
- * deny rather than throwing. The right "fail closed" posture for an
- * authorization helper.
+ * Delegates to the single source of truth, `canWriteWorkspaceScoped`:
+ * the identity must be a workspace member with the `admin` role. There
+ * is no org-admin bypass — an org admin / owner who is not a workspace
+ * admin member cannot install connectors. The helper fails closed on a
+ * malformed workspace record (non-array `members`).
  */
-function isWorkspaceAdmin(
-  ws: { members?: Array<{ userId: string; role: string }> },
-  identity: UserIdentity,
-): boolean {
-  if (ORG_ADMIN_ROLES.has(identity.orgRole)) return true;
-  const members = Array.isArray(ws.members) ? ws.members : [];
-  const member = members.find((m) => m.userId === identity.id);
-  return member?.role === "admin";
+function isWorkspaceAdmin(ws: Workspace, identity: UserIdentity): boolean {
+  return canWriteWorkspaceScoped(identity, ws).allowed;
 }
 
 function errResult(msg: string): ToolResult {

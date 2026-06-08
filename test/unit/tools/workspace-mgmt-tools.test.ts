@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { UserIdentity } from "../../../src/identity/provider.ts";
+import type { User } from "../../../src/identity/user.ts";
+import { UserStore } from "../../../src/identity/user.ts";
 import type { InProcessTool } from "../../../src/tools/in-process-app.ts";
 import {
   createManageWorkspacesTool,
@@ -26,6 +28,7 @@ function parseResult(result: { content: Array<{ type: string; text: string }>; s
 
 let workDir: string;
 let store: WorkspaceStore;
+let userStore: UserStore;
 let tool: InProcessTool;
 let currentIdentity: UserIdentity | null;
 
@@ -33,12 +36,14 @@ function makeCtx(): ManageWorkspacesContext {
   return {
     getIdentity: () => currentIdentity,
     workspaceStore: store,
+    userStore,
   };
 }
 
 beforeEach(async () => {
   workDir = await mkdtemp(join(tmpdir(), "nb-ws-mgmt-test-"));
   store = new WorkspaceStore(workDir);
+  userStore = new UserStore(workDir);
   currentIdentity = {
     id: "usr_admin000000001",
     email: "admin@example.com",
@@ -169,6 +174,77 @@ describe("nb__manage_workspaces", () => {
 
       expect(result.isError).toBe(true);
       expect(extractText(result)).toContain("already exists");
+    });
+  });
+
+  describe("creator seating (deadlock fix)", () => {
+    test("creating a shared workspace seats the creator as an admin member", async () => {
+      const createResult = await tool.handler({
+        action: "create",
+        name: "Seated Workspace",
+      });
+
+      expect(createResult.isError).toBe(false);
+      const created = parseResult(createResult) as {
+        workspace: { id: string; memberCount: number };
+      };
+      // The success response reflects the seated member.
+      expect(created.workspace.memberCount).toBe(1);
+
+      // The persisted workspace has the creator seated as an admin member.
+      const ws = await store.get(created.workspace.id);
+      expect(ws?.members).toEqual([{ userId: currentIdentity!.id, role: "admin" }]);
+    });
+
+    test("creator can immediately manage members of the new workspace via the strict workspace-admin path", async () => {
+      // The creator is an org admin at create time (create requires it), and a
+      // user record so they could be added/removed.
+      const creator: User = await userStore.create({
+        email: "creator@example.com",
+        displayName: "Creator",
+        orgRole: "admin",
+      });
+      const newMember: User = await userStore.create({
+        email: "newmember@example.com",
+        displayName: "New Member",
+        orgRole: "member",
+      });
+
+      currentIdentity = {
+        id: creator.id,
+        email: creator.email,
+        displayName: creator.displayName,
+        orgRole: "admin",
+      };
+      tool = createManageWorkspacesTool(makeCtx());
+
+      const createResult = await tool.handler({
+        action: "create",
+        name: "Creator Managed",
+      });
+      const created = parseResult(createResult) as { workspace: { id: string } };
+
+      // Drop the org-admin role entirely — the creator now relies SOLELY on
+      // their seated workspace-admin membership. This is the strict-policy
+      // world where the org-admin bypass is gone. Without seating, this path
+      // would deadlock (canManageMembers would return false).
+      currentIdentity = { ...currentIdentity, orgRole: "member" };
+      tool = createManageWorkspacesTool(makeCtx());
+
+      const addResult = await tool.handler({
+        action: "add_member",
+        workspaceId: created.workspace.id,
+        userId: newMember.id,
+      });
+
+      expect(addResult.isError).toBe(false);
+      const added = parseResult(addResult) as {
+        added: { userId: string; role: string };
+        workspace: { memberCount: number };
+      };
+      expect(added.added.userId).toBe(newMember.id);
+      // creator (admin, seated on create) + newMember.
+      expect(added.workspace.memberCount).toBe(2);
     });
   });
 
@@ -316,7 +392,9 @@ describe("nb__manage_workspaces", () => {
       expect(parsed.workspaces).toHaveLength(2);
       const sorted = [...parsed.workspaces].sort((a, b) => a.name.localeCompare(b.name));
       expect(sorted[0].name).toBe("Alpha");
-      expect(sorted[0].memberCount).toBe(0);
+      // The creator is auto-seated as an admin member on create, so each
+      // freshly created shared workspace starts with exactly one member.
+      expect(sorted[0].memberCount).toBe(1);
       expect(sorted[0].bundles).toEqual([]);
       expect(sorted[1].name).toBe("Beta");
     });

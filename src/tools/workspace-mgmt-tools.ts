@@ -3,6 +3,7 @@ import type { ToolResult } from "../engine/types.ts";
 import type { UserIdentity } from "../identity/provider.ts";
 import { ORG_ADMIN_ROLES } from "../identity/types.ts";
 import type { UserStore } from "../identity/user.ts";
+import { canWriteWorkspaceScoped } from "../workspace/authz.ts";
 import { PersonalWorkspaceInvariantError } from "../workspace/errors.ts";
 import type { WorkspaceMember } from "../workspace/types.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
@@ -161,7 +162,23 @@ async function handleCreate(
   const bundles = input.bundles as Array<Record<string, unknown>> | undefined;
 
   try {
-    const workspace = await ctx.workspaceStore.create(name, slug);
+    let workspace = await ctx.workspaceStore.create(name, slug);
+
+    // Seat the creator as an `admin` member. `WorkspaceStore.create`
+    // intentionally leaves `members: []`, so a freshly created shared
+    // workspace has no one able to manage it. Under the strict
+    // workspace-write policy (org-admin override removed), that would
+    // strand the workspace permanently — `add_member` is itself gated by
+    // `canManageMembers`. Seating the creator here is the bootstrap that
+    // keeps the workspace manageable from creation onward.
+    //
+    // `getIdentity()` is guaranteed non-null by the org-admin gate in the
+    // `create` handler above; we still guard defensively rather than
+    // assume the invariant holds.
+    const identity = ctx.getIdentity();
+    if (identity) {
+      workspace = await ctx.workspaceStore.addMember(workspace.id, identity.id, "admin");
+    }
 
     // If bundles were provided, update the workspace with them
     if (bundles && bundles.length > 0) {
@@ -170,8 +187,8 @@ async function handleCreate(
         if (b.path) return { path: String(b.path) };
         return { name: String(b.name ?? "") };
       });
-      await ctx.workspaceStore.update(workspace.id, { bundles: bundleRefs });
-      workspace.bundles = bundleRefs;
+      const updated = await ctx.workspaceStore.update(workspace.id, { bundles: bundleRefs });
+      if (updated) workspace = updated;
     }
 
     const data = {
@@ -179,6 +196,7 @@ async function handleCreate(
         id: workspace.id,
         name: workspace.name,
         bundles: workspace.bundles,
+        memberCount: workspace.members.length,
         createdAt: workspace.createdAt,
       },
     };
@@ -352,29 +370,22 @@ async function handleList(ctx: ManageWorkspacesContext): Promise<ToolResult> {
 
 /**
  * Check whether the requesting user can manage members in the given workspace.
- * Allowed when:
- *  1. The user is an org-level admin or owner, OR
- *  2. The user is a workspace-level admin for this specific workspace.
+ *
+ * STRICT policy (see `canWriteWorkspaceScoped`): allowed only when the user is
+ * a member of this specific workspace with the `admin` member role. Org role
+ * grants no bypass — an org admin/owner who is not a workspace admin member
+ * cannot manage members.
  */
 async function canManageMembers(ctx: ManageMembersContext, workspaceId: string): Promise<boolean> {
   const identity = ctx.getIdentity();
-  if (!identity) return false;
-
-  // Org admin/owner can manage any workspace
-  if (ORG_ADMIN_ROLES.has(identity.orgRole)) return true;
-
-  // Check workspace-level admin
   const ws = await ctx.workspaceStore.get(workspaceId);
-  if (!ws) return false;
-
-  const member = ws.members.find((m) => m.userId === identity.id);
-  return member?.role === "admin";
+  return canWriteWorkspaceScoped(identity, ws).allowed;
 }
 
 function memberPermissionDenied(): ToolResult {
   return {
     content: textContent(
-      "You don't have permission to manage members. Requires workspace admin or org admin/owner.",
+      "You don't have permission to manage members. Requires workspace admin membership.",
     ),
     isError: false,
   };
@@ -407,7 +418,7 @@ export function createManageMembersTool(ctx: ManageMembersContext): InProcessToo
   return {
     name: "manage_members",
     description:
-      "Add, remove, update, or list members in a workspace. Requires workspace admin or org admin/owner.",
+      "Add, remove, update, or list members in a workspace. Requires workspace admin membership.",
     inputSchema: {
       type: "object",
       properties: {

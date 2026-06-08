@@ -846,6 +846,29 @@ describe("manage_connectors.install", () => {
     expect(structured(result).error).toBe("permission_denied");
   });
 
+  test("returns permission_denied for an org owner who is NOT a member of the target workspace (mpak)", async () => {
+    // Strict workspace-scoped-write policy (#389): orgRole grants NO
+    // bypass. An org owner/admin who isn't a workspace admin member of
+    // the target workspace cannot install — they must be seated as a
+    // workspace admin first. This is the behavior change from the old
+    // org-admin override in isWorkspaceAdmin.
+    const orgOwnerNonMember: UserIdentity = {
+      id: "usr_org_owner",
+      email: "owner@example.test",
+      displayName: "Org Owner",
+      orgRole: "owner",
+      preferences: {},
+    };
+    const tool = buildTool(h, orgOwnerNonMember);
+    const result = await tool.handler({
+      action: "install",
+      entry: mpakEntry(),
+      wsId: h.wsId,
+    });
+    expect(result.isError).toBe(true);
+    expect(structured(result).error).toBe("permission_denied");
+  });
+
   test("rejects mpak entry with non-scoped package name", async () => {
     // Defense-in-depth at the wire boundary. The entry comes from
     // tool input; not every caller is the curated registry.

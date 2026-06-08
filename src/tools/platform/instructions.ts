@@ -6,8 +6,8 @@
  *   instructions://workspace   (live — set via workspace detail page or agent)
  *
  * Plus a single write tool, `write_instructions(scope, text)`, with role
- * gates (workspace admin or org admin/owner can write workspace; only org
- * admin/owner can write org).
+ * gates (a workspace admin member can write workspace scope — org role
+ * grants no bypass; only org admin/owner can write org).
  *
  * Per-bundle custom instructions are NOT in this module's scope. Bundles
  * publish a `app://instructions` resource if and only if they
@@ -22,6 +22,7 @@ import type { EventSink, ToolResult } from "../../engine/types.ts";
 import { ORG_ADMIN_ROLES } from "../../identity/types.ts";
 import type { Scope } from "../../instructions/index.ts";
 import type { Runtime } from "../../runtime/runtime.ts";
+import { canWriteWorkspaceScoped } from "../../workspace/authz.ts";
 import { defineInProcessApp, type InProcessTool } from "../in-process-app.ts";
 import type { McpSource } from "../mcp-source.ts";
 import { InstructionsWriteInput } from "./schemas/instructions.ts";
@@ -59,31 +60,20 @@ async function checkScopePermission(
     return { allowed: false, reason: "No authenticated identity" };
   }
 
-  const isOrgAdmin = ORG_ADMIN_ROLES.has(identity.orgRole);
-
   if (scope === "org") {
-    return isOrgAdmin
+    return ORG_ADMIN_ROLES.has(identity.orgRole)
       ? { allowed: true }
       : { allowed: false, reason: "Org-scope writes require org admin or owner" };
   }
 
-  // workspace scope — org admin/owner OR workspace admin.
-  if (isOrgAdmin) return { allowed: true };
-
+  // Workspace scope — STRICT: only a workspace admin member may write.
+  // Org role grants NO bypass (see `canWriteWorkspaceScoped`).
   if (!wsId) {
     return { allowed: false, reason: "Workspace-scope writes require a workspace context" };
   }
   const ws = await runtime.getWorkspaceStore().get(wsId);
-  if (!ws) {
-    return { allowed: false, reason: `Workspace "${wsId}" not found` };
-  }
-  const member = ws.members.find((m) => m.userId === identity.id);
-  return member?.role === "admin"
-    ? { allowed: true }
-    : {
-        allowed: false,
-        reason: "Workspace-scope writes require workspace admin (or org admin/owner)",
-      };
+  const decision = canWriteWorkspaceScoped(identity, ws);
+  return decision.allowed ? { allowed: true } : { allowed: false, reason: decision.reason };
 }
 
 // ── Source factory ───────────────────────────────────────────────────────

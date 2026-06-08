@@ -8,6 +8,7 @@ import { ORG_ADMIN_ROLES } from "../identity/types.ts";
 import { getAvailableModels, isModelAllowed } from "../model/catalog.ts";
 import { type RequestContext, runWithRequestContext } from "../runtime/request-context.ts";
 import type { Runtime } from "../runtime/runtime.ts";
+import { canWriteWorkspaceScoped } from "../workspace/authz.ts";
 import type { InProcessTool } from "./in-process-app.ts";
 
 const pkgPath = resolve(import.meta.dirname ?? __dirname, "../../package.json");
@@ -638,17 +639,19 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
           const wsId = runtime.requireWorkspaceId();
           const identity = runtime.getCurrentIdentity();
 
-          // Admin gating: org admin/owner OR workspace-level admin
+          // Workspace-scoped write gate (STRICT): only a workspace admin member
+          // may modify identity; orgRole grants no bypass.
+          // Null identity (dev/unauthenticated mode) is intentionally allowed
+          // through here, matching the prior behavior where the gate was wrapped
+          // in `if (identity)`.
           if (identity) {
-            if (!ORG_ADMIN_ROLES.has(identity.orgRole)) {
-              const ws = await runtime.getWorkspaceStore().get(wsId);
-              const member = ws?.members.find((m) => m.userId === identity.id);
-              if (member?.role !== "admin") {
-                return {
-                  content: textContent("Only workspace admins can modify identity."),
-                  isError: true,
-                };
-              }
+            const ws = await runtime.getWorkspaceStore().get(wsId);
+            const decision = canWriteWorkspaceScoped(identity, ws);
+            if (!decision.allowed) {
+              return {
+                content: textContent(decision.reason),
+                isError: true,
+              };
             }
           }
 

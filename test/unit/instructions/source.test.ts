@@ -243,7 +243,7 @@ describe("instructions source — write_instructions", () => {
 // ── Role gates ──────────────────────────────────────────────────────────
 
 describe("instructions source — role gates", () => {
-  test("non-admin identity denied for workspace scope", async () => {
+  test("workspace non-admin member denied for workspace scope", async () => {
     const src = await buildSource();
     runtime.hasIdentityProvider = true;
     runtime.identity = {
@@ -255,6 +255,54 @@ describe("instructions source — role gates", () => {
     };
     runtime.wsId = "ws_demo";
     runtime.setMember("ws_demo", "u1", "member");
+
+    const client = src.getClient()!;
+    const result = await client.callTool({
+      name: "write_instructions",
+      arguments: { scope: "workspace", body: "x" },
+    });
+    expect(result.isError).toBe(true);
+  });
+
+  test("org admin/owner who is NOT a workspace member is denied for workspace scope (STRICT — no org bypass)", async () => {
+    const src = await buildSource();
+    runtime.hasIdentityProvider = true;
+    runtime.identity = {
+      id: "org_admin",
+      email: "admin@ex.com",
+      displayName: "Org Admin",
+      orgRole: "admin",
+      preferences: { timezone: "UTC", locale: "en-US", theme: "system" },
+    };
+    runtime.wsId = "ws_demo";
+    // A different user is the workspace admin; the org admin is NOT a member.
+    runtime.setMember("ws_demo", "someone_else", "admin");
+
+    const client = src.getClient()!;
+    const result = await client.callTool({
+      name: "write_instructions",
+      arguments: { scope: "workspace", body: "x" },
+    });
+    expect(result.isError).toBe(true);
+    const parsed = parseStructured(
+      result as { content?: Array<{ type: string; text?: string }> },
+    );
+    // Denied for membership, not for org role.
+    expect(JSON.stringify(parsed)).toContain("member");
+  });
+
+  test("org owner who is NOT a workspace member is denied for workspace scope", async () => {
+    const src = await buildSource();
+    runtime.hasIdentityProvider = true;
+    runtime.identity = {
+      id: "org_owner",
+      email: "owner@ex.com",
+      displayName: "Org Owner",
+      orgRole: "owner",
+      preferences: { timezone: "UTC", locale: "en-US", theme: "system" },
+    };
+    runtime.wsId = "ws_demo";
+    runtime.setMember("ws_demo", "someone_else", "admin");
 
     const client = src.getClient()!;
     const result = await client.callTool({
