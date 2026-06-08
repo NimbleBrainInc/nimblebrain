@@ -110,6 +110,17 @@ export interface SkillSummary {
     loadingStrategy?: string;
     appliesToTools?: string[];
     priority?: number;
+    /**
+     * Computed loading visibility: whether any loader path reaches this skill
+     * (`wouldLoad`) and the mechanism by which it loads. `mechanism: "none"`
+     * (`wouldLoad: false`) flags a dead skill — no strategy, no triggers, no
+     * tool affinity — that would otherwise be silently inert. Derived, not
+     * stored on disk.
+     */
+    loading?: {
+        wouldLoad: boolean;
+        mechanism: "always" | "tool_affinity" | "trigger" | "none";
+    };
 }
 export interface SkillsListOutput {
     skills: SkillSummary[];

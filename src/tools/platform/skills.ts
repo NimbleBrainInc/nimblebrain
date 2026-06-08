@@ -29,6 +29,7 @@ import { ORG_ADMIN_ROLES } from "../../identity/types.ts";
 import { getRequestContext } from "../../runtime/request-context.ts";
 import type { Runtime } from "../../runtime/runtime.ts";
 import { parseSkillFile, readSkillMtime } from "../../skills/loader.ts";
+import { resolveLoadingMechanism } from "../../skills/loading.ts";
 import { toolMatches } from "../../skills/select.ts";
 import { approxTokens } from "../../skills/tokens.ts";
 import type { Skill, SkillManifest } from "../../skills/types.ts";
@@ -442,6 +443,7 @@ function skillToListed(skill: Skill): ListedSkill {
   const m = skill.manifest;
   const path = skill.sourcePath || undefined;
   const id = path || `skill-in-memory:${m.name}`;
+  const mechanism = resolveLoadingMechanism(m);
   return {
     id,
     name: m.name,
@@ -458,6 +460,7 @@ function skillToListed(skill: Skill): ListedSkill {
       ? { appliesToTools: m.appliesToTools }
       : {}),
     priority: m.priority,
+    loading: { wouldLoad: mechanism !== "none", mechanism },
   };
 }
 
@@ -520,6 +523,7 @@ async function listSkills(
       const skill = parseSkillFile(authoringGuidePath);
       if (skill) {
         const tokens = approxTokens(skill.body);
+        const mechanism = resolveLoadingMechanism(skill.manifest);
         out.push({
           id: AUTHORING_GUIDE_URI,
           name: skill.manifest.name,
@@ -538,6 +542,7 @@ async function listSkills(
             ? { appliesToTools: skill.manifest.appliesToTools }
             : {}),
           priority: skill.manifest.priority,
+          loading: { wouldLoad: mechanism !== "none", mechanism },
         });
       }
     }
@@ -1020,7 +1025,10 @@ function summarizeList(skills: ListedSkill[]): string {
     if (s.status && s.status !== "active") tags.push(s.status);
     const meta = `(${tags.join(" ")})`;
     const desc = s.description ? ` — ${s.description.slice(0, 100)}` : "";
-    return `- ${s.id} ${meta}${desc}`;
+    // Flag dead skills (no strategy, no triggers, no tool affinity) so the
+    // zero-signal failure mode is visible in the model-facing content.
+    const warn = s.loading?.wouldLoad === false ? " ⚠ never loads" : "";
+    return `- ${s.id} ${meta}${desc}${warn}`;
   });
   return `${header}\n${lines.join("\n")}`;
 }
@@ -1468,6 +1476,21 @@ async function createSkill(
       : {}),
   };
 
+  // Derive a loading strategy when the skill would otherwise be dead.
+  // The LLM-facing schema deliberately omits `loading-strategy` /
+  // `applies-to-tools` (tools/platform/CLAUDE.md §1.4), so a tool-created
+  // `type: skill` with no triggers/keywords reaches no loader path. Resolve
+  // the mechanism via the shared predicate and, only for that dead case,
+  // stamp `loading-strategy: always` so the file is self-describing and the
+  // skill composes via Layer 3. Skills that resolve to trigger/tool_affinity
+  // (and `type: context`, which is always-by-type) are left untouched — they
+  // already load and writing a strategy would pull a trigger skill off the
+  // matcher path.
+  const mechanism = resolveLoadingMechanism(fullManifest);
+  if (mechanism === "none" && fullManifest.type === "skill") {
+    fullManifest.loadingStrategy = "always";
+  }
+
   const validation = validateSkill(name, fullManifest, body);
   if (!validation.valid) {
     return errorResult(new Error(`Validation failed — ${validation.errors.join("; ")}`));
@@ -1479,9 +1502,22 @@ async function createSkill(
     type: "skill.created",
     data: { id: target, name, scope, type: fullManifest.type },
   });
+
+  // Report the resolved mechanism so the author sees how (and whether) the
+  // skill will load. `fullManifest.loadingStrategy` is set only for the
+  // derived-always case; everything else rides its native path.
+  const writtenStrategy = fullManifest.loadingStrategy;
+  const loadsClause = writtenStrategy
+    ? "loads: always — no triggers or tool affinity were provided"
+    : `loads: ${mechanism}`;
   return {
-    content: textContent(`Created ${scope} skill "${name}" → ${target}`),
-    structuredContent: { id: target, name, scope },
+    content: textContent(`Created ${scope} skill "${name}" → ${target} (${loadsClause})`),
+    structuredContent: {
+      id: target,
+      name,
+      scope,
+      ...(writtenStrategy ? { loadingStrategy: writtenStrategy } : {}),
+    },
     isError: false,
   };
 }
