@@ -178,6 +178,11 @@ async function handleCreate(
     // `getIdentity()` is guaranteed non-null by the org-admin gate in the
     // `create` handler above; we still guard defensively rather than
     // assume the invariant holds.
+    //
+    // Partial-failure window: if `addMember` throws after `create` has
+    // persisted, the workspace exists with no admin member. That is the
+    // stranded state, and it is recoverable via the `claim_admin` action
+    // below — so we don't attempt a compensating delete here.
     const identity = ctx.getIdentity();
     if (identity) {
       workspace = await ctx.workspaceStore.addMember(workspace.id, identity.id, "admin");
