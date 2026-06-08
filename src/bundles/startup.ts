@@ -13,6 +13,7 @@ import {
   type HostResourcesRateLimit,
   type HostResourcesResolver,
 } from "../host-resources/index.ts";
+import { fleetIssuerOption } from "../oauth/fleet-assertion.ts";
 import { mcpAuthCallbackUrl } from "../oauth/mcp-callback-url.ts";
 import { FileCredentialStore } from "../tools/credential-store.ts";
 import { type BundleMcpContext, McpSource } from "../tools/mcp-source.ts";
@@ -366,6 +367,10 @@ export async function startBundleSource(
         callbackUrl,
         allowInsecureRemotes: opts?.allowInsecureRemotes === true,
         headlessAuthProbe: ref.headlessAuthProbe === true,
+        // Fleet tenant binding. Safe for every server: the provider only
+        // attaches an assertion when the token endpoint's origin matches this
+        // issuer (the fleet authorizer), never to a vendor.
+        ...fleetIssuerOption(),
         onInteractiveAuthRequired: wrappedCallback,
         ...(staticClient ? { staticClient } : {}),
         ...(ref.scopes ? { scopes: ref.scopes } : {}),

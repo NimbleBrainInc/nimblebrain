@@ -4,9 +4,11 @@ import { chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promi
 import { join } from "node:path";
 import {
   type OAuthClientProvider,
+  selectClientAuthMethod,
   UnauthorizedError,
 } from "@modelcontextprotocol/sdk/client/auth.js";
 import type {
+  AuthorizationServerMetadata,
   OAuthClientInformationFull,
   OAuthClientInformationMixed,
   OAuthClientMetadata,
@@ -14,6 +16,7 @@ import type {
 } from "@modelcontextprotocol/sdk/shared/auth.js";
 import { validateBundleUrl } from "../bundles/url-validator.ts";
 import { log } from "../cli/log.ts";
+import { buildTenantAssertion } from "../oauth/fleet-assertion.ts";
 import { validateAdditionalAuthorizationParams } from "../util/oauth-params.ts";
 import type { WorkspaceContext } from "../workspace/context.ts";
 import { register as registerInteractiveFlow } from "./oauth-flow-registry.ts";
@@ -184,6 +187,17 @@ export interface WorkspaceOAuthProviderOptions {
    * the bundle is known-headless.
    */
   headlessAuthProbe?: boolean;
+  /**
+   * Issuer URL of the MCP fleet authorizer, e.g.
+   * `https://fleet-authorizer.internal`. When set, the provider attaches a
+   * signed tenant assertion to the `/token` request — but ONLY when
+   * the token endpoint belongs to this issuer. It is NEVER attached to a vendor
+   * authorization server (Granola, Google, …): a tenant key signature must not
+   * leak to a third party. Leave unset for every provider except the one
+   * driving the fleet-token flow; the assertion also no-ops when the tenant key
+   * (`NB_MCP_AUTHORIZER_TENANT_KEY`) isn't provisioned (rollout phase 1).
+   */
+  fleetAuthorizerIssuer?: string;
 }
 
 /**
@@ -197,6 +211,62 @@ function canonicalEndpoint(u: URL): string {
   const origin = u.origin.toLowerCase();
   const path = u.pathname.replace(/\/+$/, "") || "/";
   return `${origin}${path}`;
+}
+
+/** Lowercased origin of a URL string, or undefined if it doesn't parse. */
+function originOf(value: string | URL): string | undefined {
+  try {
+    return new URL(value).origin.toLowerCase();
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Apply OAuth 2.1 client authentication to a token request. This mirrors the
+ * MCP SDK's internal `applyClientAuthentication` (in
+ * `@modelcontextprotocol/sdk/client/auth.js`), which the SDK runs by default
+ * but which is NOT exported. We reproduce it because defining
+ * `addClientAuthentication` on the provider REPLACES the SDK's default for
+ * every token endpoint — so the provider must re-apply client auth itself.
+ * The method-selection half (`selectClientAuthMethod`) IS exported and is
+ * reused. Kept faithful to RFC 6749 §2.3.1; pinned against the SDK by
+ * fleet-assertion.test.ts ("fleet hook — SDK client-auth parity"), which
+ * exercises all three auth methods. If the SDK changes its apply logic, update
+ * this mirror and those tests together.
+ */
+function applyClientAuthentication(
+  method: ReturnType<typeof selectClientAuthMethod>,
+  clientInformation: OAuthClientInformationMixed,
+  headers: Headers,
+  params: URLSearchParams,
+): void {
+  const { client_id, client_secret } = clientInformation;
+  switch (method) {
+    case "client_secret_basic":
+      if (!client_secret) {
+        throw new Error("client_secret_basic authentication requires a client_secret");
+      }
+      headers.set("Authorization", `Basic ${btoa(`${client_id}:${client_secret}`)}`);
+      return;
+    case "client_secret_post":
+      params.set("client_id", client_id);
+      if (client_secret) params.set("client_secret", client_secret);
+      return;
+    case "none":
+      params.set("client_id", client_id);
+      return;
+    default: {
+      // Compile-time drift canary. `method` is the SDK's exported
+      // `ClientAuthMethod` union; once the three cases above are handled it
+      // narrows to `never` here. If a future SDK bump adds an auth method, this
+      // assignment stops compiling and the typecheck job fails — forcing this
+      // mirror to be updated alongside the SDK, rather than silently throwing at
+      // runtime in a fleet deployment.
+      const unsupported: never = method;
+      throw new Error(`Unsupported client authentication method: ${String(unsupported)}`);
+    }
+  }
 }
 
 /**
@@ -454,6 +524,15 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
   private readonly additionalAuthorizationParams?: Record<string, string>;
   private readonly abortSignal?: AbortSignal;
   private readonly headlessAuthProbe: boolean;
+  /** Canonical origin of the fleet authorizer issuer, or undefined (off). */
+  private readonly fleetAuthorizerOrigin?: string;
+  /**
+   * SDK token-auth hook. Left `undefined` unless the fleet feature is
+   * configured (see constructor) — when unset, the SDK runs its own default
+   * client authentication and NO fleet code touches the token path. Assigned
+   * to {@link fleetTokenAuth} only when `fleetAuthorizerOrigin` is pinned.
+   */
+  addClientAuthentication?: NonNullable<OAuthClientProvider["addClientAuthentication"]>;
   /** Cached DCR result + tokens to avoid redundant disk reads within a flow. */
   private cachedClientInfo: OAuthClientInformationFull | null = null;
   private cachedTokens: OAuthTokens | null = null;
@@ -528,6 +607,26 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     this.additionalAuthorizationParams = opts.additionalAuthorizationParams;
     this.abortSignal = opts.abortSignal;
     this.headlessAuthProbe = opts.headlessAuthProbe === true;
+    // Pin the fleet authorizer's origin once, at construction — the token-auth
+    // hook compares against this and never against caller-supplied values, so a
+    // vendor token endpoint can't trick the provider into attaching the assertion.
+    this.fleetAuthorizerOrigin = opts.fleetAuthorizerIssuer
+      ? originOf(opts.fleetAuthorizerIssuer)
+      : undefined;
+    if (opts.fleetAuthorizerIssuer && !this.fleetAuthorizerOrigin) {
+      // Configured but unparseable: the feature disables itself (fails closed).
+      // Warn so a misconfigured NB_FLEET_AUTHORIZER_ISSUER is visible, not silent.
+      log.warn(
+        `[oauth] fleetAuthorizerIssuer is set but not a valid URL (${opts.fleetAuthorizerIssuer}) — fleet tenant assertion disabled`,
+      );
+    }
+    // Install the token-auth hook ONLY when the fleet feature is active. The SDK
+    // uses this hook IN PLACE OF its default client auth, so leaving it undefined
+    // for non-fleet (every local / self-host) deployments keeps them on the SDK's
+    // own tested path — no fleet code in the token exchange at all.
+    if (this.fleetAuthorizerOrigin) {
+      this.addClientAuthentication = this.fleetTokenAuth;
+    }
 
     // Resolve the per-owner storage root. Two construction modes:
     //
@@ -867,6 +966,69 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     if (!data) throw new Error("PKCE code verifier missing — OAuth flow corrupted");
     return data.codeVerifier;
   }
+
+  /**
+   * Fleet token-auth hook. Installed as `addClientAuthentication` ONLY when the
+   * fleet feature is configured (see constructor) — never on a local / self-host
+   * deployment. The SDK calls `addClientAuthentication` IN PLACE OF its built-in
+   * client authentication (auth.js executeTokenRequest:
+   * `if (addClientAuthentication) … else <default> …`), so once installed this
+   * provider owns client auth on EVERY token endpoint it talks to. We therefore:
+   *   1. always apply the standard OAuth 2.1 client auth the SDK would have
+   *      (client_id / client_secret per the negotiated method), then
+   *   2. additionally present the fleet tenant assertion — but ONLY to the
+   *      fleet authorizer's token endpoint.
+   * Because it's only installed in fleet deployments, none of this runs (and the
+   * {@link applyClientAuthentication} SDK-mirror carries no drift risk) for the
+   * local path.
+   *
+   * The assertion binds this tenant's identity to the flow's PKCE
+   * `code_challenge` (= SHA256(code_verifier)); the authorizer verifies the MAC
+   * and mints the proven `tenant_id`. A tenant-key signature must never leak to
+   * a vendor token endpoint, hence the origin guard.
+   *
+   * A bound arrow property, NOT a prototype method: the SDK's `auth()` flow
+   * destructures it off the provider
+   * (`addClientAuthentication: provider.addClientAuthentication`) and invokes it
+   * unbound, so a plain method would lose `this`.
+   */
+  private readonly fleetTokenAuth = async (
+    headers: Headers,
+    params: URLSearchParams,
+    url: string | URL,
+    metadata?: AuthorizationServerMetadata,
+  ): Promise<void> => {
+    // (1) Reproduce the SDK's default client authentication. Without this, the
+    // token request would carry no client_id/secret and every exchange fails.
+    const clientInformation = await this.clientInformation();
+    if (clientInformation) {
+      const supported = metadata?.token_endpoint_auth_methods_supported ?? [];
+      applyClientAuthentication(
+        selectClientAuthMethod(clientInformation, supported),
+        clientInformation,
+        headers,
+        params,
+      );
+    }
+
+    // (2) Fleet tenant assertion — only for the fleet authorizer's endpoint.
+    if (!this.fleetAuthorizerOrigin) return;
+    // The token endpoint we're POSTing to must belong to the fleet authorizer.
+    if (originOf(url) !== this.fleetAuthorizerOrigin) return;
+
+    // `inner` binds the assertion to THIS PKCE flow. The token request already
+    // carries `code_verifier`; the bound challenge is its S256 hash, which is
+    // exactly what the authorizer stored at /authorize. The SDK also invokes
+    // this hook on the refresh grant, which has no `code_verifier` — so refresh
+    // requests are intentionally left unasserted (PKCE binding can't exist on
+    // refresh). The fleet authorizer must not require an assertion on refresh.
+    const verifier = params.get("code_verifier");
+    if (!verifier) return;
+    const inner = createHash("sha256").update(verifier).digest("base64url");
+
+    const assertion = buildTenantAssertion({ inner });
+    if (assertion) params.set("tenant_assertion", assertion);
+  };
 
   async redirectToAuthorization(url: URL): Promise<void> {
     if (!this.pendingFlow) {
