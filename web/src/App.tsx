@@ -572,9 +572,19 @@ export function App() {
       // SSE slots immediately. Slices stay intact for a bfcache restore.
       chatStore.closeAllConnections();
     };
+    // bfcache restore: the page is revived from memory with sockets closed but
+    // slice state (incl. `isStreaming`) intact, and React effects do NOT re-run.
+    // Re-open a resume stream for every still-streaming slice — otherwise the
+    // spinner is wedged forever (no connection, isStreaming pinned true). The
+    // resume reconciles: still-running turns re-tail; finished ones clear.
+    const onPageShow = (e: PageTransitionEvent): void => {
+      if (e.persisted) chatStore.reattachStreaming();
+    };
     window.addEventListener("pagehide", onPageHide);
+    window.addEventListener("pageshow", onPageShow);
     return () => {
       window.removeEventListener("pagehide", onPageHide);
+      window.removeEventListener("pageshow", onPageShow);
     };
   }, []);
 

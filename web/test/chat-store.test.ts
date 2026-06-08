@@ -475,4 +475,26 @@ describe("chat-store viewer", () => {
     expect(s.closed).toBe(true);
     expect(store.getSnapshot("kA").isStreaming).toBe(false);
   });
+
+  it("reattachStreaming re-opens a resume stream after a bfcache restore", async () => {
+    const store = createChatStore();
+    await store.sendTurn("kA", { text: "go" });
+    const before = latestStream();
+    expect(store.getSnapshot("kA").isStreaming).toBe(true);
+
+    // pagehide: sockets closed, slice state (isStreaming) deliberately kept.
+    store.closeAllConnections();
+    expect(before.closed).toBe(true);
+    expect(store.getSnapshot("kA").isStreaming).toBe(true);
+
+    // bfcache restore: re-attach opens a fresh resume stream (not the dead one).
+    store.reattachStreaming();
+    const after = latestStream();
+    expect(after).not.toBe(before);
+
+    // The resume reconciles: the server says the turn already ended → the
+    // otherwise-wedged spinner clears.
+    after.onSubscribed?.({ isActive: false, activeSeq: 0 });
+    expect(store.getSnapshot("kA").isStreaming).toBe(false);
+  });
 });

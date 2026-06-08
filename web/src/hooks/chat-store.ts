@@ -305,6 +305,10 @@ export interface ChatStore {
    *  heavier {@link reset} (which also clears all state) is for identity
    *  change, not tab lifecycle. */
   closeAllConnections(): void;
+  /** Re-open a resume stream for every slice still flagged streaming but with
+   *  no live connection — the bfcache-restore counterpart to
+   *  {@link closeAllConnections}. */
+  reattachStreaming(): void;
   sliceCount(): number;
 }
 
@@ -1054,6 +1058,18 @@ export function createChatStore(): ChatStore {
     }
   }
 
+  function reattachStreaming(): void {
+    // bfcache restore: closeAllConnections nulled the sockets but left
+    // isStreaming pinned true. Re-open a resume stream for each so the turn
+    // re-tails (or, if it ended while we were away, the server-authoritative
+    // reconcile in onSubscribed clears the stuck spinner).
+    for (const slice of allSlices) {
+      if (slice.isStreaming && slice.conversationId && !slice.connection) {
+        openConnection(slice, slice.conversationId, true);
+      }
+    }
+  }
+
   return {
     ensureSlice,
     getSnapshot(key) {
@@ -1104,6 +1120,7 @@ export function createChatStore(): ChatStore {
     simulateError,
     reset,
     closeAllConnections,
+    reattachStreaming,
     sliceCount() {
       return allSlices.size;
     },
