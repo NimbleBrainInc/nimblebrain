@@ -57,6 +57,39 @@ describe("loadInstanceConfig", () => {
     expect(result).toEqual(config);
   });
 
+  test("loads workos auth with custom adminRoleSlugs", async () => {
+    const config: InstanceConfig = {
+      auth: {
+        adapter: "workos",
+        clientId: "client_123",
+        redirectUri: "http://localhost:3000/v1/auth/callback",
+        organizationId: "org_789",
+        adminRoleSlugs: ["org-admin", "owner"],
+      },
+    };
+    await writeFile(join(workDir, "instance.json"), JSON.stringify(config));
+
+    const result = await loadInstanceConfig(workDir);
+    expect(result).toEqual(config);
+  });
+
+  test("rejects an empty adminRoleSlugs (would lock out every admin)", async () => {
+    await writeFile(
+      join(workDir, "instance.json"),
+      JSON.stringify({
+        auth: {
+          adapter: "workos",
+          clientId: "client_123",
+          redirectUri: "http://localhost:3000/v1/auth/callback",
+          adminRoleSlugs: [],
+        },
+      }),
+    );
+    await expect(loadInstanceConfig(workDir)).rejects.toThrow(
+      "'adminRoleSlugs' must contain at least one",
+    );
+  });
+
   test("returns null when instance.json is missing", async () => {
     const result = await loadInstanceConfig(workDir);
     expect(result).toBeNull();

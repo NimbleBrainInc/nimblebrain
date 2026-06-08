@@ -30,6 +30,18 @@ export interface WorkosAuth {
    * exposes /.well-known/oauth-protected-resource for MCP client discovery.
    */
   authkitDomain?: string;
+  /**
+   * WorkOS organization-membership role slugs that map to the app `admin`
+   * role, matched case-insensitively. Omit to use the default
+   * `["admin", "owner"]`; an explicit list REPLACES the defaults and must
+   * contain at least one non-empty slug. Set this when your WorkOS org's admin
+   * role carries a custom slug (e.g. `org-admin`) — otherwise it silently maps
+   * to `member`. Any slug not listed maps to `member` (and is logged). Note:
+   * `owner` is an app-internal elevation assigned via `manage_users`, not a
+   * WorkOS-derived role; listing an `owner` slug here grants app `admin`, not
+   * app `owner`.
+   */
+  adminRoleSlugs?: string[];
 }
 
 export type AuthConfig = OidcAuth | WorkosAuth;
@@ -106,6 +118,25 @@ function validateAuthConfig(raw: unknown): AuthConfig {
         if (typeof auth.authkitDomain !== "string")
           throw new Error("instance.json: workos auth 'authkitDomain' must be a string");
         workos.authkitDomain = auth.authkitDomain as string;
+      }
+      if (auth.adminRoleSlugs !== undefined) {
+        if (
+          !Array.isArray(auth.adminRoleSlugs) ||
+          auth.adminRoleSlugs.some((s) => typeof s !== "string")
+        )
+          throw new Error(
+            "instance.json: workos auth 'adminRoleSlugs' must be an array of strings",
+          );
+        // An explicit list replaces the defaults, so an empty or blank-only list
+        // would mean "no slug grants admin" — almost always a mistake (it locks
+        // out every WorkOS admin). Reject it loudly instead of silently falling
+        // back to the defaults; omit the field to use ["admin", "owner"].
+        if ((auth.adminRoleSlugs as string[]).every((s) => s.trim() === ""))
+          throw new Error(
+            "instance.json: workos auth 'adminRoleSlugs' must contain at least one " +
+              'non-empty slug (omit the field to use the default ["admin", "owner"])',
+          );
+        workos.adminRoleSlugs = auth.adminRoleSlugs as string[];
       }
       return workos;
     }
