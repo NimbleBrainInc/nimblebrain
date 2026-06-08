@@ -9,8 +9,7 @@ import type { BundleInstance, BundleState } from "../../src/bundles/types.ts";
  *
  * Per-turn `availableTools()` enumeration of a stuck source must NOT emit
  * any operator-visible log. The single warn lives at the lifecycle
- * transition site, fires once per non-broken → broken edge, and a
- * matching info fires once per broken → running recovery edge.
+ * transition site and fires once per non-broken → broken edge.
  *
  * Broken set = { dead, crashed, reauth_required }. Excludes pending_auth
  * (in-flight OAuth — expected during normal Connect) and not_authenticated
@@ -46,27 +45,19 @@ function makeSink(): EventSink & { events: EngineEvent[] } {
 describe("BundleLifecycleManager.transition — edge-triggered logging", () => {
   let lifecycle: BundleLifecycleManager;
   let warnCalls: string[];
-  let infoCalls: string[];
   let originalWarn: (msg: string) => void;
-  let originalInfo: (msg: string) => void;
 
   beforeEach(() => {
     lifecycle = new BundleLifecycleManager(makeSink(), undefined);
     warnCalls = [];
-    infoCalls = [];
     originalWarn = log.warn;
-    originalInfo = log.info;
     log.warn = (msg) => {
       warnCalls.push(msg);
-    };
-    log.info = (msg) => {
-      infoCalls.push(msg);
     };
   });
 
   afterEach(() => {
     log.warn = originalWarn;
-    log.info = originalInfo;
   });
 
   test("running → dead emits exactly one warn", () => {
@@ -129,46 +120,18 @@ describe("BundleLifecycleManager.transition — edge-triggered logging", () => {
     expect(warnCalls.length).toBe(0);
   });
 
-  test("dead → running emits one info (recovery edge)", () => {
+  test("recovery (dead → running) is silent — no warn", () => {
     const inst = makeInstance("dead");
     lifecycle.transition(inst, "running");
-    expect(infoCalls.length).toBe(1);
-    expect(infoCalls[0]).toContain("recovered");
-    expect(infoCalls[0]).toContain("test-src");
-  });
-
-  test("reauth_required → running emits one info", () => {
-    const inst = makeInstance("reauth_required");
-    lifecycle.transition(inst, "running");
-    expect(infoCalls.length).toBe(1);
-  });
-
-  test("crashed → running emits one info", () => {
-    const inst = makeInstance("crashed");
-    lifecycle.transition(inst, "running");
-    expect(infoCalls.length).toBe(1);
-  });
-
-  test("broken → non-running (dead → not_authenticated) emits no info", () => {
-    const inst = makeInstance("dead");
-    lifecycle.transition(inst, "not_authenticated");
-    expect(infoCalls.length).toBe(0);
     expect(warnCalls.length).toBe(0);
   });
 
-  test("not_authenticated → running emits no info (was not broken)", () => {
-    const inst = makeInstance("not_authenticated");
-    lifecycle.transition(inst, "running");
-    expect(infoCalls.length).toBe(0);
-  });
-
-  test("full cycle: running → dead → running → dead = 2 warns + 1 info", () => {
+  test("re-entering broken after recovery warns again (running → dead → running → dead = 2 warns)", () => {
     const inst = makeInstance("running");
     lifecycle.transition(inst, "dead");
     lifecycle.transition(inst, "running");
     lifecycle.transition(inst, "dead");
     expect(warnCalls.length).toBe(2);
-    expect(infoCalls.length).toBe(1);
   });
 
   test("instance.state field still updates on every call", () => {
@@ -179,125 +142,5 @@ describe("BundleLifecycleManager.transition — edge-triggered logging", () => {
     expect(inst.state).toBe("running");
     lifecycle.transition(inst, "pending_auth");
     expect(inst.state).toBe("pending_auth");
-  });
-});
-
-/**
- * Multi-step recovery via sticky-bit. The direct broken → running edge
- * is rare in production — URL bundles recover through `pending_auth`
- * (user clicks Reconnect, completes OAuth) and stdio bundles recover
- * via a `restarting` intermediate. The sticky `lastBrokenState`
- * breadcrumb on `BundleInstance` carries the broken signal across
- * those intermediates so the recovery info still fires on the final
- * `→ running` hop.
- */
-describe("BundleLifecycleManager.transition — multi-step recovery (sticky-bit)", () => {
-  let lifecycle: BundleLifecycleManager;
-  let warnCalls: string[];
-  let infoCalls: string[];
-  let originalWarn: (msg: string) => void;
-  let originalInfo: (msg: string) => void;
-
-  beforeEach(() => {
-    lifecycle = new BundleLifecycleManager(makeSink(), undefined);
-    warnCalls = [];
-    infoCalls = [];
-    originalWarn = log.warn;
-    originalInfo = log.info;
-    log.warn = (msg) => {
-      warnCalls.push(msg);
-    };
-    log.info = (msg) => {
-      infoCalls.push(msg);
-    };
-  });
-
-  afterEach(() => {
-    log.warn = originalWarn;
-    log.info = originalInfo;
-  });
-
-  test("URL bundle reconnect: reauth_required → pending_auth → running emits one info", () => {
-    const inst = makeInstance("running");
-    lifecycle.transition(inst, "reauth_required");
-    lifecycle.transition(inst, "pending_auth");
-    lifecycle.transition(inst, "running");
-    expect(warnCalls.length).toBe(1);
-    expect(infoCalls.length).toBe(1);
-    expect(infoCalls[0]).toContain("reauth_required");
-    expect(infoCalls[0]).toContain("recovered");
-  });
-
-  test("dead → not_authenticated → running still emits info (sticky preserved across intermediate)", () => {
-    const inst = makeInstance("running");
-    lifecycle.transition(inst, "dead");
-    lifecycle.transition(inst, "not_authenticated");
-    lifecycle.transition(inst, "running");
-    expect(infoCalls.length).toBe(1);
-    expect(infoCalls[0]).toContain("dead");
-  });
-
-  test("recovery clears sticky-bit: second running after second-broken episode also fires info", () => {
-    const inst = makeInstance("running");
-    lifecycle.transition(inst, "dead");
-    lifecycle.transition(inst, "running");
-    lifecycle.transition(inst, "reauth_required");
-    lifecycle.transition(inst, "pending_auth");
-    lifecycle.transition(inst, "running");
-    expect(warnCalls.length).toBe(2);
-    expect(infoCalls.length).toBe(2);
-    expect(infoCalls[0]).toContain("dead");
-    expect(infoCalls[1]).toContain("reauth_required");
-  });
-
-  test("sticky-bit tracks LATEST broken state across broken→broken (crashed → dead → running labels 'dead')", () => {
-    const inst = makeInstance("running");
-    lifecycle.transition(inst, "crashed");
-    lifecycle.transition(inst, "dead");
-    lifecycle.transition(inst, "running");
-    expect(infoCalls.length).toBe(1);
-    expect(infoCalls[0]).toContain("dead");
-  });
-
-  test("instance constructed in broken state: dead → running captures dead as label", () => {
-    // Mirrors HealthMonitor crash recovery on a bundle that came up
-    // dead before any transition flowed through this lifecycle instance.
-    const inst = makeInstance("dead");
-    lifecycle.transition(inst, "running");
-    expect(infoCalls.length).toBe(1);
-    expect(infoCalls[0]).toContain("dead");
-  });
-
-  test("instance constructed in broken state: reauth_required → pending_auth → running captures reauth_required", () => {
-    const inst = makeInstance("reauth_required");
-    lifecycle.transition(inst, "pending_auth");
-    lifecycle.transition(inst, "running");
-    expect(infoCalls.length).toBe(1);
-    expect(infoCalls[0]).toContain("reauth_required");
-  });
-
-  test("operator-stop clears sticky-bit: dead → stopped → starting → running emits no info", () => {
-    const inst = makeInstance("running");
-    lifecycle.transition(inst, "dead");
-    lifecycle.transition(inst, "stopped");
-    lifecycle.transition(inst, "starting");
-    lifecycle.transition(inst, "running");
-    expect(warnCalls.length).toBe(1);
-    expect(infoCalls.length).toBe(0);
-  });
-
-  test("starting → running on fresh boot emits no info (never broken)", () => {
-    const inst = makeInstance("starting");
-    lifecycle.transition(inst, "running");
-    expect(infoCalls.length).toBe(0);
-    expect(warnCalls.length).toBe(0);
-  });
-
-  test("lastBrokenState field is undefined after recovery", () => {
-    const inst = makeInstance("running");
-    lifecycle.transition(inst, "dead");
-    expect(inst.lastBrokenState).toBe("dead");
-    lifecycle.transition(inst, "running");
-    expect(inst.lastBrokenState).toBeUndefined();
   });
 });

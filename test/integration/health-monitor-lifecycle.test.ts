@@ -139,23 +139,16 @@ function markSourceCrashed(source: McpSource): void {
 describe("HealthMonitor ↔ BundleLifecycleManager — end-to-end crash chain", () => {
   let originalWorkDir: string | undefined;
   let originalWarn: (msg: string) => void;
-  let originalInfo: (msg: string) => void;
   let warnCalls: string[];
-  let infoCalls: string[];
 
   beforeEach(() => {
     setupTestDir();
     originalWorkDir = process.env.NB_WORK_DIR;
     process.env.NB_WORK_DIR = testDir;
     originalWarn = log.warn;
-    originalInfo = log.info;
     warnCalls = [];
-    infoCalls = [];
     log.warn = (msg) => {
       warnCalls.push(msg);
-    };
-    log.info = (msg) => {
-      infoCalls.push(msg);
     };
   });
 
@@ -163,7 +156,6 @@ describe("HealthMonitor ↔ BundleLifecycleManager — end-to-end crash chain", 
     if (originalWorkDir === undefined) delete process.env.NB_WORK_DIR;
     else process.env.NB_WORK_DIR = originalWorkDir;
     log.warn = originalWarn;
-    log.info = originalInfo;
   });
 
   it(
@@ -196,7 +188,6 @@ describe("HealthMonitor ↔ BundleLifecycleManager — end-to-end crash chain", 
       // Reset any boot-time logs so the assertions below see only the
       // transition output we're testing.
       warnCalls.length = 0;
-      infoCalls.length = 0;
 
       // Simulate the transport-level crash that production HealthMonitor
       // would see when a subprocess dies (transport.onclose → dead=true).
@@ -257,7 +248,6 @@ describe("HealthMonitor ↔ BundleLifecycleManager — end-to-end crash chain", 
       const monitor = buildAdaptedMonitor([sourceA, sourceB], lifecycle, sink);
 
       warnCalls.length = 0;
-      infoCalls.length = 0;
 
       // Crash ONLY workspace alpha's instance.
       markSourceCrashed(sourceA);
