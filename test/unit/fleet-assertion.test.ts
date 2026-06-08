@@ -1,11 +1,38 @@
-import { createHash, randomBytes } from "node:crypto";
-import { mkdtempSync } from "node:fs";
+import { createHash, hkdfSync, randomBytes } from "node:crypto";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { buildTenantAssertion } from "../../src/oauth/fleet-assertion.ts";
-import { verifyEnvelopeAsTenant } from "../../src/oauth/envelope.ts";
+import { signEnvelope, verifyEnvelopeAsTenant } from "../../src/oauth/envelope.ts";
 import { WorkspaceOAuthProvider } from "../../src/tools/workspace-oauth-provider.ts";
+
+// Cross-implementation drift guard (infra#16). This wire is shared verbatim with
+// the authorizer repo (NimbleBrainInc/infra), where verifyAssertion asserts it
+// accepts it. Here we assert our signer reproduces it byte-for-byte. If the two
+// implementations drift on HKDF info / MAC framing / payload shape / lifetime
+// cap, exactly one side breaks and CI catches it.
+const VECTOR = JSON.parse(
+  readFileSync(new URL("./fixtures/authorizer-cross-impl-v1.json", import.meta.url), "utf8"),
+) as { masterKeyB64: string; tid: string; inner: string; iat: number; ttlSeconds: number; wire: string };
+
+describe("cross-impl vector (authorizer parity)", () => {
+  it("signEnvelope reproduces the committed wire byte-for-byte", () => {
+    const master = Buffer.from(VECTOR.masterKeyB64, "base64");
+    // The runtime holds this key pre-derived under the authorizer info string.
+    const tenantKey = Buffer.from(
+      hkdfSync("sha256", master, Buffer.from(VECTOR.tid, "utf8"), Buffer.from("mcp-authorizer/v1"), 32),
+    );
+    const wire = signEnvelope({
+      tid: VECTOR.tid,
+      inner: VECTOR.inner,
+      tenantKey,
+      now: VECTOR.iat,
+      ttlSeconds: VECTOR.ttlSeconds,
+    });
+    expect(wire).toBe(VECTOR.wire);
+  });
+});
 
 const KEY = randomBytes(32);
 const KEY_B64 = KEY.toString("base64");
