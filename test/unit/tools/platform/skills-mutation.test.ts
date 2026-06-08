@@ -248,6 +248,102 @@ describe("skills__create", () => {
   });
 });
 
+// ── workspace-scope write gate (shared `canWriteWorkspaceScoped`) ──────────
+
+// These tests exercise the real authorization path (identity provider
+// configured) — distinct from the dev-mode create test above, which bypasses
+// auth. Skills delegates workspace-scope WRITES to `canWriteWorkspaceScoped`
+// (strict: workspace admin member, no org-admin override) while keeping the
+// READ rule as "any member". Behavior here must be identical to the prior
+// hand-rolled branch for every (member, role, mode) combination.
+describe("skills — workspace-scope write gate", () => {
+  const WS = "ws_gate";
+
+  function setIdentity(id: string, orgRole: "owner" | "admin" | "member"): void {
+    runtime.hasIdentityProvider = true;
+    runtime.wsId = WS;
+    runtime.identity = {
+      id,
+      email: `${id}@ex.com`,
+      displayName: id,
+      orgRole,
+      preferences: { timezone: "UTC", locale: "en-US", theme: "system" },
+    };
+  }
+
+  async function createWsSkill(name: string) {
+    const src = await buildSource();
+    const client = src.getClient()!;
+    return client.callTool({
+      name: "create",
+      arguments: {
+        scope: "workspace",
+        manifest: { name, description: "test", type: "skill" },
+        body: "ws body",
+      },
+    });
+  }
+
+  test("workspace ADMIN member CAN write a workspace skill", async () => {
+    setIdentity("u_admin", "member");
+    runtime.setMember(WS, "u_admin", "admin");
+    const result = await createWsSkill("admin-can");
+    expect(result.isError).toBeFalsy();
+    expect(existsSync(join(workDir, "workspaces", WS, "skills", "admin-can.md"))).toBe(true);
+  });
+
+  test("workspace NON-ADMIN member CANNOT write a workspace skill", async () => {
+    setIdentity("u_member", "member");
+    runtime.setMember(WS, "u_member", "member");
+    const result = await createWsSkill("member-cannot");
+    expect(result.isError).toBe(true);
+    expect((result as { structuredContent?: { code?: string } }).structuredContent?.code).toBe(
+      "permission_denied",
+    );
+    expect(existsSync(join(workDir, "workspaces", WS, "skills", "member-cannot.md"))).toBe(false);
+  });
+
+  test("workspace NON-ADMIN member CAN read a workspace skill (read semantics preserved)", async () => {
+    // Seed a skill in the workspace dir, then read it as a plain member.
+    // The write helper would deny a non-admin; reads must not route through it.
+    setIdentity("u_member", "member");
+    runtime.setMember(WS, "u_member", "member");
+    const skillPath = join(workDir, "workspaces", WS, "skills", "readable.md");
+    mkdirSync(join(workDir, "workspaces", WS, "skills"), { recursive: true });
+    writeFileSync(
+      skillPath,
+      "---\nname: readable\ndescription: test\ntype: skill\n---\nbody\n",
+      "utf-8",
+    );
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const result = await client.callTool({ name: "read", arguments: { id: skillPath } });
+    expect(result.isError).toBeFalsy();
+  });
+
+  test("org admin who is NOT a workspace member CANNOT write (no org-admin override)", async () => {
+    setIdentity("u_orgadmin", "admin");
+    runtime.setMember(WS, "someone_else", "admin"); // workspace has a member, just not the actor
+    const result = await createWsSkill("orgadmin-cannot");
+    expect(result.isError).toBe(true);
+    expect((result as { structuredContent?: { code?: string } }).structuredContent?.code).toBe(
+      "permission_denied",
+    );
+    expect(existsSync(join(workDir, "workspaces", WS, "skills", "orgadmin-cannot.md"))).toBe(false);
+  });
+
+  test("org OWNER who is NOT a workspace member CANNOT write (no org-owner override)", async () => {
+    setIdentity("u_owner", "owner");
+    runtime.setMember(WS, "someone_else", "admin");
+    const result = await createWsSkill("owner-cannot");
+    expect(result.isError).toBe(true);
+    expect((result as { structuredContent?: { code?: string } }).structuredContent?.code).toBe(
+      "permission_denied",
+    );
+    expect(existsSync(join(workDir, "workspaces", WS, "skills", "owner-cannot.md"))).toBe(false);
+  });
+});
+
 // ── create-time loading-strategy derivation (issue #391) ───────────────────
 
 describe("skills__create — loading-strategy derivation", () => {

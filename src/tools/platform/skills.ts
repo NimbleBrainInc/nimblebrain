@@ -35,6 +35,7 @@ import { approxTokens } from "../../skills/tokens.ts";
 import type { Skill, SkillManifest } from "../../skills/types.ts";
 import { validateSkill } from "../../skills/validator.ts";
 import { deleteSkill, updateSkill, writeSkill } from "../../skills/writer.ts";
+import { canWriteWorkspaceScoped } from "../../workspace/authz.ts";
 import { defineInProcessApp, type InProcessTool } from "../in-process-app.ts";
 import type { McpSource } from "../mcp-source.ts";
 import type {
@@ -1170,20 +1171,22 @@ async function checkPathAccess(
   }
   const ws = await runtime.getWorkspaceStore().get(pathWsId);
   if (!ws) return { allowed: false, reason: `Workspace "${pathWsId}" not found` };
+
+  if (mode === "write") {
+    // Workspace-scope write policy lives in the shared helper
+    // (`canWriteWorkspaceScoped`): strict membership + admin role, no
+    // org-admin override. All four workspace-write gates share it.
+    const decision = canWriteWorkspaceScoped(identity, ws);
+    return decision.allowed ? { allowed: true } : { allowed: false, reason: decision.reason };
+  }
+
+  // Read: membership only (any role). Reads are deliberately NOT routed
+  // through the write helper — a non-admin member may still read.
   const member = ws.members.find((m) => m.userId === identity.id);
   if (!member) {
-    // Strict — no org-admin override into a workspace the operator
-    // isn't a member of. Switch workspaces explicitly to act on its
-    // skills.
     return {
       allowed: false,
       reason: `Not a member of workspace "${pathWsId}"`,
-    };
-  }
-  if (mode === "write" && member.role !== "admin") {
-    return {
-      allowed: false,
-      reason: `Workspace-scope writes require admin role in workspace "${pathWsId}"`,
     };
   }
   return { allowed: true };
