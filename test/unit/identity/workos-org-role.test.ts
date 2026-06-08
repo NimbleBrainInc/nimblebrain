@@ -131,6 +131,30 @@ describe("WorkOS resolveOrgRole slug mapping", () => {
     expect(warnings.some((w) => w.includes("org-admin") && w.includes("adminRoleSlugs"))).toBe(true);
   });
 
+  it("warns at most once per unmatched slug per process", async () => {
+    const p = makeProvider(new Map([["a", "viewer"], ["b", "viewer"]]));
+    let warnCount = 0;
+    const original = console.warn;
+    console.warn = () => {
+      warnCount++;
+    };
+    try {
+      // Two logins carrying the same non-admin slug — only the first should warn.
+      expect(await resolveOrgRole(p, "a")).toBe("member");
+      expect(await resolveOrgRole(p, "b")).toBe("member");
+    } finally {
+      console.warn = original;
+    }
+    expect(warnCount).toBe(1);
+  });
+
+  it("falls back to the defaults when adminRoleSlugs is blank-only (never an empty set)", async () => {
+    // Unreachable via config (instance.ts rejects it) but a latent footgun for
+    // direct construction — the normalized set must never be empty.
+    const p = makeProvider(new Map([["u", "admin"]]), { adminRoleSlugs: ["  "] });
+    expect(await resolveOrgRole(p, "u")).toBe("admin");
+  });
+
   it("honors a custom admin slug via adminRoleSlugs config", async () => {
     const p = makeProvider(new Map([["u", "org-admin"]]), { adminRoleSlugs: ["org-admin"] });
     expect(await resolveOrgRole(p, "u")).toBe("admin");

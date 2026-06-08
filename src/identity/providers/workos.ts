@@ -107,12 +107,16 @@ const DEFAULT_ADMIN_ROLE_SLUGS = ["admin", "owner"];
 
 /**
  * Normalize the configured (or default) admin role slugs into a lowercased
- * Set for case-insensitive membership tests. Empty/whitespace entries are
- * dropped; an empty or omitted config falls back to the defaults.
+ * Set for case-insensitive membership tests. Whitespace entries are dropped.
+ * An omitted, empty, or blank-only config falls back to the defaults — the
+ * result is never an empty set, which would mean "no slug grants admin" and
+ * lock out every WorkOS admin. (Config-level empties are already rejected in
+ * `instance.ts`; this is the defense-in-depth invariant for direct callers.)
  */
 function normalizeAdminRoleSlugs(slugs: string[] | undefined): Set<string> {
   const source = slugs && slugs.length > 0 ? slugs : DEFAULT_ADMIN_ROLE_SLUGS;
-  return new Set(source.map((s) => s.trim().toLowerCase()).filter((s) => s.length > 0));
+  const normalized = source.map((s) => s.trim().toLowerCase()).filter((s) => s.length > 0);
+  return new Set(normalized.length > 0 ? normalized : DEFAULT_ADMIN_ROLE_SLUGS);
 }
 
 // ── WorkosIdentityProvider ────────────────────────────────────────
@@ -146,6 +150,13 @@ export class WorkosIdentityProvider implements IdentityProvider {
   private authkitJwksCache: CachedJwks | null = null;
   private userCache = new Map<string, { identity: UserIdentity; fetchedAt: number }>();
   private static USER_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+  /**
+   * Normalized slugs already warned about in `resolveOrgRole`, so an
+   * unrecognized-but-legitimate non-admin slug (e.g. `viewer`) logs once per
+   * process instead of on every login. The diagnostic is the first occurrence;
+   * recurring volume on a busy tenant is not.
+   */
+  private warnedUnmatchedSlugs = new Set<string>();
 
   /** Overridable for testing. */
   fetcher: typeof globalThis.fetch = globalThis.fetch.bind(globalThis);
@@ -529,13 +540,16 @@ export class WorkosIdentityProvider implements IdentityProvider {
       const roleSlug = (membership.role as { slug?: string })?.slug;
       const normalized = roleSlug?.trim().toLowerCase();
       if (normalized && this.adminRoleSlugs.has(normalized)) return "admin";
-      if (normalized && normalized !== "member") {
+      if (normalized && normalized !== "member" && !this.warnedUnmatchedSlugs.has(normalized)) {
         // An unexpected slug that isn't a recognized admin slug and isn't the
         // ordinary "member" — this is the silent-downgrade trap. Log the actual
         // slug and the configured set so a misconfigured admin role surfaces in
         // the logs instead of an invisible "everyone is a member" outcome. The
-        // plain "member" slug is the normal case and is intentionally quiet.
+        // plain "member" slug is the normal case and is intentionally quiet, and
+        // each unmatched slug warns once per process (not per login) so a tenant
+        // with legitimate non-admin slugs (e.g. `viewer`) isn't spammed.
         // Add the slug to `auth.adminRoleSlugs` to grant admin.
+        this.warnedUnmatchedSlugs.add(normalized);
         console.warn(
           `[workos] role slug "${roleSlug}" for user=${workosUserId} is not in ` +
             `adminRoleSlugs [${[...this.adminRoleSlugs].join(", ")}] — mapping to "member". ` +
