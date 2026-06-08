@@ -7,11 +7,11 @@ import { buildTenantAssertion } from "../../src/oauth/fleet-assertion.ts";
 import { signEnvelope, verifyEnvelopeAsTenant } from "../../src/oauth/envelope.ts";
 import { WorkspaceOAuthProvider } from "../../src/tools/workspace-oauth-provider.ts";
 
-// Cross-implementation drift guard (infra#16). This wire is shared verbatim with
-// the authorizer repo (NimbleBrainInc/infra), where verifyAssertion asserts it
-// accepts it. Here we assert our signer reproduces it byte-for-byte. If the two
-// implementations drift on HKDF info / MAC framing / payload shape / lifetime
-// cap, exactly one side breaks and CI catches it.
+// Cross-implementation drift guard. This wire is shared verbatim with the
+// authorizer that verifies the assertion, which asserts it accepts it. Here we
+// assert our signer reproduces it byte-for-byte. If the two implementations
+// drift on HKDF info / MAC framing / payload shape / lifetime cap, exactly one
+// side breaks and CI catches it.
 const VECTOR = JSON.parse(
   readFileSync(new URL("./fixtures/authorizer-cross-impl-v1.json", import.meta.url), "utf8"),
 ) as { masterKeyB64: string; tid: string; inner: string; iat: number; ttlSeconds: number; wire: string };
@@ -36,7 +36,7 @@ describe("cross-impl vector (authorizer parity)", () => {
 
 const KEY = randomBytes(32);
 const KEY_B64 = KEY.toString("base64");
-const FLEET_ISSUER = "https://mcp-authorizer.mcp-shared.svc";
+const FLEET_ISSUER = "https://fleet-authorizer.internal";
 
 const savedTid = process.env.NB_TENANT_ID;
 const savedKey = process.env.NB_MCP_AUTHORIZER_TENANT_KEY;

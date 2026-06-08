@@ -1228,7 +1228,7 @@ export class BundleLifecycleManager {
       callbackUrl: opts.callbackUrl,
       allowInsecureRemotes: opts.allowInsecureRemotes === true,
       headlessAuthProbe: ref.headlessAuthProbe === true,
-      // Fleet tenant binding (infra#16). Safe to pass for every server: the
+      // Fleet tenant binding. Safe to pass for every server: the
       // provider only attaches an assertion when the token endpoint's origin
       // matches this issuer (the fleet authorizer), never to a vendor.
       ...(process.env.NB_FLEET_AUTHORIZER_ISSUER

@@ -2,7 +2,7 @@ import { signEnvelope } from "./envelope.ts";
 
 /**
  * Sign the tenant-auth assertion the runtime presents to the MCP fleet
- * authorizer (infra#16).
+ * authorizer.
  *
  * The `tenant_id` claim minted by `mcp-authorizer` is the cross-tenant trust
  * boundary for the whole fleet. Rather than let the authorizer derive it from a
@@ -20,8 +20,9 @@ import { signEnvelope } from "./envelope.ts";
  *
  * Returns `null` when the key isn't provisioned (rollout phase 1): the caller
  * simply omits the assertion, and the authorizer's accept-but-don't-require mode
- * falls back to the legacy path. Once `REQUIRE_TENANT_ASSERTION` is flipped, an
- * unprovisioned tenant fails closed at the authorizer, which is correct.
+ * falls back to the legacy path. Once the authorizer enforces assertions
+ * (rather than accepting-but-not-requiring), an unprovisioned tenant fails
+ * closed at the authorizer, which is correct.
  */
 export function buildTenantAssertion(opts: { inner: string; ttlSeconds?: number }): string | null {
   const tid = process.env.NB_TENANT_ID;

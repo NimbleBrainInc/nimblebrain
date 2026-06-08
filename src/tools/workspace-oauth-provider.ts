@@ -187,9 +187,9 @@ export interface WorkspaceOAuthProviderOptions {
    */
   headlessAuthProbe?: boolean;
   /**
-   * Issuer of the MCP fleet authorizer (`mcp-authorizer`), e.g.
-   * `https://mcp-authorizer.mcp-shared.svc`. When set, the provider attaches a
-   * signed tenant assertion (infra#16) to the `/token` request — but ONLY when
+   * Issuer URL of the MCP fleet authorizer, e.g.
+   * `https://fleet-authorizer.internal`. When set, the provider attaches a
+   * signed tenant assertion to the `/token` request — but ONLY when
    * the token endpoint belongs to this issuer. It is NEVER attached to a vendor
    * authorization server (Granola, Google, …): a tenant key signature must not
    * leak to a third party. Leave unset for every provider except the one
@@ -900,7 +900,7 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
 
   /**
    * SDK hook: inject client-auth material into the `/token` request. Used here
-   * to present the fleet tenant assertion (infra#16) — and ONLY to the fleet
+   * to present the fleet tenant assertion — and ONLY to the fleet
    * authorizer. The assertion binds this tenant's identity to the flow's PKCE
    * `code_challenge` (= SHA256(code_verifier)); the authorizer verifies the MAC
    * and mints the proven `tenant_id`.
