@@ -97,14 +97,26 @@ describe("WorkspaceOAuthProvider.addClientAuthentication", () => {
     return new URLSearchParams({ grant_type: "authorization_code", code: "c", code_verifier: verifier });
   }
 
+  // The hook fires through the property the SDK actually destructures. Asserting
+  // it's defined here is also the contract that the fleet path is wired at all.
+  function fleetHook(fleetAuthorizerIssuer: string) {
+    const hook = provider(fleetAuthorizerIssuer).addClientAuthentication;
+    expect(hook).toBeDefined();
+    return hook as NonNullable<typeof hook>;
+  }
+
+  it("is NOT installed when no fleet issuer is configured (SDK default client auth runs)", () => {
+    // The contract for 'runs locally with none of it': with no issuer the
+    // provider leaves addClientAuthentication undefined, so the MCP SDK uses its
+    // own built-in client authentication and zero fleet code touches the token
+    // path. This is what makes the local/self-host path bulletproof.
+    expect(provider(undefined).addClientAuthentication).toBeUndefined();
+  });
+
   it("attaches an assertion bound to the PKCE challenge for the fleet token endpoint", async () => {
     setEnv("tenant-x", KEY_B64);
     const p = params();
-    await provider(FLEET_ISSUER).addClientAuthentication(
-      new Headers(),
-      p,
-      `${FLEET_ISSUER}/token`,
-    );
+    await fleetHook(FLEET_ISSUER)(new Headers(), p, `${FLEET_ISSUER}/token`);
     const wire = p.get("tenant_assertion");
     expect(wire).toBeTruthy();
     const payload = verifyEnvelopeAsTenant({ wire: wire as string, tenantKey: KEY, expectedTid: "tenant-x" });
@@ -114,25 +126,14 @@ describe("WorkspaceOAuthProvider.addClientAuthentication", () => {
   it("never attaches to a vendor token endpoint (no key-signature leak)", async () => {
     setEnv("tenant-x", KEY_B64);
     const p = params();
-    await provider(FLEET_ISSUER).addClientAuthentication(
-      new Headers(),
-      p,
-      "https://oauth2.googleapis.com/token",
-    );
-    expect(p.get("tenant_assertion")).toBeNull();
-  });
-
-  it("is off when no fleet issuer is configured", async () => {
-    setEnv("tenant-x", KEY_B64);
-    const p = params();
-    await provider(undefined).addClientAuthentication(new Headers(), p, `${FLEET_ISSUER}/token`);
+    await fleetHook(FLEET_ISSUER)(new Headers(), p, "https://oauth2.googleapis.com/token");
     expect(p.get("tenant_assertion")).toBeNull();
   });
 
   it("no-ops gracefully when the tenant key is not provisioned (rollout phase 1)", async () => {
     setEnv("tenant-x", undefined);
     const p = params();
-    await provider(FLEET_ISSUER).addClientAuthentication(new Headers(), p, `${FLEET_ISSUER}/token`);
+    await fleetHook(FLEET_ISSUER)(new Headers(), p, `${FLEET_ISSUER}/token`);
     expect(p.get("tenant_assertion")).toBeNull();
   });
 });

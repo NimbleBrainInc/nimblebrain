@@ -516,6 +516,13 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
   private readonly headlessAuthProbe: boolean;
   /** Canonical origin of the fleet authorizer issuer, or undefined (off). */
   private readonly fleetAuthorizerOrigin?: string;
+  /**
+   * SDK token-auth hook. Left `undefined` unless the fleet feature is
+   * configured (see constructor) — when unset, the SDK runs its own default
+   * client authentication and NO fleet code touches the token path. Assigned
+   * to {@link fleetTokenAuth} only when `fleetAuthorizerOrigin` is pinned.
+   */
+  addClientAuthentication?: NonNullable<OAuthClientProvider["addClientAuthentication"]>;
   /** Cached DCR result + tokens to avoid redundant disk reads within a flow. */
   private cachedClientInfo: OAuthClientInformationFull | null = null;
   private cachedTokens: OAuthTokens | null = null;
@@ -602,6 +609,13 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
       log.warn(
         `[oauth] fleetAuthorizerIssuer is set but not a valid URL (${opts.fleetAuthorizerIssuer}) — fleet tenant assertion disabled`,
       );
+    }
+    // Install the token-auth hook ONLY when the fleet feature is active. The SDK
+    // uses this hook IN PLACE OF its default client auth, so leaving it undefined
+    // for non-fleet (every local / self-host) deployments keeps them on the SDK's
+    // own tested path — no fleet code in the token exchange at all.
+    if (this.fleetAuthorizerOrigin) {
+      this.addClientAuthentication = this.fleetTokenAuth;
     }
 
     // Resolve the per-owner storage root. Two construction modes:
@@ -944,28 +958,31 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
   }
 
   /**
-   * SDK hook: authenticate the `/token` request. The SDK calls this IN PLACE OF
-   * its built-in client authentication (auth.js executeTokenRequest:
-   * `if (addClientAuthentication) … else <default> …`), so defining it makes
-   * this provider responsible for client auth on EVERY token endpoint — vendor
-   * and fleet alike. We therefore:
+   * Fleet token-auth hook. Installed as `addClientAuthentication` ONLY when the
+   * fleet feature is configured (see constructor) — never on a local / self-host
+   * deployment. The SDK calls `addClientAuthentication` IN PLACE OF its built-in
+   * client authentication (auth.js executeTokenRequest:
+   * `if (addClientAuthentication) … else <default> …`), so once installed this
+   * provider owns client auth on EVERY token endpoint it talks to. We therefore:
    *   1. always apply the standard OAuth 2.1 client auth the SDK would have
    *      (client_id / client_secret per the negotiated method), then
    *   2. additionally present the fleet tenant assertion — but ONLY to the
    *      fleet authorizer's token endpoint.
+   * Because it's only installed in fleet deployments, none of this runs (and the
+   * {@link applyClientAuthentication} SDK-mirror carries no drift risk) for the
+   * local path.
    *
    * The assertion binds this tenant's identity to the flow's PKCE
    * `code_challenge` (= SHA256(code_verifier)); the authorizer verifies the MAC
    * and mints the proven `tenant_id`. A tenant-key signature must never leak to
    * a vendor token endpoint, hence the origin guard.
    *
-   * Declared as a bound arrow property, NOT a prototype method: the SDK's
-   * `auth()` flow destructures this off the provider
+   * A bound arrow property, NOT a prototype method: the SDK's `auth()` flow
+   * destructures it off the provider
    * (`addClientAuthentication: provider.addClientAuthentication`) and invokes it
-   * unbound, so a plain method would lose `this`. The other provider hooks are
-   * always called as `provider.x()`, so only this one needs binding.
+   * unbound, so a plain method would lose `this`.
    */
-  addClientAuthentication = async (
+  private readonly fleetTokenAuth = async (
     headers: Headers,
     params: URLSearchParams,
     url: string | URL,
