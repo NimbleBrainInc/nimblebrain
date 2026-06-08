@@ -97,6 +97,24 @@ function extractToken(req: Request): string | null {
   return null;
 }
 
+/**
+ * WorkOS role slugs that map to the app `admin` role when the operator hasn't
+ * configured `adminRoleSlugs`. Includes `owner` so a WorkOS org-owner role
+ * lands as app `admin` (the app's `owner` tier is internal — see
+ * `syncLocalProfile`), and so the common case works without configuration.
+ */
+const DEFAULT_ADMIN_ROLE_SLUGS = ["admin", "owner"];
+
+/**
+ * Normalize the configured (or default) admin role slugs into a lowercased
+ * Set for case-insensitive membership tests. Empty/whitespace entries are
+ * dropped; an empty or omitted config falls back to the defaults.
+ */
+function normalizeAdminRoleSlugs(slugs: string[] | undefined): Set<string> {
+  const source = slugs && slugs.length > 0 ? slugs : DEFAULT_ADMIN_ROLE_SLUGS;
+  return new Set(source.map((s) => s.trim().toLowerCase()).filter((s) => s.length > 0));
+}
+
 // ── WorkosIdentityProvider ────────────────────────────────────────
 
 /**
@@ -120,6 +138,7 @@ export class WorkosIdentityProvider implements IdentityProvider {
   private redirectUri: string;
   private organizationId: string | undefined;
   private authkitDomain: string | undefined;
+  private adminRoleSlugs: Set<string>;
   private userStore: UserStore | null;
   private workspaceStore: WorkspaceStore;
 
@@ -150,6 +169,7 @@ export class WorkosIdentityProvider implements IdentityProvider {
     this.redirectUri = config.redirectUri;
     this.organizationId = config.organizationId;
     this.authkitDomain = config.authkitDomain;
+    this.adminRoleSlugs = normalizeAdminRoleSlugs(config.adminRoleSlugs);
     this.userStore = userStore ?? null;
     this.workspaceStore = workspaceStore;
   }
@@ -419,16 +439,24 @@ export class WorkosIdentityProvider implements IdentityProvider {
 
     const existing = await this.userStore.get(workosUserId);
     if (existing) {
+      // `owner` is an app-internal elevation, not a WorkOS-derived role:
+      // `resolveOrgRole` only ever yields "admin"/"member", and only the
+      // guarded `manage_users` path may create or remove an owner. So a
+      // login-time sync must never DOWNGRADE a local owner to a lesser
+      // WorkOS-derived role — otherwise a WorkOS membership change would
+      // silently strip owners and defeat the last-owner invariant (the
+      // sync path bypasses that guard). admin/member still track WorkOS.
+      const effectiveRole: OrgRole = existing.orgRole === "owner" ? "owner" : data.orgRole;
       // Update identity fields from WorkOS, preserve preferences
       if (
         existing.email !== data.email ||
         existing.displayName !== data.displayName ||
-        existing.orgRole !== data.orgRole
+        existing.orgRole !== effectiveRole
       ) {
         await this.userStore.update(workosUserId, {
           email: data.email,
           displayName: data.displayName,
-          orgRole: data.orgRole,
+          orgRole: effectiveRole,
         });
       }
       return existing.preferences;
@@ -453,13 +481,19 @@ export class WorkosIdentityProvider implements IdentityProvider {
   /**
    * Resolve the NimbleBrain OrgRole from WorkOS organization membership.
    *
-   * Queries the WorkOS Organization Membership API for the user's role
-   * in the configured organization. Maps WorkOS role slugs to OrgRole:
-   *   - "admin" → "admin"
-   *   - "member" → "member"
+   * Queries the WorkOS Organization Membership API for the user's role in the
+   * configured organization and maps the role slug to an app OrgRole:
+   *   - slug ∈ `adminRoleSlugs` (default `["admin", "owner"]`, case-insensitive)
+   *     → "admin"
+   *   - any other slug → "member" (logged, so a custom admin slug that should
+   *     have matched is diagnosable instead of silently downgraded)
    *
-   * Returns null if the user has no org membership — this is a security
-   * signal that the user should be denied access.
+   * This NEVER returns "owner": `owner` is an app-internal elevation managed
+   * via `manage_users` and preserved across login by `syncLocalProfile`, not a
+   * WorkOS-derived role. A WorkOS owner-slug role therefore grants app `admin`.
+   *
+   * Returns null if the user has no org membership — a security signal that the
+   * user should be denied access.
    */
   private async resolveOrgRole(workosUserId: string): Promise<OrgRole | null> {
     if (!this.organizationId) return "member";
@@ -479,7 +513,21 @@ export class WorkosIdentityProvider implements IdentityProvider {
       }
 
       const roleSlug = (membership.role as { slug?: string })?.slug;
-      if (roleSlug === "admin") return "admin";
+      const normalized = roleSlug?.trim().toLowerCase();
+      if (normalized && this.adminRoleSlugs.has(normalized)) return "admin";
+      if (normalized && normalized !== "member") {
+        // An unexpected slug that isn't a recognized admin slug and isn't the
+        // ordinary "member" — this is the silent-downgrade trap. Log the actual
+        // slug and the configured set so a misconfigured admin role surfaces in
+        // the logs instead of an invisible "everyone is a member" outcome. The
+        // plain "member" slug is the normal case and is intentionally quiet.
+        // Add the slug to `auth.adminRoleSlugs` to grant admin.
+        console.warn(
+          `[workos] role slug "${roleSlug}" for user=${workosUserId} is not in ` +
+            `adminRoleSlugs [${[...this.adminRoleSlugs].join(", ")}] — mapping to "member". ` +
+            "If this role should be an org admin, add its slug to auth.adminRoleSlugs.",
+        );
+      }
       return "member";
     } catch (err) {
       console.error(

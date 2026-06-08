@@ -30,6 +30,16 @@ export interface WorkosAuth {
    * exposes /.well-known/oauth-protected-resource for MCP client discovery.
    */
   authkitDomain?: string;
+  /**
+   * WorkOS organization-membership role slugs that map to the app `admin`
+   * role, matched case-insensitively. Defaults to `["admin", "owner"]` when
+   * omitted. Set this when your WorkOS org's admin role carries a custom slug
+   * (e.g. `org-admin`) — otherwise it silently maps to `member`. Any slug not
+   * listed maps to `member` (and is logged). Note: `owner` is an app-internal
+   * elevation assigned via `manage_users`, not a WorkOS-derived role; listing
+   * an `owner` slug here grants app `admin`, not app `owner`.
+   */
+  adminRoleSlugs?: string[];
 }
 
 export type AuthConfig = OidcAuth | WorkosAuth;
@@ -106,6 +116,16 @@ function validateAuthConfig(raw: unknown): AuthConfig {
         if (typeof auth.authkitDomain !== "string")
           throw new Error("instance.json: workos auth 'authkitDomain' must be a string");
         workos.authkitDomain = auth.authkitDomain as string;
+      }
+      if (auth.adminRoleSlugs !== undefined) {
+        if (
+          !Array.isArray(auth.adminRoleSlugs) ||
+          auth.adminRoleSlugs.some((s) => typeof s !== "string")
+        )
+          throw new Error(
+            "instance.json: workos auth 'adminRoleSlugs' must be an array of strings",
+          );
+        workos.adminRoleSlugs = auth.adminRoleSlugs as string[];
       }
       return workos;
     }
