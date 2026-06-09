@@ -74,70 +74,30 @@ function groupMessages(messages: LanguageModelV3Message[]): LanguageModelV3Messa
 }
 
 /**
- * Strip reasoning blocks from assistant messages older than the most recent
- * assistant turn.
- *
- * Anthropic's guidance for extended thinking: pass thinking blocks from the
- * most recent turn back to the API unchanged; strip thinking blocks from
- * older turns to reduce token usage. The reasoning blocks attached to the
- * last assistant message are still load-bearing — they pair with any
- * tool-use chain currently in flight — but every earlier assistant message's
- * reasoning is historical and replays as opaque signature bytes that bloat
- * the prompt linearly with turn count.
- *
- * In production conv_e00606c7aab7423d we saw 100+ KB `llm.response` events
- * dominated by Anthropic signatures with empty `text`. This is the seam
- * where that growth is cut.
- *
- * Edge case: an assistant message that contains ONLY reasoning blocks is a
- * legitimate placeholder for a turn that produced reasoning-only output
- * (see `event-reconstructor.ts` step 4a). Stripping its only content would
- * leave an empty assistant message that Anthropic rejects on replay, so
- * those placeholders are kept intact.
- */
-export function stripOlderReasoning(messages: LanguageModelV3Message[]): LanguageModelV3Message[] {
-  let lastAssistantIdx = -1;
-  for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i]?.role === "assistant") {
-      lastAssistantIdx = i;
-      break;
-    }
-  }
-  if (lastAssistantIdx <= 0) return messages;
-
-  let changed = false;
-  const out = messages.map((msg, idx) => {
-    if (idx === lastAssistantIdx) return msg;
-    if (msg.role !== "assistant") return msg;
-    if (typeof msg.content === "string") return msg;
-    const nonReasoning = msg.content.filter((part) => part.type !== "reasoning");
-    if (nonReasoning.length === msg.content.length) return msg;
-    if (nonReasoning.length === 0) return msg; // pure-reasoning placeholder
-    changed = true;
-    return { ...msg, content: nonReasoning };
-  });
-  return changed ? out : messages;
-}
-
-/**
  * Apply provider-specific replay policy for reasoning blocks.
  *
- * Reasoning blocks are RETAINED for every provider. OpenAI and Gemini require
- * reasoning/thought metadata to stay paired with replayed tool calls, so their
- * history must be intact. Anthropic *permits* stripping older thinking blocks
- * (an optional token optimization), but doing it here — per request, keyed on
- * "is this the latest assistant message" — is incompatible with prompt caching:
- * the moment a turn stops being the latest, its reasoning bytes change, which
- * invalidates the cached prefix from that point. With the rolling step-anchor
- * (see `model/cache-policy.ts`) that bust lands just behind the anchor on EVERY
- * iteration, forcing a full re-write of the growing prefix — the exact pathology
- * this whole effort removes. Under caching, retained reasoning is written to
- * cache once and read back at the cache-read rate; the strip's token savings are
- * dwarfed by the re-writes it forces.
+ * This is the single chokepoint for one invariant: **reasoning blocks are
+ * RETAINED on replay — never stripped per turn.** It protects two providers for
+ * two different reasons, so it's worth one named seam (and the regression test
+ * that guards it):
+ *   - OpenAI / Gemini *require* reasoning/thought metadata to stay paired with
+ *     replayed tool calls (a correctness constraint).
+ *   - Anthropic merely *permits* stripping older thinking blocks (a token
+ *     optimization), but stripping here — per request, keyed on "is this the
+ *     latest assistant message" — is incompatible with prompt caching: the
+ *     moment a turn stops being the latest, its reasoning bytes change, which
+ *     invalidates the cached prefix from that point. With the rolling
+ *     step-anchor (see `model/cache-policy.ts`) that bust lands just behind the
+ *     anchor on EVERY iteration, forcing a full re-write of the growing prefix —
+ *     the exact pathology this effort removes. Retained reasoning is written to
+ *     cache once and read back cheaply; the strip's savings are dwarfed by the
+ *     re-writes it forced.
  *
- * Stripping is only cache-safe beyond a STABLE frozen boundary that advances
- * rarely (i.e. at compaction). `stripOlderReasoning` is kept for that future
- * use — applied once to a compacted prefix, not per turn. Until then, retain.
+ * The policy is uniform today (retain, regardless of `provider`), so this is a
+ * passthrough — but it stays provider-keyed because that's the dispatch point a
+ * future provider-specific replay transform plugs into. Bounded stripping, if it
+ * ever returns, belongs at a stable compaction boundary (applied once to a
+ * frozen prefix), not here per turn.
  */
 export function applyReasoningReplayPolicy(
   messages: LanguageModelV3Message[],

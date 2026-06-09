@@ -3,7 +3,6 @@ import type { LanguageModelV3Message } from "@ai-sdk/provider";
 import {
 	applyReasoningReplayPolicy,
 	sliceHistory,
-	stripOlderReasoning,
 	windowMessages,
 } from "../../src/conversation/window.ts";
 
@@ -18,14 +17,6 @@ function assistantWithReasoning(
 			{ type: "reasoning" as const, text: reasoningText },
 			{ type: "text" as const, text: visibleText },
 		],
-	};
-}
-
-/** Helper: create an assistant message with only reasoning (placeholder turn). */
-function assistantReasoningOnly(reasoningText: string): LanguageModelV3Message {
-	return {
-		role: "assistant",
-		content: [{ type: "reasoning" as const, text: reasoningText }],
 	};
 }
 
@@ -359,109 +350,6 @@ describe("sliceHistory", () => {
 	});
 });
 
-describe("stripOlderReasoning", () => {
-	it("keeps reasoning on the most recent assistant message", () => {
-		const msgs: LanguageModelV3Message[] = [
-			textMsg("user", "first"),
-			assistantWithReasoning("thinking 1", "answer 1"),
-			textMsg("user", "second"),
-			assistantWithReasoning("thinking 2", "answer 2"),
-		];
-		const result = stripOlderReasoning(msgs);
-
-		// First assistant message: reasoning stripped, text kept.
-		expect(result[1]).toEqual({
-			role: "assistant",
-			content: [{ type: "text", text: "answer 1" }],
-		});
-		// Last assistant message: untouched.
-		expect(result[3]).toEqual(msgs[3]!);
-	});
-
-	it("returns the input unchanged when there is nothing to strip", () => {
-		const msgs: LanguageModelV3Message[] = [
-			textMsg("user", "hi"),
-			assistantWithReasoning("thinking", "hello"),
-		];
-		const result = stripOlderReasoning(msgs);
-		// Only assistant message is the latest — no older turns to strip.
-		// Returns the same reference (identity) for the common no-op path.
-		expect(result).toBe(msgs);
-	});
-
-	it("preserves reasoning-only placeholder messages instead of leaving an empty assistant turn", () => {
-		const msgs: LanguageModelV3Message[] = [
-			textMsg("user", "first"),
-			assistantReasoningOnly("opaque signature"),
-			textMsg("user", "second"),
-			assistantWithReasoning("thinking", "answer"),
-		];
-		const result = stripOlderReasoning(msgs);
-
-		// The earlier reasoning-only assistant message is kept as-is —
-		// stripping would leave an empty content array, which Anthropic
-		// rejects on replay.
-		expect(result[1]).toEqual(msgs[1]!);
-		expect(result[3]).toEqual(msgs[3]!);
-	});
-
-	it("strips reasoning from earlier assistant messages even when they also contain tool-calls", () => {
-		const msgs: LanguageModelV3Message[] = [
-			textMsg("user", "do something"),
-			{
-				role: "assistant",
-				content: [
-					{ type: "reasoning" as const, text: "considering options" },
-					{
-						type: "tool-call" as const,
-						toolCallId: "call_1",
-						toolName: "search",
-						input: { q: "x" },
-					},
-				],
-			},
-			toolResultMsg("call_1"),
-			assistantWithReasoning("now reasoning again", "done"),
-		];
-		const result = stripOlderReasoning(msgs);
-
-		// Older assistant message: reasoning stripped, tool-call retained
-		// so the tool_result it pairs with still has its tool_use anchor.
-		expect(result[1]).toEqual({
-			role: "assistant",
-			content: [
-				{
-					type: "tool-call",
-					toolCallId: "call_1",
-					toolName: "search",
-					input: { q: "x" },
-				},
-			],
-		});
-		// Tool-result unchanged.
-		expect(result[2]).toEqual(msgs[2]!);
-		// Latest assistant unchanged.
-		expect(result[3]).toEqual(msgs[3]!);
-	});
-
-	it("is a no-op when there are no assistant messages", () => {
-		const msgs: LanguageModelV3Message[] = [textMsg("user", "hi")];
-		const result = stripOlderReasoning(msgs);
-		expect(result).toBe(msgs);
-	});
-
-	it("is a no-op when no reasoning blocks exist", () => {
-		const msgs: LanguageModelV3Message[] = [
-			textMsg("user", "hi"),
-			textMsg("assistant", "hello"),
-			textMsg("user", "again"),
-			textMsg("assistant", "hello again"),
-		];
-		const result = stripOlderReasoning(msgs);
-		expect(result).toBe(msgs);
-	});
-});
-
 describe("applyReasoningReplayPolicy", () => {
 	const replayHistoryWithToolCall = (): LanguageModelV3Message[] => [
 		textMsg("user", "do something"),
@@ -498,6 +386,12 @@ describe("applyReasoningReplayPolicy", () => {
 	});
 
 	it("prefix is byte-stable as the latest assistant advances (no per-turn re-strip)", () => {
+		// REGRESSION GUARD (not a tautology): trivially true while the policy is a
+		// passthrough, but it fails loudly the moment anyone re-introduces per-turn
+		// reasoning stripping here — which would change a turn's bytes the instant
+		// it stops being the latest assistant and bust the rolling cache anchor
+		// just behind it. Keep it.
+		//
 		// Simulate the engine appending a new step: the previously-latest
 		// assistant must NOT change bytes when a newer assistant arrives, or the
 		// rolling cache anchor just behind it misses every turn.
