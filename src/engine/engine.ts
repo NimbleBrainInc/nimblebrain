@@ -542,6 +542,11 @@ export class AgentEngine {
           // Provider-scoped prompt-cache policy: places the rolling step-anchor
           // + tail breakpoints (Anthropic) so the growing prefix is read back,
           // not re-written, each iteration. See model/cache-policy.ts.
+          //
+          // Correctness assumes transformContext keeps the prefix append-only:
+          // the rolling anchor must stay byte-identical to the prior call's
+          // tail. If a future compaction hook rewrites pre-anchor messages,
+          // reads silently become misses (degraded, not incorrect).
           const { prompt: cachedPrompt, tools: cachedTools } = applyCachePolicy({
             provider: callProvider,
             systemPrompt: callPrompt,
