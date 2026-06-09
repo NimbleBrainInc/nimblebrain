@@ -22,6 +22,13 @@ export interface FeatureFlags {
   fileContext?: boolean;
   userManagement?: boolean;
   workspaceManagement?: boolean;
+  /**
+   * Opt-in (default false). When on, long conversations are compacted at run
+   * start — the oldest turns folded into a summary — to bound context growth
+   * without per-turn cache thrash. Event-sourced stores only. See
+   * `conversation/compaction.ts`.
+   */
+  compaction?: boolean;
 }
 
 /** Resolved feature flags — all required booleans (no optionals). */
@@ -36,6 +43,7 @@ const DEFAULTS: ResolvedFeatures = {
   fileContext: true,
   userManagement: true,
   workspaceManagement: true,
+  compaction: false,
 };
 
 /** Resolve partial feature flags to a complete set. Missing keys default to true. */
@@ -50,6 +58,7 @@ export function resolveFeatures(config?: FeatureFlags): ResolvedFeatures {
     fileContext: config.fileContext ?? true,
     userManagement: config.userManagement ?? true,
     workspaceManagement: config.workspaceManagement ?? true,
+    compaction: config.compaction ?? false,
   };
 }
 

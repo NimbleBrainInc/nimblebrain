@@ -2,13 +2,18 @@ import { describe, expect, test } from "bun:test";
 import type { LanguageModelV3 } from "@ai-sdk/provider";
 import { reconstructMessages } from "../../src/conversation/event-reconstructor.ts";
 import {
+  compactConversationMessages,
   compactionSummaryMessages,
   estimateMessagesTokens,
   planCompaction,
   runCompaction,
   summarizeMessages,
 } from "../../src/conversation/compaction.ts";
-import type { ConversationEvent, StoredMessage } from "../../src/conversation/types.ts";
+import type {
+  ConversationEvent,
+  HistoryCompactedEvent,
+  StoredMessage,
+} from "../../src/conversation/types.ts";
 
 // --- builders --------------------------------------------------------------
 
@@ -122,6 +127,61 @@ describe("summarizeMessages + runCompaction", () => {
     expect(out!.summary).toBe("SUMMARY");
     expect(out!.compactedThroughTs).toBe(plan.boundaryTs);
     expect(out!.summarizedMessageCount).toBe(plan.boundaryIndex);
+  });
+});
+
+// --- compactConversationMessages (the wiring helper) -----------------------
+
+describe("compactConversationMessages", () => {
+  test("compacts: emits one event and returns summary seed + kept tail", async () => {
+    const msgs = conversation(40, 800);
+    const events: HistoryCompactedEvent[] = [];
+    const out = await compactConversationMessages(fakeModel("SUMMARY"), msgs, {
+      budget: 5000,
+      now: ts(99),
+      onEvent: (e) => events.push(e),
+    });
+    expect(events).toHaveLength(1);
+    expect(events[0]!.type).toBe("history.compacted");
+    expect(events[0]!.summary).toBe("SUMMARY");
+    expect(events[0]!.ts).toBe(ts(99));
+    // returns a NEW array: summary seed (2 msgs) + the kept tail
+    expect(out).not.toBe(msgs);
+    expect(out[0]!.role).toBe("user");
+    expect((out[0]!.content as { text?: string }[])[0]?.text).toContain("SUMMARY");
+    expect(out[1]!.role).toBe("assistant");
+  });
+
+  test("no-op below threshold: same reference, no event, model never called", async () => {
+    const msgs = conversation(2, 40);
+    let called = false;
+    const model = { doGenerate: async () => ((called = true), { content: [] }) } as never;
+    const events: HistoryCompactedEvent[] = [];
+    const out = await compactConversationMessages(model, msgs, {
+      budget: 100_000,
+      now: ts(99),
+      onEvent: (e) => events.push(e),
+    });
+    expect(out).toBe(msgs); // unchanged reference → caller detects no-op
+    expect(events).toHaveLength(0);
+    expect(called).toBe(false);
+  });
+
+  test("best-effort: a summarizer failure falls back to full history, no event", async () => {
+    const msgs = conversation(40, 800);
+    const model = {
+      doGenerate: async () => {
+        throw new Error("model boom");
+      },
+    } as never;
+    const events: HistoryCompactedEvent[] = [];
+    const out = await compactConversationMessages(model, msgs, {
+      budget: 5000,
+      now: ts(99),
+      onEvent: (e) => events.push(e),
+    });
+    expect(out).toBe(msgs); // fell back to the full history
+    expect(events).toHaveLength(0); // nothing persisted
   });
 });
 

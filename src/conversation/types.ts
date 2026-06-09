@@ -111,6 +111,13 @@ export interface ConversationStore {
   load(id: string, access?: ConversationAccessContext): Promise<Conversation | null>;
   append(conversation: Conversation, message: StoredMessage): Promise<void>;
   history(conversation: Conversation, limit?: number): Promise<StoredMessage[]>;
+  /**
+   * Append a raw conversation event to the stream. Event-sourced stores only —
+   * absent on message-based stores (legacy JSONL, in-memory), so callers must
+   * feature-detect. Used for events the engine-event sink doesn't produce, e.g.
+   * `history.compacted` written by the compaction path.
+   */
+  appendEvent?(id: string, event: ConversationEvent): void;
   list(options?: ListOptions, access?: ConversationAccessContext): Promise<ConversationListResult>;
   /**
    * Delete a conversation and its backing store. Returns true if the

@@ -1,5 +1,5 @@
 import type { LanguageModelV3 } from "@ai-sdk/provider";
-import type { StoredMessage } from "./types.ts";
+import type { HistoryCompactedEvent, StoredMessage } from "./types.ts";
 
 /**
  * History compaction — bound context growth on long conversations without
@@ -215,4 +215,39 @@ export async function runCompaction(
     compactedThroughTs: plan.boundaryTs,
     summarizedMessageCount: plan.boundaryIndex,
   };
+}
+
+/**
+ * End-to-end compaction for a conversation's history: plan, summarize, emit the
+ * `history.compacted` event via `onEvent`, and return the compacted message
+ * array (summary seed + kept tail). Returns the input array UNCHANGED — same
+ * reference — when nothing should be compacted, so callers can cheaply detect a
+ * no-op (`result === messages`).
+ *
+ * Best-effort: any failure (model error, etc.) falls back to the full history.
+ * Compaction must never fail a chat turn — a slightly-too-long prompt is the
+ * pre-existing overflow path's job, not a hard error here.
+ */
+export async function compactConversationMessages(
+  model: LanguageModelV3,
+  messages: StoredMessage[],
+  opts: CompactionOptions & { now: string; onEvent: (event: HistoryCompactedEvent) => void },
+): Promise<StoredMessage[]> {
+  try {
+    const outcome = await runCompaction(model, messages, opts);
+    if (!outcome) return messages;
+    opts.onEvent({
+      ts: opts.now,
+      type: "history.compacted",
+      summary: outcome.summary,
+      compactedThroughTs: outcome.compactedThroughTs,
+      summarizedMessageCount: outcome.summarizedMessageCount,
+    });
+    return [
+      ...compactionSummaryMessages(outcome.summary, outcome.compactedThroughTs),
+      ...messages.slice(outcome.summarizedMessageCount),
+    ];
+  } catch {
+    return messages;
+  }
 }

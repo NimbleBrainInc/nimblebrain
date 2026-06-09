@@ -16,6 +16,7 @@ import { isToolVisibleToRole, type ResolvedFeatures, resolveFeatures } from "../
 import { deriveOverridePath } from "../config/overrides.ts";
 import { createPrivilegeHook, NoopConfirmationGate } from "../config/privilege.ts";
 import { generateTitle } from "../conversation/auto-title.ts";
+import { compactConversationMessages } from "../conversation/compaction.ts";
 import { EventSourcedConversationStore } from "../conversation/event-sourced-store.ts";
 import { JsonlConversationStore } from "../conversation/jsonl-store.ts";
 import { InMemoryConversationStore } from "../conversation/memory-store.ts";
@@ -26,6 +27,7 @@ import type {
   ConversationStore,
   CreateConversationOptions,
   ListOptions,
+  StoredMessage,
 } from "../conversation/types.ts";
 import {
   applyReasoningReplayPolicy,
@@ -1545,7 +1547,7 @@ export class Runtime {
     // in. A `files://` URI persisted in any conversation resolves here against
     // the owner's single store — there is no per-workspace file silo to miss.
     const fileStore = this.getFileStore(ownerId);
-    const messages = await rehydrateUserResources(history, fileStore, {
+    let messages = await rehydrateUserResources(history, fileStore, {
       model: resolvedModelString,
       maxExtractedTextSize: this.getFilesConfig().maxExtractedTextSize,
     });
@@ -1576,6 +1578,24 @@ export class Runtime {
       tools,
       maxOutputTokens: resolvedMaxOutputTokens,
     });
+
+    // History compaction (opt-in): when the conversation has outgrown its
+    // budget, fold the oldest turns into a summary so the prefix re-anchors
+    // once here instead of windowing — and busting the cache — every turn.
+    // No-op unless `features.compaction` is on and the store is event-sourced;
+    // best-effort, so a summarizer failure falls back to the full history.
+    const compactedHistory = await this.maybeCompactHistory(
+      store,
+      conversation.id,
+      history,
+      messageBudget.budget,
+    );
+    if (compactedHistory) {
+      messages = await rehydrateUserResources(compactedHistory, fileStore, {
+        model: resolvedModelString,
+        maxExtractedTextSize: this.getFilesConfig().maxExtractedTextSize,
+      });
+    }
 
     // Per-request hooks: inherit `beforeToolCall` from the runtime-level
     // hooks; compose `transformContext` here so the windowing budget is
@@ -2012,7 +2032,7 @@ export class Runtime {
     // shape consistency with the engine's message contract).
     const history = await store.history(conversation);
     const fileStore = this.getFileStore(ownerId);
-    const messages = await rehydrateUserResources(history, fileStore, {
+    let messages = await rehydrateUserResources(history, fileStore, {
       model: resolvedModelString,
       maxExtractedTextSize: this.getFilesConfig().maxExtractedTextSize,
     });
@@ -2042,6 +2062,24 @@ export class Runtime {
       tools,
       maxOutputTokens: resolvedMaxOutputTokens,
     });
+
+    // History compaction (opt-in): when the conversation has outgrown its
+    // budget, fold the oldest turns into a summary so the prefix re-anchors
+    // once here instead of windowing — and busting the cache — every turn.
+    // No-op unless `features.compaction` is on and the store is event-sourced;
+    // best-effort, so a summarizer failure falls back to the full history.
+    const compactedHistory = await this.maybeCompactHistory(
+      store,
+      conversation.id,
+      history,
+      messageBudget.budget,
+    );
+    if (compactedHistory) {
+      messages = await rehydrateUserResources(compactedHistory, fileStore, {
+        model: resolvedModelString,
+        maxExtractedTextSize: this.getFilesConfig().maxExtractedTextSize,
+      });
+    }
 
     const maxHistoryMessages = this.config.maxHistoryMessages ?? DEFAULT_MAX_HISTORY_MESSAGES;
     const replayProvider = getProviderFromModel(resolvedModelString);
@@ -3100,6 +3138,33 @@ export class Runtime {
   /** Get the default model ID (shorthand for models.default). */
   getDefaultModel(): string {
     return this.getModelSlot("default");
+  }
+
+  /**
+   * Compact a conversation's history at run start when it has outgrown its
+   * budget — fold the oldest turns into a summary so the prefix re-anchors once
+   * instead of windowing (and busting the cache) every turn. Opt-in via
+   * `features.compaction`; event-sourced stores only (it persists a
+   * `history.compacted` event). Returns the compacted `StoredMessage[]`, or
+   * `null` when nothing changed (no flag, no `appendEvent`, or below threshold)
+   * so the caller can skip re-rehydrating. Best-effort: the helper swallows
+   * failures and returns the full history, never throwing into the chat path.
+   */
+  private async maybeCompactHistory(
+    store: ConversationStore,
+    conversationId: string,
+    history: StoredMessage[],
+    budget: number,
+  ): Promise<StoredMessage[] | null> {
+    if (!this.config.features?.compaction || !store.appendEvent) return null;
+    const appendEvent = store.appendEvent.bind(store);
+    const model = this.resolveModelFn(this.getModelSlot("fast"));
+    const compacted = await compactConversationMessages(model, history, {
+      budget,
+      now: new Date().toISOString(),
+      onEvent: (event) => appendEvent(conversationId, event),
+    });
+    return compacted === history ? null : compacted;
   }
 
   /** Get the list of configured provider names (e.g., ["anthropic", "openai"]). */
