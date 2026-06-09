@@ -484,24 +484,33 @@ describe("applyReasoningReplayPolicy", () => {
 		assistantWithReasoning("now reasoning again", "done"),
 	];
 
-	it("uses Anthropic's older-reasoning stripping policy", () => {
+	it("retains Anthropic reasoning on replay (cache stability over the strip optimization)", () => {
 		const msgs = replayHistoryWithToolCall();
 		const result = applyReasoningReplayPolicy(msgs, "anthropic");
 
-		expect(result[1]).toEqual({
-			role: "assistant",
-			content: [
-				{
-					type: "tool-call",
-					toolCallId: "call_1",
-					toolName: "search",
-					input: { q: "x" },
-					providerOptions: {
-						google: { thoughtSignature: "opaque-signature" },
-					},
-				},
-			],
-		});
+		// Reasoning is NO LONGER stripped per-turn: stripping changes a turn's
+		// bytes the moment it stops being the latest assistant, which busts the
+		// cached prefix every iteration. Retain it (cached once, read cheaply).
+		expect(result).toBe(msgs);
+		expect(result[1]).toEqual(msgs[1]!);
+		const firstAssistant = result[1] as { content: { type: string }[] };
+		expect(firstAssistant.content.some((p) => p.type === "reasoning")).toBe(true);
+	});
+
+	it("prefix is byte-stable as the latest assistant advances (no per-turn re-strip)", () => {
+		// Simulate the engine appending a new step: the previously-latest
+		// assistant must NOT change bytes when a newer assistant arrives, or the
+		// rolling cache anchor just behind it misses every turn.
+		const turnK: LanguageModelV3Message[] = [
+			textMsg("user", "go"),
+			assistantWithReasoning("thinking A", "answer A"),
+			toolResultMsg("call_a"),
+		];
+		const beforeAdvance = JSON.stringify(applyReasoningReplayPolicy(turnK, "anthropic"));
+		const turnKPlus1 = [...turnK, assistantWithReasoning("thinking B", "answer B"), toolResultMsg("call_b")];
+		const afterAdvance = applyReasoningReplayPolicy(turnKPlus1, "anthropic");
+		// the shared prefix (the first 3 messages) is byte-identical across turns
+		expect(JSON.stringify(afterAdvance.slice(0, 3))).toBe(beforeAdvance);
 	});
 
 	it("preserves OpenAI reasoning paired with replayed tool calls", () => {

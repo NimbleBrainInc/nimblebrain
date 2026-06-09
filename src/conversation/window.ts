@@ -122,16 +122,28 @@ export function stripOlderReasoning(messages: LanguageModelV3Message[]): Languag
 /**
  * Apply provider-specific replay policy for reasoning blocks.
  *
- * The historical stripping optimization is Anthropic-specific: older thinking
- * signatures are safe to omit and otherwise grow the prompt quickly. OpenAI
- * Responses API and Gemini can require reasoning/thought metadata to remain
- * paired with replayed tool calls, so preserve those providers' history intact.
+ * Reasoning blocks are RETAINED for every provider. OpenAI and Gemini require
+ * reasoning/thought metadata to stay paired with replayed tool calls, so their
+ * history must be intact. Anthropic *permits* stripping older thinking blocks
+ * (an optional token optimization), but doing it here — per request, keyed on
+ * "is this the latest assistant message" — is incompatible with prompt caching:
+ * the moment a turn stops being the latest, its reasoning bytes change, which
+ * invalidates the cached prefix from that point. With the rolling step-anchor
+ * (see `model/cache-policy.ts`) that bust lands just behind the anchor on EVERY
+ * iteration, forcing a full re-write of the growing prefix — the exact pathology
+ * this whole effort removes. Under caching, retained reasoning is written to
+ * cache once and read back at the cache-read rate; the strip's token savings are
+ * dwarfed by the re-writes it forces.
+ *
+ * Stripping is only cache-safe beyond a STABLE frozen boundary that advances
+ * rarely (i.e. at compaction). `stripOlderReasoning` is kept for that future
+ * use — applied once to a compacted prefix, not per turn. Until then, retain.
  */
 export function applyReasoningReplayPolicy(
   messages: LanguageModelV3Message[],
-  provider: string,
+  _provider: string,
 ): LanguageModelV3Message[] {
-  return provider === "anthropic" ? stripOlderReasoning(messages) : messages;
+  return messages;
 }
 
 /**
