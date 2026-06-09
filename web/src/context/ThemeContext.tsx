@@ -118,3 +118,14 @@ export function useTheme(): ThemeContextValue {
   if (!ctx) throw new Error("useTheme must be used within ThemeProvider");
   return ctx;
 }
+
+/**
+ * Theme mode with a safe default. Unlike `useTheme`, this never throws when
+ * rendered outside a `ThemeProvider` — it falls back to "light". For leaf UI
+ * (e.g. `ConnectorIcon`) that only needs to pick a light/dark asset and may be
+ * rendered in isolation (unit tests, embeds), a missing provider should
+ * degrade to the light variant, not crash the subtree.
+ */
+export function useThemeMode(): ThemeMode {
+  return useContext(ThemeContext)?.mode ?? "light";
+}

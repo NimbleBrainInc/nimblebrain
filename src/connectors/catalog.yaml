@@ -139,7 +139,7 @@ servers:
     description: Read, send, and draft mail (via Composio)
     version: "0.1.0"
     icons:
-      - src: https://static.nimblebrain.ai/icons/gmail.png
+      - src: https://static.nimblebrain.ai/logos/gmail/light.svg
         sizes: ["any"]
     remotes:
       - type: streamable-http
@@ -193,7 +193,7 @@ servers:
     description: Read, send, and draft mail (via Composio)
     version: "0.1.0"
     icons:
-      - src: https://static.nimblebrain.ai/icons/outlook.png
+      - src: https://static.nimblebrain.ai/logos/outlook/light.svg
         sizes: ["any"]
     remotes:
       - type: streamable-http
@@ -369,7 +369,7 @@ servers:
     description: Files, folders, and shared links (via Composio)
     version: "0.1.0"
     icons:
-      - src: https://static.nimblebrain.ai/icons/box.png
+      - src: https://static.nimblebrain.ai/logos/box/light.svg
         sizes: ["any"]
     remotes:
       - type: streamable-http
@@ -402,7 +402,7 @@ servers:
     description: Issues, pull requests, and repository files (via Composio)
     version: "0.1.0"
     icons:
-      - src: https://static.nimblebrain.ai/icons/github.png
+      - src: https://static.nimblebrain.ai/logos/github/light.svg
         sizes: ["any"]
     remotes:
       - type: streamable-http
@@ -436,7 +436,7 @@ servers:
     description: Create, find, and manage calendar events (via Composio)
     version: "0.1.0"
     icons:
-      - src: https://static.nimblebrain.ai/icons/google-calendar.png
+      - src: https://static.nimblebrain.ai/logos/google-calendar/light.svg
         sizes: ["any"]
     remotes:
       - type: streamable-http
@@ -469,7 +469,7 @@ servers:
     description: Invoices, customers, payments, and financial reports (via Composio)
     version: "0.1.0"
     icons:
-      - src: https://static.nimblebrain.ai/icons/quickbooks.png
+      - src: https://static.nimblebrain.ai/logos/quickbooks/light.svg
         sizes: ["any"]
     remotes:
       - type: streamable-http
@@ -504,7 +504,7 @@ servers:
     description: Create posts and read profile/company data (via Composio)
     version: "0.1.0"
     icons:
-      - src: https://static.nimblebrain.ai/icons/linkedin.png
+      - src: https://static.nimblebrain.ai/logos/linkedin/light.svg
         sizes: ["any"]
     remotes:
       - type: streamable-http
@@ -538,7 +538,7 @@ servers:
     description: Send messages, read channels, and search (via Composio)
     version: "0.1.0"
     icons:
-      - src: https://static.nimblebrain.ai/icons/slack.png
+      - src: https://static.nimblebrain.ai/logos/slack/light.svg
         sizes: ["any"]
     remotes:
       - type: streamable-http
@@ -572,7 +572,7 @@ servers:
     description: Send WhatsApp Business messages and templates (via Composio)
     version: "0.1.0"
     icons:
-      - src: https://static.nimblebrain.ai/icons/whatsapp.png
+      - src: https://static.nimblebrain.ai/logos/whatsapp/light.svg
         sizes: ["any"]
     remotes:
       - type: streamable-http
@@ -604,7 +604,7 @@ servers:
     description: Contacts, leads, deals, and modules (via Composio)
     version: "0.1.0"
     icons:
-      - src: https://static.nimblebrain.ai/icons/zoho.png
+      - src: https://static.nimblebrain.ai/logos/zoho/light.svg
         sizes: ["any"]
     remotes:
       - type: streamable-http
@@ -633,7 +633,7 @@ servers:
     description: Find, read, and manage Drive files (via Composio)
     version: "0.1.0"
     icons:
-      - src: https://static.nimblebrain.ai/icons/googledrive.png
+      - src: https://static.nimblebrain.ai/logos/google-drive/light.svg
         sizes: ["any"]
     remotes:
       - type: streamable-http
@@ -662,7 +662,7 @@ servers:
     description: Read and write spreadsheet data (via Composio)
     version: "0.1.0"
     icons:
-      - src: https://static.nimblebrain.ai/icons/googlesheets.png
+      - src: https://static.nimblebrain.ai/logos/google-sheets/light.svg
         sizes: ["any"]
     remotes:
       - type: streamable-http
@@ -690,7 +690,7 @@ servers:
     description: Create, read, and edit documents (via Composio)
     version: "0.1.0"
     icons:
-      - src: https://static.nimblebrain.ai/icons/googledocs.png
+      - src: https://static.nimblebrain.ai/logos/google-docs/light.svg
         sizes: ["any"]
     remotes:
       - type: streamable-http
@@ -719,7 +719,7 @@ servers:
     description: Create and edit presentations (via Composio)
     version: "0.1.0"
     icons:
-      - src: https://static.nimblebrain.ai/icons/googleslides.png
+      - src: https://static.nimblebrain.ai/logos/google-slides/light.svg
         sizes: ["any"]
     remotes:
       - type: streamable-http
@@ -745,7 +745,7 @@ servers:
     description: CRM contacts, deals, and pipeline (via Composio)
     version: "1.0.0"
     icons:
-      - src: https://static.nimblebrain.ai/icons/hubspot.png
+      - src: https://static.nimblebrain.ai/logos/hubspot/light.svg
         sizes: ["any"]
     remotes:
       - type: streamable-http
@@ -768,35 +768,12 @@ servers:
             - HUBSPOT_BATCH_READ_COMPANIES_BY_PROPERTIES
         tags: [crm, sales, composio]
 
-  - name: com.microsoft.outlook/mcp
-    title: Outlook
-    description: Microsoft 365 mail
-    version: "1.0.0"
-    icons:
-      - src: https://static.nimblebrain.ai/icons/outlook.png
-        sizes: ["any"]
-    remotes:
-      - type: streamable-http
-        url: https://mcp.microsoft.com/mail
-    _meta:
-      ai.nimblebrain/connector:
-        auth: static
-        requiredScopes:
-          - https://graph.microsoft.com/Mail.ReadWrite
-          - https://graph.microsoft.com/Mail.Send
-          - offline_access
-        operatorSetup:
-          portalUrl: https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade
-          hint: Register a multi-tenant app in Entra ID; add Microsoft Graph delegated permissions; copy client_id + client_secret
-          clientSecretKey: entra.client_secret
-        tags: [email, microsoft]
-
   - name: us.zoom/mcp
     title: Zoom
     description: Meetings, recordings, contacts (via Composio)
     version: "1.0.0"
     icons:
-      - src: https://static.nimblebrain.ai/icons/zoom.png
+      - src: https://static.nimblebrain.ai/logos/zoom/light.svg
         sizes: ["any"]
     remotes:
       - type: streamable-http
@@ -824,7 +801,7 @@ servers:
     description: Read and post Teams channel and chat messages (via Composio)
     version: "0.1.0"
     icons:
-      - src: https://static.nimblebrain.ai/icons/teams.png
+      - src: https://static.nimblebrain.ai/logos/ms-teams/light.svg
         sizes: ["any"]
     remotes:
       - type: streamable-http
@@ -859,7 +836,7 @@ servers:
     description: Create, search, and update Jira issues (via Composio)
     version: "0.1.0"
     icons:
-      - src: https://static.nimblebrain.ai/icons/jira.png
+      - src: https://static.nimblebrain.ai/logos/jira/light.svg
         sizes: ["any"]
     remotes:
       - type: streamable-http

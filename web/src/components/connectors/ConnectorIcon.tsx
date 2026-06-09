@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { useThemeMode } from "../../context/ThemeContext";
+import { themedIconUrl } from "../../lib/icon-theme";
 
 /**
  * Connector identity icon. Used everywhere a connector is shown:
@@ -7,6 +9,10 @@ import { useState } from "react";
  * it's missing OR the URL fails to load we fall back to a
  * deterministic letter avatar so cards never have a hole on the left
  * edge.
+ *
+ * Brand icons on our static CDN ship light/dark variants; we swap to
+ * the one matching the active theme via `themedIconUrl`. Any other URL
+ * (mpak, legacy PNG, third-party) renders unchanged.
  *
  * The fallback's background tint is hashed from the connector's
  * display name. Same connector → same color across reloads. The
@@ -31,15 +37,21 @@ export function ConnectorIcon({
    *  appropriate primitive (img or fallback div). */
   className?: string;
 }) {
-  const [broken, setBroken] = useState(false);
-  const showImage = !!iconUrl && !broken;
+  const mode = useThemeMode();
+  const src = themedIconUrl(iconUrl, mode);
+  // Track the broken URL, not a boolean: when the theme flips we render a
+  // different variant (…/dark.svg), so a prior light-variant failure must not
+  // suppress the retry. Only fall back to the avatar once the *current* src
+  // has actually failed.
+  const [brokenSrc, setBrokenSrc] = useState<string | null>(null);
+  const showImage = !!src && brokenSrc !== src;
   if (showImage) {
     return (
       <img
-        src={iconUrl}
+        src={src}
         alt=""
         className={`shrink-0 ${className}`}
-        onError={() => setBroken(true)}
+        onError={() => setBrokenSrc(src)}
       />
     );
   }
