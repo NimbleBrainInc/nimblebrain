@@ -270,7 +270,8 @@ export type ConversationEventType =
   | "run.error"
   | "skills.loaded"
   | "context.assembled"
-  | "metadata.title";
+  | "metadata.title"
+  | "history.compacted";
 
 export interface UserMessageEvent {
   ts: string;
@@ -408,6 +409,26 @@ export interface ContextAssembledEvent {
   headroomTokens?: number;
 }
 
+/**
+ * Recorded when the runtime folds the oldest turns of a long conversation into
+ * a single summary to bound context growth. The event is appended after all the
+ * turns it summarizes; `compactedThroughTs` is the boundary — on replay, every
+ * event with `ts < compactedThroughTs` is represented by `summary`, and turns at
+ * or after it replay verbatim. Multiple compactions can accumulate; reconstruction
+ * honors only the most recent (its summary already subsumes the earlier ones).
+ * See `conversation/compaction.ts`.
+ */
+export interface HistoryCompactedEvent {
+  ts: string;
+  type: "history.compacted";
+  /** Natural-language summary of every turn before `compactedThroughTs`. */
+  summary: string;
+  /** Boundary: events strictly before this timestamp are summarized. */
+  compactedThroughTs: string;
+  /** How many reconstructed messages the summary replaced (telemetry). */
+  summarizedMessageCount: number;
+}
+
 /** Discriminated union of all conversation event types. */
 export type ConversationEvent =
   | UserMessageEvent
@@ -420,4 +441,5 @@ export type ConversationEvent =
   | RunErrorEvent
   | SkillsLoadedEvent
   | ContextAssembledEvent
-  | TitleChangeEvent;
+  | TitleChangeEvent
+  | HistoryCompactedEvent;
