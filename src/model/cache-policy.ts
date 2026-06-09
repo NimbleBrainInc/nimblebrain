@@ -40,7 +40,10 @@ import type {
  * Anthropic API (cache-write ↓ ~78% over 7 turns, widening with length).
  *
  * Four breakpoints, within Anthropic's budget of four:
- *   1. tools   — last tool definition (the frozen catalog, position 0)
+ *   1. tools   — last tool definition (the tools block, position 0). Stable
+ *               across most turns, but not frozen: tripped/promoted tools can
+ *               change the set mid-run, which busts this breakpoint (a cache
+ *               miss on tools + everything after — degraded, never incorrect).
  *   2. system  — the system prompt
  *   3. anchor  — last message of the previous step (= prior request's tail)
  *   4. tail    — the current last message (cached for the NEXT turn to read)

@@ -163,6 +163,44 @@ describe("applyCachePolicy — the chaining invariant (cache correctness)", () =
     }
   });
 
+  test("length-continuation (lone assistant append) still anchors on the prior tail", () => {
+    // The engine's length-continuation path (engine.ts) appends a SINGLE
+    // assistant message — its partial text — with no tool results, then
+    // re-calls. This is the one append pattern the tool-step builders above
+    // don't exercise, yet the whole savings story depends on it preserving the
+    // invariant: because exactly one assistant is appended, the message before
+    // the new last assistant is still precisely the prior call's tail. A
+    // regression here (e.g. appending two messages, or trailing non-assistant
+    // content) would silently slide the anchor off and bust the cache with no
+    // behavior change to notice it.
+    const history = [userMsg("go")];
+    appendStep(history, 0, 3); // one normal tool step to seed a real prefix
+
+    const anchorOf = (msgs: LanguageModelV3Message[]): number => {
+      const { prompt } = applyCachePolicy({
+        provider: "anthropic",
+        systemPrompt: "sys",
+        messages: msgs,
+        tools: TOOLS,
+      });
+      const body = prompt.slice(1); // drop system
+      const tailIdx = body.length - 1;
+      const cached = body.map((m, i) => (hasCache(m) ? i : -1)).filter((i) => i >= 0);
+      return cached.find((i) => i !== tailIdx) ?? -1;
+    };
+
+    // Two back-to-back continuations: each appends only a partial assistant.
+    for (let cont = 0; cont < 2; cont++) {
+      const prevTailContent = contentOnly(history[history.length - 1]!);
+      const prevTailIdx = history.length - 1;
+      history.push({ role: "assistant", content: [{ type: "text", text: `partial ${cont}` }] });
+
+      const anchorIdx = anchorOf([...history]);
+      expect(anchorIdx).toBe(prevTailIdx);
+      expect(contentOnly(history[anchorIdx]!)).toBe(prevTailContent);
+    }
+  });
+
   test("prefix-monotonicity: content up to the anchor is a stable prefix across turns", () => {
     const history = [userMsg("go")];
     let prevPrefix: string[] = [];
