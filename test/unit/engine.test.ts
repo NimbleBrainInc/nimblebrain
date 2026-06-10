@@ -2574,10 +2574,12 @@ describe("prompt caching", () => {
     const firstUser = capturedPrompt[1]!;
     expect((firstUser as Record<string, unknown>).providerOptions).toBeUndefined();
 
-    // Last user message has cache control
+    // Last user message (the rolling tail) carries cache control at the 5-minute
+    // TTL — the churning history is re-read within seconds, so the 1h premium
+    // would buy nothing there (the stable system+tools block keeps 1h).
     const lastUser = capturedPrompt[2]!;
     expect((lastUser as Record<string, unknown>).providerOptions).toEqual({
-      anthropic: { cacheControl: { type: "ephemeral", ttl: "1h" } },
+      anthropic: { cacheControl: { type: "ephemeral", ttl: "5m" } },
     });
   });
 

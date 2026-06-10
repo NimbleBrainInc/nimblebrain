@@ -146,7 +146,8 @@ describe("usage-aggregator", () => {
 
   it("computes cost correctly from model catalog", async () => {
     const dir = makeTmpDir();
-    // claude-sonnet-4-5-20250929: input=$3/M, output=$15/M, cacheRead=$0.30/M, cacheWrite=$3.75/M
+    // claude-sonnet-4-5-20250929: input=$3/M, output=$15/M, cacheRead=$0.30/M.
+    // Cache writes bill at the 1-hour TTL rate the engine uses: 2x input = $6/M.
     // AI SDK V3 contract: inputTokens is grand total = noCache + cacheRead + cacheWrite.
     // So 2_000_000 total = 500K noCache + 500K cacheRead + 1M cacheWrite.
     writeFileSync(
@@ -169,8 +170,8 @@ describe("usage-aggregator", () => {
     expect(cost.input).toBeCloseTo(1.5, 4);
     expect(cost.output).toBeCloseTo(15.0, 4);
     expect(cost.cacheRead).toBeCloseTo(0.15, 4);
-    expect(cost.cacheWrite).toBeCloseTo(3.75, 4);
-    expect(cost.total).toBeCloseTo(1.5 + 15.0 + 0.15 + 3.75, 4);
+    expect(cost.cacheWrite).toBeCloseTo(6.0, 4);
+    expect(cost.total).toBeCloseTo(1.5 + 15.0 + 0.15 + 6.0, 4);
 
     // Token breakdown: input is the non-cached portion, not the grand total.
     expect(report.totals.tokens.input).toBe(500_000);

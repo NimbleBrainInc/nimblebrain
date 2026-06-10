@@ -59,6 +59,12 @@ function hasCache(m: { providerOptions?: Record<string, unknown> } | undefined):
   return Boolean(anthropic?.cacheControl);
 }
 
+function ttlOf(m: { providerOptions?: Record<string, unknown> } | undefined): string | undefined {
+  const cc = (m?.providerOptions?.anthropic as { cacheControl?: { ttl?: string } } | undefined)
+    ?.cacheControl;
+  return cc?.ttl;
+}
+
 /** Indices into result.prompt (incl. the system message at 0) that carry a breakpoint. */
 function breakpointIdxs(prompt: LanguageModelV3Message[]): number[] {
   return prompt.map((m, i) => (hasCache(m) ? i : -1)).filter((i) => i >= 0);
@@ -100,6 +106,25 @@ describe("applyCachePolicy — Anthropic breakpoint placement", () => {
     expect(hasCache(prompt[0])).toBe(true);
     expect(hasCache(tools[tools.length - 1])).toBe(true);
     expect(hasCache(tools[0])).toBe(false); // only the last tool
+  });
+
+  test("TTL is tiered: 1h on the stable system+tools, 5m on the rolling history", () => {
+    const history = [userMsg("go")];
+    appendStep(history, 0, 4);
+    appendStep(history, 1, 4); // ≥2 steps so anchor and tail are distinct
+    const { prompt, tools } = applyCachePolicy({
+      provider: "anthropic",
+      systemPrompt: "sys",
+      messages: history,
+      tools: TOOLS,
+    });
+    // stable prefix → 1h
+    expect(ttlOf(prompt[0])).toBe("1h"); // system
+    expect(ttlOf(tools[tools.length - 1])).toBe("1h"); // tools block
+    // rolling history breakpoints → 5m
+    const cachedMsgs = prompt.slice(1).filter((m) => hasCache(m));
+    expect(cachedMsgs.length).toBeGreaterThanOrEqual(2); // anchor + tail
+    for (const m of cachedMsgs) expect(ttlOf(m)).toBe("5m");
   });
 
   test("tail breakpoint is on the last message", () => {

@@ -93,8 +93,9 @@ describe("estimateCost", () => {
       outputTokens: 0,
       cacheWriteTokens: 300,
     });
+    // Cache writes bill at the 1-hour TTL rate the engine uses: 2x base input.
     const expected =
-      (700 * model!.cost.input + 300 * model!.cost.cacheWrite!) / 1_000_000;
+      (700 * model!.cost.input + 300 * (model!.cost.input * 2)) / 1_000_000;
     expect(cost).toBeCloseTo(expected, 8);
   });
 
@@ -110,7 +111,7 @@ describe("estimateCost", () => {
     const expected =
       (500 * model!.cost.input +
         200 * model!.cost.cacheRead! +
-        300 * model!.cost.cacheWrite!) /
+        300 * (model!.cost.input * 2)) /
       1_000_000;
     expect(cost).toBeCloseTo(expected, 8);
   });
@@ -127,7 +128,7 @@ describe("estimateCost", () => {
     });
     // Non-cached portion = max(100 - 200 - 50, 0) = 0
     const expected =
-      (200 * model!.cost.cacheRead! + 50 * model!.cost.cacheWrite!) / 1_000_000;
+      (200 * model!.cost.cacheRead! + 50 * (model!.cost.input * 2)) / 1_000_000;
     expect(cost).toBeCloseTo(expected, 8);
   });
 
@@ -146,10 +147,30 @@ describe("estimateCost", () => {
       (22_000 * model!.cost.input +
         10_587 * model!.cost.output +
         524_000 * model!.cost.cacheRead! +
-        141_000 * model!.cost.cacheWrite!) /
+        141_000 * (model!.cost.input * 2)) /
       1_000_000;
     expect(cost).toBeCloseTo(expected, 8);
     // Sanity: pre-fix code would charge 687K at full input rate AND cache rates,
     // ~3x the correct figure for this shape. Post-fix should match Anthropic.
+  });
+
+  it("prices the TTL split: 1h writes at 2x base, the 5-minute remainder at the catalog rate", () => {
+    const model = getModelByString("anthropic:claude-sonnet-4-6");
+    // 1000 cache writes: 400 written 1h (stable system+tools), 600 written 5m
+    // (the rolling history) — the tiered shape the engine now produces.
+    const cost = estimateCost("anthropic:claude-sonnet-4-6", {
+      inputTokens: 1000,
+      outputTokens: 0,
+      cacheWriteTokens: 1000,
+      cacheWrite1hTokens: 400,
+    });
+    const expected =
+      (400 * (model!.cost.input * 2) + 600 * model!.cost.cacheWrite!) / 1_000_000;
+    expect(cost).toBeCloseTo(expected, 8);
+    // And it sits strictly between all-1h (2x) and all-5m (1.25x) pricing.
+    const allOneHour = (1000 * (model!.cost.input * 2)) / 1_000_000;
+    const allFiveMin = (1000 * model!.cost.cacheWrite!) / 1_000_000;
+    expect(cost).toBeLessThan(allOneHour);
+    expect(cost).toBeGreaterThan(allFiveMin);
   });
 });

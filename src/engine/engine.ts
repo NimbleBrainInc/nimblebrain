@@ -687,12 +687,24 @@ export class AgentEngine {
         // cacheWrite); we preserve that semantics on TokenUsage.inputTokens
         // and surface the cache subsets as siblings. Cost computation
         // subtracts the subsets from the totals — see src/usage/cost.ts.
+        // Anthropic reports the cache-write TTL split under
+        // `raw.cache_creation` (ephemeral_1h vs ephemeral_5m). We tier TTL by
+        // breakpoint (1h on system+tools, 5m on the rolling history — see
+        // model/cache-policy.ts), so capture the 1-hour portion for accurate
+        // costing. Absent for providers that don't report it.
+        const rawCreation = (
+          response.usage.raw as
+            | { cache_creation?: { ephemeral_1h_input_tokens?: number } }
+            | undefined
+        )?.cache_creation;
+        const cacheWrite1h = rawCreation?.ephemeral_1h_input_tokens;
         const turnUsage: TokenUsage = {
           inputTokens: response.usage.inputTokens.total ?? 0,
           outputTokens: response.usage.outputTokens.total ?? 0,
           cacheReadTokens: response.usage.inputTokens.cacheRead ?? 0,
           cacheWriteTokens: response.usage.inputTokens.cacheWrite ?? 0,
           reasoningTokens: response.usage.outputTokens.reasoning ?? 0,
+          ...(cacheWrite1h != null ? { cacheWrite1hTokens: cacheWrite1h } : {}),
         };
         addUsage(cumulativeUsage, turnUsage);
         cumulativeLlmMs += llmMs;

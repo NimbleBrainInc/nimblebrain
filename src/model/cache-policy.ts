@@ -50,15 +50,27 @@ import type {
  */
 
 /**
- * 1-hour ephemeral cache control. Agentic runs pause between turns (tool
- * execution, the user reading and replying) for longer than Anthropic's
- * default 5-minute TTL, which would let the prefix lapse and force a full
- * re-write. The 1-hour TTL keeps the prefix warm across those gaps. The 1-hour
- * write rate is higher than 5-minute, but it is paid once per write and is
- * dwarfed by the reads it unlocks across a long run.
+ * TTL is tiered by breakpoint stability, because the 1-hour write rate (2x base
+ * input) is a 60% premium over the 5-minute rate (1.25x) and only pays off when
+ * a cached segment is re-read after a >5-minute gap.
+ *
+ * - **1-hour** on the STABLE prefix (system + tools): written once per run and
+ *   expensive to rebuild, so it's worth keeping warm across a between-runs pause
+ *   (a user stepping away for minutes). One write per run — the premium is small.
+ * - **5-minute** on the ROLLING history (the step-anchor + tail): rewritten
+ *   every turn and always re-read seconds later within the same agentic loop, so
+ *   the 1-hour premium buys nothing there. After a >5-minute pause this portion
+ *   lapses and the history re-writes at the cheaper 5-minute rate, while the
+ *   system+tools prefix stays warm at 1-hour.
+ *
+ * Net: pay the premium only where it earns its keep. Costing is TTL-aware — the
+ * 1h/5m split is captured per call (see `usage/cost.ts`).
  */
 export const CACHE_CONTROL_1H: SharedV3ProviderOptions = {
   anthropic: { cacheControl: { type: "ephemeral", ttl: "1h" } },
+};
+export const CACHE_CONTROL_5M: SharedV3ProviderOptions = {
+  anthropic: { cacheControl: { type: "ephemeral", ttl: "5m" } },
 };
 
 export interface CachePolicyInput {
@@ -93,11 +105,14 @@ export interface CachePolicyResult {
  */
 export type CacheStrategy = (input: CachePolicyInput) => CachePolicyResult;
 
-/** Merge cache control onto a message's existing providerOptions. */
-function withCacheControl(message: LanguageModelV3Message): LanguageModelV3Message {
+/** Merge the given cache control onto a message's existing providerOptions. */
+function withCacheControl(
+  message: LanguageModelV3Message,
+  control: SharedV3ProviderOptions,
+): LanguageModelV3Message {
   return {
     ...message,
-    providerOptions: { ...message.providerOptions, ...CACHE_CONTROL_1H },
+    providerOptions: { ...message.providerOptions, ...control },
   } as LanguageModelV3Message;
 }
 
@@ -135,25 +150,30 @@ const passthroughStrategy: CacheStrategy = ({ systemPrompt, messages, tools }) =
 });
 
 /**
- * Anthropic strategy: place up to four explicit `cache_control` breakpoints —
- * tools (1), system (2), rolling step-anchor (3), tail (4). See the module
- * header for why the step-anchor is the load-bearing one.
+ * Anthropic strategy: place up to four explicit `cache_control` breakpoints,
+ * TTL-tiered by stability — tools (1, 1h) + system (2, 1h) on the stable
+ * prefix; rolling step-anchor (3, 5m) + tail (4, 5m) on the churning history.
+ * See the module header for the TTL rationale and why the step-anchor is the
+ * load-bearing breakpoint.
  */
 const anthropicStrategy: CacheStrategy = ({ systemPrompt, messages, tools }) => {
-  // (2) system breakpoint.
-  const cachedSystem = withCacheControl(systemMessageOf(systemPrompt));
+  // (2) system breakpoint — stable, 1-hour.
+  const cachedSystem = withCacheControl(systemMessageOf(systemPrompt), CACHE_CONTROL_1H);
 
-  // (3) rolling step-anchor + (4) tail. The two indices can coincide when the
-  // history is a single message; dedupe so we never double-annotate.
+  // (3) rolling step-anchor + (4) tail — churning, 5-minute. The two indices
+  // can coincide when the history is a single message; dedupe so we never
+  // double-annotate.
   const tailIdx = messages.length - 1;
   const anchorIdx = stepAnchorIndex(messages);
   const breakpointIdxs = new Set<number>();
   if (tailIdx >= 0) breakpointIdxs.add(tailIdx);
   if (anchorIdx >= 0 && anchorIdx !== tailIdx) breakpointIdxs.add(anchorIdx);
-  const cachedMessages = messages.map((m, i) => (breakpointIdxs.has(i) ? withCacheControl(m) : m));
+  const cachedMessages = messages.map((m, i) =>
+    breakpointIdxs.has(i) ? withCacheControl(m, CACHE_CONTROL_5M) : m,
+  );
 
   // (1) tools breakpoint on the last definition — caches the whole tools block
-  // (position 0 in Anthropic's tools→system→messages order).
+  // (position 0 in Anthropic's tools→system→messages order). Stable, 1-hour.
   const cachedTools =
     tools.length === 0
       ? tools
