@@ -47,12 +47,7 @@ export function ConnectorIcon({
   const showImage = !!src && brokenSrc !== src;
   if (showImage) {
     return (
-      <img
-        src={src}
-        alt=""
-        className={`shrink-0 ${className}`}
-        onError={() => setBrokenSrc(src)}
-      />
+      <img src={src} alt="" className={`shrink-0 ${className}`} onError={() => setBrokenSrc(src)} />
     );
   }
   const letter = (name.trim().charAt(0) || "?").toUpperCase();

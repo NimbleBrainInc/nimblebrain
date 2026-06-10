@@ -12,13 +12,9 @@
  * legacy flat `/icons/<name>.png`, or any third-party host. Those render as-is
  * and the caller's letter-avatar fallback covers anything that fails to load.
  */
-const NB_THEMED_ICON =
-  /^(https:\/\/static\.nimblebrain\.ai\/logos\/[^/?#]+\/)(?:light|dark)\.svg$/;
+const NB_THEMED_ICON = /^(https:\/\/static\.nimblebrain\.ai\/logos\/[^/?#]+\/)(?:light|dark)\.svg$/;
 
-export function themedIconUrl(
-  url: string | undefined,
-  mode: "light" | "dark",
-): string | undefined {
+export function themedIconUrl(url: string | undefined, mode: "light" | "dark"): string | undefined {
   if (!url) return url;
   const m = NB_THEMED_ICON.exec(url);
   if (!m) return url;
