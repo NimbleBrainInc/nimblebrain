@@ -80,6 +80,12 @@ export function UsageTotalsCards({ totals }: { totals: UsageReport["totals"] }) 
             <CostRow label="Output" value={formatTokens(tokens.output)} />
             <CostRow label="Cache read" value={formatTokens(tokens.cacheRead)} />
             <CostRow label="Cache write" value={formatTokens(tokens.cacheWrite)} />
+            <CostRow
+              label="Cache hit"
+              value={
+                totals.cacheHitRate != null ? `${Math.round(totals.cacheHitRate * 100)}%` : "—"
+              }
+            />
           </div>
         </CardContent>
       </Card>

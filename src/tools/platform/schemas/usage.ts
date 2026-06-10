@@ -73,6 +73,8 @@ export interface UsageModelEntry {
   tokens: UsageTokenBreakdown;
   cost: UsageCostBreakdown;
   llmCalls: number;
+  /** Input-side cache-hit rate (0–1). See `computeCacheHitRate` in the aggregator. */
+  cacheHitRate?: number;
 }
 
 export interface UsageBreakdownEntry {
@@ -81,6 +83,8 @@ export interface UsageBreakdownEntry {
   cost: UsageCostBreakdown;
   llmCalls: number;
   conversations: number;
+  /** Input-side cache-hit rate (0–1). See `computeCacheHitRate` in the aggregator. */
+  cacheHitRate?: number;
 }
 
 export interface UsageReportOutput {
@@ -93,6 +97,8 @@ export interface UsageReportOutput {
     llmCalls: number;
     llmMs: number;
     conversations: number;
+    /** Input-side cache-hit rate (0–1). See `computeCacheHitRate` in the aggregator. */
+    cacheHitRate?: number;
   };
   models: UsageModelEntry[];
   breakdown: UsageBreakdownEntry[];
