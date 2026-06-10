@@ -522,17 +522,36 @@ export class AgentEngine {
         const windowed = runTransform(0);
         // Sanitize: filter out empty text content blocks that the API rejects
         let callMessages = sanitizeMessages(windowed);
-        let callPrompt = config.hooks?.transformPrompt
+        const callPrompt = config.hooks?.transformPrompt
           ? config.hooks.transformPrompt(systemPrompt)
           : systemPrompt;
 
         // On the final allowed iteration, tell the model to wrap up instead of
-        // starting new tool calls that will never execute.
+        // starting new tool calls that will never execute. Deliver this as a
+        // TAIL message, not by appending to the system prompt: mutating the
+        // system block would bust its (1-hour) cache breakpoint — and the whole
+        // message prefix after it — on the final call of every run. As a tail
+        // message the reminder rides the volatile (5-minute) region and leaves
+        // the stable prefix byte-identical, so the final call still reads it
+        // from cache. Merge into a trailing user turn when present to avoid
+        // consecutive user messages; otherwise append a fresh one.
         if (iteration === maxIter - 1) {
-          callPrompt +=
-            "\n\n[IMPORTANT: This is your final step. Do NOT call any more tools. " +
-            "Summarize what you have accomplished so far and clearly list what " +
-            "remains unfinished so the user can continue in a follow-up message.]";
+          const finalStep =
+            "<system-reminder>This is your final step. Do NOT call any more tools. " +
+            "Summarize what you have accomplished so far and clearly list what remains " +
+            "unfinished so the user can continue in a follow-up message.</system-reminder>";
+          const last = callMessages[callMessages.length - 1];
+          if (last && last.role === "user" && Array.isArray(last.content)) {
+            callMessages = [
+              ...callMessages.slice(0, -1),
+              { ...last, content: [...last.content, { type: "text", text: finalStep }] },
+            ];
+          } else {
+            callMessages = [
+              ...callMessages,
+              { role: "user", content: [{ type: "text", text: finalStep }] },
+            ];
+          }
         }
 
         const callProviderOptions = buildThinkingProviderOptions(config.model, config.thinking);
