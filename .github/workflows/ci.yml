@@ -95,6 +95,8 @@ jobs:
       - name: Install dependencies
         run: bun install
       - name: Install mpak
+        # Intentionally @latest: smoke validates the live registry against the
+        # current mpak. Do NOT pin — a fixed version blinds the check it exists for.
         run: npm install -g @nimblebrain/mpak@latest
       - name: Smoke tests
         run: bun run smoke
