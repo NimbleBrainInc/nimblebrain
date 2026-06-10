@@ -1,13 +1,19 @@
 # check=skip=SecretsUsedInArgOrEnv
 # VITE_TURNSTILE_SITE_KEY is a public client-side key, not a secret.
-FROM node:24-alpine AS build
+#
+# Install with bun against the frozen bun.lock — NOT `npm install`. npm cannot
+# read bun.lock, so it re-resolves every dependency to the newest in-range
+# version on each build, leaving us exposed to upstream publish races (e.g. a
+# transitive dep pinned to a version not yet live on the registry). Bun honors
+# the lockfile and builds deterministically, matching the platform Dockerfile.
+FROM oven/bun:1-alpine AS build
 WORKDIR /app
 COPY package.json bun.lock ./
-RUN npm install
+RUN bun install --frozen-lockfile
 COPY . .
 ARG VITE_TURNSTILE_SITE_KEY=""
 ENV VITE_TURNSTILE_SITE_KEY=$VITE_TURNSTILE_SITE_KEY
-RUN npm run build
+RUN bun run build
 
 FROM caddy:2-alpine
 
