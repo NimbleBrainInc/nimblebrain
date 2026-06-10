@@ -121,6 +121,49 @@ describe("usage pipeline — cache writes + reasoning round-trip end-to-end", ()
     expect(llmUsage.cacheWriteTokens).toBe(141_000);
   });
 
+  test("extracts the 1-hour cache-write split from the provider raw usage", async () => {
+    // Anthropic reports the TTL split under `usage.raw.cache_creation`. This is
+    // the single seam tying the live API to TTL-aware costing — every other test
+    // feeds `cacheWrite1hTokens` directly, so without this nothing pins that the
+    // engine actually pulls `ephemeral_1h_input_tokens` off the raw usage. If the
+    // SDK shape or the field path drifts, the split silently stays absent and the
+    // (now mostly-5m) writes over-report at 2x — the inverse of the bug #406 fixes.
+    const model = modelWithUsage({
+      inputTokens: { total: 687_000, noCache: 22_000, cacheRead: 524_000, cacheWrite: 141_000 },
+      outputTokens: { total: 10_587, text: 10_587, reasoning: undefined },
+      raw: {
+        cache_creation: {
+          ephemeral_1h_input_tokens: 40_000, // system + tools, written 1h
+          ephemeral_5m_input_tokens: 101_000, // rolling history, written 5m
+        },
+      },
+    });
+
+    const events: EngineEvent[] = [];
+    const sink: EventSink = {
+      emit(e) {
+        events.push(e);
+      },
+    };
+    const engine = new AgentEngine(
+      model,
+      new StaticToolRouter([], () => ({ content: textContent(""), isError: false })),
+      sink,
+    );
+    const result = await engine.run(
+      config,
+      "",
+      [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+      [],
+    );
+
+    expect(result.usage.cacheWriteTokens).toBe(141_000);
+    expect(result.usage.cacheWrite1hTokens).toBe(40_000); // the 5m remainder is 101K
+    const llmDone = events.find((e) => e.type === "llm.done");
+    const usage = (llmDone!.data as Record<string, unknown>).usage as { cacheWrite1hTokens?: number };
+    expect(usage.cacheWrite1hTokens).toBe(40_000);
+  });
+
   test("estimateCost on the propagated usage charges cache writes correctly", async () => {
     const model = modelWithUsage({
       inputTokens: { total: 687_000, noCache: 22_000, cacheRead: 524_000, cacheWrite: 141_000 },
@@ -150,15 +193,17 @@ describe("usage pipeline — cache writes + reasoning round-trip end-to-end", ()
     // a rate change won't silently mask a regression — we'll detect it as
     // a hard-coded number drifting.
     // Per src/model/catalog-data.json (Anthropic Sonnet 4-6):
-    //   input $3/M, output $15/M, cacheRead $0.30/M, cacheWrite $3.75/M
+    //   input $3/M, output $15/M, cacheRead $0.30/M.
+    // Cache WRITES bill at the 1-hour TTL rate the engine uses: 2x base input
+    // = $6/M (NOT the catalog's 1.25x 5-minute `cacheWrite` of $3.75/M).
     const expected =
-      (22_000 * 3 + 10_587 * 15 + 524_000 * 0.3 + 141_000 * 3.75) / 1_000_000;
+      (22_000 * 3 + 10_587 * 15 + 524_000 * 0.3 + 141_000 * 6) / 1_000_000;
     expect(cost).toBeCloseTo(expected, 6);
 
-    // Sanity floor: pre-fix code would charge 687K at full input rate AND
-    // cache rates, ~3x the correct figure. Post-fix should be ~$0.85, far
-    // less than the pre-fix ~$2.49 ceiling.
-    expect(cost).toBeLessThan(1.0);
-    expect(cost).toBeGreaterThan(0.5);
+    // Sanity band: cache writes bill at the 1h rate (2x input), so the figure
+    // is ~$1.23 — well below the pre-fix double-counting bug's ~$2.49 ceiling,
+    // and above the (under-reported) 5-minute-rate figure of ~$0.91.
+    expect(cost).toBeLessThan(1.5);
+    expect(cost).toBeGreaterThan(1.0);
   });
 });

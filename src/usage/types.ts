@@ -22,6 +22,16 @@ export interface TokenUsage {
   cacheReadTokens?: number;
   cacheWriteTokens?: number;
   reasoningTokens?: number;
+  /**
+   * The portion of `cacheWriteTokens` written with a 1-HOUR TTL (billed at 2x
+   * base input vs 1.25x for the 5-minute remainder). The engine tiers TTL by
+   * breakpoint stability (1h on system+tools, 5m on the rolling history), so
+   * this distinguishes the two for accurate costing. Subset of
+   * `cacheWriteTokens`; the rest is the 5-minute portion. Absent on legacy
+   * events (pre-tiering, when all writes were 1h) — cost treats absent as
+   * all-1h so historical figures stay correct.
+   */
+  cacheWrite1hTokens?: number;
 }
 
 /** Zero-valued TokenUsage. Convenience for accumulators. */
@@ -32,6 +42,9 @@ export function emptyUsage(): TokenUsage {
     cacheReadTokens: 0,
     cacheWriteTokens: 0,
     reasoningTokens: 0,
+    // cacheWrite1hTokens is intentionally left undefined: it is tri-state, where
+    // absent means "no TTL split reported" (cost treats that as all-1h). Forcing
+    // it to 0 here would wrongly mark every accumulated write as 5-minute.
   };
 }
 
@@ -41,5 +54,19 @@ export function addUsage(target: TokenUsage, delta: TokenUsage): void {
   target.outputTokens += delta.outputTokens;
   target.cacheReadTokens = (target.cacheReadTokens ?? 0) + (delta.cacheReadTokens ?? 0);
   target.cacheWriteTokens = (target.cacheWriteTokens ?? 0) + (delta.cacheWriteTokens ?? 0);
+  // Preserve the tri-state: only materialize a number once some call actually
+  // reported a 1h split, so "no split reported" stays absent (→ cost assumes 1h)
+  // rather than collapsing to an explicit 0 (→ cost would assume all 5-minute).
+  //
+  // ASSUMES all deltas are same-era (same deploy): either all carry the split or
+  // none do. That holds within a run (every event is same-deploy) and is the
+  // only way addUsage is used today — the usage aggregator sums per-record
+  // *costs* (each priced correctly by costBreakdown), never raw usage across the
+  // boundary. Mixing a split-bearing delta with a legacy (no-split) one would
+  // mis-bucket the legacy writes as 5-minute; that cross-deploy aggregation is
+  // out of scope here (handled per-record at the cost boundary).
+  if (target.cacheWrite1hTokens != null || delta.cacheWrite1hTokens != null) {
+    target.cacheWrite1hTokens = (target.cacheWrite1hTokens ?? 0) + (delta.cacheWrite1hTokens ?? 0);
+  }
   target.reasoningTokens = (target.reasoningTokens ?? 0) + (delta.reasoningTokens ?? 0);
 }

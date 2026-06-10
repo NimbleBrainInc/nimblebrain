@@ -41,6 +41,18 @@ const ZERO_BREAKDOWN: CostBreakdownUsd = {
 };
 
 /**
+ * Anthropic cache-WRITE multipliers over base input, by TTL: a 5-minute write
+ * is 1.25x base, a 1-hour write is 2x. The engine tiers TTL by breakpoint
+ * stability (1h on system+tools, 5m on the rolling history — see
+ * `model/cache-policy.ts`), so writes must be costed per-bucket. Empirically
+ * confirmed against the live API (`cache_creation.ephemeral_{1h,5m}_input_tokens`).
+ * The catalog's `cacheWrite` field is the 5-minute rate (synced from upstream);
+ * we use it for the 5m bucket and derive the 1h rate as 2x base input.
+ */
+const ONE_HOUR_CACHE_WRITE_MULTIPLIER = 2;
+const FIVE_MIN_CACHE_WRITE_MULTIPLIER = 1.25;
+
+/**
  * Decompose token usage into per-bucket cost in USD. Returns all-zeros
  * for unknown models.
  *
@@ -80,7 +92,23 @@ export function costBreakdown(modelString: string, usage: TokenUsage): CostBreak
   const input = (inputNonCached * c.input) / 1_000_000;
   const output = (outputNonReasoning * c.output + reasoningCost) / 1_000_000;
   const cacheReadCost = (cacheRead * (c.cacheRead ?? c.input)) / 1_000_000;
-  const cacheWriteCost = (cacheWrite * (c.cacheWrite ?? c.input)) / 1_000_000;
+  // Cache writes are TTL-tiered. `cacheWrite1hTokens` is the 1-hour portion
+  // (2x base input); the remainder is the 5-minute portion (the catalog's
+  // `cacheWrite` rate, ~1.25x). When the split is absent — legacy events from
+  // before TTL tiering, when every write was 1-hour — treat the whole write as
+  // 1-hour so historical figures stay accurate. Reads are TTL-independent.
+  //
+  // The "absent → 2x" default is Anthropic-specific (the only provider the
+  // platform caches with, and the only one that reports cache-write tokens —
+  // OpenAI/Gemini caching is read-discount or out-of-band, so `cacheWrite` is 0
+  // there and this is a no-op). If a future provider reports cache writes with a
+  // different write multiplier, gate this default on the model's provider rather
+  // than assuming 2x.
+  const cacheWrite1h = usage.cacheWrite1hTokens ?? cacheWrite;
+  const cacheWrite5m = Math.max(cacheWrite - cacheWrite1h, 0);
+  const rate1h = c.input * ONE_HOUR_CACHE_WRITE_MULTIPLIER;
+  const rate5m = c.cacheWrite ?? c.input * FIVE_MIN_CACHE_WRITE_MULTIPLIER;
+  const cacheWriteCost = (cacheWrite1h * rate1h + cacheWrite5m * rate5m) / 1_000_000;
 
   return {
     input,
