@@ -53,6 +53,8 @@ export interface UsageTotals {
   llmCalls: number;
   llmMs: number;
   conversations: number;
+  /** Input-side cache-hit rate (0–1). See `computeCacheHitRate`. */
+  cacheHitRate?: number;
 }
 
 export interface ModelUsage {
@@ -60,6 +62,8 @@ export interface ModelUsage {
   tokens: TokenBreakdown;
   cost: CostBreakdown;
   llmCalls: number;
+  /** Input-side cache-hit rate (0–1). See `computeCacheHitRate`. */
+  cacheHitRate?: number;
 }
 
 export interface BreakdownEntry {
@@ -68,6 +72,27 @@ export interface BreakdownEntry {
   cost: CostBreakdown;
   llmCalls: number;
   conversations: number;
+  /** Input-side cache-hit rate (0–1). See `computeCacheHitRate`. */
+  cacheHitRate?: number;
+}
+
+/**
+ * Input-side cache-hit rate: the fraction of input tokens served from cache
+ * (cheap reads) rather than re-written or sent uncached —
+ * `cacheRead / (input + cacheRead + cacheWrite)`, 0 when there were no input
+ * tokens. A healthy long conversation trends high (the growing prefix is read
+ * back each turn); a thrashing one trends low (the prefix is re-written every
+ * turn). This is the standing signal the prompt-cache work keeps high — see
+ * `model/cache-policy.ts`. `input` here is the NON-cached portion (the
+ * aggregator's `tokens.input`), so the three terms sum to the input-side total.
+ */
+export function computeCacheHitRate(t: {
+  input: number;
+  cacheRead: number;
+  cacheWrite: number;
+}): number {
+  const denom = t.input + t.cacheRead + t.cacheWrite;
+  return denom > 0 ? t.cacheRead / denom : 0;
 }
 
 export interface UsageReport {
@@ -211,6 +236,7 @@ function finalizeBreakdown(
       cost: data.cost,
       llmCalls: data.llmCalls,
       conversations: data.sids.size,
+      cacheHitRate: computeCacheHitRate(data.tokens),
     }))
     .sort((a, b) => a.key.localeCompare(b.key));
 
@@ -416,8 +442,14 @@ export async function aggregateUsage(
   }
 
   totals.conversations = conversationIds.size;
+  totals.cacheHitRate = computeCacheHitRate(totals.tokens);
 
-  const models = [...modelMap.values()].sort((a, b) => b.cost.total - a.cost.total);
+  const models = [...modelMap.values()]
+    .map((m) => {
+      m.cacheHitRate = computeCacheHitRate(m.tokens);
+      return m;
+    })
+    .sort((a, b) => b.cost.total - a.cost.total);
   const breakdowns: Partial<Record<UsageGroupBy, BreakdownEntry[]>> = {};
   for (const [dimension, map] of breakdownMaps) {
     breakdowns[dimension] = finalizeBreakdown(map, dimension, period, range);
