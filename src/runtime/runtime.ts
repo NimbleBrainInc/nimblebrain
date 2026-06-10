@@ -3168,7 +3168,12 @@ export class Runtime {
       budget,
       now: new Date().toISOString(),
       onEvent: (event) => appendEvent(conversationId, event),
+      onError: (err) => console.error("[runtime] history compaction failed:", err),
     });
+    // No-op contract: the helper returns the SAME array reference when nothing
+    // was compacted (below threshold or best-effort failure). A future helper
+    // that returns a copy would defeat this — the wiring integration test pins
+    // that a below-threshold turn writes no history.compacted event.
     return compacted === history ? null : compacted;
   }
 

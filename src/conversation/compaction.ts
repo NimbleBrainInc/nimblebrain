@@ -275,7 +275,12 @@ export async function runCompaction(
 export async function compactConversationMessages(
   model: LanguageModelV3,
   messages: StoredMessage[],
-  opts: CompactionOptions & { now: string; onEvent: (event: HistoryCompactedEvent) => void },
+  opts: CompactionOptions & {
+    now: string;
+    onEvent: (event: HistoryCompactedEvent) => void;
+    /** Observe a best-effort failure (e.g. summarizer error) without throwing. */
+    onError?: (err: unknown) => void;
+  },
 ): Promise<StoredMessage[]> {
   try {
     const outcome = await runCompaction(model, messages, opts);
@@ -291,7 +296,11 @@ export async function compactConversationMessages(
       ...compactionSummaryMessages(outcome.summary, outcome.compactedThroughTs),
       ...messages.slice(outcome.summarizedMessageCount),
     ];
-  } catch {
+  } catch (err) {
+    // Best-effort: fall back to the full history, but surface the failure so an
+    // operator who enabled the flag can tell "never triggered" from "fails
+    // every turn" (the dogfood-validation blind spot).
+    opts.onError?.(err);
     return messages;
   }
 }

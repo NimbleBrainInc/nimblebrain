@@ -146,6 +146,12 @@ export function reconstructMessages(
 
     if (lastCompaction) {
       const boundary = lastCompaction.compactedThroughTs;
+      // Planning is index-based on the reconstructed array; replay is this
+      // timestamp filter. They agree as long as event timestamps are monotonic
+      // across the boundary. A same-millisecond collision on a pre-boundary
+      // event would keep one extra turn verbatim (it also appears in the
+      // summary) — a harmless over-keep, never data loss, and absorbed by
+      // ensureRoleAlternation below.
       const tail = events.filter((e) => e.type !== "history.compacted" && e.ts >= boundary);
       const messages = [
         ...compactionSummaryMessages(lastCompaction.summary, boundary),
