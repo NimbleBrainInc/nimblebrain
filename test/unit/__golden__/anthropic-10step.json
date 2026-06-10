@@ -1,0 +1,232 @@
+[
+  {
+    "step": 1,
+    "messages": 2,
+    "promptTokens": 80,
+    "system": {
+      "tokens": 55,
+      "hash": "95db03dc7816",
+      "ttl": "1h"
+    },
+    "tools": {
+      "count": 1,
+      "hash": "ae474cf4fef7",
+      "breakpointIdx": 0,
+      "breakpointTtl": "1h"
+    },
+    "anchorIdx": -1,
+    "tailIdx": 0,
+    "tailTtl": "5m",
+    "deltaTokensAfterAnchor": null
+  },
+  {
+    "step": 2,
+    "messages": 4,
+    "promptTokens": 153,
+    "system": {
+      "tokens": 55,
+      "hash": "95db03dc7816",
+      "ttl": "1h"
+    },
+    "tools": {
+      "count": 1,
+      "hash": "ae474cf4fef7",
+      "breakpointIdx": 0,
+      "breakpointTtl": "1h"
+    },
+    "anchorIdx": 0,
+    "tailIdx": 2,
+    "anchorTtl": "5m",
+    "tailTtl": "5m",
+    "deltaTokensAfterAnchor": 73
+  },
+  {
+    "step": 3,
+    "messages": 6,
+    "promptTokens": 226,
+    "system": {
+      "tokens": 55,
+      "hash": "95db03dc7816",
+      "ttl": "1h"
+    },
+    "tools": {
+      "count": 1,
+      "hash": "ae474cf4fef7",
+      "breakpointIdx": 0,
+      "breakpointTtl": "1h"
+    },
+    "anchorIdx": 2,
+    "tailIdx": 4,
+    "anchorTtl": "5m",
+    "tailTtl": "5m",
+    "deltaTokensAfterAnchor": 73
+  },
+  {
+    "step": 4,
+    "messages": 8,
+    "promptTokens": 299,
+    "system": {
+      "tokens": 55,
+      "hash": "95db03dc7816",
+      "ttl": "1h"
+    },
+    "tools": {
+      "count": 1,
+      "hash": "ae474cf4fef7",
+      "breakpointIdx": 0,
+      "breakpointTtl": "1h"
+    },
+    "anchorIdx": 4,
+    "tailIdx": 6,
+    "anchorTtl": "5m",
+    "tailTtl": "5m",
+    "deltaTokensAfterAnchor": 73
+  },
+  {
+    "step": 5,
+    "messages": 10,
+    "promptTokens": 372,
+    "system": {
+      "tokens": 55,
+      "hash": "95db03dc7816",
+      "ttl": "1h"
+    },
+    "tools": {
+      "count": 1,
+      "hash": "ae474cf4fef7",
+      "breakpointIdx": 0,
+      "breakpointTtl": "1h"
+    },
+    "anchorIdx": 6,
+    "tailIdx": 8,
+    "anchorTtl": "5m",
+    "tailTtl": "5m",
+    "deltaTokensAfterAnchor": 73
+  },
+  {
+    "step": 6,
+    "messages": 12,
+    "promptTokens": 445,
+    "system": {
+      "tokens": 55,
+      "hash": "95db03dc7816",
+      "ttl": "1h"
+    },
+    "tools": {
+      "count": 1,
+      "hash": "ae474cf4fef7",
+      "breakpointIdx": 0,
+      "breakpointTtl": "1h"
+    },
+    "anchorIdx": 8,
+    "tailIdx": 10,
+    "anchorTtl": "5m",
+    "tailTtl": "5m",
+    "deltaTokensAfterAnchor": 73
+  },
+  {
+    "step": 7,
+    "messages": 14,
+    "promptTokens": 518,
+    "system": {
+      "tokens": 55,
+      "hash": "95db03dc7816",
+      "ttl": "1h"
+    },
+    "tools": {
+      "count": 1,
+      "hash": "ae474cf4fef7",
+      "breakpointIdx": 0,
+      "breakpointTtl": "1h"
+    },
+    "anchorIdx": 10,
+    "tailIdx": 12,
+    "anchorTtl": "5m",
+    "tailTtl": "5m",
+    "deltaTokensAfterAnchor": 73
+  },
+  {
+    "step": 8,
+    "messages": 16,
+    "promptTokens": 591,
+    "system": {
+      "tokens": 55,
+      "hash": "95db03dc7816",
+      "ttl": "1h"
+    },
+    "tools": {
+      "count": 1,
+      "hash": "ae474cf4fef7",
+      "breakpointIdx": 0,
+      "breakpointTtl": "1h"
+    },
+    "anchorIdx": 12,
+    "tailIdx": 14,
+    "anchorTtl": "5m",
+    "tailTtl": "5m",
+    "deltaTokensAfterAnchor": 73
+  },
+  {
+    "step": 9,
+    "messages": 18,
+    "promptTokens": 664,
+    "system": {
+      "tokens": 55,
+      "hash": "95db03dc7816",
+      "ttl": "1h"
+    },
+    "tools": {
+      "count": 1,
+      "hash": "ae474cf4fef7",
+      "breakpointIdx": 0,
+      "breakpointTtl": "1h"
+    },
+    "anchorIdx": 14,
+    "tailIdx": 16,
+    "anchorTtl": "5m",
+    "tailTtl": "5m",
+    "deltaTokensAfterAnchor": 73
+  },
+  {
+    "step": 10,
+    "messages": 20,
+    "promptTokens": 737,
+    "system": {
+      "tokens": 55,
+      "hash": "95db03dc7816",
+      "ttl": "1h"
+    },
+    "tools": {
+      "count": 1,
+      "hash": "ae474cf4fef7",
+      "breakpointIdx": 0,
+      "breakpointTtl": "1h"
+    },
+    "anchorIdx": 16,
+    "tailIdx": 18,
+    "anchorTtl": "5m",
+    "tailTtl": "5m",
+    "deltaTokensAfterAnchor": 73
+  },
+  {
+    "step": 11,
+    "messages": 22,
+    "promptTokens": 810,
+    "system": {
+      "tokens": 55,
+      "hash": "95db03dc7816",
+      "ttl": "1h"
+    },
+    "tools": {
+      "count": 1,
+      "hash": "ae474cf4fef7",
+      "breakpointIdx": 0,
+      "breakpointTtl": "1h"
+    },
+    "anchorIdx": 18,
+    "tailIdx": 20,
+    "anchorTtl": "5m",
+    "tailTtl": "5m",
+    "deltaTokensAfterAnchor": 73
+  }
+]
