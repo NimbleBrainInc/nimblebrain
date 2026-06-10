@@ -37,6 +37,8 @@ export interface UsageModelEntry {
     tokens: UsageTokenBreakdown;
     cost: UsageCostBreakdown;
     llmCalls: number;
+    /** Input-side cache-hit rate (0–1). See `computeCacheHitRate` in the aggregator. */
+    cacheHitRate?: number;
 }
 export interface UsageBreakdownEntry {
     key: string;
@@ -44,6 +46,8 @@ export interface UsageBreakdownEntry {
     cost: UsageCostBreakdown;
     llmCalls: number;
     conversations: number;
+    /** Input-side cache-hit rate (0–1). See `computeCacheHitRate` in the aggregator. */
+    cacheHitRate?: number;
 }
 export interface UsageReportOutput {
     /** Echoes the resolved scope so consumers know whether this is a self or org view. */
@@ -58,6 +62,8 @@ export interface UsageReportOutput {
         llmCalls: number;
         llmMs: number;
         conversations: number;
+        /** Input-side cache-hit rate (0–1). See `computeCacheHitRate` in the aggregator. */
+        cacheHitRate?: number;
     };
     models: UsageModelEntry[];
     breakdown: UsageBreakdownEntry[];

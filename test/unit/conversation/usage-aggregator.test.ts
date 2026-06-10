@@ -2,7 +2,11 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { aggregateUsage, resolveDateRange } from "../../../src/conversation/usage-aggregator.ts";
+import {
+  aggregateUsage,
+  computeCacheHitRate,
+  resolveDateRange,
+} from "../../../src/conversation/usage-aggregator.ts";
 import { estimateCost } from "../../../src/usage/cost.ts";
 
 // ---------------------------------------------------------------------------
@@ -364,7 +368,7 @@ describe("usage-aggregator", () => {
     // models[] entry shape
     expect(report.models.length).toBeGreaterThan(0);
     const m = report.models[0]!;
-    expect(Object.keys(m).sort()).toEqual(["cost", "llmCalls", "model", "tokens"]);
+    expect(Object.keys(m).sort()).toEqual(["cacheHitRate", "cost", "llmCalls", "model", "tokens"]);
     expect(Object.keys(m.tokens).sort()).toEqual(["cacheRead", "cacheWrite", "input", "output"]);
     expect(Object.keys(m.cost).sort()).toEqual([
       "cacheRead",
@@ -377,7 +381,40 @@ describe("usage-aggregator", () => {
     // breakdown[] entry shape
     expect(report.breakdown.length).toBeGreaterThan(0);
     const b = report.breakdown[0]!;
-    expect(Object.keys(b).sort()).toEqual(["conversations", "cost", "key", "llmCalls", "tokens"]);
+    expect(Object.keys(b).sort()).toEqual([
+      "cacheHitRate",
+      "conversations",
+      "cost",
+      "key",
+      "llmCalls",
+      "tokens",
+    ]);
+  });
+
+  it("computes the input-side cache-hit rate on totals, models, and breakdown", async () => {
+    const dir = makeTmpDir();
+    // One call: 1000 input total = 700 cacheRead + 200 cacheWrite + 100 non-cached.
+    // hit rate = 700 / (100 + 700 + 200) = 0.7
+    writeFileSync(
+      join(dir, "hit.jsonl"),
+      buildJsonl({ id: "hit", updatedAt: "2026-04-10T10:00:00Z" }, [
+        llmEvent({
+          model: "claude-sonnet-4-5-20250929",
+          inputTokens: 1000,
+          outputTokens: 10,
+          cacheReadTokens: 700,
+          cacheWriteTokens: 200,
+        }),
+      ]),
+    );
+    const report = await aggregateUsage(dir, "all", "day");
+    expect(report.totals.cacheHitRate).toBeCloseTo(0.7, 6);
+    expect(report.models[0]!.cacheHitRate).toBeCloseTo(0.7, 6);
+    expect(report.breakdown[0]!.cacheHitRate).toBeCloseTo(0.7, 6);
+  });
+
+  it("computeCacheHitRate is 0 when there are no input tokens", () => {
+    expect(computeCacheHitRate({ input: 0, cacheRead: 0, cacheWrite: 0 })).toBe(0);
   });
 });
 
