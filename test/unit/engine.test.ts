@@ -1964,17 +1964,19 @@ describe("AgentEngine", () => {
     expect(result.iterations).toBe(MAX_ITERATIONS);
   });
 
-  it("injects wrap-up hint on the final iteration", async () => {
+  it("injects wrap-up hint on the final iteration as a tail message, leaving the system prompt stable", async () => {
     const systemPrompts: string[] = [];
+    const lastMessageText: string[] = [];
     let callCount = 0;
 
-    // Model that always returns tool calls, capturing the system prompt each time
+    // Model that always returns tool calls, capturing the system prompt + the
+    // last message's serialized content each call.
     const model = createMockModel((opts) => {
       callCount++;
-      // Capture the system prompt from the prompt array
-      const prompt = opts.prompt as Array<{ role: string; content: string }>;
+      const prompt = opts.prompt as Array<{ role: string; content: unknown }>;
       const system = prompt.find((m) => m.role === "system");
-      if (system) systemPrompts.push(system.content);
+      if (system) systemPrompts.push(system.content as string);
+      lastMessageText.push(JSON.stringify(prompt[prompt.length - 1]));
 
       return {
         content: [
@@ -1998,14 +2000,54 @@ describe("AgentEngine", () => {
       tools.schemas,
     );
 
-    // Should have 3 calls (maxIterations = 3)
     expect(systemPrompts).toHaveLength(3);
-    // First two iterations: no wrap-up hint
-    expect(systemPrompts[0]).not.toContain("final step");
-    expect(systemPrompts[1]).not.toContain("final step");
-    // Last iteration: wrap-up hint appended
-    expect(systemPrompts[2]).toContain("final step");
-    expect(systemPrompts[2]).toContain("Do NOT call any more tools");
+    // The system prompt is byte-stable across every iteration — the wrap-up hint
+    // must NOT mutate it (that would bust the system cache breakpoint on the
+    // final call of every run).
+    expect(systemPrompts[0]).toBe(systemPrompts[1]);
+    expect(systemPrompts[1]).toBe(systemPrompts[2]);
+    for (const sp of systemPrompts) expect(sp).not.toContain("final step");
+    // The hint rides the tail message on the final iteration only.
+    expect(lastMessageText[0]).not.toContain("final step");
+    expect(lastMessageText[1]).not.toContain("final step");
+    expect(lastMessageText[2]).toContain("final step");
+    expect(lastMessageText[2]).toContain("Do NOT call any more tools");
+  });
+
+  it("merges the final-step hint into a trailing user message on a single-iteration run", async () => {
+    // maxIterations: 1 → iteration 0 IS the final iteration, and the tail is the
+    // initial user prompt (a user message). This is the only path that exercises
+    // the merge branch (`...last.content` spread); it ships in delegated children
+    // and automations that cap iterations at 1.
+    let capturedPrompt: Array<{ role: string; content: unknown }> = [];
+    const model = createMockModel((opts) => {
+      capturedPrompt = opts.prompt as Array<{ role: string; content: unknown }>;
+      return { content: [{ type: "text", text: "done" }], inputTokens: 10, outputTokens: 5 };
+    });
+
+    const engine = makeEngine(model);
+    await engine.run(
+      { ...defaultConfig, maxIterations: 1 },
+      "You are helpful.",
+      [{ role: "user", content: [{ type: "text", text: "Go" }] }],
+      [],
+    );
+
+    // The hint MERGES into the existing user turn (two content blocks), rather
+    // than appending a second user message that would sit adjacent to the first.
+    const last = capturedPrompt[capturedPrompt.length - 1] as {
+      role: string;
+      content: Array<{ type: string; text?: string }>;
+    };
+    expect(last.role).toBe("user");
+    expect(last.content).toHaveLength(2);
+    expect(JSON.stringify(last.content)).toContain("Go");
+    expect(JSON.stringify(last.content)).toContain("final step");
+    // Exactly one user message — no second user turn appended.
+    expect(capturedPrompt.filter((m) => m.role === "user")).toHaveLength(1);
+    // System prompt untouched.
+    const system = capturedPrompt.find((m) => m.role === "system") as { content: string };
+    expect(system.content).not.toContain("final step");
   });
 
   it("catches tool execution errors and wraps them", async () => {
