@@ -111,6 +111,47 @@ describe("summarizeMessages + runCompaction", () => {
     await expect(summarizeMessages(fakeModel(""), conversation(2, 40))).rejects.toThrow();
   });
 
+  test("transcript names tool calls and results so the summary can preserve them", async () => {
+    // Regression: formatTranscript collapsed every non-text part to a bare
+    // `[tool-call]` / `[tool-result]` placeholder, so the summarizer could not
+    // honor its instruction to preserve "files/entities/tools touched".
+    let captured = "";
+    const capturing = {
+      doGenerate: async (opts: { prompt: Array<{ role: string; content: unknown }> }) => {
+        captured = JSON.stringify(opts.prompt.find((p) => p.role === "user")?.content ?? "");
+        return { content: [{ type: "text", text: "summary" }] };
+      },
+    } as unknown as LanguageModelV3;
+
+    const msgs = [
+      user("look up the weather", ts(0)),
+      {
+        role: "assistant",
+        content: [
+          { type: "tool-call", toolCallId: "tc1", toolName: "get_weather", input: { city: "Honolulu" } },
+        ],
+        timestamp: ts(1),
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "tc1",
+            toolName: "get_weather",
+            output: { type: "text", value: "72F and sunny" },
+          },
+        ],
+        timestamp: ts(2),
+      },
+    ] as StoredMessage[];
+
+    await summarizeMessages(capturing, msgs);
+    expect(captured).toContain("get_weather");
+    expect(captured).toContain("Honolulu");
+    expect(captured).toContain("72F and sunny");
+  });
+
   test("runCompaction returns null below threshold (model never called)", async () => {
     let called = false;
     const model = { doGenerate: async () => ((called = true), { content: [] }) } as unknown as LanguageModelV3;
@@ -249,5 +290,29 @@ describe("reconstructMessages — history.compacted", () => {
     ];
     const msgs = reconstructMessages(events);
     expect((msgs[0]!.content as { text?: string }[])[0]?.text).toBe("hi");
+  });
+
+  test("ignoreCompaction returns the full verbatim history (fork/UI projection)", () => {
+    // The truth projection: every turn replays and the summary seed is absent.
+    // This is what fork() and the web client must read — NOT the model view.
+    const events: ConversationEvent[] = [
+      { ts: ts(0), type: "user.message", content: [{ type: "text", text: "old turn 1" }] },
+      { ts: ts(2), type: "user.message", content: [{ type: "text", text: "old turn 2" }] },
+      { ts: ts(4), type: "user.message", content: [{ type: "text", text: "kept turn" }] },
+      {
+        ts: ts(9),
+        type: "history.compacted",
+        summary: "the user did two old things",
+        compactedThroughTs: ts(4),
+        summarizedMessageCount: 2,
+      },
+    ];
+    const msgs = reconstructMessages(events, { ignoreCompaction: true });
+    const allText = JSON.stringify(msgs);
+    expect(allText).toContain("old turn 1");
+    expect(allText).toContain("old turn 2");
+    expect(allText).toContain("kept turn");
+    expect(allText).not.toContain("<conversation-summary>");
+    expect(allText).not.toContain("the user did two old things");
   });
 });

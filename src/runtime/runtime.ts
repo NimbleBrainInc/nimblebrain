@@ -1547,10 +1547,6 @@ export class Runtime {
     // in. A `files://` URI persisted in any conversation resolves here against
     // the owner's single store — there is no per-workspace file silo to miss.
     const fileStore = this.getFileStore(ownerId);
-    let messages = await rehydrateUserResources(history, fileStore, {
-      model: resolvedModelString,
-      maxExtractedTextSize: this.getFilesConfig().maxExtractedTextSize,
-    });
 
     // Resolve maxOutputTokens FIRST — resolveThinking needs it to clamp the
     // thinking budget so visible-content headroom is always preserved.
@@ -1584,18 +1580,24 @@ export class Runtime {
     // once here instead of windowing — and busting the cache — every turn.
     // No-op unless `features.compaction` is on and the store is event-sourced;
     // best-effort, so a summarizer failure falls back to the full history.
+    //
+    // Plan/persist compaction on the RAW (un-rehydrated) history, then
+    // rehydrate the result exactly once — rehydration inlines file bytes,
+    // which the ts-keyed compaction estimate and summarizer transcript must
+    // not see. NOTE: because the trigger estimate runs pre-rehydration, large
+    // file extractions aren't counted toward the threshold, so compaction can
+    // under-fire relative to true prompt size; the overflow windowing path
+    // below still bounds the hard context limit.
     const compactedHistory = await this.maybeCompactHistory(
       store,
       conversation.id,
       history,
       messageBudget.budget,
     );
-    if (compactedHistory) {
-      messages = await rehydrateUserResources(compactedHistory, fileStore, {
-        model: resolvedModelString,
-        maxExtractedTextSize: this.getFilesConfig().maxExtractedTextSize,
-      });
-    }
+    const messages = await rehydrateUserResources(compactedHistory ?? history, fileStore, {
+      model: resolvedModelString,
+      maxExtractedTextSize: this.getFilesConfig().maxExtractedTextSize,
+    });
 
     // Per-request hooks: inherit `beforeToolCall` from the runtime-level
     // hooks; compose `transformContext` here so the windowing budget is
@@ -2027,15 +2029,12 @@ export class Runtime {
     }
     resolvedModelString = resolveModelString(resolvedModelString);
 
-    // Load the freshly-appended user message and rehydrate (no-op since
-    // there are no file refs — the rehydrate call is a pass-through for
-    // shape consistency with the engine's message contract).
+    // Load the freshly-appended user message. Rehydration happens once below,
+    // after compaction (no-op here since there are typically no file refs —
+    // the rehydrate call is a pass-through for shape consistency with the
+    // engine's message contract).
     const history = await store.history(conversation);
     const fileStore = this.getFileStore(ownerId);
-    let messages = await rehydrateUserResources(history, fileStore, {
-      model: resolvedModelString,
-      maxExtractedTextSize: this.getFilesConfig().maxExtractedTextSize,
-    });
 
     const resolvedMaxOutputTokens = resolveMaxOutputTokens({
       configValue: this.config.maxOutputTokens,
@@ -2068,18 +2067,24 @@ export class Runtime {
     // once here instead of windowing — and busting the cache — every turn.
     // No-op unless `features.compaction` is on and the store is event-sourced;
     // best-effort, so a summarizer failure falls back to the full history.
+    //
+    // Plan/persist compaction on the RAW (un-rehydrated) history, then
+    // rehydrate the result exactly once — rehydration inlines file bytes,
+    // which the ts-keyed compaction estimate and summarizer transcript must
+    // not see. NOTE: because the trigger estimate runs pre-rehydration, large
+    // file extractions aren't counted toward the threshold, so compaction can
+    // under-fire relative to true prompt size; the overflow windowing path
+    // below still bounds the hard context limit.
     const compactedHistory = await this.maybeCompactHistory(
       store,
       conversation.id,
       history,
       messageBudget.budget,
     );
-    if (compactedHistory) {
-      messages = await rehydrateUserResources(compactedHistory, fileStore, {
-        model: resolvedModelString,
-        maxExtractedTextSize: this.getFilesConfig().maxExtractedTextSize,
-      });
-    }
+    const messages = await rehydrateUserResources(compactedHistory ?? history, fileStore, {
+      model: resolvedModelString,
+      maxExtractedTextSize: this.getFilesConfig().maxExtractedTextSize,
+    });
 
     const maxHistoryMessages = this.config.maxHistoryMessages ?? DEFAULT_MAX_HISTORY_MESSAGES;
     const replayProvider = getProviderFromModel(resolvedModelString);

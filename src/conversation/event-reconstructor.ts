@@ -123,28 +123,42 @@ export interface UsageMetrics {
  *    - `llm.response` with text content → assistant message with text
  * 4. Per-run metrics accumulate into assistant message metadata.
  */
-export function reconstructMessages(events: readonly ConversationEvent[]): StoredMessage[] {
-  // Honor the most recent compaction: every event before its boundary is
-  // represented by the summary seed; turns at or after the boundary replay
-  // verbatim. The latest compaction's summary already subsumes any earlier one
-  // (it was produced from the prior summary plus the turns since), so only the
-  // last one matters.
-  let lastCompaction: HistoryCompactedEvent | undefined;
-  for (const e of events) {
-    if (e.type === "history.compacted") lastCompaction = e;
+export function reconstructMessages(
+  events: readonly ConversationEvent[],
+  opts?: { ignoreCompaction?: boolean },
+): StoredMessage[] {
+  // `ignoreCompaction` reconstructs the FULL verbatim history, replaying every
+  // turn and skipping the summary seed entirely. This is the conversation's
+  // truth — what the UI/export show and what a fork must copy — as opposed to
+  // the default (compacted) projection, which is a model-context optimization.
+  // Callers that feed the model want the compacted view; callers that copy or
+  // display the conversation want this one.
+  if (!opts?.ignoreCompaction) {
+    // Honor the most recent compaction: every event before its boundary is
+    // represented by the summary seed; turns at or after the boundary replay
+    // verbatim. The latest compaction's summary already subsumes any earlier
+    // one (it was produced from the prior summary plus the turns since), so
+    // only the last one matters.
+    let lastCompaction: HistoryCompactedEvent | undefined;
+    for (const e of events) {
+      if (e.type === "history.compacted") lastCompaction = e;
+    }
+
+    if (lastCompaction) {
+      const boundary = lastCompaction.compactedThroughTs;
+      const tail = events.filter((e) => e.type !== "history.compacted" && e.ts >= boundary);
+      const messages = [
+        ...compactionSummaryMessages(lastCompaction.summary, boundary),
+        ...buildMessagesFromEvents(tail),
+      ];
+      return ensureRoleAlternation(messages);
+    }
   }
 
-  if (lastCompaction) {
-    const boundary = lastCompaction.compactedThroughTs;
-    const tail = events.filter((e) => e.type !== "history.compacted" && e.ts >= boundary);
-    const messages = [
-      ...compactionSummaryMessages(lastCompaction.summary, boundary),
-      ...buildMessagesFromEvents(tail),
-    ];
-    return ensureRoleAlternation(messages);
-  }
-
-  const messages = buildMessagesFromEvents(events);
+  // No compaction (or ignored): replay all real turns. `history.compacted`
+  // events carry no message of their own, so dropping them is a no-op for the
+  // un-compacted log and the correct verbatim view when compaction is ignored.
+  const messages = buildMessagesFromEvents(events.filter((e) => e.type !== "history.compacted"));
   return ensureRoleAlternation(messages);
 }
 

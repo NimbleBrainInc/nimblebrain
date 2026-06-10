@@ -152,15 +152,59 @@ export function compactionSummaryMessages(summary: string, ts: string): StoredMe
   ];
 }
 
+// A tool-heavy thread carries most of its substance in tool calls and results,
+// not free text. The summarizer is told to preserve "files/entities/tools
+// touched", so the transcript must name them rather than collapse every
+// non-text part to a bare `[tool-call]` placeholder. Args/results are bounded —
+// the summary needs the shape of what happened, not full payloads.
+const TOOL_ARG_LIMIT = 200;
+const TOOL_RESULT_LIMIT = 400;
+
+type TranscriptPart = Exclude<StoredMessage["content"], string>[number];
+
+function truncate(s: string, max: number): string {
+  return s.length > max ? `${s.slice(0, max)}…` : s;
+}
+
+function safeStringify(value: unknown): string {
+  if (typeof value === "string") return value;
+  try {
+    return JSON.stringify(value) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function formatPart(p: TranscriptPart): string {
+  switch (p.type) {
+    case "text":
+      return typeof p.text === "string" ? p.text : "";
+    case "tool-call": {
+      const name = typeof p.toolName === "string" ? p.toolName : "tool";
+      const args = safeStringify(p.input);
+      return `[tool-call ${name}${args ? `(${truncate(args, TOOL_ARG_LIMIT)})` : ""}]`;
+    }
+    case "tool-result": {
+      const name = typeof p.toolName === "string" ? p.toolName : "";
+      // V3 tool-result output is `{ type, value }`; fall back to whole part.
+      const out = p.output;
+      const value =
+        out && typeof out === "object" && "value" in out
+          ? safeStringify((out as { value: unknown }).value)
+          : safeStringify(out);
+      return `[tool-result${name ? ` ${name}` : ""}: ${truncate(value, TOOL_RESULT_LIMIT)}]`;
+    }
+    case "resource_link":
+      return `[file: ${p.name ?? p.uri ?? ""}]`;
+    default:
+      return `[${p.type}]`;
+  }
+}
+
 function formatTranscript(messages: readonly StoredMessage[]): string {
   const lines: string[] = ["<conversation-transcript>"];
   for (const m of messages) {
-    const text =
-      typeof m.content === "string"
-        ? m.content
-        : m.content
-            .map((p) => ("text" in p && typeof p.text === "string" ? p.text : `[${p.type}]`))
-            .join(" ");
+    const text = typeof m.content === "string" ? m.content : m.content.map(formatPart).join(" ");
     lines.push(`<${m.role}>`, escapeClosingTags(text), `</${m.role}>`);
   }
   lines.push("</conversation-transcript>");
