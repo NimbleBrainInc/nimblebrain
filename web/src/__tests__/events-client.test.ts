@@ -1,13 +1,25 @@
 // ---------------------------------------------------------------------------
 // events-client.ts — workspace event stream singleton
 //
-// Mocks `./api/sse` so tests don't touch the network. The fake exposes
-// hooks to drive events / reconnects into the singleton and to count
-// real `connectEvents` invocations, which is the property the whole
-// refactor exists to enforce: N subscribers → 1 connection.
+// Injects a fake connector via `__internal__.setConnectorForTest` so tests
+// don't touch the network. The fake exposes hooks to drive events / reconnects
+// into the singleton and to count real `connectEvents` invocations, which is
+// the property the whole refactor exists to enforce: N subscribers → 1
+// connection.
+//
+// Why injection and not `mock.module("../api/sse")`: module mocks are
+// process-global and only intercept the singleton's static `connectEvents`
+// import if they register before events-client.ts is first evaluated. Another
+// file importing events-client first (e.g. via a hook) leaves the mock a
+// silent no-op — subscribe() then calls the real connector, connectCalls stays
+// 0, and every assertion here fails. That ordering tracks filesystem
+// enumeration order, so it flaked only on CI. Injecting on the one real module
+// instance the test imports is deterministic regardless of load order.
 // ---------------------------------------------------------------------------
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { setAuthLifecycleHandler, setAuthToken } from "../api/client";
+import { __internal__, closeEventsClient, onReconnect, subscribe } from "../api/events-client";
 import type { ConnectEventsOptions, EventConnection } from "../api/sse";
 
 let connectCalls = 0;
@@ -37,14 +49,6 @@ function fakeConnectEvents(options: ConnectEventsOptions): EventConnection {
   return conn;
 }
 
-mock.module("../api/sse", () => ({
-  connectEvents: fakeConnectEvents,
-}));
-
-// Import AFTER mocking so the singleton sees the fake.
-import { setAuthLifecycleHandler, setAuthToken } from "../api/client";
-import { __internal__, closeEventsClient, onReconnect, subscribe } from "../api/events-client";
-
 function resetCounters(): void {
   connectCalls = 0;
   closeCalls = 0;
@@ -57,10 +61,12 @@ beforeEach(() => {
   setAuthLifecycleHandler(null);
   setAuthToken("tok-initial");
   __internal__.resetForTest();
+  __internal__.setConnectorForTest(fakeConnectEvents);
 });
 
 afterEach(() => {
   __internal__.resetForTest();
+  __internal__.setConnectorForTest(null);
   setAuthLifecycleHandler(null);
   setAuthToken(null);
 });

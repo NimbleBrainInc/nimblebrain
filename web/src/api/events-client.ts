@@ -33,10 +33,22 @@
 
 import type { SseEventMap, SseEventType } from "../types";
 import { addAuthLifecycleHandler, getAuthToken } from "./client";
-import { connectEvents, type EventConnection } from "./sse";
+import { connectEvents, type ConnectEventsOptions, type EventConnection } from "./sse";
 
 type Handler<K extends SseEventType> = (data: SseEventMap[K]) => void;
 type ReconnectHandler = () => void;
+
+// The connector the singleton actually calls. Defaults to the real SSE
+// `connectEvents`; tests inject a fake via `__internal__.setConnectorForTest`.
+// This is a dependency-injection seam, NOT a `mock.module("./sse")`: module
+// mocking is process-global and only intercepts the static import if it
+// registers before this module is first evaluated, which is load-order
+// dependent across a multi-file suite (it silently no-ops when another file
+// imports events-client first — the source of a CI-only flake). Injecting on
+// the single real module instance the test imports removes that ordering
+// dependence entirely.
+type Connector = (options: ConnectEventsOptions) => EventConnection;
+let connectImpl: Connector = connectEvents;
 
 // biome-ignore lint/suspicious/noExplicitAny: subscriber set is keyed by event type; type-safety is enforced by `subscribe<K>` at the public boundary
 const eventHandlers = new Map<SseEventType, Set<Handler<any>>>();
@@ -54,7 +66,7 @@ function hasAnySubscribers(): boolean {
 
 function ensureOpen(): void {
   if (connection) return;
-  connection = connectEvents({
+  connection = connectImpl({
     token: getAuthToken() ?? undefined,
     onEvent: <K extends SseEventType>(type: K, data: SseEventMap[K]) => {
       const set = eventHandlers.get(type);
@@ -156,6 +168,15 @@ export const __internal__ = {
     let n = reconnectHandlers.size;
     for (const set of eventHandlers.values()) n += set.size;
     return n;
+  },
+  /**
+   * Inject the connector the singleton calls. Pass a fake to intercept SSE
+   * setup deterministically; pass `null` to restore the real `connectEvents`.
+   * Replaces `mock.module("./sse")` so the test never depends on module
+   * load order. Test-only.
+   */
+  setConnectorForTest(fn: Connector | null): void {
+    connectImpl = fn ?? connectEvents;
   },
   resetForTest(): void {
     closeEventsClient();

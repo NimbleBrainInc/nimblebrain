@@ -10,6 +10,7 @@ import type {
 } from "@ai-sdk/provider";
 import { log } from "../cli/log.ts";
 import { DEFAULT_MAX_DIRECT_TOOLS, MAX_ITERATIONS, MAX_LENGTH_CONTINUATIONS } from "../limits.ts";
+import { applyCachePolicy } from "../model/cache-policy.ts";
 import { getProviderFromModel, supportsEnabledThinking } from "../model/catalog.ts";
 import { normalizeForReplay } from "../model/inbound-fit.ts";
 import { callModel, type StreamResult } from "../model/stream.ts";
@@ -212,56 +213,6 @@ function sanitizeMessages(messages: LanguageModelV3Message[]): LanguageModelV3Me
       ? msg
       : ({ ...msg, content: filtered } as LanguageModelV3Message);
   });
-}
-
-// 1-hour cache TTL (vs Anthropic's 5-minute default). Agentic runs pause
-// between turns far longer than 5 minutes (a user steps away; an automation
-// waits on I/O), so a 5-minute prefix lapses constantly and the next turn
-// re-WRITES the whole cached prefix at the write rate. A 1-hour TTL keeps the
-// prefix alive across those gaps, converting full re-writes into cheap cache
-// reads. The 1-hour write rate is 2x base input vs 1.25x for 5-minute, but
-// that is paid once per write and is dwarfed by the reads it unlocks.
-const CACHE_CONTROL_EPHEMERAL = {
-  anthropic: { cacheControl: { type: "ephemeral", ttl: "1h" } },
-} as const;
-
-/**
- * Add an ephemeral cache breakpoint to the last user message in the
- * conversation. Combined with the breakpoint on the system message, this
- * lets Anthropic cache the stable prefix (system prompt + tools +
- * conversation history up to the last user turn) across agentic iterations.
- *
- * Anthropic allows up to 4 cache breakpoints per request. We use 2:
- *   1. The system prompt (set at the call site)
- *   2. The last user message (set here)
- */
-function addCacheBreakpoint(messages: LanguageModelV3Message[]): LanguageModelV3Message[] {
-  if (messages.length === 0) return messages;
-
-  // Find the last user message index
-  let lastUserIdx = -1;
-  for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i]!.role === "user") {
-      lastUserIdx = i;
-      break;
-    }
-  }
-
-  if (lastUserIdx === -1) return messages;
-
-  // Shallow-copy the array and replace the target message with a version
-  // that carries providerOptions for cache control.
-  const result = [...messages];
-  const target = result[lastUserIdx]!;
-  result[lastUserIdx] = {
-    ...target,
-    providerOptions: {
-      ...target.providerOptions,
-      ...CACHE_CONTROL_EPHEMERAL,
-    },
-  } as LanguageModelV3Message;
-
-  return result;
 }
 
 export class AgentEngine {
@@ -586,24 +537,29 @@ export class AgentEngine {
 
         const callProviderOptions = buildThinkingProviderOptions(config.model, config.thinking);
 
-        const callOnce = (msgs: LanguageModelV3Message[]) =>
-          withRetry(
+        const callProvider = getProviderFromModel(config.model);
+        const callOnce = (msgs: LanguageModelV3Message[]) => {
+          // Provider-scoped prompt-cache policy: places the rolling step-anchor
+          // + tail breakpoints (Anthropic) so the growing prefix is read back,
+          // not re-written, each iteration. See model/cache-policy.ts.
+          //
+          // Correctness assumes transformContext keeps the prefix append-only:
+          // the rolling anchor must stay byte-identical to the prior call's
+          // tail. If a future compaction hook rewrites pre-anchor messages,
+          // reads silently become misses (degraded, not incorrect).
+          const { prompt: cachedPrompt, tools: cachedTools } = applyCachePolicy({
+            provider: callProvider,
+            systemPrompt: callPrompt,
+            messages: msgs,
+            tools: modelTools,
+          });
+          return withRetry(
             () =>
               callModel(
                 this.model,
                 {
-                  prompt: [
-                    {
-                      role: "system",
-                      // Same ephemeral 1-hour cache control as the last-user
-                      // breakpoint — reuse the const so the TTL lives in one
-                      // place. See CACHE_CONTROL_EPHEMERAL.
-                      content: callPrompt,
-                      providerOptions: CACHE_CONTROL_EPHEMERAL,
-                    },
-                    ...addCacheBreakpoint(msgs),
-                  ],
-                  tools: modelTools,
+                  prompt: cachedPrompt,
+                  tools: cachedTools,
                   maxOutputTokens: config.maxOutputTokens,
                   // Forward the run-scoped signal into the model call. AI
                   // SDK V3 providers honor `abortSignal` by aborting the
@@ -631,6 +587,7 @@ export class AgentEngine {
             1000,
             config.signal,
           );
+        };
 
         const llmStart = performance.now();
         let response: StreamResult;
