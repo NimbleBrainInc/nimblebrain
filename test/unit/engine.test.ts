@@ -2014,6 +2014,42 @@ describe("AgentEngine", () => {
     expect(lastMessageText[2]).toContain("Do NOT call any more tools");
   });
 
+  it("merges the final-step hint into a trailing user message on a single-iteration run", async () => {
+    // maxIterations: 1 → iteration 0 IS the final iteration, and the tail is the
+    // initial user prompt (a user message). This is the only path that exercises
+    // the merge branch (`...last.content` spread); it ships in delegated children
+    // and automations that cap iterations at 1.
+    let capturedPrompt: Array<{ role: string; content: unknown }> = [];
+    const model = createMockModel((opts) => {
+      capturedPrompt = opts.prompt as Array<{ role: string; content: unknown }>;
+      return { content: [{ type: "text", text: "done" }], inputTokens: 10, outputTokens: 5 };
+    });
+
+    const engine = makeEngine(model);
+    await engine.run(
+      { ...defaultConfig, maxIterations: 1 },
+      "You are helpful.",
+      [{ role: "user", content: [{ type: "text", text: "Go" }] }],
+      [],
+    );
+
+    // The hint MERGES into the existing user turn (two content blocks), rather
+    // than appending a second user message that would sit adjacent to the first.
+    const last = capturedPrompt[capturedPrompt.length - 1] as {
+      role: string;
+      content: Array<{ type: string; text?: string }>;
+    };
+    expect(last.role).toBe("user");
+    expect(last.content).toHaveLength(2);
+    expect(JSON.stringify(last.content)).toContain("Go");
+    expect(JSON.stringify(last.content)).toContain("final step");
+    // Exactly one user message — no second user turn appended.
+    expect(capturedPrompt.filter((m) => m.role === "user")).toHaveLength(1);
+    // System prompt untouched.
+    const system = capturedPrompt.find((m) => m.role === "system") as { content: string };
+    expect(system.content).not.toContain("final step");
+  });
+
   it("catches tool execution errors and wraps them", async () => {
     let callCount = 0;
     const model = createMockModel(() => {
