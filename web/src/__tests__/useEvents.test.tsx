@@ -9,27 +9,43 @@
 //
 // Same shape as the other hook tests in this directory — bun:test +
 // react-dom/client + happy-dom (via web/test/setup.ts), no
-// @testing-library/react. We mock `../api/events-client` so the test
-// drives the dispatch directly instead of trying to fake the SSE.
+// @testing-library/react.
+//
+// We drive the REAL events-client singleton and inject a fake connector
+// via `__internal__.setConnectorForTest` — NOT `mock.module("../api/events-client")`.
+// A module mock here is process-global and persistent across the whole
+// `bun test` run; it merges over the real module, leaving `subscribe`
+// stubbed for any file that loads after this one. `events-client.test.ts`
+// then sees a no-op `subscribe` (connectCalls stays 0, every assertion
+// fails) whenever bun's filesystem enumeration happens to run this file
+// first — which it does on CI (Linux) but not locally (macOS). Injecting
+// on the single shared module instance is deterministic regardless of
+// load order and exercises the real hook → singleton → reconnect wiring.
 // ---------------------------------------------------------------------------
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { __internal__ } from "../api/events-client";
+import type { ConnectEventsOptions, EventConnection } from "../api/sse";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-let reconnectHandler: (() => void) | null = null;
-const subscribeMock = mock(() => () => {});
-const onReconnectMock = mock((handler: () => void) => {
-  reconnectHandler = handler;
-  return () => {
-    if (reconnectHandler === handler) reconnectHandler = null;
-  };
-});
+// The options the singleton handed to the connector on open. The
+// connector-level `onReconnect` is the singleton's internal fan-out to
+// every handler registered via `onReconnect(...)` — firing it is how we
+// simulate a post-watchdog re-establishment.
+let lastOptions: ConnectEventsOptions | null = null;
 
-mock.module("../api/events-client", () => ({
-  subscribe: subscribeMock,
-  onReconnect: onReconnectMock,
-}));
+class FakeConnection implements EventConnection {
+  closed = false;
+  close(): void {
+    this.closed = true;
+  }
+}
+
+function fakeConnectEvents(options: ConnectEventsOptions): EventConnection {
+  lastOptions = options;
+  return new FakeConnection();
+}
 
 const React = await import("react");
 const ReactDOMClient = await import("react-dom/client");
@@ -45,9 +61,9 @@ let container: HTMLDivElement;
 let root: ReturnType<typeof ReactDOMClient.createRoot>;
 
 beforeEach(() => {
-  reconnectHandler = null;
-  subscribeMock.mockClear();
-  onReconnectMock.mockClear();
+  lastOptions = null;
+  __internal__.resetForTest();
+  __internal__.setConnectorForTest(fakeConnectEvents);
   container = document.createElement("div");
   document.body.appendChild(container);
   root = ReactDOMClient.createRoot(container);
@@ -58,30 +74,41 @@ afterEach(() => {
     root.unmount();
   });
   container.remove();
+  __internal__.resetForTest();
+  __internal__.setConnectorForTest(null);
 });
 
 describe("useEvents", () => {
-  test("registers an onReconnect subscription against the singleton", () => {
+  test("subscribes through the shared singleton (one connection)", () => {
     const onReconnect = mock(() => {});
     act(() => {
       root.render(<Probe onReconnect={onReconnect} />);
     });
 
-    expect(onReconnectMock).toHaveBeenCalledTimes(1);
-    expect(reconnectHandler).not.toBeNull();
+    // The hook opened exactly one underlying connection and registered
+    // its subscriptions on the singleton: six event types + onReconnect.
+    expect(__internal__.hasConnection()).toBe(true);
+    expect(__internal__.subscriberCount()).toBe(7);
   });
 
-  test("singleton onReconnect fires the consumer's onReconnect callback", () => {
+  test("singleton reconnect fires the consumer's onReconnect, and unmount unregisters it", () => {
     const onReconnect = mock(() => {});
     act(() => {
       root.render(<Probe onReconnect={onReconnect} />);
     });
-    expect(reconnectHandler).not.toBeNull();
+    // biome-ignore lint/style/noNonNullAssertion: ensureOpen ran on first subscribe()
+    expect(lastOptions!.onReconnect).toBeDefined();
 
     // Simulate the singleton firing reconnect (as it does after a
     // successful re-establishment post-watchdog / visibility resume).
-    reconnectHandler?.();
+    lastOptions?.onReconnect?.();
+    expect(onReconnect).toHaveBeenCalledTimes(1);
 
+    // Unmount removes the subscription — a later reconnect is a no-op.
+    act(() => {
+      root.unmount();
+    });
+    lastOptions?.onReconnect?.();
     expect(onReconnect).toHaveBeenCalledTimes(1);
   });
 });
