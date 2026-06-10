@@ -300,24 +300,36 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
   }
 
   async history(conversation: Conversation, limit?: number): Promise<StoredMessage[]> {
-    const path = this.path(conversation.id);
+    const messages = await this.readMessages(conversation.id);
+    return limit ? messages.slice(-limit) : messages;
+  }
+
+  /**
+   * Read and reconstruct a conversation's messages from disk.
+   *
+   * `ignoreCompaction` selects the projection: the default (false) returns the
+   * compacted view (summary seed + recent tail) that feeds the model;
+   * `ignoreCompaction: true` returns the FULL verbatim history — the
+   * conversation's truth, matching what the UI/export render. Use the verbatim
+   * view anywhere the conversation is copied or shown to the user (e.g.
+   * `fork`), never for the model context.
+   */
+  private async readMessages(
+    conversationId: string,
+    opts?: { ignoreCompaction?: boolean },
+  ): Promise<StoredMessage[]> {
+    const path = this.path(conversationId);
     if (!existsSync(path)) return [];
 
     const content = await readFile(path, "utf-8");
     const lines = content.split("\n").filter(Boolean);
     if (lines.length < 2) return [];
 
-    const isEventFormat = this.detectFormat(lines);
-
-    let messages: StoredMessage[];
-    if (isEventFormat) {
+    if (this.detectFormat(lines)) {
       const events = safeParseLines<ConversationEvent>(lines.slice(1));
-      messages = reconstructMessages(events);
-    } else {
-      messages = safeParseLines<StoredMessage>(lines.slice(1));
+      return reconstructMessages(events, opts);
     }
-
-    return limit ? messages.slice(-limit) : messages;
+    return safeParseLines<StoredMessage>(lines.slice(1));
   }
 
   async list(
@@ -370,7 +382,14 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
     if (!source) return null;
     if (access && source.ownerId !== access.userId) return null;
 
-    const allMessages = await this.history(source);
+    // Fork from the VERBATIM history, not the compacted projection. A fork is
+    // a faithful copy of the conversation as the user sees it; reading the
+    // compacted view here would bake the `<conversation-summary>` seed in as
+    // real events and permanently drop the pre-boundary turns the UI still
+    // shows. `atMessage` is an index into that same full-history view (the web
+    // client's projection), so slicing the compacted array would also cut at
+    // the wrong logical point.
+    const allMessages = await this.readMessages(source.id, { ignoreCompaction: true });
     const messagesToCopy = atMessage !== undefined ? allMessages.slice(0, atMessage) : allMessages;
 
     const newConv = await this.create({

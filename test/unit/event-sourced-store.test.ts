@@ -528,4 +528,75 @@ describe("EventSourcedConversationStore", () => {
     expect(forkedAssistantCount).toBe(sourceAssistantCount);
     expect(forkedAssistantCount).toBeGreaterThan(0);
   });
+
+  it("fork() copies the verbatim history, not the compacted projection", async () => {
+    // Regression: fork() routed through history() → the COMPACTED projection.
+    // Forking a compacted conversation baked the `<conversation-summary>` seed
+    // in as real events and permanently dropped the pre-boundary turns the UI
+    // still shows. fork() must read the full verbatim history (ignore
+    // compaction) so a fork copies the real turns the user sees.
+    const T = (n: number) => new Date(Date.UTC(2026, 0, 1, 0, 0, n)).toISOString();
+    const conv = await store.create({ ownerId: "user_test" });
+
+    const log: ConversationEvent[] = [
+      { ts: T(1), type: "user.message", content: [{ type: "text", text: "FIRST QUESTION" }] },
+      { ts: T(2), type: "run.start", runId: "r1", model: "test-model" },
+      {
+        ts: T(3),
+        type: "llm.response",
+        runId: "r1",
+        model: "test-model",
+        content: [{ type: "text", text: "FIRST REPLY" }],
+        usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0 },
+        llmMs: 1,
+      },
+      { ts: T(4), type: "run.done", runId: "r1", stopReason: "complete", totalMs: 1 },
+      { ts: T(5), type: "user.message", content: [{ type: "text", text: "SECOND QUESTION" }] },
+      { ts: T(6), type: "run.start", runId: "r2", model: "test-model" },
+      {
+        ts: T(7),
+        type: "llm.response",
+        runId: "r2",
+        model: "test-model",
+        content: [{ type: "text", text: "SECOND REPLY" }],
+        usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0 },
+        llmMs: 1,
+      },
+      { ts: T(8), type: "run.done", runId: "r2", stopReason: "complete", totalMs: 1 },
+      {
+        ts: T(9),
+        type: "history.compacted",
+        summary: "SUMMARY OF FIRST TURN",
+        compactedThroughTs: T(5),
+        summarizedMessageCount: 2,
+      },
+    ];
+    for (const e of log) store.appendEvent(conv.id, e as ConversationEvent);
+
+    const flatten = (ms: StoredMessage[]) =>
+      ms
+        .map((m) =>
+          typeof m.content === "string"
+            ? m.content
+            : m.content
+                .map((p) => ("text" in p && typeof p.text === "string" ? p.text : ""))
+                .join(" "),
+        )
+        .join(" | ");
+
+    // Sanity: the model-facing projection IS compacted (first turn summarized).
+    const modelText = flatten(await store.history(conv));
+    expect(modelText).toContain("SUMMARY OF FIRST TURN");
+    expect(modelText).not.toContain("FIRST REPLY");
+
+    // The fork preserves every verbatim turn and carries no summary seed.
+    const forked = await store.fork(conv.id);
+    expect(forked).not.toBeNull();
+    const forkedText = flatten(await store.history(forked!));
+    expect(forkedText).toContain("FIRST QUESTION");
+    expect(forkedText).toContain("FIRST REPLY");
+    expect(forkedText).toContain("SECOND QUESTION");
+    expect(forkedText).toContain("SECOND REPLY");
+    expect(forkedText).not.toContain("SUMMARY OF FIRST TURN");
+  });
 });
