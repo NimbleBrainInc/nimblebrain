@@ -143,22 +143,31 @@ function buildRequest(automation: Automation, ctx?: ExecutorContext): TaskFnRequ
  * Per-tool-call failure reasons that mean a connector the run NEEDED was not
  * usable — so a `complete` stop is not an honest success:
  *
- *   - `unknown_tool_source`     → the tool's source isn't registered in the
- *                                 workspace the run can see — i.e. the app isn't
- *                                 installed there (`route.ts`: `getSource()`
- *                                 returned nothing). This is the standup case:
- *                                 the agent searched, found no Teams connector
- *                                 in any reachable workspace, and "completed" by
- *                                 writing around it. (Orchestrator reason; see
- *                                 `src/orchestrator/error-mapping.ts`.)
- *   - `workspace_access_denied` → the tool lives in a workspace the run's owner
- *                                 isn't a member of (e.g. another user's personal
- *                                 workspace) — unreachable by design. (Orchestrator
- *                                 reason.)
+ *   - `unknown_tool_source`     → the run ATTEMPTED a namespaced tool call but
+ *                                 the tool's source isn't registered in that
+ *                                 workspace — the app isn't installed there
+ *                                 (`route.ts`: `getSource()` returned nothing).
+ *                                 (Orchestrator reason; see `error-mapping.ts`.)
+ *   - `workspace_access_denied` → the run ATTEMPTED a call into a workspace its
+ *                                 owner isn't a member of (e.g. another user's
+ *                                 personal workspace) — unreachable by design.
+ *                                 (Orchestrator reason.)
  *
- * These are the only two reasons any code emits as a tool-result
- * `structuredContent.reason` today (the orchestrator's `error-mapping.ts`), so
- * the set stays grounded in values that are actually produced and tested.
+ * KEY LIMITATION — both reasons require the agent to have ATTEMPTED the call.
+ * A required connector that never appears in the agent's toolset (so it never
+ * tries) produces no reason and is NOT de-masked. The production standup
+ * incident was actually this never-attempted variant: the agent ran `nb__search`,
+ * found no Teams connector in any reachable workspace, and "completed" by
+ * documenting the gap — never calling a Teams tool. So this fix de-masks the
+ * attempted-call class (a strict improvement, zero false positives); the
+ * never-attempted class needs a different signal (the agent self-reporting an
+ * incomplete required step) and is tracked separately.
+ *
+ * These are the only two *connector-unreachable* reasons. The orchestrator
+ * (`error-mapping.ts`) emits FIVE reasons in all; the other three are agent /
+ * typo errors, not connector gaps, and are excluded below — the taxonomy is NOT
+ * closed at two. Both reasons here are really produced and tested, so the set
+ * stays grounded in values that actually occur.
  *
  * Deliberately narrower than the full reason taxonomy. Excluded on purpose:
  *   - `invalid_tool_name` / `unknown_identity_source` — usually the agent probing
