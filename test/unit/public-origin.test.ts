@@ -102,6 +102,11 @@ describe("publicOrigin — fail-closed assertions", () => {
     expect(publicOrigin()).toBe("http://localhost:27247");
   });
 
+  it("allows http://[::1] (IPv6 loopback) for local dev", () => {
+    process.env.NB_PUBLIC_ORIGIN = "http://[::1]:27247";
+    expect(publicOrigin()).toBe("http://[::1]:27247");
+  });
+
   it("normalizes away a trailing slash", () => {
     process.env.NB_PUBLIC_ORIGIN = "https://brain.acme.com/";
     expect(publicOrigin()).toBe("https://brain.acme.com");
@@ -125,5 +130,35 @@ describe("canonicalOrigins", () => {
   it("dedupes when there is no custom domain", () => {
     process.env.NB_PLATFORM_HOST = "tenant-c.platform.nimblebrain.ai";
     expect(canonicalOrigins()).toEqual(["https://tenant-c.platform.nimblebrain.ai"]);
+  });
+});
+
+describe("NB_CUSTOM_DOMAIN_CANONICAL parsing — the rollout safety pin", () => {
+  it("pins non-canonical case-insensitively (False / FALSE)", () => {
+    process.env.NB_PLATFORM_HOST = "tenant-b.platform.nimblebrain.ai";
+    process.env.NB_CUSTOM_DOMAIN = "brain.tenant-b.com";
+    for (const v of ["false", "False", "FALSE", "  false  "]) {
+      process.env.NB_CUSTOM_DOMAIN_CANONICAL = v;
+      expect(publicOrigin()).toBe("https://tenant-b.platform.nimblebrain.ai");
+    }
+  });
+
+  it("stays canonical for true (case-insensitive) and when unset", () => {
+    process.env.NB_PLATFORM_HOST = "acme.platform.nimblebrain.ai";
+    process.env.NB_CUSTOM_DOMAIN = "brain.acme.com";
+    for (const v of ["true", "TRUE", undefined]) {
+      if (v === undefined) delete process.env.NB_CUSTOM_DOMAIN_CANONICAL;
+      else process.env.NB_CUSTOM_DOMAIN_CANONICAL = v;
+      expect(publicOrigin()).toBe("https://brain.acme.com");
+    }
+  });
+
+  it("fails closed on an unrecognized value (typo can't silently flip the pin)", () => {
+    process.env.NB_PLATFORM_HOST = "tenant-b.platform.nimblebrain.ai";
+    process.env.NB_CUSTOM_DOMAIN = "brain.tenant-b.com";
+    for (const v of ["no", "0", "off", "nope"]) {
+      process.env.NB_CUSTOM_DOMAIN_CANONICAL = v;
+      expect(() => publicOrigin()).toThrow(/must be "true" or "false"/);
+    }
   });
 });

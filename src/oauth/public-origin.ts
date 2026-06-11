@@ -116,6 +116,24 @@ export function webOrigin(): string {
   return publicOrigin();
 }
 
+/**
+ * Parse `NB_CUSTOM_DOMAIN_CANONICAL`. Defaults to `true` (canonical) when unset.
+ * Case-insensitive `true`/`false`; **anything else throws** rather than silently
+ * defaulting to canonical — this flag is the rollout safety pin (an unverified
+ * tenant set to `false` must stay on its subdomain), so a chart/operator typo
+ * (`"False"`, `"0"`, `"no"`) must fail closed at boot, not silently flip the
+ * tenant to its custom domain.
+ */
+function parseCanonicalFlag(raw: string | undefined): boolean {
+  if (raw === undefined) return true;
+  const v = raw.trim().toLowerCase();
+  if (v === "true") return true;
+  if (v === "false") return false;
+  throw new Error(
+    `[public-origin] ${CUSTOM_DOMAIN_CANONICAL_ENV} must be "true" or "false", got "${raw}"`,
+  );
+}
+
 function computePublicOrigin(): string {
   // 1. Explicit override — trusted as given, only shape-validated.
   const override = process.env[PUBLIC_ORIGIN_ENV]?.trim();
@@ -124,7 +142,7 @@ function computePublicOrigin(): string {
   // 2. Derived from the chart-forwarded facts. Custom domain wins when canonical.
   const platformHost = process.env[PLATFORM_HOST_ENV]?.trim();
   const customDomain = process.env[CUSTOM_DOMAIN_ENV]?.trim();
-  const canonical = (process.env[CUSTOM_DOMAIN_CANONICAL_ENV] ?? "true").trim() !== "false";
+  const canonical = parseCanonicalFlag(process.env[CUSTOM_DOMAIN_CANONICAL_ENV]);
 
   const derivedHost = customDomain && canonical ? customDomain : platformHost;
   if (derivedHost) return assertOrigin(`https://${derivedHost}`, "derived");
@@ -151,7 +169,8 @@ function assertOrigin(value: string, source: string): string {
     throw new Error(`[public-origin] ${source} is not a valid URL: "${value}"`);
   }
 
-  const isLocalhost = url.hostname === "localhost" || url.hostname === "127.0.0.1";
+  const isLocalhost =
+    url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]";
   if (url.protocol !== "https:" && !(isLocalhost && url.protocol === "http:")) {
     throw new Error(
       `[public-origin] ${source} must be https (or http://localhost in dev): "${value}"`,
