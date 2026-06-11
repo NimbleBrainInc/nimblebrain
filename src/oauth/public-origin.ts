@@ -156,10 +156,29 @@ function computePublicOrigin(): string {
 }
 
 /**
+ * Loopback hostnames where `http` (not just `https`) is acceptable, for local
+ * dev. URL parsing brackets IPv6, so `new URL("http://[::1]").hostname` is
+ * `"[::1]"` — match that literal form.
+ */
+const LOOPBACK_HOSTNAMES = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+/**
+ * Whether a parsed URL's scheme is acceptable for an outward-facing origin or
+ * redirect URI: `https` anywhere, or `http` on a loopback host (dev). The single
+ * owner of the scheme/loopback rule — `assertOrigin` (bare origins here) and
+ * `resolveWorkosRedirectUri` (full callback URLs, in the WorkOS provider) both
+ * call this so the rule can't drift between them.
+ */
+export function isAllowedOriginScheme(url: URL): boolean {
+  if (url.protocol === "https:") return true;
+  return url.protocol === "http:" && LOOPBACK_HOSTNAMES.has(url.hostname);
+}
+
+/**
  * Validate that `value` is a bare origin (scheme + host only) and return it
- * normalized without a trailing slash. `https` is required except for a
- * `localhost` host, which may be `http` for local dev. Throws on anything
- * malformed so the misconfig surfaces at startup, not at first OAuth click.
+ * normalized without a trailing slash. `https` is required except for a loopback
+ * host, which may be `http` for local dev. Throws on anything malformed so the
+ * misconfig surfaces at startup, not at first OAuth click.
  */
 function assertOrigin(value: string, source: string): string {
   let url: URL;
@@ -169,11 +188,9 @@ function assertOrigin(value: string, source: string): string {
     throw new Error(`[public-origin] ${source} is not a valid URL: "${value}"`);
   }
 
-  const isLocalhost =
-    url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]";
-  if (url.protocol !== "https:" && !(isLocalhost && url.protocol === "http:")) {
+  if (!isAllowedOriginScheme(url)) {
     throw new Error(
-      `[public-origin] ${source} must be https (or http://localhost in dev): "${value}"`,
+      `[public-origin] ${source} must be https (or http on a loopback host in dev): "${value}"`,
     );
   }
   // A path of only slashes (`/`, `//`) is sloppy-but-harmless trailing-slash

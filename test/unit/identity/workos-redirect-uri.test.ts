@@ -93,4 +93,16 @@ describe("WorkosIdentityProvider redirectUri derivation", () => {
       makeProvider({ adapter: "workos", clientId: "client_test", redirectUri: "not a url" }),
     ).toThrow(/not a valid URL/);
   });
+
+  it("accepts an http loopback override — shares the scheme rule with assertOrigin (incl. [::1])", () => {
+    // Drift guard: the scheme/loopback predicate is owned by public-origin.ts, so
+    // adding IPv6 loopback there also applies here. Would have thrown before.
+    expect(() =>
+      makeProvider({
+        adapter: "workos",
+        clientId: "client_test",
+        redirectUri: "http://[::1]:27247/v1/auth/callback",
+      }),
+    ).not.toThrow();
+  });
 });

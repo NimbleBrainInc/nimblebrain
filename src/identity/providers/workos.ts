@@ -1,5 +1,5 @@
 import { GeneratePortalLinkIntent, WorkOS } from "@workos-inc/node";
-import { publicOrigin } from "../../oauth/public-origin.ts";
+import { isAllowedOriginScheme, publicOrigin } from "../../oauth/public-origin.ts";
 import { ensureUserWorkspace } from "../../workspace/provisioning.ts";
 import type { WorkspaceStore } from "../../workspace/workspace-store.ts";
 import type { WorkosAuth } from "../instance.ts";
@@ -139,10 +139,12 @@ function resolveWorkosRedirectUri(explicit: string | undefined): string {
   } catch {
     throw new Error(`[workos] redirectUri override is not a valid URL: "${trimmed}"`);
   }
-  const isLocalhost = url.hostname === "localhost" || url.hostname === "127.0.0.1";
-  if (url.protocol !== "https:" && !(isLocalhost && url.protocol === "http:")) {
+  // Shared scheme/loopback rule (owned by public-origin.ts) so this can't drift
+  // from assertOrigin. Unlike a bare origin, a redirect URI legitimately carries
+  // a path (/v1/auth/callback), so only the scheme is checked here.
+  if (!isAllowedOriginScheme(url)) {
     throw new Error(
-      `[workos] redirectUri override must be https (or http://localhost in dev): "${trimmed}"`,
+      `[workos] redirectUri override must be https (or http on a loopback host in dev): "${trimmed}"`,
     );
   }
   return trimmed;
