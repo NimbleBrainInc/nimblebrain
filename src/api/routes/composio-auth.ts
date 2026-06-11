@@ -235,7 +235,7 @@ export function composioAuthRoutes(ctx: AppContext) {
             "running",
           );
           return c.json({
-            authorizationUrl: workspaceConnectorsUrl(wsId, c.req.url),
+            authorizationUrl: workspaceConnectorsUrl(wsId),
             alreadyConnected: true,
           });
         }
@@ -404,7 +404,7 @@ export function composioAuthRoutes(ctx: AppContext) {
     if (!ctx.isLocalhost) expireParts.push("Secure");
     c.header("Set-Cookie", expireParts.join("; "));
 
-    const returnUrl = workspaceConnectorsUrl(wsId, c.req.url);
+    const returnUrl = workspaceConnectorsUrl(wsId);
     const safeReturnUrl = escapeHtml(returnUrl);
     c.header("Content-Security-Policy", SUCCESS_PAGE_CSP);
     return c.html(

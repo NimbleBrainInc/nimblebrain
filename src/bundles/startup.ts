@@ -322,15 +322,16 @@ export async function startBundleSource(
       // then fails and the bundle falls into a headless interactive flow
       // that times out at boot). See src/oauth/mcp-callback-url.ts.
       const callbackUrl = mcpAuthCallbackUrl();
-      // Startup warning when a URL-ref bundle is being wired with no
-      // externally reachable origin and no bouncer. The localhost default is
-      // only safe for local dev — in prod the authorization server would get
-      // a redirect_uri pointing at the pod's localhost. One log per process.
-      if (!process.env.NB_API_URL && callbackUrl.startsWith("http://localhost")) {
+      // Startup warning when a URL-ref bundle is being wired with no externally
+      // reachable origin and no bouncer — the callback resolved to localhost.
+      // Only safe for local dev; in prod the authorization server would get a
+      // redirect_uri pointing at the pod's localhost. One log per process.
+      if (callbackUrl.startsWith("http://localhost")) {
         log.warn(
-          `[bundles] NB_API_URL not set; OAuth callback defaults to http://localhost:27247. ` +
+          `[bundles] public origin not configured; OAuth callback defaults to ${callbackUrl}. ` +
             "In production (NB behind a proxy / on a different host from the user's browser), " +
-            "set NB_API_URL to the platform's externally reachable URL.",
+            "set the custom domain / platform host so publicOrigin() resolves to the externally " +
+            "reachable URL.",
         );
       }
 

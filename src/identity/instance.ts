@@ -18,8 +18,14 @@ export interface WorkosAuth {
   adapter: "workos";
   /** WorkOS Client ID (client_...). */
   clientId: string;
-  /** OAuth callback URL (e.g., https://app.example.com/v1/auth/callback). */
-  redirectUri: string;
+  /**
+   * OAuth callback URL (e.g., https://app.example.com/v1/auth/callback).
+   * Optional: when omitted the provider derives `${publicOrigin()}/v1/auth/callback`
+   * from the canonical public origin. An explicit value (legacy
+   * `WORKOS_REDIRECT_URI`) still overrides — kept as a fallback during the
+   * migration off that secret.
+   */
+  redirectUri?: string;
   /** WorkOS Organization ID — scopes auth to a specific customer org. */
   organizationId?: string;
   /** WorkOS API key — can also come from WORKOS_API_KEY env var. */
@@ -97,13 +103,17 @@ function validateAuthConfig(raw: unknown): AuthConfig {
     case "workos": {
       if (typeof auth.clientId !== "string")
         throw new Error("instance.json: workos auth requires string 'clientId'");
-      if (typeof auth.redirectUri !== "string")
-        throw new Error("instance.json: workos auth requires string 'redirectUri'");
+      // redirectUri is optional — the provider derives it from publicOrigin()
+      // when absent. Validate only if present.
+      if (auth.redirectUri !== undefined && typeof auth.redirectUri !== "string")
+        throw new Error("instance.json: workos auth 'redirectUri' must be a string");
       const workos: WorkosAuth = {
         adapter: "workos",
         clientId: auth.clientId as string,
-        redirectUri: auth.redirectUri as string,
       };
+      if (auth.redirectUri !== undefined) {
+        workos.redirectUri = auth.redirectUri as string;
+      }
       if (auth.organizationId !== undefined) {
         if (typeof auth.organizationId !== "string")
           throw new Error("instance.json: workos auth 'organizationId' must be a string");

@@ -37,6 +37,7 @@
 import { Composio } from "@composio/core";
 import { log } from "../cli/log.ts";
 import { getBouncerMode } from "../oauth/bouncer-config.ts";
+import { publicOrigin } from "../oauth/public-origin.ts";
 
 /** Default Composio API host. Overridable via `COMPOSIO_API_BASE_URL`. */
 export const COMPOSIO_API_BASE = "https://backend.composio.dev";
@@ -171,8 +172,7 @@ export function composioUserId(wsId: string): string {
 
 /** Outward-facing callback URL the platform passes to Composio. */
 export function composioCallbackUrl(): string {
-  const apiBase = process.env.NB_API_URL ?? "http://localhost:27247";
-  return `${apiBase.replace(/\/+$/, "")}/v1/composio-auth/callback`;
+  return `${publicOrigin()}/v1/composio-auth/callback`;
 }
 
 // ── SDK call wrappers ───────────────────────────────────────────────

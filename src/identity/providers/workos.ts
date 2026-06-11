@@ -1,4 +1,5 @@
 import { GeneratePortalLinkIntent, WorkOS } from "@workos-inc/node";
+import { isAllowedOriginScheme, publicOrigin } from "../../oauth/public-origin.ts";
 import { ensureUserWorkspace } from "../../workspace/provisioning.ts";
 import type { WorkspaceStore } from "../../workspace/workspace-store.ts";
 import type { WorkosAuth } from "../instance.ts";
@@ -119,6 +120,36 @@ function normalizeAdminRoleSlugs(slugs: string[] | undefined): Set<string> {
   return new Set(normalized.length > 0 ? normalized : DEFAULT_ADMIN_ROLE_SLUGS);
 }
 
+/**
+ * Resolve the WorkOS OAuth `redirect_uri`. An explicit value (legacy
+ * `WORKOS_REDIRECT_URI`) overrides; **empty or blank-only counts as absent** and
+ * derives `${publicOrigin()}/v1/auth/callback`. The empty case is load-bearing:
+ * the Helm init container emits `"redirectUri":""` whenever the secret is unset
+ * (and `instance.ts` keeps `""` as a present field, since `"" !== undefined`), so
+ * a plain `??` would hand WorkOS an empty `redirect_uri` and break login at first
+ * click. A non-empty override is validated here so a malformed value fails closed
+ * at construction (startup), not at the user's first login.
+ */
+function resolveWorkosRedirectUri(explicit: string | undefined): string {
+  const trimmed = explicit?.trim();
+  if (!trimmed) return `${publicOrigin()}/v1/auth/callback`;
+  let url: URL;
+  try {
+    url = new URL(trimmed);
+  } catch {
+    throw new Error(`[workos] redirectUri override is not a valid URL: "${trimmed}"`);
+  }
+  // Shared scheme/loopback rule (owned by public-origin.ts) so this can't drift
+  // from assertOrigin. Unlike a bare origin, a redirect URI legitimately carries
+  // a path (/v1/auth/callback), so only the scheme is checked here.
+  if (!isAllowedOriginScheme(url)) {
+    throw new Error(
+      `[workos] redirectUri override must be https (or http on a loopback host in dev): "${trimmed}"`,
+    );
+  }
+  return trimmed;
+}
+
 // ── WorkosIdentityProvider ────────────────────────────────────────
 
 /**
@@ -177,7 +208,11 @@ export class WorkosIdentityProvider implements IdentityProvider {
     const apiKey = process.env.WORKOS_API_KEY ?? config.apiKey ?? "";
     this.workos = new WorkOS(apiKey, { clientId: config.clientId });
     this.clientId = config.clientId;
-    this.redirectUri = config.redirectUri;
+    // Explicit override (legacy WORKOS_REDIRECT_URI) wins; absent OR empty
+    // derives from publicOrigin(). See resolveWorkosRedirectUri — the empty case
+    // matters because the chart emits redirectUri:"" when the secret is unset.
+    // A derived value must match a redirect URI registered in the WorkOS dashboard.
+    this.redirectUri = resolveWorkosRedirectUri(config.redirectUri);
     this.organizationId = config.organizationId;
     this.authkitDomain = config.authkitDomain;
     this.adminRoleSlugs = normalizeAdminRoleSlugs(config.adminRoleSlugs);
