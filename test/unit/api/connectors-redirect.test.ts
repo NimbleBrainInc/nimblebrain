@@ -2,68 +2,68 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { workspaceConnectorsUrl } from "../../../src/api/routes/connectors-redirect.ts";
 
 describe("workspaceConnectorsUrl", () => {
-  const savedWeb = process.env.NB_WEB_URL;
-  const savedApi = process.env.NB_API_URL;
+  const ENV_KEYS = [
+    "NB_WEB_URL",
+    "NB_API_URL",
+    "NB_CUSTOM_DOMAIN",
+    "NB_PLATFORM_HOST",
+    "NB_CUSTOM_DOMAIN_CANONICAL",
+    "NB_PUBLIC_ORIGIN",
+  ] as const;
+  let saved: Record<string, string | undefined>;
 
   beforeEach(() => {
-    delete process.env.NB_WEB_URL;
-    delete process.env.NB_API_URL;
+    saved = {};
+    for (const k of ENV_KEYS) {
+      saved[k] = process.env[k];
+      delete process.env[k];
+    }
   });
 
   afterEach(() => {
-    if (savedWeb === undefined) delete process.env.NB_WEB_URL;
-    else process.env.NB_WEB_URL = savedWeb;
-    if (savedApi === undefined) delete process.env.NB_API_URL;
-    else process.env.NB_API_URL = savedApi;
+    for (const k of ENV_KEYS) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
   });
 
   it("builds the workspace-scoped connectors path, stripping the ws_ prefix", () => {
-    // The whole point of this fix: connectors live at
-    // `/w/<slug>/settings/connectors`, NOT the pre-scoping
-    // `/settings/workspace/connectors`. Slug = wsId minus `ws_`.
+    // The whole point: connectors live at `/w/<slug>/settings/connectors`, NOT
+    // the pre-scoping `/settings/workspace/connectors`. Slug = wsId minus `ws_`.
     process.env.NB_WEB_URL = "https://app.example.com";
-    expect(workspaceConnectorsUrl("ws_acme", "http://ignored/")).toBe(
+    expect(workspaceConnectorsUrl("ws_acme")).toBe(
       "https://app.example.com/w/acme/settings/connectors",
     );
   });
 
-  it("prefers NB_WEB_URL over NB_API_URL over the request origin", () => {
+  it("uses webOrigin: NB_WEB_URL wins over the derived/legacy origin", () => {
+    // No NB_WEB_URL → webOrigin() falls through to publicOrigin() (legacy NB_API_URL here).
     process.env.NB_API_URL = "https://api.example.com";
-    // No NB_WEB_URL → falls through to NB_API_URL.
-    expect(workspaceConnectorsUrl("ws_x", "http://origin.test/cb")).toBe(
-      "https://api.example.com/w/x/settings/connectors",
-    );
+    expect(workspaceConnectorsUrl("ws_x")).toBe("https://api.example.com/w/x/settings/connectors");
+    // NB_WEB_URL set → the user-facing SPA origin wins (the dev API/SPA-port split).
     process.env.NB_WEB_URL = "https://web.example.com";
-    expect(workspaceConnectorsUrl("ws_x", "http://origin.test/cb")).toBe(
-      "https://web.example.com/w/x/settings/connectors",
-    );
+    expect(workspaceConnectorsUrl("ws_x")).toBe("https://web.example.com/w/x/settings/connectors");
   });
 
-  it("falls back to the request origin when no env base is set", () => {
-    expect(workspaceConnectorsUrl("ws_x", "http://localhost:27247/v1/mcp-auth/callback")).toBe(
-      "http://localhost:27247/w/x/settings/connectors",
-    );
+  it("returns the custom domain when it is the canonical origin", () => {
+    process.env.NB_PLATFORM_HOST = "acme.platform.nimblebrain.ai";
+    process.env.NB_CUSTOM_DOMAIN = "brain.acme.com";
+    expect(workspaceConnectorsUrl("ws_x")).toBe("https://brain.acme.com/w/x/settings/connectors");
+  });
+
+  it("falls back to the localhost dev origin when nothing is configured", () => {
+    expect(workspaceConnectorsUrl("ws_x")).toBe("http://localhost:27247/w/x/settings/connectors");
   });
 
   it("trims a trailing slash on the base so the path isn't doubled", () => {
     process.env.NB_WEB_URL = "https://app.example.com/";
-    expect(workspaceConnectorsUrl("ws_x", "http://ignored/")).toBe(
-      "https://app.example.com/w/x/settings/connectors",
-    );
+    expect(workspaceConnectorsUrl("ws_x")).toBe("https://app.example.com/w/x/settings/connectors");
   });
 
-  it("returns a same-origin relative path when the base has a non-http(s) scheme", () => {
-    // Defense-in-depth: a tampered NB_WEB_URL with a javascript:/data: scheme
-    // must never survive into the meta-refresh. Degrade to a relative path.
+  it("throws (fail-closed) on a tampered non-http(s) web origin", () => {
+    // A `javascript:`/`data:` NB_WEB_URL must never reach the meta-refresh. The
+    // origin seam asserts http(s) and throws at the boundary rather than degrade.
     process.env.NB_WEB_URL = "javascript:alert(1)";
-    expect(workspaceConnectorsUrl("ws_acme", "http://ignored/")).toBe(
-      "/w/acme/settings/connectors",
-    );
-  });
-
-  it("returns a relative path when there is no resolvable base at all", () => {
-    // No env, unparseable request URL → no origin. The absolute string is
-    // already relative, so URL parsing throws and we return the path.
-    expect(workspaceConnectorsUrl("ws_acme", "not a url")).toBe("/w/acme/settings/connectors");
+    expect(() => workspaceConnectorsUrl("ws_acme")).toThrow();
   });
 });

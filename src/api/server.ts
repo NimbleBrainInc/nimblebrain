@@ -3,6 +3,7 @@ type BunServer = ReturnType<typeof Bun.serve>;
 import { log } from "../cli/log.ts";
 import type { IdentityProvider } from "../identity/provider.ts";
 import { DevIdentityProvider } from "../identity/providers/dev.ts";
+import { canonicalOrigins, publicOrigin } from "../oauth/public-origin.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import { HealthMonitor } from "../tools/health-monitor.ts";
 import { createApp } from "./app.ts";
@@ -40,8 +41,13 @@ export interface ServerHandle {
   stop(closeConnections?: boolean): void;
 }
 
-/** Parse ALLOWED_ORIGINS env var into a Set. */
-const allowedOrigins: Set<string> | null = process.env.ALLOWED_ORIGINS
+/**
+ * Parse ALLOWED_ORIGINS env var into a Set of *additional* CORS origins. The
+ * canonical hosts (custom domain + platform subdomain) are folded in separately
+ * via `canonicalOrigins()` at server start, so they never need to be listed
+ * here by hand. `null` (var unset) keeps CORS permissive for local dev.
+ */
+const envAllowedOrigins: Set<string> | null = process.env.ALLOWED_ORIGINS
   ? new Set(
       process.env.ALLOWED_ORIGINS.split(",")
         .map((o) => o.trim())
@@ -60,6 +66,14 @@ export function startServer(options: ServerOptions): ServerHandle {
   const { runtime, port = 27247, provider: optProvider = null } = options;
   // Read the scoped internal token minted by the runtime at startup.
   const internalToken = runtime.getInternalToken();
+
+  // Effective CORS allowlist = operator-declared extras (ALLOWED_ORIGINS) ∪ the
+  // canonical hosts (custom domain + platform subdomain). Folding the canonical
+  // origins in here means they're always allowed without being listed by hand.
+  // `null` (no ALLOWED_ORIGINS) stays permissive for local dev.
+  const allowedOrigins: Set<string> | null = envAllowedOrigins
+    ? new Set([...envAllowedOrigins, ...canonicalOrigins()])
+    : null;
 
   const mcpSources = runtime.mcpSources();
   const healthMonitor = new HealthMonitor(mcpSources, runtime.getEventSink());
@@ -211,7 +225,9 @@ export function startServer(options: ServerOptions): ServerHandle {
     isDevMode,
     eventSink: runtime.getEventSink(),
     isLocalhost: true, // Updated after Bun.serve starts
-    appOrigin: allowedOrigins ? [...allowedOrigins][0] : undefined,
+    // Post-login landing — the canonical public origin, decoupled from the CORS
+    // allowlist (no longer ALLOWED_ORIGINS[0], so reordering CORS can't move it).
+    appOrigin: publicOrigin(),
     internalToken,
     mcpHost,
   };

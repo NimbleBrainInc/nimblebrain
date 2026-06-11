@@ -1,4 +1,5 @@
 import { getBouncerMode } from "./bouncer-config.ts";
+import { publicOrigin } from "./public-origin.ts";
 
 /**
  * The single source of truth for the MCP OAuth callback URL — the
@@ -27,6 +28,5 @@ export function mcpAuthCallbackUrl(): string {
   const bouncer = getBouncerMode();
   if (bouncer) return bouncer.callbackUrl;
 
-  const apiBase = process.env.NB_API_URL ?? "http://localhost:27247";
-  return `${apiBase.replace(/\/+$/, "")}/v1/mcp-auth/callback`;
+  return `${publicOrigin()}/v1/mcp-auth/callback`;
 }

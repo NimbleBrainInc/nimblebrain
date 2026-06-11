@@ -1,4 +1,5 @@
 import { GeneratePortalLinkIntent, WorkOS } from "@workos-inc/node";
+import { publicOrigin } from "../../oauth/public-origin.ts";
 import { ensureUserWorkspace } from "../../workspace/provisioning.ts";
 import type { WorkspaceStore } from "../../workspace/workspace-store.ts";
 import type { WorkosAuth } from "../instance.ts";
@@ -177,7 +178,11 @@ export class WorkosIdentityProvider implements IdentityProvider {
     const apiKey = process.env.WORKOS_API_KEY ?? config.apiKey ?? "";
     this.workos = new WorkOS(apiKey, { clientId: config.clientId });
     this.clientId = config.clientId;
-    this.redirectUri = config.redirectUri;
+    // Derive from the canonical public origin when instance.json carries no
+    // explicit redirectUri (the post-WORKOS_REDIRECT_URI world). An explicit
+    // value still wins, so the legacy secret remains a valid override during
+    // migration. Must match a redirect URI registered in the WorkOS dashboard.
+    this.redirectUri = config.redirectUri ?? `${publicOrigin()}/v1/auth/callback`;
     this.organizationId = config.organizationId;
     this.authkitDomain = config.authkitDomain;
     this.adminRoleSlugs = normalizeAdminRoleSlugs(config.adminRoleSlugs);

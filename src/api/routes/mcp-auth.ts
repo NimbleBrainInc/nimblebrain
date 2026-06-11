@@ -343,7 +343,7 @@ export function mcpAuthRoutes(ctx: AppContext) {
     // same `/w/<slug>` workspace the flow was initiated in. `flowWsId` is
     // non-null here (resolveWithCode succeeded just above ⟹ the flow
     // existed when we peeked it).
-    const returnUrl = workspaceConnectorsUrl(flowWsId ?? "", c.req.url);
+    const returnUrl = workspaceConnectorsUrl(flowWsId ?? "");
     const safeReturnUrl = escapeHtml(returnUrl);
     // Override the platform-default CSP (`default-src 'none'`) for this
     // response only. Without this the inline <style> below is blocked and
