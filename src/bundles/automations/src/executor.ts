@@ -138,13 +138,74 @@ function buildRequest(automation: Automation, ctx?: ExecutorContext): TaskFnRequ
   return req;
 }
 
+/**
+ * Orchestrator routing-failure reasons (see `src/orchestrator/error-mapping.ts`)
+ * that mean a tool call could not be ROUTED to a connector at all:
+ *
+ *   - `unknown_tool_source`     → the connector isn't installed/running in the
+ *                                 workspace the run can see (a disconnected or
+ *                                 missing app). This is the standup-automation
+ *                                 case: the agent searched, found no Teams
+ *                                 connector, and "completed" by writing around it.
+ *   - `workspace_access_denied` → the connector lives in a workspace the run's
+ *                                 owner isn't a member of (e.g. another user's
+ *                                 personal workspace) — unreachable by design.
+ *
+ * These are deliberately narrower than the full reason taxonomy: a malformed
+ * name (`invalid_tool_name`) or a bad identity source is usually the agent
+ * probing and self-correcting, not a real connector gap — flagging those would
+ * mark healthy runs failed. The two above mean "a connector the run needed was
+ * not reachable," which an operator must see rather than have hidden behind a
+ * green `complete`.
+ */
+const UNREACHABLE_CONNECTOR_REASONS = new Set(["unknown_tool_source", "workspace_access_denied"]);
+
+/** Tool-call entries (loosely typed in `TaskFnResult`) whose routing failed. */
+function unreachableConnectorCalls(toolCalls: TaskFnResult["toolCalls"]): string[] {
+  if (!Array.isArray(toolCalls)) return [];
+  const names: string[] = [];
+  for (const tc of toolCalls) {
+    const reason = tc.errorReason;
+    const name = tc.name;
+    if (typeof reason === "string" && UNREACHABLE_CONNECTOR_REASONS.has(reason)) {
+      names.push(typeof name === "string" ? name : "(unknown tool)");
+    }
+  }
+  return names;
+}
+
 function mapResultToRun(
   automation: Automation,
   startedAt: string,
   data: TaskFnResult,
 ): AutomationRun {
   const stopReason = data.stopReason as AutomationRun["stopReason"];
-  const status: AutomationRun["status"] = mapStopReasonToStatus(stopReason);
+  let status: AutomationRun["status"] = mapStopReasonToStatus(stopReason);
+
+  // De-mask the silent connector failure: when the model reports `complete`,
+  // the run would otherwise be a green `success` — even if a tool call hit a
+  // connector that couldn't be routed (missing, disconnected, or in another
+  // workspace the owner can't reach). The agent commonly "completes" by
+  // documenting the gap instead of doing the work, which is precisely the
+  // failure operators reported (a standup summary that never reached Teams,
+  // recorded as success). A connector-unreachable call means the automation
+  // did not actually do its job: downgrade to `failure` and name the tool(s)
+  // so the run list shows it instead of burying it in the conversation.
+  //
+  // Only overrides an otherwise-`success` run; a run already classified
+  // failure/timeout keeps its (stronger) status.
+  let error: string | undefined;
+  if (status === "success") {
+    const unreachable = unreachableConnectorCalls(data.toolCalls);
+    if (unreachable.length > 0) {
+      status = "failure";
+      const unique = [...new Set(unreachable)];
+      error =
+        `Connector unavailable during run: ${unique.length} tool call type(s) could not be ` +
+        `routed (${unique.join(", ")}). The required connector is missing, disconnected, or ` +
+        `in a workspace this automation cannot reach — the run did not complete its intended action.`;
+    }
+  }
 
   return {
     id: `run_${crypto.randomUUID().slice(0, 12)}`,
@@ -159,6 +220,7 @@ function mapResultToRun(
     iterations: data.usage.iterations,
     resultPreview: data.output || undefined,
     stopReason,
+    ...(error ? { error } : {}),
   };
 }
 

@@ -12,7 +12,7 @@ import {
 	type TaskFn,
 	type TaskFnResult,
 } from "../../../../src/bundles/automations/src/executor.ts";
-import type { Automation } from "../../../../src/bundles/automations/src/types.ts";
+import type { Automation, AutomationRun } from "../../../../src/bundles/automations/src/types.ts";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -226,6 +226,98 @@ describe("createDirectExecutor — stopReason → status", () => {
 
 	test("unrecognized stopReason → failure (fail-closed default)", async () => {
 		expect(await statusFor("some_future_reason")).toBe("failure");
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Connector-unreachable de-masking. A run can end `complete` (→ would-be
+// `success`) while a tool call hit a connector that couldn't be routed — the
+// agent "completes" by writing around the gap. That is the silent failure
+// operators reported (a standup summary that never reached Teams, recorded as
+// success). mapResultToRun downgrades such runs to `failure` and names the
+// tool, keyed on the orchestrator routing reason carried per tool call
+// (`errorReason`), NOT on a generic `ok: false` (which would flag healthy
+// runs where the agent probed and self-corrected).
+// ---------------------------------------------------------------------------
+
+describe("createDirectExecutor — connector-unreachable de-masking", () => {
+	function taskFnWithToolCalls(toolCalls: Array<Record<string, unknown>>): TaskFn {
+		return async (): Promise<TaskFnResult> => ({
+			output: "I documented the gap in the deliverable.",
+			conversationId: "conv_test",
+			toolCalls,
+			stopReason: "complete",
+			usage: { inputTokens: 10, outputTokens: 5, iterations: 1 },
+		});
+	}
+
+	async function runWith(toolCalls: Array<Record<string, unknown>>): Promise<AutomationRun> {
+		const executor = createDirectExecutor(taskFnWithToolCalls(toolCalls), () => ({}));
+		return executor(makeAutomation());
+	}
+
+	test("complete + unknown_tool_source → failure naming the tool", async () => {
+		const run = await runWith([
+			{ id: "t1", name: "nb__search", input: {}, output: "ok", ok: true, ms: 20 },
+			{
+				id: "t2",
+				name: "ws_x-teams__send_message",
+				input: {},
+				output: "[orchestrator] no source …",
+				ok: false,
+				ms: 15,
+				errorReason: "unknown_tool_source",
+			},
+		]);
+		expect(run.status).toBe("failure");
+		expect(run.error).toMatch(/Connector unavailable/);
+		expect(run.error).toMatch(/ws_x-teams__send_message/);
+	});
+
+	test("complete + workspace_access_denied → failure", async () => {
+		const run = await runWith([
+			{
+				id: "t1",
+				name: "ws_other-teams__send_message",
+				input: {},
+				output: "[orchestrator] not a member …",
+				ok: false,
+				ms: 12,
+				errorReason: "workspace_access_denied",
+			},
+		]);
+		expect(run.status).toBe("failure");
+		expect(run.error).toMatch(/Connector unavailable/);
+	});
+
+	test("complete + all tool calls ok → success (no false downgrade)", async () => {
+		const run = await runWith([
+			{ id: "t1", name: "nb__briefing", input: {}, output: "ok", ok: true, ms: 20 },
+			{ id: "t2", name: "synapse-crm__list", input: {}, output: "ok", ok: true, ms: 30 },
+		]);
+		expect(run.status).toBe("success");
+		expect(run.error).toBeUndefined();
+	});
+
+	test("complete + a non-routing tool error (handled by agent) → stays success", async () => {
+		// `invalid_tool_name` is deliberately NOT in the unreachable set: it's
+		// usually the agent probing a wrong name and recovering, not a real
+		// connector gap. A logical tool error with no errorReason likewise must
+		// not flip the run.
+		const run = await runWith([
+			{
+				id: "t1",
+				name: "nb__search",
+				input: {},
+				output: "bad name",
+				ok: false,
+				ms: 10,
+				errorReason: "invalid_tool_name",
+			},
+			{ id: "t2", name: "synapse-crm__create", input: {}, output: "validation error", ok: false, ms: 10 },
+		]);
+		expect(run.status).toBe("success");
+		expect(run.error).toBeUndefined();
 	});
 });
 

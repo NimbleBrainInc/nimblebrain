@@ -1022,6 +1022,12 @@ export class AgentEngine {
             output: llmText,
             ok: !result.isError,
             ms,
+            // Surface the structured failure reason (orchestrator routing
+            // classes, etc.) so consumers can tell an unroutable connector
+            // from a tool that ran and errored. See ToolCallRecord.errorReason.
+            ...(result.isError && typeof result.structuredContent?.reason === "string"
+              ? { errorReason: result.structuredContent.reason }
+              : {}),
             ...(uri ? { resourceUri: uri } : {}),
             ...(links && links.length > 0 ? { resourceLinks: links } : {}),
           });
