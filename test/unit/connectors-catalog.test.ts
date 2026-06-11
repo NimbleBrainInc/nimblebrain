@@ -34,6 +34,27 @@ describe("bundled catalog.yaml", () => {
     }
   });
 
+  test("composio entries all have a composio block with toolkit + authConfigEnv", () => {
+    // validateServerDetail only checks the upstream ServerDetail shape, not
+    // the NimbleBrain composio block — a missing toolkit or a typo'd
+    // authConfigEnv would otherwise pass validation and only surface at
+    // install time (handleInstallRemoteOAuth reads process.env[authConfigEnv]).
+    // This pins the block's presence and the env-var naming convention the
+    // ClusterExternalSecret wires (COMPOSIO_<TOOLKIT>_AUTH_CONFIG_ID).
+    for (const s of readStaticServers(BUNDLED_STATIC_CATALOG_PATH)) {
+      const meta = getNimbleBrainConnectorMeta(s);
+      if (meta?.auth !== "composio") continue;
+      expect(meta.composio).toBeDefined();
+      expect(meta.composio?.toolkit.length).toBeGreaterThan(0);
+      expect(meta.composio?.authConfigEnv).toMatch(/^COMPOSIO_[A-Z0-9_]+_AUTH_CONFIG_ID$/);
+      // A `tools` allowlist, when present, must be non-empty — an empty
+      // array would mint a Composio session that exposes zero tools.
+      if (meta.composio?.tools) {
+        expect(meta.composio.tools.length).toBeGreaterThan(0);
+      }
+    }
+  });
+
   test("every entry carries an icon (Browse renders <img src>)", () => {
     const servers = readStaticServers(BUNDLED_STATIC_CATALOG_PATH);
     for (const s of servers) {
