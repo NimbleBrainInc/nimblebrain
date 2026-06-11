@@ -22,6 +22,7 @@ import {
   type HostResourcesResolver,
   hostExtensions,
 } from "../host-resources/index.ts";
+import { coerceInputForSchema } from "./coerce-input.ts";
 import { promoteHiddenErrors } from "./promote-hidden-errors.ts";
 import { createRemoteTransport } from "./remote-transport.ts";
 import { scrubArgsForDispatch } from "./scrub-args.ts";
@@ -1028,13 +1029,41 @@ export class McpSource implements ToolSource {
     const taskSupport = tool?.execution?.taskSupport;
     const isTaskAugmented = taskSupport === "optional" || taskSupport === "required";
 
+    // Recover string-encoded structured args against THIS server's own
+    // advertised schema, then strip no-op optional values — both keyed off
+    // `tool.inputSchema`, the schema this source advertised at `tools/list`.
+    //
+    // Coerce first: models routinely emit object/array parameters as
+    // JSON-encoded strings (`to_recipients: "[\"a@b.com\"]"` instead of the
+    // array). The engine runs the same coercion against the schema it built
+    // for the LLM, but that view can diverge from this source's live schema
+    // (search-promoted tools, cross-workspace dispatch) — and any divergence
+    // means a stringified array reaches the wire and the upstream validator
+    // rejects it ("Input should be a valid list on parameter to_recipients").
+    // Re-coercing here, at the dispatch boundary, against the source's own
+    // schema closes that gap for every call routed through `execute` — the
+    // agent loop's inline and task-augmented paths both flow through here.
+    // `coerceInputForSchema` is pure and idempotent: an already-correct array
+    // survives unchanged, so the redundant engine-side pass is harmless.
+    //
+    // Scope: this covers the `execute` path only. The external `/mcp` task
+    // surface dispatches via `startToolAsTask` directly (see mcp-server.ts),
+    // bypassing this; that path is folded into the separate `/mcp` overhaul (#423).
+    // Limitation: coercion is a no-op when the array/object param is expressed
+    // via `$ref`/`allOf` (see `coerce-input.ts`) — Composio's flat `type:
+    // "array"` schemas are covered; richer shapes are tracked in #424.
+    //
+    // Order matters: coerce before scrub so a stringified empty array
+    // (`"[]"`) becomes `[]` and is then eligible for no-op stripping.
+    const coerced = tool?.inputSchema ? coerceInputForSchema(input, tool.inputSchema) : input;
+
     // Strip no-op values models routinely emit for optional fields (empty
     // strings, nil UUIDs, empty arrays). Some upstream APIs treat these as
     // real values and reject with HTTP 400. Equivalent to the model having
     // omitted the field. Required fields pass through unchanged.
     const scrubbed = tool?.inputSchema
-      ? scrubArgsForDispatch(input, tool.inputSchema)
-      : { args: input, stripped: [] };
+      ? scrubArgsForDispatch(coerced, tool.inputSchema)
+      : { args: coerced, stripped: [] };
     if (scrubbed.stripped.length > 0) {
       log.debug(
         "mcp",
