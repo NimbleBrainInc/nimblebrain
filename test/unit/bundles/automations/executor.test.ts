@@ -274,6 +274,22 @@ describe("createDirectExecutor — connector-unreachable de-masking", () => {
 		expect(run.error).toMatch(/ws_x-teams__send_message/);
 	});
 
+	test("complete + reauth_required (installed but auth expired) → failure", async () => {
+		const run = await runWith([
+			{
+				id: "t1",
+				name: "ws_x-teams__send_message",
+				input: {},
+				output: "teams needs to be reconnected",
+				ok: false,
+				ms: 18,
+				errorReason: "reauth_required",
+			},
+		]);
+		expect(run.status).toBe("failure");
+		expect(run.error).toMatch(/Connector unavailable/);
+	});
+
 	test("complete + workspace_access_denied → failure", async () => {
 		const run = await runWith([
 			{

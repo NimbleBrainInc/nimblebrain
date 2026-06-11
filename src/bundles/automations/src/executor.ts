@@ -139,26 +139,45 @@ function buildRequest(automation: Automation, ctx?: ExecutorContext): TaskFnRequ
 }
 
 /**
- * Orchestrator routing-failure reasons (see `src/orchestrator/error-mapping.ts`)
- * that mean a tool call could not be ROUTED to a connector at all:
+ * Per-tool-call failure reasons that mean a connector the run NEEDED was not
+ * usable — so a `complete` stop is not an honest success:
  *
- *   - `unknown_tool_source`     → the connector isn't installed/running in the
- *                                 workspace the run can see (a disconnected or
- *                                 missing app). This is the standup-automation
- *                                 case: the agent searched, found no Teams
- *                                 connector, and "completed" by writing around it.
- *   - `workspace_access_denied` → the connector lives in a workspace the run's
- *                                 owner isn't a member of (e.g. another user's
- *                                 personal workspace) — unreachable by design.
+ *   - `unknown_tool_source`     → the tool's source isn't registered in the
+ *                                 workspace the run can see — i.e. the app isn't
+ *                                 installed there (`route.ts`: `getSource()`
+ *                                 returned nothing). This is the standup case:
+ *                                 the agent searched, found no Teams connector
+ *                                 in any reachable workspace, and "completed" by
+ *                                 writing around it. (Orchestrator reason; see
+ *                                 `src/orchestrator/error-mapping.ts`.)
+ *   - `workspace_access_denied` → the tool lives in a workspace the run's owner
+ *                                 isn't a member of (e.g. another user's personal
+ *                                 workspace) — unreachable by design. (Orchestrator
+ *                                 reason.)
+ *   - `reauth_required`         → the connector IS installed but its authorization
+ *                                 expired/was revoked, so a tool call hit it and
+ *                                 failed on auth. Distinct from the two above: the
+ *                                 source routes fine, the failure is downstream.
+ *                                 Emitted by the connector auth-loss path
+ *                                 (`McpSource.execute`); harmless to list before
+ *                                 that lands — no call carries this reason until
+ *                                 then. This is the literal "the connector is
+ *                                 disconnected" case the others do NOT cover.
  *
- * These are deliberately narrower than the full reason taxonomy: a malformed
- * name (`invalid_tool_name`) or a bad identity source is usually the agent
- * probing and self-correcting, not a real connector gap — flagging those would
- * mark healthy runs failed. The two above mean "a connector the run needed was
- * not reachable," which an operator must see rather than have hidden behind a
- * green `complete`.
+ * Deliberately narrower than the full reason taxonomy. Excluded on purpose:
+ *   - `invalid_tool_name` / `unknown_identity_source` — usually the agent probing
+ *     a wrong name and self-correcting, not a real connector gap; flagging them
+ *     would mark healthy runs failed.
+ *   - `unknown_workspace` — a target workspace deleted out from under the run.
+ *     Real but rare, and the taxonomy frames it as a typo / cross-tenant accident
+ *     (agent error) rather than a connector gap. Left out for now; revisit if it
+ *     shows up in practice.
  */
-const UNREACHABLE_CONNECTOR_REASONS = new Set(["unknown_tool_source", "workspace_access_denied"]);
+const UNREACHABLE_CONNECTOR_REASONS = new Set([
+  "unknown_tool_source",
+  "workspace_access_denied",
+  "reauth_required",
+]);
 
 /** Tool-call entries (loosely typed in `TaskFnResult`) whose routing failed. */
 function unreachableConnectorCalls(toolCalls: TaskFnResult["toolCalls"]): string[] {
