@@ -449,7 +449,7 @@ export interface AuxUsageEvent {
   ts: string;
   type: "aux.usage";
   /** Which forked call produced this usage. */
-  source: "compaction" | "title";
+  source: "compaction" | "title" | "briefing";
   model: string;
   usage: TokenUsage;
   llmMs: number;

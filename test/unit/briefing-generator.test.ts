@@ -371,6 +371,24 @@ describe("briefing-generator", () => {
 			expect(calls[0].abortSignal).toBeDefined();
 		});
 
+		it("reports the generation's usage via onUsage", async () => {
+			const llmResponse = JSON.stringify({ lede: "Ok.", sections: [] });
+			const { model } = createTrackingModelV3(llmResponse);
+			let seen: { inputTokens: number; outputTokens: number } | undefined;
+			const gen = new BriefingGenerator(
+				model,
+				"anthropic:claude-sonnet-4-6",
+				makeConfig(),
+				(usage) => {
+					seen = { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens };
+				},
+			);
+			await gen.generate(activeActivity());
+
+			expect(seen?.inputTokens).toBe(100);
+			expect(seen?.outputTokens).toBe(50);
+		});
+
 		it("disables Anthropic thinking for reasoning-capable Claude models", async () => {
 			const llmResponse = JSON.stringify({ lede: "Ok.", sections: [] });
 			const { model, calls } = createTrackingModelV3(llmResponse);
