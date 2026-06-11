@@ -41,6 +41,14 @@ export interface CompactionOptions {
   keepRatio?: number;
   /** Don't bother compacting unless at least this many messages would be folded in. */
   minSummarizedMessages?: number;
+  /**
+   * Context window (tokens) of the summarizer model — the `fast` slot. The fold
+   * is sized by the MAIN model's window, which can be far larger than the
+   * summarizer's, so the summary call is bounded to a deflated fraction of this
+   * to keep it inside the summarizer's context. Undefined → a conservative
+   * fallback (never unbounded). See `summarizerTranscriptBudgetTokens`.
+   */
+  summarizerContextTokens?: number;
 }
 
 const DEFAULTS = {
@@ -201,12 +209,109 @@ function formatPart(p: TranscriptPart): string {
   }
 }
 
-function formatTranscript(messages: readonly StoredMessage[]): string {
-  const lines: string[] = ["<conversation-transcript>"];
-  for (const m of messages) {
-    const text = typeof m.content === "string" ? m.content : m.content.map(formatPart).join(" ");
-    lines.push(`<${m.role}>`, escapeClosingTags(text), `</${m.role}>`);
+// The summarizer is the `fast` slot, usually a smaller-context model than the
+// main model whose window sizes the fold — so the fold can exceed the
+// summarizer's context and the call is rejected (`prompt is too long`), which
+// made compaction silently no-op on exactly the long conversations it exists to
+// bound. The transcript is bounded to the summarizer's context, DEFLATED to
+// absorb the gap between the chars/4 estimate and the provider's real tokenizer
+// (the same reason `resolveMessageBudget` reserves a margin). A catalog miss
+// yields a conservative floor so an unknown summarizer is never handed an
+// unbounded prompt.
+const SUMMARIZER_CTX_FALLBACK_TOKENS = 32_000;
+// The summary's output ceiling. The re-anchor compresses the older fold (the
+// recent tail is kept verbatim), and a fold can be 200k+ tokens, so a too-small
+// ceiling flattens real detail (decisions, ids, file refs). The model self-
+// sizes under this cap — a small fold yields a short summary — so a generous
+// ceiling only costs more when there's substance to preserve. Output is cheap
+// (summarizer is the `fast` slot) and rides as a cached prefix afterward, so the
+// cost is negligible; well under the summarizer's max output. This same value is
+// reserved against the summarizer's context below so `input + output ≤ context`.
+const SUMMARY_MAX_OUTPUT_TOKENS = 8_192;
+const SUMMARIZER_SYSTEM_RESERVE_TOKENS = 512;
+const SUMMARIZER_SAFETY_MARGIN_TOKENS = 8_192;
+const SUMMARIZER_ESTIMATE_DEFLATE = 0.6;
+const TRANSCRIPT_ELISION_MARKER = "[…older history elided to fit the summarizer's context…]";
+
+/** Max transcript tokens to feed the summarizer given its context window. */
+export function summarizerTranscriptBudgetTokens(contextTokens?: number): number {
+  const ctx = contextTokens ?? SUMMARIZER_CTX_FALLBACK_TOKENS;
+  const net =
+    ctx -
+    SUMMARY_MAX_OUTPUT_TOKENS -
+    SUMMARIZER_SYSTEM_RESERVE_TOKENS -
+    SUMMARIZER_SAFETY_MARGIN_TOKENS;
+  return Math.max(4_000, Math.floor(net * SUMMARIZER_ESTIMATE_DEFLATE));
+}
+
+interface TranscriptBlock {
+  role: StoredMessage["role"];
+  body: string;
+}
+
+// Role tags + surrounding newlines that wrap each block in the rendered transcript.
+const BLOCK_WRAP_CHARS = "<>\n\n</>\n".length;
+
+/**
+ * Keep the NEWEST fold blocks that fit `budgetTokens` (chars/4), dropping the
+ * oldest — they're the least relevant to continuity (the recent tail is already
+ * kept verbatim by the planner). A single block larger than the whole budget is
+ * hard-truncated rather than dropped, so even one oversized message (a giant
+ * paste or tool result) stays representable and the call never exceeds the
+ * summarizer's context. Returns kept blocks (chronological) + whether anything
+ * was elided.
+ */
+function boundBlocks(
+  blocks: readonly TranscriptBlock[],
+  budgetTokens: number,
+): { kept: TranscriptBlock[]; elided: boolean } {
+  const budgetChars = budgetTokens * 4;
+  const kept: TranscriptBlock[] = [];
+  let usedChars = 0;
+  let elided = false;
+  for (let i = blocks.length - 1; i >= 0; i--) {
+    const b = { ...blocks[i]! };
+    let blockChars = b.role.length * 2 + b.body.length + BLOCK_WRAP_CHARS;
+    if (kept.length > 0 && usedChars + blockChars > budgetChars) {
+      elided = true;
+      break;
+    }
+    if (blockChars > budgetChars) {
+      // Single oversized message: truncate its body to fit rather than drop it.
+      b.body = truncate(b.body, Math.max(0, budgetChars - (b.role.length * 2 + BLOCK_WRAP_CHARS)));
+      blockChars = b.role.length * 2 + b.body.length + BLOCK_WRAP_CHARS;
+      if (i > 0) elided = true;
+    }
+    kept.unshift(b);
+    usedChars += blockChars;
+    if (usedChars >= budgetChars && i > 0) {
+      elided = true;
+      break;
+    }
   }
+  return { kept, elided };
+}
+
+/**
+ * Render the fold as the summarizer transcript. When `budgetTokens` is given the
+ * transcript is bounded to it (newest-kept, oldest-elided/truncated); otherwise
+ * every message is rendered verbatim.
+ */
+function formatTranscript(messages: readonly StoredMessage[], budgetTokens?: number): string {
+  const blocks: TranscriptBlock[] = messages.map((m) => ({
+    role: m.role,
+    body: escapeClosingTags(
+      typeof m.content === "string" ? m.content : m.content.map(formatPart).join(" "),
+    ),
+  }));
+  const { kept, elided } =
+    budgetTokens === undefined
+      ? { kept: blocks, elided: false }
+      : boundBlocks(blocks, budgetTokens);
+
+  const lines = ["<conversation-transcript>"];
+  if (elided) lines.push(TRANSCRIPT_ELISION_MARKER);
+  for (const b of kept) lines.push(`<${b.role}>`, b.body, `</${b.role}>`);
   lines.push("</conversation-transcript>");
   return lines.join("\n");
 }
@@ -219,21 +324,27 @@ const SUMMARIZE_SYSTEM =
   "mention yourself, apologize, or refuse. Output only the summary.";
 
 /**
- * Summarize the given messages with the injected model (use the `fast` slot).
- * Throws on model failure — the caller treats compaction as best-effort and
- * falls back to the un-compacted history.
+ * Summarize the given messages with the injected model (the `fast` slot). The
+ * transcript is bounded to the summarizer's context (`summarizerContextTokens`)
+ * so the fold — sized by the larger main-model window — can't overflow the
+ * summarizer and silently fail. Throws on model failure; the caller treats
+ * compaction as best-effort and falls back to the un-compacted history.
  */
 export async function summarizeMessages(
   model: LanguageModelV3,
   messages: readonly StoredMessage[],
-  maxOutputTokens = 1024,
+  opts: { maxOutputTokens?: number; summarizerContextTokens?: number } = {},
 ): Promise<string> {
+  const transcript = formatTranscript(
+    messages,
+    summarizerTranscriptBudgetTokens(opts.summarizerContextTokens),
+  );
   const result = await model.doGenerate({
     prompt: [
       { role: "system", content: SUMMARIZE_SYSTEM },
-      { role: "user", content: [{ type: "text", text: formatTranscript(messages) }] },
+      { role: "user", content: [{ type: "text", text: transcript }] },
     ],
-    maxOutputTokens,
+    maxOutputTokens: opts.maxOutputTokens ?? SUMMARY_MAX_OUTPUT_TOKENS,
   });
   const textBlock = result.content.find((b) => b.type === "text");
   const summary = textBlock?.type === "text" ? textBlock.text.trim() : "";
@@ -253,7 +364,9 @@ export async function runCompaction(
 ): Promise<CompactionOutcome | null> {
   const plan = planCompaction(messages, opts);
   if (!plan.shouldCompact) return null;
-  const summary = await summarizeMessages(model, messages.slice(0, plan.boundaryIndex));
+  const summary = await summarizeMessages(model, messages.slice(0, plan.boundaryIndex), {
+    summarizerContextTokens: opts.summarizerContextTokens,
+  });
   return {
     summary,
     compactedThroughTs: plan.boundaryTs,
