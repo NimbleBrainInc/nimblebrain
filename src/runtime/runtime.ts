@@ -62,7 +62,7 @@ import { createIdentityProvider } from "../identity/provider.ts";
 import { DEV_IDENTITY } from "../identity/providers/dev.ts";
 import { UserStore } from "../identity/user.ts";
 import { InstructionsStore } from "../instructions/index.ts";
-import { getProviderFromModel } from "../model/catalog.ts";
+import { getModelByString, getProviderFromModel } from "../model/catalog.ts";
 import { buildModelResolver, resolveModelString } from "../model/registry.ts";
 import { installOAuthFetchDebug } from "../oauth/oauth-fetch-debug.ts";
 import {
@@ -3163,9 +3163,14 @@ export class Runtime {
   ): Promise<StoredMessage[] | null> {
     if (!this.config.features?.compaction || !store.appendEvent) return null;
     const appendEvent = store.appendEvent.bind(store);
-    const model = this.resolveModelFn(this.getModelSlot("fast"));
+    const fastSlot = this.getModelSlot("fast");
+    const model = this.resolveModelFn(fastSlot);
     const compacted = await compactConversationMessages(model, history, {
       budget,
+      // Bound the summary call to the summarizer's own context — the fold is
+      // sized by the main model's (larger) window, so without this it overflows
+      // a smaller `fast` model and compaction silently no-ops.
+      summarizerContextTokens: getModelByString(fastSlot)?.limits.context,
       now: new Date().toISOString(),
       onEvent: (event) => appendEvent(conversationId, event),
       onError: (err) => console.error("[runtime] history compaction failed:", err),

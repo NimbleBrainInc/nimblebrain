@@ -171,6 +171,72 @@ describe("summarizeMessages + runCompaction", () => {
   });
 });
 
+// --- summarizer context bounding (regression: large folds silently no-op'd) ---
+
+/** Mimics the provider rejecting an over-context prompt, like the real API. */
+function contextLimitedModel(summaryText: string, contextTokens: number): LanguageModelV3 {
+  return {
+    doGenerate: async (opts: { prompt: unknown }) => {
+      const tokens = Math.ceil(JSON.stringify(opts.prompt).length / 4);
+      if (tokens > contextTokens) {
+        throw new Error(`prompt is too long: ${tokens} tokens > ${contextTokens} maximum`);
+      }
+      return { content: [{ type: "text", text: summaryText }] };
+    },
+  } as unknown as LanguageModelV3;
+}
+
+/** Records the prompt-token size the model was actually handed. */
+function sizeCapturingModel(): { model: LanguageModelV3; lastPromptTokens: () => number } {
+  let last = 0;
+  const model = {
+    doGenerate: async (opts: { prompt: unknown }) => {
+      last = Math.ceil(JSON.stringify(opts.prompt).length / 4);
+      return { content: [{ type: "text", text: "s" }] };
+    },
+  } as unknown as LanguageModelV3;
+  return { model, lastPromptTokens: () => last };
+}
+
+describe("summarizeMessages — bounds the transcript to the summarizer context", () => {
+  test("a fold far larger than the summarizer context is bounded under it", async () => {
+    const fold = conversation(100, 4000); // ~200k tokens of fold
+    const { model, lastPromptTokens } = sizeCapturingModel();
+    await summarizeMessages(model, fold, { summarizerContextTokens: 50_000 });
+    expect(lastPromptTokens()).toBeLessThanOrEqual(50_000);
+  });
+
+  test("a single message larger than the whole budget is truncated, not dropped or overflowed", async () => {
+    const huge = user("X".repeat(2_000_000), ts(0)); // ~500k tokens in ONE message
+    const { model, lastPromptTokens } = sizeCapturingModel();
+    const out = await summarizeMessages(model, [huge], { summarizerContextTokens: 40_000 });
+    expect(out).toBe("s"); // the call happened (didn't throw / infinite-loop)
+    expect(lastPromptTokens()).toBeLessThanOrEqual(40_000);
+  });
+});
+
+describe("compactConversationMessages — large fold + small summarizer (production regression)", () => {
+  test("compacts instead of silently failing when the fold exceeds the summarizer context", async () => {
+    // Repro of the prod bug: fold ≫ summarizer context. Old behavior: doGenerate
+    // throws `prompt is too long`, best-effort swallows it, ZERO events, history
+    // never bounded. New: the transcript is bounded so the call fits and a
+    // history.compacted event is emitted.
+    const msgs = conversation(120, 4000); // ~240k tokens of history
+    const events: HistoryCompactedEvent[] = [];
+    const errors: unknown[] = [];
+    const out = await compactConversationMessages(contextLimitedModel("SUMMARY", 12_500), msgs, {
+      budget: 100_000,
+      summarizerContextTokens: 12_500, // tiny summarizer window
+      now: ts(999),
+      onEvent: (e) => events.push(e),
+      onError: (e) => errors.push(e),
+    });
+    expect(errors).toEqual([]); // did NOT fall back on an over-context error
+    expect(events).toHaveLength(1); // it actually compacted
+    expect(out).not.toBe(msgs);
+  });
+});
+
 // --- compactConversationMessages (the wiring helper) -----------------------
 
 describe("compactConversationMessages", () => {
