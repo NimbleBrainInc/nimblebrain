@@ -53,8 +53,9 @@ const RENEW_SKEW_SECONDS = 30;
 
 export interface MintRequestParams {
   tid: string;
-  /** Workspace dimension — becomes the token's `workspace_id` claim. Must pass
-   *  the authorizer's DNS-label grammar (shared with tid). */
+  /** Workspace dimension — becomes the token's `workspace_id` claim. Validated
+   *  against the runtime's canonical workspace-id grammar (`WORKSPACE_ID_RE`);
+   *  the authorizer accepts it via its own bounded safe-id grammar. */
   workspace: string;
   audience: string;
   scope: string;
