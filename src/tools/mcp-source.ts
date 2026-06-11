@@ -1094,8 +1094,20 @@ export class McpSource implements ToolSource {
       // a clear, structured reauth error instead of a generic crash. This
       // wires the documented `running → reauth_required` transition
       // (see connection.ts) that nothing else triggered.
-      if (err instanceof UnauthorizedError && this.mode.type === "remote") {
-        this.mode.authProvider?.notifyAuthLost();
+      //
+      // Gated on `authProvider`: only an OAuth-provider remote can be
+      // "reconnected" by the user — a 401 there means the refresh token died
+      // and re-running OAuth fixes it. A static-auth remote (e.g. a Composio
+      // bundle's `x-api-key` header) that 401s is a bad OPERATOR credential,
+      // not user-reconnectable: there's no flow to re-run, and `notifyAuthLost`
+      // would no-op anyway (no provider). Fall through to the normal error
+      // path rather than show a misleading "Reconnect".
+      if (
+        err instanceof UnauthorizedError &&
+        this.mode.type === "remote" &&
+        this.mode.authProvider
+      ) {
+        this.mode.authProvider.notifyAuthLost();
         return {
           content: textContent(
             `${this.name} needs to be reconnected — its authorization has expired. Open the connector and click Reconnect.`,

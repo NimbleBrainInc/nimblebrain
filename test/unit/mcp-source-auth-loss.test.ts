@@ -14,16 +14,19 @@ import type { WorkspaceOAuthProvider } from "../../src/tools/workspace-oauth-pro
 
 function startedRemoteSource(opts: {
   callTool: () => Promise<unknown>;
-  notifyAuthLost: () => void;
+  // Omit to model a static-auth remote (e.g. a Composio x-api-key bundle)
+  // that has no OAuth provider — the reauth branch must NOT fire for it.
+  notifyAuthLost?: () => void;
 }): McpSource {
-  const authProvider = {
-    notifyAuthLost: opts.notifyAuthLost,
-  } as unknown as WorkspaceOAuthProvider;
+  const authProvider =
+    opts.notifyAuthLost === undefined
+      ? undefined
+      : ({ notifyAuthLost: opts.notifyAuthLost } as unknown as WorkspaceOAuthProvider);
 
   const mode: McpTransportMode = {
     type: "remote",
     url: new URL("https://teams.example.com/mcp"),
-    authProvider,
+    ...(authProvider ? { authProvider } : {}),
   };
   const source = new McpSource("teams", mode, new NoopEventSink());
 
@@ -60,6 +63,25 @@ describe("McpSource — auth loss on a tool call (detect-on-use)", () => {
     const text = result.content.map((c) => ("text" in c ? c.text : "")).join(" ");
     expect(text).not.toMatch(/crashed|restart/i);
     expect(text).toMatch(/reconnect/i);
+  });
+
+  it("UnauthorizedError on a static-auth remote (no provider) does NOT show reauth", async () => {
+    // A Composio bundle authenticates with a static x-api-key header — no
+    // OAuth provider. A 401 there is a bad operator credential, not a
+    // user-reconnectable token: the branch is gated on authProvider, so it
+    // falls through to the normal error path instead of a misleading
+    // "Reconnect" message.
+    const source = startedRemoteSource({
+      callTool: () => Promise.reject(new UnauthorizedError("bad api key")),
+      // no notifyAuthLost → no authProvider on the mode
+    });
+
+    const result = await source.execute("send_message", {});
+
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent?.reason).not.toBe("reauth_required");
+    const text = result.content.map((c) => ("text" in c ? c.text : "")).join(" ");
+    expect(text).not.toMatch(/reconnect/i);
   });
 
   it("a non-auth tool-call error still goes through the crash path (not reauth)", async () => {
