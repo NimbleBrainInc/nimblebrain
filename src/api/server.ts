@@ -4,6 +4,10 @@ import type { ConnectionHealthProbe } from "../bundles/connection-probe.ts";
 import { ConnectionRevalidator } from "../bundles/connection-revalidator.ts";
 import { log } from "../cli/log.ts";
 import { ComposioConnectionProbe } from "../composio/connection-probe.ts";
+import {
+  composioMonitorEnabled,
+  revalidatorIntervalMsFromEnv,
+} from "../composio/monitor-config.ts";
 import { validateComposioConfig } from "../composio/sdk.ts";
 import type { IdentityProvider } from "../identity/provider.ts";
 import { DevIdentityProvider } from "../identity/providers/dev.ts";
@@ -76,25 +80,18 @@ export function startServer(options: ServerOptions): ServerHandle {
   // the operator switch. Env knobs (read once at startup, restart to change):
   //   COMPOSIO_MONITOR_ENABLED         — incident kill switch (default on)
   //   COMPOSIO_MONITOR_INTERVAL_SECONDS — sweep cadence (default 300)
+  const composioConfigured = validateComposioConfig().configured;
   const revalidatorProbes: ConnectionHealthProbe[] = [];
-  if (
-    validateComposioConfig().configured &&
-    (process.env.COMPOSIO_MONITOR_ENABLED ?? "true").trim().toLowerCase() !== "false"
-  ) {
+  if (composioMonitorEnabled(composioConfigured)) {
     revalidatorProbes.push(new ComposioConnectionProbe(runtime.getConnectorDirectory()));
-  } else if (validateComposioConfig().configured) {
+  } else if (composioConfigured) {
     log.info("[connection-revalidator] disabled via COMPOSIO_MONITOR_ENABLED=false");
   }
-  const intervalSeconds = Number.parseInt(
-    (process.env.COMPOSIO_MONITOR_INTERVAL_SECONDS ?? "").trim(),
-    10,
-  );
+  const intervalMs = revalidatorIntervalMsFromEnv();
   const connectionRevalidator = new ConnectionRevalidator(
     runtime.getLifecycle(),
     revalidatorProbes,
-    Number.isFinite(intervalSeconds) && intervalSeconds > 0
-      ? { intervalMs: intervalSeconds * 1000 }
-      : {},
+    intervalMs !== undefined ? { intervalMs } : {},
   );
   connectionRevalidator.start();
 
