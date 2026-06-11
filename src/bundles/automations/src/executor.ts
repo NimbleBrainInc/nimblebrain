@@ -1,7 +1,8 @@
 /**
  * Automation executor: runs an automation's prompt through the chat engine.
  *
- * `createDirectExecutor` calls `runtime.chat()` in-process — the only path now
+ * `createDirectExecutor` runs each automation via `runtime.executeTask()`
+ * in-process (wired in `tools/platform/automations.ts`) — the only path now
  * that automations is an in-process platform source (the former HTTP executor
  * + standalone MCP server were removed). A scheduled run fires as the
  * automation's owner; see `getExecutorContext` in the platform source.
@@ -154,15 +155,10 @@ function buildRequest(automation: Automation, ctx?: ExecutorContext): TaskFnRequ
  *                                 isn't a member of (e.g. another user's personal
  *                                 workspace) — unreachable by design. (Orchestrator
  *                                 reason.)
- *   - `reauth_required`         → the connector IS installed but its authorization
- *                                 expired/was revoked, so a tool call hit it and
- *                                 failed on auth. Distinct from the two above: the
- *                                 source routes fine, the failure is downstream.
- *                                 Emitted by the connector auth-loss path
- *                                 (`McpSource.execute`); harmless to list before
- *                                 that lands — no call carries this reason until
- *                                 then. This is the literal "the connector is
- *                                 disconnected" case the others do NOT cover.
+ *
+ * These are the only two reasons any code emits as a tool-result
+ * `structuredContent.reason` today (the orchestrator's `error-mapping.ts`), so
+ * the set stays grounded in values that are actually produced and tested.
  *
  * Deliberately narrower than the full reason taxonomy. Excluded on purpose:
  *   - `invalid_tool_name` / `unknown_identity_source` — usually the agent probing
@@ -172,12 +168,14 @@ function buildRequest(automation: Automation, ctx?: ExecutorContext): TaskFnRequ
  *     Real but rare, and the taxonomy frames it as a typo / cross-tenant accident
  *     (agent error) rather than a connector gap. Left out for now; revisit if it
  *     shows up in practice.
+ *
+ * NOT covered here: an installed connector whose authorization expired mid-run.
+ * That surfaces a `reason: "reauth_required"` tool result only once the connector
+ * auth-loss detection lands (a separate change). Add `reauth_required` to this
+ * set in THAT change, alongside a test against its real emission — not as a
+ * forward-declaration here, which would assert a value no current path produces.
  */
-const UNREACHABLE_CONNECTOR_REASONS = new Set([
-  "unknown_tool_source",
-  "workspace_access_denied",
-  "reauth_required",
-]);
+const UNREACHABLE_CONNECTOR_REASONS = new Set(["unknown_tool_source", "workspace_access_denied"]);
 
 /** Tool-call entries (loosely typed in `TaskFnResult`) whose routing failed. */
 function unreachableConnectorCalls(toolCalls: TaskFnResult["toolCalls"]): string[] {
