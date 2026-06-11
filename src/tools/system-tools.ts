@@ -169,12 +169,35 @@ export async function createSystemTools(
             _meta: { [NON_ADVANCING_META_KEY]: true },
           };
         const shown = matches.slice(0, 25);
+        // Auto-promote the top matches straight into the active set, so the
+        // model can call them on the NEXT turn without a separate
+        // nb__manage_tools round-trip — which would re-send the whole cached
+        // prefix for zero state the model couldn't infer. The prefix
+        // cache-write on the next call is irreducible either way (tool
+        // definitions are wire position 0; changing them busts the prefix);
+        // this just removes one model round-trip per discovery. addTool is
+        // idempotent, eligibility-guarded, and LRU-bounded, and no-ops when
+        // there's no active run.
+        const AUTO_PROMOTE_LIMIT = 3;
+        const promoted: string[] = [];
+        if (toolPromotionCtx) {
+          for (const t of shown.slice(0, AUTO_PROMOTE_LIMIT)) {
+            if (toolPromotionCtx.addTool(t.name).ok) promoted.push(t.name);
+          }
+        }
         const suffix = matches.length > shown.length ? ` (showing top ${shown.length})` : "";
         const lines = [`Found ${matches.length} tool(s) for "${query}"${suffix}:\n`];
         for (const t of shown) lines.push(`- **${t.name}**: ${t.description}`);
+        if (promoted.length > 0) {
+          const subj = promoted.length === 1 ? "This tool is" : `The top ${promoted.length} are`;
+          const obj = promoted.length === 1 ? "it" : "them";
+          lines.push(
+            `\n${subj} now active — call ${obj} directly. Use nb__manage_tools only to activate a different match from the list above.`,
+          );
+        }
         return {
           content: textContent(lines.join("\n")),
-          structuredContent: { tools: shown.map((t) => ({ name: t.name })) },
+          structuredContent: { tools: shown.map((t) => ({ name: t.name })), promoted },
           isError: false,
         };
       },
