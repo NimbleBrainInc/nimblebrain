@@ -324,6 +324,8 @@ export interface ChatResult {
     output: string;
     ok: boolean;
     ms: number;
+    /** Structured failure reason when `ok === false`. See ToolCallRecord.errorReason. */
+    errorReason?: string;
   }>;
   stopReason: string;
   /** Detailed usage breakdown for this turn. */
@@ -430,6 +432,8 @@ export interface TaskResult {
     output: string;
     ok: boolean;
     ms: number;
+    /** Structured failure reason when `ok === false`. See ToolCallRecord.errorReason. */
+    errorReason?: string;
   }>;
   stopReason: string;
   usage: TurnUsage;

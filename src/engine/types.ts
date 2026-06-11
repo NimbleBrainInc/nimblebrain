@@ -387,6 +387,18 @@ export interface ToolCallRecord {
   output: string;
   ok: boolean;
   ms: number;
+  /**
+   * Structured error reason when `ok === false`, lifted from the tool
+   * result's `structuredContent.reason`. Lets downstream consumers
+   * distinguish a tool call that could not be ROUTED (a connector missing
+   * from the workspace, disconnected, or in a workspace the caller can't
+   * reach — `unknown_tool_source`, `workspace_access_denied`, …; see
+   * `src/orchestrator/error-mapping.ts`) from a tool that ran and returned a
+   * logical error the agent handled. The automations executor reads this to
+   * de-mask runs that "completed" only by writing around an unreachable
+   * connector. Absent when the call succeeded or carried no structured reason.
+   */
+  errorReason?: string;
   resourceUri?: string;
   /**
    * MCP `resource_link` content blocks surfaced by the tool result.

@@ -1,7 +1,8 @@
 /**
  * Automation executor: runs an automation's prompt through the chat engine.
  *
- * `createDirectExecutor` calls `runtime.chat()` in-process — the only path now
+ * `createDirectExecutor` runs each automation via `runtime.executeTask()`
+ * in-process (wired in `tools/platform/automations.ts`) — the only path now
  * that automations is an in-process platform source (the former HTTP executor
  * + standalone MCP server were removed). A scheduled run fires as the
  * automation's owner; see `getExecutorContext` in the platform source.
@@ -138,13 +139,99 @@ function buildRequest(automation: Automation, ctx?: ExecutorContext): TaskFnRequ
   return req;
 }
 
+/**
+ * Per-tool-call failure reasons that mean a connector the run NEEDED was not
+ * usable — so a `complete` stop is not an honest success:
+ *
+ *   - `unknown_tool_source`     → the run ATTEMPTED a namespaced tool call but
+ *                                 the tool's source isn't registered in that
+ *                                 workspace — the app isn't installed there
+ *                                 (`route.ts`: `getSource()` returned nothing).
+ *                                 (Orchestrator reason; see `error-mapping.ts`.)
+ *   - `workspace_access_denied` → the run ATTEMPTED a call into a workspace its
+ *                                 owner isn't a member of (e.g. another user's
+ *                                 personal workspace) — unreachable by design.
+ *                                 (Orchestrator reason.)
+ *
+ * KEY LIMITATION — both reasons require the agent to have ATTEMPTED the call.
+ * A required connector that never appears in the agent's toolset (so it never
+ * tries) produces no reason and is NOT de-masked. The production standup
+ * incident was actually this never-attempted variant: the agent ran `nb__search`,
+ * found no Teams connector in any reachable workspace, and "completed" by
+ * documenting the gap — never calling a Teams tool. So this fix de-masks the
+ * attempted-call class (a strict improvement, zero false positives); the
+ * never-attempted class needs a different signal (the agent self-reporting an
+ * incomplete required step) and is tracked separately.
+ *
+ * These are the only two *connector-unreachable* reasons. The orchestrator
+ * (`error-mapping.ts`) emits FIVE reasons in all; the other three are agent /
+ * typo errors, not connector gaps, and are excluded below — the taxonomy is NOT
+ * closed at two. Both reasons here are really produced and tested, so the set
+ * stays grounded in values that actually occur.
+ *
+ * Deliberately narrower than the full reason taxonomy. Excluded on purpose:
+ *   - `invalid_tool_name` / `unknown_identity_source` — usually the agent probing
+ *     a wrong name and self-correcting, not a real connector gap; flagging them
+ *     would mark healthy runs failed.
+ *   - `unknown_workspace` — a target workspace deleted out from under the run.
+ *     Real but rare, and the taxonomy frames it as a typo / cross-tenant accident
+ *     (agent error) rather than a connector gap. Left out for now; revisit if it
+ *     shows up in practice.
+ *
+ * NOT covered here: an installed connector whose authorization expired mid-run.
+ * That surfaces a `reason: "reauth_required"` tool result only once the connector
+ * auth-loss detection lands (a separate change). Add `reauth_required` to this
+ * set in THAT change, alongside a test against its real emission — not as a
+ * forward-declaration here, which would assert a value no current path produces.
+ */
+const UNREACHABLE_CONNECTOR_REASONS = new Set(["unknown_tool_source", "workspace_access_denied"]);
+
+/** Tool-call entries (loosely typed in `TaskFnResult`) whose routing failed. */
+function unreachableConnectorCalls(toolCalls: TaskFnResult["toolCalls"]): string[] {
+  if (!Array.isArray(toolCalls)) return [];
+  const names: string[] = [];
+  for (const tc of toolCalls) {
+    const reason = tc.errorReason;
+    const name = tc.name;
+    if (typeof reason === "string" && UNREACHABLE_CONNECTOR_REASONS.has(reason)) {
+      names.push(typeof name === "string" ? name : "(unknown tool)");
+    }
+  }
+  return names;
+}
+
 function mapResultToRun(
   automation: Automation,
   startedAt: string,
   data: TaskFnResult,
 ): AutomationRun {
   const stopReason = data.stopReason as AutomationRun["stopReason"];
-  const status: AutomationRun["status"] = mapStopReasonToStatus(stopReason);
+  let status: AutomationRun["status"] = mapStopReasonToStatus(stopReason);
+
+  // De-mask the silent connector failure: when the model reports `complete`,
+  // the run would otherwise be a green `success` — even if a tool call hit a
+  // connector that couldn't be routed (missing, disconnected, or in another
+  // workspace the owner can't reach). The agent commonly "completes" by
+  // documenting the gap instead of doing the work, which is precisely the
+  // failure operators reported (a standup summary that never reached Teams,
+  // recorded as success). A connector-unreachable call means the automation
+  // did not actually do its job: downgrade to `failure` and name the tool(s)
+  // so the run list shows it instead of burying it in the conversation.
+  //
+  // Only overrides an otherwise-`success` run; a run already classified
+  // failure/timeout keeps its (stronger) status.
+  let error: string | undefined;
+  if (status === "success") {
+    const unreachable = unreachableConnectorCalls(data.toolCalls);
+    if (unreachable.length > 0) {
+      status = "failure";
+      const unique = [...new Set(unreachable)];
+      error =
+        `Connector unavailable during run: ${unique.length} tool call type(s) could not be ` +
+        `routed (${unique.join(", ")}). The required connector is missing, disconnected, or ` +
+        `in a workspace this automation cannot reach — the run did not complete its intended action.`;
+    }
+  }
 
   return {
     id: `run_${crypto.randomUUID().slice(0, 12)}`,
@@ -159,6 +246,7 @@ function mapResultToRun(
     iterations: data.usage.iterations,
     resultPreview: data.output || undefined,
     stopReason,
+    ...(error ? { error } : {}),
   };
 }
 

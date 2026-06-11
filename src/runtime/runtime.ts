@@ -2175,6 +2175,12 @@ export class Runtime {
           partial.inputTokens += usage.inputTokens ?? 0;
           partial.outputTokens += usage.outputTokens ?? 0;
         } else if (type === "tool.done") {
+          // `errorReason` is intentionally absent here: this accumulator only
+          // feeds the abort/timeout path, which always returns
+          // `stopReason: "aborted"` (never "complete"), so the automations
+          // de-masker's `status === "success"` guard never reads it. (The
+          // `tool.done` event doesn't carry `errorReason` either — no point
+          // threading it through for a path that can't de-mask.)
           partialToolCalls.push({
             id: (data.id as string) ?? "",
             name: (data.name as string) ?? "",
