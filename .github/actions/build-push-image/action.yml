@@ -1,0 +1,46 @@
+name: Build and push image
+description: >-
+  Build a linux/amd64 image with the GitHub Actions layer cache and push it to
+  the given tags. Single source of truth for how CI (ci.yml) and releases
+  (release.yml) build the platform and web images — keep the build mechanics
+  here; keep tag/registry *policy* in the calling workflow, where it differs.
+  The caller must run docker/setup-buildx-action once per job (the gha cache
+  needs the docker-container driver) and log in to every registry referenced
+  in `tags` before calling this action.
+
+inputs:
+  context:
+    description: Docker build context
+    required: true
+  file:
+    description: Path to the Dockerfile
+    required: true
+  tags:
+    description: Newline-separated list of fully-qualified image tags to push
+    required: true
+  cache-scope:
+    description: >-
+      gha cache scope. Use a distinct scope per image (e.g. platform, web) so
+      the caches never overwrite each other.
+    required: true
+  build-args:
+    description: Newline-separated build args (KEY=value)
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - uses: docker/build-push-action@v6
+      with:
+        context: ${{ inputs.context }}
+        file: ${{ inputs.file }}
+        platforms: linux/amd64
+        push: true
+        build-args: ${{ inputs.build-args }}
+        tags: ${{ inputs.tags }}
+        # mode=max caches intermediate (multi-stage) layers too, which the web
+        # image needs — its bun install + vite build live in a build stage that
+        # is discarded from the final image.
+        cache-from: type=gha,scope=${{ inputs.cache-scope }}
+        cache-to: type=gha,mode=max,scope=${{ inputs.cache-scope }}
