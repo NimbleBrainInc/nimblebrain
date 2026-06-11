@@ -107,6 +107,31 @@ describe("summarizeMessages + runCompaction", () => {
     expect(out).toBe("a dense summary");
   });
 
+  test("summarizeMessages reports the call's usage via onUsage", async () => {
+    const model = {
+      doGenerate: async () => ({
+        content: [{ type: "text", text: "a dense summary" }],
+        usage: {
+          inputTokens: { total: 1200, cacheRead: 300, cacheWrite: 100 },
+          outputTokens: { total: 40 },
+        },
+      }),
+    } as unknown as LanguageModelV3;
+    let seen:
+      | { usage: { inputTokens: number; outputTokens: number; cacheReadTokens?: number }; ms: number }
+      | undefined;
+    const out = await summarizeMessages(model, conversation(2, 40), {
+      onUsage: (usage, ms) => {
+        seen = { usage, ms };
+      },
+    });
+    expect(out).toBe("a dense summary");
+    expect(seen?.usage.inputTokens).toBe(1200);
+    expect(seen?.usage.outputTokens).toBe(40);
+    expect(seen?.usage.cacheReadTokens).toBe(300);
+    expect(typeof seen?.ms).toBe("number");
+  });
+
   test("summarizeMessages throws on an empty model response", async () => {
     await expect(summarizeMessages(fakeModel(""), conversation(2, 40))).rejects.toThrow();
   });
@@ -355,6 +380,23 @@ describe("reconstructMessages — history.compacted", () => {
       { ts: ts(0), type: "user.message", content: [{ type: "text", text: "hi" }] },
     ];
     const msgs = reconstructMessages(events);
+    expect((msgs[0]!.content as { text?: string }[])[0]?.text).toBe("hi");
+  });
+
+  test("aux.usage events are skipped — forked-call cost, never a message", () => {
+    const events: ConversationEvent[] = [
+      { ts: ts(0), type: "user.message", content: [{ type: "text", text: "hi" }] },
+      {
+        ts: ts(1),
+        type: "aux.usage",
+        source: "title",
+        model: "m",
+        usage: { inputTokens: 10, outputTokens: 5 },
+        llmMs: 1,
+      },
+    ];
+    const msgs = reconstructMessages(events);
+    expect(msgs).toHaveLength(1);
     expect((msgs[0]!.content as { text?: string }[])[0]?.text).toBe("hi");
   });
 

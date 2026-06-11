@@ -100,6 +100,29 @@ describe("usage-aggregator", () => {
     expect(report.totals.conversations).toBe(1);
   });
 
+  it("counts aux.usage events (forked compaction/title calls) toward totals", async () => {
+    const dir = makeTmpDir();
+    const content = buildJsonl({ id: "conv-aux", updatedAt: "2026-04-10T14:00:00Z" }, [
+      llmEvent({ inputTokens: 1000, outputTokens: 500 }),
+      {
+        type: "aux.usage",
+        ts: "2026-04-10T12:05:00Z",
+        source: "compaction",
+        model: "claude-haiku-4-5-20251001",
+        usage: { inputTokens: 400, outputTokens: 60, cacheReadTokens: 0, cacheWriteTokens: 0 },
+        llmMs: 120,
+      },
+    ]);
+    writeFileSync(join(dir, "conv-aux.jsonl"), content);
+
+    const report = await aggregateUsage(dir, "all", "day");
+
+    // Both the main turn and the forked summarizer call are counted.
+    expect(report.totals.tokens.input).toBe(1400);
+    expect(report.totals.tokens.output).toBe(560);
+    expect(report.totals.llmCalls).toBe(2);
+  });
+
   it("filters usage by llm.response timestamp, not conversation updatedAt", async () => {
     const dir = makeTmpDir();
 

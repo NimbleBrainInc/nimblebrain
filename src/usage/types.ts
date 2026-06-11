@@ -16,6 +16,8 @@
  * compiler enforces that callers supply the full struct, which is what
  * keeps cost computation from silently dropping a field.
  */
+import type { LanguageModelV3Usage } from "@ai-sdk/provider";
+
 export interface TokenUsage {
   inputTokens: number;
   outputTokens: number;
@@ -32,6 +34,22 @@ export interface TokenUsage {
    * all-1h so historical figures stay correct.
    */
   cacheWrite1hTokens?: number;
+}
+
+/**
+ * Map an AI SDK V3 `doGenerate`/`doStream` usage struct into the canonical
+ * `TokenUsage`. The engine maps inline (it also tiers the 1h cache-write split
+ * from provider metadata); forked utility calls — the compaction summarizer and
+ * auto-title — use this to report their usage without that engine-only detail.
+ */
+export function tokenUsageFromV3(usage: LanguageModelV3Usage): TokenUsage {
+  return {
+    inputTokens: usage.inputTokens.total ?? 0,
+    outputTokens: usage.outputTokens.total ?? 0,
+    cacheReadTokens: usage.inputTokens.cacheRead ?? 0,
+    cacheWriteTokens: usage.inputTokens.cacheWrite ?? 0,
+    reasoningTokens: usage.outputTokens.reasoning ?? 0,
+  };
 }
 
 /** Zero-valued TokenUsage. Convenience for accumulators. */

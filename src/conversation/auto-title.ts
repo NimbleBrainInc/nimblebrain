@@ -1,16 +1,23 @@
 import type { LanguageModelV3 } from "@ai-sdk/provider";
+import { type TokenUsage, tokenUsageFromV3 } from "../usage/types.ts";
 
 /**
  * Generate a short conversation title using the provided model.
  * Non-blocking — call fire-and-forget after first turn.
+ *
+ * `onUsage` observes the title call's token usage — it runs the `fast` slot
+ * outside the agentic loop, so without this its cost is invisible to the
+ * usage aggregator.
  */
 export async function generateTitle(
   model: LanguageModelV3,
   userMessage: string,
   assistantResponse: string,
+  onUsage?: (usage: TokenUsage, llmMs: number) => void,
 ): Promise<string> {
   try {
     const transcript = formatTitleTranscript(userMessage, assistantResponse);
+    const startedAt = Date.now();
     const result = await model.doGenerate({
       prompt: [
         {
@@ -31,6 +38,7 @@ export async function generateTitle(
       ],
       maxOutputTokens: 30,
     });
+    onUsage?.(tokenUsageFromV3(result.usage), Date.now() - startedAt);
     const textBlock = result.content.find((b) => b.type === "text");
     if (textBlock?.type === "text") {
       return sanitizeGeneratedTitle(textBlock.text, userMessage);

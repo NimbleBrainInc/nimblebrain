@@ -128,6 +128,17 @@ describe("history compaction — wired path", () => {
       // (a) The wired path actually persisted a compaction event.
       expect(events.some((e) => e.type === "history.compacted")).toBe(true);
 
+      // (a.2) The summarizer's usage is persisted as an aux.usage event, so the
+      // fold's cost is visible to the usage aggregator (not undercounted).
+      expect(
+        events.some(
+          (e) =>
+            e.type === "aux.usage" &&
+            (e as { source?: string }).source === "compaction" &&
+            (e as { usage?: { inputTokens?: number } }).usage?.inputTokens !== undefined,
+        ),
+      ).toBe(true);
+
       // (b) The model-facing projection is compacted: it carries the summary
       //     seed and NOT the oldest turn's text.
       const modelView = JSON.stringify(reconstructMessages(events));
