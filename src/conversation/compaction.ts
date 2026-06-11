@@ -219,7 +219,15 @@ function formatPart(p: TranscriptPart): string {
 // yields a conservative floor so an unknown summarizer is never handed an
 // unbounded prompt.
 const SUMMARIZER_CTX_FALLBACK_TOKENS = 32_000;
-const SUMMARIZER_OUTPUT_RESERVE_TOKENS = 1_024;
+// The summary's output ceiling. The re-anchor compresses the older fold (the
+// recent tail is kept verbatim), and a fold can be 200k+ tokens, so a too-small
+// ceiling flattens real detail (decisions, ids, file refs). The model self-
+// sizes under this cap — a small fold yields a short summary — so a generous
+// ceiling only costs more when there's substance to preserve. Output is cheap
+// (summarizer is the `fast` slot) and rides as a cached prefix afterward, so the
+// cost is negligible; well under the summarizer's max output. This same value is
+// reserved against the summarizer's context below so `input + output ≤ context`.
+const SUMMARY_MAX_OUTPUT_TOKENS = 8_192;
 const SUMMARIZER_SYSTEM_RESERVE_TOKENS = 512;
 const SUMMARIZER_SAFETY_MARGIN_TOKENS = 8_192;
 const SUMMARIZER_ESTIMATE_DEFLATE = 0.6;
@@ -230,7 +238,7 @@ export function summarizerTranscriptBudgetTokens(contextTokens?: number): number
   const ctx = contextTokens ?? SUMMARIZER_CTX_FALLBACK_TOKENS;
   const net =
     ctx -
-    SUMMARIZER_OUTPUT_RESERVE_TOKENS -
+    SUMMARY_MAX_OUTPUT_TOKENS -
     SUMMARIZER_SYSTEM_RESERVE_TOKENS -
     SUMMARIZER_SAFETY_MARGIN_TOKENS;
   return Math.max(4_000, Math.floor(net * SUMMARIZER_ESTIMATE_DEFLATE));
@@ -336,7 +344,7 @@ export async function summarizeMessages(
       { role: "system", content: SUMMARIZE_SYSTEM },
       { role: "user", content: [{ type: "text", text: transcript }] },
     ],
-    maxOutputTokens: opts.maxOutputTokens ?? 1024,
+    maxOutputTokens: opts.maxOutputTokens ?? SUMMARY_MAX_OUTPUT_TOKENS,
   });
   const textBlock = result.content.find((b) => b.type === "text");
   const summary = textBlock?.type === "text" ? textBlock.text.trim() : "";
