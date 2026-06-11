@@ -40,35 +40,38 @@ import { personalWorkspaceIdFor, WorkspaceStore } from "../../src/workspace/work
  */
 
 // Reverse-DNS form per upstream MCP registry's ServerDetail spec — matches
-// the `name` field of the Asana entry in src/connectors/catalog.yaml.
-const ASANA_ID = "io.asana/mcp";
-const ASANA_URL = "https://mcp.asana.com/v2/mcp";
-const ASANA_SECRET_KEY = "asana.client_secret";
+// the `name` field of the Dropbox entry in src/connectors/catalog.yaml.
+// Dropbox is the canonical `auth: static` (bring-your-own OAuth) connector
+// in the catalog, so static-auth setup_operator/install tests resolve
+// against it.
+const DROPBOX_ID = "com.dropbox/mcp";
+const DROPBOX_URL = "https://mcp.dropbox.com/mcp";
+const DROPBOX_SECRET_KEY = "dropbox.client_secret";
 // DCR entry from the bundled static catalog — used to verify operator
 // setup is rejected for non-static-auth connectors.
 const NOTION_ID = "com.notion/mcp";
 
 /**
  * Build a DirectoryEntry shaped like what `StaticSource` projects for
- * Asana — used by install tests since the install API takes the full
+ * Dropbox — used by install tests since the install API takes the full
  * entry, not an id. Field set matches the real source output; tests
  * can override pieces (operatorSetup, install) per case.
  */
-function asanaEntry(over: Partial<DirectoryEntry> = {}): DirectoryEntry {
+function dropboxEntry(over: Partial<DirectoryEntry> = {}): DirectoryEntry {
   return {
-    id: ASANA_ID,
+    id: DROPBOX_ID,
     registryId: "bundled-static",
     registryType: "static",
-    name: "Asana",
-    description: "Tasks, projects, and team workflows",
+    name: "Dropbox",
+    description: "Files, folders, and shared links",
     install: {
       kind: "remote-oauth",
-      url: ASANA_URL,
+      url: DROPBOX_URL,
       auth: "static",
       operatorSetup: {
-        portalUrl: "https://app.asana.com/0/developer-console",
+        portalUrl: "https://www.dropbox.com/developers/apps",
         hint: "Create a service account",
-        clientSecretKey: ASANA_SECRET_KEY,
+        clientSecretKey: DROPBOX_SECRET_KEY,
       },
     },
     ...over,
@@ -140,7 +143,7 @@ function buildHarness(opts: { adminId?: string } = {}): Harness {
   const credStore = new FileCredentialStore(workDir);
   // Pre-seed registries.json so RegistryStore.list() reads it instead of
   // auto-seeding the production defaults. The bundled-static row is kept
-  // (tests look up real catalog ids like ASANA_ID), but mpak is DISABLED:
+  // (tests look up real catalog ids like DROPBOX_ID), but mpak is DISABLED:
   // otherwise ConnectorDirectory.servers() would call MpakSource.fetch
   // which makes a live HTTP request to registry.mpak.dev. Under suite
   // load that network call queues past the 5s test timeout — flake
@@ -277,7 +280,7 @@ describe("manage_connectors.setup_operator", () => {
     const tool = buildTool(h, NON_ADMIN_USER);
     const result = await tool.handler({
       action: "setup_operator",
-      catalogId: ASANA_ID,
+      catalogId: DROPBOX_ID,
       clientId: "cid-1",
       clientSecret: "sec-1",
     });
@@ -290,7 +293,7 @@ describe("manage_connectors.setup_operator", () => {
     const tool = buildTool(h, ADMIN_USER);
     const result = await tool.handler({
       action: "setup_operator",
-      catalogId: ASANA_ID,
+      catalogId: DROPBOX_ID,
       clientId: "cid-public",
       clientSecret: "sec-private",
     });
@@ -300,10 +303,10 @@ describe("manage_connectors.setup_operator", () => {
     expect(structured(result).clientId).toBe("cid-public");
 
     const ws = await h.workspaceStore.get(h.wsId);
-    expect(ws?.oauthOperatorApps?.[ASANA_ID]?.clientId).toBe("cid-public");
-    expect(ws?.oauthOperatorApps?.[ASANA_ID]?.configuredBy).toBe(ADMIN_USER.id);
+    expect(ws?.oauthOperatorApps?.[DROPBOX_ID]?.clientId).toBe("cid-public");
+    expect(ws?.oauthOperatorApps?.[DROPBOX_ID]?.configuredBy).toBe(ADMIN_USER.id);
 
-    const wrapped = await h.credStore.get(h.wsId, ASANA_SECRET_KEY);
+    const wrapped = await h.credStore.get(h.wsId, DROPBOX_SECRET_KEY);
     expect(wrapped?.reveal()).toBe("sec-private");
   });
 
@@ -312,21 +315,21 @@ describe("manage_connectors.setup_operator", () => {
 
     await tool.handler({
       action: "setup_operator",
-      catalogId: ASANA_ID,
+      catalogId: DROPBOX_ID,
       clientId: "cid-v1",
       clientSecret: "sec-v1",
     });
     const second = await tool.handler({
       action: "setup_operator",
-      catalogId: ASANA_ID,
+      catalogId: DROPBOX_ID,
       clientId: "cid-v2",
       clientSecret: "sec-v2",
     });
 
     expect(second.isError).toBe(false);
     const ws = await h.workspaceStore.get(h.wsId);
-    expect(ws?.oauthOperatorApps?.[ASANA_ID]?.clientId).toBe("cid-v2");
-    const wrapped = await h.credStore.get(h.wsId, ASANA_SECRET_KEY);
+    expect(ws?.oauthOperatorApps?.[DROPBOX_ID]?.clientId).toBe("cid-v2");
+    const wrapped = await h.credStore.get(h.wsId, DROPBOX_SECRET_KEY);
     expect(wrapped?.reveal()).toBe("sec-v2");
   });
 
@@ -336,7 +339,7 @@ describe("manage_connectors.setup_operator", () => {
       (
         await noWs.handler({
           action: "setup_operator",
-          catalogId: ASANA_ID,
+          catalogId: DROPBOX_ID,
           clientId: "x",
           clientSecret: "y",
         })
@@ -357,7 +360,7 @@ describe("manage_connectors.setup_operator", () => {
       (
         await tool.handler({
           action: "setup_operator",
-          catalogId: ASANA_ID,
+          catalogId: DROPBOX_ID,
           clientSecret: "y",
         })
       ).isError,
@@ -366,7 +369,7 @@ describe("manage_connectors.setup_operator", () => {
       (
         await tool.handler({
           action: "setup_operator",
-          catalogId: ASANA_ID,
+          catalogId: DROPBOX_ID,
           clientId: "x",
         })
       ).isError,
@@ -377,7 +380,7 @@ describe("manage_connectors.setup_operator", () => {
     const fakeWs = buildTool(h, ADMIN_USER, "ws_nonexistent");
     const r1 = await fakeWs.handler({
       action: "setup_operator",
-      catalogId: ASANA_ID,
+      catalogId: DROPBOX_ID,
       clientId: "x",
       clientSecret: "y",
     });
@@ -417,14 +420,14 @@ describe("manage_connectors.setup_operator", () => {
     await expect(
       tool.handler({
         action: "setup_operator",
-        catalogId: ASANA_ID,
+        catalogId: DROPBOX_ID,
         clientId: "cid-orphan",
         clientSecret: "sec-orphan",
       }),
     ).rejects.toThrow("simulated workspace.json failure");
     h.workspaceStore.update = original;
 
-    const wrapped = await h.credStore.get(h.wsId, ASANA_SECRET_KEY);
+    const wrapped = await h.credStore.get(h.wsId, DROPBOX_SECRET_KEY);
     expect(wrapped).toBeNull();
   });
 
@@ -436,7 +439,7 @@ describe("manage_connectors.setup_operator", () => {
     const tool = buildTool(h, ADMIN_USER);
     await tool.handler({
       action: "setup_operator",
-      catalogId: ASANA_ID,
+      catalogId: DROPBOX_ID,
       clientId: "cid-v1",
       clientSecret: "sec-v1",
     });
@@ -448,7 +451,7 @@ describe("manage_connectors.setup_operator", () => {
     await expect(
       tool.handler({
         action: "setup_operator",
-        catalogId: ASANA_ID,
+        catalogId: DROPBOX_ID,
         clientId: "cid-v2",
         clientSecret: "sec-v2",
       }),
@@ -458,7 +461,7 @@ describe("manage_connectors.setup_operator", () => {
     // Credential store now holds the new secret (the put already
     // landed before the failure) — but it's NOT been deleted, because
     // there was a prior valid secret under the same key.
-    const wrapped = await h.credStore.get(h.wsId, ASANA_SECRET_KEY);
+    const wrapped = await h.credStore.get(h.wsId, DROPBOX_SECRET_KEY);
     expect(wrapped?.reveal()).toBe("sec-v2");
   });
 });
@@ -484,7 +487,7 @@ describe("manage_connectors.remove_operator_setup", () => {
     const adminTool = buildTool(h, ADMIN_USER);
     await adminTool.handler({
       action: "setup_operator",
-      catalogId: ASANA_ID,
+      catalogId: DROPBOX_ID,
       clientId: "cid",
       clientSecret: "sec",
     });
@@ -492,7 +495,7 @@ describe("manage_connectors.remove_operator_setup", () => {
     const memberTool = buildTool(h, NON_ADMIN_USER);
     const result = await memberTool.handler({
       action: "remove_operator_setup",
-      catalogId: ASANA_ID,
+      catalogId: DROPBOX_ID,
     });
     expect(result.isError).toBe(true);
     expect(structured(result).error).toBe("permission_denied");
@@ -502,7 +505,7 @@ describe("manage_connectors.remove_operator_setup", () => {
     const tool = buildTool(h, ADMIN_USER);
     const result = await tool.handler({
       action: "remove_operator_setup",
-      catalogId: ASANA_ID,
+      catalogId: DROPBOX_ID,
     });
     expect(result.isError).toBe(true);
   });
@@ -511,7 +514,7 @@ describe("manage_connectors.remove_operator_setup", () => {
     const tool = buildTool(h, ADMIN_USER);
     await tool.handler({
       action: "setup_operator",
-      catalogId: ASANA_ID,
+      catalogId: DROPBOX_ID,
       clientId: "cid",
       clientSecret: "sec",
     });
@@ -521,13 +524,13 @@ describe("manage_connectors.remove_operator_setup", () => {
     await h.workspaceStore.update(h.wsId, {
       bundles: [
         ...(ws?.bundles ?? []),
-        { url: ASANA_URL, serverName: ASANA_ID } as BundleRef,
+        { url: DROPBOX_URL, serverName: DROPBOX_ID } as BundleRef,
       ],
     });
 
     const result = await tool.handler({
       action: "remove_operator_setup",
-      catalogId: ASANA_ID,
+      catalogId: DROPBOX_ID,
     });
     expect(result.isError).toBe(true);
   });
@@ -536,21 +539,21 @@ describe("manage_connectors.remove_operator_setup", () => {
     const tool = buildTool(h, ADMIN_USER);
     await tool.handler({
       action: "setup_operator",
-      catalogId: ASANA_ID,
+      catalogId: DROPBOX_ID,
       clientId: "cid",
       clientSecret: "sec",
     });
 
     const result = await tool.handler({
       action: "remove_operator_setup",
-      catalogId: ASANA_ID,
+      catalogId: DROPBOX_ID,
     });
     expect(result.isError).toBe(false);
     expect(structured(result).ok).toBe(true);
 
     const ws = await h.workspaceStore.get(h.wsId);
-    expect(ws?.oauthOperatorApps?.[ASANA_ID]).toBeUndefined();
-    const wrapped = await h.credStore.get(h.wsId, ASANA_SECRET_KEY);
+    expect(ws?.oauthOperatorApps?.[DROPBOX_ID]).toBeUndefined();
+    const wrapped = await h.credStore.get(h.wsId, DROPBOX_SECRET_KEY);
     expect(wrapped).toBeNull();
   });
 
@@ -559,7 +562,7 @@ describe("manage_connectors.remove_operator_setup", () => {
     const tool = buildTool(h, ADMIN_USER);
     await tool.handler({
       action: "setup_operator",
-      catalogId: ASANA_ID,
+      catalogId: DROPBOX_ID,
       clientId: "cid",
       clientSecret: "sec",
     });
@@ -568,7 +571,7 @@ describe("manage_connectors.remove_operator_setup", () => {
 
     const result = await tool.handler({
       action: "remove_operator_setup",
-      catalogId: ASANA_ID,
+      catalogId: DROPBOX_ID,
     });
     expect(result.isError).toBe(false);
   });
@@ -606,11 +609,11 @@ describe("manage_connectors.list_directory", () => {
     await h.registryStore.update("mpak", { enabled: false });
     const tool = buildTool(h, ADMIN_USER);
     const result = await tool.handler({ action: "list_directory" });
-    const asana = (structured(result).entries ?? []).find(
-      (e) => e.registryId === "bundled-static" && e.id === ASANA_ID,
+    const dropbox = (structured(result).entries ?? []).find(
+      (e) => e.registryId === "bundled-static" && e.id === DROPBOX_ID,
     );
-    expect(asana).toBeDefined();
-    expect(asana?.operatorConfigured).toBe(false);
+    expect(dropbox).toBeDefined();
+    expect(dropbox?.operatorConfigured).toBe(false);
   });
 
   test("static entry shows operatorConfigured: true after setup_operator runs", async () => {
@@ -618,16 +621,16 @@ describe("manage_connectors.list_directory", () => {
     const tool = buildTool(h, ADMIN_USER);
     await tool.handler({
       action: "setup_operator",
-      catalogId: ASANA_ID,
+      catalogId: DROPBOX_ID,
       clientId: "cid",
       clientSecret: "sec",
     });
 
     const result = await tool.handler({ action: "list_directory" });
-    const asana = (structured(result).entries ?? []).find(
-      (e) => e.registryId === "bundled-static" && e.id === ASANA_ID,
+    const dropbox = (structured(result).entries ?? []).find(
+      (e) => e.registryId === "bundled-static" && e.id === DROPBOX_ID,
     );
-    expect(asana?.operatorConfigured).toBe(true);
+    expect(dropbox?.operatorConfigured).toBe(true);
   });
 });
 
@@ -651,7 +654,7 @@ describe("manage_connectors.install (static-auth)", () => {
     const tool = buildTool(h, ADMIN_USER);
     const result = await tool.handler({
       action: "install",
-      entry: asanaEntry(),
+      entry: dropboxEntry(),
       wsId: h.wsId,
     });
     expect(result.isError).toBe(true);
@@ -665,7 +668,7 @@ describe("manage_connectors.install (static-auth)", () => {
     // half-setup (e.g., the credentials directory was wiped).
     await h.workspaceStore.update(h.wsId, {
       oauthOperatorApps: {
-        [ASANA_ID]: {
+        [DROPBOX_ID]: {
           clientId: "cid-only",
           configuredAt: new Date().toISOString(),
           configuredBy: ADMIN_USER.id,
@@ -676,7 +679,7 @@ describe("manage_connectors.install (static-auth)", () => {
     const tool = buildTool(h, ADMIN_USER);
     const result = await tool.handler({
       action: "install",
-      entry: asanaEntry(),
+      entry: dropboxEntry(),
       wsId: h.wsId,
     });
     expect(result.isError).toBe(true);
@@ -688,31 +691,31 @@ describe("manage_connectors.install (static-auth)", () => {
     const tool = buildTool(h, ADMIN_USER);
     await tool.handler({
       action: "setup_operator",
-      catalogId: ASANA_ID,
+      catalogId: DROPBOX_ID,
       clientId: "cid-public",
       clientSecret: "sec-private",
     });
 
     const result = await tool.handler({
       action: "install",
-      entry: asanaEntry(),
+      entry: dropboxEntry(),
       wsId: h.wsId,
     });
     expect(result.isError).toBe(false);
     expect(structured(result).ok).toBe(true);
     // serverName is the slug of the canonical reverse-DNS form
-    // (`io.asana/mcp` → `io-asana-mcp`) — opaque, URL-safe, route-safe.
-    expect(structured(result).serverName).toBe("io-asana-mcp");
+    // (`com.dropbox/mcp` → `com-dropbox-mcp`) — opaque, URL-safe, route-safe.
+    expect(structured(result).serverName).toBe("com-dropbox-mcp");
 
     const ws = await h.workspaceStore.get(h.wsId);
     const installed = ws?.bundles.find(
-      (b): b is Extract<BundleRef, { url: string }> => "url" in b && b.url === ASANA_URL,
+      (b): b is Extract<BundleRef, { url: string }> => "url" in b && b.url === DROPBOX_URL,
     );
     expect(installed).toBeDefined();
     expect(installed?.oauthClient?.clientId).toBe("cid-public");
     expect(installed?.oauthClient?.clientSecret).toEqual({
       ref: "credential",
-      key: ASANA_SECRET_KEY,
+      key: DROPBOX_SECRET_KEY,
     });
   });
 });

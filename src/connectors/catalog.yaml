@@ -22,22 +22,44 @@ servers:
   # ── Workspace-scoped (shared organizational identity) ──────────
   - name: io.asana/mcp
     title: Asana
-    description: Tasks, projects, and team workflows
-    version: "1.0.0"
+    description: Tasks, projects, and team workflows (via Composio)
+    version: "0.1.0"
     icons:
       - src: https://static.nimblebrain.ai/icons/asana.png
         sizes: ["any"]
     remotes:
       - type: streamable-http
-        url: https://mcp.asana.com/v2/mcp
+        url: https://backend.composio.dev/v3/mcp
     _meta:
       ai.nimblebrain/connector:
-        auth: static
-        operatorSetup:
-          portalUrl: https://app.asana.com/0/my-apps
-          hint: Create an OAuth app in Asana developer portal, copy client_id + client_secret
-          clientSecretKey: asana.client_secret
-        tags: [tasks, projects]
+        auth: composio
+        composio:
+          toolkit: asana
+          authConfigEnv: COMPOSIO_ASANA_AUTH_CONFIG_ID
+          # Asana publishes 84 tool slugs — curate to a task/project
+          # working set. Slugs verified against the live Composio catalog
+          # (GET /api/v3/tools?toolkit_slug=asana); note the `_A_` infix
+          # (CREATE_A_TASK, GET_A_TASK) and that there is no
+          # SEARCH_TASKS_IN_WORKSPACE — GET_TYPEAHEAD_OBJECTS is the
+          # name-search path. Expand from the 84-slug set as needs surface.
+          tools:
+            - ASANA_CREATE_A_TASK
+            - ASANA_GET_A_TASK
+            - ASANA_UPDATE_A_TASK
+            - ASANA_GET_TASKS_FROM_A_PROJECT
+            - ASANA_GET_A_USER_TASK_LIST
+            - ASANA_CREATE_SUBTASK
+            - ASANA_GET_TASK_SUBTASKS
+            - ASANA_CREATE_TASK_COMMENT
+            - ASANA_GET_STORIES_FOR_TASK
+            - ASANA_GET_TYPEAHEAD_OBJECTS
+            - ASANA_CREATE_A_PROJECT
+            - ASANA_GET_A_PROJECT
+            - ASANA_GET_WORKSPACE_PROJECTS
+            - ASANA_GET_SECTIONS_IN_PROJECT
+            - ASANA_GET_MULTIPLE_WORKSPACES
+            - ASANA_GET_CURRENT_USER
+        tags: [tasks, projects, composio]
 
   - name: com.notion/mcp
     title: Notion (org)
