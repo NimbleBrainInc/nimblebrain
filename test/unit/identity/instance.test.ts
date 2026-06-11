@@ -57,6 +57,38 @@ describe("loadInstanceConfig", () => {
     expect(result).toEqual(config);
   });
 
+  test("loads workos auth with redirectUri omitted (provider derives it)", async () => {
+    // Post-WORKOS_REDIRECT_URI world: instance.json may carry no redirectUri;
+    // the provider fills it from publicOrigin(). Loading must succeed and leave
+    // the field absent (not throw, not default to a string).
+    const config = {
+      auth: {
+        adapter: "workos",
+        clientId: "client_123",
+        organizationId: "org_789",
+      },
+    };
+    await writeFile(join(workDir, "instance.json"), JSON.stringify(config));
+
+    const result = await loadInstanceConfig(workDir);
+    expect(result?.auth).toEqual({
+      adapter: "workos",
+      clientId: "client_123",
+      organizationId: "org_789",
+    });
+    expect((result?.auth as { redirectUri?: string }).redirectUri).toBeUndefined();
+  });
+
+  test("rejects workos auth with a non-string redirectUri", async () => {
+    await writeFile(
+      join(workDir, "instance.json"),
+      JSON.stringify({ auth: { adapter: "workos", clientId: "client_123", redirectUri: 42 } }),
+    );
+    await expect(loadInstanceConfig(workDir)).rejects.toThrow(
+      "workos auth 'redirectUri' must be a string",
+    );
+  });
+
   test("loads workos auth with custom adminRoleSlugs", async () => {
     const config: InstanceConfig = {
       auth: {

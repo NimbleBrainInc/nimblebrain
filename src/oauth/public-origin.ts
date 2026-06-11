@@ -85,10 +85,13 @@ export function publicOrigin(): string {
 }
 
 /**
- * The hosts the platform is reachable at and trusts as same-origin — the
- * canonical origin's host plus the platform subdomain. Callers fold these into
- * the CORS allowlist so the canonical hosts never have to be listed by hand in
- * `ALLOWED_ORIGINS` (which is reserved for *additional* origins).
+ * Every origin the platform is reachable at and trusts as same-origin: the
+ * canonical origin, the platform subdomain, AND the custom domain when set —
+ * the custom domain is included even when pinned non-canonical, because the ALB
+ * still serves it, so a browser on it must pass CORS regardless of which host is
+ * canonical. Callers fold these into the CORS allowlist so the canonical hosts
+ * never have to be listed by hand in `ALLOWED_ORIGINS` (reserved for *additional*
+ * origins).
  */
 export function canonicalOrigins(): string[] {
   const origins = new Set<string>();

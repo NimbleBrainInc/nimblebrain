@@ -3,7 +3,7 @@ type BunServer = ReturnType<typeof Bun.serve>;
 import { log } from "../cli/log.ts";
 import type { IdentityProvider } from "../identity/provider.ts";
 import { DevIdentityProvider } from "../identity/providers/dev.ts";
-import { canonicalOrigins, publicOrigin } from "../oauth/public-origin.ts";
+import { canonicalOrigins, webOrigin } from "../oauth/public-origin.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import { HealthMonitor } from "../tools/health-monitor.ts";
 import { createApp } from "./app.ts";
@@ -225,9 +225,11 @@ export function startServer(options: ServerOptions): ServerHandle {
     isDevMode,
     eventSink: runtime.getEventSink(),
     isLocalhost: true, // Updated after Bun.serve starts
-    // Post-login landing — the canonical public origin, decoupled from the CORS
-    // allowlist (no longer ALLOWED_ORIGINS[0], so reordering CORS can't move it).
-    appOrigin: publicOrigin(),
+    // Post-login landing — a user-facing browser destination, so it uses
+    // webOrigin() like the connectors return (one rule: browser-facing →
+    // webOrigin, vendor-facing → publicOrigin). Identical to publicOrigin() in
+    // prod; decoupled from the CORS allowlist (no longer ALLOWED_ORIGINS[0]).
+    appOrigin: webOrigin(),
     internalToken,
     mcpHost,
   };
