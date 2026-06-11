@@ -932,6 +932,7 @@ describe("search — scope: registry", () => {
 		const store = new RegistryStore(workDir);
 		return {
 			getConnectorDirectory: () => new ConnectorDirectory(store),
+			getRegistryStore: () => store,
 		} as unknown as Runtime;
 	}
 
@@ -985,6 +986,32 @@ describe("search — scope: registry", () => {
 		const result = await systemTools.execute("search", { scope: "registry", query: "ipinfo" });
 		expect(result.isError).toBe(false);
 		expect(extractText(result.content)).toContain("No bundles found");
+	});
+
+	it("reports failure (not 'No bundles found') when the mpak registry is unreachable", async () => {
+		// servers() aggregates the fetch failure into errors instead of
+		// throwing; the handler must not mistake an outage for an empty result
+		// and tell the agent the bundle doesn't exist.
+		globalThis.fetch = (async () =>
+			new Response("upstream down", { status: 503 })) as typeof fetch;
+		_resetMpakSourceCache();
+		const registry = await makeRegistry();
+		const systemTools = await createSystemTools(
+			() => registry,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			runtimeWithMpak(["nimblebraininc"]),
+		);
+		const result = await systemTools.execute("search", { scope: "registry", query: "asana" });
+		expect(result.isError).toBe(true);
+		expect(extractText(result.content)).toContain("Failed to search mpak registry");
 	});
 });
 

@@ -128,9 +128,9 @@ export async function createSystemTools(
             // applies each registry's OWN scopes per-source (so mixed-scope
             // multi-registry configs filter exactly as Browse does), runs
             // the icon/URL safety scrub, caches, and aggregates errors. We
-            // take just the mpak-sourced bundles and keyword-match them the
-            // way the Browse search box does. One method, not two parallel
-            // fetch/filter paths, so the two surfaces can't drift.
+            // take just the mpak-sourced bundles and keyword-match them. One
+            // method, not two parallel fetch/filter paths, so the scope
+            // filtering can't drift.
             //
             // No runtime (non-agent/test paths) ⇒ no directory ⇒ no results;
             // the production agent always has one.
@@ -140,11 +140,32 @@ export async function createSystemTools(
               .filter((s) => s.source.type === "mpak")
               .map((s) => s.detail);
             const results = matchServersByQuery(mpakBundles, query);
-            if (results.length === 0)
+            if (results.length === 0) {
+              // Distinguish "registry unreachable" from "no such bundle".
+              // servers() aggregates per-source fetch failures into `errors`
+              // instead of throwing, so an mpak outage (5xx / timeout / DNS)
+              // yields zero bundles silently. If an mpak source errored and we
+              // got nothing back, surface a failure — matching the
+              // pre-refactor throw — rather than telling the agent the bundle
+              // doesn't exist.
+              const mpakIds = new Set(
+                (await runtime?.getRegistryStore().list())
+                  ?.filter((r) => r.type === "mpak")
+                  .map((r) => r.id),
+              );
+              const mpakDown =
+                mpakBundles.length === 0 &&
+                (aggregated?.errors ?? []).some((e) => mpakIds.has(e.registryId));
+              if (mpakDown)
+                return {
+                  content: textContent(`Failed to search mpak registry for "${query}".`),
+                  isError: true,
+                };
               return {
                 content: textContent(`No bundles found for "${query}".`),
                 isError: false,
               };
+            }
             const lines = [`Found ${results.length} result(s) for "${query}":\n`];
             for (const r of results) {
               const id = r.packages?.[0]?.identifier ?? r.name;
@@ -718,16 +739,18 @@ function formatUptime(ms: number): string {
 }
 
 /**
- * Client-side keyword match over an mpak `ServerDetail` set — mirrors the
- * Browse search box (which filters the fetched catalog in-memory rather
- * than re-querying). Empty query returns everything; otherwise every
- * whitespace-separated term must appear (case-insensitive) in the name,
- * title, description, or a package identifier.
+ * Keyword match over an mpak `ServerDetail` set for agent registry search.
+ * Empty query returns everything; otherwise every whitespace-separated term
+ * must appear (case-insensitive) in the name, title, description, or a
+ * package identifier.
  *
- * NOTE: this is a separate implementation from the web Browse filter
- * (`web/src/` connector directory search). They can drift on which fields
- * are searched / how terms split; if you change the searchable-field set
- * here, mirror it there (and vice versa). No shared backend matcher exists.
+ * NOTE: this is DELIBERATELY a different matcher from the web Browse search
+ * box, not a port of it. Browse OR-matches the whole query as one literal
+ * substring across name/description/tags; this AND-matches each term across
+ * more fields — better precision for an agent narrowing to a specific
+ * bundle. They are not meant to return identical sets. No shared backend
+ * matcher exists; if you change the field set here, that divergence is
+ * expected, not a bug.
  */
 function matchServersByQuery(servers: ServerDetail[], query: string): ServerDetail[] {
   const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
