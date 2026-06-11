@@ -125,6 +125,53 @@ describe("AgentEngine", () => {
     expect(result.stopReason).toBe("complete");
   });
 
+  it("lifts a failed tool result's structuredContent.reason onto errorReason", async () => {
+    // The exact envelope McpSource.execute returns on mid-session auth loss
+    // (a disconnected OAuth/Composio connector). The engine must surface that
+    // reason on the ToolCallRecord so downstream consumers (the automations
+    // de-masker) can tell an unreachable connector from a generic tool error.
+    let callCount = 0;
+    const model = createMockModel(() => {
+      callCount++;
+      if (callCount === 1) {
+        return {
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call_1",
+              toolName: "teams__send",
+              input: JSON.stringify({}),
+            },
+          ],
+          inputTokens: 10,
+          outputTokens: 5,
+        };
+      }
+      return { content: [{ type: "text", text: "ok" }], inputTokens: 10, outputTokens: 5 };
+    });
+
+    const tools = {
+      schemas: [{ name: "teams__send", description: "send", inputSchema: {} }],
+      handler: (): ToolResult => ({
+        content: textContent("teams needs to be reconnected"),
+        isError: true,
+        structuredContent: { error: "auth_required", reason: "reauth_required", source: "teams" },
+      }),
+    };
+
+    const engine = makeEngine(model, tools);
+    const result = await engine.run(
+      defaultConfig,
+      "",
+      [{ role: "user", content: [{ type: "text", text: "send it" }] }],
+      tools.schemas,
+    );
+
+    expect(result.toolCalls).toHaveLength(1);
+    expect(result.toolCalls[0]!.ok).toBe(false);
+    expect(result.toolCalls[0]!.errorReason).toBe("reauth_required");
+  });
+
   it("does not promote tools discovered by nb__search implicitly", async () => {
     let callCount = 0;
     const seenToolLists: string[][] = [];

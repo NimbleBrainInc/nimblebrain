@@ -290,6 +290,26 @@ describe("createDirectExecutor — connector-unreachable de-masking", () => {
 		expect(run.error).toMatch(/Connector unavailable/);
 	});
 
+	test("complete + reauth_required (installed connector, auth expired) → failure", async () => {
+		// reauth_required is emitted by the connector auth-loss path
+		// (McpSource.execute), proven to flow onto errorReason by the engine test
+		// in engine.test.ts. Here: a run that attempted such a connector and got
+		// the reauth result must not be a green success.
+		const run = await runWith([
+			{
+				id: "t1",
+				name: "ws_founders-teams__send_message",
+				input: {},
+				output: "teams needs to be reconnected — its authorization has expired",
+				ok: false,
+				ms: 14,
+				errorReason: "reauth_required",
+			},
+		]);
+		expect(run.status).toBe("failure");
+		expect(run.error).toMatch(/Connector unavailable/);
+	});
+
 	test("complete + all tool calls ok → success (no false downgrade)", async () => {
 		const run = await runWith([
 			{ id: "t1", name: "nb__briefing", input: {}, output: "ok", ok: true, ms: 20 },

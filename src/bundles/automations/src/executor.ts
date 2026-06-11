@@ -152,22 +152,31 @@ function buildRequest(automation: Automation, ctx?: ExecutorContext): TaskFnRequ
  *                                 owner isn't a member of (e.g. another user's
  *                                 personal workspace) — unreachable by design.
  *                                 (Orchestrator reason.)
+ *   - `reauth_required`         → the run ATTEMPTED a call to an INSTALLED
+ *                                 connector whose authorization had expired /
+ *                                 been revoked — the call routed fine but failed
+ *                                 downstream on auth. Emitted by the connector
+ *                                 auth-loss path (`McpSource.execute`), NOT the
+ *                                 orchestrator — a reactive 401 (OAuth-provider
+ *                                 remote) or a proactive revalidation flip
+ *                                 (Composio, via `ConnectionRevalidator`) both
+ *                                 surface this same reason.
  *
- * KEY LIMITATION — both reasons require the agent to have ATTEMPTED the call.
- * A required connector that never appears in the agent's toolset (so it never
- * tries) produces no reason and is NOT de-masked. The production standup
+ * KEY LIMITATION — every reason here requires the agent to have ATTEMPTED the
+ * call. A required connector that never appears in the agent's toolset (so it
+ * never tries) produces no reason and is NOT de-masked. The production standup
  * incident was actually this never-attempted variant: the agent ran `nb__search`,
  * found no Teams connector in any reachable workspace, and "completed" by
- * documenting the gap — never calling a Teams tool. So this fix de-masks the
+ * documenting the gap — never calling a Teams tool. So this de-masks the
  * attempted-call class (a strict improvement, zero false positives); the
  * never-attempted class needs a different signal (the agent self-reporting an
  * incomplete required step) and is tracked separately.
  *
- * These are the only two *connector-unreachable* reasons. The orchestrator
- * (`error-mapping.ts`) emits FIVE reasons in all; the other three are agent /
- * typo errors, not connector gaps, and are excluded below — the taxonomy is NOT
- * closed at two. Both reasons here are really produced and tested, so the set
- * stays grounded in values that actually occur.
+ * These are the *connector-unreachable* reasons. Two are orchestrator routing
+ * reasons (`error-mapping.ts`); `reauth_required` is the connector auth-loss
+ * reason. The orchestrator emits five reasons in all — the other three are
+ * agent / typo errors, not connector gaps, excluded below. Every reason in the
+ * set is really produced and tested, so it stays grounded in values that occur.
  *
  * Deliberately narrower than the full reason taxonomy. Excluded on purpose:
  *   - `invalid_tool_name` / `unknown_identity_source` — usually the agent probing
@@ -177,14 +186,12 @@ function buildRequest(automation: Automation, ctx?: ExecutorContext): TaskFnRequ
  *     Real but rare, and the taxonomy frames it as a typo / cross-tenant accident
  *     (agent error) rather than a connector gap. Left out for now; revisit if it
  *     shows up in practice.
- *
- * NOT covered here: an installed connector whose authorization expired mid-run.
- * That surfaces a `reason: "reauth_required"` tool result only once the connector
- * auth-loss detection lands (a separate change). Add `reauth_required` to this
- * set in THAT change, alongside a test against its real emission — not as a
- * forward-declaration here, which would assert a value no current path produces.
  */
-const UNREACHABLE_CONNECTOR_REASONS = new Set(["unknown_tool_source", "workspace_access_denied"]);
+const UNREACHABLE_CONNECTOR_REASONS = new Set([
+  "unknown_tool_source",
+  "workspace_access_denied",
+  "reauth_required",
+]);
 
 /** Tool-call entries (loosely typed in `TaskFnResult`) whose routing failed. */
 function unreachableConnectorCalls(toolCalls: TaskFnResult["toolCalls"]): string[] {
