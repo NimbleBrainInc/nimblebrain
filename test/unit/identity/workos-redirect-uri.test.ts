@@ -77,4 +77,20 @@ describe("WorkosIdentityProvider redirectUri derivation", () => {
     });
     expect(redirectUriOf(provider)).toBe("https://explicit.example.com/v1/auth/callback");
   });
+
+  it("treats an empty redirectUri as absent and derives (chart emits \"\" when the secret is unset)", () => {
+    // The Helm init container always writes the redirectUri key; with the legacy
+    // secret unset it lands as "". `??` would keep that empty value and break the
+    // WorkOS authorize URL — the booby-trap the runtime must absorb.
+    process.env.NB_PLATFORM_HOST = "acme.platform.nimblebrain.ai";
+    process.env.NB_CUSTOM_DOMAIN = "brain.acme.com";
+    const provider = makeProvider({ adapter: "workos", clientId: "client_test", redirectUri: "" });
+    expect(redirectUriOf(provider)).toBe("https://brain.acme.com/v1/auth/callback");
+  });
+
+  it("fails closed at construction on a malformed explicit redirectUri", () => {
+    expect(() =>
+      makeProvider({ adapter: "workos", clientId: "client_test", redirectUri: "not a url" }),
+    ).toThrow(/not a valid URL/);
+  });
 });
