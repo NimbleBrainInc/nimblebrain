@@ -36,13 +36,26 @@ RUN bun install --frozen-lockfile --production --ignore-scripts
 COPY --chown=1000:1000 src/ src/
 COPY --chown=1000:1000 scripts/ scripts/
 
-# Build bundle UIs (dist/ is gitignored, must build in container).
-# UI deps are installed fresh here and removed after build — the source tree's
-# nested node_modules are excluded by .dockerignore (**/node_modules) so they
-# never enter the build context or bloat the COPY layer.
-RUN for ui in src/bundles/*/ui; do \
-      [ -f "$ui/package.json" ] && (cd "$ui" && bun install && bun run build && rm -rf node_modules); \
-    done
+# Build the built-in bundle UIs (home, conversations, files, automations,
+# usage) — each is its own single-file Vite app and must build in the container
+# because dist/ is gitignored. UI deps are installed fresh here and removed
+# after build; the source tree's nested node_modules are excluded by
+# .dockerignore (**/node_modules) so they never enter the build context.
+#
+# Built in parallel (each bundle does its own install + build) rather than
+# serially — they're independent. PIDs are collected and waited on individually
+# so any single bundle's failure fails the whole RUN (a bare `wait` would mask
+# a nonzero exit). Each subshell tags its own failure with the bundle path so
+# the culprit is greppable even though parallel output is interleaved.
+RUN set -e; \
+    pids=""; \
+    for ui in src/bundles/*/ui; do \
+      [ -f "$ui/package.json" ] || continue; \
+      ( cd "$ui" && bun install && bun run build && rm -rf node_modules \
+        || { echo "ERROR: bundle UI build failed: $ui" >&2; exit 1; } ) & \
+      pids="$pids $!"; \
+    done; \
+    for p in $pids; do wait "$p"; done
 
 USER 1000
 
