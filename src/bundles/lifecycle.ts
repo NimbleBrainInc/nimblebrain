@@ -471,6 +471,13 @@ export class BundleLifecycleManager {
       });
     };
 
+    // Mid-session auth loss on the running connection (a tool call hit
+    // UnauthorizedError because the refresh token was rejected). Flip to
+    // reauth_required so the UI offers "Reconnect" instead of failing silently.
+    const onAuthLost = () => {
+      this.recordConnectionStateChange(serverName, wsId, "_workspace", "reauth_required");
+    };
+
     let sourceName: string;
     let meta: Awaited<ReturnType<typeof startBundleSource>>["meta"];
     try {
@@ -484,6 +491,7 @@ export class BundleLifecycleManager {
           wsId,
           workDir: nbWorkDir,
           onInteractiveAuthRequired,
+          onAuthLost,
           bundleMcp: this.resolveBundleMcpDeps(wsId),
         },
       );
@@ -1239,6 +1247,13 @@ export class BundleLifecycleManager {
           authorizationUrl: url,
         });
         resolveAuthUrl(url);
+      },
+      // Mid-session auth loss on this connection (a tool call hit
+      // UnauthorizedError because the refresh token was rejected). Flip to
+      // reauth_required so the UI offers "Reconnect" instead of silently
+      // failing every call. No authorizationUrl — Reconnect re-initiates.
+      onAuthLost: () => {
+        this.recordConnectionStateChange(serverName, wsId, principalId, "reauth_required");
       },
       ...(staticClient ? { staticClient } : {}),
       ...(ref.scopes ? { scopes: ref.scopes } : {}),

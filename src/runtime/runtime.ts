@@ -860,6 +860,18 @@ export class Runtime {
           // a platform restart doesn't silently drop the capability for
           // already-installed bundles.
           getBundleMcpDeps: bundleMcpDepsFactory,
+          // Late-bound: a boot-started connection that loses auth mid-session
+          // fires this on a post-boot tool call, by which point `rt.lifecycle`
+          // is constructed. Flip the Connection to reauth_required so the UI
+          // offers "Reconnect" instead of every call failing silently.
+          onAuthLost: (wsId, serverName) => {
+            rt.lifecycle?.recordConnectionStateChange(
+              serverName,
+              wsId,
+              "_workspace",
+              "reauth_required",
+            );
+          },
         },
       );
     rt._workspaceRegistries = workspaceRegistries;

@@ -130,6 +130,19 @@ export interface WorkspaceOAuthProviderOptions {
    */
   onInteractiveAuthRequired?: (authorizationUrl: string) => void;
   /**
+   * Fired when an already-established connection loses its authorization
+   * mid-session — i.e. a tool call fails with `UnauthorizedError` because the
+   * persisted refresh token was rejected (expired / revoked / conditional-access
+   * pulled). The owner (`(wsId, serverName)`) is implicit in this provider, so
+   * the callback carries no args; the wiring records the documented
+   * `running → reauth_required` transition (see `connection.ts`) so the UI shows
+   * "Reconnect" instead of silently failing every call. Distinct from
+   * `onInteractiveAuthRequired` (an active flow → `pending_auth`); this is the
+   * passive "your live connection just went stale" signal. Invoked via
+   * `notifyAuthLost()`, which de-dupes so repeated failing calls flip state once.
+   */
+  onAuthLost?: () => void;
+  /**
    * Pre-registered OAuth client (Track A). When present, the provider
    * skips DCR — `clientInformation()` returns this static client and
    * `saveClientInformation()` is a no-op. The client_secret is supplied
@@ -519,6 +532,10 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
   private readonly canonicalCallback: string;
   private readonly allowInsecureRemotes: boolean;
   private readonly onInteractiveAuthRequired?: (authorizationUrl: string) => void;
+  private readonly onAuthLost?: () => void;
+  /** De-dupe guard: a flurry of in-flight tool calls can each throw
+   *  UnauthorizedError; the connection should flip to reauth_required once. */
+  private authLostNotified = false;
   private readonly staticClient?: WorkspaceOAuthProviderOptions["staticClient"];
   private readonly scopes?: string[];
   private readonly additionalAuthorizationParams?: Record<string, string>;
@@ -599,6 +616,7 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     this.canonicalCallback = canonicalEndpoint(new URL(opts.callbackUrl));
     this.allowInsecureRemotes = opts.allowInsecureRemotes === true;
     this.onInteractiveAuthRequired = opts.onInteractiveAuthRequired;
+    this.onAuthLost = opts.onAuthLost;
     this.staticClient = opts.staticClient;
     this.scopes = opts.scopes;
     // Validate at construction so a bad config fails fast — same boundary
@@ -899,6 +917,11 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
 
   async saveTokens(tokens: OAuthTokens): Promise<void> {
     this.cachedTokens = tokens;
+    // Fresh tokens landed — a subsequent auth loss is a NEW episode, so
+    // re-arm the one-shot `notifyAuthLost` guard. Without this, a connection
+    // that went reauth_required, reconnected, then expired again would never
+    // re-signal (the guard stays latched for the provider's lifetime).
+    this.authLostNotified = false;
     await this.writeJson(this.dataDir, "tokens.json", tokens);
     // OIDC identity capture (best-effort). When the AS returns an
     // id_token alongside the tokens — Google, Microsoft, and Zoom all
@@ -922,6 +945,28 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
           `[oauth] ${this.serverName} id_token parse failed: ${err instanceof Error ? err.message : String(err)}`,
         );
       }
+    }
+  }
+
+  /**
+   * Signal that an established connection lost its authorization mid-session
+   * (a tool call threw `UnauthorizedError` because the persisted refresh token
+   * was rejected). Fires the `onAuthLost` callback once per auth episode —
+   * the wiring records `running → reauth_required`. De-duped because a burst of
+   * concurrent tool calls can each surface the same failure; `saveTokens`
+   * re-arms it after a successful reconnect. Best-effort: a throwing callback
+   * is swallowed so it can never turn a tool-call failure into a worse one.
+   */
+  notifyAuthLost(): void {
+    if (this.authLostNotified) return;
+    this.authLostNotified = true;
+    try {
+      this.onAuthLost?.();
+    } catch (err) {
+      log.debug(
+        "mcp",
+        `[oauth] onAuthLost callback threw: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }
 

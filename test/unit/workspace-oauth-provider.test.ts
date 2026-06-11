@@ -837,3 +837,76 @@ describe("WorkspaceOAuthProvider — WorkspaceContext construction (Stage 0)", (
     expect(p.getOwner()).toEqual(owner);
   });
 });
+
+describe("WorkspaceOAuthProvider — notifyAuthLost (mid-session auth loss)", () => {
+  let workDir: string;
+
+  beforeEach(() => {
+    workDir = mkdtempSync(join(tmpdir(), "nb-oauth-authlost-"));
+  });
+
+  const TOKENS: OAuthTokens = { access_token: "a", token_type: "bearer" };
+
+  it("fires onAuthLost once even when called repeatedly (de-dupes a burst)", () => {
+    let calls = 0;
+    const p = new WorkspaceOAuthProvider({
+      owner: { type: "workspace", wsId: "ws_test" },
+      serverName: "teams",
+      workDir,
+      callbackUrl: CALLBACK,
+      onAuthLost: () => {
+        calls++;
+      },
+    });
+
+    p.notifyAuthLost();
+    p.notifyAuthLost();
+    p.notifyAuthLost();
+
+    expect(calls).toBe(1);
+  });
+
+  it("re-arms after saveTokens so a later auth loss signals again", async () => {
+    let calls = 0;
+    const p = new WorkspaceOAuthProvider({
+      owner: { type: "workspace", wsId: "ws_test" },
+      serverName: "teams",
+      workDir,
+      callbackUrl: CALLBACK,
+      onAuthLost: () => {
+        calls++;
+      },
+    });
+
+    p.notifyAuthLost();
+    expect(calls).toBe(1);
+
+    // Successful reconnect persists fresh tokens → next loss is a new episode.
+    await p.saveTokens(TOKENS);
+    p.notifyAuthLost();
+    expect(calls).toBe(2);
+  });
+
+  it("is a no-op (no throw) when no onAuthLost callback is wired", () => {
+    const p = new WorkspaceOAuthProvider({
+      owner: { type: "workspace", wsId: "ws_test" },
+      serverName: "teams",
+      workDir,
+      callbackUrl: CALLBACK,
+    });
+    expect(() => p.notifyAuthLost()).not.toThrow();
+  });
+
+  it("swallows a throwing onAuthLost callback (never worsens a tool-call failure)", () => {
+    const p = new WorkspaceOAuthProvider({
+      owner: { type: "workspace", wsId: "ws_test" },
+      serverName: "teams",
+      workDir,
+      callbackUrl: CALLBACK,
+      onAuthLost: () => {
+        throw new Error("boom");
+      },
+    });
+    expect(() => p.notifyAuthLost()).not.toThrow();
+  });
+});
