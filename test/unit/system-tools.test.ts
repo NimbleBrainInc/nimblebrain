@@ -117,6 +117,47 @@ describe("System Tools", () => {
 		]);
 	});
 
+	it("search auto-promotes its top matches into the active set", async () => {
+		const registry = await makeRegistry();
+		const added: string[] = [];
+		const toolPromotionCtx: ToolPromotionContext = {
+			addTool: (name) => {
+				added.push(name);
+				return { ok: true, toolName: name, changed: true, message: "active" };
+			},
+			removeTool: (name) => ({ ok: true, toolName: name, changed: false, message: "" }),
+		};
+		// toolPromotionCtx is the 17th positional arg (15 reserved slots after getRegistry).
+		const systemTools = await createSystemTools(
+			() => registry,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			toolPromotionCtx,
+		);
+		const result = await systemTools.execute("search", { scope: "tools", query: "greet" });
+
+		expect(result.isError).toBe(false);
+		// The matched tool was promoted into the active set (one fewer round-trip
+		// than search → manage_tools → call).
+		expect(added).toContain("test__greet");
+		// The model is told it can call it directly, and the result reports it.
+		expect(extractText(result.content)).toContain("now active");
+		expect(getStructured<{ promoted?: string[] }>(result)?.promoted).toContain("test__greet");
+	});
+
 	it("search with scope=tools preserves single-word prefix substring matches", async () => {
 		const registry = new ToolRegistry();
 		const source = await makeInProcessSource("test", [
@@ -571,6 +612,11 @@ describe("System Tools", () => {
 		expect(getStructured<{ tools?: Array<{ name: string }> }>(searchResult)?.tools).toEqual([
 			{ name: "test__tool.with.dot" },
 		]);
+
+		// search now auto-promotes its top match; clear the log to isolate the
+		// manage_tools call below (intent: manage_tools accepts the searched name).
+		expect(calls).toEqual(["add:test__tool.with.dot"]);
+		calls.length = 0;
 
 		const result = await systemTools.execute("manage_tools", {
 			add: ["test__tool.with.dot"],
