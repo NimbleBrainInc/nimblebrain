@@ -153,6 +153,12 @@ export async function createSystemTools(
                   ?.filter((r) => r.type === "mpak")
                   .map((r) => r.id),
               );
+              // `mpakBundles.length === 0` is global across all mpak rows:
+              // with multiple mpak registries where one is up (returning
+              // bundles) and the down one held the queried bundle, this
+              // reports "No bundles found" rather than a failure. Acceptable —
+              // it matches Browse's partial-results semantics, and a single
+              // mpak registry is the norm.
               const mpakDown =
                 mpakBundles.length === 0 &&
                 (aggregated?.errors ?? []).some((e) => mpakIds.has(e.registryId));
