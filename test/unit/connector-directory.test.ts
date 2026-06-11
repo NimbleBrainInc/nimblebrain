@@ -2,10 +2,9 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ConnectorDirectory, resolveMpakSearchScopes } from "../../src/registries/directory.ts";
+import { ConnectorDirectory } from "../../src/registries/directory.ts";
 import { _resetMpakSourceCache } from "../../src/registries/mpak-source.ts";
 import { RegistryStore } from "../../src/registries/registry-store.ts";
-import type { RegistryConfig } from "../../src/registries/types.ts";
 
 /**
  * `ConnectorDirectory` is the only thing tool handlers should call.
@@ -561,65 +560,5 @@ describe("ConnectorDirectory safety scrub (mpak XSS via _meta extension URLs)", 
       );
     const result = await new ConnectorDirectory(store).list();
     expect(result.entries.map((e) => e.id)).toEqual(["io.safe/mcp"]);
-  });
-});
-
-/**
- * `resolveMpakSearchScopes` is the decision the `nb__search` registry
- * handler makes before filtering: which mpak registries to query and which
- * scopes to enforce. The filter itself (`applyScopeFilter`) is exercised
- * end-to-end by the ConnectorDirectory scope tests above; these pin the
- * branch logic (drop-disabled / open-vs-scoped / union) that can silently
- * regress the narrow-by-default intent.
- */
-describe("resolveMpakSearchScopes", () => {
-  const mpak = (over: Partial<RegistryConfig>): RegistryConfig => ({
-    id: "mpak",
-    name: "mpak.dev",
-    type: "mpak",
-    enabled: true,
-    ...over,
-  });
-
-  test("all enabled mpak registries scoped ⇒ union of their scopes", () => {
-    const { registries, scopes } = resolveMpakSearchScopes([
-      mpak({ id: "a", scopes: ["nimblebraininc"] }),
-      mpak({ id: "b", scopes: ["acme"] }),
-    ]);
-    expect(registries.map((r) => r.id)).toEqual(["a", "b"]);
-    expect(scopes).toEqual(["nimblebraininc", "acme"]);
-  });
-
-  test("any unscoped mpak registry ⇒ open (no filter)", () => {
-    const { scopes } = resolveMpakSearchScopes([
-      mpak({ id: "a", scopes: ["nimblebraininc"] }),
-      mpak({ id: "b" }), // no scopes ⇒ operator opted into open mpak
-    ]);
-    expect(scopes).toBeUndefined();
-  });
-
-  test("disabled mpak registries are dropped (do not open the filter)", () => {
-    const { registries, scopes } = resolveMpakSearchScopes([
-      mpak({ id: "a", scopes: ["nimblebraininc"] }),
-      mpak({ id: "b", enabled: false }), // unscoped but disabled ⇒ ignored
-    ]);
-    expect(registries.map((r) => r.id)).toEqual(["a"]);
-    expect(scopes).toEqual(["nimblebraininc"]);
-  });
-
-  test("non-mpak registries are ignored", () => {
-    const { registries } = resolveMpakSearchScopes([
-      { id: "bundled-static", name: "Curated", type: "static", enabled: true },
-      mpak({ id: "a", scopes: ["nimblebraininc"] }),
-    ]);
-    expect(registries.map((r) => r.id)).toEqual(["a"]);
-  });
-
-  test("no mpak registries ⇒ empty set, open", () => {
-    const { registries, scopes } = resolveMpakSearchScopes([
-      { id: "bundled-static", name: "Curated", type: "static", enabled: true },
-    ]);
-    expect(registries).toEqual([]);
-    expect(scopes).toBeUndefined();
   });
 });

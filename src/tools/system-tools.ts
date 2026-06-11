@@ -8,8 +8,6 @@ import type { ServerDetail } from "../connectors/server-detail.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import type { EventSink, ToolPromotionControls, ToolResult, ToolSchema } from "../engine/types.ts";
 import { NON_ADVANCING_META_KEY } from "../engine/types.ts";
-import { applyScopeFilter, resolveMpakSearchScopes } from "../registries/directory.ts";
-import { MpakSource } from "../registries/mpak-source.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import type { SelectedSkill } from "../skills/select.ts";
 import type { Skill } from "../skills/types.ts";
@@ -71,9 +69,10 @@ export async function createSystemTools(
   features?: ResolvedFeatures,
   runtime?: Runtime,
   // Reserved slot — was the mpak SDK home for the legacy searchBundles
-  // discovery path. Registry search now goes through MpakSource (Browse's
-  // own cached fetch), which manages its own client. Keep the positional
-  // slot stable so every call site's arity holds.
+  // discovery path. Registry search now goes through
+  // ConnectorDirectory.servers() (Browse's own cached, scoped fetch), which
+  // manages its own client. Keep the positional slot stable so every call
+  // site's arity holds.
   _mpakHome?: string,
   manageUsersCtx?: ManageUsersContext,
   manageWorkspacesCtx?: ManageWorkspacesContext,
@@ -124,31 +123,23 @@ export async function createSystemTools(
 
         if (scope === "registry") {
           try {
-            // Reuse the EXACT Browse data path so agent discovery and the
-            // Browse directory can't diverge: fetch each enabled mpak
-            // registry's catalog via MpakSource.fetch() (cached + paginated
-            // up to MAX_PAGES×PAGE_LIMIT), apply the same ServerDetail
-            // scope filter, then keyword-match client-side the way the
-            // Browse search box does. The prior searchBundles path hit the
-            // deprecated /v1/bundles/search and filtered only its first
-            // page, so an in-scope bundle ranked below page 1 vanished from
-            // search while Browse still showed it — the same divergence
-            // this scoping is meant to kill.
+            // Route agent discovery through the SAME method Browse uses —
+            // ConnectorDirectory.servers(). It fetches every enabled source,
+            // applies each registry's OWN scopes per-source (so mixed-scope
+            // multi-registry configs filter exactly as Browse does), runs
+            // the icon/URL safety scrub, caches, and aggregates errors. We
+            // take just the mpak-sourced bundles and keyword-match them the
+            // way the Browse search box does. One method, not two parallel
+            // fetch/filter paths, so the two surfaces can't drift.
             //
-            // Fail-open is intentional: with no runtime (non-agent/test
-            // paths) the production agent never reaches here, and an
-            // operator who disabled every mpak registry just gets no
-            // registry results — there is nothing un-scoped to leak.
-            const registries = (await runtime?.getRegistryStore().list()) ?? [];
-            const { registries: mpakRegs, scopes } = resolveMpakSearchScopes(registries);
-            const fetched = (
-              await Promise.all(
-                mpakRegs.map((r) =>
-                  new MpakSource(r.id, r.url).fetch().catch(() => [] as ServerDetail[]),
-                ),
-              )
-            ).flat();
-            const results = matchServersByQuery(applyScopeFilter(fetched, scopes), query);
+            // No runtime (non-agent/test paths) ⇒ no directory ⇒ no results;
+            // the production agent always has one.
+            const directory = runtime?.getConnectorDirectory();
+            const aggregated = directory ? await directory.servers() : null;
+            const mpakBundles = (aggregated?.servers ?? [])
+              .filter((s) => s.source.type === "mpak")
+              .map((s) => s.detail);
+            const results = matchServersByQuery(mpakBundles, query);
             if (results.length === 0)
               return {
                 content: textContent(`No bundles found for "${query}".`),
@@ -732,6 +723,11 @@ function formatUptime(ms: number): string {
  * than re-querying). Empty query returns everything; otherwise every
  * whitespace-separated term must appear (case-insensitive) in the name,
  * title, description, or a package identifier.
+ *
+ * NOTE: this is a separate implementation from the web Browse filter
+ * (`web/src/` connector directory search). They can drift on which fields
+ * are searched / how terms split; if you change the searchable-field set
+ * here, mirror it there (and vice versa). No shared backend matcher exists.
  */
 function matchServersByQuery(servers: ServerDetail[], query: string): ServerDetail[] {
   const terms = query.toLowerCase().split(/\s+/).filter(Boolean);

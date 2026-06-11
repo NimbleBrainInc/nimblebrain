@@ -289,10 +289,7 @@ export class ConnectorDirectory {
  * and have it work uniformly across source types. Empty / undefined
  * `scopes` returns the input untouched (no filter).
  */
-export function applyScopeFilter(
-  servers: ServerDetail[],
-  scopes: string[] | undefined,
-): ServerDetail[] {
+function applyScopeFilter(servers: ServerDetail[], scopes: string[] | undefined): ServerDetail[] {
   if (!scopes || scopes.length === 0) return servers;
   const norm = scopes.map((s) => s.toLowerCase());
   return servers.filter((s) => {
@@ -312,27 +309,4 @@ export function applyScopeFilter(
 function parseNpmScope(identifier: string): string | null {
   const m = /^@([^/]+)\//.exec(identifier);
   return m ? (m[1]?.toLowerCase() ?? null) : null;
-}
-
-/**
- * Resolve which mpak registries agent search (`nb__search { scope:
- * "registry" }`) should query, and the scope set to enforce on their
- * results — so agent discovery and the Browse directory stay on one
- * filtering rule instead of two that drift apart.
- *
- * Only enabled mpak registries participate (matches Browse, which skips
- * disabled sources). An mpak registry with no `scopes` means the operator
- * opted into open mpak, so a single unscoped row drops the filter entirely
- * (`scopes: undefined` ⇒ `applyScopeFilter` no-ops); otherwise the result
- * is the union of scopes across the enabled mpak rows.
- */
-export function resolveMpakSearchScopes(registries: RegistryConfig[]): {
-  registries: RegistryConfig[];
-  scopes: string[] | undefined;
-} {
-  const mpak = registries.filter((r) => r.type === "mpak" && r.enabled);
-  // Open when any enabled mpak row is unscoped (operator opted in) or there
-  // are simply no enabled mpak rows — both mean "don't filter" (undefined).
-  const open = mpak.length === 0 || mpak.some((r) => !r.scopes?.length);
-  return { registries: mpak, scopes: open ? undefined : mpak.flatMap((r) => r.scopes ?? []) };
 }

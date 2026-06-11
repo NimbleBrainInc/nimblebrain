@@ -1,4 +1,7 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { extractText } from "../../src/engine/content-helpers.ts";
 import { NON_ADVANCING_META_KEY } from "../../src/engine/types.ts";
@@ -19,6 +22,10 @@ import {
 import type { ConfirmationGate } from "../../src/config/privilege.ts";
 import { resolveFeatures } from "../../src/config/features.ts";
 import { isToolEligibleForPromotion } from "../../src/runtime/tool-eligibility.ts";
+import { ConnectorDirectory } from "../../src/registries/directory.ts";
+import { _resetMpakSourceCache } from "../../src/registries/mpak-source.ts";
+import { RegistryStore } from "../../src/registries/registry-store.ts";
+import type { Runtime } from "../../src/runtime/runtime.ts";
 
 const noopSink = new NoopEventSink();
 
@@ -857,6 +864,127 @@ describe("search — feature flag gating", () => {
 		);
 		const result = await systemTools.execute("search", { scope: "tools", query: "hello" });
 		expect(result.isError).toBe(false);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// search — scope: registry (publisher scoping through ConnectorDirectory)
+// ---------------------------------------------------------------------------
+
+describe("search — scope: registry", () => {
+	const originalFetch = globalThis.fetch;
+	afterEach(() => {
+		globalThis.fetch = originalFetch;
+		_resetMpakSourceCache();
+	});
+
+	// One in-scope (@nimblebraininc) + one out-of-scope (@joecardoso13) bundle,
+	// in the ServerDetail shape mpak's /v1/servers/search returns.
+	const TWO_BUNDLES = JSON.stringify({
+		servers: [
+			{
+				name: "ai.nimblebrain/ipinfo",
+				description: "IP geolocation",
+				version: "1.0.0",
+				packages: [
+					{
+						registryType: "mpak",
+						identifier: "@nimblebraininc/ipinfo",
+						version: "1.0.0",
+						transport: { type: "stdio" },
+					},
+				],
+			},
+			{
+				name: "dev.mpak.joecardoso13/asana",
+				description: "MCP server for the Asana API",
+				version: "0.3.0",
+				packages: [
+					{
+						registryType: "mpak",
+						identifier: "@joecardoso13/asana",
+						version: "0.3.0",
+						transport: { type: "stdio" },
+					},
+				],
+			},
+		],
+	});
+
+	// Build a runtime whose ConnectorDirectory is backed by a single mpak
+	// registry with the given scopes (omit for an unscoped / open registry).
+	function runtimeWithMpak(scopes?: string[]): Runtime {
+		const workDir = mkdtempSync(join(tmpdir(), "nb-search-registry-"));
+		writeFileSync(
+			join(workDir, "registries.json"),
+			JSON.stringify({
+				registries: [
+					{
+						id: "mpak",
+						name: "mpak.dev",
+						type: "mpak",
+						enabled: true,
+						...(scopes ? { scopes } : {}),
+					},
+				],
+			}),
+		);
+		const store = new RegistryStore(workDir);
+		return {
+			getConnectorDirectory: () => new ConnectorDirectory(store),
+		} as unknown as Runtime;
+	}
+
+	async function search(runtime: Runtime, query: string) {
+		globalThis.fetch = (async () =>
+			new Response(TWO_BUNDLES, { status: 200 })) as typeof fetch;
+		_resetMpakSourceCache();
+		const registry = await makeRegistry();
+		const systemTools = await createSystemTools(
+			() => registry,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			runtime,
+		);
+		return systemTools.execute("search", { scope: "registry", query });
+	}
+
+	it("renders an in-scope bundle as **@scope/name** <version> [bundle]", async () => {
+		const result = await search(runtimeWithMpak(["nimblebraininc"]), "ipinfo");
+		expect(result.isError).toBe(false);
+		const text = extractText(result.content);
+		expect(text).toContain("@nimblebraininc/ipinfo");
+		expect(text).toContain("1.0.0");
+		expect(text).toContain("[bundle]");
+	});
+
+	it("drops bundles from other publishers even when the name matches", async () => {
+		// "asana" matches @joecardoso13/asana by name, but it's out of scope
+		// for the nimblebraininc-scoped registry — the leak this PR fixes.
+		const result = await search(runtimeWithMpak(["nimblebraininc"]), "asana");
+		const text = extractText(result.content);
+		expect(text).not.toContain("@joecardoso13/asana");
+		expect(text).toContain("No bundles found");
+	});
+
+	it("an unscoped mpak registry surfaces all publishers (open mpak)", async () => {
+		const result = await search(runtimeWithMpak(undefined), "asana");
+		expect(extractText(result.content)).toContain("@joecardoso13/asana");
+	});
+
+	it("returns no results when there is no runtime (no directory to query)", async () => {
+		const registry = await makeRegistry();
+		const systemTools = await createSystemTools(() => registry);
+		const result = await systemTools.execute("search", { scope: "registry", query: "ipinfo" });
+		expect(result.isError).toBe(false);
+		expect(extractText(result.content)).toContain("No bundles found");
 	});
 });
 
