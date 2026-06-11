@@ -378,6 +378,7 @@ export class McpSource implements ToolSource {
         this.mode.url,
         this.mode.transportConfig,
         this.mode.authProvider,
+        { workspaceId: this.bundleContext?.workspaceId },
       );
 
       // Remote: watch for transport close — wired AFTER successful start
@@ -642,6 +643,7 @@ export class McpSource implements ToolSource {
       this.mode.url,
       this.mode.transportConfig,
       this.mode.authProvider,
+      { workspaceId: this.bundleContext?.workspaceId },
     );
     // onclose is wired in `start()` AFTER the connect succeeds — same
     // reason as the initial-construction site: a transport close that

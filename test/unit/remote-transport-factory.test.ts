@@ -1,4 +1,5 @@
-import { describe, test, expect } from "bun:test";
+import { randomBytes } from "node:crypto";
+import { afterEach, describe, expect, test } from "bun:test";
 import { createRemoteTransport } from "../../src/tools/remote-transport.ts";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
@@ -111,5 +112,61 @@ describe("createRemoteTransport", () => {
 		if (sessionId !== undefined) {
 			expect(sessionId).toBe("session-abc");
 		}
+	});
+});
+
+describe("createRemoteTransport — tenant-key auth", () => {
+	const saved = {
+		tid: process.env.NB_TENANT_ID,
+		key: process.env.NB_MCP_AUTHORIZER_TENANT_KEY,
+		iss: process.env.NB_FLEET_AUTHORIZER_ISSUER,
+	};
+	afterEach(() => {
+		const restore: [string, string | undefined][] = [
+			["NB_TENANT_ID", saved.tid],
+			["NB_MCP_AUTHORIZER_TENANT_KEY", saved.key],
+			["NB_FLEET_AUTHORIZER_ISSUER", saved.iss],
+		];
+		for (const [k, v] of restore) {
+			if (v === undefined) delete process.env[k];
+			else process.env[k] = v;
+		}
+	});
+
+	const tenantKeyConfig = {
+		auth: { type: "tenant-key" as const, audience: "artifacts", scope: "artifacts:write" },
+	};
+
+	test("throws when the connection has no workspaceId (fail loud, not a silent 401)", () => {
+		process.env.NB_FLEET_AUTHORIZER_ISSUER = "https://authz.test";
+		expect(() =>
+			createRemoteTransport(new URL("https://artifacts.test/mcp"), tenantKeyConfig),
+		).toThrow(/workspaceId/);
+	});
+
+	test("throws when NB_FLEET_AUTHORIZER_ISSUER is unset", () => {
+		delete process.env.NB_FLEET_AUTHORIZER_ISSUER;
+		expect(() =>
+			createRemoteTransport(new URL("https://artifacts.test/mcp"), tenantKeyConfig, undefined, {
+				workspaceId: "ws_smoke",
+			}),
+		).toThrow(/NB_FLEET_AUTHORIZER_ISSUER/);
+	});
+
+	test("attaches a minting fetch and NO static Authorization when fully provisioned", () => {
+		process.env.NB_TENANT_ID = "hq";
+		process.env.NB_MCP_AUTHORIZER_TENANT_KEY = randomBytes(32).toString("base64");
+		process.env.NB_FLEET_AUTHORIZER_ISSUER = "https://authz.test";
+		const t = createRemoteTransport(new URL("https://artifacts.test/mcp"), tenantKeyConfig, undefined, {
+			workspaceId: "ws_smoke",
+		});
+		expect(t).toBeInstanceOf(StreamableHTTPClientTransport);
+		const internal = t as unknown as Record<string, unknown>;
+		// The minted token is attached via the transport's fetch override, not a
+		// static header — so `_fetch` is wired and `Authorization` is absent.
+		expect(internal["_fetch"]).toBeDefined();
+		const reqInit = internal["_requestInit"] as RequestInit | undefined;
+		const headers = (reqInit?.headers ?? {}) as Record<string, string>;
+		expect(headers["Authorization"]).toBeUndefined();
 	});
 });
