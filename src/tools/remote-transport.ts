@@ -1,8 +1,9 @@
 import type { OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import type { FetchLike, Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { RemoteTransportConfig } from "../bundles/types.ts";
+import { createMintingFetch, getDefaultServiceTokenCache } from "../oauth/tenant-key-mint.ts";
 
 /**
  * Resolve `${ENV_VAR}` placeholders against `process.env`.
@@ -49,6 +50,12 @@ export function createRemoteTransport(
   url: URL,
   config?: RemoteTransportConfig,
   authProvider?: OAuthClientProvider,
+  opts?: {
+    /** Workspace of the connection — required for `auth.type: "tenant-key"`, the
+     *  dimension the minted token is scoped to. Threaded from the McpSource's
+     *  `BundleMcpContext`. */
+    workspaceId?: string;
+  },
 ): Transport {
   const headers: Record<string, string> = { ...(config?.headers ?? {}) };
 
@@ -64,6 +71,35 @@ export function createRemoteTransport(
     headers[k] = resolveEnvTemplate(v);
   }
 
+  // Machine-plane auth: mint a workspace-scoped service token on demand and
+  // attach it as the transport's `fetch`. This is NOT a static header (the
+  // token is short-lived and re-minted on expiry / 401) and it is NOT OAuth
+  // (no interactive flow). Fail loud here if the connection's workspace or the
+  // authorizer issuer is missing — a tenant-key bundle is unreachable without
+  // both, and a downstream 401 would not name the cause.
+  let mintingFetch: FetchLike | undefined;
+  if (config?.auth?.type === "tenant-key") {
+    const workspaceId = opts?.workspaceId;
+    if (!workspaceId) {
+      throw new Error(
+        "tenant-key transport auth requires a workspaceId (the connection's workspace dimension)",
+      );
+    }
+    const issuer = process.env.NB_FLEET_AUTHORIZER_ISSUER;
+    if (!issuer) {
+      throw new Error(
+        "tenant-key transport auth requires NB_FLEET_AUTHORIZER_ISSUER (the mcp-authorizer issuer)",
+      );
+    }
+    mintingFetch = createMintingFetch({
+      cache: getDefaultServiceTokenCache(),
+      issuer,
+      workspace: workspaceId,
+      audience: config.auth.audience,
+      scope: config.auth.scope,
+    }) as FetchLike;
+  }
+
   // Only wire the OAuth provider if no static auth is configured. Static
   // auth is the simpler, explicit contract — don't second-guess it.
   const effectiveAuthProvider =
@@ -75,12 +111,14 @@ export function createRemoteTransport(
     return new SSEClientTransport(url, {
       requestInit,
       authProvider: effectiveAuthProvider,
+      fetch: mintingFetch,
     });
   }
 
   return new StreamableHTTPClientTransport(url, {
     requestInit,
     authProvider: effectiveAuthProvider,
+    fetch: mintingFetch,
     reconnectionOptions: config?.reconnection
       ? {
           maxReconnectionDelay: config.reconnection.maxReconnectionDelay ?? 30_000,

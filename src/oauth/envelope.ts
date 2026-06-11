@@ -160,6 +160,36 @@ export function isUniformByte(buf: Buffer, byte: number): boolean {
   return true;
 }
 
+/**
+ * Low-level MAC envelope: serialize a payload object to the versioned wire
+ * `v1.<b64url(json)>.<b64url(hmac)>`, with the HMAC taken over the
+ * `v1.<b64url(json)>` prefix (NOT the raw JSON), so the version is bound into
+ * the signature.
+ *
+ * This is the single crypto construction shared by the two payload schemas that
+ * ride this envelope: the LOGIN assertion (`signEnvelope`, payload carries
+ * `inner`) and the tenant-key MINT request (`buildMintRequest` in
+ * `tenant-key-mint.ts`, payload carries `workspace`/`audience`/`scope`). The
+ * authorizer mirrors this exactly with a single `verifyMac` over both schemas —
+ * keeping sign and verify as one construction on each side, not two copies of a
+ * security-critical path.
+ *
+ * The caller owns the payload schema, including the temporal fields (`iat` /
+ * `exp`): this function does serialization + MAC only, never clock or field
+ * semantics. Throws `invalid_payload` if the serialized payload exceeds the
+ * verifier's wire cap, so an over-long payload fails at the signer rather than
+ * producing bytes every peer refuses.
+ */
+export function signMacEnvelope(payload: object, tenantKey: Buffer): string {
+  const payloadB64 = base64UrlEncode(Buffer.from(JSON.stringify(payload)));
+  if (payloadB64.length > MAX_PAYLOAD_BYTES) {
+    throw new EnvelopeError("invalid_payload");
+  }
+  const signed = `${VERSION_PREFIX}${payloadB64}`;
+  const macB64 = base64UrlEncode(createHmac("sha256", tenantKey).update(signed).digest());
+  return `${signed}.${macB64}`;
+}
+
 export function signEnvelope(opts: SignOptions): string {
   if (!ALLOWED_TID_PATTERN.test(opts.tid)) {
     throw new EnvelopeError("invalid_tid");
@@ -182,13 +212,7 @@ export function signEnvelope(opts: SignOptions): string {
     iat: now,
     exp: now + ttl,
   };
-  const payloadB64 = base64UrlEncode(Buffer.from(JSON.stringify(payload)));
-  if (payloadB64.length > MAX_PAYLOAD_BYTES) {
-    throw new EnvelopeError("invalid_payload");
-  }
-  const signed = `${VERSION_PREFIX}${payloadB64}`;
-  const macB64 = base64UrlEncode(createHmac("sha256", opts.tenantKey).update(signed).digest());
-  return `${signed}.${macB64}`;
+  return signMacEnvelope(payload, opts.tenantKey);
 }
 
 /**

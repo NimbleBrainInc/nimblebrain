@@ -49,7 +49,16 @@ export interface RemoteTransportConfig {
   auth?:
     | { type: "bearer"; token: string }
     | { type: "header"; name: string; value: string }
-    | { type: "none" };
+    | { type: "none" }
+    /**
+     * Machine-plane auth for platform data-plane services (artifacts,
+     * nimbletasks, web-search). The runtime mints a short-lived,
+     * workspace-scoped service token on demand via the tenant-key grant
+     * (`NB_MCP_AUTHORIZER_TENANT_KEY` + `NB_FLEET_AUTHORIZER_ISSUER`), naming
+     * this `audience`/`scope`, and re-mints on expiry. No interactive OAuth, no
+     * static secret. The workspace dimension is the connection's own workspace.
+     */
+    | { type: "tenant-key"; audience: string; scope: string };
   headers?: Record<string, string>;
   reconnection?: {
     maxReconnectionDelay?: number;
