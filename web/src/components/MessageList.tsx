@@ -13,11 +13,13 @@ function formatTokens(count: number): string {
 }
 
 /**
- * Per-turn usage chip. Shows the *new* work inline — fresh (non-cached) input,
- * output, and (when present) the cached re-reads. The raw input total sums
- * every agentic-loop iteration AND counts cache reads at face value, so a
- * cache-heavy turn reads as a scary number (e.g. "401k") that's almost all
- * re-reads. Inline (not a hover title) so the breakdown is actually visible.
+ * Per-turn usage chip. Shows the *new* work inline — fresh (non-cached) input
+ * as "N new", plus the cached re-reads as "Nk cached" when present. The raw
+ * input total sums every agentic-loop iteration AND counts cache reads at face
+ * value, so a cache-heavy turn reads as a scary number (e.g. "401k") that's
+ * almost all re-reads. Output, cache *writes*, model, and latency are
+ * deliberately omitted to keep the bar ambient ("new" is noCache only). Inline
+ * (not a hover title) so the breakdown is actually visible.
  */
 function UsageChip({ usage }: { usage: NonNullable<ChatMessage["usage"]> }) {
   const cacheRead = usage.cacheReadTokens ?? 0;

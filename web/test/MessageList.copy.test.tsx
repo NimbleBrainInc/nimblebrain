@@ -142,7 +142,7 @@ describe("MessageList CopyButton feedback", () => {
 describe("MessageList usage chip", () => {
 	// Real numbers from the conv that prompted this: 400k "input" was almost
 	// all cached re-reads. The chip must show the fresh work inline
-	// (16.4k new · 870 out · 225.3k cached), never the 401k raw sum.
+	// (16.4k new · 225.3k cached), never the 401k raw sum.
 	const usageMsg: ChatMessage = {
 		role: "assistant",
 		content: "done",
