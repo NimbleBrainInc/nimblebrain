@@ -1,6 +1,10 @@
 type BunServer = ReturnType<typeof Bun.serve>;
 
+import type { ConnectionHealthProbe } from "../bundles/connection-probe.ts";
+import { ConnectionRevalidator } from "../bundles/connection-revalidator.ts";
 import { log } from "../cli/log.ts";
+import { ComposioConnectionProbe } from "../composio/connection-probe.ts";
+import { validateComposioConfig } from "../composio/sdk.ts";
 import type { IdentityProvider } from "../identity/provider.ts";
 import { DevIdentityProvider } from "../identity/providers/dev.ts";
 import type { Runtime } from "../runtime/runtime.ts";
@@ -64,6 +68,35 @@ export function startServer(options: ServerOptions): ServerHandle {
   const mcpSources = runtime.mcpSources();
   const healthMonitor = new HealthMonitor(mcpSources, runtime.getEventSink());
   healthMonitor.start();
+
+  // Connection credential re-validation (a disjoint concern from HealthMonitor's
+  // transport liveness): poll providers whose upstream account can lapse without
+  // a transport 401 (Composio) and flip stale connections to reauth_required.
+  // Dormant unless a probe is registered (Composio configured) and not killed by
+  // the operator switch. Env knobs (read once at startup, restart to change):
+  //   COMPOSIO_MONITOR_ENABLED         — incident kill switch (default on)
+  //   COMPOSIO_MONITOR_INTERVAL_SECONDS — sweep cadence (default 300)
+  const revalidatorProbes: ConnectionHealthProbe[] = [];
+  if (
+    validateComposioConfig().configured &&
+    (process.env.COMPOSIO_MONITOR_ENABLED ?? "true").trim().toLowerCase() !== "false"
+  ) {
+    revalidatorProbes.push(new ComposioConnectionProbe(runtime.getConnectorDirectory()));
+  } else if (validateComposioConfig().configured) {
+    log.info("[connection-revalidator] disabled via COMPOSIO_MONITOR_ENABLED=false");
+  }
+  const intervalSeconds = Number.parseInt(
+    (process.env.COMPOSIO_MONITOR_INTERVAL_SECONDS ?? "").trim(),
+    10,
+  );
+  const connectionRevalidator = new ConnectionRevalidator(
+    runtime.getLifecycle(),
+    revalidatorProbes,
+    Number.isFinite(intervalSeconds) && intervalSeconds > 0
+      ? { intervalMs: intervalSeconds * 1000 }
+      : {},
+  );
+  connectionRevalidator.start();
 
   // SSE event manager — listens to runtime events and broadcasts to clients.
   // Wired with the workspace store so `addIdentityClient` (the /v1/events
@@ -244,6 +277,7 @@ export function startServer(options: ServerOptions): ServerHandle {
       sseManager.stop();
       conversationEventManager.stop();
       healthMonitor.stop();
+      connectionRevalidator.stop();
       mcpHost.shutdown().catch(() => {});
       server.stop(closeConnections);
     },
