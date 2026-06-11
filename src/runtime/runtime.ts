@@ -798,7 +798,7 @@ export class Runtime {
       events,
       features,
       rt,
-      mpakHome,
+      undefined, // reserved slot — was mpakHome (legacy searchBundles path, removed)
       manageUsersCtx,
       manageWorkspacesCtx,
       manageMembersCtx,

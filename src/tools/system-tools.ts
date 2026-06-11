@@ -1,10 +1,10 @@
 import { NoopEventSink } from "../adapters/noop-events.ts";
 import type { BundleLifecycleManager } from "../bundles/lifecycle.ts";
-import { getMpak } from "../bundles/mpak.ts";
 import { deriveServerName } from "../bundles/paths.ts";
 import type { BundleManifest } from "../bundles/types.ts";
 import { isToolEnabled, type ResolvedFeatures } from "../config/features.ts";
 import type { ConfirmationGate } from "../config/privilege.ts";
+import type { ServerDetail } from "../connectors/server-detail.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import type { EventSink, ToolPromotionControls, ToolResult, ToolSchema } from "../engine/types.ts";
 import { NON_ADVANCING_META_KEY } from "../engine/types.ts";
@@ -68,7 +68,12 @@ export async function createSystemTools(
   eventSink?: EventSink,
   features?: ResolvedFeatures,
   runtime?: Runtime,
-  mpakHome?: string,
+  // Reserved slot — was the mpak SDK home for the legacy searchBundles
+  // discovery path. Registry search now goes through
+  // ConnectorDirectory.servers() (Browse's own cached, scoped fetch), which
+  // manages its own client. Keep the positional slot stable so every call
+  // site's arity holds.
+  _mpakHome?: string,
   manageUsersCtx?: ManageUsersContext,
   manageWorkspacesCtx?: ManageWorkspacesContext,
   manageMembersCtx?: ManageMembersContext,
@@ -118,17 +123,59 @@ export async function createSystemTools(
 
         if (scope === "registry") {
           try {
-            const mpak = getMpak(mpakHome!);
-            const data = await mpak.client.searchBundles({ q: query });
-            const results = data.bundles ?? [];
-            if (results.length === 0)
+            // Route agent discovery through the SAME method Browse uses —
+            // ConnectorDirectory.servers(). It fetches every enabled source,
+            // applies each registry's OWN scopes per-source (so mixed-scope
+            // multi-registry configs filter exactly as Browse does), runs
+            // the icon/URL safety scrub, caches, and aggregates errors. We
+            // take just the mpak-sourced bundles and keyword-match them. One
+            // method, not two parallel fetch/filter paths, so the scope
+            // filtering can't drift.
+            //
+            // No runtime (non-agent/test paths) ⇒ no directory ⇒ no results;
+            // the production agent always has one.
+            const directory = runtime?.getConnectorDirectory();
+            const aggregated = directory ? await directory.servers() : null;
+            const mpakBundles = (aggregated?.servers ?? [])
+              .filter((s) => s.source.type === "mpak")
+              .map((s) => s.detail);
+            const results = matchServersByQuery(mpakBundles, query);
+            if (results.length === 0) {
+              // Distinguish "registry unreachable" from "no such bundle".
+              // servers() aggregates per-source fetch failures into `errors`
+              // instead of throwing, so an mpak outage (5xx / timeout / DNS)
+              // yields zero bundles silently. If an mpak source errored and we
+              // got nothing back, surface a failure — matching the
+              // pre-refactor throw — rather than telling the agent the bundle
+              // doesn't exist.
+              const mpakIds = new Set(
+                (await runtime?.getRegistryStore().list())
+                  ?.filter((r) => r.type === "mpak")
+                  .map((r) => r.id),
+              );
+              // `mpakBundles.length === 0` is global across all mpak rows:
+              // with multiple mpak registries where one is up (returning
+              // bundles) and the down one held the queried bundle, this
+              // reports "No bundles found" rather than a failure. Acceptable —
+              // it matches Browse's partial-results semantics, and a single
+              // mpak registry is the norm.
+              const mpakDown =
+                mpakBundles.length === 0 &&
+                (aggregated?.errors ?? []).some((e) => mpakIds.has(e.registryId));
+              if (mpakDown)
+                return {
+                  content: textContent(`Failed to search mpak registry for "${query}".`),
+                  isError: true,
+                };
               return {
                 content: textContent(`No bundles found for "${query}".`),
                 isError: false,
               };
+            }
             const lines = [`Found ${results.length} result(s) for "${query}":\n`];
             for (const r of results) {
-              lines.push(`- **${r.name}** ${r.latest_version} [bundle]: ${r.description ?? ""}`);
+              const id = r.packages?.[0]?.identifier ?? r.name;
+              lines.push(`- **${id}** ${r.version} [bundle]: ${r.description ?? ""}`);
             }
             return { content: textContent(lines.join("\n")), isError: false };
           } catch {
@@ -718,6 +765,36 @@ function formatUptime(ms: number): string {
   if (minutes < 60) return `${minutes}m ${seconds % 60}s`;
   const hours = Math.floor(minutes / 60);
   return `${hours}h ${minutes % 60}m`;
+}
+
+/**
+ * Keyword match over an mpak `ServerDetail` set for agent registry search.
+ * Empty query returns everything; otherwise every whitespace-separated term
+ * must appear (case-insensitive) in the name, title, description, or a
+ * package identifier.
+ *
+ * NOTE: this is DELIBERATELY a different matcher from the web Browse search
+ * box, not a port of it. Browse OR-matches the whole query as one literal
+ * substring across name/description/tags; this AND-matches each term across
+ * more fields — better precision for an agent narrowing to a specific
+ * bundle. They are not meant to return identical sets. No shared backend
+ * matcher exists; if you change the field set here, that divergence is
+ * expected, not a bug.
+ */
+function matchServersByQuery(servers: ServerDetail[], query: string): ServerDetail[] {
+  const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+  if (terms.length === 0) return servers;
+  return servers.filter((s) => {
+    const hay = [
+      s.name,
+      s.title ?? "",
+      s.description,
+      ...(s.packages ?? []).map((p) => p.identifier),
+    ]
+      .join(" ")
+      .toLowerCase();
+    return terms.every((t) => hay.includes(t));
+  });
 }
 
 function groupToolsBySource(all: Array<{ name: string; description: string }>): ToolResult {
