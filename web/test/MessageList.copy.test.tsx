@@ -138,3 +138,37 @@ describe("MessageList CopyButton feedback", () => {
 		});
 	});
 });
+
+describe("MessageList usage chip", () => {
+	// Real numbers from the conv that prompted this: 400k "input" was almost
+	// all cached re-reads. The chip must show the fresh work inline
+	// (16.4k new · 870 out · 225.3k cached), never the 401k raw sum.
+	const usageMsg: ChatMessage = {
+		role: "assistant",
+		content: "done",
+		usage: {
+			inputTokens: 400304,
+			outputTokens: 870,
+			cacheReadTokens: 225328,
+			cacheWriteTokens: 158550,
+			model: "anthropic:claude-opus-4-7",
+			llmMs: 1240,
+		},
+	};
+
+	it("shows fresh tokens + cached inline, not the cache-inflated input sum", () => {
+		const { container } = render(
+			<MessageList
+				messages={[usageMsg]}
+				isStreaming={false}
+				streamingState="idle"
+				displayDetail="balanced"
+			/>,
+		);
+
+		const text = container.textContent ?? "";
+		expect(text).toContain("16.4k new");
+		expect(text).toContain("225.3k cached");
+		expect(text).not.toContain("401");
+	});
+});

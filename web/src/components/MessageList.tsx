@@ -12,6 +12,29 @@ function formatTokens(count: number): string {
   return count.toString();
 }
 
+/**
+ * Per-turn usage chip. Shows the *new* work inline — fresh (non-cached) input,
+ * output, and (when present) the cached re-reads. The raw input total sums
+ * every agentic-loop iteration AND counts cache reads at face value, so a
+ * cache-heavy turn reads as a scary number (e.g. "401k") that's almost all
+ * re-reads. Inline (not a hover title) so the breakdown is actually visible.
+ */
+function UsageChip({ usage }: { usage: NonNullable<ChatMessage["usage"]> }) {
+  const cacheRead = usage.cacheReadTokens ?? 0;
+  const cacheWrite = usage.cacheWriteTokens ?? 0;
+  const freshIn = Math.max(usage.inputTokens - cacheRead - cacheWrite, 0);
+
+  const parts = [`${formatTokens(freshIn)} new`];
+  if (cacheRead > 0) parts.push(`${formatTokens(cacheRead)} cached`);
+
+  return (
+    <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground tabular-nums">
+      <Zap style={{ width: 10, height: 10 }} className="opacity-70" />
+      <span>{parts.join(" · ")}</span>
+    </span>
+  );
+}
+
 const APP_CONTEXT_RE = /^\[App Context:[^\]]*\]\n/;
 
 function formatRelativeTime(iso: string): string {
@@ -426,17 +449,7 @@ export function MessageList({
                       {formatRelativeTime(msg.timestamp)}
                     </span>
                   )}
-                  {msg.usage && (
-                    <span
-                      className="inline-flex items-center gap-1 text-[10px] text-muted-foreground"
-                      title={`${formatTokens(msg.usage.inputTokens)} in, ${formatTokens(msg.usage.outputTokens)} out${msg.usage.cacheReadTokens ? ` (${formatTokens(msg.usage.cacheReadTokens)} cached)` : ""} · ${msg.usage.model} · ${Math.round(msg.usage.llmMs)}ms`}
-                    >
-                      <Zap style={{ width: 10, height: 10 }} className="opacity-70" />
-                      <span className="tabular-nums">
-                        {formatTokens(msg.usage.inputTokens + msg.usage.outputTokens)}
-                      </span>
-                    </span>
-                  )}
+                  {msg.usage && <UsageChip usage={msg.usage} />}
                 </div>
               </div>
             );
