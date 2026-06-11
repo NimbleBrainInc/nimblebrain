@@ -1,14 +1,15 @@
 import { NoopEventSink } from "../adapters/noop-events.ts";
 import type { BundleLifecycleManager } from "../bundles/lifecycle.ts";
-import { getMpak } from "../bundles/mpak.ts";
 import { deriveServerName } from "../bundles/paths.ts";
 import type { BundleManifest } from "../bundles/types.ts";
 import { isToolEnabled, type ResolvedFeatures } from "../config/features.ts";
 import type { ConfirmationGate } from "../config/privilege.ts";
+import type { ServerDetail } from "../connectors/server-detail.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import type { EventSink, ToolPromotionControls, ToolResult, ToolSchema } from "../engine/types.ts";
 import { NON_ADVANCING_META_KEY } from "../engine/types.ts";
-import { scopeAllowsName } from "../registries/directory.ts";
+import { applyScopeFilter, resolveMpakSearchScopes } from "../registries/directory.ts";
+import { MpakSource } from "../registries/mpak-source.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import type { SelectedSkill } from "../skills/select.ts";
 import type { Skill } from "../skills/types.ts";
@@ -69,7 +70,11 @@ export async function createSystemTools(
   eventSink?: EventSink,
   features?: ResolvedFeatures,
   runtime?: Runtime,
-  mpakHome?: string,
+  // Reserved slot — was the mpak SDK home for the legacy searchBundles
+  // discovery path. Registry search now goes through MpakSource (Browse's
+  // own cached fetch), which manages its own client. Keep the positional
+  // slot stable so every call site's arity holds.
+  _mpakHome?: string,
   manageUsersCtx?: ManageUsersContext,
   manageWorkspacesCtx?: ManageWorkspacesContext,
   manageMembersCtx?: ManageMembersContext,
@@ -119,22 +124,31 @@ export async function createSystemTools(
 
         if (scope === "registry") {
           try {
-            const mpak = getMpak(mpakHome!);
-            const data = await mpak.client.searchBundles({ q: query });
-            // Scope agent-driven discovery to the same publisher set the
-            // Browse directory enforces. The mpak API has no publisher
-            // filter, so we filter the returned bundles client-side by the
-            // configured mpak registry scopes (e.g. ["nimblebraininc"]).
-            // Without this, nb__search returns every publisher's bundles
-            // even though Browse is scoped — the two surfaces diverge.
-            // Unscoped (operator opted into open mpak) → no filter.
+            // Reuse the EXACT Browse data path so agent discovery and the
+            // Browse directory can't diverge: fetch each enabled mpak
+            // registry's catalog via MpakSource.fetch() (cached + paginated
+            // up to MAX_PAGES×PAGE_LIMIT), apply the same ServerDetail
+            // scope filter, then keyword-match client-side the way the
+            // Browse search box does. The prior searchBundles path hit the
+            // deprecated /v1/bundles/search and filtered only its first
+            // page, so an in-scope bundle ranked below page 1 vanished from
+            // search while Browse still showed it — the same divergence
+            // this scoping is meant to kill.
+            //
+            // Fail-open is intentional: with no runtime (non-agent/test
+            // paths) the production agent never reaches here, and an
+            // operator who disabled every mpak registry just gets no
+            // registry results — there is nothing un-scoped to leak.
             const registries = (await runtime?.getRegistryStore().list()) ?? [];
-            const mpakRegs = registries.filter((r) => r.type === "mpak" && r.enabled !== false);
-            const open = mpakRegs.length === 0 || mpakRegs.some((r) => !r.scopes?.length);
-            const scopes = open ? undefined : mpakRegs.flatMap((r) => r.scopes ?? []);
-            const results = scopes
-              ? (data.bundles ?? []).filter((r) => scopeAllowsName(r.name, scopes))
-              : (data.bundles ?? []);
+            const { registries: mpakRegs, scopes } = resolveMpakSearchScopes(registries);
+            const fetched = (
+              await Promise.all(
+                mpakRegs.map((r) =>
+                  new MpakSource(r.id, r.url).fetch().catch(() => [] as ServerDetail[]),
+                ),
+              )
+            ).flat();
+            const results = matchServersByQuery(applyScopeFilter(fetched, scopes), query);
             if (results.length === 0)
               return {
                 content: textContent(`No bundles found for "${query}".`),
@@ -142,7 +156,8 @@ export async function createSystemTools(
               };
             const lines = [`Found ${results.length} result(s) for "${query}":\n`];
             for (const r of results) {
-              lines.push(`- **${r.name}** ${r.latest_version} [bundle]: ${r.description ?? ""}`);
+              const id = r.packages?.[0]?.identifier ?? r.name;
+              lines.push(`- **${id}** ${r.version} [bundle]: ${r.description ?? ""}`);
             }
             return { content: textContent(lines.join("\n")), isError: false };
           } catch {
@@ -709,6 +724,29 @@ function formatUptime(ms: number): string {
   if (minutes < 60) return `${minutes}m ${seconds % 60}s`;
   const hours = Math.floor(minutes / 60);
   return `${hours}h ${minutes % 60}m`;
+}
+
+/**
+ * Client-side keyword match over an mpak `ServerDetail` set — mirrors the
+ * Browse search box (which filters the fetched catalog in-memory rather
+ * than re-querying). Empty query returns everything; otherwise every
+ * whitespace-separated term must appear (case-insensitive) in the name,
+ * title, description, or a package identifier.
+ */
+function matchServersByQuery(servers: ServerDetail[], query: string): ServerDetail[] {
+  const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+  if (terms.length === 0) return servers;
+  return servers.filter((s) => {
+    const hay = [
+      s.name,
+      s.title ?? "",
+      s.description,
+      ...(s.packages ?? []).map((p) => p.identifier),
+    ]
+      .join(" ")
+      .toLowerCase();
+    return terms.every((t) => hay.includes(t));
+  });
 }
 
 function groupToolsBySource(all: Array<{ name: string; description: string }>): ToolResult {

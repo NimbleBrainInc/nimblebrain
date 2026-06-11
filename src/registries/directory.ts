@@ -289,11 +289,17 @@ export class ConnectorDirectory {
  * and have it work uniformly across source types. Empty / undefined
  * `scopes` returns the input untouched (no filter).
  */
-function applyScopeFilter(servers: ServerDetail[], scopes: string[] | undefined): ServerDetail[] {
+export function applyScopeFilter(
+  servers: ServerDetail[],
+  scopes: string[] | undefined,
+): ServerDetail[] {
   if (!scopes || scopes.length === 0) return servers;
   const norm = scopes.map((s) => s.toLowerCase());
   return servers.filter((s) => {
-    if (scopeAllowsName(s.name, scopes)) return true;
+    const reverseDns = s.name.split("/")[0]?.toLowerCase() ?? "";
+    if (norm.some((scope) => reverseDns === scope || reverseDns.startsWith(`${scope}.`))) {
+      return true;
+    }
     for (const pkg of s.packages ?? []) {
       const npmScope = parseNpmScope(pkg.identifier);
       if (npmScope && norm.includes(npmScope)) return true;
@@ -302,30 +308,31 @@ function applyScopeFilter(servers: ServerDetail[], scopes: string[] | undefined)
   });
 }
 
-/**
- * True if a single `name` is allowed by `scopes`. `name` may be a
- * reverse-DNS `ServerDetail.name` (`ai.nimblebrain/echo`) or an mpak
- * `@scope/name` bundle identifier (`@nimblebraininc/echo`) — both forms
- * are matched, mirroring the per-name rules in `applyScopeFilter`.
- *
- * Exported so callers that work off raw mpak search results — which carry
- * `@scope/name` directly, not a `packages[]` array — can scope to the same
- * publisher set the Browse directory enforces, without rebuilding a
- * `ServerDetail`. Empty/undefined `scopes` allows everything (no filter).
- */
-export function scopeAllowsName(name: string, scopes: string[] | undefined): boolean {
-  if (!scopes || scopes.length === 0) return true;
-  const norm = scopes.map((s) => s.toLowerCase());
-  const reverseDns = name.split("/")[0]?.toLowerCase() ?? "";
-  if (norm.some((scope) => reverseDns === scope || reverseDns.startsWith(`${scope}.`))) {
-    return true;
-  }
-  const npmScope = parseNpmScope(name);
-  return npmScope != null && norm.includes(npmScope);
-}
-
 /** `@scope/name` → `scope` (lowercased); non-scoped npm name → null. */
 function parseNpmScope(identifier: string): string | null {
   const m = /^@([^/]+)\//.exec(identifier);
   return m ? (m[1]?.toLowerCase() ?? null) : null;
+}
+
+/**
+ * Resolve which mpak registries agent search (`nb__search { scope:
+ * "registry" }`) should query, and the scope set to enforce on their
+ * results — so agent discovery and the Browse directory stay on one
+ * filtering rule instead of two that drift apart.
+ *
+ * Only enabled mpak registries participate (matches Browse, which skips
+ * disabled sources). An mpak registry with no `scopes` means the operator
+ * opted into open mpak, so a single unscoped row drops the filter entirely
+ * (`scopes: undefined` ⇒ `applyScopeFilter` no-ops); otherwise the result
+ * is the union of scopes across the enabled mpak rows.
+ */
+export function resolveMpakSearchScopes(registries: RegistryConfig[]): {
+  registries: RegistryConfig[];
+  scopes: string[] | undefined;
+} {
+  const mpak = registries.filter((r) => r.type === "mpak" && r.enabled);
+  // Open when any enabled mpak row is unscoped (operator opted in) or there
+  // are simply no enabled mpak rows — both mean "don't filter" (undefined).
+  const open = mpak.length === 0 || mpak.some((r) => !r.scopes?.length);
+  return { registries: mpak, scopes: open ? undefined : mpak.flatMap((r) => r.scopes ?? []) };
 }
