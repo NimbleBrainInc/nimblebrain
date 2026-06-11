@@ -8,6 +8,7 @@ import type { ConfirmationGate } from "../config/privilege.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import type { EventSink, ToolPromotionControls, ToolResult, ToolSchema } from "../engine/types.ts";
 import { NON_ADVANCING_META_KEY } from "../engine/types.ts";
+import { scopeAllowsName } from "../registries/directory.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import type { SelectedSkill } from "../skills/select.ts";
 import type { Skill } from "../skills/types.ts";
@@ -120,7 +121,20 @@ export async function createSystemTools(
           try {
             const mpak = getMpak(mpakHome!);
             const data = await mpak.client.searchBundles({ q: query });
-            const results = data.bundles ?? [];
+            // Scope agent-driven discovery to the same publisher set the
+            // Browse directory enforces. The mpak API has no publisher
+            // filter, so we filter the returned bundles client-side by the
+            // configured mpak registry scopes (e.g. ["nimblebraininc"]).
+            // Without this, nb__search returns every publisher's bundles
+            // even though Browse is scoped — the two surfaces diverge.
+            // Unscoped (operator opted into open mpak) → no filter.
+            const registries = (await runtime?.getRegistryStore().list()) ?? [];
+            const mpakRegs = registries.filter((r) => r.type === "mpak" && r.enabled !== false);
+            const open = mpakRegs.length === 0 || mpakRegs.some((r) => !r.scopes?.length);
+            const scopes = open ? undefined : mpakRegs.flatMap((r) => r.scopes ?? []);
+            const results = scopes
+              ? (data.bundles ?? []).filter((r) => scopeAllowsName(r.name, scopes))
+              : (data.bundles ?? []);
             if (results.length === 0)
               return {
                 content: textContent(`No bundles found for "${query}".`),

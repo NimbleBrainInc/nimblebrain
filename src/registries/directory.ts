@@ -293,16 +293,35 @@ function applyScopeFilter(servers: ServerDetail[], scopes: string[] | undefined)
   if (!scopes || scopes.length === 0) return servers;
   const norm = scopes.map((s) => s.toLowerCase());
   return servers.filter((s) => {
-    const reverseDns = s.name.split("/")[0]?.toLowerCase() ?? "";
-    if (norm.some((scope) => reverseDns === scope || reverseDns.startsWith(`${scope}.`))) {
-      return true;
-    }
+    if (scopeAllowsName(s.name, scopes)) return true;
     for (const pkg of s.packages ?? []) {
       const npmScope = parseNpmScope(pkg.identifier);
       if (npmScope && norm.includes(npmScope)) return true;
     }
     return false;
   });
+}
+
+/**
+ * True if a single `name` is allowed by `scopes`. `name` may be a
+ * reverse-DNS `ServerDetail.name` (`ai.nimblebrain/echo`) or an mpak
+ * `@scope/name` bundle identifier (`@nimblebraininc/echo`) — both forms
+ * are matched, mirroring the per-name rules in `applyScopeFilter`.
+ *
+ * Exported so callers that work off raw mpak search results — which carry
+ * `@scope/name` directly, not a `packages[]` array — can scope to the same
+ * publisher set the Browse directory enforces, without rebuilding a
+ * `ServerDetail`. Empty/undefined `scopes` allows everything (no filter).
+ */
+export function scopeAllowsName(name: string, scopes: string[] | undefined): boolean {
+  if (!scopes || scopes.length === 0) return true;
+  const norm = scopes.map((s) => s.toLowerCase());
+  const reverseDns = name.split("/")[0]?.toLowerCase() ?? "";
+  if (norm.some((scope) => reverseDns === scope || reverseDns.startsWith(`${scope}.`))) {
+    return true;
+  }
+  const npmScope = parseNpmScope(name);
+  return npmScope != null && norm.includes(npmScope);
 }
 
 /** `@scope/name` → `scope` (lowercased); non-scoped npm name → null. */

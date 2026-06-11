@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ConnectorDirectory } from "../../src/registries/directory.ts";
+import { ConnectorDirectory, scopeAllowsName } from "../../src/registries/directory.ts";
 import { _resetMpakSourceCache } from "../../src/registries/mpak-source.ts";
 import { RegistryStore } from "../../src/registries/registry-store.ts";
 
@@ -560,5 +560,39 @@ describe("ConnectorDirectory safety scrub (mpak XSS via _meta extension URLs)", 
       );
     const result = await new ConnectorDirectory(store).list();
     expect(result.entries.map((e) => e.id)).toEqual(["io.safe/mcp"]);
+  });
+});
+
+/**
+ * `scopeAllowsName` is the single-name match rule shared by the Browse
+ * directory's `applyScopeFilter` and the agent's `nb__search` registry
+ * scope. Agent-driven discovery feeds it raw mpak `@scope/name` bundle
+ * names, so it must match the same publisher set the Browse list enforces.
+ */
+describe("scopeAllowsName", () => {
+  test("matches an mpak @scope/name bundle by npm scope", () => {
+    expect(scopeAllowsName("@nimblebraininc/asana", ["nimblebraininc"])).toBe(true);
+  });
+
+  test("rejects a different publisher's bundle (the @joecardoso13 case)", () => {
+    expect(scopeAllowsName("@joecardoso13/asana", ["nimblebraininc"])).toBe(false);
+  });
+
+  test("matches a reverse-DNS ServerDetail name by prefix", () => {
+    expect(scopeAllowsName("ai.nimblebrain/echo", ["ai.nimblebrain"])).toBe(true);
+    expect(scopeAllowsName("ai.nimblebrain.sub/echo", ["ai.nimblebrain"])).toBe(true);
+  });
+
+  test("is case-insensitive on both sides", () => {
+    expect(scopeAllowsName("@NimbleBrainInc/asana", ["nimblebraininc"])).toBe(true);
+  });
+
+  test("empty / undefined scopes allow everything (no filter)", () => {
+    expect(scopeAllowsName("@joecardoso13/asana", [])).toBe(true);
+    expect(scopeAllowsName("@joecardoso13/asana", undefined)).toBe(true);
+  });
+
+  test("an unscoped npm name never matches a non-empty scope set", () => {
+    expect(scopeAllowsName("plain-bundle", ["nimblebraininc"])).toBe(false);
   });
 });
