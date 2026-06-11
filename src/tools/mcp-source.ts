@@ -1083,6 +1083,32 @@ export class McpSource implements ToolSource {
         };
       }
 
+      // Authorization loss is not a crash. A remote tool call that throws
+      // UnauthorizedError means the persisted refresh token was rejected
+      // (expired / revoked / conditional-access pulled) — restarting the
+      // transport can't fix a dead credential, and routing it through the
+      // crash/restart path below wrongly escalates the connection toward
+      // `dead`. Flip the connection to `reauth_required` via the provider
+      // (which holds the (wsId, serverName) owner context) so the UI shows
+      // "Reconnect" and a `connection.state_changed` event fires, then surface
+      // a clear, structured reauth error instead of a generic crash. This
+      // wires the documented `running → reauth_required` transition
+      // (see connection.ts) that nothing else triggered.
+      if (err instanceof UnauthorizedError && this.mode.type === "remote") {
+        this.mode.authProvider?.notifyAuthLost();
+        return {
+          content: textContent(
+            `${this.name} needs to be reconnected — its authorization has expired. Open the connector and click Reconnect.`,
+          ),
+          isError: true,
+          structuredContent: {
+            error: "auth_required",
+            reason: "reauth_required",
+            source: this.name,
+          },
+        };
+      }
+
       // De-duped via the `dead` guard inside emitSourceCrashed: if the
       // transport's `onclose` already fired (subprocess died before our
       // catch ran), this is a no-op and the onclose-side payload — which

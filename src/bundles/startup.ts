@@ -226,6 +226,15 @@ export async function startBundleSource(
      */
     onInteractiveAuthRequired?: (authorizationUrl: string) => void;
     /**
+     * Optional callback fired when an established connection loses its
+     * authorization mid-session — a tool call threw `UnauthorizedError`
+     * because the persisted refresh token was rejected. Threaded into
+     * `WorkspaceOAuthProvider`; receivers transition the Connection to
+     * `reauth_required` (the documented `running → reauth_required` step) so
+     * the UI offers "Reconnect". No-op for non-URL bundles.
+     */
+    onAuthLost?: () => void;
+    /**
      * Per-workspace host-resources deps. When present, the spawned
      * McpSource registers inbound handlers for
      * `ai.nimblebrain/resources/{read,list}` so the bundle can read
@@ -372,6 +381,7 @@ export async function startBundleSource(
         // issuer (the fleet authorizer), never to a vendor.
         ...fleetIssuerOption(),
         onInteractiveAuthRequired: wrappedCallback,
+        ...(opts?.onAuthLost ? { onAuthLost: opts.onAuthLost } : {}),
         ...(staticClient ? { staticClient } : {}),
         ...(ref.scopes ? { scopes: ref.scopes } : {}),
         ...(ref.additionalAuthorizationParams

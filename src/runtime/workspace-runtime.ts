@@ -152,6 +152,16 @@ export async function startWorkspaceBundles(
      * through here.
      */
     getBundleMcpDeps?: (wsId: string) => BundleMcpDeps | undefined;
+    /**
+     * Fired when a boot-started URL bundle's connection later loses its
+     * authorization mid-session (a tool call hit `UnauthorizedError`). Unlike
+     * `onInteractiveAuthRequired` — which buffers via `setPendingAuth` because
+     * `BundleLifecycleManager` doesn't exist yet at boot — this fires LATER
+     * (on a post-boot tool call), by which time the runtime's late-bound
+     * lifecycle exists, so the runtime wires it straight to
+     * `recordConnectionStateChange(... "reauth_required")`.
+     */
+    onAuthLost?: (wsId: string, serverName: string) => void;
   },
 ): Promise<{ registries: Map<string, ToolRegistry>; entries: ProcessInventoryEntry[] }> {
   const workDir = opts?.workDir ?? join(process.env.NB_WORK_DIR ?? "", ".nimblebrain");
@@ -258,6 +268,12 @@ export async function startWorkspaceBundles(
         onInteractiveAuthRequired: (authorizationUrl) => {
           setPendingAuth(entry.wsId, entry.serverName, authorizationUrl);
         },
+        // Mid-session auth loss fires post-boot (a tool call), so the
+        // runtime's late-bound lifecycle exists by then — wire straight
+        // through to flip the Connection to reauth_required.
+        ...(opts?.onAuthLost
+          ? { onAuthLost: () => opts.onAuthLost?.(entry.wsId, entry.serverName) }
+          : {}),
         // Re-register inbound host-resources handlers on respawn so bundles
         // installed with host-resources support don't silently lose the
         // capability across platform restarts.
