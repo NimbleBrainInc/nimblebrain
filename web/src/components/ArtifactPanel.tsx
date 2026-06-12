@@ -60,6 +60,9 @@ export function ArtifactPanel() {
   const appName = artifact?.appName;
   const uri = artifact?.uri;
 
+  // artifact?.mimeType is captured only as a fallback at fetch time; the
+  // (appName, uri) pair is the identity of the resource being fetched.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: fetch keyed on resource identity
   useEffect(() => {
     if (!appName || !uri) return;
     let cancelled = false;
@@ -102,9 +105,6 @@ export function ArtifactPanel() {
     return () => {
       cancelled = true;
     };
-    // artifact?.mimeType is captured only as a fallback at fetch time; the
-    // (appName, uri) pair is the identity of the resource being fetched.
-    // biome-ignore lint/correctness/useExhaustiveDependencies: fetch keyed on resource identity
   }, [appName, uri]);
 
   // Esc closes the panel while it's open.
