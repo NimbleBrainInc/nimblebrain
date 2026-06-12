@@ -820,6 +820,12 @@ export class Runtime {
       makeLocal: () =>
         createLocalOutputStore({
           resolveStore: (scope: OutputScope) =>
+            // lint-ok:file-path — DELIBERATE workspace-scoped store. Agent
+            // OUTPUTS (reports/exports) are workspace-produced and MUST be
+            // workspace-fenced — a distinct store from the identity-owned
+            // upload store (users/{userId}/files). One `files://` scheme,
+            // two scoped stores keyed by who owns the content (see CLAUDE.md
+            // "Files are identity-owned, outputs are workspace-owned").
             createFileStore(rt.getWorkspaceContext(scope.workspace).getDataPath("files")),
         }),
     });
