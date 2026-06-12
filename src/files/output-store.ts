@@ -70,6 +70,15 @@ export interface OutputMeta {
   citations?: Array<{ title?: string; url?: string }>;
   sizeBytes: number;
   createdAt?: string;
+  /**
+   * The workspace the output was produced under, when the backend records it.
+   * The `dataplane` backend already fences cross-workspace reads at the RLS
+   * boundary (the read token is workspace-dimensioned); `local` is an
+   * identity-owned store with no per-workspace silo, so this lets a caller
+   * (e.g. `nb__get_output`) enforce the same workspace scope explicitly. May be
+   * absent for legacy/foreign entries.
+   */
+  workspace?: string;
 }
 
 /** A stored output plus its FULL body — never truncated. */
@@ -146,6 +155,7 @@ function metaFromArtifact(m: ArtifactMetadata): OutputMeta {
     citations: m.citations ?? undefined,
     sizeBytes: m.sizeBytes,
     createdAt: m.createdAt ?? undefined,
+    workspace: m.workspaceId,
   };
 }
 
@@ -237,6 +247,7 @@ function metaFromEntry(entry: FileEntry): OutputMeta {
     citations: extra.citations,
     sizeBytes: entry.size,
     createdAt: entry.createdAt,
+    workspace: entry.workspaceId,
   };
 }
 
@@ -325,4 +336,178 @@ export function decodeOutputText(content: OutputContent): string {
 /** Recover the id from a `files://` output ref, or null for any other scheme. */
 export function outputRefToId(uri: string): string | null {
   return uriToFileId(uri);
+}
+
+// ---------------------------------------------------------------------------
+// provider selection (task 005)
+// ---------------------------------------------------------------------------
+
+/**
+ * Which output-store backend the runtime selected, and WHY. The kind drives
+ * tool/source registration (the `dataplane`/`local` stores expose
+ * `nb__get_output` + the resolvable source; `null` omits them); the `reason`
+ * is logged once at startup so an operator can see the chosen backend without
+ * inferring it from a constellation of env vars.
+ */
+export type OutputStoreKind = "dataplane" | "local" | "null";
+
+export interface OutputStoreSelection {
+  kind: OutputStoreKind;
+  /** Human-readable one-liner for the startup log (which backend + why). */
+  reason: string;
+  /** The resolved store. Present for every kind — `null` resolves to the disabled store. */
+  store: OutputStore;
+}
+
+/**
+ * The config inputs the resolver reads. Env vars are read by the runtime and
+ * passed in (not read here) so the resolver stays a pure function that tests
+ * drive directly. The dataplane URL + issuer are the only signal that the data
+ * plane is wired; `force` is the explicit override.
+ */
+export interface ResolveOutputStoreConfig {
+  /**
+   * Explicit override. `"none"` forces the `null` backend even when the data
+   * plane is fully configured (kill-switch for a degraded data plane);
+   * `"local"`/`"dataplane"` force that backend; `undefined` auto-selects.
+   * From `NB_OUTPUT_STORE` — task 009 must match this name.
+   */
+  force?: string;
+  /** Fleet authorizer issuer (`NB_FLEET_AUTHORIZER_ISSUER`). */
+  issuer?: string;
+  /** Artifacts service base URL (`NB_ARTIFACTS_URL`) — the data-plane signal. */
+  dataplaneUrl?: string;
+  /** Builds the dataplane store when the data plane is selected. */
+  makeDataplane: (opts: { baseUrl: string; issuer: string }) => OutputStore;
+  /** Builds the local store (binds the runtime's identity-owned FileStore). */
+  makeLocal: () => OutputStore;
+}
+
+/**
+ * Resolve the active output-store backend EXPLICITLY — by config, not by
+ * per-capability env-presence. The rules, in order:
+ *
+ *   1. `force === "none"`        → `null`      (kill-switch; fail closed)
+ *   2. `force === "local"`       → `local`     (forced self-host)
+ *   3. `force === "dataplane"`   → `dataplane`  (only if issuer + URL present;
+ *                                                else `null` — a forced data
+ *                                                plane with no URL is a misconfig,
+ *                                                not a silent fall-back to local)
+ *   4. issuer + dataplaneUrl set → `dataplane`  (auto: the data plane is wired)
+ *   5. otherwise                 → `local`      (zero-infra default; off-platform works)
+ *
+ * Default is `local`, so a fresh checkout with no env stores outputs to the
+ * workspace PVC and every output path works with no data plane at all.
+ */
+export function resolveOutputStore(config: ResolveOutputStoreConfig): OutputStoreSelection {
+  const force = config.force?.trim().toLowerCase();
+  const { issuer, dataplaneUrl } = config;
+  // Narrowed locals (not `config.x!`) so the dataplane branches type-check
+  // without non-null assertions — `dataplane` is non-null only when both are set.
+  const dataplane = issuer && dataplaneUrl ? { baseUrl: dataplaneUrl, issuer } : null;
+
+  if (force === "none") {
+    return {
+      kind: "null",
+      reason: "output store disabled by NB_OUTPUT_STORE=none",
+      store: createNullOutputStore(),
+    };
+  }
+
+  if (force === "local") {
+    return {
+      kind: "local",
+      reason: "output store forced local by NB_OUTPUT_STORE=local",
+      store: config.makeLocal(),
+    };
+  }
+
+  if (force === "dataplane") {
+    if (!dataplane) {
+      return {
+        kind: "null",
+        reason:
+          "output store forced dataplane by NB_OUTPUT_STORE=dataplane but issuer/URL are not set — disabling (fail closed)",
+        store: createNullOutputStore(),
+      };
+    }
+    return {
+      kind: "dataplane",
+      store: config.makeDataplane(dataplane),
+      reason: "output store forced dataplane by NB_OUTPUT_STORE=dataplane",
+    };
+  }
+
+  if (dataplane) {
+    return {
+      kind: "dataplane",
+      store: config.makeDataplane(dataplane),
+      reason: "output store using dataplane (fleet issuer + artifacts URL configured)",
+    };
+  }
+
+  return {
+    kind: "local",
+    reason: "output store using local file store (no data plane configured — zero-infra default)",
+    store: config.makeLocal(),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// task-runner provider selection (task 005) — same selection shape
+// ---------------------------------------------------------------------------
+
+/**
+ * The task-runner backend selection. Only `dataplane` (nimbletasks) and `null`
+ * are implemented today — there is no local task runner — but the selection
+ * shares ONE model with the output store so artifacts + tasks resolve the same
+ * way: explicit force, then the data-plane signal, then fail closed. The kind
+ * gates whether durable-task surfaces (deep_research) are wired.
+ */
+export type TaskRunnerKind = "dataplane" | "null";
+
+export interface TaskRunnerSelection {
+  kind: TaskRunnerKind;
+  reason: string;
+  /** nimbletasks base URL + issuer when `dataplane`; absent for `null`. */
+  dataplane?: { baseUrl: string; issuer: string };
+}
+
+export interface ResolveTaskRunnerConfig {
+  /** Explicit override (`NB_TASK_RUNNER`): `"none"` forces `null`. */
+  force?: string;
+  /** Fleet authorizer issuer (`NB_FLEET_AUTHORIZER_ISSUER`). */
+  issuer?: string;
+  /** nimbletasks service base URL (`NB_NIMBLETASKS_URL`) — the data-plane signal. */
+  nimbletasksUrl?: string;
+}
+
+/**
+ * Resolve the task-runner backend. Mirrors `resolveOutputStore`: `none` forces
+ * disabled; issuer + URL present selects `dataplane`; otherwise `null` (there is
+ * no zero-infra task runner, so the default off-platform state is "no durable
+ * tasks", not "local tasks"). Failing closed here means deep_research is simply
+ * absent off-platform rather than pretending to run.
+ */
+export function resolveTaskRunner(config: ResolveTaskRunnerConfig): TaskRunnerSelection {
+  const force = config.force?.trim().toLowerCase();
+  const { issuer, nimbletasksUrl } = config;
+  const dataplane = issuer && nimbletasksUrl ? { baseUrl: nimbletasksUrl, issuer } : null;
+
+  if (force === "none") {
+    return { kind: "null", reason: "task runner disabled by NB_TASK_RUNNER=none" };
+  }
+
+  if (dataplane) {
+    return {
+      kind: "dataplane",
+      dataplane,
+      reason: "task runner using dataplane nimbletasks (fleet issuer + nimbletasks URL configured)",
+    };
+  }
+
+  return {
+    kind: "null",
+    reason: "task runner disabled (no data plane configured — durable tasks unavailable)",
+  };
 }

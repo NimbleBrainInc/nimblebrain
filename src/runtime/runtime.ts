@@ -49,6 +49,14 @@ import type {
   ToolRouter,
   ToolSchema,
 } from "../engine/types.ts";
+import {
+  createDataplaneOutputStore,
+  createLocalOutputStore,
+  type OutputScope,
+  type OutputStore,
+  resolveOutputStore,
+  resolveTaskRunner,
+} from "../files/output-store.ts";
 import { rehydrateUserResources } from "../files/rehydrate.ts";
 import { createFileStore, type FileStore } from "../files/store.ts";
 import { DEFAULT_FILE_CONFIG, type FileConfig } from "../files/types.ts";
@@ -98,9 +106,11 @@ import { TelemetryManager } from "../telemetry/manager.ts";
 import { PostHogEventSink } from "../telemetry/posthog-sink.ts";
 import type { DeepResearchContext } from "../tools/deep-research.ts";
 import type { DelegateContext } from "../tools/delegate.ts";
+import type { GetOutputContext } from "../tools/get-output.ts";
 import { isIdentitySource } from "../tools/identity-sources.ts";
 import { McpSource } from "../tools/mcp-source.ts";
 import { namespacedToolName } from "../tools/namespace.ts";
+import { createOutputsSource } from "../tools/outputs-source.ts";
 import { SharedSourceRef, type ToolRegistry } from "../tools/registry.ts";
 import { surfaceTools } from "../tools/surfacing.ts";
 import { createSystemTools } from "../tools/system-tools.ts";
@@ -802,6 +812,45 @@ export class Runtime {
           }
         : undefined;
 
+    // Output-store + task-runner provider selection (output-store seam). ONE
+    // explicit model for both: NB_OUTPUT_STORE / NB_TASK_RUNNER force the
+    // backend; otherwise the data-plane signal (fleet issuer + service URL)
+    // selects `dataplane`, and the output store defaults to `local` (zero-infra)
+    // while the task runner defaults to `null` (no local durable runner). The
+    // selection is logged ONCE here so an operator sees the chosen backend
+    // without inferring it from a constellation of env vars.
+    //
+    // The local backend resolves the caller's identity-owned FileStore the same
+    // way the `files` source does (`resolveRequestUserId` on the current
+    // identity), so outputs land in the same store `files://` already resolves.
+    const outputStoreSelection = resolveOutputStore({
+      force: process.env.NB_OUTPUT_STORE,
+      issuer: drIssuer,
+      dataplaneUrl: drArtifactsUrl,
+      makeDataplane: ({ baseUrl, issuer }) => createDataplaneOutputStore({ baseUrl, issuer }),
+      makeLocal: () =>
+        createLocalOutputStore({
+          resolveStore: (_scope: OutputScope) =>
+            rt.getFileStore(rt.resolveRequestUserId(rt.getCurrentIdentity() ?? undefined)),
+        }),
+    });
+    const taskRunnerSelection = resolveTaskRunner({
+      force: process.env.NB_TASK_RUNNER,
+      issuer: drIssuer,
+      nimbletasksUrl: drTasksUrl,
+    });
+    log.info(`[output-store] ${outputStoreSelection.reason}`);
+    log.info(`[task-runner] ${taskRunnerSelection.reason}`);
+
+    // `nb__get_output` (full, uncapped retrieval) + the `outputs` resolvable
+    // source are wired ONLY when the store provider resolves (not `null`),
+    // mirroring how `deepResearchCtx` gates `nb__deep_research`.
+    const outputStore: OutputStore | null =
+      outputStoreSelection.kind === "null" ? null : outputStoreSelection.store;
+    const getOutputCtx: GetOutputContext | undefined = outputStore
+      ? { getWorkspaceId: () => rt.getCurrentWorkspaceId(), store: outputStore }
+      : undefined;
+
     // Register the `nb` system source. Built as an in-process MCP server
     // — `createSystemTools` returns it already-started so it's ready to
     // serve tools and resources to every workspace registry.
@@ -825,6 +874,7 @@ export class Runtime {
       toolPromotionCtx,
       toolEligibilityCtx,
       deepResearchCtx,
+      getOutputCtx,
     );
     rt._systemSource = systemTools;
 
@@ -863,6 +913,21 @@ export class Runtime {
     // `_platformSources` (already started by `createPlatformSources`) and reach
     // the user only through the identity door — never `ws_<id>-conversations`.
     const workspaceSources = platformSources.filter((s) => !isIdentitySource(s.name));
+
+    // Outputs resolvable source — exposes stored outputs through `files://`
+    // resolution so `nb__read_resource(files://<id>)` peeks a past output (the
+    // existing read_resource loop iterates workspace sources). Present only when
+    // the store provider resolves; the dataplane backend especially needs it
+    // (its artifact refs have no entry in the local file store that `files`
+    // resolves). Started here, then threaded into every workspace registry.
+    if (outputStore) {
+      const outputsSource = createOutputsSource(
+        { getWorkspaceId: () => rt.getCurrentWorkspaceId(), store: outputStore },
+        events,
+      );
+      await outputsSource.start();
+      workspaceSources.push(outputsSource);
+    }
 
     // Phase 3: Start workspace bundles with per-workspace registries
     const configDir = config.configPath ? dirname(config.configPath) : undefined;

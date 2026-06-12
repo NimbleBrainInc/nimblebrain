@@ -10,7 +10,10 @@ import {
   createNullOutputStore,
   decodeOutputText,
   type OutputScope,
+  type OutputStore,
   OutputStoreDisabledError,
+  resolveOutputStore,
+  resolveTaskRunner,
 } from "../../src/files/output-store.ts";
 import { ServiceTokenCache, type TenantIdentity } from "../../src/oauth/tenant-key-mint.ts";
 
@@ -260,5 +263,87 @@ describe("null OutputStore", () => {
     await expect(out.get(SCOPE, "art_1")).rejects.toBeInstanceOf(OutputStoreDisabledError);
     await expect(out.list(SCOPE)).rejects.toBeInstanceOf(OutputStoreDisabledError);
     await expect(out.get(SCOPE, "art_1")).rejects.toMatchObject({ code: "output_store_disabled" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// provider selection (task 005)
+// ---------------------------------------------------------------------------
+
+describe("resolveOutputStore", () => {
+  const DATAPLANE = {} as OutputStore;
+  const LOCAL = {} as OutputStore;
+  const makeDataplane = () => DATAPLANE;
+  const makeLocal = () => LOCAL;
+  const URL = "https://artifacts.test";
+
+  it("defaults to local when nothing is configured (zero-infra)", () => {
+    const sel = resolveOutputStore({ makeDataplane, makeLocal });
+    expect(sel.kind).toBe("local");
+    expect(sel.store).toBe(LOCAL);
+    expect(sel.reason).toContain("local");
+  });
+
+  it("selects dataplane when issuer + URL are present", () => {
+    const sel = resolveOutputStore({ issuer: ISSUER, dataplaneUrl: URL, makeDataplane, makeLocal });
+    expect(sel.kind).toBe("dataplane");
+    expect(sel.store).toBe(DATAPLANE);
+  });
+
+  it("stays local when only one of issuer/URL is present", () => {
+    expect(resolveOutputStore({ issuer: ISSUER, makeDataplane, makeLocal }).kind).toBe("local");
+    expect(resolveOutputStore({ dataplaneUrl: URL, makeDataplane, makeLocal }).kind).toBe("local");
+  });
+
+  it("forces null with NB_OUTPUT_STORE=none even when the data plane is configured", () => {
+    const sel = resolveOutputStore({
+      force: "none",
+      issuer: ISSUER,
+      dataplaneUrl: URL,
+      makeDataplane,
+      makeLocal,
+    });
+    expect(sel.kind).toBe("null");
+    // the disabled store is real, not a stub — every method rejects.
+    return expect(sel.store.get(SCOPE, "x")).rejects.toBeInstanceOf(OutputStoreDisabledError);
+  });
+
+  it("forces local with NB_OUTPUT_STORE=local even when the data plane is configured", () => {
+    const sel = resolveOutputStore({
+      force: "local",
+      issuer: ISSUER,
+      dataplaneUrl: URL,
+      makeDataplane,
+      makeLocal,
+    });
+    expect(sel.kind).toBe("local");
+    expect(sel.store).toBe(LOCAL);
+  });
+
+  it("forced dataplane with no URL fails closed to null (not local)", () => {
+    const sel = resolveOutputStore({ force: "dataplane", makeDataplane, makeLocal });
+    expect(sel.kind).toBe("null");
+    expect(sel.reason).toContain("fail closed");
+  });
+});
+
+describe("resolveTaskRunner", () => {
+  const URL = "https://nimbletasks.test";
+
+  it("defaults to null when no data plane is configured", () => {
+    const sel = resolveTaskRunner({});
+    expect(sel.kind).toBe("null");
+    expect(sel.dataplane).toBeUndefined();
+  });
+
+  it("selects dataplane when issuer + nimbletasks URL are present", () => {
+    const sel = resolveTaskRunner({ issuer: ISSUER, nimbletasksUrl: URL });
+    expect(sel.kind).toBe("dataplane");
+    expect(sel.dataplane).toEqual({ baseUrl: URL, issuer: ISSUER });
+  });
+
+  it("forces null with NB_TASK_RUNNER=none even when configured", () => {
+    const sel = resolveTaskRunner({ force: "none", issuer: ISSUER, nimbletasksUrl: URL });
+    expect(sel.kind).toBe("null");
   });
 });

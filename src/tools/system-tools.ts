@@ -19,6 +19,8 @@ import type { DeepResearchContext } from "./deep-research.ts";
 import { createDeepResearchTool } from "./deep-research.ts";
 import type { DelegateContext } from "./delegate.ts";
 import { createDelegateTool } from "./delegate.ts";
+import type { GetOutputContext } from "./get-output.ts";
+import { createGetOutputTool } from "./get-output.ts";
 import { defineInProcessApp, type InProcessTool } from "./in-process-app.ts";
 import { McpSource } from "./mcp-source.ts";
 import { createManageToolsToolDefs } from "./platform/manage-tools.ts";
@@ -86,6 +88,7 @@ export async function createSystemTools(
   toolPromotionCtx?: ToolPromotionContext,
   toolEligibilityCtx?: ToolEligibilityContext,
   deepResearchCtx?: DeepResearchContext,
+  getOutputCtx?: GetOutputContext,
 ): Promise<McpSource> {
   // Core tools (always available, not feature-gated)
   const coreToolDefs: InProcessTool[] = runtime ? createCoreToolDefs(runtime) : [];
@@ -264,6 +267,14 @@ export async function createSystemTools(
   // Absent on local dev so the agent never sees a tool it can't drive.
   if (deepResearchCtx) {
     systemToolDefs.push(createDeepResearchTool(deepResearchCtx));
+  }
+
+  // Present only when an output-store provider resolves (dataplane | local).
+  // Omitted when the provider is `null` so the agent never sees a retrieval
+  // tool with no store behind it. Full, uncapped fetch (vs read_resource's 12K
+  // peek).
+  if (getOutputCtx) {
+    systemToolDefs.push(createGetOutputTool(getOutputCtx));
   }
 
   if (manageUsersCtx) {
