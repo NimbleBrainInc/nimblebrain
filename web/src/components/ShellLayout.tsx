@@ -9,6 +9,7 @@ import { identityAppRoute, isIdentityApp } from "../lib/identity-apps";
 import { cn } from "../lib/utils";
 import { toSlug } from "../lib/workspace-slug";
 import type { PlacementEntry } from "../types";
+import { ArtifactPanel } from "./ArtifactPanel";
 import { ChatChrome } from "./ChatChrome";
 import { Logo } from "./Logo";
 import { MobileSidebarDrawer } from "./MobileSidebarDrawer";
@@ -192,6 +193,12 @@ export const ShellLayout = memo(function ShellLayout({
           `marginRight` on <main> above; the panel and handle live inside
           ChatChrome itself. */}
       <ChatChrome />
+
+      {/* Artifact document panel — the single, global mount point (sibling
+          of ChatChrome), so an artifact chip in any conversation opens its
+          report into one shared right-side drawer. Renders nothing until an
+          artifact is opened via ArtifactPanelContext. */}
+      <ArtifactPanel />
 
       {/* Mobile drawer — single-column layout mirroring desktop. */}
       {isHidden && (

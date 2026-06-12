@@ -38,6 +38,7 @@ import type {
   ToolCallDisplay,
 } from "../hooks/useChat";
 import { useMinDisplayTime, type VisualStatus } from "../hooks/useMinDisplayTime";
+import { isDocumentArtifact } from "../lib/artifact-kind";
 import { formatDuration, stripServerPrefix } from "../lib/format";
 import {
   aggregateGroup,
@@ -47,6 +48,7 @@ import {
   type Tone,
   type ToolDescription,
 } from "../lib/tool-display";
+import { ArtifactChip } from "./ArtifactChip";
 import { InlineAppView } from "./InlineAppView";
 import { ResourceLinkView } from "./ResourceLinkView";
 
@@ -654,16 +656,32 @@ function ToolWidgets({ calls }: { calls: ReadonlyArray<ToolCallDisplay> }) {
         />
       ))}
       {resourceLinkCalls.flatMap((tc) =>
-        tc.resourceLinks!.map((link) => (
-          <ResourceLinkView
-            key={`${tc.id}:${link.uri}`}
-            appName={tc.appName!}
-            uri={link.uri}
-            name={link.name}
-            mimeType={link.mimeType}
-            description={link.description}
-          />
-        )),
+        tc.resourceLinks!.map((link) =>
+          // Document artifacts (markdown reports, long text) get a compact
+          // chip that opens the full document in the global ArtifactPanel —
+          // a 24KB research report is a document, not a chat message. Binary
+          // resources (PDF, images) keep their inline preview, where
+          // ResourceLinkView already picks the right HTML primitive per MIME.
+          isDocumentArtifact(link.mimeType) ? (
+            <ArtifactChip
+              key={`${tc.id}:${link.uri}`}
+              appName={tc.appName!}
+              uri={link.uri}
+              name={link.name}
+              mimeType={link.mimeType}
+              description={link.description}
+            />
+          ) : (
+            <ResourceLinkView
+              key={`${tc.id}:${link.uri}`}
+              appName={tc.appName!}
+              uri={link.uri}
+              name={link.name}
+              mimeType={link.mimeType}
+              description={link.description}
+            />
+          ),
+        ),
       )}
     </>
   );

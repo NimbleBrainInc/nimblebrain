@@ -20,6 +20,7 @@ import { RouteGuard } from "./components/RouteGuard";
 import { ShellLayout } from "./components/ShellLayout";
 import { WorkspaceRouteGuard } from "./components/WorkspaceRouteGuard";
 import { ChatProvider, useChatConfigContext, useChatContext } from "./context/ChatContext";
+import { ArtifactPanelProvider } from "./context/ArtifactPanelContext";
 import { ChatPanelProvider, useChatPanelContext } from "./context/ChatPanelContext";
 import { FocusedAppProvider } from "./context/FocusedAppContext";
 import { PaletteProvider } from "./context/PaletteContext";
@@ -195,18 +196,20 @@ function BootstrappedShell({
       <WorkspaceAppIconsProvider token={token} workspaceId={activeWorkspace?.id}>
         <ChatProvider initialConfig={initialConfig} currentUserId={currentUserId}>
           <ChatPanelProvider>
-            <PaletteProvider>
-              <FocusedAppProvider>
-                <AuthenticatedAppContent
-                  token={token}
-                  forSlot={forSlot}
-                  mainRoutes={mainRoutes}
-                  shellWorkspaceId={shellWorkspaceId}
-                  refreshShell={refreshShell}
-                  onLogout={onLogout}
-                />
-              </FocusedAppProvider>
-            </PaletteProvider>
+            <ArtifactPanelProvider>
+              <PaletteProvider>
+                <FocusedAppProvider>
+                  <AuthenticatedAppContent
+                    token={token}
+                    forSlot={forSlot}
+                    mainRoutes={mainRoutes}
+                    shellWorkspaceId={shellWorkspaceId}
+                    refreshShell={refreshShell}
+                    onLogout={onLogout}
+                  />
+                </FocusedAppProvider>
+              </PaletteProvider>
+            </ArtifactPanelProvider>
           </ChatPanelProvider>
         </ChatProvider>
       </WorkspaceAppIconsProvider>
