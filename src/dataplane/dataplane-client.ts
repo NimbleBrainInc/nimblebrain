@@ -165,6 +165,8 @@ export interface WriteArtifactInput {
   body: string | Uint8Array;
   title?: string;
   citations?: Array<{ title?: string; url?: string }>;
+  /** Provenance (`tool:deep_research`, `user:<id>`) → the `source` column. */
+  source?: string;
   idempotencyKey: string;
   ttlSeconds?: number;
 }
@@ -294,6 +296,7 @@ export class ArtifactsClient {
         title: req.title,
         body_b64: toBase64(req.body),
         citations: req.citations,
+        source: req.source,
         idempotency_key: req.idempotencyKey,
         ttl_seconds: req.ttlSeconds,
       }),

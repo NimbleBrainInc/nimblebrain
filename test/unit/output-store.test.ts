@@ -63,10 +63,11 @@ describe("local OutputStore", () => {
     await rm(dir, { recursive: true, force: true });
   });
 
-  it("round-trips a body verbatim and resolves a files:// ref", async () => {
+  it("round-trips kind/producedBy/scope and resolves a files:// ref", async () => {
     const out = createLocalOutputStore({ resolveStore: () => store });
     const ref = await out.put(SCOPE, {
-      type: "report",
+      kind: "report",
+      producedBy: "tool:deep_research",
       mime: "text/markdown",
       body: "# Findings\nthe answer is 42",
       title: "Deep research",
@@ -74,10 +75,16 @@ describe("local OutputStore", () => {
 
     expect(ref.uri).toBe(`files://${ref.id}`);
     expect(ref.uri.startsWith("artifact://")).toBe(false);
+    // The Ref carries the discriminator metadata + the fencing scope.
+    expect(ref.kind).toBe("report");
+    expect(ref.producedBy).toBe("tool:deep_research");
+    expect(ref.scope).toEqual(SCOPE);
 
     const got = await out.get(SCOPE, ref.id);
     expect(decodeOutputText(got)).toBe("# Findings\nthe answer is 42");
-    expect(got.meta.type).toBe("report");
+    expect(got.meta.kind).toBe("report");
+    expect(got.meta.producedBy).toBe("tool:deep_research");
+    expect(got.meta.workspace).toBe(SCOPE.workspace);
     expect(got.meta.title).toBe("Deep research");
     expect(got.meta.mime).toBe("text/markdown");
   });
@@ -86,7 +93,7 @@ describe("local OutputStore", () => {
     const out = createLocalOutputStore({ resolveStore: () => store });
     // 12K is the read_resource peek cap; prove get is uncapped well past it.
     const big = "x".repeat(13_000) + "TAIL_SENTINEL";
-    const ref = await out.put(SCOPE, { type: "report", mime: "text/plain", body: big });
+    const ref = await out.put(SCOPE, { kind: "report", mime: "text/plain", body: big });
 
     const got = await out.get(SCOPE, ref.id);
     const text = decodeOutputText(got);
@@ -98,25 +105,51 @@ describe("local OutputStore", () => {
 
   it("list returns metadata for every put, newest first", async () => {
     const out = createLocalOutputStore({ resolveStore: () => store });
-    const a = await out.put(SCOPE, { type: "report", mime: "text/plain", body: "a", title: "A" });
-    const b = await out.put(SCOPE, { type: "doc", mime: "text/plain", body: "bb", title: "B" });
+    const a = await out.put(SCOPE, { kind: "report", mime: "text/plain", body: "a", title: "A" });
+    const b = await out.put(SCOPE, { kind: "doc", mime: "text/plain", body: "bb", title: "B" });
 
     const metas = await out.list(SCOPE);
     expect(metas.map((m) => m.id).sort()).toEqual([a.id, b.id].sort());
     const byId = new Map(metas.map((m) => [m.id, m]));
     expect(byId.get(a.id)?.title).toBe("A");
-    expect(byId.get(b.id)?.type).toBe("doc");
+    expect(byId.get(b.id)?.kind).toBe("doc");
     expect(byId.get(b.id)?.sizeBytes).toBe(2);
   });
 
-  it("list filters by type", async () => {
+  it("list filters by kind", async () => {
     const out = createLocalOutputStore({ resolveStore: () => store });
-    await out.put(SCOPE, { type: "report", mime: "text/plain", body: "a" });
-    await out.put(SCOPE, { type: "doc", mime: "text/plain", body: "b" });
+    await out.put(SCOPE, { kind: "report", mime: "text/plain", body: "a" });
+    await out.put(SCOPE, { kind: "doc", mime: "text/plain", body: "b" });
 
-    const reports = await out.list(SCOPE, { type: "report" });
+    const reports = await out.list(SCOPE, { kind: "report" });
     expect(reports).toHaveLength(1);
-    expect(reports[0]?.type).toBe("report");
+    expect(reports[0]?.kind).toBe("report");
+  });
+
+  it("fences across workspaces: a put in A is NOT gettable/listable in B (the 002b bug fix)", async () => {
+    // ONE shared underlying FileStore — fencing must hold even when the backend
+    // can't rely on a per-workspace store (the regression guard). With the
+    // runtime wiring (a store rooted under workspaces/{wsId}/files) the fence is
+    // additionally structural; here we prove the in-backend check.
+    const out = createLocalOutputStore({ resolveStore: () => store });
+    const A: OutputScope = { workspace: "ws_alpha" };
+    const B: OutputScope = { workspace: "ws_beta" };
+
+    const ref = await out.put(A, {
+      kind: "report",
+      mime: "text/plain",
+      body: "alpha-only secret",
+      title: "Alpha report",
+    });
+
+    // Retrievable in A.
+    const inA = await out.get(A, ref.id);
+    expect(decodeOutputText(inA)).toBe("alpha-only secret");
+    expect((await out.list(A)).map((m) => m.id)).toContain(ref.id);
+
+    // NOT retrievable in B — get rejects, list excludes it.
+    await expect(out.get(B, ref.id)).rejects.toThrow(/not found/);
+    expect((await out.list(B)).map((m) => m.id)).not.toContain(ref.id);
   });
 });
 
@@ -153,7 +186,8 @@ describe("dataplane OutputStore", () => {
     });
 
     const ref = await out.put(SCOPE, {
-      type: "report",
+      kind: "report",
+      producedBy: "tool:deep_research",
       mime: "text/markdown",
       body: "report",
       title: "Deep research",
@@ -162,10 +196,15 @@ describe("dataplane OutputStore", () => {
     expect(ref.id).toBe("art_1");
     // The ref surfaced to callers is files://, NOT the server's artifact:// uri.
     expect(ref.uri).toBe("files://art_1");
+    expect(ref.kind).toBe("report");
+    expect(ref.producedBy).toBe("tool:deep_research");
+    expect(ref.scope).toEqual(SCOPE);
     expect(seen?.method).toBe("POST");
     expect(seen?.url).toBe(`${BASE}/v1/artifacts`);
     expect(seen?.auth).toBe("Bearer tok-artifacts-artifacts:write");
+    // `kind` is sent as the artifacts `type`; `producedBy` as `source`.
     expect((seen?.body as { type: string }).type).toBe("report");
+    expect((seen?.body as { source?: string }).source).toBe("tool:deep_research");
   });
 
   it("get fetches content with a SEPARATE aud=artifacts scope=artifacts:read bearer", async () => {
@@ -185,6 +224,7 @@ describe("dataplane OutputStore", () => {
         uri: "artifact://art_1",
         workspace_id: "ws_smoke",
         type: "report",
+        source: "tool:deep_research",
         mime_type: "text/markdown",
         title: "Deep research",
         size_bytes: 21,
@@ -207,6 +247,9 @@ describe("dataplane OutputStore", () => {
     expect(auths.meta).toBe("Bearer tok-artifacts-artifacts:read");
     expect(decodeOutputText(got)).toBe("the full report bytes");
     expect(got.meta.uri).toBe("files://art_1");
+    expect(got.meta.kind).toBe("report");
+    expect(got.meta.producedBy).toBe("tool:deep_research");
+    expect(got.meta.workspace).toBe("ws_smoke");
     expect(got.meta.title).toBe("Deep research");
     expect(got.meta.citations).toEqual([{ title: "Src", url: "https://src.test" }]);
   });
@@ -240,13 +283,13 @@ describe("dataplane OutputStore", () => {
       baseFetch: svc,
     });
 
-    const metas = await out.list(SCOPE, { type: "report" });
+    const metas = await out.list(SCOPE, { kind: "report" });
     expect(auth).toBe("Bearer tok-artifacts-artifacts:read");
     expect(url.startsWith(`${BASE}/v1/artifacts`)).toBe(true);
     expect(url).toContain("type=report");
     expect(metas).toHaveLength(1);
     expect(metas[0]?.uri).toBe("files://art_1");
-    expect(metas[0]?.type).toBe("report");
+    expect(metas[0]?.kind).toBe("report");
   });
 });
 
@@ -257,7 +300,7 @@ describe("dataplane OutputStore", () => {
 describe("null OutputStore", () => {
   it("rejects put/get/list with a typed disabled error", async () => {
     const out = createNullOutputStore();
-    await expect(out.put(SCOPE, { type: "report", mime: "text/plain", body: "x" })).rejects.toBeInstanceOf(
+    await expect(out.put(SCOPE, { kind: "report", mime: "text/plain", body: "x" })).rejects.toBeInstanceOf(
       OutputStoreDisabledError,
     );
     await expect(out.get(SCOPE, "art_1")).rejects.toBeInstanceOf(OutputStoreDisabledError);

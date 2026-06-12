@@ -86,6 +86,9 @@ function fakeStore(opts: { throwOnPut?: boolean } = {}) {
         uri: "files://out_1",
         mime: input.mime,
         sizeBytes: bodyLen,
+        kind: input.kind,
+        scope,
+        producedBy: input.producedBy,
       };
     },
     async get() {
@@ -181,7 +184,8 @@ describe("nb__deep_research", () => {
     expect(fs.puts).toHaveLength(1);
     const put = fs.puts[0]!;
     expect(put.scope.workspace).toBe("ws_smoke");
-    expect(put.input.type).toBe("report");
+    expect(put.input.kind).toBe("report");
+    expect(put.input.producedBy).toBe("tool:deep_research");
     expect(put.input.mime).toBe("text/markdown");
     expect(put.input.body).toBe(REPORT);
     expect(put.input.citations).toHaveLength(2);

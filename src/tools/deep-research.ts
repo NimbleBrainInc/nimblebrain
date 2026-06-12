@@ -390,7 +390,8 @@ export function createDeepResearchTool(ctx: DeepResearchContext): InProcessTool 
           const ref = await ctx.store.put(
             { workspace },
             {
-              type: "report",
+              kind: "report",
+              producedBy: "tool:deep_research",
               mime: "text/markdown",
               body: envelope.report,
               title: titleFor(query),

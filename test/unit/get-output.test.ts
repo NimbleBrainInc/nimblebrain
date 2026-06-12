@@ -36,7 +36,7 @@ describe("nb__get_output", () => {
   it("returns a >12K stored output in FULL (no truncation)", async () => {
     const out = outputStore();
     const big = "y".repeat(13_500) + "END_SENTINEL";
-    const ref = await out.put({ workspace: WS }, { type: "report", mime: "text/markdown", body: big });
+    const ref = await out.put({ workspace: WS }, { kind: "report", mime: "text/markdown", body: big });
 
     const tool = createGetOutputTool({ getWorkspaceId: () => WS, store: out });
     const res = await tool.handler({ ref: ref.uri });
@@ -50,7 +50,7 @@ describe("nb__get_output", () => {
 
   it("accepts a bare id as well as a files:// ref", async () => {
     const out = outputStore();
-    const ref = await out.put({ workspace: WS }, { type: "report", mime: "text/plain", body: "hello" });
+    const ref = await out.put({ workspace: WS }, { kind: "report", mime: "text/plain", body: "hello" });
     const tool = createGetOutputTool({ getWorkspaceId: () => WS, store: out });
 
     const res = await tool.handler({ ref: ref.id });
@@ -61,7 +61,7 @@ describe("nb__get_output", () => {
   it("denies a ref produced under another workspace (no cross-workspace read)", async () => {
     const out = outputStore();
     // Written under OTHER_WS …
-    const ref = await out.put({ workspace: OTHER_WS }, { type: "report", mime: "text/plain", body: "secret" });
+    const ref = await out.put({ workspace: OTHER_WS }, { kind: "report", mime: "text/plain", body: "secret" });
     // … requested from WS.
     const tool = createGetOutputTool({ getWorkspaceId: () => WS, store: out });
 
@@ -95,7 +95,7 @@ describe("nb__get_output", () => {
 
   it("fails cleanly when no workspace is bound", async () => {
     const out = outputStore();
-    const ref = await out.put({ workspace: WS }, { type: "report", mime: "text/plain", body: "x" });
+    const ref = await out.put({ workspace: WS }, { kind: "report", mime: "text/plain", body: "x" });
     const tool = createGetOutputTool({ getWorkspaceId: () => null, store: out });
 
     const res = await tool.handler({ ref: ref.uri });

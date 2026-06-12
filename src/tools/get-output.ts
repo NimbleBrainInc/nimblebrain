@@ -135,7 +135,8 @@ export function createGetOutputTool(ctx: GetOutputContext): InProcessTool {
           structuredContent: {
             id: content.meta.id,
             uri: content.meta.uri,
-            type: content.meta.type,
+            kind: content.meta.kind,
+            produced_by: content.meta.producedBy,
             mime_type: content.meta.mime,
             title: content.meta.title,
             size_bytes: content.meta.sizeBytes,

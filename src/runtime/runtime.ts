@@ -808,9 +808,11 @@ export class Runtime {
     // selection is logged ONCE here so an operator sees the chosen backend
     // without inferring it from a constellation of env vars.
     //
-    // The local backend resolves the caller's identity-owned FileStore the same
-    // way the `files` source does (`resolveRequestUserId` on the current
-    // identity), so outputs land in the same store `files://` already resolves.
+    // The local backend resolves a WORKSPACE-SCOPED FileStore (rooted at
+    // `workspaces/{wsId}/files`), fenced by `scope.workspace` — NOT the
+    // identity-owned user file store. Outputs are workspace-produced resources
+    // (`scope=workspace`), so they must not leak into the user's global files
+    // or across workspaces (the 002b scope-bug fix; spec D1a).
     const outputStoreSelection = resolveOutputStore({
       force: process.env.NB_OUTPUT_STORE,
       issuer: drIssuer,
@@ -818,8 +820,8 @@ export class Runtime {
       makeDataplane: ({ baseUrl, issuer }) => createDataplaneOutputStore({ baseUrl, issuer }),
       makeLocal: () =>
         createLocalOutputStore({
-          resolveStore: (_scope: OutputScope) =>
-            rt.getFileStore(rt.resolveRequestUserId(rt.getCurrentIdentity() ?? undefined)),
+          resolveStore: (scope: OutputScope) =>
+            createFileStore(rt.getWorkspaceContext(scope.workspace).getDataPath("files")),
         }),
     });
     const taskRunnerSelection = resolveTaskRunner({

@@ -49,7 +49,7 @@ describe("outputs resolvable source (read_resource peek)", () => {
   it("resolves a stored output via read_resource (peek)", async () => {
     const ref = await outputStore().put(
       { workspace: WS },
-      { type: "report", mime: "text/markdown", body: "# Title\nbody text" },
+      { kind: "report", mime: "text/markdown", body: "# Title\nbody text" },
     );
 
     const { nb } = await makeRegistryWith(() => WS);
@@ -63,7 +63,7 @@ describe("outputs resolvable source (read_resource peek)", () => {
     const big = "z".repeat(20_000) + "TAIL";
     const ref = await outputStore().put(
       { workspace: WS },
-      { type: "report", mime: "text/plain", body: big },
+      { kind: "report", mime: "text/plain", body: big },
     );
 
     const { nb } = await makeRegistryWith(() => WS);
@@ -81,7 +81,7 @@ describe("outputs resolvable source (read_resource peek)", () => {
     // Written under OTHER_WS, read from WS.
     const ref = await outputStore().put(
       { workspace: OTHER_WS },
-      { type: "report", mime: "text/plain", body: "secret body" },
+      { kind: "report", mime: "text/plain", body: "secret body" },
     );
 
     const { nb } = await makeRegistryWith(() => WS);

@@ -31,9 +31,10 @@ import { fileIdToUri, uriToFileId } from "./uri.ts";
 
 /**
  * Identity dimension for an output operation. `workspace` is the tenant-key
- * mint / RLS dimension for the `dataplane` backend and the provenance breadcrumb
- * for `local`. A backend may key its storage on it, but the kernel files store
- * is identity-owned, so `local` records it rather than siloing by it.
+ * mint / RLS dimension for the `dataplane` backend AND the storage-fencing key
+ * for the `local` backend. ONE resource primitive, fenced by scope: a `put`
+ * under workspace A must NOT be retrievable via `get`/`list` under workspace B
+ * on any backend.
  */
 export interface OutputScope {
   workspace: string;
@@ -41,8 +42,19 @@ export interface OutputScope {
 
 /** What a caller hands to `put`. */
 export interface PutInput {
-  /** Coarse kind, e.g. `report`, `document`. Stored as metadata, not interpreted. */
-  type: string;
+  /**
+   * Discriminator kind, e.g. `report`, `upload`, `export`. This is the field
+   * that differentiates one resource from another — uploads and agent outputs
+   * are ONE primitive, told apart by `kind` (see spec D1). Stored as metadata,
+   * not interpreted by the store.
+   */
+  kind: string;
+  /**
+   * Provenance, e.g. `tool:deep_research`, `user:<id>`. Records WHO produced the
+   * output. Stored as metadata; the dataplane backend maps it to the artifacts
+   * `source` field.
+   */
+  producedBy?: string;
   mime: string;
   /** Raw body. Strings are UTF-8; bytes pass through verbatim. */
   body: string | Uint8Array;
@@ -58,25 +70,34 @@ export interface Ref {
   uri: string;
   mime: string;
   sizeBytes: number;
+  /** The discriminator kind the output was stored with. */
+  kind: string;
+  /** The workspace the output was fenced to. */
+  scope: OutputScope;
+  /** Provenance, when the caller supplied it. */
+  producedBy?: string;
 }
 
 /** Metadata about a stored output (no body). */
 export interface OutputMeta {
   id: string;
   uri: string;
-  type: string;
+  /** Discriminator kind (`report`, `upload`, …) — query this to tell resources apart. */
+  kind: string;
   mime: string;
   title?: string;
   citations?: Array<{ title?: string; url?: string }>;
   sizeBytes: number;
   createdAt?: string;
+  /** Provenance (`tool:deep_research`, `user:<id>`), when recorded. */
+  producedBy?: string;
   /**
-   * The workspace the output was produced under, when the backend records it.
-   * The `dataplane` backend already fences cross-workspace reads at the RLS
-   * boundary (the read token is workspace-dimensioned); `local` is an
-   * identity-owned store with no per-workspace silo, so this lets a caller
-   * (e.g. `nb__get_output`) enforce the same workspace scope explicitly. May be
-   * absent for legacy/foreign entries.
+   * The workspace the output was produced under. Both backends fence reads on
+   * this: the `dataplane` backend at the RLS boundary (the read token is
+   * workspace-dimensioned), and the `local` backend by siloing storage under
+   * the workspace dir (and as an explicit check so a caller — e.g.
+   * `nb__get_output` — never surfaces another workspace's output). May be absent
+   * for legacy/foreign entries.
    */
   workspace?: string;
 }
@@ -89,7 +110,8 @@ export interface OutputContent {
 
 /** Filters for `list`. */
 export interface ListQuery {
-  type?: string;
+  /** Filter to one discriminator kind (`report`, `upload`, …). */
+  kind?: string;
   limit?: number;
   cursor?: string;
 }
@@ -149,12 +171,15 @@ function metaFromArtifact(m: ArtifactMetadata): OutputMeta {
     // Refs are kernel `files://` — never the server's `artifact://` uri.
     id: m.artifactId,
     uri: fileIdToUri(m.artifactId),
-    type: m.type,
+    // The artifacts service `type` field IS `kind` at the storage layer (D1).
+    kind: m.type,
     mime: m.mimeType,
     title: m.title ?? undefined,
     citations: m.citations ?? undefined,
     sizeBytes: m.sizeBytes,
     createdAt: m.createdAt ?? undefined,
+    // `producedBy` rides in the artifacts `source` column.
+    producedBy: m.source ?? undefined,
     workspace: m.workspaceId,
   };
 }
@@ -172,11 +197,17 @@ export function createDataplaneOutputStore(opts: DataplaneOutputStoreOptions): O
   return {
     async put(scope, input) {
       const ref = await clientFor(scope).writeArtifact({
-        type: input.type,
+        // `kind` IS the artifacts `type` at the storage layer (D1).
+        type: input.kind,
         mimeType: input.mime,
         body: input.body,
         title: input.title,
         citations: input.citations,
+        // `producedBy` maps to the artifacts `source` column.
+        // TODO(platform): confirm the artifacts write API persists `source` on
+        // POST (it's already returned on read/list metadata); if it doesn't, add
+        // a `source`/`producedBy` column on the write path.
+        source: input.producedBy,
         idempotencyKey: newIdem(scope, input),
         ttlSeconds: input.ttl,
       });
@@ -185,6 +216,9 @@ export function createDataplaneOutputStore(opts: DataplaneOutputStoreOptions): O
         uri: fileIdToUri(ref.artifactId),
         mime: ref.mimeType,
         sizeBytes: ref.sizeBytes,
+        kind: input.kind,
+        scope,
+        producedBy: input.producedBy,
       };
     },
 
@@ -201,7 +235,8 @@ export function createDataplaneOutputStore(opts: DataplaneOutputStoreOptions): O
 
     async list(scope, query) {
       const page = await clientFor(scope).listArtifacts({
-        type: query?.type,
+        // `kind` filters on the artifacts `type` field.
+        type: query?.kind,
         limit: query?.limit,
         cursor: query?.cursor,
       });
@@ -215,22 +250,32 @@ export function createDataplaneOutputStore(opts: DataplaneOutputStoreOptions): O
 // ---------------------------------------------------------------------------
 
 /**
- * The `local` backend persists to the kernel files store and round-trips via
- * `files://`. It is the zero-infra / self-host default: no data plane, no mint,
- * no network — just the workspace PVC.
+ * The `local` backend persists to a WORKSPACE-SCOPED file store and round-trips
+ * via `files://`. It is the zero-infra / self-host default: no data plane, no
+ * mint, no network — just the workspace PVC.
  *
- * `resolveStore` lets the caller pick the FileStore for a scope (the runtime
- * resolves an identity-owned store); a single-store form is fine for tests and
- * single-tenant self-hosters.
+ * SCOPE FENCING (the 002b bug fix): `resolveStore(scope)` MUST return a store
+ * rooted under `scope.workspace` (e.g. `workspaces/{wsId}/files`), NOT the
+ * identity-owned user file store. Wiring it to `getFileStore(userId)` siloed
+ * outputs by identity, so a workspace-A report surfaced in the user's global
+ * files and across every workspace they touched. The runtime now resolves a
+ * per-workspace store, so storage is fenced structurally. We ALSO record the
+ * workspace on each entry and re-check it on `get`/`list` as defence in depth
+ * (a shared store, e.g. in tests, still fences A from B).
  */
 export interface LocalOutputStoreOptions {
   resolveStore: (scope: OutputScope) => FileStore;
 }
 
 function metaFromEntry(entry: FileEntry): OutputMeta {
-  // `type`/`title`/`citations` ride in the registry `description` as a JSON
-  // sidecar so `list`/`get` recover them without a second store.
-  let extra: { type?: string; title?: string; citations?: OutputMeta["citations"] } = {};
+  // `kind`/`producedBy`/`title`/`citations` ride in the registry `description`
+  // as a JSON sidecar so `list`/`get` recover them without a second store.
+  let extra: {
+    kind?: string;
+    producedBy?: string;
+    title?: string;
+    citations?: OutputMeta["citations"];
+  } = {};
   if (entry.description) {
     try {
       extra = JSON.parse(entry.description) as typeof extra;
@@ -241,12 +286,13 @@ function metaFromEntry(entry: FileEntry): OutputMeta {
   return {
     id: entry.id,
     uri: fileIdToUri(entry.id),
-    type: extra.type ?? "output",
+    kind: extra.kind ?? "output",
     mime: entry.mimeType,
     title: extra.title ?? entry.filename,
     citations: extra.citations,
     sizeBytes: entry.size,
     createdAt: entry.createdAt,
+    producedBy: extra.producedBy,
     workspace: entry.workspaceId,
   };
 }
@@ -256,21 +302,23 @@ export function createLocalOutputStore(opts: LocalOutputStoreOptions): OutputSto
     async put(scope, input) {
       const store = opts.resolveStore(scope);
       const bytes = toBytes(input.body);
-      const filename = `${input.title ?? input.type}`.slice(0, 200) || "output";
+      const filename = `${input.title ?? input.kind}`.slice(0, 200) || "output";
       const saved = await store.saveFile(Buffer.from(bytes), filename, input.mime);
       // Persist a registry entry so `get`/`list` can recover the bytes and the
-      // output metadata (type/title/citations packed into `description`).
+      // output metadata (kind/producedBy/title/citations packed into
+      // `description`). `workspaceId` is the fencing key.
       await store.appendRegistry({
         id: saved.id,
         filename,
         mimeType: input.mime,
         size: saved.size,
-        tags: ["output", input.type],
+        tags: ["output", input.kind],
         source: "agent",
         conversationId: null,
         createdAt: new Date().toISOString(),
         description: JSON.stringify({
-          type: input.type,
+          kind: input.kind,
+          producedBy: input.producedBy,
           title: input.title,
           citations: input.citations,
         }),
@@ -281,13 +329,20 @@ export function createLocalOutputStore(opts: LocalOutputStoreOptions): OutputSto
         uri: fileIdToUri(saved.id),
         mime: input.mime,
         sizeBytes: saved.size,
+        kind: input.kind,
+        scope,
+        producedBy: input.producedBy,
       };
     },
 
     async get(scope, id) {
       const store = opts.resolveStore(scope);
       const entry = await store.findEntry(id);
-      if (!entry) throw new Error(`output not found: ${id}`);
+      // Fence: not in this scope's store, or recorded under a different
+      // workspace → not found. A `get` scoped to B must never read A's output.
+      if (!entry || (entry.workspaceId && entry.workspaceId !== scope.workspace)) {
+        throw new Error(`output not found: ${id}`);
+      }
       const file = await store.readFile(id);
       // FULL body — no truncation.
       return { meta: metaFromEntry(entry), body: new Uint8Array(file.data) };
@@ -296,12 +351,14 @@ export function createLocalOutputStore(opts: LocalOutputStoreOptions): OutputSto
     async list(scope, query) {
       const store = opts.resolveStore(scope);
       const entries = await store.readRegistry();
-      // Only outputs this store produced (tagged at put), newest first.
+      // Only outputs this store produced (tagged at put), fenced to this
+      // workspace, newest first.
       let metas = entries
         .filter((e) => e.tags.includes("output"))
+        .filter((e) => !e.workspaceId || e.workspaceId === scope.workspace)
         .map(metaFromEntry)
         .sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""));
-      if (query?.type) metas = metas.filter((m) => m.type === query.type);
+      if (query?.kind) metas = metas.filter((m) => m.kind === query.kind);
       if (query?.limit !== undefined) metas = metas.slice(0, query.limit);
       return metas;
     },
