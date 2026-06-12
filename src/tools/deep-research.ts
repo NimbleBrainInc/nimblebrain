@@ -44,16 +44,16 @@ import type { InProcessTool } from "./in-process-app.ts";
  * we fall back to a bounded inline report so research still works.
  */
 
-/** Task type the baked web worker is registered to handle (chart `values-staging`). */
+/** Task type the baked web worker is registered to handle. */
 const DEEP_RESEARCH_TASK_TYPE = "research.deep_research";
 /** Audit breadcrumbs recorded on the task row. */
 const MCP_SERVER_NAME = "web";
 const TOOL_NAME = "deep_research";
 
 const DEFAULT_POLL_INTERVAL_MS = 3_000;
-// The worker's own timeout is 600s (`deploy/chart/values-staging.yaml`). Wait a
-// little past that so a task that runs to its own limit still resolves here
-// rather than being abandoned mid-flight.
+// Sized to sit a little past the worker's own task timeout, so a task that runs
+// right up to its own limit still resolves here rather than being abandoned
+// mid-flight.
 const DEFAULT_MAX_WAIT_MS = 660_000;
 /** Keep the output title bounded — the query can be a long question. */
 const TITLE_QUERY_MAX = 72;

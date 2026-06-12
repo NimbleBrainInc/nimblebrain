@@ -322,7 +322,7 @@ describe("nb__deep_research", () => {
   it("humanizes a service/cert failure — no raw technical detail in the result", async () => {
     const svc: typeof fetch = async () => {
       throw new Error(
-        "mint POST to https://mcp-authorizer.mcp-shared.svc/token failed: " +
+        "mint POST to https://authorizer.internal/token failed: " +
           "unable to verify the first certificate",
       );
     };
@@ -334,7 +334,7 @@ describe("nb__deep_research", () => {
     const text = textOf(res);
     expect(text).toContain("temporarily unavailable");
     expect(text).not.toContain("certificate");
-    expect(text).not.toContain("mcp-authorizer");
+    expect(text).not.toContain("authorizer");
     expect(text).not.toContain("https://");
     expect(fs.puts).toHaveLength(0);
   });

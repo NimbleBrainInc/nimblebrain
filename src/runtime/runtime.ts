@@ -811,7 +811,7 @@ export class Runtime {
     // `workspaces/{wsId}/files`), fenced by `scope.workspace` — NOT the
     // identity-owned user file store. Outputs are workspace-produced resources
     // (`scope=workspace`), so they must not leak into the user's global files
-    // or across workspaces (the 002b scope-bug fix; spec D1a).
+    // or across workspaces.
     const outputStoreSelection = resolveOutputStore({
       force: process.env.NB_OUTPUT_STORE,
       issuer: drIssuer,

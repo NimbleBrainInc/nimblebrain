@@ -126,7 +126,7 @@ describe("local OutputStore", () => {
     expect(reports[0]?.kind).toBe("report");
   });
 
-  it("fences across workspaces: a put in A is NOT gettable/listable in B (the 002b bug fix)", async () => {
+  it("fences across workspaces: a put in A is NOT gettable/listable in B", async () => {
     // ONE shared underlying FileStore — fencing must hold even when the backend
     // can't rely on a per-workspace store (the regression guard). With the
     // runtime wiring (a store rooted under workspaces/{wsId}/files) the fence is

@@ -45,8 +45,8 @@ export interface PutInput {
   /**
    * Discriminator kind, e.g. `report`, `upload`, `export`. This is the field
    * that differentiates one resource from another — uploads and agent outputs
-   * are ONE primitive, told apart by `kind` (see spec D1). Stored as metadata,
-   * not interpreted by the store.
+   * are ONE primitive, told apart by `kind` — there is deliberately no separate
+   * type per source. Stored as metadata, not interpreted by the store.
    */
   kind: string;
   /**
@@ -271,7 +271,7 @@ export function createDataplaneOutputStore(opts: DataplaneOutputStoreOptions): O
  * via `files://`. It is the zero-infra / self-host default: no data plane, no
  * mint, no network — just the workspace PVC.
  *
- * SCOPE FENCING (the 002b bug fix): `resolveStore(scope)` MUST return a store
+ * SCOPE FENCING: `resolveStore(scope)` MUST return a store
  * rooted under `scope.workspace` (e.g. `workspaces/{wsId}/files`), NOT the
  * identity-owned user file store. Wiring it to `getFileStore(userId)` siloed
  * outputs by identity, so a workspace-A report surfaced in the user's global
@@ -458,7 +458,8 @@ export interface ResolveOutputStoreConfig {
   /** Builds the dataplane store when the data plane is selected. */
   makeDataplane: (opts: { baseUrl: string; issuer: string }) => OutputStore;
   /** Builds the local store (binds a WORKSPACE-SCOPED FileStore — rooted under
-   *  the workspace dir, not the identity-owned user store; see the 002b fix). */
+   *  the workspace dir, not the identity-owned user store, so outputs are
+   *  fenced per workspace rather than siloed by identity). */
   makeLocal: () => OutputStore;
 }
 

@@ -12,8 +12,8 @@ import {
  * tenant-key mint: the runtime is the only tenant-bound principal (it holds the
  * per-tenant key), so it mints a short-lived, workspace-scoped token per service
  * and calls REST directly. No fleet bundle ever holds a data-plane credential —
- * a deliberate trust-boundary choice (see the mode-2 auth review): a bundle's
- * identity isn't tenant-bound, so letting it reach the data plane would let a
+ * a deliberate trust-boundary choice: a bundle's identity isn't tenant-bound,
+ * so letting it reach the data plane would let a
  * compromised bundle act across tenants. The runtime keeps that authority.
  *
  * Auth per service (all via `createMintingFetch`, which mints on demand, caches,
