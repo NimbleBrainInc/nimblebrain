@@ -110,7 +110,9 @@ describe("ArtifactChip", () => {
     expect(readResourceMock.mock.calls.length).toBe(0);
     findOpenButton(mounted.container); // throws if absent
   });
+});
 
+describe("ArtifactPanel (document surface)", () => {
   test("clicking Open triggers the fetch and renders MARKDOWN (real anchors, not raw)", async () => {
     readResourceMock.mockImplementation(async () => ({
       contents: [

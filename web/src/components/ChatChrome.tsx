@@ -24,6 +24,7 @@ import { useChatContext } from "../context/ChatContext";
 import { useChatPanelContext } from "../context/ChatPanelContext";
 import { useFocusedApp } from "../context/FocusedAppContext";
 import { useSidebar } from "../context/SidebarContext";
+import { useIsMobile } from "../lib/hooks/use-is-mobile";
 import type { ChatPanelRef } from "./ChatPanel";
 import { ChatPanel } from "./ChatPanel";
 import { ResizeHandle } from "./ResizeHandle";
@@ -31,19 +32,6 @@ import { ResizeHandle } from "./ResizeHandle";
 const DEFAULT_WIDTH = 380;
 const TRANSITION_STANDARD = "300ms cubic-bezier(0.33, 1, 0.68, 1)";
 const TRANSITION_FULLSCREEN = "350ms cubic-bezier(0.4, 0, 0.2, 1)";
-
-function useIsMobile(): boolean {
-  const [isMobile, setIsMobile] = useState(
-    () => typeof window !== "undefined" && window.innerWidth < 768,
-  );
-  useEffect(() => {
-    const mq = window.matchMedia("(max-width: 767px)");
-    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
-    mq.addEventListener("change", handler);
-    return () => mq.removeEventListener("change", handler);
-  }, []);
-  return isMobile;
-}
 
 export function ChatChrome() {
   const { panelState, panelWidth, setPanelWidth, openPanel, closePanel, toggleFullscreen } =

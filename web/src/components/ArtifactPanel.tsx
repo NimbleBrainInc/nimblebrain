@@ -19,24 +19,11 @@ import { useEffect, useRef, useState } from "react";
 import { Streamdown } from "streamdown";
 import { ApiClientError, type ReadResourceContent, readResource } from "../api/client";
 import { useArtifactPanel } from "../context/ArtifactPanelContext";
-import { isMarkdownMime } from "../lib/artifact-kind";
+import { isMarkdownMime, normalizeMime } from "../lib/artifact-kind";
+import { useIsMobile } from "../lib/hooks/use-is-mobile";
 
 const TRANSITION = "300ms cubic-bezier(0.33, 1, 0.68, 1)";
 const PANEL_WIDTH = 720; // px — comfortable reading measure on desktop.
-
-function useIsMobile(): boolean {
-  const [isMobile, setIsMobile] = useState(
-    () => typeof window !== "undefined" && window.innerWidth < 768,
-  );
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const mq = window.matchMedia("(max-width: 767px)");
-    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
-    mq.addEventListener("change", handler);
-    return () => mq.removeEventListener("change", handler);
-  }, []);
-  return isMobile;
-}
 
 /** Decode a base64 text resource (blob form) to a string. */
 function decodeBlobText(b64: string): string {
@@ -46,9 +33,17 @@ function decodeBlobText(b64: string): string {
   return new TextDecoder().decode(bytes);
 }
 
-function downloadFilename(uri: string, name?: string): string {
+function downloadFilename(
+  uri: string,
+  name: string | undefined,
+  mimeType: string | undefined,
+): string {
   const base = name ?? uri.split("/").pop() ?? "document";
-  return /\.[a-z0-9]+$/i.test(base) ? base : `${base}.md`;
+  if (/\.[a-z0-9]+$/i.test(base)) return base;
+  // Extension-less names get one inferred from the MIME: plain text → .txt,
+  // markdown (and the catch-all) → .md.
+  const ext = normalizeMime(mimeType) === "text/plain" ? "txt" : "md";
+  return `${base}.${ext}`;
 }
 
 export function ArtifactPanel() {
@@ -125,6 +120,26 @@ export function ArtifactPanel() {
     return () => document.removeEventListener("keydown", onKey);
   }, [isOpen, closeArtifact]);
 
+  // Focus management: when the dialog opens, remember what was focused and
+  // move focus to the Close button (the panel's first stable control), so
+  // keyboard users land inside the dialog rather than behind it. On close,
+  // restore focus to the trigger (the chip). Paired with conditional render +
+  // aria-hidden below, this keeps the closed panel out of the tab order and
+  // unannounced by screen readers.
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const restoreFocusRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    if (isOpen) {
+      restoreFocusRef.current = (document.activeElement as HTMLElement | null) ?? null;
+      // Defer one frame so the button is mounted and the slide-in has begun.
+      const id = requestAnimationFrame(() => closeButtonRef.current?.focus());
+      return () => cancelAnimationFrame(id);
+    }
+    const toRestore = restoreFocusRef.current;
+    restoreFocusRef.current = null;
+    toRestore?.focus?.();
+  }, [isOpen]);
+
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     return () => {
@@ -150,7 +165,7 @@ export function ArtifactPanel() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = downloadFilename(uri, artifact?.name);
+    a.download = downloadFilename(uri, artifact?.name, mimeType ?? artifact?.mimeType);
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -174,9 +189,14 @@ export function ArtifactPanel() {
         }}
       />
 
+      {/* The aside stays mounted so the slide transition can play, but when
+          closed it is aria-hidden + inert (no focusable controls, not
+          announced) and its content is unmounted — which also clears the
+          previous document's body so it can't linger off-screen. role=dialog /
+          aria-modal therefore only describe a panel that is actually open. */}
       <aside
-        role="dialog"
-        aria-modal="true"
+        {...(isOpen ? { role: "dialog", "aria-modal": true } : { inert: true })}
+        aria-hidden={!isOpen}
         aria-label={title}
         data-testid="artifact-panel"
         className="fixed top-0 right-0 z-30 flex h-full max-w-full flex-col border-l border-border bg-background shadow-xl"
@@ -186,71 +206,78 @@ export function ArtifactPanel() {
           transition: `transform ${TRANSITION}`,
         }}
       >
-        {/* Header — title + actions. Sticky by virtue of the flex column:
-            the body below scrolls, this stays put. */}
-        <header className="flex shrink-0 items-center gap-2 border-b border-border bg-card px-4 py-3">
-          <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
-          <h2 className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground">{title}</h2>
+        {isOpen && (
+          <>
+            {/* Header — title + actions. Sticky by virtue of the flex column:
+                the body below scrolls, this stays put. */}
+            <header className="flex shrink-0 items-center gap-2 border-b border-border bg-card px-4 py-3">
+              <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+              <h2 className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground">
+                {title}
+              </h2>
 
-          <button
-            type="button"
-            onClick={onCopy}
-            disabled={text == null}
-            className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground disabled:opacity-40"
-            aria-label="Copy document to clipboard"
-          >
-            {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-            {copied ? "Copied" : "Copy"}
-          </button>
-          <button
-            type="button"
-            onClick={onDownload}
-            disabled={text == null}
-            className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground disabled:opacity-40"
-            aria-label="Download document"
-          >
-            <Download className="h-3.5 w-3.5" />
-            Download
-          </button>
-          <button
-            type="button"
-            onClick={closeArtifact}
-            className="ml-1 inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
-            aria-label="Close document panel"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </header>
+              <button
+                type="button"
+                onClick={onCopy}
+                disabled={text == null}
+                className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground disabled:opacity-40"
+                aria-label="Copy document to clipboard"
+              >
+                {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                {copied ? "Copied" : "Copy"}
+              </button>
+              <button
+                type="button"
+                onClick={onDownload}
+                disabled={text == null}
+                className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground disabled:opacity-40"
+                aria-label="Download document"
+              >
+                <Download className="h-3.5 w-3.5" />
+                Download
+              </button>
+              <button
+                ref={closeButtonRef}
+                type="button"
+                onClick={closeArtifact}
+                className="ml-1 inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+                aria-label="Close document panel"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </header>
 
-        {/* Body — the scrollable reading region. */}
-        <div className="min-h-0 flex-1 overflow-y-auto">
-          {loading && (
-            <div className="flex items-center gap-2 px-6 py-8 text-sm text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin text-processing" />
-              Loading {title}...
-            </div>
-          )}
-
-          {!loading && error && (
-            <div className="m-6 rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
-              Failed to load {title}: {error}
-            </div>
-          )}
-
-          {!loading && !error && text != null && (
-            <article className="mx-auto max-w-3xl px-6 py-8">
-              {renderMarkdown ? (
-                <Streamdown className="streamdown-container presence-assistant-message">
-                  {text}
-                </Streamdown>
-              ) : (
-                <pre className="whitespace-pre-wrap break-words font-mono text-sm text-foreground">
-                  {text}
-                </pre>
+            {/* Body — the scrollable reading region. */}
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              {loading && (
+                <div className="flex items-center gap-2 px-6 py-8 text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin text-processing" />
+                  Loading {title}...
+                </div>
               )}
-            </article>
-          )}
-        </div>
+
+              {!loading && error && (
+                <div className="m-6 rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
+                  Failed to load {title}: {error}
+                </div>
+              )}
+
+              {!loading && !error && text != null && (
+                <article className="mx-auto max-w-3xl px-6 py-8">
+                  {renderMarkdown ? (
+                    <Streamdown className="streamdown-container presence-assistant-message">
+                      {text}
+                    </Streamdown>
+                  ) : (
+                    <pre className="whitespace-pre-wrap break-words font-mono text-sm text-foreground">
+                      {text}
+                    </pre>
+                  )}
+                </article>
+              )}
+            </div>
+          </>
+        )}
       </aside>
     </>
   );

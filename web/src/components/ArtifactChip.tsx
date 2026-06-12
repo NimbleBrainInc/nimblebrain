@@ -1,5 +1,6 @@
 import { ChevronRight, FileText } from "lucide-react";
 import { useArtifactPanel } from "../context/ArtifactPanelContext";
+import { isMarkdownMime, normalizeMime } from "../lib/artifact-kind";
 
 export interface ArtifactChipProps {
   /** Server/app that owns the resource — forwarded to the document panel. */
@@ -16,10 +17,8 @@ export interface ArtifactChipProps {
 
 /** Human-readable kind label from a MIME type. */
 function kindLabel(mimeType: string | undefined): string {
-  if (!mimeType) return "Document";
-  const mime = mimeType.split(";")[0]!.trim().toLowerCase();
-  if (mime === "text/markdown" || mime === "text/x-markdown") return "Report";
-  if (mime === "text/plain") return "Text document";
+  if (isMarkdownMime(mimeType)) return "Report";
+  if (normalizeMime(mimeType) === "text/plain") return "Text document";
   return "Document";
 }
 
