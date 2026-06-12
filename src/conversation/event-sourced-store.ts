@@ -553,6 +553,16 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
         // model-context bound. Replay uses it verbatim so the replayed prompt
         // matches what the model saw live. See boundToolResultForModel.
         const modelOutput = typeof d.modelOutput === "string" ? d.modelOutput : undefined;
+        // Inline-UI binding and MCP `resource_link` pointers. The engine
+        // emits both on the live `tool.done`; persisting them is what lets a
+        // reopened conversation re-render the artifact (the frontend's
+        // BlockTimeline gates rendering on `appName && resourceLinks`). Without
+        // these fields the jsonl carries no `files://` pointer and the artifact
+        // box never re-renders on reload.
+        const resourceUri = typeof d.resourceUri === "string" ? d.resourceUri : undefined;
+        const resourceLinks = Array.isArray(d.resourceLinks)
+          ? (d.resourceLinks as ToolDoneEvent["resourceLinks"])
+          : undefined;
         const e: ToolDoneEvent = {
           ts,
           type: "tool.done",
@@ -563,6 +573,8 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
           ms: (d.ms as number) ?? 0,
           ...(output !== undefined ? { output } : {}),
           ...(modelOutput !== undefined ? { modelOutput } : {}),
+          ...(resourceUri !== undefined ? { resourceUri } : {}),
+          ...(resourceLinks && resourceLinks.length > 0 ? { resourceLinks } : {}),
         };
         return e;
       }

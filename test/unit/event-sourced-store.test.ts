@@ -288,6 +288,77 @@ describe("EventSourcedConversationStore", () => {
     expect(assistantMsg!.metadata!.toolCalls![0]!.output).toBe("Hello world file content");
   });
 
+  it("persists and replays tool.done resourceLinks + resourceUri so artifacts survive reload", async () => {
+    const conv = await store.create({ ownerId: "user_test" });
+    store.setActiveConversation(conv.id);
+
+    const resourceLinks = [
+      {
+        uri: "files://abc123",
+        name: "Deep Research Report",
+        mimeType: "text/markdown",
+        description: "Synthesized findings",
+      },
+    ];
+
+    store.emit({ type: "run.start", data: { runId: "r1", model: "test-model" } });
+    store.emit({
+      type: "llm.done",
+      data: {
+        runId: "r1",
+        model: "test-model",
+        content: [
+          { type: "tool-call", toolCallId: "tc1", toolName: "nb__deep_research", input: "{}" },
+        ],
+        usage: { inputTokens: 100, outputTokens: 50, cacheReadTokens: 0, cacheWriteTokens: 0 },
+        llmMs: 500,
+      },
+    });
+    store.emit({ type: "tool.start", data: { runId: "r1", name: "nb__deep_research", id: "tc1" } });
+    store.emit({
+      type: "tool.done",
+      data: {
+        runId: "r1",
+        name: "nb__deep_research",
+        id: "tc1",
+        ok: true,
+        ms: 10,
+        output: "See attached report.",
+        resourceUri: "ui://research/abc123",
+        resourceLinks,
+      },
+    });
+    store.emit({
+      type: "llm.done",
+      data: {
+        runId: "r1",
+        model: "test-model",
+        content: [{ type: "text", text: "Done." }],
+        usage: { inputTokens: 200, outputTokens: 30, cacheReadTokens: 0, cacheWriteTokens: 0 },
+        llmMs: 400,
+      },
+    });
+    store.emit({ type: "run.done", data: { runId: "r1", stopReason: "end_turn", totalMs: 1000 } });
+
+    // 1. The persisted jsonl tool.done event carries resourceLinks + resourceUri.
+    const lines = readLines(join(dirs.dir, `${conv.id}.jsonl`));
+    const events = lines.slice(1).map((l) => JSON.parse(l));
+    const toolDone = events.find((e) => e.type === "tool.done");
+    expect(toolDone).toBeDefined();
+    expect(toolDone.resourceUri).toBe("ui://research/abc123");
+    expect(toolDone.resourceLinks).toEqual(resourceLinks);
+
+    // 2. Reconstruction surfaces them back onto the assistant tool-call metadata.
+    const messages = await store.history(conv);
+    const assistantMsg = messages.find(
+      (m) => m.role === "assistant" && m.metadata?.toolCalls?.length,
+    );
+    expect(assistantMsg).toBeDefined();
+    const tc = assistantMsg!.metadata!.toolCalls![0]!;
+    expect(tc.resourceUri).toBe("ui://research/abc123");
+    expect(tc.resourceLinks).toEqual(resourceLinks);
+  });
+
   it("routes events to the correct conversation", async () => {
     const conv1 = await store.create({ ownerId: "user_test" });
     const conv2 = await store.create({ ownerId: "user_test" });

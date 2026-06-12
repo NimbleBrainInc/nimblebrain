@@ -1127,3 +1127,47 @@ describe("reconstructMessages — tool-result bounding on replay", () => {
     expect(a).toBe(b);
   });
 });
+
+describe("reconstructMessages — resourceLinks survive replay", () => {
+  const resourceLinks = [
+    {
+      uri: "files://abc123",
+      name: "Deep Research Report",
+      mimeType: "text/markdown",
+      description: "Synthesized findings",
+    },
+  ];
+
+  function eventsWithResourceLinks(): ConversationEvent[] {
+    const done: ToolDoneEvent = {
+      ts: ts(4),
+      type: "tool.done",
+      runId: "run-1",
+      name: "nb__deep_research",
+      id: "tc-1",
+      ok: true,
+      ms: 100,
+      output: "See attached report.",
+      resourceUri: "ui://research/abc123",
+      resourceLinks,
+    };
+    return [
+      userMessage("Research the topic"),
+      runStart("run-1"),
+      llmToolCall("run-1", "tc-1", "nb__deep_research", {}),
+      toolStart("run-1", "tc-1", "nb__deep_research"),
+      done,
+      llmText("run-1", "Done."),
+      runDone("run-1"),
+    ];
+  }
+
+  it("surfaces resourceLinks + resourceUri onto the assistant tool-call metadata", () => {
+    const messages = reconstructMessages(eventsWithResourceLinks());
+    const asst = messages.find((m) => m.role === "assistant" && m.metadata?.toolCalls?.length);
+    expect(asst).toBeDefined();
+    const tc = asst!.metadata!.toolCalls![0]!;
+    expect(tc.resourceUri).toBe("ui://research/abc123");
+    expect(tc.resourceLinks).toEqual(resourceLinks);
+  });
+});

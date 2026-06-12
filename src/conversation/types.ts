@@ -366,6 +366,25 @@ export interface ToolDoneEvent {
    * `output` at read time. See boundToolResultForModel.
    */
   modelOutput?: string;
+  /**
+   * Static tool annotation binding the result to an inline UI resource (the
+   * `resourceUri` the engine emits). Persisted so a reopened conversation can
+   * re-bind the inline UI without re-running the tool.
+   */
+  resourceUri?: string;
+  /**
+   * MCP `resource_link` content blocks (2025-11-25) surfaced by the tool
+   * result — per-call, spec-defined pointers to resources the client should
+   * fetch via `resources/read` (e.g. `files://<id>` from `nb__deep_research`).
+   * Persisted so the artifact box re-renders on conversation reload; the live
+   * `tool.done` event carries the identical shape. See extractResourceLinks.
+   */
+  resourceLinks?: Array<{
+    uri: string;
+    name?: string;
+    mimeType?: string;
+    description?: string;
+  }>;
 }
 
 export interface ToolProgressEvent {

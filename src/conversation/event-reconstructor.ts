@@ -300,6 +300,15 @@ function buildMessagesFromEvents(events: readonly ConversationEvent[]): StoredMe
             output: done.output ?? "",
             ok: done.ok ?? true,
             ms: done.ms ?? 0,
+            // Surface the persisted inline-UI binding and MCP `resource_link`
+            // pointers back onto the tool-call metadata so a reopened
+            // conversation re-renders the artifact (e.g. the `files://` link
+            // from `nb__deep_research`). The live event carries the identical
+            // shape; this is the read-time half of that round-trip.
+            ...(done.resourceUri ? { resourceUri: done.resourceUri } : {}),
+            ...(done.resourceLinks && done.resourceLinks.length > 0
+              ? { resourceLinks: done.resourceLinks }
+              : {}),
           };
         });
 
