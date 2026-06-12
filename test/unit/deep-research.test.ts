@@ -188,8 +188,32 @@ describe("nb__deep_research", () => {
 
     const res = await tool.handler({ query: "q" });
     expect(res.isError).toBe(true);
-    expect((res.content[0] as { text: string }).text).toContain("timed out");
+    // User-facing text is humanized — the raw "timed out / task <id>" detail
+    // goes to the logs, not the result.
+    const text = (res.content[0] as { text: string }).text;
+    expect(text).toContain("taking longer than expected");
+    expect(text).not.toContain("task_abc");
     expect(dp.calls.some((c) => c.url === `${ARTIFACTS_URL}/v1/artifacts`)).toBe(false);
+  });
+
+  it("humanizes a service/cert failure — no raw technical detail in the result", async () => {
+    // The mint/data-plane fetch throws like a TLS verification failure.
+    const svc: typeof fetch = async () => {
+      throw new Error(
+        "mint POST to https://mcp-authorizer.mcp-shared.svc/token failed: " +
+          "unable to verify the first certificate",
+      );
+    };
+    const tool = createDeepResearchTool(ctxFor(svc));
+
+    const res = await tool.handler({ query: "q" });
+    expect(res.isError).toBe(true);
+    const text = (res.content[0] as { text: string }).text;
+    expect(text).toContain("temporarily unavailable");
+    // None of the raw detail leaks to the user.
+    expect(text).not.toContain("certificate");
+    expect(text).not.toContain("mcp-authorizer");
+    expect(text).not.toContain("https://");
   });
 
   it("errors when no workspace is bound", async () => {

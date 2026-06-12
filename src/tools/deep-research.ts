@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
+import { log } from "../cli/log.ts";
 import {
   ArtifactsClient,
-  DataPlaneError,
   isTerminalTaskStatus,
   NimbleTasksClient,
   type TaskRef,
@@ -76,8 +76,15 @@ interface ResearchEnvelope {
   sources?: Array<{ title?: string; url?: string }>;
 }
 
-function err(message: string): ToolResult {
-  return { content: textContent(message), isError: true };
+/**
+ * Surface a clean, human-readable failure to the agent (and through it the
+ * user). Any technical detail goes to the runtime logs (stderr → Loki/Grafana),
+ * never into the tool result a user sees — a raw "unable to verify the first
+ * certificate" is an operator concern, not something to put in the chat.
+ */
+function fail(userMessage: string, detail?: string, level: "warn" | "error" = "error"): ToolResult {
+  if (detail) log[level](`[deep_research] ${detail}`);
+  return { content: textContent(userMessage), isError: true };
 }
 
 function normalizeSources(raw: unknown): Array<{ title?: string; url?: string }> | undefined {
@@ -192,11 +199,14 @@ export function createDeepResearchTool(ctx: DeepResearchContext): InProcessTool 
     },
     handler: async (input): Promise<ToolResult> => {
       const query = String(input.query ?? "").trim();
-      if (!query) return err("deep_research requires a non-empty `query`.");
+      if (!query) return fail("Please give me a topic or question to research.");
 
       const workspace = ctx.getWorkspaceId();
       if (!workspace) {
-        return err("deep_research needs a workspace context, but none is bound to this request.");
+        return fail(
+          "Deep research isn't available here right now.",
+          "no workspace was bound to the request",
+        );
       }
 
       const clientOpts = {
@@ -224,26 +234,35 @@ export function createDeepResearchTool(ctx: DeepResearchContext): InProcessTool 
 
         const terminal = await pollToTerminal(tasks, created, ctx);
         if (!terminal) {
-          return err(
-            `deep_research timed out waiting for task ${created.taskId}. The task may still be ` +
-              "running; resolve its artifact later if it completes.",
+          return fail(
+            "The research is taking longer than expected and hasn't finished yet. " +
+              "Please try again in a few minutes.",
+            `task ${created.taskId} did not reach a terminal status within the poll window`,
+            "warn",
           );
         }
         if (terminal.status !== "completed") {
-          const reason = terminal.statusMessage ? `: ${terminal.statusMessage}` : "";
-          return err(`deep_research task ${terminal.taskId} ${terminal.status}${reason}.`);
+          return fail(
+            "The research didn't finish successfully. Please try again in a few minutes.",
+            `task ${terminal.taskId} ${terminal.status}` +
+              (terminal.statusMessage ? `: ${terminal.statusMessage}` : ""),
+            "warn",
+          );
         }
 
         const { available, result } = await tasks.getResult(terminal.taskId);
         if (!available) {
-          return err(
-            `deep_research task ${terminal.taskId} completed but no result was available.`,
+          return fail(
+            "The research finished but I couldn't retrieve the report. Please try again.",
+            `task ${terminal.taskId} completed but its result was not available`,
           );
         }
         const envelope = extractEnvelope(result);
         if (!envelope) {
-          return err(
-            `deep_research task ${terminal.taskId} returned an unrecognized result shape.`,
+          return fail(
+            "The research finished but the report came back in an unexpected format. " +
+              "Please try again.",
+            `task ${terminal.taskId} returned an unrecognized result shape`,
           );
         }
 
@@ -275,9 +294,15 @@ export function createDeepResearchTool(ctx: DeepResearchContext): InProcessTool 
           isError: false,
         };
       } catch (e) {
-        const detail =
-          e instanceof DataPlaneError ? e.message : e instanceof Error ? e.message : String(e);
-        return err(`deep_research failed: ${detail}`);
+        // Network / TLS / mint / data-plane failures. The raw detail (e.g. a
+        // cert-verification message or a 5xx body) is an operator concern — log
+        // it, show the user a calm "try again".
+        const detail = e instanceof Error ? (e.stack ?? e.message) : String(e);
+        return fail(
+          "Deep research is temporarily unavailable — I couldn't reach the research service. " +
+            "Please try again in a few minutes.",
+          detail,
+        );
       }
     },
   };
