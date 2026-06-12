@@ -32,6 +32,7 @@ const NIMBLETASKS_AUDIENCE = "mcp-fleet";
 const NIMBLETASKS_SCOPE = "nimbletasks:create";
 const ARTIFACTS_AUDIENCE = "artifacts";
 const ARTIFACTS_WRITE_SCOPE = "artifacts:write";
+const ARTIFACTS_READ_SCOPE = "artifacts:read";
 
 export class DataPlaneError extends Error {
   readonly status: number;
@@ -175,32 +176,116 @@ export interface ArtifactRef {
   sizeBytes: number;
 }
 
+/** Artifact metadata as returned by `GET /v1/artifacts/{id}` and the list
+ *  endpoint. Mirrors the service's `ArtifactMetadata`. */
+export interface ArtifactMetadata {
+  artifactId: string;
+  uri: string;
+  workspaceId: string;
+  type: string;
+  mimeType: string;
+  title?: string | null;
+  source?: string | null;
+  sizeBytes: number;
+  status?: string | null;
+  citations?: Array<{ title?: string; url?: string }> | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+  expiresAt?: string | null;
+}
+
+/** Filters for `GET /v1/artifacts` (keyset paginated). */
+export interface ListArtifactsInput {
+  type?: string;
+  source?: string;
+  limit?: number;
+  cursor?: string;
+}
+
+export interface ArtifactPage {
+  artifacts: ArtifactMetadata[];
+  nextCursor?: string | null;
+}
+
+/** Raw metadata shape on the wire. */
+interface ArtifactMetadataWire {
+  artifact_id: string;
+  uri: string;
+  workspace_id: string;
+  type: string;
+  mime_type: string;
+  title?: string | null;
+  source?: string | null;
+  size_bytes: number;
+  status?: string | null;
+  citations?: Array<{ title?: string; url?: string }> | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  expires_at?: string | null;
+}
+
+function metadataFromWire(json: ArtifactMetadataWire): ArtifactMetadata {
+  return {
+    artifactId: json.artifact_id,
+    uri: json.uri,
+    workspaceId: json.workspace_id,
+    type: json.type,
+    mimeType: json.mime_type,
+    title: json.title ?? null,
+    source: json.source ?? null,
+    sizeBytes: json.size_bytes,
+    status: json.status ?? null,
+    citations: json.citations ?? null,
+    createdAt: json.created_at ?? null,
+    updatedAt: json.updated_at ?? null,
+    expiresAt: json.expires_at ?? null,
+  };
+}
+
 function toBase64(body: string | Uint8Array): string {
   const buf = typeof body === "string" ? Buffer.from(body, "utf8") : Buffer.from(body);
   return buf.toString("base64");
 }
 
-/** Write artifacts the user can later resolve. tenant_id/workspace_id come from
- *  the minted token (never the body); RLS fences the write. */
+/**
+ * Read + write artifacts the user can later resolve. tenant_id/workspace_id come
+ * from the minted token (never the body); RLS fences every operation.
+ *
+ * Write and read mint DISTINCT tokens — `artifacts:write` for `POST`, and a
+ * separately-minted `artifacts:read` for the `GET` content/metadata/list path.
+ * A write-scoped token must never be reused to read: scopes are least-privilege
+ * and the service's read guard rejects a write-only bearer. The runtime holds
+ * both mints; bundles never see either.
+ */
 export class ArtifactsClient {
-  private readonly fetchImpl: typeof fetch;
+  private readonly writeFetch: typeof fetch;
+  private readonly readFetch: typeof fetch;
 
   constructor(
     private readonly baseUrl: string,
     opts: DataPlaneClientOptions,
   ) {
-    this.fetchImpl = createMintingFetch({
-      cache: opts.cache ?? getDefaultServiceTokenCache(),
+    const cache = opts.cache ?? getDefaultServiceTokenCache();
+    this.writeFetch = createMintingFetch({
+      cache,
       issuer: opts.issuer,
       workspace: opts.workspace,
       audience: ARTIFACTS_AUDIENCE,
       scope: ARTIFACTS_WRITE_SCOPE,
       baseFetch: opts.baseFetch,
     });
+    this.readFetch = createMintingFetch({
+      cache,
+      issuer: opts.issuer,
+      workspace: opts.workspace,
+      audience: ARTIFACTS_AUDIENCE,
+      scope: ARTIFACTS_READ_SCOPE,
+      baseFetch: opts.baseFetch,
+    });
   }
 
   async writeArtifact(req: WriteArtifactInput): Promise<ArtifactRef> {
-    const res = await this.fetchImpl(new URL("/v1/artifacts", this.baseUrl).toString(), {
+    const res = await this.writeFetch(new URL("/v1/artifacts", this.baseUrl).toString(), {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -226,6 +311,54 @@ export class ArtifactsClient {
       uri: json.uri,
       mimeType: json.mime_type,
       sizeBytes: json.size_bytes,
+    };
+  }
+
+  /** Resolve an artifact's metadata (`GET /v1/artifacts/{id}`, `artifacts:read`). */
+  async getArtifact(id: string): Promise<ArtifactMetadata> {
+    const res = await this.readFetch(
+      new URL(`/v1/artifacts/${encodeURIComponent(id)}`, this.baseUrl).toString(),
+    );
+    if (!res.ok)
+      throw new DataPlaneError("artifacts getArtifact", res.status, await readError(res));
+    return metadataFromWire((await res.json()) as ArtifactMetadataWire);
+  }
+
+  /**
+   * Fetch an artifact's FULL body bytes (`GET /v1/artifacts/{id}/content`,
+   * `artifacts:read`). The service either streams the bytes inline or 302s to a
+   * short-lived presigned URL; `fetch` follows the redirect by default, so the
+   * returned response always carries the body. No size cap — the caller gets the
+   * whole artifact.
+   */
+  async getArtifactContent(id: string): Promise<{ body: Uint8Array; mimeType: string }> {
+    const res = await this.readFetch(
+      new URL(`/v1/artifacts/${encodeURIComponent(id)}/content`, this.baseUrl).toString(),
+    );
+    if (!res.ok)
+      throw new DataPlaneError("artifacts getArtifactContent", res.status, await readError(res));
+    const buf = new Uint8Array(await res.arrayBuffer());
+    const mimeType = res.headers.get("content-type") ?? "application/octet-stream";
+    return { body: buf, mimeType };
+  }
+
+  /** List artifacts for the token's (tenant, workspace) — keyset paginated. */
+  async listArtifacts(req: ListArtifactsInput = {}): Promise<ArtifactPage> {
+    const url = new URL("/v1/artifacts", this.baseUrl);
+    if (req.type) url.searchParams.set("type", req.type);
+    if (req.source) url.searchParams.set("source", req.source);
+    if (req.limit !== undefined) url.searchParams.set("limit", String(req.limit));
+    if (req.cursor) url.searchParams.set("cursor", req.cursor);
+    const res = await this.readFetch(url.toString());
+    if (!res.ok)
+      throw new DataPlaneError("artifacts listArtifacts", res.status, await readError(res));
+    const json = (await res.json()) as {
+      artifacts: ArtifactMetadataWire[];
+      next_cursor?: string | null;
+    };
+    return {
+      artifacts: (json.artifacts ?? []).map(metadataFromWire),
+      nextCursor: json.next_cursor ?? null,
     };
   }
 }
