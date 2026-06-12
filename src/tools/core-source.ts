@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { readFile, rename, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { recordLlmUsage } from "../api/metrics.ts";
 import { log } from "../cli/log.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import type { ToolResult } from "../engine/types.ts";
@@ -810,6 +811,11 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
                 // (bgCtx) has no conversationId, so it's skipped here — a known
                 // workspace-scoped gap with no conversation to attribute to.
                 (usage, llmMs) => {
+                  // Metric fires for every briefing generation, including the
+                  // background refresh — Prometheus has no conversation to
+                  // attribute to, so it captures the cost the aux.usage event
+                  // (below) can't.
+                  recordLlmUsage("briefing", modelString ?? "unknown", usage);
                   const convId = getRequestContext()?.conversationId;
                   if (!convId) return;
                   runtime.findConversationStore()?.appendEvent?.(convId, {
