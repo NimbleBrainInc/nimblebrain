@@ -109,7 +109,10 @@ describe("fetchWithRefresh", () => {
     expect(refreshCount).toBe(1); // only one refresh call
   });
 
-  test("refresh network error is handled gracefully", async () => {
+  test("refresh transport failure does NOT log out — session may still be valid", async () => {
+    // A refresh that throws at the transport layer (dropped connection,
+    // roaming hand-off) is not an auth failure. The user must stay logged in;
+    // the original 401 surfaces as a transient error for the caller to retry.
     let authErrorCalled = false;
     const fakeFetch = async (input: string | URL | Request) => {
       const url = typeof input === "string" ? input : input.toString();
@@ -127,6 +130,37 @@ describe("fetchWithRefresh", () => {
 
     const r = await fetcher("/api/data");
     expect(r.status).toBe(401);
-    expect(authErrorCalled).toBe(true);
+    expect(authErrorCalled).toBe(false);
+  });
+
+  test("retries a transport-failed refresh and recovers without logging out", async () => {
+    // First refresh attempt throws (blip); the retry succeeds. The original
+    // request then retries and returns 200 — the user never sees a logout.
+    let refreshAttempts = 0;
+    let apiCalls = 0;
+    let authErrorCalled = false;
+    const fakeFetch = async (input: string | URL | Request) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url === "/refresh") {
+        refreshAttempts++;
+        if (refreshAttempts === 1) throw new TypeError("Failed to fetch");
+        return res(200);
+      }
+      apiCalls++;
+      return apiCalls === 1 ? res(401) : res(200);
+    };
+
+    const fetcher = createFetchWithRefresh({
+      fetch: fakeFetch as typeof fetch,
+      refreshUrl: "/refresh",
+      onAuthError: () => {
+        authErrorCalled = true;
+      },
+    });
+
+    const r = await fetcher("/api/data");
+    expect(r.status).toBe(200);
+    expect(refreshAttempts).toBe(2); // first threw, second succeeded
+    expect(authErrorCalled).toBe(false);
   });
 });
