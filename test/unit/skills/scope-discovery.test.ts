@@ -21,7 +21,7 @@
  * the engine.
  */
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -272,5 +272,57 @@ describe("loadScopedSkills + mergeScopedSkills — end-to-end on tmpdir", () => 
     expect(merged).toHaveLength(1);
     expect(merged[0]!.manifest.name).toBe("voice");
     expect(merged[0]!.manifest.scope).toBe("org");
+  });
+});
+
+describe("loadScopedSkills — read failures are observable, not silent", () => {
+  let errors: string[];
+  let originalError: typeof console.error;
+
+  beforeEach(() => {
+    errors = [];
+    originalError = console.error;
+    console.error = (...args: unknown[]) => {
+      errors.push(args.map(String).join(" "));
+    };
+  });
+
+  afterEach(() => {
+    console.error = originalError;
+  });
+
+  test("a dir that exists but cannot be listed logs an error instead of silently dropping the scope", () => {
+    // A path that exists but is NOT a directory: readdirSync throws ENOTDIR.
+    // This stands in for the permissions/IO/TOCTOU failure that silently
+    // emptied a live workspace's skill pool — the regression we're guarding.
+    const notADir = join(root, "skills-is-a-file");
+    writeFileSync(notADir, "not a directory", "utf-8");
+
+    const skills = loadScopedSkills(notADir, "workspace");
+
+    expect(skills).toHaveLength(0);
+    expect(errors.some((e) => e.includes("[skill]") && e.includes("workspace"))).toBe(true);
+    expect(errors.some((e) => e.includes("entire scope is empty"))).toBe(true);
+  });
+
+  test("a single unreadable skill file drops only that file, not the whole scope", () => {
+    const dir = join(root, "ws-skills");
+    mkdirSync(dir, { recursive: true });
+    writeSkillFile(join(dir, "good.md"), "good");
+    const bad = join(dir, "bad.md");
+    writeSkillFile(bad, "bad");
+    chmodSync(bad, 0o000);
+
+    // Root can read 0o000 files, so the parse never throws there — skip the
+    // assertion rather than report a false pass.
+    const isRoot = typeof process.getuid === "function" && process.getuid() === 0;
+    if (isRoot) return;
+
+    const skills = loadScopedSkills(dir, "workspace");
+
+    expect(skills.map((s) => s.manifest.name)).toEqual(["good"]);
+    expect(errors.some((e) => e.includes("[skill]") && e.includes("bad.md"))).toBe(true);
+
+    chmodSync(bad, 0o644); // restore so afterEach cleanup can remove it
   });
 });

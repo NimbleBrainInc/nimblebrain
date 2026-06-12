@@ -131,13 +131,37 @@ function collectScopedSkills(dir: string, scope: SkillScope, out: Skill[], depth
   let entries: Dirent[];
   try {
     entries = readdirSync(dir, { withFileTypes: true });
-  } catch {
+  } catch (err) {
+    // `loadScopedSkills` already returned [] for a non-existent top-level dir,
+    // so reaching a read error here means the dir EXISTED but couldn't be
+    // listed — permissions, I/O, or a TOCTOU race where it was removed or
+    // rewritten under us. Silently swallowing this (the old bare `return`)
+    // drops the entire scope with zero signal: a workspace can lose all of its
+    // always-load skills mid-session and nothing — not the logs, not the
+    // `skills.loaded` event — shows anything went wrong. Make it visible.
+    const code = (err as NodeJS.ErrnoException)?.code ?? "unknown";
+    console.error(
+      `[skill] Could not read ${scope}-scope skills dir "${dir}" (${code})` +
+        (depth === 0
+          ? " — the entire scope is empty for this load"
+          : ` at depth ${depth} — this subtree is skipped`),
+    );
     return;
   }
   for (const entry of entries) {
     if (entry.isFile() && entry.name.toLowerCase().endsWith(".md")) {
       const path = join(dir, entry.name);
-      const skill = parseSkillFile(path);
+      let skill: Skill | null;
+      try {
+        skill = parseSkillFile(path);
+      } catch (err) {
+        // One unreadable or half-written file (e.g. mid-rewrite by a concurrent
+        // skills__update) must drop only THAT file — never throw out of the
+        // loop and lose every skill already collected for this scope.
+        const code = (err as NodeJS.ErrnoException)?.code ?? "unknown";
+        console.error(`[skill] Skipping unreadable skill file "${path}" (${code})`);
+        continue;
+      }
       if (skill) {
         skill.manifest.scope = scope;
         out.push(skill);
