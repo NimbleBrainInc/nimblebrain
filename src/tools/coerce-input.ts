@@ -16,16 +16,24 @@
  * the parsed value. Recurse into the parsed result so deeply nested
  * misencodings unwind in one pass.
  *
+ * The same forgiveness extends one rung further to scalars: a model that
+ * stringifies a number or boolean ("5", "true") for a param the schema types
+ * as number/integer/boolean has its value recovered too. Coercion only fires
+ * when the schema can't already accept a string, so a legitimately-string
+ * param is never retyped.
+ *
  * Non-parseable strings (and strings where the schema didn't expect an
- * object/array) pass through unchanged — the validator reports them with
- * its content-aware error. Non-string values are untouched.
+ * object/array/number/boolean) pass through unchanged — the validator reports
+ * them with its content-aware error. Non-string values are untouched.
  *
  * Idempotent: a properly shaped input survives unchanged. Safe to call at
  * multiple boundaries without amplification.
  *
- * Why not AJV's `coerceTypes`: AJV only coerces between scalar types
- * (string ↔ number, etc.). It does not parse string-as-JSON into objects
- * or arrays. This helper fills exactly that gap.
+ * Why not AJV's `coerceTypes`: it does not parse string-as-JSON into objects
+ * or arrays (the original gap this helper fills), and its scalar coercion is
+ * loose and mutating (`[]`↔scalar, `""`→0). Owning coercion here keeps it
+ * schema-aware and conservative — we recover a clean misencoding and leave
+ * anything ambiguous for the validator, rather than globally retyping inputs.
  *
  * ## Union schemas (`anyOf` / `oneOf`)
  *
@@ -59,13 +67,46 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+type JsonType = "object" | "array" | "number" | "integer" | "boolean" | "string";
+
 /** True iff the (effective) schema declares a concrete type matching `target`. */
-function declaresType(schema: Schema, target: "object" | "array"): boolean {
+function declaresType(schema: Schema, target: JsonType): boolean {
   if (!schema) return false;
   const t = schema.type;
   if (t === target) return true;
   if (Array.isArray(t) && t.includes(target)) return true;
   return false;
+}
+
+/**
+ * Recover a stringified scalar against a schema that declares a numeric or
+ * boolean type — the same model-misencoding class as the object/array case,
+ * one rung down: a model emits `"5"` or `"true"` for a param typed as
+ * number/integer/boolean. Returns the coerced primitive, or `undefined` when
+ * the string isn't a clean match (leave it for the validator's content-aware
+ * error rather than guess). A schema that also accepts `string` is handled by
+ * the caller — we never coerce a value the schema would take as-is.
+ */
+function coerceScalarString(
+  value: string,
+  schema: Record<string, unknown>,
+): number | boolean | undefined {
+  const trimmed = value.trim();
+  if (trimmed === "") return undefined;
+  if (declaresType(schema, "integer")) {
+    const n = Number(trimmed);
+    return Number.isInteger(n) ? n : undefined;
+  }
+  if (declaresType(schema, "number")) {
+    const n = Number(trimmed);
+    return Number.isFinite(n) ? n : undefined;
+  }
+  if (declaresType(schema, "boolean")) {
+    if (trimmed === "true") return true;
+    if (trimmed === "false") return false;
+    return undefined;
+  }
+  return undefined;
 }
 
 /**
@@ -169,6 +210,13 @@ function coerceValue(value: unknown, schema: Schema): unknown {
       // Parse failed — leave as string. Validator will surface the
       // content-aware error ("must be object", "must be array").
       return value;
+    }
+    // String → number/boolean recovery. Only when the schema can't already
+    // accept a string (a `string` or `string | number` param takes the value
+    // as-is, so coercing it would change a legitimate value's type).
+    if (effective && !declaresType(effective, "string")) {
+      const scalar = coerceScalarString(value, effective);
+      if (scalar !== undefined) return scalar;
     }
     return value;
   }
