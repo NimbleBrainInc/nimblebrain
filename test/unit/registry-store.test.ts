@@ -140,65 +140,75 @@ describe("RegistryStore", () => {
     }
   });
 
-  test("reconciles a stale persisted bundled-static url on load (heals image bumps)", async () => {
+  /** Write a registries.json seeding bundled-static at `url` (+ mpak). */
+  function seedRegistriesJson(dir: string, url: string): void {
+    writeFileSync(
+      join(dir, "registries.json"),
+      JSON.stringify({
+        registries: [
+          {
+            id: "bundled-static",
+            name: "Curated services",
+            type: "static",
+            enabled: true,
+            locked: true,
+            url,
+          },
+          { id: "mpak", name: "mpak.dev", type: "mpak", enabled: true },
+        ],
+      }),
+    );
+  }
+
+  test("resolves a broken persisted curated url to the in-image default (in-memory, no clobber)", async () => {
     const dir = mkdtempSync(join(tmpdir(), "nb-regstore-"));
     try {
-      // Simulate a tenant seeded by an older image: registries.json
-      // persists a catalog path that the new image no longer ships.
-      writeFileSync(
-        join(dir, "registries.json"),
-        JSON.stringify({
-          registries: [
-            {
-              id: "bundled-static",
-              name: "Curated services",
-              type: "static",
-              enabled: true,
-              locked: true,
-              url: "/app/src/connectors/catalog.yaml",
-            },
-            { id: "mpak", name: "mpak.dev", type: "mpak", enabled: true },
-          ],
-        }),
-      );
+      // A tenant seeded by an older image: registries.json persists a
+      // catalog path the new image no longer ships.
+      const stale = "/app/src/connectors/catalog.yaml";
+      seedRegistriesJson(dir, stale);
       const store = new RegistryStore(dir);
       const bundled = (await store.list()).find((r) => r.id === "bundled-static");
-      // In-memory: healed to the current default path.
+      // Read-time resolution falls back to the in-image example.
       expect(bundled?.url).toMatch(/connectors\/curated$/);
-      // And persisted back to disk (one-time heal, stable thereafter).
+      // Disk is NOT rewritten — the resolution is in-memory only, so a
+      // transient miss can't permanently overwrite the persisted value.
       const onDisk = JSON.parse(readFileSync(join(dir, "registries.json"), "utf-8")) as {
         registries: Array<{ id: string; url?: string }>;
       };
-      expect(onDisk.registries.find((r) => r.id === "bundled-static")?.url).toMatch(
-        /connectors\/curated$/,
-      );
+      expect(onDisk.registries.find((r) => r.id === "bundled-static")?.url).toBe(stale);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   });
 
-  test("NB_CURATED_CATALOG_DIR is authoritative for an already-seeded tenant", async () => {
-    // The Phase-2 deploy lever: an existing tenant whose persisted url
-    // predates the override must pick the override up on boot, not stay
-    // pinned to the stale path.
+  test("preserves a valid hand-edited curated url (#247 direct-edit lever)", async () => {
+    // An operator points the curated registry at their own catalog dir
+    // by editing registries.json directly. With no env override, a path
+    // that still resolves must be honored, not replaced.
+    const custom = mkdtempSync(join(tmpdir(), "nb-custom-catalog-"));
+    writeFileSync(join(custom, "curated.yaml"), "servers: []\n");
+    const dir = mkdtempSync(join(tmpdir(), "nb-regstore-"));
+    try {
+      seedRegistriesJson(dir, custom);
+      const store = new RegistryStore(dir);
+      const bundled = (await store.list()).find((r) => r.id === "bundled-static");
+      expect(bundled?.url).toBe(custom);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      rmSync(custom, { recursive: true, force: true });
+    }
+  });
+
+  test("NB_CURATED_CATALOG_DIR overrides even a valid persisted url (env wins)", async () => {
+    // The Phase-2 deploy lever is authoritative: it must win over a
+    // persisted hand-edit, the same way NB_REGISTRIES beats disk.
+    const custom = mkdtempSync(join(tmpdir(), "nb-custom-catalog-"));
+    writeFileSync(join(custom, "curated.yaml"), "servers: []\n");
     await withCuratedDir("/config/connectors", async () => {
       const dir = mkdtempSync(join(tmpdir(), "nb-regstore-"));
       try {
-        writeFileSync(
-          join(dir, "registries.json"),
-          JSON.stringify({
-            registries: [
-              {
-                id: "bundled-static",
-                name: "Curated services",
-                type: "static",
-                enabled: true,
-                locked: true,
-                url: "/app/src/connectors/catalog.yaml",
-              },
-            ],
-          }),
-        );
+        seedRegistriesJson(dir, custom); // valid, but env must still win
         const store = new RegistryStore(dir);
         const bundled = (await store.list()).find((r) => r.id === "bundled-static");
         expect(bundled?.url).toBe("/config/connectors");
@@ -206,6 +216,7 @@ describe("RegistryStore", () => {
         rmSync(dir, { recursive: true, force: true });
       }
     });
+    rmSync(custom, { recursive: true, force: true });
   });
 
   test("creates the file on first write (no race with seed)", async () => {

@@ -68,7 +68,6 @@
     "check:file-paths": "bun run scripts/check-file-paths.ts",
     "check:automation-paths": "bun run scripts/check-automation-paths.ts",
     "check:code-style": "bun run scripts/check-code-style.ts",
-    "check:catalog": "bun run scripts/check-catalog-dcr.ts",
     "codegen": "bun run scripts/codegen-web-platform-schemas.ts",
     "check:codegen": "bun run codegen && git diff --exit-code web/src/_generated/",
     "verify": "bun run verify:static && bun run verify:test-unit && bun run test:integration && bun run smoke",

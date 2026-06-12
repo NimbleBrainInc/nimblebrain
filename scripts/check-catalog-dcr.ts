@@ -2,7 +2,8 @@
 /**
  * Catalog rot detector for DCR remote-OAuth connectors.
  *
- * Iterates `src/connectors/catalog.yaml`, picks every entry whose
+ * Reusable CLI tool: takes a catalog path (a `ServerDetail` file or a
+ * directory of them) as a REQUIRED argument, picks every entry whose
  * `_meta["ai.nimblebrain/connector"].auth === "dcr"`, and runs the
  * full DCR flow end-to-end against each vendor:
  *
@@ -41,9 +42,10 @@
  * report; exit 1 if any DCR entry fails.
  *
  * Network-dependent by design — NOT part of `bun run verify` (which is
- * offline). Run before merging catalog.yaml changes; CI runs it
- * automatically on PRs that touch the file
- * (`.github/workflows/catalog-check.yml`).
+ * offline). The production catalog now lives in the deploy repo, so the
+ * automated PR gate is re-homed there (deployments#33), invoking this
+ * tool against the mounted catalog via the platform image. Run it
+ * locally against any catalog path before shipping a curation change.
  *
  * Static-auth entries are skipped — they're operator-pre-registered
  * and don't use DCR. Their failure mode (operator hasn't set up the
@@ -51,7 +53,6 @@
  */
 
 import { getNimbleBrainConnectorMeta, type ServerDetail } from "../src/connectors/server-detail.ts";
-import { BUNDLED_STATIC_CATALOG_PATH } from "../src/registries/registry-store.ts";
 import { readStaticServers } from "../src/registries/static-source.ts";
 
 const REQUEST_TIMEOUT_MS = 10_000;
@@ -77,7 +78,21 @@ interface CheckResult {
 }
 
 async function main(): Promise<void> {
-  const servers = readStaticServers(BUNDLED_STATIC_CATALOG_PATH);
+  // Catalog path is a REQUIRED argument — a file or a directory of
+  // `ServerDetail` files. The real curated catalog now lives in the
+  // deploy repo (the in-image `BUNDLED_STATIC_CATALOG_PATH` is only the
+  // minimal example), so defaulting to it would silently green-check two
+  // illustrative entries instead of the production set. Point this at
+  // the mounted/checked-out catalog you actually want to probe.
+  const catalogPath = process.argv[2];
+  if (!catalogPath) {
+    console.error(
+      "Usage: bun run scripts/check-catalog-dcr.ts <catalog-file-or-dir>\n" +
+        "Probe DCR connector entries in the given catalog for install-time rot.",
+    );
+    process.exit(2);
+  }
+  const servers = readStaticServers(catalogPath);
   const dcrEntries: ServerDetail[] = [];
   for (const s of servers) {
     const meta = getNimbleBrainConnectorMeta(s);

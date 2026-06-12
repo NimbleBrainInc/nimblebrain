@@ -74,6 +74,29 @@ function curatedCatalogPath(): string {
   return override && override.length > 0 ? override : BUNDLED_STATIC_CATALOG_PATH;
 }
 
+/**
+ * Read-time resolution of the locked curated registry's backing path,
+ * given the value persisted in `registries.json`. Precedence:
+ *
+ *   1. `NB_CURATED_CATALOG_DIR` when set — the authoritative deployment
+ *      lever (same "env beats disk" precedent as `NB_REGISTRIES`).
+ *   2. The persisted url, if it still resolves — preserves a path an
+ *      operator set by hand-editing `registries.json` directly (#247).
+ *   3. The in-image example — so a path baked in by an older image
+ *      (e.g. one that shipped a since-removed catalog file) can't strand
+ *      Browse on a missing file.
+ *
+ * Pure/in-memory: callers never persist the result, so a transiently
+ * unreachable hand-edited path (a ConfigMap mount race) falls back for
+ * that read only and is restored on the next, never overwritten.
+ */
+function resolveCuratedUrl(persisted: string | undefined): string {
+  const override = process.env[CURATED_CATALOG_DIR_ENV]?.trim();
+  if (override && override.length > 0) return override;
+  if (persisted && existsSync(persisted)) return persisted;
+  return BUNDLED_STATIC_CATALOG_PATH;
+}
+
 const BUNDLED_STATIC_ID = "bundled-static";
 const MPAK_ID = "mpak";
 
@@ -138,7 +161,14 @@ export class RegistryStore {
   async list(): Promise<RegistryConfig[]> {
     if (this.envOverride) return this.envOverride;
     const record = await this.load();
-    return record.registries;
+    // The locked curated registry's path is deployment config, not
+    // trusted disk state: resolve it fresh on every read (see
+    // `resolveCuratedUrl`). Done in-memory only — a transient miss never
+    // overwrites an operator's persisted hand-edit, and a path baked in
+    // by an older image can't strand Browse on a since-removed file.
+    return record.registries.map((r) =>
+      r.id === BUNDLED_STATIC_ID ? { ...r, url: resolveCuratedUrl(r.url) } : r,
+    );
   }
 
   /** Look up a single registry by id. */
@@ -206,34 +236,15 @@ export class RegistryStore {
       if (!Array.isArray(parsed?.registries)) {
         return { registries: defaultRegistries() };
       }
-      // The locked bundled-static registry is deployment-managed. Two
-      // invariants enforced on every load:
-      //   1. Re-add it if a hand-edit removed it (it can't be removed).
-      //   2. Reconcile its backing path so a stale value persisted by an
-      //      older image (e.g. one that shipped a since-removed catalog
-      //      file) doesn't leave Browse permanently empty.
-      // Precedence on (2): NB_CURATED_CATALOG_DIR, when set, is the
-      // authoritative deployment lever and always wins (same "env beats
-      // disk" precedent as NB_REGISTRIES). When it's NOT set, we heal
-      // only a *broken* persisted path — preserving a url an operator
-      // set by hand-editing registries.json directly (the other
-      // sanctioned deployment-config path, #247) while still rescuing a
-      // tenant whose persisted path points nowhere on this image.
-      let dirty = false;
-      const bundled = parsed.registries.find((r) => r.id === BUNDLED_STATIC_ID);
-      if (!bundled) {
+      // Ensure the locked bundled-static registry can't be removed by
+      // hand-editing the file — re-add it if missing. Its *url* is not
+      // reconciled here; it's resolved fresh at read time in `list()`
+      // (see `resolveCuratedUrl`), so a stale persisted path never needs
+      // a disk write to heal.
+      if (!parsed.registries.some((r) => r.id === BUNDLED_STATIC_ID)) {
         parsed.registries.unshift(defaultRegistryById(BUNDLED_STATIC_ID));
-        dirty = true;
-      } else {
-        const envOverride = process.env[CURATED_CATALOG_DIR_ENV]?.trim();
-        const target = curatedCatalogPath();
-        const heal = (envOverride?.length ?? 0) > 0 || !bundled.url || !existsSync(bundled.url);
-        if (heal && bundled.url !== target) {
-          bundled.url = target;
-          dirty = true;
-        }
+        await this.save(parsed);
       }
-      if (dirty) await this.save(parsed);
       return parsed;
     } catch (err: unknown) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") {

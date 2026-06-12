@@ -140,28 +140,14 @@ function extractServerCandidates(parsed: unknown, source: string): unknown[] {
 }
 
 /**
- * Validate a parsed candidate. Accepts:
- *   - `{ servers: [ ... ] }`              (canonical YAML/JSON shape)
- *   - `[ ... ]`                            (bare-array convenience shape)
- *
- * Returns only the entries that pass the upstream `ServerDetail` ajv
- * schema and the platform's defense-in-depth safety checks. Single-
- * source convenience wrapper over `appendValidatedServers`; the
- * directory path in `readStaticServers` shares a dedup set across files
- * instead.
- */
-export function validateStaticServers(parsed: unknown, source: string): ServerDetail[] {
-  const out: ServerDetail[] = [];
-  appendValidatedServers(extractServerCandidates(parsed, source), source, new Set<string>(), out);
-  return out;
-}
-
-/**
  * Validate raw candidates and append the survivors to `out`, deduping
  * by name against the shared `seenNames` set so a caller aggregating
- * multiple files gets first-wins dedup across them. Each drop is logged
- * with a `source[index:name]` tag naming where it came from — for the
- * directory path, `source` is the individual file, not the dir.
+ * multiple files gets first-wins dedup across them. Keeps only entries
+ * that pass the upstream `ServerDetail` ajv schema (the platform's
+ * defense-in-depth safety checks run later, uniformly, at the directory
+ * boundary). Each drop is logged with a `source[index:name]` tag naming
+ * where it came from — for the directory path, `source` is the
+ * individual file, not the dir.
  */
 function appendValidatedServers(
   raw: unknown[],
