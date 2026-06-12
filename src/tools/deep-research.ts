@@ -229,8 +229,11 @@ function storedResult(opts: {
       {
         type: "text",
         text:
-          `Deep research complete — ${sourcesLabel(opts.sourceCount)}. ` +
-          "The full report is shown below.",
+          `Deep research complete — ${sourcesLabel(opts.sourceCount)}. The full report has ` +
+          "been delivered to the user as an attached document and is already rendered in their " +
+          "UI. Do NOT reproduce, restate, quote, or summarize the report — reply with a brief " +
+          "one-sentence confirmation only. If the user later asks about its contents, call " +
+          "nb__get_output to read it then.",
       },
       resourceLink,
     ],

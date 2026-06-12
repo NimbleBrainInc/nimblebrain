@@ -171,7 +171,12 @@ describe("nb__deep_research", () => {
     expect(text).toContain("2 sources");
     expect(text).not.toContain("# Findings");
     expect(text).not.toContain("forty-two");
-    expect(text.length).toBeLessThan(200);
+    // The text instructs the model NOT to reproduce the report (the UI renders
+    // it) — this is what stops the model re-emitting the full report (the box +
+    // duplicate-text + per-turn replay bug).
+    expect(text).toContain("Do NOT reproduce");
+    // Still small — a directive, not the report (report would be ~17KB).
+    expect(text.length).toBeLessThan(500);
 
     // The resource_link points at the stored `files://<id>` ref.
     const link = resourceLinkOf(res);
