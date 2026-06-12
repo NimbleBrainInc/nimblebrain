@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { log } from "../cli/log.ts";
 import { writeJsonAtomic } from "../util/atomic-json.ts";
+import { readStaticServers } from "./static-source.ts";
 import type { RegistryConfig } from "./types.ts";
 
 /**
@@ -18,9 +19,12 @@ import type { RegistryConfig } from "./types.ts";
  *
  * On first read with no file present, the store seeds two defaults:
  *
- *   - `bundled-static` — a `StaticSource` pointing at the bundled
- *     `src/connectors/catalog.yaml` shipped with the platform. Locked
- *     (operator can't disable or remove it).
+ *   - `bundled-static` — a `StaticSource` pointing at the curated
+ *     catalog directory. Defaults to the minimal in-image example
+ *     (`src/connectors/curated/`); a deployment overrides the path with
+ *     `NB_CURATED_CATALOG_DIR` (a mounted ConfigMap dir) to supply the
+ *     real catalog. Locked: the registry is always present and can't be
+ *     disabled, but its backing path is deployment configuration.
  *   - `mpak`           — an `MpakSource` row with no persisted `url`;
  *     the SDK owns the default registry host. Default enabled, scoped
  *     to `["nimblebraininc"]` so first installs are NimbleBrain-curated.
@@ -39,13 +43,59 @@ import type { RegistryConfig } from "./types.ts";
 
 const FILE_NAME = "registries.json";
 
-/** Absolute path to the bundled curated catalog YAML. */
-export const BUNDLED_STATIC_CATALOG_PATH = join(
-  import.meta.dir,
-  "..",
-  "connectors",
-  "catalog.yaml",
-);
+/**
+ * Absolute path to the minimal curated catalog shipped in the image —
+ * a directory of `ServerDetail` YAML files (see
+ * `src/connectors/curated/`). Deliberately tiny: a couple of DCR
+ * entries so fresh / OSS / dev installs have a non-empty Browse without
+ * inheriting production curation. Real deployments override this with
+ * `NB_CURATED_CATALOG_DIR` pointing at a mounted ConfigMap directory
+ * (see `curatedCatalogPath`).
+ */
+export const BUNDLED_STATIC_CATALOG_PATH = join(import.meta.dir, "..", "connectors", "curated");
+
+/**
+ * Deployment override for the curated catalog source. Set to a mounted
+ * ConfigMap directory (e.g. `/config/connectors`) to replace the
+ * in-image example with the real, externally-managed catalog. Read at
+ * registry-build time; URLs are deployment configuration, not a
+ * runtime-mutable field (matching the `manage_registries` contract).
+ */
+const CURATED_CATALOG_DIR_ENV = "NB_CURATED_CATALOG_DIR";
+
+/**
+ * Resolve the curated registry's backing path: the deployment override
+ * when set, else the minimal in-image example directory. The path may
+ * be a single file or a directory of `ServerDetail` files —
+ * `StaticSource` handles both.
+ */
+function curatedCatalogPath(): string {
+  const override = process.env[CURATED_CATALOG_DIR_ENV]?.trim();
+  return override && override.length > 0 ? override : BUNDLED_STATIC_CATALOG_PATH;
+}
+
+/**
+ * Read-time resolution of the locked curated registry's backing path,
+ * given the value persisted in `registries.json`. Precedence:
+ *
+ *   1. `NB_CURATED_CATALOG_DIR` when set — the authoritative deployment
+ *      lever (same "env beats disk" precedent as `NB_REGISTRIES`).
+ *   2. The persisted url, if it still resolves — preserves a path an
+ *      operator set by hand-editing `registries.json` directly (#247).
+ *   3. The in-image example — so a path baked in by an older image
+ *      (e.g. one that shipped a since-removed catalog file) can't strand
+ *      Browse on a missing file.
+ *
+ * Pure/in-memory: callers never persist the result, so a transiently
+ * unreachable hand-edited path (a ConfigMap mount race) falls back for
+ * that read only and is restored on the next, never overwritten.
+ */
+function resolveCuratedUrl(persisted: string | undefined): string {
+  const override = process.env[CURATED_CATALOG_DIR_ENV]?.trim();
+  if (override && override.length > 0) return override;
+  if (persisted && existsSync(persisted)) return persisted;
+  return BUNDLED_STATIC_CATALOG_PATH;
+}
 
 const BUNDLED_STATIC_ID = "bundled-static";
 const MPAK_ID = "mpak";
@@ -72,7 +122,7 @@ function defaultRegistries(): RegistryConfig[] {
       type: "static",
       enabled: true,
       locked: true,
-      url: BUNDLED_STATIC_CATALOG_PATH,
+      url: curatedCatalogPath(),
     },
     // No `url` — the mpak SDK owns its default registry host. Operators
     // self-hosting a private mpak instance set `url` via the admin UI
@@ -111,7 +161,14 @@ export class RegistryStore {
   async list(): Promise<RegistryConfig[]> {
     if (this.envOverride) return this.envOverride;
     const record = await this.load();
-    return record.registries;
+    // The locked curated registry's path is deployment config, not
+    // trusted disk state: resolve it fresh on every read (see
+    // `resolveCuratedUrl`). Done in-memory only — a transient miss never
+    // overwrites an operator's persisted hand-edit, and a path baked in
+    // by an older image can't strand Browse on a since-removed file.
+    return record.registries.map((r) =>
+      r.id === BUNDLED_STATIC_ID ? { ...r, url: resolveCuratedUrl(r.url) } : r,
+    );
   }
 
   /** Look up a single registry by id. */
@@ -180,7 +237,10 @@ export class RegistryStore {
         return { registries: defaultRegistries() };
       }
       // Ensure the locked bundled-static registry can't be removed by
-      // hand-editing the file — re-add it if missing.
+      // hand-editing the file — re-add it if missing. Its *url* is not
+      // reconciled here; it's resolved fresh at read time in `list()`
+      // (see `resolveCuratedUrl`), so a stale persisted path never needs
+      // a disk write to heal.
       if (!parsed.registries.some((r) => r.id === BUNDLED_STATIC_ID)) {
         parsed.registries.unshift(defaultRegistryById(BUNDLED_STATIC_ID));
         await this.save(parsed);
@@ -198,6 +258,26 @@ export class RegistryStore {
 
   private async save(record: PersistedRecord): Promise<void> {
     await writeJsonAtomic(this.filePath(), record);
+  }
+}
+
+/**
+ * Boot-time visibility check for the locked curated registry — the
+ * platform's non-empty-Browse guarantee. If its resolved catalog path
+ * yields zero entries (a missing/empty ConfigMap mount, or a mis-set
+ * `NB_CURATED_CATALOG_DIR`), warn loudly so an empty Browse is
+ * diagnosable. This complements the per-source errors that already
+ * surface through `manage_registries list`. Intended as a one-shot
+ * call from `Runtime.start`, not a per-request hot path.
+ */
+export async function warnIfCuratedCatalogEmpty(store: RegistryStore): Promise<void> {
+  const curated = (await store.list()).find((r) => r.id === BUNDLED_STATIC_ID);
+  if (!curated || curated.type !== "static" || !curated.url) return;
+  if (readStaticServers(curated.url).length === 0) {
+    log.warn(
+      `[registries] curated catalog "${curated.url}" resolved to 0 entries — Browse will be ` +
+        `empty until a non-empty catalog is in place (check the mount or NB_CURATED_CATALOG_DIR).`,
+    );
   }
 }
 

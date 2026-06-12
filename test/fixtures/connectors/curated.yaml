@@ -1,0 +1,41 @@
+# Test fixture — representative curated catalog (DCR + static-auth).
+# Not shipped. Exercises the StaticSource contract and the connector
+# tooling against one of each non-Composio auth shape. Kept stable so
+# tests don't couple to production curation (which lives in deployments).
+servers:
+  - name: com.notion/mcp
+    title: Notion
+    description: Read & write workspace pages
+    version: "1.0.0"
+    icons:
+      - src: https://static.nimblebrain.ai/icons/notion.png
+        sizes: ["any"]
+    remotes:
+      - type: streamable-http
+        url: https://mcp.notion.com/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        auth: dcr
+        tags: [docs, knowledge]
+
+  - name: com.dropbox/mcp
+    title: Dropbox
+    description: Files, folders, and shared links
+    version: "1.0.0"
+    icons:
+      - src: https://static.nimblebrain.ai/icons/dropbox.png
+        sizes: ["any"]
+    remotes:
+      - type: streamable-http
+        url: https://mcp.dropbox.com/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        auth: static
+        requiredScopes:
+          - files.metadata.read
+          - files.content.read
+        operatorSetup:
+          portalUrl: https://www.dropbox.com/developers/apps
+          hint: Create a Scoped Access app, add the redirect URI, paste App key + secret
+          clientSecretKey: dropbox.client_secret
+        tags: [storage, files]

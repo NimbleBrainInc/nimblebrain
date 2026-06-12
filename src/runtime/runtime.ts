@@ -79,7 +79,7 @@ import type {
 } from "../prompt/compose.ts";
 import { composeSystemPrompt } from "../prompt/compose.ts";
 import { ConnectorDirectory } from "../registries/directory.ts";
-import { RegistryStore } from "../registries/registry-store.ts";
+import { RegistryStore, warnIfCuratedCatalogEmpty } from "../registries/registry-store.ts";
 import { synthesizeBundleSkill } from "../skills/bundle-skills.ts";
 import {
   loadBuiltinSkills,
@@ -912,6 +912,13 @@ export class Runtime {
         placementRegistry.register(sn, instance.ui.placements, wsId);
       }
     }
+
+    // Boot-time visibility: the locked curated registry is the platform's
+    // non-empty-Browse guarantee. Warn loudly if its resolved catalog
+    // path yields zero entries (missing/empty mount, mis-set
+    // NB_CURATED_CATALOG_DIR) so an empty Browse is diagnosable rather
+    // than silent.
+    await warnIfCuratedCatalogEmpty(rt.getRegistryStore());
 
     return rt;
   }

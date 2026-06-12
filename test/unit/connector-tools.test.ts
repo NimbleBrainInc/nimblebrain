@@ -8,7 +8,8 @@ import type { BundleRef } from "../../src/bundles/types.ts";
 import { getWorkspaceCredentials } from "../../src/config/workspace-credentials.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
 import { ConnectorDirectory } from "../../src/registries/directory.ts";
-import { BUNDLED_STATIC_CATALOG_PATH, RegistryStore } from "../../src/registries/registry-store.ts";
+import { RegistryStore } from "../../src/registries/registry-store.ts";
+import { CONNECTOR_FIXTURE_DIR } from "../helpers/connector-fixtures.ts";
 import type { DirectoryEntry } from "../../src/registries/types.ts";
 import type { Runtime } from "../../src/runtime/runtime.ts";
 import { FileCredentialStore } from "../../src/tools/credential-store.ts";
@@ -40,10 +41,10 @@ import { personalWorkspaceIdFor, WorkspaceStore } from "../../src/workspace/work
  */
 
 // Reverse-DNS form per upstream MCP registry's ServerDetail spec — matches
-// the `name` field of the Dropbox entry in src/connectors/catalog.yaml.
-// Dropbox is the canonical `auth: static` (bring-your-own OAuth) connector
-// in the catalog, so static-auth setup_operator/install tests resolve
-// against it.
+// the `name` field of the Dropbox entry in the connector test fixture
+// (test/fixtures/connectors/). Dropbox is the canonical `auth: static`
+// (bring-your-own OAuth) connector, so static-auth setup_operator/install
+// tests resolve against it.
 const DROPBOX_ID = "com.dropbox/mcp";
 const DROPBOX_URL = "https://mcp.dropbox.com/mcp";
 const DROPBOX_SECRET_KEY = "dropbox.client_secret";
@@ -158,7 +159,7 @@ function buildHarness(opts: { adminId?: string } = {}): Harness {
           type: "static",
           enabled: true,
           locked: true,
-          url: BUNDLED_STATIC_CATALOG_PATH,
+          url: CONNECTOR_FIXTURE_DIR,
         },
         {
           id: "mpak",

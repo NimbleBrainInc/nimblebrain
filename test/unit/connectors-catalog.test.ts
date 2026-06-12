@@ -3,12 +3,17 @@ import {
   getNimbleBrainConnectorMeta,
   validateServerDetail,
 } from "../../src/connectors/server-detail.ts";
-import { BUNDLED_STATIC_CATALOG_PATH } from "../../src/registries/registry-store.ts";
 import { readStaticServers } from "../../src/registries/static-source.ts";
+import { CONNECTOR_FIXTURE_DIR } from "../helpers/connector-fixtures.ts";
 
-describe("bundled catalog.yaml", () => {
+// The catalog *contract* — the shape rules every curated catalog file
+// must satisfy. Validated against a representative fixture directory
+// (one DCR, one static-auth, one Composio entry) rather than the
+// shipped catalog: production curation lives in deployments, so coupling
+// this suite to it would break the contract test on every curation edit.
+describe("curated catalog contract", () => {
   test("parses + validates as ServerDetail with zero drops", () => {
-    const servers = readStaticServers(BUNDLED_STATIC_CATALOG_PATH);
+    const servers = readStaticServers(CONNECTOR_FIXTURE_DIR);
     expect(servers.length).toBeGreaterThan(0);
     for (const s of servers) {
       const result = validateServerDetail(s);
@@ -17,21 +22,24 @@ describe("bundled catalog.yaml", () => {
   });
 
   test("all reverse-DNS names are unique", () => {
-    const servers = readStaticServers(BUNDLED_STATIC_CATALOG_PATH);
+    const servers = readStaticServers(CONNECTOR_FIXTURE_DIR);
     const names = servers.map((s) => s.name);
     expect(new Set(names).size).toBe(names.length);
   });
 
   test("static-auth entries all have operatorSetup with clientSecretKey", () => {
-    const servers = readStaticServers(BUNDLED_STATIC_CATALOG_PATH);
+    const servers = readStaticServers(CONNECTOR_FIXTURE_DIR);
+    let staticSeen = 0;
     for (const s of servers) {
       const meta = getNimbleBrainConnectorMeta(s);
       if (meta?.auth === "static") {
+        staticSeen++;
         expect(meta.operatorSetup).toBeDefined();
         expect(meta.operatorSetup?.clientSecretKey.length).toBeGreaterThan(0);
         expect(meta.operatorSetup?.portalUrl.startsWith("http")).toBe(true);
       }
     }
+    expect(staticSeen).toBeGreaterThan(0); // fixture covers the static-auth shape
   });
 
   test("composio entries all have a composio block with toolkit + authConfigEnv", () => {
@@ -41,9 +49,11 @@ describe("bundled catalog.yaml", () => {
     // install time (handleInstallRemoteOAuth reads process.env[authConfigEnv]).
     // This pins the block's presence and the env-var naming convention the
     // ClusterExternalSecret wires (COMPOSIO_<TOOLKIT>_AUTH_CONFIG_ID).
-    for (const s of readStaticServers(BUNDLED_STATIC_CATALOG_PATH)) {
+    let composioSeen = 0;
+    for (const s of readStaticServers(CONNECTOR_FIXTURE_DIR)) {
       const meta = getNimbleBrainConnectorMeta(s);
       if (meta?.auth !== "composio") continue;
+      composioSeen++;
       expect(meta.composio).toBeDefined();
       expect(meta.composio?.toolkit.length).toBeGreaterThan(0);
       expect(meta.composio?.authConfigEnv).toMatch(/^COMPOSIO_[A-Z0-9_]+_AUTH_CONFIG_ID$/);
@@ -53,10 +63,11 @@ describe("bundled catalog.yaml", () => {
         expect(meta.composio.tools.length).toBeGreaterThan(0);
       }
     }
+    expect(composioSeen).toBeGreaterThan(0); // fixture covers the composio shape
   });
 
   test("every entry carries an icon (Browse renders <img src>)", () => {
-    const servers = readStaticServers(BUNDLED_STATIC_CATALOG_PATH);
+    const servers = readStaticServers(CONNECTOR_FIXTURE_DIR);
     for (const s of servers) {
       const icon = s.icons?.[0];
       expect(icon).toBeDefined();

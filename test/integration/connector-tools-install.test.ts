@@ -7,10 +7,7 @@ import { BundleLifecycleManager } from "../../src/bundles/lifecycle.ts";
 import { textContent } from "../../src/engine/content-helpers.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
 import { ConnectorDirectory } from "../../src/registries/directory.ts";
-import {
-  BUNDLED_STATIC_CATALOG_PATH,
-  RegistryStore,
-} from "../../src/registries/registry-store.ts";
+import { RegistryStore } from "../../src/registries/registry-store.ts";
 import type { DirectoryEntry } from "../../src/registries/types.ts";
 import type { Runtime } from "../../src/runtime/runtime.ts";
 import {
@@ -25,6 +22,7 @@ import {
   WorkspaceStore,
 } from "../../src/workspace/workspace-store.ts";
 import { writeFileSync } from "node:fs";
+import { CONNECTOR_FIXTURE_DIR } from "../helpers/connector-fixtures.ts";
 
 /**
  * Integration coverage for T010's `manage_connectors.install` contract:
@@ -94,7 +92,7 @@ async function buildHarness(opts: { sessionWsId: string | null } = { sessionWsId
           type: "static",
           enabled: true,
           locked: true,
-          url: BUNDLED_STATIC_CATALOG_PATH,
+          url: CONNECTOR_FIXTURE_DIR,
         },
         { id: "mpak", name: "mpak.dev", type: "mpak", enabled: false },
       ],
