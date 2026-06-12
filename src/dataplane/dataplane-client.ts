@@ -296,7 +296,11 @@ export class ArtifactsClient {
         title: req.title,
         body_b64: toBase64(req.body),
         citations: req.citations,
-        source: req.source,
+        // NOTE: the artifacts service derives `source` from the verified token
+        // (provenance principal), and its POST body rejects an explicit `source`
+        // (422 extra_forbidden). So we do NOT send it on the write — `producedBy`
+        // still round-trips on the local backend, and dataplane provenance comes
+        // from the token. (Re-add here only if the service adds a writable column.)
         idempotency_key: req.idempotencyKey,
         ttl_seconds: req.ttlSeconds,
       }),

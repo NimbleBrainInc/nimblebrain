@@ -202,9 +202,11 @@ describe("dataplane OutputStore", () => {
     expect(seen?.method).toBe("POST");
     expect(seen?.url).toBe(`${BASE}/v1/artifacts`);
     expect(seen?.auth).toBe("Bearer tok-artifacts-artifacts:write");
-    // `kind` is sent as the artifacts `type`; `producedBy` as `source`.
+    // `kind` is sent as the artifacts `type`. `source`/producedBy is NOT sent on
+    // the write — the artifacts service derives it from the verified token and
+    // its POST body rejects an explicit `source` (422 extra_forbidden).
     expect((seen?.body as { type: string }).type).toBe("report");
-    expect((seen?.body as { source?: string }).source).toBe("tool:deep_research");
+    expect((seen?.body as Record<string, unknown>).source).toBeUndefined();
   });
 
   it("get fetches content with a SEPARATE aud=artifacts scope=artifacts:read bearer", async () => {
