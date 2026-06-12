@@ -15,6 +15,8 @@ import { createManageAppsTool } from "./app-tools.ts";
 import { createManageConnectorsTool } from "./connector-tools.ts";
 import { buildCoreResourceMap } from "./core-resources/index.ts";
 import { createCoreToolDefs } from "./core-source.ts";
+import type { DeepResearchContext } from "./deep-research.ts";
+import { createDeepResearchTool } from "./deep-research.ts";
 import type { DelegateContext } from "./delegate.ts";
 import { createDelegateTool } from "./delegate.ts";
 import { defineInProcessApp, type InProcessTool } from "./in-process-app.ts";
@@ -83,6 +85,7 @@ export async function createSystemTools(
   _manageBundleCtx?: unknown,
   toolPromotionCtx?: ToolPromotionContext,
   toolEligibilityCtx?: ToolEligibilityContext,
+  deepResearchCtx?: DeepResearchContext,
 ): Promise<McpSource> {
   // Core tools (always available, not feature-gated)
   const coreToolDefs: InProcessTool[] = runtime ? createCoreToolDefs(runtime) : [];
@@ -255,6 +258,12 @@ export async function createSystemTools(
 
   if (delegateCtx) {
     systemToolDefs.push(createDelegateTool(delegateCtx));
+  }
+
+  // Present only when the data plane is configured (issuer + service URLs).
+  // Absent on local dev so the agent never sees a tool it can't drive.
+  if (deepResearchCtx) {
+    systemToolDefs.push(createDeepResearchTool(deepResearchCtx));
   }
 
   if (manageUsersCtx) {

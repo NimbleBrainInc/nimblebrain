@@ -96,6 +96,7 @@ import { truncateMarkdownToBudget } from "../skills/truncate.ts";
 import type { Skill } from "../skills/types.ts";
 import { TelemetryManager } from "../telemetry/manager.ts";
 import { PostHogEventSink } from "../telemetry/posthog-sink.ts";
+import type { DeepResearchContext } from "../tools/deep-research.ts";
 import type { DelegateContext } from "../tools/delegate.ts";
 import { isIdentitySource } from "../tools/identity-sources.ts";
 import { McpSource } from "../tools/mcp-source.ts";
@@ -783,6 +784,24 @@ export class Runtime {
     rt._getIdentity = getIdentity;
     rt._getWorkspaceId = getWorkspaceId;
 
+    // Deep-research trigger context. Built only when the data plane is wired
+    // (fleet issuer + nimbletasks + artifacts URLs all present) — otherwise the
+    // `nb__deep_research` tool is omitted, so local dev never sees a tool it
+    // can't drive. The mint itself is authenticated by the per-tenant key
+    // (NB_MCP_AUTHORIZER_TENANT_KEY), read inside the data-plane clients.
+    const drIssuer = process.env.NB_FLEET_AUTHORIZER_ISSUER;
+    const drTasksUrl = process.env.NB_NIMBLETASKS_URL;
+    const drArtifactsUrl = process.env.NB_ARTIFACTS_URL;
+    const deepResearchCtx: DeepResearchContext | undefined =
+      drIssuer && drTasksUrl && drArtifactsUrl
+        ? {
+            getWorkspaceId: () => rt.getCurrentWorkspaceId(),
+            issuer: drIssuer,
+            nimbletasksUrl: drTasksUrl,
+            artifactsUrl: drArtifactsUrl,
+          }
+        : undefined;
+
     // Register the `nb` system source. Built as an in-process MCP server
     // — `createSystemTools` returns it already-started so it's ready to
     // serve tools and resources to every workspace registry.
@@ -805,6 +824,7 @@ export class Runtime {
       undefined, // reserved slot — was manageBundleCtx (nb__manage_app, removed)
       toolPromotionCtx,
       toolEligibilityCtx,
+      deepResearchCtx,
     );
     rt._systemSource = systemTools;
 
