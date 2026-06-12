@@ -22,7 +22,8 @@ import type { InProcessTool } from "./in-process-app.ts";
  *      its own Job — discover sources, read them, synthesize a cited report).
  *   3. persist the report through the kernel `OutputStore` seam → `files://<id>`.
  *   4. return a SHORT summary + a `resource_link` to the stored report; the
- *      client fetches the report (via the outputs source) and renders it.
+ *      client fetches the report (via the `nb` source's resource handler) and
+ *      renders it.
  *
  * The bundle/worker never holds a data-plane credential: the runtime creates the
  * task and writes the output. The tool BLOCKS until the task is terminal — the
@@ -294,8 +295,10 @@ export function createDeepResearchTool(ctx: DeepResearchContext): InProcessTool 
     description:
       "Run deep web research on a query as a durable background task and save the result as a " +
       "retrievable report. Discovers sources, reads the top ones, and synthesizes a cited " +
-      "markdown report. Long-running — may take minutes. The full report is shown inline to the " +
-      "user; retrieve it later in full via nb__get_output using the returned reference.",
+      "markdown report. Long-running — may take minutes. On success the report is delivered to " +
+      "the user as an attached document (returned as a resource_link) and rendered in their UI — " +
+      "do NOT reproduce or restate it; reply with a brief confirmation. Retrieve its full " +
+      "contents later via nb__get_output using the returned reference.",
     inputSchema: {
       type: "object",
       properties: {
@@ -385,10 +388,13 @@ export function createDeepResearchTool(ctx: DeepResearchContext): InProcessTool 
           });
         }
 
-        // Persist through the store seam. Idempotency keyed on the task so a
-        // re-run writes the report once. On a write failure we still have the
-        // REAL report in hand — inline-fallback it (real content, not a
-        // fabrication) with a "couldn't save durably" note rather than failing.
+        // Persist through the store seam. The idempotency key is STABLE per task
+        // (`dr-artifact-<taskId>`), so a re-run of the same (workspace, query) —
+        // which the content-addressed task key already dedups to one task — writes
+        // the report ONCE rather than minting a duplicate artifact each call. On a
+        // write failure we still have the REAL report in hand — inline-fallback it
+        // (real content, not a fabrication) with a "couldn't save durably" note
+        // rather than failing.
         try {
           const ref = await ctx.store.put(
             { workspace },
@@ -399,6 +405,7 @@ export function createDeepResearchTool(ctx: DeepResearchContext): InProcessTool 
               body: envelope.report,
               title: titleFor(query),
               citations: envelope.sources,
+              idempotencyKey: `dr-artifact-${terminal.taskId}`,
             },
           );
           return storedResult({

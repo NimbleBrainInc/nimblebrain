@@ -110,7 +110,6 @@ import type { GetOutputContext } from "../tools/get-output.ts";
 import { isIdentitySource } from "../tools/identity-sources.ts";
 import { McpSource } from "../tools/mcp-source.ts";
 import { namespacedToolName } from "../tools/namespace.ts";
-import { createOutputsSource } from "../tools/outputs-source.ts";
 import { SharedSourceRef, type ToolRegistry } from "../tools/registry.ts";
 import { surfaceTools } from "../tools/surfacing.ts";
 import { createSystemTools } from "../tools/system-tools.ts";
@@ -920,20 +919,12 @@ export class Runtime {
     // the user only through the identity door — never `ws_<id>-conversations`.
     const workspaceSources = platformSources.filter((s) => !isIdentitySource(s.name));
 
-    // Outputs resolvable source — exposes stored outputs through `files://`
-    // resolution so `nb__read_resource(files://<id>)` peeks a past output (the
-    // existing read_resource loop iterates workspace sources). Present only when
-    // the store provider resolves; the dataplane backend especially needs it
-    // (its artifact refs have no entry in the local file store that `files`
-    // resolves). Started here, then threaded into every workspace registry.
-    if (outputStore) {
-      const outputsSource = createOutputsSource(
-        { getWorkspaceId: () => rt.getCurrentWorkspaceId(), store: outputStore },
-        events,
-      );
-      await outputsSource.start();
-      workspaceSources.push(outputsSource);
-    }
+    // Stored outputs resolve through `files://` via the `nb` system source's
+    // `resourceHandler` (see `createSystemTools` → `resolveOutputResource`), so
+    // `nb__read_resource(files://<id>)` and the frontend's
+    // `POST /v1/resources/read {server:"nb"}` both peek a past output — including
+    // the dataplane backend's artifact refs that have no local file-store entry.
+    // No dedicated workspace source is needed.
 
     // Phase 3: Start workspace bundles with per-workspace registries
     const configDir = config.configPath ? dirname(config.configPath) : undefined;

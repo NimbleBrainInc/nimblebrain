@@ -191,9 +191,13 @@ describe("dataplane OutputStore", () => {
       mime: "text/markdown",
       body: "report",
       title: "Deep research",
+      idempotencyKey: "dr-artifact-task_1",
     });
 
     expect(ref.id).toBe("art_1");
+    // A caller-supplied stable key wins over the generator and is forwarded on
+    // the wire so a re-run dedups instead of writing a duplicate artifact.
+    expect((seen?.body as Record<string, unknown>).idempotency_key).toBe("dr-artifact-task_1");
     // The ref surfaced to callers is files://, NOT the server's artifact:// uri.
     expect(ref.uri).toBe("files://art_1");
     expect(ref.kind).toBe("report");

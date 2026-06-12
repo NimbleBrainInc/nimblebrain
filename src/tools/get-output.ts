@@ -1,13 +1,14 @@
 import { log } from "../cli/log.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import type { ToolResult } from "../engine/types.ts";
+import { isTextMime } from "../files/mime.ts";
 import {
   decodeOutputText,
   type OutputStore,
   OutputStoreDisabledError,
   outputRefToId,
 } from "../files/output-store.ts";
-import type { InProcessTool } from "./in-process-app.ts";
+import type { InProcessResource, InProcessTool } from "./in-process-app.ts";
 
 /**
  * `nb__get_output` — fetch a stored output's FULL content by `files://` ref.
@@ -25,9 +26,10 @@ import type { InProcessTool } from "./in-process-app.ts";
  * Workspace fencing: the scope is taken from the runtime's CURRENT workspace
  * context — never a field on the request body. The dataplane backend enforces
  * the same scope at the RLS boundary (its read token is workspace-dimensioned);
- * for the identity-owned local store we additionally compare the resolved
- * output's recorded workspace and refuse a cross-workspace read. Either way the
- * caller cannot widen its own scope.
+ * the local store is workspace-scoped (rooted under the workspace dir), but we
+ * additionally compare the resolved output's recorded workspace and refuse a
+ * cross-workspace read as defense in depth (a shared store, e.g. in tests, still
+ * fences A from B). Either way the caller cannot widen its own scope.
  */
 
 export interface GetOutputContext {
@@ -97,11 +99,12 @@ export function createGetOutputTool(ctx: GetOutputContext): InProcessTool {
       try {
         const content = await ctx.store.get({ workspace }, id);
 
-        // Defense in depth for the identity-owned local store: the dataplane
-        // backend already fenced this at the RLS boundary, but the local store
-        // resolves any of the identity's files regardless of workspace. If the
-        // stored output records a DIFFERENT workspace, refuse — same not-found
-        // shape as an unknown id, so a foreign ref leaks nothing.
+        // Defense in depth for the workspace-scoped local store: the dataplane
+        // backend already fenced this at the RLS boundary, and the local store
+        // is rooted under the workspace dir — but a shared store (e.g. in tests)
+        // can hold entries from multiple workspaces. If the stored output records
+        // a DIFFERENT workspace, refuse — same not-found shape as an unknown id,
+        // so a foreign ref leaks nothing.
         if (content.meta.workspace && content.meta.workspace !== workspace) {
           return fail(
             `Output "${id}" was not found.`,
@@ -158,4 +161,54 @@ export function createGetOutputTool(ctx: GetOutputContext): InProcessTool {
       }
     },
   };
+}
+
+/**
+ * Resolve a `files://<id>` ref to its output bytes through the `OutputStore`,
+ * shaped as an `InProcessResource` for the `resources/read` path. Returns `null`
+ * for a non-`files://` uri, no bound workspace, a cross-workspace ref, or any
+ * store error — so the read_resource loop falls through cleanly.
+ *
+ * Wired into the `nb` system source's `resourceHandler` (see system-tools.ts): a
+ * deep_research `resource_link` is fetched by the frontend with the OWNING tool's
+ * app name (`appNameFromToolName("nb__deep_research") === "nb"`), so the `nb`
+ * source resolves the same `files://<id>` ref. The bounded "peek": read_resource
+ * applies its existing 12K cap to the returned text (motivating `nb__get_output`
+ * for the full body).
+ */
+export async function resolveOutputResource(
+  store: OutputStore,
+  workspace: string | null,
+  uri: string,
+): Promise<InProcessResource | null> {
+  const id = outputRefToId(uri);
+  if (!id) return null; // not a files:// ref — let another source try.
+  if (!workspace) return null; // no workspace bound — resolve nothing.
+
+  try {
+    const content = await store.get({ workspace }, id);
+
+    // Fence the workspace-scoped local store the same way `nb__get_output` does:
+    // if the stored output records a different workspace, treat it as not-found
+    // rather than leaking it across the scope boundary. (The dataplane backend
+    // already fenced at the RLS boundary.)
+    if (content.meta.workspace && content.meta.workspace !== workspace) {
+      return null;
+    }
+
+    // Return the FULL body; read_resource applies its own 12K peek cap. Text
+    // MIMEs come back as `text` (so read_resource can truncate + show them);
+    // everything else as a `blob` (read_resource reports it as binary).
+    if (isTextMime(content.meta.mime)) {
+      return {
+        text: new TextDecoder().decode(content.body),
+        mimeType: content.meta.mime,
+      };
+    }
+    return { blob: content.body, mimeType: content.meta.mime };
+  } catch {
+    // Unknown id / store error → not-found. Falls through the read_resource
+    // loop cleanly (no crash, no leak).
+    return null;
+  }
 }

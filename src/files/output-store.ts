@@ -62,6 +62,16 @@ export interface PutInput {
   citations?: Array<{ title?: string; url?: string }>;
   /** Optional time-to-live in seconds (dataplane honors it; local ignores it). */
   ttl?: number;
+  /**
+   * Optional STABLE idempotency key for the write. When set, a repeat `put` with
+   * the same key returns the existing artifact instead of minting a duplicate —
+   * the dataplane backend forwards it as the artifacts `idempotency_key`. Callers
+   * that re-run the same logical write (e.g. deep_research keying on its taskId)
+   * pass a deterministic key so a re-run writes the report ONCE. Absent ⇒ the
+   * dataplane mints a random key per call (no dedup). The local backend does not
+   * dedup on it today (see `put`).
+   */
+  idempotencyKey?: string;
 }
 
 /** A resolvable reference to a stored output. `uri` is always `files://<id>`. */
@@ -162,7 +172,12 @@ export interface DataplaneOutputStoreOptions {
   cache?: DataPlaneClientOptions["cache"];
   /** Injectable base fetch for tests. */
   baseFetch?: typeof fetch;
-  /** Idempotency-key generator for writes; defaults to a random key per put. */
+  /**
+   * Idempotency-key generator for writes, used ONLY when the put input carries no
+   * explicit `idempotencyKey`. Defaults to a random key per put (no dedup). A
+   * caller-supplied `PutInput.idempotencyKey` always wins so a stable key (e.g.
+   * deep_research's per-task key) dedups duplicate writes.
+   */
   idempotencyKey?: (scope: OutputScope, input: PutInput) => string;
 }
 
@@ -203,12 +218,14 @@ export function createDataplaneOutputStore(opts: DataplaneOutputStoreOptions): O
         body: input.body,
         title: input.title,
         citations: input.citations,
-        // `producedBy` maps to the artifacts `source` column.
-        // TODO(platform): confirm the artifacts write API persists `source` on
-        // POST (it's already returned on read/list metadata); if it doesn't, add
-        // a `source`/`producedBy` column on the write path.
+        // `producedBy` is DROPPED on the dataplane write: `writeArtifact` does NOT
+        // forward `source` because the artifacts POST rejects an explicit `source`
+        // (422 extra_forbidden) and derives provenance from the verified token. We
+        // still hand it over so the seam stays wired if the service adds a writable
+        // column. It round-trips on read/list (service-filled) and on the local
+        // backend — so don't go hunting for missing provenance on dataplane writes.
         source: input.producedBy,
-        idempotencyKey: newIdem(scope, input),
+        idempotencyKey: input.idempotencyKey ?? newIdem(scope, input),
         ttlSeconds: input.ttl,
       });
       return {
@@ -302,6 +319,10 @@ export function createLocalOutputStore(opts: LocalOutputStoreOptions): OutputSto
     async put(scope, input) {
       const store = opts.resolveStore(scope);
       const bytes = toBytes(input.body);
+      // NOTE: the local backend does not honor `input.idempotencyKey` — the file
+      // store has no cheap "find by idempotency key" — so a re-run writes a new
+      // entry. The dataplane dedup is the one that matters (it pays for remote
+      // storage); local writes are to a cheap workspace PVC.
       const filename = `${input.title ?? input.kind}`.slice(0, 200) || "output";
       const saved = await store.saveFile(Buffer.from(bytes), filename, input.mime);
       // Persist a registry entry so `get`/`list` can recover the bytes and the
@@ -436,7 +457,8 @@ export interface ResolveOutputStoreConfig {
   dataplaneUrl?: string;
   /** Builds the dataplane store when the data plane is selected. */
   makeDataplane: (opts: { baseUrl: string; issuer: string }) => OutputStore;
-  /** Builds the local store (binds the runtime's identity-owned FileStore). */
+  /** Builds the local store (binds a WORKSPACE-SCOPED FileStore — rooted under
+   *  the workspace dir, not the identity-owned user store; see the 002b fix). */
   makeLocal: () => OutputStore;
 }
 
@@ -531,7 +553,11 @@ export interface TaskRunnerSelection {
 }
 
 export interface ResolveTaskRunnerConfig {
-  /** Explicit override (`NB_TASK_RUNNER`): `"none"` forces `null`. */
+  /**
+   * Explicit override (`NB_TASK_RUNNER`): `"none"` forces `null`; `"dataplane"`
+   * forces the data plane (or `null` if issuer/URL are missing — fail closed,
+   * mirroring `resolveOutputStore`).
+   */
   force?: string;
   /** Fleet authorizer issuer (`NB_FLEET_AUTHORIZER_ISSUER`). */
   issuer?: string;
@@ -541,10 +567,12 @@ export interface ResolveTaskRunnerConfig {
 
 /**
  * Resolve the task-runner backend. Mirrors `resolveOutputStore`: `none` forces
- * disabled; issuer + URL present selects `dataplane`; otherwise `null` (there is
- * no zero-infra task runner, so the default off-platform state is "no durable
- * tasks", not "local tasks"). Failing closed here means deep_research is simply
- * absent off-platform rather than pretending to run.
+ * disabled; `dataplane` forces the data plane (or `null`, fail closed, if
+ * issuer/URL are missing); else issuer + URL present selects `dataplane`;
+ * otherwise `null` (there is no zero-infra task runner, so the default
+ * off-platform state is "no durable tasks", not "local tasks"). Failing closed
+ * here means deep_research is simply absent off-platform rather than pretending
+ * to run.
  */
 export function resolveTaskRunner(config: ResolveTaskRunnerConfig): TaskRunnerSelection {
   const force = config.force?.trim().toLowerCase();
@@ -553,6 +581,23 @@ export function resolveTaskRunner(config: ResolveTaskRunnerConfig): TaskRunnerSe
 
   if (force === "none") {
     return { kind: "null", reason: "task runner disabled by NB_TASK_RUNNER=none" };
+  }
+
+  if (force === "dataplane") {
+    if (!dataplane) {
+      // Mirror resolveOutputStore: a forced data plane with no issuer/URL is a
+      // misconfig, not a silent no-op. Fail closed with an explicit reason.
+      return {
+        kind: "null",
+        reason:
+          "task runner forced dataplane by NB_TASK_RUNNER=dataplane but issuer/URL are not set — disabling (fail closed)",
+      };
+    }
+    return {
+      kind: "dataplane",
+      dataplane,
+      reason: "task runner forced dataplane by NB_TASK_RUNNER=dataplane",
+    };
   }
 
   if (dataplane) {

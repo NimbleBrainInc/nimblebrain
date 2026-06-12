@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { createFileStore, type FileStore } from "../../src/files/store.ts";
 import { createLocalOutputStore, type OutputScope } from "../../src/files/output-store.ts";
-import { createGetOutputTool } from "../../src/tools/get-output.ts";
+import { createGetOutputTool, resolveOutputResource } from "../../src/tools/get-output.ts";
 import type { ToolResult } from "../../src/engine/types.ts";
 
 /** Extract the first text content block from a tool result. */
@@ -27,8 +27,9 @@ describe("nb__get_output", () => {
     await rm(dir, { recursive: true, force: true });
   });
 
-  // The identity-owned local store is shared across workspaces; the tool fences
-  // by the CURRENT workspace, so a single store backs both ws here.
+  // A single shared local store backs both workspaces here; the tool fences by
+  // the CURRENT workspace (defense in depth — a real workspace-scoped store is
+  // already rooted under the workspace dir).
   function outputStore() {
     return createLocalOutputStore({ resolveStore: (_s: OutputScope) => store });
   }
@@ -100,5 +101,59 @@ describe("nb__get_output", () => {
 
     const res = await tool.handler({ ref: ref.uri });
     expect(res.isError).toBe(true);
+  });
+});
+
+// The `nb` system source resolves `files://<id>` output refs through this same
+// helper (wired as its `resourceHandler`), so a deep_research `resource_link`
+// peeks via read_resource. These cover the resolver directly.
+describe("resolveOutputResource (nb resource handler)", () => {
+  let dir: string;
+  let store: FileStore;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), "resolve-output-"));
+    store = createFileStore(join(dir, "files"));
+  });
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  function outputStore() {
+    return createLocalOutputStore({ resolveStore: (_s: OutputScope) => store });
+  }
+
+  it("resolves a stored text output to an InProcessResource", async () => {
+    const out = outputStore();
+    const ref = await out.put(
+      { workspace: WS },
+      { kind: "report", mime: "text/markdown", body: "# Title\nbody text" },
+    );
+    const res = await resolveOutputResource(out, WS, ref.uri);
+    expect(res).not.toBeNull();
+    expect((res as { text: string }).text).toContain("body text");
+  });
+
+  it("returns null for a foreign-workspace ref (no leak)", async () => {
+    const out = outputStore();
+    const ref = await out.put(
+      { workspace: OTHER_WS },
+      { kind: "report", mime: "text/plain", body: "secret body" },
+    );
+    expect(await resolveOutputResource(out, WS, ref.uri)).toBeNull();
+  });
+
+  it("returns null for a non-files scheme", async () => {
+    expect(await resolveOutputResource(outputStore(), WS, "skill://foo/bar")).toBeNull();
+  });
+
+  it("returns null with no bound workspace", async () => {
+    const out = outputStore();
+    const ref = await out.put({ workspace: WS }, { kind: "report", mime: "text/plain", body: "x" });
+    expect(await resolveOutputResource(out, null, ref.uri)).toBeNull();
+  });
+
+  it("returns null for an unknown files:// ref (no crash)", async () => {
+    expect(await resolveOutputResource(outputStore(), WS, "files://fl_missing")).toBeNull();
   });
 });
