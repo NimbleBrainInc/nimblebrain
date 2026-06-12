@@ -378,7 +378,10 @@ export async function aggregateUsage(
         continue;
       }
 
-      if (entry.type === "llm.response" && entry.usage) {
+      // `aux.usage` carries the same {ts, model, usage, llmMs} shape for forked
+      // model calls (compaction summarizer, auto-title) that emit no
+      // llm.response — count them so their cost isn't undercounted.
+      if ((entry.type === "llm.response" || entry.type === "aux.usage") && entry.usage) {
         const ts = (entry.ts as string) ?? "";
         if (!isDateInRange(ts.slice(0, 10), range)) continue;
 

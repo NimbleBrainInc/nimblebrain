@@ -57,6 +57,20 @@ describe("generateTitle", () => {
 		expect(transcript).toContain("<\\/user-message>");
 	});
 
+	it("reports the title call's usage via onUsage", async () => {
+		const model = createMockModel(() => ({
+			content: [{ type: "text", text: "My Title" }],
+			inputTokens: 120,
+			outputTokens: 8,
+		}));
+		let seen: { inputTokens: number; outputTokens: number } | undefined;
+		await generateTitle(model, "hello", "hi there", (usage) => {
+			seen = { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens };
+		});
+		expect(seen?.inputTokens).toBe(120);
+		expect(seen?.outputTokens).toBe(8);
+	});
+
 	it("falls back when the model returns refusal text", async () => {
 		const model = createMockModel(() => ({
 			content: [

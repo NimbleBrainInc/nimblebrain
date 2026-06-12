@@ -1814,11 +1814,24 @@ export class Runtime {
     // and the title landing) surfaces in the catch instead of as an unhandled
     // rejection that would fail the whole run.
     if (conversation.title === null) {
-      const titleModel = this.resolveModelFn(this.getModelSlot("fast"));
+      const titleSlot = this.getModelSlot("fast");
+      const titleModel = this.resolveModelFn(titleSlot);
       const titleInput =
         request.message ||
         `[Uploaded: ${request.fileRefs?.map((f) => f.filename).join(", ") || "files"}]`;
-      void generateTitle(titleModel, titleInput, result.output)
+      // The title call runs the `fast` slot outside the agentic loop; persist
+      // its usage as an aux.usage event so it isn't invisible to cost accounting.
+      const appendTitleUsage = store.appendEvent?.bind(store);
+      void generateTitle(titleModel, titleInput, result.output, (usage, llmMs) =>
+        appendTitleUsage?.(conversation.id, {
+          ts: new Date().toISOString(),
+          type: "aux.usage",
+          source: "title",
+          model: titleSlot,
+          usage,
+          llmMs,
+        }),
+      )
         .then(async (title) => {
           await store.update(conversation.id, { title });
           // `wsId: sessionWsId` (the owner's personal workspace) — NOT
@@ -3192,6 +3205,18 @@ export class Runtime {
       now: new Date().toISOString(),
       onEvent: (event) => appendEvent(conversationId, event),
       onError: (err) => console.error("[runtime] history compaction failed:", err),
+      // The summarizer runs the `fast` slot outside the agentic loop, so it
+      // emits no llm.response. Persist its usage as an aux.usage event so the
+      // fold's cost isn't invisible to the usage aggregator.
+      onUsage: (usage, llmMs) =>
+        appendEvent(conversationId, {
+          ts: new Date().toISOString(),
+          type: "aux.usage",
+          source: "compaction",
+          model: fastSlot,
+          usage,
+          llmMs,
+        }),
     });
     // No-op contract: the helper returns the SAME array reference when nothing
     // was compacted (below threshold or best-effort failure). A future helper

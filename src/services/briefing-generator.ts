@@ -1,5 +1,6 @@
 import type { LanguageModelV3, SharedV3ProviderOptions } from "@ai-sdk/provider";
 import { getModelByString, getProviderFromModel } from "../model/catalog.ts";
+import { type TokenUsage, tokenUsageFromV3 } from "../usage/types.ts";
 import type { BriefingContext } from "./briefing-collector.ts";
 import { debugBriefing } from "./briefing-debug.ts";
 import type {
@@ -148,6 +149,12 @@ export class BriefingGenerator {
     private model: LanguageModelV3,
     private modelString: string | null,
     private config: HomeConfig,
+    /**
+     * Observe the `fast`-slot generation's usage — the call runs outside the
+     * agentic loop and emits no llm.response, so without this its cost is
+     * invisible to the usage aggregator.
+     */
+    private onUsage?: (usage: TokenUsage, llmMs: number) => void,
   ) {}
 
   async generate(
@@ -260,6 +267,7 @@ export class BriefingGenerator {
 
     const providerOptions = shortCallProviderOptions(this.modelString);
     const abort = AbortSignal.timeout(BRIEFING_TIMEOUT_MS);
+    const startedAt = Date.now();
     const response = await this.model.doGenerate({
       prompt: [
         { role: "system", content: BRIEFING_SYSTEM_PROMPT },
@@ -278,6 +286,8 @@ export class BriefingGenerator {
       abortSignal: abort,
       ...(Object.keys(providerOptions).length > 0 ? { providerOptions } : {}),
     });
+
+    this.onUsage?.(tokenUsageFromV3(response.usage), Date.now() - startedAt);
 
     const finishReason = response.finishReason?.unified ?? "unknown";
     if (finishReason === "length") {

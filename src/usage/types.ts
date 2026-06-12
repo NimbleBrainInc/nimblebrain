@@ -16,6 +16,8 @@
  * compiler enforces that callers supply the full struct, which is what
  * keeps cost computation from silently dropping a field.
  */
+import type { LanguageModelV3Usage } from "@ai-sdk/provider";
+
 export interface TokenUsage {
   inputTokens: number;
   outputTokens: number;
@@ -32,6 +34,29 @@ export interface TokenUsage {
    * all-1h so historical figures stay correct.
    */
   cacheWrite1hTokens?: number;
+}
+
+/**
+ * Map an AI SDK V3 `doGenerate`/`doStream` usage struct into the canonical
+ * `TokenUsage`.
+ *
+ * Deliberately omits `cacheWrite1hTokens` — that 1h/5m split comes from
+ * provider metadata the engine reads separately, not from this usage struct.
+ * Cost treats an absent split as all-1h (the 2x rate; see `cost.ts`), so a
+ * caller that sets `cache_control` breakpoints AND maps usage only through here
+ * would over-cost its cache writes. Safe for the current callers (the forked
+ * `fast`-slot utility calls — compaction summarizer, auto-title, briefing —
+ * issue raw `doGenerate` with no breakpoints, so `cacheWriteTokens` is ~0); the
+ * engine layers the 1h split on top of this for the main loop.
+ */
+export function tokenUsageFromV3(usage: LanguageModelV3Usage): TokenUsage {
+  return {
+    inputTokens: usage.inputTokens.total ?? 0,
+    outputTokens: usage.outputTokens.total ?? 0,
+    cacheReadTokens: usage.inputTokens.cacheRead ?? 0,
+    cacheWriteTokens: usage.inputTokens.cacheWrite ?? 0,
+    reasoningTokens: usage.outputTokens.reasoning ?? 0,
+  };
 }
 
 /** Zero-valued TokenUsage. Convenience for accumulators. */

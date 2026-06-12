@@ -1,4 +1,5 @@
 import type { LanguageModelV3 } from "@ai-sdk/provider";
+import { type TokenUsage, tokenUsageFromV3 } from "../usage/types.ts";
 import type { HistoryCompactedEvent, StoredMessage } from "./types.ts";
 
 /**
@@ -49,6 +50,12 @@ export interface CompactionOptions {
    * fallback (never unbounded). See `summarizerTranscriptBudgetTokens`.
    */
   summarizerContextTokens?: number;
+  /**
+   * Observe the summarizer model call's token usage (the call runs outside the
+   * agentic loop, so it emits no `llm.response`). The runtime uses this to
+   * persist an `aux.usage` event so the fold's cost isn't invisible.
+   */
+  onUsage?: (usage: TokenUsage, llmMs: number) => void;
 }
 
 const DEFAULTS = {
@@ -333,12 +340,17 @@ const SUMMARIZE_SYSTEM =
 export async function summarizeMessages(
   model: LanguageModelV3,
   messages: readonly StoredMessage[],
-  opts: { maxOutputTokens?: number; summarizerContextTokens?: number } = {},
+  opts: {
+    maxOutputTokens?: number;
+    summarizerContextTokens?: number;
+    onUsage?: (usage: TokenUsage, llmMs: number) => void;
+  } = {},
 ): Promise<string> {
   const transcript = formatTranscript(
     messages,
     summarizerTranscriptBudgetTokens(opts.summarizerContextTokens),
   );
+  const startedAt = Date.now();
   const result = await model.doGenerate({
     prompt: [
       { role: "system", content: SUMMARIZE_SYSTEM },
@@ -346,6 +358,9 @@ export async function summarizeMessages(
     ],
     maxOutputTokens: opts.maxOutputTokens ?? SUMMARY_MAX_OUTPUT_TOKENS,
   });
+  // Report usage before the empty-summary guard — the call was billed
+  // regardless of whether its output is usable.
+  opts.onUsage?.(tokenUsageFromV3(result.usage), Date.now() - startedAt);
   const textBlock = result.content.find((b) => b.type === "text");
   const summary = textBlock?.type === "text" ? textBlock.text.trim() : "";
   if (!summary) throw new Error("compaction summary was empty");
@@ -366,6 +381,7 @@ export async function runCompaction(
   if (!plan.shouldCompact) return null;
   const summary = await summarizeMessages(model, messages.slice(0, plan.boundaryIndex), {
     summarizerContextTokens: opts.summarizerContextTokens,
+    onUsage: opts.onUsage,
   });
   return {
     summary,

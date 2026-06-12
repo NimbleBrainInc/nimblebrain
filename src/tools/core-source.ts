@@ -6,7 +6,11 @@ import { textContent } from "../engine/content-helpers.ts";
 import type { ToolResult } from "../engine/types.ts";
 import { ORG_ADMIN_ROLES } from "../identity/types.ts";
 import { getAvailableModels, isModelAllowed } from "../model/catalog.ts";
-import { type RequestContext, runWithRequestContext } from "../runtime/request-context.ts";
+import {
+  getRequestContext,
+  type RequestContext,
+  runWithRequestContext,
+} from "../runtime/request-context.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import { canWriteWorkspaceScoped } from "../workspace/authz.ts";
 import type { InProcessTool } from "./in-process-app.ts";
@@ -799,6 +803,23 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
                   userName: homeConfig.userName,
                   timezone: homeConfig.timezone,
                   cacheTtlMinutes: homeConfig.cacheTtlMinutes,
+                },
+                // The briefing's fast-slot generation emits no llm.response, so
+                // persist its usage as an aux.usage event. Foreground generation
+                // runs in the caller's conversation; the background SWR refresh
+                // (bgCtx) has no conversationId, so it's skipped here — a known
+                // workspace-scoped gap with no conversation to attribute to.
+                (usage, llmMs) => {
+                  const convId = getRequestContext()?.conversationId;
+                  if (!convId) return;
+                  runtime.findConversationStore()?.appendEvent?.(convId, {
+                    ts: new Date().toISOString(),
+                    type: "aux.usage",
+                    source: "briefing",
+                    model: modelString ?? "unknown",
+                    usage,
+                    llmMs,
+                  });
                 },
               );
               return generator.generate(activity, facetContext);

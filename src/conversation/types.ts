@@ -278,7 +278,8 @@ export type ConversationEventType =
   | "skills.loaded"
   | "context.assembled"
   | "metadata.title"
-  | "history.compacted";
+  | "history.compacted"
+  | "aux.usage";
 
 export interface UserMessageEvent {
   ts: string;
@@ -436,6 +437,24 @@ export interface HistoryCompactedEvent {
   summarizedMessageCount: number;
 }
 
+/**
+ * Token usage for a forked model call that is NOT a conversation turn — the
+ * compaction summarizer and the auto-title generator. These run the `fast`
+ * slot outside the agentic loop and so emit no `llm.response`; without this
+ * event their cost is invisible to the usage aggregator. It carries no
+ * content (the produced text lands elsewhere — the summary seed, the title),
+ * and reconstruction skips it, so it never becomes a message.
+ */
+export interface AuxUsageEvent {
+  ts: string;
+  type: "aux.usage";
+  /** Which forked call produced this usage. */
+  source: "compaction" | "title" | "briefing";
+  model: string;
+  usage: TokenUsage;
+  llmMs: number;
+}
+
 /** Discriminated union of all conversation event types. */
 export type ConversationEvent =
   | UserMessageEvent
@@ -449,4 +468,5 @@ export type ConversationEvent =
   | SkillsLoadedEvent
   | ContextAssembledEvent
   | TitleChangeEvent
-  | HistoryCompactedEvent;
+  | HistoryCompactedEvent
+  | AuxUsageEvent;

@@ -18,7 +18,7 @@ import { coerceInputForSchema } from "../tools/coerce-input.ts";
 import { bareToolName } from "../tools/namespace.ts";
 import { validateToolInput } from "../tools/validate-input.ts";
 import type { TokenUsage } from "../usage/types.ts";
-import { addUsage, emptyUsage } from "../usage/types.ts";
+import { addUsage, emptyUsage, tokenUsageFromV3 } from "../usage/types.ts";
 import {
   boundToolResultForModel,
   estimateContentSize,
@@ -698,12 +698,10 @@ export class AgentEngine {
             | undefined
         )?.cache_creation;
         const cacheWrite1h = rawCreation?.ephemeral_1h_input_tokens;
+        // Canonical mapping + the engine-only 1h/5m cache-write split that the
+        // base V3 usage struct doesn't carry (from provider metadata above).
         const turnUsage: TokenUsage = {
-          inputTokens: response.usage.inputTokens.total ?? 0,
-          outputTokens: response.usage.outputTokens.total ?? 0,
-          cacheReadTokens: response.usage.inputTokens.cacheRead ?? 0,
-          cacheWriteTokens: response.usage.inputTokens.cacheWrite ?? 0,
-          reasoningTokens: response.usage.outputTokens.reasoning ?? 0,
+          ...tokenUsageFromV3(response.usage),
           ...(cacheWrite1h != null ? { cacheWrite1hTokens: cacheWrite1h } : {}),
         };
         addUsage(cumulativeUsage, turnUsage);
