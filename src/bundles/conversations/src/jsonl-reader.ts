@@ -180,6 +180,22 @@ interface LlmResponseEvent {
   llmMs: number;
 }
 
+/**
+ * Usage for a forked fast-slot model call (compaction summarizer, auto-title,
+ * briefing) that runs outside the agentic loop and emits no `llm.response`.
+ * Mirrors the runtime's `AuxUsageEvent`. Carries no content and is never a
+ * message — `reconstructFromEvents` skips it — but its usage is summed into
+ * the conversation totals so the bundle matches the runtime aggregator.
+ */
+interface AuxUsageEvent {
+  ts: string;
+  type: "aux.usage";
+  source?: string;
+  model?: string;
+  usage?: UsageShape;
+  llmMs?: number;
+}
+
 interface ToolStartEvent {
   ts: string;
   type: "tool.start";
@@ -220,6 +236,7 @@ type KnownEvent =
   | UserMessageEvent
   | RunStartEvent
   | LlmResponseEvent
+  | AuxUsageEvent
   | ToolStartEvent
   | ToolDoneEvent
   | RunDoneEvent
@@ -233,6 +250,9 @@ function isRunStart(e: { type: string }): e is RunStartEvent {
 }
 function isLlmResponse(e: { type: string }): e is LlmResponseEvent {
   return e.type === "llm.response";
+}
+function isAuxUsage(e: { type: string }): e is AuxUsageEvent {
+  return e.type === "aux.usage";
 }
 function isToolStart(e: { type: string }): e is ToolStartEvent {
   return e.type === "tool.start";
@@ -287,6 +307,12 @@ function deriveMetricsFromLines(lines: string[]): DerivedMetrics {
         totalInputTokens += evt.usage?.inputTokens ?? 0;
         totalOutputTokens += evt.usage?.outputTokens ?? 0;
         lastModel = evt.model;
+      } else if (isAuxUsage(evt)) {
+        // Forked fast-slot calls (compaction/title/briefing) emit no
+        // llm.response; count their usage so the bundle's totals match the
+        // runtime aggregator (which counts aux.usage too).
+        totalInputTokens += evt.usage?.inputTokens ?? 0;
+        totalOutputTokens += evt.usage?.outputTokens ?? 0;
       }
       continue;
     }

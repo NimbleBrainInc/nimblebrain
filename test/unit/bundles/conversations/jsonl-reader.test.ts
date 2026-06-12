@@ -254,6 +254,43 @@ describe("readConversation (event format)", () => {
 		expect(assistant.timestamp).toBe("2025-06-01T00:00:06.000Z");
 	});
 
+	test("counts aux.usage toward conversation totals but emits no message", async () => {
+		const runId = "run_aux";
+		const lines = [
+			JSON.stringify(eventMeta("conv_aux")),
+			JSON.stringify({ ts: "2025-06-01T00:00:00.000Z", type: "user.message", content: [{ type: "text", text: "hi" }] }),
+			JSON.stringify({ ts: "2025-06-01T00:00:01.000Z", type: "run.start", runId }),
+			JSON.stringify({
+				ts: "2025-06-01T00:00:02.000Z",
+				type: "llm.response",
+				runId,
+				model: "m1",
+				content: [{ type: "text", text: "ok" }],
+				usage: { inputTokens: 100, outputTokens: 20 },
+				llmMs: 50,
+			}),
+			JSON.stringify({ ts: "2025-06-01T00:00:03.000Z", type: "run.done", runId, stopReason: "complete" }),
+			// Forked compaction summarizer call: no run, no message, just cost.
+			JSON.stringify({
+				ts: "2025-06-01T00:00:04.000Z",
+				type: "aux.usage",
+				source: "compaction",
+				model: "fast-m",
+				usage: { inputTokens: 400, outputTokens: 60 },
+				llmMs: 120,
+			}),
+		];
+		const path = writeTmpFile("conv_aux.jsonl", lines);
+
+		const result = await readConversation(path);
+		expect(result).not.toBeNull();
+		// Totals include both the turn (100/20) and the forked call (400/60).
+		expect(result!.meta.totalInputTokens).toBe(500);
+		expect(result!.meta.totalOutputTokens).toBe(80);
+		// aux.usage is never a message — just user + assistant.
+		expect(result!.messages).toHaveLength(2);
+	});
+
 	test("flags an in-flight run (no run.done) as pending", async () => {
 		const runId = "run_pending";
 		const lines = [
