@@ -1,9 +1,10 @@
 /**
- * `StaticSource` reads `ServerDetail[]` from a YAML or JSON file on
- * disk. It's the curated-services source we ship with the platform
- * (Asana, Notion, Granola, etc. — `src/connectors/catalog.yaml`) and
- * any operator-override source mounted via `NB_REGISTRIES` with
- * `type: "static"`.
+ * `StaticSource` reads `ServerDetail[]` from a YAML/JSON file — or a
+ * directory of them — on disk. It's the curated-services source we
+ * ship with the platform (the minimal in-image example under
+ * `src/connectors/curated/`, overridden in deployments by a mounted
+ * catalog directory) and any operator-override source mounted via
+ * `NB_REGISTRIES` with `type: "static"`.
  *
  * The contract is just `fetch(): Promise<ServerDetail[]>`. Filtering,
  * projection, error aggregation, and lookup tables live in
@@ -26,8 +27,8 @@
  * minimal override files.
  */
 
-import { existsSync, readFileSync } from "node:fs";
-import { extname } from "node:path";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { extname, join } from "node:path";
 import { log } from "../cli/log.ts";
 import { type ServerDetail, validateServerDetail } from "../connectors/server-detail.ts";
 import type { ConnectorSource } from "./types.ts";
@@ -36,9 +37,11 @@ export class StaticSource implements ConnectorSource {
   /**
    * @param id Stable source id (from `RegistryConfig.id`) — used by
    *   the directory in error-tagged log lines.
-   * @param path Absolute path to the YAML/JSON file holding the
-   *   `ServerDetail[]`. Read on every `fetch()` call so operator
-   *   edits to a mounted ConfigMap take effect without a restart.
+   * @param path Absolute path to a YAML/JSON file holding the
+   *   `ServerDetail[]`, OR a directory of such files (every
+   *   `*.yaml`/`*.yml`/`*.json` in it, read in sorted filename order
+   *   and aggregated). Read on every `fetch()` call so operator edits
+   *   to a mounted ConfigMap take effect without a restart.
    */
   constructor(
     public readonly id: string,
@@ -50,41 +53,89 @@ export class StaticSource implements ConnectorSource {
   }
 }
 
+const CATALOG_EXTENSIONS = new Set([".yaml", ".yml", ".json"]);
+
 /**
- * Load a `ServerDetail[]` from the given YAML or JSON file. Returns
- * the validated subset — invalid entries are dropped with a logged
- * warning. Unreadable / unparseable files return an empty array
- * (caller logs the failure inline).
+ * Load a `ServerDetail[]` from a YAML/JSON file OR a directory of
+ * them. For a directory, every `*.yaml`/`*.yml`/`*.json` is read in
+ * sorted filename order and the entries are aggregated into one list
+ * — splitting curation across files (e.g. `curated.yaml` +
+ * `composio.yaml`) is a GitOps convenience that still rolls up to a
+ * single registry. Cross-file name dedup ("first file wins") and
+ * per-entry validation run once over the combined set. A missing path
+ * returns empty; an unreadable / unparseable individual file is
+ * skipped with a logged warning while the rest still load.
  */
 export function readStaticServers(path: string): ServerDetail[] {
   if (!existsSync(path)) {
-    log.warn(`[static-source] ${path}: file not found — returning empty`);
+    log.warn(`[static-source] ${path}: not found — returning empty`);
     return [];
   }
+  const files = statSync(path).isDirectory() ? catalogFilesInDir(path) : [path];
+  const combined: unknown[] = [];
+  for (const file of files) {
+    const parsed = parseCatalogFile(file);
+    if (parsed === undefined) continue; // unreadable / unparseable — already warned
+    combined.push(...extractServerCandidates(parsed, file));
+  }
+  return validateStaticServers(combined, path);
+}
+
+/**
+ * List the catalog files in a directory: `*.yaml`/`*.yml`/`*.json`
+ * only, sorted by filename so cross-file "first wins" dedup is
+ * deterministic. Flat (non-recursive) by design — a connectors
+ * ConfigMap mounts as a flat directory of keys.
+ */
+function catalogFilesInDir(dir: string): string[] {
+  return readdirSync(dir)
+    .filter((f) => CATALOG_EXTENSIONS.has(extname(f).toLowerCase()))
+    .sort()
+    .map((f) => join(dir, f));
+}
+
+/**
+ * Read + parse one catalog file. Returns the parsed body, or
+ * `undefined` when the file is unreadable or unparseable (logged) so
+ * the caller can skip it without sinking sibling files.
+ */
+function parseCatalogFile(file: string): unknown {
   let text: string;
   try {
-    text = readFileSync(path, "utf-8");
+    text = readFileSync(file, "utf-8");
   } catch (err) {
     log.warn(
-      `[static-source] failed to read ${path}: ${err instanceof Error ? err.message : String(err)}`,
+      `[static-source] failed to read ${file}: ${err instanceof Error ? err.message : String(err)}`,
     );
-    return [];
+    return undefined;
   }
-  let parsed: unknown;
   try {
-    const ext = extname(path).toLowerCase();
-    if (ext === ".yaml" || ext === ".yml") {
-      parsed = Bun.YAML.parse(text);
-    } else {
-      parsed = JSON.parse(text);
-    }
+    const ext = extname(file).toLowerCase();
+    return ext === ".yaml" || ext === ".yml" ? Bun.YAML.parse(text) : JSON.parse(text);
   } catch (err) {
     log.warn(
-      `[static-source] failed to parse ${path}: ${err instanceof Error ? err.message : String(err)}`,
+      `[static-source] failed to parse ${file}: ${err instanceof Error ? err.message : String(err)}`,
     );
-    return [];
+    return undefined;
   }
-  return validateStaticServers(parsed, path);
+}
+
+/**
+ * Pull the raw server-candidate list out of a parsed file body.
+ * Accepts `{ servers: [ ... ] }` (canonical) or a bare `[ ... ]`
+ * array. Anything else logs and yields nothing.
+ */
+function extractServerCandidates(parsed: unknown, source: string): unknown[] {
+  if (Array.isArray(parsed)) return parsed;
+  if (
+    parsed &&
+    typeof parsed === "object" &&
+    Array.isArray((parsed as { servers?: unknown }).servers)
+  ) {
+    return (parsed as { servers: unknown[] }).servers;
+  }
+  log.warn(`[static-source] ${source} did not yield a top-level 'servers' list or bare array`);
+  return [];
 }
 
 /**
@@ -96,19 +147,7 @@ export function readStaticServers(path: string): ServerDetail[] {
  * schema and the platform's defense-in-depth safety checks.
  */
 export function validateStaticServers(parsed: unknown, source: string): ServerDetail[] {
-  let raw: unknown[];
-  if (Array.isArray(parsed)) {
-    raw = parsed;
-  } else if (
-    parsed &&
-    typeof parsed === "object" &&
-    Array.isArray((parsed as { servers?: unknown }).servers)
-  ) {
-    raw = (parsed as { servers: unknown[] }).servers;
-  } else {
-    log.warn(`[static-source] ${source} did not yield a top-level 'servers' list or bare array`);
-    return [];
-  }
+  const raw = extractServerCandidates(parsed, source);
 
   const out: ServerDetail[] = [];
   const seenNames = new Set<string>();

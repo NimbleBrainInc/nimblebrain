@@ -100,9 +100,9 @@ export interface Package {
  * fields that don't fit upstream slots: OAuth flow type, operator-setup
  * pointers, recommended scope, search tags, and UI hints.
  *
- * Authored on entries we curate (loaded by `StaticSource` from
- * `catalog.yaml`) and absent on mpak entries (the projection leaves
- * it undefined).
+ * Authored on entries we curate (loaded by `StaticSource` from the
+ * curated catalog directory) and absent on mpak entries (the
+ * projection leaves it undefined).
  */
 export interface NimbleBrainConnectorMeta {
   /**

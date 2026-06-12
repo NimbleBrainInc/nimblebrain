@@ -1,0 +1,26 @@
+# Test fixture — representative Composio-backed catalog entry. Not
+# shipped. Pins the `_meta.composio` block shape and the
+# COMPOSIO_<TOOLKIT>_AUTH_CONFIG_ID env-var naming convention. Split
+# into its own file so tests also exercise StaticSource directory
+# aggregation across multiple catalog files.
+servers:
+  - name: io.asana/mcp
+    title: Asana
+    description: Tasks, projects, and team workflows
+    version: "0.1.0"
+    icons:
+      - src: https://static.nimblebrain.ai/icons/asana.png
+        sizes: ["any"]
+    remotes:
+      - type: streamable-http
+        url: https://backend.composio.dev/v3/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        auth: composio
+        composio:
+          toolkit: asana
+          authConfigEnv: COMPOSIO_ASANA_AUTH_CONFIG_ID
+          tools:
+            - ASANA_CREATE_A_TASK
+            - ASANA_GET_A_TASK
+        tags: [tasks, projects, composio]

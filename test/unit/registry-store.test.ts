@@ -1,8 +1,25 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { RegistryStore } from "../../src/registries/registry-store.ts";
+import { log } from "../../src/cli/log.ts";
+import {
+  RegistryStore,
+  warnIfCuratedCatalogEmpty,
+} from "../../src/registries/registry-store.ts";
+import { CONNECTOR_FIXTURE_DIR } from "../helpers/connector-fixtures.ts";
+
+/** Run `fn` with NB_CURATED_CATALOG_DIR set, restoring the prior value. */
+async function withCuratedDir(dir: string, fn: () => Promise<void>): Promise<void> {
+  const prev = process.env.NB_CURATED_CATALOG_DIR;
+  process.env.NB_CURATED_CATALOG_DIR = dir;
+  try {
+    await fn();
+  } finally {
+    if (prev === undefined) delete process.env.NB_CURATED_CATALOG_DIR;
+    else process.env.NB_CURATED_CATALOG_DIR = prev;
+  }
+}
 
 function freshStore(): { store: RegistryStore; dir: string; cleanup: () => void } {
   const dir = mkdtempSync(join(tmpdir(), "nb-regstore-"));
@@ -21,7 +38,8 @@ describe("RegistryStore", () => {
       expect(bundled?.enabled).toBe(true);
       expect(bundled?.locked).toBe(true);
       expect(bundled?.type).toBe("static");
-      expect(bundled?.url).toMatch(/connectors\/catalog\.yaml$/);
+      // Defaults to the minimal in-image curated catalog directory.
+      expect(bundled?.url).toMatch(/connectors\/curated$/);
       expect(mpak?.enabled).toBe(true);
       // Seeded mpak row carries no `url` — the SDK owns its default host.
       expect(mpak?.url).toBeUndefined();
@@ -31,6 +49,30 @@ describe("RegistryStore", () => {
     } finally {
       cleanup();
     }
+  });
+
+  test("curated registry url honors NB_CURATED_CATALOG_DIR override", async () => {
+    await withCuratedDir("/config/connectors", async () => {
+      const { store, cleanup } = freshStore();
+      try {
+        const bundled = (await store.list()).find((r) => r.id === "bundled-static");
+        expect(bundled?.url).toBe("/config/connectors");
+      } finally {
+        cleanup();
+      }
+    });
+  });
+
+  test("blank NB_CURATED_CATALOG_DIR falls back to the in-image default", async () => {
+    await withCuratedDir("   ", async () => {
+      const { store, cleanup } = freshStore();
+      try {
+        const bundled = (await store.list()).find((r) => r.id === "bundled-static");
+        expect(bundled?.url).toMatch(/connectors\/curated$/);
+      } finally {
+        cleanup();
+      }
+    });
   });
 
   test("persists changes across instances (file-backed)", async () => {
@@ -105,6 +147,45 @@ describe("RegistryStore", () => {
       expect(existsSync(join(dir, "registries.json"))).toBe(true);
     } finally {
       cleanup();
+    }
+  });
+});
+
+describe("warnIfCuratedCatalogEmpty", () => {
+  test("warns when the curated catalog resolves to zero entries", async () => {
+    const empty = mkdtempSync(join(tmpdir(), "nb-empty-catalog-"));
+    const warn = spyOn(log, "warn").mockImplementation(() => {});
+    try {
+      await withCuratedDir(empty, async () => {
+        const { store, cleanup } = freshStore();
+        try {
+          await warnIfCuratedCatalogEmpty(store);
+          expect(warn).toHaveBeenCalled();
+          expect(warn.mock.calls.some((c) => String(c[0]).includes("0 entries"))).toBe(true);
+        } finally {
+          cleanup();
+        }
+      });
+    } finally {
+      warn.mockRestore();
+      rmSync(empty, { recursive: true, force: true });
+    }
+  });
+
+  test("stays quiet when the curated catalog has entries", async () => {
+    const warn = spyOn(log, "warn").mockImplementation(() => {});
+    try {
+      await withCuratedDir(CONNECTOR_FIXTURE_DIR, async () => {
+        const { store, cleanup } = freshStore();
+        try {
+          await warnIfCuratedCatalogEmpty(store);
+          expect(warn.mock.calls.some((c) => String(c[0]).includes("0 entries"))).toBe(false);
+        } finally {
+          cleanup();
+        }
+      });
+    } finally {
+      warn.mockRestore();
     }
   });
 });
