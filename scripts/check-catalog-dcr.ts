@@ -77,6 +77,20 @@ interface CheckResult {
   failureReason?: string;
 }
 
+/**
+ * Pick the entries this probe checks: `auth: "dcr"` with at least one
+ * remote to reach. Static-auth and Composio entries are skipped (their
+ * failure modes aren't catalog DCR rot). Exported + pure so an offline
+ * unit test exercises the selection — and the script's imports against
+ * the platform source — without the network probe or process exit.
+ */
+export function selectDcrEntries(servers: ServerDetail[]): ServerDetail[] {
+  return servers.filter((s) => {
+    const meta = getNimbleBrainConnectorMeta(s);
+    return meta?.auth === "dcr" && !!s.remotes && s.remotes.length > 0;
+  });
+}
+
 async function main(): Promise<void> {
   // Catalog path is a REQUIRED argument — a file or a directory of
   // `ServerDetail` files. The real curated catalog now lives in the
@@ -92,14 +106,7 @@ async function main(): Promise<void> {
     );
     process.exit(2);
   }
-  const servers = readStaticServers(catalogPath);
-  const dcrEntries: ServerDetail[] = [];
-  for (const s of servers) {
-    const meta = getNimbleBrainConnectorMeta(s);
-    if (meta?.auth === "dcr" && s.remotes && s.remotes.length > 0) {
-      dcrEntries.push(s);
-    }
-  }
+  const dcrEntries = selectDcrEntries(readStaticServers(catalogPath));
 
   if (dcrEntries.length === 0) {
     console.log("No DCR entries found in catalog. Nothing to check.");
@@ -367,4 +374,8 @@ async function probeAuthorize(
   }
 }
 
-await main();
+// Only probe when run directly — importing the module (e.g. from the
+// unit test) must not trigger the network run or the argv/exit handling.
+if (import.meta.main) {
+  await main();
+}
