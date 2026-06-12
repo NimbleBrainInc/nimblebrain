@@ -126,6 +126,13 @@ describe("nb__deep_research", () => {
       task_id: "task_abc",
     });
 
+    // The REAL report is returned INLINE (not a bare ref) so the agent presents
+    // actual research, not a fabrication.
+    const text = (res.content[0] as { text: string }).text;
+    expect(text).toContain("# Findings");
+    expect(text).toContain("The answer.");
+    expect(text).toContain("do not add facts that are not in it");
+
     // Task created with the right type + audit breadcrumbs, on the fleet audience.
     const create = dp.calls.find((c) => c.url === `${TASKS_URL}/v1/tasks` && c.method === "POST");
     expect(create?.auth).toBe("Bearer tok-mcp-fleet");
@@ -144,6 +151,27 @@ describe("nb__deep_research", () => {
     expect(wbody.mime_type).toBe("text/markdown");
     expect(Buffer.from(wbody.body_b64, "base64").toString("utf8")).toContain("# Findings");
     expect(wbody.citations).toHaveLength(2);
+  });
+
+  it("truncates an over-cap report inline but persists the full report", async () => {
+    const big = `# Big\n\n${"x".repeat(20_000)}`;
+    const result = {
+      isError: false,
+      structuredContent: { report: big, sources: [], query: "q" },
+    };
+    const dp = dataPlane({ statuses: ["completed"], result });
+    const tool = createDeepResearchTool(ctxFor(dp.fetchImpl));
+
+    const res = await tool.handler({ query: "q" });
+    expect(res.isError).toBeFalsy();
+    const text = (res.content[0] as { text: string }).text;
+    expect(text).toContain("[Report truncated");
+    expect(text).toContain("nb__get_output");
+    expect(res.structuredContent).toMatchObject({ report_truncated: true });
+    // The FULL report is still written to the store (durable), un-truncated.
+    const write = dp.calls.find((c) => c.url === `${ARTIFACTS_URL}/v1/artifacts`);
+    const wbody = write?.body as { body_b64: string };
+    expect(Buffer.from(wbody.body_b64, "base64").toString("utf8").length).toBeGreaterThan(20_000);
   });
 
   it("returns immediately when the task is already terminal on create", async () => {

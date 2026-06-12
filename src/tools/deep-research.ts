@@ -42,6 +42,11 @@ const DEFAULT_POLL_INTERVAL_MS = 3_000;
 const DEFAULT_MAX_WAIT_MS = 660_000;
 /** Keep the artifact title bounded — the query can be a long question. */
 const TITLE_QUERY_MAX = 72;
+// The report is returned INLINE so the agent presents the real research (never a
+// bare ref it can't resolve — that's what let it fabricate from memory). Bounded
+// so a long report doesn't blow the turn; the full report lives in the durable
+// artifact and is retrievable via nb__get_output.
+const INLINE_REPORT_MAX = 16_000;
 
 export interface DeepResearchContext {
   /**
@@ -277,11 +282,19 @@ export function createDeepResearchTool(ctx: DeepResearchContext): InProcessTool 
         });
 
         const sourceCount = envelope.sources?.length ?? 0;
+        // Return the REAL report inline so the agent presents the actual
+        // research. The agent must use this content verbatim — it must NOT
+        // substitute its own knowledge.
+        const overCap = envelope.report.length > INLINE_REPORT_MAX;
+        const reportBody = overCap
+          ? `${envelope.report.slice(0, INLINE_REPORT_MAX)}\n\n[Report truncated to the first ${INLINE_REPORT_MAX} characters — retrieve the full report from artifact ${artifact.artifactId} via nb__get_output.]`
+          : envelope.report;
         return {
           content: textContent(
-            `Deep research complete. Report saved as artifact ${artifact.artifactId} ` +
-              `(${artifact.uri}), ${sourceCount} source${sourceCount === 1 ? "" : "s"}. ` +
-              "Resolve the artifact to read the full report.",
+            `Deep research complete — ${sourceCount} source${sourceCount === 1 ? "" : "s"}, ` +
+              `full report saved as artifact ${artifact.artifactId} (${artifact.uri}).\n` +
+              "Present the report below to the user as-is; do not add facts that are not in it.\n\n" +
+              `---\n\n${reportBody}`,
           ),
           structuredContent: {
             artifact_id: artifact.artifactId,
@@ -290,6 +303,7 @@ export function createDeepResearchTool(ctx: DeepResearchContext): InProcessTool 
             size_bytes: artifact.sizeBytes,
             sources: sourceCount,
             task_id: terminal.taskId,
+            report_truncated: overCap,
           },
           isError: false,
         };
