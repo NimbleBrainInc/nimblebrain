@@ -206,12 +206,34 @@ export class RegistryStore {
       if (!Array.isArray(parsed?.registries)) {
         return { registries: defaultRegistries() };
       }
-      // Ensure the locked bundled-static registry can't be removed by
-      // hand-editing the file — re-add it if missing.
-      if (!parsed.registries.some((r) => r.id === BUNDLED_STATIC_ID)) {
+      // The locked bundled-static registry is deployment-managed. Two
+      // invariants enforced on every load:
+      //   1. Re-add it if a hand-edit removed it (it can't be removed).
+      //   2. Reconcile its backing path so a stale value persisted by an
+      //      older image (e.g. one that shipped a since-removed catalog
+      //      file) doesn't leave Browse permanently empty.
+      // Precedence on (2): NB_CURATED_CATALOG_DIR, when set, is the
+      // authoritative deployment lever and always wins (same "env beats
+      // disk" precedent as NB_REGISTRIES). When it's NOT set, we heal
+      // only a *broken* persisted path — preserving a url an operator
+      // set by hand-editing registries.json directly (the other
+      // sanctioned deployment-config path, #247) while still rescuing a
+      // tenant whose persisted path points nowhere on this image.
+      let dirty = false;
+      const bundled = parsed.registries.find((r) => r.id === BUNDLED_STATIC_ID);
+      if (!bundled) {
         parsed.registries.unshift(defaultRegistryById(BUNDLED_STATIC_ID));
-        await this.save(parsed);
+        dirty = true;
+      } else {
+        const envOverride = process.env[CURATED_CATALOG_DIR_ENV]?.trim();
+        const target = curatedCatalogPath();
+        const heal = (envOverride?.length ?? 0) > 0 || !bundled.url || !existsSync(bundled.url);
+        if (heal && bundled.url !== target) {
+          bundled.url = target;
+          dirty = true;
+        }
       }
+      if (dirty) await this.save(parsed);
       return parsed;
     } catch (err: unknown) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") {

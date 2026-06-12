@@ -58,13 +58,13 @@ const CATALOG_EXTENSIONS = new Set([".yaml", ".yml", ".json"]);
 /**
  * Load a `ServerDetail[]` from a YAML/JSON file OR a directory of
  * them. For a directory, every `*.yaml`/`*.yml`/`*.json` is read in
- * sorted filename order and the entries are aggregated into one list
- * — splitting curation across files (e.g. `curated.yaml` +
- * `composio.yaml`) is a GitOps convenience that still rolls up to a
- * single registry. Cross-file name dedup ("first file wins") and
- * per-entry validation run once over the combined set. A missing path
- * returns empty; an unreadable / unparseable individual file is
- * skipped with a logged warning while the rest still load.
+ * sorted filename order — splitting curation across files (e.g.
+ * `curated.yaml` + `composio.yaml`) is a GitOps convenience that still
+ * rolls up to a single registry. Each file is validated independently
+ * so drop warnings name the originating file, while a shared
+ * name-dedup set across files gives "first file (sorted) wins". A
+ * missing path returns empty; an unreadable / unparseable individual
+ * file is skipped with a logged warning while the rest still load.
  */
 export function readStaticServers(path: string): ServerDetail[] {
   if (!existsSync(path)) {
@@ -72,13 +72,14 @@ export function readStaticServers(path: string): ServerDetail[] {
     return [];
   }
   const files = statSync(path).isDirectory() ? catalogFilesInDir(path) : [path];
-  const combined: unknown[] = [];
+  const out: ServerDetail[] = [];
+  const seenNames = new Set<string>();
   for (const file of files) {
     const parsed = parseCatalogFile(file);
     if (parsed === undefined) continue; // unreadable / unparseable — already warned
-    combined.push(...extractServerCandidates(parsed, file));
+    appendValidatedServers(extractServerCandidates(parsed, file), file, seenNames, out);
   }
-  return validateStaticServers(combined, path);
+  return out;
 }
 
 /**
@@ -144,13 +145,30 @@ function extractServerCandidates(parsed: unknown, source: string): unknown[] {
  *   - `[ ... ]`                            (bare-array convenience shape)
  *
  * Returns only the entries that pass the upstream `ServerDetail` ajv
- * schema and the platform's defense-in-depth safety checks.
+ * schema and the platform's defense-in-depth safety checks. Single-
+ * source convenience wrapper over `appendValidatedServers`; the
+ * directory path in `readStaticServers` shares a dedup set across files
+ * instead.
  */
 export function validateStaticServers(parsed: unknown, source: string): ServerDetail[] {
-  const raw = extractServerCandidates(parsed, source);
-
   const out: ServerDetail[] = [];
-  const seenNames = new Set<string>();
+  appendValidatedServers(extractServerCandidates(parsed, source), source, new Set<string>(), out);
+  return out;
+}
+
+/**
+ * Validate raw candidates and append the survivors to `out`, deduping
+ * by name against the shared `seenNames` set so a caller aggregating
+ * multiple files gets first-wins dedup across them. Each drop is logged
+ * with a `source[index:name]` tag naming where it came from — for the
+ * directory path, `source` is the individual file, not the dir.
+ */
+function appendValidatedServers(
+  raw: unknown[],
+  source: string,
+  seenNames: Set<string>,
+  out: ServerDetail[],
+): void {
   for (let i = 0; i < raw.length; i++) {
     const candidate = raw[i];
     const name = candidateName(candidate);
@@ -175,7 +193,6 @@ export function validateStaticServers(parsed: unknown, source: string): ServerDe
     seenNames.add(detail.name);
     out.push(detail);
   }
-  return out;
 }
 
 function candidateName(c: unknown): string | undefined {

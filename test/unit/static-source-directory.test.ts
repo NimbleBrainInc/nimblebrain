@@ -1,7 +1,8 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { log } from "../../src/cli/log.ts";
 import { readStaticServers } from "../../src/registries/static-source.ts";
 
 /**
@@ -93,6 +94,35 @@ describe("StaticSource directory reading", () => {
       const names = readStaticServers(dir).map((s) => s.name);
       expect(names).toEqual(["com.a/mcp"]);
     } finally {
+      cleanup();
+    }
+  });
+
+  test("invalid-entry warnings name the originating file, not the directory", () => {
+    const { dir, cleanup } = tmpDir();
+    const warn = spyOn(log, "warn").mockImplementation(() => {});
+    try {
+      writeFileSync(join(dir, "good.yaml"), catalog(entry("com.good/mcp")));
+      // Missing `version` → dropped by ServerDetail validation.
+      writeFileSync(
+        join(dir, "bad.yaml"),
+        `servers:
+  - name: com.bad/mcp
+    description: no version
+    remotes:
+      - type: streamable-http
+        url: https://example.com/mcp
+`,
+      );
+      readStaticServers(dir);
+      const dropLine = warn.mock.calls
+        .map((c) => String(c[0]))
+        .find((m) => m.includes("com.bad/mcp") && m.includes("dropped"));
+      expect(dropLine).toBeDefined();
+      // Tagged with the file path, so a multi-file curated dir is actionable.
+      expect(dropLine).toContain("bad.yaml");
+    } finally {
+      warn.mockRestore();
       cleanup();
     }
   });

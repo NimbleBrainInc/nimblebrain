@@ -1,5 +1,5 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { log } from "../../src/cli/log.ts";
@@ -138,6 +138,74 @@ describe("RegistryStore", () => {
     } finally {
       cleanup();
     }
+  });
+
+  test("reconciles a stale persisted bundled-static url on load (heals image bumps)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nb-regstore-"));
+    try {
+      // Simulate a tenant seeded by an older image: registries.json
+      // persists a catalog path that the new image no longer ships.
+      writeFileSync(
+        join(dir, "registries.json"),
+        JSON.stringify({
+          registries: [
+            {
+              id: "bundled-static",
+              name: "Curated services",
+              type: "static",
+              enabled: true,
+              locked: true,
+              url: "/app/src/connectors/catalog.yaml",
+            },
+            { id: "mpak", name: "mpak.dev", type: "mpak", enabled: true },
+          ],
+        }),
+      );
+      const store = new RegistryStore(dir);
+      const bundled = (await store.list()).find((r) => r.id === "bundled-static");
+      // In-memory: healed to the current default path.
+      expect(bundled?.url).toMatch(/connectors\/curated$/);
+      // And persisted back to disk (one-time heal, stable thereafter).
+      const onDisk = JSON.parse(readFileSync(join(dir, "registries.json"), "utf-8")) as {
+        registries: Array<{ id: string; url?: string }>;
+      };
+      expect(onDisk.registries.find((r) => r.id === "bundled-static")?.url).toMatch(
+        /connectors\/curated$/,
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("NB_CURATED_CATALOG_DIR is authoritative for an already-seeded tenant", async () => {
+    // The Phase-2 deploy lever: an existing tenant whose persisted url
+    // predates the override must pick the override up on boot, not stay
+    // pinned to the stale path.
+    await withCuratedDir("/config/connectors", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "nb-regstore-"));
+      try {
+        writeFileSync(
+          join(dir, "registries.json"),
+          JSON.stringify({
+            registries: [
+              {
+                id: "bundled-static",
+                name: "Curated services",
+                type: "static",
+                enabled: true,
+                locked: true,
+                url: "/app/src/connectors/catalog.yaml",
+              },
+            ],
+          }),
+        );
+        const store = new RegistryStore(dir);
+        const bundled = (await store.list()).find((r) => r.id === "bundled-static");
+        expect(bundled?.url).toBe("/config/connectors");
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
   });
 
   test("creates the file on first write (no race with seed)", async () => {
