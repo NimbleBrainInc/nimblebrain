@@ -1,13 +1,13 @@
 import { createHash } from "node:crypto";
 import { log } from "../cli/log.ts";
 import {
-  ArtifactsClient,
   isTerminalTaskStatus,
   NimbleTasksClient,
   type TaskRef,
 } from "../dataplane/dataplane-client.ts";
 import { textContent } from "../engine/content-helpers.ts";
-import type { ToolResult } from "../engine/types.ts";
+import type { ContentBlock, ToolResult } from "../engine/types.ts";
+import type { OutputStore } from "../files/output-store.ts";
 import type { ServiceTokenCache } from "../oauth/tenant-key-mint.ts";
 import type { InProcessTool } from "./in-process-app.ts";
 
@@ -20,13 +20,27 @@ import type { InProcessTool } from "./in-process-app.ts";
  *   1. mint `aud=mcp-fleet` → POST a `research.deep_research` task to nimbletasks.
  *   2. poll the task to a terminal status (the baked web worker does the work in
  *      its own Job — discover sources, read them, synthesize a cited report).
- *   3. mint `aud=artifacts` → write the report to the artifacts store.
- *   4. return the artifact reference; the user resolves it to read the report.
+ *   3. persist the report through the kernel `OutputStore` seam → `files://<id>`.
+ *   4. return a SHORT summary + a `resource_link` to the stored report; the
+ *      client fetches the report (via the outputs source) and renders it.
  *
  * The bundle/worker never holds a data-plane credential: the runtime creates the
- * task and writes the artifact. The tool BLOCKS until the task is terminal — the
+ * task and writes the output. The tool BLOCKS until the task is terminal — the
  * "async/durable" property is that the work runs in a separate, restart-surviving
  * Job with its own resources and timeout, not that this call returns early.
+ *
+ * Persistence goes through the `OutputStore` seam (NOT a direct ArtifactsClient):
+ * the dataplane backend writes to the artifacts service, the local backend to the
+ * workspace file store, and both round-trip a `files://<id>` ref. ArtifactsClient
+ * is referenced ONLY inside the dataplane backend now.
+ *
+ * Result shape (the jsonl/context fix): the report does NOT live in the tool
+ * result's text `content` (a ~24K report is under MAX_TOOL_RESULT_CHARS, so it
+ * would re-enter model context every turn). Instead the text is a one-line
+ * summary and the report rides as a per-call `resource_link` block — the engine
+ * persists the REF, and `rehydrateUserResources` materializes the bytes only on
+ * the turn that needs them, under a budget. When NO store resolves (off-platform)
+ * we fall back to a bounded inline report so research still works.
  */
 
 /** Task type the baked web worker is registered to handle (chart `values-staging`). */
@@ -40,32 +54,40 @@ const DEFAULT_POLL_INTERVAL_MS = 3_000;
 // little past that so a task that runs to its own limit still resolves here
 // rather than being abandoned mid-flight.
 const DEFAULT_MAX_WAIT_MS = 660_000;
-/** Keep the artifact title bounded — the query can be a long question. */
+/** Keep the output title bounded — the query can be a long question. */
 const TITLE_QUERY_MAX = 72;
-// The report is returned INLINE so the agent presents the real research (never a
-// bare ref it can't resolve — that's what let it fabricate from memory). Bounded
-// so a long report doesn't blow the turn; the full report lives in the durable
-// artifact and is retrievable via nb__get_output.
+// The off-platform / persistence-failure fallback returns the report INLINE so
+// the agent presents the real research (never a bare ref it can't resolve —
+// that's what let it fabricate from memory). Bounded so a long report doesn't
+// blow the turn. The store path does NOT use this — there the report rides as a
+// resource_link, not inline text.
 const INLINE_REPORT_MAX = 16_000;
 
 export interface DeepResearchContext {
   /**
-   * The request's workspace — the token/RLS dimension for both data-plane
-   * services. Per-call (pulled from the runtime's current workspace context);
-   * `null` when no workspace is bound, which fails the call cleanly.
+   * The request's workspace — the token/RLS dimension for the task runner and
+   * the output store. Per-call (pulled from the runtime's current workspace
+   * context); `null` when no workspace is bound, which fails the call cleanly.
    */
   getWorkspaceId: () => string | null;
-  /** mcp-authorizer issuer the data-plane tokens mint against (`NB_FLEET_AUTHORIZER_ISSUER`). */
-  issuer: string;
-  /** nimbletasks base URL (`NB_NIMBLETASKS_URL`). */
-  nimbletasksUrl: string;
-  /** artifacts base URL (`NB_ARTIFACTS_URL`). */
-  artifactsUrl: string;
+  /**
+   * The resolved task runner (nimbletasks). `baseUrl` + `issuer` come from the
+   * runtime's `resolveTaskRunner` selection — the tool is wired ONLY when a
+   * dataplane task runner resolves, so this is always present here.
+   */
+  taskRunner: { baseUrl: string; issuer: string };
+  /**
+   * The resolved output store (dataplane | local), or `null` when no store
+   * provider resolves (off-platform). With a store the report is persisted and
+   * returned as a `resource_link`; with `null` it falls back to a bounded
+   * inline report so research still works without any data plane.
+   */
+  store: OutputStore | null;
 
   // ---- test seams (all optional; production omits them) ----
-  /** Shared mint cache; defaults to the process-wide singleton inside the clients. */
+  /** Shared mint cache; defaults to the process-wide singleton inside the client. */
   cache?: ServiceTokenCache;
-  /** Injectable base fetch for the data-plane clients. */
+  /** Injectable base fetch for the task-runner client. */
   baseFetch?: typeof fetch;
   /** Injectable clock for the poll deadline. */
   now?: () => number;
@@ -158,6 +180,10 @@ function titleFor(query: string): string {
   return `Deep research: ${trimmed}`;
 }
 
+function sourcesLabel(count: number): string {
+  return `${count} source${count === 1 ? "" : "s"}`;
+}
+
 /** Poll a task to a terminal status, or `null` if the deadline passes first. */
 async function pollToTerminal(
   tasks: NimbleTasksClient,
@@ -180,18 +206,93 @@ async function pollToTerminal(
 }
 
 /**
- * Build the `nb__deep_research` InProcessTool. Present only when the runtime is
- * configured for the data plane (issuer + service URLs); absent on local dev so
- * the agent never sees a tool it can't drive.
+ * Success WITH a store: the report is persisted and surfaced as a resource_link.
+ * The tool text is a SHORT one-liner; the report does NOT enter `content`, so
+ * the conversation log persists the REF, not the report bytes.
+ */
+function storedResult(opts: {
+  uri: string;
+  id: string;
+  title: string;
+  sourceCount: number;
+  taskId: string;
+  sizeBytes: number;
+}): ToolResult {
+  const resourceLink: ContentBlock = {
+    type: "resource_link",
+    uri: opts.uri,
+    name: opts.title,
+    mimeType: "text/markdown",
+  } as ContentBlock;
+  return {
+    content: [
+      {
+        type: "text",
+        text:
+          `Deep research complete — ${sourcesLabel(opts.sourceCount)}. ` +
+          "The full report is shown below.",
+      },
+      resourceLink,
+    ],
+    structuredContent: {
+      output_id: opts.id,
+      uri: opts.uri,
+      mime_type: "text/markdown",
+      size_bytes: opts.sizeBytes,
+      sources: opts.sourceCount,
+      task_id: opts.taskId,
+    },
+    isError: false,
+  };
+}
+
+/**
+ * Fallback when no store resolves OR the store write failed: return the REAL
+ * report INLINE (bounded). This is real research content, not a fabrication —
+ * the agent must present it verbatim. `note` distinguishes the off-platform case
+ * (no store) from the couldn't-save case (had a store, write failed).
+ */
+function inlineResult(opts: {
+  report: string;
+  sourceCount: number;
+  taskId: string;
+  note?: string;
+}): ToolResult {
+  const overCap = opts.report.length > INLINE_REPORT_MAX;
+  const reportBody = overCap
+    ? `${opts.report.slice(0, INLINE_REPORT_MAX)}\n\n[Report truncated to the first ${INLINE_REPORT_MAX} characters.]`
+    : opts.report;
+  const head =
+    `Deep research complete — ${sourcesLabel(opts.sourceCount)}.` +
+    (opts.note ? ` ${opts.note}` : "") +
+    "\nPresent the report below to the user as-is; do not add facts that are not in it.";
+  return {
+    content: textContent(`${head}\n\n---\n\n${reportBody}`),
+    structuredContent: {
+      sources: opts.sourceCount,
+      task_id: opts.taskId,
+      report_truncated: overCap,
+      inline_fallback: true,
+    },
+    isError: false,
+  };
+}
+
+/**
+ * Build the `nb__deep_research` InProcessTool. Present only when the runtime
+ * resolved a dataplane task runner (the durable Job that does the work);
+ * absent off-platform so the agent never sees a tool it can't drive. The output
+ * store may still be `null` here (task runner up, store off) — that path
+ * degrades to a bounded inline report rather than failing.
  */
 export function createDeepResearchTool(ctx: DeepResearchContext): InProcessTool {
   return {
     name: "deep_research",
     description:
       "Run deep web research on a query as a durable background task and save the result as a " +
-      "retrievable artifact. Discovers sources, reads the top ones, and synthesizes a cited " +
-      "markdown report. Long-running — may take minutes. Returns the artifact reference; resolve " +
-      "the artifact to read the full report.",
+      "retrievable report. Discovers sources, reads the top ones, and synthesizes a cited " +
+      "markdown report. Long-running — may take minutes. The full report is shown inline to the " +
+      "user; retrieve it later in full via nb__get_output using the returned reference.",
     inputSchema: {
       type: "object",
       properties: {
@@ -214,14 +315,12 @@ export function createDeepResearchTool(ctx: DeepResearchContext): InProcessTool 
         );
       }
 
-      const clientOpts = {
-        issuer: ctx.issuer,
+      const tasks = new NimbleTasksClient(ctx.taskRunner.baseUrl, {
+        issuer: ctx.taskRunner.issuer,
         workspace,
         cache: ctx.cache,
         baseFetch: ctx.baseFetch,
-      };
-      const tasks = new NimbleTasksClient(ctx.nimbletasksUrl, clientOpts);
-      const artifacts = new ArtifactsClient(ctx.artifactsUrl, clientOpts);
+      });
 
       // Content-addressed idempotency: identical (workspace, query) research
       // dedups to one task, so a re-run returns the existing task's result
@@ -271,42 +370,53 @@ export function createDeepResearchTool(ctx: DeepResearchContext): InProcessTool 
           );
         }
 
-        const artifact = await artifacts.writeArtifact({
-          type: "report",
-          mimeType: "text/markdown",
-          body: envelope.report,
-          title: titleFor(query),
-          citations: envelope.sources,
-          // Tie the artifact key to the task so a re-run writes the report once.
-          idempotencyKey: `dr-artifact-${terminal.taskId}`,
-        });
-
         const sourceCount = envelope.sources?.length ?? 0;
-        // Return the REAL report inline so the agent presents the actual
-        // research. The agent must use this content verbatim — it must NOT
-        // substitute its own knowledge.
-        const overCap = envelope.report.length > INLINE_REPORT_MAX;
-        const reportBody = overCap
-          ? `${envelope.report.slice(0, INLINE_REPORT_MAX)}\n\n[Report truncated to the first ${INLINE_REPORT_MAX} characters — retrieve the full report from artifact ${artifact.artifactId} via nb__get_output.]`
-          : envelope.report;
-        return {
-          content: textContent(
-            `Deep research complete — ${sourceCount} source${sourceCount === 1 ? "" : "s"}, ` +
-              `full report saved as artifact ${artifact.artifactId} (${artifact.uri}).\n` +
-              "Present the report below to the user as-is; do not add facts that are not in it.\n\n" +
-              `---\n\n${reportBody}`,
-          ),
-          structuredContent: {
-            artifact_id: artifact.artifactId,
-            uri: artifact.uri,
-            mime_type: artifact.mimeType,
-            size_bytes: artifact.sizeBytes,
-            sources: sourceCount,
-            task_id: terminal.taskId,
-            report_truncated: overCap,
-          },
-          isError: false,
-        };
+
+        // No store resolved (off-platform): bounded inline report so research
+        // still works without any data plane. The report is real content.
+        if (!ctx.store) {
+          return inlineResult({
+            report: envelope.report,
+            sourceCount,
+            taskId: terminal.taskId,
+          });
+        }
+
+        // Persist through the store seam. Idempotency keyed on the task so a
+        // re-run writes the report once. On a write failure we still have the
+        // REAL report in hand — inline-fallback it (real content, not a
+        // fabrication) with a "couldn't save durably" note rather than failing.
+        try {
+          const ref = await ctx.store.put(
+            { workspace },
+            {
+              type: "report",
+              mime: "text/markdown",
+              body: envelope.report,
+              title: titleFor(query),
+              citations: envelope.sources,
+            },
+          );
+          return storedResult({
+            uri: ref.uri,
+            id: ref.id,
+            title: titleFor(query),
+            sourceCount,
+            taskId: terminal.taskId,
+            sizeBytes: ref.sizeBytes,
+          });
+        } catch (e) {
+          const detail = e instanceof Error ? (e.stack ?? e.message) : String(e);
+          log.warn(
+            `[deep_research] task ${terminal.taskId} completed but OutputStore.put failed: ${detail}`,
+          );
+          return inlineResult({
+            report: envelope.report,
+            sourceCount,
+            taskId: terminal.taskId,
+            note: "I couldn't save it durably, so it isn't retrievable later — here it is in full.",
+          });
+        }
       } catch (e) {
         // Network / TLS / mint / data-plane failures. The raw detail (e.g. a
         // cert-verification message or a 5xx body) is an operator concern — log

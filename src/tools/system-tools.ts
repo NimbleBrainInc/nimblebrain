@@ -23,6 +23,7 @@ import type { GetOutputContext } from "./get-output.ts";
 import { createGetOutputTool } from "./get-output.ts";
 import { defineInProcessApp, type InProcessTool } from "./in-process-app.ts";
 import { McpSource } from "./mcp-source.ts";
+import { resolveOutputResource } from "./outputs-source.ts";
 import { createManageToolsToolDefs } from "./platform/manage-tools.ts";
 import type { ToolRegistry } from "./registry.ts";
 import { createManageRegistriesTool } from "./registry-tools.ts";
@@ -330,12 +331,26 @@ export async function createSystemTools(
     ? systemToolDefs.filter((t) => isToolEnabled(t.name, features))
     : systemToolDefs;
 
+  // Resolve `files://<id>` output refs through the `nb` source too. The
+  // frontend fetches a `resource_link` with the OWNING tool's app name, and
+  // `appNameFromToolName("nb__deep_research") === "nb"` — so deep_research's
+  // `resource_link` is read via `POST /v1/resources/read {server:"nb"}`, which
+  // routes to `nb.readResource(files://<id>)`. Without this handler that read
+  // would 404 (the dedicated `outputs` source is a DIFFERENT app name). Shares
+  // the ONE resolver with the outputs source. Present only when an output-store
+  // provider resolved (mirrors how `getOutputCtx` gates `nb__get_output`); when
+  // the provider is `null` the handler is omitted and no `files://` ref renders.
+  const outputResourceHandler = getOutputCtx
+    ? (uri: string) => resolveOutputResource(getOutputCtx.store, getOutputCtx.getWorkspaceId(), uri)
+    : undefined;
+
   const source = defineInProcessApp(
     {
       name: "nb",
       version: "1.0.0",
       tools: [...coreToolDefs, ...manageToolsToolDefs, ...filteredSystemDefs],
       resources: buildCoreResourceMap(),
+      resourceHandler: outputResourceHandler,
     },
     eventSink ?? new NoopEventSink(),
   );

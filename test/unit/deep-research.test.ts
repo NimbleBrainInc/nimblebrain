@@ -1,6 +1,7 @@
 import { hkdfSync, randomBytes } from "node:crypto";
 import { describe, expect, it } from "bun:test";
 import { createDeepResearchTool, type DeepResearchContext } from "../../src/tools/deep-research.ts";
+import type { OutputStore, PutInput, Ref } from "../../src/files/output-store.ts";
 import { ServiceTokenCache, type TenantIdentity } from "../../src/oauth/tenant-key-mint.ts";
 
 const MASTER = randomBytes(32);
@@ -29,14 +30,14 @@ function mintingCache(): ServiceTokenCache {
 }
 
 const TASKS_URL = "https://nt.test";
-const ARTIFACTS_URL = "https://art.test";
 
 /**
- * Data-plane stub modelling the full deep-research lifecycle: create task →
- * status transitions → terminal result → artifact write. `statuses` drives the
- * GET /tasks/:id sequence; the trailing value sticks once exhausted.
+ * NimbleTasks stub modelling the deep-research task lifecycle: create task →
+ * status transitions → terminal result. `statuses` drives the GET /tasks/:id
+ * sequence; the trailing value sticks once exhausted. Persistence is NOT here
+ * anymore — it goes through the injected OutputStore (the seam).
  */
-function dataPlane(opts: {
+function tasksPlane(opts: {
   createStatus?: string;
   statuses: string[];
   result?: unknown;
@@ -65,27 +66,49 @@ function dataPlane(opts: {
       statusIdx += 1;
       return Response.json({ task_id: "task_abc", status });
     }
-    if (url === `${ARTIFACTS_URL}/v1/artifacts` && method === "POST") {
-      return Response.json({
-        artifact_id: "art_1",
-        uri: "artifact://art_1",
-        mime_type: "text/markdown",
-        size_bytes: 42,
-      });
-    }
     throw new Error(`unexpected request ${method} ${url}`);
   };
   return { fetchImpl, calls };
 }
 
-function ctxFor(fetchImpl: typeof fetch, over: Partial<DeepResearchContext> = {}): DeepResearchContext {
+/** Recording fake OutputStore. `put` captures the input + returns a `files://`
+ *  ref; `throwOnPut` makes the write fail to drive the persistence-failure path. */
+function fakeStore(opts: { throwOnPut?: boolean } = {}) {
+  const puts: Array<{ scope: { workspace: string }; input: PutInput }> = [];
+  const store: OutputStore = {
+    async put(scope, input): Promise<Ref> {
+      puts.push({ scope, input });
+      if (opts.throwOnPut) throw new Error("artifacts service 503");
+      const bodyLen =
+        typeof input.body === "string" ? input.body.length : input.body.byteLength;
+      return {
+        id: "out_1",
+        uri: "files://out_1",
+        mime: input.mime,
+        sizeBytes: bodyLen,
+      };
+    },
+    async get() {
+      throw new Error("not used");
+    },
+    async list() {
+      return [];
+    },
+  };
+  return { store, puts };
+}
+
+function ctxFor(
+  fetchImpl: typeof fetch,
+  store: OutputStore | null,
+  over: Partial<DeepResearchContext> = {},
+): DeepResearchContext {
   // Clock advances 1s per read so the poll deadline is reachable in finite steps.
   let clock = 0;
   return {
     getWorkspaceId: () => "ws_smoke",
-    issuer: "https://authz.test",
-    nimbletasksUrl: TASKS_URL,
-    artifactsUrl: ARTIFACTS_URL,
+    taskRunner: { baseUrl: TASKS_URL, issuer: "https://authz.test" },
+    store,
     cache: mintingCache(),
     baseFetch: fetchImpl,
     now: () => (clock += 1000),
@@ -96,11 +119,13 @@ function ctxFor(fetchImpl: typeof fetch, over: Partial<DeepResearchContext> = {}
   };
 }
 
+const REPORT = "# Findings\n\nThe answer is forty-two and here is the supporting evidence.\n";
+
 const ENVELOPE_RESULT = {
   isError: false,
   content: [{ type: "text", text: "{}" }],
   structuredContent: {
-    report: "# Findings\n\nThe answer.\n",
+    report: REPORT,
     sources: [
       { title: "A", url: "https://a.test", source_domain: "a.test" },
       { title: "B", url: "https://b.test", source_domain: "b.test" },
@@ -111,27 +136,63 @@ const ENVELOPE_RESULT = {
   },
 };
 
+function textOf(res: { content: unknown[] }): string {
+  const block = res.content.find(
+    (b) => (b as { type?: string }).type === "text",
+  ) as { text: string } | undefined;
+  return block?.text ?? "";
+}
+
+function resourceLinkOf(res: { content: unknown[] }) {
+  return res.content.find((b) => (b as { type?: string }).type === "resource_link") as
+    | { type: string; uri: string; name?: string; mimeType?: string }
+    | undefined;
+}
+
 describe("nb__deep_research", () => {
-  it("creates the task, polls to completion, and writes the report artifact", async () => {
-    const dp = dataPlane({ statuses: ["working", "completed"], result: ENVELOPE_RESULT });
-    const tool = createDeepResearchTool(ctxFor(dp.fetchImpl));
+  it("persists the report through the store and returns a resource_link + short summary (NOT the report inline)", async () => {
+    const dp = tasksPlane({ statuses: ["working", "completed"], result: ENVELOPE_RESULT });
+    const fs = fakeStore();
+    const tool = createDeepResearchTool(ctxFor(dp.fetchImpl, fs.store));
 
     const res = await tool.handler({ query: "what is x" });
 
     expect(res.isError).toBeFalsy();
+
+    // The result is a SHORT one-line text summary + a resource_link to the
+    // stored output. The report text does NOT live in `content` — so the
+    // conversation log persists the REF, not a ~17KB jsonl line replayed every
+    // turn. (No worker-envelope marker, no report body, in the text block.)
+    const text = textOf(res);
+    expect(text).toContain("Deep research complete");
+    expect(text).toContain("2 sources");
+    expect(text).not.toContain("# Findings");
+    expect(text).not.toContain("forty-two");
+    expect(text.length).toBeLessThan(200);
+
+    // The resource_link points at the stored `files://<id>` ref.
+    const link = resourceLinkOf(res);
+    expect(link).toBeDefined();
+    expect(link?.uri).toBe("files://out_1");
+    expect(link?.mimeType).toBe("text/markdown");
+    expect(link?.name).toContain("Deep research");
+
+    // The FULL report IS persisted to the store (full body, with citations).
+    expect(fs.puts).toHaveLength(1);
+    const put = fs.puts[0]!;
+    expect(put.scope.workspace).toBe("ws_smoke");
+    expect(put.input.type).toBe("report");
+    expect(put.input.mime).toBe("text/markdown");
+    expect(put.input.body).toBe(REPORT);
+    expect(put.input.citations).toHaveLength(2);
+
+    // structuredContent carries the ref, not the report.
     expect(res.structuredContent).toMatchObject({
-      artifact_id: "art_1",
-      uri: "artifact://art_1",
+      output_id: "out_1",
+      uri: "files://out_1",
       sources: 2,
       task_id: "task_abc",
     });
-
-    // The REAL report is returned INLINE (not a bare ref) so the agent presents
-    // actual research, not a fabrication.
-    const text = (res.content[0] as { text: string }).text;
-    expect(text).toContain("# Findings");
-    expect(text).toContain("The answer.");
-    expect(text).toContain("do not add facts that are not in it");
 
     // Task created with the right type + audit breadcrumbs, on the fleet audience.
     const create = dp.calls.find((c) => c.url === `${TASKS_URL}/v1/tasks` && c.method === "POST");
@@ -143,46 +204,71 @@ describe("nb__deep_research", () => {
       tool_name: "deep_research",
     });
     expect(String((create?.body as { idempotency_key: string }).idempotency_key)).toMatch(/^dr-/);
-
-    // Artifact written on the artifacts audience, with the markdown report + citations.
-    const write = dp.calls.find((c) => c.url === `${ARTIFACTS_URL}/v1/artifacts`);
-    expect(write?.auth).toBe("Bearer tok-artifacts");
-    const wbody = write?.body as { body_b64: string; mime_type: string; citations: unknown[] };
-    expect(wbody.mime_type).toBe("text/markdown");
-    expect(Buffer.from(wbody.body_b64, "base64").toString("utf8")).toContain("# Findings");
-    expect(wbody.citations).toHaveLength(2);
   });
 
-  it("truncates an over-cap report inline but persists the full report", async () => {
+  it("falls back to a BOUNDED INLINE report when no store resolves (off-platform)", async () => {
+    const dp = tasksPlane({ statuses: ["completed"], result: ENVELOPE_RESULT });
+    const tool = createDeepResearchTool(ctxFor(dp.fetchImpl, null));
+
+    const res = await tool.handler({ query: "what is x" });
+
+    expect(res.isError).toBeFalsy();
+    // No store ⇒ the REAL report is returned inline so research still works.
+    const text = textOf(res);
+    expect(text).toContain("# Findings");
+    expect(text).toContain("forty-two");
+    expect(text).toContain("do not add facts that are not in it");
+    // No resource_link without a store.
+    expect(resourceLinkOf(res)).toBeUndefined();
+    expect(res.structuredContent).toMatchObject({ inline_fallback: true });
+  });
+
+  it("bounds an over-cap inline report when no store resolves", async () => {
     const big = `# Big\n\n${"x".repeat(20_000)}`;
-    const result = {
-      isError: false,
-      structuredContent: { report: big, sources: [], query: "q" },
-    };
-    const dp = dataPlane({ statuses: ["completed"], result });
-    const tool = createDeepResearchTool(ctxFor(dp.fetchImpl));
+    const result = { isError: false, structuredContent: { report: big, sources: [], query: "q" } };
+    const dp = tasksPlane({ statuses: ["completed"], result });
+    const tool = createDeepResearchTool(ctxFor(dp.fetchImpl, null));
 
     const res = await tool.handler({ query: "q" });
     expect(res.isError).toBeFalsy();
-    const text = (res.content[0] as { text: string }).text;
+    const text = textOf(res);
     expect(text).toContain("[Report truncated");
-    expect(text).toContain("nb__get_output");
-    expect(res.structuredContent).toMatchObject({ report_truncated: true });
-    // The FULL report is still written to the store (durable), un-truncated.
-    const write = dp.calls.find((c) => c.url === `${ARTIFACTS_URL}/v1/artifacts`);
-    const wbody = write?.body as { body_b64: string };
-    expect(Buffer.from(wbody.body_b64, "base64").toString("utf8").length).toBeGreaterThan(20_000);
+    expect(res.structuredContent).toMatchObject({ report_truncated: true, inline_fallback: true });
+  });
+
+  it("inline-falls-back the REAL report (no fabrication) when OutputStore.put fails", async () => {
+    const dp = tasksPlane({ statuses: ["completed"], result: ENVELOPE_RESULT });
+    const fs = fakeStore({ throwOnPut: true });
+    const tool = createDeepResearchTool(ctxFor(dp.fetchImpl, fs.store));
+
+    const res = await tool.handler({ query: "what is x" });
+
+    // The write failed, but we HAVE the real report — return it inline (real
+    // content, not a fabrication), never an empty success.
+    expect(res.isError).toBeFalsy();
+    const text = textOf(res);
+    expect(text).toContain("# Findings");
+    expect(text).toContain("forty-two");
+    expect(text).toContain("couldn't save it durably");
+    // No resource_link — there's no durable ref to point at.
+    expect(resourceLinkOf(res)).toBeUndefined();
+    // The put WAS attempted (the real report, full).
+    expect(fs.puts).toHaveLength(1);
+    expect(fs.puts[0]!.input.body).toBe(REPORT);
+    expect(res.structuredContent).toMatchObject({ inline_fallback: true });
   });
 
   it("returns immediately when the task is already terminal on create", async () => {
-    const dp = dataPlane({ createStatus: "completed", statuses: [], result: ENVELOPE_RESULT });
-    const tool = createDeepResearchTool(ctxFor(dp.fetchImpl));
+    const dp = tasksPlane({ createStatus: "completed", statuses: [], result: ENVELOPE_RESULT });
+    const fs = fakeStore();
+    const tool = createDeepResearchTool(ctxFor(dp.fetchImpl, fs.store));
 
     const res = await tool.handler({ query: "what is x" });
 
     expect(res.isError).toBeFalsy();
     // No GET /tasks/:id poll needed — create returned terminal.
     expect(dp.calls.some((c) => c.url === `${TASKS_URL}/v1/tasks/task_abc`)).toBe(false);
+    expect(fs.puts).toHaveLength(1);
   });
 
   it("falls back to the JSON text content block when structuredContent is absent", async () => {
@@ -190,75 +276,79 @@ describe("nb__deep_research", () => {
       isError: false,
       content: [{ type: "text", text: JSON.stringify({ report: "plain report", sources: [] }) }],
     };
-    const dp = dataPlane({ statuses: ["completed"], result });
-    const tool = createDeepResearchTool(ctxFor(dp.fetchImpl));
+    const dp = tasksPlane({ statuses: ["completed"], result });
+    const fs = fakeStore();
+    const tool = createDeepResearchTool(ctxFor(dp.fetchImpl, fs.store));
 
     const res = await tool.handler({ query: "q" });
     expect(res.isError).toBeFalsy();
-    const write = dp.calls.find((c) => c.url === `${ARTIFACTS_URL}/v1/artifacts`);
-    const wbody = write?.body as { body_b64: string };
-    expect(Buffer.from(wbody.body_b64, "base64").toString("utf8")).toBe("plain report");
+    expect(fs.puts[0]!.input.body).toBe("plain report");
   });
 
-  it("errors (without writing an artifact) when the task fails", async () => {
-    const dp = dataPlane({ statuses: ["failed"] });
-    const tool = createDeepResearchTool(ctxFor(dp.fetchImpl));
+  it("FAILS HARD (no store write, no fabrication) when the task fails", async () => {
+    const dp = tasksPlane({ statuses: ["failed"] });
+    const fs = fakeStore();
+    const tool = createDeepResearchTool(ctxFor(dp.fetchImpl, fs.store));
 
     const res = await tool.handler({ query: "q" });
     expect(res.isError).toBe(true);
-    expect(dp.calls.some((c) => c.url === `${ARTIFACTS_URL}/v1/artifacts`)).toBe(false);
+    // No real report ⇒ never touch the store.
+    expect(fs.puts).toHaveLength(0);
   });
 
-  it("times out (no artifact) when the task never reaches a terminal status", async () => {
-    const dp = dataPlane({ statuses: ["working"] });
+  it("times out (no store write) when the task never reaches a terminal status", async () => {
+    const dp = tasksPlane({ statuses: ["working"] });
+    const fs = fakeStore();
     // Tight deadline: the advancing clock crosses it after a couple of polls.
-    const tool = createDeepResearchTool(ctxFor(dp.fetchImpl, { maxWaitMs: 2500 }));
+    const tool = createDeepResearchTool(ctxFor(dp.fetchImpl, fs.store, { maxWaitMs: 2500 }));
 
     const res = await tool.handler({ query: "q" });
     expect(res.isError).toBe(true);
-    // User-facing text is humanized — the raw "timed out / task <id>" detail
-    // goes to the logs, not the result.
-    const text = (res.content[0] as { text: string }).text;
+    const text = textOf(res);
     expect(text).toContain("taking longer than expected");
     expect(text).not.toContain("task_abc");
-    expect(dp.calls.some((c) => c.url === `${ARTIFACTS_URL}/v1/artifacts`)).toBe(false);
+    expect(fs.puts).toHaveLength(0);
   });
 
   it("humanizes a service/cert failure — no raw technical detail in the result", async () => {
-    // The mint/data-plane fetch throws like a TLS verification failure.
     const svc: typeof fetch = async () => {
       throw new Error(
         "mint POST to https://mcp-authorizer.mcp-shared.svc/token failed: " +
           "unable to verify the first certificate",
       );
     };
-    const tool = createDeepResearchTool(ctxFor(svc));
+    const fs = fakeStore();
+    const tool = createDeepResearchTool(ctxFor(svc, fs.store));
 
     const res = await tool.handler({ query: "q" });
     expect(res.isError).toBe(true);
-    const text = (res.content[0] as { text: string }).text;
+    const text = textOf(res);
     expect(text).toContain("temporarily unavailable");
-    // None of the raw detail leaks to the user.
     expect(text).not.toContain("certificate");
     expect(text).not.toContain("mcp-authorizer");
     expect(text).not.toContain("https://");
+    expect(fs.puts).toHaveLength(0);
   });
 
   it("errors when no workspace is bound", async () => {
-    const dp = dataPlane({ statuses: ["completed"], result: ENVELOPE_RESULT });
-    const tool = createDeepResearchTool(ctxFor(dp.fetchImpl, { getWorkspaceId: () => null }));
+    const dp = tasksPlane({ statuses: ["completed"], result: ENVELOPE_RESULT });
+    const fs = fakeStore();
+    const tool = createDeepResearchTool(ctxFor(dp.fetchImpl, fs.store, { getWorkspaceId: () => null }));
 
     const res = await tool.handler({ query: "q" });
     expect(res.isError).toBe(true);
     expect(dp.calls).toHaveLength(0);
+    expect(fs.puts).toHaveLength(0);
   });
 
   it("rejects an empty query before any network call", async () => {
-    const dp = dataPlane({ statuses: ["completed"], result: ENVELOPE_RESULT });
-    const tool = createDeepResearchTool(ctxFor(dp.fetchImpl));
+    const dp = tasksPlane({ statuses: ["completed"], result: ENVELOPE_RESULT });
+    const fs = fakeStore();
+    const tool = createDeepResearchTool(ctxFor(dp.fetchImpl, fs.store));
 
     const res = await tool.handler({ query: "   " });
     expect(res.isError).toBe(true);
     expect(dp.calls).toHaveLength(0);
+    expect(fs.puts).toHaveLength(0);
   });
 });

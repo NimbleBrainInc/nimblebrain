@@ -794,23 +794,11 @@ export class Runtime {
     rt._getIdentity = getIdentity;
     rt._getWorkspaceId = getWorkspaceId;
 
-    // Deep-research trigger context. Built only when the data plane is wired
-    // (fleet issuer + nimbletasks + artifacts URLs all present) — otherwise the
-    // `nb__deep_research` tool is omitted, so local dev never sees a tool it
-    // can't drive. The mint itself is authenticated by the per-tenant key
-    // (NB_MCP_AUTHORIZER_TENANT_KEY), read inside the data-plane clients.
+    // Data-plane env signals. The mint itself is authenticated by the per-tenant
+    // key (NB_MCP_AUTHORIZER_TENANT_KEY), read inside the data-plane clients.
     const drIssuer = process.env.NB_FLEET_AUTHORIZER_ISSUER;
     const drTasksUrl = process.env.NB_NIMBLETASKS_URL;
     const drArtifactsUrl = process.env.NB_ARTIFACTS_URL;
-    const deepResearchCtx: DeepResearchContext | undefined =
-      drIssuer && drTasksUrl && drArtifactsUrl
-        ? {
-            getWorkspaceId: () => rt.getCurrentWorkspaceId(),
-            issuer: drIssuer,
-            nimbletasksUrl: drTasksUrl,
-            artifactsUrl: drArtifactsUrl,
-          }
-        : undefined;
 
     // Output-store + task-runner provider selection (output-store seam). ONE
     // explicit model for both: NB_OUTPUT_STORE / NB_TASK_RUNNER force the
@@ -849,6 +837,22 @@ export class Runtime {
       outputStoreSelection.kind === "null" ? null : outputStoreSelection.store;
     const getOutputCtx: GetOutputContext | undefined = outputStore
       ? { getWorkspaceId: () => rt.getCurrentWorkspaceId(), store: outputStore }
+      : undefined;
+
+    // Deep-research trigger context. Wired ONLY when a dataplane task runner
+    // resolves (the durable Job that does the work) — otherwise the
+    // `nb__deep_research` tool is omitted, so local dev never sees a tool it
+    // can't drive. Persistence threads the runtime's ALREADY-RESOLVED OutputStore
+    // (reused, not re-resolved): deep_research persists the report through the
+    // seam → a `files://<id>` ref → a resource_link. The store may still be
+    // `null` here (task runner up, store off) — that path degrades to a bounded
+    // inline report inside the tool rather than failing.
+    const deepResearchCtx: DeepResearchContext | undefined = taskRunnerSelection.dataplane
+      ? {
+          getWorkspaceId: () => rt.getCurrentWorkspaceId(),
+          taskRunner: taskRunnerSelection.dataplane,
+          store: outputStore,
+        }
       : undefined;
 
     // Register the `nb` system source. Built as an in-process MCP server

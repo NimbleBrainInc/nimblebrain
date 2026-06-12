@@ -38,46 +38,63 @@ export interface OutputsSourceContext {
 }
 
 /**
+ * Resolve a `files://<id>` ref to its output bytes through the `OutputStore`,
+ * shaped as an `InProcessResource` for the `resources/read` path. Returns `null`
+ * for a non-`files://` uri, no bound workspace, a cross-workspace ref, or any
+ * store error — so the read_resource loop falls through cleanly.
+ *
+ * Shared between the dedicated `outputs` source (Group B) and the `nb` system
+ * source: a deep_research `resource_link` is fetched by the frontend with the
+ * OWNING tool's app name (`appNameFromToolName("nb__deep_research") === "nb"`),
+ * so the `nb` source must resolve the same `files://<id>` ref the outputs source
+ * does. Both delegate here so there's ONE resolver, not two.
+ */
+export async function resolveOutputResource(
+  store: OutputStore,
+  workspace: string | null,
+  uri: string,
+): Promise<InProcessResource | null> {
+  const id = outputRefToId(uri);
+  if (!id) return null; // not a files:// ref — let another source try.
+  if (!workspace) return null; // no workspace bound — resolve nothing.
+
+  try {
+    const content = await store.get({ workspace }, id);
+
+    // Fence the identity-owned local store the same way `nb__get_output` does:
+    // if the stored output records a different workspace, treat it as not-found
+    // rather than leaking it across the scope boundary. (The dataplane backend
+    // already fenced at the RLS boundary.)
+    if (content.meta.workspace && content.meta.workspace !== workspace) {
+      return null;
+    }
+
+    // Return the FULL body; read_resource applies its own 12K peek cap. Text
+    // MIMEs come back as `text` (so read_resource can truncate + show them);
+    // everything else as a `blob` (read_resource reports it as binary).
+    if (isTextMime(content.meta.mime)) {
+      return {
+        text: new TextDecoder().decode(content.body),
+        mimeType: content.meta.mime,
+      };
+    }
+    return { blob: content.body, mimeType: content.meta.mime };
+  } catch {
+    // Unknown id / store error → not-found. Falls through the read_resource
+    // loop cleanly (no crash, no leak).
+    return null;
+  }
+}
+
+/**
  * Build the `outputs` in-process source. It serves no tools — only the
  * `files://` resource resolution path. Returns an UNSTARTED source (the caller
  * starts it alongside the other workspace sources, as `createSystemTools` does
  * for the `nb` source).
  */
 export function createOutputsSource(ctx: OutputsSourceContext, eventSink: EventSink): McpSource {
-  const resourceHandler = async (uri: string): Promise<InProcessResource | null> => {
-    const id = outputRefToId(uri);
-    if (!id) return null; // not a files:// ref — let another source try.
-
-    const workspace = ctx.getWorkspaceId();
-    if (!workspace) return null; // no workspace bound — resolve nothing.
-
-    try {
-      const content = await ctx.store.get({ workspace }, id);
-
-      // Fence the identity-owned local store the same way `nb__get_output`
-      // does: if the stored output records a different workspace, treat it as
-      // not-found rather than leaking it across the scope boundary. (The
-      // dataplane backend already fenced at the RLS boundary.)
-      if (content.meta.workspace && content.meta.workspace !== workspace) {
-        return null;
-      }
-
-      // Return the FULL body; read_resource applies its own 12K peek cap. Text
-      // MIMEs come back as `text` (so read_resource can truncate + show them);
-      // everything else as a `blob` (read_resource reports it as binary).
-      if (isTextMime(content.meta.mime)) {
-        return {
-          text: new TextDecoder().decode(content.body),
-          mimeType: content.meta.mime,
-        };
-      }
-      return { blob: content.body, mimeType: content.meta.mime };
-    } catch {
-      // Unknown id / store error → not-found. Falls through the read_resource
-      // loop cleanly (no crash, no leak).
-      return null;
-    }
-  };
+  const resourceHandler = (uri: string): Promise<InProcessResource | null> =>
+    resolveOutputResource(ctx.store, ctx.getWorkspaceId(), uri);
 
   return defineInProcessApp(
     {
