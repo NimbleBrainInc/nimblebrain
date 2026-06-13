@@ -1,9 +1,10 @@
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import { memo, useEffect, useState } from "react";
+import { memo } from "react";
 import { NavLink } from "react-router-dom";
 import { useChatPanelContext } from "../context/ChatPanelContext";
 import { useSidebar } from "../context/SidebarContext";
 import { useWorkspaceContext } from "../context/WorkspaceContext";
+import { useIsMobile } from "../lib/hooks/use-is-mobile";
 import { resolveIcon } from "../lib/icons";
 import { identityAppRoute, isIdentityApp } from "../lib/identity-apps";
 import { cn } from "../lib/utils";
@@ -61,19 +62,6 @@ interface ShellLayoutProps {
 // wasn't moving in coordination.
 const CHAT_TRANSITION_STANDARD = "300ms cubic-bezier(0.33, 1, 0.68, 1)";
 const CHAT_RESIZE_HANDLE_WIDTH = 4; // px — matches ChatChrome's ResizeHandle
-
-function useIsMobile(): boolean {
-  const [isMobile, setIsMobile] = useState(
-    () => typeof window !== "undefined" && window.innerWidth < 768,
-  );
-  useEffect(() => {
-    const mq = window.matchMedia("(max-width: 767px)");
-    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
-    mq.addEventListener("change", handler);
-    return () => mq.removeEventListener("change", handler);
-  }, []);
-  return isMobile;
-}
 
 export const ShellLayout = memo(function ShellLayout({
   forSlot,

@@ -39,7 +39,9 @@ function downloadFilename(
   mimeType: string | undefined,
 ): string {
   const base = name ?? uri.split("/").pop() ?? "document";
-  if (/\.[a-z0-9]+$/i.test(base)) return base;
+  // Only keep a recognized document extension — an arbitrary trailing dot-token
+  // (e.g. a title like "report.final") is NOT an extension and still gets one.
+  if (/\.(md|markdown|txt)$/i.test(base)) return base;
   // Extension-less names get one inferred from the MIME: plain text → .txt,
   // markdown (and the catch-all) → .md.
   const ext = normalizeMime(mimeType) === "text/plain" ? "txt" : "md";
