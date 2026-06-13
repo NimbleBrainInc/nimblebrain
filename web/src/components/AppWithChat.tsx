@@ -21,7 +21,7 @@
 //     to the last in-flight conversation so the SSE viewer reconnects.
 // ---------------------------------------------------------------------------
 
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import { useLocation } from "react-router-dom";
 import type { UiChatContext } from "../bridge/types";
 import { useChatContext } from "../context/ChatContext";
@@ -34,6 +34,7 @@ import {
   setSavedConversationId,
   setSavedStreamingIds,
 } from "../lib/active-conversation-storage";
+import { useIsMobile } from "../lib/hooks/use-is-mobile";
 import type { AppContext, PlacementEntry } from "../types";
 import { SlotRenderer } from "./SlotRenderer";
 
@@ -49,19 +50,6 @@ let restoredLastConversation = false;
  * post-reload (empty) set.
  */
 const initialSavedStreamingIds = getSavedStreamingIds();
-
-function useIsMobile(): boolean {
-  const [isMobile, setIsMobile] = useState(
-    () => typeof window !== "undefined" && window.innerWidth < 768,
-  );
-  useEffect(() => {
-    const mq = window.matchMedia("(max-width: 767px)");
-    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
-    mq.addEventListener("change", handler);
-    return () => mq.removeEventListener("change", handler);
-  }, []);
-  return isMobile;
-}
 
 interface AppWithChatProps {
   placement: PlacementEntry;

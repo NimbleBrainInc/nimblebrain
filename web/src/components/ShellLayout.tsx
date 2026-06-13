@@ -1,14 +1,16 @@
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import { memo, useEffect, useState } from "react";
+import { memo } from "react";
 import { NavLink } from "react-router-dom";
 import { useChatPanelContext } from "../context/ChatPanelContext";
 import { useSidebar } from "../context/SidebarContext";
 import { useWorkspaceContext } from "../context/WorkspaceContext";
+import { useIsMobile } from "../lib/hooks/use-is-mobile";
 import { resolveIcon } from "../lib/icons";
 import { identityAppRoute, isIdentityApp } from "../lib/identity-apps";
 import { cn } from "../lib/utils";
 import { toSlug } from "../lib/workspace-slug";
 import type { PlacementEntry } from "../types";
+import { ArtifactPanel } from "./ArtifactPanel";
 import { ChatChrome } from "./ChatChrome";
 import { Logo } from "./Logo";
 import { MobileSidebarDrawer } from "./MobileSidebarDrawer";
@@ -60,19 +62,6 @@ interface ShellLayoutProps {
 // wasn't moving in coordination.
 const CHAT_TRANSITION_STANDARD = "300ms cubic-bezier(0.33, 1, 0.68, 1)";
 const CHAT_RESIZE_HANDLE_WIDTH = 4; // px — matches ChatChrome's ResizeHandle
-
-function useIsMobile(): boolean {
-  const [isMobile, setIsMobile] = useState(
-    () => typeof window !== "undefined" && window.innerWidth < 768,
-  );
-  useEffect(() => {
-    const mq = window.matchMedia("(max-width: 767px)");
-    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
-    mq.addEventListener("change", handler);
-    return () => mq.removeEventListener("change", handler);
-  }, []);
-  return isMobile;
-}
 
 export const ShellLayout = memo(function ShellLayout({
   forSlot,
@@ -192,6 +181,12 @@ export const ShellLayout = memo(function ShellLayout({
           `marginRight` on <main> above; the panel and handle live inside
           ChatChrome itself. */}
       <ChatChrome />
+
+      {/* Artifact document panel — the single, global mount point (sibling
+          of ChatChrome), so an artifact chip in any conversation opens its
+          report into one shared right-side drawer. Renders nothing until an
+          artifact is opened via ArtifactPanelContext. */}
+      <ArtifactPanel />
 
       {/* Mobile drawer — single-column layout mirroring desktop. */}
       {isHidden && (
