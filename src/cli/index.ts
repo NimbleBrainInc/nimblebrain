@@ -2,6 +2,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { CommanderError } from "commander";
+import { initTracing } from "../observability/index.ts";
 import { TelemetryManager } from "../telemetry/manager.ts";
 import { createAutomationCommand } from "./commands/automation.ts";
 import { createBundleCommand } from "./commands/bundle.ts";
@@ -34,6 +35,11 @@ const KNOWN_COMMANDS = new Set([
 ]);
 
 async function main() {
+  // Install vendor-neutral OTel tracing once, before any command runs. No-op
+  // (nothing exported) unless OTEL_EXPORTER_OTLP_ENDPOINT is set, so this is
+  // safe for CLI/TUI and OSS checkouts with no observability infra.
+  initTracing();
+
   // Pre-check for unknown subcommands (before Commander parses)
   const firstArg = process.argv[2];
   if (firstArg && !firstArg.startsWith("-") && !KNOWN_COMMANDS.has(firstArg)) {

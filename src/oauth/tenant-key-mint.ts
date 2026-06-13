@@ -1,3 +1,4 @@
+import { injectTraceparent } from "../observability/index.ts";
 import { WORKSPACE_ID_RE } from "../workspace/workspace-id-pattern.ts";
 import { ALLOWED_TID_PATTERN, EnvelopeError, signMacEnvelope } from "./envelope.ts";
 
@@ -217,7 +218,10 @@ export async function mintServiceToken(opts: MintServiceTokenOptions): Promise<S
   try {
     res = await doFetch(tokenUrl, {
       method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      // Continue the trace into the authorizer (a traced mesh service). The
+      // traceparent is correlation only — the tenant assertion in the body is
+      // the authority. No-op when there's no active span (e.g. boot-time mint).
+      headers: injectTraceparent({ "Content-Type": "application/x-www-form-urlencoded" }),
       body: body.toString(),
     });
   } catch (cause) {
@@ -400,6 +404,9 @@ export function createMintingFetch(opts: MintingFetchOptions): typeof fetch {
       // (content-type, session id) ride through via `init`.
       const headers = new Headers(init?.headers);
       headers.set("Authorization", `Bearer ${token}`);
+      // Propagate the active trace onto the authenticated remote-MCP request so
+      // the span continues on the same hop as the verified service identity.
+      injectTraceparent(headers);
       return base(input, { ...init, headers });
     };
     const res = await send(false);

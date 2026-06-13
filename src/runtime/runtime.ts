@@ -65,6 +65,7 @@ import { InstructionsStore } from "../instructions/index.ts";
 import { getModelByString, getProviderFromModel } from "../model/catalog.ts";
 import { buildModelResolver, resolveModelString } from "../model/registry.ts";
 import { installOAuthFetchDebug } from "../oauth/oauth-fetch-debug.ts";
+import { requestIdentityAttrs, withSpan } from "../observability/index.ts";
 import {
   createToolListAggregator,
   type ToolListAggregator,
@@ -1768,8 +1769,13 @@ export class Runtime {
       }
     }
 
+    // Root span for the agent turn — the common chokepoint for both the HTTP
+    // and CLI entry points. Opened inside runWithRequestContext so the verified
+    // identity is in scope; the llm.call and tool.dispatch spans nest under it.
     const result = await runWithRequestContext(reqCtx, () =>
-      engine.run(engineConfig, systemPrompt, messages, tools),
+      withSpan("agent.turn", { "llm.model": model, ...requestIdentityAttrs() }, () =>
+        engine.run(engineConfig, systemPrompt, messages, tools),
+      ),
     );
 
     const usage: TurnUsage = {

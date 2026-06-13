@@ -1,7 +1,7 @@
 {
   "name": "nimblebrain",
   "version": "0.0.0-dev",
-  "description": "Self-hosted platform for MCP Apps and agent automations — tools, interactive UIs, scheduled runs, multi-agent delegation",
+  "description": "Self-hosted platform for MCP Apps and agent automations \u2014 tools, interactive UIs, scheduled runs, multi-agent delegation",
   "license": "Apache-2.0",
   "author": "NimbleBrain, Inc. <oss@nimblebrain.ai>",
   "repository": {
@@ -101,6 +101,12 @@
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@nimblebrain/mpak-sdk": "0.8.0",
     "@nimblebrain/synapse": "^0.8.0",
+    "@opentelemetry/api": "1.9.1",
+    "@opentelemetry/exporter-trace-otlp-http": "0.219.0",
+    "@opentelemetry/resources": "2.8.0",
+    "@opentelemetry/sdk-trace-base": "2.8.0",
+    "@opentelemetry/sdk-trace-node": "2.8.0",
+    "@opentelemetry/semantic-conventions": "1.41.1",
     "@sinclair/typebox": "^0.34.49",
     "@workos-inc/node": "^8.12.1",
     "ai": "^6.0.138",

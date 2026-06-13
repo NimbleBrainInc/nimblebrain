@@ -4,6 +4,7 @@ import { enableDefaultMetrics } from "./metrics.ts";
 import { corsMiddleware } from "./middleware/cors.ts";
 import { metricsMiddleware } from "./middleware/metrics.ts";
 import { securityHeaders } from "./middleware/security-headers.ts";
+import { tracingMiddleware } from "./middleware/tracing.ts";
 import { authRoutes } from "./routes/auth.ts";
 import { bootstrapRoutes } from "./routes/bootstrap.ts";
 import { chatRoutes } from "./routes/chat.ts";
@@ -28,6 +29,10 @@ export function createApp(
 
   // Turn on process/runtime metrics for this server (idempotent).
   enableDefaultMetrics();
+
+  // Tracing outermost so the HTTP span wraps the full chain (incl. metrics) and
+  // establishes the trace context every downstream handler/span inherits.
+  app.use("*", tracingMiddleware());
 
   // Request metrics first so it times the full handler chain.
   app.use("*", metricsMiddleware());
