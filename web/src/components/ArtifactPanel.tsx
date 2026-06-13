@@ -109,17 +109,21 @@ export function ArtifactPanel() {
     };
   }, [appName, uri]);
 
-  // Esc closes the panel while it's open.
+  // Esc closes the panel while it's open. The panel is the topmost layer, so it
+  // claims Esc in the capture phase and stops the event before it reaches other
+  // document-level Esc handlers (e.g. ChatChrome's drawer) — otherwise one Esc
+  // press would close both.
   useEffect(() => {
     if (!isOpen) return;
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") {
         e.preventDefault();
+        e.stopImmediatePropagation();
         closeArtifact();
       }
     }
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
+    document.addEventListener("keydown", onKey, { capture: true });
+    return () => document.removeEventListener("keydown", onKey, { capture: true });
   }, [isOpen, closeArtifact]);
 
   // Focus management: when the dialog opens, remember what was focused and
@@ -214,9 +218,12 @@ export function ArtifactPanel() {
                 the body below scrolls, this stays put. */}
             <header className="flex shrink-0 items-center gap-2 border-b border-border bg-card px-4 py-3">
               <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
-              <h2 className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground">
-                {title}
-              </h2>
+              <div className="min-w-0 flex-1">
+                <h2 className="truncate text-sm font-semibold text-foreground">{title}</h2>
+                {artifact?.description && (
+                  <p className="truncate text-xs text-muted-foreground">{artifact.description}</p>
+                )}
+              </div>
 
               <button
                 type="button"
