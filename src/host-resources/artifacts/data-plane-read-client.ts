@@ -22,12 +22,16 @@ import {
  * dimension comes from the request — never the wire, never the artifact URI.
  * There is no new signing key.
  *
- * Body delivery follows the data plane's own discrimination: small bodies are
- * returned inline (after the RLS row-read authorizes); large bodies are served
- * via a short-lived presigned URL the data plane mints *after* the same row-read
- * authorizes. The host prefers the presigned URL when offered — it keeps large
- * report bytes off the runtime's request path — and proxies inline bytes
- * otherwise.
+ * Body delivery follows the data plane's own two-endpoint shape. Metadata
+ * (`GET /artifacts/{id}`) returns a JSON row — mime type, title, size — with no
+ * bytes. The body is fetched separately (`GET /artifacts/{id}/content`), which
+ * after the RLS row-read authorizes either streams the bytes directly (small,
+ * inline body) or answers a short-lived presigned-URL redirect (large body, the
+ * data plane mints the URL *after* the same row-read). The host follows that
+ * discrimination: it reads inline bytes off the content response, and for the
+ * redirect it captures the presigned URL and fetches it off the read path so
+ * large report bytes never traverse the runtime twice. The redirect is read
+ * manually — the runtime's read bearer is never replayed to the storage origin.
  */
 
 /** Audience of the artifacts data-plane service token. */
@@ -110,36 +114,22 @@ export interface ArtifactReadClientOptions {
 }
 
 /**
- * The shape returned by the data plane's read endpoint. A single JSON envelope
- * carries the metadata the host needs plus EITHER inline content OR a presigned
- * pointer — the host never has to interpret storage internals.
+ * The metadata row returned by `GET /artifacts/{id}`. Bytes are NOT here — the
+ * body is fetched from `/content`. Snake_case mirrors the data plane's wire;
+ * camelCase variants are accepted defensively so a future wire tweak does not
+ * silently drop the field.
  */
-interface DataPlaneReadEnvelope {
+interface ArtifactMetadataEnvelope {
   mime_type?: unknown;
   mimeType?: unknown;
   title?: unknown;
   size_bytes?: unknown;
   sizeBytes?: unknown;
-  /** base64-encoded inline body for small artifacts. */
-  body_base64?: unknown;
-  bodyBase64?: unknown;
-  /** UTF-8 inline body for small text artifacts. */
-  body_text?: unknown;
-  bodyText?: unknown;
-  /** Short-lived presigned URL for large artifacts. */
-  presigned_url?: unknown;
-  presignedUrl?: unknown;
 }
 
 function firstString(...vals: unknown[]): string | undefined {
   for (const v of vals) if (typeof v === "string" && v.length > 0) return v;
   return undefined;
-}
-
-function decodeBase64(b64: string): Uint8Array {
-  // Node/Bun Buffer is available in the runtime; keep the decode here so the
-  // resolver layer stays free of encoding concerns.
-  return new Uint8Array(Buffer.from(b64, "base64"));
 }
 
 export class ArtifactReadClient {
@@ -181,14 +171,17 @@ export class ArtifactReadClient {
       baseFetch: this.fetchImpl,
     });
 
-    const readUrl = new URL(
-      `artifacts/${encodeURIComponent(id)}`,
-      this.config.baseUrl.endsWith("/") ? this.config.baseUrl : `${this.config.baseUrl}/`,
-    ).toString();
+    const base = this.config.baseUrl.endsWith("/")
+      ? this.config.baseUrl
+      : `${this.config.baseUrl}/`;
+    const metaUrl = new URL(`artifacts/${encodeURIComponent(id)}`, base).toString();
+    const contentUrl = new URL(`artifacts/${encodeURIComponent(id)}/content`, base).toString();
 
-    let res: Response;
+    // (1) Metadata row — mime type, title, size. No bytes here; the body comes
+    // from the /content endpoint below.
+    let metaRes: Response;
     try {
-      res = await authedFetch(readUrl, {
+      metaRes = await authedFetch(metaUrl, {
         method: "GET",
         headers: { Accept: "application/json" },
       });
@@ -198,52 +191,76 @@ export class ArtifactReadClient {
       );
     }
 
-    // 404 from the data plane covers both "no such row" and "RLS hid the row
-    // from this workspace" — collapsed on purpose so a guessed id can't be used
-    // to probe another workspace's inventory.
-    if (res.status === 404 || res.status === 403) {
+    // 404/403 covers both "no such row" and "RLS hid the row from this
+    // workspace" — collapsed on purpose so a guessed id can't be used to probe
+    // another workspace's inventory.
+    if (metaRes.status === 404 || metaRes.status === 403) {
       throw new ArtifactNotFoundError(id);
     }
-    if (!res.ok) {
-      const detail = await res.text().catch(() => "");
+    if (!metaRes.ok) {
+      const detail = await metaRes.text().catch(() => "");
       throw new ArtifactReadError(
-        `artifact read for ${id} failed ${res.status}: ${detail.slice(0, 300)}`,
-        res.status,
+        `artifact read for ${id} failed ${metaRes.status}: ${detail.slice(0, 300)}`,
+        metaRes.status,
       );
     }
 
-    let env: DataPlaneReadEnvelope;
+    let meta: ArtifactMetadataEnvelope;
     try {
-      env = (await res.json()) as DataPlaneReadEnvelope;
+      meta = (await metaRes.json()) as ArtifactMetadataEnvelope;
     } catch {
-      throw new ArtifactReadError("artifact read response was not JSON");
+      throw new ArtifactReadError("artifact metadata response was not JSON");
     }
 
-    const mimeType = firstString(env.mime_type, env.mimeType) ?? "application/octet-stream";
-    const title = firstString(env.title);
-    const sizeRaw = env.size_bytes ?? env.sizeBytes;
+    const mimeType = firstString(meta.mime_type, meta.mimeType) ?? "application/octet-stream";
+    const title = firstString(meta.title);
+    const sizeRaw = meta.size_bytes ?? meta.sizeBytes;
     const sizeBytes = typeof sizeRaw === "number" && Number.isFinite(sizeRaw) ? sizeRaw : undefined;
 
-    // Prefer the presigned URL when the data plane brokered one — that's the
-    // large-body path, and it keeps the bytes off the runtime's request path.
-    const presignedUrl = firstString(env.presigned_url, env.presignedUrl);
-    if (presignedUrl) {
-      return { mimeType, presignedUrl, title, sizeBytes };
+    // (2) Body. The data plane streams a small inline body directly (200) or
+    // answers a redirect to a short-lived presigned URL for a large (spilled)
+    // body. Read the redirect MANUALLY so the runtime's read bearer is never
+    // replayed to the storage origin and so the presigned URL stays off the
+    // read path (the resolver fetches it unauthenticated).
+    let contentRes: Response;
+    try {
+      contentRes = await authedFetch(contentUrl, {
+        method: "GET",
+        redirect: "manual",
+      });
+    } catch (cause) {
+      throw new ArtifactReadError(
+        `artifact content request failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+      );
     }
 
-    // Otherwise the body is inline (small artifact). Accept either a base64
-    // blob or a UTF-8 text body.
-    const bodyBase64 = firstString(env.body_base64, env.bodyBase64);
-    if (bodyBase64) {
-      return { mimeType, body: decodeBase64(bodyBase64), title, sizeBytes };
-    }
-    const bodyText = firstString(env.body_text, env.bodyText);
-    if (bodyText !== undefined) {
-      return { mimeType, body: new TextEncoder().encode(bodyText), title, sizeBytes };
+    if (contentRes.status === 404 || contentRes.status === 403) {
+      throw new ArtifactNotFoundError(id);
     }
 
-    throw new ArtifactReadError(
-      `artifact read for ${id} returned neither an inline body nor a presigned URL`,
-    );
+    // Redirect → large body: capture the presigned URL and hand it up. The
+    // resolver fetches it directly, keeping the bytes off the runtime path.
+    if (contentRes.status >= 300 && contentRes.status < 400) {
+      const presignedUrl = contentRes.headers.get("location") ?? undefined;
+      if (presignedUrl) {
+        return { mimeType, presignedUrl, title, sizeBytes };
+      }
+      throw new ArtifactReadError(
+        `artifact content for ${id} redirected without a Location`,
+        contentRes.status,
+      );
+    }
+
+    if (!contentRes.ok) {
+      const detail = await contentRes.text().catch(() => "");
+      throw new ArtifactReadError(
+        `artifact content for ${id} failed ${contentRes.status}: ${detail.slice(0, 300)}`,
+        contentRes.status,
+      );
+    }
+
+    // 200 → small inline body, streamed as raw bytes.
+    const body = new Uint8Array(await contentRes.arrayBuffer());
+    return { mimeType, body, title, sizeBytes };
   }
 }

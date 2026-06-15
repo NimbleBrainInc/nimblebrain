@@ -35,20 +35,31 @@ const DATA_PLANE = "https://artifacts.test";
 const TENANT_KEY = Buffer.alloc(32, 7);
 const IDENTITY: TenantIdentity = { tid: TID, tenantKey: TENANT_KEY };
 
-/** One artifact row in the fake store. */
+/**
+ * One artifact row in the fake store. `body` is the raw inline bytes the data
+ * plane streams from `/content` for a small artifact; `presignedUrl` (with the
+ * bytes under `presigned`) models a large artifact spilled to object storage,
+ * where `/content` answers a 302 redirect instead of bytes.
+ */
 interface Row {
   workspace: string;
   mimeType: string;
-  bodyText?: string;
-  bodyBase64?: string;
+  body?: Uint8Array;
   presignedUrl?: string;
 }
 
 /**
  * Build a fake `fetch` that plays BOTH the authorizer (`/token`) and the
- * artifacts service (`/artifacts/:id`). The minted token is a JSON blob naming
- * the workspace the runtime requested; the artifacts service reads that
- * workspace back off the bearer and fences rows by it (the RLS gate).
+ * artifacts service. The minted token is a JSON blob naming the workspace the
+ * runtime requested; the artifacts service reads that workspace back off the
+ * bearer and fences rows by it (the RLS gate).
+ *
+ * The service mirrors the data plane's ACTUAL two-endpoint read shape:
+ *   - `GET /artifacts/{id}`          → metadata JSON ({ mime_type, ... }), NO body
+ *   - `GET /artifacts/{id}/content`  → raw inline bytes (200), or a 302 redirect
+ *                                      to a presigned URL for a spilled body
+ * It deliberately does NOT return any inline-body field on the metadata row —
+ * that would be a wire shape the service never emits.
  */
 function makeDataPlaneFetch(
   rows: Record<string, Row>,
@@ -97,17 +108,32 @@ function makeDataPlaneFetch(
       const claims = JSON.parse(Buffer.from(bearer, "base64url").toString("utf8")) as {
         workspace: string;
       };
-      const id = decodeURIComponent(url.slice(`${DATA_PLANE}/artifacts/`.length));
+      const rest = url.slice(`${DATA_PLANE}/artifacts/`.length);
+      const isContent = rest.endsWith("/content");
+      const id = decodeURIComponent(isContent ? rest.slice(0, -"/content".length) : rest);
       const row = rows[id];
       // RLS: the row is invisible unless its workspace matches the caller's.
       if (!row || row.workspace !== claims.workspace) {
         return new Response(JSON.stringify({ error: "not_found" }), { status: 404 });
       }
-      const envelope: Record<string, unknown> = { mime_type: row.mimeType };
-      if (row.bodyText !== undefined) envelope.body_text = row.bodyText;
-      if (row.bodyBase64 !== undefined) envelope.body_base64 = row.bodyBase64;
-      if (row.presignedUrl !== undefined) envelope.presigned_url = row.presignedUrl;
-      return new Response(JSON.stringify(envelope), {
+
+      // /content: stream inline bytes, or 302 to the presigned URL for a
+      // spilled body — exactly the data plane's content endpoint.
+      if (isContent) {
+        if (row.presignedUrl !== undefined) {
+          return new Response(null, {
+            status: 302,
+            headers: { location: row.presignedUrl },
+          });
+        }
+        return new Response(row.body ?? new Uint8Array(), {
+          status: 200,
+          headers: { "content-type": row.mimeType },
+        });
+      }
+
+      // /{id}: metadata only — never any body bytes.
+      return new Response(JSON.stringify({ mime_type: row.mimeType }), {
         status: 200,
         headers: { "content-type": "application/json" },
       });
@@ -157,7 +183,11 @@ describe("artifact:// URI parsing", () => {
 describe("ArtifactResolver.read — reads as the viewing user", () => {
   it("resolves a markdown artifact in the user's own workspace", async () => {
     const resolver = makeResolver({
-      art_md: { workspace: WS_A, mimeType: "text/markdown", bodyText: "# Title\n\nbody" },
+      art_md: {
+        workspace: WS_A,
+        mimeType: "text/markdown",
+        body: new TextEncoder().encode("# Title\n\nbody"),
+      },
     });
     const result = await resolver.read("artifact://art_md", WS_A);
     const first = result.contents[0]!;
@@ -174,7 +204,11 @@ describe("ArtifactResolver.read — reads as the viewing user", () => {
     // like RLS, and the resolver collapses the denial to not-found so existence
     // can't be probed across workspaces.
     const resolver = makeResolver({
-      art_secret: { workspace: WS_A, mimeType: "text/markdown", bodyText: "secret" },
+      art_secret: {
+        workspace: WS_A,
+        mimeType: "text/markdown",
+        body: new TextEncoder().encode("secret"),
+      },
     });
     await expect(resolver.read("artifact://art_secret", WS_B)).rejects.toBeInstanceOf(
       ArtifactNotFoundError,
@@ -202,9 +236,10 @@ describe("ArtifactResolver.read — reads as the viewing user", () => {
   });
 
   it("returns binary mime as a base64 blob, not text", async () => {
-    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47]).toString("base64");
+    const pngBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+    const png = Buffer.from(pngBytes).toString("base64");
     const resolver = makeResolver({
-      art_png: { workspace: WS_A, mimeType: "image/png", bodyBase64: png },
+      art_png: { workspace: WS_A, mimeType: "image/png", body: pngBytes },
     });
     const result = await resolver.read("artifact://art_png", WS_A);
     const first = result.contents[0]!;
@@ -218,5 +253,62 @@ describe("ArtifactResolver.read — reads as the viewing user", () => {
     await expect(resolver.read("artifact://nope", WS_A)).rejects.toBeInstanceOf(
       ArtifactNotFoundError,
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Read-path cross-seam: the read CLIENT against the data plane's ACTUAL wire.
+//
+// The metadata endpoint (`GET /artifacts/{id}`) returns a JSON row with no body;
+// the body endpoint (`GET /artifacts/{id}/content`) streams raw inline bytes or
+// answers a 302 to a presigned URL. These assert the client keys off that real
+// shape and returns the bytes / presigned URL — never the "neither inline nor
+// presigned" fall-through that an envelope-shaped client would hit on every read.
+// ---------------------------------------------------------------------------
+
+function makeReadClient(
+  rows: Record<string, Row>,
+  presigned?: Record<string, Uint8Array>,
+): ArtifactReadClient {
+  const dataPlaneFetch = makeDataPlaneFetch(rows, presigned);
+  const cache = new ServiceTokenCache({ identity: IDENTITY, fetchImpl: dataPlaneFetch });
+  return new ArtifactReadClient({
+    config: { baseUrl: DATA_PLANE, issuer: ISSUER },
+    cache,
+    fetchImpl: dataPlaneFetch,
+  });
+}
+
+describe("ArtifactReadClient — reads the data plane's actual response shape", () => {
+  it("returns inline bytes from the /content stream (200), not a fall-through error", async () => {
+    const client = makeReadClient({
+      art_inline: {
+        workspace: WS_A,
+        mimeType: "text/markdown",
+        body: new TextEncoder().encode("# Report\n\ninline body"),
+      },
+    });
+    const result = await client.read("art_inline", WS_A);
+    expect(result.mimeType).toBe("text/markdown");
+    expect(result.presignedUrl).toBeUndefined();
+    expect(result.body).toBeDefined();
+    expect(new TextDecoder().decode(result.body!)).toBe("# Report\n\ninline body");
+  });
+
+  it("returns the presigned URL from the /content 302 redirect for a spilled body", async () => {
+    const client = makeReadClient(
+      {
+        art_spilled: {
+          workspace: WS_A,
+          mimeType: "application/pdf",
+          presignedUrl: "https://presigned.test/art_spilled",
+        },
+      },
+      { art_spilled: new Uint8Array([1, 2, 3]) },
+    );
+    const result = await client.read("art_spilled", WS_A);
+    expect(result.mimeType).toBe("application/pdf");
+    expect(result.body).toBeUndefined();
+    expect(result.presignedUrl).toBe("https://presigned.test/art_spilled");
   });
 });
