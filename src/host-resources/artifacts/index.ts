@@ -5,6 +5,7 @@ export { ArtifactResolver, ArtifactTooLargeError } from "./artifact-resolver.ts"
 export {
   ARTIFACT_URI_SCHEME,
   artifactIdToUri,
+  InvalidArtifactUriError,
   isArtifactUri,
   uriToArtifactId,
 } from "./artifact-uri.ts";

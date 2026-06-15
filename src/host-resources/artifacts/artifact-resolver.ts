@@ -81,6 +81,10 @@ export class ArtifactResolver {
     const result = await this.client.read(id, workspaceId);
     const bytes = await this.materialize(id, result);
 
+    // The cap is UNIVERSAL, not proxy-path-only: a presigned body is still
+    // `arrayBuffer()`'d fully into host memory in `materialize`, so it is gated
+    // here too. Artifacts are effectively capped at `maxProxyBytes` regardless
+    // of delivery mode. True streaming for >cap bodies is a follow-up.
     if (bytes.byteLength > this.maxProxyBytes) {
       throw new ArtifactTooLargeError(bytes.byteLength, this.maxProxyBytes);
     }
@@ -109,7 +113,7 @@ export class ArtifactResolver {
       let res: Response;
       try {
         res = await this.fetchImpl(result.presignedUrl);
-      } catch (cause) {
+      } catch {
         throw new ArtifactNotFoundError(id);
       }
       if (!res.ok) {

@@ -12,6 +12,7 @@ import {
   ArtifactNotFoundError,
   ArtifactTooLargeError,
   getArtifactResolver,
+  InvalidArtifactUriError,
   isArtifactUri,
 } from "../host-resources/artifacts/index.ts";
 import type { IdentityProvider, UserIdentity } from "../identity/provider.ts";
@@ -885,6 +886,12 @@ export async function handleReadResource(
       const result = await resolver.read(uri, ws);
       return json(result as Record<string, unknown>);
     } catch (err) {
+      // A malformed `artifact://` id is client input, not a server fault: 400,
+      // and never warn-log it — a hostile/typo'd URI must not spam the logs.
+      if (err instanceof InvalidArtifactUriError) {
+        log.debug("host-resources", `[artifact] rejected malformed URI ${uri}: ${err.message}`);
+        return apiError(400, "bad_request", "Malformed artifact:// URI", { uri });
+      }
       if (err instanceof ArtifactNotFoundError) {
         return apiError(404, "resource_not_found", `Resource "${uri}" not found`, { uri });
       }

@@ -34,6 +34,23 @@ const ARTIFACT_URI_PREFIX = `${ARTIFACT_URI_SCHEME}://`;
  */
 const ARTIFACT_ID_RE = /^[A-Za-z0-9_.-]{1,128}$/;
 
+/**
+ * Thrown for an `artifact://` URI whose id fails the safe-id grammar (empty,
+ * over-long, or carrying chars that could smuggle a path/query/control byte).
+ * This is a *client-input* error — a malformed reference supplied by the caller
+ * — so the API layer maps it to a 400, not a 502. Distinct from a downstream
+ * read failure (those are the data-plane read client's errors).
+ */
+export class InvalidArtifactUriError extends Error {
+  constructor(
+    readonly uri: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = "InvalidArtifactUriError";
+  }
+}
+
 export function artifactIdToUri(id: string): string {
   return `${ARTIFACT_URI_PREFIX}${id}`;
 }
@@ -54,7 +71,8 @@ export function uriToArtifactId(uri: string): string | null {
   if (!isArtifactUri(uri)) return null;
   const id = uri.slice(ARTIFACT_URI_PREFIX.length);
   if (!ARTIFACT_ID_RE.test(id)) {
-    throw new Error(
+    throw new InvalidArtifactUriError(
+      uri,
       `invalid artifact id in URI "${uri}": id must match ${ARTIFACT_ID_RE} (1..128 chars, [A-Za-z0-9_.-])`,
     );
   }
