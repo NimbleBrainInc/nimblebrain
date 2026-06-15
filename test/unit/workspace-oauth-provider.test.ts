@@ -407,7 +407,9 @@ describe("WorkspaceOAuthProvider — Track A: pre-registered client + scopes + e
       callbackUrl: CALLBACK,
     });
     expect(p.clientMetadata.client_uri).toBe("https://nimblebrain.ai");
-    expect(p.clientMetadata.logo_uri).toBe("https://static.nimblebrain.ai/logos/nimblebrain.png");
+    expect(p.clientMetadata.logo_uri).toBe(
+      "https://static.nimblebrain.ai/logos/nimblebrain/light-128.png",
+    );
   });
 
   it("clientMetadata default token_endpoint_auth_method = 'none' (DCR PKCE-only) when no staticClient", () => {
