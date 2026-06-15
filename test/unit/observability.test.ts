@@ -155,7 +155,7 @@ describe("structured logger (JSON mode)", () => {
       return true;
     };
     try {
-      // Inside a span so the line carries a correlation id (the trace id).
+      // Inside a span so the line carries the active trace id.
       await runWithRequestContext(identityCtx(), () =>
         withSpan("agent.turn", {}, async () => {
           log.info("turn.start", { iteration: 1 });
@@ -172,12 +172,71 @@ describe("structured logger (JSON mode)", () => {
     expect(rec.user_id).toBe("user_123");
     expect(rec.workspace_id).toBe("ws_abc123");
     expect(rec.iteration).toBe(1);
-    expect(rec.correlation_id).toMatch(/^[0-9a-f]{32}$/);
+    // Trace correlation uses the OTel-standard `trace_id` field.
+    expect(rec.trace_id).toMatch(/^[0-9a-f]{32}$/);
+    expect(rec.correlation_id).toBeUndefined();
     // PII never appears anywhere in the serialized line.
     expect(rec.displayName).toBeUndefined();
     const joined = lines.join("");
     expect(joined).not.toContain(PII_EMAIL);
     expect(joined).not.toContain(PII_NAME);
+  });
+
+  it("redacts secret-bearing field keys (incl. nested) before writing", () => {
+    process.env.NB_LOG_FORMAT = "json";
+    const lines: string[] = [];
+    const orig = process.stderr.write.bind(process.stderr);
+    // @ts-expect-error narrow override for capture
+    process.stderr.write = (chunk: string) => {
+      lines.push(String(chunk));
+      return true;
+    };
+    try {
+      log.info("connector.auth", {
+        api_key: "sk-supersecret",
+        authorization: "Bearer abc.def",
+        nested: { password: "hunter2", safe: "ok" },
+        workspace_id: "ws_keep",
+      });
+    } finally {
+      process.stderr.write = orig;
+      process.env.NB_LOG_FORMAT = undefined;
+    }
+    const rec = JSON.parse(lines.join("").trim());
+    expect(rec.api_key).toBe("[redacted]");
+    expect(rec.authorization).toBe("[redacted]");
+    expect(rec.nested.password).toBe("[redacted]");
+    expect(rec.nested.safe).toBe("ok");
+    expect(rec.workspace_id).toBe("ws_keep"); // non-secret key untouched
+    const joined = lines.join("");
+    expect(joined).not.toContain("sk-supersecret");
+    expect(joined).not.toContain("hunter2");
+    expect(joined).not.toContain("abc.def");
+  });
+
+  it("honors the LOG_LEVEL floor for info/warn/error", () => {
+    process.env.NB_LOG_FORMAT = "json";
+    process.env.LOG_LEVEL = "warn";
+    const lines: string[] = [];
+    const orig = process.stderr.write.bind(process.stderr);
+    // @ts-expect-error narrow override for capture
+    process.stderr.write = (chunk: string) => {
+      lines.push(String(chunk));
+      return true;
+    };
+    try {
+      log.info("should.drop");
+      log.warn("should.keep");
+      log.error("should.keep.too");
+    } finally {
+      process.stderr.write = orig;
+      process.env.LOG_LEVEL = undefined;
+      process.env.NB_LOG_FORMAT = undefined;
+    }
+    const out = lines.join("");
+    expect(out).not.toContain("should.drop");
+    expect(out).toContain("should.keep");
+    expect(out).toContain("should.keep.too");
   });
 });
 
