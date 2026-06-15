@@ -501,6 +501,22 @@ function deferred<T>(): Deferred<T> {
 }
 
 /**
+ * Brand metadata sent in the DCR registration so vendors that honor RFC 7591
+ * `client_uri` / `logo_uri` render NimbleBrain's homepage link and logo on
+ * their consent screen instead of a bare name. Hardcoded to match the
+ * likewise-hardcoded "NimbleBrain" in `client_name`; a future white-label
+ * effort would make all three configurable together. The logo is the
+ * NimbleBrain brand mark from the platform's public asset CDN
+ * (`static.nimblebrain.ai`), built by the logos pipeline into the canonical
+ * per-brand path. We point at the 128px raster rather than the SVG variant
+ * because several OAuth/identity providers refuse to render an SVG `logo_uri`
+ * (scriptable-image hardening); the mark is transparent and reads on both
+ * light and dark consent screens.
+ */
+const NIMBLEBRAIN_CLIENT_URI = "https://nimblebrain.ai";
+const NIMBLEBRAIN_LOGO_URI = "https://static.nimblebrain.ai/logos/nimblebrain/light-128.png";
+
+/**
  * File-backed OAuthClientProvider scoped to a `(workspace, serverName)`
  * pair. Persistence layout:
  *
@@ -526,22 +542,6 @@ function deferred<T>(): Deferred<T> {
  * no HTTP round-trip, no browser. For all other interactive flows, we
  * throw `InteractiveOAuthNotSupportedError` and fail fast.
  */
-/**
- * Brand metadata sent in the DCR registration so vendors that honor RFC 7591
- * `client_uri` / `logo_uri` render NimbleBrain's homepage link and logo on
- * their consent screen instead of a bare name. Hardcoded to match the
- * likewise-hardcoded "NimbleBrain" in `client_name`; a future white-label
- * effort would make all three configurable together. The logo is the
- * NimbleBrain brand mark from the platform's public asset CDN
- * (`static.nimblebrain.ai`), built by the logos pipeline into the canonical
- * per-brand path. We point at the 128px raster rather than the SVG variant
- * because several OAuth/identity providers refuse to render an SVG `logo_uri`
- * (scriptable-image hardening); the mark is transparent and reads on both
- * light and dark consent screens.
- */
-const NIMBLEBRAIN_CLIENT_URI = "https://nimblebrain.ai";
-const NIMBLEBRAIN_LOGO_URI = "https://static.nimblebrain.ai/logos/nimblebrain/light-128.png";
-
 export class WorkspaceOAuthProvider implements OAuthClientProvider {
   private readonly owner: OAuthOwnerContext;
   private readonly ownerDisplayName?: string;
