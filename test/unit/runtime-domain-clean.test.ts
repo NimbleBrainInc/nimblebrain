@@ -7,11 +7,17 @@ import { spawnSync } from "bun";
  * Standing guard: the runtime kernel stays generic.
  *
  * Capability lives in MCP servers, not in `src/`. A handful of generic
- * mentions of "deep research" (an English phrase, third-party model
- * catalog names) and "artifact" (the English word, plus service names)
- * legitimately occur in the kernel and form a fixed baseline. Anything
- * above that baseline means a domain capability has leaked back into the
- * runtime — this test fails loudly so it cannot ride in unnoticed.
+ * mentions of "deep research" (third-party model catalog names) legitimately
+ * occur in the kernel and form a fixed baseline. Anything above that baseline
+ * means a domain capability has leaked back into the runtime — this test fails
+ * loudly so it cannot ride in unnoticed.
+ *
+ * The dropped output-store seam (the artifact-producing capability that was
+ * removed) is guarded precisely by the file-existence test below, so this
+ * word-gate deliberately does NOT match "artifact": the kernel uses that word
+ * pervasively for unrelated infra (a live `artifacts` data-plane service, plus
+ * build/cache/tmp/oauth artifacts), and gating on it by count would fail on
+ * benign growth while blaming a "domain capability leak."
  *
  * The ceiling is the exact count of those benign mentions today. It is a
  * ratchet: if you legitimately remove a benign hit, lower the ceiling in
@@ -20,10 +26,10 @@ import { spawnSync } from "bun";
  */
 const REPO_ROOT = join(import.meta.dir, "..", "..");
 
-// Benign baseline in `src/`: an English phrase, a third-party model
-// catalog, the English word "artifact", and platform service names.
-// Net-new domain code would push the count above this.
-const DOMAIN_HIT_CEILING = 20;
+// Benign baseline in `src/`: third-party model catalog names
+// (`o3-deep-research`, `o4-mini-deep-research`). Net-new domain code would
+// push the count above this.
+const DOMAIN_HIT_CEILING = 8;
 
 function grepDomainHits(): string[] {
   // `--untracked` so a not-yet-committed file (the most likely way a
@@ -34,7 +40,7 @@ function grepDomainHits(): string[] {
       "grep",
       "--untracked",
       "-niE",
-      "deep.?research|artifact",
+      "deep.?research",
       "--",
       "src/*",
     ],
@@ -54,12 +60,12 @@ function grepDomainHits(): string[] {
 }
 
 describe("runtime stays domain-clean", () => {
-  test("no net-new 'deep research' / 'artifact' hits in src/", () => {
+  test("no net-new 'deep research' hits in src/", () => {
     const hits = grepDomainHits();
     if (hits.length > DOMAIN_HIT_CEILING) {
       const offenders = hits.join("\n");
       throw new Error(
-        `Found ${hits.length} 'deep research' / 'artifact' hits in src/, ` +
+        `Found ${hits.length} 'deep research' hits in src/, ` +
           `ceiling is ${DOMAIN_HIT_CEILING}. A domain capability has likely ` +
           `leaked into the runtime kernel — it belongs in an MCP server. ` +
           `Hits:\n${offenders}`,
