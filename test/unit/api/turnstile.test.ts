@@ -1,4 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from "bun:test";
+import { log } from "../../../src/cli/log.ts";
 import { verifyTurnstileToken, isTurnstileEnabled, resetTurnstileState } from "../../../src/api/turnstile.ts";
 
 describe("verifyTurnstileToken", () => {
@@ -8,7 +9,7 @@ describe("verifyTurnstileToken", () => {
   beforeEach(() => {
     delete process.env.TURNSTILE_SECRET_KEY;
     resetTurnstileState();
-    consoleErrorSpy = spyOn(console, "error").mockImplementation(() => {});
+    consoleErrorSpy = spyOn(log, "error").mockImplementation(() => {});
   });
 
   afterEach(() => {

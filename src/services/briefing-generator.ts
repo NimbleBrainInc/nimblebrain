@@ -1,4 +1,5 @@
 import type { LanguageModelV3, SharedV3ProviderOptions } from "@ai-sdk/provider";
+import { log } from "../cli/log.ts";
 import { getModelByString, getProviderFromModel } from "../model/catalog.ts";
 import { type TokenUsage, tokenUsageFromV3 } from "../usage/types.ts";
 import type { BriefingContext } from "./briefing-collector.ts";
@@ -291,7 +292,7 @@ export class BriefingGenerator {
 
     const finishReason = response.finishReason?.unified ?? "unknown";
     if (finishReason === "length") {
-      console.warn("[briefing] LLM response truncated (hit token limit)");
+      log.warn("[briefing] LLM response truncated (hit token limit)");
     }
 
     const textBlock = response.content.find((b) => b.type === "text");

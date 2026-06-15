@@ -1,3 +1,4 @@
+import { log } from "../cli/log.ts";
 import type { EventSink } from "../engine/types.ts";
 import type { IdentityProvider, UserIdentity } from "../identity/provider.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
@@ -158,7 +159,7 @@ export async function resolveWorkspace(
 
 function logAuthFailure(req: Request, eventSink: EventSink): void {
   const ip = req.headers.get("x-forwarded-for") ?? "direct";
-  console.error(`[nimblebrain] AUTH FAIL ip=${ip} timestamp=${new Date().toISOString()}`);
+  log.warn("[auth] authentication failed", { ip });
   eventSink.emit({
     type: "audit.auth_failure",
     data: { ip, method: req.method, path: new URL(req.url).pathname },

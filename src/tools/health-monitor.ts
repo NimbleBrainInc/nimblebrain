@@ -1,3 +1,4 @@
+import { log } from "../cli/log.ts";
 import type { EventSink } from "../engine/types.ts";
 import type { McpSource } from "./mcp-source.ts";
 
@@ -181,7 +182,9 @@ export class HealthMonitor {
       await source.start();
       return true;
     } catch (err) {
-      console.error("[health-monitor] reconnect failed:", err);
+      log.error("[health-monitor] reconnect failed", {
+        error: err instanceof Error ? err.message : String(err),
+      });
       return false;
     }
   }

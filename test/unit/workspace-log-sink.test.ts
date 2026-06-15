@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { log } from "../../src/cli/log.ts";
 import { WorkspaceLogSink } from "../../src/adapters/workspace-log-sink.ts";
 import type { EngineEvent } from "../../src/engine/types.ts";
 
@@ -126,7 +127,7 @@ describe("WorkspaceLogSink", () => {
     const today = new Date().toISOString().slice(0, 10);
     const logFile = join(dir, "workspace", `${today}.jsonl`);
     mkdirSync(logFile);
-    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    const warn = spyOn(log, "warn").mockImplementation(() => {});
     try {
       expect(() => sink.emit(makeEvent("bundle.installed", { name: "@a" }))).not.toThrow();
       expect(() => sink.emit(makeEvent("bundle.uninstalled", { name: "@b" }))).not.toThrow();

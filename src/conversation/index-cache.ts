@@ -1,6 +1,7 @@
 import { readdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { log } from "../cli/log.ts";
 import { estimateCost } from "../usage/cost.ts";
 import type { TokenUsage } from "../usage/types.ts";
 import type {
@@ -77,7 +78,7 @@ export class ConversationIndex {
     }
 
     if (ownerlessSkipped > 0) {
-      console.warn(
+      log.warn(
         `[index] excluded ${ownerlessSkipped} ownerless conversation file(s) in ${dir} — run \`bun run migrate:conversations-to-top-level\` to stamp ownerId.`,
       );
     }

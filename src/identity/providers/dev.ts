@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { log } from "../../cli/log.ts";
 import { ensureUserWorkspace } from "../../workspace/provisioning.ts";
 import type { WorkspaceStore } from "../../workspace/workspace-store.ts";
 import type {
@@ -46,7 +47,7 @@ export class DevIdentityProvider implements IdentityProvider {
   ) {
     this.usersDir = join(workDir, "users");
     this.workspaceStore = workspaceStore;
-    console.warn("Running in dev mode — no authentication configured");
+    log.warn("Running in dev mode — no authentication configured");
   }
 
   async verifyRequest(_req: Request): Promise<UserIdentity | null> {

@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { log } from "../cli/log.ts";
 import { WorkspaceResolutionError } from "./auth-middleware.ts";
 import { enableDefaultMetrics } from "./metrics.ts";
 import { corsMiddleware } from "./middleware/cors.ts";
@@ -85,7 +86,9 @@ export function createApp(
     if (err instanceof WorkspaceResolutionError) {
       return apiError(err.statusCode, "workspace_error", err.message);
     }
-    console.error("[nimblebrain] Unhandled error:", err);
+    log.error("[nimblebrain] Unhandled error", {
+      error: err instanceof Error ? err.message : String(err),
+    });
     return apiError(500, "internal_error", "Internal server error");
   });
 

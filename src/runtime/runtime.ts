@@ -1877,7 +1877,9 @@ export class Runtime {
           // Title generation is best-effort; a failed write must not crash
           // the chat. Common causes: model latency timeout (generateTitle),
           // or ENOENT on the conversation file (deleted concurrently).
-          console.error("[runtime] title generation failed:", err);
+          log.error("[runtime] title generation failed", {
+            error: err instanceof Error ? err.message : String(err),
+          });
         });
     }
 
@@ -3235,7 +3237,10 @@ export class Runtime {
       summarizerContextTokens: getModelByString(fastSlot)?.limits.context,
       now: new Date().toISOString(),
       onEvent: (event) => appendEvent(conversationId, event),
-      onError: (err) => console.error("[runtime] history compaction failed:", err),
+      onError: (err) =>
+        log.error("[runtime] history compaction failed", {
+          error: err instanceof Error ? err.message : String(err),
+        }),
       // The summarizer runs the `fast` slot outside the agentic loop, so it
       // emits no llm.response. Persist its usage as an aux.usage event so the
       // fold's cost isn't invisible to the usage aggregator.
