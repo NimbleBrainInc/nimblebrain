@@ -256,8 +256,14 @@ export async function startBundleSource(
     const serverName = ref.serverName ?? deriveServerName(ref.url);
     validateServerName(serverName);
     const sourceName = serverName;
-    // SSRF protection: validate URL before connecting
-    validateBundleUrl(new URL(ref.url), { allowInsecure: opts?.allowInsecureRemotes });
+    // SSRF protection: validate URL before connecting. Tenant-key sources are the
+    // operator-provisioned fleet rail (tenant-key auth cannot be set by a tenant),
+    // so they may reach in-cluster `.svc` services over plain HTTP — see
+    // `validateBundleUrl`'s `fleetInternal` path.
+    validateBundleUrl(new URL(ref.url), {
+      allowInsecure: opts?.allowInsecureRemotes,
+      fleetInternal: ref.transport?.auth?.type === "tenant-key",
+    });
     log.info(`[bundles] Starting remote bundle ${ref.url} as ${sourceName}...`);
 
     // Attach an OAuthClientProvider when no static auth is configured. The
