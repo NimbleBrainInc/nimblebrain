@@ -68,6 +68,15 @@ interface StubRuntimeOpts {
   workDir: string;
   /** Kernel identity sources by name (conversations, …). The identity door. */
   identitySources?: Map<string, ToolSource>;
+  /**
+   * Optional self-heal hook. When set, it's exposed as
+   * `recoverWorkspaceSource` and the orchestrator calls it on a source
+   * miss. The behavior may mutate `registries` (push the now-recovered
+   * source into the workspace's array) and returns whether recovery
+   * succeeded. When omitted, the stub has no `recoverWorkspaceSource` —
+   * exercising the back-compat path where a miss is a hard error.
+   */
+  recoverWorkspaceSource?: (wsId: string, sourceName: string) => boolean | Promise<boolean>;
 }
 
 interface StubRuntime extends OrchestratorRuntime {
@@ -75,12 +84,23 @@ interface StubRuntime extends OrchestratorRuntime {
   contextCallCount(): number;
   /** Every `WorkspaceContext` returned, in call order — used to assert non-aliasing. */
   emittedContexts(): WorkspaceContext[];
+  /** How many times `recoverWorkspaceSource` was invoked — asserts the self-heal fired exactly once. */
+  recoverCallCount(): number;
 }
 
 function makeStubRuntime(opts: StubRuntimeOpts): StubRuntime {
   const emitted: WorkspaceContext[] = [];
+  let recoverCalls = 0;
 
   return {
+    ...(opts.recoverWorkspaceSource
+      ? {
+          async recoverWorkspaceSource(wsId: string, sourceName: string): Promise<boolean> {
+            recoverCalls += 1;
+            return opts.recoverWorkspaceSource!(wsId, sourceName);
+          },
+        }
+      : {}),
     getWorkspaceStore() {
       return {
         async get(wsId: string) {
@@ -119,6 +139,9 @@ function makeStubRuntime(opts: StubRuntimeOpts): StubRuntime {
     },
     emittedContexts() {
       return emitted;
+    },
+    recoverCallCount() {
+      return recoverCalls;
     },
   };
 }
@@ -403,5 +426,122 @@ describe("routeToolCall — unknown tool source", () => {
     expect(thrown).toBeInstanceOf(UnknownToolSource);
     expect((thrown as UnknownToolSource).wsId).toBe(SHARED_WS);
     expect((thrown as UnknownToolSource).sourceName).toBe("crm");
+  });
+});
+
+// ── Self-heal: a missing-but-recoverable source is re-registered ─────
+//
+// Regression for the incident where a remote-OAuth connector
+// (Dropbox) was torn down from a workspace registry mid-run without
+// being re-added — every subsequent tool call (chat AND scheduled
+// automations, which share the same registry) failed with
+// `UnknownToolSource` until a platform restart. The orchestrator now
+// gives the runtime one best-effort, cooldown-guarded chance to
+// re-spawn the source from its persisted ref before failing.
+
+describe("routeToolCall — self-heal on a recoverable source miss", () => {
+  test("re-registers a missing source via recoverWorkspaceSource, then routes to it", async () => {
+    // SHARED_WS starts with NO `crm` source. The recovery hook pushes
+    // it in (simulating a re-spawn from the persisted ref) and reports
+    // success — mirroring production's `tryRecoverSource`.
+    const wsSources: ToolSource[] = [];
+    const runtime = makeStubRuntime({
+      registries: new Map([[SHARED_WS, wsSources]]),
+      memberships: new Map([[USER_ID, [SHARED_WS]]]),
+      existingWorkspaces: new Set([SHARED_WS]),
+      workDir,
+      recoverWorkspaceSource(_wsId, sourceName) {
+        wsSources.push(makeStubSource(sourceName));
+        return true;
+      },
+    });
+
+    const routed = await routeToolCall({
+      identityId: USER_ID,
+      namespacedName: `${SHARED_WS}-crm__search`,
+      runtime,
+    });
+
+    expect(routed.source.name).toBe("crm");
+    expect(routed.toolName).toBe("crm__search");
+    // Self-heal fired exactly once — the orchestrator does not loop.
+    expect(runtime.recoverCallCount()).toBe(1);
+  });
+
+  test("recovery that fails to register still throws UnknownToolSource (no masking)", async () => {
+    // The hook is invoked but does NOT add the source (e.g. the bundle
+    // is genuinely broken / needs interactive auth that never lands).
+    // The call must still fail loud, exactly as before recovery existed.
+    const runtime = makeStubRuntime({
+      registries: new Map([[SHARED_WS, []]]),
+      memberships: new Map([[USER_ID, [SHARED_WS]]]),
+      existingWorkspaces: new Set([SHARED_WS]),
+      workDir,
+      recoverWorkspaceSource() {
+        return false;
+      },
+    });
+
+    let thrown: unknown = null;
+    try {
+      await routeToolCall({
+        identityId: USER_ID,
+        namespacedName: `${SHARED_WS}-crm__search`,
+        runtime,
+      });
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(UnknownToolSource);
+    expect((thrown as UnknownToolSource).sourceName).toBe("crm");
+    expect(runtime.recoverCallCount()).toBe(1);
+  });
+
+  test("a recovery hook that throws is swallowed; the call fails with UnknownToolSource", async () => {
+    // Recovery is strictly best-effort: a throw inside the hook must
+    // not escape routeToolCall as a non-orchestrator error.
+    const runtime = makeStubRuntime({
+      registries: new Map([[SHARED_WS, []]]),
+      memberships: new Map([[USER_ID, [SHARED_WS]]]),
+      existingWorkspaces: new Set([SHARED_WS]),
+      workDir,
+      recoverWorkspaceSource() {
+        throw new Error("re-spawn blew up");
+      },
+    });
+
+    let thrown: unknown = null;
+    try {
+      await routeToolCall({
+        identityId: USER_ID,
+        namespacedName: `${SHARED_WS}-crm__search`,
+        runtime,
+      });
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(UnknownToolSource);
+  });
+
+  test("an already-registered source never invokes recovery", async () => {
+    const runtime = makeStubRuntime({
+      registries: new Map([[SHARED_WS, [makeStubSource("crm")]]]),
+      memberships: new Map([[USER_ID, [SHARED_WS]]]),
+      existingWorkspaces: new Set([SHARED_WS]),
+      workDir,
+      recoverWorkspaceSource() {
+        return true;
+      },
+    });
+
+    const routed = await routeToolCall({
+      identityId: USER_ID,
+      namespacedName: `${SHARED_WS}-crm__search`,
+      runtime,
+    });
+
+    expect(routed.source.name).toBe("crm");
+    // The fast path never touches recovery.
+    expect(runtime.recoverCallCount()).toBe(0);
   });
 });

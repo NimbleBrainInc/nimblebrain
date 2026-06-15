@@ -2769,6 +2769,18 @@ export class Runtime {
   }
 
   /**
+   * Orchestrator self-heal hook (`OrchestratorRuntime.recoverWorkspaceSource`).
+   * Best-effort, cooldown-guarded re-registration of an installed source
+   * that went missing from a workspace registry — a failed credential
+   * respawn or a remote-OAuth teardown that removed it without re-adding.
+   * Delegates to the lifecycle manager and never throws; returns whether
+   * the source is registered after the attempt.
+   */
+  async recoverWorkspaceSource(wsId: string, sourceName: string): Promise<boolean> {
+    return this.lifecycle.tryRecoverSource(sourceName, wsId, this.getWorkDir());
+  }
+
+  /**
    * Resolve a kernel identity-scoped source by name. v1 set: `conversations`
    * (Files / Automations join when their data moves to identity ownership).
    * Returns `undefined` for an unknown or non-identity source. No workspace:
