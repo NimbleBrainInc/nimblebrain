@@ -61,8 +61,10 @@ export const httpRequestDurationSeconds = new Histogram({
 //
 // All labels are bounded: `direction` (input/output), `kind` (fresh/cache_read/
 // cache_write/text), `source` (main + the forked fast-slot calls), `model`
-// (the catalog set), `ok` (true/false). No tool names or ids — those would be
-// client-unbounded and aren't needed for fleet-level optimization. Per-tenant
+// (the catalog set — bounded by deployment config today; if custom model ids
+// ever become user-settable, this label would need capping), `ok`
+// (true/false). No tool names or ids — those would be client-unbounded and
+// aren't needed for fleet-level optimization. Per-tenant
 // breakdown comes for free from the scrape (one pod per tenant); these are not
 // labeled by tenant. Purely observe-only and process-local: they increment in
 // memory whether or not anything scrapes `/metrics`, so they work identically
