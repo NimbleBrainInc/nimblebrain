@@ -526,6 +526,18 @@ function deferred<T>(): Deferred<T> {
  * no HTTP round-trip, no browser. For all other interactive flows, we
  * throw `InteractiveOAuthNotSupportedError` and fail fast.
  */
+/**
+ * Brand metadata sent in the DCR registration so vendors that honor RFC 7591
+ * `client_uri` / `logo_uri` render NimbleBrain's homepage link and logo on
+ * their consent screen instead of a bare name. Hardcoded to match the
+ * likewise-hardcoded "NimbleBrain" in `client_name`; a future white-label
+ * effort would make all three configurable together. The logo is the square
+ * brand mark on `static.nimblebrain.ai` (the platform's public asset CDN) —
+ * a transparent PNG that reads on both light and dark consent screens.
+ */
+const NIMBLEBRAIN_CLIENT_URI = "https://nimblebrain.ai";
+const NIMBLEBRAIN_LOGO_URI = "https://static.nimblebrain.ai/logos/nimblebrain.png";
+
 export class WorkspaceOAuthProvider implements OAuthClientProvider {
   private readonly owner: OAuthOwnerContext;
   private readonly ownerDisplayName?: string;
@@ -724,6 +736,8 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
       (this.owner.type === "workspace" ? this.owner.wsId : `user:${this.owner.userId}`);
     const meta: OAuthClientMetadata = {
       client_name: `NimbleBrain (${ownerLabel})`,
+      client_uri: NIMBLEBRAIN_CLIENT_URI,
+      logo_uri: NIMBLEBRAIN_LOGO_URI,
       redirect_uris: [this.callbackUrl],
       grant_types: ["authorization_code", "refresh_token"],
       response_types: ["code"],

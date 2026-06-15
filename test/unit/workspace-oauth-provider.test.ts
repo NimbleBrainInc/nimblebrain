@@ -399,6 +399,17 @@ describe("WorkspaceOAuthProvider — Track A: pre-registered client + scopes + e
     expect(p.clientMetadata.client_name).toBe("NimbleBrain (Mat's Workspace)");
   });
 
+  it("clientMetadata carries NimbleBrain client_uri + logo_uri for consent-screen branding", () => {
+    const p = new WorkspaceOAuthProvider({
+      owner: { type: "workspace", wsId: "ws_test" },
+      serverName: "granola",
+      workDir,
+      callbackUrl: CALLBACK,
+    });
+    expect(p.clientMetadata.client_uri).toBe("https://nimblebrain.ai");
+    expect(p.clientMetadata.logo_uri).toBe("https://static.nimblebrain.ai/logos/nimblebrain.png");
+  });
+
   it("clientMetadata default token_endpoint_auth_method = 'none' (DCR PKCE-only) when no staticClient", () => {
     const p = new WorkspaceOAuthProvider({
       owner: { type: "workspace", wsId: "ws_test" },
