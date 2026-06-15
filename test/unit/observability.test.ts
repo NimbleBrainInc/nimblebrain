@@ -1,3 +1,4 @@
+import { SpanStatusCode } from "@opentelemetry/api";
 import { beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { InMemorySpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
 import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
@@ -62,14 +63,30 @@ describe("withSpan", () => {
     expect(spanNamed("agent.turn").attributes["llm.model"]).toBe("anthropic:x");
   });
 
-  it("records the exception and re-throws on error", async () => {
+  it("records the exception and marks ERROR on an unexpected error", async () => {
     await expect(
       withSpan("tool.dispatch", {}, async () => {
         throw new Error("boom");
       }),
     ).rejects.toThrow("boom");
-    // Span still ended (exported) even though the body threw.
-    expect(spanNamed("tool.dispatch")).toBeDefined();
+    // Span still ended (exported) and is marked failed.
+    expect(spanNamed("tool.dispatch").status.code).toBe(SpanStatusCode.ERROR);
+  });
+
+  it("does not mark the span failed for an expected (cancelled) error", async () => {
+    await expect(
+      withSpan(
+        "tool.dispatch",
+        {},
+        async () => {
+          throw new Error("aborted");
+        },
+        { isExpectedError: () => true },
+      ),
+    ).rejects.toThrow("aborted");
+    const span = spanNamed("tool.dispatch");
+    expect(span.status.code).toBe(SpanStatusCode.UNSET);
+    expect(span.attributes.cancelled).toBe(true);
   });
 
   it("nests child spans under the active span (same trace, parent linked)", async () => {

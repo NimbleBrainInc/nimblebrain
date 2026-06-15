@@ -1099,6 +1099,8 @@ export class McpSource implements ToolSource {
           isTaskAugmented
             ? this.callToolAsTask(toolName, dispatchArgs, signal)
             : this.callToolInline(toolName, dispatchArgs, signal),
+        // A client cancellation isn't a crash — don't mark the span failed.
+        { isExpectedError: () => signal?.aborted === true },
       );
     } catch (err) {
       // Cancellation isn't a crash — the source is healthy, the client just

@@ -35,6 +35,7 @@ const TRACER_NAME = "nimblebrain-runtime";
 const INVALID_TRACE_ID = "00000000000000000000000000000000";
 
 let configured = false;
+let provider: NodeTracerProvider | undefined;
 
 /**
  * Install tracing for this process. Idempotent — safe to call from every entry
@@ -55,7 +56,7 @@ export function initTracing(): void {
   const tenantId = process.env.NB_TENANT_ID;
   if (tenantId) attrs.tenant_id = tenantId;
 
-  const provider = new NodeTracerProvider({
+  provider = new NodeTracerProvider({
     resource: resourceFromAttributes(attrs),
     spanProcessors: process.env.OTEL_EXPORTER_OTLP_ENDPOINT
       ? [new BatchSpanProcessor(new OTLPTraceExporter())]
@@ -64,6 +65,34 @@ export function initTracing(): void {
   // register() installs the W3C tracecontext propagator + an AsyncLocalStorage
   // context manager, so active-span nesting works under Bun.
   provider.register();
+}
+
+/**
+ * Flush and shut down the tracer provider. Call on SIGTERM/SIGINT so the
+ * BatchSpanProcessor exports its final buffered window instead of dropping it
+ * on pod termination (the default schedule is ~5s). No-op before init / with no
+ * exporter. Idempotent.
+ *
+ * Best-effort and bounded: an unreachable collector makes `provider.shutdown()`
+ * retry with backoff for ~8.5s and then reject — neither of which may stall or
+ * fail graceful shutdown. So the flush races a short deadline and all errors are
+ * swallowed (export failures already surface via OTel diag). A dropped final
+ * window is acceptable; a hung or crashing shutdown is not.
+ */
+export async function shutdownTracing(timeoutMs = 2000): Promise<void> {
+  const p = provider;
+  provider = undefined;
+  if (!p) return;
+  try {
+    await Promise.race([
+      p.shutdown(),
+      new Promise<void>((resolve) => {
+        setTimeout(resolve, timeoutMs).unref?.();
+      }),
+    ]);
+  } catch {
+    // Best-effort: never let a flush failure block or break shutdown.
+  }
 }
 
 const tracer = () => trace.getTracer(TRACER_NAME);
@@ -95,16 +124,28 @@ function errMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+export interface WithSpanOptions {
+  /**
+   * Errors matching this predicate are recorded on the span but do NOT mark it
+   * failed — e.g. user cancellation, which is expected, not a crash. The span
+   * is annotated `cancelled=true` and its status left UNSET so a normal abort
+   * doesn't show up as ERROR telemetry.
+   */
+  isExpectedError?: (err: unknown) => boolean;
+}
+
 /**
  * Run `fn` inside a new active span. The span is the active context for the
  * duration, so any span started inside `fn` nests under it automatically.
- * Records the exception + ERROR status on throw, and always ends the span.
- * Cheap when no exporter is configured (the SDK still threads context).
+ * Records the exception on throw — ERROR status unless the error is classified
+ * expected via `opts.isExpectedError` — and always ends the span. Cheap when no
+ * exporter is configured (the SDK still threads context).
  */
 export async function withSpan<T>(
   name: string,
   attrs: SpanAttrs,
   fn: (span: SpanHandle) => Promise<T>,
+  opts?: WithSpanOptions,
 ): Promise<T> {
   return tracer().startActiveSpan(name, async (span: Span) => {
     span.setAttributes(attrs);
@@ -112,7 +153,11 @@ export async function withSpan<T>(
       return await fn(new SpanHandleImpl(span));
     } catch (err) {
       span.recordException(err as Error);
-      span.setStatus({ code: SpanStatusCode.ERROR, message: errMessage(err) });
+      if (opts?.isExpectedError?.(err)) {
+        span.setAttribute("cancelled", true);
+      } else {
+        span.setStatus({ code: SpanStatusCode.ERROR, message: errMessage(err) });
+      }
       throw err;
     } finally {
       span.end();

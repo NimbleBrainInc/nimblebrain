@@ -13,6 +13,8 @@ export {
   injectTraceparent,
   type SpanAttrs,
   type SpanHandle,
+  shutdownTracing,
+  type WithSpanOptions,
   withInboundSpan,
   withSpan,
 } from "./tracing.ts";
