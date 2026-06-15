@@ -1763,19 +1763,28 @@ export class BundleLifecycleManager {
     if (!wsRegistry) return false;
     if (wsRegistry.hasSource(serverName)) return true;
 
+    const key = `${serverName}|${wsId}`;
+
     // Only an installed instance with a persisted URL ref is recoverable
     // on this path. No instance → the bundle isn't installed in this
     // workspace (nothing to recover). A non-URL (named/stdio) ref needs
     // the credential-resolving named-spawn path — out of scope here.
-    const ref = this.instances.get(`${serverName}|${wsId}`)?.ref;
+    const ref = this.instances.get(key)?.ref;
     if (!ref || !("url" in ref)) return false;
 
-    const key = `${serverName}|${wsId}`;
     const now = Date.now();
     const last = this.recoveryAttempts.get(key);
     if (last !== undefined && now - last < BundleLifecycleManager.RECOVERY_COOLDOWN_MS) {
       return false;
     }
+    // Stamp BEFORE the await, with no intervening yield: a concurrent miss
+    // for the same source observes the stamp and declines rather than
+    // double-spawning (the spawn-storm guard). The deliberate trade-off is
+    // that an overlapping call returns false mid-recovery instead of
+    // awaiting this attempt's outcome — benign, since the caller falls
+    // through to `UnknownToolSource` and the agent's retry lands after
+    // this attempt settles. Not worth an in-flight-promise dedup for so
+    // narrow a window.
     this.recoveryAttempts.set(key, now);
 
     try {
