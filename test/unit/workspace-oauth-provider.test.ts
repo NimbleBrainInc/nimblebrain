@@ -367,6 +367,38 @@ describe("WorkspaceOAuthProvider — Track A: pre-registered client + scopes + e
     );
   });
 
+  it("clientMetadata.client_name uses ownerDisplayName when provided (not the opaque wsId)", () => {
+    const p = new WorkspaceOAuthProvider({
+      owner: { type: "workspace", wsId: "ws_user_user_01ABCDEF" },
+      ownerDisplayName: "Engineering Team",
+      serverName: "granola",
+      workDir,
+      callbackUrl: CALLBACK,
+    });
+    expect(p.clientMetadata.client_name).toBe("NimbleBrain (Engineering Team)");
+  });
+
+  it("clientMetadata.client_name falls back to the raw wsId when no ownerDisplayName", () => {
+    const p = new WorkspaceOAuthProvider({
+      owner: { type: "workspace", wsId: "ws_user_user_01ABCDEF" },
+      serverName: "granola",
+      workDir,
+      callbackUrl: CALLBACK,
+    });
+    expect(p.clientMetadata.client_name).toBe("NimbleBrain (ws_user_user_01ABCDEF)");
+  });
+
+  it("clientMetadata.client_name uses ownerDisplayName for user-scoped owners too", () => {
+    const p = new WorkspaceOAuthProvider({
+      owner: { type: "user", userId: "user_01ABCDEF" },
+      ownerDisplayName: "Mat's Workspace",
+      serverName: "granola",
+      workDir,
+      callbackUrl: CALLBACK,
+    });
+    expect(p.clientMetadata.client_name).toBe("NimbleBrain (Mat's Workspace)");
+  });
+
   it("clientMetadata default token_endpoint_auth_method = 'none' (DCR PKCE-only) when no staticClient", () => {
     const p = new WorkspaceOAuthProvider({
       owner: { type: "workspace", wsId: "ws_test" },

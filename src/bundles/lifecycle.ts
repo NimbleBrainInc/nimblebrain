@@ -13,6 +13,7 @@ import type { ToolRegistry } from "../tools/registry.ts";
 import { WorkspaceOAuthProvider } from "../tools/workspace-oauth-provider.ts";
 import { validateAdditionalAuthorizationParams } from "../util/oauth-params.ts";
 import { WorkspaceContext } from "../workspace/context.ts";
+import { resolveWorkspaceDisplayName } from "../workspace/workspace-store.ts";
 import type { AutomationDomainContext } from "./automations/src/domain.ts";
 import { createAutomation, deleteAutomation } from "./automations/src/domain.ts";
 import { connectorSlug, hasPersistedComposioConnection } from "./composio-connection.ts";
@@ -1227,8 +1228,13 @@ export class BundleLifecycleManager {
     // to the caller.
     const providerAbort = new AbortController();
 
+    // Human-readable workspace name for the vendor's consent screen, in
+    // place of the opaque wsId. Best-effort — falls back to the id.
+    const ownerDisplayName = await resolveWorkspaceDisplayName(opts.workDir, wsId);
+
     const provider = new WorkspaceOAuthProvider({
       owner: { type: "workspace", wsId },
+      ...(ownerDisplayName ? { ownerDisplayName } : {}),
       serverName,
       workDir: opts.workDir,
       // Workspace-scoped tokens route the credential directory through
