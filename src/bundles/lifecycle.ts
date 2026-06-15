@@ -1521,6 +1521,22 @@ export class BundleLifecycleManager {
    * failed re-spawn stamps the key so the orchestrator hot path doesn't
    * spawn-storm a genuinely broken bundle on every tool call; a
    * successful recovery clears it.
+   *
+   * Per-pod by design, and correct under `replicas > 1` — do NOT move it
+   * to Redis/`SessionRegistry`. It guards a per-pod in-memory registry
+   * repair: `registriesByWs` is process-local and its sources are
+   * process-bound transports (see the "MCP Session Architecture" two-layer
+   * model — transports "never serialize, never share across processes").
+   * A source missing from this pod's registry says nothing about another
+   * pod's, so each pod must heal its own registry on its own evidence. A
+   * cluster-shared cooldown would be a bug: one pod's failed heal would
+   * suppress another pod's legitimate independent miss. Unlike
+   * `ConnectionRevalidator` (a proactive poller against a shared upstream
+   * account → needs leader election), this is reactive and idempotent
+   * (`hasSource` short-circuit, re-uses persisted OAuth state), touches no
+   * shared resource, and fans out to nobody — so it needs no coordination.
+   * No TTL sweep: a key for a since-removed bundle lingers until process
+   * exit (a few bytes, bounded by install × workspace cardinality).
    */
   private readonly recoveryAttempts = new Map<string, number>();
   /** Min interval between `tryRecoverSource` re-spawn attempts per source. */
