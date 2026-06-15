@@ -7,7 +7,7 @@ import type { TokenUsage } from "../usage/types.ts";
  * is dropped on its `run.done`/`run.error`; this only bounds the leak from a
  * run whose terminator never fires (e.g. process death mid-run).
  */
-const MAX_TRACKED_RUNS = 1000;
+export const MAX_TRACKED_RUNS = 1000;
 
 /**
  * Translates engine events into Prometheus counters (see `api/metrics.ts`).
@@ -68,7 +68,16 @@ export class MetricsEventSink implements EventSink {
       this.runs.set(runId, r);
       if (this.runs.size > MAX_TRACKED_RUNS) {
         const oldest = this.runs.keys().next().value;
-        if (oldest !== undefined) this.runs.delete(oldest);
+        if (oldest !== undefined) {
+          this.runs.delete(oldest);
+          // Should be unreachable in practice (run terminators always fire, so
+          // tracked runs drain). Surface it rather than dropping the evicted
+          // run's promotion samples silently — a leak this big means a
+          // regressed terminator, not normal load.
+          console.warn(
+            `[metrics] tracked-run cap (${MAX_TRACKED_RUNS}) exceeded; dropping run ${oldest} — its promotion metrics are lost. A run terminator (run.done/run.error) likely failed to fire.`,
+          );
+        }
       }
     }
     return r;

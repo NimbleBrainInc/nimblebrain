@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { MetricsEventSink } from "../../src/adapters/metrics-events.ts";
+import { MAX_TRACKED_RUNS, MetricsEventSink } from "../../src/adapters/metrics-events.ts";
 import type { Counter } from "prom-client";
 import {
   llmCallsTotal,
@@ -109,6 +109,31 @@ describe("MetricsEventSink", () => {
     sink.emit({ type: "run.done", data: { runId: "rA" } });
 
     expect((await read(toolPromotionsTotal, { used: "false" })) - beforeFalse).toBe(2);
+  });
+
+  it("warns (not silently) and drops the oldest run when the tracked-run cap is exceeded", async () => {
+    const sink = new MetricsEventSink();
+    const warnings: string[] = [];
+    const origWarn = console.warn;
+    console.warn = (msg?: unknown) => {
+      warnings.push(String(msg));
+    };
+    try {
+      const before = await read(toolPromotionsTotal, { used: "false" });
+      // The first run is the oldest, so it's evicted once the cap is exceeded.
+      sink.emit({ type: "tool.promoted", data: { runId: "evict-me", toolName: "t" } });
+      for (let i = 0; i <= MAX_TRACKED_RUNS; i++) {
+        sink.emit({ type: "tool.promoted", data: { runId: `filler-${i}`, toolName: "t" } });
+      }
+      // Its terminator now finds no state → no sample recorded (the loss the
+      // warn surfaces).
+      sink.emit({ type: "run.done", data: { runId: "evict-me" } });
+
+      expect((await read(toolPromotionsTotal, { used: "false" })) - before).toBe(0);
+      expect(warnings.some((w) => w.includes("evict-me"))).toBe(true);
+    } finally {
+      console.warn = origWarn;
+    }
   });
 
   it("ignores events it doesn't track", async () => {
