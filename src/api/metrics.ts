@@ -113,12 +113,23 @@ interface UsageForMetrics {
 }
 
 /**
+ * Origin of an LLM call. Closed set by design — the whole point of these
+ * metrics is bounded label cardinality, so a typo at a call site is a compile
+ * error rather than a silently-minted new series.
+ */
+export type LlmUsageSource = "main" | "title" | "compaction" | "briefing";
+
+/**
  * Record one LLM call's usage: a call increment plus token counts split into
  * fresh / cache_read / cache_write / output. Called for both the main agentic
  * loop (`source: "main"`) and the forked fast-slot calls (`compaction` /
  * `title` / `briefing`), so fleet token spend is attributable by origin.
  */
-export function recordLlmUsage(source: string, model: string, usage: UsageForMetrics): void {
+export function recordLlmUsage(
+  source: LlmUsageSource,
+  model: string,
+  usage: UsageForMetrics,
+): void {
   const cacheRead = usage.cacheReadTokens ?? 0;
   const cacheWrite = usage.cacheWriteTokens ?? 0;
   const fresh = Math.max(usage.inputTokens - cacheRead - cacheWrite, 0);
