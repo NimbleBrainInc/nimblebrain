@@ -23,8 +23,9 @@ import {
  * There is no new signing key.
  *
  * Body delivery follows the data plane's own two-endpoint shape. Metadata
- * (`GET /artifacts/{id}`) returns a JSON row — mime type, title, size — with no
- * bytes. The body is fetched separately (`GET /artifacts/{id}/content`), which
+ * (`GET /v1/artifacts/{id}`) returns a JSON row — mime type, title, size — with
+ * no bytes. The body is fetched separately (`GET /v1/artifacts/{id}/content`),
+ * which
  * after the RLS row-read authorizes either streams the bytes directly (small,
  * inline body) or answers a short-lived presigned-URL redirect (large body, the
  * data plane mints the URL *after* the same row-read). The host follows that
@@ -114,7 +115,7 @@ export interface ArtifactReadClientOptions {
 }
 
 /**
- * The metadata row returned by `GET /artifacts/{id}`. Bytes are NOT here — the
+ * The metadata row returned by `GET /v1/artifacts/{id}`. Bytes are NOT here — the
  * body is fetched from `/content`. Snake_case mirrors the data plane's wire;
  * camelCase variants are accepted defensively so a future wire tweak does not
  * silently drop the field.
@@ -171,11 +172,13 @@ export class ArtifactReadClient {
       baseFetch: this.fetchImpl,
     });
 
-    const base = this.config.baseUrl.endsWith("/")
-      ? this.config.baseUrl
-      : `${this.config.baseUrl}/`;
-    const metaUrl = new URL(`artifacts/${encodeURIComponent(id)}`, base).toString();
-    const contentUrl = new URL(`artifacts/${encodeURIComponent(id)}/content`, base).toString();
+    // `baseUrl` is the service ROOT; the versioned API lives under `/v1/artifacts`
+    // (the same convention the writer client appends in code), so one env var
+    // means the same thing for the reader and the writer.
+    const root = this.config.baseUrl.replace(/\/+$/, "");
+    const encodedId = encodeURIComponent(id);
+    const metaUrl = `${root}/v1/artifacts/${encodedId}`;
+    const contentUrl = `${root}/v1/artifacts/${encodedId}/content`;
 
     // (1) Metadata row — mime type, title, size. No bytes here; the body comes
     // from the /content endpoint below.

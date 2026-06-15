@@ -54,10 +54,11 @@ interface Row {
  * runtime requested; the artifacts service reads that workspace back off the
  * bearer and fences rows by it (the RLS gate).
  *
- * The service mirrors the data plane's ACTUAL two-endpoint read shape:
- *   - `GET /artifacts/{id}`          → metadata JSON ({ mime_type, ... }), NO body
- *   - `GET /artifacts/{id}/content`  → raw inline bytes (200), or a 302 redirect
- *                                      to a presigned URL for a spilled body
+ * The service mirrors the data plane's ACTUAL two-endpoint read shape, mounted
+ * under the versioned `/v1/artifacts` prefix the live service uses:
+ *   - `GET /v1/artifacts/{id}`          → metadata JSON ({ mime_type, ... }), NO body
+ *   - `GET /v1/artifacts/{id}/content`  → raw inline bytes (200), or a 302 redirect
+ *                                        to a presigned URL for a spilled body
  * It deliberately does NOT return any inline-body field on the metadata row —
  * that would be a wire shape the service never emits.
  */
@@ -102,13 +103,16 @@ function makeDataPlaneFetch(
     }
 
     // (3) Artifacts service read — decode the bearer's workspace and fence.
-    if (url.startsWith(`${DATA_PLANE}/artifacts/`)) {
+    // The live service mounts its router under `/v1/artifacts`; the client must
+    // hit that versioned prefix. Anything under the un-versioned `/artifacts/`
+    // path falls through to the 500 below, so a dropped `/v1` fails the test.
+    if (url.startsWith(`${DATA_PLANE}/v1/artifacts/`)) {
       const auth = new Headers(init?.headers).get("Authorization") ?? "";
       const bearer = auth.replace(/^Bearer\s+/, "");
       const claims = JSON.parse(Buffer.from(bearer, "base64url").toString("utf8")) as {
         workspace: string;
       };
-      const rest = url.slice(`${DATA_PLANE}/artifacts/`.length);
+      const rest = url.slice(`${DATA_PLANE}/v1/artifacts/`.length);
       const isContent = rest.endsWith("/content");
       const id = decodeURIComponent(isContent ? rest.slice(0, -"/content".length) : rest);
       const row = rows[id];
