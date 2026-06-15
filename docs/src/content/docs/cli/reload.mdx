@@ -1,0 +1,58 @@
+---
+title: nb reload
+description: Hot-reload the NimbleBrain configuration without restarting.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+`nb reload` signals a running NimbleBrain server to reload its configuration and restart bundle processes. You do not need to restart the server after adding or removing bundles.
+
+## Usage
+
+```
+nb reload
+```
+
+## How it works
+
+```bash
+nb reload
+```
+
+```
+Reload signal sent. Running runtime will pick up changes.
+```
+
+The command writes a timestamp to `~/.nimblebrain/.reload`. The running server watches for this sentinel file and picks up the change, re-reading `nimblebrain.json` and restarting any affected bundle processes.
+
+## When to use reload
+
+Run `nb reload` after:
+
+- Installing or removing a bundle (via the Apps catalog, or by editing `nimblebrain.json` / `workspace.json`)
+- Changing bundle configuration with `nb config set` or `nb config clear`
+- Manually editing your `nimblebrain.json`
+
+## Typical workflow
+
+```bash
+# after adding the bundle entry to nimblebrain.json:
+nb config set @nimblebraininc/postgres connection_string=postgres://localhost/mydb
+nb reload
+```
+
+```
+Saved connection_string for @nimblebraininc/postgres
+Reload signal sent. Running runtime will pick up changes.
+```
+
+<Aside type="note">
+  If no server is running, the reload signal is still written. The next server that starts will load the current config regardless.
+</Aside>
+
+## Related commands
+
+- [nb bundle](/cli/bundle/) -- add or remove bundles
+- [nb config](/cli/config/) -- set bundle configuration values
+- [nb status](/cli/status/) -- verify the server picked up changes
+- [nb serve](/cli/serve/) -- start the server

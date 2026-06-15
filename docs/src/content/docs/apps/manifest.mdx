@@ -1,0 +1,274 @@
+---
+title: Manifest Reference
+description: Complete reference for the _meta["ai.nimblebrain/host"] manifest extension.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+NimbleBrain reads host metadata from the `_meta["ai.nimblebrain/host"]` key in your MCPB `manifest.json`. This is where you declare your app's name, icon, category, sidebar placements, briefing facets, and settings section.
+
+## Full manifest structure
+
+```json title="manifest.json"
+{
+  "manifest_version": "0.4",
+  "name": "@myorg/my-app",
+  "version": "1.0.0",
+  "description": "My NimbleBrain app",
+  "author": {
+    "name": "My Org",
+    "email": "dev@myorg.com",
+    "url": "https://myorg.com"
+  },
+  "server": {
+    "type": "python",
+    "mcp_config": {
+      "command": "python",
+      "args": ["-m", "my_app.server"]
+    }
+  },
+  "_meta": {
+    "ai.nimblebrain/host": {
+      "host_version": "1.0",
+      "name": "My App",
+      "icon": "database",
+      "category": "custom",
+      "primaryView": {
+        "resourceUri": "ui://dashboard"
+      },
+      "placements": [
+        {
+          "slot": "sidebar",
+          "resourceUri": "ui://nav",
+          "priority": 50,
+          "label": "My App",
+          "icon": "database",
+          "route": "my-app",
+          "size": "compact"
+        }
+      ],
+      "settings": {
+        "id": "my-app",
+        "label": "My App",
+        "icon": "settings",
+        "resourceUri": "ui://settings"
+      }
+    }
+  }
+}
+```
+
+## MCPB base fields
+
+These fields are defined by the [MCPB specification](https://github.com/modelcontextprotocol/mcpb). NimbleBrain supports both v0.3 and v0.4 formats.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `manifest_version` | `string` | No | MCPB spec version (`"0.3"` or `"0.4"`). |
+| `name` | `string` | Yes | Scoped package name (e.g., `@myorg/my-app`). |
+| `version` | `string` | Yes | Semver version string. |
+| `description` | `string` | No | Human-readable description. |
+| `author` | `object` | No | Author info: `name`, `email`, `url`. |
+| `server.type` | `string` | Yes | Runtime type: `"python"`, `"node"`, `"binary"`, or `"uv"`. |
+| `server.entry_point` | `string` | No | Entry point file path. |
+| `server.mcp_config` | `McpConfig` | Yes | Spawn configuration (see below). |
+| `_meta` | `object` | No | Extension metadata. NimbleBrain reads `_meta["ai.nimblebrain/host"]`. |
+
+### McpConfig
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `command` | `string` | Yes | Executable to run (`"python"`, `"node"`, etc.). |
+| `args` | `string[]` | No | Command-line arguments. Use `${__dirname}` for the bundle directory. |
+| `env` | `Record<string, string>` | No | Environment variables passed to the process. |
+
+## Host metadata: `_meta["ai.nimblebrain/host"]`
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `host_version` | `string` | Yes | Schema version: `"1.0"` or `"1.1"`. `1.1` adds the `host_capabilities` block (declaring it requires `host_version: "1.1"`, enforced by the schema). |
+| `name` | `string` | Yes | Display name shown in the sidebar and app list. |
+| `icon` | `string` | Yes | [Lucide icon](https://lucide.dev/icons) name in kebab-case (e.g., `"database"`, `"message-square"`, `"hand"`). |
+| `category` | `string` | No | App category: `"sales"`, `"marketing"`, `"operations"`, `"research"`, `"finance"`, `"hr"`, `"engineering"`, `"support"`, or `"custom"`. |
+| `primaryView` | `object` | No | The main view loaded when a user navigates to your app. |
+| `primaryView.resourceUri` | `string` | Yes (if `primaryView` set) | `ui://` URI for the main view (e.g., `"ui://dashboard"`). |
+| `placements` | `PlacementDeclaration[]` | No | Explicit shell layout placement declarations. See [Placements](/apps/placements). |
+| `settings` | `object` | No | Settings section contributed by this bundle. See [settings object](#settings-object) below. |
+| `briefing` | `object` | No | Daily briefing contribution. See [briefing](#briefing-object) below. |
+| `host_capabilities` | `object` | No | NimbleBrain host capabilities this bundle requires or prefers. Requires `host_version: "1.1"`. See [Host Capabilities](/apps/host-capabilities). |
+
+### `settings` object
+
+`settings` is a **top-level field** on `_meta["ai.nimblebrain/host"]` — a sibling of `placements`, not a placement slot. Declaring it contributes a tab to the settings UI under **Settings → This Workspace → Apps → &lt;your app&gt;**.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `settings.id` | `string` | Yes | Unique section ID across all bundles. |
+| `settings.label` | `string` | Yes | Tab label in the settings UI. |
+| `settings.icon` | `string` | Yes | Lucide icon name for the settings tab. |
+| `settings.resourceUri` | `string` | Yes | `ui://` URI that renders the settings section HTML. |
+
+```json
+"settings": {
+  "id": "my-app",
+  "label": "My App",
+  "icon": "settings",
+  "resourceUri": "ui://settings"
+}
+```
+
+### `briefing` object
+
+Apps can contribute to the daily briefing on the Home dashboard by declaring a `briefing` block. The platform reads entity data from disk and presents a business-language summary.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `briefing.priority` | `"high" \| "medium" \| "low"` | No | Relative ordering in the briefing. High-priority apps appear first. Default: `"medium"`. |
+| `briefing.facets` | `BriefingFacet[]` | Yes | Summary dimensions this app contributes. |
+
+### `BriefingFacet`
+
+Each facet describes one piece of data to surface in the briefing:
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | `string` | Yes | Unique identifier (kebab-case). |
+| `label` | `string` | Yes | Human-readable label (e.g., "Pipeline", "Blocked tasks"). |
+| `type` | `string` | Yes | How this facet is treated: `"attention"` (needs action now), `"upcoming"` (coming soon), `"activity"` (something happened), `"delta"` (state changed), `"kpi"` (headline number). |
+| `entity` | `string` | No | Upjack entity to query. Reads JSON files from the entity data directory. |
+| `query` | `object` | No | MongoDB-style filter (powered by [sift.js](https://github.com/crcn/sift.js)). Supports `$eq`, `$ne`, `$gt`, `$gte`, `$lt`, `$lte`, `$in`, `$exists`. String values like `"${today}"` are resolved at runtime. |
+| `tool` | `string` | No | MCP tool to call at briefing time (e.g., `"newsapi__search_news"`). |
+| `tool_input` | `object` | No | Arguments passed to the tool. |
+| `resource` | `string` | No | `briefing://` URI — the app computes its own summary via MCP resource. |
+| `metric` | `"count" \| "sum" \| "list"` | No | Aggregation hint. |
+| `description` | `string` | No | Fallback description if data can't be resolved. |
+
+Each facet resolves via **one** of `entity`, `tool`, or `resource`.
+
+**Query variables** resolved at runtime:
+
+| Variable | Value |
+|----------|-------|
+| `${today}` | Current date as `YYYY-MM-DD` |
+| `${now}` | Current ISO timestamp |
+| `${period.since}` | Start of the briefing period (24 hours ago) |
+
+**Example:**
+
+```json
+"briefing": {
+  "priority": "medium",
+  "facets": [
+    {
+      "name": "due_today",
+      "label": "Due today",
+      "type": "upcoming",
+      "entity": "task",
+      "query": { "due_date": "${today}", "completed_at": null },
+      "metric": "count",
+      "description": "Tasks due today that aren't done"
+    },
+    {
+      "name": "blocked_tasks",
+      "label": "Blocked",
+      "type": "attention",
+      "entity": "task",
+      "query": { "column": "blocked", "status": "active" },
+      "metric": "count",
+      "description": "Tasks stuck in blocked column"
+    }
+  ]
+}
+```
+
+### `PlacementDeclaration`
+
+Each entry in the `placements` array:
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `slot` | `string` | Yes | — | Shell slot to fill: `"sidebar"`, `"sidebar.apps"`, `"sidebar.bottom"`, or `"main"`. See [Placements](/apps/placements). |
+| `resourceUri` | `string` | Yes | — | `ui://` URI served by this MCP server. |
+| `priority` | `number` | No | `100` | Sort order within the slot. Lower values appear first. |
+| `label` | `string` | No | — | Human-readable label for sidebar items and tabs. |
+| `icon` | `string` | No | — | Lucide icon name (kebab-case). Falls back to `CircleDot` if unset or unrecognized. |
+| `route` | `string` | No | — | Route path for `"main"` slot placements. Registers as `/app/<route>`. |
+| `size` | `"compact" \| "full" \| "auto"` | No | — | Size hint for the slot renderer. |
+
+## How `primaryView` and `placements` interact
+
+`placements` is what the shell renders and routes from. To give your app a navigable main view, declare a `"main"` slot placement with a `route`:
+
+```json
+"placements": [
+  {
+    "slot": "main",
+    "resourceUri": "ui://dashboard",
+    "route": "my-app",
+    "label": "My App",
+    "icon": "database"
+  }
+]
+```
+
+The virtual `primary` resource path resolves to the **first declared placement's** `resourceUri`, so the shell can load your main view without knowing its URI ahead of time. See [UI Resources](/apps/ui-resources) for how `primary` resolves.
+
+<Aside type="tip">
+Declare at least one `"main"` placement with a `route` so users can navigate to your app. Add `"sidebar.*"` or `"sidebar.bottom"` placements when you need sidebar widgets or pinned items.
+</Aside>
+
+## Icons
+
+Icons use [Lucide](https://lucide.dev/icons) names. The resolver accepts both kebab-case and PascalCase:
+
+- `"message-square"` resolves to the `MessageSquare` component
+- `"database"` resolves to `Database`
+- `"hand"` resolves to `Hand`
+
+If the icon name is not recognized, `CircleDot` is used as the default fallback.
+
+## Minimal example (UI app)
+
+The smallest manifest that registers a UI view:
+
+```json title="manifest.json"
+{
+  "name": "@myorg/hello",
+  "version": "0.1.0",
+  "server": {
+    "type": "node",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/dist/index.js"]
+    }
+  },
+  "_meta": {
+    "ai.nimblebrain/host": {
+      "host_version": "1.0",
+      "name": "Hello",
+      "icon": "hand",
+      "primaryView": {
+        "resourceUri": "ui://index"
+      }
+    }
+  }
+}
+```
+
+## Minimal example (tools only)
+
+No `_meta` needed for tools-only bundles:
+
+```json title="manifest.json"
+{
+  "name": "@myorg/calculator",
+  "version": "1.0.0",
+  "server": {
+    "type": "python",
+    "mcp_config": {
+      "command": "python",
+      "args": ["-m", "calculator.server"]
+    }
+  }
+}
+```

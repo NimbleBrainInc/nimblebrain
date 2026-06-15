@@ -1,0 +1,393 @@
+---
+title: nimblebrain.json
+description: Complete reference for the NimbleBrain instance configuration file.
+---
+
+import { Tabs, TabItem, Aside } from '@astrojs/starlight/components';
+
+NimbleBrain splits configuration into two files:
+
+- **`nimblebrain.json`** — instance-level settings (models, HTTP, logging, limits, feature flags). One file per deployment. **This page.**
+- **`workspace.json`** — per-workspace settings (bundles, skill directories, named agent profiles, optional model + identity overrides). See [`workspace.json`](/config/workspace-json).
+
+Top-level `bundles`, `skillDirs`, `agents`, `home`, and `preferences` entries in `nimblebrain.json` are silently stripped at load — they belong in `workspace.json` now. See [workspace configuration](/config/workspace-json) for where they live.
+
+## Config resolution
+
+NimbleBrain looks for the config file in this order, stopping at the first match:
+
+1. **`--config <path>`** — Explicit path passed as a CLI flag.
+2. **`.nimblebrain/nimblebrain.json`** — Project-local config directory in the current working directory.
+3. **`<defaultWorkDir>/nimblebrain.json`** — Inside the command's default working directory (`~/.nimblebrain` for `nb serve`, the project-local workdir for worktree dev).
+4. **`./nimblebrain.json`** — Current working directory (bare file).
+
+If no config file exists at the resolved path, NimbleBrain auto-creates a minimal default file (`{ "$schema": …, "version": "1" }`) as long as the parent directory exists.
+
+<Aside type="caution">
+  `NB_WORK_DIR` does **not** drive config-file discovery. It sets the `workDir` runtime value (where conversations, logs, and workspaces are stored) and is forwarded to bundle subprocesses, but the config file is located by the order above. To point at a specific config file, use `--config`.
+</Aside>
+
+### The override file
+
+A sibling `nimblebrain.overrides.json` next to the resolved config file is **deep-merged on top of it** at load. The seed (`nimblebrain.json`) is operator-managed and overwritten on every deploy; the override is written by the admin `set_model_config` tool and preserved across deploys. The merge is one level deep — top-level objects (e.g. `models`) are merged key-by-key so an override of `models.fast` doesn't clobber the seed's `models.default`; scalars and arrays are replaced wholesale. A malformed override file is logged loudly and skipped (the seed still boots) rather than taking down startup.
+
+## Complete annotated example
+
+```json
+{
+  "$schema": "https://schemas.nimblebrain.ai/v1/nimblebrain-config.schema.json",
+  "version": "1",
+
+  "models": {
+    "default":   "anthropic:claude-sonnet-4-6",
+    "fast":      "anthropic:claude-haiku-4-5-20251001",
+    "reasoning": "anthropic:claude-opus-4-6"
+  },
+
+  "providers": {
+    "anthropic": { "apiKey": "sk-ant-..." },
+    "openai":    { "apiKey": "sk-..." }
+  },
+
+  "maxIterations":      25,
+  "maxInputTokens":     500000,
+  "maxOutputTokens":    16384,
+  "maxHistoryMessages": 40,
+  "maxToolResultSize":  1000000,
+
+  "store":   { "type": "jsonl", "dir": "~/.nimblebrain/conversations" },
+  "logging": { "dir": "~/.nimblebrain/logs", "disabled": false, "level": "normal", "retentionDays": 30 },
+  "http":    { "port": 27247, "host": "127.0.0.1" },
+
+  "features": {
+    "bundleManagement":    true,
+    "skillManagement":     true,
+    "delegation":          true,
+    "toolDiscovery":       true,
+    "bundleDiscovery":     true,
+    "fileContext":         true,
+    "userManagement":      true,
+    "workspaceManagement": true,
+    "compaction":          false
+  },
+
+  "files": {
+    "maxFileSize":          26214400,
+    "maxTotalSize":         104857600,
+    "maxFilesPerMessage":   10,
+    "maxExtractedTextSize": 204800
+  },
+
+  "allowInsecureRemotes": false,
+  "telemetry":            { "enabled": true },
+  "workDir":              "~/.nimblebrain"
+}
+```
+
+## Top-level fields
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `$schema` | `string` | — | JSON Schema URI. Set to `"https://schemas.nimblebrain.ai/v1/nimblebrain-config.schema.json"` for editor autocompletion. |
+| `version` | `string` | — | Config file version. Must be `"1"`. |
+| `models` | `object` | — | Role-based model slots. See [models](#models). |
+| `providers` | `object` | — | Per-provider API keys. See [providers](#providers). |
+| `model` | `object` | `{ "provider": "anthropic" }` | **Legacy** single-provider config. Use `providers` instead. |
+| `defaultModel` | `string` | — | **Deprecated.** Use `models.default` instead. |
+| `maxIterations` | `integer` | `25` | Max agentic iterations per request. Range: 1--50. |
+| `maxInputTokens` | `integer` | `500000` | Max input tokens per request. Engine stops when this budget is exceeded. |
+| `maxOutputTokens` | `integer` | `16384` | Max output tokens per LLM call. |
+| `maxHistoryMessages` | `integer` | `40` | Max conversation message groups in context. Tool call/result pairs count as one group. |
+| `maxToolResultSize` | `integer` | `1000000` | Max characters for a single tool result. `0` disables the cap. |
+| `thinking` | `"off" \| "adaptive" \| "enabled"` | — | Extended-thinking mode for reasoning-capable models. `off`: never reason. `adaptive`: model decides per call. `enabled`: always reason (cap with `thinkingBudgetTokens`). Typically set via the admin `set_model_config` tool, which writes it to `nimblebrain.overrides.json`. |
+| `thinkingBudgetTokens` | `integer` | — | Token budget when `thinking: "enabled"`. Counts toward `maxOutputTokens`. Anthropic requires a minimum of 1,024. |
+| `store` | `object` | event-sourced (`jsonl` via CLI) | Conversation storage backend. See [store](#store). |
+| `sessionStore` | `object` | `{ "type": "memory", "ttlSeconds": 28800 }` | MCP session metadata store for `/mcp`. See [sessionStore](#sessionstore). |
+| `logging` | `object` | — | Structured logging config. See [logging](#logging). |
+| `http` | `object` | `{ "port": 27247, "host": "127.0.0.1" }` | HTTP server config. Omit for programmatic-only use. |
+| `features` | `object` | all `true` | Feature flags. See [Feature Flags](/config/features). |
+| `files` | `object` | — | File upload limits. See [files](#files). |
+| `allowInsecureRemotes` | `boolean` | `false` | Allow HTTP (non-TLS) remote bundle connections. Dev only. |
+| `telemetry` | `object` | `{ "enabled": true }` | Anonymous usage telemetry. See [telemetry](#telemetry). |
+| `workDir` | `string` | `"~/.nimblebrain"` | Working directory for runtime state (conversations, logs, workspaces). |
+
+<Aside type="note">
+  **Workspace-owned fields** — `bundles`, `skillDirs`, `agents`, `home`, `preferences`, `noDefaultBundles` — are silently stripped if placed at the top level. They live in [`workspace.json`](/config/workspace-json). A top-level `skills` array is a **legacy** field and is silently stripped too; skill directories belong in `workspace.json` as `skillDirs`.
+
+  **Deprecated fields** — `identity` and `contextFile` are ignored with a warning. Use a skill with `type: "context"` instead.
+</Aside>
+
+## models
+
+The `models` object declares three role-based slots. Each value is a `provider:model-id` string (e.g. `"anthropic:claude-sonnet-4-6"`).
+
+```json
+{
+  "models": {
+    "default":   "anthropic:claude-sonnet-4-6",
+    "fast":      "anthropic:claude-haiku-4-5-20251001",
+    "reasoning": "anthropic:claude-opus-4-6"
+  }
+}
+```
+
+| Slot | Used for |
+|------|----------|
+| `default` | Chat, general requests, most tool-using turns |
+| `fast` | Title generation, briefing, skill matching — cheap/fast workloads |
+| `reasoning` | Complex analysis, planning, long-horizon tasks |
+
+A workspace can override individual slots via `workspace.json → models`. When a `nb__delegate` call or agent profile specifies a slot name (e.g. `"model": "fast"`), it's resolved against these slots.
+
+## providers
+
+Per-provider API keys. Takes precedence over the legacy `model` object when both are present.
+
+```json
+{
+  "providers": {
+    "anthropic": { "apiKey": "sk-ant-..." },
+    "openai":    { "apiKey": "sk-..." },
+    "google":    { "apiKey": "AIza..." }
+  }
+}
+```
+
+Each provider key is optional. If a provider's `apiKey` is omitted, the SDK falls back to the provider's standard env var (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_GENERATIVE_AI_API_KEY`).
+
+<Aside type="caution">
+  Prefer environment variables for API keys in production. Config files end up in version control and backup snapshots by accident.
+</Aside>
+
+## store
+
+Choose where conversations are persisted. **The CLI (`nb serve`) defaults to `jsonl`** — conversations persist across restarts at `{workDir}/conversations/`. In-memory is the fallback only for programmatic embedding where no `store` is given.
+
+<Tabs>
+  <TabItem label="JSONL (default for the CLI)">
+    ```json
+    {
+      "store": {
+        "type": "jsonl",
+        "dir": "~/.nimblebrain/conversations"
+      }
+    }
+    ```
+
+    File-backed conversations in `{workDir}/conversations/`. New conversations are written in the **event-sourced** JSONL format (one append-only event log per conversation), which is what enables crash-resilient run replay and history [compaction](/config/features/). Legacy message-format JSONL files are still read.
+  </TabItem>
+  <TabItem label="In-memory">
+    ```json
+    {
+      "store": { "type": "memory" }
+    }
+    ```
+
+    Conversations are lost when the process exits. Only the fallback for programmatic use with no configured store.
+  </TabItem>
+</Tabs>
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `type` | `"jsonl"` \| `"memory"` | Yes | Storage backend. The CLI defaults to `jsonl`. |
+| `dir` | `string` | JSONL only | Directory for conversation JSONL files. |
+
+## sessionStore
+
+Pluggable metadata store for MCP HTTP sessions. Tracks each `Mcp-Session-Id` and its idle TTL across the cluster.
+
+<Tabs>
+  <TabItem label="In-memory (default)">
+    ```json
+    {
+      "sessionStore": {
+        "type": "memory",
+        "ttlSeconds": 28800
+      }
+    }
+    ```
+
+    Process-local Map with periodic TTL sweep. No external dependencies. Default; fine for any single-replica deploy.
+  </TabItem>
+  <TabItem label="Redis">
+    ```json
+    {
+      "sessionStore": {
+        "type": "redis",
+        "ttlSeconds": 28800,
+        "redis": {
+          "url": "${REDIS_URL}",
+          "keyPrefix": "nb:mcp:session:"
+        }
+      }
+    }
+    ```
+
+    Hash-per-session with native `PEXPIRE` TTL. Required when `platform.replicas > 1`; also useful at single-replica if you want cluster-wide visibility into active sessions for ops/admin tooling. The `redis.url` field expands `${VAR}` placeholders from `process.env` at boot, so the deployment configmap can carry a literal `"${REDIS_URL}"` and have the actual URL injected from a secret via `envFrom`.
+  </TabItem>
+</Tabs>
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `type` | `"memory"` \| `"redis"` | `"memory"` | Provider. `redis` requires `redis.url`. |
+| `ttlSeconds` | `integer` (s) | `28800` (8 h) | Idle TTL. Each request resets the clock — actively-used sessions never expire. |
+| `redis.url` | `string` | — | Redis connection URL (`redis://` or `rediss://`). Required when `type` is `"redis"`. Supports `${VAR}` env expansion. |
+| `redis.keyPrefix` | `string` | `"nb:mcp:session:"` | Hash key prefix for session entries. |
+
+### Why a session store at all
+
+The MCP `/mcp` endpoint is stateful. Each session has two parts:
+
+- **Metadata** — `sessionId`, `identityId`, `workspaceId`, timestamps. Just data; lives in the session store.
+- **Live transport** — open HTTP response stream, SDK `Server` instance, registered request handlers, in-flight JSON-RPC state. Process-bound — holds open file descriptors and JS object references that cannot be serialized or moved.
+
+Metadata is shareable across processes; the live transport is not. Routing requests to the process that owns a session's transport is the **load balancer's** job (cookie stickiness, header-hash on `Mcp-Session-Id`), not the session store's. The session store is deliberately deployment-vocabulary-free — no notion of "which pod owns this" — so the same interface fits any deployment topology.
+
+When a request arrives at a process that doesn't have the live transport for the requested session, the 404 carries `error.data.reason`:
+
+| Reason | Meaning |
+|--------|---------|
+| `not_found` | Session store has no record. Idle-TTL eviction, or session never existed. |
+| `unavailable` | Session exists in the store, but the live transport isn't on this process. Possible causes: process restart, sticky-routing miss, transport closed locally. |
+
+Spec-compliant clients re-initialize on either reason. Operators distinguish `unavailable` causes via deploy timing, process uptime, and "session-store size vs local transport count" signals.
+
+### Configuration matrix
+
+| Replicas | Store | Use case |
+|----------|-------|----------|
+| 1 | `memory` | Default. Dev, programmatic use, simple production. Sessions die on process restart; clients re-initialize. |
+| 1 | `redis` | Single-process with cluster-shared metadata for ops visibility, audit trails, or future scale-out. |
+| N | `redis` | Horizontal scale. **Pair with sticky load-balancing** (e.g. ALB `lb_cookie`) — without it, every cross-process request returns `unavailable` and clients re-initialize constantly. |
+| N | `memory` | **Not supported.** Sessions partition across processes. |
+
+When `type: "redis"` is set without a `redis.url`, NimbleBrain refuses to fall back to in-memory and fails the boot — silently degrading would mask a misconfiguration.
+
+### Scaling to multiple replicas
+
+`platform.replicas > 1` requires all of:
+
+1. **Storage that supports concurrent multi-process mounts.** The default chart's PVC is `ReadWriteOnce` and blocks `RollingUpdate` rollouts. Move workspace data out of the PVC (Postgres/S3) or relocate to `ReadWriteMany` (EFS).
+2. **Routing strategy keyed on `Mcp-Session-Id`.** ALB `lb_cookie` stickiness is the simplest path on AWS; alternatives are NGINX/Envoy with header-hash routing, or application-level cross-process proxying.
+3. **Cluster-shared session store.** `sessionStore.type: "redis"`.
+4. **Deploy strategy that doesn't drop all replicas at once.** `platform.strategy.type: RollingUpdate` (with the storage from (1) in place).
+
+Drop any one of these and multi-replica is broken in a different way: PVC deadlock, re-init storms, partitioned session view, or deploy-time outages.
+
+### Tuning `ttlSeconds`
+
+The 8 h default is tuned for a connector left open during a working day. Tighten it (e.g. `1800` for 30 minutes) if you want sessions to evict faster on idle; loosen it if your typical usage pattern leaves connectors open across days.
+
+`MCP_SESSION_TTL_SECONDS` env var overrides this when set.
+
+## logging
+
+```json
+{
+  "logging": {
+    "dir": "~/.nimblebrain/logs",
+    "disabled": false,
+    "level": "normal",
+    "retentionDays": 30
+  }
+}
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `dir` | `string` | `{workDir}/logs` | Log directory. |
+| `disabled` | `boolean` | `false` | Disable structured logging entirely. |
+| `level` | `"normal"` \| `"debug"` | `"normal"` | `"debug"` persists additional verbose fields. |
+| `retentionDays` | `integer` | — | Auto-delete log files older than N days on startup. Omit for no cleanup. |
+
+## files
+
+File upload limits applied when `features.fileContext` is enabled.
+
+```json
+{
+  "files": {
+    "maxFileSize":          26214400,
+    "maxTotalSize":         104857600,
+    "maxFilesPerMessage":   10,
+    "maxExtractedTextSize": 204800
+  }
+}
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `maxFileSize` | `integer` (bytes) | 26 MB | Maximum size of a single uploaded file. |
+| `maxTotalSize` | `integer` (bytes) | 100 MB | Maximum total size of all files per message. |
+| `maxFilesPerMessage` | `integer` | 10 | Maximum number of files per chat message. |
+| `maxExtractedTextSize` | `integer` (bytes) | 200 KB | Maximum extracted text size per file. |
+
+## telemetry
+
+NimbleBrain collects anonymized, aggregate usage data with no PII — no bundle names, tool names, error messages, or file paths are sent.
+
+```json
+{ "telemetry": { "enabled": false } }
+```
+
+Disable with `NB_TELEMETRY_DISABLED=1` or `DO_NOT_TRACK=1` env vars, or run `nb telemetry off`.
+
+## Legacy `model` object
+
+The older single-provider `model` shape is still accepted for backward compatibility but deprecated. Prefer `providers` for mixing API keys and `models` for model selection.
+
+```json
+{
+  "model": { "provider": "anthropic", "apiKey": "sk-ant-..." },
+  "defaultModel": "claude-sonnet-4-6"
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `provider` | `"anthropic"` \| `"openai"` \| `"google"` | Default provider when `providers` isn't set. |
+| `apiKey` | `string` | Falls back to the provider's env var when omitted. |
+
+## Validation
+
+NimbleBrain validates `nimblebrain.json` at startup against the [JSON Schema (draft-07)](https://schemas.nimblebrain.ai/v1/nimblebrain-config.schema.json) using AJV.
+
+- **Unknown keys** produce a warning on stderr and are ignored.
+- **Structural errors** (wrong types, missing required fields) throw an error and prevent startup.
+- **Workspace-owned and legacy keys** (`bundles`, `skillDirs`, `agents`, `home`, `preferences`, `noDefaultBundles`, and the legacy `skills`) are silently stripped — no warning.
+- The **override file** (`nimblebrain.overrides.json`) is validated structurally, but unknown-key warnings are suppressed for it: its `set_model_config`-written vocabulary (`thinking`, `thinkingBudgetTokens`) is not yet in the published schema.
+- **Deprecated keys** (`identity`, `contextFile`) produce a warning pointing at context skills.
+
+```
+[config] Warning: unknown key "foo" in /home/user/.nimblebrain/nimblebrain.json (ignored)
+```
+
+```
+Error: Invalid config in /home/user/.nimblebrain/nimblebrain.json:
+  - /maxIterations: must be <= 50
+```
+
+## CLI flag overrides
+
+CLI flags take precedence over values in the config file:
+
+| Flag | Overrides |
+|------|-----------|
+| `--config <path>` | Config file location |
+| `--workdir <dir>` | Default location of the config file and `workDir` fallback |
+| `--model <id>` | `defaultModel` field (legacy) |
+| `--port <n>` | `http.port` field |
+| `--debug` | Enables verbose debug event logging |
+
+## Minimal config
+
+The smallest valid config file:
+
+```json
+{
+  "$schema": "https://schemas.nimblebrain.ai/v1/nimblebrain-config.schema.json",
+  "version": "1"
+}
+```
+
+This uses all defaults: Anthropic provider (key from `ANTHROPIC_API_KEY`), default model, no MCP bundles installed (platform capabilities are built in), in-memory conversation storage, and structured logging enabled.

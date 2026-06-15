@@ -1,0 +1,882 @@
+---
+title: Synapse SDK
+description: The recommended SDK for building NimbleBrain apps with typed tool calls, agent-aware state, data sync, and more.
+---
+
+import { Aside, Tabs, TabItem, FileTree } from '@astrojs/starlight/components';
+
+Synapse is the recommended way to build NimbleBrain app UIs. It wraps the standard [MCP Apps protocol](/apps/bridge) and adds typed tool calls, LLM-visible state, data sync, widget persistence, and keyboard forwarding.
+
+The primary API is `connect()` — a single async call that handles the entire MCP Apps handshake and returns a ready-to-use `App` object. For React apps, `<AppProvider>` wraps `connect()` and exposes everything through hooks.
+
+Apps built with vanilla ext-apps still work without Synapse. Synapse apps degrade gracefully in non-NimbleBrain hosts (Claude, ChatGPT, VS Code) — NB-specific features become silent no-ops while the ext-apps baseline continues working.
+
+## Why use Synapse?
+
+Raw ext-apps gives you an iframe and `postMessage`. That works for static UIs — but as soon as the agent and UI share mutable state, you hit real friction:
+
+**The UI goes stale when the agent acts.** A user says "change the headline." The agent calls `set_content`. Without Synapse, your UI has no idea — you poll, or the user refreshes. With Synapse, `useDataSync()` fires a callback the moment the agent's tool call completes.
+
+**The agent can't see what the user is doing.** The user filters to "West Coast, Q2." They ask "how does this compare to last quarter?" The agent doesn't know what "this" means. `updateModelContext()` pushes the current filter into the agent's context so it can answer without asking.
+
+**Tool calls are boilerplate.** Every raw tool call needs JSON-RPC framing, request ID tracking, content array parsing, and timeout handling — about 25 lines of plumbing per app. `useCallTool()` gives you `{ call, data, isPending, error }` in one hook.
+
+**Local dev is painful.** Testing an ext-apps UI means spawning a server, writing a bridge page, wiring postMessage proxying, and handling the handshake. `synapseVite()` does all of that — `npm run dev` and open `/__preview`.
+
+<Aside type="tip">
+If your app is display-only HTML with no tool calls and no agent interaction, you don't need Synapse. The [raw bridge](/apps/bridge) is fine. Synapse earns its keep when the agent and UI are both reading and writing the same data.
+</Aside>
+
+## Install
+
+```bash
+npm install @nimblebrain/synapse
+```
+
+Synapse has `@modelcontextprotocol/ext-apps` and `react` as peer dependencies, but you don't need to install them separately — Synapse handles the ext-apps handshake internally, and React is only needed if you use the React hooks.
+
+## Quick start
+
+<Tabs>
+<TabItem label="Vanilla JS">
+```typescript
+import { connect } from '@nimblebrain/synapse';
+
+const app = await connect({ name: 'my-app', version: '1.0.0' });
+
+// Receive tool results from the host
+app.on('tool-result', (data) => {
+  console.log('Tool output:', data.content);
+});
+
+// Call tools on your app's MCP server
+const result = await app.callTool('create_task', { title: 'Review Q2' });
+console.log(result.data);
+// { id: "tsk_01BXX...", title: "Review Q2", status: "active" }
+
+// Tell the agent what the user sees
+app.updateModelContext(
+  { filter: 'overdue', selectedCount: 3 },
+  'User is viewing 3 overdue tasks'
+);
+
+// Send a message into the conversation
+app.sendMessage('Show me the Q2 report');
+```
+</TabItem>
+<TabItem label="React">
+```tsx
+import {
+  AppProvider,
+  useToolResult,
+  useCallTool,
+  useConnectTheme,
+} from '@nimblebrain/synapse/react';
+
+function App() {
+  return (
+    <AppProvider name="my-app" version="1.0.0">
+      <TaskBoard />
+    </AppProvider>
+  );
+}
+
+function TaskBoard() {
+  const result = useToolResult();
+  const { call, isPending, data } = useCallTool('create_task');
+  const theme = useConnectTheme();
+
+  if (result) {
+    console.log('Last tool result:', result.content);
+  }
+
+  return (
+    <button
+      onClick={() => call({ title: 'New task' })}
+      disabled={isPending}
+    >
+      Create Task
+    </button>
+  );
+}
+```
+</TabItem>
+<TabItem label="IIFE (no bundler)">
+```html
+<script src="node_modules/@nimblebrain/synapse/dist/connect.iife.global.js"></script>
+<div id="root">Loading...</div>
+<script>
+  Synapse.connect({
+    name: 'my-widget',
+    version: '1.0.0',
+    autoResize: true,
+  }).then(app => {
+    app.on('tool-result', (data) => {
+      document.getElementById('root').innerHTML = render(data.content);
+    });
+  });
+</script>
+```
+</TabItem>
+</Tabs>
+
+## Handling events
+
+The `App` object returned by `connect()` uses an event-driven model. Subscribe with `on()`, which returns an unsubscribe function:
+
+```typescript
+const app = await connect({ name: 'my-app', version: '1.0.0' });
+
+// Tool result — parsed data from the host after a tool call completes
+const unsub1 = app.on('tool-result', (data) => {
+  // data.content — parsed text content (JSON-parsed if valid, raw string otherwise)
+  // data.structuredContent — structuredContent if host sent it, null otherwise
+  // data.raw — original params for advanced use
+  console.log(data.content);
+});
+
+// Tool input — the arguments the agent is sending to the tool
+const unsub2 = app.on('tool-input', (args) => {
+  console.log('Tool called with:', args);
+});
+
+// Theme changed — host switched light/dark mode
+app.on('theme-changed', (theme) => {
+  document.documentElement.setAttribute('data-theme', theme.mode);
+});
+
+// Teardown — host is removing the iframe
+app.on('teardown', () => {
+  // Clean up resources
+});
+
+// Custom/extension events pass through as-is
+app.on('synapse/data-changed', (params) => {
+  console.log('Agent modified data');
+});
+
+// Unsubscribe when done
+unsub1();
+unsub2();
+```
+
+| Event | Fires when | Handler receives |
+|-------|-----------|-----------------|
+| `tool-result` | Host delivers a tool result | `ToolResultData` — parsed content |
+| `tool-input` | Host sends tool input args | `Record<string, unknown>` |
+| `tool-input-partial` | Streaming partial input | `Record<string, unknown>` |
+| `tool-cancelled` | Tool call was cancelled | `unknown` |
+| `theme-changed` | Host theme changed | `Theme` |
+| `teardown` | Host is removing the iframe | (none) |
+| Any custom string | Extension events (e.g., `synapse/data-changed`) | `unknown` |
+
+<Aside type="note">
+Short names like `"tool-result"` map to their full spec method names (e.g., `ui/notifications/tool-result`). Custom event names pass through as-is.
+</Aside>
+
+## Tool calls
+
+`app.callTool()` sends a `tools/call` JSON-RPC request to the host bridge, which proxies it to your app's MCP server. The result is automatically parsed from both raw JSON and MCP `CallToolResult` formats.
+
+```typescript
+const app = await connect({ name: 'my-app', version: '1.0.0' });
+
+const result = await app.callTool('create_task', { title: 'Review Q2' });
+
+if (result.isError) {
+  console.error('Tool failed:', result.data);
+} else {
+  console.log('Created:', result.data);
+}
+```
+
+React hook:
+
+```tsx
+function TaskBoard() {
+  const { call, isPending, data, error } = useCallTool('create_task');
+
+  return (
+    <button onClick={() => call({ title: 'New task' })} disabled={isPending}>
+      Create Task
+    </button>
+  );
+}
+```
+
+### Typed tool calls with codegen
+
+Generate TypeScript interfaces from your MCP server's tool schemas:
+
+```bash
+npx synapse codegen --from-manifest ./manifest.json --out src/generated/types.ts
+```
+
+This reads `inputSchema` (and optional `outputSchema`) from your tool definitions and produces typed interfaces:
+
+```typescript
+// Auto-generated
+export interface CreateTaskInput {
+  title: string;
+  description?: string;
+  tags?: string[];
+}
+
+export interface CreateTaskOutput {
+  id: string;
+  title: string;
+  status: 'active' | 'archived' | 'deleted';
+}
+
+export interface TasksToolMap {
+  create_task: { input: CreateTaskInput; output: CreateTaskOutput };
+  // ...
+}
+```
+
+Use them with `callTool`:
+
+```typescript
+import type { TasksToolMap } from './generated/types';
+
+const result = await app.callTool<
+  TasksToolMap['create_task']['input'],
+  TasksToolMap['create_task']['output']
+>('create_task', { title: 'Review Q2' });
+
+// result.data is typed as CreateTaskOutput
+```
+
+Codegen sources:
+
+| Flag | Source |
+|------|--------|
+| `--from-manifest <path>` | Read from a local `manifest.json` |
+| `--from-server <url>` | Introspect a running MCP server via `tools/list` |
+| `--from-schema <dir>` | Generate CRUD types from Upjack entity schemas |
+
+## Long-running tools
+
+For tools whose work exceeds the stock MCP request timeout (~60s) — research runs, batch imports, multi-stage analyses — use `callToolAsTask` instead of `callTool`. The host returns a `CreateTaskResult` immediately with a `taskId`; the actual `CallToolResult` is fetched separately via `tasks/result` once the task reaches a terminal state.
+
+This implements the [MCP 2025-11-25 tasks utility](https://modelcontextprotocol.io/specification/2025-11-25) end-to-end across the iframe SDK, the platform bridge, and the bundled MCP server.
+
+<Aside type="caution">
+`callToolAsTask` is on `Synapse` (`createSynapse()`), not `App` (`connect()`). For task-aware apps, use `createSynapse()` and `<SynapseProvider>`. The `connect()` path is for short-running, request/response tools.
+</Aside>
+
+### When to reach for it
+
+| Tool shape | Use |
+|---|---|
+| Returns in `<30s`, simple result | `callTool` / `useCallTool` |
+| Returns in `<60s` but might pause for input/IO | `callTool` (acceptable) |
+| Long-running, multi-phase, or progress-emitting | `callToolAsTask` / `useCallToolAsTask` |
+| Returns in milliseconds (CRUD, lookups) | `callTool` |
+
+The agent itself uses task augmentation automatically when a tool declares `execution.taskSupport: "optional"`. This page is about the **iframe-side** API for UIs that need to fire long-running tools from a button click and reflect lifecycle in the UI.
+
+### React hook (recommended)
+
+```tsx
+import { useCallToolAsTask } from '@nimblebrain/synapse/react';
+
+function ResearchPanel() {
+  const {
+    fire,         // Start (or restart) the task
+    task,         // Latest Task state, or null before fire()
+    result,       // ToolCallResult once terminal, otherwise null
+    error,        // Error on failure or rejection
+    isWorking,    // task.status ∈ {working, input_required}
+    isTerminal,   // task.status ∈ {completed, failed, cancelled}
+    cancel,       // Issue tasks/cancel for the active handle
+  } = useCallToolAsTask<{ query: string }, { report: string }>('start_research');
+
+  if (!task) {
+    return <button onClick={() => fire({ query: 'Q2 metrics' })}>Run research</button>;
+  }
+  if (isWorking) {
+    return <Spinner status={task.status} statusMessage={task.statusMessage} onCancel={cancel} />;
+  }
+  if (error) {
+    return <ErrorBox error={error} />;
+  }
+  return <Report data={result?.data} />;
+}
+```
+
+The hook subscribes to `notifications/tasks/status` for live updates and falls back to polling `tasks/get` if notifications don't arrive (the MCP spec marks status notifications as OPTIONAL — hosts MAY emit them but consumers MUST NOT depend on them).
+
+### Imperative API
+
+```typescript
+import { createSynapse } from '@nimblebrain/synapse';
+
+const synapse = createSynapse({ name: 'research-app', version: '1.0.0' });
+await synapse.ready;
+
+const handle = await synapse.callToolAsTask<{ query: string }, { report: string }>(
+  'start_research',
+  { query: 'Q2 metrics' },
+  { ttl: 3600_000 }, // optional — receiver may override
+);
+
+// `handle.task` has the initial CreateTaskResult.task: taskId, status="working", ttl, ...
+console.log('Started task', handle.task.taskId);
+
+// Subscribe to live status (optional notifications)
+const unsub = handle.onStatus((task) => {
+  console.log('status:', task.status, task.statusMessage);
+});
+
+// Block until terminal
+const result = await handle.result();
+unsub();
+
+// Or poll yourself
+const current = await handle.refresh();
+
+// Or cancel
+await handle.cancel();
+```
+
+### Authoring task-aware tools
+
+The server side declares `execution.taskSupport: "optional"` (or `"required"`) on the tool's `tools/list` entry. With FastMCP (Python), `TaskConfig` does this in one decorator:
+
+```python
+from fastmcp import FastMCP
+from fastmcp.server.tasks import TaskConfig
+
+mcp = FastMCP('research')
+
+@mcp.tool(task=TaskConfig(mode='optional'))
+async def start_research(query: str, ctx: Context) -> dict:
+    run = app.create_entity('research_run', { 'query': query, 'run_status': 'working' })
+    try:
+        for phase in phases:
+            await ctx.report_progress(phase.label)
+            app.update_entity('research_run', run['id'], { 'run_status': phase.label })
+            await phase.run()
+        app.update_entity('research_run', run['id'], { 'run_status': 'completed' })
+        return { 'run_id': run['id'], 'report': '...' }
+    except asyncio.CancelledError:
+        app.update_entity('research_run', run['id'], { 'run_status': 'cancelled' })
+        raise
+```
+
+- `mode="optional"` lets the same tool run inline (`callTool`) **or** as a task (`callToolAsTask`) — the client decides. Use this.
+- `mode="required"` rejects non-task calls with JSON-RPC `-32601`. Only use if you're certain every client supports tasks.
+- `mode="forbidden"` (the implicit default) never runs as a task.
+
+### Dual-channel pattern
+
+Tasks that create durable entities (a research run, an import job) should deliver the entity ID through the **entity channel** (`synapse/data-changed` / `useDataSync`), not the task result. The two channels carry different things:
+
+- **Task channel:** lifecycle (`working` → `completed`/`failed`/`cancelled`), progress messages, cancellation control.
+- **Entity channel:** the durable record — survives the LLM losing interest mid-run, the client disconnecting, or the agent process bouncing.
+
+UIs that need to navigate to the new entity should listen on `useDataSync` rather than awaiting `result()`:
+
+```tsx
+function ResearchPanel() {
+  const { fire, task, isWorking, cancel } = useCallToolAsTask('start_research');
+  const runs = useDataSync<ResearchRun>('research_run');
+
+  // Snapshot existing IDs at fire-time, navigate when a new one appears.
+  const knownIds = useRef(new Set<string>());
+  useEffect(() => {
+    if (task && isWorking) {
+      runs.forEach((r) => knownIds.current.add(r.id));
+    }
+  }, [task, isWorking]);
+
+  useEffect(() => {
+    const fresh = runs.find((r) => !knownIds.current.has(r.id));
+    if (fresh) navigate(`/runs/${fresh.id}`);
+  }, [runs]);
+
+  return isWorking
+    ? <Spinner onCancel={cancel} />
+    : <button onClick={() => fire({ query })}>Retry</button>;
+}
+```
+
+This pattern means the UI navigates within ~1s of the click — as soon as the bundle creates the entity — instead of blocking for minutes on the task result.
+
+### Capability detection and graceful fallback
+
+Hosts that don't support the tasks utility won't advertise the `tasks.requests.tools.call` capability. `callToolAsTask` throws when the host hasn't advertised it; wrap in a try/catch to fall back to `callTool` if you need to support legacy hosts:
+
+```typescript
+try {
+  const handle = await synapse.callToolAsTask('start_research', { query });
+  // ...task-aware UI path
+} catch (err) {
+  if (String(err).includes('tasks.requests.tools.call')) {
+    // Legacy host — fall back to a blocking call. Loses cancel/progress.
+    const result = await synapse.callTool('start_research', { query });
+  } else {
+    throw err;
+  }
+}
+```
+
+You can also feature-detect via `synapse._hostTasksCapability` (tri-state: `null` pre-handshake, `undefined` if absent, `TasksCapability` if present).
+
+### Polling and cancellation behavior
+
+- **Polling fallback.** `useCallToolAsTask` polls `tasks/get` every `pollInterval × 1.5` (default ~7.5s) when no `notifications/tasks/status` arrives. Polling stops automatically on terminal status, on `result()` settling, or after 5 consecutive refresh failures (host-side TTL eviction or bridge teardown).
+- **Cancel.** `handle.cancel()` issues `tasks/cancel`. Cancelling an already-terminal task surfaces a `-32602` error from the host.
+- **Unmount.** Unmounting a React component does **not** cancel the server-side task. The task continues; the user can re-fire to recover state. This is intentional — long-running work shouldn't disappear because someone navigated away briefly.
+
+## Resize
+
+Control the iframe size reported to the host. Two modes:
+
+### Manual resize (default)
+
+```typescript
+const app = await connect({ name: 'my-app', version: '1.0.0' });
+
+// Auto-measure document.body and send size to host
+app.resize();
+
+// Or send explicit dimensions
+app.resize(800, 600);
+```
+
+### Auto resize
+
+Pass `autoResize: true` to attach a `ResizeObserver` on `document.body`. Synapse sends `size-changed` on every observed resize, debounced to one animation frame (16ms).
+
+```typescript
+const app = await connect({
+  name: 'my-widget',
+  version: '1.0.0',
+  autoResize: true,
+});
+
+// Explicit resize() still works for overrides
+app.resize(400, 300);
+```
+
+React hook:
+
+```tsx
+function MyComponent() {
+  const resize = useResize();
+
+  useEffect(() => {
+    // Resize after content renders
+    resize();
+  }, [data]);
+
+  return <div>{/* content */}</div>;
+}
+```
+
+<Aside type="tip">
+Auto resize is the right default for simple widgets. Complex apps that animate or lazy-load should use manual resize for precise control.
+</Aside>
+
+## Data sync
+
+When the agent calls a tool on your server during a conversation, the host sends a `data.changed` event to your iframe. Synapse surfaces this as a callback:
+
+```typescript
+const unsub = app.on('synapse/data-changed', (event) => {
+  console.log('Agent modified data — refresh UI');
+});
+
+// Later: unsub() to stop listening
+```
+
+React hook (legacy API):
+
+```tsx
+useDataSync((event) => {
+  queryClient.invalidateQueries(['tasks']);
+});
+```
+
+<Aside type="caution">
+Data sync only fires for **agent-initiated** tool calls. Tool calls made by the iframe itself (via `callTool`) do not trigger data sync — the iframe already knows its own results.
+</Aside>
+
+## LLM-aware UI state
+
+Push UI state into the agent's context so it knows what the user is looking at:
+
+```typescript
+app.updateModelContext(
+  { view: 'board', filter: 'overdue', checkedTasks: ['tsk_01', 'tsk_02'] },
+  'User is viewing the board with overdue filter, 2 tasks checked'
+);
+```
+
+When the user sends a chat message while viewing your app, this state is included in the system prompt. The agent can reference it to provide contextual responses.
+
+The `summary` parameter is optional but recommended — it's used as a fallback when the full state exceeds the token budget. Calls are debounced (250ms) to avoid flooding.
+
+<Aside type="note">
+State injection is bounded by a token budget. When the serialized state exceeds the budget, the host falls back to the `summary` string (or truncates the state if no summary was provided). The state is wrapped in a `<app-state>` containment tag in the system prompt — supply a concise `summary` so the agent still gets the gist when the full state is too large.
+</Aside>
+
+Legacy API (via `createSynapse`):
+
+```tsx
+synapse.setVisibleState({ filter: 'overdue', count: 3 }, 'Viewing 3 overdue tasks');
+
+// React hook
+const setVisible = useVisibleState();
+setVisible({ filter: 'overdue', count: 3 }, 'Viewing 3 overdue tasks');
+```
+
+## Widget state store
+
+Persistent, typed state management with optional agent visibility:
+
+```typescript
+import { createStore } from '@nimblebrain/synapse';
+
+const store = createStore(synapse, {
+  initialState: { filter: 'all', sortBy: 'date' },
+  actions: {
+    setFilter: (state, filter: string) => ({ ...state, filter }),
+    toggleSort: (state) => ({
+      ...state,
+      sortBy: state.sortBy === 'date' ? 'priority' : 'date',
+    }),
+  },
+  persist: true,          // Survives iframe reloads
+  visibleToAgent: true,   // Auto-pushed to LLM context
+  summarize: (s) => `Viewing ${s.filter} tasks sorted by ${s.sortBy}`,
+});
+
+store.dispatch.setFilter('overdue');
+store.getState(); // { filter: 'overdue', sortBy: 'date' }
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `persist` | `false` | Persist state across iframe reloads via host storage |
+| `visibleToAgent` | `false` | Auto-push state to the LLM context after every dispatch |
+| `summarize` | — | Generate a human-readable summary for token budget fallback |
+| `version` | — | Schema version for state migration |
+| `migrations` | — | Ordered migration functions for versioned state |
+
+React hook:
+
+```tsx
+import { useStore } from '@nimblebrain/synapse/react';
+
+function TaskBoard() {
+  const { state, dispatch } = useStore(store);
+  return (
+    <button onClick={() => dispatch.setFilter('overdue')}>
+      {state.filter}
+    </button>
+  );
+}
+```
+
+### State migration
+
+When your store shape changes, add a version and migrations:
+
+```typescript
+const store = createStore(synapse, {
+  version: 3,
+  initialState: { filter: 'all', sortBy: 'date', view: 'list' },
+  migrations: [
+    (v1) => ({ ...v1, sortBy: 'date' }),              // v1 -> v2
+    (v2) => ({ ...v2, view: 'list' }),                  // v2 -> v3
+  ],
+  persist: true,
+  actions: { /* ... */ },
+});
+```
+
+On hydration, if the persisted version is lower than the current version, migrations run sequentially.
+
+## Shell actions
+
+Dispatch semantic actions to the NimbleBrain shell:
+
+```typescript
+app.sendMessage('Show me the Q2 report');
+app.sendMessage('Update this contact', {
+  action: 'update',
+  entity: 'ct_01BXX',
+});
+
+app.openLink('https://example.com');
+```
+
+Legacy API (via `createSynapse`):
+
+```typescript
+synapse.action('openConversation', { id: 'conv_abc123' });
+synapse.action('startChat', { prompt: 'Help me with this task' });
+synapse.action('openApp', { name: '@nimblebraininc/contacts' });
+synapse.action('navigate', { route: '/app/tasks' });
+
+synapse.chat('Show me the Q2 report');
+synapse.chat('Update this contact', {
+  action: 'update',
+  entity: 'ct_01BXX',
+});
+
+synapse.openLink('https://example.com');
+synapse.saveFile('report.csv', csvContent, 'text/csv');
+
+// Open the host's native file picker. The host persists each picked
+// file to the workspace store and returns a stable file ID — bytes
+// never cross the iframe boundary, so uploads aren't bounded by the
+// tool-call JSON limit.
+const file = await synapse.pickFile({ accept: '.csv,.json' });
+// → { id: 'fl_…', filename: 'data.csv', mimeType: 'text/csv', size: 12345 } | null
+
+// Pass the ID to a tool. Tools read the bytes server-side via the
+// host's file APIs.
+if (file) {
+  await synapse.callTool('ingest_csv', { file_id: file.id });
+}
+```
+
+<Aside type="note">
+In non-NimbleBrain hosts, `action()`, `chat()`, and `saveFile()` are silent no-ops. `openLink()` falls back to `window.open()`. `pickFile()` / `pickFiles()` throw — the file picker depends on host-side persistence.
+</Aside>
+
+<Aside type="caution">
+`pickFile` / `pickFiles` were broken in NimbleBrain hosts before `@nimblebrain/synapse@0.8.0` (the SDK sent the wrong method name; the call would hang). The result shape also changed in 0.8.0 from `{ base64Data, filename, mimeType, size }` to `{ id, filename, mimeType, size }`. If you need bytes inline for a small generated file, write a tool that takes a file ID and have it read the file server-side.
+</Aside>
+
+## Theming
+
+The `App` object provides the host theme immediately after `connect()` resolves, and fires events on changes:
+
+```typescript
+const app = await connect({ name: 'my-app', version: '1.0.0' });
+
+// Available immediately
+console.log(app.theme);
+// { mode: 'dark', tokens: { '--nb-primary': '...', ... } }
+
+// React to changes
+app.on('theme-changed', (theme) => {
+  document.documentElement.setAttribute('data-theme', theme.mode);
+});
+```
+
+React hooks:
+
+```tsx
+// Connect API — returns Theme (mode + tokens)
+const theme = useConnectTheme();
+
+// Legacy API — returns SynapseTheme (mode + primaryColor + tokens)
+const theme = useTheme();
+```
+
+Both re-render automatically when the theme changes.
+
+## Keyboard forwarding
+
+When an iframe has focus, keyboard events fire on the iframe's document, not the host's. Synapse automatically forwards Ctrl/Cmd combos and Escape to the host so global shortcuts (like Ctrl+K to open the chat panel) still work.
+
+Customize which keys are forwarded (via the legacy `createSynapse` API):
+
+```typescript
+const synapse = createSynapse({
+  name: 'my-app',
+  version: '1.0.0',
+  forwardKeys: [
+    { key: 'k', ctrl: true },   // Ctrl+K
+    { key: '/', ctrl: true },   // Ctrl+/
+    { key: 'Escape' },
+  ],
+});
+```
+
+Pass an empty array to disable forwarding entirely: `forwardKeys: []`
+
+## Dev mode
+
+### Standalone preview (recommended)
+
+The Synapse Vite plugin gives you a full dev experience with one command:
+
+```bash
+cd ui
+npm run dev
+# Open http://localhost:5173/__preview
+```
+
+The `synapseVite()` plugin in your `vite.config.ts` automatically:
+- Reads `../manifest.json` to get your app name and server command
+- Spawns the MCP server as a child process (stdio mode)
+- Serves a preview host page at `/__preview` that iframes your app
+- Proxies tool calls from the iframe to the MCP server
+- Provides a dark/light theme toggle
+
+```typescript
+// ui/vite.config.ts
+import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+import { viteSingleFile } from "vite-plugin-singlefile";
+import { synapseVite } from "@nimblebrain/synapse/vite";
+
+export default defineConfig({
+  plugins: [react(), viteSingleFile(), synapseVite()],
+  build: { outDir: "dist", assetsInlineLimit: Infinity },
+});
+```
+
+Zero config — `synapseVite()` reads the manifest. Override if needed:
+
+```typescript
+synapseVite({
+  appName: "my-app",                    // override manifest name
+  serverCmd: "uv run python -m server", // override derived command
+  manifest: "../custom-manifest.json",  // custom manifest path
+  preview: false,                       // disable preview (build-only)
+})
+```
+
+Python projects with `pyproject.toml` are auto-detected — the plugin prepends `uv run` to the server command.
+
+### NimbleBrain platform
+
+For testing data sync, agent interactions, and multi-app navigation:
+
+```bash
+nb dev --app ./ui
+```
+
+Your app must be configured as a local bundle in `.nimblebrain/nimblebrain.json`.
+
+See the [Local Development guide](/apps/local-dev) for the full workflow comparison.
+
+## Project structure
+
+The recommended structure for an MCP app with a UI:
+
+<FileTree>
+- my-app/
+  - manifest.json
+  - pyproject.toml          or package.json for TS
+  - src/mcp_my_app/
+    - server.py             MCP server: tools + ui:// resource
+    - ui.py                 Loads ui/dist/index.html
+  - ui/                     Vite + React project
+    - package.json
+    - vite.config.ts         synapseVite() — zero config
+    - index.html
+    - src/
+      - main.tsx
+      - App.tsx              Your components + Synapse hooks
+    - dist/
+      - index.html           Built single-file bundle
+</FileTree>
+
+The server reads the built `ui/dist/index.html` and serves it as a `ui://` resource. `vite-plugin-singlefile` bundles everything (React, CSS, JS) into that single file.
+
+See the [Hello World example](/apps/hello-world) for a complete walkthrough.
+
+## Graceful degradation
+
+Synapse detects its host during the ext-apps handshake. In NimbleBrain, `hostInfo.name` is `"nimblebrain"` — Synapse enables all features. In the standalone preview, the preview host also identifies as `"nimblebrain"`. In other hosts (Claude, ChatGPT, VS Code), NB-specific features degrade:
+
+| Feature | NimbleBrain / Preview | Other hosts |
+|---------|----------------------|-------------|
+| Tool calls | Full | Works (if host supports `tools/call`) |
+| Data sync | Full (NB only) | No-op |
+| Visible state | Full (NB only) | No-op |
+| Widget store | Persist + agent (NB only) | In-memory only |
+| Actions / chat | Full | No-op |
+| Theme | Full | From ext-apps handshake |
+| Keyboard forwarding | Full | No-op |
+| Open link | Via bridge | `window.open()` fallback |
+| Save file | Via bridge | No-op |
+| Pick file | Via bridge | Throws |
+
+## Package exports
+
+| Export | Contents |
+|--------|----------|
+| `@nimblebrain/synapse` | `connect`, `createSynapse`, `createStore`, all types |
+| `@nimblebrain/synapse/react` | `AppProvider`, `useApp`, `useToolResult`, `useToolInput`, `useResize`, `useConnectTheme`, `SynapseProvider`, `useSynapse`, `useCallTool`, `useDataSync`, `useTheme`, `useAction`, `useAgentAction`, `useChat`, `useVisibleState`, `useStore`, `useFileUpload` |
+| `@nimblebrain/synapse/iife` | `connect.iife.global.js` — `window.Synapse` global for `<script>` tags |
+| `@nimblebrain/synapse/vite` | `synapseVite` Vite plugin |
+| `@nimblebrain/synapse/codegen` | `readFromManifest`, `readFromServer`, `generateTypes` |
+
+### React hooks reference
+
+| Hook | Source | Returns | Subscribes to |
+|------|--------|---------|---------------|
+| `useApp()` | Connect API | `App` object | — |
+| `useToolResult()` | Connect API | `ToolResultData \| null` | `tool-result` event |
+| `useToolInput()` | Connect API | `Record<string, unknown> \| null` | `tool-input` event |
+| `useConnectTheme()` | Connect API | `Theme` | `theme-changed` event |
+| `useResize()` | Connect API | `(w?, h?) => void` | — |
+| `useCallTool(name)` | Legacy API | `{ call, data, isPending, error }` | — |
+| `useTheme()` | Legacy API | `SynapseTheme` | Theme changes |
+| `useDataSync(cb)` | Legacy API | — | data-changed events |
+| `useChat()` | Legacy API | `(msg, ctx?) => void` | — |
+| `useAction()` | Legacy API | `(action, params?) => void` | — |
+| `useAgentAction(cb)` | Legacy API | — | Agent action events |
+| `useVisibleState()` | Legacy API | `(state, summary?) => void` | — |
+| `useStore(store)` | Legacy API | `{ state, dispatch }` | Store changes |
+| `useFileUpload()` | Legacy API | `{ pickFile, pickFiles }` | — |
+| `useSynapse()` | Legacy API | `Synapse` object | — |
+
+Hooks labeled "Connect API" require an `<AppProvider>` ancestor. Hooks labeled "Legacy API" require a `<SynapseProvider>` ancestor. Both providers can coexist in the same tree.
+
+## Synapse vs. raw bridge
+
+Synapse wraps the [MCP App Bridge](/apps/bridge) protocol. You don't need to use both — pick one:
+
+| | Synapse | Raw bridge |
+|---|---|---|
+| **Use when** | Building a new app with a build step (Vite, webpack) | Simple static HTML, no build step, or vanilla ext-apps |
+| **Tool calls** | Typed, parsed, error-handled | Raw JSON-RPC postMessage |
+| **State management** | `createStore` with persistence | Roll your own |
+| **Agent awareness** | `updateModelContext` / `setVisibleState` | Not available |
+| **Data sync** | `on("synapse/data-changed")` or `onDataChanged` | Listen for `synapse/data-changed` manually |
+| **Dev experience** | `npm run dev` with preview + HMR | Manual server restart |
+| **Framework support** | Vanilla JS + React hooks | Any (raw postMessage) |
+
+The bridge protocol docs remain the reference for the underlying wire format. Synapse is the SDK that makes it ergonomic.
+
+## Legacy API: createSynapse
+
+The original `createSynapse()` API remains fully functional and is used by existing apps. New apps should prefer `connect()` and `AppProvider`, but migration is not required.
+
+```typescript
+import { createSynapse } from '@nimblebrain/synapse';
+
+const synapse = createSynapse({ name: 'my-app', version: '1.0.0' });
+await synapse.ready;
+
+synapse.callTool('create_task', { title: 'Review Q2' });
+synapse.setVisibleState({ filter: 'overdue' }, 'Viewing overdue tasks');
+synapse.onDataChanged((event) => { /* ... */ });
+synapse.saveFile('report.csv', csvContent, 'text/csv');
+synapse.chat('Show me the Q2 report');
+```
+
+Key differences from `connect()`:
+
+| | `connect()` | `createSynapse()` |
+|---|---|---|
+| Handshake | `await connect()` resolves when ready | `await synapse.ready` |
+| Events | `app.on("tool-result", cb)` | No tool-result event |
+| Resize | `app.resize()` / `autoResize` option | Not available |
+| Model context | `app.updateModelContext()` | `synapse.setVisibleState()` |
+| Messages | `app.sendMessage()` | `synapse.chat()` |
+| File save | Not on App object (use legacy) | `synapse.saveFile()` |
+| File pick | Not on App object (use legacy) | `synapse.pickFile()` / `synapse.pickFiles()` |
+| Shell actions | Not on App object (use legacy) | `synapse.action()` |
+| React provider | `<AppProvider>` | `<SynapseProvider>` |

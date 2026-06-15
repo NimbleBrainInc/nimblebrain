@@ -1,0 +1,100 @@
+---
+title: Connecting External Clients
+description: Use NimbleBrain's tools from Claude Desktop, Claude Code, Cursor, or any other MCP-compatible client over Streamable HTTP.
+---
+
+import { Aside, Tabs, TabItem, Steps } from '@astrojs/starlight/components';
+
+NimbleBrain can act as a tool server for external apps that speak the MCP protocol, like Claude Desktop, Claude Code, Cursor, or VS Code. Point a client at your instance once and every tool from every app installed in your workspaces becomes available inside that client, without switching to the web UI.
+
+NimbleBrain exposes a single programmatic surface for this: the `/mcp` Streamable HTTP endpoint. For the protocol-level reference (methods, sessions, OAuth discovery), see [The /mcp Endpoint](/connect/mcp-endpoint).
+
+## How it connects
+
+Authentication uses OAuth. There is no static API key to copy around. When you point a client at NimbleBrain:
+
+<Steps>
+
+1. The client hits `/mcp` without credentials and gets a `401` with a `WWW-Authenticate` header pointing to NimbleBrain's discovery endpoint.
+2. The client follows [RFC 9728](https://www.rfc-editor.org/rfc/rfc9728) / [RFC 8414](https://www.rfc-editor.org/rfc/rfc8414) discovery to find the authorization server (AuthKit).
+3. A browser window opens for you to log in.
+4. The client receives a JWT and attaches it on subsequent requests.
+
+</Steps>
+
+Clients that support MCP OAuth discovery (Claude Code, Claude Desktop, Cursor) handle all of this automatically.
+
+## What you need
+
+- **Instance URL** — the address of your NimbleBrain instance (for example, `https://your-team.nimblebrain.ai`). Append `/mcp` to form the endpoint URL.
+
+That is all the client config needs. You do not set a workspace header.
+
+<Aside type="note" title="Where workspace context comes from">
+NimbleBrain `/mcp` sessions are bound to your **identity**, not to a single workspace. Your tool list aggregates across every workspace you belong to. Each tool name carries its own workspace scope: a workspace tool is named `ws_<id>-<source>__<tool>` (for example, `ws_1a2b...-crm__search`), so the call routes to the right workspace by name. Identity-owned tools (`conversations__*`, `files__*`, `automations__*`) are bare and live outside any workspace.
+
+You do **not** set an `X-Workspace-Id` header. The endpoint ignores it. If you need a specific workspace's ID for reference, find it under **Settings → This Workspace → General** in the "MCP Connection" card.
+</Aside>
+
+<Aside type="note">
+OAuth requires the `workos` auth adapter with an `authkitDomain` configured. On a dev-mode instance (no `instance.json`), the `/mcp` endpoint is open and no login is needed. See [The /mcp Endpoint](/connect/mcp-endpoint) and [auth adapters](/config/instance-json) for the full setup.
+</Aside>
+
+## Claude Code
+
+Use the CLI:
+
+```bash
+claude mcp add --transport http nimblebrain https://your-team.nimblebrain.ai/mcp
+```
+
+Or add to your project's `.mcp.json`:
+
+```json title=".mcp.json"
+{
+  "mcpServers": {
+    "nimblebrain": {
+      "type": "http",
+      "url": "https://your-team.nimblebrain.ai/mcp"
+    }
+  }
+}
+```
+
+The first request triggers the OAuth flow. Claude Code opens a browser for you to authenticate against AuthKit, then attaches the returned JWT on every subsequent request.
+
+## Claude Desktop
+
+Edit `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
+
+```json title="claude_desktop_config.json"
+{
+  "mcpServers": {
+    "nimblebrain": {
+      "type": "http",
+      "url": "https://your-team.nimblebrain.ai/mcp"
+    }
+  }
+}
+```
+
+The first time Claude Desktop uses the server, it opens a browser for OAuth login.
+
+## Cursor
+
+Open **Cursor Settings → MCP → Add Server**, choose the HTTP/URL-based server type, and set the URL to `https://your-team.nimblebrain.ai/mcp`. Cursor handles the OAuth flow automatically. See [Cursor's MCP documentation](https://docs.cursor.com/context/model-context-protocol) for the latest details.
+
+## Other MCP clients
+
+Any client that implements Streamable HTTP transport and either OAuth 2.0 (RFC 9728/8414 discovery) or a pre-issued bearer token can connect. See [The /mcp Endpoint](/connect/mcp-endpoint) for the protocol-level reference, including the discovery endpoints and the manual OAuth flow.
+
+## What's exposed
+
+When an external client connects, it gets the tools installed across your workspaces, the same tools the agent uses in the web UI. The client sees a flat tool list; NimbleBrain routes each call to the right app internally based on the namespaced tool name.
+
+Two filters apply:
+
+- **Feature flags** — tools gated by a disabled flag (for example, the `skills__*` authoring tools when `skillManagement` is `false`) are hidden. See [Feature Flags](/config/features).
+- **Role** — admin-only tools (such as `nb__manage_users`, `nb__manage_workspaces`) are hidden from non-admin members.
+
+If an admin installs or removes an app, the change is reflected on the next `tools/list` call.

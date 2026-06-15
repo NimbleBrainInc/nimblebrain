@@ -1,0 +1,105 @@
+---
+title: Workspaces
+description: Create and manage workspaces to isolate apps, connectors, and team access.
+---
+
+import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
+
+Workspaces let you organize your NimbleBrain environment into isolated contexts. Each workspace has its own installed apps, connectors, and members. Use workspaces to separate projects, teams, or environments.
+
+## What is a workspace?
+
+A workspace is an isolated environment within a NimbleBrain instance. It contains:
+
+- **Apps and connectors** — each workspace has its own set of installed MCP bundles and connectors
+- **Members** — users with assigned roles who can access the workspace
+
+When you send a chat message, it runs in the context of your focused workspace, and the agent's active tool set is scoped to the apps installed there. **Conversations are not part of a workspace** — they belong to you and follow you across every workspace you're a member of. See [Conversations](/using/conversations) for how ownership works.
+
+<Aside type="note">
+Workspace IDs are opaque tokens of the form `ws_<16-hex>` (for example `ws_3f9a1c7e0b2d4856`). The ID is assigned once at creation and never derived from the name — renaming a workspace does not change its ID or its URL. Treat the ID as opaque: never parse it for meaning. Your personal workspace is the one exception, with a stable `ws_user_<userId>` form.
+</Aside>
+
+## Roles
+
+Every workspace member has one of three roles:
+
+| Role | Capabilities |
+|------|-------------|
+| **Owner** | Full access. Can manage members, apps, and settings. Cannot be removed. |
+| **Admin** | Can manage members and apps. |
+| **Member** | Can chat and use tools. Cannot manage other members. |
+
+## What workspaces isolate
+
+| Scoped to workspace | Owned by you (cross-workspace) |
+|---------------------|--------------------------------|
+| Installed apps and connectors | Your user account and login |
+| Members and roles | Your conversations and history |
+| Per-workspace credentials | Your files and automations |
+| | Your profile settings (name, theme, timezone) |
+
+## Creating a workspace
+
+The agent can create workspaces through the `nb__manage_workspaces` tool. Ask it in chat:
+
+```
+Create a workspace called "Engineering" for our dev team
+```
+
+The agent uses `nb__manage_workspaces` with `action: "create"` to set it up. The new workspace gets an opaque `ws_<hex>` ID; the name you give it is a freely editable label.
+
+## Managing members
+
+Add or remove members with the `nb__manage_members` tool:
+
+```
+Add sarah@example.com to the Engineering workspace as an admin
+```
+
+The tool supports these actions:
+
+| Action | Description |
+|--------|-------------|
+| `add` | Add a user to the workspace with a specified role |
+| `remove` | Remove a user from the workspace (cannot remove the owner) |
+| `update` | Change a member's role |
+| `list` | List all members and their roles |
+
+<Aside type="note">
+Only workspace admins and the owner can manage members. Regular members cannot add or remove other users.
+</Aside>
+
+## Workspace-scoped apps
+
+Apps and connectors are installed at the workspace level. When a bundle is installed in a workspace, only members of that workspace can use its tools.
+
+```
+Install @nimblebraininc/tasks in this workspace
+```
+
+The agent installs the bundle and registers its tools in the workspace's tool registry. Other workspaces are unaffected.
+
+## Switching workspaces
+
+In the web UI, switch workspaces from the workspace navigator at the top of the sidebar. Your session is identity-bound, so switching is instant — there is no per-workspace session to reset.
+
+Each workspace has a stable URL of the form `/w/<id>/...`. The agent's active tools follow your focused workspace; the full set of tools across every workspace you belong to is reachable on demand through `nb__search`.
+
+## Personal workspaces
+
+Every user has a personal workspace — a private space where you can experiment with apps and conversations without affecting your team. It shows a lock icon in the workspace navigator and uses a stable `ws_user_<userId>` ID.
+
+<Aside type="note">
+NimbleBrain guarantees every authenticated user has at least one workspace. The personal workspace is provisioned on first login and re-created on the next login if it is ever deleted.
+</Aside>
+
+## Connecting external MCP clients
+
+The `/mcp` endpoint is **identity-bound**, not workspace-bound. A single connection aggregates your tools across every workspace you belong to, and the tool name itself carries the workspace scope. You do **not** need to send an `X-Workspace-Id` header — it is ignored on `/mcp`. See [Connecting External Clients](/connect/external-clients) for setup.
+
+## What's next
+
+- [Conversations](/using/conversations) — conversations are owned by you, not by a workspace
+- [Managing Apps](/using/managing-apps) — install and configure bundles per workspace
+- [Connecting External Clients](/connect/external-clients) — connect Claude Desktop, Cursor, and other MCP clients

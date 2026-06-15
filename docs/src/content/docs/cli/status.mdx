@@ -1,0 +1,56 @@
+---
+title: nb status
+description: Check workspace status — configured bundles and loaded skills.
+---
+
+`nb status` displays a summary of your NimbleBrain workspace: configured bundles and loaded skills. It reads your configuration locally and does not contact a running server.
+
+## Usage
+
+```
+nb status [flags]
+```
+
+## Flags
+
+| Flag | Description |
+|------|-------------|
+| `--config <path>` | Config file path |
+| `--json` | Output as JSON |
+
+## Checking status
+
+```bash
+nb status
+```
+
+```
+Bundles: 3 configured
+  @nimblebraininc/ipinfo
+  @nimblebraininc/granola
+  @nimblebraininc/postgres
+Skills: 4 loaded
+```
+
+## JSON output
+
+Get machine-readable output with `--json`:
+
+```bash
+nb status --json
+```
+
+```json
+{"bundles":[{"name":"@nimblebraininc/ipinfo"},{"name":"@nimblebraininc/granola"},{"name":"@nimblebraininc/postgres"}],"skills":[{"name":"bootstrap","type":"context","priority":100,"source":"src/skills/core/bootstrap.md","description":"Teaches the agent about meta-tools and mpak"}]}
+```
+
+The JSON output includes two keys:
+- `bundles` -- the bundle entries from your config
+- `skills` -- all loaded skills with metadata
+
+## Related commands
+
+- [nb bundle](/cli/bundle/) -- list and search bundles
+- [nb skill](/cli/skill/) -- inspect individual skills
+- [nb reload](/cli/reload/) -- apply config changes to a running server
+- [nb serve](/cli/serve/) -- start the server

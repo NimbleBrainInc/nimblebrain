@@ -1,0 +1,194 @@
+---
+title: Publishing to mpak
+description: Package your NimbleBrain app as an MCPB bundle and publish it to the mpak registry.
+---
+
+import { Steps, Aside } from '@astrojs/starlight/components';
+
+Once your app is working locally, you can package it as an MCPB bundle and publish it to the [mpak registry](https://mpak.dev) so others can install it with a single command.
+
+## Bundle structure
+
+An MCPB bundle is a directory with a `manifest.json` and your server code:
+
+```
+my-app/
+├── manifest.json          # Bundle manifest (required)
+├── src/                   # Your server source code
+│   └── server.py
+├── deps/                  # Python dependencies (auto-added to PYTHONPATH)
+│   └── ...
+└── resources/             # Static files (optional)
+    └── index.html
+```
+
+For Node.js apps:
+
+```
+my-app/
+├── manifest.json
+├── dist/
+│   └── index.js           # Compiled entry point
+├── node_modules/           # Dependencies
+│   └── ...
+└── package.json
+```
+
+## Manifest requirements
+
+Your `manifest.json` must include at minimum:
+
+```json title="manifest.json"
+{
+  "name": "@myorg/my-app",
+  "version": "1.0.0",
+  "server": {
+    "type": "python",
+    "mcp_config": {
+      "command": "python",
+      "args": ["-m", "my_app.server"]
+    }
+  }
+}
+```
+
+Key requirements:
+
+- **`name`** must be scoped (e.g., `@myorg/my-app`). Register your org on [mpak.dev](https://mpak.dev).
+- **`version`** must be a valid semver string.
+- **`server.type`** must be `"python"`, `"node"`, `"binary"`, or `"uv"`.
+- **`server.mcp_config`** must include a `command` and optionally `args` and `env`.
+
+Add NimbleBrain host metadata in `_meta["ai.nimblebrain/host"]` if your app has a UI. See [Manifest Reference](/apps/manifest) for the full schema.
+
+## Building with mcpb-pack
+
+The `mcpb-pack` GitHub Action automates bundle creation in CI:
+
+```yaml title=".github/workflows/release.yml"
+name: Release
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Build bundle
+        uses: NimbleBrainInc/mcpb-pack@v3
+        with:
+          path: .
+          output: dist/bundle.tar.gz
+
+      - name: Publish to mpak
+        run: mpak publish dist/bundle.tar.gz
+        env:
+          MPAK_TOKEN: ${{ secrets.MPAK_TOKEN }}
+```
+
+The `mcpb-pack` action:
+
+1. Validates your `manifest.json`.
+2. Installs dependencies (Python or Node).
+3. Packages everything into a `.tar.gz` bundle.
+4. Outputs the bundle path for the next step.
+
+## Publishing
+
+<Steps>
+
+1. **Create an account** on [mpak.dev](https://mpak.dev) and register your organization scope.
+
+2. **Authenticate** with the mpak CLI:
+   ```bash
+   mpak login
+   ```
+
+3. **Build** your bundle locally (optional — CI can do this):
+   ```bash
+   mpak pack .
+   ```
+
+4. **Publish** the bundle:
+   ```bash
+   mpak publish
+   ```
+
+   Or publish a specific archive:
+   ```bash
+   mpak publish dist/bundle.tar.gz
+   ```
+</Steps>
+
+After publishing, anyone can install your app from the Apps catalog in their workspace settings, or by adding it to their `workspace.json` bundles and running `nb reload`.
+
+## Version conventions
+
+Follow [semver](https://semver.org/):
+
+- **Patch** (`1.0.1`) — Bug fixes, no new tools or UI changes.
+- **Minor** (`1.1.0`) — New tools, new UI features, backward-compatible.
+- **Major** (`2.0.0`) — Breaking changes to tool schemas or behavior.
+
+For forked MCP servers, use the `-mcpb.N` suffix to indicate the fork version:
+
+```
+1.2.0-mcpb.1    # First fork of upstream v1.2.0
+1.2.0-mcpb.2    # Second fork iteration
+```
+
+## Testing locally before publishing
+
+Test your bundle against a local NimbleBrain instance before publishing:
+
+<Steps>
+
+1. **Start NimbleBrain** in dev mode:
+   ```bash
+   bun run dev
+   ```
+
+2. **Add your bundle** by path in `nimblebrain.json`:
+   ```json
+   {
+     "bundles": [
+       { "path": "../my-app" }
+     ]
+   }
+   ```
+
+   Then run `nb reload` (or restart the dev server) to load it.
+
+3. **Verify tools** are registered:
+   ```bash
+   nb status
+   ```
+
+4. **Test the UI** by navigating to your app in the web client at `http://localhost:27246`.
+
+5. **Check the resource proxy** directly:
+   ```bash
+   curl http://localhost:27247/v1/apps/my-app/resources/primary
+   ```
+</Steps>
+
+<Aside type="tip">
+During development, use `{ "path": "../my-app" }` in your config so NimbleBrain loads the bundle from disk. Changes to your MCP server take effect after `nb reload`.
+</Aside>
+
+## Python bundle tips
+
+- Use module execution in `mcp_config`: `"command": "python", "args": ["-m", "my_app.server"]`. This handles relative imports correctly.
+- Place dependencies in a `deps/` directory. NimbleBrain automatically adds it to `PYTHONPATH`.
+- If a `src/` directory exists in the bundle, it is also added to `PYTHONPATH`.
+- Your server entry point needs: `if __name__ == "__main__": mcp.run()`
+- Stdout must be clean JSON-RPC only. Send logs and banners to stderr.
+
+## Node bundle tips
+
+- Use `${__dirname}` in `mcp_config.args` to reference files relative to the bundle root: `"args": ["${__dirname}/dist/index.js"]`.
+- The `${__dirname}` placeholder is resolved to the absolute bundle directory at runtime.
+- Bundle your dependencies — mpak runs `mcp_config.args` directly without `npm install`.

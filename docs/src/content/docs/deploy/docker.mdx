@@ -1,0 +1,294 @@
+---
+title: Docker Compose
+description: Deploy NimbleBrain on a single machine with Docker Compose.
+---
+
+import { Steps, Tabs, TabItem, Aside } from '@astrojs/starlight/components';
+
+NimbleBrain ships two container images: **`ghcr.io/nimblebraininc/nimblebrain`** (agent engine + API on port 27247, internal) and **`ghcr.io/nimblebraininc/nimblebrain-web`** (React UI served by Caddy, exposed on port 27246). Docker Compose runs both on a single machine with a shared internal network.
+
+## Prerequisites
+
+- Docker Engine 24+ and Docker Compose v2
+- An [Anthropic API key](https://console.anthropic.com/)
+- At least 2 GB of available memory
+
+## Compose file
+
+Create a project directory and add this file:
+
+```yaml title="docker-compose.yml"
+services:
+  platform:
+    image: ghcr.io/nimblebraininc/nimblebrain:latest
+    build: .
+    restart: unless-stopped
+    volumes:
+      - workspace:/data
+      - ./skills:/app/skills:ro
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - GOOGLE_GENERATIVE_AI_API_KEY=${GOOGLE_GENERATIVE_AI_API_KEY:-}
+    networks:
+      - internal
+
+  web:
+    image: ghcr.io/nimblebraininc/nimblebrain-web:latest
+    build: web/
+    restart: unless-stopped
+    ports:
+      - "27246:8080"
+    environment:
+      - PLATFORM_URL=http://platform:27247
+    depends_on:
+      platform:
+        condition: service_healthy
+    networks:
+      - internal
+
+volumes:
+  workspace:
+
+networks:
+  internal:
+```
+
+The platform reads its working directory from the `workspace` volume mounted at `/data` (the image sets `NB_WORK_DIR=/data`). Configuration (`nimblebrain.json`), skills, and bundle state all live under that directory — there is no separate config bind mount required to boot. Drop custom skill files into the `./skills` directory if you want to mount them read-only.
+
+### What each service does
+
+| Service | Image | Port | Purpose |
+|---------|-------|------|---------|
+| `platform` | `ghcr.io/nimblebraininc/nimblebrain` | 27247 (internal) | Agent engine, HTTP API, MCP bundle manager |
+| `web` | `ghcr.io/nimblebraininc/nimblebrain-web` | 27246 (host) → 8080 (container) | React SPA served by Caddy, proxies `/v1/*` to platform |
+
+The `web` container runs Caddy, which serves the static UI files and reverse-proxies all `/v1/*` API requests to the platform container. The platform container is **not** exposed to the host — all traffic flows through the web container.
+
+### Volumes
+
+| Volume/Mount | Container path | Purpose |
+|---|---|---|
+| `workspace` (named volume) | `/data` | Working directory (`NB_WORK_DIR`) — conversations, logs, installed bundles, and `nimblebrain.json` |
+| `./skills` (bind mount, read-only) | `/app/skills` | Custom skill files |
+
+### Environment variables
+
+| Variable | Required | Description |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | Yes | Your Anthropic API key for Claude |
+| `OPENAI_API_KEY` | No | OpenAI API key (for OpenAI model provider) |
+| `GOOGLE_GENERATIVE_AI_API_KEY` | No | Google Gemini API key (for Google model provider) |
+| `ALLOWED_ORIGINS` | Production | Comma-separated list of allowed CORS origins (e.g., `https://nb.example.com`). Required for cross-origin cookie auth |
+| `NB_PUBLIC_ORIGIN` | Production (when using OAuth connectors) | Canonical public origin of the platform (e.g., `https://nb.example.com`). Used to build absolute callback URLs such as the OAuth `redirect_uri` for [connectors](/config/connectors-catalog/). A mismatch with the URL registered in each vendor's OAuth app produces vendor-side `redirect_uri does not match` errors at sign-in time. |
+
+Authentication is configured through an `instance.json` adapter (`dev`, `oidc`, or `workos`), not an environment variable. There is no `NB_API_KEY` — see [Security](/deploy/security) for adapter setup.
+
+<Aside type="caution">
+Running without authentication (no `instance.json`) runs in **dev mode** and disables auth entirely. CORS falls back to `Access-Control-Allow-Origin: *`. This is acceptable for local development but never for production. See [Security](/deploy/security) for auth adapter setup.
+</Aside>
+
+### Health check
+
+The platform image has a built-in health check:
+
+```dockerfile
+HEALTHCHECK --interval=30s --timeout=5s \
+  CMD curl -f http://localhost:27247/v1/health || exit 1
+```
+
+The `web` service uses `depends_on` with `condition: service_healthy`, so it only starts after the platform passes its first health check.
+
+## Start the stack
+
+<Steps>
+
+1. **Set environment variables**
+
+   Create a `.env` file in your project directory:
+
+   ```bash title=".env"
+   ANTHROPIC_API_KEY=sk-ant-api03-your-key-here
+   ```
+
+   Or export it directly:
+
+   ```bash
+   export ANTHROPIC_API_KEY=sk-ant-api03-your-key-here
+   ```
+
+   This starts the platform in dev mode (no authentication). Configure an `instance.json` adapter before exposing it to a network — see [Security](/deploy/security).
+
+2. **Start the services**
+
+   ```bash
+   docker compose up -d
+   ```
+
+   ```
+   ✔ Network project_internal     Created
+   ✔ Volume "project_workspace"   Created
+   ✔ Container project-platform-1 Healthy
+   ✔ Container project-web-1      Started
+   ```
+
+3. **Verify**
+
+   ```bash
+   docker compose ps
+   ```
+
+   ```
+   NAME                   STATUS                 PORTS
+   project-platform-1     running (healthy)      27247/tcp
+   project-web-1          running                0.0.0.0:27246->8080/tcp
+   ```
+
+   Check the health endpoint directly (proxied through the web container):
+
+   ```bash
+   curl http://localhost:27246/v1/health
+   ```
+
+   ```json
+   {"status":"ok","version":"1.2.3","buildSha":"abc1234","bundles":[]}
+   ```
+
+4. **Open the UI**
+
+   Go to [http://localhost:27246](http://localhost:27246). In dev mode the UI opens straight to the agent. Once an `instance.json` adapter is configured, you sign in through that adapter's flow (for example the OIDC provider's hosted login).
+
+</Steps>
+
+## Stop and restart
+
+```bash
+# Stop (preserves volumes)
+docker compose down
+
+# Stop and remove volumes (deletes all workspace data)
+docker compose down -v
+
+# Restart
+docker compose restart
+```
+
+## Update to a new version
+
+<Steps>
+
+1. **Pull the latest images**
+
+   ```bash
+   docker compose pull
+   ```
+
+2. **Recreate the containers**
+
+   ```bash
+   docker compose up -d
+   ```
+
+   Compose replaces only the containers whose images changed. The `workspace` volume persists across updates.
+
+</Steps>
+
+## Backup and restore
+
+Workspace data lives in the `workspace` named Docker volume. The default mount point is `/data` inside the platform container.
+
+### Backup
+
+```bash
+docker run --rm \
+  -v project_workspace:/data \
+  -v "$(pwd)":/backup \
+  alpine tar czf /backup/nimblebrain-backup.tar.gz -C /data .
+```
+
+<Aside type="tip">
+Replace `project_workspace` with your actual volume name. Run `docker volume ls` to find it — it's typically `<directory>_workspace`.
+</Aside>
+
+### Restore
+
+```bash
+docker compose down
+
+docker run --rm \
+  -v project_workspace:/data \
+  -v "$(pwd)":/backup \
+  alpine sh -c "rm -rf /data/* && tar xzf /backup/nimblebrain-backup.tar.gz -C /data"
+
+docker compose up -d
+```
+
+## Platform image details
+
+The `ghcr.io/nimblebraininc/nimblebrain` image is built on `python:3.13-slim` (Python is the base so Python-based MCP bundles run natively) and adds the Bun runtime plus the tooling bundles shell out to:
+
+| Component | Version | Purpose |
+|-----------|---------|---------|
+| Python | 3.13 | Base image; runs Python-based MCP bundles |
+| Bun | latest | JavaScript/TypeScript runtime (runs the platform itself) |
+| Node.js + npm | 24 | Runs Node-based MCP bundles |
+| Git, curl, unzip | System | Bundle clones at boot, the health check, archive extraction |
+| mpak CLI | `@nimblebrain/mpak@0.4.1` | Downloads and manages bundles from the mpak registry |
+
+The container runs as a non-root user (UID 1000). The entrypoint is `bun run src/cli/index.ts serve`, which starts the HTTP API server on port 27247 with `NB_WORK_DIR=/data` and `NB_HOST=0.0.0.0`.
+
+## Reverse proxy
+
+The web container's Caddy server already handles reverse proxying for the default setup. If you want to place your own reverse proxy in front of the stack (for TLS termination, custom domain, etc.), point it at port 27246:
+
+```nginx title="nginx.conf"
+server {
+    listen 443 ssl;
+    server_name nb.example.com;
+
+    ssl_certificate /etc/ssl/certs/nb.example.com.pem;
+    ssl_certificate_key /etc/ssl/private/nb.example.com-key.pem;
+
+    location / {
+        proxy_pass http://127.0.0.1:27246;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_buffering off;
+    }
+}
+```
+
+<Aside type="caution">
+If you expose NimbleBrain over a network, configure an `instance.json` auth adapter and set `ALLOWED_ORIGINS` to your domain. See the [Security](/deploy/security) guide for full hardening steps.
+</Aside>
+
+## Troubleshooting
+
+### Platform container keeps restarting
+
+Check the logs:
+
+```bash
+docker compose logs platform
+```
+
+Common causes:
+- `ANTHROPIC_API_KEY` is missing or invalid
+- A malformed `instance.json` — the server refuses to start if the auth adapter config is invalid. Check the logs for the validation error and see [Security](/deploy/security).
+
+### Web container won't start
+
+The web container waits for the platform health check to pass. If the platform is unhealthy, the web container stays in a "waiting" state. Fix the platform first.
+
+### Port 27246 already in use
+
+Change the host port mapping in `docker-compose.yml`:
+
+```yaml
+ports:
+  - "9090:8080"  # Access the UI on port 9090 instead
+```

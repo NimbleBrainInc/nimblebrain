@@ -1,0 +1,102 @@
+---
+title: nb serve
+description: Start the NimbleBrain HTTP API server for production use.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+`nb serve` launches the NimbleBrain runtime and starts an HTTP API server. This is the production entry point -- it boots the agent engine, loads all configured bundles, and listens for HTTP requests.
+
+## Usage
+
+```
+nb serve [flags]
+```
+
+## Flags
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--port <number>` | Server port | `27247` |
+| `--config <path>` | Config file path | Auto-resolved (see [config resolution](/cli/overview/#config-resolution)) |
+| `--workdir <dir>` | Working directory | `~/.nimblebrain` |
+| `--model <name>` | Override default model | From config |
+| `--debug` | Verbose logging | Off |
+
+## Starting the server
+
+```bash
+nb serve
+```
+
+```
+[nimblebrain] Starting runtime...
+[nimblebrain] Runtime ready.
+```
+
+The server listens on port 27247 by default. Override with `--port`:
+
+```bash
+nb serve --port 8080
+```
+
+You can also set the port via the `PORT` environment variable:
+
+```bash
+PORT=8080 nb serve
+```
+
+<Aside type="note">
+  The `PORT` environment variable takes precedence over `--port`. If both are set, `PORT` wins.
+</Aside>
+
+## What happens at startup
+
+1. The config file is loaded and validated
+2. The runtime initializes -- loading bundles, skills, and model configuration
+3. Structured logging is disabled unless `--debug` is set (keeps stdout/stderr clean for production)
+4. The HTTP server starts listening on the configured port
+
+## Production deployment
+
+For production, set the required environment variables and run `nb serve`:
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-api03-...
+export ALLOWED_ORIGINS=https://app.example.com
+
+nb serve --port 27247
+```
+
+Authentication is configured through `instance.json` (the `oidc` or `workos` adapter), not an environment variable — there is no `NB_API_KEY`. `ALLOWED_ORIGINS` controls CORS. See [Connect via MCP](/connect/mcp-endpoint/) and [Security](/deploy/security/) for details.
+
+## Debug mode
+
+Enable verbose logging to see every event the runtime processes:
+
+```bash
+nb serve --debug
+```
+
+In debug mode, each event is dumped as JSON to stderr. Without `--debug`, the server runs quietly -- only startup and shutdown messages are printed.
+
+## Using a custom config
+
+Point to a specific config file:
+
+```bash
+nb serve --config /etc/nimblebrain/nimblebrain.json
+```
+
+Or set a custom working directory (the server looks for `nimblebrain.json` inside it):
+
+```bash
+nb serve --workdir /opt/nimblebrain
+```
+
+## Related commands
+
+- [nb dev](/cli/dev/) -- development mode with file watching and HMR
+- [nb status](/cli/status/) -- check workspace health
+- [nb reload](/cli/reload/) -- hot-reload config on a running server
+- [CLI Overview](/cli/overview/) -- global flags and config resolution

@@ -1,0 +1,156 @@
+---
+title: Installing Apps
+description: Add MCP bundles to NimbleBrain from the Apps catalog, the connectors directory, or a local path.
+---
+
+import { Steps, Tabs, TabItem, Aside } from '@astrojs/starlight/components';
+
+Apps in NimbleBrain are MCP server bundles. Each bundle provides tools the agent can use. You install apps from the in-product **Apps catalog** (the connectors directory), by asking the agent, or by pointing the config at a local bundle directory.
+
+<Aside type="tip">
+  For point-and-click OAuth services (Linear, Stripe, Gmail, Notion, and others), use [Connectors](/using/connectors). This page covers stdio bundles and the agent-driven install path; the underlying catalog is shared.
+</Aside>
+
+## Apps in the sidebar
+
+Apps give the agent specific capabilities — a calendar app lets it check your schedule, a notes app lets it search meeting notes, a database app lets it query data. Each installed app that ships a UI appears in the sidebar with an icon and label.
+
+Click an app to open its interface in the main content area. Some apps have full UIs (dashboards, forms, data views); others are tool-only and work entirely through chat. When you open an app, the chat panel automatically scopes to it — the agent knows you're focused on that app and prioritizes its tools.
+
+The chat panel and app content work side by side. Ask the agent a question about the data you're looking at, or ask it to take an action in the app.
+
+## Installing apps
+
+<Tabs>
+  <TabItem label="Apps catalog (web)">
+    Apps install per workspace from the connectors directory.
+
+    <Steps>
+    1. Open **Settings** for the workspace you're in, then go to **Connectors**.
+    2. Click **Browse** to open the directory. Each card shows the app's name and a short description; use the search box to filter by name, description, or tag.
+    3. Click **Install** on the app you want.
+
+       - For a remote OAuth service, you're sent straight into the vendor's sign-in flow.
+       - For a stdio bundle, the install completes in place and you land on the app's **Configure** page to fill in any required fields.
+    </Steps>
+
+    Installs are scoped to the workspace named by the URL you're viewing (`/w/<slug>/...`). Installing an app requires the **Admin** or **Owner** role in that workspace.
+  </TabItem>
+  <TabItem label="Ask the agent">
+    The agent can install apps for you. Just ask:
+
+    > "I need to connect to my Granola meeting notes. Can you set that up?"
+
+    The agent will:
+    1. Search the app directory for a matching bundle (`nb__search` with `scope: "registry"`)
+    2. Present options to you
+    3. Install your choice via `manage_connectors`
+
+    If an app needs credentials (like an API key), the agent will ask you for them during setup.
+
+    <Aside type="tip">
+      If you're not sure what's available, ask: "What apps can I install?" The agent searches the directory and shows you what's out there.
+    </Aside>
+  </TabItem>
+  <TabItem label="Local bundle (config)">
+    For a bundle you're developing locally, point a `bundles` entry at its directory. Each entry needs one of `name`, `path`, or `url`:
+
+    ```json
+    {
+      "bundles": [
+        { "path": "../mcp-servers/hello" }
+      ]
+    }
+    ```
+
+    After editing, run `nb reload` or restart the server.
+
+    <Aside type="note">
+      The CLI `nb bundle add` / `nb bundle add --url` / `nb bundle remove` commands are deprecated stubs and exit with an error. Install through the Apps catalog or the agent instead; for local development, edit the config directly as shown above. `nb bundle list` and `nb bundle search` still work.
+    </Aside>
+  </TabItem>
+</Tabs>
+
+## Browsing the registry from the CLI
+
+You can search and list bundles from the command line:
+
+```bash
+nb bundle search granola
+```
+```
+Searching mpak registry for "granola"...
+Run: mpak search "granola"
+```
+
+```bash
+nb bundle list
+```
+
+To actually install what you find, use the Apps catalog in the web UI or ask the agent.
+
+## Bundle types
+
+| Type | Config field | How it resolves |
+|------|-------------|-----------------|
+| Named (mpak) | `name` | Downloads via `mpak install`, cached at `~/.mpak/cache/` |
+| Local | `path` | Reads `manifest.json` from the directory. Path resolved relative to the config file. |
+| Remote | `url` | Connects directly via HTTP transport (streamable-http or SSE). No download. |
+
+## Setting bundle credentials
+
+Most bundles need API keys or tokens. In most cases, exporting the env var the bundle already looks for is enough:
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+```
+
+For workspace-scoped values or when env vars aren't a good fit, use `nb config set -w <wsId>`. Stdio bundles that declare `user_config` fields surface them on the app's **Configure** page in the web UI. See [Credentials](/config/credentials/) for the full picture.
+
+## Passing non-credential environment variables
+
+Sensitive values belong in [Credentials](/config/credentials/). For non-secret env vars (log level, region, connection tuning), use the `env` field on a local bundle entry:
+
+```json
+{
+  "bundles": [
+    {
+      "name": "@nimblebraininc/postgres",
+      "env": {
+        "PG_MAX_CONNECTIONS": "10",
+        "PG_STATEMENT_TIMEOUT": "30000"
+      }
+    }
+  ]
+}
+```
+
+Values in `env` merge with the bundle's own `mcp_config.env` and the filtered process environment; `env` takes precedence.
+
+## Verify the install
+
+After installing, check that the bundle is running:
+
+```bash
+nb status
+```
+```
+Bundles: 2 configured
+  @nimblebraininc/granola
+  @nimblebraininc/postgres
+
+Skills: 2 loaded
+
+Bundle health:
+  granola: running (uptime: 120s, restarts: 0)
+  postgres: running (uptime: 120s, restarts: 0)
+```
+
+In the web UI, installed apps and their status appear on the workspace **Settings → About** tab.
+
+## What's next
+
+- [Connectors](/using/connectors) — point-and-click OAuth services
+- [Managing Apps](/using/managing-apps) — start, stop, and monitor installed bundles
+- [Chat](/using/chat) — start using your newly installed apps
+- [Configuration: Bundles](/config/bundles) — full config reference for bundle entries
