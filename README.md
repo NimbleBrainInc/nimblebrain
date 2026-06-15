@@ -767,3 +767,7 @@ These are non-negotiable patterns. Violating them causes production bugs:
 - **`CallbackEventSink`** — Bridges events into React state (Ink UI).
 - **`PostHogEventSink`** — Anonymous telemetry. No PII. Opt-out: `telemetry.enabled: false`, `NB_TELEMETRY_DISABLED=1`, or `DO_NOT_TRACK=1`.
 
+## License
+
+The runtime (everything outside `docs/`) is licensed under [Apache-2.0](./LICENSE). The documentation under [`docs/`](./docs) is licensed under [CC-BY-4.0](./docs/LICENSE) — the standard license for documentation; reuse it freely with attribution.
+

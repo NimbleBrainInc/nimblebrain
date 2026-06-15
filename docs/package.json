@@ -1,6 +1,6 @@
 {
   "name": "nimblebrain-docs",
-  "description": "Documentation site for NimbleBrain — the composable MCP orchestrator and app host",
+  "description": "Documentation site for NimbleBrain — the self-hosted platform for MCP Apps and agent automations",
   "type": "module",
   "version": "0.0.1",
   "license": "CC-BY-4.0",
@@ -8,7 +8,8 @@
   "homepage": "https://docs.nimblebrain.ai",
   "repository": {
     "type": "git",
-    "url": "https://github.com/NimbleBrainInc/nimblebrain-docs.git"
+    "url": "https://github.com/NimbleBrainInc/nimblebrain.git",
+    "directory": "docs"
   },
   "keywords": [
     "nimblebrain",
