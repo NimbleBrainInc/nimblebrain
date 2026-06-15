@@ -17,15 +17,17 @@
  *
  * Both formats keep stdout untouched.
  *
- * Severity floor: `LOG_LEVEL` (debug|info|warn|error, default `info`) drops
+ * Severity floor: `NB_LOG_LEVEL` (debug|info|warn|error, default `info`) drops
  * anything below it for the info/warn/error methods. `debug` (NB_DEBUG
  * namespaces) and `bundle` are separate always-available channels and bypass it.
  *
  * Secret-safety: structured `fields` pass through a key-denylist redactor
- * (token / secret / api_key / password / authorization / cookie / credential →
- * "[redacted]") so a stray secret in a field never reaches Loki. The redactor is
- * a backstop, not a license — still don't deliberately log secrets, and it does
- * not inspect free text, so keep secrets out of the message too.
+ * (secret / password / api_key / authorization / cookie / credential / a bare
+ * `token` / the secret *_token compounds → "[redacted]") so a stray secret in a
+ * field never reaches Loki. LLM usage fields (inputTokens / tokenCount / …) are
+ * deliberately preserved. The redactor is a backstop, not a license — still
+ * don't deliberately log secrets, and it does not inspect free text, so keep
+ * secrets out of the message too.
  *
  * Debug messages are gated behind the `NB_DEBUG` environment variable. Set it
  * to a comma-separated list of namespaces to enable, or `*` for all:
@@ -68,12 +70,14 @@ const SERVICE = process.env.NB_SERVICE_NAME ?? "nimblebrain-runtime";
 // Boot-time tenant of this deployment (chart -> NB_TENANT_ID). Unset in dev.
 const TENANT_ID = process.env.NB_TENANT_ID;
 
-// Severity floor. `LOG_LEVEL` (deploy-time, read at call time for test control)
-// drops anything below it for the info/warn/error methods. `debug` (NB_DEBUG)
-// and `bundle` are separate channels and intentionally bypass this floor.
+// Severity floor. `NB_LOG_LEVEL` (deploy-time, read at call time for test
+// control) drops anything below it for the info/warn/error methods. `debug`
+// (NB_DEBUG) and `bundle` are separate channels and intentionally bypass this
+// floor. NB_-namespaced to match the other knobs and avoid a stray `LOG_LEVEL`
+// (aimed at some other tool) silently re-flooring our logs.
 const LEVELS: Record<Level, number> = { debug: 10, info: 20, warn: 30, error: 40 };
 function levelEnabled(level: Level): boolean {
-  const floor = LEVELS[(process.env.LOG_LEVEL ?? "info").toLowerCase() as Level] ?? LEVELS.info;
+  const floor = LEVELS[(process.env.NB_LOG_LEVEL ?? "info").toLowerCase() as Level] ?? LEVELS.info;
   return LEVELS[level] >= floor;
 }
 
@@ -83,14 +87,24 @@ function levelEnabled(level: Level): boolean {
 // enrichment keys (tenant_id, trace_id, user_id, message, …) never match, so
 // they pass through untouched. Does not inspect free text — keep secrets out of
 // the message.
+//
+// Bare `token` is deliberately NOT a substring trigger: it is a substring of the
+// most important LLM telemetry fields (inputTokens / outputTokens / tokenCount /
+// max_tokens), and redacting those would silently corrupt usage/cost telemetry.
+// So we match the secret token COMPOUNDS explicitly (access_token, …) plus an
+// exact bare `token` key (a `{ token }` field is a credential; `inputTokens` is
+// not). See the redaction regression test.
 const SECRET_KEY =
-  /(?:token|secret|api[_-]?key|password|passwd|authorization|cookie|credential|private[_-]?key)/i;
+  /(?:secret|password|passwd|authorization|cookie|credential|api[_-]?key|private[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|auth[_-]?token|session[_-]?token|bearer)/i;
+function isSecretKey(key: string): boolean {
+  return key.toLowerCase() === "token" || SECRET_KEY.test(key);
+}
 function redact(value: unknown, depth = 0): unknown {
   if (value === null || typeof value !== "object" || depth > 4) return value;
   if (Array.isArray(value)) return value.map((v) => redact(v, depth + 1));
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-    out[k] = SECRET_KEY.test(k) ? "[redacted]" : redact(v, depth + 1);
+    out[k] = isSecretKey(k) ? "[redacted]" : redact(v, depth + 1);
   }
   return out;
 }

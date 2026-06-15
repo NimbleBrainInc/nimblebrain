@@ -185,7 +185,7 @@ export async function withInboundSpan<T>(
 }
 
 /** The active trace id (32-hex), or undefined outside any span. For log
- *  correlation — emit it as `correlation_id` so logs pivot to traces. */
+ *  correlation — emit it as `trace_id` so logs pivot to traces. */
 export function currentTraceId(): string | undefined {
   const ctx = trace.getActiveSpan()?.spanContext();
   if (!ctx || ctx.traceId === INVALID_TRACE_ID) return undefined;
