@@ -1516,6 +1516,33 @@ export class BundleLifecycleManager {
   private readonly registriesByWs = new Map<string, ToolRegistry>();
 
   /**
+   * Per-`${serverName}|${wsId}` timestamp (epoch ms) of the last
+   * best-effort recovery attempt (`tryRecoverSource`). Negative cache: a
+   * failed re-spawn stamps the key so the orchestrator hot path doesn't
+   * spawn-storm a genuinely broken bundle on every tool call; a
+   * successful recovery clears it.
+   *
+   * Per-pod by design, and correct under `replicas > 1` — do NOT move it
+   * to Redis/`SessionRegistry`. It guards a per-pod in-memory registry
+   * repair: `registriesByWs` is process-local and its sources are
+   * process-bound transports (see the "MCP Session Architecture" two-layer
+   * model — transports "never serialize, never share across processes").
+   * A source missing from this pod's registry says nothing about another
+   * pod's, so each pod must heal its own registry on its own evidence. A
+   * cluster-shared cooldown would be a bug: one pod's failed heal would
+   * suppress another pod's legitimate independent miss. Unlike
+   * `ConnectionRevalidator` (a proactive poller against a shared upstream
+   * account → needs leader election), this is reactive and idempotent
+   * (`hasSource` short-circuit, re-uses persisted OAuth state), touches no
+   * shared resource, and fans out to nobody — so it needs no coordination.
+   * No TTL sweep: a key for a since-removed bundle lingers until process
+   * exit (a few bytes, bounded by install × workspace cardinality).
+   */
+  private readonly recoveryAttempts = new Map<string, number>();
+  /** Min interval between `tryRecoverSource` re-spawn attempts per source. */
+  private static readonly RECOVERY_COOLDOWN_MS = 30_000;
+
+  /**
    * Wire the per-workspace registries map. Called once by `Runtime.start`
    * after the workspace bundle boot loop has constructed the registries.
    * Allows `startAuth` (workspace-scope) to add/remove sources without
@@ -1720,6 +1747,79 @@ export class BundleLifecycleManager {
       // composio-auth callback path goes through here.
       bundleMcp: this.resolveBundleMcpDeps(wsId),
     });
+  }
+
+  /**
+   * Best-effort re-registration of an installed-but-missing workspace
+   * source, for the orchestrator's hot-path self-heal
+   * (`OrchestratorRuntime.recoverWorkspaceSource`). Unlike
+   * `ensureSourceRegistered` — which throws and is only safe from a
+   * deliberate reconnect flow — this NEVER throws and is safe to call on
+   * every tool-call source-miss:
+   *
+   *   - returns `true` immediately if the source is already registered;
+   *   - returns `false` for an unknown instance (bundle not installed
+   *     here), a non-URL ref (named/stdio re-spawn is the heavier
+   *     `startBundleSource` path — deferred; see the tracked follow-up),
+   *     or a recent failed attempt still inside the cooldown window;
+   *   - otherwise re-spawns once from the persisted URL ref, stamps the
+   *     attempt, and returns whether the source is now registered.
+   *
+   * The cooldown is a negative cache: a genuinely-broken bundle (bad
+   * OAuth, unreachable endpoint) is retried at most once per
+   * `RECOVERY_COOLDOWN_MS`, NOT once per tool call, so a self-heal miss
+   * can't turn into a spawn storm on the hot path. A recovered remote
+   * source that still needs interactive auth comes back registered (in
+   * `pending_auth`), which is strictly better than absent: tool calls get
+   * a clean "needs reauth" surface and the UI offers Reconnect, instead
+   * of `UnknownToolSource` and a vanished connector.
+   */
+  async tryRecoverSource(serverName: string, wsId: string, workDir: string): Promise<boolean> {
+    const wsRegistry = this.registriesByWs.get(wsId);
+    if (!wsRegistry) return false;
+    if (wsRegistry.hasSource(serverName)) return true;
+
+    const key = `${serverName}|${wsId}`;
+
+    // Only an installed instance with a persisted URL ref is recoverable
+    // on this path. No instance → the bundle isn't installed in this
+    // workspace (nothing to recover). A non-URL (named/stdio) ref needs
+    // the credential-resolving named-spawn path — out of scope here.
+    const ref = this.instances.get(key)?.ref;
+    if (!ref || !("url" in ref)) return false;
+
+    const now = Date.now();
+    const last = this.recoveryAttempts.get(key);
+    if (last !== undefined && now - last < BundleLifecycleManager.RECOVERY_COOLDOWN_MS) {
+      return false;
+    }
+    // Stamp BEFORE the await, with no intervening yield: a concurrent miss
+    // for the same source observes the stamp and declines rather than
+    // double-spawning (the spawn-storm guard). The deliberate trade-off is
+    // that an overlapping call returns false mid-recovery instead of
+    // awaiting this attempt's outcome — benign, since the caller falls
+    // through to `UnknownToolSource` and the agent's retry lands after
+    // this attempt settles. Not worth an in-flight-promise dedup for so
+    // narrow a window.
+    this.recoveryAttempts.set(key, now);
+
+    try {
+      await this.ensureSourceRegistered(serverName, wsId, workDir);
+    } catch (err) {
+      log.warn(
+        `[lifecycle] tryRecoverSource: re-register failed for "${serverName}" in ${wsId}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      return false;
+    }
+
+    const recovered = wsRegistry.hasSource(serverName);
+    if (recovered) {
+      this.recoveryAttempts.delete(key);
+      log.info(`[lifecycle] tryRecoverSource: re-registered "${serverName}" in ${wsId}`);
+    }
+    return recovered;
   }
 
   notifyInstalled(serverName: string, wsId: string): void {
