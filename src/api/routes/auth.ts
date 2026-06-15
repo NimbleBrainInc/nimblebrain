@@ -7,7 +7,7 @@ import {
 } from "../handlers.ts";
 import { requireAuth } from "../middleware/auth.ts";
 import { bodyLimit } from "../middleware/body-limit.ts";
-import { type AppContext, type AuthEnv, apiError } from "../types.ts";
+import { type AppContext, apiError } from "../types.ts";
 
 export function authRoutes(ctx: AppContext) {
   const app = new Hono();
@@ -30,11 +30,14 @@ export function authRoutes(ctx: AppContext) {
   });
 
   // --- Authenticated ---
-  const authed = new Hono<AuthEnv>();
-  authed.use("*", requireAuth(ctx.authOptions));
-  authed.post("/v1/auth/logout", limit, (_c) => handleLogout());
-
-  app.route("/", authed);
+  // requireAuth is attached PER-ROUTE, never through a nested sub-app
+  // `.use("*")`. Hono flattens a sub-app's `.use("*")` into a `/*` matcher
+  // that runs for every request reaching the parent AFTER this sub-app is
+  // mounted — so a wildcard here would leak onto the sub-apps mounted after
+  // authRoutes in app.ts (mcp-auth, composio-auth) and silently 401 their
+  // unauthenticated-by-design OAuth callbacks. Same footgun called out in
+  // mcp-auth.ts and conversation-events.ts.
+  app.post("/v1/auth/logout", requireAuth(ctx.authOptions), limit, (_c) => handleLogout());
 
   return app;
 }
