@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { log } from "../../src/cli/log.ts";
 import { StructuredLogSink } from "../../src/adapters/structured-log-sink.ts";
 
 function makeLogDir(): string {
@@ -231,7 +232,7 @@ describe("StructuredLogSink", () => {
     const today = new Date().toISOString().slice(0, 10);
     const logFile = join(logDir, `nimblebrain-${today}.jsonl`);
     mkdirSync(logFile);
-    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    const warn = spyOn(log, "warn").mockImplementation(() => {});
     try {
       expect(() => sink.emit({ type: "run.start", data: { runId: "r1" } })).not.toThrow();
       expect(() => sink.emit({ type: "run.done", data: { runId: "r1" } })).not.toThrow();

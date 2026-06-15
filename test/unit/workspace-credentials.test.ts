@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { MpakConfigError } from "@nimblebrain/mpak-sdk";
 import type { ConfigField, ConfirmationGate } from "../../src/config/privilege.ts";
 import {
@@ -15,6 +15,7 @@ import {
   saveWorkspaceCredential,
   type UserConfigFieldDef,
 } from "../../src/config/workspace-credentials.ts";
+import { log } from "../../src/cli/log.ts";
 
 const BUNDLE = "@nimblebraininc/newsapi";
 const WS_A = "ws_alpha";
@@ -321,16 +322,15 @@ describe("insecure mode warning", () => {
     await chmod(filePath, 0o644);
 
     const warnings: string[] = [];
-    const origWarn = console.warn;
-    console.warn = (...args: unknown[]) => {
+    const warnSpy = spyOn(log, "warn").mockImplementation((...args: unknown[]) => {
       warnings.push(args.map((a) => String(a)).join(" "));
-    };
+    });
     try {
       const creds = await getWorkspaceCredentials(WS_A, BUNDLE, workDir);
       // Advisory check: we still return the credentials even when mode is wrong.
       expect(creds).toEqual({ api_key: "sk-abc" });
     } finally {
-      console.warn = origWarn;
+      warnSpy.mockRestore();
     }
 
     expect(warnings).toHaveLength(1);

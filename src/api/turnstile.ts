@@ -1,3 +1,5 @@
+import { log } from "../cli/log.ts";
+
 const SITEVERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
 
 interface SiteverifyResponse {
@@ -48,11 +50,11 @@ export async function verifyTurnstileToken(
 
     if (!res.ok) {
       consecutiveFailures++;
-      console.error(
+      log.error(
         `[nimblebrain] Turnstile siteverify HTTP error: ${res.status} (${consecutiveFailures}/${MAX_CONSECUTIVE_FAILURES} consecutive failures)`,
       );
       if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
-        console.error(
+        log.error(
           "[nimblebrain] Turnstile fail-closed: rejecting requests until siteverify recovers",
         );
       }
@@ -69,7 +71,7 @@ export async function verifyTurnstileToken(
     // Verification failed (not an API error — don't count toward consecutive failures)
     consecutiveFailures = 0; // API is working, just rejected the token
     const codes = data["error-codes"] ?? [];
-    console.error(`[nimblebrain] Turnstile verification failed: ${codes.join(", ")}`);
+    log.error(`[nimblebrain] Turnstile verification failed: ${codes.join(", ")}`);
 
     if (codes.includes("timeout-or-duplicate")) {
       return "Turnstile token expired or already used. Please try again.";
@@ -78,12 +80,12 @@ export async function verifyTurnstileToken(
     return "Turnstile verification failed";
   } catch (err) {
     consecutiveFailures++;
-    console.error(
-      `[nimblebrain] Turnstile siteverify fetch error (${consecutiveFailures}/${MAX_CONSECUTIVE_FAILURES}):`,
-      err,
+    log.error(
+      `[nimblebrain] Turnstile siteverify fetch error (${consecutiveFailures}/${MAX_CONSECUTIVE_FAILURES})`,
+      { error: err instanceof Error ? err.message : String(err) },
     );
     if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
-      console.error(
+      log.error(
         "[nimblebrain] Turnstile fail-closed: rejecting requests until siteverify recovers",
       );
     }

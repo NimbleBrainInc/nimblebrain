@@ -25,6 +25,7 @@
  * mirrors the `SessionRegistry` pattern.
  */
 
+import { log as logger } from "../cli/log.ts";
 import { RunInProgressError } from "./errors.ts";
 
 export type RunStatus = "running" | "done" | "error" | "cancelled";
@@ -137,7 +138,7 @@ export class RunBus {
     // `end()` below flips status off "running", so the next publish returns at
     // the top guard.
     if (log.events.length >= this.maxEventsPerRun) {
-      console.warn(
+      logger.warn(
         `[run-bus] conversation=${conversationId} hit per-run event cap ` +
           `(${this.maxEventsPerRun}); aborting turn. This indicates a runaway ` +
           `producer (model stream looping or tool spamming progress events).`,

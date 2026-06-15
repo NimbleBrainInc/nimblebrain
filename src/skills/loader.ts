@@ -2,6 +2,7 @@ import { type Dirent, existsSync, readdirSync, readFileSync, statSync } from "no
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import matter from "gray-matter";
+import { log } from "../cli/log.ts";
 import type {
   Skill,
   SkillLoadingStrategy,
@@ -183,11 +184,11 @@ export function parseSkillContent(raw: string, sourcePath: string): Skill | null
   if (data.type && VALID_TYPES.has(data.type)) {
     type = data.type as SkillType;
   } else if (data.type) {
-    console.error(
+    log.error(
       `[skill] Warning: invalid type "${data.type}" in ${sourcePath}, defaulting to "skill"`,
     );
   } else {
-    console.error(`[skill] Warning: missing type in ${sourcePath}, defaulting to "skill"`);
+    log.error(`[skill] Warning: missing type in ${sourcePath}, defaulting to "skill"`);
   }
 
   // Parse priority with default + warning
@@ -195,9 +196,9 @@ export function parseSkillContent(raw: string, sourcePath: string): Skill | null
   if (typeof data.priority === "number") {
     priority = data.priority;
   } else if (data.priority !== undefined) {
-    console.error(`[skill] Warning: invalid priority in ${sourcePath}, defaulting to 50`);
+    log.error(`[skill] Warning: invalid priority in ${sourcePath}, defaulting to 50`);
   } else {
-    console.error(`[skill] Warning: missing priority in ${sourcePath}, defaulting to 50`);
+    log.error(`[skill] Warning: missing priority in ${sourcePath}, defaulting to 50`);
   }
 
   const rawMeta = data.metadata;
@@ -233,7 +234,7 @@ export function parseSkillContent(raw: string, sourcePath: string): Skill | null
     if (VALID_LOADING_STRATEGIES.has(rawLoadingStrategy as SkillLoadingStrategy)) {
       loadingStrategy = rawLoadingStrategy as SkillLoadingStrategy;
     } else {
-      console.error(
+      log.error(
         `[skill] Warning: invalid loading-strategy "${rawLoadingStrategy}" in ${sourcePath}, falling back to default`,
       );
     }
@@ -262,7 +263,7 @@ export function parseSkillContent(raw: string, sourcePath: string): Skill | null
     } else if (VALID_STATUSES.has(data.status as SkillStatus)) {
       status = data.status as SkillStatus;
     } else {
-      console.error(
+      log.error(
         `[skill] Warning: invalid status "${data.status}" in ${sourcePath}, defaulting to "active"`,
       );
     }
@@ -282,7 +283,7 @@ export function parseSkillContent(raw: string, sourcePath: string): Skill | null
     } else if (VALID_SCOPES.has(data.scope as SkillScope)) {
       scope = data.scope as SkillScope;
     } else {
-      console.error(`[skill] Warning: invalid scope "${data.scope}" in ${sourcePath}, ignoring`);
+      log.error(`[skill] Warning: invalid scope "${data.scope}" in ${sourcePath}, ignoring`);
     }
   }
 

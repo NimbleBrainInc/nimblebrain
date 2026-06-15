@@ -1,4 +1,5 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
+import { log } from "../../src/cli/log.ts";
 import { MAX_TRACKED_RUNS, MetricsEventSink } from "../../src/adapters/metrics-events.ts";
 import type { Counter } from "prom-client";
 import {
@@ -114,10 +115,9 @@ describe("MetricsEventSink", () => {
   it("warns (not silently) and drops the oldest run when the tracked-run cap is exceeded", async () => {
     const sink = new MetricsEventSink();
     const warnings: string[] = [];
-    const origWarn = console.warn;
-    console.warn = (msg?: unknown) => {
+    const warnSpy = spyOn(log, "warn").mockImplementation((msg?: unknown) => {
       warnings.push(String(msg));
-    };
+    });
     try {
       const before = await read(toolPromotionsTotal, { used: "false" });
       // The first run is the oldest, so it's evicted once the cap is exceeded.
@@ -132,7 +132,7 @@ describe("MetricsEventSink", () => {
       expect((await read(toolPromotionsTotal, { used: "false" })) - before).toBe(0);
       expect(warnings.some((w) => w.includes("evict-me"))).toBe(true);
     } finally {
-      console.warn = origWarn;
+      warnSpy.mockRestore();
     }
   });
 

@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { readdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { log } from "../cli/log.ts";
 import { writeJsonAtomic } from "../util/atomic-json.ts";
 import { PersonalWorkspaceInvariantError } from "./errors.ts";
 import { scaffoldWorkspace } from "./scaffold.ts";
@@ -593,7 +594,9 @@ export class WorkspaceStore {
       try {
         handler(userId);
       } catch (err) {
-        console.warn("[workspace-store] membership change handler threw:", err);
+        log.warn("[workspace-store] membership change handler threw", {
+          error: err instanceof Error ? err.message : String(err),
+        });
       }
     }
   }
