@@ -94,12 +94,21 @@ function levelEnabled(level: Level): boolean {
 // So we match the secret token COMPOUNDS explicitly (access_token, …) plus an
 // exact bare `token` key (a `{ token }` field is a credential; `inputTokens` is
 // not). See the redaction regression test.
+//
+// This is a denylist by necessity — an allowlist of safe keys is infeasible when
+// callers log arbitrary field names. Accepted residual risk: a novel
+// secret-bearing key outside the regex passes through. The redactor is a
+// backstop for the convention-only "no secrets in logs" rule, not the primary
+// control — don't deliberately log secrets.
 const SECRET_KEY =
   /(?:secret|password|passwd|authorization|cookie|credential|api[_-]?key|private[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|auth[_-]?token|session[_-]?token|bearer)/i;
 function isSecretKey(key: string): boolean {
   return key.toLowerCase() === "token" || SECRET_KEY.test(key);
 }
 function redact(value: unknown, depth = 0): unknown {
+  // depth > 4 bounds the walk against pathological/cyclic structures (a DoS
+  // guard, not a redaction policy); a secret nested deeper than 4 levels in a
+  // log field is implausible, so the DoS bound wins the tradeoff.
   if (value === null || typeof value !== "object" || depth > 4) return value;
   if (Array.isArray(value)) return value.map((v) => redact(v, depth + 1));
   const out: Record<string, unknown> = {};
@@ -143,7 +152,15 @@ function emitJson(level: Level, message: string, fields?: LogFields, ns?: string
   process.stderr.write(`${JSON.stringify(redact(record))}\n`);
 }
 
-/** Pretty-mode trailer: render extra fields compactly so dev still sees them. */
+/**
+ * Pretty-mode trailer: render extra fields compactly so dev still sees them.
+ *
+ * NOTE: pretty output is intentionally NOT run through `redact()`. The threat
+ * model is "a secret reaches Loki" (retained + queryable), so redaction is
+ * scoped to the JSON sink. The local dev terminal is neither retained nor
+ * shipped, so `fields` print verbatim here. Don't "fix" this to redact pretty
+ * output, and don't treat a pasted pretty-mode line as secret-safe.
+ */
 function prettyFields(fields?: LogFields): string {
   if (!fields || Object.keys(fields).length === 0) return "";
   return ` ${dim(JSON.stringify(fields))}`;
