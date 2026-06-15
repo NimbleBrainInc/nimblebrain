@@ -22,6 +22,7 @@ import {
   type HostResourcesResolver,
   hostExtensions,
 } from "../host-resources/index.ts";
+import { requestIdentityAttrs, withSpan } from "../observability/index.ts";
 import { coerceInputForSchema } from "./coerce-input.ts";
 import { promoteHiddenErrors } from "./promote-hidden-errors.ts";
 import { createRemoteTransport } from "./remote-transport.ts";
@@ -1086,9 +1087,21 @@ export class McpSource implements ToolSource {
     );
 
     try {
-      return isTaskAugmented
-        ? await this.callToolAsTask(toolName, dispatchArgs, signal)
-        : await this.callToolInline(toolName, dispatchArgs, signal);
+      return await withSpan(
+        "tool.dispatch",
+        {
+          "tool.name": toolName,
+          "tool.source": this.name,
+          "tool.path": isTaskAugmented ? "task-augmented" : "inline",
+          ...requestIdentityAttrs(),
+        },
+        () =>
+          isTaskAugmented
+            ? this.callToolAsTask(toolName, dispatchArgs, signal)
+            : this.callToolInline(toolName, dispatchArgs, signal),
+        // A client cancellation isn't a crash — don't mark the span failed.
+        { isExpectedError: () => signal?.aborted === true },
+      );
     } catch (err) {
       // Cancellation isn't a crash — the source is healthy, the client just
       // asked to stop. Emit a terminal tool.progress for task-augmented

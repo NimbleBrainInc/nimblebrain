@@ -12,6 +12,7 @@ import { validateComposioConfig } from "../composio/sdk.ts";
 import type { IdentityProvider } from "../identity/provider.ts";
 import { DevIdentityProvider } from "../identity/providers/dev.ts";
 import { canonicalOrigins, webOrigin } from "../oauth/public-origin.ts";
+import { shutdownTracing } from "../observability/index.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import { HealthMonitor } from "../tools/health-monitor.ts";
 import { createApp } from "./app.ts";
@@ -326,6 +327,9 @@ export async function startServerWithShutdown(options: ServerOptions): Promise<v
 
     handle.stop(true);
     await runtime.shutdown();
+    // Flush any buffered spans before exit so the final window isn't dropped on
+    // pod termination (BatchSpanProcessor schedule is ~5s). No-op without export.
+    await shutdownTracing();
 
     clearTimeout(safetyTimeout);
     console.error("[nimblebrain] Shutdown complete.");

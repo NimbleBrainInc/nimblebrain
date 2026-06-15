@@ -237,6 +237,17 @@ Reload after setting. Namespaces (`web/src/lib/debug.ts`):
 
 Namespaces are shared convention between server and browser: `NB_DEBUG=sync` plus `localStorage.nb_debug=sync` together trace the entire data.changed flow.
 
+## Observability (OTel tracing + structured logs)
+
+Vendor-neutral OpenTelemetry lives in `src/observability/`. The runtime depends only on `@opentelemetry/*` and the W3C tracecontext + OTLP wire formats — **never** a branded observability library. The wire is the interface.
+
+- **Spans:** wrap work with `withSpan(name, attrs, fn)` (active-context, nests automatically) — never call the OTel API directly from feature code. Today's spans: `agent.turn` (engine run), `llm.call` (model stream), `tool.dispatch` (MCP dispatch), and the outer HTTP span (Hono middleware, continues an inbound `traceparent`). Add `requestIdentityAttrs()` to span attrs to stamp the verified identity.
+- **Propagation:** `injectTraceparent(headers)` on outbound calls that should extend the trace (service-token mint, authenticated remote-MCP fetch). No-op outside a span.
+- **Logs:** use `log.*(msg, fields?)`. With `NB_LOG_FORMAT=json` (set by the chart) lines are structured JSON auto-enriched with `service`, `tenant_id`, `correlation_id` (the active trace id), and identity. Pretty dev output is unchanged.
+- **Trust rule — what may be stamped:** `tenant_id` is a boot-time Resource attribute from `NB_TENANT_ID`, never a request header. `user_id` / `workspace_id` / `conversation_id` come from the verified request context. **Never** stamp the display name, email, secrets, prompts, tool args/results, or file contents.
+- **Config:** `OTEL_EXPORTER_OTLP_ENDPOINT` enables export (unset = nothing exported, ids still exist for log correlation — so local dev and OSS checkouts need no infra). `NB_SERVICE_NAME` overrides the service name.
+- **OTel deps are exact-pinned to one release train** (stable `sdk-trace-*`/`resources` + the matching experimental exporter). Bump them together or export serialization breaks; the version-coherence test in `test/unit/observability.test.ts` guards it.
+
 ## Long-Running Tools (MCP Tasks)
 
 Any MCP tool whose work exceeds the stock MCP request timeout (~60 s) must be written as a **task-augmented tool**. The engine implements the client side of the MCP draft 2025-11-25 `tasks` utility end-to-end; bundle authors only have to opt in.
