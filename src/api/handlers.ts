@@ -8,6 +8,12 @@ import type { EngineEvent, EventSink } from "../engine/types.ts";
 import { ingestFiles, isAllowedMime, type UploadedFile } from "../files/ingest.ts";
 import { resolveMimeType } from "../files/mime.ts";
 import type { FileEntry } from "../files/types.ts";
+import {
+  ArtifactNotFoundError,
+  ArtifactTooLargeError,
+  getArtifactResolver,
+  isArtifactUri,
+} from "../host-resources/artifacts/index.ts";
 import type { IdentityProvider, UserIdentity } from "../identity/provider.ts";
 import { DEV_IDENTITY } from "../identity/providers/dev.ts";
 import {
@@ -857,11 +863,43 @@ export async function handleReadResource(
   if (body instanceof Response) return body;
 
   const { server, uri } = body as { server?: string; uri?: string };
-  if (!server || typeof server !== "string") {
-    return apiError(400, "bad_request", "'server' is required");
-  }
   if (!uri || typeof uri !== "string") {
     return apiError(400, "bad_request", "'uri' is required");
+  }
+
+  // `artifact://` is host-resolved against the shared data plane, not against
+  // any producing bundle — the bundle is never in the read path. It carries no
+  // `server`, and resolution is uniform across every capability. Intercept it
+  // here, before per-source routing, and read as the VIEWING USER: the verified
+  // workspace from the request scopes the minted read token, and RLS in the data
+  // plane is the enforcement point. A second workspace cannot read another's
+  // artifact — the read is denied and surfaces as 404 (absent and forbidden are
+  // intentionally indistinguishable, so a guessed id can't probe inventory).
+  if (isArtifactUri(uri)) {
+    const ws = options?.workspaceId;
+    if (!ws) {
+      return apiError(400, "bad_request", "artifact:// reads require a workspace context");
+    }
+    const resolver = getArtifactResolver();
+    try {
+      const result = await resolver.read(uri, ws);
+      return json(result as Record<string, unknown>);
+    } catch (err) {
+      if (err instanceof ArtifactNotFoundError) {
+        return apiError(404, "resource_not_found", `Resource "${uri}" not found`, { uri });
+      }
+      if (err instanceof ArtifactTooLargeError) {
+        return apiError(413, "resource_too_large", err.message, { uri });
+      }
+      log.warn(
+        `[artifact] read ${uri} (ws=${ws}) failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return apiError(502, "resource_read_failed", "Failed to resolve artifact", { uri });
+    }
+  }
+
+  if (!server || typeof server !== "string") {
+    return apiError(400, "bad_request", "'server' is required");
   }
 
   // Identity sources (conversations, files) live OUTSIDE any workspace —
