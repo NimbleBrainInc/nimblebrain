@@ -15,6 +15,7 @@ import { validateAdditionalAuthorizationParams } from "../util/oauth-params.ts";
 import { WorkspaceContext } from "../workspace/context.ts";
 import type { AutomationDomainContext } from "./automations/src/domain.ts";
 import { createAutomation, deleteAutomation } from "./automations/src/domain.ts";
+import { bundleHasStaticAuth } from "./bundle-auth.ts";
 import { connectorSlug, hasPersistedComposioConnection } from "./composio-connection.ts";
 import {
   type Connection,
@@ -1957,10 +1958,17 @@ export class BundleLifecycleManager {
         // the mcp-oauth tokens.json. Bundles carry the catalog id
         // forward on `ref.composio.connectorId` so this probe is
         // local; we don't need the catalog to derive the path.
+        // Static-auth sources (bearer / header / tenant-key) carry their own
+        // credential and auto-connect — there is no interactive Connect step, so
+        // they must not seed `not_authenticated` (which the UI renders as a
+        // "Connect" button that would spin a bogus OAuth flow). A surviving entry
+        // here means boot-start succeeded (failed starts are filtered before
+        // seedInstance runs), so `running` is accurate.
         const hasAuth =
-          "composio" in ref && ref.composio
+          bundleHasStaticAuth(ref) ||
+          ("composio" in ref && ref.composio
             ? hasPersistedComposioConnection(workDir, wsId, ref.composio.connectorId)
-            : hasPersistedWorkspaceOAuthTokens(workDir, wsId, serverName);
+            : hasPersistedWorkspaceOAuthTokens(workDir, wsId, serverName));
         if (!hasAuth) {
           this.recordConnectionStateChange(serverName, wsId, "_workspace", "not_authenticated");
         } else {

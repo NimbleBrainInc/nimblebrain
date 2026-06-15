@@ -24,6 +24,7 @@ import {
   type WorkspaceOAuthProviderOptions,
 } from "../tools/workspace-oauth-provider.ts";
 import { WorkspaceContext } from "../workspace/context.ts";
+import { bundleHasStaticAuth } from "./bundle-auth.ts";
 import { extractBundleMeta } from "./defaults.ts";
 import { filterEnvForBundle } from "./env-filter.ts";
 import { validateManifest } from "./manifest.ts";
@@ -302,7 +303,7 @@ export async function startBundleSource(
     };
 
     let authProvider: WorkspaceOAuthProvider | undefined;
-    const hasStaticAuth = ref.transport?.auth && ref.transport.auth.type !== "none";
+    const hasStaticAuth = bundleHasStaticAuth(ref);
     if (!hasStaticAuth) {
       if (!wsContext) {
         throw new Error(
