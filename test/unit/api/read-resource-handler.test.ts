@@ -1,8 +1,25 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
 import { handleReadResource } from "../../../src/api/handlers.ts";
+import {
+  ArtifactNotFoundError,
+  type ArtifactResolver,
+  ArtifactTooLargeError,
+  InvalidArtifactUriError,
+  setArtifactResolver,
+} from "../../../src/host-resources/artifacts/index.ts";
 import type { Runtime } from "../../../src/runtime/runtime.ts";
 import type { ResourceData } from "../../../src/tools/types.ts";
 import { bytesToBase64 } from "../../../src/util/base64.ts";
+
+/**
+ * Inject a fake `artifact://` resolver whose `read` runs `impl`. Only `read` is
+ * exercised by the handler, so a partial cast is the whole seam.
+ */
+function stubArtifactResolver(impl: (uri: string, ws: string) => unknown): void {
+  setArtifactResolver({
+    read: async (uri: string, ws: string) => impl(uri, ws),
+  } as unknown as ArtifactResolver);
+}
 
 interface StubOptions {
   sources?: string[];
@@ -238,6 +255,99 @@ describe("handleReadResource", () => {
       { workspaceId: "ws_x" },
     );
     expect(res.status).toBe(401);
+  });
+});
+
+describe("handleReadResource — artifact:// branch", () => {
+  // The artifact resolver is a process-wide singleton (test seam). Reset it
+  // after each case so an injected fake never leaks into another test.
+  afterEach(() => setArtifactResolver(undefined));
+
+  it("returns 400 when no workspace is in scope", async () => {
+    const runtime = makeStubRuntime();
+    let called = false;
+    stubArtifactResolver(() => {
+      called = true;
+      return { contents: [] };
+    });
+    const res = await handleReadResource(req({ uri: "artifact://abc123" }), runtime, {});
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toBe("bad_request");
+    // The workspace gate fires before the resolver is ever consulted.
+    expect(called).toBe(false);
+  });
+
+  it("maps ArtifactNotFoundError to 404", async () => {
+    const runtime = makeStubRuntime();
+    stubArtifactResolver(() => {
+      throw new ArtifactNotFoundError("abc123");
+    });
+    const res = await handleReadResource(req({ uri: "artifact://abc123" }), runtime, {
+      workspaceId: "w1",
+    });
+    expect(res.status).toBe(404);
+    const body = await res.json();
+    expect(body.error).toBe("resource_not_found");
+  });
+
+  it("maps ArtifactTooLargeError to 413", async () => {
+    const runtime = makeStubRuntime();
+    stubArtifactResolver(() => {
+      throw new ArtifactTooLargeError(99, 8);
+    });
+    const res = await handleReadResource(req({ uri: "artifact://abc123" }), runtime, {
+      workspaceId: "w1",
+    });
+    expect(res.status).toBe(413);
+    const body = await res.json();
+    expect(body.error).toBe("resource_too_large");
+  });
+
+  it("maps InvalidArtifactUriError (malformed id) to 400 bad_request", async () => {
+    const runtime = makeStubRuntime();
+    stubArtifactResolver((uri) => {
+      throw new InvalidArtifactUriError(uri, "id must match the safe-id grammar");
+    });
+    // A prefix-valid but grammar-invalid id (the space fails the id RE).
+    const res = await handleReadResource(req({ uri: "artifact://bad id" }), runtime, {
+      workspaceId: "w1",
+    });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toBe("bad_request");
+  });
+
+  it("maps an unexpected resolver error to 502 resource_read_failed", async () => {
+    const runtime = makeStubRuntime();
+    stubArtifactResolver(() => {
+      throw new Error("data plane unreachable");
+    });
+    const res = await handleReadResource(req({ uri: "artifact://abc123" }), runtime, {
+      workspaceId: "w1",
+    });
+    expect(res.status).toBe(502);
+    const body = await res.json();
+    expect(body.error).toBe("resource_read_failed");
+  });
+
+  it("returns 200 with the resolved resource on the happy path", async () => {
+    const runtime = makeStubRuntime();
+    const calls: Array<{ uri: string; ws: string }> = [];
+    stubArtifactResolver((uri, ws) => {
+      calls.push({ uri, ws });
+      return { contents: [{ uri, mimeType: "text/plain", text: "resolved body" }] };
+    });
+    const res = await handleReadResource(req({ uri: "artifact://abc123" }), runtime, {
+      workspaceId: "w1",
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.contents).toEqual([
+      { uri: "artifact://abc123", mimeType: "text/plain", text: "resolved body" },
+    ]);
+    // Read as the viewing user's verified workspace.
+    expect(calls).toEqual([{ uri: "artifact://abc123", ws: "w1" }]);
   });
 });
 
