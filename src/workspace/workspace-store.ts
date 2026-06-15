@@ -140,6 +140,29 @@ export function personalWorkspaceSlugFor(userId: string): string {
   return personalWorkspaceIdFor(userId).slice(3);
 }
 
+/**
+ * Best-effort lookup of a workspace's human-readable `name` for display to
+ * a third party — currently the OAuth `client_name` a remote vendor renders
+ * on its consent screen (see `WorkspaceOAuthProvider.ownerDisplayName`).
+ *
+ * Returns `undefined` when the workspace can't be read or has no name, so
+ * the caller cleanly falls back to the opaque id. Deliberately non-throwing:
+ * a cosmetic label must never block an auth flow. Constructs a throwaway
+ * store from `workDir` — cheap, and these are infrequent (interactive auth
+ * start / bundle boot) paths, not hot loops.
+ */
+export async function resolveWorkspaceDisplayName(
+  workDir: string,
+  wsId: string,
+): Promise<string | undefined> {
+  try {
+    const ws = await new WorkspaceStore(workDir).get(wsId);
+    return ws?.name || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 // ── WorkspaceStore ─────────────────────────────────────────────────
 
 export class WorkspaceStore {
