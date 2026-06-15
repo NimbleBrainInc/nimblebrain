@@ -62,7 +62,6 @@ describe("MetricsEventSink", () => {
       fresh: await read(llmTokensTotal, fresh),
       okTrue: await read(toolCallsTotal, { ok: "true" }),
       okFalse: await read(toolCallsTotal, { ok: "false" }),
-      promo: await read(toolPromotionsTotal),
     };
 
     sink.emit({
@@ -72,14 +71,44 @@ describe("MetricsEventSink", () => {
         usage: { inputTokens: 200, outputTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0 },
       },
     });
-    sink.emit({ type: "tool.done", data: { ok: true } });
-    sink.emit({ type: "tool.done", data: { ok: false } });
-    sink.emit({ type: "tool.promoted", data: { toolName: "x" } });
+    sink.emit({ type: "tool.done", data: { runId: "r-sink", name: "a", ok: true } });
+    sink.emit({ type: "tool.done", data: { runId: "r-sink", name: "b", ok: false } });
 
     expect((await read(llmTokensTotal, fresh)) - before.fresh).toBe(200);
     expect((await read(toolCallsTotal, { ok: "true" })) - before.okTrue).toBe(1);
     expect((await read(toolCallsTotal, { ok: "false" })) - before.okFalse).toBe(1);
-    expect((await read(toolPromotionsTotal)) - before.promo).toBe(1);
+  });
+
+  it("labels promotions used=true when the promoted tool is called, false otherwise", async () => {
+    const sink = new MetricsEventSink();
+    const beforeTrue = await read(toolPromotionsTotal, { used: "true" });
+    const beforeFalse = await read(toolPromotionsTotal, { used: "false" });
+
+    // Run 1: promote two tools, call only one, then finish.
+    sink.emit({ type: "tool.promoted", data: { runId: "r1", toolName: "used-tool" } });
+    sink.emit({ type: "tool.promoted", data: { runId: "r1", toolName: "unused-tool" } });
+    sink.emit({ type: "tool.done", data: { runId: "r1", name: "used-tool", ok: true } });
+    // Nothing should be counted until the run terminates.
+    expect((await read(toolPromotionsTotal, { used: "true" })) - beforeTrue).toBe(0);
+    sink.emit({ type: "run.done", data: { runId: "r1" } });
+
+    expect((await read(toolPromotionsTotal, { used: "true" })) - beforeTrue).toBe(1);
+    expect((await read(toolPromotionsTotal, { used: "false" })) - beforeFalse).toBe(1);
+  });
+
+  it("does not double-count or leak across interleaved runs; run.error finalizes too", async () => {
+    const sink = new MetricsEventSink();
+    const beforeFalse = await read(toolPromotionsTotal, { used: "false" });
+
+    // Interleaved runs, neither tool called; one ends via run.error.
+    sink.emit({ type: "tool.promoted", data: { runId: "rA", toolName: "tA" } });
+    sink.emit({ type: "tool.promoted", data: { runId: "rB", toolName: "tB" } });
+    sink.emit({ type: "run.done", data: { runId: "rA" } });
+    sink.emit({ type: "run.error", data: { runId: "rB" } });
+    // A second terminator for an already-finalized run is a no-op.
+    sink.emit({ type: "run.done", data: { runId: "rA" } });
+
+    expect((await read(toolPromotionsTotal, { used: "false" })) - beforeFalse).toBe(2);
   });
 
   it("ignores events it doesn't track", async () => {

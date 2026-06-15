@@ -99,10 +99,18 @@ export const toolCallsTotal = new Counter({
   registers: [metricsRegistry],
 });
 
-/** Tools promoted into the active set (progressive-disclosure discovery). */
+/**
+ * Tools promoted into the active set (progressive-disclosure discovery),
+ * labeled by whether the promoted tool was actually called later in the same
+ * run. `used="false"` is the wasted-promotion signal — a cache-prefix re-write
+ * for a tool the model never used — that validates the auto-promote policy:
+ * `used="false" / total` is the promoted-but-never-called rate. Counted at run
+ * end (not at promote time) so the correlation is known.
+ */
 export const toolPromotionsTotal = new Counter({
   name: "nb_tool_promotions_total",
-  help: "Tools promoted into the active set (progressive disclosure).",
+  help: "Tools promoted into the active set, by whether the tool was used in the run.",
+  labelNames: ["used"] as const,
   registers: [metricsRegistry],
 });
 
