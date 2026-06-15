@@ -3,8 +3,10 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { LanguageModelV3, LanguageModelV3Message } from "@ai-sdk/provider";
+import { MetricsEventSink } from "../adapters/metrics-events.ts";
 import { NoopEventSink } from "../adapters/noop-events.ts";
 import { WorkspaceLogSink } from "../adapters/workspace-log-sink.ts";
+import { recordLlmUsage } from "../api/metrics.ts";
 import type { AutomationDomainContext } from "../bundles/automations/src/domain.ts";
 import { BundleLifecycleManager } from "../bundles/lifecycle.ts";
 import { deriveServerName } from "../bundles/paths.ts";
@@ -412,7 +414,10 @@ export class Runtime {
 
     // Create delegate tracker and include it in the event pipeline
     const delegateTracker = new DelegateTracker();
-    const sinkList: EventSink[] = [baseEvents, delegateTracker];
+    // Always-on, observe-only Prometheus counters. Process-local: increments in
+    // memory whether or not `/metrics` is scraped, so it's safe in a local
+    // `bun run dev` with no Prometheus/k8s.
+    const sinkList: EventSink[] = [baseEvents, delegateTracker, new MetricsEventSink()];
     if (eventStore) {
       sinkList.push(eventStore);
     }
@@ -1829,7 +1834,8 @@ export class Runtime {
       // The title call runs the `fast` slot outside the agentic loop; persist
       // its usage as an aux.usage event so it isn't invisible to cost accounting.
       const appendTitleUsage = store.appendEvent?.bind(store);
-      void generateTitle(titleModel, titleInput, result.output, (usage, llmMs) =>
+      void generateTitle(titleModel, titleInput, result.output, (usage, llmMs) => {
+        recordLlmUsage("title", titleSlot, usage);
         appendTitleUsage?.(conversation.id, {
           ts: new Date().toISOString(),
           type: "aux.usage",
@@ -1837,8 +1843,8 @@ export class Runtime {
           model: titleSlot,
           usage,
           llmMs,
-        }),
-      )
+        });
+      })
         .then(async (title) => {
           await store.update(conversation.id, { title });
           // `wsId: sessionWsId` (the owner's personal workspace) — NOT
@@ -3227,7 +3233,8 @@ export class Runtime {
       // The summarizer runs the `fast` slot outside the agentic loop, so it
       // emits no llm.response. Persist its usage as an aux.usage event so the
       // fold's cost isn't invisible to the usage aggregator.
-      onUsage: (usage, llmMs) =>
+      onUsage: (usage, llmMs) => {
+        recordLlmUsage("compaction", fastSlot, usage);
         appendEvent(conversationId, {
           ts: new Date().toISOString(),
           type: "aux.usage",
@@ -3235,7 +3242,8 @@ export class Runtime {
           model: fastSlot,
           usage,
           llmMs,
-        }),
+        });
+      },
     });
     // No-op contract: the helper returns the SAME array reference when nothing
     // was compacted (below threshold or best-effort failure). A future helper
