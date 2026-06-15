@@ -229,15 +229,16 @@ export async function startWorkspaceBundles(
     // `oauthScope: "user"` literal was deleted). Personal connectors
     // bind to the owning user's personal workspace at install time.
     if ("url" in entry.bundle) {
-      // Static-auth sources (bearer / header / tenant-key) carry their own
-      // credential — they mint/present a token on demand and have no persisted
-      // OAuth tokens to gate on. Boot-start them; only OAuth/Composio bundles
-      // need a persisted-credential check.
-      const hasAuth =
-        bundleHasStaticAuth(entry.bundle) ||
-        (entry.bundle.composio
-          ? hasPersistedComposioConnection(workDir, entry.wsId, entry.bundle.composio.connectorId)
-          : hasPersistedWorkspaceOAuthTokens(workDir, entry.wsId, entry.serverName));
+      // Composio bundles carry header auth but STILL need a per-user connect, so
+      // they route to the composio probe (check FIRST — they're also static-auth
+      // by transport, but must not skip the connect gate). Other static-auth
+      // sources (tenant-key / bearer / header) carry their own credential and
+      // mint/present on demand — boot-start them. Only OAuth bundles gate on
+      // persisted tokens.
+      const hasAuth = entry.bundle.composio
+        ? hasPersistedComposioConnection(workDir, entry.wsId, entry.bundle.composio.connectorId)
+        : bundleHasStaticAuth(entry.bundle) ||
+          hasPersistedWorkspaceOAuthTokens(workDir, entry.wsId, entry.serverName);
       if (!hasAuth) {
         log.info(
           `[bundles] Skipping boot start for URL bundle "${entry.serverName}" — no tokens yet (state: not_authenticated)`,
