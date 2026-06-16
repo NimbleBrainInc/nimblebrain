@@ -1417,6 +1417,16 @@ describe("deriveConnectorStatus", () => {
     expect(deriveConnectorStatus({ state: "running" })).toEqual({ status: "ready" });
   });
 
+  test("provider-auth fleet source (running, no operator OAuth, no user_config) → ready", () => {
+    // Regression: a `provider`-auth fleet source (e.g. deep_research `web`) is a
+    // remote bundle, so it gets NO `userConfig` probe (that gate is `!isRemote`)
+    // and has no operator OAuth client — its credential is provided server-side.
+    // It boots `running` (bundleHasStaticAuth), so it must derive `ready`: no
+    // bogus Connect, no "needs setup" for a key the server already holds. The UI
+    // hero is status-driven, so `ready` means no Connect button.
+    expect(deriveConnectorStatus({ state: "running" })).toEqual({ status: "ready" });
+  });
+
   test("missingOperatorSetup wins over every other signal — admin acts first", () => {
     // Even with state=running and required user_config populated, an
     // unconfigured operator OAuth client should mark the connector as
