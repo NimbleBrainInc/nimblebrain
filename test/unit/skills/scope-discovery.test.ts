@@ -25,7 +25,7 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { loadScopedSkills, mergeScopedSkills } from "../../../src/skills/loader.ts";
+import { loadScopedSkills, loadSkillDir, mergeScopedSkills } from "../../../src/skills/loader.ts";
 import type { Skill } from "../../../src/skills/types.ts";
 
 let root: string;
@@ -324,5 +324,37 @@ describe("loadScopedSkills — read failures are observable, not silent", () => 
     expect(errors.some((e) => e.includes("[skill]") && e.includes("bad.md"))).toBe(true);
 
     chmodSync(bad, 0o644); // restore so afterEach cleanup can remove it
+  });
+
+  // loadSkillDir is the flat boot-time loader (builtin/core + the user-writable
+  // global/config skill dirs). It shares the same guards as the scoped loader —
+  // a bad dir or one bad file must never crash buildSkills at startup.
+  test("loadSkillDir: an unlistable dir returns [] and logs, never throws", () => {
+    const notADir = join(root, "global-skills-is-a-file");
+    writeFileSync(notADir, "not a directory", "utf-8");
+
+    const skills = loadSkillDir(notADir, "global");
+
+    expect(skills).toHaveLength(0);
+    expect(errors.some((e) => e.includes("[skill]") && e.includes("global"))).toBe(true);
+  });
+
+  test("loadSkillDir: one unreadable file drops only that file, not the whole dir", () => {
+    const dir = join(root, "global-skills");
+    mkdirSync(dir, { recursive: true });
+    writeSkillFile(join(dir, "good.md"), "good");
+    const bad = join(dir, "bad.md");
+    writeSkillFile(bad, "bad");
+    chmodSync(bad, 0o000);
+
+    const isRoot = typeof process.getuid === "function" && process.getuid() === 0;
+    if (isRoot) return;
+
+    const skills = loadSkillDir(dir, "global");
+
+    expect(skills.map((s) => s.manifest.name)).toEqual(["good"]);
+    expect(errors.some((e) => e.includes("[skill]") && e.includes("bad.md"))).toBe(true);
+
+    chmodSync(bad, 0o644);
   });
 });

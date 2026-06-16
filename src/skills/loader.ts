@@ -49,23 +49,68 @@ const RESERVED_SUBDIR_PREFIX = "_";
 
 /** Load built-in skills shipped with the package. */
 export function loadBuiltinSkills(): Skill[] {
-  return loadSkillDir(BUILTIN_DIR);
+  return loadSkillDir(BUILTIN_DIR, "builtin");
 }
 
 /** Load core skills that are always injected into the system prompt. */
 export function loadCoreSkills(): Skill[] {
-  return loadSkillDir(CORE_DIR);
+  return loadSkillDir(CORE_DIR, "core");
 }
 
-/** Load all SKILL.md files from a directory. Non-recursive. */
-export function loadSkillDir(dir: string): Skill[] {
+/**
+ * Read a skill directory's entries, logging (not throwing, not silently
+ * swallowing) if the listing fails. A read error here means the dir existed
+ * (`existsSync` passed) but couldn't be listed — permissions, I/O, or a TOCTOU
+ * race where it was removed/rewritten under us. The old bare `return` dropped
+ * the whole pool with zero signal; `[]` + a log keeps the failure visible. The
+ * `label` and `depth` only shape the message.
+ */
+function readSkillDirEntries(dir: string, label: string, depth: number): Dirent[] {
+  try {
+    return readdirSync(dir, { withFileTypes: true });
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException)?.code ?? "unknown";
+    console.error(
+      `[skill] Could not read ${label} skills dir "${dir}" (${code})` +
+        (depth === 0
+          ? " — the entire scope is empty for this load"
+          : ` at depth ${depth} — this subtree is skipped`),
+    );
+    return [];
+  }
+}
+
+/**
+ * Parse one skill file, isolating a read/parse failure to THAT file. A single
+ * unreadable or half-written file (e.g. mid-rewrite by a concurrent
+ * `skills__update`, or malformed frontmatter that throws inside gray-matter)
+ * is logged and dropped — it must never throw out of a directory loop and lose
+ * every other skill in the pool (or crash `buildSkills` at boot).
+ */
+function parseSkillFileGuarded(path: string): Skill | null {
+  try {
+    return parseSkillFile(path);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException)?.code ?? "unknown";
+    console.error(`[skill] Skipping unreadable skill file "${path}" (${code})`);
+    return null;
+  }
+}
+
+/**
+ * Load all SKILL.md files from a directory. Non-recursive. Used for the
+ * vendored builtin/core dirs and the user-writable global/config skill dirs
+ * (`runtime.ts` boot path, CLI). Both the directory read and each file parse
+ * are guarded so one bad dir or one bad file degrades to a logged skip instead
+ * of crashing the load — see `readSkillDirEntries` / `parseSkillFileGuarded`.
+ */
+export function loadSkillDir(dir: string, label = "local"): Skill[] {
   if (!existsSync(dir)) return [];
 
   const skills: Skill[] = [];
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+  for (const entry of readSkillDirEntries(dir, label, 0)) {
     if (entry.isFile() && entry.name.toLowerCase().endsWith(".md")) {
-      const path = join(dir, entry.name);
-      const skill = parseSkillFile(path);
+      const skill = parseSkillFileGuarded(join(dir, entry.name));
       if (skill) skills.push(skill);
     }
   }
@@ -128,40 +173,14 @@ export function mergeScopedSkills(platform: Skill[], workspace: Skill[], user: S
 }
 
 function collectScopedSkills(dir: string, scope: SkillScope, out: Skill[], depth: number): void {
-  let entries: Dirent[];
-  try {
-    entries = readdirSync(dir, { withFileTypes: true });
-  } catch (err) {
-    // `loadScopedSkills` already returned [] for a non-existent top-level dir,
-    // so reaching a read error here means the dir EXISTED but couldn't be
-    // listed — permissions, I/O, or a TOCTOU race where it was removed or
-    // rewritten under us. Silently swallowing this (the old bare `return`)
-    // drops the entire scope with zero signal: a workspace can lose all of its
-    // always-load skills mid-session and nothing — not the logs, not the
-    // `skills.loaded` event — shows anything went wrong. Make it visible.
-    const code = (err as NodeJS.ErrnoException)?.code ?? "unknown";
-    console.error(
-      `[skill] Could not read ${scope}-scope skills dir "${dir}" (${code})` +
-        (depth === 0
-          ? " — the entire scope is empty for this load"
-          : ` at depth ${depth} — this subtree is skipped`),
-    );
-    return;
-  }
-  for (const entry of entries) {
+  // Shared read/parse guards (see `readSkillDirEntries` / `parseSkillFileGuarded`):
+  // `loadScopedSkills` already returned [] for a non-existent top-level dir, so a
+  // read failure here means the dir existed but couldn't be listed — logged, not
+  // swallowed (the old bare `return` dropped the whole scope with zero signal,
+  // the production incident this fix targets). One bad file drops only itself.
+  for (const entry of readSkillDirEntries(dir, `${scope}-scope`, depth)) {
     if (entry.isFile() && entry.name.toLowerCase().endsWith(".md")) {
-      const path = join(dir, entry.name);
-      let skill: Skill | null;
-      try {
-        skill = parseSkillFile(path);
-      } catch (err) {
-        // One unreadable or half-written file (e.g. mid-rewrite by a concurrent
-        // skills__update) must drop only THAT file — never throw out of the
-        // loop and lose every skill already collected for this scope.
-        const code = (err as NodeJS.ErrnoException)?.code ?? "unknown";
-        console.error(`[skill] Skipping unreadable skill file "${path}" (${code})`);
-        continue;
-      }
+      const skill = parseSkillFileGuarded(join(dir, entry.name));
       if (skill) {
         skill.manifest.scope = scope;
         out.push(skill);
