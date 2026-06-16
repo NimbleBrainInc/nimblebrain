@@ -38,12 +38,7 @@ import {
 } from "./paths.ts";
 import { notifyConnectionRunning } from "./pending-auth-buffer.ts";
 import { resolveLocalBundle } from "./resolve.ts";
-import type {
-  BundleManifest,
-  BundleRef,
-  LocalBundleMeta,
-  StartBundleResult,
-} from "./types.ts";
+import type { BundleManifest, BundleRef, LocalBundleMeta, StartBundleResult } from "./types.ts";
 import { validateBundleUrl } from "./url-validator.ts";
 
 /**

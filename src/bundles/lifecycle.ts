@@ -553,14 +553,14 @@ export class BundleLifecycleManager {
   // ---- Uninstall ---------------------------------------------------------
 
   /**
-   * Uninstall a bundle (PRODUCT_SPEC ss3.4).
+   * Uninstall a bundle (PRODUCT_SPEC ss3.4). Every connector is user-removable —
+   * there is no `protected` guard.
    *
-   * 1. Check protected flag — reject if protected
-   * 2. Stop MCP server
-   * 3. Remove source from ToolRegistry
-   * 4. Remove entry from nimblebrain.json
-   * 5. Emit bundle.uninstalled
-   * 6. Data is NOT deleted
+   * 1. Stop MCP server
+   * 2. Remove source from ToolRegistry
+   * 3. Remove entry from nimblebrain.json
+   * 4. Emit bundle.uninstalled
+   * 5. Data is NOT deleted
    */
   async uninstall(nameOrPath: string, registry: ToolRegistry, wsId: string): Promise<void> {
     // Resolve by (serverName, wsId) first; fall back to bundleName match within

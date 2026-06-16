@@ -35,7 +35,7 @@ export const mintedCredentialProvider: TransportCredentialProvider = {
     }
     if (config === null || typeof config !== "object") {
       throw new Error(
-        'minted transport credential requires a config object ({ audience, scope }); got a `provider` auth with no `config`',
+        "minted transport credential requires a config object ({ audience, scope }); got a `provider` auth with no `config`",
       );
     }
     const issuer =

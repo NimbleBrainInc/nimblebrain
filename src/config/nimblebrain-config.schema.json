@@ -117,8 +117,14 @@
                   "token": { "type": "string" },
                   "name": { "type": "string" },
                   "value": { "type": "string" },
-                  "provider": { "type": "string", "description": "Credential provider name (auth.type=provider), e.g. \"minted\"." },
-                  "config": { "type": "object", "description": "Opaque provider config (e.g. { audience, scope } for \"minted\")." }
+                  "provider": {
+                    "type": "string",
+                    "description": "Credential provider name (auth.type=provider), e.g. \"minted\"."
+                  },
+                  "config": {
+                    "type": "object",
+                    "description": "Opaque provider config (e.g. { audience, scope } for \"minted\")."
+                  }
                 },
                 "required": ["type"]
               },
