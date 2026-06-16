@@ -126,6 +126,31 @@ describe("projectServerDetailToDirectoryEntry", () => {
     }
   });
 
+  test("projects provider auth + providerAuth (the platform-connector class)", () => {
+    const e = projectServerDetailToDirectoryEntry(
+      detail({
+        remotes: [{ type: "streamable-http", url: "http://mcp-web.mcp-shared.svc/mcp" }],
+        _meta: {
+          "ai.nimblebrain/connector": {
+            auth: "provider",
+            providerAuth: { provider: "minted", config: { audience: "mcp-fleet", scope: "mcp:invoke" } },
+          },
+        },
+      }),
+      CTX,
+    );
+    expect(e?.install.kind).toBe("remote-oauth");
+    if (e?.install.kind === "remote-oauth") {
+      expect(e.install.auth).toBe("provider");
+      // The operator-authored provider config is carried through verbatim — this
+      // is what the install path copies into transport.auth (never tenant input).
+      expect(e.install.providerAuth).toEqual({
+        provider: "minted",
+        config: { audience: "mcp-fleet", scope: "mcp:invoke" },
+      });
+    }
+  });
+
   test("threads streamable-http transport type from remotes[0] to install action", () => {
     const e = projectServerDetailToDirectoryEntry(
       detail({

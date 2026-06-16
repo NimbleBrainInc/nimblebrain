@@ -126,7 +126,7 @@ export interface RemoteOAuthInstall {
    * the handshake.
    */
   transportType: "streamable-http" | "sse";
-  auth: "dcr" | "static" | "composio";
+  auth: "dcr" | "static" | "composio" | "provider";
   requiredScopes?: string[];
   additionalAuthorizationParams?: Record<string, string>;
   operatorSetup?: { portalUrl: string; hint: string; clientSecretKey: string };
@@ -136,6 +136,14 @@ export interface RemoteOAuthInstall {
    * `NimbleBrainConnectorMeta.composio` for the canonical shape.
    */
   composio?: { toolkit: string; authConfigEnv: string; tools?: string[] };
+  /**
+   * Required for `auth: "provider"`. Names the credential provider and its
+   * opaque config (e.g. `{ provider: "minted", config: { audience, scope } }`).
+   * Operator-authored in the catalog — the install path copies it verbatim into
+   * the BundleRef's `transport.auth`, NEVER taking provider/config from tenant
+   * input. That is what keeps a self-installable platform connector safe.
+   */
+  providerAuth?: { provider: string; config: Record<string, unknown> };
 }
 
 /**

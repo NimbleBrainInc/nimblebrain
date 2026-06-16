@@ -991,6 +991,9 @@ async function handleInstallRemoteOAuth(
   if (action.auth === "static" && !action.operatorSetup) {
     return errResult(`"${entry.name}" is static-auth but missing operatorSetup config.`);
   }
+  if (action.auth === "provider" && !action.providerAuth) {
+    return errResult(`"${entry.name}" is provider-auth but missing providerAuth config block.`);
+  }
 
   // serverName is the slugified canonical reverse-DNS form — opaque,
   // URL-safe, filesystem-safe, collision-free by construction. See
@@ -1100,8 +1103,22 @@ async function handleInstallRemoteOAuth(
       // Pin the transport class the source advertised. Default would be
       // streamable-http (createRemoteTransport's fallback), which is wrong
       // for vendors whose remote `type` is `sse` — PayPal / Cloudflare /
-      // Webflow / Wix in the bundled catalog today.
-      transport: composioWiring?.transport ?? { type: action.transportType },
+      // Webflow / Wix in the bundled catalog today. A `provider`-auth entry
+      // also carries its credential class here: provider + config are copied
+      // VERBATIM from the (operator-authored) catalog entry — never tenant
+      // input — which is what makes a self-installable platform connector safe.
+      transport:
+        composioWiring?.transport ??
+        (action.auth === "provider" && action.providerAuth
+          ? {
+              type: action.transportType,
+              auth: {
+                type: "provider",
+                provider: action.providerAuth.provider,
+                config: action.providerAuth.config,
+              },
+            }
+          : { type: action.transportType }),
       // Post-Stage-2: every ref's oauthScope is "workspace". The install
       // targets the request's active workspace (see the dispatch logic
       // above); the ref carries no per-target scope literal.
@@ -1218,15 +1235,13 @@ async function handleInstallRemoteOAuth(
   lifecycle.seedInstance(serverName, action.url, ref, undefined, wsId, undefined, wsRegistry);
   lifecycle.notifyInstalled(serverName, wsId);
 
-  // Composio-backed URL bundles authenticate via static header
-  // (x-api-key) — no MCP-side OAuth flow is needed to start the
-  // source, so kick it off here rather than waiting for the next
-  // platform boot. Tool listing works regardless of whether the
-  // user has completed Composio's OAuth dance yet; tool execution
-  // returns Composio's "not connected" errors until they do.
-  // For static / dcr bundles, source.start() is bound to
-  // `lifecycle.startAuth` (called from `/v1/mcp-auth/initiate`)
-  // and shouldn't run here.
+  // Static-credential URL bundles authenticate without an MCP-side OAuth flow,
+  // so start the source here rather than waiting for the next platform boot:
+  //  - composio: static `x-api-key` header (tool execution returns "not
+  //    connected" until the user finishes Composio's OAuth dance);
+  //  - provider: a server-side credential (e.g. minted) — no user auth at all.
+  // For static / dcr bundles, source.start() is bound to `lifecycle.startAuth`
+  // (called from `/v1/mcp-auth/initiate`) and shouldn't run here.
   //
   // Eager-start is a UX optimization (instant tool list). If it
   // fails the install itself has still succeeded — the BundleRef
@@ -1238,7 +1253,7 @@ async function handleInstallRemoteOAuth(
   // so the agent can communicate "installed, eager-start failed,
   // click Connect" cleanly.
   let startWarning: string | undefined;
-  if (action.auth === "composio") {
+  if (action.auth === "composio" || action.auth === "provider") {
     try {
       await startBundleSource(ref, wsRegistry, ctx.runtime.getEventSink(), undefined, {
         allowInsecureRemotes: ctx.runtime.getAllowInsecureRemotes(),
@@ -1249,7 +1264,7 @@ async function handleInstallRemoteOAuth(
     } catch (err) {
       startWarning = err instanceof Error ? err.message : String(err);
       log.warn(
-        `[connector-tools] composio eager-start failed for ${entry.name} in ${wsId} ` +
+        `[connector-tools] ${action.auth} eager-start failed for ${entry.name} in ${wsId} ` +
           `(install succeeded; click Connect to retry): ${startWarning}`,
       );
     }
