@@ -66,6 +66,7 @@ import { UserStore } from "../identity/user.ts";
 import { InstructionsStore } from "../instructions/index.ts";
 import { getModelByString, getProviderFromModel } from "../model/catalog.ts";
 import { buildModelResolver, resolveModelString } from "../model/registry.ts";
+import { registerBuiltinCredentialProviders } from "../oauth/minted-credential-provider.ts";
 import { installOAuthFetchDebug } from "../oauth/oauth-fetch-debug.ts";
 import { requestIdentityAttrs, withSpan } from "../observability/index.ts";
 import {
@@ -383,6 +384,14 @@ export class Runtime {
 
   /** Create and start a runtime from config. */
   static async start(config: RuntimeConfig): Promise<Runtime> {
+    // Register built-in transport credential providers (e.g. `minted`) at the
+    // ONE composition root every entry point shares — serve, the no-subcommand
+    // TUI/headless boot, and the automation runner all reach here before
+    // startWorkspaceBundles. Idempotent (last-writer-wins); doing it here instead
+    // of per-entry-point avoids a provider-auth source failing to boot under any
+    // path that forgot to register.
+    registerBuiltinCredentialProviders();
+
     // Temporary OAuth token-exchange diagnostic (no-op unless
     // NB_DEBUG_OAUTH_EXCHANGE is set). Installed before any bundle OAuth so
     // it captures the agent's /token request + the vendor's raw response.

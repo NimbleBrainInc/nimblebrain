@@ -153,6 +153,20 @@ describe("createRemoteTransport — provider auth (minted)", () => {
 		).toThrow(/workspaceId/);
 	});
 
+	test("throws a clear error on a provider auth with no config (fail loud, not a cryptic undefined read)", () => {
+		process.env.NB_FLEET_AUTHORIZER_ISSUER = "https://authz.test";
+		// A malformed workspace.json `{ type: "provider", provider: "minted" }` with
+		// no `config` (the TS type requires it; JSON config can omit it).
+		const noConfig = { auth: { type: "provider" as const, provider: "minted" } } as unknown as Parameters<
+			typeof createRemoteTransport
+		>[1];
+		expect(() =>
+			createRemoteTransport(new URL("https://artifacts.test/mcp"), noConfig, undefined, {
+				workspaceId: "ws_smoke",
+			}),
+		).toThrow(/config object/);
+	});
+
 	test("throws when NB_FLEET_AUTHORIZER_ISSUER is unset", () => {
 		delete process.env.NB_FLEET_AUTHORIZER_ISSUER;
 		expect(() =>

@@ -33,6 +33,11 @@ export const mintedCredentialProvider: TransportCredentialProvider = {
         "minted transport credential requires a workspaceId (the connection's workspace dimension)",
       );
     }
+    if (config === null || typeof config !== "object") {
+      throw new Error(
+        'minted transport credential requires a config object ({ audience, scope }); got a `provider` auth with no `config`',
+      );
+    }
     const issuer =
       (typeof config.issuer === "string" && config.issuer) ||
       process.env.NB_FLEET_AUTHORIZER_ISSUER;
