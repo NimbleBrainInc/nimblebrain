@@ -103,6 +103,83 @@ describe("coerceInputForSchema — nested array recovery", () => {
   });
 });
 
+describe("coerceInputForSchema — scalar string recovery", () => {
+  // Mirrors the real failure: automations__runs `limit` is Type.Number, the
+  // model sent "5", and validation rejected the whole call.
+  it("coerces a stringified number for a number param", () => {
+    const schema = {
+      type: "object" as const,
+      properties: { limit: { type: "number" } },
+    };
+    expect(coerceInputForSchema({ limit: "5" }, schema)).toEqual({ limit: 5 });
+  });
+
+  it("coerces a stringified integer for an integer param", () => {
+    const schema = {
+      type: "object" as const,
+      properties: { top: { type: "integer" } },
+    };
+    expect(coerceInputForSchema({ top: "30" }, schema)).toEqual({ top: 30 });
+  });
+
+  it("rejects a non-integer string for an integer param (left for the validator)", () => {
+    const schema = {
+      type: "object" as const,
+      properties: { top: { type: "integer" } },
+    };
+    expect(coerceInputForSchema({ top: "30.5" }, schema)).toEqual({ top: "30.5" });
+  });
+
+  it("coerces stringified booleans for a boolean param", () => {
+    const schema = {
+      type: "object" as const,
+      properties: { enabled: { type: "boolean" } },
+    };
+    expect(coerceInputForSchema({ enabled: "true" }, schema)).toEqual({ enabled: true });
+    expect(coerceInputForSchema({ enabled: "false" }, schema)).toEqual({ enabled: false });
+  });
+
+  it("leaves a non-numeric string for a number param (validator surfaces it)", () => {
+    const schema = {
+      type: "object" as const,
+      properties: { limit: { type: "number" } },
+    };
+    expect(coerceInputForSchema({ limit: "abc" }, schema)).toEqual({ limit: "abc" });
+  });
+
+  it("does NOT retype a value the schema accepts as a string", () => {
+    const schema = {
+      type: "object" as const,
+      properties: { id: { type: "string" } },
+    };
+    expect(coerceInputForSchema({ id: "42" }, schema)).toEqual({ id: "42" });
+  });
+
+  it("does NOT coerce inside a string|number union (string branch accepts it)", () => {
+    const schema = {
+      type: "object" as const,
+      properties: { val: { anyOf: [{ type: "string" }, { type: "number" }] } },
+    };
+    expect(coerceInputForSchema({ val: "5" }, schema)).toEqual({ val: "5" });
+  });
+
+  it("recovers a stringified number through a Pydantic Optional[int] union", () => {
+    const schema = {
+      type: "object" as const,
+      properties: { limit: { anyOf: [{ type: "integer" }, { type: "null" }] } },
+    };
+    expect(coerceInputForSchema({ limit: "5" }, schema)).toEqual({ limit: 5 });
+  });
+
+  it("leaves an already-correct number untouched (idempotent)", () => {
+    const schema = {
+      type: "object" as const,
+      properties: { limit: { type: "number" } },
+    };
+    expect(coerceInputForSchema({ limit: 5 }, schema)).toEqual({ limit: 5 });
+  });
+});
+
 describe("coerceInputForSchema — depth and edge cases", () => {
   it("recovers a doubly-nested string-encoded object", () => {
     const schema = {
