@@ -8,23 +8,27 @@
  * ## Network failure ≠ auth failure
  *
  * A 401 means the access token expired; the cure is a refresh. But the
- * refresh request itself can fail two very different ways, and only ONE of
- * them means the session is over:
+ * refresh request itself can fail several ways, and only ONE of them means
+ * the session is over:
  *
- * - **Rejected** — the refresh endpoint responded with a non-OK status (the
- *   server returns 401 when the refresh token is expired/revoked/reused).
- *   The session is genuinely dead → log out.
- * - **Unavailable** — the refresh request never got a response: it threw at
- *   the transport layer (connection dropped, TLS reset, a roaming hand-off
- *   between networks). The session may be perfectly valid — we just couldn't
- *   reach the server this instant → do NOT log out. Surface the original 401
- *   so the caller can retry; the next attempt will refresh cleanly.
+ * - **Rejected** — the refresh endpoint responded **401**. That is the only
+ *   status that means the refresh token is expired/revoked/reused (the server
+ *   returns `refresh_failed` / `no_refresh_token` as 401). The session is
+ *   genuinely dead → log out.
+ * - **Unavailable** — anything else: the request threw at the transport layer
+ *   (connection dropped, TLS reset, a roaming hand-off between networks), OR it
+ *   reached the server but came back non-401 — a 5xx/429 from the ingress
+ *   during a rolling deploy, a proxy/captive-portal interstitial, a WAF 403.
+ *   None of those mean the session is dead; we just couldn't refresh this
+ *   instant → do NOT log out. Surface the original 401 so the caller can retry;
+ *   the next attempt will refresh cleanly.
  *
- * Collapsing both into "logged out" (the historical `.catch(() => false)`)
- * meant a single dropped refresh POST on a flaky/mobile connection bounced the
- * user to the sign-in screen mid-session even though nothing was wrong with
- * their session. Transport failures are also retried a couple times before we
- * give up, to ride out brief blips without surfacing an error at all.
+ * Collapsing all of these into "logged out" (the historical `.catch(() => false)`,
+ * and then a naive `res.ok ? … : rejected`) bounced users to the sign-in screen
+ * mid-session over a single dropped or 5xx'd refresh POST — exactly the
+ * mobile/proxy/deploy conditions this module exists to survive. Unavailable
+ * outcomes are also retried a couple times before we give up, to ride out brief
+ * blips without surfacing an error at all.
  */
 
 /** How many times to re-attempt a refresh that failed at the transport layer. */
@@ -37,9 +41,9 @@ const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout
 /**
  * Outcome of a refresh attempt:
  * - `refreshed`   — server issued a new token; retry the original request.
- * - `rejected`    — server refused the refresh token; the session is dead.
- * - `unavailable` — the request never reached the server (transient transport
- *                   failure); the session is likely still valid.
+ * - `rejected`    — server returned 401: the refresh token is dead → log out.
+ * - `unavailable` — transient: a thrown fetch OR any non-401 server response
+ *                   (5xx/429/403/…); the session is likely still valid.
  */
 type RefreshOutcome = "refreshed" | "rejected" | "unavailable";
 
@@ -62,8 +66,8 @@ export interface FetchWithRefresh {
   /**
    * Attempt a token refresh. Exposed for SSE modules that manage their own
    * fetch. Returns true only on a successful refresh; both a server rejection
-   * and a transport failure return false (the SSE caller stops the stream and
-   * its own backoff loop reconnects — it never logs out directly).
+   * and a transient failure return false, on which the SSE caller stops the
+   * stream and surfaces an error — it never logs out directly.
    */
   tryRefresh(): Promise<boolean>;
 }
@@ -77,7 +81,19 @@ export function createFetchWithRefresh(options: FetchWithRefreshOptions): FetchW
   async function attemptRefresh(): Promise<RefreshOutcome> {
     try {
       const res = await fetchFn(refreshUrl, { method: "POST", credentials: "include" });
-      return res.ok ? "refreshed" : "rejected";
+      if (res.ok) return "refreshed";
+      // ONLY an explicit 401 means the session is over — the refresh endpoint
+      // returns 401 (`refresh_failed` / `no_refresh_token`) when the refresh
+      // token is expired/revoked/reused, and that is the *only* status that
+      // signals a dead session. Everything else that reaches the server is
+      // transient: a 5xx/429 from the ingress during a rolling deploy, a proxy
+      // interstitial, a WAF 403. Treating those as `rejected` would log valid
+      // users out — the same spurious logout this module exists to prevent,
+      // just via an HTTP error instead of a thrown fetch. So: 401 → dead,
+      // anything else server-reachable-but-not-401 → transient (retry, keep
+      // the session).
+      if (res.status === 401) return "rejected";
+      return "unavailable";
     } catch {
       return "unavailable";
     }

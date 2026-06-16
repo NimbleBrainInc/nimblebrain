@@ -38,11 +38,11 @@ describe("fetchWithRefresh", () => {
     expect(callCount).toBe(2); // original + retry
   });
 
-  test("calls onAuthError when refresh fails", async () => {
+  test("calls onAuthError when refresh is rejected with 401 (token dead)", async () => {
     let authErrorCalled = false;
     const fakeFetch = async (input: string | URL | Request) => {
       const url = typeof input === "string" ? input : input.toString();
-      if (url === "/refresh") return res(401); // refresh fails
+      if (url === "/refresh") return res(401); // 401 = refresh token expired/revoked
       return res(401);
     };
 
@@ -57,6 +57,65 @@ describe("fetchWithRefresh", () => {
     const r = await fetcher("/api/data");
     expect(r.status).toBe(401);
     expect(authErrorCalled).toBe(true);
+  });
+
+  // A refresh that REACHES the server but comes back non-401 (5xx during a
+  // rolling deploy, 429, a WAF 403, a proxy interstitial) is transient, not a
+  // dead session. It must NOT log the user out — same thesis as the thrown
+  // path. Retried, then the original 401 is surfaced for the caller.
+  for (const status of [500, 502, 503, 429, 403]) {
+    test(`does NOT log out when refresh returns ${status} (transient server response)`, async () => {
+      let authErrorCalled = false;
+      let refreshAttempts = 0;
+      const fakeFetch = async (input: string | URL | Request) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url === "/refresh") {
+          refreshAttempts++;
+          return res(status);
+        }
+        return res(401);
+      };
+
+      const fetcher = createFetchWithRefresh({
+        fetch: fakeFetch as typeof fetch,
+        refreshUrl: "/refresh",
+        onAuthError: () => {
+          authErrorCalled = true;
+        },
+      });
+
+      const r = await fetcher("/api/data");
+      expect(r.status).toBe(401);
+      expect(authErrorCalled).toBe(false);
+      expect(refreshAttempts).toBeGreaterThan(1); // retried, not given up after one
+    });
+  }
+
+  test("recovers when a 503'd refresh later succeeds — no logout", async () => {
+    let refreshAttempts = 0;
+    let apiCalls = 0;
+    let authErrorCalled = false;
+    const fakeFetch = async (input: string | URL | Request) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url === "/refresh") {
+        refreshAttempts++;
+        return refreshAttempts === 1 ? res(503) : res(200); // deploy finishes mid-retry
+      }
+      apiCalls++;
+      return apiCalls === 1 ? res(401) : res(200);
+    };
+
+    const fetcher = createFetchWithRefresh({
+      fetch: fakeFetch as typeof fetch,
+      refreshUrl: "/refresh",
+      onAuthError: () => {
+        authErrorCalled = true;
+      },
+    });
+
+    const r = await fetcher("/api/data");
+    expect(r.status).toBe(200);
+    expect(authErrorCalled).toBe(false);
   });
 
   test("calls onAuthError when retry still returns 401", async () => {
