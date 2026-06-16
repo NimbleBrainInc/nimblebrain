@@ -130,11 +130,12 @@ export function createOAuthRefreshFetch(options: OAuthRefreshFetchOptions = {}):
   const sleep = options.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const rng = options.rng ?? Math.random;
 
-  return async (url, init) => {
-    if (!isRefreshGrant(init)) {
-      return doFetch(url, init);
-    }
-
+  // The (retrying) refresh POST, run once. A thrown fetch is network-level
+  // (connection drop, TLS reset, DNS, abort) — always transient; a transient
+  // response (5xx/429/transient OAuth code) is retried within budget. On
+  // exhaustion the last response is returned / the last error re-thrown so the
+  // SDK sees a real failure and its reauth path can fire.
+  const refreshWithRetry = async (url: string | URL, init?: RequestInit): Promise<Response> => {
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       const isLast = attempt >= maxAttempts;
       try {
@@ -150,9 +151,6 @@ export function createOAuthRefreshFetch(options: OAuthRefreshFetchOptions = {}):
         }
         return res;
       } catch (err) {
-        // A thrown fetch is a network-level failure (connection drop, TLS
-        // reset, DNS, abort) — always transient. Retry within budget, then
-        // re-throw so the SDK sees a real failure on exhaustion.
         if (isLast) throw err;
         const delay = backoffDelayMs(attempt, baseDelayMs, rng);
         log.warn(
@@ -164,5 +162,49 @@ export function createOAuthRefreshFetch(options: OAuthRefreshFetchOptions = {}):
     }
     // Unreachable: the final attempt either returns or throws above.
     throw new Error("oauth refresh fetch: retry loop exited without result");
+  };
+
+  // Run the refresh once and snapshot the response body into a buffer, so every
+  // coalesced caller can be handed an independent, fully-readable `Response`
+  // (the SDK's `auth()` reads the body on each caller's own flow). Token
+  // responses are small JSON, so buffering is trivial.
+  const refreshOnceSnapshot = async (
+    url: string | URL,
+    init?: RequestInit,
+  ): Promise<() => Response> => {
+    const res = await refreshWithRetry(url, init);
+    const body = await res.arrayBuffer();
+    const responseInit: ResponseInit = {
+      status: res.status,
+      statusText: res.statusText,
+      headers: res.headers,
+    };
+    return () => new Response(body, responseInit);
+  };
+
+  // Single-flight scope: this wrapper is created once per transport
+  // (`createRemoteTransport`), and one transport speaks for exactly one
+  // (workspace, connector) token. So every concurrent refresh POST that reaches
+  // it refreshes the SAME credential — one nullable in-flight slot is the
+  // correct coalescing scope, no keying needed.
+  let inFlight: Promise<() => Response> | null = null;
+
+  return async (url, init) => {
+    if (!isRefreshGrant(init)) {
+      return doFetch(url, init);
+    }
+    // Coalesce concurrent refreshes. The engine runs a turn's tool calls in
+    // parallel, so on token expiry N calls 401 at once and would otherwise each
+    // fire their own refresh POST — an IdP rate-limit storm, and on rotating
+    // providers a race where the losers get `invalid_grant` (a spurious dead
+    // credential). One upstream attempt serves them all; awaiters get an
+    // independent snapshot of its result.
+    if (!inFlight) {
+      inFlight = refreshOnceSnapshot(url, init).finally(() => {
+        inFlight = null;
+      });
+    }
+    const makeResponse = await inFlight;
+    return makeResponse();
   };
 }

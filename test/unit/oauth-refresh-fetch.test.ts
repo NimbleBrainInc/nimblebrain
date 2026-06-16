@@ -142,3 +142,82 @@ describe("createOAuthRefreshFetch", () => {
     expect(calls()).toBe(1);
   });
 });
+
+// Single-flight: N parallel tool calls hitting 401 on the same expired token
+// (engine runs a turn's tool calls via Promise.all) must collapse into ONE
+// upstream refresh POST — otherwise the IdP rate-limits the burst and, on
+// rotating providers, the losers get invalid_grant (a spurious dead credential).
+describe("createOAuthRefreshFetch single-flight", () => {
+  // Each call returns a distinct token so we can prove all coalesced callers
+  // received the result of the SAME upstream refresh.
+  function countingTokenFetch() {
+    let calls = 0;
+    const impl = (_url: string | URL, _init?: RequestInit): Promise<Response> => {
+      calls++;
+      return Promise.resolve(
+        new Response(JSON.stringify({ access_token: `tok_${calls}` }), { status: 200 }),
+      );
+    };
+    return { impl, calls: () => calls };
+  }
+
+  it("collapses concurrent refreshes into one upstream POST; all get the same token", async () => {
+    const { impl, calls } = countingTokenFetch();
+    const wrapped = createOAuthRefreshFetch({ fetchImpl: impl, ...fast });
+
+    const results = await Promise.all(
+      Array.from({ length: 5 }, () => wrapped(TOKEN_URL, refreshInit())),
+    );
+
+    expect(calls()).toBe(1); // one upstream refresh served all 5 callers
+    // Each caller's Response is independently readable (proves snapshot, not a
+    // shared single-use body) and carries the same token.
+    const tokens = await Promise.all(results.map((r) => r.json()));
+    for (const t of tokens) expect(t).toEqual({ access_token: "tok_1" });
+  });
+
+  it("does NOT coalesce a refresh that starts after the previous settled", async () => {
+    const { impl, calls } = countingTokenFetch();
+    const wrapped = createOAuthRefreshFetch({ fetchImpl: impl, ...fast });
+
+    const r1 = await wrapped(TOKEN_URL, refreshInit());
+    const r2 = await wrapped(TOKEN_URL, refreshInit()); // in-flight already cleared
+
+    expect(calls()).toBe(2);
+    expect(await r1.json()).toEqual({ access_token: "tok_1" });
+    expect(await r2.json()).toEqual({ access_token: "tok_2" });
+  });
+
+  it("shares ONE retry sequence across coalesced callers (transient then success)", async () => {
+    const fail = new Response("down", { status: 503 });
+    const ok = new Response(JSON.stringify({ access_token: "tok_ok" }), { status: 200 });
+    const { impl, calls } = makeFetch([fail, ok]);
+    const wrapped = createOAuthRefreshFetch({ fetchImpl: impl, ...fast });
+
+    const results = await Promise.all([
+      wrapped(TOKEN_URL, refreshInit()),
+      wrapped(TOKEN_URL, refreshInit()),
+      wrapped(TOKEN_URL, refreshInit()),
+    ]);
+
+    expect(calls()).toBe(2); // 503 then 200, shared — NOT 3 callers × 2 attempts
+    for (const r of results) expect(await r.json()).toEqual({ access_token: "tok_ok" });
+  });
+
+  it("fans a refresh failure out to all coalesced callers, with one shared attempt sequence", async () => {
+    const networkThrow = () => {
+      throw new TypeError("fetch failed");
+    };
+    const { impl, calls } = makeFetch([networkThrow]);
+    const wrapped = createOAuthRefreshFetch({ fetchImpl: impl, maxAttempts: 2, ...fast });
+
+    const settled = await Promise.allSettled([
+      wrapped(TOKEN_URL, refreshInit()),
+      wrapped(TOKEN_URL, refreshInit()),
+      wrapped(TOKEN_URL, refreshInit()),
+    ]);
+
+    for (const s of settled) expect(s.status).toBe("rejected");
+    expect(calls()).toBe(2); // one shared 2-attempt sequence, not 3 × 2 = 6
+  });
+});
