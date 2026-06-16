@@ -71,11 +71,12 @@ function readSkillDirEntries(dir: string, label: string, depth: number): Dirent[
     return readdirSync(dir, { withFileTypes: true });
   } catch (err) {
     const code = (err as NodeJS.ErrnoException)?.code ?? "unknown";
-    console.error(
+    log.error(
       `[skill] Could not read ${label} skills dir "${dir}" (${code})` +
         (depth === 0
           ? " — it contributes no skills this load"
           : ` at depth ${depth} — this subtree is skipped`),
+      { dir, label, depth, code },
     );
     return [];
   }
@@ -93,7 +94,7 @@ function parseSkillFileGuarded(path: string): Skill | null {
     return parseSkillFile(path);
   } catch (err) {
     const code = (err as NodeJS.ErrnoException)?.code ?? "unknown";
-    console.error(`[skill] Skipping unreadable skill file "${path}" (${code})`);
+    log.error(`[skill] Skipping unreadable skill file "${path}" (${code})`, { path, code });
     return null;
   }
 }
