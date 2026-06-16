@@ -73,7 +73,7 @@ function readSkillDirEntries(dir: string, label: string, depth: number): Dirent[
     console.error(
       `[skill] Could not read ${label} skills dir "${dir}" (${code})` +
         (depth === 0
-          ? " — the entire scope is empty for this load"
+          ? " — it contributes no skills this load"
           : ` at depth ${depth} — this subtree is skipped`),
     );
     return [];

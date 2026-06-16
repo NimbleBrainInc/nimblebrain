@@ -21,7 +21,7 @@
  * the engine.
  */
 
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -302,28 +302,22 @@ describe("loadScopedSkills — read failures are observable, not silent", () => 
 
     expect(skills).toHaveLength(0);
     expect(errors.some((e) => e.includes("[skill]") && e.includes("workspace"))).toBe(true);
-    expect(errors.some((e) => e.includes("entire scope is empty"))).toBe(true);
+    expect(errors.some((e) => e.includes("contributes no skills"))).toBe(true);
   });
 
-  test("a single unreadable skill file drops only that file, not the whole scope", () => {
+  test("a single unparseable skill file drops only that file, not the whole scope", () => {
     const dir = join(root, "ws-skills");
     mkdirSync(dir, { recursive: true });
     writeSkillFile(join(dir, "good.md"), "good");
-    const bad = join(dir, "bad.md");
-    writeSkillFile(bad, "bad");
-    chmodSync(bad, 0o000);
-
-    // Root can read 0o000 files, so the parse never throws there — skip the
-    // assertion rather than report a false pass.
-    const isRoot = typeof process.getuid === "function" && process.getuid() === 0;
-    if (isRoot) return;
+    // Malformed YAML frontmatter (unclosed flow mapping) → gray-matter throws
+    // on parse. uid-independent — exercises the per-file guard everywhere,
+    // including CI running as root (where a chmod 0o000 read-error would not).
+    writeFileSync(join(dir, "bad.md"), "---\nname: bad\nx: {unclosed\n---\nbody\n", "utf-8");
 
     const skills = loadScopedSkills(dir, "workspace");
 
     expect(skills.map((s) => s.manifest.name)).toEqual(["good"]);
     expect(errors.some((e) => e.includes("[skill]") && e.includes("bad.md"))).toBe(true);
-
-    chmodSync(bad, 0o644); // restore so afterEach cleanup can remove it
   });
 
   // loadSkillDir is the flat boot-time loader (builtin/core + the user-writable
@@ -339,22 +333,18 @@ describe("loadScopedSkills — read failures are observable, not silent", () => 
     expect(errors.some((e) => e.includes("[skill]") && e.includes("global"))).toBe(true);
   });
 
-  test("loadSkillDir: one unreadable file drops only that file, not the whole dir", () => {
+  test("loadSkillDir: one unparseable file drops only that file, not the whole dir", () => {
     const dir = join(root, "global-skills");
     mkdirSync(dir, { recursive: true });
     writeSkillFile(join(dir, "good.md"), "good");
-    const bad = join(dir, "bad.md");
-    writeSkillFile(bad, "bad");
-    chmodSync(bad, 0o000);
-
-    const isRoot = typeof process.getuid === "function" && process.getuid() === 0;
-    if (isRoot) return;
+    // Distinct malformed content from the scoped test above — gray-matter
+    // caches by raw input, so an identical bad string would hit the cache and
+    // return null (silently dropped) instead of throwing through the guard.
+    writeFileSync(join(dir, "bad.md"), "---\nname: bad-global\ny: [unclosed\n---\nbody\n", "utf-8");
 
     const skills = loadSkillDir(dir, "global");
 
     expect(skills.map((s) => s.manifest.name)).toEqual(["good"]);
     expect(errors.some((e) => e.includes("[skill]") && e.includes("bad.md"))).toBe(true);
-
-    chmodSync(bad, 0o644);
   });
 });
