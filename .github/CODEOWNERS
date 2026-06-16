@@ -1,1 +1,4 @@
 * @NimbleBrainInc/core
+
+# Documentation site (retarget to a docs team if one is created)
+/docs/ @NimbleBrainInc/core

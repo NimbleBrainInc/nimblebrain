@@ -1,0 +1,175 @@
+---
+title: CLI Overview
+description: Global flags, modes, and config resolution for the nb command-line interface.
+---
+
+The `nb` command is your primary interface to the NimbleBrain runtime. It starts interactive sessions, launches servers, manages bundles, and configures your workspace.
+
+## Usage
+
+```
+nb [command] [flags]
+```
+
+When you run `nb` without a command, it enters interactive mode (TUI or headless, depending on your terminal).
+
+## Commands
+
+| Command | Description |
+|---------|-------------|
+| *(default)* | Interactive TUI or headless pipe mode |
+| `serve` | Start the HTTP API server |
+| `dev` | Start development mode (API with watch + web HMR) |
+| `bundle` | Manage installed bundles |
+| `skill` | Inspect loaded skills |
+| `config` | Configure bundle settings |
+| `status` | Show workspace status |
+| `reload` | Hot-reload bundles and config |
+| `telemetry` | Manage anonymous usage telemetry |
+| `automation` | Manage scheduled automations |
+| `credential` (alias `creds`) | Manage workspace-scoped secrets (OAuth client secrets, API keys) |
+| `user` | User account management (no subcommands yet) |
+
+## Global flags
+
+These flags work with any command:
+
+| Flag | Description |
+|------|-------------|
+| `--config <path>` | Path to a `nimblebrain.json` config file |
+| `--workdir <dir>` | Working directory for data, logs, and conversations |
+| `--model <name>` | Override the default model (e.g., `claude-sonnet-4-6`) |
+| `--debug` | Enable verbose logging to stderr |
+| `--help` | Print help text and exit |
+
+### Getting help
+
+Pass `--help` to any command to see its usage and flags:
+
+```bash
+nb --help
+```
+
+```
+NimbleBrain Platform CLI
+
+Usage: nb [command] [flags]
+
+Commands:
+  (default)    Interactive TUI / headless mode
+  serve        Start HTTP API server
+  dev          Start dev mode (API with watch + web HMR)
+  bundle       Manage installed bundles
+  skill        Inspect loaded skills
+  config       Configure bundle settings
+  status       Show workspace status
+  reload       Hot-reload bundles and config
+  telemetry    Manage anonymous usage telemetry
+  automation   Manage scheduled automations
+  credential   Manage workspace-scoped secrets
+  user         User account management (no subcommands yet)
+
+Global flags:
+  --config <path>   Config file path
+  --workdir <dir>   Working directory
+  --model <name>    Override default model
+  --debug           Verbose logging
+
+Run 'nb <command> --help' for command-specific flags.
+```
+
+```bash
+nb serve --help
+```
+
+```
+Start HTTP API server
+
+Launches the NimbleBrain runtime and listens for HTTP requests.
+
+Usage: nb serve [flags]
+
+Flags:
+  --port <number>   Server port (default: 27247)
+  --config <path>   Config file path
+  --workdir <dir>   Working directory
+  --model <name>    Override default model
+  --debug           Verbose logging
+```
+
+## Three modes
+
+The CLI operates in one of three modes, determined automatically:
+
+### 1. TUI (interactive)
+
+When you run `nb` in a terminal with no piped input, it launches an Ink-based terminal UI with streaming output, inline tool call display, and a line editor.
+
+```bash
+nb
+```
+
+### 2. Headless (piped stdin)
+
+When stdin is piped (not a TTY), `nb` reads one message per line from stdin and writes responses to stdout. The session stays alive across all lines until EOF.
+
+```bash
+echo "What bundles are installed?" | nb
+```
+
+### 3. Subcommand
+
+When you pass a command name (`serve`, `dev`, `bundle`, etc.), that command runs and exits.
+
+```bash
+nb bundle list
+```
+
+### Mode detection logic
+
+The CLI detects which mode to use in this order:
+
+1. If the first positional argument matches a known command name, run that subcommand.
+2. If stdin is not a TTY (i.e., input is piped), run in headless mode.
+3. Otherwise, run in TUI mode.
+
+## Config resolution
+
+NimbleBrain loads its configuration from a `nimblebrain.json` file. The CLI resolves the config path using this priority:
+
+| Priority | Source | Path |
+|----------|--------|------|
+| 1 | `--config` flag | Exactly the path you specify |
+| 2 | `--workdir` flag | `<workdir>/nimblebrain.json` |
+| 3 | `NB_WORK_DIR` env var | `<NB_WORK_DIR>/nimblebrain.json` |
+| 4 | Default work directory | `~/.nimblebrain/nimblebrain.json` |
+
+All modes (interactive, `nb serve`, and `nb dev`) default to the same global work directory at `~/.nimblebrain`. `nb dev` spawns `nb serve` under the hood, so it inherits that default unless you override it with `--config`, `--workdir`, or `NB_WORK_DIR`.
+
+If no config file exists at the resolved path, NimbleBrain auto-creates one with defaults:
+
+```json title="nimblebrain.json"
+{
+  "$schema": "https://schemas.nimblebrain.ai/v1/nimblebrain-config.schema.json",
+  "version": "1",
+  "bundles": [],
+  "skills": []
+}
+```
+
+CLI flags override values from the config file. For example, `--model claude-sonnet-4-6` overrides whatever `defaultModel` is set in your config.
+
+## Exit codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Success |
+| 1 | Runtime error |
+| 2 | Usage error (bad flags, missing arguments) |
+
+## Related commands
+
+- [nb (Interactive)](/cli/interactive/) -- TUI and headless modes
+- [nb serve](/cli/serve/) -- production HTTP server
+- [nb dev](/cli/dev/) -- development mode
+- [nb credential](/cli/credential/) -- manage workspace-scoped secrets

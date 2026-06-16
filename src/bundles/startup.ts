@@ -24,6 +24,8 @@ import {
   type WorkspaceOAuthProviderOptions,
 } from "../tools/workspace-oauth-provider.ts";
 import { WorkspaceContext } from "../workspace/context.ts";
+import { resolveWorkspaceDisplayName } from "../workspace/workspace-store.ts";
+import { bundleHasStaticAuth } from "./bundle-auth.ts";
 import { extractBundleMeta } from "./defaults.ts";
 import { filterEnvForBundle } from "./env-filter.ts";
 import { validateManifest } from "./manifest.ts";
@@ -255,8 +257,14 @@ export async function startBundleSource(
     const serverName = ref.serverName ?? deriveServerName(ref.url);
     validateServerName(serverName);
     const sourceName = serverName;
-    // SSRF protection: validate URL before connecting
-    validateBundleUrl(new URL(ref.url), { allowInsecure: opts?.allowInsecureRemotes });
+    // SSRF protection: validate URL before connecting. Tenant-key sources are the
+    // operator-provisioned fleet rail (tenant-key auth cannot be set by a tenant),
+    // so they may reach in-cluster `.svc` services over plain HTTP — see
+    // `validateBundleUrl`'s `fleetInternal` path.
+    validateBundleUrl(new URL(ref.url), {
+      allowInsecure: opts?.allowInsecureRemotes,
+      fleetInternal: ref.transport?.auth?.type === "tenant-key",
+    });
     log.info(`[bundles] Starting remote bundle ${ref.url} as ${sourceName}...`);
 
     // Attach an OAuthClientProvider when no static auth is configured. The
@@ -302,7 +310,7 @@ export async function startBundleSource(
     };
 
     let authProvider: WorkspaceOAuthProvider | undefined;
-    const hasStaticAuth = ref.transport?.auth && ref.transport.auth.type !== "none";
+    const hasStaticAuth = bundleHasStaticAuth(ref);
     if (!hasStaticAuth) {
       if (!wsContext) {
         throw new Error(
@@ -369,8 +377,12 @@ export async function startBundleSource(
       // Boot path is workspace-scope only — user-scope bundles aren't
       // started at boot (they're loaded into a workspace's registry
       // on-demand when their user enters the workspace, see lifecycle).
+      // Human-readable workspace name for the vendor consent screen in
+      // place of the opaque wsId; best-effort, falls back to the id.
+      const ownerDisplayName = await resolveWorkspaceDisplayName(workDir, wsId);
       authProvider = new WorkspaceOAuthProvider({
         owner: { type: "workspace", wsId },
+        ...(ownerDisplayName ? { ownerDisplayName } : {}),
         serverName,
         workDir,
         workspaceContext: wsContext,

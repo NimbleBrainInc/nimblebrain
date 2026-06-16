@@ -1,0 +1,122 @@
+---
+title: Quickstart
+description: Get NimbleBrain running and chatting in 5 minutes with Docker Compose.
+---
+
+import { Steps, Aside } from '@astrojs/starlight/components';
+
+Get NimbleBrain running locally with Docker Compose. You need Docker and an [Anthropic API key](https://console.anthropic.com/).
+
+<Steps>
+
+1. **Create a config file**
+
+   Create `nimblebrain.json` in a new directory:
+
+   ```json title="nimblebrain.json"
+   {
+     "$schema": "https://schemas.nimblebrain.ai/v1/nimblebrain-config.schema.json",
+     "version": "1"
+   }
+   ```
+
+   Both `$schema` and `version` are part of the config. This minimal file starts NimbleBrain with no MCP apps installed. The agent still has built-in platform capabilities (home, conversations, files, automations, skills, usage). You install apps from the web UI in step 5 to give it domain-specific tools.
+
+   <Aside type="note">
+   Apps are not listed in `nimblebrain.json`. Per-workspace app installs live in `workspace.json`, which the runtime manages for you. The config file is for runtime settings (model, limits, features), not app inventory.
+   </Aside>
+
+2. **Create a Docker Compose file**
+
+   ```yaml title="docker-compose.yml"
+   services:
+     platform:
+       image: ghcr.io/nimblebraininc/nimblebrain:latest
+       restart: unless-stopped
+       volumes:
+         - workspace:/data
+         - ./nimblebrain.json:/data/nimblebrain.json:ro
+       environment:
+         - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+       networks:
+         - internal
+
+     web:
+       image: ghcr.io/nimblebraininc/nimblebrain-web:latest
+       restart: unless-stopped
+       ports:
+         - "27246:8080"
+       environment:
+         - PLATFORM_URL=http://platform:27247
+       depends_on:
+         platform:
+           condition: service_healthy
+       networks:
+         - internal
+
+   volumes:
+     workspace:
+
+   networks:
+     internal:
+   ```
+
+   The `platform` image runs the agent API on port 27247 (internal). The `web` image serves the UI and is published on port 27246.
+
+3. **Set your API key and start**
+
+   ```bash
+   export ANTHROPIC_API_KEY=sk-ant-api03-...
+   docker compose up
+   ```
+
+   You should see output like:
+
+   ```
+   ✔ Container quickstart-platform-1  Healthy
+   ✔ Container quickstart-web-1       Started
+   ```
+
+   The platform container reports healthy once `http://localhost:27247/v1/health` responds (checked internally). The web container then starts.
+
+4. **Open the web UI**
+
+   Go to [http://localhost:27246](http://localhost:27246).
+
+   There is no login screen by default. With no `instance.json` present, NimbleBrain runs in **dev mode** — requests are unauthenticated and you act as a single built-in user. This is the right setup for trying things out locally.
+
+   <Aside type="caution">
+   Dev mode has no authentication. Before exposing NimbleBrain to a network, configure a real auth adapter (`oidc` or `workos`) in `instance.json`. See [Installation](/installation) and the configuration reference.
+   </Aside>
+
+   Try sending a message:
+
+   ```
+   What can you help me with?
+   ```
+
+   The agent responds using its built-in platform capabilities. To give it domain-specific tools, install an app in the next step.
+
+5. **Install an app**
+
+   Apps come from two places: the in-app **connectors catalog** (remote MCP connectors with point-and-click OAuth) and the **mpak registry** (MCP server bundles).
+
+   Open the connectors catalog from workspace settings to browse and install connectors directly in the UI. You can also drive installs by chatting with the agent — it uses the `manage_connectors` tool to list the catalog and install a connector, and `manage_apps` to manage registry apps across the org:
+
+   ```
+   List the available connectors and install one for me
+   ```
+
+   Once an app is installed and running, its tools join the agent's namespace. Ask the agent to use them in plain language.
+
+</Steps>
+
+## What's next
+
+import { CardGrid, LinkCard } from '@astrojs/starlight/components';
+
+<CardGrid>
+  <LinkCard title="Installation" description="All install methods: Docker Compose or from source, plus auth setup" href="/installation" />
+  <LinkCard title="Core Concepts" description="Understand the agent loop, bundles, skills, and tools" href="/concepts" />
+  <LinkCard title="Installing Apps" description="Browse and install MCP bundles from the mpak registry" href="/using/installing-apps" />
+</CardGrid>

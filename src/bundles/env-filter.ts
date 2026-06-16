@@ -6,6 +6,8 @@
  * Operators can opt in specific vars per bundle via `allowedEnv`.
  */
 
+import { log } from "../cli/log.ts";
+
 /** Safe, non-secret vars that all bundles receive by default. */
 const DEFAULT_ALLOWLIST = new Set([
   "PATH",
@@ -59,7 +61,7 @@ export function filterEnvForBundle(
   if (bundleAllowedEnv) {
     for (const key of bundleAllowedEnv) {
       if (HARD_DENY.has(key)) {
-        console.warn(`[env-filter] Denied passing ${key} to bundle — hard-deny list`);
+        log.warn(`[env-filter] Denied passing ${key} to bundle — hard-deny list`);
         continue;
       }
       const val = processEnv[key];
@@ -73,7 +75,7 @@ export function filterEnvForBundle(
   if (manifestEnv) {
     for (const [key, val] of Object.entries(manifestEnv)) {
       if (HARD_DENY.has(key)) {
-        console.warn(`[env-filter] Denied manifest env ${key} — hard-deny list`);
+        log.warn(`[env-filter] Denied manifest env ${key} — hard-deny list`);
         continue;
       }
       result[key] = val;

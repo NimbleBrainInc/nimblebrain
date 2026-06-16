@@ -3,8 +3,10 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { LanguageModelV3, LanguageModelV3Message } from "@ai-sdk/provider";
+import { MetricsEventSink } from "../adapters/metrics-events.ts";
 import { NoopEventSink } from "../adapters/noop-events.ts";
 import { WorkspaceLogSink } from "../adapters/workspace-log-sink.ts";
+import { recordLlmUsage } from "../api/metrics.ts";
 import type { AutomationDomainContext } from "../bundles/automations/src/domain.ts";
 import { BundleLifecycleManager } from "../bundles/lifecycle.ts";
 import { deriveServerName } from "../bundles/paths.ts";
@@ -65,6 +67,7 @@ import { InstructionsStore } from "../instructions/index.ts";
 import { getModelByString, getProviderFromModel } from "../model/catalog.ts";
 import { buildModelResolver, resolveModelString } from "../model/registry.ts";
 import { installOAuthFetchDebug } from "../oauth/oauth-fetch-debug.ts";
+import { requestIdentityAttrs, withSpan } from "../observability/index.ts";
 import {
   createToolListAggregator,
   type ToolListAggregator,
@@ -79,7 +82,7 @@ import type {
 } from "../prompt/compose.ts";
 import { composeSystemPrompt } from "../prompt/compose.ts";
 import { ConnectorDirectory } from "../registries/directory.ts";
-import { RegistryStore } from "../registries/registry-store.ts";
+import { RegistryStore, warnIfCuratedCatalogEmpty } from "../registries/registry-store.ts";
 import { synthesizeBundleSkill } from "../skills/bundle-skills.ts";
 import {
   loadBuiltinSkills,
@@ -412,7 +415,10 @@ export class Runtime {
 
     // Create delegate tracker and include it in the event pipeline
     const delegateTracker = new DelegateTracker();
-    const sinkList: EventSink[] = [baseEvents, delegateTracker];
+    // Always-on, observe-only Prometheus counters. Process-local: increments in
+    // memory whether or not `/metrics` is scraped, so it's safe in a local
+    // `bun run dev` with no Prometheus/k8s.
+    const sinkList: EventSink[] = [baseEvents, delegateTracker, new MetricsEventSink()];
     if (eventStore) {
       sinkList.push(eventStore);
     }
@@ -912,6 +918,13 @@ export class Runtime {
         placementRegistry.register(sn, instance.ui.placements, wsId);
       }
     }
+
+    // Boot-time visibility: the locked curated registry is the platform's
+    // non-empty-Browse guarantee. Warn loudly if its resolved catalog
+    // path yields zero entries (missing/empty mount, mis-set
+    // NB_CURATED_CATALOG_DIR) so an empty Browse is diagnosable rather
+    // than silent.
+    await warnIfCuratedCatalogEmpty(rt.getRegistryStore());
 
     return rt;
   }
@@ -1761,8 +1774,13 @@ export class Runtime {
       }
     }
 
+    // Root span for the agent turn — the common chokepoint for both the HTTP
+    // and CLI entry points. Opened inside runWithRequestContext so the verified
+    // identity is in scope; the llm.call and tool.dispatch spans nest under it.
     const result = await runWithRequestContext(reqCtx, () =>
-      engine.run(engineConfig, systemPrompt, messages, tools),
+      withSpan("agent.turn", { "llm.model": model, ...requestIdentityAttrs() }, () =>
+        engine.run(engineConfig, systemPrompt, messages, tools),
+      ),
     );
 
     const usage: TurnUsage = {
@@ -1822,7 +1840,8 @@ export class Runtime {
       // The title call runs the `fast` slot outside the agentic loop; persist
       // its usage as an aux.usage event so it isn't invisible to cost accounting.
       const appendTitleUsage = store.appendEvent?.bind(store);
-      void generateTitle(titleModel, titleInput, result.output, (usage, llmMs) =>
+      void generateTitle(titleModel, titleInput, result.output, (usage, llmMs) => {
+        recordLlmUsage("title", titleSlot, usage);
         appendTitleUsage?.(conversation.id, {
           ts: new Date().toISOString(),
           type: "aux.usage",
@@ -1830,8 +1849,8 @@ export class Runtime {
           model: titleSlot,
           usage,
           llmMs,
-        }),
-      )
+        });
+      })
         .then(async (title) => {
           await store.update(conversation.id, { title });
           // `wsId: sessionWsId` (the owner's personal workspace) — NOT
@@ -1858,7 +1877,9 @@ export class Runtime {
           // Title generation is best-effort; a failed write must not crash
           // the chat. Common causes: model latency timeout (generateTitle),
           // or ENOENT on the conversation file (deleted concurrently).
-          console.error("[runtime] title generation failed:", err);
+          log.error("[runtime] title generation failed", {
+            error: err instanceof Error ? err.message : String(err),
+          });
         });
     }
 
@@ -2769,6 +2790,18 @@ export class Runtime {
   }
 
   /**
+   * Orchestrator self-heal hook (`OrchestratorRuntime.recoverWorkspaceSource`).
+   * Best-effort, cooldown-guarded re-registration of an installed source
+   * that went missing from a workspace registry — a failed credential
+   * respawn or a remote-OAuth teardown that removed it without re-adding.
+   * Delegates to the lifecycle manager and never throws; returns whether
+   * the source is registered after the attempt.
+   */
+  async recoverWorkspaceSource(wsId: string, sourceName: string): Promise<boolean> {
+    return this.lifecycle.tryRecoverSource(sourceName, wsId, this.getWorkDir());
+  }
+
+  /**
    * Resolve a kernel identity-scoped source by name. v1 set: `conversations`
    * (Files / Automations join when their data moves to identity ownership).
    * Returns `undefined` for an unknown or non-identity source. No workspace:
@@ -3204,11 +3237,15 @@ export class Runtime {
       summarizerContextTokens: getModelByString(fastSlot)?.limits.context,
       now: new Date().toISOString(),
       onEvent: (event) => appendEvent(conversationId, event),
-      onError: (err) => console.error("[runtime] history compaction failed:", err),
+      onError: (err) =>
+        log.error("[runtime] history compaction failed", {
+          error: err instanceof Error ? err.message : String(err),
+        }),
       // The summarizer runs the `fast` slot outside the agentic loop, so it
       // emits no llm.response. Persist its usage as an aux.usage event so the
       // fold's cost isn't invisible to the usage aggregator.
-      onUsage: (usage, llmMs) =>
+      onUsage: (usage, llmMs) => {
+        recordLlmUsage("compaction", fastSlot, usage);
         appendEvent(conversationId, {
           ts: new Date().toISOString(),
           type: "aux.usage",
@@ -3216,7 +3253,8 @@ export class Runtime {
           model: fastSlot,
           usage,
           llmMs,
-        }),
+        });
+      },
     });
     // No-op contract: the helper returns the SAME array reference when nothing
     // was compacted (below threshold or best-effort failure). A future helper

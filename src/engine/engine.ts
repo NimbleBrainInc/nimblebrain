@@ -267,7 +267,7 @@ export class AgentEngine {
       // so the cap can't be enforced strictly for agent-driven additions.
       // Surface the misconfiguration once at run start; behavior degrades
       // to "cap is soft, agent additions stick on top." See addTool below.
-      console.warn(
+      log.warn(
         `[engine] initial tools (${directTools.length}) exceed maxActiveTools (${maxActiveTools}); ` +
           `cap will be soft for this run. Reduce the initial tool set or raise maxActiveTools.`,
       );

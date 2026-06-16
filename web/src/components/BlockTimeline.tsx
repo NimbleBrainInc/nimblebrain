@@ -38,17 +38,27 @@ import type {
   ToolCallDisplay,
 } from "../hooks/useChat";
 import { useMinDisplayTime, type VisualStatus } from "../hooks/useMinDisplayTime";
+import { isDocumentArtifact } from "../lib/artifact-kind";
 import { formatDuration, stripServerPrefix } from "../lib/format";
 import {
   aggregateGroup,
-  describeCall,
   type DisplayDetail,
+  describeCall,
   type GroupDescription,
   type Tone,
   type ToolDescription,
 } from "../lib/tool-display";
+import { ArtifactChip } from "./ArtifactChip";
+import { ArtifactView } from "./ArtifactView";
 import { InlineAppView } from "./InlineAppView";
 import { ResourceLinkView } from "./ResourceLinkView";
+
+/** True for the host-resolved `artifact://` scheme (capability output read from
+ *  the data plane), distinct from `ui://` (app surfaces) and `files://`
+ *  (uploads). Routed through the sanitizing ArtifactRenderer registry. */
+function isArtifactUri(uri: string): boolean {
+  return uri.startsWith("artifact://");
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Data model
@@ -654,16 +664,47 @@ function ToolWidgets({ calls }: { calls: ReadonlyArray<ToolCallDisplay> }) {
         />
       ))}
       {resourceLinkCalls.flatMap((tc) =>
-        tc.resourceLinks!.map((link) => (
-          <ResourceLinkView
-            key={`${tc.id}:${link.uri}`}
-            appName={tc.appName!}
-            uri={link.uri}
-            name={link.name}
-            mimeType={link.mimeType}
-            description={link.description}
-          />
-        )),
+        tc.resourceLinks!.map((link) =>
+          // `artifact://` is the host-resolved capability-output scheme: the
+          // host reads it from the data plane as the viewing user (RLS) and the
+          // bytes are UNTRUSTED. Route it through ArtifactView → the sanitizing
+          // ArtifactRenderer registry. This is the generic artifact read path;
+          // it precedes the document/binary heuristics below, which are for the
+          // bundle-owned (files://, collateral://, …) resource_links.
+          isArtifactUri(link.uri) ? (
+            <ArtifactView
+              key={`${tc.id}:${link.uri}`}
+              appName={tc.appName!}
+              uri={link.uri}
+              name={link.name}
+              mimeType={link.mimeType}
+              description={link.description}
+            />
+          ) : // Document artifacts (markdown reports, long text) get a compact
+          // chip that opens the full document in the global ArtifactPanel —
+          // a 24KB research report is a document, not a chat message. Binary
+          // resources (PDF, images) keep their inline preview, where
+          // ResourceLinkView already picks the right HTML primitive per MIME.
+          isDocumentArtifact(link.mimeType) ? (
+            <ArtifactChip
+              key={`${tc.id}:${link.uri}`}
+              appName={tc.appName!}
+              uri={link.uri}
+              name={link.name}
+              mimeType={link.mimeType}
+              description={link.description}
+            />
+          ) : (
+            <ResourceLinkView
+              key={`${tc.id}:${link.uri}`}
+              appName={tc.appName!}
+              uri={link.uri}
+              name={link.name}
+              mimeType={link.mimeType}
+              description={link.description}
+            />
+          ),
+        ),
       )}
     </>
   );

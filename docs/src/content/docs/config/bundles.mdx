@@ -1,0 +1,247 @@
+---
+title: Bundle Configuration
+description: Configure named, local, and remote MCP bundles in workspace.json.
+---
+
+import { Tabs, TabItem, Aside } from '@astrojs/starlight/components';
+
+The `bundles` array lives in [`workspace.json`](/config/workspace-json/), **not** `nimblebrain.json`. Each workspace declares its own bundles; a `bundles` array placed at the top level of `nimblebrain.json` is silently stripped on load. This page documents the shape of a single bundle entry — the same shape whether the entry was written by hand, by the connectors install flow, or by the CLI.
+
+Each entry references a bundle from a registry by name, a local directory by path, or a remote MCP server by URL.
+
+NimbleBrain ships with no MCP bundles by default. Platform capabilities (home, conversations, files, settings, usage, automations) are built in as in-process tool sources — install bundles to give a workspace domain-specific tools.
+
+<Aside type="note">
+  Bundles are workspace-scoped. Two workspaces that install the same bundle spawn independent subprocesses with separate data directories. See [`workspace.json`](/config/workspace-json/) for where the array lives and how workspaces are managed.
+</Aside>
+
+## Bundle types
+
+Every bundle entry must include exactly one of `name`, `path`, or `url`.
+
+### Named bundles (registry)
+
+Install a bundle from a registered registry (mpak by default) by its scoped name.
+
+```json
+{
+  "bundles": [
+    { "name": "@nimblebraininc/tasks" },
+    { "name": "@nimblebraininc/postgres" }
+  ]
+}
+```
+
+NimbleBrain downloads the bundle, reads its manifest, spawns the MCP server process, and registers its tools.
+
+### Local bundles (path)
+
+Point to a bundle directory on the local filesystem. Paths are resolved relative to the config file location.
+
+```json
+{
+  "bundles": [
+    { "path": "../mcp-servers/hello" },
+    { "path": "/opt/bundles/my-custom-server" }
+  ]
+}
+```
+
+The directory must contain a valid MCPB `manifest.json` with an `mcp_config` section that tells NimbleBrain how to spawn the server process.
+
+### Remote bundles (url)
+
+Connect to an MCP server running at a remote URL. You must provide a `serverName` for display and tool namespacing.
+
+```json
+{
+  "bundles": [
+    {
+      "url": "https://mcp.example.com/mcp",
+      "serverName": "example",
+      "transport": {
+        "type": "streamable-http",
+        "auth": { "type": "bearer", "token": "sk-..." }
+      }
+    }
+  ]
+}
+```
+
+Remote bundles do not download or spawn a local process. Instead, NimbleBrain connects to the server over HTTP using the specified transport configuration.
+
+## Common fields
+
+These fields apply to all bundle types.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `env` | `object` | `{}` | Environment variables passed to the bundle process. Each key-value pair is a string. |
+| `protected` | `boolean` | `false` | When `true`, the bundle cannot be uninstalled through the connectors / apps management tools or the API. |
+| `trustScore` | `number \| null` | `null` | MTF trust score (0--100) recorded at install time. Set automatically by the install flow. |
+| `ui` | `object \| null` | `null` | UI metadata from the bundle manifest. Set automatically at install time. |
+
+### Passing environment variables
+
+Use `env` to inject secrets or configuration into a bundle process:
+
+```json
+{
+  "bundles": [
+    {
+      "name": "@nimblebraininc/postgres",
+      "env": {
+        "DATABASE_URL": "postgres://localhost:5432/mydb",
+        "PG_MAX_CONNECTIONS": "10"
+      },
+      "protected": true
+    }
+  ]
+}
+```
+
+<Aside type="tip">
+  For sensitive values (API keys, tokens, connection strings), don't put them in `env` here. Use [`nb config set -w <wsId>`](/cli/config/) or a host env var that matches the bundle's `mcp_config.env` declaration — see [Credentials](/config/credentials/) for the full picture.
+</Aside>
+
+### UI metadata
+
+The `ui` field is populated automatically when you install a bundle that declares UI metadata in its manifest. You do not need to set this manually.
+
+```json
+{
+  "ui": {
+    "name": "Tasks",
+    "icon": "clipboard",
+    "primaryView": {
+      "resourceUri": "ui://tasks/index.html"
+    }
+  }
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `ui.name` | `string` | Human-readable app name shown in the sidebar. |
+| `ui.icon` | `string` | Emoji or icon identifier. |
+| `ui.primaryView.resourceUri` | `string` | `ui://` resource URI for the app's full-page view. |
+
+## Remote transport configuration
+
+Remote bundles accept a `transport` object that controls how NimbleBrain connects to the server.
+
+```json
+{
+  "url": "https://mcp.example.com/mcp",
+  "serverName": "example",
+  "transport": {
+    "type": "streamable-http",
+    "auth": { "type": "bearer", "token": "sk-..." },
+    "headers": {
+      "X-Custom-Header": "value"
+    },
+    "reconnection": {
+      "maxRetries": 5,
+      "initialReconnectionDelay": 1000,
+      "maxReconnectionDelay": 30000
+    },
+    "sessionId": "resume-session-abc123"
+  }
+}
+```
+
+### Transport fields
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `type` | `"streamable-http"` \| `"sse"` | `"streamable-http"` | Transport protocol. Streamable HTTP is the default MCP transport. Use `"sse"` for servers that only support Server-Sent Events. |
+| `auth` | `object` | — | Authentication method. See [auth types](#auth-types). |
+| `headers` | `object` | `{}` | Custom HTTP headers sent with every request. Keys and values are strings. |
+| `reconnection` | `object` | — | Reconnection behavior. See [reconnection](#reconnection). |
+| `sessionId` | `string` | — | MCP session ID for resuming an existing session. |
+
+### Auth types
+
+<Tabs>
+  <TabItem label="Bearer token">
+    ```json
+    {
+      "auth": {
+        "type": "bearer",
+        "token": "sk-your-api-key"
+      }
+    }
+    ```
+
+    Sends an `Authorization: Bearer <token>` header with every request.
+  </TabItem>
+  <TabItem label="Custom header">
+    ```json
+    {
+      "auth": {
+        "type": "header",
+        "name": "X-API-Key",
+        "value": "your-api-key"
+      }
+    }
+    ```
+
+    Sends a custom header with every request. Use this for APIs that expect a non-standard auth header.
+  </TabItem>
+  <TabItem label="No auth">
+    ```json
+    {
+      "auth": {
+        "type": "none"
+      }
+    }
+    ```
+
+    No authentication headers are sent. Use this for servers on a private network or behind a VPN.
+  </TabItem>
+</Tabs>
+
+### Reconnection
+
+Control how NimbleBrain handles dropped connections to remote servers.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `maxRetries` | `number` | Maximum number of reconnection attempts before giving up. |
+| `initialReconnectionDelay` | `number` | Milliseconds to wait before the first retry. |
+| `maxReconnectionDelay` | `number` | Maximum milliseconds between retries (backs off exponentially up to this cap). |
+
+## Complete example
+
+A `workspace.json` `bundles` array with all three bundle types:
+
+```json
+{
+  "id": "ws_product",
+  "name": "Product",
+  "bundles": [
+    {
+      "name": "@nimblebraininc/postgres",
+      "env": { "DATABASE_URL": "postgres://localhost:5432/mydb" },
+      "protected": true
+    },
+    {
+      "path": "./my-local-server"
+    },
+    {
+      "url": "https://mcp.example.com/mcp",
+      "serverName": "example-remote",
+      "transport": {
+        "type": "streamable-http",
+        "auth": { "type": "bearer", "token": "sk-..." },
+        "headers": { "X-Tenant": "acme" },
+        "reconnection": {
+          "maxRetries": 3,
+          "initialReconnectionDelay": 1000,
+          "maxReconnectionDelay": 10000
+        }
+      }
+    }
+  ]
+}
+```

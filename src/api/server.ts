@@ -12,6 +12,7 @@ import { validateComposioConfig } from "../composio/sdk.ts";
 import type { IdentityProvider } from "../identity/provider.ts";
 import { DevIdentityProvider } from "../identity/providers/dev.ts";
 import { canonicalOrigins, webOrigin } from "../oauth/public-origin.ts";
+import { shutdownTracing } from "../observability/index.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import { HealthMonitor } from "../tools/health-monitor.ts";
 import { createApp } from "./app.ts";
@@ -307,28 +308,31 @@ export async function startServerWithShutdown(options: ServerOptions): Promise<v
   const handle = startServer(options);
   const { runtime } = options;
 
-  console.error(`[nimblebrain] HTTP server listening on port ${handle.port}`);
+  log.info(`[nimblebrain] HTTP server listening on port ${handle.port}`);
 
   let shuttingDown = false;
 
   const shutdown = async () => {
     if (shuttingDown) {
-      console.error("[nimblebrain] Forced shutdown.");
+      log.error("[nimblebrain] Forced shutdown.");
       process.exit(1);
     }
     shuttingDown = true;
-    console.error("[nimblebrain] Shutting down HTTP server... (press Ctrl+C again to force)");
+    log.info("[nimblebrain] Shutting down HTTP server... (press Ctrl+C again to force)");
 
     const safetyTimeout = setTimeout(() => {
-      console.error("[nimblebrain] Shutdown timed out after 10s, forcing exit.");
+      log.error("[nimblebrain] Shutdown timed out after 10s, forcing exit.");
       process.exit(1);
     }, 10_000);
 
     handle.stop(true);
     await runtime.shutdown();
+    // Flush any buffered spans before exit so the final window isn't dropped on
+    // pod termination (BatchSpanProcessor schedule is ~5s). No-op without export.
+    await shutdownTracing();
 
     clearTimeout(safetyTimeout);
-    console.error("[nimblebrain] Shutdown complete.");
+    log.info("[nimblebrain] Shutdown complete.");
     process.exit(0);
   };
 

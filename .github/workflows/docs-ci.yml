@@ -1,0 +1,41 @@
+name: Docs CI
+
+# Builds the docs site on PRs that touch docs/. The Astro build runs
+# starlight-links-validator, so broken internal links fail the check.
+# The job always runs (so it can be a required status check) but only does
+# work when docs/ actually changed.
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build docs (link-checked)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Detect docs changes
+        id: changes
+        env:
+          BASE: ${{ github.base_ref }}
+        run: |
+          git fetch origin "$BASE" --depth=1 --quiet
+          if git diff --name-only "origin/$BASE...HEAD" | grep -q '^docs/'; then
+            echo "docs=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "docs=false" >> "$GITHUB_OUTPUT"
+            echo "No docs/ changes — nothing to build."
+          fi
+
+      - uses: oven-sh/setup-bun@v2
+        if: steps.changes.outputs.docs == 'true'
+
+      - name: Install and build (fails on broken internal links)
+        if: steps.changes.outputs.docs == 'true'
+        run: cd docs && bun install --frozen-lockfile && bun run build

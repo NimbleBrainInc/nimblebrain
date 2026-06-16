@@ -1,0 +1,154 @@
+---
+title: Observability
+description: Tracing, structured logs, Prometheus metrics, health probes, and multi-replica session storage for a NimbleBrain deployment.
+---
+
+import { Steps, Tabs, TabItem, Aside } from '@astrojs/starlight/components';
+
+NimbleBrain emits vendor-neutral telemetry: OpenTelemetry traces over OTLP, structured JSON logs, and a Prometheus metrics endpoint. None of it requires infrastructure to run — with no collector configured, traces are simply not exported and trace ids still flow through logs for correlation. This page covers what to wire up when you run NimbleBrain in production.
+
+## Tracing (OpenTelemetry)
+
+The runtime wraps its hot paths in OpenTelemetry spans and exports them over OTLP/HTTP. It depends only on the open OTel and W3C tracecontext primitives, so you point it at any OTLP-compatible collector (the OpenTelemetry Collector, Grafana Tempo, Jaeger, Honeycomb, and so on).
+
+### Spans
+
+The runtime produces these spans today:
+
+| Span | Covers |
+|---|---|
+| `agent.turn` | One engine run (a full agent turn) |
+| `llm.call` | A single model stream |
+| `tool.dispatch` | An MCP tool dispatch |
+| HTTP server span | The inbound request; continues an upstream `traceparent` if present |
+
+Spans nest automatically and carry the verified request identity (`user_id`, `workspace_id`, `conversation_id`) plus the boot-time `tenant_id`. They **never** carry the user's display name, email, secrets, prompts, tool arguments or results, or file contents.
+
+### Enabling export
+
+Set `OTEL_EXPORTER_OTLP_ENDPOINT` to your collector's base URL. When it is unset, nothing is exported (the default — local `bun run dev` and OSS checkouts need no infrastructure).
+
+```yaml title="docker-compose.yml (platform service)"
+environment:
+  - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318
+  - NB_SERVICE_NAME=nimblebrain-runtime
+  - NB_TENANT_ID=acme
+```
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | unset | Collector base URL. Unset = no export; trace ids still exist for log correlation |
+| `NB_SERVICE_NAME` | `nimblebrain-runtime` | Service name stamped on every span and log line |
+| `NB_TENANT_ID` | unset | This deployment's tenant. A boot-time constant stamped on every span and log line — never read from a request header |
+
+<Aside type="note">
+`NB_TENANT_ID` is set once at process start (in multi-tenant deployments the chart injects it per pod). It is structurally unspoofable: it rides on the OTel Resource and the logger reads it once at boot, so no request can forge another tenant's id.
+</Aside>
+
+### Propagation
+
+Outbound calls that should extend a trace — minting a service token, fetching an authenticated remote MCP server — inject the active W3C `traceparent` so the trace continues across the hop. Inbound, the HTTP middleware continues any upstream `traceparent` it receives. No configuration is required; this is on whenever a span is active.
+
+## Structured logs
+
+By default the runtime logs pretty, colored lines to stderr for the local dev loop. Set `NB_LOG_FORMAT=json` to switch to one structured JSON object per line — this is what you want for deployed pods (the platform chart sets it for you).
+
+```yaml title="docker-compose.yml (platform service)"
+environment:
+  - NB_LOG_FORMAT=json
+```
+
+Each JSON line is auto-enriched with:
+
+| Field | Source |
+|---|---|
+| `service` | `NB_SERVICE_NAME` |
+| `tenant_id` | `NB_TENANT_ID` (boot-time, omitted in dev) |
+| `correlation_id` | The active trace id — pivot a log straight to its trace |
+| `user_id` / `workspace_id` / `conversation_id` | The verified request identity (omitted when not in a request) |
+
+Identity comes only from the verified request context, never the wire, and never includes the human display name. Logs stay on stderr, so Kubernetes captures them alongside stdout and stdout stays clean for JSON-RPC and piped output.
+
+## Prometheus metrics
+
+The runtime exposes a Prometheus exposition endpoint at the bare path `GET /metrics`:
+
+```bash
+curl http://platform:27247/metrics
+```
+
+A few properties worth knowing:
+
+- It is served at the **bare** `/metrics` path, not under `/v1`. The bundled `nimblebrain-web` Caddy proxy only forwards `/v1/*`, so `/metrics` is **not** reachable through the public web container — it is scraped in-cluster.
+- Like `/v1/health`, it is unauthenticated. It carries no per-user data and is meant to be reachable only inside the cluster.
+
+In Kubernetes, point a `ServiceMonitor` (or your scrape config) at the platform service's `/metrics` path. Do not expose it to the internet.
+
+## Health and readiness probes
+
+The platform serves a liveness/readiness endpoint at `GET /v1/health`. It is unauthenticated and returns the build identity plus the state of each installed bundle:
+
+```bash
+curl http://platform:27247/v1/health
+```
+
+```json
+{
+  "status": "ok",
+  "version": "1.2.3",
+  "buildSha": "abc1234",
+  "bundles": [
+    { "name": "@nimblebraininc/ipinfo", "state": "running" }
+  ]
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `status` | `"ok"` once the server is serving |
+| `version` | The platform version |
+| `buildSha` | The build commit SHA (`null` if not stamped) |
+| `bundles` | Each installed bundle and its lifecycle state |
+
+The Docker image already wires this into its `HEALTHCHECK` (`curl -f http://localhost:27247/v1/health`), and Compose gates the `web` service on it via `depends_on: condition: service_healthy`. In Kubernetes, use the same path for both `livenessProbe` and `readinessProbe`.
+
+<Aside type="note">
+There is no `uptime` field. Use `version` / `buildSha` to confirm which build is live and `bundles[].state` to confirm bundles started cleanly.
+</Aside>
+
+## Multi-replica session storage
+
+The `/mcp` endpoint allocates a stateful session per client (`Mcp-Session-Id`). At a single replica these live in process memory. To run more than one platform replica, the session **metadata** must be shared across pods through a registry, and requests must be routed back to the pod holding a session's transport.
+
+### Session store
+
+Select the session store with the `sessionStore` config block (or the env knobs below):
+
+| Store | When |
+|---|---|
+| `memory` | Single replica (default). Sessions live in process memory only |
+| `redis` | Multiple replicas. Session metadata is shared via Redis so any pod can recognize a session id |
+
+```json title="nimblebrain.json"
+{
+  "sessionStore": {
+    "type": "redis",
+    "url": "redis://nb-redis:6379"
+  }
+}
+```
+
+The registry stores only session metadata (`sessionId`, identity, workspace, timestamps) — never the live transport, which is process-bound. Routing a request to the pod that owns a session's transport is the load balancer's job (sticky routing on `Mcp-Session-Id`), not the registry's.
+
+### Session limits
+
+These apply regardless of store and tune the per-process transport map:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `MCP_MAX_SESSIONS` | `100` | Maximum concurrent MCP sessions per process. At the cap, a new `initialize` evicts the least-recently-used session rather than returning an error |
+| `MCP_SESSION_TTL_SECONDS` | `28800` (8h) | Idle session TTL. Drives both the per-process idle sweep and the registry TTL |
+
+<Aside type="caution">
+`sessionStore: "redis"` is necessary but **not sufficient** for `replicas > 1`. You also need session-affinity routing on `Mcp-Session-Id` (ALB `lb_cookie` stickiness or header-hash routing) and shared (RWX) storage for workspace data. Until those are in place, keep the platform at a single replica.
+</Aside>

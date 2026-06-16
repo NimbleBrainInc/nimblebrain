@@ -1,0 +1,128 @@
+---
+title: Settings & Preferences
+description: Customize your profile, manage your workspace, and configure organization-wide settings.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+NimbleBrain organizes settings by **scope** — what each setting affects:
+
+- **You** — your personal profile (theme, display name, timezone). Lives at `/profile`, reached from the **avatar menu** at the **top-left** of the sidebar.
+- **This Workspace** — settings for the workspace you're currently focused on (its name, members, instructions, app config, connectors, skills). Lives under `/w/<id>/settings/*`.
+- **Organization** — admin-only settings that affect every workspace (model defaults, the workspace roster, user management, org-wide usage). Lives under `/org/*`.
+
+Open profile or sign out from the **avatar menu** at the top-left. Open workspace and org settings from the workspace navigator and the workspace settings nav.
+
+## Your profile (`/profile`)
+
+Reach your profile any time from the **avatar menu** at the top-left of the sidebar — click your avatar, then **Profile settings**. The profile surface is tabbed.
+
+### General (`/profile/general`)
+
+- **Display Name** — how your name appears to teammates.
+- **Email** — your login email (read-only).
+- **Role** — your org-level role (read-only).
+- **Timezone** — used for scheduling and time-related responses.
+- **Theme** — System (follows your OS), Light, or Dark.
+
+Click **Save** after making changes.
+
+### Skills (`/profile/skills`)
+
+Your personal skills — prompt-composition guidance the agent picks up across all your workspaces.
+
+The avatar menu also has a **Sign out** action.
+
+## This Workspace
+
+This section reflects the workspace you're currently focused on. Switch workspaces from the navigator at the top-left of the sidebar; the workspace settings update to match.
+
+### General (`/w/<id>/settings/general`)
+
+- **Workspace name** — what shows up in the navigator and shared contexts.
+- **MCP Connection** — your workspace ID, copyable. Use it when wiring up external MCP clients (Claude Desktop, VS Code, Cursor). Note that the `/mcp` endpoint is identity-bound and does not require a workspace header. See [Connecting External Clients](/connect/external-clients).
+- **Workspace Instructions** — custom instructions injected into every conversation focused on this workspace, on top of any organization-wide policy. Workspace admins (or org admins/owners) can edit; everyone else reads.
+
+<Aside type="tip">
+  Workspace instructions are great for team conventions: tone for shared documents, default triage priorities, citation policies. The agent picks them up on every turn — no need to repeat them in chat.
+</Aside>
+
+### Members (`/w/<id>/settings/members`)
+
+The list of who belongs to this workspace and their role. Membership for any workspace can also be managed by organization admins from **Organization → Workspaces**.
+
+### Apps (`/w/<id>/settings/apps`)
+
+Per-bundle settings for the apps installed in this workspace. An app appears here only when its author registered a settings panel — otherwise the bundle has no settings UI to surface.
+
+Some apps support **custom instructions** of their own — saved guidance the agent picks up whenever you're using that app. When supported, the editor appears inside that app's settings panel; the app owns storage and validation, and the platform includes the saved text in the agent's system prompt on every turn. See the [bundle-author docs](/apps/custom-instructions/) for the other side of this.
+
+### Connectors (`/w/<id>/settings/connectors`)
+
+Browse and configure the workspace's connectors — point-and-click OAuth integrations and managed connectors. Install a connector here to make its tools available to the agent in this workspace.
+
+### Skills (`/w/<id>/settings/skills`)
+
+The skills available in this workspace.
+
+## Organization (admin only)
+
+Visible only to organization admins and owners. Hidden from regular members. These settings live under `/org/*`, outside any workspace URL.
+
+### Model (`/org/model`)
+
+Choose which AI models the agent uses across **every** workspace:
+
+- **Default model** — primary model for chat.
+- **Fast model** — cheaper, faster model for quick auxiliary tasks.
+- **Reasoning model** — most capable model for complex analysis.
+
+Plus runtime limits — **max iterations** and **max input/output tokens** — and the **Extended Thinking** control.
+
+The Extended Thinking modes are:
+
+- **Default** — adaptive for reasoning models, off otherwise.
+- **Off** — never reason.
+- **Adaptive** — the model decides per call.
+- **Enabled** — always reason. Enabling this reveals a **Thinking Budget Tokens** field (minimum 1024), which counts toward Max Output Tokens.
+
+Reasoning is billed as output tokens, and the agent's reasoning shows up in chat as a collapsible **Thought** chip. See [Chat](/using/chat#the-thoughts-panel).
+
+<Aside type="caution">
+  Model configuration is platform-wide. Changes affect every workspace and every user immediately. Restrict to org admins/owners.
+</Aside>
+
+### Workspaces (`/org/workspaces`)
+
+The org-wide workspace roster. Click into any workspace to manage its members, view its bundles, and see its metadata. Workspace creation, deletion, and cross-workspace member management live here.
+
+To edit a specific workspace's name or instructions, switch into it via the navigator and use **This Workspace → General**.
+
+### Users (`/org/users`)
+
+Manage user accounts at the organization level — change someone's org role or remove a user.
+
+### Usage (`/org/usage`)
+
+Organization-wide usage analytics:
+
+- **Cost over time** — spending across a chosen period.
+- **Token breakdown** — input, output, and cache usage.
+- **Model usage** — which models the agent is using and what each costs.
+- **Activity stats** — LLM calls, response times, conversation counts.
+
+<Aside type="note">
+  Usage is reported at the **organization** level only. There is no per-workspace usage tab.
+</Aside>
+
+## Custom-instruction layers
+
+Custom instructions stack from broad to narrow, and the agent reads them on every turn:
+
+1. **Organization** policy applies everywhere.
+2. **Workspace Instructions** (This Workspace → General) layer on top for the focused workspace.
+3. **App custom instructions** (This Workspace → Apps) apply when you're using that app.
+
+## Sidebar layout
+
+The sidebar collapses with the toggle on its right edge (or `⌘B` / `Ctrl-B`). Collapsing hides labels but keeps icons; expanding restores the full nav. Your avatar and the workspace navigator sit at the **top-left**; clicking the avatar opens a popover with **Profile settings** and **Sign out**.

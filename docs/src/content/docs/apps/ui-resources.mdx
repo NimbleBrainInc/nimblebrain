@@ -1,0 +1,189 @@
+---
+title: UI Resources
+description: Serve HTML views from your MCP server using the ui:// protocol.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+NimbleBrain apps serve UI as HTML pages through the `ui://` protocol. The platform proxies these resources from your MCP server and renders them in sandboxed iframes inside the web client.
+
+## How `ui://` works
+
+When your manifest declares a resource URI like `ui://dashboard`, NimbleBrain resolves it through the MCP resource protocol. Your MCP server registers a resource at `ui://dashboard` that returns HTML content. The web client fetches this HTML through the platform's resource proxy and renders it in an iframe.
+
+The flow:
+
+1. User navigates to your app (e.g., `/app/@myorg/my-app`).
+2. The web client requests `GET /v1/apps/my-app/resources/primary`.
+3. The platform resolves `"primary"` to your `primaryView.resourceUri`.
+4. The platform calls `resources/read` on your MCP server for that URI.
+5. The HTML response is returned to the web client and loaded into an iframe.
+6. The [MCP App Bridge](/apps/bridge) initializes via `postMessage`.
+
+## The `primaryView`
+
+The `primaryView` is the main HTML page for your app. Declare it in your manifest:
+
+```json
+{
+  "_meta": {
+    "ai.nimblebrain/host": {
+      "host_version": "1.0",
+      "name": "My App",
+      "icon": "database",
+      "primaryView": {
+        "resourceUri": "ui://dashboard"
+      }
+    }
+  }
+}
+```
+
+Your MCP server must register a resource handler for `ui://dashboard` that returns an HTML string.
+
+### Python (FastMCP)
+
+```python
+from mcp.server.fastmcp import FastMCP
+
+mcp = FastMCP("my-app")
+
+@mcp.resource("ui://dashboard")
+def dashboard() -> str:
+    return """
+    <!DOCTYPE html>
+    <html>
+    <head><meta charset="utf-8"><title>Dashboard</title></head>
+    <body>
+      <h1>My App Dashboard</h1>
+      <div id="app"></div>
+      <script>
+        window.addEventListener('message', (event) => {
+          const msg = event.data;
+          if (msg?.method === 'ui/initialize') {
+            document.getElementById('app').textContent = 'Connected!';
+          }
+        });
+      </script>
+    </body>
+    </html>
+    """
+```
+
+### TypeScript (MCP SDK)
+
+```typescript
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+
+const server = new McpServer({ name: "my-app", version: "1.0.0" });
+
+server.resource("dashboard", "ui://dashboard", async () => ({
+  contents: [{
+    uri: "ui://dashboard",
+    mimeType: "text/html",
+    text: `
+      <!DOCTYPE html>
+      <html>
+      <head><meta charset="utf-8"><title>Dashboard</title></head>
+      <body>
+        <h1>My App Dashboard</h1>
+      </body>
+      </html>
+    `
+  }]
+}));
+```
+
+## Resource proxy
+
+The platform API exposes app resources at:
+
+```
+GET /v1/apps/:name/resources/:path
+```
+
+| Parameter | Description |
+|-----------|-------------|
+| `:name` | The server name (derived from the bundle name). |
+| `:path` | The full path after `ui://` in your resource URI. |
+
+Resource URIs are independent of your app's package name. You can name them whatever makes sense for your domain:
+
+```python
+# Package: @nimblebraininc/synapse-crm
+# Resource URI doesn't need to include "synapse-crm"
+@mcp.resource("ui://crm/main")
+def crm_ui() -> str:
+    return "<html>...</html>"
+```
+
+```
+GET /v1/apps/synapse-crm/resources/crm/main
+```
+
+Returns the HTML with `Content-Type: text/html`.
+
+## The virtual `primary` path
+
+The path `primary` is special. It resolves to the `resourceUri` from the first placement in your manifest:
+
+```
+GET /v1/apps/synapse-crm/resources/primary
+→ reads ui://crm/main (from placement resourceUri)
+```
+
+This means apps don't need to know their own resource URI at runtime. The web client uses `primary` when loading the main view from a placement.
+
+## Serving multiple resources
+
+Your app can serve multiple HTML pages. Register each as a separate `ui://` resource:
+
+```python
+@mcp.resource("ui://crm/main")
+def main_view() -> str:
+    return "<html>...</html>"
+
+@mcp.resource("ui://crm/settings")
+def settings() -> str:
+    return "<html>...</html>"
+
+@mcp.resource("ui://crm/contact-detail")
+def contact_detail() -> str:
+    return "<html>...</html>"
+```
+
+Access them through the proxy:
+
+```
+GET /v1/apps/synapse-crm/resources/crm/main
+GET /v1/apps/synapse-crm/resources/crm/settings
+GET /v1/apps/synapse-crm/resources/crm/contact-detail
+```
+
+Use multiple resources when you need separate views for different [placements](/apps/placements) (e.g., a sidebar widget and a main view).
+
+## HTML resource guidelines
+
+Your HTML resources are rendered inside iframes. Keep these points in mind:
+
+- **Self-contained** — Each resource should be a complete HTML document with its own styles and scripts. There is no shared CSS or JS between resources.
+- **No external dependencies required** — You can include external scripts and stylesheets, but the resource must work within an iframe sandbox.
+- **Theme tokens** — Listen for `ui/initialize` and `ui/notifications/host-context-changed` to apply the host's CSS custom properties. See [MCP App Bridge](/apps/bridge) for the protocol.
+- **Responsive** — The iframe fills the available space. Design your UI to be fluid.
+
+<Aside type="tip">
+For inline or compact views, send `ui/notifications/size-changed` messages to tell the host your content dimensions. This prevents unnecessary scrollbars.
+</Aside>
+
+## Built-in views use the same path
+
+NimbleBrain's own surfaces — the home dashboard, conversation list, usage, files, and automations — use the exact same `ui://` pattern as third-party apps. There is no separate "core" code path. Each built-in is an **in-process MCP bundle**: it runs inside the platform process (over an in-memory transport) and registers `ui://` resources just like a subprocess bundle would.
+
+When the resource proxy receives a request for a built-in's view, it calls `resources/read` on that in-process bundle through the same dispatch path it uses for any other server:
+
+```
+GET /v1/apps/home/resources/primary   → home bundle's ui:// resource
+GET /v1/apps/files/resources/primary  → files bundle's ui:// resource
+```
+
+This means the built-ins and your app are governed by one contract. Anything the platform's own UI can do through `ui://` and the bridge, your app can do too.

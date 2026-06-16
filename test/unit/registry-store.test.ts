@@ -1,8 +1,25 @@
-import { describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { describe, expect, spyOn, test } from "bun:test";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { RegistryStore } from "../../src/registries/registry-store.ts";
+import { log } from "../../src/cli/log.ts";
+import {
+  RegistryStore,
+  warnIfCuratedCatalogEmpty,
+} from "../../src/registries/registry-store.ts";
+import { CONNECTOR_FIXTURE_DIR } from "../helpers/connector-fixtures.ts";
+
+/** Run `fn` with NB_CURATED_CATALOG_DIR set, restoring the prior value. */
+async function withCuratedDir(dir: string, fn: () => Promise<void>): Promise<void> {
+  const prev = process.env.NB_CURATED_CATALOG_DIR;
+  process.env.NB_CURATED_CATALOG_DIR = dir;
+  try {
+    await fn();
+  } finally {
+    if (prev === undefined) delete process.env.NB_CURATED_CATALOG_DIR;
+    else process.env.NB_CURATED_CATALOG_DIR = prev;
+  }
+}
 
 function freshStore(): { store: RegistryStore; dir: string; cleanup: () => void } {
   const dir = mkdtempSync(join(tmpdir(), "nb-regstore-"));
@@ -21,7 +38,8 @@ describe("RegistryStore", () => {
       expect(bundled?.enabled).toBe(true);
       expect(bundled?.locked).toBe(true);
       expect(bundled?.type).toBe("static");
-      expect(bundled?.url).toMatch(/connectors\/catalog\.yaml$/);
+      // Defaults to the minimal in-image curated catalog directory.
+      expect(bundled?.url).toMatch(/connectors\/curated$/);
       expect(mpak?.enabled).toBe(true);
       // Seeded mpak row carries no `url` — the SDK owns its default host.
       expect(mpak?.url).toBeUndefined();
@@ -31,6 +49,30 @@ describe("RegistryStore", () => {
     } finally {
       cleanup();
     }
+  });
+
+  test("curated registry url honors NB_CURATED_CATALOG_DIR override", async () => {
+    await withCuratedDir("/config/connectors", async () => {
+      const { store, cleanup } = freshStore();
+      try {
+        const bundled = (await store.list()).find((r) => r.id === "bundled-static");
+        expect(bundled?.url).toBe("/config/connectors");
+      } finally {
+        cleanup();
+      }
+    });
+  });
+
+  test("blank NB_CURATED_CATALOG_DIR falls back to the in-image default", async () => {
+    await withCuratedDir("   ", async () => {
+      const { store, cleanup } = freshStore();
+      try {
+        const bundled = (await store.list()).find((r) => r.id === "bundled-static");
+        expect(bundled?.url).toMatch(/connectors\/curated$/);
+      } finally {
+        cleanup();
+      }
+    });
   });
 
   test("persists changes across instances (file-backed)", async () => {
@@ -98,6 +140,85 @@ describe("RegistryStore", () => {
     }
   });
 
+  /** Write a registries.json seeding bundled-static at `url` (+ mpak). */
+  function seedRegistriesJson(dir: string, url: string): void {
+    writeFileSync(
+      join(dir, "registries.json"),
+      JSON.stringify({
+        registries: [
+          {
+            id: "bundled-static",
+            name: "Curated services",
+            type: "static",
+            enabled: true,
+            locked: true,
+            url,
+          },
+          { id: "mpak", name: "mpak.dev", type: "mpak", enabled: true },
+        ],
+      }),
+    );
+  }
+
+  test("resolves a broken persisted curated url to the in-image default (in-memory, no clobber)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nb-regstore-"));
+    try {
+      // A tenant seeded by an older image: registries.json persists a
+      // catalog path the new image no longer ships.
+      const stale = "/app/src/connectors/catalog.yaml";
+      seedRegistriesJson(dir, stale);
+      const store = new RegistryStore(dir);
+      const bundled = (await store.list()).find((r) => r.id === "bundled-static");
+      // Read-time resolution falls back to the in-image example.
+      expect(bundled?.url).toMatch(/connectors\/curated$/);
+      // Disk is NOT rewritten — the resolution is in-memory only, so a
+      // transient miss can't permanently overwrite the persisted value.
+      const onDisk = JSON.parse(readFileSync(join(dir, "registries.json"), "utf-8")) as {
+        registries: Array<{ id: string; url?: string }>;
+      };
+      expect(onDisk.registries.find((r) => r.id === "bundled-static")?.url).toBe(stale);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("preserves a valid hand-edited curated url (#247 direct-edit lever)", async () => {
+    // An operator points the curated registry at their own catalog dir
+    // by editing registries.json directly. With no env override, a path
+    // that still resolves must be honored, not replaced.
+    const custom = mkdtempSync(join(tmpdir(), "nb-custom-catalog-"));
+    writeFileSync(join(custom, "curated.yaml"), "servers: []\n");
+    const dir = mkdtempSync(join(tmpdir(), "nb-regstore-"));
+    try {
+      seedRegistriesJson(dir, custom);
+      const store = new RegistryStore(dir);
+      const bundled = (await store.list()).find((r) => r.id === "bundled-static");
+      expect(bundled?.url).toBe(custom);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      rmSync(custom, { recursive: true, force: true });
+    }
+  });
+
+  test("NB_CURATED_CATALOG_DIR overrides even a valid persisted url (env wins)", async () => {
+    // The Phase-2 deploy lever is authoritative: it must win over a
+    // persisted hand-edit, the same way NB_REGISTRIES beats disk.
+    const custom = mkdtempSync(join(tmpdir(), "nb-custom-catalog-"));
+    writeFileSync(join(custom, "curated.yaml"), "servers: []\n");
+    await withCuratedDir("/config/connectors", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "nb-regstore-"));
+      try {
+        seedRegistriesJson(dir, custom); // valid, but env must still win
+        const store = new RegistryStore(dir);
+        const bundled = (await store.list()).find((r) => r.id === "bundled-static");
+        expect(bundled?.url).toBe("/config/connectors");
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+    rmSync(custom, { recursive: true, force: true });
+  });
+
   test("creates the file on first write (no race with seed)", async () => {
     const { store, dir, cleanup } = freshStore();
     try {
@@ -105,6 +226,45 @@ describe("RegistryStore", () => {
       expect(existsSync(join(dir, "registries.json"))).toBe(true);
     } finally {
       cleanup();
+    }
+  });
+});
+
+describe("warnIfCuratedCatalogEmpty", () => {
+  test("warns when the curated catalog resolves to zero entries", async () => {
+    const empty = mkdtempSync(join(tmpdir(), "nb-empty-catalog-"));
+    const warn = spyOn(log, "warn").mockImplementation(() => {});
+    try {
+      await withCuratedDir(empty, async () => {
+        const { store, cleanup } = freshStore();
+        try {
+          await warnIfCuratedCatalogEmpty(store);
+          expect(warn).toHaveBeenCalled();
+          expect(warn.mock.calls.some((c) => String(c[0]).includes("0 entries"))).toBe(true);
+        } finally {
+          cleanup();
+        }
+      });
+    } finally {
+      warn.mockRestore();
+      rmSync(empty, { recursive: true, force: true });
+    }
+  });
+
+  test("stays quiet when the curated catalog has entries", async () => {
+    const warn = spyOn(log, "warn").mockImplementation(() => {});
+    try {
+      await withCuratedDir(CONNECTOR_FIXTURE_DIR, async () => {
+        const { store, cleanup } = freshStore();
+        try {
+          await warnIfCuratedCatalogEmpty(store);
+          expect(warn.mock.calls.some((c) => String(c[0]).includes("0 entries"))).toBe(false);
+        } finally {
+          cleanup();
+        }
+      });
+    } finally {
+      warn.mockRestore();
     }
   });
 });

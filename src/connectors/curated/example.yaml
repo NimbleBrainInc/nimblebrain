@@ -1,0 +1,48 @@
+# Minimal curated catalog shipped in the image.
+#
+# This is the in-image fallback for the locked `bundled-static`
+# ("Curated services") registry — just enough for a fresh / OSS / dev
+# install to have a non-empty Browse list and a working reference for
+# the `ServerDetail` wire shape (the upstream MCP registry schema,
+# ajv-validated against `schemas/server.schema.json`).
+#
+# It deliberately ships ONLY plain DCR entries. Production curation —
+# the full connector set, `auth: static` operator-setup entries, and
+# Composio-backed toolkits — is deployment configuration, not runtime
+# code: a deployment points `NB_CURATED_CATALOG_DIR` at a mounted
+# directory of catalog files, which replaces this example wholesale.
+#
+# `StaticSource` reads every `*.yaml`/`*.yml`/`*.json` in this directory
+# in sorted filename order and aggregates them into the one registry, so
+# additional example files can be dropped here without further wiring.
+
+servers:
+  - name: com.notion/mcp
+    title: Notion
+    description: Read & write workspace pages
+    version: "1.0.0"
+    icons:
+      - src: https://static.nimblebrain.ai/icons/notion.png
+        sizes: ["any"]
+    remotes:
+      - type: streamable-http
+        url: https://mcp.notion.com/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        auth: dcr
+        tags: [docs, knowledge]
+
+  - name: app.linear/mcp
+    title: Linear
+    description: Issues, projects, and product roadmaps
+    version: "1.0.0"
+    icons:
+      - src: https://static.nimblebrain.ai/icons/linear.png
+        sizes: ["any"]
+    remotes:
+      - type: streamable-http
+        url: https://mcp.linear.app/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        auth: dcr
+        tags: [issues, project-mgmt]

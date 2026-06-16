@@ -1,0 +1,197 @@
+---
+title: Environment Variables
+description: All environment variables that configure NimbleBrain behavior.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+NimbleBrain reads environment variables for model provider keys, server binding, public-origin resolution, rate limiting, MCP session limits, the Composio aggregator, and observability. This page lists every supported variable with its purpose, default, and precedence.
+
+<Aside type="note">
+  Authentication is **not** configured through an environment variable. Identity comes from `instance.json` auth adapters (`oidc` / `workos`); the absence of that file is dev mode. See [`instance.json`](/config/instance-json/) for the full auth model.
+</Aside>
+
+## Variable reference
+
+### Model providers
+
+A provider's API key can be supplied here or in `nimblebrain.json` under `providers.<name>.apiKey`. When the config field is omitted, the AI SDK falls back to the standard provider env var below.
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `ANTHROPIC_API_KEY` | For Anthropic models | — | Anthropic API key. Also settable via `providers.anthropic.apiKey`. |
+| `OPENAI_API_KEY` | For OpenAI models | — | OpenAI API key. Also settable via `providers.openai.apiKey`. |
+| `GOOGLE_GENERATIVE_AI_API_KEY` | For Google models | — | Google Gemini API key (the AI SDK's standard Google var). Also settable via `providers.google.apiKey`. |
+
+### Runtime & server
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `NB_WORK_DIR` | No | `~/.nimblebrain` | Working directory for runtime state (conversations, logs, workspaces, cache). Does **not** drive config-file discovery — see [config resolution](/config/nimblebrain-json/#config-resolution). Also passed to bundle subprocesses so they can locate workspace data. |
+| `PORT` | No | `27247` | HTTP server port. **Wins over** the `--port` CLI flag when both are set. |
+| `ALLOWED_ORIGINS` | No | — | Comma-separated additional CORS origins. The canonical origins (platform host, custom domain) are already trusted; this is for extra origins. |
+| `NB_CHAT_RATE_LIMIT` | No | `20` | Chat requests per minute per identity. |
+| `NB_TOOL_RATE_LIMIT` | No | `600` | Tool calls per minute per identity. |
+| `NB_MCP_RATE_LIMIT` | No | `300` | `/mcp` JSON-RPC requests per minute per identity. |
+| `NB_TIMEZONE` | No | `Pacific/Honolulu` | Default IANA timezone for time-aware features (e.g. automation schedules) when an identity has no timezone preference. |
+
+### Public origin and callbacks
+
+The platform builds every outward-facing URL (OAuth callbacks, post-login landing) from a single canonical public origin. Resolution order: `NB_PUBLIC_ORIGIN` → derived from `NB_PLATFORM_HOST` / `NB_CUSTOM_DOMAIN` → legacy `NB_API_URL` → `http://localhost:27247` (dev).
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `NB_PUBLIC_ORIGIN` | Recommended (production) | derived, else `http://localhost:27247` | **Canonical** public origin (scheme + host, no path). The explicit operator override — trusted as given. Used to build the OAuth callback `${NB_PUBLIC_ORIGIN}/v1/mcp-auth/callback` and the WorkOS / Composio callbacks. Must be a bare `https` origin (or `http` on a loopback host in dev); a value with a path/query throws at startup. |
+| `NB_PLATFORM_HOST` | No | — | Platform subdomain host (no scheme). Used to derive the canonical origin when `NB_PUBLIC_ORIGIN` is unset. Chart-forwarded in production. |
+| `NB_CUSTOM_DOMAIN` | No | — | Custom domain host. When set and canonical, becomes the derived public origin (custom domain wins). |
+| `NB_CUSTOM_DOMAIN_CANONICAL` | No | `true` | `"true"` / `"false"` only — anything else throws. When `"false"`, the custom domain is served but the platform host stays canonical. |
+| `NB_WEB_URL` | No | falls back to the canonical origin | User-facing SPA origin for post-OAuth browser returns. Only needed when the API and SPA are served from different origins (e.g. dev: API on :27247, SPA on :27246). |
+| `NB_API_URL` | No (**legacy**) | — | **Legacy** public-origin fallback for older deploys that set only this. Prefer `NB_PUBLIC_ORIGIN`. This is the only sanctioned reader; do not reintroduce it elsewhere. |
+
+### Registries
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `NB_REGISTRIES` | No | — | JSON array of registry configs that **completely overrides** the persisted `registries.json` for the lifetime of the process. Adds custom `static` / `mpak` / `mcp` registries without touching the pod filesystem. The locked bundled-static registry is re-pinned automatically. Read once at startup. See [Connectors Catalog → Operator override](/config/connectors-catalog/#operator-override). |
+
+### MCP sessions
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `MCP_MAX_SESSIONS` | No | `100` | Max concurrent live MCP sessions on `/mcp` per process. A well-formed initialize at capacity evicts the least-recently-used session and is admitted — it is never a 4xx. Non-positive / non-integer values are rejected with a warning and the default is used. |
+| `MCP_SESSION_TTL_SECONDS` | No | `28800` (8 h) | MCP session inactivity TTL in seconds. Each request resets the clock — actively-used sessions never expire. **Highest priority**, overriding [`sessionStore.ttlSeconds`](/config/nimblebrain-json/#sessionstore) in `nimblebrain.json`. Non-positive / non-integer values fall back to the default. |
+
+### Service-to-service & secrets
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `WORKOS_API_KEY` | When `auth.adapter: "workos"` and no `apiKey` in `instance.json` | — | WorkOS API key. Also settable via `instance.json → auth.apiKey`. |
+| `NB_INTERNAL_TOKEN` | No | — | Shared secret for service-to-service calls. Hard-denied to bundle subprocesses. |
+
+<Aside type="caution">
+  `NB_API_KEY` is **not** an authentication gate. It exists only as an entry in the bundle env-var deny-list — a name that is never forwarded to a bundle subprocess even if a manifest requests it. It does not enable, configure, or bypass auth. To configure auth, use [`instance.json`](/config/instance-json/).
+</Aside>
+
+### Composio aggregator
+
+Required only when the connectors catalog contains any `auth: composio` entries (Gmail, Outlook, …). See the [Composio operator guide](/deploy/composio/) for end-to-end setup.
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `COMPOSIO_API_KEY` | When the catalog has `auth: composio` entries | — | Platform-wide Composio API key. Read once at startup. Without it, the Composio integration reports "not configured" and installs of `auth: composio` entries fail. |
+| `COMPOSIO_<TOOLKIT>_AUTH_CONFIG_ID` | One per `auth: composio` entry | — | The `ac_…` id from the Composio dashboard for this toolkit's auth config. The variable name is declared by the catalog entry's `composio.authConfigEnv`. Example: `COMPOSIO_GMAIL_AUTH_CONFIG_ID=ac_xxx`. |
+| `COMPOSIO_API_BASE_URL` | No | `https://backend.composio.dev` | Override the Composio SDK base URL (self-hosted, staging). Must be `http(s)`. |
+| `NB_TENANT_ID` | When multi-tenant pods share a Composio account | — | Per-pod tenant identifier prepended to the wsId so two tenants never collide in Composio's namespace. **Required** in bouncer (multi-tenant) mode — startup fails without it. Single-tenant deployments can omit it. |
+| `COMPOSIO_MONITOR_ENABLED` | No | `true` when `COMPOSIO_API_KEY` is set | Kill switch for the connection-revalidation monitor. Set to `false` (case/whitespace-insensitive) to disable. Read once at startup. |
+| `COMPOSIO_MONITOR_INTERVAL_SECONDS` | No | `300` | Poll interval for the Composio connection monitor. Non-positive / unparseable values fall back to the default. |
+
+### Observability (OpenTelemetry + logs)
+
+Vendor-neutral. Trace ids always exist for log correlation; export only happens when an OTLP endpoint is configured, so local dev and OSS checkouts need no infrastructure.
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | No | — (no export) | OTLP collector base URL. Unset means spans are still created (for log correlation) but nothing is exported. |
+| `NB_SERVICE_NAME` | No | — | Overrides the service name stamped on spans and structured logs. |
+| `NB_TENANT_ID` | No | — | Boot-time resource attribute stamped on spans/logs as `tenant_id`. (Same var as the Composio multi-tenant prefix above.) |
+| `NB_LOG_FORMAT` | No | pretty | Set to `json` for structured JSON logs auto-enriched with `service`, `tenant_id`, `correlation_id` (the active trace id), and identity. Set by the chart in production. |
+| `NB_DEBUG` | No | — | Namespace-scoped hot-path debug logging (e.g. `NB_DEBUG=mcp,sse`). Read once at process start. |
+
+### Telemetry
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `NB_TELEMETRY_DISABLED` | No | — | Set to `1` to disable anonymous usage telemetry. |
+| `DO_NOT_TRACK` | No | — | Standard opt-out signal. Set to `1` to disable telemetry. Equivalent to `NB_TELEMETRY_DISABLED=1`. |
+| `POSTHOG_API_KEY` | No | — | Override the built-in PostHog key. Rarely needed. |
+
+## NB_PUBLIC_ORIGIN
+
+The canonical public origin of the deployment. Every OAuth callback URL the platform hands to a vendor is built from it:
+
+```
+${NB_PUBLIC_ORIGIN}/v1/mcp-auth/callback
+```
+
+Each OAuth app registered with a vendor (Asana, HubSpot, Gmail, …) must list this exact URL in its `redirect_uri` allow-list. A mismatch surfaces as a vendor-side `redirect_uri does not match` error at the moment a user clicks **Connect**.
+
+```bash
+export NB_PUBLIC_ORIGIN=https://nimblebrain.acme.com
+```
+
+The value must be a bare origin — scheme + host with no path, query, or fragment. A malformed value (a pasted full callback URL, an `http` origin on a non-loopback host) throws at startup rather than minting broken callbacks at first click.
+
+In dev (`bun run dev`) the default `http://localhost:27247` is correct without setting the variable. **In production, set this explicitly** (or supply `NB_PLATFORM_HOST` / `NB_CUSTOM_DOMAIN` for the chart to derive it). Pointing it at `localhost`, an internal cluster service name, or a stale staging URL produces confusing OAuth failures that look like vendor outages.
+
+<Aside type="tip">
+  The Set up modal in the UI shows the resolved redirect URI with a Copy button. Paste that exact string into the vendor portal.
+</Aside>
+
+## NB_WORK_DIR
+
+Sets the working directory where NimbleBrain stores runtime state.
+
+```bash
+export NB_WORK_DIR=/data/nimblebrain
+```
+
+The working directory contains `conversations/` (JSONL conversation files), `logs/`, `workspaces/<wsId>/`, `users/<userId>/`, `registries.json`, and `cache/`.
+
+`NB_WORK_DIR` sets the `workDir` runtime value (where state lives) and is forwarded to bundle subprocesses. It does **not** select which `nimblebrain.json` is loaded — config-file discovery is driven by `--config`, a project-local `.nimblebrain/`, and the command's default workdir. See [config resolution](/config/nimblebrain-json/#config-resolution).
+
+## ALLOWED_ORIGINS
+
+Adds origins to the CORS allowlist beyond the canonical ones (platform host and custom domain, which are trusted automatically).
+
+```bash
+export ALLOWED_ORIGINS=https://app.example.com,https://admin.example.com
+```
+
+Separate multiple origins with commas. Whitespace around each origin is trimmed.
+
+## Telemetry variables
+
+Either variable disables anonymous telemetry:
+
+```bash
+export NB_TELEMETRY_DISABLED=1
+export DO_NOT_TRACK=1
+```
+
+`DO_NOT_TRACK` follows the [Console Do Not Track](https://consoledonottrack.com/) standard. You can also disable telemetry via `telemetry.enabled: false` in `nimblebrain.json` or `nb telemetry off`.
+
+<Aside type="tip">
+  Use `nb telemetry status` to check whether telemetry is currently active and which method disabled it.
+</Aside>
+
+## Precedence summary
+
+When the same setting can be configured in multiple places, this is the resolution order (highest priority first):
+
+| Setting | Env var | CLI flag | Config file | Default |
+|---------|---------|----------|-------------|---------|
+| Working directory | `NB_WORK_DIR` (beats all) | `--workdir` | `workDir` | `~/.nimblebrain` |
+| Port | `PORT` (beats `--port`) | `--port` | `http.port` | `27247` |
+| MCP session TTL | `MCP_SESSION_TTL_SECONDS` (beats all) | — | `sessionStore.ttlSeconds` | `28800` |
+| Public origin | `NB_PUBLIC_ORIGIN` | — | derived from host facts, else legacy `NB_API_URL` | `http://localhost:27247` |
+| Anthropic key | `ANTHROPIC_API_KEY` | — | `providers.anthropic.apiKey` | — |
+| Telemetry | `NB_TELEMETRY_DISABLED` / `DO_NOT_TRACK` | `nb telemetry off` | `telemetry.enabled` | Enabled |
+
+## Example: production environment
+
+A typical production setup:
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-api03-...
+export NB_PUBLIC_ORIGIN=https://app.example.com
+export NB_WORK_DIR=/data/nimblebrain
+export NB_TELEMETRY_DISABLED=1
+# Composio connectors (only if the catalog uses auth: composio)
+export COMPOSIO_API_KEY=...
+export COMPOSIO_GMAIL_AUTH_CONFIG_ID=ac_...
+# Observability
+export NB_LOG_FORMAT=json
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318
+```
+
+Authentication is configured separately in [`instance.json`](/config/instance-json/), not via environment variables.

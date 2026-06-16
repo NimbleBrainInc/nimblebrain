@@ -5,6 +5,7 @@
  * Run `bun run sync-models` to refresh.
  */
 
+import { log } from "../cli/log.ts";
 import catalogData from "./catalog-data.json";
 
 // ============================================================================
@@ -79,7 +80,7 @@ const idToProvider: Map<string, string> = (() => {
     for (const id of Object.keys(p.models)) {
       const existing = map.get(id);
       if (existing) {
-        console.warn(
+        log.warn(
           `[catalog] Duplicate model id "${id}" appears in providers "${existing}" and "${provider}". ` +
             `findProviderForModelId will return "${existing}" (first seen); routing of the bare id ` +
             `should not depend on iteration order. Qualify with "<provider>:" or rename one entry.`,

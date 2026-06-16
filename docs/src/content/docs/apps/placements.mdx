@@ -1,0 +1,184 @@
+---
+title: Placements & Navigation
+description: Control where your app appears in the NimbleBrain sidebar and how users navigate to it.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Placements control where your app's UI appears in the NimbleBrain shell layout. Each placement maps a `ui://` resource to a **slot** in the shell and optionally registers a route for navigation.
+
+## Slots
+
+The shell layout has the following slots:
+
+| Slot | Location | Description |
+|------|----------|-------------|
+| `sidebar` | Left sidebar, top zone | Scrollable navigation items. Priority `< 10` is ungrouped core nav; `>= 10` is grouped under "general". |
+| `sidebar.apps` | Left sidebar, "Apps" group | Items grouped under the "Apps" heading. |
+| `sidebar.bottom` | Left sidebar, bottom zone | Pinned items below the scrollable area (e.g., settings). |
+| `main` | Central content area | Full-page views rendered in iframes. Requires a `route`. |
+
+A `"sidebar.<group>"` slot renders under a named group heading derived from the group name (e.g., `"sidebar.apps"` → "Apps").
+
+## Declaring placements
+
+Add a `placements` array to your manifest's `_meta["ai.nimblebrain/host"]`:
+
+```json title="manifest.json"
+{
+  "_meta": {
+    "ai.nimblebrain/host": {
+      "host_version": "1.0",
+      "name": "Tasks",
+      "icon": "check-square",
+      "placements": [
+        {
+          "slot": "sidebar",
+          "resourceUri": "ui://sidebar-widget",
+          "priority": 30,
+          "label": "Tasks",
+          "icon": "check-square",
+          "route": "tasks"
+        },
+        {
+          "slot": "main",
+          "resourceUri": "ui://dashboard",
+          "route": "tasks",
+          "label": "Tasks",
+          "icon": "check-square"
+        }
+      ]
+    }
+  }
+}
+```
+
+## Priority sorting
+
+Placements are sorted by **slot, then `priority`** (ascending). Lower priority values appear first within a slot. There is no further tie-break — placements with the same slot and priority keep their registration order.
+
+```
+priority: 10  → appears first
+priority: 50  → appears second
+priority: 100 → appears third (default)
+```
+
+The default priority is `100`. NimbleBrain's built-in items use low priorities to appear at the top. Set a priority below 50 to appear near the top, or leave it at the default to appear after core items.
+
+## Route-based navigation
+
+Placements with a `route` field register a URL path in the shell. The route is prefixed with `/app/`:
+
+| `route` value | URL |
+|---------------|-----|
+| `"tasks"` | `/app/tasks` |
+| `"my-app/settings"` | `/app/my-app/settings` |
+
+When a user clicks a sidebar item with a route, the shell navigates to `/app/<route>` and loads the placement's `resourceUri` in the main content iframe.
+
+## Sidebar rendering
+
+The shell layout renders sidebar items in two zones:
+
+### Top zone (scrollable)
+
+1. **Core nav** — `sidebar` placements with priority `< 10` (built-ins like Home and Conversations) render ungrouped at the top.
+2. **Grouped sidebar placements** — `sidebar` placements with priority `>= 10` group under "general"; `sidebar.<group>` placements group under their named heading (e.g., `sidebar.apps` → "Apps"). Items within each group are sorted by priority.
+3. **App routes** — `"main"` slot placements with routes appear under the "Apps" heading.
+
+### Bottom zone (pinned)
+
+Items with `slot: "sidebar.bottom"` are pinned below the scrollable area, separated by a border. Use this for settings or admin panels.
+
+```json
+{
+  "slot": "sidebar.bottom",
+  "resourceUri": "ui://settings",
+  "label": "Settings",
+  "icon": "settings",
+  "route": "settings"
+}
+```
+
+## Icons
+
+Specify icons using [Lucide](https://lucide.dev/icons) names in kebab-case:
+
+```json
+{ "icon": "check-square" }
+{ "icon": "message-square" }
+{ "icon": "database" }
+{ "icon": "settings" }
+```
+
+The resolver converts kebab-case to PascalCase for Lucide component lookup. If the name is not found, `CircleDot` is used as the fallback.
+
+## Size hints
+
+The `size` field provides a hint to the slot renderer:
+
+| Value | Description |
+|-------|-------------|
+| `"compact"` | Minimal height, suitable for sidebar widgets. |
+| `"full"` | Fills available space (default behavior for main views). |
+| `"auto"` | Let the content determine the size. Pair with `ui/notifications/size-changed` bridge messages. |
+
+## Placement registry internals
+
+The `PlacementRegistry` is an in-memory store that tracks all active placements. It is updated when bundles are installed or uninstalled.
+
+Every entry is either **ambient** (no `wsId` — platform-provided views like Home, Conversations, Files, Settings; always present inside any workspace) or **workspace-scoped** (installed bundles, visible only to members of that workspace). The registry exposes a single read method, `forWorkspace(wsId)`, which returns ambient + scoped entries merged and sorted. There is deliberately no "return everything" accessor — in a multi-tenant host, no legitimate caller wants placements unrelated to a workspace.
+
+**Registration** — When a bundle starts, its declared `placements` are registered via `register(serverName, placements, wsId)` against the installing workspace's `wsId`. Platform built-ins register ambient (no `wsId`). The virtual `primary` resource path then resolves to the first registered placement's `resourceUri`.
+
+**Querying** — `forWorkspace(wsId)` returns ambient entries plus entries scoped to `wsId`, sorted by slot then priority (lower first).
+
+**Unregistration** — When a bundle is uninstalled, its placements for that workspace are removed. Other workspaces' entries for the same bundle are untouched.
+
+```typescript
+// Register explicit placements, scoped to a workspace
+registry.register(
+  "my-app",
+  [
+    { slot: "sidebar", resourceUri: "ui://nav", priority: 50, label: "My App" },
+    { slot: "main", resourceUri: "ui://dashboard", route: "my-app" },
+  ],
+  "ws_engineering",
+);
+
+// Read the merged ambient + workspace-scoped list
+const items = registry.forWorkspace("ws_engineering");
+// → sorted by slot then priority
+```
+
+## Example: sidebar + main view
+
+A common pattern is one sidebar item that links to a main view:
+
+```json title="manifest.json"
+{
+  "_meta": {
+    "ai.nimblebrain/host": {
+      "host_version": "1.0",
+      "name": "CRM",
+      "icon": "users",
+      "placements": [
+        {
+          "slot": "main",
+          "resourceUri": "ui://dashboard",
+          "route": "crm",
+          "label": "CRM",
+          "icon": "users",
+          "priority": 50
+        }
+      ]
+    }
+  }
+}
+```
+
+This creates a sidebar entry under "Apps" (because the `"main"` slot with a route automatically appears in the sidebar) and loads `ui://dashboard` when clicked.
+
+<Aside type="tip">
+You don't need both a `"sidebar"` and a `"main"` placement for the same view. A `"main"` placement with a `route` automatically appears in the sidebar under the "Apps" group.
+</Aside>

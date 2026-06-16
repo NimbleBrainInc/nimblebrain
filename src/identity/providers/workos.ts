@@ -1,4 +1,5 @@
 import { GeneratePortalLinkIntent, WorkOS } from "@workos-inc/node";
+import { log } from "../../cli/log.ts";
 import { isAllowedOriginScheme, publicOrigin } from "../../oauth/public-origin.ts";
 import { ensureUserWorkspace } from "../../workspace/provisioning.ts";
 import type { WorkspaceStore } from "../../workspace/workspace-store.ts";
@@ -254,13 +255,13 @@ export class WorkosIdentityProvider implements IdentityProvider {
       // AuthKit-issued JWT (from MCP OAuth flow) — verify against AuthKit JWKS
       const keys = await this.getAuthkitJwks();
       if (!keys) {
-        console.error("[workos] AuthKit JWKS fetch failed");
+        log.error("[workos] AuthKit JWKS fetch failed");
         return null;
       }
 
       const verified = await this.verifySignature(header, signatureInput, signature, keys);
       if (!verified) {
-        console.error("[workos] AuthKit JWT signature verification failed");
+        log.error("[workos] AuthKit JWT signature verification failed");
         return null;
       }
 
@@ -413,7 +414,7 @@ export class WorkosIdentityProvider implements IdentityProvider {
 
       // SECURITY: No org membership = no access
       if (orgRole === null) {
-        console.error(`[workos] DENIED: user ${workosUserId} has no org membership`);
+        log.error(`[workos] DENIED: user ${workosUserId} has no org membership`);
         // Clear stale cache — user definitively lost access
         this.userCache.delete(workosUserId);
         return null;
@@ -428,7 +429,7 @@ export class WorkosIdentityProvider implements IdentityProvider {
       // no-ops), and the factory always wires a real store in production.
       const localProfile = await this.userStore?.get(workosUserId);
       if (localProfile?.deletedAt) {
-        console.error(`[workos] DENIED: user ${workosUserId} is deactivated`);
+        log.error(`[workos] DENIED: user ${workosUserId} is deactivated`);
         this.userCache.delete(workosUserId);
         return null;
       }
@@ -457,15 +458,14 @@ export class WorkosIdentityProvider implements IdentityProvider {
       this.userCache.set(workosUserId, { identity, fetchedAt: nowMs });
       return identity;
     } catch (err) {
-      console.error(
-        `[workos] resolveUser failed for ${workosUserId}:`,
-        err instanceof Error ? err.message : err,
-      );
+      log.error(`[workos] resolveUser failed for ${workosUserId}`, {
+        error: err instanceof Error ? err.message : String(err),
+      });
       // Fall back to stale cache on transient API errors — the JWT was already
       // validated (signature + expiration), so the user is who they claim to be.
       // Denying access because of a transient WorkOS API hiccup causes spurious 401s.
       if (cached) {
-        console.warn(
+        log.warn(
           `[workos] Using stale cached identity for ${workosUserId} (age: ${Math.round((nowMs - cached.fetchedAt) / 1000)}s)`,
         );
         return cached.identity;
@@ -566,7 +566,7 @@ export class WorkosIdentityProvider implements IdentityProvider {
 
       const membership = memberships.data[0];
       if (!membership) {
-        console.error(
+        log.error(
           `[workos] DENIED: No org membership for user=${workosUserId} org=${this.organizationId}`,
         );
         return null;
@@ -585,7 +585,7 @@ export class WorkosIdentityProvider implements IdentityProvider {
         // with legitimate non-admin slugs (e.g. `viewer`) isn't spammed.
         // Add the slug to `auth.adminRoleSlugs` to grant admin.
         this.warnedUnmatchedSlugs.add(normalized);
-        console.warn(
+        log.warn(
           `[workos] role slug "${roleSlug}" for user=${workosUserId} is not in ` +
             `adminRoleSlugs [${[...this.adminRoleSlugs].join(", ")}] — mapping to "member". ` +
             "If this role should be an org admin, add its slug to auth.adminRoleSlugs.",
@@ -593,10 +593,9 @@ export class WorkosIdentityProvider implements IdentityProvider {
       }
       return "member";
     } catch (err) {
-      console.error(
-        `[workos] resolveOrgRole failed for user=${workosUserId}:`,
-        err instanceof Error ? err.message : err,
-      );
+      log.error(`[workos] resolveOrgRole failed for user=${workosUserId}`, {
+        error: err instanceof Error ? err.message : String(err),
+      });
       // Fail closed — deny access on API errors
       return null;
     }
@@ -648,7 +647,7 @@ export class WorkosIdentityProvider implements IdentityProvider {
       const res = await this.fetcher(url);
       if (!res.ok) {
         if (this.authkitJwksCache) {
-          console.warn(`[workos] AuthKit JWKS fetch failed (${res.status}), using stale cache`);
+          log.warn(`[workos] AuthKit JWKS fetch failed (${res.status}), using stale cache`);
           return this.authkitJwksCache.keys;
         }
         return null;
@@ -661,7 +660,7 @@ export class WorkosIdentityProvider implements IdentityProvider {
       return jwks.keys;
     } catch {
       if (this.authkitJwksCache) {
-        console.warn("[workos] AuthKit JWKS fetch error, using stale cache");
+        log.warn("[workos] AuthKit JWKS fetch error, using stale cache");
         return this.authkitJwksCache.keys;
       }
       return null;
@@ -681,7 +680,7 @@ export class WorkosIdentityProvider implements IdentityProvider {
         // Fall back to stale keys — JWKS rotate rarely, stale keys are almost
         // certainly still valid. Failing verification here causes spurious 401s.
         if (this.jwksCache) {
-          console.warn(
+          log.warn(
             `[workos] JWKS fetch failed (${res.status}), using stale cache (age: ${Math.round((nowMs - this.jwksCache.fetchedAt) / 1000)}s)`,
           );
           return this.jwksCache.keys;
@@ -697,7 +696,7 @@ export class WorkosIdentityProvider implements IdentityProvider {
     } catch {
       // Fall back to stale keys on network errors
       if (this.jwksCache) {
-        console.warn(
+        log.warn(
           `[workos] JWKS fetch error, using stale cache (age: ${Math.round((nowMs - this.jwksCache.fetchedAt) / 1000)}s)`,
         );
         return this.jwksCache.keys;
@@ -737,11 +736,9 @@ export class WorkosIdentityProvider implements IdentityProvider {
       }
     }
     if (candidates.length > 0) {
-      console.warn(
-        "[workos] JWT signature verification failed: no matching key found among",
-        candidates.length,
-        "candidates",
-      );
+      log.warn("[workos] JWT signature verification failed: no matching key found", {
+        candidates: candidates.length,
+      });
     }
     return false;
   }

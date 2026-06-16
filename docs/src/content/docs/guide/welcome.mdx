@@ -1,0 +1,34 @@
+---
+title: Welcome
+description: Get started with NimbleBrain — your AI assistant with access to all your team's tools.
+---
+
+import { CardGrid, LinkCard, Aside } from '@astrojs/starlight/components';
+
+NimbleBrain gives you an AI assistant that can use all the tools your team has set up — calendar, notes, databases, documents, and more. You interact with it by chatting in natural language, and it figures out which tools to use to get things done.
+
+This guide walks you through the web interface. No technical background needed.
+
+## What you can do
+
+- **Ask questions** — "What meetings do I have this week?" or "Summarize this document"
+- **Take actions** — "Create a task for the design review" or "Send a follow-up to the meeting notes"
+- **Work with files** — Drag in a PDF, spreadsheet, or image and ask the agent to analyze it
+- **Use apps** — Your admin has installed apps that give the agent specific capabilities. Browse them in the sidebar.
+
+## How it works
+
+You type a message. The agent reads it, decides which tools to call, runs them, and streams the response back to you. You see what it's doing at every step — tool calls appear inline so you always know what's happening behind the scenes.
+
+<Aside type="tip">
+  You don't need to know which tools are available. Just describe what you want in plain language and the agent will find the right tool.
+</Aside>
+
+## Next steps
+
+<CardGrid>
+  <LinkCard title="The Interface" description="A quick tour of the sidebar, chat panel, and navigation" href="/guide/interface" />
+  <LinkCard title="Chat" description="Send messages, attach files, and understand responses" href="/using/chat" />
+  <LinkCard title="Installing Apps" description="Browse and use the apps your team has installed" href="/using/installing-apps" />
+  <LinkCard title="Settings & Preferences" description="Set your theme, timezone, and model preferences" href="/guide/settings" />
+</CardGrid>

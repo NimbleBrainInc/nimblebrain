@@ -8,12 +8,13 @@
  * WorkOS membership change).
  */
 
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { rmSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { WorkosAuth } from "../../../src/identity/instance.ts";
+import { log } from "../../../src/cli/log.ts";
 import { WorkosIdentityProvider } from "../../../src/identity/providers/workos.ts";
 import type { UserIdentity } from "../../../src/identity/provider.ts";
 import type { OrgRole } from "../../../src/identity/types.ts";
@@ -117,14 +118,13 @@ describe("WorkOS resolveOrgRole slug mapping", () => {
   it("maps an unrecognized slug to member and logs the downgrade", async () => {
     const p = makeProvider(new Map([["u", "org-admin"]]));
     const warnings: string[] = [];
-    const original = console.warn;
-    console.warn = (...args: unknown[]) => {
+    const warnSpy = spyOn(log, "warn").mockImplementation((...args: unknown[]) => {
       warnings.push(args.map(String).join(" "));
-    };
+    });
     try {
       expect(await resolveOrgRole(p, "u")).toBe("member");
     } finally {
-      console.warn = original;
+      warnSpy.mockRestore();
     }
     // The silent-downgrade trap must be observable: log names the actual slug
     // and points at the config knob.
@@ -134,16 +134,15 @@ describe("WorkOS resolveOrgRole slug mapping", () => {
   it("warns at most once per unmatched slug per process", async () => {
     const p = makeProvider(new Map([["a", "viewer"], ["b", "viewer"]]));
     let warnCount = 0;
-    const original = console.warn;
-    console.warn = () => {
+    const warnSpy = spyOn(log, "warn").mockImplementation(() => {
       warnCount++;
-    };
+    });
     try {
       // Two logins carrying the same non-admin slug — only the first should warn.
       expect(await resolveOrgRole(p, "a")).toBe("member");
       expect(await resolveOrgRole(p, "b")).toBe("member");
     } finally {
-      console.warn = original;
+      warnSpy.mockRestore();
     }
     expect(warnCount).toBe(1);
   });

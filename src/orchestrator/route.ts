@@ -179,6 +179,22 @@ export interface OrchestratorRuntime {
   };
 
   /**
+   * Best-effort recovery for an installed-but-unregistered workspace
+   * source. When the per-call source lookup misses, the orchestrator
+   * invokes this ONCE before failing with `UnknownToolSource`, giving the
+   * runtime a chance to re-spawn a source that a failed credential
+   * respawn or a remote-OAuth teardown removed from the registry without
+   * re-adding (nothing else on the hot path re-registers it). Returns
+   * `true` if the source is registered after the attempt. The runtime
+   * cooldown-guards repeats, so calling on every miss is cheap.
+   *
+   * Optional: test stubs and non-production runtimes may omit it, in
+   * which case the orchestrator behaves exactly as before — a miss is a
+   * hard `UnknownToolSource`.
+   */
+  recoverWorkspaceSource?(wsId: string, sourceName: string): Promise<boolean>;
+
+  /**
    * Resolve a kernel identity-scoped source by name (`conversations`, and
    * later `files` / `automations`). Returns `undefined` for an unknown or
    * non-identity source — the orchestrator turns that into
@@ -311,7 +327,29 @@ export async function routeToolCall(opts: {
     throw new UnknownToolSource(wsId, toolName, sourceName);
   }
   const registry = runtime.getRegistryForWorkspace(wsId);
-  const source = registry.getSource(sourceName);
+  let source = registry.getSource(sourceName);
+  if (!source && runtime.recoverWorkspaceSource) {
+    // Self-heal. An installed bundle's source can be transiently absent
+    // from the registry: a failed credential respawn or a remote-OAuth
+    // teardown removes it WITHOUT re-adding, and nothing on the chat /
+    // automation hot path re-registers it — so the workspace stays
+    // toolless until a platform restart (the failure that bricked a
+    // workspace's Dropbox tools mid-run for both chat and its scheduled
+    // automations). Give the runtime ONE best-effort, cooldown-guarded
+    // chance to re-spawn the source from its persisted ref, then
+    // re-resolve against the same registry. A still-missing source falls
+    // through to the same `UnknownToolSource` as before — recovery only
+    // repairs a recoverable absence, it never hides a genuine failure.
+    let recovered = false;
+    try {
+      recovered = await runtime.recoverWorkspaceSource(wsId, sourceName);
+    } catch {
+      // Recovery is strictly best-effort; a throw here is no worse than
+      // no recovery at all. Fall through to UnknownToolSource.
+      recovered = false;
+    }
+    if (recovered) source = registry.getSource(sourceName);
+  }
   if (!source) {
     throw new UnknownToolSource(wsId, toolName, sourceName);
   }

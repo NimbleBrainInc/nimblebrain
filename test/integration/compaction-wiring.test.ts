@@ -139,6 +139,12 @@ describe("history compaction — wired path", () => {
         ),
       ).toBe(true);
 
+      // (a.3) The summarizer's usage is ALSO recorded to Prometheus — proves
+      // the forked-call metric wiring (recordLlmUsage("compaction", ...) at the
+      // onUsage site) fires end-to-end, not just the aux.usage append.
+      const metricsBody = await (await fetch(`${baseUrl}/metrics`)).text();
+      expect(metricsBody).toMatch(/nb_llm_tokens_total\{[^}]*source="compaction"[^}]*\}\s+[1-9]/);
+
       // (b) The model-facing projection is compacted: it carries the summary
       //     seed and NOT the oldest turn's text.
       const modelView = JSON.stringify(reconstructMessages(events));

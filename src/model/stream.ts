@@ -6,6 +6,7 @@ import type {
   LanguageModelV3Usage,
   SharedV3ProviderMetadata,
 } from "@ai-sdk/provider";
+import { withSpan } from "../observability/index.ts";
 
 export interface StreamResult {
   content: LanguageModelV3Content[];
@@ -13,7 +14,42 @@ export interface StreamResult {
   finishReason: LanguageModelV3FinishReason;
 }
 
+/**
+ * Trace one model call as an `llm.call` span nested under the active
+ * `agent.turn`. Attributes are operational only — model id, provider, token
+ * counts, finish reason. Prompt and completion content are NEVER recorded.
+ */
 export async function callModel(
+  model: LanguageModelV3,
+  options: LanguageModelV3CallOptions,
+  onTextDelta: (text: string) => void,
+  onReasoningDelta?: (text: string) => void,
+  onToolInputStart?: (id: string, toolName: string) => void,
+  onToolInputEnd?: (id: string) => void,
+): Promise<StreamResult> {
+  return withSpan(
+    "llm.call",
+    { "llm.model": model.modelId, "llm.provider": model.provider },
+    async (span) => {
+      const result = await callModelInner(
+        model,
+        options,
+        onTextDelta,
+        onReasoningDelta,
+        onToolInputStart,
+        onToolInputEnd,
+      );
+      span.setAttrs({
+        "llm.tokens.input": result.usage.inputTokens.total ?? 0,
+        "llm.tokens.output": result.usage.outputTokens.total ?? 0,
+        "llm.finish_reason": result.finishReason.unified,
+      });
+      return result;
+    },
+  );
+}
+
+async function callModelInner(
   model: LanguageModelV3,
   options: LanguageModelV3CallOptions,
   onTextDelta: (text: string) => void,

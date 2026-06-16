@@ -1,0 +1,34 @@
+{
+  "name": "nimblebrain-docs",
+  "description": "Documentation site for NimbleBrain — the self-hosted platform for MCP Apps and agent automations",
+  "type": "module",
+  "version": "0.0.1",
+  "license": "CC-BY-4.0",
+  "author": "NimbleBrain Inc <engineering@nimblebrain.ai>",
+  "homepage": "https://docs.nimblebrain.ai",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/NimbleBrainInc/nimblebrain.git",
+    "directory": "docs"
+  },
+  "keywords": [
+    "nimblebrain",
+    "mcp",
+    "documentation",
+    "model-context-protocol"
+  ],
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview"
+  },
+  "dependencies": {
+    "@astrojs/starlight": "^0.38.2",
+    "astro": "^6.0.8",
+    "sharp": "^0.34.2",
+    "starlight-sidebar-topics": "^0.7.1"
+  },
+  "devDependencies": {
+    "starlight-links-validator": "^0.24.1"
+  }
+}

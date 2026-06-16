@@ -104,6 +104,18 @@ function isLocalhostHostname(hostname: string): boolean {
 }
 
 /**
+ * In-cluster Kubernetes service DNS. CoreDNS owns `cluster.local` (and the `.svc`
+ * search domain), so only real in-cluster Services resolve here — an external
+ * host cannot present as `*.svc.cluster.local` from inside the cluster. This is a
+ * pure string check (no DNS resolution, consistent with the anti-rebinding
+ * stance), safe because the namespace is cluster-owned.
+ */
+function isInClusterHostname(hostname: string): boolean {
+  const bare = bareHostname(hostname).toLowerCase();
+  return bare.endsWith(".svc.cluster.local") || bare.endsWith(".svc");
+}
+
+/**
  * Validate a URL for use as a remote bundle endpoint.
  *
  * Throws on:
@@ -113,15 +125,21 @@ function isLocalhostHostname(hostname: string): boolean {
  * - Cloud metadata hostnames (metadata.google.internal, instance-data)
  * - Embedded credentials (url.username or url.password non-empty)
  */
-export function validateBundleUrl(url: URL, opts?: { allowInsecure?: boolean }): void {
+export function validateBundleUrl(
+  url: URL,
+  opts?: { allowInsecure?: boolean; fleetInternal?: boolean },
+): void {
   const allowInsecure = opts?.allowInsecure ?? false;
+  const fleetInternal = opts?.fleetInternal ?? false;
 
   // Reject embedded credentials
   if (url.username || url.password) {
     throw new Error(`Remote bundle URL must not contain embedded credentials: ${url.toString()}`);
   }
 
-  // Reject private/reserved hostnames (always, even with allowInsecure)
+  // Reject private/reserved hostnames (always, even with allowInsecure /
+  // fleetInternal). Stays ABOVE the protocol check so a raw private IP can never
+  // be reached over http, even for a fleet source.
   if (isPrivateHostname(url.hostname) && !isLocalhostHostname(url.hostname)) {
     throw new Error(`Remote bundle URL resolves to a private/reserved address: ${url.hostname}`);
   }
@@ -132,6 +150,14 @@ export function validateBundleUrl(url: URL, opts?: { allowInsecure?: boolean }):
   }
 
   if (url.protocol === "http:") {
+    // Operator-provisioned fleet sources (tenant-key auth) may reach in-cluster
+    // services over plain HTTP — the fleet's trust boundary is NetworkPolicy +
+    // the verified token (ARCHITECTURE P4), not TLS. This is a production posture
+    // scoped to the cluster DNS suffix, NOT the dev-only `allowInsecure` flag, and
+    // it cannot be self-selected by a tenant (tenant-key auth is operator-only).
+    if (fleetInternal && isInClusterHostname(url.hostname)) {
+      return;
+    }
     if (allowInsecure && isLocalhostHostname(url.hostname)) {
       return; // HTTP localhost allowed in dev mode
     }

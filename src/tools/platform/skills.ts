@@ -21,6 +21,7 @@
 
 import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { log } from "../../cli/log.ts";
 import { EventSourcedConversationStore } from "../../conversation/event-sourced-store.ts";
 import type { ConversationEvent, SkillsLoadedEvent } from "../../conversation/types.ts";
 import { textContent } from "../../engine/content-helpers.ts";
@@ -1295,7 +1296,9 @@ async function reloadBootSkills(runtime: Runtime): Promise<void> {
   try {
     await runtime.reloadSkills();
   } catch (err) {
-    console.error("[skills] reloadSkills failed after mutation:", err);
+    log.error("[skills] reloadSkills failed after mutation", {
+      error: err instanceof Error ? err.message : String(err),
+    });
   }
 }
 

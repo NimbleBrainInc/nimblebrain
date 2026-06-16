@@ -1,0 +1,131 @@
+---
+title: nb dev
+description: Run NimbleBrain in development mode with file watching and HMR.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+`nb dev` starts a supervised dual-process development environment. It runs the API server with automatic restart on source changes and the Vite web dev server with hot module replacement -- all in a single terminal.
+
+## Usage
+
+```
+nb dev [flags]
+```
+
+## Flags
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--port <number>` | API server port | `27247` |
+| `--no-web` | Skip the web dev server (API only) | Off |
+| `--app <path>` | Path to an app directory to serve with a Vite HMR dev server | None |
+| `--app-port <number>` | Vite dev server port for `--app` | `5173` |
+| `--debug` | Verbose logging | Off |
+
+## Starting dev mode
+
+```bash
+nb dev
+```
+
+```
+[dev] Starting API server with file watching...
+[dev] Starting web dev server...
+[api] [nimblebrain] Starting runtime...
+[api] [nimblebrain] Runtime ready.
+[web]   VITE v6.0.0  ready in 340 ms
+[web]
+[web]   ➜  Local:   http://localhost:27246/
+```
+
+Both processes share the terminal. Output is prefixed with `[api]` or `[web]` so you can tell which process logged each line. Press Ctrl+C to stop both.
+
+## Dual-process architecture
+
+`nb dev` runs two child processes:
+
+1. **API server** (`bun --watch`) -- runs `nb serve` with Bun's file watcher. When you change any source file, Bun automatically restarts the server.
+2. **Web dev server** (`bun run dev` in `web/`) -- runs the Vite development server with HMR. Changes to web client files are applied instantly in the browser without a full reload.
+
+Both processes are supervised. When you press Ctrl+C:
+- A `SIGTERM` is sent to both processes
+- If they don't exit within 5 seconds, they receive `SIGKILL`
+- A second Ctrl+C forces an immediate exit
+
+## API-only mode
+
+If you only need the API server (no web client), skip the Vite process:
+
+```bash
+nb dev --no-web
+```
+
+```
+[dev] Starting API server with file watching...
+[api] [nimblebrain] Starting runtime...
+[api] [nimblebrain] Runtime ready.
+```
+
+<Aside type="tip">
+  Use `--no-web` when you are developing against the API directly or when the `web/` directory does not exist in your project.
+</Aside>
+
+## Custom port
+
+Override the API server port:
+
+```bash
+nb dev --port 8080
+```
+
+The web dev server port is controlled by `NB_WEB_PORT`. The standard npm scripts pre-configure all ports:
+
+| Script | API | Web |
+|--------|-----|-----|
+| `bun run dev` | :27247 | :27246 |
+| `bun run dev:empty` | :27249 | :27248 |
+| `bun run dev:minimal` | :27251 | :27250 |
+
+## Developing an app
+
+To iterate on a Synapse/Upjack app with hot module replacement, point `nb dev` at the app directory with `--app`. The CLI reads the app's `manifest.json`, registers the app in dev mode, and starts a Vite dev server for it (default port `5173`):
+
+```bash
+nb dev --app ../synapse-apps/synapse-crm
+```
+
+Use `--app-port` to run the app's Vite server on a different port:
+
+```bash
+nb dev --app ../synapse-apps/synapse-crm --app-port 5180
+```
+
+The app dev server runs alongside the API and web processes; its output is prefixed with `[app]`. If the app directory has no `manifest.json`, `nb dev` logs a warning and skips the app dev server.
+
+## Working directory
+
+`nb dev` spawns `nb serve` under the hood, so it uses the same default work directory: `~/.nimblebrain`. Development data (config, conversations, logs) lives there unless you point somewhere else.
+
+Override the work directory by setting `NB_WORK_DIR` or passing `--config` to target a specific config file:
+
+```bash
+NB_WORK_DIR=./my-project/.nimblebrain nb dev
+```
+
+## What happens when the web directory is missing
+
+If `web/package.json` does not exist, `nb dev` logs a warning and runs in API-only mode:
+
+```
+[dev] Starting API server with file watching...
+[dev] Warning: web/package.json not found. Skipping web dev server.
+[api] [nimblebrain] Starting runtime...
+[api] [nimblebrain] Runtime ready.
+```
+
+## Related commands
+
+- [nb serve](/cli/serve/) -- production server (no file watching)
+- [nb reload](/cli/reload/) -- hot-reload config on a running server
+- [CLI Overview](/cli/overview/) -- global flags and config resolution

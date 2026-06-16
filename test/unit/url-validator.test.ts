@@ -97,4 +97,44 @@ describe("validateBundleUrl", () => {
 			).not.toThrow();
 		});
 	});
+
+	describe("fleetInternal (in-cluster fleet sources over http)", () => {
+		it("allows http to a .svc.cluster.local host when fleetInternal", () => {
+			expect(() =>
+				validateBundleUrl(new URL("http://mcp-web.mcp-shared.svc.cluster.local/mcp"), {
+					fleetInternal: true,
+				}),
+			).not.toThrow();
+		});
+
+		it("allows http to a bare .svc short-form host when fleetInternal", () => {
+			expect(() =>
+				validateBundleUrl(new URL("http://mcp-web.mcp-shared.svc/mcp"), { fleetInternal: true }),
+			).not.toThrow();
+		});
+
+		it("STILL rejects http to an external host even when fleetInternal", () => {
+			expect(() =>
+				validateBundleUrl(new URL("http://evil.example.com/mcp"), { fleetInternal: true }),
+			).toThrow(/HTTPS/);
+		});
+
+		it("does NOT allow http to .svc.cluster.local without fleetInternal", () => {
+			expect(() =>
+				validateBundleUrl(new URL("http://mcp-web.mcp-shared.svc.cluster.local/mcp")),
+			).toThrow(/HTTPS/);
+			// the dev-only allowInsecure flag must not unlock in-cluster http either
+			expect(() =>
+				validateBundleUrl(new URL("http://mcp-web.mcp-shared.svc.cluster.local/mcp"), {
+					allowInsecure: true,
+				}),
+			).toThrow(/HTTPS/);
+		});
+
+		it("STILL rejects a raw private IP even when fleetInternal (private block stays above)", () => {
+			expect(() =>
+				validateBundleUrl(new URL("http://10.0.0.1/mcp"), { fleetInternal: true }),
+			).toThrow(/private\/reserved/);
+		});
+	});
 });

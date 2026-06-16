@@ -486,9 +486,11 @@ function collectRun(
   let endTs = events[start]?.ts ?? "";
   let stopReason: string | undefined;
   // A run is "terminated" only when we see its run.done/run.error. If the loop
-  // runs out of events first, the turn was still in flight when the file was
-  // read → mark the message pending.
+  // runs off the END of the array first, the turn was still in flight when the
+  // file was read → mark the message pending. A run cut short by a LATER turn
+  // (foreign user.message / run.start) is `abandoned`, not pending — see below.
   let terminated = false;
+  let abandoned = false;
 
   let i = start + 1;
   while (i < events.length) {
@@ -505,6 +507,21 @@ function collectRun(
       stopReason = "error";
       terminated = true;
       i++;
+      break;
+    }
+    // Implicit run end: a foreign user.message or a different run's run.start
+    // means this run never closed cleanly (process death / deploy bounce
+    // mid-turn before a terminal event). Stop here WITHOUT consuming the event
+    // (`i` stays put) so the outer loop renders it as its own turn. Mirrors the
+    // sibling LLM-replay projection's guard in src/conversation/
+    // event-reconstructor.ts. Without this, an orphaned run swallows every
+    // subsequent turn and the transcript appears to lose everything after the
+    // bounce (NimbleBrain prod incident: a deploy-killed turn hid the next hour
+    // of an actively-used conversation on reload). The loop begins at start + 1,
+    // so any run.start seen here is by construction a foreign run.
+    if (isUserMessage(inner) || isRunStart(inner)) {
+      abandoned = true;
+      stopReason = "interrupted";
       break;
     }
     if (isLlmResponse(inner) && inner.runId === runId) {
@@ -627,7 +644,12 @@ function collectRun(
     ...(flatToolCalls.length > 0 ? { toolCalls: flatToolCalls } : {}),
     usage,
     ...(stopReason && stopReason !== "complete" ? { stopReason } : {}),
-    ...(terminated ? {} : { pending: true }),
+    // `pending` only for a TRULY trailing in-flight run (ran off the end of the
+    // array). An `abandoned` run has a later turn after it, so it can never be
+    // in flight — stamping it pending would show a perpetual "still thinking"
+    // spinner on an old turn (and chat-store's trailing-pending trim doesn't
+    // apply to an interior turn anyway). It carries stopReason "interrupted".
+    ...(terminated || abandoned ? {} : { pending: true }),
   };
   return [msg, i];
 }

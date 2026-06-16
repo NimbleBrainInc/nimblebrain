@@ -338,6 +338,68 @@ describe("readConversation (event format)", () => {
 		expect(result!.messages.at(-1)!.pending).toBeUndefined();
 	});
 
+	test("an orphaned mid-transcript run does not swallow later turns", async () => {
+		// Regression: a run killed mid-turn (process death / deploy bounce) has
+		// no run.done. Before the fix, collectRun consumed the rest of the event
+		// array, dropping every later turn from the rendered transcript — the
+		// user perceived "I lost the last hour of conversation" even though the
+		// data was fully persisted. The orphaned run must end at the next turn's
+		// boundary, and subsequent turns must still render.
+		const lines = [
+			JSON.stringify(eventMeta("conv_orphan01")),
+			// Turn 1 — complete.
+			JSON.stringify({ ts: "2025-06-01T00:00:00.000Z", type: "user.message", content: [{ type: "text", text: "first question" }] }),
+			JSON.stringify({ ts: "2025-06-01T00:00:01.000Z", type: "run.start", runId: "run_1" }),
+			JSON.stringify({ ts: "2025-06-01T00:00:02.000Z", type: "llm.response", runId: "run_1", model: "m1", content: [{ type: "text", text: "first answer" }], usage: { inputTokens: 5, outputTokens: 2 }, llmMs: 10 }),
+			JSON.stringify({ ts: "2025-06-01T00:00:03.000Z", type: "run.done", runId: "run_1", stopReason: "complete" }),
+			// Turn 2 — ORPHANED: user message + a run that never closes (no run.done).
+			JSON.stringify({ ts: "2025-06-01T00:00:04.000Z", type: "user.message", content: [{ type: "text", text: "second question" }] }),
+			JSON.stringify({ ts: "2025-06-01T00:00:05.000Z", type: "run.start", runId: "run_2" }),
+			JSON.stringify({ ts: "2025-06-01T00:00:06.000Z", type: "llm.response", runId: "run_2", model: "m1", content: [{ type: "text", text: "partial work before the bounce" }], usage: { inputTokens: 5, outputTokens: 2 }, llmMs: 10 }),
+			// <-- pod killed here; no run.done for run_2.
+			// Turn 3 — complete (came after the restart).
+			JSON.stringify({ ts: "2025-06-01T00:00:07.000Z", type: "user.message", content: [{ type: "text", text: "third question" }] }),
+			JSON.stringify({ ts: "2025-06-01T00:00:08.000Z", type: "run.start", runId: "run_3" }),
+			JSON.stringify({ ts: "2025-06-01T00:00:09.000Z", type: "llm.response", runId: "run_3", model: "m1", content: [{ type: "text", text: "third answer" }], usage: { inputTokens: 5, outputTokens: 2 }, llmMs: 10 }),
+			JSON.stringify({ ts: "2025-06-01T00:00:10.000Z", type: "run.done", runId: "run_3", stopReason: "complete" }),
+		];
+		const path = writeTmpFile("conv_orphan01.jsonl", lines);
+
+		const result = await readConversation(path);
+		expect(result).not.toBeNull();
+		// All 6 turns render (3 user + 3 assistant) — nothing swallowed.
+		const roles = result!.messages.map((m) => m.role);
+		expect(roles).toEqual(["user", "assistant", "user", "assistant", "user", "assistant"]);
+		// The post-bounce turns survive.
+		expect(result!.messages[4]!.content).toBe("third question");
+		expect(result!.messages[5]!.content).toBe("third answer");
+		// The orphaned turn rendered its partial work...
+		const orphaned = result!.messages[3]!;
+		expect(orphaned.content).toBe("partial work before the bounce");
+		// ...but is ABANDONED, not pending — no perpetual "still thinking" spinner.
+		expect(orphaned.pending).toBeUndefined();
+		expect(orphaned.stopReason).toBe("interrupted");
+	});
+
+	test("a trailing in-flight run (no later turn) is still pending, not abandoned", async () => {
+		// Guard against over-correction: only a run with a LATER turn after it is
+		// abandoned. A genuinely trailing incomplete run is the live turn and must
+		// stay pending so chat-store's resume path reconciles it.
+		const lines = [
+			JSON.stringify(eventMeta("conv_orphan02")),
+			JSON.stringify({ ts: "2025-06-01T00:00:00.000Z", type: "user.message", content: [{ type: "text", text: "q" }] }),
+			JSON.stringify({ ts: "2025-06-01T00:00:01.000Z", type: "run.start", runId: "run_live" }),
+			JSON.stringify({ ts: "2025-06-01T00:00:02.000Z", type: "llm.response", runId: "run_live", model: "m1", content: [{ type: "text", text: "streaming..." }], usage: { inputTokens: 5, outputTokens: 2 }, llmMs: 10 }),
+			// No run.done and no later turn — genuinely in flight.
+		];
+		const path = writeTmpFile("conv_orphan02.jsonl", lines);
+
+		const result = await readConversation(path);
+		const asst = result!.messages.at(-1)!;
+		expect(asst.pending).toBe(true);
+		expect(asst.stopReason).toBeUndefined();
+	});
+
 	test("sets status='error' and isError=true for a failed tool call", async () => {
 		const runId = "run_b";
 		const lines = [
