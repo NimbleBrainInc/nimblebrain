@@ -34,7 +34,7 @@ export class ErrorBoundary extends Component<Props, State> {
     if (this.state.hasError) {
       if (this.props.fallback) return this.props.fallback;
       return (
-        <div className="flex flex-col items-center justify-center h-full gap-4 p-8 text-center">
+        <div className="flex flex-col items-center justify-center min-h-screen gap-4 p-8 text-center">
           <p className="text-lg font-medium">Something went wrong</p>
           <p className="text-sm text-muted-foreground">
             An unexpected error occurred while rendering this page.
