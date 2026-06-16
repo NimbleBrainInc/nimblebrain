@@ -46,6 +46,9 @@ const BASE_CONFIG: WorkosAuth = {
 function providerThatThrows(thrown: unknown): WorkosIdentityProvider {
   const workspaceStore = new WorkspaceStore(mkdtempSync(join(tmpdir(), "oidc-refresh-")));
   const provider = new WorkosIdentityProvider(BASE_CONFIG, undefined, workspaceStore);
+  // Cast escape hatch: `workos` is a private field typed as the full WorkOS SDK;
+  // we only need to swap the one method under test, so we widen it to a bag of
+  // unknowns rather than reconstruct the SDK's type.
   const sdk = (provider as unknown as { workos: { userManagement: Record<string, unknown> } })
     .workos;
   sdk.userManagement = {
