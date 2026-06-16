@@ -963,7 +963,9 @@ async function handleInstallRemoteOAuth(
   if (entry.install.kind !== "remote-oauth") {
     return errResult("invariant violated: handleInstallRemoteOAuth requires remote-oauth entry");
   }
-  const action = entry.install;
+  // Reassignable: a `provider` entry's security-critical fields are re-resolved
+  // from the server-trusted catalog below (the caller's wire values are discarded).
+  let action = entry.install;
 
   // Cheap entry-shape validation up front (fail fast, no IO). The
   // expensive remote work — Composio session create, operator
@@ -990,6 +992,24 @@ async function handleInstallRemoteOAuth(
   }
   if (action.auth === "static" && !action.operatorSetup) {
     return errResult(`"${entry.name}" is static-auth but missing operatorSetup config.`);
+  }
+  if (action.auth === "provider") {
+    // SECURITY (trust boundary): a `provider` install mints a fleet-trusted,
+    // workspace-scoped service token (the `minted` provider) and ships it to the
+    // entry's URL. The install tool otherwise trusts the caller-supplied entry
+    // ("the registry that produced the entry is the source of truth") — but that
+    // is FALSE for this class: a workspace admin could forge an entry with an
+    // arbitrary url + audience/scope and exfiltrate a fleet token / reach an
+    // in-cluster .svc the SSRF guard protects. So re-resolve the security-critical
+    // fields (url + providerAuth) from the SERVER-trusted catalog by id, discard
+    // the caller's, and reject any provider entry that isn't a known catalog entry.
+    const trusted = await ctx.runtime.getConnectorDirectory().catalogById(entry.id);
+    if (!trusted || trusted.auth !== "provider" || !trusted.providerAuth) {
+      return errResult(
+        `"${entry.name}" is not a recognized platform connector — refusing a provider-auth install from an unverified entry.`,
+      );
+    }
+    action = { ...action, url: trusted.url, providerAuth: trusted.providerAuth };
   }
 
   // serverName is the slugified canonical reverse-DNS form — opaque,
@@ -1100,8 +1120,22 @@ async function handleInstallRemoteOAuth(
       // Pin the transport class the source advertised. Default would be
       // streamable-http (createRemoteTransport's fallback), which is wrong
       // for vendors whose remote `type` is `sse` — PayPal / Cloudflare /
-      // Webflow / Wix in the bundled catalog today.
-      transport: composioWiring?.transport ?? { type: action.transportType },
+      // Webflow / Wix in the bundled catalog today. A `provider`-auth entry
+      // also carries its credential class here: provider + config are copied
+      // VERBATIM from the (operator-authored) catalog entry — never tenant
+      // input — which is what makes a self-installable platform connector safe.
+      transport:
+        composioWiring?.transport ??
+        (action.auth === "provider" && action.providerAuth
+          ? {
+              type: action.transportType,
+              auth: {
+                type: "provider",
+                provider: action.providerAuth.provider,
+                config: action.providerAuth.config,
+              },
+            }
+          : { type: action.transportType }),
       // Post-Stage-2: every ref's oauthScope is "workspace". The install
       // targets the request's active workspace (see the dispatch logic
       // above); the ref carries no per-target scope literal.
@@ -1218,15 +1252,13 @@ async function handleInstallRemoteOAuth(
   lifecycle.seedInstance(serverName, action.url, ref, undefined, wsId, undefined, wsRegistry);
   lifecycle.notifyInstalled(serverName, wsId);
 
-  // Composio-backed URL bundles authenticate via static header
-  // (x-api-key) — no MCP-side OAuth flow is needed to start the
-  // source, so kick it off here rather than waiting for the next
-  // platform boot. Tool listing works regardless of whether the
-  // user has completed Composio's OAuth dance yet; tool execution
-  // returns Composio's "not connected" errors until they do.
-  // For static / dcr bundles, source.start() is bound to
-  // `lifecycle.startAuth` (called from `/v1/mcp-auth/initiate`)
-  // and shouldn't run here.
+  // Static-credential URL bundles authenticate without an MCP-side OAuth flow,
+  // so start the source here rather than waiting for the next platform boot:
+  //  - composio: static `x-api-key` header (tool execution returns "not
+  //    connected" until the user finishes Composio's OAuth dance);
+  //  - provider: a server-side credential (e.g. minted) — no user auth at all.
+  // For static / dcr bundles, source.start() is bound to `lifecycle.startAuth`
+  // (called from `/v1/mcp-auth/initiate`) and shouldn't run here.
   //
   // Eager-start is a UX optimization (instant tool list). If it
   // fails the install itself has still succeeded — the BundleRef
@@ -1238,7 +1270,7 @@ async function handleInstallRemoteOAuth(
   // so the agent can communicate "installed, eager-start failed,
   // click Connect" cleanly.
   let startWarning: string | undefined;
-  if (action.auth === "composio") {
+  if (action.auth === "composio" || action.auth === "provider") {
     try {
       await startBundleSource(ref, wsRegistry, ctx.runtime.getEventSink(), undefined, {
         allowInsecureRemotes: ctx.runtime.getAllowInsecureRemotes(),
@@ -1249,7 +1281,7 @@ async function handleInstallRemoteOAuth(
     } catch (err) {
       startWarning = err instanceof Error ? err.message : String(err);
       log.warn(
-        `[connector-tools] composio eager-start failed for ${entry.name} in ${wsId} ` +
+        `[connector-tools] ${action.auth} eager-start failed for ${entry.name} in ${wsId} ` +
           `(install succeeded; click Connect to retry): ${startWarning}`,
       );
     }

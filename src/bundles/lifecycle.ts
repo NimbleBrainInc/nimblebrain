@@ -460,7 +460,6 @@ export class BundleLifecycleManager {
       trustScore: trustScore ?? null,
       ui: ui ?? null,
       briefing: null,
-      protected: false,
       type: "plain",
       wsId,
     };
@@ -554,14 +553,14 @@ export class BundleLifecycleManager {
   // ---- Uninstall ---------------------------------------------------------
 
   /**
-   * Uninstall a bundle (PRODUCT_SPEC ss3.4).
+   * Uninstall a bundle (PRODUCT_SPEC ss3.4). Every connector is user-removable —
+   * there is no `protected` guard.
    *
-   * 1. Check protected flag — reject if protected
-   * 2. Stop MCP server
-   * 3. Remove source from ToolRegistry
-   * 4. Remove entry from nimblebrain.json
-   * 5. Emit bundle.uninstalled
-   * 6. Data is NOT deleted
+   * 1. Stop MCP server
+   * 2. Remove source from ToolRegistry
+   * 3. Remove entry from nimblebrain.json
+   * 4. Emit bundle.uninstalled
+   * 5. Data is NOT deleted
    */
   async uninstall(nameOrPath: string, registry: ToolRegistry, wsId: string): Promise<void> {
     // Resolve by (serverName, wsId) first; fall back to bundleName match within
@@ -579,12 +578,8 @@ export class BundleLifecycleManager {
       }
     }
 
-    // Step 1 — Protected check
-    if (instance?.protected) {
-      throw new Error(`Cannot uninstall "${serverName}": bundle is protected`);
-    }
-
-    // Step 2+3 — Stop server, remove from registry
+    // Stop server, remove from registry. Every connector is user-removable
+    // (no `protected` guard — install/uninstall is symmetric for all classes).
     if (registry.hasSource(serverName)) {
       await registry.removeSource(serverName);
     }
@@ -1921,7 +1916,6 @@ export class BundleLifecycleManager {
       trustScore: ref.trustScore ?? null,
       ui: ref.ui ?? manifestMeta?.ui ?? null,
       briefing: manifestMeta?.briefing ?? null,
-      protected: ref.protected ?? false,
       type: manifestMeta?.type ?? "plain",
       wsId,
       // Derive the install channel from the persisted ref shape so both the
@@ -1966,7 +1960,7 @@ export class BundleLifecycleManager {
         // local; we don't need the catalog to derive the path.
         // Composio bundles carry header auth but STILL need a per-user connect,
         // so they route to the composio probe (check FIRST). Other static-auth
-        // sources (tenant-key / bearer / header) carry their own credential and
+        // sources (provider / bearer / header) carry their own credential and
         // auto-connect — no interactive Connect step — so they must not seed
         // `not_authenticated` (which the UI renders as a "Connect" button that
         // would spin a bogus OAuth flow). A surviving entry here means boot-start
@@ -2039,7 +2033,6 @@ function createInstance(
     trustScore: null,
     ui: null,
     briefing: null,
-    protected: false,
     type: isUpjack ? "upjack" : "plain",
     wsId,
     ...(namespace ? { entityDataRoot: join(dataDir, namespace, "data") } : {}),

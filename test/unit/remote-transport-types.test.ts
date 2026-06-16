@@ -26,7 +26,6 @@ describe("Remote transport — TypeScript types", () => {
 				type: "streamable-http",
 				auth: { type: "bearer", token: "tok_123" },
 			},
-			protected: true,
 			trustScore: 85,
 			ui: null,
 		};

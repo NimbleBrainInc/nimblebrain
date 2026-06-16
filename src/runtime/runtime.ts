@@ -66,6 +66,7 @@ import { UserStore } from "../identity/user.ts";
 import { InstructionsStore } from "../instructions/index.ts";
 import { getModelByString, getProviderFromModel } from "../model/catalog.ts";
 import { buildModelResolver, resolveModelString } from "../model/registry.ts";
+import { registerBuiltinCredentialProviders } from "../oauth/minted-credential-provider.ts";
 import { installOAuthFetchDebug } from "../oauth/oauth-fetch-debug.ts";
 import { requestIdentityAttrs, withSpan } from "../observability/index.ts";
 import {
@@ -383,6 +384,14 @@ export class Runtime {
 
   /** Create and start a runtime from config. */
   static async start(config: RuntimeConfig): Promise<Runtime> {
+    // Register built-in transport credential providers (e.g. `minted`) at the
+    // ONE composition root every entry point shares — serve, the no-subcommand
+    // TUI/headless boot, and the automation runner all reach here before
+    // startWorkspaceBundles. Idempotent (last-writer-wins); doing it here instead
+    // of per-entry-point avoids a provider-auth source failing to boot under any
+    // path that forgot to register.
+    registerBuiltinCredentialProviders();
+
     // Temporary OAuth token-exchange diagnostic (no-op unless
     // NB_DEBUG_OAUTH_EXCHANGE is set). Installed before any bundle OAuth so
     // it captures the agent's /token request + the vendor's raw response.
@@ -427,8 +436,8 @@ export class Runtime {
     }
     const events: EventSink = new MultiEventSink(sinkList);
 
-    // Mint a scoped internal token for protected default bundles.
-    // Rotated on every runtime restart — never persisted.
+    // Mint the scoped internal-API auth token (the internal-API bearer checked
+    // in auth-middleware). Rotated on every runtime restart — never persisted.
     const internalToken = crypto.randomUUID();
 
     initWorkDir(config);
@@ -2521,7 +2530,7 @@ export class Runtime {
     };
   }
 
-  /** Scoped internal token for protected default bundles. Rotated on every restart. */
+  /** Scoped internal-API auth token (the internal-API bearer). Rotated on every restart. */
   getInternalToken(): string {
     return this._internalToken;
   }
@@ -2535,7 +2544,7 @@ export class Runtime {
    * would N×-multiply the request-path latency.
    *
    * `SharedSourceRef`-wrapped sources are unwrapped before the `McpSource`
-   * check; protected default bundles arrive wrapped and would otherwise be
+   * check; shared sources arrive wrapped and would otherwise be
    * silently invisible to this path.
    */
   private async getAppSkillResource(serverName: string): Promise<string | null> {
@@ -2607,8 +2616,8 @@ export class Runtime {
     const registry = this._workspaceRegistries.get(wsId);
     if (!registry) return [];
 
-    // Candidate sources: MCP-backed (unwrapping `SharedSourceRef` so protected
-    // default bundles are visible), and not the one already injected via
+    // Candidate sources: MCP-backed (unwrapping `SharedSourceRef` so shared
+    // sources are visible), and not the one already injected via
     // `<app-guide>` in `appContext` chats — otherwise the same body lands
     // twice in the prompt under two different framings.
     //

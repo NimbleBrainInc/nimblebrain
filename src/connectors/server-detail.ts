@@ -115,8 +115,11 @@ export interface NimbleBrainConnectorMeta {
    * - `composio`: Composio aggregator holds the vendor's tokens.
    *   Platform persists only an opaque `connectedAccountId` per
    *   workspace. Required: the `composio` block below.
+   * - `provider`: a platform-managed connector whose credential is produced
+   *   server-side by a named credential provider (no user/operator OAuth, no
+   *   per-user secret). Required: the `providerAuth` block below.
    */
-  auth?: "dcr" | "static" | "composio";
+  auth?: "dcr" | "static" | "composio" | "provider";
   /** Required for `auth: "static"`: where the operator creates the OAuth app. */
   operatorSetup?: {
     portalUrl: string;
@@ -153,6 +156,13 @@ export interface NimbleBrainConnectorMeta {
     authConfigEnv: string;
     tools?: string[];
   };
+  /**
+   * Required for `auth: "provider"`. Names the credential provider and its
+   * opaque config — e.g. `{ provider: "minted", config: { audience, scope } }`.
+   * Operator-authored; the install path copies it verbatim into the BundleRef
+   * `transport.auth`. NEVER derived from tenant input.
+   */
+  providerAuth?: { provider: string; config: Record<string, unknown> };
   /** Optional OAuth scopes the bundle requests. */
   requiredScopes?: string[];
   /** Optional extra authorize-URL params (e.g. Google's access_type=offline). */

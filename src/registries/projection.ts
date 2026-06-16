@@ -88,6 +88,7 @@ function deriveInstall(s: ServerDetail): DirectoryEntry["install"] | null {
         : {}),
       ...(meta?.operatorSetup ? { operatorSetup: meta.operatorSetup } : {}),
       ...(meta?.composio ? { composio: meta.composio } : {}),
+      ...(meta?.providerAuth ? { providerAuth: meta.providerAuth } : {}),
     };
   }
   return null;
@@ -109,7 +110,7 @@ export interface ConnectorCatalogEntry {
   iconUrl: string;
   /** Remote MCP server URL — the value that goes into the bundle `url`. */
   url: string;
-  auth: "dcr" | "static" | "composio";
+  auth: "dcr" | "static" | "composio" | "provider";
   requiredScopes?: string[];
   additionalAuthorizationParams?: Record<string, string>;
   operatorSetup?: { portalUrl: string; hint: string; clientSecretKey: string };
@@ -120,6 +121,13 @@ export interface ConnectorCatalogEntry {
    * `connection.json`. Absent on dcr/static entries.
    */
   composio?: { toolkit: string; authConfigEnv: string; tools?: string[] };
+  /**
+   * Required for `auth: "provider"` entries: the credential provider name + its
+   * opaque config (e.g. `{ provider: "minted", config: { audience, scope } }`).
+   * Operator-authored; copied verbatim into the BundleRef's `transport.auth` at
+   * install, never derived from tenant input.
+   */
+  providerAuth?: { provider: string; config: Record<string, unknown> };
   tags?: string[];
   interactive?: boolean;
   docsUrl?: string;
@@ -152,6 +160,7 @@ export function serverDetailToCatalogEntry(s: ServerDetail): ConnectorCatalogEnt
       : {}),
     ...(meta?.operatorSetup ? { operatorSetup: meta.operatorSetup } : {}),
     ...(meta?.composio ? { composio: meta.composio } : {}),
+    ...(meta?.providerAuth ? { providerAuth: meta.providerAuth } : {}),
     ...(meta?.tags ? { tags: meta.tags } : {}),
     ...(typeof meta?.interactive === "boolean" ? { interactive: meta.interactive } : {}),
     ...(meta?.docsUrl ? { docsUrl: meta.docsUrl } : {}),

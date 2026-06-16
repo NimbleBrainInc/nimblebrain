@@ -49,7 +49,6 @@ function seedInstance(lifecycle: BundleLifecycleManager, serverName: string, ref
     trustScore: null,
     ui: null,
     briefing: null,
-    protected: false,
     type: "plain",
     wsId: WS,
     oauthScope: "workspace",

@@ -13,7 +13,6 @@ import {
 	INTERNAL_TOKEN_ALLOWED_PATHS,
 } from "../../src/api/auth-utils.ts";
 import { filterEnvForBundle } from "../../src/bundles/env-filter.ts";
-import { DEFAULT_BUNDLES } from "../../src/bundles/defaults.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
 
 let runtime: Runtime;
@@ -187,11 +186,5 @@ describe("internal auth token - env isolation", () => {
 		};
 		const result = filterEnvForBundle(env, undefined, ["NB_INTERNAL_TOKEN"]);
 		expect(result.NB_INTERNAL_TOKEN).toBeUndefined();
-	});
-
-	it("default bundles are marked as protected", () => {
-		for (const bundle of DEFAULT_BUNDLES) {
-			expect(bundle.protected).toBe(true);
-		}
 	});
 });

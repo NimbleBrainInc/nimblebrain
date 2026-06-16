@@ -44,7 +44,7 @@ export interface ServerHandle {
   sseManager: SseEventManager;
   /** Shorthand for server.port */
   port: number;
-  /** Scoped internal token for protected default bundles. Rotated on every restart. */
+  /** Scoped internal-API auth token (the internal-API bearer). Rotated on every restart. */
   internalToken: string;
   /** Stop the server and health monitor. */
   stop(closeConnections?: boolean): void;

@@ -48,7 +48,6 @@ function makeInstance(overrides: Partial<BundleInstance> = {}): BundleInstance {
 				},
 			],
 		},
-		protected: false,
 		type: "upjack",
 		wsId: "ws_test",
 		...overrides,

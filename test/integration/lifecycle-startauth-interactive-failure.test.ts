@@ -127,7 +127,6 @@ describe("lifecycle.startAuth — interactive-flow failure is surfaced, not swal
       trustScore: null,
       ui: null,
       briefing: null,
-      protected: false,
       type: "plain",
       wsId: WS,
       oauthScope: "workspace",

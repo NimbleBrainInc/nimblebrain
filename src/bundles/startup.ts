@@ -38,13 +38,7 @@ import {
 } from "./paths.ts";
 import { notifyConnectionRunning } from "./pending-auth-buffer.ts";
 import { resolveLocalBundle } from "./resolve.ts";
-import type {
-  BundleManifest,
-  BundleRef,
-  InternalBundleEnv,
-  LocalBundleMeta,
-  StartBundleResult,
-} from "./types.ts";
+import type { BundleManifest, BundleRef, LocalBundleMeta, StartBundleResult } from "./types.ts";
 import { validateBundleUrl } from "./url-validator.ts";
 
 /**
@@ -190,7 +184,6 @@ export async function startBundleSource(
   configDir?: string,
   opts?: {
     allowInsecureRemotes?: boolean;
-    internalEnv?: InternalBundleEnv;
     dataDir?: string;
     /**
      * Workspace context for credential resolution and on-disk path
@@ -257,13 +250,26 @@ export async function startBundleSource(
     const serverName = ref.serverName ?? deriveServerName(ref.url);
     validateServerName(serverName);
     const sourceName = serverName;
-    // SSRF protection: validate URL before connecting. Tenant-key sources are the
-    // operator-provisioned fleet rail (tenant-key auth cannot be set by a tenant),
-    // so they may reach in-cluster `.svc` services over plain HTTP — see
-    // `validateBundleUrl`'s `fleetInternal` path.
+    // Diagnostic (NOT back-compat): name the cause when a url source declares a
+    // transport.auth.type the runtime doesn't recognize — otherwise it silently
+    // gets no credential and 401s. The likeliest case is a config that predates
+    // the provider-auth migration (e.g. the retired `tenant-key`).
+    const declaredAuthType = ref.transport?.auth?.type;
+    if (declaredAuthType && !["bearer", "header", "none", "provider"].includes(declaredAuthType)) {
+      log.warn(
+        `[bundles] source "${serverName}" declares an unrecognized transport.auth.type="${declaredAuthType}" ` +
+          "(known: bearer, header, none, provider). No credential will be attached and the source will likely 401 — " +
+          "if this config predates the provider-auth migration, re-register the source.",
+      );
+    }
+    // SSRF protection: validate URL before connecting. Provider-auth sources are
+    // the operator-provisioned fleet rail (a `provider` auth config can't be set
+    // from tenant input — it comes from the vetted catalog entry), so they may
+    // reach in-cluster `.svc` services over plain HTTP — see `validateBundleUrl`'s
+    // `fleetInternal` path.
     validateBundleUrl(new URL(ref.url), {
       allowInsecure: opts?.allowInsecureRemotes,
-      fleetInternal: ref.transport?.auth?.type === "tenant-key",
+      fleetInternal: ref.transport?.auth?.type === "provider",
     });
     log.info(`[bundles] Starting remote bundle ${ref.url} as ${sourceName}...`);
 
@@ -695,11 +701,9 @@ export async function startBundleSource(
       composeBundleMcpContext(opts?.bundleMcp, sourceName),
     );
   } else {
-    const internalEnv = ref.protected && opts?.internalEnv ? opts.internalEnv : undefined;
     const result = buildLocalSource(
       ref,
       configDir,
-      internalEnv,
       opts?.dataDir,
       eventSink,
       wsContext?.workspaceId,
@@ -746,7 +750,6 @@ function buildLocalSource(
     serverName?: string;
   },
   configDir: string | undefined,
-  internalEnv: InternalBundleEnv | undefined,
   dataDirOverride: string | undefined,
   eventSink: EventSink,
   wsId: string | undefined,
@@ -794,12 +797,6 @@ function buildLocalSource(
     ...filterEnvForBundle(process.env as Record<string, string>, resolvedMcpEnv, ref.allowedEnv),
     ...(ref.env ?? {}),
   };
-
-  // Inject internal auth env for protected default bundles
-  if (internalEnv) {
-    spawnEnv.NB_INTERNAL_TOKEN = internalEnv.NB_INTERNAL_TOKEN;
-    spawnEnv.NB_HOST_URL = internalEnv.NB_HOST_URL;
-  }
 
   // Per-bundle data isolation. Callers (lifecycle install*, workspace-ops,
   // buildProcessInventory) always pass `dataDir` via
