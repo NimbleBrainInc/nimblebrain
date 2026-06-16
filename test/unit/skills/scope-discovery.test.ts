@@ -25,7 +25,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { loadScopedSkills, mergeScopedSkills } from "../../../src/skills/loader.ts";
+import { loadScopedSkills, loadSkillDir, mergeScopedSkills } from "../../../src/skills/loader.ts";
 import type { Skill } from "../../../src/skills/types.ts";
 
 let root: string;
@@ -272,5 +272,79 @@ describe("loadScopedSkills + mergeScopedSkills — end-to-end on tmpdir", () => 
     expect(merged).toHaveLength(1);
     expect(merged[0]!.manifest.name).toBe("voice");
     expect(merged[0]!.manifest.scope).toBe("org");
+  });
+});
+
+describe("loadScopedSkills — read failures are observable, not silent", () => {
+  let errors: string[];
+  let originalError: typeof console.error;
+
+  beforeEach(() => {
+    errors = [];
+    originalError = console.error;
+    console.error = (...args: unknown[]) => {
+      errors.push(args.map(String).join(" "));
+    };
+  });
+
+  afterEach(() => {
+    console.error = originalError;
+  });
+
+  test("a dir that exists but cannot be listed logs an error instead of silently dropping the scope", () => {
+    // A path that exists but is NOT a directory: readdirSync throws ENOTDIR.
+    // This stands in for the permissions/IO/TOCTOU failure that silently
+    // emptied a live workspace's skill pool — the regression we're guarding.
+    const notADir = join(root, "skills-is-a-file");
+    writeFileSync(notADir, "not a directory", "utf-8");
+
+    const skills = loadScopedSkills(notADir, "workspace");
+
+    expect(skills).toHaveLength(0);
+    expect(errors.some((e) => e.includes("[skill]") && e.includes("workspace"))).toBe(true);
+    expect(errors.some((e) => e.includes("contributes no skills"))).toBe(true);
+  });
+
+  test("a single unparseable skill file drops only that file, not the whole scope", () => {
+    const dir = join(root, "ws-skills");
+    mkdirSync(dir, { recursive: true });
+    writeSkillFile(join(dir, "good.md"), "good");
+    // Malformed YAML frontmatter (unclosed flow mapping) → gray-matter throws
+    // on parse. uid-independent — exercises the per-file guard everywhere,
+    // including CI running as root (where a chmod 0o000 read-error would not).
+    writeFileSync(join(dir, "bad.md"), "---\nname: bad\nx: {unclosed\n---\nbody\n", "utf-8");
+
+    const skills = loadScopedSkills(dir, "workspace");
+
+    expect(skills.map((s) => s.manifest.name)).toEqual(["good"]);
+    expect(errors.some((e) => e.includes("[skill]") && e.includes("bad.md"))).toBe(true);
+  });
+
+  // loadSkillDir is the flat boot-time loader (builtin/core + the user-writable
+  // global/config skill dirs). It shares the same guards as the scoped loader —
+  // a bad dir or one bad file must never crash buildSkills at startup.
+  test("loadSkillDir: an unlistable dir returns [] and logs, never throws", () => {
+    const notADir = join(root, "global-skills-is-a-file");
+    writeFileSync(notADir, "not a directory", "utf-8");
+
+    const skills = loadSkillDir(notADir, "global");
+
+    expect(skills).toHaveLength(0);
+    expect(errors.some((e) => e.includes("[skill]") && e.includes("global"))).toBe(true);
+  });
+
+  test("loadSkillDir: one unparseable file drops only that file, not the whole dir", () => {
+    const dir = join(root, "global-skills");
+    mkdirSync(dir, { recursive: true });
+    writeSkillFile(join(dir, "good.md"), "good");
+    // Distinct malformed content from the scoped test above — gray-matter
+    // caches by raw input, so an identical bad string would hit the cache and
+    // return null (silently dropped) instead of throwing through the guard.
+    writeFileSync(join(dir, "bad.md"), "---\nname: bad-global\ny: [unclosed\n---\nbody\n", "utf-8");
+
+    const skills = loadSkillDir(dir, "global");
+
+    expect(skills.map((s) => s.manifest.name)).toEqual(["good"]);
+    expect(errors.some((e) => e.includes("[skill]") && e.includes("bad.md"))).toBe(true);
   });
 });
