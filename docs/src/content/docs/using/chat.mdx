@@ -1,0 +1,149 @@
+---
+title: Chat
+description: Talk to the NimbleBrain agent through the web UI or CLI.
+---
+
+import { Steps, Tabs, TabItem, Aside } from '@astrojs/starlight/components';
+
+You interact with NimbleBrain by chatting with an agent that has access to all the tools provided by your installed apps. The agent processes your message, decides which tools to call, executes them, and streams the response back to you.
+
+## Two interfaces
+
+NimbleBrain offers two ways to chat: a web UI for browser-based interaction and a terminal TUI for command-line workflows.
+
+<Tabs>
+  <TabItem label="Web UI">
+    The chat panel is where you talk to the agent in the browser. Type a message in the input field at the bottom and press **Enter** to send. For multi-line messages, use **Shift+Enter** to add a new line.
+
+    During a response, you see streaming states:
+
+    - **Thinking** — the agent is processing your message and deciding what to do
+    - **Streaming** — text is arriving from the model in real time
+    - **Working** — a tool call is in progress
+
+    Tool calls appear inline as expandable cards. Each shows the tool name, which app it belongs to, and whether it succeeded or failed. Expand a card to see what the tool returned.
+  </TabItem>
+  <TabItem label="CLI TUI">
+    Start the interactive TUI:
+
+    ```bash
+    nb
+    ```
+
+    Or with a specific config:
+
+    ```bash
+    nb --config ./nimblebrain.json
+    ```
+
+    The TUI renders in your terminal using Ink (React for terminals). Streaming text and tool-call status update in real time.
+  </TabItem>
+</Tabs>
+
+## Chat panel modes
+
+In the web UI, the chat panel has three modes:
+
+| Mode | What it looks like | When to use it |
+|------|-------------------|----------------|
+| **Closed** | Small button in the bottom-right corner | When you're focused on an app and don't need chat |
+| **Sidebar** | Fixed panel on the right | The default — chat alongside an app |
+| **Fullscreen** | Chat fills the entire content area | For focused, longer conversations |
+
+Switch modes with the expand/collapse icons in the chat header or with keyboard shortcuts. See [Keyboard Shortcuts](/guide/shortcuts).
+
+## Headless mode
+
+When stdin is piped, NimbleBrain automatically enters headless mode. It reads one message per line from stdin and writes responses to stdout:
+
+```bash
+echo "What apps are installed?" | nb
+```
+
+For structured output, use `--json`:
+
+```bash
+echo "List my apps" | nb --json
+```
+
+This returns a `ChatResult` JSON object with `response`, `conversationId`, `toolCalls`, token counts, and `stopReason`.
+
+The conversation ID carries across lines, so multi-turn conversations work:
+
+```bash
+printf "What is 2+2?\nNow multiply that by 10\n" | nb
+```
+
+## What the agent can do
+
+The agent has access to:
+
+- **App tools** — every tool from every installed MCP bundle (for example `granola__list_meetings`, `bash__execute`)
+- **System tools** — built-in tools prefixed with `nb__`:
+
+| Tool | Purpose |
+|------|---------|
+| `nb__search` | Search installed tools (`scope: "tools"`) or the mpak registry (`scope: "registry"`) |
+| `nb__status` | Platform status; `scope: "bundles"` for per-app health, `scope: "skills"` for loaded skills |
+| `nb__delegate` | Spawn a child agent for a sub-task |
+
+The agent also has identity-level tools for managing your apps, connectors, conversations, files, and automations. It uses these when you ask it to install a capability or set up a scheduled run.
+
+<Aside type="tip">
+  When more than 30 tools are available, NimbleBrain uses tiered tool surfacing. Only system tools and matched skill tools are surfaced directly; the agent uses `nb__search` to find other tools as needed.
+</Aside>
+
+## Attaching files
+
+You can give the agent additional context by attaching files to a message. In the web UI:
+
+- **Drag and drop** files onto the chat input
+- **Paste an image** directly from your clipboard (Cmd+V / Ctrl+V)
+- **Click the attachment icon** to browse
+
+Attached files appear as chips below the input. Remove one by clicking the X on its chip before sending. See [File Context](/using/file-context) for supported formats and how extraction works.
+
+## The Thoughts panel
+
+When extended thinking is enabled, the agent's reasoning shows up in the chat timeline as a collapsible **Thought** chip (it reads "Thinking…" while the reasoning is still streaming). Expand it to read the model's reasoning before the answer; collapse it to keep the transcript clean.
+
+Extended thinking is controlled by the **Extended Thinking** setting on the organization Model tab — choose Off, Adaptive (the model decides per call), or Enabled (always reason). Reasoning is billed as output tokens. See [Settings](/guide/settings) for where to set it.
+
+## The Artifacts panel
+
+When a tool or app returns a document via an `artifact://` resource, the chat renders an **artifact chip**. Click it to open the **Artifacts panel** — a slide-out drawer alongside the conversation that shows the full document with a title header and sticky **Copy** and **Download** actions. Markdown is rendered; plain text and other formats fall back to a readable view. Press **Esc** to close the panel.
+
+This keeps long deliverables (reports, generated files, structured output) out of the message stream while leaving them one click away.
+
+## App context
+
+When you open an app in the web UI and chat from within that app's view, the chat is scoped to that app. The agent receives an `appContext` that tells it which app you're focused on, so it can prioritize that app's tools and give more relevant responses.
+
+For example, with a calendar app open, asking "What's on my schedule?" leads the agent to the calendar tools rather than searching across everything installed.
+
+## Tips for effective prompting
+
+- **Be specific about what you want.** "Search for MCP servers related to Slack" works better than "find me something."
+- **Name the app when relevant.** If you have multiple apps installed, say "Use Granola to list my meetings" rather than just "list my meetings."
+- **Ask the agent to install what it needs.** The agent can search mpak and install bundles on its own.
+- **Use delegation for parallel work.** For tasks that split naturally, ask the agent to delegate sub-tasks. See [Multi-Agent Delegation](/using/delegation).
+
+## Cost transparency
+
+Each assistant response shows a token-count breakdown — input and output tokens used. This helps you understand usage if your team tracks costs.
+
+## Resume a conversation
+
+You can resume a previous conversation in the CLI:
+
+```bash
+nb --resume conv_a1b2c3d4e5f67890
+```
+
+In the web UI, open a past conversation from the Conversations sidebar. See [Conversations](/using/conversations) for details on history and storage.
+
+## What's next
+
+- [Installing Apps](/using/installing-apps) — add new capabilities to your agent
+- [Skills](/using/skills) — customize how the agent responds with prompt composition
+- [Conversations](/using/conversations) — history, resume, and storage

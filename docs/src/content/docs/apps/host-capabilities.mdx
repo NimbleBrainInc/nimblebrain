@@ -1,0 +1,119 @@
+---
+title: Host Capabilities
+description: Negotiate platform extensions like host-served file reads with host_version 1.1 and the host_capabilities manifest block.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+The platform advertises **host capabilities** — vendor-namespaced extensions it offers to bundles — during the MCP `initialize` handshake. A bundle declares which capabilities it needs or prefers in its manifest. The platform validates those declarations at install time, so a bundle that genuinely depends on a missing capability fails loudly instead of misbehaving at runtime.
+
+This is capability negotiation: the platform says what it can do, the bundle says what it needs, and the install gate reconciles the two.
+
+## When you need this
+
+Most apps don't. You need host capabilities only when your bundle wants to use a platform extension beyond the standard MCP surface (tools, resources, the [iframe bridge](/apps/bridge)). The first such extension is `ai.nimblebrain/host-resources`, which lets a bundle read workspace files directly through the platform.
+
+## Declaring capabilities
+
+Capability declarations live in a `host_capabilities` block inside `_meta["ai.nimblebrain/host"]`. Declaring the block **requires `host_version: "1.1"`** — the schema rejects the block under `1.0`.
+
+```json title="manifest.json"
+{
+  "_meta": {
+    "ai.nimblebrain/host": {
+      "host_version": "1.1",
+      "name": "Research",
+      "icon": "microscope",
+      "host_capabilities": {
+        "ai.nimblebrain/host-resources": {
+          "required": true
+        }
+      }
+    }
+  }
+}
+```
+
+Each key is a vendor-namespaced capability key (reverse-DNS, e.g. `ai.nimblebrain/host-resources`). Each value declares your requirement for that capability:
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `required` | `boolean` | `false` | When `true`, the platform refuses to install the bundle if it does not advertise this capability. When `false` (or omitted), the bundle prefers the capability but adapts at runtime if it's absent. |
+
+## Required vs. optional — install-fail semantics
+
+The `required` flag picks one of two install-time behaviors:
+
+- **`required: true`** — The platform checks every required capability key against what it advertises in `ClientCapabilities.extensions`. If any required key is missing, install is **refused** with an error naming the missing capability. Use this only when your bundle is useless without the capability (e.g. a workspace-file iterator that has nothing to iterate without `host-resources`).
+- **`required: false` (or omitted)** — The bundle installs regardless. At runtime, use the SDK's availability check to detect whether the capability is present, and fall back gracefully when it isn't (typically a structured tool error teaching the agent to retry with inline content). This "prefers-but-adapts" mode is the safer default — it keeps your bundle installable on platform builds or other hosts that don't offer the extension.
+
+<Aside type="caution">
+The install gate also validates the block against the JSON Schema before the capability check. A typo like `"requierd": true` is rejected as a schema error rather than silently degrading your "I require X" declaration into "I prefer X" — the exact failure the gate exists to prevent.
+</Aside>
+
+## The `ai.nimblebrain/host-resources` capability
+
+This extension lets a bundle read files from the workspace's file store — the same store the agent's `files__read` tool sees — without routing the request through the agent. The platform advertises it during `initialize`; when present, your bundle issues `ai.nimblebrain/resources/read` and `ai.nimblebrain/resources/list` requests back to the platform.
+
+The current advertisement (v1) supports:
+
+| Capability | v1 status |
+|------------|-----------|
+| `read` | Whole-file reads up to 10 MiB. |
+| `list` | List available resources with an optional `mime_type` / `tags` filter. |
+| `write` | Not offered in v1. |
+| `schemes` | `files` only. Requesting a URI outside the allowed schemes returns `-32602`. |
+
+### Using it from Python
+
+The [`nimblebrain-bundle-sdk`](https://pypi.org/project/nimblebrain-bundle-sdk/) wraps the protocol — capability detection, method names, and typed results:
+
+```python
+from fastmcp import Context
+from nimblebrain_bundle_sdk import host
+
+@mcp.tool
+async def start_research(
+    seed_uri: str | None = None,
+    seed_data: str | None = None,
+    ctx: Context = None,
+):
+    h = host(ctx)
+    if seed_uri and h.available:
+        # Host advertised the extension — read the file directly.
+        result = await h.read(seed_uri)
+        content = result.contents[0].text
+    elif seed_data:
+        # Inline fallback — common for hosts that don't advertise it.
+        content = seed_data
+    elif seed_uri and not h.available:
+        # The Level-C fallback: tell the agent to retry with inline content.
+        raise ValueError(
+            "This host doesn't support ai.nimblebrain/host-resources. "
+            "Pass file contents inline via `seed_data` instead."
+        )
+    else:
+        raise ValueError("Provide `seed_data` or `seed_uri`.")
+
+    ...  # do work with `content`
+```
+
+`h.available` is the runtime availability check — true only when the platform advertised `ai.nimblebrain/host-resources` with `read.enabled`. Pair an optional (`required: false`) declaration with this check so your bundle adapts wherever it runs.
+
+### Error codes
+
+The extension uses the JSON-RPC implementation-defined server-error range for quota and policy responses, distinct from `-32603 InternalError`:
+
+| Code | Meaning |
+|------|---------|
+| `-32002` | Resource not found (also returned for cross-workspace lookups — no information leak). |
+| `-32004` | Rate limited (per-bundle token bucket; carries `retryAfterMs` in `error.data`). |
+| `-32005` | Response too large (whole-response cap; `error.data` carries `size`, `maxSize`). |
+| `-32602` | Invalid params (unsupported URI scheme, malformed `tags`). |
+
+Match on specific codes to back off intelligently rather than treating every error as a server fault.
+
+## Related
+
+- [Manifest reference](/apps/manifest/) — full `_meta["ai.nimblebrain/host"]` schema, including `host_version` and `host_capabilities`.
+- [Long-running tools](/apps/synapse) — the MCP Tasks pattern, the other place a bundle reaches back to the platform.

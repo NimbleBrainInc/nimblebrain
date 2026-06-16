@@ -1,0 +1,148 @@
+---
+title: "nb (Interactive)"
+description: Run NimbleBrain in interactive TUI mode or headless pipe mode.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Running `nb` without a subcommand starts an interactive session with the NimbleBrain agent. The CLI auto-detects whether to use the terminal UI or headless pipe mode based on your terminal.
+
+## TUI mode
+
+When you run `nb` in a terminal, it launches an Ink-based terminal UI with streaming responses, inline tool call display, and a line editor.
+
+```bash
+nb
+```
+
+```
+[nimblebrain] Starting runtime...
+[nimblebrain] Ready.
+
+> What can you do?
+
+I can help you with tasks using any tools from your installed apps, plus built-in
+platform capabilities (home, conversations, files, settings, usage, automations).
+I can also search the mpak registry and install new apps for you.
+
+What would you like to work on?
+```
+
+Type your message and press Enter. The agent streams its response in real time. Press Ctrl+C to exit.
+
+### TUI features
+
+- **Streaming output** -- responses appear token by token as Claude generates them
+- **Tool call display** -- you see each tool invocation and its result inline
+- **Confirmation gate** -- the agent prompts you before running potentially destructive tools
+- **Conversation persistence** -- conversations are saved to `~/.nimblebrain/conversations/` as JSONL files
+
+## Headless mode
+
+When stdin is piped (not a TTY), `nb` switches to headless mode. It reads one message per line from stdin and writes the response to stdout. The conversation persists across lines until EOF.
+
+```bash
+echo "How many tools are available?" | nb
+```
+
+```
+You currently have 3 tools available from the @nimblebraininc/granola bundle, plus the built-in platform tools.
+```
+
+### Multi-turn conversations
+
+Each line of input is a separate message in the same conversation. The session stays alive until stdin closes (EOF):
+
+```bash
+printf "What bundles are installed?\nWhat tools does the first one provide?" | nb
+```
+
+```
+You have one bundle installed: @nimblebraininc/granola.
+The @nimblebraininc/granola bundle provides 3 tools: list_meetings, get_transcript, and search_meetings.
+```
+
+### JSON output
+
+Use `--json` to get structured output. Each response is a single JSON object per line:
+
+```bash
+echo "What time is it?" | nb --json
+```
+
+```json
+{"response":"I don't have a clock tool available right now, so I can't give you the exact time. If you install a time or shell bundle I can run it for you.","conversationId":"conv_a1b2c3","skillName":null,"toolCalls":[],"inputTokens":1247,"outputTokens":42,"stopReason":"end_turn"}
+```
+
+When an error occurs in JSON mode, you get an error object instead:
+
+```json
+{"error":"Model rate limit exceeded"}
+```
+
+## Flags
+
+| Flag | Description |
+|------|-------------|
+| `--model <name>` | Override the default model for this session |
+| `--resume <id>` | Resume a previous conversation by ID |
+| `--json` | Output structured JSON (headless mode only) |
+| `--config <path>` | Config file path |
+| `--workdir <dir>` | Working directory (default: `~/.nimblebrain`) |
+| `--debug` | Verbose logging to stderr |
+
+## Resuming conversations
+
+Use `--resume` to continue a previous conversation. Pass the conversation ID from a prior session:
+
+```bash
+nb --resume conv_a1b2c3
+```
+
+```
+[nimblebrain] Starting runtime...
+[nimblebrain] Resuming conversation: conv_a1b2c3
+[nimblebrain] Ready.
+
+>
+```
+
+This works in both TUI and headless mode:
+
+```bash
+echo "What were we talking about?" | nb --resume conv_a1b2c3
+```
+
+<Aside type="tip">
+  Find conversation IDs with `nb status --json` or by listing the files in `~/.nimblebrain/conversations/`.
+</Aside>
+
+## Model override
+
+Override the default model for a single session:
+
+```bash
+nb --model claude-sonnet-4-6
+```
+
+This takes precedence over the `defaultModel` value in your `nimblebrain.json` config.
+
+## Debug output
+
+Enable verbose logging to see runtime internals:
+
+```bash
+nb --debug
+```
+
+Debug output goes to stderr, so it does not interfere with headless stdout:
+
+```bash
+echo "Hello" | nb --debug 2>debug.log
+```
+
+## Related commands
+
+- [CLI Overview](/cli/overview/) -- global flags and config resolution
+- [nb serve](/cli/serve/) -- run as an HTTP API server instead
+- [nb status](/cli/status/) -- check workspace health

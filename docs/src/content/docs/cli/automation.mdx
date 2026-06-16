@@ -1,0 +1,130 @@
+---
+title: nb automation
+description: List, inspect, run, pause, and resume scheduled automations.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+`nb automation` manages scheduled automation rules. Automations are agent tasks that run on a cron schedule, executing a prompt with optional tool access and skill matching.
+
+## Usage
+
+```
+nb automation <action> [name] [flags]
+```
+
+## Actions
+
+| Action | Description |
+|--------|-------------|
+| `list` | List all automations with status |
+| `status <name>` | Show automation details and run history |
+| `run <name>` | Trigger an immediate run |
+| `pause <name>` | Disable an automation |
+| `resume <name>` | Re-enable an automation |
+
+## Listing automations
+
+Show all configured automations with their current state:
+
+```bash
+nb automation list
+```
+
+```
+NAME                          ENABLED  SCHEDULE                    SOURCE  LAST RUN   NEXT RUN
+daily-summary                 yes      0 9 * * *                   config  completed  2026-04-15T09:00:00Z
+weekly-report                 no       0 8 * * 1                   config  -          -
+
+2 automation(s)
+```
+
+Pass `--json` for machine-readable output.
+
+## Checking status
+
+View details about a specific automation, including its configuration and recent run history:
+
+```bash
+nb automation status daily-summary
+```
+
+```
+Name:         daily-summary
+ID:           auto_abc123
+Description:  Generate a daily activity summary
+Enabled:      yes
+Schedule:     0 9 * * *
+Source:       config
+Run count:    47
+Errors:       0 consecutive
+Last run:     2026-04-14T09:00:03Z
+Next run:     2026-04-15T09:00:00Z
+Model:        claude-sonnet-4-6
+Prompt:       Summarize yesterday's workspace activity and highlight anything that needs...
+
+Recent runs:
+  ID          STATUS     STARTED                    ITERS  TOOLS
+  run_a1b2c3  completed  2026-04-14T09:00:03Z       3      5
+  run_d4e5f6  completed  2026-04-13T09:00:02Z       2      3
+```
+
+## Triggering a run
+
+Execute an automation immediately, outside its normal schedule:
+
+```bash
+nb automation run daily-summary
+```
+
+```
+Run run_x7y8z9: completed
+  Started:    2026-04-14T15:30:01Z
+  Completed:  2026-04-14T15:30:12Z
+  Iterations: 3
+  Tool calls: 5
+  Result:     Here is the daily summary for April 14...
+```
+
+The run uses the automation's configured model, skill, and tool access. It does not affect the next scheduled run.
+
+## Pausing and resuming
+
+Disable an automation to stop it from running on schedule:
+
+```bash
+nb automation pause daily-summary
+```
+
+```
+Paused "daily-summary".
+```
+
+Re-enable it:
+
+```bash
+nb automation resume daily-summary
+```
+
+```
+Resumed "daily-summary".
+```
+
+<Aside type="note">
+  Pausing an automation does not cancel any currently running execution. It only prevents future scheduled runs.
+</Aside>
+
+## JSON output
+
+All subcommands support `--json` for structured output:
+
+```bash
+nb automation list --json
+nb automation status daily-summary --json
+nb automation run daily-summary --json
+```
+
+## Related commands
+
+- [nb status](/cli/status/) -- workspace overview including automation count
+- [nb reload](/cli/reload/) -- reload config to pick up new automation definitions

@@ -1,0 +1,173 @@
+---
+title: Logging
+description: Structured JSONL logging configuration and log format reference.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+NimbleBrain writes structured logs as JSONL (one JSON object per line) to daily rolling log files. These logs capture LLM latency, tool execution times, cache token usage, per-tool statistics, and estimated costs.
+
+## Configuration
+
+Control logging through the `logging` object in `nimblebrain.json`:
+
+```json
+{
+  "logging": {
+    "dir": "~/.nimblebrain/logs",
+    "disabled": false,
+    "level": "normal",
+    "retentionDays": 30
+  }
+}
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `dir` | `string` | `{workDir}/logs` | Directory where log files are written. Created automatically if it does not exist. |
+| `disabled` | `boolean` | `false` | Set to `true` to disable structured logging entirely. |
+| `level` | `"normal"` \| `"debug"` | `"normal"` | `"debug"` persists additional verbose fields (full tool inputs/outputs, raw provider responses). Larger files. |
+| `retentionDays` | `integer` | — | Auto-delete log files older than N days on startup. Omit for no cleanup. |
+
+Structured logging is enabled by default. To disable it:
+
+```json
+{
+  "logging": {
+    "disabled": true
+  }
+}
+```
+
+## Log file naming
+
+Log files follow a daily rolling pattern:
+
+```
+{dir}/nimblebrain-YYYY-MM-DD.jsonl
+```
+
+A new file is created automatically each day. Examples:
+
+```
+~/.nimblebrain/logs/nimblebrain-2026-03-25.jsonl
+~/.nimblebrain/logs/nimblebrain-2026-03-26.jsonl
+```
+
+## Log entry format
+
+Every log line is a JSON object with at minimum a timestamp and event type:
+
+```json
+{"ts":"2026-03-25T14:30:00.123Z","event":"run.start","runId":"abc123","model":"anthropic:claude-sonnet-4-6"}
+```
+
+### Common fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `ts` | `string` | ISO 8601 timestamp of when the event was recorded. |
+| `event` | `string` | Event type (e.g., `run.start`, `tool.done`, `run.done`). |
+| `sid` | `string` | Conversation ID, present when the log sink has a conversation context. |
+| `runId` | `string` | Unique identifier for the agent run. Correlates all events in a single request. |
+
+### Event types
+
+The following events are logged. `text.delta` events are excluded to avoid log noise.
+
+**`run.start`** — An agent run begins.
+
+```json
+{"ts":"2026-03-25T14:30:00.123Z","event":"run.start","runId":"abc123","model":"anthropic:claude-sonnet-4-6","sid":"conv-456"}
+```
+
+**`iteration.done`** — One LLM call + tool execution cycle completes.
+
+```json
+{"ts":"2026-03-25T14:30:01.456Z","event":"iteration.done","runId":"abc123","llmMs":823,"cacheCreationTokens":1200,"cacheReadTokens":4500}
+```
+
+**`tool.done`** — A tool call finishes.
+
+```json
+{"ts":"2026-03-25T14:30:01.200Z","event":"tool.done","runId":"abc123","name":"postgres__query","ms":45,"ok":true}
+```
+
+**`run.done`** — The agent run completes. This is the summary record with accumulated metrics.
+
+```json
+{
+  "ts": "2026-03-25T14:30:02.789Z",
+  "event": "run.done",
+  "runId": "abc123",
+  "sid": "conv-456",
+  "inputTokens": 12500,
+  "outputTokens": 1830,
+  "cacheCreationTokens": 1200,
+  "cacheReadTokens": 4500,
+  "llmMs": 1650,
+  "toolMs": 320,
+  "toolCalls": 3,
+  "toolErrors": 0,
+  "costUsd": 0.004215,
+  "toolStats": {
+    "postgres__query": { "count": 2, "totalMs": 250 },
+    "filesystem__read_file": { "count": 1, "totalMs": 70 }
+  }
+}
+```
+
+**`run.error`** — The agent run failed with an error.
+
+```json
+{"ts":"2026-03-25T14:30:03.000Z","event":"run.error","runId":"abc123","error":"Token budget exceeded"}
+```
+
+### run.done summary fields
+
+The `run.done` event accumulates metrics across all iterations in the run:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `inputTokens` | `number` | Total input tokens consumed. |
+| `outputTokens` | `number` | Total output tokens generated. |
+| `cacheCreationTokens` | `number` | Tokens written to prompt cache during this run. |
+| `cacheReadTokens` | `number` | Tokens read from prompt cache (cache hits). |
+| `llmMs` | `number` | Total milliseconds spent in LLM calls. |
+| `toolMs` | `number` | Total milliseconds spent executing tools. |
+| `toolCalls` | `number` | Total number of tool calls made. |
+| `toolErrors` | `number` | Number of tool calls that returned errors. |
+| `costUsd` | `number` | Estimated cost in USD, based on the model's token pricing. |
+| `toolStats` | `object` | Per-tool breakdown: `{ "toolName": { "count": N, "totalMs": N } }`. Only present when at least one tool was called. |
+
+## Querying logs
+
+Log files are plain JSONL, so you can use standard command-line tools:
+
+```bash
+# Total cost for today
+cat ~/.nimblebrain/logs/nimblebrain-2026-03-25.jsonl \
+  | jq -s '[.[] | select(.event == "run.done") | .costUsd] | add'
+
+# Slowest tool calls
+cat ~/.nimblebrain/logs/nimblebrain-2026-03-25.jsonl \
+  | jq 'select(.event == "tool.done") | {name, ms}' \
+  | jq -s 'sort_by(-.ms) | .[0:5]'
+
+# Errors only
+cat ~/.nimblebrain/logs/nimblebrain-2026-03-25.jsonl \
+  | jq 'select(.event == "run.error")'
+```
+
+<Aside type="tip">
+  For programmatic cost tracking, query the agent's `usage__report` tool instead of parsing the JSONL logs directly.
+</Aside>
+
+## Log rotation
+
+NimbleBrain does not delete old log files. Each day creates a new file, so you can manage retention with standard tools:
+
+```bash
+# Delete logs older than 30 days
+find ~/.nimblebrain/logs -name "nimblebrain-*.jsonl" -mtime +30 -delete
+```

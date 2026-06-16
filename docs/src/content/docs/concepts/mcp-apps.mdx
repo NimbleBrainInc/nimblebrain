@@ -1,0 +1,122 @@
+---
+title: MCP Apps
+description: NimbleBrain is a full MCP Apps host — interactive UIs that render inside the platform with bidirectional tool access via the ext-apps specification.
+---
+
+import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
+
+## What are MCP Apps?
+
+[MCP Apps](https://modelcontextprotocol.io/extensions/apps/overview) are interactive UI applications — built with HTML, CSS, and JavaScript — that render directly inside an MCP host rather than in a separate browser tab. They extend the [Model Context Protocol](https://modelcontextprotocol.io) with a UI layer defined by the [ext-apps specification](https://apps.extensions.modelcontextprotocol.io/api/).
+
+MCP Apps solve a fundamental problem: AI agents can call tools, but many workflows need visual interfaces for data exploration, configuration, monitoring, or multi-step approvals. Rather than switching to a separate web app, MCP Apps render **inside the conversation** with full access to the agent's tool chain.
+
+## NimbleBrain as an MCP Apps host
+
+NimbleBrain implements the ext-apps specification (2026-01-26), making it a full MCP Apps host alongside Claude Desktop, VS Code GitHub Copilot, Goose, and Postman.
+
+When you install a bundle that declares UI resources, NimbleBrain:
+
+1. Reads the `_meta["ai.nimblebrain/host"]` manifest metadata for placements and views
+2. Registers sidebar entries, routes, and navigation items in the shell layout
+3. Renders the app's HTML in a **sandboxed iframe** with CSP isolation
+4. Establishes a **postMessage bridge** implementing the ext-apps JSON-RPC protocol
+5. Injects theme tokens as CSS custom properties so the app matches the host's look
+
+The result: apps appear as native views inside NimbleBrain, with bidirectional communication to the agent and MCP tools.
+
+## What MCP Apps can do
+
+MCP Apps excel at tasks where text-only tool results aren't enough:
+
+| Use case | Example |
+|----------|---------|
+| **Data exploration** | Dashboards, charts, maps, filterable tables |
+| **Complex configuration** | Multi-option forms, drag-and-drop builders |
+| **Rich media** | PDF viewers, image galleries, 3D model previews |
+| **Real-time monitoring** | Live metrics, log streams, deployment status |
+| **Multi-step workflows** | Approval chains, review interfaces, wizards |
+
+Apps are framework-agnostic — React, Vue, Svelte, Preact, Solid, or vanilla JavaScript all work. The only requirement is that the app communicates via postMessage using the ext-apps protocol.
+
+## How it differs from a regular web app
+
+| | Traditional web app | MCP App |
+|-|---|---|
+| **Context** | Separate tab, disconnected from AI | Inline with the conversation |
+| **Tool access** | Needs its own API client + auth | Calls MCP tools through the bridge — no separate API |
+| **Data flow** | Polls or WebSocket | Pushed via `tool-result` and `data-changed` notifications |
+| **Theming** | Independent design system | Inherits host theme via CSS variables |
+| **Security** | Full page access | Sandboxed iframe — no access to parent, cookies, or other apps |
+
+## The ext-apps protocol
+
+Communication between the app iframe and NimbleBrain uses JSON-RPC 2.0 over `window.postMessage`. The key message flows:
+
+**Initialization handshake:**
+1. App sends `ui/initialize` with its capabilities
+2. Host responds with theme, capabilities, and context
+3. App confirms with `ui/notifications/initialized`
+4. Host begins sending tool data
+
+**App → Host (requests):**
+- `tools/call` — invoke a tool on the app's MCP server
+- `ui/message` — send a message to the conversation
+- `ui/open-link` — open a URL in a new browser tab
+- `ui/update-model-context` — push structured state visible to the LLM
+
+**Host → App (notifications):**
+- `ui/notifications/tool-result` — a tool call completed
+- `ui/notifications/tool-input` — tool arguments being sent
+- `ui/notifications/host-context-changed` — theme toggle, locale change
+
+NimbleBrain extends the spec with `synapse/` namespace methods for data-change notifications, semantic actions, file downloads, and state persistence. These degrade gracefully to no-ops in non-NimbleBrain hosts.
+
+See [MCP App Bridge](/apps/bridge) for the complete protocol reference.
+
+## Building an MCP App
+
+Any MCPB bundle can become an MCP App by:
+
+1. Adding `_meta["ai.nimblebrain/host"]` to its `manifest.json` with UI placements
+2. Serving HTML via `ui://` resource URIs from the MCP server
+3. Implementing the ext-apps handshake in the frontend code (or using the `@nimblebrain/synapse` SDK)
+
+```json title="manifest.json"
+{
+  "name": "@myorg/dashboard",
+  "version": "1.0.0",
+  "server": {
+    "type": "python",
+    "mcp_config": {
+      "command": "python",
+      "args": ["-m", "dashboard.server"]
+    }
+  },
+  "_meta": {
+    "ai.nimblebrain/host": {
+      "host_version": "1.0",
+      "name": "Dashboard",
+      "icon": "bar-chart-3",
+      "primaryView": {
+        "resourceUri": "ui://main"
+      }
+    }
+  }
+}
+```
+
+<Aside type="tip">
+If you use the `@nimblebrain/synapse` SDK, the handshake, theme sync, and tool calling are handled for you with a single `connect()` call.
+</Aside>
+
+## What's next
+
+import { CardGrid, LinkCard } from '@astrojs/starlight/components';
+
+<CardGrid>
+  <LinkCard title="MCP App Bridge" description="Full ext-apps protocol reference and NimbleBrain extensions" href="/apps/bridge" />
+  <LinkCard title="App Overview" description="Architecture, app types, and manifest structure" href="/apps/overview" />
+  <LinkCard title="UI Resources" description="Serve HTML from your MCP server via ui:// URIs" href="/apps/ui-resources" />
+  <LinkCard title="Hello World App" description="Build a complete MCP App from scratch" href="/apps/hello-world" />
+</CardGrid>

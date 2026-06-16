@@ -1,0 +1,320 @@
+---
+title: Security
+description: Harden your NimbleBrain deployment with proper auth, CORS, and network configuration.
+---
+
+import { Steps, Tabs, TabItem, Aside } from '@astrojs/starlight/components';
+
+NimbleBrain exposes an HTTP API that controls an agent with tool execution capabilities. A misconfigured deployment can give unauthorized users shell access to your server. This page covers every security surface you should address before exposing NimbleBrain to a network.
+
+## Authentication
+
+### Auth adapters
+
+NimbleBrain uses pluggable authentication adapters configured via `instance.json` in the work directory. The available adapters are:
+
+| Adapter | Use case | Configuration |
+|---------|----------|--------------|
+| **dev** | Local development | No `instance.json` (default) |
+| **oidc** | Enterprise / SSO | Authorization-code flow against any OIDC provider |
+| **workos** | Enterprise / SSO via WorkOS | AuthKit-hosted login (`adapter: "workos"`) |
+
+The adapter is selected by the `auth.adapter` field in `instance.json`. With no `instance.json` present, the platform runs in dev mode.
+
+<Aside type="danger">
+Running without an `instance.json` (dev mode) disables all authentication. The CORS policy falls back to `Access-Control-Allow-Origin: *`. Anyone who can reach the server has full access to the agent, including shell execution via the bash bundle.
+</Aside>
+
+### How authentication works
+
+For the OIDC and WorkOS adapters, sign-in is an authorization-code flow, not a login form that the platform posts credentials to. There is **no** `POST /v1/auth/login` endpoint. The browser flow is:
+
+<Steps>
+
+1. The web client redirects to `GET /v1/auth/authorize`, which sends the user to the configured identity provider.
+2. The provider authenticates the user and redirects back to `GET /v1/auth/callback` with an authorization code.
+3. The callback exchanges the code for tokens and sets the `nb_session` cookie (see [Session cookies](#session-cookies) below). It does **not** validate a shared secret — the cookie carries the provider-issued access token.
+4. Subsequent requests present either the `nb_session` cookie or an `Authorization: Bearer <token>` header. Programmatic callers (CLI, external MCP clients) use the bearer header; the browser uses the cookie.
+
+</Steps>
+
+`POST /v1/auth/refresh` rotates an expiring session, and `POST /v1/auth/logout` clears it. These four routes (`authorize`, `callback`, `refresh`, `logout`) are the entire auth surface — there is no login route and no `NB_API_KEY`.
+
+### Failed authentication logging
+
+Every failed authentication attempt is logged to stderr with the client IP and timestamp:
+
+```
+[nimblebrain] AUTH FAIL ip=203.0.113.42 timestamp=2026-03-25T22:00:00.000Z
+```
+
+The IP comes from the `X-Forwarded-For` header (set by your reverse proxy) or `"direct"` for direct connections. Monitor these logs for brute-force attempts.
+
+## Session cookies
+
+The OIDC/WorkOS callback (`GET /v1/auth/callback`) sets the `nb_session` cookie after a successful authorization-code exchange. The web UI uses this cookie for all subsequent same-origin requests. No login endpoint is involved — the cookie value is the provider-issued access token, not a platform-minted secret.
+
+### Cookie attributes
+
+| Attribute | Value | Purpose |
+|---|---|---|
+| Name | `nb_session` | Identifies the session |
+| `HttpOnly` | Always set | Prevents JavaScript access — mitigates XSS token theft |
+| `SameSite` | `Lax` | Cookie sent on same-site requests and top-level navigations — mitigates CSRF |
+| `Secure` | Set when not localhost | Cookie only sent over HTTPS |
+| `Path` | `/` | Available to all routes |
+| `Max-Age` | `3600` (1 hour) | Session expires after one hour; refreshed via `POST /v1/auth/refresh` |
+
+The `Secure` flag is automatically omitted for localhost connections (where `http://` is expected) and added for all other hosts.
+
+### Logout
+
+`POST /v1/auth/logout` clears the cookie by setting `Max-Age=0`. The client should discard any cached auth state.
+
+## CORS
+
+Cross-Origin Resource Sharing controls which domains can make API requests from a browser. NimbleBrain has three CORS modes depending on your configuration. The deciding factor is whether **auth is configured** (an `instance.json` adapter is present), not any single environment variable:
+
+### Mode 1: No auth configured (development)
+
+When no `instance.json` adapter is configured (dev mode):
+- `Access-Control-Allow-Origin: *`
+- No credentials support
+- Any origin can make requests
+
+### Mode 2: Auth configured, no `ALLOWED_ORIGINS`
+
+When an auth adapter is configured but `ALLOWED_ORIGINS` is not:
+- No `Access-Control-Allow-Origin` header is sent
+- Only same-origin requests work (browser enforces this)
+- Cross-origin requests from any domain are blocked
+
+### Mode 3: Auth configured + `ALLOWED_ORIGINS` (production)
+
+When both are set:
+- `Access-Control-Allow-Origin` is set to the requesting origin only if it appears in the allow list
+- `Access-Control-Allow-Credentials: true` enables cookie-based auth
+- `Vary: Origin` ensures caches differentiate by origin
+
+```bash
+export ALLOWED_ORIGINS=https://nb.example.com,https://admin.example.com
+```
+
+<Aside type="caution">
+If you use a custom domain with the web UI, that domain must be in `ALLOWED_ORIGINS` for cookie-based auth to work. Without it, the browser blocks the `Set-Cookie` response from the OIDC callback.
+</Aside>
+
+### Allowed headers
+
+These headers are always permitted in CORS requests:
+
+```
+Content-Type, Authorization, Mcp-Session-Id, Last-Event-ID, Mcp-Protocol-Version, X-Workspace-Id
+```
+
+These headers are exposed to client JavaScript:
+
+```
+Mcp-Session-Id, Mcp-Protocol-Version
+```
+
+## Network architecture
+
+### Keep the platform internal
+
+The platform service (port 27247) should never be directly exposed to the internet. The platform runs on an internal Docker network:
+
+- The platform has no `ports` mapping. Only the `web` container (Caddy) is exposed on port 27246. Caddy proxies `/v1/*` to the platform.
+
+```
+Internet → Reverse Proxy (TLS) → Web (27246) → Platform (27247, internal)
+                                       ↑
+                                  Serves UI + proxies /v1/*
+```
+
+<Aside type="danger">
+Do not add `ports: - "27247:27247"` to the platform service in `docker-compose.yml`. This would expose the API directly, bypassing the web container's reverse proxy.
+</Aside>
+
+### Firewall rules
+
+If your host is directly on the internet, restrict inbound traffic:
+
+```bash
+# Allow only HTTPS (443) and SSH (22)
+ufw allow 22/tcp
+ufw allow 443/tcp
+ufw deny 27246/tcp  # Block direct access if behind a reverse proxy
+ufw enable
+```
+
+## TLS
+
+NimbleBrain does not terminate TLS itself. Use a reverse proxy for HTTPS:
+
+<Tabs>
+<TabItem label="nginx">
+
+```nginx title="nginx.conf"
+server {
+    listen 443 ssl http2;
+    server_name nb.example.com;
+
+    ssl_certificate /etc/ssl/certs/nb.example.com.pem;
+    ssl_certificate_key /etc/ssl/private/nb.example.com-key.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+
+    # HSTS — only enable once you confirm TLS works
+    add_header Strict-Transport-Security "max-age=63072000; includeSubDomains" always;
+
+    location / {
+        proxy_pass http://127.0.0.1:27246;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # Required for SSE streaming
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_buffering off;
+    }
+}
+```
+
+</TabItem>
+<TabItem label="Caddy">
+
+```txt title="Caddyfile"
+nb.example.com {
+    reverse_proxy 127.0.0.1:27246
+}
+```
+
+Caddy handles TLS automatically via Let's Encrypt.
+
+</TabItem>
+</Tabs>
+
+<Aside type="caution">
+The `Secure` flag on the `nb_session` cookie is only set when the server detects a non-localhost hostname. Behind a reverse proxy that terminates TLS, this works correctly because the platform binds to `0.0.0.0`. If you test over plain HTTP on a non-localhost address, the cookie will be set with `Secure` but your browser will reject it.
+</Aside>
+
+## MCP OAuth behind a reverse proxy
+
+The `/mcp` endpoint and `/.well-known/oauth-*` endpoints advertise a `resource` URL in their OAuth metadata. Clients validate this value against the URL they connected to and **reject** responses whose scheme doesn't match (e.g. client connected via `https://…/mcp` but the server returned `resource: http://…`).
+
+NimbleBrain derives the scheme from the `X-Forwarded-Proto` header, falling back to the raw request scheme. When you terminate TLS at an upstream proxy, that proxy must set and preserve `X-Forwarded-Proto: https` end-to-end — otherwise OAuth discovery silently advertises `http://` and modern MCP clients fail with:
+
+```
+Protected resource http://your-host does not match expected https://your-host/mcp
+```
+
+<Tabs>
+<TabItem label="AWS ALB → web container">
+
+Works out of the box. The ALB sets `X-Forwarded-Proto` based on the actual client→ALB connection scheme, and the bundled `nimblebrain-web` Caddy container trusts forwarded headers from RFC 1918 sources:
+
+```txt title="web/Caddyfile (shipped)"
+{
+    servers {
+        trusted_proxies static private_ranges
+    }
+}
+```
+
+No additional config needed. Ensure the ALB targets `nimblebrain-web`, not the platform service directly.
+
+</TabItem>
+<TabItem label="nginx → platform (direct)">
+
+If you skip the bundled `web` container and front the platform yourself, propagate the header explicitly:
+
+```nginx
+location / {
+    proxy_pass http://nimblebrain-platform:27247;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+}
+```
+
+</TabItem>
+<TabItem label="Caddy → platform (direct)">
+
+```txt title="Caddyfile"
+{
+    servers {
+        trusted_proxies static private_ranges
+    }
+}
+
+your-host.example.com {
+    reverse_proxy nimblebrain-platform:27247
+}
+```
+
+`trusted_proxies` is only required if *another* proxy sits upstream of Caddy — otherwise Caddy sets `X-Forwarded-Proto` itself based on its listener scheme.
+
+</TabItem>
+</Tabs>
+
+### Verify
+
+After deploying, confirm the advertised scheme matches the client-facing URL:
+
+```bash
+curl -s https://your-host.example.com/.well-known/oauth-protected-resource | jq .resource
+# must be "https://your-host.example.com"
+```
+
+If it still returns `http://`, walk the proxy chain to find where `X-Forwarded-Proto` is being stripped or overwritten.
+
+## Bundle trust
+
+MCP bundles run as subprocesses with access to the filesystem and network inside the container. Evaluate bundles before installing them.
+
+### Trust score
+
+Each bundle in the mpak registry has an MTF (mpak Trust Framework) trust score from 0 to 100. The score is stored in `nimblebrain.json` alongside the bundle entry and displayed in the web UI's app list.
+
+### Protected bundles
+
+Mark bundles as `protected` in your configuration to prevent the agent from uninstalling them:
+
+```json title="nimblebrain.json"
+{
+  "bundles": [
+    {
+      "name": "@nimblebraininc/ipinfo",
+      "protected": true
+    }
+  ]
+}
+```
+
+A protected bundle cannot be uninstalled through the connectors catalog (`manage_connectors`). You must edit the workspace configuration and restart to remove it.
+
+### Bundle isolation
+
+Bundles run as child processes inside the platform container. They share the container's filesystem, network namespace, and user. To limit blast radius:
+
+- Use read-only bind mounts for configuration files (the default `docker-compose.yml` already does this with `:ro`)
+- Set specific environment variables per bundle in `nimblebrain.json` rather than passing broad credentials to the platform container
+- Review a bundle's manifest before installing it — check what tools it exposes and whether it requires network access
+
+## Production checklist
+
+Use this checklist before exposing NimbleBrain to any network:
+
+| Item | How to verify |
+|---|---|
+| Authentication configured | `instance.json` exists with `auth.adapter` set to `oidc` or `workos` |
+| `ALLOWED_ORIGINS` set to your domain(s) | `curl -v` with an `Origin` header and confirm the response includes `Access-Control-Allow-Origin` |
+| Platform port (27247) not exposed | `docker compose ps` shows no host port mapping for platform service |
+| TLS enabled | `curl -I https://nb.example.com` returns a valid certificate |
+| `X-Forwarded-For` header set by proxy | Check auth failure logs for real IPs, not `"direct"` |
+| Bundle list reviewed | `cat nimblebrain.json` — only bundles you trust are listed |
+| Critical bundles marked `protected` | Check for `"protected": true` on bundles you don't want the agent to remove |
+| Firewall restricts inbound ports | Only 443 (HTTPS) and 22 (SSH) reachable from the internet |
+| Backups configured | Test your volume backup and restore procedure |

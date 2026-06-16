@@ -1,0 +1,358 @@
+---
+title: "Example: Hello World App"
+description: Build a complete MCP app with a React UI, Synapse SDK, and hot-reload development.
+---
+
+import { Aside, Steps, Tabs, TabItem, FileTree } from '@astrojs/starlight/components';
+
+This guide walks through building a complete MCP app with:
+- A Python MCP server with tools
+- A React UI with Synapse for typed tool calls and data sync
+- Vite for single-file HTML bundling
+- Hot-reload development with `nb dev --app`
+
+The result works in NimbleBrain (full Synapse features), Claude Desktop (tools only), and any MCP client.
+
+## Project structure
+
+<FileTree>
+- hello/
+  - manifest.json
+  - pyproject.toml
+  - src/mcp_hello/
+    - server.py            Server: tools + UI resource
+    - ui.py                Loads built HTML or inline fallback
+  - ui/                    Vite + React project
+    - package.json
+    - vite.config.ts
+    - index.html
+    - src/
+      - main.tsx
+      - App.tsx            Your components with Synapse hooks
+    - dist/
+      - index.html         Built single-file bundle
+</FileTree>
+
+The key insight: **the server and UI are separate projects**. The Python server defines tools and serves HTML. The UI is a standard Vite+React app that builds to a single HTML file. The server reads that file at runtime.
+
+## Step 1: The MCP server
+
+The server defines tools and a UI resource. It's a standard FastMCP server — nothing Synapse-specific.
+
+```python
+# src/mcp_hello/server.py
+from fastmcp import FastMCP
+from .ui import load_ui
+
+mcp = FastMCP(
+    "Hello",
+    instructions="Call get_greeting to greet someone by name.",
+)
+
+_greet_count: int = 0
+
+@mcp.tool()
+async def get_greeting(name: str) -> str:
+    """Greet someone by name."""
+    global _greet_count
+    _greet_count += 1
+    return f"Hello, {name}! 👋"
+
+@mcp.tool()
+async def get_greet_count() -> str:
+    """Get the number of greetings sent this session."""
+    return str(_greet_count)
+
+@mcp.resource("ui://hello/main")
+def hello_ui() -> str:
+    """The app UI — rendered in the platform sidebar."""
+    return load_ui()
+```
+
+`load_ui()` reads the built HTML from `ui/dist/index.html`. If no build exists, it serves a minimal fallback:
+
+```python
+# src/mcp_hello/ui.py
+from pathlib import Path
+
+_UI_DIR = Path(__file__).resolve().parent.parent.parent / "ui" / "dist"
+
+def load_ui() -> str:
+    built = _UI_DIR / "index.html"
+    if built.exists():
+        return built.read_text()
+    return FALLBACK_HTML  # Minimal inline HTML, no build step needed
+```
+
+<Aside type="tip">
+The fallback HTML ensures your app works even without a UI build — useful for CI, quick testing, or distributions where only the tools matter.
+</Aside>
+
+## Step 2: The React UI
+
+Initialize the UI project:
+
+```bash
+mkdir ui && cd ui
+npm init -y
+npm install react react-dom
+npm install -D @nimblebrain/synapse @vitejs/plugin-react vite vite-plugin-singlefile typescript @types/react @types/react-dom
+```
+
+### Vite config
+
+`vite-plugin-singlefile` bundles everything into a single `index.html` — no external assets. This is what the MCP server reads and serves.
+
+```typescript
+// ui/vite.config.ts
+import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+import { viteSingleFile } from "vite-plugin-singlefile";
+
+export default defineConfig({
+  plugins: [react(), viteSingleFile()],
+  build: {
+    outDir: "dist",
+    assetsInlineLimit: Infinity,
+  },
+});
+```
+
+### Entry point
+
+```html
+<!-- ui/index.html -->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Hello</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+```
+
+```tsx
+// ui/src/main.tsx
+import { createRoot } from "react-dom/client";
+import { App } from "./App";
+
+createRoot(document.getElementById("root")!).render(<App />);
+```
+
+### The app component
+
+This is where the developer experience pays off — real React components with full IDE support, TypeScript, autocomplete:
+
+<Tabs>
+<TabItem label="SynapseProvider (stable)">
+
+```tsx
+// ui/src/App.tsx
+import { useState } from "react";
+import {
+  SynapseProvider,
+  useCallTool,
+  useDataSync,
+  useTheme,
+} from "@nimblebrain/synapse/react";
+
+function HelloApp() {
+  const [name, setName] = useState("");
+  const [greeting, setGreeting] = useState("Type a name and click Greet.");
+  const [count, setCount] = useState<number | null>(null);
+
+  const greetTool = useCallTool<string>("get_greeting");
+  const countTool = useCallTool<string>("get_greet_count");
+  const theme = useTheme();
+
+  // Auto-refresh when the agent calls our tools
+  useDataSync(() => refreshCount());
+
+  async function refreshCount() {
+    const result = await countTool.call({});
+    setCount(Number(result.data));
+  }
+
+  async function greet() {
+    const result = await greetTool.call({ name: name.trim() });
+    setGreeting(String(result.data));
+    refreshCount();
+  }
+
+  return (
+    <div style={{ maxWidth: 420, margin: "0 auto", padding: "2rem" }}>
+      <h1>Hello 👋</h1>
+      <div style={{ display: "flex", gap: "0.5rem" }}>
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && greet()}
+          placeholder="Enter a name…"
+        />
+        <button onClick={greet} disabled={greetTool.isPending}>
+          Greet
+        </button>
+      </div>
+      <div style={{ marginTop: "1rem" }}>{greeting}</div>
+      {count !== null && <div>Greetings sent: {count}</div>}
+    </div>
+  );
+}
+
+export function App() {
+  return (
+    <SynapseProvider name="hello" version="0.1.0">
+      <HelloApp />
+    </SynapseProvider>
+  );
+}
+```
+
+</TabItem>
+<TabItem label="AppProvider + connect() (recommended for new apps)">
+
+```tsx
+// ui/src/App.tsx
+import { useState, useEffect } from "react";
+import {
+  AppProvider,
+  useApp,
+  useToolResult,
+  useConnectTheme,
+} from "@nimblebrain/synapse/react";
+
+function HelloApp() {
+  const [name, setName] = useState("");
+  const [greeting, setGreeting] = useState("Type a name and click Greet.");
+  const [count, setCount] = useState<number | null>(null);
+
+  const app = useApp();
+  const theme = useConnectTheme();
+
+  // The latest tool result delivered by the host (agent-initiated calls).
+  // `useToolResult()` takes no arguments and returns the most recent result.
+  const lastResult = useToolResult();
+  useEffect(() => {
+    if (lastResult) setGreeting(String(lastResult.content));
+  }, [lastResult]);
+
+  async function greet() {
+    const result = await app.callTool("get_greeting", { name: name.trim() });
+    setGreeting(String(result.data));
+    const countResult = await app.callTool("get_greet_count", {});
+    setCount(Number(countResult.data));
+  }
+
+  return (
+    <div style={{ maxWidth: 420, margin: "0 auto", padding: "2rem" }}>
+      <h1>Hello 👋</h1>
+      <div style={{ display: "flex", gap: "0.5rem" }}>
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && greet()}
+          placeholder="Enter a name…"
+        />
+        <button onClick={greet}>
+          Greet
+        </button>
+      </div>
+      <div style={{ marginTop: "1rem" }}>{greeting}</div>
+      {count !== null && <div>Greetings sent: {count}</div>}
+    </div>
+  );
+}
+
+export function App() {
+  return (
+    <AppProvider name="hello" version="0.1.0">
+      <HelloApp />
+    </AppProvider>
+  );
+}
+```
+
+</TabItem>
+</Tabs>
+
+Synapse hooks used:
+
+| Hook | What it does |
+|------|-------------|
+| `useCallTool('get_greeting')` | `{ call, isPending, data, error }` — typed tool calls with loading state |
+| `useDataSync(callback)` | Fires when the agent calls a tool on your server |
+| `useTheme()` | Reactive theme tokens — re-renders on dark mode toggle |
+
+<Aside type="note">
+For new apps, prefer `AppProvider` + `useToolResult` over `SynapseProvider` + `useDataSync`. The `connect()` API handles the handshake automatically and provides a simpler event-driven model. Both approaches work — `SynapseProvider` is not going away.
+</Aside>
+
+### Build
+
+```bash
+cd ui && npm run build
+```
+
+Output: `ui/dist/index.html` — a single file containing React, your components, and Synapse.
+
+## Step 3: Development
+
+### Preview (standalone — no NimbleBrain needed)
+
+```bash
+cd ui
+npm run dev
+# Open http://localhost:5173/__preview
+```
+
+The Synapse Vite plugin reads `../manifest.json`, starts the MCP server automatically, and serves a preview host page. Edit `ui/src/App.tsx` — changes appear instantly. Tool calls work.
+
+### Full platform (NimbleBrain)
+
+```bash
+nb dev --app ./ui
+```
+
+Same as above but inside the full NimbleBrain platform — data sync, agent interactions, multi-app navigation.
+
+### Tools only (no UI)
+
+```bash
+uv run python -m mcp_hello.server
+```
+
+Starts stdio mode. Add to Claude Desktop or any MCP client to test tools independently.
+
+## How it works across hosts
+
+| Host | Tools | UI | Synapse features |
+|------|-------|----|------------------|
+| **NimbleBrain** | Full | React + Synapse | Data sync, theme, keyboard forwarding |
+| **Claude Desktop** | Full | Not yet (no ext-apps) | N/A |
+| **VS Code Copilot** | Full | ext-apps baseline | Graceful degradation |
+| **Any MCP client** | Full | Depends on host | Graceful degradation |
+
+Synapse features degrade gracefully — `useDataSync`, `useTheme`, and NB-specific hooks become no-ops in non-NimbleBrain hosts. Tool calls work everywhere.
+
+## Adding typed tool calls
+
+Add `outputSchema` to your manifest tools, then generate types:
+
+```bash
+npx synapse codegen --from-manifest ./manifest.json --out ui/src/generated/types.ts
+```
+
+Your `useCallTool` calls become fully typed — autocomplete for inputs, typed return data.
+
+## Next steps
+
+- Use `connect()` for new apps — it handles the handshake and gives you a ready-to-use `App` object
+- Use `createStore()` for persistent widget state that survives iframe reloads
+- Use `App.updateModelContext()` (or `setVisibleState()` in the classic API) to make the agent aware of what the user sees
+- See the [Synapse SDK reference](/apps/synapse) for the full API
+- See the [MCP App Bridge](/apps/bridge) for the underlying protocol

@@ -1,0 +1,155 @@
+---
+title: Tool Results & Content Routing
+description: How to structure tool results with MCP content blocks and audience annotations to control what the LLM sees vs. what the UI displays.
+---
+
+import { Aside, Code, Tabs, TabItem } from '@astrojs/starlight/components';
+
+When your MCP server returns a tool result, you control **what the LLM sees** and **what the UI displays** using MCP content blocks and audience annotations. This matters for token efficiency — binary data like images and PDFs should go to the UI, not the LLM context.
+
+## Content blocks
+
+MCP tool results contain a `content` array of typed blocks:
+
+| Type | Use case | Example |
+|------|----------|---------|
+| `TextContent` | Structured data, summaries, status messages | `{"type": "text", "text": "Created 3 records"}` |
+| `ImageContent` | Rendered previews, charts, screenshots | `{"type": "image", "data": "iVBOR...", "mimeType": "image/png"}` |
+| `AudioContent` | Voice responses, audio clips | `{"type": "audio", "data": "...", "mimeType": "audio/wav"}` |
+
+Every content block supports an optional `annotations` field from the [MCP spec](https://modelcontextprotocol.io/specification/2025-06-18/server/resources#annotations).
+
+## The `audience` annotation
+
+The `audience` field controls who sees a content block:
+
+| Value | Who sees it | When to use |
+|-------|-------------|-------------|
+| `["assistant"]` | LLM only | Data the model needs but the user doesn't (internal state, intermediate results) |
+| `["user"]` | UI only | Binary data, rendered previews, downloadable files — anything the LLM can't meaningfully interpret |
+| `["user", "assistant"]` | Both | Content useful to both (default behavior) |
+| *(absent)* | Both | Backward compatible — treated the same as `["user", "assistant"]` |
+
+<Aside type="tip">
+The NimbleBrain engine automatically filters `audience: ["user"]` content blocks from the LLM context. The full unfiltered result is always available to the UI via the MCP App Bridge.
+</Aside>
+
+## Example: preview with images
+
+A document preview tool that returns rendered PNG pages:
+
+<Tabs>
+<TabItem label="Python (FastMCP)">
+
+```python
+from mcp.types import Annotations, ImageContent, TextContent
+
+USER_ONLY = Annotations(audience=["user"])
+
+@mcp.tool()
+async def preview() -> list[TextContent | ImageContent]:
+    """Render document to preview images."""
+    pages = compile_document()
+
+    blocks: list[TextContent | ImageContent] = [
+        # Summary for the LLM — lightweight confirmation
+        TextContent(type="text", text=f"Preview rendered ({len(pages)} pages)"),
+    ]
+
+    # Images for the UI only — base64 data stays out of LLM context
+    for i, png_bytes in enumerate(pages):
+        blocks.append(ImageContent(
+            type="image",
+            data=base64.b64encode(png_bytes).decode(),
+            mimeType="image/png",
+            annotations=USER_ONLY,
+        ))
+
+    return blocks
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+server.tool("preview", {}, async () => {
+  const pages = await compileDocument();
+
+  return {
+    content: [
+      // Summary for the LLM
+      { type: "text", text: `Preview rendered (${pages.length} pages)` },
+      // Images for the UI only
+      ...pages.map((png) => ({
+        type: "image" as const,
+        data: png.toString("base64"),
+        mimeType: "image/png",
+        annotations: { audience: ["user"] },
+      })),
+    ],
+  };
+});
+```
+
+</TabItem>
+</Tabs>
+
+**Without audience annotations**, the base64 image data (~12,000+ tokens per page) goes into the LLM conversation history and persists for every subsequent tool call iteration. With annotations, the LLM sees only `"Preview rendered (3 pages)"` (~6 tokens).
+
+## Example: file export
+
+A PDF export tool where the binary data is for download, not the LLM:
+
+```python
+@mcp.tool()
+async def export_pdf() -> list[TextContent]:
+    result = generate_pdf()
+
+    blocks = [
+        TextContent(type="text", text=f"Exported {result.filename} ({result.page_count} pages)"),
+    ]
+
+    if result.pdf_base64:
+        blocks.append(TextContent(
+            type="text",
+            text=result.pdf_base64,
+            annotations=USER_ONLY,
+        ))
+
+    return blocks
+```
+
+## Reading content blocks in the UI
+
+When your app's UI calls a tool via `callTool()`, the full content array (including user-only blocks) is available on `result.content`:
+
+```typescript
+const result = await callTool("preview", {});
+
+// result.data = "Preview rendered (3 pages)" (parsed from first text block)
+// result.content = full array including ImageContent blocks
+
+const images = (result.content ?? [])
+  .filter((block) => block.type === "image")
+  .map((block) => block.data);  // base64 strings
+```
+
+<Aside>
+`result.data` contains the parsed first text block (backward compatible). `result.content` is the full MCP content array — use it when you need image, audio, or other non-text content types. Requires `@nimblebrain/synapse` >= 0.4.2.
+</Aside>
+
+## When to use audience annotations
+
+| Scenario | Annotation | Why |
+|----------|-----------|-----|
+| Rendered images (previews, charts) | `audience: ["user"]` | LLM can't interpret base64; images are for visual display |
+| PDF/file downloads | `audience: ["user"]` | Binary data for the browser, not the model |
+| Status messages | *(none)* | Both LLM and user benefit from "3 records created" |
+| Structured data the LLM will act on | *(none)* | The LLM needs this to make decisions |
+| Internal state for debugging | `audience: ["user"]` | Useful in the UI console but wastes LLM context |
+
+## Token impact
+
+Every content block in a tool result stays in the conversation history for all subsequent LLM iterations within the same turn. A single un-annotated image adds ~12,000 tokens per iteration. Over 10 iterations, that's 120,000 tokens of context consumed by data the LLM can't use.
+
+Use `audience: ["user"]` for any content block the LLM doesn't need to reason about.

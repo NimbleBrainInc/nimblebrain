@@ -1,0 +1,210 @@
+---
+title: Theming
+description: Match the platform's look and feel using injected CSS variables.
+---
+
+import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
+
+The NimbleBrain platform injects CSS custom properties into every app iframe so your UI can match the host shell — including dark mode — without shipping your own color palette. The tokens follow the [MCP ext-apps specification](https://apps.extensions.modelcontextprotocol.io/api/), with a small set of NimbleBrain-specific extensions prefixed `--nb-`.
+
+## How it works
+
+When your app's HTML loads in an iframe, the platform:
+
+1. **Injects a `<style>` block** into your `<head>` with the full token set (ext-apps `--color-*` / `--font-*` / `--border-radius-*` / `--shadow-*` plus the `--nb-*` extensions) for the current theme. This happens before your HTML renders — no flash of wrong colors.
+2. **Sends `ui/initialize`** via postMessage with the same tokens in `params.theme.tokens` (the NimbleBrain legacy notification path).
+3. **Sends `ui/notifications/host-context-changed`** when the user toggles dark mode, with updated token values under `styles.variables`.
+
+Your CSS references these variables with `var(--token, fallback)`. The fallback ensures your app still looks correct when running outside the platform (Claude Desktop, standalone, etc).
+
+## Using tokens in CSS
+
+```css
+body {
+  font-family: var(--font-sans, system-ui, sans-serif);
+  background: var(--color-background-primary, #ffffff);
+  color: var(--color-text-primary, #1a1a1a);
+}
+
+button {
+  background: var(--color-text-accent, #2563eb);
+  color: var(--nb-color-accent-foreground, #ffffff);
+  border-radius: var(--border-radius-md, 0.5rem);
+}
+
+input {
+  border: 1px solid var(--color-border-primary, #e5e7eb);
+  background: var(--color-background-secondary, #f9fafb);
+  color: var(--color-text-primary, #1a1a1a);
+}
+
+.muted-text {
+  color: var(--color-text-secondary, #6b7280);
+}
+```
+
+<Aside type="tip">
+Always include a fallback value after the comma. This is your standalone appearance — what users see when the app runs outside NimbleBrain.
+</Aside>
+
+## Handling dark mode
+
+The injected `<style>` block gives you the right tokens at load time. But when the user toggles dark mode mid-session, you need a JavaScript handler to apply the updated values:
+
+```javascript
+function applyTokens(tokens) {
+  if (!tokens || typeof tokens !== 'object') return;
+  for (const [key, value] of Object.entries(tokens)) {
+    document.documentElement.style.setProperty(key, value);
+  }
+}
+
+window.addEventListener('message', (event) => {
+  const msg = event.data;
+  if (!msg || typeof msg !== 'object' || msg.jsonrpc !== '2.0') return;
+
+  // Apply tokens on initial load (legacy notification path)
+  if (msg.method === 'ui/initialize' && msg.params?.theme?.tokens) {
+    applyTokens(msg.params.theme.tokens);
+  }
+
+  // Apply tokens when host context changes (ext-apps spec)
+  if (msg.method === 'ui/notifications/host-context-changed') {
+    const vars = msg.params?.styles?.variables;
+    if (vars) applyTokens(vars);
+  }
+});
+```
+
+`applyTokens` sets CSS variables on `document.documentElement`, which overrides the injected `<style>` values. Because your CSS uses `var()` references, the UI updates instantly.
+
+<Aside type="caution">
+**Live-update caveat.** The initial `<style>` block injected at load carries the full token set. But the `ui/notifications/host-context-changed` payload sent on a dark-mode toggle carries **only the tokens in the host's allow-list** — most, but not all, ext-apps spec tokens. These do **not** refresh live on a toggle:
+
+- the `--nb-*` extension tokens (injected at load only), and
+- `--color-text-accent`, `--font-text-base-size`, and `--font-text-base-line-height` — spec tokens the host filters out of the toggle payload.
+
+Drive any surface that must flip between light and dark from the spec tokens that *do* cross: `--color-background-*`, `--color-text-primary` / `-secondary` / `-tertiary`, `--color-border-*`, and `--color-ring-*`. Do **not** key light/dark styling off `--color-text-accent` — it is injected at load but never updates on a toggle.
+</Aside>
+
+## Token reference
+
+The platform injects the following tokens into every iframe. Most ext-apps spec tokens also cross the protocol boundary and refresh live on theme changes; the `--nb-*` extensions — plus `--color-text-accent`, `--font-text-base-size`, and `--font-text-base-line-height` — are injected at load only and do not refresh on a toggle.
+
+### Colors (ext-apps spec)
+
+| Token | Light | Dark | Use for |
+|-------|-------|------|---------|
+| `--color-background-primary` | `#faf9f7` | `#0a0a09` | Page background |
+| `--color-background-secondary` | `#ffffff` | `#141413` | Card / panel backgrounds |
+| `--color-background-tertiary` | `#f3f2ef` | `#1c1c1b` | Subtle / nested backgrounds |
+| `--color-text-primary` | `#171717` | `#e5e5e5` | Body text |
+| `--color-text-secondary` | `#737373` | `#a3a3a3` | Captions, metadata, placeholders |
+| `--color-text-tertiary` | `#a3a3a3` | `#737373` | De-emphasized text |
+| `--color-text-accent` | `#0055FF` | `#3b8eff` | Links, primary buttons, AI accents (load-only — does not refresh on toggle) |
+| `--color-border-primary` | `#e5e5e5` | `#262626` | Borders, dividers |
+| `--color-border-secondary` | `#e5e5e5` | `#262626` | Secondary borders |
+| `--color-ring-primary` | `#0055FF` | `#3b8eff` | Focus rings |
+
+### Typography (ext-apps spec)
+
+| Token | Value | Use for |
+|-------|-------|---------|
+| `--font-sans` | `'Satoshi', system-ui, sans-serif` | Body font |
+| `--font-mono` | `'JetBrains Mono Variable', ui-monospace, SFMono-Regular, monospace` | Code / monospace font |
+| `--font-weight-normal` | `400` | Normal weight |
+| `--font-weight-medium` | `500` | Medium weight |
+| `--font-weight-semibold` | `600` | Semibold weight |
+| `--font-weight-bold` | `700` | Bold weight |
+| `--font-text-xs-size` / `-line-height` | `0.75rem` / `1rem` | Extra-small body text |
+| `--font-text-sm-size` / `-line-height` | `0.875rem` / `1.25rem` | Small body text |
+| `--font-text-base-size` / `-line-height` | `1rem` / `1.5rem` | Base body text |
+| `--font-text-lg-size` / `-line-height` | `1.125rem` / `1.75rem` | Large body text |
+| `--font-heading-sm-size` / `-line-height` | `1.25rem` / `1.75rem` | Small heading |
+| `--font-heading-md-size` / `-line-height` | `1.5rem` / `2rem` | Medium heading |
+| `--font-heading-lg-size` / `-line-height` | `2rem` / `2.5rem` | Large heading |
+
+### Layout (ext-apps spec)
+
+| Token | Value | Use for |
+|-------|-------|---------|
+| `--border-radius-xs` | `0.25rem` | Tight corners |
+| `--border-radius-sm` | `0.5rem` | Small corners |
+| `--border-radius-md` | `0.75rem` | Default corners |
+| `--border-radius-lg` | `1rem` | Large corners |
+| `--border-radius-xl` | `1.5rem` | Extra-large corners |
+| `--border-width-regular` | `1px` | Standard border width |
+
+### Effects (ext-apps spec)
+
+| Token | Light | Dark | Use for |
+|-------|-------|------|---------|
+| `--shadow-hairline` | `0 0 0 1px rgba(0,0,0,0.06)` | `0 0 0 1px rgba(255,255,255,0.06)` | Hairline outline |
+| `--shadow-sm` | `0 1px 2px rgba(0,0,0,0.05)` | `0 1px 2px rgba(0,0,0,0.3)` | Small elevation |
+| `--shadow-md` | `0 4px 6px -1px rgba(0,0,0,0.1)` | `0 4px 6px -1px rgba(0,0,0,0.4)` | Medium elevation |
+| `--shadow-lg` | `0 10px 15px -3px rgba(0,0,0,0.1)` | `0 10px 15px -3px rgba(0,0,0,0.4)` | Large elevation |
+
+### NimbleBrain extensions (`--nb-*`)
+
+These have no ext-apps spec equivalent. They are injected into the iframe's `<style>` block at load but do **not** cross the protocol boundary, so they will not refresh on a live theme toggle (see the caveat above).
+
+| Token | Light | Dark | Use for |
+|-------|-------|------|---------|
+| `--nb-color-accent-foreground` | `#ffffff` | `#0a0a09` | Text on accent backgrounds |
+| `--nb-color-danger` | `#dc2626` | `#f87171` | Errors, destructive actions |
+| `--nb-color-success` | `#059669` | `#34d399` | Success indicators |
+| `--nb-color-warning` | `#f59e0b` | `#fbbf24` | Warning indicators |
+| `--nb-color-warm` | `#d4620a` | `#f59542` | Warm accent |
+| `--nb-color-warm-light` | `#fef5ee` | `#2a1a08` | Warm accent background |
+| `--nb-color-processing` | `#7c3aed` | `#a78bfa` | In-progress / processing state |
+| `--nb-color-processing-light` | `#f3eeff` | `#1a0f2e` | Processing background |
+| `--nb-color-info-light` | `#eef4ff` | `#0c1a33` | Info background |
+| `--nb-font-heading` | `'Erode', Georgia, serif` | same | Heading font |
+
+<Aside type="note">
+Custom fonts are injected — `--font-sans` resolves to Satoshi and `--nb-font-heading` to Erode, the platform's actual brand typefaces. The fallback stacks (`system-ui`, `Georgia`) only take over when the app runs outside the platform.
+</Aside>
+
+## Opt-in, not opt-out
+
+Theme injection is non-breaking. The platform injects tokens into every iframe, but they have zero effect unless your CSS references them:
+
+| Your CSS | What happens |
+|----------|-------------|
+| `background: white` | Stays white. Injected tokens are ignored. |
+| `background: var(--my-bg)` | Uses your `--my-bg` variable. No collision. |
+| `background: var(--color-background-primary, white)` | Picks up the platform theme. Falls back to white outside the platform. |
+
+Existing apps require zero changes — theming is entirely opt-in.
+
+## Injected style cascade
+
+The platform injects a `<style>` block as the **first child of `<head>`**, before your app's own `<style>` tags. This means:
+
+- Platform tokens are declared on `:root` and are available to your CSS.
+- The injected block includes a minimal body reset (`margin: 0`, `font-family: var(--font-sans)`, `background: var(--color-background-primary)`, `color: var(--color-text-primary)`).
+- Your app's `<style>` comes after and wins the CSS cascade for any conflicting declarations.
+
+If you define your own `body { background: ... }`, it overrides the injected reset. This is by design — your app's styles always win.
+
+## Debugging
+
+If your tokens aren't applying, open DevTools and inspect the iframe:
+
+1. In Chrome DevTools, open the **Elements** panel.
+2. Expand the iframe's document (click the `#document` node inside the `<iframe>`).
+3. Select `<html>` and check the **Computed** tab for `--color-background-primary`.
+
+Common issues:
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| Background is white, not warm paper | Your CSS uses `background: #fff` instead of `var(--color-background-primary, #fff)` | Replace hardcoded colors with `var()` references |
+| Tokens exist but aren't applied | CSS specificity — a more specific selector overrides the token | Check that your selector isn't more specific than the `:root` declaration |
+| Dark mode doesn't toggle | Missing `ui/notifications/host-context-changed` handler | Add the `applyTokens` message listener (see code above) |
+| An `--nb-*` color doesn't flip on toggle | `--nb-*` tokens are injected at load only, not in the live payload | Drive light/dark-sensitive surfaces from the spec `--color-*` tokens |
+| Tokens are stale after restart | `deps/` directory contains an old bundled copy | Delete `deps/<your-package>` during local development (see [Local Development](/apps/local-dev)) |
+
+## Full example
+
+See the [Hello World walkthrough](/apps/hello-world) for a complete app with theme integration, including both Python and TypeScript implementations.

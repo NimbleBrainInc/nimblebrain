@@ -1,0 +1,70 @@
+/*
+ * NimbleBrain docs theme for Starlight
+ *
+ * Colors, fonts, and spacing aligned with www.nimblebrain.ai design system.
+ * Literata headings, IBM Plex Sans body, DM Mono labels, JetBrains Mono code.
+ *
+ * Starlight's gray scale inverts between themes:
+ *   dark  → gray-1 = lightest text, gray-6 = darkest bg surface, black = page bg
+ *   light → gray-1 = darkest text, gray-6 = lightest bg surface, black = page bg (white)
+ */
+
+/* ── Dark mode ── */
+:root {
+  /* Accent: #0055FF brand blue */
+  --sl-color-accent-low:  #001A66;
+  --sl-color-accent:      #0055FF;
+  --sl-color-accent-high: #7BA8F5;
+
+  /* Scale: white = brightest text, black = page bg */
+  --sl-color-white: #E8E8ED;
+  --sl-color-black: #0A0A0F;
+
+  /* Gray ramp: 1 (light/readable) → 6 (dark surface) */
+  --sl-color-gray-1: #C8C8D0;
+  --sl-color-gray-2: #9898A8;
+  --sl-color-gray-3: #66667A;
+  --sl-color-gray-4: #3A3A4A;
+  --sl-color-gray-5: #1E1E2A;
+  --sl-color-gray-6: #12121A;
+}
+
+/* ── Light mode ── */
+:root[data-theme='light'] {
+  /* Accent: deeper for readability on light bg */
+  --sl-color-accent-low:  #EEF2FF;
+  --sl-color-accent:      #0044CC;
+  --sl-color-accent-high: #002B99;
+
+  /* Scale: white = darkest text, black = page bg (warm off-white) */
+  --sl-color-white: #1A1A1A;
+  --sl-color-black: #FAFAF8;
+
+  /* Gray ramp: 1 (dark/readable) → 6 (light surface), 7 (nav) */
+  --sl-color-gray-1: #1A1A1A;
+  --sl-color-gray-2: #3D3D3D;
+  --sl-color-gray-3: #595959;
+  --sl-color-gray-4: #8C8C8C;
+  --sl-color-gray-5: #D8D8D4;
+  --sl-color-gray-6: #F0EDE6;
+  --sl-color-gray-7: #F5F5F0;
+
+  /* Sidebar slightly off from page bg */
+  --sl-color-bg-sidebar: #F5F5F0;
+}
+
+/* ── Fonts ── */
+:root {
+  --sl-font: 'IBM Plex Sans', var(--sl-font-system);
+  --sl-font-mono: 'JetBrains Mono', var(--sl-font-system-mono);
+}
+
+/* Literata for headings */
+.sl-markdown-content :is(h1, h2, h3, h4, h5, h6),
+.sl-markdown-content h1,
+.sl-markdown-content h2,
+.sl-markdown-content h3 {
+  font-family: 'Literata', Georgia, serif;
+  font-optical-sizing: auto;
+  letter-spacing: -0.01em;
+}
