@@ -128,20 +128,21 @@ describe("McpSource.execute — dispatch-boundary coercion", () => {
     expect(lastArgs()?.to_recipients).toEqual(["broker@firm.com"]);
   });
 
-  it("leaves a stringified scalar (boolean) untouched — scalar coercion is out of scope", async () => {
+  it("coerces a stringified scalar (boolean) at the dispatch boundary", async () => {
     const { source, lastArgs } = buildInlineSource(OUTLOOK_SCHEMA);
 
     await source.execute("OUTLOOK_CREATE_DRAFT", {
       subject: "Hi",
       body: "x",
       to_recipients: ["broker@firm.com"],
-      is_html: "true", // model stringifies the boolean; coercion only handles object/array
+      is_html: "true", // model stringifies the boolean (is_html is type: boolean)
     });
 
-    // Pinned deliberately: coerce-input recovers structured (object/array)
-    // misencodings, not scalars. If a future change starts mangling scalars
-    // this fails loudly. (Stringified booleans are a separate, smaller issue.)
-    expect(lastArgs()?.is_html).toBe("true");
+    // coerce-input recovers stringified scalars (number/boolean) against a
+    // schema that declares that type — the same misencoding class as the
+    // object/array recovery above, one rung down. The vendor receives a real
+    // boolean, not the string "true".
+    expect(lastArgs()?.is_html).toBe(true);
   });
 });
 
