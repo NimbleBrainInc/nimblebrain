@@ -41,7 +41,6 @@ import { resolveLocalBundle } from "./resolve.ts";
 import type {
   BundleManifest,
   BundleRef,
-  InternalBundleEnv,
   LocalBundleMeta,
   StartBundleResult,
 } from "./types.ts";
@@ -190,7 +189,6 @@ export async function startBundleSource(
   configDir?: string,
   opts?: {
     allowInsecureRemotes?: boolean;
-    internalEnv?: InternalBundleEnv;
     dataDir?: string;
     /**
      * Workspace context for credential resolution and on-disk path
@@ -696,14 +694,9 @@ export async function startBundleSource(
       composeBundleMcpContext(opts?.bundleMcp, sourceName),
     );
   } else {
-    // Internal host env for trusted local bundles. Formerly gated on `protected`
-    // (now removed); no caller supplies `opts.internalEnv` today, so this stays
-    // dormant. A future internal/default-bundle path wires it deliberately.
-    const internalEnv = opts?.internalEnv;
     const result = buildLocalSource(
       ref,
       configDir,
-      internalEnv,
       opts?.dataDir,
       eventSink,
       wsContext?.workspaceId,
@@ -750,7 +743,6 @@ function buildLocalSource(
     serverName?: string;
   },
   configDir: string | undefined,
-  internalEnv: InternalBundleEnv | undefined,
   dataDirOverride: string | undefined,
   eventSink: EventSink,
   wsId: string | undefined,
@@ -798,12 +790,6 @@ function buildLocalSource(
     ...filterEnvForBundle(process.env as Record<string, string>, resolvedMcpEnv, ref.allowedEnv),
     ...(ref.env ?? {}),
   };
-
-  // Inject internal auth env for protected default bundles
-  if (internalEnv) {
-    spawnEnv.NB_INTERNAL_TOKEN = internalEnv.NB_INTERNAL_TOKEN;
-    spawnEnv.NB_HOST_URL = internalEnv.NB_HOST_URL;
-  }
 
   // Per-bundle data isolation. Callers (lifecycle install*, workspace-ops,
   // buildProcessInventory) always pass `dataDir` via

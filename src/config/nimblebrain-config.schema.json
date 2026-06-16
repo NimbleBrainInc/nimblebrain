@@ -104,10 +104,6 @@
             "items": { "type": "string" },
             "description": "Host env vars this bundle may access."
           },
-          "protected": {
-            "type": "boolean",
-            "description": "Prevents uninstall via nb__manage_app."
-          },
           "trustScore": { "type": ["number", "null"], "description": "MTF trust score (0-100)." },
           "transport": {
             "type": "object",
@@ -117,10 +113,12 @@
               "auth": {
                 "type": "object",
                 "properties": {
-                  "type": { "type": "string", "enum": ["bearer", "header", "none"] },
+                  "type": { "type": "string", "enum": ["bearer", "header", "none", "provider"] },
                   "token": { "type": "string" },
                   "name": { "type": "string" },
-                  "value": { "type": "string" }
+                  "value": { "type": "string" },
+                  "provider": { "type": "string", "description": "Credential provider name (auth.type=provider), e.g. \"minted\"." },
+                  "config": { "type": "object", "description": "Opaque provider config (e.g. { audience, scope } for \"minted\")." }
                 },
                 "required": ["type"]
               },

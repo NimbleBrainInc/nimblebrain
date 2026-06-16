@@ -411,12 +411,6 @@ export interface LocalBundleMeta {
   upjackNamespace?: string;
 }
 
-/** Env vars injected into protected default bundles for internal host communication. */
-export interface InternalBundleEnv {
-  NB_INTERNAL_TOKEN: string;
-  NB_HOST_URL: string;
-}
-
 /** Result from starting a bundle source — includes the actual registered source name. */
 export interface StartBundleResult {
   meta: LocalBundleMeta | null;

@@ -1414,16 +1414,10 @@ describe("manage_connectors.clear_user_config", () => {
 
 describe("deriveConnectorStatus", () => {
   test("running + no probes outstanding → ready", () => {
-    expect(deriveConnectorStatus({ state: "running" })).toEqual({ status: "ready" });
-  });
-
-  test("provider-auth fleet source (running, no operator OAuth, no user_config) → ready", () => {
-    // Regression: a `provider`-auth fleet source (e.g. deep_research `web`) is a
-    // remote bundle, so it gets NO `userConfig` probe (that gate is `!isRemote`)
-    // and has no operator OAuth client — its credential is provided server-side.
-    // It boots `running` (bundleHasStaticAuth), so it must derive `ready`: no
-    // bogus Connect, no "needs setup" for a key the server already holds. The UI
-    // hero is status-driven, so `ready` means no Connect button.
+    // This is the state a provider-auth fleet source (e.g. deep_research `web`)
+    // produces: a remote bundle gets NO userConfig probe (`!isRemote`) and has no
+    // operator OAuth client, so its inputs are bare `{ state: "running" }` → ready
+    // (no bogus Connect). Boot-side coverage: provider-source-boot.test.ts.
     expect(deriveConnectorStatus({ state: "running" })).toEqual({ status: "ready" });
   });
 
