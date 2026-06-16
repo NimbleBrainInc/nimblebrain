@@ -102,6 +102,9 @@ function coerceScalarString(
     return Number.isFinite(n) ? n : undefined;
   }
   if (declaresType(schema, "boolean")) {
+    // Lowercase JSON literals only, deliberately. Python-cased "True"/"False"
+    // would recover too, but we haven't observed it — keep the match tight and
+    // let anything else fall to the validator. Widen only if it shows up.
     if (trimmed === "true") return true;
     if (trimmed === "false") return false;
     return undefined;
@@ -214,7 +217,8 @@ function coerceValue(value: unknown, schema: Schema): unknown {
     // String → number/boolean recovery. Only when the schema can't already
     // accept a string (a `string` or `string | number` param takes the value
     // as-is, so coercing it would change a legitimate value's type).
-    if (effective && !declaresType(effective, "string")) {
+    // (`effective` is non-null past the line 196 guard.)
+    if (!declaresType(effective, "string")) {
       const scalar = coerceScalarString(value, effective);
       if (scalar !== undefined) return scalar;
     }
