@@ -127,6 +127,15 @@ export function ConnectorBrowsePage() {
       // Stdio (mpak-bundle): install completes in-process; route to
       // Configure so the user can fill in any user_config fields.
       if (entry.install.kind === "remote-oauth") {
+        // A provider-auth (platform) source has no user/operator OAuth — its
+        // credential is minted server-side and it eager-starts `running` at
+        // install. So there's no auth flow to launch: route to Configure, which
+        // renders it `ready`. Launching initiateMcpOAuth here would spin a bogus
+        // OAuth flow against a server that has none.
+        if (entry.install.auth === "provider") {
+          navigate(`${configureBasePath}/${result.serverName}`);
+          return;
+        }
         // Composio-backed connectors route through their own initiate
         // endpoint (keyed on catalog id, not server name). Everything
         // else (dcr + static) stays on /v1/mcp-auth.
