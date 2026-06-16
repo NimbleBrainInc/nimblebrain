@@ -36,6 +36,42 @@ export interface TokenResult {
   refreshToken?: string;
 }
 
+/**
+ * Why a refresh failed — the distinction the refresh handler acts on.
+ *
+ * - `rejected`    — the IdP gave a definitive verdict that this end-user's
+ *                   refresh token is no longer valid (expired/revoked/reused).
+ *                   The session is genuinely over → re-authenticate.
+ * - `unavailable` — the refresh hop failed *without* a definitive verdict: a
+ *                   thrown network error, a 5xx/429 from the IdP, a timeout, or
+ *                   a deployment misconfig (bad client credentials). The
+ *                   end-user's token is probably fine; we just couldn't reach a
+ *                   verdict this instant → keep the session and retry.
+ */
+export type RefreshFailureKind = "rejected" | "unavailable";
+
+/**
+ * Thrown by {@link IdentityProvider.refreshToken} to tell the handler which
+ * kind of failure occurred. Providers own this classification because only they
+ * understand their SDK's error shapes — the handler must stay provider-agnostic
+ * (it maps `kind` → HTTP status and never sniffs vendor error fields).
+ */
+export class RefreshTokenError extends Error {
+  readonly kind: RefreshFailureKind;
+  /** Provider-specific code for logging/triage (e.g. the OAuth error code). */
+  readonly code?: string;
+  constructor(
+    kind: RefreshFailureKind,
+    message: string,
+    options?: { code?: string; cause?: unknown },
+  ) {
+    super(message, options?.cause !== undefined ? { cause: options.cause } : undefined);
+    this.name = "RefreshTokenError";
+    this.kind = kind;
+    this.code = options?.code;
+  }
+}
+
 // ── User management ────────────────────────────────────────────────
 
 export interface CreateUserInput {
@@ -78,7 +114,11 @@ export interface IdentityProvider {
   /** Exchange an authorization code for tokens. Accepts optional PKCE code_verifier. */
   exchangeCode?(code: string, codeVerifier?: string): Promise<TokenResult>;
 
-  /** Refresh an access token using a refresh token. */
+  /**
+   * Refresh an access token using a refresh token. On failure, throws a
+   * {@link RefreshTokenError} whose `kind` tells the handler whether the
+   * session is dead (`rejected`) or the hop was merely transient (`unavailable`).
+   */
   refreshToken?(refreshToken: string): Promise<TokenResult>;
 
   // ── User management ──────────────────────────────────────────────

@@ -12,6 +12,7 @@ import type {
   TokenResult,
   UserIdentity,
 } from "../provider.ts";
+import { RefreshTokenError } from "../provider.ts";
 import type { OrgRole } from "../types.ts";
 import type { User, UserPreferences, UserStore } from "../user.ts";
 
@@ -323,14 +324,44 @@ export class WorkosIdentityProvider implements IdentityProvider {
   }
 
   async refreshToken(refreshToken: string): Promise<TokenResult> {
-    const result = await this.workos.userManagement.authenticateWithRefreshToken({
-      clientId: this.clientId,
-      refreshToken,
-    });
-    return {
-      accessToken: result.accessToken,
-      refreshToken: result.refreshToken,
-    };
+    try {
+      const result = await this.workos.userManagement.authenticateWithRefreshToken({
+        clientId: this.clientId,
+        refreshToken,
+      });
+      return {
+        accessToken: result.accessToken,
+        refreshToken: result.refreshToken,
+      };
+    } catch (err) {
+      // Classify the failure for the handler. The end-user's session is dead
+      // ONLY on `invalid_grant` (refresh token expired/revoked/reused — RFC
+      // 6749 §5.2), which WorkOS surfaces as an OauthException carrying that
+      // `.error` code. Everything else leaves the session intact and must NOT
+      // log the user out:
+      //   - other OAuth codes (invalid_client/unauthorized_client) = this
+      //     deployment's WorkOS credentials are wrong — a config problem, not a
+      //     dead session;
+      //   - GenericServerException / RateLimitExceededException = a 5xx/429
+      //     from WorkOS during a blip;
+      //   - a thrown fetch / TypeError = the IdP hop never completed.
+      // All of those are `unavailable`: we couldn't reach a verdict, so keep
+      // the session and let the client retry.
+      const oauthError =
+        typeof err === "object" && err !== null && "error" in err
+          ? (err as { error?: unknown }).error
+          : undefined;
+      if (oauthError === "invalid_grant") {
+        throw new RefreshTokenError("rejected", "Refresh token rejected by IdP (invalid_grant)", {
+          code: "invalid_grant",
+          cause: err,
+        });
+      }
+      throw new RefreshTokenError("unavailable", "Token refresh did not reach a verdict", {
+        code: typeof oauthError === "string" ? oauthError : undefined,
+        cause: err,
+      });
+    }
   }
 
   async listUsers(): Promise<User[]> {

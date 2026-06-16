@@ -16,6 +16,7 @@ import {
   isArtifactUri,
 } from "../host-resources/artifacts/index.ts";
 import type { IdentityProvider, UserIdentity } from "../identity/provider.ts";
+import { RefreshTokenError } from "../identity/provider.ts";
 import { DEV_IDENTITY } from "../identity/providers/dev.ts";
 import {
   ConversationAccessDeniedError,
@@ -1639,23 +1640,33 @@ export async function handleOidcRefresh(
 
     return res;
   } catch (err) {
-    // invalid_grant = refresh token expired/revoked (e.g. session ended due to
-    // inactivity). Expected; the client re-authenticates. Log terse, no stack.
-    // Anything else is unexpected — log the message (still no bundled-source dump).
-    const expired =
-      typeof err === "object" &&
-      err !== null &&
-      "error" in err &&
-      (err as { error?: unknown }).error === "invalid_grant";
-    if (expired) {
+    // The provider classifies the failure (it owns its SDK's error shapes); we
+    // only map that verdict to a status. A `rejected` refresh means the session
+    // is genuinely dead → 401, the client logs out and re-authenticates. Any
+    // other failure is transient/infrastructural → 503 `refresh_unavailable`,
+    // which the client treats as "keep the session and retry" rather than
+    // logging a valid user out over a network blip or a deploy-time 5xx. (This
+    // is the server-side half of the same fix as fetch-with-refresh.ts.)
+    if (err instanceof RefreshTokenError && err.kind === "rejected") {
+      // Expected (session expired/revoked). Log terse, no stack.
       log.warn(
         "[nimblebrain] Token refresh rejected (session expired) — client will re-authenticate",
       );
-    } else {
-      const reason = err instanceof Error ? err.message : String(err);
-      log.error("[nimblebrain] Token refresh failed", { reason });
+      return apiError(401, "refresh_failed", "Token refresh failed");
     }
-    return apiError(401, "refresh_failed", "Token refresh failed");
+    // Transient: log at error so a misconfig (e.g. invalid_client) or an
+    // unmapped code surfaces to an operator instead of hiding in the client's
+    // soft-retry loop. Retry-After completes the 503's HTTP semantics.
+    const reason = err instanceof Error ? err.message : String(err);
+    const code = err instanceof RefreshTokenError ? err.code : undefined;
+    log.error("[nimblebrain] Token refresh unavailable", { reason, code });
+    return apiError(
+      503,
+      "refresh_unavailable",
+      "Token refresh temporarily unavailable",
+      undefined,
+      { "Retry-After": "1" },
+    );
   }
 }
 

@@ -9,6 +9,11 @@
 }
 
 :8080 {
+	# Status-transparent passthrough: the upstream's HTTP status must reach the
+	# browser unaltered. The web client distinguishes a 401 (log out) from a 503
+	# (`/v1/auth/refresh` transient — keep session, retry), so do NOT add
+	# `handle_errors`, a friendly error page, or passive health-checks here that
+	# would rewrite or swallow upstream 5xx on /v1/*.
 	handle /v1/* {
 		reverse_proxy {$PLATFORM_URL}
 	}
