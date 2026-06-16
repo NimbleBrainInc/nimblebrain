@@ -44,6 +44,11 @@ import { log } from "../cli/log.ts";
  * can't help and the connector must be reconnected by the user. Anything else
  * (5xx, 429, network throw, `server_error`, `temporarily_unavailable`) is
  * transient and worth a bounded retry.
+ *
+ * Safety note: the retry decision is an ALLOWLIST — only `TRANSIENT_REFRESH_ERRORS`
+ * retry; any unrecognized 4xx code is treated as permanent by default. This set
+ * is therefore an intent-documenting short-circuit, not the load-bearing guard
+ * (the allowlist default is). Fail-closed: an unknown code never retries.
  */
 const PERMANENT_REFRESH_ERRORS = new Set([
   "invalid_grant",
@@ -151,6 +156,15 @@ export function createOAuthRefreshFetch(options: OAuthRefreshFetchOptions = {}):
         }
         return res;
       } catch (err) {
+        // A thrown fetch is network-level (connection drop, TLS reset, DNS,
+        // abort). Retrying is safe EXCEPT one unavoidable window: if the prior
+        // attempt actually reached the server and rotated the refresh token
+        // (rotating IdPs), but the response was lost on the wire, the retry
+        // re-sends the now-stale token → `invalid_grant` → reauth. That is
+        // inherent to retrying a refresh (not idempotent under rotation), and it
+        // is strictly NARROWER than the pre-fix behavior where *every* transient
+        // blip flipped to reauth — here only the lost-response-after-rotation
+        // case does, and the same lost response would reauth without any retry.
         if (isLast) throw err;
         const delay = backoffDelayMs(attempt, baseDelayMs, rng);
         log.warn(
