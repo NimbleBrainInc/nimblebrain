@@ -1,0 +1,581 @@
+---
+title: MCP App Bridge
+description: NimbleBrain's ext-apps host implementation — the JSON-RPC protocol connecting MCP App iframes to the platform's tools, theme, and conversation.
+---
+
+import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
+
+The MCP App Bridge is NimbleBrain's implementation of the [ext-apps specification (2026-01-26)](https://apps.extensions.modelcontextprotocol.io/api/) — the standard protocol that enables [MCP Apps](/concepts/mcp-apps) to render inside host applications with bidirectional tool access. NimbleBrain extends the spec with `synapse/` namespace methods for data-change notifications, semantic actions, and state persistence.
+
+All messages use `window.postMessage` with JSON-RPC 2.0 envelopes:
+
+```typescript
+{
+  jsonrpc: "2.0",
+  method: string,
+  id?: string,        // Present for requests that expect a response
+  params?: object,
+  result?: unknown,    // Present in responses
+  error?: object,      // Present in error responses
+}
+```
+
+## Message overview
+
+### Spec messages (ext-apps)
+
+#### Host to App
+
+| Method | Type | Description |
+|--------|------|-------------|
+| `ui/initialize` | Response | Host responds to the app's init request with capabilities, theme, and context. |
+| `ui/notifications/tool-result` | Notification | Forwarded tool result from the agent. |
+| `ui/notifications/tool-input` | Notification | Tool arguments being sent to a tool on the app's server. |
+| `ui/notifications/host-context-changed` | Notification | Host context changed (theme toggle, locale, etc.). |
+| `notifications/tasks/status` | Notification | Status update for a long-running task. Forwarded verbatim from the MCP server. See [Tasks](#tasks). |
+
+#### App to Host
+
+| Method | Type | Description |
+|--------|------|-------------|
+| `ui/initialize` | Request | App initiates the handshake. Host responds with capabilities and context. |
+| `ui/notifications/initialized` | Notification | App confirms handshake complete. Host must not send tool data before this. |
+| `ui/notifications/size-changed` | Notification | Report content dimensions for auto-sizing inline views. |
+| `ui/notifications/request-teardown` | Notification | App requests the host to tear down the iframe. Currently a no-op. |
+| `tools/call` | Request | Call a tool on the app's MCP server. Returns `CallToolResult`. |
+| `resources/read` | Request | Read a resource from the app's MCP server. Returns `ReadResourceResult`. See [below](#resourcesread). |
+| `tasks/get` | Request | Non-blocking fetch of a long-running task's current state. See [Tasks](#tasks). |
+| `tasks/result` | Request | Block until a task reaches a terminal state and return its payload. See [Tasks](#tasks). |
+| `tasks/cancel` | Request | Best-effort cancel of a running task. See [Tasks](#tasks). |
+| `ui/message` | Request | Send a message to the conversation. |
+| `ui/open-link` | Request | Open a URL in a new browser tab. |
+| `ui/update-model-context` | Request | Push structured state visible to the LLM. See [below](#uiupdate-model-context). |
+
+### NimbleBrain extensions (`synapse/`)
+
+These have no spec equivalent and degrade to no-ops in non-NimbleBrain hosts.
+
+| Method | Direction | Description |
+|--------|-----------|-------------|
+| `synapse/data-changed` | Host → App | Data changed on a server — the app should refresh. |
+| `synapse/action` | App → Host | Request a semantic action from the shell. |
+| `synapse/download-file` | App → Host | Trigger a file download in the browser. |
+| `synapse/persist-state` | App → Host | Persist widget state across sessions. |
+| `synapse/state-loaded` | Host → App | Load previously persisted widget state. |
+| `synapse/request-file` | App → Host | Open native file picker; the host persists each chosen file to the workspace store and returns `{ id, filename, mimeType, size }`. |
+| `synapse/keydown` | App → Host | Forward keyboard shortcuts to the host. |
+
+## Initialization handshake
+
+The app initiates the handshake per the ext-apps spec:
+
+1. **App → Host:** `ui/initialize` request with `appInfo`, `appCapabilities`, `protocolVersion`
+2. **Host → App:** Response with `hostInfo`, `hostCapabilities`, `hostContext`
+3. **App → Host:** `ui/notifications/initialized` notification
+4. Host sends tool data only after receiving `initialized`
+
+```json
+// 1. App sends
+{
+  "jsonrpc": "2.0",
+  "method": "ui/initialize",
+  "id": "syn-1",
+  "params": {
+    "protocolVersion": "2026-01-26",
+    "appInfo": { "name": "my-app", "version": "1.0.0" },
+    "appCapabilities": {}
+  }
+}
+
+// 2. Host responds
+{
+  "jsonrpc": "2.0",
+  "id": "syn-1",
+  "result": {
+    "protocolVersion": "2026-01-26",
+    "hostInfo": { "name": "nimblebrain", "version": "1.0.0" },
+    "hostCapabilities": {
+      "openLinks": {},
+      "serverTools": {},
+      "logging": {},
+      "tasks": { "cancel": {}, "requests": { "tools": { "call": {} } } }
+    },
+    "hostContext": {
+      "theme": "dark",
+      "styles": {
+        "variables": {
+          "--color-background-primary": "#0f172a",
+          "--color-text-primary": "#e2e8f0"
+        }
+      }
+    }
+  }
+}
+
+// 3. App sends
+{
+  "jsonrpc": "2.0",
+  "method": "ui/notifications/initialized",
+  "params": {}
+}
+```
+
+<Aside type="tip">
+If you're using the `@nimblebrain/synapse` SDK, `connect()` handles the entire handshake for you.
+</Aside>
+
+## Host to App messages
+
+### `ui/notifications/tool-result`
+
+Sent when the agent calls one of your app's tools during a conversation. The params follow the standard MCP `CallToolResult` shape.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "ui/notifications/tool-result",
+  "params": {
+    "content": [{ "type": "text", "text": "{\"temp\":72,\"condition\":\"sunny\"}" }],
+    "structuredContent": { "temp": 72, "condition": "sunny" }
+  }
+}
+```
+
+### `ui/notifications/host-context-changed`
+
+Sent when the user toggles themes, changes locale, or other host context changes. Theme tokens are nested under `styles.variables`.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "ui/notifications/host-context-changed",
+  "params": {
+    "theme": "dark",
+    "styles": {
+      "variables": {
+        "--color-background-primary": "#0f172a",
+        "--color-text-primary": "#e2e8f0"
+      }
+    }
+  }
+}
+```
+
+### `ui/notifications/tool-input`
+
+Sent when the agent is calling a tool on your app's server. The params contain the tool arguments. Use this to show a loading state or preview the incoming action.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "ui/notifications/tool-input",
+  "params": {
+    "arguments": { "city": "Honolulu", "days": 5 }
+  }
+}
+```
+
+### `synapse/data-changed`
+
+Sent when a tool call completes on a server, indicating the app's data may have changed. Use this to refresh your UI.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "synapse/data-changed",
+  "params": {
+    "source": "agent",
+    "server": "weather",
+    "tool": "set_location"
+  }
+}
+```
+
+<Aside type="caution">
+Iframe-initiated tool calls (via `tools/call`) do **not** trigger `synapse/data-changed`. Only agent-side tool calls produce this event. This prevents infinite refresh loops.
+</Aside>
+
+## App to Host messages
+
+<Aside type="note">
+If you are using the `@nimblebrain/synapse` SDK, these messages are sent automatically by the SDK's helper methods. You do not need to construct or post them manually.
+</Aside>
+
+### `tools/call`
+
+Call a tool on your app's MCP server. This is a JSON-RPC **request** — the response is a standard MCP `CallToolResult`.
+
+**Request:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "tools/call",
+  "id": "call-1",
+  "params": {
+    "name": "get_weather",
+    "arguments": { "city": "Honolulu" }
+  }
+}
+```
+
+**Success response (CallToolResult):**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "call-1",
+  "result": {
+    "content": [{ "type": "text", "text": "{\"temp\":82,\"condition\":\"partly cloudy\"}" }],
+    "structuredContent": { "temp": 82, "condition": "partly cloudy" }
+  }
+}
+```
+
+**Error response:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "call-1",
+  "error": {
+    "code": -32000,
+    "message": "City not found"
+  }
+}
+```
+
+<Aside type="note">
+Tool calls are scoped to your app's MCP server. The bridge automatically routes `tools/call` with your app's server name. An iframe cannot call tools on other servers.
+</Aside>
+
+### `resources/read`
+
+Read a resource from your app's MCP server. This is a JSON-RPC **request** — the response is a standard MCP `ReadResourceResult` (`{ contents: [...] }`). The URI passes through verbatim to your server; resources are namespaced by the bundle that authored them.
+
+**Request:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "resources/read",
+  "id": "res-1",
+  "params": {
+    "uri": "data://board/state"
+  }
+}
+```
+
+**Success response (ReadResourceResult):**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "res-1",
+  "result": {
+    "contents": [
+      { "uri": "data://board/state", "mimeType": "application/json", "text": "{\"columns\":[]}" }
+    ]
+  }
+}
+```
+
+Like `tools/call`, resource reads are scoped to your app's own server.
+
+### Tasks
+
+Long-running tools (work that exceeds the stock MCP request timeout) run as **task-augmented** calls. To start one, send a `tools/call` whose `params` include a `task` object; the response is a `CreateTaskResult` carrying a `taskId`. You then track progress two ways:
+
+- **Status notifications** — the host forwards each `notifications/tasks/status` from the server to your iframe verbatim. Filter on the `taskId` you own.
+- **Polling** — call `tasks/get`, `tasks/result`, or `tasks/cancel` with the `taskId`.
+
+| Method | Blocking | Returns |
+|--------|----------|---------|
+| `tasks/get` | No | Current task state (`GetTaskResult`). |
+| `tasks/result` | Yes — blocks until terminal | The original request's payload (for `tools/call`, a `CallToolResult`). |
+| `tasks/cancel` | No | The (final) task state. Cancelling an already-terminal task surfaces as JSON-RPC `-32602`. |
+
+**Start a task-augmented call:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "tools/call",
+  "id": "call-2",
+  "params": {
+    "name": "start_research",
+    "arguments": { "query": "competitive landscape" },
+    "task": { "ttl": 3600000 }
+  }
+}
+```
+
+**Fetch the result when ready:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "tasks/result",
+  "id": "res-2",
+  "params": { "taskId": "tsk_abc123" }
+}
+```
+
+<Aside type="tip">
+The `@nimblebrain/synapse` SDK's `callToolAsTask` handles the full flow — starting the task, subscribing to status notifications, and awaiting the result. See [Long-running tools](/apps/synapse) for the dual-channel (task + entity) pattern.
+</Aside>
+
+### `ui/message`
+
+Send a message to the conversation. Follows the ext-apps spec format with `role` and `content` array. Context can be attached via `_meta` on the content block.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "ui/message",
+  "params": {
+    "role": "user",
+    "content": [{
+      "type": "text",
+      "text": "Show me the 5-day forecast for Honolulu",
+      "_meta": {
+        "context": {
+          "action": "forecast",
+          "entity": { "type": "city", "id": "honolulu" }
+        }
+      }
+    }]
+  }
+}
+```
+
+The `_meta.context` object is optional. When present, it helps the agent understand the source and intent of the message.
+
+**Prompt suggestion** (NimbleBrain extension — pre-fills the chat input without sending):
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "ui/message",
+  "params": {
+    "action": "prompt",
+    "value": "What's the weather forecast for this week?"
+  }
+}
+```
+
+### `ui/open-link`
+
+Open a URL in a new browser tab with `noopener`.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "ui/open-link",
+  "params": {
+    "url": "https://weather.gov/forecast"
+  }
+}
+```
+
+### `ui/notifications/size-changed`
+
+Report content dimensions so the host can auto-size inline views.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "ui/notifications/size-changed",
+  "params": {
+    "width": 800,
+    "height": 480
+  }
+}
+```
+
+### `ui/update-model-context`
+
+Push structured state into the agent's context so the LLM knows what the user is viewing. This is an ext-apps spec method — when the user sends a chat message, this state is included in the system prompt.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "ui/update-model-context",
+  "id": "ctx-1",
+  "params": {
+    "structuredContent": {
+      "view": "board",
+      "filter": "overdue",
+      "selectedTasks": ["tsk_01", "tsk_02"]
+    },
+    "summary": "User is viewing the board with overdue filter, 2 tasks selected"
+  }
+}
+```
+
+The `summary` field is optional but recommended — it's used as a fallback when the full state exceeds the token budget. If the message includes an `id`, the host responds with an empty result.
+
+<Aside type="note">
+If you're using the `@nimblebrain/synapse` SDK, `app.updateModelContext()` constructs and posts this message for you.
+</Aside>
+
+### `synapse/download-file`
+
+Trigger a file download. The `data` field is the file content as a string.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "synapse/download-file",
+  "params": {
+    "data": "city,temp,condition\nHonolulu,82,sunny\nNew York,45,cloudy",
+    "filename": "weather-report.csv",
+    "mimeType": "text/csv"
+  }
+}
+```
+
+### `synapse/action`
+
+Request a semantic action from the shell. Your app declares *intent* and the shell resolves it — no need to know routes or layout details.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "synapse/action",
+  "params": {
+    "action": "openConversation",
+    "id": "conv_abc123"
+  }
+}
+```
+
+The `action` field is required. All other fields in `params` are action-specific.
+
+**Built-in actions (handled by the bridge):**
+
+| Action | Params | Description |
+|--------|--------|-------------|
+| `navigate` | `{ route: string }` | Navigate to a route in the shell (e.g., `/app/tasks`). Invokes the `onNavigate` callback. |
+
+**Consumer-level actions (handled by shell callbacks):**
+
+| Action | Params | Description |
+|--------|--------|-------------|
+| `openConversation` | `{ id: string }` | Open the chat panel and load a specific conversation. |
+| `startChat` | `{ prompt?: string }` | Open the chat panel. Optionally pre-fill a prompt. |
+| `openApp` | `{ name: string }` | Navigate to an installed app by server name. |
+
+The bridge handles `navigate` directly. All other actions are dispatched to the registered `onAction` callback, or as an `nb:action` custom event on `window` if no callback is registered.
+
+<Aside type="note">
+`synapse/action` is a NimbleBrain platform extension — it is not part of the ext-apps specification.
+</Aside>
+
+## Security model
+
+The bridge enforces two security boundaries:
+
+1. **Origin isolation** — The host only processes messages from the iframe's `contentWindow`. Messages from other sources are silently dropped.
+2. **Tool scoping** — `tools/call` requests are always routed to the app's own MCP server. An iframe cannot call tools on another app's server.
+
+## Example: making a tool call from an iframe
+
+```html
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body>
+  <button id="btn" disabled>Get Weather</button>
+  <pre id="output"></pre>
+
+  <script>
+    let initialized = false;
+
+    window.addEventListener('message', (event) => {
+      const msg = event.data;
+      if (!msg || msg.jsonrpc !== '2.0') return;
+
+      // Host responds to our ui/initialize request
+      if (msg.id === 'init-1' && msg.result) {
+        initialized = true;
+        // Send initialized notification
+        window.parent.postMessage({
+          jsonrpc: '2.0',
+          method: 'ui/notifications/initialized',
+          params: {}
+        }, '*');
+        document.getElementById('btn').disabled = false;
+      }
+
+      // Tool call response (CallToolResult)
+      if (msg.id === 'weather-1' && msg.result) {
+        const data = msg.result.structuredContent || msg.result;
+        document.getElementById('output').textContent =
+          JSON.stringify(data, null, 2);
+      }
+
+      if (msg.id === 'weather-1' && msg.error) {
+        document.getElementById('output').textContent =
+          'Error: ' + msg.error.message;
+      }
+    });
+
+    // Initiate handshake
+    window.parent.postMessage({
+      jsonrpc: '2.0',
+      method: 'ui/initialize',
+      id: 'init-1',
+      params: {
+        protocolVersion: '2026-01-26',
+        appInfo: { name: 'weather-demo', version: '1.0.0' },
+        appCapabilities: {}
+      }
+    }, '*');
+
+    // Send a tool call when the button is clicked
+    document.getElementById('btn').addEventListener('click', () => {
+      window.parent.postMessage({
+        jsonrpc: '2.0',
+        method: 'tools/call',
+        id: 'weather-1',
+        params: {
+          name: 'get_weather',
+          arguments: { city: 'Honolulu' }
+        }
+      }, '*');
+    });
+  </script>
+</body>
+</html>
+```
+
+## Bridge runtime helper
+
+The platform's built-in apps ship a small bridge runtime script that handles theme synchronization automatically. It listens for `ui/initialize` (legacy notification path) and `ui/notifications/host-context-changed` (spec) and applies tokens as CSS custom properties.
+
+If you are building a third-party app, you can implement the same pattern:
+
+```javascript
+window.addEventListener('message', (event) => {
+  const msg = event.data;
+  if (!msg || typeof msg !== 'object' || !msg.method) return;
+
+  // Apply theme tokens from host-context-changed (spec)
+  if (msg.method === 'ui/notifications/host-context-changed') {
+    const vars = msg.params?.styles?.variables;
+    if (vars) applyTokens(vars);
+  }
+
+  // Apply theme tokens from legacy ui/initialize notification
+  if (msg.method === 'ui/initialize' && msg.params?.theme?.tokens) {
+    applyTokens(msg.params.theme.tokens);
+  }
+});
+
+function applyTokens(tokens) {
+  for (const [key, value] of Object.entries(tokens)) {
+    document.documentElement.style.setProperty(key, value);
+  }
+}
+```

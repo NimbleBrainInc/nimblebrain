@@ -1,0 +1,110 @@
+---
+title: instance.json
+description: Authentication and identity — dev mode (no file), plus the OIDC and WorkOS adapters.
+---
+
+import { Tabs, TabItem, Aside } from '@astrojs/starlight/components';
+
+`instance.json` configures **how users authenticate** to a NimbleBrain deployment. It lives at `<workDir>/instance.json` and is the single source of truth for the deployment's auth adapter and org identity.
+
+<Aside type="note">
+  Authentication is configured **here**, not through an environment variable. There is no `NB_API_KEY` auth gate.
+</Aside>
+
+## Dev mode — the absence of the file
+
+If `<workDir>/instance.json` does not exist, the runtime starts in **dev mode**: no auth gate, and every request authenticates as a single built-in identity (`usr_default`, org role `owner`). This is the default for `bun run dev`, worktree dev, and any local checkout. You only create `instance.json` when you want real authentication.
+
+## Adapters
+
+The `auth.adapter` field selects the identity provider. Two adapters are configurable: `oidc` and `workos`. (Dev mode is not an adapter value — it is the no-file state above.)
+
+<Tabs>
+  <TabItem label="OIDC">
+    ```json title="instance.json"
+    {
+      "auth": {
+        "adapter": "oidc",
+        "issuer": "https://auth.example.com",
+        "clientId": "nimblebrain-app",
+        "allowedDomains": ["example.com", "acme.com"],
+        "jwksUri": "https://auth.example.com/.well-known/jwks.json"
+      },
+      "orgName": "Acme",
+      "orgId": "org_acme"
+    }
+    ```
+
+    Verifies incoming Bearer JWTs against the provider's JWKS. Users whose email domain is not in `allowedDomains` are rejected.
+  </TabItem>
+  <TabItem label="WorkOS">
+    ```json title="instance.json"
+    {
+      "auth": {
+        "adapter": "workos",
+        "clientId": "client_01ABC...",
+        "organizationId": "org_01XYZ...",
+        "apiKey": "sk_live_...",
+        "authkitDomain": "myapp",
+        "adminRoleSlugs": ["org-admin"]
+      },
+      "orgName": "Acme",
+      "orgId": "org_acme"
+    }
+    ```
+
+    WorkOS-managed auth with AuthKit. Supports the redirect login flow for the web shell and, when `authkitDomain` is set, Bearer-JWT auth on `/mcp` for external MCP clients.
+  </TabItem>
+</Tabs>
+
+## Top-level fields
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `auth` | `object` | Yes | The auth adapter config. See per-adapter fields below. |
+| `orgName` | `string` | No | Human-readable organization name. |
+| `orgId` | `string` | No | Stable organization identifier. |
+| `integrations` | `object` | No | Free-form integration config bag. |
+
+## OIDC adapter (`auth.adapter: "oidc"`)
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `adapter` | `"oidc"` | Yes | Selects the OIDC adapter. |
+| `issuer` | `string` | Yes | OIDC issuer URL. |
+| `clientId` | `string` | Yes | OAuth client id registered with the provider. |
+| `allowedDomains` | `string[]` | Yes | Email domains permitted to sign in. A verified identity whose domain isn't listed is rejected. |
+| `jwksUri` | `string` | No | JWKS endpoint override. Discovered from the issuer's `.well-known` when omitted. |
+
+## WorkOS adapter (`auth.adapter: "workos"`)
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `adapter` | `"workos"` | Yes | Selects the WorkOS adapter. |
+| `clientId` | `string` | Yes | WorkOS Client ID (`client_…`). |
+| `redirectUri` | `string` | No | OAuth callback URL. When omitted, derived as `${publicOrigin()}/v1/auth/callback` from the canonical [public origin](/config/environment/#public-origin-and-callbacks). An explicit value (legacy `WORKOS_REDIRECT_URI`) overrides. |
+| `organizationId` | `string` | No | WorkOS Organization ID — scopes auth to a specific customer org. |
+| `apiKey` | `string` | No | WorkOS API key. Can also come from the `WORKOS_API_KEY` env var. |
+| `authkitDomain` | `string` | No | AuthKit subdomain for MCP OAuth (e.g. `"myapp"` → `myapp.authkit.app`). When set, `/mcp` accepts AuthKit-issued Bearer JWTs and exposes `/.well-known/oauth-protected-resource` for MCP client discovery. |
+| `adminRoleSlugs` | `string[]` | No | WorkOS membership role slugs that map to the app `admin` role (case-insensitive). Omit to use the defaults `["admin", "owner"]`. An explicit list **replaces** the defaults and must contain at least one non-empty slug — an empty list is rejected at startup. Set this when your WorkOS org's admin role carries a custom slug. |
+
+<Aside type="caution">
+  For WorkOS, prefer the env var `WORKOS_API_KEY` over `auth.apiKey` in production so the secret doesn't sit in a config file that lands in version control or backups.
+</Aside>
+
+## Validation
+
+`instance.json` is validated at load:
+
+- Missing or non-object `auth` throws.
+- An unknown `adapter` value (anything other than `oidc` / `workos`) throws, naming the accepted set.
+- Each adapter's required fields are type-checked; a missing or wrong-typed field throws with a field-specific message.
+- A malformed file crashes the deployment at startup rather than silently falling back to dev mode — an auth misconfiguration must fail loud, not open.
+
+The file is written atomically (temp-then-rename) whenever the runtime persists changes to it.
+
+## Related
+
+- [Environment Variables](/config/environment/) — `WORKOS_API_KEY`, public-origin variables.
+- [`nimblebrain.json`](/config/nimblebrain-json/) — instance-level runtime config (models, limits, features).
+- [`workspace.json`](/config/workspace-json/) — per-workspace config (bundles, members).

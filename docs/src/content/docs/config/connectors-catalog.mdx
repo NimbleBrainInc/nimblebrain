@@ -1,0 +1,386 @@
+---
+title: Connectors Catalog
+description: How to curate the OAuth and stdio bundles that appear on the Settings → Connectors page.
+---
+
+import { Aside, Code, Tabs, TabItem } from '@astrojs/starlight/components';
+
+The Settings → Connectors **Browse** list is assembled by aggregating one or more **registries** into a single directory. Every registry produces the same wire shape — the upstream MCP registry's [`ServerDetail`](https://github.com/modelcontextprotocol/registry) — so curated remote OAuth services and mpak-published stdio bundles render side-by-side without separate plumbing.
+
+## How registries work
+
+A registry is a typed source of `ServerDetail` records. Each instance is identified by a stable `id` and a `type`:
+
+| Type | Source | When to use |
+|------|--------|-------------|
+| `static` | A YAML / JSON file containing `ServerDetail` entries | Curated lists you ship with the platform or mount via ConfigMap. |
+| `mpak` | The mpak HTTP registry (`registry.mpak.dev` by default) | Discovering third-party stdio bundles published to mpak. |
+| `mcp` | An upstream MCP `/v1/servers` endpoint | Pointing at any spec-conformant MCP registry. (Discovery API only — no install path yet.) |
+| `custom-url` | Reserved | Future expansion. |
+
+The platform seeds two registries on first boot:
+
+- **`bundled-static`** (locked, type `static`) — the curated list shipped at `src/connectors/curated/example.yaml`. Cannot be disabled or removed; operators may rename it.
+- **`mpak`** (type `mpak`, scoped to `["nimblebraininc"]`) — the public mpak registry, narrowed to the `@nimblebraininc/*` scope so first-time installs see only NimbleBrain-curated bundles. Operators can broaden the scope or disable the registry entirely.
+
+Registry config persists at `<workDir>/registries.json`. The shape is:
+
+```json
+{
+  "registries": [
+    {
+      "id": "bundled-static",
+      "name": "Curated services",
+      "type": "static",
+      "enabled": true,
+      "locked": true,
+      "url": "/abs/path/to/catalog.yaml"
+    },
+    {
+      "id": "mpak",
+      "name": "mpak.dev",
+      "type": "mpak",
+      "enabled": true,
+      "scopes": ["nimblebraininc"]
+    }
+  ]
+}
+```
+
+The `scopes` field (when present) restricts a registry's entries to one or more namespaces. A `ServerDetail` passes if **any** of these match **any** configured scope:
+
+- The reverse-DNS prefix of `ServerDetail.name` (`ai.nimblebrain` matches `ai.nimblebrain/echo`).
+- The npm scope of any `packages[].identifier` (`nimblebraininc` matches `@nimblebraininc/echo`).
+
+## Adding a new OAuth connector
+
+Append an entry to the bundled catalog at `src/connectors/curated/example.yaml`. The file is a list of upstream `ServerDetail` records; platform-specific fields live under the reverse-DNS extension key `_meta["ai.nimblebrain/connector"]`.
+
+### 1. Pick the auth flow
+
+Three shapes are supported:
+
+- **`auth: dcr`** — the vendor's MCP server speaks Dynamic Client Registration ([RFC 7591](https://datatracker.ietf.org/doc/html/rfc7591)). The platform auto-registers a client at OAuth flow time. Operator setup is **zero**. Examples: Granola, Notion, Linear, Stripe.
+- **`auth: static`** — the operator pre-registers an OAuth app in the vendor's developer portal, copies the `client_id` + `client_secret`, and pastes them into the workspace via the Set up modal. Examples: Asana, HubSpot, Zoom.
+- **`auth: composio`** — the vendor's OAuth credentials are held by [Composio](https://composio.dev), an aggregator. Useful when the vendor's API requires app verification you don't yet hold (Google's restricted Gmail scopes, Microsoft's `Mail.*`, etc.). The platform proxies tool calls through Composio's MCP endpoint; per-workspace state is just an opaque `connectedAccountId`. Examples: Gmail, Outlook. See the [Composio operator guide](/deploy/composio/) for end-to-end setup.
+
+If the vendor exposes a `/.well-known/oauth-authorization-server` document with `registration_endpoint` set, prefer DCR. Otherwise use static, or composio when you don't yet hold the necessary vendor verification. The [catalog rot detector](#catalog-rot-detection) verifies DCR claims at PR time.
+
+### 2. Add the YAML entry
+
+```yaml
+servers:
+  - name: app.linear/mcp
+    title: Linear
+    description: Issues, projects, and product roadmaps
+    version: "1.0.0"
+    icons:
+      - src: https://static.nimblebrain.ai/icons/linear.png
+        sizes: ["any"]
+    remotes:
+      - type: streamable-http
+        url: https://mcp.linear.app/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        defaultScope: workspace
+        auth: dcr
+        tags: [issues, project-mgmt]
+```
+
+For `auth: composio`, include a `composio` block with the toolkit slug, the env var the platform should read the auth-config id from, and (strongly recommended) a curated tool allowlist:
+
+```yaml
+servers:
+  - name: com.google/gmail
+    title: Gmail
+    description: Read, send, and draft mail (via Composio)
+    version: "1.0.0"
+    icons:
+      - src: https://static.nimblebrain.ai/icons/gmail.png
+        sizes: ["any"]
+    remotes:
+      - type: streamable-http
+        url: https://backend.composio.dev/v3/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        defaultScope: workspace
+        auth: composio
+        composio:
+          toolkit: gmail
+          authConfigEnv: COMPOSIO_GMAIL_AUTH_CONFIG_ID
+          tools:
+            - GMAIL_SEND_EMAIL
+            - GMAIL_FETCH_EMAILS
+            - GMAIL_CREATE_EMAIL_DRAFT
+            # ... 10-15 total
+        tags: [mail, productivity, composio]
+```
+
+The `url` is a fixed placeholder; the actual session URL is minted per install from Composio's session API. `composio.tools` is an allowlist of upstream tool names — without it the connector exposes every tool the toolkit publishes (Outlook ships ~280, enough to blow past Claude's input-token budget on first turn). Curate to a working set.
+
+For `auth: static`, also include `operatorSetup`:
+
+```yaml
+servers:
+  - name: io.asana/mcp
+    title: Asana
+    description: Tasks, projects, and team workflows
+    version: "1.0.0"
+    icons:
+      - src: https://static.nimblebrain.ai/icons/asana.png
+        sizes: ["any"]
+    remotes:
+      - type: streamable-http
+        url: https://mcp.asana.com/v2/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        defaultScope: workspace
+        auth: static
+        operatorSetup:
+          portalUrl: https://app.asana.com/0/my-apps
+          hint: Create an OAuth app in Asana developer portal, copy client_id + client_secret
+          clientSecretKey: asana.client_secret
+        tags: [tasks, projects]
+```
+
+### Field reference
+
+Top-level fields come from upstream `ServerDetail`:
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `name` | yes | Reverse-DNS canonical id (e.g. `io.asana/mcp`). Must match `^[a-zA-Z0-9.-]+/[a-zA-Z0-9._-]+$`. Used as the entry's primary key throughout the platform. |
+| `title` | no | Display name on the Browse card. Falls back to `name` when absent. |
+| `description` | yes | One-line tagline. ~80 chars. |
+| `version` | yes | Semver string. |
+| `icons[].src` | yes | Absolute http(s) URL. `javascript:` / `data:` / `file:` are rejected at the directory boundary. |
+| `remotes[]` | for OAuth connectors | List of remote transports. First entry drives the install. `type` is `streamable-http` or `sse`. |
+| `packages[]` | for stdio bundles | List of installable packages. `identifier` is the scoped npm name (e.g. `@nimblebraininc/echo`). |
+
+NimbleBrain-specific fields under `_meta["ai.nimblebrain/connector"]`:
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `defaultScope` | recommended | `"workspace"` (shared identity) or `"user"` (per-user account). Defaults to `workspace`. `auth: composio` is workspace-scope only. |
+| `auth` | required for `remotes[]` | `"dcr"`, `"static"`, or `"composio"`. Defaults to `dcr`. |
+| `requiredScopes` | no | List of OAuth scope strings. |
+| `additionalAuthorizationParams` | no | Extra authorize-URL params (e.g. Google's `access_type: offline`). Reserved keys (`client_id`, `state`, `redirect_uri`, `response_type`, `code_challenge`, `code_challenge_method`, `scope`, etc.) are rejected. |
+| `operatorSetup` | required when `auth: static` | `{ portalUrl, hint, clientSecretKey }`. |
+| `composio` | required when `auth: composio` | `{ toolkit, authConfigEnv, tools? }`. `tools` is an optional allowlist of upstream tool names — strongly recommended to keep agent context bounded. |
+| `tags` | no | Strings used for filter / search in the Browse page. |
+| `interactive` | no | Sets the "Interactive" badge. |
+| `docsUrl` | no | Connector-specific docs link surfaced on the Configure page. Must be http(s). |
+
+### 3. Register the OAuth redirect URI
+
+The vendor's OAuth app must allow this exact callback URL:
+
+```
+{NB_PUBLIC_ORIGIN}/v1/mcp-auth/callback
+```
+
+Where `NB_PUBLIC_ORIGIN` is the canonical public origin of the deployment. For the dev server it defaults to `http://localhost:27247`. **In production this must be set explicitly** (or derived from the chart-forwarded host facts) — see [Environment Variables → Public origin](/config/environment/#public-origin-and-callbacks).
+
+The Set up modal in the UI shows the resolved redirect URI with a Copy button so admins can register it without guessing.
+
+<Aside type="caution">
+  A `redirect_uri does not match` error from the vendor at sign-in time means the URL registered with the vendor's OAuth app doesn't match what NimbleBrain sends. Double-check `NB_PUBLIC_ORIGIN` matches the app's actual public origin (not `localhost`, not the internal cluster service name).
+</Aside>
+
+### 4. Test it
+
+```bash
+bun run dev
+```
+
+The new entry appears on Settings → Connectors → Browse. Walk through the install:
+
+1. Click **Install** on the new connector.
+2. (For static-auth) Click **Set up** in the workspace admin modal, paste `client_id` + `client_secret`, save.
+3. Click **Connect**, complete the vendor's consent flow.
+4. Open the connector detail page. The status pill should read **Ready** and the tools list populates.
+
+If anything is off, check the API server logs for `[static-source]` / `[connector-directory]` warnings — invalid entries are dropped with a logged reason.
+
+## Adding stdio bundles
+
+Stdio bundles install via the mpak SDK, which fetches the published `@nimblebraininc/<name>` package. There is no separate stdio catalog file: any bundle published to a registered `mpak` registry whose `packages[].identifier` matches the registry's `scopes` filter surfaces in Browse automatically.
+
+To narrow or broaden which mpak bundles operators see, edit the seeded mpak row's `scopes` list (default `["nimblebraininc"]`):
+
+```json
+{
+  "id": "mpak",
+  "type": "mpak",
+  "enabled": true,
+  "scopes": ["nimblebraininc", "acme-internal"]
+}
+```
+
+Drop the `scopes` field entirely to surface every bundle on the registry — usually too noisy for first-time users.
+
+## Operator override
+
+Operators with custom curation needs can replace the persisted `registries.json` at runtime via the `NB_REGISTRIES` env var. Setting this env var **completely overrides** any stored `registries.json` for the lifetime of the process; the bundled-static entry is re-pinned automatically so a malformed override can't accidentally drop the platform default.
+
+```bash
+export NB_REGISTRIES='[
+  {
+    "id": "acme-internal",
+    "name": "Acme Internal",
+    "type": "static",
+    "enabled": true,
+    "url": "/etc/nimblebrain/connectors/acme-catalog.yaml"
+  },
+  {
+    "id": "mpak",
+    "name": "mpak.dev",
+    "type": "mpak",
+    "enabled": true,
+    "scopes": ["nimblebraininc", "acme"]
+  }
+]'
+```
+
+Each entry must include `id`, `name`, and `type`. Supported types: `static`, `mpak`, `mcp`, `custom-url`. Optional fields: `enabled` (default `true`), `url`, `scopes`, `locked`.
+
+When `NB_REGISTRIES` is set, persistent edits via the admin UI are rejected — the env var is the source of truth. Unset it to fall back to the persisted file.
+
+### Static-source file format
+
+The file referenced by a `static` registry is a YAML or JSON document with one of these shapes:
+
+```yaml
+servers:
+  - name: io.example/mcp
+    description: ...
+    # ... full ServerDetail
+```
+
+Or a bare JSON array for minimal override files:
+
+```json
+[{ "name": "io.example/mcp", "description": "...", "version": "1.0.0" }]
+```
+
+Every entry is validated against the upstream `ServerDetail` JSON schema. Invalid entries are dropped with a logged warning naming the source path and the entry name.
+
+### Kubernetes ConfigMap example
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nimblebrain-registries
+  namespace: nimblebrain
+data:
+  acme-catalog.yaml: |
+    servers:
+      - name: io.acme.support/mcp
+        title: Acme Support
+        description: Internal support tooling
+        version: "1.0.0"
+        icons:
+          - src: https://static.acme.example/icons/support.png
+        remotes:
+          - type: streamable-http
+            url: https://mcp.acme.example/support
+        _meta:
+          ai.nimblebrain/connector:
+            defaultScope: workspace
+            auth: dcr
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nimblebrain
+spec:
+  template:
+    spec:
+      containers:
+        - name: api
+          env:
+            - name: NB_REGISTRIES
+              value: |
+                [
+                  {
+                    "id": "acme-internal",
+                    "name": "Acme Internal",
+                    "type": "static",
+                    "enabled": true,
+                    "url": "/etc/nimblebrain/registries/acme-catalog.yaml"
+                  }
+                ]
+          volumeMounts:
+            - name: registries
+              mountPath: /etc/nimblebrain/registries
+              readOnly: true
+      volumes:
+        - name: registries
+          configMap:
+            name: nimblebrain-registries
+```
+
+The platform reads `NB_REGISTRIES` once at process start. Edits to the env var (or the mounted file) require a pod restart to take effect.
+
+### Validation
+
+Every `ServerDetail` is validated at the source boundary (mpak fetch, static-source file read) and again at the directory boundary. Invalid entries are dropped with a logged warning naming the registry id and the entry name. Common rejection reasons:
+
+| Reason | Fix |
+|--------|-----|
+| `name must match pattern "^[a-zA-Z0-9.-]+/[a-zA-Z0-9._-]+$"` | Use the reverse-DNS form (`io.asana/mcp`), not a bare slug. |
+| `icon src must be http(s)` | Drop `data:` / `javascript:` / `file:` schemes. |
+| `auth='static' requires operatorSetup.{portalUrl,hint,clientSecretKey}` | Add the `operatorSetup` block under `_meta["ai.nimblebrain/connector"]`. |
+| `additionalAuthorizationParams cannot include reserved keys` | Remove `client_id`, `redirect_uri`, `state`, `code_challenge`, `code_challenge_method`, `scope`, etc. — these are filled by the OAuth provider. |
+| `duplicate name "<id>"` | Each entry's `name` must be unique within a single static source. |
+
+When the top-level shape is bad (not a list or `{servers: [...]}`, malformed YAML), the whole override is rejected and the bundled catalog is used. The startup logs name the file path and the parse error.
+
+## Catalog rot detection
+
+The platform ships a network-dependent probe that verifies every `auth: dcr` entry in the bundled catalog actually serves the OAuth discovery chain it claims:
+
+```bash
+bun run check:catalog
+```
+
+The probe runs the same chain the production OAuth provider uses:
+
+1. **Reachability** — `HEAD <remotes[0].url>`.
+2. **RFC 9728** — `GET <bundle-origin>/.well-known/oauth-protected-resource` to discover the authorization server origin.
+3. **RFC 8414** — `GET <as-origin>/.well-known/oauth-authorization-server` against each candidate AS origin (RFC 9728 advertised, plus bundle origin as fallback).
+4. **RFC 7591** — the AS metadata document must include `registration_endpoint`.
+
+CI runs this probe automatically on PRs that touch the bundled catalog (`.github/workflows/catalog-check.yml`), so a vendor going down or dropping DCR support breaks the PR before the catalog ships. It's not part of `bun run verify` (which stays offline).
+
+## Where the secrets live
+
+The catalog never contains secrets. For `auth: static` entries, the workspace admin sets `client_id` (which lives in `workspace.json` under `oauthOperatorApps[<id>].clientId`) and `client_secret` (which lives in the workspace credential store under the key declared by `operatorSetup.clientSecretKey`).
+
+Both are keyed by the connector's reverse-DNS `name` (e.g. `io.asana/mcp`), not a short slug.
+
+Both are set through the UI:
+
+```
+Settings → Connectors → <connector> → Set up
+```
+
+The modal writes the public `client_id` into `workspace.json → oauthOperatorApps[<id>].clientId` and stores the `client_secret` in the workspace credential store under `operatorSetup.clientSecretKey`. There is no flag-based headless command for an operator OAuth secret — use the Set up modal (or the `manage_connectors` tool action it calls).
+
+## Migrating from a pre-alignment install
+
+Operators upgrading from a release before the `ServerDetail` alignment landed should be aware of these one-time migrations:
+
+- **`RegistryType` rename.** `"curated"` → `"static"` and `"directory"` → `"mcp"`. Any `NB_REGISTRIES` JSON pinning the old strings must be re-typed. The persisted `registries.json` is auto-migrated on next read by re-seeding the locked default.
+- **Seeded id rename.** The locked seeded registry id `"curated"` is now `"bundled-static"`. Existing `registries.json` rows are preserved; the new id is re-added if missing.
+- **`NB_CATALOG_PATH` and `NB_STDIO_CATALOG_PATH` removed.** Use `NB_REGISTRIES` with a `static`-type registry pointing at a `ServerDetail[]` YAML / JSON file.
+- **Catalog id format.** `DirectoryEntry.id` (and `InstalledConnector.catalogId`) is now the reverse-DNS `ServerDetail.name` (`io.asana/mcp`) instead of a bare slug (`asana`). Catalog-keyed state — `workspace.json#oauthOperatorApps[<id>]` and the matching `<clientSecretKey>` credential entries — must be rekeyed to the reverse-DNS form before existing static-auth connectors will resolve. There's no auto-migration; rekey workspace by workspace through the admin Connectors UI.
+- **`stdio-catalog.yaml` removed.** Curated stdio bundle entries no longer live in a separate file — the mpak registry is queried directly via the SDK and filtered by `scopes`.
+- **Bundle `serverName` slug.** New catalog installs persist a slugified canonical reverse-DNS form (`com-canva-mcp`, `dev-mpak-nimblebraininc-echo`) instead of a short brand slug. Existing installs keep their persisted `serverName` via a fallback. Operators querying by `serverName` (logs, audit) need both forms during the transition.
+
+## Related
+
+- [Environment Variables](/config/environment/) — `NB_PUBLIC_ORIGIN`, `NB_REGISTRIES`.
+- [Workspace JSON](/config/workspace-json/) — `oauthOperatorApps`, `connectorsAllowList`.
+- [Credentials](/config/credentials/) — how `user_config` and the credential store work for stdio bundles.

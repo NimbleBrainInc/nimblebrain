@@ -5,15 +5,29 @@
  *   `bun run dev`. Unchanged from the original logger so the dev loop reads the
  *   same. stdout stays clean for JSON-RPC / pipe output.
  * - **json**: one structured JSON object per line, opted into with
- *   `NB_LOG_FORMAT=json` (the chart sets it for deployed pods). Each line is
- *   auto-enriched with `service`, `tenant_id`, `correlation_id` (the active
- *   trace id), and the verified request identity (`user_id` / `workspace_id` /
- *   `conversation_id`) so logs pivot to traces in Grafana and are queryable by
- *   tenant in Loki. Identity comes only from the verified request context, never
- *   the wire, and never includes the human display name. Still on stderr —
- *   Kubernetes captures it alongside stdout, so Promtail ingests it either way.
+ *   `NB_LOG_FORMAT=json` (the chart sets it for deployed pods). The line shape is
+ *   the log CONTRACT consumed by Promtail/Loki/Grafana — keep it stable:
+ *     { timestamp, level, service, tenant_id?, ns?, message, trace_id?,
+ *       user_id?, workspace_id?, conversation_id?, ...fields }
+ *   `trace_id` is the active OTel trace id — the standard W3C/OTel field name,
+ *   and what the Grafana Loki→Tempo derived field keys on, so logs pivot to
+ *   traces. Identity comes only from the verified request context, never the
+ *   wire, and never includes the human display name. On stderr — Kubernetes
+ *   captures it alongside stdout, so Promtail ingests it either way.
  *
  * Both formats keep stdout untouched.
+ *
+ * Severity floor: `NB_LOG_LEVEL` (debug|info|warn|error, default `info`) drops
+ * anything below it for the info/warn/error methods. `debug` (NB_DEBUG
+ * namespaces) and `bundle` are separate always-available channels and bypass it.
+ *
+ * Secret-safety: structured `fields` pass through a key-denylist redactor
+ * (secret / password / api_key / authorization / cookie / credential / a bare
+ * `token` / the secret *_token compounds → "[redacted]") so a stray secret in a
+ * field never reaches Loki. LLM usage fields (inputTokens / tokenCount / …) are
+ * deliberately preserved. The redactor is a backstop, not a license — still
+ * don't deliberately log secrets, and it does not inspect free text, so keep
+ * secrets out of the message too.
  *
  * Debug messages are gated behind the `NB_DEBUG` environment variable. Set it
  * to a comma-separated list of namespaces to enable, or `*` for all:
@@ -56,6 +70,54 @@ const SERVICE = process.env.NB_SERVICE_NAME ?? "nimblebrain-runtime";
 // Boot-time tenant of this deployment (chart -> NB_TENANT_ID). Unset in dev.
 const TENANT_ID = process.env.NB_TENANT_ID;
 
+// Severity floor. `NB_LOG_LEVEL` (deploy-time, read at call time for test
+// control) drops anything below it for the info/warn/error methods. `debug`
+// (NB_DEBUG) and `bundle` are separate channels and intentionally bypass this
+// floor. NB_-namespaced to match the other knobs and avoid a stray `LOG_LEVEL`
+// (aimed at some other tool) silently re-flooring our logs.
+const LEVELS: Record<Level, number> = { debug: 10, info: 20, warn: 30, error: 40 };
+function levelEnabled(level: Level): boolean {
+  const floor = LEVELS[(process.env.NB_LOG_LEVEL ?? "info").toLowerCase() as Level] ?? LEVELS.info;
+  return LEVELS[level] >= floor;
+}
+
+// Key-denylist redactor: any field whose KEY looks secret-bearing is replaced
+// with "[redacted]" before the line is written, so a stray secret in a `fields`
+// object never reaches Loki. Walks nested objects/arrays (depth-bounded). The
+// enrichment keys (tenant_id, trace_id, user_id, message, …) never match, so
+// they pass through untouched. Does not inspect free text — keep secrets out of
+// the message.
+//
+// Bare `token` is deliberately NOT a substring trigger: it is a substring of the
+// most important LLM telemetry fields (inputTokens / outputTokens / tokenCount /
+// max_tokens), and redacting those would silently corrupt usage/cost telemetry.
+// So we match the secret token COMPOUNDS explicitly (access_token, …) plus an
+// exact bare `token` key (a `{ token }` field is a credential; `inputTokens` is
+// not). See the redaction regression test.
+//
+// This is a denylist by necessity — an allowlist of safe keys is infeasible when
+// callers log arbitrary field names. Accepted residual risk: a novel
+// secret-bearing key outside the regex passes through. The redactor is a
+// backstop for the convention-only "no secrets in logs" rule, not the primary
+// control — don't deliberately log secrets.
+const SECRET_KEY =
+  /(?:secret|password|passwd|authorization|cookie|credential|api[_-]?key|private[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|auth[_-]?token|session[_-]?token|bearer)/i;
+function isSecretKey(key: string): boolean {
+  return key.toLowerCase() === "token" || SECRET_KEY.test(key);
+}
+function redact(value: unknown, depth = 0): unknown {
+  // depth > 4 bounds the walk against pathological/cyclic structures (a DoS
+  // guard, not a redaction policy); a secret nested deeper than 4 levels in a
+  // log field is implausible, so the DoS bound wins the tradeoff.
+  if (value === null || typeof value !== "object" || depth > 4) return value;
+  if (Array.isArray(value)) return value.map((v) => redact(v, depth + 1));
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    out[k] = isSecretKey(k) ? "[redacted]" : redact(v, depth + 1);
+  }
+  return out;
+}
+
 const enabledNamespaces: Set<string> = (() => {
   const raw = process.env.NB_DEBUG ?? "";
   const items = raw
@@ -84,13 +146,21 @@ function emitJson(level: Level, message: string, fields?: LogFields, ns?: string
     message,
     ...requestIdentityAttrs(),
   };
-  const correlationId = currentTraceId();
-  if (correlationId) record.correlation_id = correlationId;
+  const traceId = currentTraceId();
+  if (traceId) record.trace_id = traceId;
   if (fields) Object.assign(record, fields);
-  process.stderr.write(`${JSON.stringify(record)}\n`);
+  process.stderr.write(`${JSON.stringify(redact(record))}\n`);
 }
 
-/** Pretty-mode trailer: render extra fields compactly so dev still sees them. */
+/**
+ * Pretty-mode trailer: render extra fields compactly so dev still sees them.
+ *
+ * NOTE: pretty output is intentionally NOT run through `redact()`. The threat
+ * model is "a secret reaches Loki" (retained + queryable), so redaction is
+ * scoped to the JSON sink. The local dev terminal is neither retained nor
+ * shipped, so `fields` print verbatim here. Don't "fix" this to redact pretty
+ * output, and don't treat a pasted pretty-mode line as secret-safe.
+ */
 function prettyFields(fields?: LogFields): string {
   if (!fields || Object.keys(fields).length === 0) return "";
   return ` ${dim(JSON.stringify(fields))}`;
@@ -98,14 +168,17 @@ function prettyFields(fields?: LogFields): string {
 
 export const log = {
   info: (msg: string, fields?: LogFields) => {
+    if (!levelEnabled("info")) return;
     if (isJson()) emitJson("info", msg, fields);
     else console.error(dim(msg) + prettyFields(fields));
   },
   warn: (msg: string, fields?: LogFields) => {
+    if (!levelEnabled("warn")) return;
     if (isJson()) emitJson("warn", msg, fields);
     else console.error(yellow(msg) + prettyFields(fields));
   },
   error: (msg: string, fields?: LogFields) => {
+    if (!levelEnabled("error")) return;
     if (isJson()) emitJson("error", msg, fields);
     else console.error(red(msg) + prettyFields(fields));
   },

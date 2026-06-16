@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { readdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { log } from "../cli/log.ts";
 import { writeJsonAtomic } from "../util/atomic-json.ts";
 import { PersonalWorkspaceInvariantError } from "./errors.ts";
 import { scaffoldWorkspace } from "./scaffold.ts";
@@ -138,6 +139,29 @@ export function personalWorkspaceIdFor(userId: string): string {
 /** The slug form (id without the `ws_` prefix) for `userId`'s personal workspace. */
 export function personalWorkspaceSlugFor(userId: string): string {
   return personalWorkspaceIdFor(userId).slice(3);
+}
+
+/**
+ * Best-effort lookup of a workspace's human-readable `name` for display to
+ * a third party — currently the OAuth `client_name` a remote vendor renders
+ * on its consent screen (see `WorkspaceOAuthProvider.ownerDisplayName`).
+ *
+ * Returns `undefined` when the workspace can't be read or has no name, so
+ * the caller cleanly falls back to the opaque id. Deliberately non-throwing:
+ * a cosmetic label must never block an auth flow. Constructs a throwaway
+ * store from `workDir` — cheap, and these are infrequent (interactive auth
+ * start / bundle boot) paths, not hot loops.
+ */
+export async function resolveWorkspaceDisplayName(
+  workDir: string,
+  wsId: string,
+): Promise<string | undefined> {
+  try {
+    const ws = await new WorkspaceStore(workDir).get(wsId);
+    return ws?.name || undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 // ── WorkspaceStore ─────────────────────────────────────────────────
@@ -570,7 +594,9 @@ export class WorkspaceStore {
       try {
         handler(userId);
       } catch (err) {
-        console.warn("[workspace-store] membership change handler threw:", err);
+        log.warn("[workspace-store] membership change handler threw", {
+          error: err instanceof Error ? err.message : String(err),
+        });
       }
     }
   }

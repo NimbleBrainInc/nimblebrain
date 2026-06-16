@@ -1,3 +1,4 @@
+import { log } from "../cli/log.ts";
 import type { EngineEvent, EngineEventType, EventSink } from "../engine/types.ts";
 import { bareToolName } from "../tools/namespace.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
@@ -220,7 +221,9 @@ export class SseEventManager implements EventSink {
         // caught and logged so the workspace mutation that triggered us
         // never sees an exception bubble out.
         void this.refreshMembershipsForIdentity(userId).catch((err) => {
-          console.warn("[events] membership refresh failed:", err);
+          log.warn("[events] membership refresh failed", {
+            error: err instanceof Error ? err.message : String(err),
+          });
         });
       });
     }
@@ -366,7 +369,9 @@ export class SseEventManager implements EventSink {
         client.controller.enqueue(encoded);
       } catch (err) {
         // Client disconnected — log before cleanup
-        console.warn("[events] SSE write failed:", err);
+        log.warn("[events] SSE write failed", {
+          error: err instanceof Error ? err.message : String(err),
+        });
         this.closeClient(client);
         this.clients.delete(id);
       }

@@ -3,6 +3,7 @@ import { dirname, join, resolve } from "node:path";
 import { getValidator } from "../config/index.ts";
 import { deriveOverridePath, mergeConfigs } from "../config/overrides.ts";
 import type { RuntimeConfig } from "../runtime/types.ts";
+import { log } from "./log.ts";
 
 const DEFAULT_CONFIG_FILE = "nimblebrain.json";
 
@@ -55,7 +56,7 @@ function validateConfig(
 
     if (warnUnknownKeys) {
       for (const key of warnings) {
-        console.error(`[config] Warning: unknown key "${key}" in ${path} (ignored)`);
+        log.error(`[config] Warning: unknown key "${key}" in ${path} (ignored)`);
       }
     }
 
@@ -121,7 +122,7 @@ export function loadConfig(flags: CliFlags = {}): RuntimeConfig {
       if (overrideKeys.length > 0) {
         fileConfig = mergeConfigs(seedConfig, override) as Partial<RuntimeConfig> &
           Record<string, unknown>;
-        console.error(
+        log.error(
           `[config] Applied ${overrideKeys.length} runtime override${overrideKeys.length === 1 ? "" : "s"} from ${configOverridePath}: ${overrideKeys.join(", ")}`,
         );
       }
@@ -129,7 +130,7 @@ export function loadConfig(flags: CliFlags = {}): RuntimeConfig {
       // A malformed override file should NOT take down startup — the seed
       // is still valid and the operator can fix the override file later.
       // Log loudly so the divergence is visible.
-      console.error(
+      log.error(
         `[config] Failed to load override file ${configOverridePath}: ${err instanceof Error ? err.message : String(err)}. Using seed config only.`,
       );
     }
@@ -147,12 +148,12 @@ export function loadConfig(flags: CliFlags = {}): RuntimeConfig {
 
   // Deprecation warnings for removed fields
   if ("identity" in fileConfig) {
-    console.error(
+    log.error(
       `[config] Warning: "identity" is deprecated in ${configPath}. Use a context skill (type: "context") instead.`,
     );
   }
   if ("contextFile" in fileConfig) {
-    console.error(
+    log.error(
       `[config] Warning: "contextFile" is deprecated in ${configPath}. Use a context skill (type: "context") instead.`,
     );
   }

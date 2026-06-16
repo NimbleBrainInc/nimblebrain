@@ -8,6 +8,7 @@
  * Separate from SseEventManager which handles workspace-level events.
  */
 
+import { log } from "../cli/log.ts";
 import type { BufferedRunEvent } from "../runtime/run-bus.ts";
 
 /** A subscriber watching a specific conversation's events. */
@@ -141,7 +142,9 @@ export class ConversationEventManager {
       try {
         sub.controller.enqueue(encoded);
       } catch (err) {
-        console.warn("[conversation-events] SSE write failed:", err);
+        log.warn("[conversation-events] SSE write failed", {
+          error: err instanceof Error ? err.message : String(err),
+        });
         this.closeSub(sub);
         this.subscribers.delete(id);
       }
@@ -200,7 +203,9 @@ export class ConversationEventManager {
       try {
         sub.controller.enqueue(encoded);
       } catch (err) {
-        console.warn("[conversation-events] SSE write failed:", err);
+        log.warn("[conversation-events] SSE write failed", {
+          error: err instanceof Error ? err.message : String(err),
+        });
         this.closeSub(sub);
         this.subscribers.delete(id);
       }
@@ -220,7 +225,9 @@ export class ConversationEventManager {
       try {
         sub.controller.enqueue(encoded);
       } catch (err) {
-        console.warn("[conversation-events] SSE broadcast write failed:", err);
+        log.warn("[conversation-events] SSE broadcast write failed", {
+          error: err instanceof Error ? err.message : String(err),
+        });
         this.closeSub(sub);
         this.subscribers.delete(id);
       }

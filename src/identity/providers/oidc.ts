@@ -1,3 +1,4 @@
+import { log } from "../../cli/log.ts";
 import { ensureUserWorkspace } from "../../workspace/provisioning.ts";
 import type { WorkspaceStore } from "../../workspace/workspace-store.ts";
 import type { OidcAuth } from "../instance.ts";
@@ -345,11 +346,9 @@ export class OidcIdentityProvider implements IdentityProvider {
       }
     }
     if (candidates.length > 0) {
-      console.warn(
-        "[oidc] JWT signature verification failed: no matching key found among",
-        candidates.length,
-        "candidates",
-      );
+      log.warn("[oidc] JWT signature verification failed: no matching key found", {
+        candidates: candidates.length,
+      });
     }
 
     return false;

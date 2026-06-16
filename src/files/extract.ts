@@ -1,6 +1,7 @@
 import mammoth from "mammoth";
 import { extractText as extractPdfText, getDocumentProxy } from "unpdf";
 import * as XLSX from "xlsx";
+import { log } from "../cli/log.ts";
 import { isTextMime } from "./mime.ts";
 
 export interface ExtractedPdfPage {
@@ -75,7 +76,9 @@ export async function extractText(
     // Images and everything else: not extractable
     return null;
   } catch (err) {
-    console.error(`[files/extract] Failed to extract text from ${mimeType}:`, err);
+    log.error(`[files/extract] Failed to extract text from ${mimeType}`, {
+      error: err instanceof Error ? err.message : String(err),
+    });
     return null;
   }
 }
@@ -124,7 +127,9 @@ export async function extractPdfPages(
 
     return { totalPages: pdf.numPages, pages: resultPages, missingPages };
   } catch (err) {
-    console.error("[files/extract] PDF page extraction failed:", err);
+    log.error("[files/extract] PDF page extraction failed", {
+      error: err instanceof Error ? err.message : String(err),
+    });
     return null;
   } finally {
     await pdf?.destroy?.();
@@ -167,7 +172,9 @@ async function extractPdf(
         : (result.text[0] ?? "");
     return truncate(text, maxSize, options);
   } catch (err) {
-    console.error("[files/extract] PDF extraction failed:", err);
+    log.error("[files/extract] PDF extraction failed", {
+      error: err instanceof Error ? err.message : String(err),
+    });
     return null;
   }
 }
@@ -182,7 +189,9 @@ async function extractDocx(
     const result = await (mammoth as any).convertToMarkdown({ buffer: data });
     return truncate(result.value, maxSize, options);
   } catch (err) {
-    console.error("[files/extract] DOCX extraction failed:", err);
+    log.error("[files/extract] DOCX extraction failed", {
+      error: err instanceof Error ? err.message : String(err),
+    });
     return null;
   }
 }
@@ -205,7 +214,9 @@ function extractXlsx(
     const csv = XLSX.utils.sheet_to_csv(sheet);
     return truncate(csv, maxSize, options);
   } catch (err) {
-    console.error("[files/extract] XLSX extraction failed:", err);
+    log.error("[files/extract] XLSX extraction failed", {
+      error: err instanceof Error ? err.message : String(err),
+    });
     return null;
   }
 }

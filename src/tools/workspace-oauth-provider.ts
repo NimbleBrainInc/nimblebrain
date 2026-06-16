@@ -74,6 +74,18 @@ export interface WorkspaceOAuthProviderOptions {
    * path and the principal id used in connection state tracking.
    */
   owner: OAuthOwnerContext;
+  /**
+   * Human-readable label for the owner, used verbatim in the OAuth
+   * `client_name` the vendor renders on its consent screen ("NimbleBrain
+   * (<ownerDisplayName>) would like access…"). When omitted, the provider
+   * falls back to the raw owner id (`owner.wsId` / `user:<userId>`), which
+   * is an opaque token the end user can't read and a tenant identifier we'd
+   * rather not hand a third party. Callers resolve this from the
+   * workspace's `name` (see `resolveWorkspaceDisplayName`); it's purely
+   * cosmetic — the vendor mints a distinct `client_id` per registration
+   * regardless — so a missing name degrades gracefully to the id.
+   */
+  ownerDisplayName?: string;
   serverName: string;
   workDir: string;
   /**
@@ -489,6 +501,22 @@ function deferred<T>(): Deferred<T> {
 }
 
 /**
+ * Brand metadata sent in the DCR registration so vendors that honor RFC 7591
+ * `client_uri` / `logo_uri` render NimbleBrain's homepage link and logo on
+ * their consent screen instead of a bare name. Hardcoded to match the
+ * likewise-hardcoded "NimbleBrain" in `client_name`; a future white-label
+ * effort would make all three configurable together. The logo is the
+ * NimbleBrain brand mark from the platform's public asset CDN
+ * (`static.nimblebrain.ai`), built by the logos pipeline into the canonical
+ * per-brand path. We point at the 128px raster rather than the SVG variant
+ * because several OAuth/identity providers refuse to render an SVG `logo_uri`
+ * (scriptable-image hardening); the mark is transparent and reads on both
+ * light and dark consent screens.
+ */
+const NIMBLEBRAIN_CLIENT_URI = "https://nimblebrain.ai";
+const NIMBLEBRAIN_LOGO_URI = "https://static.nimblebrain.ai/logos/nimblebrain/light-128.png";
+
+/**
  * File-backed OAuthClientProvider scoped to a `(workspace, serverName)`
  * pair. Persistence layout:
  *
@@ -516,6 +544,7 @@ function deferred<T>(): Deferred<T> {
  */
 export class WorkspaceOAuthProvider implements OAuthClientProvider {
   private readonly owner: OAuthOwnerContext;
+  private readonly ownerDisplayName?: string;
   private readonly serverName: string;
   /**
    * Single root directory for all credential files for this (owner,
@@ -611,6 +640,7 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
 
   constructor(opts: WorkspaceOAuthProviderOptions) {
     this.owner = opts.owner;
+    this.ownerDisplayName = opts.ownerDisplayName;
     this.serverName = opts.serverName;
     this.callbackUrl = opts.callbackUrl;
     this.canonicalCallback = canonicalEndpoint(new URL(opts.callbackUrl));
@@ -706,9 +736,12 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
 
   get clientMetadata(): OAuthClientMetadata {
     const ownerLabel =
-      this.owner.type === "workspace" ? this.owner.wsId : `user:${this.owner.userId}`;
+      this.ownerDisplayName ??
+      (this.owner.type === "workspace" ? this.owner.wsId : `user:${this.owner.userId}`);
     const meta: OAuthClientMetadata = {
       client_name: `NimbleBrain (${ownerLabel})`,
+      client_uri: NIMBLEBRAIN_CLIENT_URI,
+      logo_uri: NIMBLEBRAIN_LOGO_URI,
       redirect_uris: [this.callbackUrl],
       grant_types: ["authorization_code", "refresh_token"],
       response_types: ["code"],

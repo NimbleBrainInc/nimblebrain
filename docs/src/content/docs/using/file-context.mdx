@@ -1,0 +1,61 @@
+---
+title: File Context
+description: Attach files to give the agent additional context for your conversations.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+You can attach files to your messages to give the agent additional context. Drag a document into the chat, and the agent can read, summarize, or analyze its contents. NimbleBrain extracts text from common formats and includes it in the conversation; images are passed straight to vision-capable models.
+
+## How to attach files
+
+Three ways to add files to a message in the web UI:
+
+- **Drag and drop** — drag a file from your computer onto the chat input
+- **Paste an image** — copy an image and paste it directly into the input (Cmd+V / Ctrl+V)
+- **Click the attachment icon** — use the paperclip button next to the input to browse
+
+Attached files appear as chips below the input. Remove a file by clicking the X on its chip before sending.
+
+## Supported formats
+
+| Format | Extensions | What the agent sees |
+|--------|-----------|---------------------|
+| PDF | `.pdf` | Extracted text from all pages |
+| Word | `.docx` | Document text and structure |
+| Excel | `.xlsx` | Tabular data |
+| Images | `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp` | The image itself (visual analysis) |
+| Plain text | `.txt`, `.md`, `.csv`, `.json`, `.xml` | File contents as-is |
+
+## How it works
+
+When you attach a file to a message:
+
+1. The file is uploaded and stored under your account
+2. Content is extracted based on the file type
+3. The extracted text is included as context in the conversation
+4. The agent can reference the file content when responding
+
+Files are **owned by you**, not by a single workspace. A `files://<id>` reference resolves against your identity store no matter which workspace you were in when the file was uploaded.
+
+<Aside type="note">
+  Images are sent directly to the model for visual analysis — the agent can describe what it sees, read text in screenshots, interpret charts, and more. This requires a vision-capable model (for example, Claude). Text-based formats are extracted and included as text alongside your message.
+</Aside>
+
+## Tips
+
+- **Be specific about what you want.** Attaching a PDF and asking "Summarize the key financial metrics from Q3" gets a more focused answer than "Summarize this."
+- **One file at a time works best** for detailed analysis. You can attach multiple files, but the agent handles focused requests better.
+- **Screenshots work great** for asking about UI issues, error messages, or visual content.
+
+## Feature flag
+
+File context is controlled by the `fileContext` feature flag, which defaults to `true`. To disable it:
+
+```json title="nimblebrain.json"
+{
+  "features": {
+    "fileContext": false
+  }
+}
+```

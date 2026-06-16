@@ -1,0 +1,60 @@
+---
+title: Feature Flags
+description: Enable or disable system capabilities with feature flags.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Feature flags control which system capabilities are available. Eight flags default to `true`; `compaction` is opt-in and defaults to `false`. Setting a `true`-by-default flag to `false` removes the capability entirely — the tool is not registered, not visible to the LLM, and is rejected if a client calls it directly.
+
+## Configuration
+
+Add a `features` object to your `nimblebrain.json`:
+
+```json title="nimblebrain.json"
+{
+  "features": {
+    "bundleManagement": true,
+    "skillManagement": true,
+    "delegation": true,
+    "toolDiscovery": true,
+    "bundleDiscovery": true,
+    "fileContext": true,
+    "userManagement": true,
+    "workspaceManagement": true,
+    "compaction": false
+  }
+}
+```
+
+You only need to include flags you want to change. Omitted flags use their defaults — `true` for the first eight, `false` for `compaction`.
+
+## Flag reference
+
+| Flag | Default | Controls | Tool(s) gated |
+|------|---------|----------|---------------|
+| `bundleManagement` | `true` | Reserved. Previously gated the removed `nb__manage_app` tool. Kept as a stable operator knob; it gates no tool today. | — (reserved) |
+| `skillManagement` | `true` | Create, edit, delete, and activate user skills | `skills__create`, `skills__update`, `skills__delete`, `skills__activate`, `skills__deactivate` |
+| `delegation` | `true` | Multi-agent sub-task delegation | `nb__delegate` |
+| `toolDiscovery` | `true` | Search installed tools by keyword | `nb__search` (`scope: "tools"`) |
+| `bundleDiscovery` | `true` | Search registries for bundles | `nb__search` (`scope: "registry"`) |
+| `fileContext` | `true` | File upload and context extraction | File processing pipeline |
+| `userManagement` | `true` | Create, update, and delete users | `nb__manage_users` |
+| `workspaceManagement` | `true` | CRUD workspaces and manage members | `nb__manage_workspaces` |
+| `compaction` | `false` | History compaction — fold the oldest turns of a long conversation into a summary at run start to bound context growth. Event-sourced stores only. | — (engine behavior, not a tool) |
+
+<Aside type="note">
+  `bundleManagement` is **reserved**. Its `nb__manage_app` tool was removed — bundle install and configuration now happen through the connectors catalog (`manage_connectors`) and the CLI; org-wide app version management is `manage_apps`. The flag is kept as a stable config knob for a future bundle-management tool, but toggling it has no effect on the current tool set.
+</Aside>
+
+## Always-enabled tools
+
+Tools not listed in the table above are never gated by feature flags. They register and stay visible regardless of feature configuration — for example `nb__status`, `nb__search` itself (only its `scope`-specific behavior is gated), and the read-only platform tool surfaces.
+
+## Enforcement
+
+Feature flags are enforced at tool registration. A gated tool whose flag is `false` is excluded at startup — it never appears in `tools/list` for the LLM, the web shell, or external MCP clients, and a direct call to it is rejected. `compaction` is enforced differently: it changes engine behavior at run start rather than gating a tool.
+
+<Aside type="tip">
+Use feature flags to lock down a production deployment. For example, disable `skillManagement` to prevent the agent from mutating skills, or disable `delegation` to forbid sub-agent fan-out, while leaving the rest of the platform intact.
+</Aside>

@@ -1,0 +1,55 @@
+---
+title: nb config
+description: Get, set, and clear per-bundle credentials in a workspace.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Workspace-scoped credential management. For when and why to use this versus a host env var, see [Credentials](/config/credentials/).
+
+## Synopsis
+
+```
+nb config set   <bundle> <key>=<value>  -w <wsId>
+nb config get   <bundle>                -w <wsId>
+nb config clear <bundle> <key>          -w <wsId>
+```
+
+The `-w`/`--workspace` flag is required on every action.
+
+## Examples
+
+Set a value:
+
+```bash
+nb config set @nimblebraininc/granola api_key=grn_abc123 -w ws_acme
+```
+
+Read current values (masked — first two characters, then `****`):
+
+```bash
+nb config get @nimblebraininc/granola -w ws_acme
+```
+```
+api_key: gr****
+```
+
+Remove a single key. If it was the last key, the file is deleted:
+
+```bash
+nb config clear @nimblebraininc/granola api_key -w ws_acme
+```
+
+## Storage
+
+Values are written to `{workDir}/workspaces/{wsId}/credentials/{bundle-slug}.json` with mode `0o600`. See [Credentials → Store it per-workspace](/config/credentials/#store-it-per-workspace) for the slug rule and the surrounding directory layout.
+
+<Aside type="caution">
+  Credential files contain secrets. Don't commit them; don't sync them to services that weaken the permission model.
+</Aside>
+
+## Related
+
+- [Credentials](/config/credentials/) — when to use this vs. host env vars.
+- [`nb bundle`](/cli/bundle/) — install and remove bundles.
+- [`nb reload`](/cli/reload/) — pick up new values on a running server.

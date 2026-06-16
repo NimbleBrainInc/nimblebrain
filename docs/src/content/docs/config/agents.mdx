@@ -1,0 +1,117 @@
+---
+title: Agent Profiles
+description: Define named agent profiles for multi-agent delegation.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Agent profiles let you define specialized sub-agents that the primary agent can delegate to using the `nb__delegate` tool. Each profile specifies a purpose, system prompt, tool access, and optional resource limits.
+
+## Defining agents
+
+Add an `agents` object to your [`workspace.json`](/config/workspace-json). Each key is the agent name, and the value is the profile configuration. Agent profiles are per-workspace — different workspaces can define different agents, and there's no global agent list.
+
+```json
+{
+  "agents": {
+    "researcher": {
+      "description": "Searches RFP databases and summarizes findings",
+      "systemPrompt": "You are a research agent. Search for relevant RFPs and summarize the key requirements, deadlines, and evaluation criteria.",
+      "tools": ["rfpsearch__*", "nb__*"],
+      "maxIterations": 8,
+      "model": "reasoning"
+    },
+    "writer": {
+      "description": "Drafts proposal sections from research notes",
+      "systemPrompt": "You are a technical writer. Given research notes, draft clear and persuasive proposal sections. Use active voice and concrete examples.",
+      "tools": ["filesystem__*"],
+      "maxIterations": 5
+    },
+    "analyst": {
+      "description": "Analyzes data using SQL queries",
+      "systemPrompt": "You are a data analyst. Write and run SQL queries to answer questions. Return results as markdown tables.",
+      "tools": ["postgres__*", "nb__*"],
+      "maxIterations": 12,
+      "model": "fast"
+    }
+  }
+}
+```
+
+<Aside type="note">
+  Agent profiles placed at the top level of `nimblebrain.json` are silently stripped at load. They belong in `workspace.json`.
+</Aside>
+
+## Profile fields
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `description` | `string` | Yes | — | Human-readable description of the agent's purpose. The primary agent sees this when deciding which agent to delegate to. |
+| `systemPrompt` | `string` | Yes | — | System prompt injected when this agent runs. Defines the agent's behavior and constraints. |
+| `tools` | `string[]` | Yes | — | Tool name glob patterns the agent can access. Only matching tools are available to the child agent. |
+| `maxIterations` | `integer` | No | — | Maximum iterations for this agent. Falls through to the `nb__delegate` call's default (5) when omitted. The effective value is capped at the **child ceiling of 10** and at the parent's remaining budget minus 1, so a profile value above 10 is clamped to 10. |
+| `model` | `string` | No | Workspace default | Model override. Accepts a slot name (`"default"`, `"fast"`, `"reasoning"`) or an explicit `provider:model-id` string. |
+
+## Tool glob patterns
+
+The `tools` array uses glob patterns to filter which tools the child agent can access. Each pattern is matched against the full tool name (in the format `servername__toolname`).
+
+| Pattern | Matches |
+|---------|---------|
+| `rfpsearch__*` | All tools from the `rfpsearch` server |
+| `nb__*` | All system tools (`nb__search`, `nb__delegate`, etc.) |
+| `postgres__query` | Only the `query` tool from the `postgres` server |
+| `*__search` | Any tool named `search` from any server |
+| `*` | All tools (no filtering) |
+
+<Aside type="tip">
+  Include `nb__*` in the tools array if you want the child agent to discover additional tools or delegate further. Omit it to create a tightly scoped agent that can only use the tools you explicitly allow.
+</Aside>
+
+## How delegation works
+
+When the primary agent calls `nb__delegate`, NimbleBrain:
+
+1. Looks up the named agent profile from the config
+2. Creates a child `AgentEngine` run with the profile's system prompt
+3. Filters the available tools to only those matching the `tools` globs
+4. Caps the child's iteration budget at `min(profile.maxIterations, parent.remaining - 1)`
+5. Runs the child agent to completion and returns its response to the parent
+
+Multiple delegations in the same turn run concurrently via `Promise.all()`. The primary agent can delegate to different agents in parallel for independent sub-tasks.
+
+## Iteration budget
+
+The child agent's iteration budget is the minimum of four values:
+- The `maxIterations` argument to the `nb__delegate` call (defaults to 5)
+- The `maxIterations` field on the agent profile, if set
+- `10` — the hard ceiling for child iterations
+- The parent agent's remaining iterations minus 1
+
+This prevents child agents from consuming the parent's entire budget. If the parent has 3 iterations remaining, the child gets at most 2, regardless of the profile's `maxIterations` setting.
+
+## Example: research and write workflow
+
+This config defines a two-agent workflow where a researcher gathers information and a writer produces content:
+
+```json
+{
+  "agents": {
+    "researcher": {
+      "description": "Searches the web and internal databases for information",
+      "systemPrompt": "You are a research agent. Search for information relevant to the user's question. Return structured notes with sources.",
+      "tools": ["websearch__*", "rfpsearch__*", "nb__*"],
+      "maxIterations": 10
+    },
+    "writer": {
+      "description": "Writes polished content from research notes",
+      "systemPrompt": "You are a writer. Transform research notes into clear, well-structured prose. Cite sources. Use active voice.",
+      "tools": ["filesystem__write_file", "filesystem__read_file"],
+      "maxIterations": 5,
+      "model": "fast"
+    }
+  }
+}
+```
+
+The primary agent orchestrates by delegating research tasks to `researcher`, then passing the results to `writer` for final output.

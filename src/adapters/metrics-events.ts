@@ -1,4 +1,5 @@
 import { recordLlmUsage, toolCallsTotal, toolPromotionsTotal } from "../api/metrics.ts";
+import { log } from "../cli/log.ts";
 import type { EngineEvent, EventSink } from "../engine/types.ts";
 import type { TokenUsage } from "../usage/types.ts";
 
@@ -74,7 +75,7 @@ export class MetricsEventSink implements EventSink {
           // tracked runs drain). Surface it rather than dropping the evicted
           // run's promotion samples silently — a leak this big means a
           // regressed terminator, not normal load.
-          console.warn(
+          log.warn(
             `[metrics] tracked-run cap (${MAX_TRACKED_RUNS}) exceeded; dropping run ${oldest} — its promotion metrics are lost. A run terminator (run.done/run.error) likely failed to fire.`,
           );
         }

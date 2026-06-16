@@ -1,5 +1,6 @@
 import { appendFileSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
+import { log } from "../cli/log.ts";
 import type { EngineEvent, EngineEventType, EventSink } from "../engine/types.ts";
 
 /** Event types that belong in the workspace log. */
@@ -78,9 +79,9 @@ export class WorkspaceLogSink implements EventSink {
       // subsequent success re-arms.
       if (!this.writeWarned) {
         this.writeWarned = true;
-        console.warn(
-          `[workspace-log-sink] write to ${this.dir} failed (further failures suppressed until recovery):`,
-          err instanceof Error ? err.message : err,
+        log.warn(
+          `[workspace-log-sink] write to ${this.dir} failed (further failures suppressed until recovery)`,
+          { error: err instanceof Error ? err.message : String(err) },
         );
       }
     }

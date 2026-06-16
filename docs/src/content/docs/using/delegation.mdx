@@ -1,0 +1,148 @@
+---
+title: Multi-Agent Delegation
+description: Spawn child agents for parallel sub-tasks using nb__delegate and named agent profiles.
+---
+
+import { Steps, Tabs, TabItem, Aside } from '@astrojs/starlight/components';
+
+NimbleBrain supports multi-agent delegation. The primary agent can spawn child agents to handle sub-tasks independently, each with their own system prompt, tool access, and iteration budget.
+
+## How delegation works
+
+When the agent calls `nb__delegate`, NimbleBrain:
+
+<Steps>
+
+1. Resolves the named agent profile (if specified)
+2. Determines the system prompt — from the profile or the task description
+3. Selects the model — from the profile or the workspace default
+4. Calculates the iteration budget — capped by the parent's remaining iterations
+5. Filters tools based on the profile's tool globs or the explicit `tools` parameter
+6. Spawns a new `AgentEngine` with fresh context (no conversation history)
+7. Returns the child agent's output to the parent
+</Steps>
+
+The parent agent can delegate multiple tasks in the same turn. These run concurrently via `Promise.all()`.
+
+## The nb\_\_delegate tool
+
+The agent calls `nb__delegate` with these parameters:
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `task` | string | Yes | What the sub-agent should accomplish |
+| `agent` | string | No | Named agent profile from your config |
+| `tools` | string[] | No | Tool name globs the sub-agent can access (e.g., `rfpsearch__*`). Falls back to profile's tool list. |
+| `maxIterations` | integer | No | Max iterations for the sub-agent. Default: 5, max: 10. |
+
+<Aside type="note">
+  The `task` parameter is always required. If no `agent` profile is specified, the task description itself is used as the system prompt.
+</Aside>
+
+## Agent profiles
+
+Define named agent profiles in [`workspace.json`](/config/workspace-json) under `agents`:
+
+```json
+{
+  "agents": {
+    "researcher": {
+      "description": "Deep research agent for gathering information",
+      "systemPrompt": "You are a research agent. Gather comprehensive information on the given topic. Use search tools to find relevant data. Return a structured summary with sources.",
+      "tools": ["rfpsearch__*", "bash__*"],
+      "maxIterations": 8,
+      "model": "reasoning"
+    },
+    "writer": {
+      "description": "Content writer for drafting documents",
+      "systemPrompt": "You are a technical writer. Draft clear, concise content based on the provided research. Use active voice and second person.",
+      "tools": ["bash__*"],
+      "maxIterations": 5
+    },
+    "analyst": {
+      "description": "Data analyst for processing and summarizing data",
+      "systemPrompt": "You are a data analyst. Analyze the provided data, identify patterns, and produce a summary with key insights.",
+      "tools": ["postgres__*", "bash__*"],
+      "maxIterations": 6,
+      "model": "fast"
+    }
+  }
+}
+```
+
+### Profile fields
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `description` | string | Yes | What this agent does (shown when agent requests unknown profile) |
+| `systemPrompt` | string | Yes | System prompt injected when this agent runs |
+| `tools` | string[] | Yes | Tool name globs the agent can access |
+| `maxIterations` | integer | No | Max iterations. Falls through to the `nb__delegate` call's default (5) when omitted. Also capped at the child-iteration ceiling of 10. |
+| `model` | string | No | Model override. Accepts a slot name (`"default"`, `"fast"`, `"reasoning"`) or `provider:model-id`. |
+
+## Iteration budgets
+
+Child agent iterations are capped by three values:
+
+1. The `maxIterations` in the `nb__delegate` call (default: 5, max: 10)
+2. The agent profile's `maxIterations`
+3. The parent agent's remaining iterations minus 1
+
+The effective budget is: `min(min(requested, 10), parentRemaining - 1)`
+
+This prevents child agents from consuming all the parent's iteration budget. The parent always retains at least 1 iteration to process the child's result.
+
+<Aside type="caution">
+  If the parent has only 1 iteration remaining, the child gets `max(1, 0)` = 1 iteration. Deep nesting of delegations is not recommended.
+</Aside>
+
+## Example usage
+
+Ask the primary agent to delegate:
+
+> "Research the current state of MCP security standards, then write a one-page summary. Use the researcher profile for research and the writer profile for the summary."
+
+The agent will:
+1. Call `nb__delegate` with `agent: "researcher"` and the research task
+2. Call `nb__delegate` with `agent: "writer"` and the research output as context
+3. Return the final summary
+
+You can also delegate without named profiles:
+
+> "Delegate to a sub-agent: search my Granola meetings for any mention of budget discussions this quarter"
+
+The agent will call `nb__delegate` with just a `task` parameter, using the task itself as the system prompt.
+
+## When to use delegation
+
+Delegation is most useful when:
+
+- **Parallel research** — search multiple sources simultaneously
+- **Specialized tasks** — different sub-tasks need different system prompts or tool sets
+- **Isolation** — keep a sub-task's context separate from the main conversation
+- **Iteration budget management** — give a complex sub-task its own iteration budget
+
+Delegation is less useful when:
+
+- The task is simple enough for a single tool call
+- You need the child agent to see the full conversation history (child agents start fresh)
+
+## Observability
+
+Child agent events are linked to their parent via `parentRunId` in the event data. This appears in structured logs and SSE events, letting you trace delegation chains:
+
+```json
+{
+  "type": "run.start",
+  "data": {
+    "runId": "child-run-123",
+    "parentRunId": "parent-run-456"
+  }
+}
+```
+
+## What's next
+
+- [Chat](/using/chat) — see delegation in action
+- [Skills](/using/skills) — scope tools for the primary agent
+- [Configuration: Agent Profiles](/config/agents) — full profile reference

@@ -522,7 +522,9 @@ export async function handleChatStream(
             endRun();
             return;
           }
-          console.error("[routes] handleChatStream failed:", err);
+          log.error("[routes] handleChatStream failed", {
+            error: err instanceof Error ? err.message : String(err),
+          });
           const raw = err instanceof Error ? err.message : String(err);
           const friendly = friendlyError(raw);
           send("error", {
@@ -1286,7 +1288,7 @@ export async function handleBootstrap(
       .slice()
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0]!;
     personalWorkspaceId = earliest.id;
-    console.warn(
+    log.warn(
       `[bootstrap] user ${identity.id} has ${personalCandidates.length} personal workspaces; ` +
         `picking earliest-created ${earliest.id}. This is data corruption — investigate.`,
     );
@@ -1520,7 +1522,7 @@ export async function handleOidcCallback(
   // Verify state — must match a pending flow in server memory
   const returnedState = url.searchParams.get("state");
   if (!returnedState) {
-    console.error("[nimblebrain] OAuth callback missing state parameter");
+    log.error("[nimblebrain] OAuth callback missing state parameter");
     const errorRedirect = appOrigin ?? url.origin;
     return Response.redirect(`${errorRedirect}?error=auth_failed`, 302);
   }
@@ -1529,7 +1531,7 @@ export async function handleOidcCallback(
 
   const pendingFlow = pendingAuthFlows.get(returnedState);
   if (!pendingFlow) {
-    console.error("[nimblebrain] OAuth state mismatch — possible CSRF attack or expired flow");
+    log.error("[nimblebrain] OAuth state mismatch — possible CSRF attack or expired flow");
     const errorRedirect = appOrigin ?? url.origin;
     return Response.redirect(`${errorRedirect}?error=auth_failed`, 302);
   }
@@ -1575,7 +1577,9 @@ export async function handleOidcCallback(
 
     return mutableRes;
   } catch (err) {
-    console.error("[nimblebrain] Auth callback failed:", err);
+    log.error("[nimblebrain] Auth callback failed", {
+      error: err instanceof Error ? err.message : String(err),
+    });
     const errorRedirect = appOrigin ?? url.origin;
     return Response.redirect(`${errorRedirect}?error=auth_failed`, 302);
   }
@@ -1644,12 +1648,12 @@ export async function handleOidcRefresh(
       "error" in err &&
       (err as { error?: unknown }).error === "invalid_grant";
     if (expired) {
-      console.warn(
+      log.warn(
         "[nimblebrain] Token refresh rejected (session expired) — client will re-authenticate",
       );
     } else {
       const reason = err instanceof Error ? err.message : String(err);
-      console.error("[nimblebrain] Token refresh failed:", reason);
+      log.error("[nimblebrain] Token refresh failed", { reason });
     }
     return apiError(401, "refresh_failed", "Token refresh failed");
   }

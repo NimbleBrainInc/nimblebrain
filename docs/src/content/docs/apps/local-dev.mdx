@@ -1,0 +1,265 @@
+---
+title: Local Development
+description: Develop and test MCP apps locally — standalone preview, hot-reload, and debugging.
+---
+
+import { Aside, Steps, Tabs, TabItem } from '@astrojs/starlight/components';
+
+## Choose your workflow
+
+| Workflow | What it gives you | When to use |
+|----------|-------------------|-------------|
+| **Synapse Preview** | Standalone preview with tool calls and HMR | Building a new app, iterating on UI |
+| **nb dev --app** | Full NimbleBrain platform with HMR | Testing data sync, agent interactions, multi-app |
+| **nb dev + reload** | Full platform, manual restart | Quick tool changes, no UI build step |
+| **Tools only** | MCP server in Claude Desktop or any client | Testing tools without UI |
+
+## Synapse Preview (recommended for UI development)
+
+The fastest way to develop an MCP app with a UI. No NimbleBrain platform needed.
+
+```bash
+cd your-app/ui
+npm run dev
+# Open http://localhost:5173/__preview
+```
+
+The Synapse Vite plugin (`synapseVite()` in your `vite.config.ts`) handles everything:
+- Reads `../manifest.json` to get your app name and server command
+- Spawns the MCP server as a child process (stdio mode)
+- Serves a preview host page at `/__preview` that iframes your app
+- Proxies tool calls from the iframe to the MCP server
+- HMR works — edit `.tsx` files, see changes instantly
+
+### What the preview provides
+
+| Feature | Supported |
+|---------|-----------|
+| Tool calls (proxied to MCP server) | Yes |
+| ext-apps handshake (Synapse initializes) | Yes |
+| Dark/light theme toggle | Yes |
+| NimbleBrain theme tokens | Yes |
+| Console logging (chat, actions, state) | Yes |
+| Data sync (agent tool calls) | No — use `nb dev` |
+| Widget state persistence | No — use `nb dev` |
+| Multi-app navigation | No — use `nb dev` |
+
+### Vite config
+
+The plugin reads `../manifest.json` automatically. Zero config for most apps:
+
+```typescript
+// ui/vite.config.ts
+import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+import { viteSingleFile } from "vite-plugin-singlefile";
+import { synapseVite } from "@nimblebrain/synapse/vite";
+
+export default defineConfig({
+  plugins: [react(), viteSingleFile(), synapseVite()],
+  build: { outDir: "dist", assetsInlineLimit: Infinity },
+});
+```
+
+Override if needed:
+
+```typescript
+synapseVite({
+  appName: "my-app",                    // override manifest name
+  serverCmd: "uv run python -m server", // override derived command
+  manifest: "../custom-manifest.json",  // custom manifest path
+  preview: false,                       // disable preview (build-only)
+})
+```
+
+## NimbleBrain dev mode
+
+### With UI hot-reload (`nb dev --app`)
+
+```bash
+cd nimblebrain    # the platform repo
+bun run dev --app /path/to/your-app/ui
+```
+
+Your app must already be configured as a local bundle in `.nimblebrain/nimblebrain.json`:
+
+```json
+{
+  "bundles": [
+    { "path": "/absolute/path/to/your-app" }
+  ]
+}
+```
+
+This gives you everything — data sync, agent interactions, theme injection, keyboard forwarding, multi-app navigation — plus Vite HMR on your UI.
+
+### Without UI hot-reload
+
+```bash
+bun run dev
+```
+
+The platform loads your bundle from the `path` in the config. UI changes require:
+
+<Steps>
+
+1. Rebuild the UI: `cd ui && npm run build`
+2. Reload the bundle: `nb reload`
+3. Hard-refresh the browser (`Cmd+Shift+R`)
+</Steps>
+
+## Tools only (no UI)
+
+Test your MCP server in any client:
+
+<Tabs>
+<TabItem label="stdio mode">
+```bash
+# Python
+uv run python -m mcp_myapp.server
+
+# TypeScript
+node dist/index.js --stdio
+```
+Add to Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+```json
+{
+  "mcpServers": {
+    "myapp": {
+      "command": "uv",
+      "args": ["run", "python", "-m", "mcp_myapp.server"],
+      "cwd": "/path/to/your-app"
+    }
+  }
+}
+```
+</TabItem>
+<TabItem label="HTTP mode">
+```bash
+# Python
+uv run uvicorn mcp_myapp.server:app --port 8001
+
+# TypeScript
+node dist/index.js --port 8001
+```
+Test with curl:
+```bash
+curl -X POST http://localhost:8001/mcp \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":"1","method":"tools/list","params":{}}'
+```
+</TabItem>
+</Tabs>
+
+## Setting up a new app with UI
+
+<Steps>
+
+1. **Create the MCP server** (Python or TypeScript) with tools and a `ui://` resource:
+   ```python
+   @mcp.resource("ui://myapp/main")
+   def app_ui() -> str:
+       return load_ui()  # reads ui/dist/index.html
+   ```
+
+2. **Create the UI project:**
+   ```bash
+   mkdir ui && cd ui
+   npm init -y
+   npm install react react-dom
+   npm install -D @nimblebrain/synapse @vitejs/plugin-react vite vite-plugin-singlefile typescript @types/react @types/react-dom
+   ```
+
+3. **Configure Vite** for single-file output:
+   ```typescript
+   // ui/vite.config.ts
+   import { defineConfig } from "vite";
+   import react from "@vitejs/plugin-react";
+   import { viteSingleFile } from "vite-plugin-singlefile";
+
+   export default defineConfig({
+     plugins: [react(), viteSingleFile()],
+     build: { outDir: "dist", assetsInlineLimit: Infinity },
+   });
+   ```
+
+4. **Write your React app** with Synapse hooks:
+   ```tsx
+   // ui/src/App.tsx
+   import { SynapseProvider, useCallTool, useDataSync } from "@nimblebrain/synapse/react";
+
+   function MyApp() {
+     const { call, isPending, data } = useCallTool("my_tool");
+     useDataSync(() => { /* refetch on agent changes */ });
+     return <button onClick={() => call({ arg: "value" })} disabled={isPending}>Go</button>;
+   }
+
+   export function App() {
+     return (
+       <SynapseProvider name="myapp" version="1.0.0">
+         <MyApp />
+       </SynapseProvider>
+     );
+   }
+   ```
+
+5. **Build and preview:**
+   ```bash
+   cd ui && npm run build && cd ..
+   npx @nimblebrain/synapse preview --server "uv run uvicorn mcp_myapp.server:app --port 8001" --ui ./ui
+   ```
+</Steps>
+
+See the [Hello World example](/apps/hello-world) for a complete walkthrough.
+
+## The `deps/` gotcha
+
+<Aside type="danger">
+This is the most common source of confusion during local development.
+</Aside>
+
+When you build your app for distribution (via `mcpb-pack`), dependencies are bundled into a `deps/` directory. If your project has a `deps/` directory, **the platform uses it as the primary import path**, placing it before `src/` on `PYTHONPATH`.
+
+This means edits to files in `src/` are invisible to the running server — Python imports the stale copy from `deps/` instead.
+
+**Fix:** Delete the bundled copy of your package from `deps/` during local development:
+
+```bash
+rm -rf deps/mcp_my_app
+nb reload
+```
+
+## Debugging
+
+### Bridge messages
+
+Add this temporarily to see all bridge traffic:
+
+```javascript
+window.addEventListener('message', (event) => {
+  console.log('[bridge]', event.data?.method, event.data);
+});
+```
+
+In the Synapse Preview, `ui/message`, `synapse/action`, and `ui/update-model-context` messages are logged to the browser console automatically.
+
+### Iframe sandbox restrictions
+
+Your app runs inside a sandboxed iframe:
+
+| Allowed | Not allowed |
+|---------|-------------|
+| JavaScript execution | HTML form submission |
+| `postMessage` to host | Top-level navigation |
+| Opening popups (new tabs) | `alert()` / `confirm()` / `prompt()` |
+| Inline styles and scripts | Nested iframes |
+
+Network requests from the iframe are blocked by default (`connect-src 'none'`). If your app needs external API access, declare domains in your manifest:
+
+```json
+{
+  "csp": {
+    "connectDomains": ["https://api.example.com"]
+  }
+}
+```

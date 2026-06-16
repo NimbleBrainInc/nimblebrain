@@ -1,0 +1,143 @@
+---
+title: nb telemetry
+description: Control anonymous usage telemetry from the command line.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+`nb telemetry` manages NimbleBrain's anonymous usage telemetry. Telemetry helps the NimbleBrain team understand how the platform is used so they can prioritize improvements. It is on by default and can be disabled at any time.
+
+## Usage
+
+```
+nb telemetry <action>
+```
+
+## Actions
+
+| Action | Description |
+|--------|-------------|
+| `on` | Enable telemetry |
+| `off` | Disable telemetry |
+| `status` | Show current telemetry state |
+| `reset` | Reset your anonymous ID |
+
+## Checking telemetry status
+
+View the current state, including how telemetry was configured and what data is collected:
+
+```bash
+nb telemetry status
+```
+
+```
+Telemetry: enabled
+Anonymous ID: 550e8400-e29b-41d4-a716-446655440000
+ID file: /Users/you/.nimblebrain/.telemetry-id
+
+Events sent:
+  - CLI commands (command name, mode, flag names)
+  - Agent loop (iterations, tool count, latency, stop reason)
+  - Bundle lifecycle (install/uninstall/crash counts)
+  - Errors (error type only)
+
+Never sent:
+  - Conversation content, file paths, tool arguments
+  - Usernames, hostnames, IP addresses
+  - Bundle names, skill names, model names
+
+Destination: PostHog (https://us.i.posthog.com)
+```
+
+When telemetry is disabled, the output shows the reason:
+
+```bash
+nb telemetry status
+```
+
+```
+Telemetry: disabled
+  (disabled via config)
+Anonymous ID: 550e8400-e29b-41d4-a716-446655440000
+ID file: /Users/you/.nimblebrain/.telemetry-id
+
+Events sent:
+  ...
+```
+
+## Disabling telemetry
+
+Disable telemetry by setting `telemetry.enabled` to `false` in your config:
+
+```bash
+nb telemetry off
+```
+
+```
+Telemetry disabled.
+```
+
+You can also disable telemetry with environment variables -- no config change needed:
+
+```bash
+export NB_TELEMETRY_DISABLED=1
+```
+
+Or use the standard `DO_NOT_TRACK` convention:
+
+```bash
+export DO_NOT_TRACK=1
+```
+
+<Aside type="note">
+  Environment variables take precedence over the config file. If either `NB_TELEMETRY_DISABLED=1` or `DO_NOT_TRACK=1` is set, telemetry is disabled regardless of the config value.
+</Aside>
+
+## Enabling telemetry
+
+Re-enable telemetry if you previously disabled it:
+
+```bash
+nb telemetry on
+```
+
+```
+Telemetry enabled.
+```
+
+## Resetting your anonymous ID
+
+Generate a new anonymous identifier. This breaks the link between your past and future telemetry data:
+
+```bash
+nb telemetry reset
+```
+
+```
+Anonymous ID reset: 7c9e6679-7425-40de-944b-e07fc1f90ae7
+```
+
+The new ID is written to `~/.nimblebrain/.telemetry-id`.
+
+## What is collected
+
+NimbleBrain collects only anonymous, aggregate usage signals:
+
+**Sent:**
+- CLI command names and modes (e.g., "serve", "tui", "bundle.add")
+- Flag names (never flag values)
+- Agent loop metrics: iteration count, tool call count, latency, stop reason
+- Bundle lifecycle counts: installs, uninstalls, crashes
+- Error types (never error messages)
+
+**Never sent:**
+- Conversation content, file paths, or tool arguments
+- Usernames, hostnames, or IP addresses
+- Bundle names, skill names, or model names
+
+All events are sent to PostHog (`https://us.i.posthog.com`) and associated only with a random anonymous ID.
+
+## Related commands
+
+- [CLI Overview](/cli/overview/) -- global flags and config resolution
+- [nb status](/cli/status/) -- check workspace health

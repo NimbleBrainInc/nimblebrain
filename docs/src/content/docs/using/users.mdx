@@ -1,0 +1,122 @@
+---
+title: User Management
+description: Create users, assign roles, and manage workspace membership in your NimbleBrain instance.
+---
+
+import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
+
+NimbleBrain supports multi-user environments where each person has their own identity, conversations, and workspace memberships. User management is available in dev mode (the built-in local identity store) and with the **oidc** adapter.
+
+## Auth adapters
+
+How users are managed depends on your authentication configuration in `instance.json`:
+
+| Adapter | User management | Description |
+|---------|----------------|-------------|
+| **dev** | Via `nb__manage_users` tool | No `instance.json`. Identities live in the built-in local store under `users/`. Network authentication is not enforced (see [Security](/deploy/security/)), but users, roles, and ownership still apply. |
+| **oidc** | External provider | Users are managed in your OIDC provider. NimbleBrain creates local records on first login. |
+| **workos** | External provider (WorkOS) | Identities and sign-in are managed in WorkOS / AuthKit. |
+
+<Aside type="tip">
+In dev mode (no `instance.json`), authentication is disabled entirely. This is the default for local development.
+</Aside>
+
+## Creating users
+
+<Aside type="caution">
+  There is no "Settings → Users" tab with an email invite field in the web UI. Users are created through the `nb__manage_users` tool — ask the agent, or call the tool directly. Only org **admins** and **owners** can manage users.
+</Aside>
+
+In dev mode, ask the agent to create users:
+
+```
+Create a user for sarah@example.com with the name Sarah
+```
+
+The agent uses `nb__manage_users` with `action: "create"`. The new user is created with an org role (`member` by default; `admin` or `owner` if you specify) and stored in the local identity store.
+
+`nb__manage_users` supports these actions:
+
+| Action | What it does |
+|--------|-------------|
+| `create` | Create a user (requires `email` and `displayName`; optional `orgRole`) |
+| `update` | Change a user's `email`, `displayName`, or `orgRole` |
+| `delete` | Deactivate a user (soft delete) — revokes sign-in, keeps the record |
+| `restore` | Re-enable a previously deactivated user |
+| `list` | List all users |
+
+## Org roles
+
+Every user has one org-level role:
+
+| Org role | Can manage users | Description |
+|----------|:---:|-------------|
+| **owner** | Yes | Full administrative control. The last active owner cannot be demoted or deactivated. |
+| **admin** | Yes | Can create, update, and deactivate users. |
+| **member** | — | Standard user. Chats and uses tools; cannot manage other users. |
+
+Set the role at creation with `orgRole`, or change it later:
+
+```
+Make sarah@example.com an admin
+```
+
+<Aside type="note">
+  The last active **owner** is protected. `nb__manage_users` refuses to demote or deactivate them until you promote another user to owner first — this prevents locking the org out.
+</Aside>
+
+## Deactivating users
+
+```
+Delete the user sarah@example.com
+```
+
+`delete` is a soft delete: it deactivates the user (they can no longer sign in) but keeps their record so they still appear as deactivated and can be restored. It does not hard-delete the underlying provider identity — that would be irreversible and would orphan their workspace memberships.
+
+```
+Restore the user sarah@example.com
+```
+
+<Aside type="caution">
+Deactivating a user revokes their access on the next request. Their existing conversations are owned by them and are not deleted, but become inaccessible while they're deactivated.
+</Aside>
+
+## Workspace membership
+
+Org roles control who can manage users. **Workspace** membership controls who can use a given workspace's apps and tools. A user can belong to multiple workspaces, with a per-workspace role of **admin** or **member**.
+
+Manage membership through the agent (it uses the `manage_workspaces` tool):
+
+> "Add sarah@example.com to the Engineering workspace as a member"
+
+Workspace member management requires **admin** membership in that workspace. Workspace roles:
+
+| Workspace role | Manage members | Install connectors | Chat & use tools |
+|----------------|:---:|:---:|:---:|
+| **admin** | Yes | Yes | Yes |
+| **member** | — | — | Yes |
+
+<Aside type="note">
+  Conversations are owned by the individual who created them, not shared across a workspace. Conversation sharing was removed in the cross-workspace refactor; there is no "view all conversations in the workspace" capability today.
+</Aside>
+
+See [Workspaces](/using/workspaces) for more on creating workspaces and assigning members.
+
+## Feature flag
+
+User management is controlled by the `userManagement` feature flag, which defaults to `true`. To disable:
+
+```json title="nimblebrain.json"
+{
+  "features": {
+    "userManagement": false
+  }
+}
+```
+
+When disabled, the `nb__manage_users` tool is not registered and returns an error if called.
+
+## What's next
+
+- [Workspaces](/using/workspaces) — assign users to workspaces with roles
+- [Connectors](/using/connectors) — shared services within a workspace

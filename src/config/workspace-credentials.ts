@@ -1,6 +1,7 @@
 import { chmod, mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { MpakConfigError } from "@nimblebrain/mpak-sdk";
+import { log } from "../cli/log.ts";
 import { WORKSPACE_ID_RE } from "../workspace/workspace-store.ts";
 import type { ConfirmationGate } from "./privilege.ts";
 
@@ -182,7 +183,7 @@ async function ensureCredentialsDir(wsId: string, workDir: string): Promise<stri
     // writable file under a permissive directory leaks the *fact* of which
     // bundles have credentials (directory listing), but not the contents.
     // Surface a warning so an operator can investigate ownership/mode.
-    console.warn(
+    log.warn(
       `[workspace-credentials] chmod 0700 failed on ${dir}: ${
         err instanceof Error ? err.message : String(err)
       }. Credential file contents remain protected via 0600, but the ` +
@@ -222,7 +223,7 @@ async function readCredentials(
     if (mode !== 0o600) {
       const octal = mode.toString(8).padStart(3, "0");
       // Do not include credential values; the path is sufficient to act.
-      console.warn(
+      log.warn(
         `[workspace-credentials] insecure permissions on ${filePath}: ` +
           `mode=0${octal} (expected 0600). Run: chmod 600 ${filePath}`,
       );

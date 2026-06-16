@@ -1,0 +1,113 @@
+---
+title: Custom Instructions
+description: Let users save per-app guidance that the agent picks up on every turn — by publishing one resource.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+NimbleBrain wraps any app's user-supplied custom instructions in `<app-custom-instructions>` containment in the agent's system prompt — automatically, on every conversation turn, for every active bundle. As an app author you opt in to that behavior by publishing a single MCP resource at a reserved URI.
+
+This is the platform's "bottom-up" pattern for per-app guidance: the host enforces the convention, the bundle owns everything else (storage, UI, tool name, validation).
+
+## The convention
+
+```
+app://instructions
+```
+
+Publish this resource from your app's MCP server. NimbleBrain reads it on every prompt assembly:
+
+- Body is empty / resource not published → no overlay; agent sees nothing.
+- Body has content → wrapped in `<app-custom-instructions>` containment alongside your `<app-instructions>` (from `initialize.instructions`) inside the **Installed Apps** section of the system prompt.
+
+The body is treated as Markdown. There's no schema; it's freeform user-set text.
+
+## What you own
+
+Everything except the URI convention and the prompt-side wrapping:
+
+- **Storage.** Where the body lives on disk (typically a file in your bundle's data dir).
+- **The tool to write/clear.** Any name you want — `set_brand_voice`, `configure_assistant`, `update_conventions`, etc. The agent calls it; the user wires it from your settings UI.
+- **The editor UI.** Settings panel, modal, sidebar — your call. Validation, character cap, placeholder copy.
+- **Schema.** If you want typed config (brand voice + tone + persona as separate fields), serialize to Markdown for the resource body. Or publish multiple resources (e.g. `app://instructions/voice`, `app://instructions/persona`) — but only `app://instructions` flows into containment automatically.
+
+## What the platform owns
+
+- **The URI.** Bundle authors don't pick a scheme; just publish at `app://instructions`.
+- **Containment escape.** If a saved body happens to contain a literal `</app-custom-instructions>` closing tag, the platform HTML-escapes it before wrapping so it can't break out of containment. Prompt-injection mitigation — you don't need to handle it on the bundle side.
+- **Read on every assembly.** Bodies are read fresh per chat turn (no caching), so edits apply mid-conversation without restart.
+- **Visibility gating.** Tool-only servers that don't publish the resource are naturally excluded — no flag to set, no negotiation.
+
+## Minimal example (Python / FastMCP)
+
+```python title="server.py"
+from pathlib import Path
+import os
+
+INSTRUCTIONS_FILE = Path(os.environ.get("MPAK_WORKSPACE", "./workspace")) / "custom-instructions.md"
+
+@mcp.resource("app://instructions", mime_type="text/markdown")
+def custom_instructions() -> str:
+    """User-set custom instructions for this app.
+
+    NimbleBrain reads this on every prompt assembly and wraps a non-empty
+    body in `<app-custom-instructions>` containment in the system prompt.
+    """
+    return INSTRUCTIONS_FILE.read_text(encoding="utf-8") if INSTRUCTIONS_FILE.exists() else ""
+
+
+@mcp.tool()
+async def set_custom_instructions(text: str) -> dict[str, str]:
+    """Save custom instructions for this app. Empty clears."""
+    if text == "":
+        INSTRUCTIONS_FILE.unlink(missing_ok=True)
+        return {"status": "cleared"}
+    INSTRUCTIONS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    INSTRUCTIONS_FILE.write_text(text, encoding="utf-8")
+    return {"status": "saved"}
+```
+
+That's it. Once installed in a workspace, anything saved via `set_custom_instructions` reaches the agent on every turn.
+
+<Aside type="tip">
+  The reference implementation in `synapse-apps/synapse-todo-board` shows the full pattern, including a minimal settings-panel HTML editor wired to the tool via the iframe postMessage bridge.
+</Aside>
+
+## Settings panel (optional but recommended)
+
+If you want a UI surface where the user edits their instructions (versus only the agent setting them via tool call), declare a top-level `settings` object in your manifest. This is a sibling of `placements`, not a placement slot:
+
+```json title="manifest.json"
+{
+  "_meta": {
+    "ai.nimblebrain/host": {
+      "host_version": "1.0",
+      "name": "My App",
+      "icon": "list-checks",
+      "settings": {
+        "id": "my-app",
+        "label": "My App",
+        "icon": "list-checks",
+        "resourceUri": "ui://my-app/settings"
+      }
+    }
+  }
+}
+```
+
+Then publish the panel HTML at `ui://my-app/settings` and call your tools via the iframe bridge. NimbleBrain shows the panel under **Settings → This Workspace → Apps → My App**.
+
+See the [Manifest reference](/apps/manifest/#settings-object) for the `settings` object shape and the [MCP App Bridge](/apps/bridge/) page for iframe → tool call wiring.
+
+## Why this convention
+
+- **Discoverability.** Every bundle that wants instructions support uses the same URI. Users don't have to learn per-app conventions; agents don't have to discover per-bundle write tools to know "where do my instructions live for this app."
+- **Security.** Containment escape happens platform-side, uniformly. Bundle authors writing the prompt-injection mitigation is something that *will* be gotten wrong over time.
+- **Composability.** The pattern stacks with `<app-instructions>` (your bundle author's static guidance) and the host's org/workspace overlays. The system prompt layers cleanly: org-wide policy → workspace policy → per-app author guidance → per-app user instructions.
+- **Bottom-up.** Your bundle decides if it supports custom instructions and how rich the UX is. The platform doesn't synthesize anything you don't opt into.
+
+## Related
+
+- [Workspace and org-level overlays](/guide/settings/) — managed by the host, not by your bundle. Set via the `instructions__write_instructions` system tool or the workspace/org settings UI.
+- [Manifest reference](/apps/manifest/) — full `_meta["ai.nimblebrain/host"]` schema, including the top-level `settings` object.
+- [Placements & Navigation](/apps/placements/) — sidebar and main slots for your app's views.

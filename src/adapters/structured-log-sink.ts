@@ -1,5 +1,6 @@
 import { appendFileSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
+import { log } from "../cli/log.ts";
 import type { EngineEvent, EventSink } from "../engine/types.ts";
 
 export interface StructuredLogConfig {
@@ -107,9 +108,9 @@ export class StructuredLogSink implements EventSink {
       // subsequent success re-arms.
       if (!this.writeWarned) {
         this.writeWarned = true;
-        console.warn(
-          `[structured-log-sink] write to ${this.dir} failed (further failures suppressed until recovery):`,
-          err instanceof Error ? err.message : err,
+        log.warn(
+          `[structured-log-sink] write to ${this.dir} failed (further failures suppressed until recovery)`,
+          { error: err instanceof Error ? err.message : String(err) },
         );
       }
     }

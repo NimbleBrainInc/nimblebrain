@@ -1,0 +1,70 @@
+---
+title: Connectors
+description: Browse the connector catalog and connect external services like Linear, Stripe, Gmail, and Notion with point-and-click OAuth.
+---
+
+import { Steps, Aside } from '@astrojs/starlight/components';
+
+Connectors are curated external services you connect to a workspace with point-and-click sign-in — Linear, Stripe, Gmail, Outlook, Notion, and more. Once connected, the service's tools are available to the agent for everyone in that workspace.
+
+Connectors are the OAuth-driven half of the [Apps catalog](/using/installing-apps). They share the same Browse directory; this page focuses on connecting remote services rather than installing stdio bundles.
+
+## Where connectors live
+
+Connectors are managed per workspace, under **Settings → Connectors** for the workspace you're viewing. The page lists what's already connected; the **Browse** button opens the full directory of available services.
+
+A connected service is **shared by everyone in the workspace** — its tools are available to all members. The credentials behind it are stored once, in the workspace.
+
+## Connecting a service
+
+<Steps>
+1. Open **Settings → Connectors** for your workspace and click **Browse**.
+2. Find the service you want. Each card shows its name and a short description; search filters by name, description, or tag.
+3. Click **Install**. You're redirected to the vendor's sign-in page.
+4. Sign in and approve the requested access. You're returned to NimbleBrain, and the connector's row updates to **Connected** once the handshake settles.
+</Steps>
+
+Installing or connecting a service requires the **Admin** or **Owner** role in the workspace.
+
+On a connector's **Configure** page you can see who you're connected as, **Disconnect** (reversible — reconnecting re-runs the sign-in flow), and review or adjust which of the connector's tools are allowed.
+
+## The three auth modes
+
+Connectors authenticate in one of three ways. As an end user you rarely need to care which — the **Install / Connect** button does the right thing — but it helps to know what's happening:
+
+| Mode | What it means | What you do |
+|------|---------------|-------------|
+| **dcr** | Dynamic Client Registration. The platform registers an OAuth client with the vendor on the fly. | Click **Install**, sign in. No setup. |
+| **static** | The vendor requires a pre-registered OAuth app. A workspace admin configures the app's client ID and secret once. | An admin clicks **Set up** first; after that, everyone connects with **Install**. |
+| **composio** | The service is brokered through Composio, a managed-connector provider. | Click **Install**, sign in through Composio's flow. Requires the platform operator to have configured Composio. |
+
+For a **static**-auth connector that hasn't been set up yet, non-admins see "Operator setup required" until an admin completes the one-time **Set up** step.
+
+## Where your secrets live
+
+Tokens and credentials for a connector are stored in the workspace, at `workspaces/<wsId>/credentials/` on the platform — never echoed back to the UI. For **static**-auth connectors, the admin-configured OAuth client ID is recorded on the workspace; the client secret goes into the same credential store and is never returned in any API response. For **composio** connectors, the platform-wide Composio API key lives in the platform environment, not in the workspace.
+
+Because credentials are workspace-scoped, connecting a service in one workspace never exposes it to another. See [Credentials](/config/credentials/) for the full storage model.
+
+## Limiting which connectors a workspace can use
+
+Two workspace settings gate the connector catalog:
+
+- **`connectorsAllowList`** — when set, only the listed connector IDs appear in Browse and can be installed in that workspace. Leave it unset to allow the full catalog.
+- **`oauthOperatorApps`** — records the per-workspace OAuth client configuration for **static**-auth connectors (the "Set up" step writes here).
+
+See [Workspace configuration](/config/workspace-json) for the field reference.
+
+## Connectors vs. stdio apps
+
+Both install from the same Browse directory, but they differ:
+
+- **Connectors** are remote services you reach over OAuth. Nothing runs on your platform host except the connection.
+- **Stdio apps** are MCP bundles that run as a subprocess on the platform. They may declare `user_config` fields (API keys, settings) you fill in on their Configure page. See [Installing Apps](/using/installing-apps).
+
+## What's next
+
+- [Installing Apps](/using/installing-apps) — stdio bundles and the agent-driven install path
+- [Managing Apps](/using/managing-apps) — lifecycle, status, and trust scores
+- [Credentials](/config/credentials/) — how secrets are stored
+- [Workspace configuration](/config/workspace-json) — `connectorsAllowList` and `oauthOperatorApps`

@@ -1,0 +1,149 @@
+---
+title: Conversations
+description: Persistence, history, resuming, and storage for NimbleBrain conversations.
+---
+
+import { Steps, Tabs, TabItem, Aside } from '@astrojs/starlight/components';
+
+NimbleBrain automatically persists every conversation. Each conversation is stored as a JSONL file owned by the user who created it, and you can resume, rename, fork, and delete conversations through the web UI or CLI.
+
+## Where conversations live
+
+Conversations are **owned by you**, not by a workspace. Every conversation lives at the top level of the work directory, keyed by its ID:
+
+```
+~/.nimblebrain/conversations/conv_a1b2c3d4e5f67890.jsonl
+```
+
+A conversation records which workspace's tools the agent could reach when a turn ran (`workspaceId` in its metadata), but that is a tool-scoping breadcrumb, not a location. The file always lives under `conversations/` regardless of which workspace you were in, and it follows you across every workspace you belong to.
+
+<Aside type="note">
+Conversation IDs follow the pattern `conv_` followed by 16 hex characters (for example `conv_a1b2c3d4e5f67890`). They are generated from a UUIDv4 with the dashes stripped.
+</Aside>
+
+## Storage format
+
+Conversations are stored as append-only JSONL (JSON Lines) files using event sourcing:
+
+- **Line 1** — immutable conversation metadata (written once, never rewritten)
+- **Lines 2+** — append-only conversation events
+
+### Metadata (line 1)
+
+```json
+{
+  "id": "conv_a1b2c3d4e5f67890",
+  "createdAt": "2026-03-25T10:30:00.000Z",
+  "updatedAt": "2026-03-25T10:42:00.000Z",
+  "title": "Weekly meeting summary",
+  "lastModel": "anthropic:claude-sonnet-4-6",
+  "ownerId": "user_abc123",
+  "workspaceId": "ws_3f9a1c7e0b2d4856",
+  "format": "events"
+}
+```
+
+Each conversation has exactly one owner (`ownerId`), the single authorization principal. Token totals and cost are **not** stored in line 1 — they are derived at read time by scanning `llm.response` events, which avoids drift between a cached total and what re-aggregating the events would produce.
+
+### Events (lines 2+)
+
+Events are appended chronologically. Key event types:
+
+| Event | Description |
+|-------|-------------|
+| `user.message` | A user sent a message |
+| `run.start` | The agent engine started processing |
+| `llm.response` | The model returned a response (token counts, model, content) |
+| `tool.start` | A tool call began |
+| `tool.done` | A tool call completed (result, latency) |
+| `run.done` | The agent engine finished processing |
+| `run.error` | The agent engine encountered an error |
+
+Example user message event:
+
+```json
+{
+  "ts": "2026-03-25T10:30:00.000Z",
+  "type": "user.message",
+  "content": [{"type": "text", "text": "Summarize my meetings from this week"}]
+}
+```
+
+## Finding past conversations
+
+Open **Conversations** from the sidebar to see your history. Each conversation shows:
+
+- **Title** — auto-generated from your first message
+- **Timestamp** — when the conversation last had activity
+
+Click any conversation to load it in the chat panel and continue where you left off. The agent has the full context of everything discussed previously.
+
+<Aside type="tip">
+You can link directly to a conversation by sharing its URL. When you open the link, the conversation loads automatically in your chat panel.
+</Aside>
+
+## Resuming a conversation
+
+<Tabs>
+  <TabItem label="Web UI">
+    Select a conversation from the sidebar list. The full message history loads, and new messages continue the conversation.
+  </TabItem>
+  <TabItem label="CLI">
+    ```bash
+    nb --resume conv_a1b2c3d4e5f67890
+    ```
+
+    This loads the conversation history and continues from where you left off.
+  </TabItem>
+</Tabs>
+
+## Auto-titling
+
+NimbleBrain generates a conversation title automatically after the first assistant response. The title is stored in the metadata line of the JSONL file and shown in the web UI sidebar and conversation list.
+
+## Starting fresh
+
+Click **New conversation** in the chat panel header, or type `/clear` in the input. Your previous conversation is saved — you can always return to it.
+
+## History compaction
+
+For long-running conversations, NimbleBrain can compact older history to keep the context window manageable. This is **opt-in** and disabled by default. Enable it with the `compaction` feature flag in `nimblebrain.json`:
+
+```json title="nimblebrain.json"
+{
+  "features": {
+    "compaction": false
+  }
+}
+```
+
+When enabled, the runtime summarizes earlier turns once a conversation grows large, preserving the gist while freeing room for new context. With it off (the default), the full event history is replayed every turn.
+
+## Storage configuration
+
+By default the CLI uses event-sourced JSONL storage under the work directory. You can point storage elsewhere in `nimblebrain.json`:
+
+```json
+{
+  "store": {
+    "type": "jsonl",
+    "dir": "/custom/path/to/conversations"
+  }
+}
+```
+
+For ephemeral, in-memory storage with no persistence:
+
+```json
+{
+  "store": {
+    "type": "memory"
+  }
+}
+```
+
+## What's next
+
+- [Chat](/using/chat) — how conversations are created during chat
+- [Multi-Agent Delegation](/using/delegation) — child agents run in their own conversations
+- [Automations](/using/automations) — scheduled agent runs that produce deliverables

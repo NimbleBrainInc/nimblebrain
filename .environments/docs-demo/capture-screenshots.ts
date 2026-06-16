@@ -10,11 +10,15 @@
  */
 
 import { writeFile, mkdir } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 const CDP_HOST = "127.0.0.1:9222";
 const BASE_URL = "http://localhost:27252";
-const OUTPUT_DIR = join(import.meta.dir, "../../docs/src/assets/guide");
+// Defaults to the in-repo docs asset dir (docs/src/assets/guide); override with
+// SCREENSHOT_OUT to target a worktree or an alternate checkout.
+const OUTPUT_DIR = process.env.SCREENSHOT_OUT
+  ? resolve(process.env.SCREENSHOT_OUT)
+  : join(import.meta.dir, "../../docs/src/assets/guide");
 
 // ── CDP helpers ───────────────────────────────────────────────────
 
@@ -87,27 +91,6 @@ async function setViewport(ws: WebSocket, width: number, height: number) {
   });
 }
 
-async function clickElement(ws: WebSocket, selector: string) {
-  // Get element position
-  const { result } = await cdp(ws, "Runtime.evaluate", {
-    expression: `(() => {
-      const el = document.querySelector('${selector}');
-      if (!el) return null;
-      const rect = el.getBoundingClientRect();
-      return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
-    })()`,
-    returnByValue: true,
-  });
-  if (!result.value) {
-    console.log(`  ⚠ Element not found: ${selector}`);
-    return false;
-  }
-  const { x, y } = result.value;
-  await cdp(ws, "Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 });
-  await cdp(ws, "Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1 });
-  return true;
-}
-
 async function pressKey(ws: WebSocket, key: string) {
   await cdp(ws, "Input.dispatchKeyEvent", {
     type: "keyDown",
@@ -171,104 +154,23 @@ async function main() {
   `);
   await sleep(500);
 
-  // ── 1. Interface layout — full page with chat closed ──
+  // ── 1. Interface layout — full workspace home (sidebar + main) ──
   console.log("\n1. Interface layout (sidebar + home)");
   await screenshot(ws, "interface-layout.png");
 
-  // ── 2. Chat messages — open a conversation ──
-  console.log("\n2. Chat with messages and tool calls");
-  // Click on Conversations in sidebar
-  await clickElement(ws, '[data-route="@nimblebraininc/conversations"]');
-  await sleep(2000);
-  await screenshot(ws, "conversations-list.png");
-
-  // ── 3. Try to open a conversation by navigating directly ──
-  console.log("\n3. Opening conversation with tool calls");
-  // Use the chat panel - try pressing Cmd+K to open chat
-  await cdp(ws, "Input.dispatchKeyEvent", {
-    type: "keyDown",
-    key: "k",
-    code: "KeyK",
-    text: "k",
-    modifiers: 4, // meta (cmd)
-  });
-  await cdp(ws, "Input.dispatchKeyEvent", { type: "keyUp", key: "k", code: "KeyK", modifiers: 4 });
-  await sleep(1500);
-  await screenshot(ws, "chat-panel-open.png");
-
-  // ── 4. Workspace selector dropdown ──
-  console.log("\n4. Workspace selector dropdown");
-  await navigate(ws, `${BASE_URL}/w/product/`);
-  await sleep(2000);
-  // Click the workspace selector button (top of sidebar)
-  const clicked = await clickElement(ws, '[data-testid="workspace-selector"], button:has([data-slot="workspace-selector"]), .workspace-selector');
-  if (!clicked) {
-    // Try finding it by text content
-    await evaluateJS(ws, `
-      const buttons = document.querySelectorAll('button');
-      for (const btn of buttons) {
-        if (btn.textContent.includes('Product') && btn.closest('aside,nav,[role="navigation"]')) {
-          btn.click();
-          break;
-        }
-      }
-    `);
-  }
-  await sleep(1000);
-  await screenshot(ws, "workspaces-selector.png");
-  // Close dropdown by clicking elsewhere
-  await clickElement(ws, "main");
-  await sleep(500);
-
-  // ── 5. Settings - Profile ──
-  console.log("\n5. Settings pages");
-  await navigate(ws, `${BASE_URL}/settings`);
-  await sleep(2000);
-  await screenshot(ws, "settings-profile.png");
-
-  // ── 6. Settings - Usage ──
-  console.log("  Usage tab");
-  await navigate(ws, `${BASE_URL}/settings/usage`);
-  await sleep(2000);
-  await screenshot(ws, "settings-usage.png");
-
-  // ── 7. Settings - Model ──
-  console.log("  Model tab");
-  await navigate(ws, `${BASE_URL}/settings/model`);
-  await sleep(2000);
-  await screenshot(ws, "settings-model.png");
-
-  // ── 8. Settings - Users ──
-  console.log("  Users tab");
-  await navigate(ws, `${BASE_URL}/settings/users`);
-  await sleep(2000);
-  await screenshot(ws, "team-users.png");
-
-  // ── 9. Settings - About ──
-  console.log("  About tab");
-  await navigate(ws, `${BASE_URL}/settings/about`);
-  await sleep(2000);
-  await screenshot(ws, "settings-about.png");
-
-  // ── 10. Keyboard shortcuts modal ──
-  console.log("\n6. Keyboard shortcuts modal");
-  await navigate(ws, `${BASE_URL}/w/product/`);
-  await sleep(2000);
+  // ── 2. Keyboard shortcuts modal (press ?) ──
+  // The handler ignores "?" when focus is in the chat textarea, which
+  // auto-focuses on load — blur it first so the event target is <body>.
+  console.log("\n2. Keyboard shortcuts modal");
+  await evaluateJS(ws, `
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+  `);
+  await sleep(300);
   await pressKey(ws, "?");
   await sleep(1000);
   await screenshot(ws, "shortcuts-modal.png");
 
-  // ── 11. Sidebar focused shot ──
-  console.log("\n7. Sidebar detail");
-  // Navigate back to main with chat open for a composite shot
-  await navigate(ws, `${BASE_URL}/w/product/`);
-  await sleep(2000);
-  // Capture just the left portion (sidebar)
-  await screenshot(ws, "apps-sidebar.png", {
-    clip: { x: 0, y: 0, width: 280, height: 900, scale: 1 },
-  });
-
-  console.log("\n✅ All screenshots captured to:", OUTPUT_DIR);
+  console.log("\n✅ Screenshots captured to:", OUTPUT_DIR);
 
   ws.close();
   process.exit(0);

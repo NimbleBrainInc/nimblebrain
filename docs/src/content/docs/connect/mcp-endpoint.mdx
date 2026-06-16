@@ -1,0 +1,174 @@
+---
+title: The /mcp Endpoint
+description: Reference for NimbleBrain's single public programmatic surface — the /mcp Streamable HTTP MCP endpoint, its session lifecycle, and OAuth discovery flow.
+---
+
+import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
+
+The `/mcp` endpoint turns NimbleBrain into a **Streamable HTTP MCP server**. It is NimbleBrain's public programmatic surface: external MCP clients (Claude Desktop, Claude Code, Cursor, another NimbleBrain instance, or any MCP-compatible host) connect here and access the tools installed across your workspaces.
+
+The runtime also serves a `/v1/*` REST API, but that is a trusted same-origin surface for the bundled web client — not a supported external integration point. For programmatic access from outside the platform, use `/mcp`.
+
+This makes NimbleBrain both an MCP **client** (connecting to installed bundles) and an MCP **server** (exposing composed tools to external hosts). The composition layer in between, which handles tool aggregation, feature gating, role filtering, and workspace routing, is what external clients benefit from without needing to know about individual bundles.
+
+For end-user client setup walkthroughs, see [Connecting External Clients](/connect/external-clients).
+
+## Endpoint
+
+| | |
+|---|---|
+| **Path** | `/mcp` |
+| **Methods** | `POST`, `DELETE` (`GET` returns `405`) |
+| **Protocol** | [Streamable HTTP](https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#streamable-http) (MCP transport) |
+| **Auth** | OAuth 2.0 via WorkOS AuthKit (JWT bearer), discovered via RFC 9728 |
+| **Scope** | Sessions are bound to your identity. Tool calls route to a workspace by the namespaced tool name. |
+
+The methods correspond to the Streamable HTTP session lifecycle:
+
+- **POST** — initialize a session or send subsequent JSON-RPC messages.
+- **DELETE** — terminate a session (with a valid `Mcp-Session-Id`).
+- **GET** — returns `405 Method Not Allowed` with `Allow: POST, DELETE`. NimbleBrain does not offer the optional GET-style server-to-client SSE channel; progress and task updates flow over the POST that started them. Spec-compliant clients fall back to POST-only automatically.
+
+<Aside type="note" title="Workspace routing">
+There is **no** `X-Workspace-Id` requirement. Sessions are identity-bound: a session aggregates the tools across every workspace you belong to. Each `tools/call` derives its target workspace from the **namespaced tool name** — `ws_<id>-<source>__<tool>` for a workspace tool, or a bare `<source>__<tool>` for an identity-owned tool. If a client still sends `X-Workspace-Id`, the header is ignored (logged once at debug under `NB_DEBUG=mcp`).
+</Aside>
+
+## Authentication
+
+Authentication is OAuth-based. There is no static API key.
+
+The first time a client hits `/mcp` without a valid JWT, it receives a `401` with a `WWW-Authenticate` header:
+
+```
+Bearer error="unauthorized",
+       error_description="Authorization required",
+       resource_metadata="https://your-instance/.well-known/oauth-protected-resource"
+```
+
+Clients that implement [RFC 9728](https://www.rfc-editor.org/rfc/rfc9728) (Protected Resource Metadata) and [RFC 8414](https://www.rfc-editor.org/rfc/rfc8414) (Authorization Server Metadata) — Claude Code, Claude Desktop, and Cursor all do — follow the discovery chain automatically, open a browser for user login against AuthKit, and attach the returned JWT on subsequent requests.
+
+<Aside type="note">
+When no `instance.json` is configured (dev mode), the `/mcp` endpoint accepts unauthenticated requests. This is intended for local development only.
+</Aside>
+
+Adapter configuration (`dev`, `oidc`, or `workos`) lives in `instance.json`. See [auth adapters](/config/instance-json) for the full setup, including the `workos` adapter and `authkitDomain` required to enable MCP OAuth.
+
+## OAuth discovery endpoints
+
+NimbleBrain serves two unauthenticated discovery endpoints that MCP clients fetch during the OAuth flow. Both return `404 MCP OAuth not configured` unless the `workos` adapter has an `authkitDomain` set.
+
+### GET /.well-known/oauth-protected-resource
+
+[RFC 9728](https://www.rfc-editor.org/rfc/rfc9728) Protected Resource Metadata. Clients fetch this after the `401`'s `WWW-Authenticate` header points them here. It tells them which authorization server to use.
+
+```json
+{
+  "resource": "https://your-instance",
+  "authorization_servers": ["https://your-subdomain.authkit.app"],
+  "bearer_methods_supported": ["header"]
+}
+```
+
+### GET /.well-known/oauth-authorization-server
+
+[RFC 8414](https://www.rfc-editor.org/rfc/rfc8414) Authorization Server Metadata, proxied from AuthKit for older MCP clients that look for this endpoint instead of Protected Resource Metadata.
+
+### The flow
+
+<Tabs>
+<TabItem label="Discovery sequence">
+1. Client `POST`s to `/mcp` with no token and gets `401` + `WWW-Authenticate` carrying the `resource_metadata` URL.
+2. Client fetches `/.well-known/oauth-protected-resource` to learn the authorization server (AuthKit).
+3. Client runs the OAuth authorization-code flow against AuthKit, opening a browser for user login.
+4. AuthKit issues a JWT; the client attaches it as `Authorization: Bearer <jwt>` on every `/mcp` request thereafter.
+</TabItem>
+</Tabs>
+
+NimbleBrain verifies each access token against AuthKit's JWKS endpoint (RS256, issuer validation). When `organizationId` is set on the adapter, only members of that WorkOS organization can authenticate.
+
+## Sessions
+
+Each `initialize` creates a new MCP session tracked server-side and addressed by the `Mcp-Session-Id` response header. Include that header on every subsequent request in the session.
+
+Sessions are closed on `DELETE /mcp` (with a valid `Mcp-Session-Id`), transport close, idle-TTL eviction, or server shutdown.
+
+### Session-miss reasons
+
+When the server can't serve a request because the session isn't available, the `404` response includes `error.data.reason`:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "error": {
+    "code": -32000,
+    "message": "Session not found",
+    "data": { "reason": "not_found" }
+  },
+  "id": null
+}
+```
+
+| Reason | Meaning |
+|--------|---------|
+| `not_found` | The session registry has no record. Most often idle-TTL eviction, or the session never existed. |
+| `unavailable` | The session exists in the registry, but the live transport isn't on this process. Possible causes: process restart since `initialize`, or a sticky-routing miss. |
+
+Spec-compliant clients re-initialize on either reason.
+
+## Running behind a reverse proxy
+
+The OAuth `resource` URL advertised on `/.well-known/oauth-protected-resource` (and the one in the `WWW-Authenticate` header) must match the scheme the client connected on. If you terminate TLS at an upstream proxy, the pod sees an internal `http://` connection while the client used `https://`, which makes OAuth resource validation fail.
+
+NimbleBrain honors `X-Forwarded-Proto` to derive the advertised scheme. Configure your proxy (ALB, nginx, Caddy) to set it based on the actual client connection. The `Host` header (`url.host`) is used verbatim; `X-Forwarded-Host` is deliberately **not** honored.
+
+## What's exposed
+
+The endpoint aggregates:
+
+- **Tools** from installed and running bundles across your workspaces, plus identity-owned tools.
+- **Tool discovery** — `tools/list` returns every tool visible to the caller.
+- **Tool execution** — `tools/call` routes to the correct workspace and bundle based on the namespaced tool name.
+
+Two filters apply to both `tools/list` and `tools/call`:
+
+- **Feature flags** — tools whose controlling flag is `false` are excluded (for example, the `skills__*` authoring tools when `skillManagement` is `false`). See [Feature Flags](/config/features).
+- **Role** — admin-only tools (such as `nb__manage_users`, `nb__manage_workspaces`) are excluded when the caller's role is not admin or owner.
+
+## Testing manually
+
+In dev mode (no auth), you can hit the endpoint with curl:
+
+```bash
+# Initialize a session
+curl -i -X POST http://localhost:27247/mcp \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "initialize",
+    "params": {
+      "protocolVersion": "2025-03-26",
+      "capabilities": {},
+      "clientInfo": { "name": "curl", "version": "1.0" }
+    }
+  }'
+```
+
+Extract the `Mcp-Session-Id` response header and use it on subsequent calls:
+
+```bash
+curl -X POST http://localhost:27247/mcp \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -H "Mcp-Session-Id: <session-id>" \
+  -d '{"jsonrpc":"2.0","method":"tools/list","id":2}'
+```
+
+With auth enabled, include `Authorization: Bearer <jwt>` on every request.
+
+## Related
+
+- [Connecting External Clients](/connect/external-clients) — setup walkthroughs for Claude Code, Claude Desktop, and Cursor.
+- [Auth adapters](/config/instance-json) — `dev` / `oidc` / `workos` configuration in `instance.json`.
+- [Feature Flags](/config/features) — full list of flags and enforcement points.

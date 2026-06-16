@@ -308,20 +308,20 @@ export async function startServerWithShutdown(options: ServerOptions): Promise<v
   const handle = startServer(options);
   const { runtime } = options;
 
-  console.error(`[nimblebrain] HTTP server listening on port ${handle.port}`);
+  log.info(`[nimblebrain] HTTP server listening on port ${handle.port}`);
 
   let shuttingDown = false;
 
   const shutdown = async () => {
     if (shuttingDown) {
-      console.error("[nimblebrain] Forced shutdown.");
+      log.error("[nimblebrain] Forced shutdown.");
       process.exit(1);
     }
     shuttingDown = true;
-    console.error("[nimblebrain] Shutting down HTTP server... (press Ctrl+C again to force)");
+    log.info("[nimblebrain] Shutting down HTTP server... (press Ctrl+C again to force)");
 
     const safetyTimeout = setTimeout(() => {
-      console.error("[nimblebrain] Shutdown timed out after 10s, forcing exit.");
+      log.error("[nimblebrain] Shutdown timed out after 10s, forcing exit.");
       process.exit(1);
     }, 10_000);
 
@@ -332,7 +332,7 @@ export async function startServerWithShutdown(options: ServerOptions): Promise<v
     await shutdownTracing();
 
     clearTimeout(safetyTimeout);
-    console.error("[nimblebrain] Shutdown complete.");
+    log.info("[nimblebrain] Shutdown complete.");
     process.exit(0);
   };
 
