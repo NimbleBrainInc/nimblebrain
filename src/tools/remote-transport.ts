@@ -4,6 +4,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import type { FetchLike, Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { RemoteTransportConfig } from "../bundles/types.ts";
 import { getCredentialProvider } from "./credential-provider.ts";
+import { createOAuthRefreshFetch } from "./oauth-refresh-fetch.ts";
 
 /**
  * Resolve `${ENV_VAR}` placeholders against `process.env`.
@@ -98,20 +99,32 @@ export function createRemoteTransport(
   const effectiveAuthProvider =
     config?.auth && config.auth.type !== "none" ? undefined : authProvider;
 
+  // For an OAuth connector (no static auth, no minting provider), wrap the
+  // transport's `fetch` so transient token-endpoint refresh failures are
+  // retried in place instead of bubbling up as a fabricated `UnauthorizedError`
+  // that wrongly flips the connection to `reauth_required`. The SDK threads
+  // this `fetch` into its refresh POST, the one seam where the
+  // transient-vs-dead-token distinction is still recoverable — see
+  // `oauth-refresh-fetch.ts`. `mintingFetch` and OAuth are mutually exclusive
+  // (a `provider` auth is not `none`, so `effectiveAuthProvider` is unset when
+  // `mintingFetch` is set), so the `??` never drops a minting fetch.
+  const transportFetch: FetchLike | undefined =
+    mintingFetch ?? (effectiveAuthProvider ? createOAuthRefreshFetch() : undefined);
+
   const requestInit: RequestInit = Object.keys(headers).length > 0 ? { headers } : {};
 
   if (config?.type === "sse") {
     return new SSEClientTransport(url, {
       requestInit,
       authProvider: effectiveAuthProvider,
-      fetch: mintingFetch,
+      fetch: transportFetch,
     });
   }
 
   return new StreamableHTTPClientTransport(url, {
     requestInit,
     authProvider: effectiveAuthProvider,
-    fetch: mintingFetch,
+    fetch: transportFetch,
     reconnectionOptions: config?.reconnection
       ? {
           maxReconnectionDelay: config.reconnection.maxReconnectionDelay ?? 30_000,
