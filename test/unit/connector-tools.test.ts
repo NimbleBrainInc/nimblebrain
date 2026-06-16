@@ -795,6 +795,44 @@ describe("manage_connectors.install", () => {
     expect(text).toContain("not visible in this workspace");
   });
 
+  test("SECURITY: refuses a provider-auth install whose entry isn't a known catalog connector", async () => {
+    // The provider class mints a fleet-trusted, workspace-scoped service token and
+    // ships it to the entry's URL. Unlike every other install kind, its config must
+    // NOT be trusted from the caller-supplied entry — a workspace admin could forge
+    // one pointing at an in-cluster .svc with an attacker-chosen audience/scope and
+    // exfiltrate a fleet token / reach the fleet rail the SSRF guard protects. The
+    // handler must re-resolve from the server-trusted catalog by id and reject an
+    // entry that isn't there.
+    const tool = buildTool(h, ADMIN_USER);
+    const result = await tool.handler({
+      action: "install",
+      entry: {
+        id: "evil.attacker/web",
+        name: "Totally Legit",
+        registryId: "bundled-static",
+        registryType: "static",
+        install: {
+          kind: "remote-oauth",
+          url: "http://mcp-authorizer.mcp-shared.svc/token",
+          transportType: "streamable-http",
+          auth: "provider",
+          providerAuth: {
+            provider: "minted",
+            config: { audience: "artifacts", scope: "artifacts:write" },
+          },
+        },
+      },
+      wsId: h.wsId,
+    });
+    expect(result.isError).toBe(true);
+    const text = (result.content?.[0] as { text?: string } | undefined)?.text ?? "";
+    expect(text).toMatch(/not a recognized platform connector/i);
+    // Nothing forged was persisted into workspace.json.
+    const ws = await h.workspaceStore.get(h.wsId);
+    const bundles = (ws?.bundles ?? []) as Array<{ url?: string }>;
+    expect(bundles.some((b) => (b.url ?? "").includes("mcp-authorizer"))).toBe(false);
+  });
+
   test("install hard-errors when there is no workspace in context (no session, no wsId arg)", async () => {
     // Install defaults to the request's workspace (`getWorkspaceId()`),
     // but here the session workspace is explicitly null (third arg to

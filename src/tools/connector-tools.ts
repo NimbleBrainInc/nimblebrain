@@ -963,7 +963,9 @@ async function handleInstallRemoteOAuth(
   if (entry.install.kind !== "remote-oauth") {
     return errResult("invariant violated: handleInstallRemoteOAuth requires remote-oauth entry");
   }
-  const action = entry.install;
+  // Reassignable: a `provider` entry's security-critical fields are re-resolved
+  // from the server-trusted catalog below (the caller's wire values are discarded).
+  let action = entry.install;
 
   // Cheap entry-shape validation up front (fail fast, no IO). The
   // expensive remote work — Composio session create, operator
@@ -991,8 +993,23 @@ async function handleInstallRemoteOAuth(
   if (action.auth === "static" && !action.operatorSetup) {
     return errResult(`"${entry.name}" is static-auth but missing operatorSetup config.`);
   }
-  if (action.auth === "provider" && !action.providerAuth) {
-    return errResult(`"${entry.name}" is provider-auth but missing providerAuth config block.`);
+  if (action.auth === "provider") {
+    // SECURITY (trust boundary): a `provider` install mints a fleet-trusted,
+    // workspace-scoped service token (the `minted` provider) and ships it to the
+    // entry's URL. The install tool otherwise trusts the caller-supplied entry
+    // ("the registry that produced the entry is the source of truth") — but that
+    // is FALSE for this class: a workspace admin could forge an entry with an
+    // arbitrary url + audience/scope and exfiltrate a fleet token / reach an
+    // in-cluster .svc the SSRF guard protects. So re-resolve the security-critical
+    // fields (url + providerAuth) from the SERVER-trusted catalog by id, discard
+    // the caller's, and reject any provider entry that isn't a known catalog entry.
+    const trusted = await ctx.runtime.getConnectorDirectory().catalogById(entry.id);
+    if (!trusted || trusted.auth !== "provider" || !trusted.providerAuth) {
+      return errResult(
+        `"${entry.name}" is not a recognized platform connector — refusing a provider-auth install from an unverified entry.`,
+      );
+    }
+    action = { ...action, url: trusted.url, providerAuth: trusted.providerAuth };
   }
 
   // serverName is the slugified canonical reverse-DNS form — opaque,
