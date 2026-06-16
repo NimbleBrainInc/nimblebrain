@@ -436,8 +436,8 @@ export class Runtime {
     }
     const events: EventSink = new MultiEventSink(sinkList);
 
-    // Mint a scoped internal token for protected default bundles.
-    // Rotated on every runtime restart — never persisted.
+    // Mint the scoped internal-API auth token (the internal-API bearer checked
+    // in auth-middleware). Rotated on every runtime restart — never persisted.
     const internalToken = crypto.randomUUID();
 
     initWorkDir(config);
@@ -2530,7 +2530,7 @@ export class Runtime {
     };
   }
 
-  /** Scoped internal token for protected default bundles. Rotated on every restart. */
+  /** Scoped internal-API auth token (the internal-API bearer). Rotated on every restart. */
   getInternalToken(): string {
     return this._internalToken;
   }
@@ -2544,7 +2544,7 @@ export class Runtime {
    * would N×-multiply the request-path latency.
    *
    * `SharedSourceRef`-wrapped sources are unwrapped before the `McpSource`
-   * check; protected default bundles arrive wrapped and would otherwise be
+   * check; shared sources arrive wrapped and would otherwise be
    * silently invisible to this path.
    */
   private async getAppSkillResource(serverName: string): Promise<string | null> {
@@ -2616,8 +2616,8 @@ export class Runtime {
     const registry = this._workspaceRegistries.get(wsId);
     if (!registry) return [];
 
-    // Candidate sources: MCP-backed (unwrapping `SharedSourceRef` so protected
-    // default bundles are visible), and not the one already injected via
+    // Candidate sources: MCP-backed (unwrapping `SharedSourceRef` so shared
+    // sources are visible), and not the one already injected via
     // `<app-guide>` in `appContext` chats — otherwise the same body lands
     // twice in the prompt under two different framings.
     //

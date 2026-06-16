@@ -250,6 +250,18 @@ export async function startBundleSource(
     const serverName = ref.serverName ?? deriveServerName(ref.url);
     validateServerName(serverName);
     const sourceName = serverName;
+    // Diagnostic (NOT back-compat): name the cause when a url source declares a
+    // transport.auth.type the runtime doesn't recognize — otherwise it silently
+    // gets no credential and 401s. The likeliest case is a config that predates
+    // the provider-auth migration (e.g. the retired `tenant-key`).
+    const declaredAuthType = ref.transport?.auth?.type;
+    if (declaredAuthType && !["bearer", "header", "none", "provider"].includes(declaredAuthType)) {
+      log.warn(
+        `[bundles] source "${serverName}" declares an unrecognized transport.auth.type="${declaredAuthType}" ` +
+          "(known: bearer, header, none, provider). No credential will be attached and the source will likely 401 — " +
+          "if this config predates the provider-auth migration, re-register the source.",
+      );
+    }
     // SSRF protection: validate URL before connecting. Provider-auth sources are
     // the operator-provisioned fleet rail (a `provider` auth config can't be set
     // from tenant input — it comes from the vetted catalog entry), so they may
