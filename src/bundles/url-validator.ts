@@ -150,11 +150,12 @@ export function validateBundleUrl(
   }
 
   if (url.protocol === "http:") {
-    // Operator-provisioned fleet sources (tenant-key auth) may reach in-cluster
+    // Operator-provisioned fleet sources (provider auth) may reach in-cluster
     // services over plain HTTP — the fleet's trust boundary is NetworkPolicy +
     // the verified token (ARCHITECTURE P4), not TLS. This is a production posture
     // scoped to the cluster DNS suffix, NOT the dev-only `allowInsecure` flag, and
-    // it cannot be self-selected by a tenant (tenant-key auth is operator-only).
+    // it cannot be self-selected by a tenant (a `provider` auth config comes from
+    // the vetted catalog entry, never tenant input).
     if (fleetInternal && isInClusterHostname(url.hostname)) {
       return;
     }

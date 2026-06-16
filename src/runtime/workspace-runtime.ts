@@ -232,7 +232,7 @@ export async function startWorkspaceBundles(
       // Composio bundles carry header auth but STILL need a per-user connect, so
       // they route to the composio probe (check FIRST — they're also static-auth
       // by transport, but must not skip the connect gate). Other static-auth
-      // sources (tenant-key / bearer / header) carry their own credential and
+      // sources (provider / bearer / header) carry their own credential and
       // mint/present on demand — boot-start them. Only OAuth bundles gate on
       // persisted tokens.
       const hasAuth = entry.bundle.composio

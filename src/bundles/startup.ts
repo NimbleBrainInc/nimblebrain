@@ -257,13 +257,14 @@ export async function startBundleSource(
     const serverName = ref.serverName ?? deriveServerName(ref.url);
     validateServerName(serverName);
     const sourceName = serverName;
-    // SSRF protection: validate URL before connecting. Tenant-key sources are the
-    // operator-provisioned fleet rail (tenant-key auth cannot be set by a tenant),
-    // so they may reach in-cluster `.svc` services over plain HTTP — see
-    // `validateBundleUrl`'s `fleetInternal` path.
+    // SSRF protection: validate URL before connecting. Provider-auth sources are
+    // the operator-provisioned fleet rail (a `provider` auth config can't be set
+    // from tenant input — it comes from the vetted catalog entry), so they may
+    // reach in-cluster `.svc` services over plain HTTP — see `validateBundleUrl`'s
+    // `fleetInternal` path.
     validateBundleUrl(new URL(ref.url), {
       allowInsecure: opts?.allowInsecureRemotes,
-      fleetInternal: ref.transport?.auth?.type === "tenant-key",
+      fleetInternal: ref.transport?.auth?.type === "provider",
     });
     log.info(`[bundles] Starting remote bundle ${ref.url} as ${sourceName}...`);
 
@@ -695,7 +696,10 @@ export async function startBundleSource(
       composeBundleMcpContext(opts?.bundleMcp, sourceName),
     );
   } else {
-    const internalEnv = ref.protected && opts?.internalEnv ? opts.internalEnv : undefined;
+    // Internal host env for trusted local bundles. Formerly gated on `protected`
+    // (now removed); no caller supplies `opts.internalEnv` today, so this stays
+    // dormant. A future internal/default-bundle path wires it deliberately.
+    const internalEnv = opts?.internalEnv;
     const result = buildLocalSource(
       ref,
       configDir,

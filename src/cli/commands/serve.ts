@@ -5,6 +5,7 @@ import { ConsoleEventSink } from "../../adapters/console-events.ts";
 import { DebugEventSink } from "../../adapters/debug-events.ts";
 import { startServerWithShutdown } from "../../api/server.ts";
 import { createSessionRegistry, resolveSessionStoreConfig } from "../../api/session-store/index.ts";
+import { registerBuiltinCredentialProviders } from "../../oauth/minted-credential-provider.ts";
 import { Runtime } from "../../runtime/runtime.ts";
 import type { TelemetryManager } from "../../telemetry/manager.ts";
 import { loadConfig } from "../config.ts";
@@ -24,6 +25,10 @@ export function createServeCommand(telemetry: TelemetryManager): Command {
       });
 
       config.events = [globals.debug ? new DebugEventSink() : new ConsoleEventSink()];
+
+      // Register built-in transport credential providers (e.g. the `minted`
+      // fleet provider) before any source starts and tries to resolve one.
+      registerBuiltinCredentialProviders();
 
       log.info("[nimblebrain] Starting runtime...");
       const startupTime = performance.now();

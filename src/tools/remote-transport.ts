@@ -3,7 +3,7 @@ import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { FetchLike, Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { RemoteTransportConfig } from "../bundles/types.ts";
-import { createMintingFetch, getDefaultServiceTokenCache } from "../oauth/tenant-key-mint.ts";
+import { getCredentialProvider } from "./credential-provider.ts";
 
 /**
  * Resolve `${ENV_VAR}` placeholders against `process.env`.
@@ -51,9 +51,9 @@ export function createRemoteTransport(
   config?: RemoteTransportConfig,
   authProvider?: OAuthClientProvider,
   opts?: {
-    /** Workspace of the connection — required for `auth.type: "tenant-key"`, the
-     *  dimension the minted token is scoped to. Threaded from the McpSource's
-     *  `BundleMcpContext`. */
+    /** Workspace of the connection — passed to a credential provider (e.g. the
+     *  dimension a `provider`-auth token is scoped to). Threaded from the
+     *  McpSource's `BundleMcpContext`. */
     workspaceId?: string;
   },
 ): Transport {
@@ -71,33 +71,26 @@ export function createRemoteTransport(
     headers[k] = resolveEnvTemplate(v);
   }
 
-  // Machine-plane auth: mint a workspace-scoped service token on demand and
-  // attach it as the transport's `fetch`. This is NOT a static header (the
-  // token is short-lived and re-minted on expiry / 401) and it is NOT OAuth
-  // (no interactive flow). Fail loud here if the connection's workspace or the
-  // authorizer issuer is missing — a tenant-key bundle is unreachable without
-  // both, and a downstream 401 would not name the cause.
+  // Provider-backed machine-plane auth: a named credential provider produces a
+  // `fetch` (or headers) for this connection. NOT a static header (the built-in
+  // `minted` provider re-mints a short-lived token on expiry / 401) and NOT
+  // OAuth (no interactive flow). The provider + its `config` are opaque here;
+  // the kernel just asks for a credential. Fail loud if the named provider isn't
+  // registered — a downstream 401 would not name the cause.
   let mintingFetch: FetchLike | undefined;
-  if (config?.auth?.type === "tenant-key") {
-    const workspaceId = opts?.workspaceId;
-    if (!workspaceId) {
+  if (config?.auth?.type === "provider") {
+    const provider = getCredentialProvider(config.auth.provider);
+    if (!provider) {
       throw new Error(
-        "tenant-key transport auth requires a workspaceId (the connection's workspace dimension)",
+        `transport auth provider "${config.auth.provider}" is not registered ` +
+          "(call registerBuiltinCredentialProviders() at the composition root)",
       );
     }
-    const issuer = process.env.NB_FLEET_AUTHORIZER_ISSUER;
-    if (!issuer) {
-      throw new Error(
-        "tenant-key transport auth requires NB_FLEET_AUTHORIZER_ISSUER (the mcp-authorizer issuer)",
-      );
+    const credential = provider.credentialFor(opts?.workspaceId, config.auth.config);
+    if (credential.headers) {
+      for (const [k, v] of Object.entries(credential.headers)) headers[k] = v;
     }
-    mintingFetch = createMintingFetch({
-      cache: getDefaultServiceTokenCache(),
-      issuer,
-      workspace: workspaceId,
-      audience: config.auth.audience,
-      scope: config.auth.scope,
-    }) as FetchLike;
+    mintingFetch = credential.fetch;
   }
 
   // Only wire the OAuth provider if no static auth is configured. Static

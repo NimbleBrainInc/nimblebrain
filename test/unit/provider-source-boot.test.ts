@@ -9,20 +9,20 @@ class NoopSink implements EventSink {
   emit(_event: EngineEvent): void {}
 }
 
-function tenantKeyRef(): BundleRef {
+function providerRef(): BundleRef {
   return {
     url: "https://web.svc.test/mcp",
     serverName: "web",
     transport: {
       type: "streamable-http",
-      auth: { type: "tenant-key", audience: "mcp-fleet", scope: "mcp:invoke" },
+      auth: { type: "provider", provider: "minted", config: { audience: "mcp-fleet", scope: "mcp:invoke" } },
     },
   };
 }
 
 describe("bundleHasStaticAuth", () => {
-  test("tenant-key url bundle has static auth", () => {
-    expect(bundleHasStaticAuth(tenantKeyRef())).toBe(true);
+  test("provider-auth url bundle has static auth", () => {
+    expect(bundleHasStaticAuth(providerRef())).toBe(true);
   });
 
   test("bearer and header url bundles have static auth", () => {
@@ -48,15 +48,15 @@ describe("bundleHasStaticAuth", () => {
   });
 });
 
-describe("seedInstance — tenant-key fleet source", () => {
-  // Regression: a tenant-key source mints on demand and has no persisted OAuth
+describe("seedInstance — provider-auth fleet source", () => {
+  // Regression: a provider-auth source mints on demand and has no persisted OAuth
   // tokens, so the OAuth-centric boot gate seeded it `not_authenticated` — the
   // agent never saw its tools, and the UI showed a "Connect" button that would
   // spin a bogus OAuth flow against a server with no OAuth. It must seed
   // `running` (auto-connected) instead.
   test("seeds running, not not_authenticated", () => {
     const lifecycle = new BundleLifecycleManager(new NoopSink(), undefined);
-    lifecycle.seedInstance("web", "https://web.svc.test/mcp", tenantKeyRef(), undefined, "ws_test");
+    lifecycle.seedInstance("web", "https://web.svc.test/mcp", providerRef(), undefined, "ws_test");
 
     const conn = lifecycle.getInstance("web", "ws_test")?.connections.get(WORKSPACE_PRINCIPAL_ID);
     expect(conn?.state).toBe("running");

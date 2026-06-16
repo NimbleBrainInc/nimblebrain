@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { afterEach, describe, expect, test } from "bun:test";
 import { createRemoteTransport } from "../../src/tools/remote-transport.ts";
+import { registerBuiltinCredentialProviders } from "../../src/oauth/minted-credential-provider.ts";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 
@@ -115,7 +116,11 @@ describe("createRemoteTransport", () => {
 	});
 });
 
-describe("createRemoteTransport — tenant-key auth", () => {
+describe("createRemoteTransport — provider auth (minted)", () => {
+	// The generic `provider` auth dispatches to a registered credential provider;
+	// register the built-in `minted` provider so the seam resolves it.
+	registerBuiltinCredentialProviders();
+
 	const saved = {
 		tid: process.env.NB_TENANT_ID,
 		key: process.env.NB_MCP_AUTHORIZER_TENANT_KEY,
@@ -133,21 +138,25 @@ describe("createRemoteTransport — tenant-key auth", () => {
 		}
 	});
 
-	const tenantKeyConfig = {
-		auth: { type: "tenant-key" as const, audience: "artifacts", scope: "artifacts:write" },
+	const mintedConfig = {
+		auth: {
+			type: "provider" as const,
+			provider: "minted",
+			config: { audience: "artifacts", scope: "artifacts:write" },
+		},
 	};
 
 	test("throws when the connection has no workspaceId (fail loud, not a silent 401)", () => {
 		process.env.NB_FLEET_AUTHORIZER_ISSUER = "https://authz.test";
 		expect(() =>
-			createRemoteTransport(new URL("https://artifacts.test/mcp"), tenantKeyConfig),
+			createRemoteTransport(new URL("https://artifacts.test/mcp"), mintedConfig),
 		).toThrow(/workspaceId/);
 	});
 
 	test("throws when NB_FLEET_AUTHORIZER_ISSUER is unset", () => {
 		delete process.env.NB_FLEET_AUTHORIZER_ISSUER;
 		expect(() =>
-			createRemoteTransport(new URL("https://artifacts.test/mcp"), tenantKeyConfig, undefined, {
+			createRemoteTransport(new URL("https://artifacts.test/mcp"), mintedConfig, undefined, {
 				workspaceId: "ws_smoke",
 			}),
 		).toThrow(/NB_FLEET_AUTHORIZER_ISSUER/);
@@ -157,7 +166,7 @@ describe("createRemoteTransport — tenant-key auth", () => {
 		process.env.NB_TENANT_ID = "hq";
 		process.env.NB_MCP_AUTHORIZER_TENANT_KEY = randomBytes(32).toString("base64");
 		process.env.NB_FLEET_AUTHORIZER_ISSUER = "https://authz.test";
-		const t = createRemoteTransport(new URL("https://artifacts.test/mcp"), tenantKeyConfig, undefined, {
+		const t = createRemoteTransport(new URL("https://artifacts.test/mcp"), mintedConfig, undefined, {
 			workspaceId: "ws_smoke",
 		});
 		expect(t).toBeInstanceOf(StreamableHTTPClientTransport);

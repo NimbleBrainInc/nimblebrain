@@ -51,14 +51,16 @@ export interface RemoteTransportConfig {
     | { type: "header"; name: string; value: string }
     | { type: "none" }
     /**
-     * Machine-plane auth for platform data-plane services (artifacts,
-     * nimbletasks, web-search). The runtime mints a short-lived,
-     * workspace-scoped service token on demand via the tenant-key grant
-     * (`NB_MCP_AUTHORIZER_TENANT_KEY` + `NB_FLEET_AUTHORIZER_ISSUER`), naming
-     * this `audience`/`scope`, and re-mints on expiry. No interactive OAuth, no
-     * static secret. The workspace dimension is the connection's own workspace.
+     * Non-interactive machine-plane auth produced by a named credential
+     * PROVIDER (see `src/tools/credential-provider.ts`). The provider name +
+     * its `config` are opaque to the kernel — for a catalog connector they come
+     * from the operator-published catalog entry, never tenant input. The
+     * built-in `"minted"` provider mints a short-lived, workspace-scoped service
+     * token against the fleet authorizer (config: `{ audience, scope, issuer? }`)
+     * and re-mints on expiry. No interactive OAuth, no static secret. The
+     * workspace dimension is the connection's own workspace.
      */
-    | { type: "tenant-key"; audience: string; scope: string };
+    | { type: "provider"; provider: string; config: Record<string, unknown> };
   headers?: Record<string, string>;
   reconnection?: {
     maxReconnectionDelay?: number;
@@ -82,7 +84,6 @@ export type BundleRef =
       serverName?: string;
       env?: Record<string, string>;
       allowedEnv?: string[];
-      protected?: boolean;
       trustScore?: number | null;
       ui?: BundleUiMeta | null;
     }
@@ -91,7 +92,6 @@ export type BundleRef =
       serverName?: string;
       env?: Record<string, string>;
       allowedEnv?: string[];
-      protected?: boolean;
       trustScore?: number | null;
       ui?: BundleUiMeta | null;
     }
@@ -99,7 +99,6 @@ export type BundleRef =
       url: string;
       serverName?: string;
       transport?: RemoteTransportConfig;
-      protected?: boolean;
       trustScore?: number | null;
       ui?: BundleUiMeta | null;
       /**
@@ -355,8 +354,6 @@ export interface BundleInstance {
   ui: BundleUiMeta | null;
   /** Briefing metadata from _meta["ai.nimblebrain/host"].briefing. */
   briefing: BriefingBlock | null;
-  /** Whether the bundle is protected from uninstall. */
-  protected: boolean;
   /** Whether this is an Upjack app or plain MCP server. */
   type: "upjack" | "plain";
   /**

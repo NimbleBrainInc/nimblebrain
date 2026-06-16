@@ -275,40 +275,6 @@ describe("BundleLifecycleManager — uninstall", () => {
 		expect(lifecycle.getInstances().find(i => i.serverName === serverName)).toBeUndefined();
 	}, 15_000);
 
-	it("rejects uninstall of a protected bundle", async () => {
-		const bundleDir = createEchoBundleOnDisk(join(testDir, "echo-protected"));
-		const configPath = join(testDir, "nimblebrain-protected.json");
-		writeFileSync(configPath, JSON.stringify({ bundles: [] }, null, 2));
-
-		const registry = new ToolRegistry();
-		const sink = makeEventCollector();
-		const lifecycle = new BundleLifecycleManager(sink, configPath);
-
-		const instance = await lifecycle.installLocal(bundleDir, registry, "ws_test");
-
-		// Mark as protected
-		instance.protected = true;
-
-		// Attempt uninstall should throw
-		let error: Error | null = null;
-		try {
-			await lifecycle.uninstall(instance.serverName, registry, "ws_test");
-		} catch (e) {
-			error = e as Error;
-		}
-
-		expect(error).not.toBeNull();
-		expect(error!.message).toContain("protected");
-
-		// Source should still be registered
-		expect(registry.hasSource(instance.serverName)).toBe(true);
-
-		// No uninstalled event
-		expect(eventTypes(sink)).not.toContain("bundle.uninstalled");
-
-		await registry.removeSource(instance.serverName);
-	}, 15_000);
-
 	it("does not delete data directories on uninstall", async () => {
 		const bundleDir = createEchoBundleOnDisk(join(testDir, "echo-data-preserve"));
 		const configPath = join(testDir, "nimblebrain-data.json");
@@ -590,7 +556,6 @@ describe("BundleLifecycleManager — instance tracking", () => {
 
 		lifecycle.seedInstance("ipinfo", "@nimblebraininc/ipinfo", {
 			name: "@nimblebraininc/ipinfo",
-			protected: true,
 			trustScore: 92,
 			ui: { name: "IPInfo", icon: "globe" },
 		}, undefined, "ws_test");
@@ -598,7 +563,6 @@ describe("BundleLifecycleManager — instance tracking", () => {
 		const instance = lifecycle.getInstance("ipinfo", "ws_test")!;
 		expect(instance).toBeDefined();
 		expect(instance.state).toBe("running");
-		expect(instance.protected).toBe(true);
 		expect(instance.trustScore).toBe(92);
 		expect(instance.ui?.name).toBe("IPInfo");
 

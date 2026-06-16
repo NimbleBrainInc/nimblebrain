@@ -44,7 +44,6 @@ function seedInstance(
     trustScore: null,
     ui: null,
     briefing: null,
-    protected: false,
     type: "plain",
     wsId,
     oauthScope: "workspace",
