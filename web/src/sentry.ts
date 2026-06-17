@@ -52,10 +52,12 @@ export function initSentry(): void {
     environment: cfg.environment,
     release: cfg.release,
     sendDefaultPii: false,
-    integrations: [Sentry.browserTracingIntegration()],
-    // No Session Replay: replayIntegration records the DOM (prompts, tool
-    // results, file contents) — the exact content the trust rule forbids. Same
-    // intent as telemetry.ts disabling PostHog session recording.
+    // Performance tracing only when a tenant opts in (sample rate > 0) — avoids
+    // instrumenting fetch and appending sentry-trace/baggage headers for nothing.
+    // No Session Replay either: replayIntegration records the DOM (prompts, tool
+    // results, file contents) — the content the trust rule forbids (cf.
+    // telemetry.ts disabling PostHog session recording).
+    integrations: (s.tracesSampleRate ?? 0) > 0 ? [Sentry.browserTracingIntegration()] : [],
     tracesSampleRate: s.tracesSampleRate ?? 0,
     // tracePropagationTargets is left at the SDK default (same-origin), which is
     // exactly our case — all API calls are same-origin /v1/* proxied to the
@@ -97,7 +99,9 @@ export function beforeSend(event: Sentry.ErrorEvent): Sentry.ErrorEvent {
 export function beforeBreadcrumb(crumb: Sentry.Breadcrumb): Sentry.Breadcrumb | null {
   // App logs can carry prompts / PII — never breadcrumb them.
   if (crumb.category === "console") return null;
-  // A workspace or conversation id must not ride along in a fetch/xhr/nav URL.
+  // Strip query strings from fetch/xhr/nav URLs. (Opaque ids in the URL *path*
+  // — e.g. /w/<wsId> — are within the trust boundary: they're tagged anyway and
+  // aren't the content the rule forbids, so we don't rewrite path segments.)
   const url = crumb.data?.url;
   if (typeof url === "string") {
     const q = url.indexOf("?");

@@ -31,8 +31,6 @@
  * blips without surfacing an error at all.
  */
 
-import { addAuthBreadcrumb, captureLogout } from "../sentry";
-
 /** How many times to re-attempt a refresh that failed at the transport layer. */
 const REFRESH_NETWORK_RETRIES = 2;
 /** Delay between transport-failure retries. */
@@ -61,6 +59,18 @@ export interface FetchWithRefreshOptions {
    * refresh. NOT called on a transient transport failure.
    */
   onAuthError?: () => void;
+  /**
+   * Telemetry hook fired with each refresh outcome (`refreshed` / `rejected` /
+   * `unavailable`). Injected so this module stays decoupled from the Sentry
+   * singleton; the client wires it to a breadcrumb. Optional — defaults to no-op.
+   */
+  onRefreshOutcome?: (outcome: RefreshOutcome) => void;
+  /**
+   * Telemetry hook fired on the two terminal involuntary-logout exits, with a
+   * reason (`refresh_rejected` / `retry_401`). Injected for the same reason as
+   * `onRefreshOutcome`. Optional — defaults to no-op.
+   */
+  onLogout?: (reason: "refresh_rejected" | "retry_401") => void;
 }
 
 export interface FetchWithRefresh {
@@ -76,7 +86,7 @@ export interface FetchWithRefresh {
 }
 
 export function createFetchWithRefresh(options: FetchWithRefreshOptions): FetchWithRefresh {
-  const { fetch: fetchFn, refreshUrl, onAuthError } = options;
+  const { fetch: fetchFn, refreshUrl, onAuthError, onRefreshOutcome, onLogout } = options;
 
   let refreshInFlight: Promise<RefreshOutcome> | null = null;
 
@@ -137,14 +147,14 @@ export function createFetchWithRefresh(options: FetchWithRefreshOptions): FetchW
 
     // 401 — attempt silent refresh
     const outcome = await refresh();
-    // Breadcrumb every outcome (not an event) so the trail preceding a logout is
+    // Report every outcome (not an event) so the trail preceding a logout is
     // visible without quota burn — transient blips vs. a genuine rejection.
-    addAuthBreadcrumb(`refresh:${outcome}`);
+    onRefreshOutcome?.(outcome);
 
     if (outcome === "rejected") {
-      // The refresh token was refused — the session is genuinely over. Emit the
-      // single involuntary-logout event carrying the breadcrumb trail above.
-      captureLogout("refresh_rejected");
+      // The refresh token was refused — the session is genuinely over. Signal the
+      // involuntary logout (the client emits a single event for the incident).
+      onLogout?.("refresh_rejected");
       onAuthError?.();
       return res;
     }
@@ -160,7 +170,7 @@ export function createFetchWithRefresh(options: FetchWithRefreshOptions): FetchW
     const retry = await fetchFn(input, init);
     if (retry.status === 401) {
       // A fresh token still gets 401 → genuinely unauthenticated.
-      captureLogout("retry_401");
+      onLogout?.("retry_401");
       onAuthError?.();
     }
     return retry;

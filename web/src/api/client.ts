@@ -9,7 +9,7 @@ import type {
   PlacementEntry,
   ToolCallResult,
 } from "../types";
-import { setSentryWorkspace } from "../sentry";
+import { addAuthBreadcrumb, captureLogout, setSentryWorkspace } from "../sentry";
 import { createFetchWithRefresh } from "./fetch-with-refresh";
 
 // ---------------------------------------------------------------------------
@@ -167,6 +167,10 @@ const refreshInterceptor = createFetchWithRefresh({
   fetch: ((input, init) => globalThis.fetch(input, init)) as typeof fetch,
   refreshUrl: `${API_BASE}/v1/auth/refresh`,
   onAuthError: () => onAuthError?.(),
+  // Telemetry: breadcrumb every refresh outcome; one event per involuntary
+  // logout (captureLogout dedupes the concurrent-401 calls into one incident).
+  onRefreshOutcome: (outcome) => addAuthBreadcrumb(`refresh:${outcome}`),
+  onLogout: captureLogout,
 });
 
 const fetchWithRefresh = refreshInterceptor;
