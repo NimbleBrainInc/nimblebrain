@@ -1,11 +1,12 @@
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { beforeEach, describe, expect, it } from "bun:test";
+import { beforeEach, describe, expect, it, spyOn } from "bun:test";
 import type {
   OAuthClientInformationFull,
   OAuthTokens,
 } from "@modelcontextprotocol/sdk/shared/auth.js";
+import { log } from "../../src/cli/log.ts";
 import { WorkspaceOAuthProvider } from "../../src/tools/workspace-oauth-provider.ts";
 import { WorkspaceContext } from "../../src/workspace/context.ts";
 
@@ -953,5 +954,69 @@ describe("WorkspaceOAuthProvider — notifyAuthLost (mid-session auth loss)", ()
       },
     });
     expect(() => p.notifyAuthLost()).not.toThrow();
+  });
+});
+
+describe("WorkspaceOAuthProvider — redacted OAuth health logging", () => {
+  let workDir: string;
+
+  beforeEach(() => {
+    workDir = mkdtempSync(join(tmpdir(), "nb-oauth-health-"));
+  });
+
+  it("warns when a token exchange returns NO refresh_token (the non-refreshable connector)", async () => {
+    const warn = spyOn(log, "warn").mockImplementation(() => {});
+    try {
+      const p = makeProvider(workDir, "com-dropbox-mcp");
+      await p.saveTokens({
+        access_token: "sl.SECRET_ACCESS_VALUE",
+        token_type: "bearer",
+        expires_in: 14400,
+      });
+
+      const msgs = warn.mock.calls.map((c) => String(c[0]));
+      const hit = msgs.find((m) => m.includes("com-dropbox-mcp") && /no refresh_token/i.test(m));
+      expect(hit).toBeDefined();
+      // Redaction invariant: a token VALUE must never reach the logs.
+      for (const m of msgs) expect(m).not.toContain("sl.SECRET_ACCESS_VALUE");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("does NOT warn when a refresh_token is present, and never logs token values", async () => {
+    const warn = spyOn(log, "warn").mockImplementation(() => {});
+    try {
+      const p = makeProvider(workDir, "com-notion-mcp");
+      await p.saveTokens({
+        access_token: "ACCESS_SECRET_VALUE",
+        token_type: "bearer",
+        refresh_token: "REFRESH_SECRET_VALUE",
+        expires_in: 3600,
+      });
+
+      const msgs = warn.mock.calls.map((c) => String(c[0]));
+      expect(msgs.some((m) => /no refresh_token/i.test(m))).toBe(false);
+      for (const m of msgs) {
+        expect(m).not.toContain("ACCESS_SECRET_VALUE");
+        expect(m).not.toContain("REFRESH_SECRET_VALUE");
+      }
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("notifyAuthLost emits a redacted reauth warn naming the connector", async () => {
+    const warn = spyOn(log, "warn").mockImplementation(() => {});
+    try {
+      const p = makeProvider(workDir, "com-dropbox-mcp");
+      p.notifyAuthLost();
+      const msgs = warn.mock.calls.map((c) => String(c[0]));
+      expect(
+        msgs.some((m) => m.includes("com-dropbox-mcp") && /reauth_required/.test(m)),
+      ).toBe(true);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
