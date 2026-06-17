@@ -9,6 +9,7 @@
 import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import type { ResourceLinkInfo } from "../engine/content-helpers.ts";
 import type { EngineEvent, EventSink } from "../engine/types.ts";
 import { ConversationCorruptedError } from "../runtime/errors.ts";
 import { assertNoBinaryPayloads } from "./binary-guard.ts";
@@ -553,6 +554,15 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
         // model-context bound. Replay uses it verbatim so the replayed prompt
         // matches what the model saw live. See boundToolResultForModel.
         const modelOutput = typeof d.modelOutput === "string" ? d.modelOutput : undefined;
+        // UI-binding resource references. The engine emits these on the live
+        // tool.done; persist them so a reopened conversation rehydrates its
+        // artifact viewers (the panel a tool's `artifact://` resource link renders into).
+        // They are small references, not bytes — the body is fetched on view.
+        const resourceUri = typeof d.resourceUri === "string" ? d.resourceUri : undefined;
+        const resourceLinks =
+          Array.isArray(d.resourceLinks) && d.resourceLinks.length > 0
+            ? (d.resourceLinks as ResourceLinkInfo[])
+            : undefined;
         const e: ToolDoneEvent = {
           ts,
           type: "tool.done",
@@ -563,6 +573,8 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
           ms: (d.ms as number) ?? 0,
           ...(output !== undefined ? { output } : {}),
           ...(modelOutput !== undefined ? { modelOutput } : {}),
+          ...(resourceUri !== undefined ? { resourceUri } : {}),
+          ...(resourceLinks !== undefined ? { resourceLinks } : {}),
         };
         return e;
       }

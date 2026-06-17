@@ -5,6 +5,7 @@ import type {
   LanguageModelV3TextPart,
   SharedV3ProviderOptions,
 } from "@ai-sdk/provider";
+import type { ResourceLinkInfo } from "../engine/content-helpers.ts";
 import type { ContextAssembledSource, SkillsLoadedEntry } from "../engine/types.ts";
 import type { TokenUsage } from "../usage/types.ts";
 
@@ -366,6 +367,16 @@ export interface ToolDoneEvent {
    * `output` at read time. See boundToolResultForModel.
    */
   modelOutput?: string;
+  /**
+   * Static inline-binding resource annotation (`resourceUri`) and the MCP
+   * `resource_link` blocks (`resourceLinks`) surfaced from the tool result.
+   * Persisted so a reopened conversation rehydrates its `artifact://` viewer
+   * panels — the engine emits these on the live event, and the reader/UI already
+   * consume them, but without persisting them a reloaded conversation loses the
+   * references.
+   */
+  resourceUri?: string;
+  resourceLinks?: ResourceLinkInfo[];
 }
 
 export interface ToolProgressEvent {
