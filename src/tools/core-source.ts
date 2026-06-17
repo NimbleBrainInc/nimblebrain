@@ -5,6 +5,11 @@ import { recordLlmUsage } from "../api/metrics.ts";
 import { log } from "../cli/log.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import type { ToolResult } from "../engine/types.ts";
+import {
+  type ArtifactListOptions,
+  ArtifactNotFoundError,
+  getArtifactResolver,
+} from "../host-resources/artifacts/index.ts";
 import { ORG_ADMIN_ROLES } from "../identity/types.ts";
 import { getAvailableModels, isModelAllowed } from "../model/catalog.ts";
 import {
@@ -722,6 +727,108 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
           },
           isError: false,
         };
+      },
+    },
+    {
+      name: "list_artifacts",
+      description:
+        "List stored artifacts in this workspace (anything a capability has saved to the artifact store), newest first. Optionally filter by `type`. Returns each artifact's id, title, type, and created_at; read one's content with read_artifact. Workspace-scoped — only this workspace's artifacts are returned.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          type: {
+            type: "string",
+            description: "Filter by artifact type (the producing capability's semantic type).",
+          },
+          cursor: {
+            type: "string",
+            description: "Pagination cursor from a prior call's next_cursor.",
+          },
+          limit: { type: "number", description: "Max rows to return (data-plane-capped)." },
+        },
+      },
+      handler: async (input): Promise<ToolResult> => {
+        try {
+          const wsId = runtime.requireWorkspaceId();
+          const opts: ArtifactListOptions = {};
+          if (typeof input.type === "string" && input.type.trim()) opts.type = input.type.trim();
+          if (typeof input.cursor === "string" && input.cursor.trim())
+            opts.cursor = input.cursor.trim();
+          if (typeof input.limit === "number" && Number.isFinite(input.limit))
+            opts.limit = input.limit;
+          const { items, nextCursor } = await getArtifactResolver().list(wsId, opts);
+          const lines = items.map(
+            (a) => `- ${a.title ?? a.artifactId} — ${a.type} (${a.createdAt}) → ${a.uri}`,
+          );
+          const text = items.length
+            ? `${items.length} artifact(s):\n${lines.join("\n")}${
+                nextCursor ? "\n\n(more available — pass cursor to continue)" : ""
+              }`
+            : "No artifacts found in this workspace.";
+          return {
+            content: textContent(text),
+            structuredContent: { artifacts: items, ...(nextCursor ? { nextCursor } : {}) },
+            isError: false,
+          };
+        } catch (err) {
+          return {
+            content: textContent(
+              `Failed to list artifacts: ${err instanceof Error ? err.message : String(err)}`,
+            ),
+            isError: true,
+          };
+        }
+      },
+    },
+    {
+      name: "read_artifact",
+      description:
+        "Read a stored artifact's content by its `artifact://` URI (or bare id), scoped to this workspace. Use this to retrieve an artifact referenced in this or a past conversation (a tool result's resource link), or an id from list_artifacts. Returns the artifact text.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          uri: {
+            type: "string",
+            description: "The artifact URI (artifact://art_...) or bare artifact id.",
+          },
+        },
+        required: ["uri"],
+      },
+      handler: async (input): Promise<ToolResult> => {
+        const raw = typeof input.uri === "string" ? input.uri.trim() : "";
+        if (!raw) {
+          return { content: textContent("uri is required"), isError: true };
+        }
+        const uri = raw.startsWith("artifact://") ? raw : `artifact://${raw}`;
+        try {
+          const wsId = runtime.requireWorkspaceId();
+          const result = await getArtifactResolver().read(uri, wsId);
+          const text = result.contents
+            .map((c) =>
+              typeof c.text === "string"
+                ? c.text
+                : c.blob
+                  ? `[binary artifact, mimeType=${c.mimeType ?? "unknown"}]`
+                  : "",
+            )
+            .join("");
+          return { content: textContent(text || "[empty artifact]"), isError: false };
+        } catch (err) {
+          if (err instanceof ArtifactNotFoundError) {
+            return {
+              content: textContent(
+                `Artifact "${uri}" not found in this workspace (it may not exist, or belong to another workspace).`,
+              ),
+              isError: true,
+            };
+          }
+          return {
+            content: textContent(
+              `Failed to read artifact: ${err instanceof Error ? err.message : String(err)}`,
+            ),
+            isError: true,
+          };
+        }
       },
     },
     // --- Briefing tool (in-process, uses runtime model resolver) ---

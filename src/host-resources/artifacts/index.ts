@@ -10,6 +10,9 @@ export {
   uriToArtifactId,
 } from "./artifact-uri.ts";
 export {
+  type ArtifactListItem,
+  type ArtifactListOptions,
+  type ArtifactListResult,
   ArtifactNotFoundError,
   ArtifactReadClient,
   ArtifactReadError,

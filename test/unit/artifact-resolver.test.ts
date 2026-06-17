@@ -316,3 +316,131 @@ describe("ArtifactReadClient — reads the data plane's actual response shape", 
     expect(result.presignedUrl).toBe("https://presigned.test/art_spilled");
   });
 });
+
+// ---------------------------------------------------------------------------
+// ArtifactReadClient.list — discovery (read_artifact / list_artifacts backing).
+// Same identity plumbing as read: the workspace scopes the minted read token and
+// the data plane's RLS fences the page. We model the LIST endpoint
+// (GET /v1/artifacts?type=...) with a fake that echoes the bearer's workspace.
+// ---------------------------------------------------------------------------
+
+interface ListRow {
+  artifact_id: string;
+  uri: string;
+  type: string;
+  mime_type: string;
+  title?: string;
+  source: string;
+  status: string;
+  created_at: string;
+}
+
+function makeListFetch(byWorkspace: Record<string, ListRow[]>): typeof fetch {
+  return (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+    const url = typeof input === "string" ? input : input.toString();
+
+    // Token mint — echo the requested workspace into the bearer (as in read).
+    if (url === `${ISSUER}/token`) {
+      const body = new URLSearchParams(String(init?.body ?? ""));
+      const payloadB64 = (body.get("tenant_assertion") ?? "").split(".")[1] ?? "";
+      const payload = JSON.parse(Buffer.from(payloadB64, "base64url").toString("utf8")) as {
+        workspace: string;
+        audience: string;
+        scope: string;
+      };
+      const token = Buffer.from(
+        JSON.stringify({ workspace: payload.workspace, aud: payload.audience, scope: payload.scope }),
+      ).toString("base64url");
+      return new Response(JSON.stringify({ access_token: token, expires_in: 300 }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
+    // LIST endpoint: GET /v1/artifacts (no /{id}). Fence by the bearer's workspace,
+    // apply the type filter the client threaded as a query param.
+    if (url.startsWith(`${DATA_PLANE}/v1/artifacts`)) {
+      const u = new URL(url);
+      if (u.pathname !== "/v1/artifacts") return new Response("not list", { status: 500 });
+      const bearer = (new Headers(init?.headers).get("Authorization") ?? "").replace(/^Bearer\s+/, "");
+      const claims = JSON.parse(Buffer.from(bearer, "base64url").toString("utf8")) as {
+        workspace: string;
+      };
+      let rows = byWorkspace[claims.workspace] ?? [];
+      const type = u.searchParams.get("type");
+      if (type) rows = rows.filter((r) => r.type === type);
+      return new Response(JSON.stringify({ artifacts: rows, next_cursor: null }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
+    return new Response("unexpected url: " + url, { status: 500 });
+  }) as typeof fetch;
+}
+
+function makeListClient(byWorkspace: Record<string, ListRow[]>): ArtifactReadClient {
+  const fetchImpl = makeListFetch(byWorkspace);
+  const cache = new ServiceTokenCache({ identity: IDENTITY, fetchImpl });
+  return new ArtifactReadClient({ config: { baseUrl: DATA_PLANE, issuer: ISSUER }, cache, fetchImpl });
+}
+
+describe("ArtifactReadClient.list — discovery as the viewing user", () => {
+  const rows: Record<string, ListRow[]> = {
+    [WS_A]: [
+      {
+        artifact_id: "art_1",
+        uri: "artifact://art_1",
+        type: "research.report",
+        mime_type: "text/markdown",
+        title: "Matthew Gerard",
+        source: "task",
+        status: "ready",
+        created_at: "2026-06-16T00:00:00Z",
+      },
+      {
+        artifact_id: "art_2",
+        uri: "artifact://art_2",
+        type: "other",
+        mime_type: "text/plain",
+        source: "task",
+        status: "ready",
+        created_at: "2026-06-15T00:00:00Z",
+      },
+    ],
+    [WS_B]: [
+      {
+        artifact_id: "art_9",
+        uri: "artifact://art_9",
+        type: "research.report",
+        mime_type: "text/markdown",
+        title: "Other workspace",
+        source: "task",
+        status: "ready",
+        created_at: "2026-06-16T00:00:00Z",
+      },
+    ],
+  };
+
+  it("lists the caller's workspace rows and maps snake_case metadata", async () => {
+    const res = await makeListClient(rows).list(WS_A);
+    expect(res.items.map((i) => i.artifactId)).toEqual(["art_1", "art_2"]);
+    expect(res.items[0].title).toBe("Matthew Gerard");
+    expect(res.items[0].uri).toBe("artifact://art_1");
+    expect(res.items[0].type).toBe("research.report");
+  });
+
+  it("threads the type filter through as a query param", async () => {
+    const res = await makeListClient(rows).list(WS_A, { type: "research.report" });
+    expect(res.items.map((i) => i.artifactId)).toEqual(["art_1"]);
+  });
+
+  it("fences by RLS — a workspace never sees another's rows", async () => {
+    const res = await makeListClient(rows).list(WS_B);
+    expect(res.items.map((i) => i.artifactId)).toEqual(["art_9"]);
+  });
+
+  it("fails closed without a workspace", async () => {
+    await expect(makeListClient(rows).list("")).rejects.toThrow(/workspace/);
+  });
+});

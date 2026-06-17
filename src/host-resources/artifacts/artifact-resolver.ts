@@ -3,6 +3,8 @@ import { log } from "../../cli/log.ts";
 import { isTextMime } from "../../files/mime.ts";
 import { isArtifactUri, uriToArtifactId } from "./artifact-uri.ts";
 import {
+  type ArtifactListOptions,
+  type ArtifactListResult,
   ArtifactNotFoundError,
   type ArtifactReadClient,
   type ArtifactReadResult,
@@ -99,6 +101,17 @@ export class ArtifactResolver {
     );
 
     return { contents };
+  }
+
+  /**
+   * List artifacts in a workspace (discovery for retrieval), reading as the
+   * viewing user. Delegates to the read client — the same workspace-scoped
+   * `artifacts:read` token gates it and RLS fences the rows. The resolver is the
+   * host's single artifact-access seam (resolve + list); no bundle is ever in
+   * the artifacts read path.
+   */
+  list(workspaceId: string, opts: ArtifactListOptions = {}): Promise<ArtifactListResult> {
+    return this.client.list(workspaceId, opts);
   }
 
   /**
