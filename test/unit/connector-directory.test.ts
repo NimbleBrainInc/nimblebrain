@@ -383,6 +383,40 @@ describe("ConnectorDirectory lookup tables", () => {
     expect(calls).toBe(1);
   });
 
+  test("catalogById finds an icon-less provider entry — the path that refused the install", async () => {
+    // Regression for the catalog projection foot-gun: an icon-less
+    // `provider`-auth connector used to be dropped at projection time, so
+    // catalogById returned null and the provider-auth install failed with
+    // "not a recognized platform connector". Icons are cosmetic — a missing
+    // icon must never make a connector non-functional.
+    const store = freshStore();
+    const path = writeStaticCatalog([
+      {
+        name: "ai.nimblebrain/web",
+        description: "Web tools",
+        version: "1.0.0",
+        // NOTE: no `icons` field.
+        remotes: [{ type: "streamable-http", url: "http://mcp-web.mcp-shared.svc/mcp" }],
+        _meta: {
+          "ai.nimblebrain/connector": {
+            auth: "provider",
+            providerAuth: { provider: "minted", config: { audience: "mcp-fleet" } },
+          },
+        },
+      },
+    ]);
+    await configureRegistries(store, [
+      { id: "static", name: "Static", type: "static", enabled: true, url: path },
+    ]);
+
+    const entry = await new ConnectorDirectory(store).catalogById("ai.nimblebrain/web");
+    expect(entry).not.toBeNull();
+    expect(entry?.id).toBe("ai.nimblebrain/web");
+    expect(entry?.iconUrl).toBeUndefined();
+    expect(entry?.auth).toBe("provider");
+    expect(entry?.providerAuth).toEqual({ provider: "minted", config: { audience: "mcp-fleet" } });
+  });
+
   test("iconByPackage maps npm-scoped package identifier → icon src", async () => {
     const store = freshStore();
     await configureRegistries(store, [

@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import type { ServerDetail } from "../../src/connectors/server-detail.ts";
-import { projectServerDetailToDirectoryEntry } from "../../src/registries/projection.ts";
+import {
+  projectServerDetailToDirectoryEntry,
+  serverDetailToCatalogEntry,
+} from "../../src/registries/projection.ts";
 
 const CTX = { registryId: "test", registryType: "static" as const };
 
@@ -216,5 +219,69 @@ describe("projectServerDetailToDirectoryEntry", () => {
     if (e?.install.kind === "remote-oauth") {
       expect(e.install.url).toBe("https://example.com/sse");
     }
+  });
+});
+
+describe("serverDetailToCatalogEntry", () => {
+  test("projects an icon-less entry that has a remote (icon is cosmetic, never gates install)", () => {
+    // The foot-gun this fixes: a missing icon must NOT make a connector
+    // un-installable. The entry projects; iconUrl is omitted so the UI
+    // falls back to a letter-avatar.
+    const e = serverDetailToCatalogEntry(
+      detail({
+        remotes: [{ type: "streamable-http", url: "https://example.com/mcp" }],
+      }),
+    );
+    expect(e).not.toBeNull();
+    expect(e?.id).toBe("io.example/test");
+    expect(e?.url).toBe("https://example.com/mcp");
+    expect(e?.iconUrl).toBeUndefined();
+  });
+
+  test("carries iconUrl through when an icon is present", () => {
+    const e = serverDetailToCatalogEntry(
+      detail({
+        icons: [{ src: "https://a.svg", sizes: ["any"] }],
+        remotes: [{ type: "streamable-http", url: "https://example.com/mcp" }],
+      }),
+    );
+    expect(e?.iconUrl).toBe("https://a.svg");
+  });
+
+  test("returns null without a remote — that drop stays (genuinely non-functional)", () => {
+    // No remote URL = nothing to install/connect to. This is the only
+    // legitimate reason to drop a catalog entry.
+    const e = serverDetailToCatalogEntry(detail());
+    expect(e).toBeNull();
+  });
+
+  test("returns null without a remote even when icons are present", () => {
+    const e = serverDetailToCatalogEntry(
+      detail({
+        icons: [{ src: "https://a.svg", sizes: ["any"] }],
+      }),
+    );
+    expect(e).toBeNull();
+  });
+
+  test("projects an icon-less provider-auth entry with providerAuth verbatim", () => {
+    // The exact class that hit the bug: a platform `provider` connector with
+    // no icon. Pre-fix the projection dropped it, so catalogById returned null
+    // and the install failed with "not a recognized platform connector".
+    const e = serverDetailToCatalogEntry(
+      detail({
+        remotes: [{ type: "streamable-http", url: "http://mcp-web.mcp-shared.svc/mcp" }],
+        _meta: {
+          "ai.nimblebrain/connector": {
+            auth: "provider",
+            providerAuth: { provider: "minted", config: { audience: "mcp-fleet" } },
+          },
+        },
+      }),
+    );
+    expect(e).not.toBeNull();
+    expect(e?.iconUrl).toBeUndefined();
+    expect(e?.auth).toBe("provider");
+    expect(e?.providerAuth).toEqual({ provider: "minted", config: { audience: "mcp-fleet" } });
   });
 });

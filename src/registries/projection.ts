@@ -106,8 +106,12 @@ export interface ConnectorCatalogEntry {
   /** Display name from `title` (falling back to `name`). */
   name: string;
   description: string;
-  /** First icon src; the platform-bundled catalog ships at least one. */
-  iconUrl: string;
+  /**
+   * First icon src, when the entry ships one. Optional — a missing icon is
+   * cosmetic: the UI falls back to a deterministic letter-avatar. Never gate
+   * installability on this.
+   */
+  iconUrl?: string;
   /** Remote MCP server URL — the value that goes into the bundle `url`. */
   url: string;
   auth: "dcr" | "static" | "composio" | "provider";
@@ -135,23 +139,21 @@ export interface ConnectorCatalogEntry {
 
 /**
  * Project one `ServerDetail` into the flat catalog entry shape.
- * Returns null when the entry isn't a remote OAuth service (no
- * `remotes[]`) or doesn't carry a renderable icon — those are the
- * minimum fields the Configure page assumes, and surfacing a
- * partial-shape catalog entry would break the call sites that
- * dereference `cat.url` or `cat.iconUrl` unconditionally.
+ * Returns null only when the entry isn't a remote OAuth service (no
+ * `remotes[]`) — that's a genuinely non-functional entry. A missing icon
+ * is cosmetic and never gates projection: `iconUrl` is omitted and the UI
+ * falls back to a letter-avatar.
  */
 export function serverDetailToCatalogEntry(s: ServerDetail): ConnectorCatalogEntry | null {
   const remote = s.remotes?.[0];
   if (!remote) return null;
   const iconUrl = s.icons?.[0]?.src;
-  if (!iconUrl) return null;
   const meta = getNimbleBrainConnectorMeta(s);
   return {
     id: s.name,
     name: s.title ?? s.name,
     description: s.description,
-    iconUrl,
+    ...(iconUrl ? { iconUrl } : {}),
     url: remote.url,
     auth: meta?.auth ?? "dcr",
     ...(meta?.requiredScopes ? { requiredScopes: meta.requiredScopes } : {}),
