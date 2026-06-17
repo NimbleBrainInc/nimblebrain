@@ -138,8 +138,9 @@ export class ConnectorDirectory {
 
   /**
    * Flat `ConnectorCatalogEntry[]` — the shape the catalog tool surface
-   * + Configure page consume. Drops servers without remotes / icons
-   * (those don't have a renderable Configure-page identity).
+   * + Configure page consume. Drops only servers without remotes (those
+   * have no installable identity). A missing icon is cosmetic and never
+   * drops the entry — the UI falls back to a letter-avatar.
    */
   async catalogEntries(): Promise<ConnectorCatalogEntry[]> {
     const { servers } = await this.servers();

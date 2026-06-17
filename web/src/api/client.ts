@@ -569,7 +569,8 @@ export interface ConnectorCatalogEntry {
   id: string;
   name: string;
   description: string;
-  iconUrl: string;
+  /** Optional brand icon URL — omitted when the entry ships no icon; the UI falls back to a letter-avatar. */
+  iconUrl?: string;
   url: string;
   auth: "dcr" | "static" | "composio" | "provider";
   requiredScopes?: string[];
