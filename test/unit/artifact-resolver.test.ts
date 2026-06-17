@@ -443,4 +443,49 @@ describe("ArtifactReadClient.list — discovery as the viewing user", () => {
   it("fails closed without a workspace", async () => {
     await expect(makeListClient(rows).list("")).rejects.toThrow(/workspace/);
   });
+
+  it("forwards a positive limit but drops a non-positive one", async () => {
+    const urls: string[] = [];
+    const fetchImpl = ((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url === `${ISSUER}/token`) {
+        const body = new URLSearchParams(String(init?.body ?? ""));
+        const payloadB64 = (body.get("tenant_assertion") ?? "").split(".")[1] ?? "";
+        const payload = JSON.parse(Buffer.from(payloadB64, "base64url").toString("utf8")) as {
+          workspace: string;
+        };
+        const token = Buffer.from(JSON.stringify({ workspace: payload.workspace })).toString(
+          "base64url",
+        );
+        return Promise.resolve(
+          new Response(JSON.stringify({ access_token: token, expires_in: 300 }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        );
+      }
+      urls.push(url);
+      return Promise.resolve(
+        new Response(JSON.stringify({ artifacts: [], next_cursor: null }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    }) as typeof fetch;
+    const cache = new ServiceTokenCache({ identity: IDENTITY, fetchImpl });
+    const client = new ArtifactReadClient({
+      config: { baseUrl: DATA_PLANE, issuer: ISSUER },
+      cache,
+      fetchImpl,
+    });
+
+    await client.list(WS_A, { limit: 5 });
+    expect(urls.at(-1)).toContain("limit=5");
+
+    await client.list(WS_A, { limit: 0 });
+    expect(urls.at(-1)).not.toContain("limit=");
+
+    await client.list(WS_A, { limit: -3 });
+    expect(urls.at(-1)).not.toContain("limit=");
+  });
 });

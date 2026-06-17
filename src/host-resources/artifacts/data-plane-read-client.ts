@@ -323,7 +323,8 @@ export class ArtifactReadClient {
    * scopes the minted read token and is the RLS dimension — the page only ever
    * contains the caller's own workspace's rows. Metadata only (no bytes); read a
    * row's body with {@link read}. Filters/pagination map straight onto
-   * `GET /v1/artifacts`.
+   * `GET /v1/artifacts`, which orders newest-first (`created_at` descending) and
+   * keysets on `created_at` — the order the `list_artifacts` tool surfaces.
    */
   async list(workspaceId: string, opts: ArtifactListOptions = {}): Promise<ArtifactListResult> {
     if (!workspaceId) {
@@ -341,7 +342,10 @@ export class ArtifactReadClient {
     const root = this.config.baseUrl.replace(/\/+$/, "");
     const params = new URLSearchParams();
     if (opts.type) params.set("type", opts.type);
-    if (typeof opts.limit === "number" && Number.isFinite(opts.limit)) {
+    // Only forward a positive limit. A negative/zero is a caller error; drop it
+    // (the data plane applies its default page size) rather than forwarding a
+    // value the wire would reject or mishandle.
+    if (typeof opts.limit === "number" && Number.isFinite(opts.limit) && opts.limit >= 1) {
       params.set("limit", String(Math.trunc(opts.limit)));
     }
     if (opts.cursor) params.set("cursor", opts.cursor);
