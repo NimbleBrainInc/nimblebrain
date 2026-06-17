@@ -23,6 +23,21 @@
 	handle /.well-known/* {
 		reverse_proxy {$PLATFORM_URL}
 	}
+	# Runtime client config. Served dynamically from NB_* env (substituted at
+	# config load) so one static, read-only image is configured per tenant via
+	# Helm — no writable filesystem, no entrypoint. index.html loads this before
+	# the app bundle (window.__NB_CONFIG__, read by web/src/config.ts). Public
+	# client values ONLY — never secrets. Unset env => empty field => feature off.
+	#
+	# Every value is emitted as a JSON *string* (incl. enabled/tracesSampleRate),
+	# and config.ts coerces booleans/numbers. This way a malformed operator value
+	# (e.g. NB_SENTRY_ENABLED=yes) degrades that one feature to "off" instead of
+	# producing invalid JS that would disable every feature at once.
+	handle /config.js {
+		header Content-Type "application/javascript; charset=utf-8"
+		header Cache-Control "no-store"
+		respond `window.__NB_CONFIG__ = {"tenantId":"{$NB_TENANT_ID:}","environment":"{$NB_SENTRY_ENV:}","release":"{$NB_RELEASE:}","sentry":{"dsn":"{$NB_SENTRY_DSN:}","enabled":"{$NB_SENTRY_ENABLED:false}","tracesSampleRate":"{$NB_SENTRY_TRACES_SAMPLE_RATE:0}"},"turnstile":{"siteKey":"{$NB_TURNSTILE_SITE_KEY:}","enabled":"{$NB_TURNSTILE_ENABLED:false}"},"posthog":{"key":"{$NB_POSTHOG_KEY:}","enabled":"{$NB_POSTHOG_ENABLED:false}"}};` 200
+	}
 	handle {
 		root * /srv
 		try_files {path} /index.html

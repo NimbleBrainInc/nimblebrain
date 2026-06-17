@@ -1,6 +1,3 @@
-# check=skip=SecretsUsedInArgOrEnv
-# VITE_TURNSTILE_SITE_KEY is a public client-side key, not a secret.
-#
 # Install with bun against the frozen bun.lock — NOT `npm install`. npm cannot
 # read bun.lock, so it re-resolves every dependency to the newest in-range
 # version on each build, leaving us exposed to upstream publish races (e.g. a
@@ -11,8 +8,9 @@ WORKDIR /app
 COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile
 COPY . .
-ARG VITE_TURNSTILE_SITE_KEY=""
-ENV VITE_TURNSTILE_SITE_KEY=$VITE_TURNSTILE_SITE_KEY
+# No build-time client keys. Sentry / Turnstile / PostHog config is served at
+# runtime from NB_* env by Caddy (see /config.js in the Caddyfile) so one image
+# works across every tenant and environment. The bundle ships clean.
 RUN bun run build
 
 FROM caddy:2-alpine

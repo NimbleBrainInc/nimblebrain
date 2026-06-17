@@ -1,8 +1,11 @@
 import posthog from "posthog-js";
+import { getConfig } from "./config";
 
-// Write-only PostHog project API key. Set VITE_POSTHOG_KEY env var to enable.
-// If unset, telemetry is silently disabled.
-const POSTHOG_KEY = import.meta.env.VITE_POSTHOG_KEY ?? "";
+// Write-only PostHog project API key, from runtime config (NB_POSTHOG_KEY via
+// window.__NB_CONFIG__). Disabled when unset or explicitly turned off
+// (NB_POSTHOG_ENABLED=false), mirroring the Sentry enable flag.
+const posthogCfg = getConfig().posthog;
+const POSTHOG_KEY = posthogCfg?.enabled === false ? "" : (posthogCfg?.key ?? "");
 
 let initialized = false;
 
