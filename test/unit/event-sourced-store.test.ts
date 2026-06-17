@@ -75,6 +75,40 @@ describe("EventSourcedConversationStore", () => {
     expect(events[2].type).toBe("run.done");
   });
 
+  it("persists resourceLinks + resourceUri on tool.done (artifact rehydration)", async () => {
+    // Regression: the engine emits resource references on tool.done, but they
+    // were dropped on persist — so a reopened conversation lost its artifact://
+    // viewers (e.g. the deep_research report panel). They must round-trip.
+    const conv = await store.create({ ownerId: "user_test" });
+    store.setActiveConversation(conv.id);
+
+    store.emit({
+      type: "tool.done",
+      data: {
+        runId: "r1",
+        name: "web__deep_research",
+        id: "tc_1",
+        ok: true,
+        ms: 1234,
+        output: "digest text",
+        resourceUri: "artifact://art_abc",
+        resourceLinks: [{ uri: "artifact://art_abc", name: "report", mimeType: "text/markdown" }],
+      },
+    });
+
+    const lines = readLines(join(dirs.dir, `${conv.id}.jsonl`));
+    const done = lines
+      .slice(1)
+      .map((l) => JSON.parse(l))
+      .find((e) => e.type === "tool.done");
+    expect(done).toBeDefined();
+    expect(done.output).toBe("digest text");
+    expect(done.resourceUri).toBe("artifact://art_abc");
+    expect(done.resourceLinks).toEqual([
+      { uri: "artifact://art_abc", name: "report", mimeType: "text/markdown" },
+    ]);
+  });
+
   it("history() reconstructs messages from events", async () => {
     const conv = await store.create({ ownerId: "user_test" });
 

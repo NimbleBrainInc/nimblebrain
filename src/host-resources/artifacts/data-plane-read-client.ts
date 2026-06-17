@@ -133,6 +133,57 @@ function firstString(...vals: unknown[]): string | undefined {
   return undefined;
 }
 
+/** A row from `GET /v1/artifacts` — metadata only, no bytes. */
+export interface ArtifactListItem {
+  artifactId: string;
+  uri: string;
+  type: string;
+  mimeType: string;
+  title?: string;
+  source: string;
+  sizeBytes?: number;
+  status: string;
+  createdAt: string;
+}
+
+/** Result of {@link ArtifactReadClient.list} — a page + an opaque keyset cursor. */
+export interface ArtifactListResult {
+  items: ArtifactListItem[];
+  nextCursor?: string;
+}
+
+/** Filters for {@link ArtifactReadClient.list}. */
+export interface ArtifactListOptions {
+  /** Semantic type filter — the producing capability's artifact type. */
+  type?: string;
+  /** Page size (data-plane-capped). */
+  limit?: number;
+  /** Keyset cursor from a prior call's `nextCursor`. */
+  cursor?: string;
+}
+
+/** The list wire envelope; snake_case mirrors the data plane, camelCase accepted defensively. */
+interface ArtifactListRowEnvelope {
+  artifact_id?: unknown;
+  artifactId?: unknown;
+  uri?: unknown;
+  type?: unknown;
+  mime_type?: unknown;
+  mimeType?: unknown;
+  title?: unknown;
+  source?: unknown;
+  size_bytes?: unknown;
+  sizeBytes?: unknown;
+  status?: unknown;
+  created_at?: unknown;
+  createdAt?: unknown;
+}
+interface ArtifactListEnvelope {
+  artifacts?: ArtifactListRowEnvelope[];
+  next_cursor?: unknown;
+  nextCursor?: unknown;
+}
+
 export class ArtifactReadClient {
   private readonly config: ArtifactDataPlaneConfig;
   private readonly cache: ServiceTokenCache;
@@ -265,5 +316,81 @@ export class ArtifactReadClient {
     // 200 → small inline body, streamed as raw bytes.
     const body = new Uint8Array(await contentRes.arrayBuffer());
     return { mimeType, body, title, sizeBytes };
+  }
+
+  /**
+   * List artifacts as the viewing user (discovery for retrieval). `workspaceId`
+   * scopes the minted read token and is the RLS dimension — the page only ever
+   * contains the caller's own workspace's rows. Metadata only (no bytes); read a
+   * row's body with {@link read}. Filters/pagination map straight onto
+   * `GET /v1/artifacts`, which orders newest-first (`created_at` descending) and
+   * keysets on `created_at` — the order the `list_artifacts` tool surfaces.
+   */
+  async list(workspaceId: string, opts: ArtifactListOptions = {}): Promise<ArtifactListResult> {
+    if (!workspaceId) {
+      throw new ArtifactReadError("artifact list requires a workspace (the viewing user's)");
+    }
+    const authedFetch = createMintingFetch({
+      cache: this.cache,
+      issuer: this.config.issuer,
+      workspace: workspaceId,
+      audience: ARTIFACTS_AUDIENCE,
+      scope: ARTIFACTS_READ_SCOPE,
+      baseFetch: this.fetchImpl,
+    });
+
+    const root = this.config.baseUrl.replace(/\/+$/, "");
+    const params = new URLSearchParams();
+    if (opts.type) params.set("type", opts.type);
+    // Only forward a positive limit. A negative/zero is a caller error; drop it
+    // (the data plane applies its default page size) rather than forwarding a
+    // value the wire would reject or mishandle.
+    if (typeof opts.limit === "number" && Number.isFinite(opts.limit) && opts.limit >= 1) {
+      params.set("limit", String(Math.trunc(opts.limit)));
+    }
+    if (opts.cursor) params.set("cursor", opts.cursor);
+    const qs = params.toString();
+    const url = `${root}/v1/artifacts${qs ? `?${qs}` : ""}`;
+
+    let res: Response;
+    try {
+      res = await authedFetch(url, { method: "GET", headers: { Accept: "application/json" } });
+    } catch (cause) {
+      throw new ArtifactReadError(
+        `artifact list request failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+      );
+    }
+    if (!res.ok) {
+      const detail = await res.text().catch(() => "");
+      throw new ArtifactReadError(
+        `artifact list failed ${res.status}: ${detail.slice(0, 300)}`,
+        res.status,
+      );
+    }
+
+    let data: ArtifactListEnvelope;
+    try {
+      data = (await res.json()) as ArtifactListEnvelope;
+    } catch {
+      throw new ArtifactReadError("artifact list response was not JSON");
+    }
+
+    const rows = Array.isArray(data.artifacts) ? data.artifacts : [];
+    const items: ArtifactListItem[] = rows.map((r) => {
+      const sizeRaw = r.size_bytes ?? r.sizeBytes;
+      return {
+        artifactId: firstString(r.artifact_id, r.artifactId) ?? "",
+        uri: firstString(r.uri) ?? "",
+        type: firstString(r.type) ?? "",
+        mimeType: firstString(r.mime_type, r.mimeType) ?? "application/octet-stream",
+        ...(firstString(r.title) ? { title: firstString(r.title) } : {}),
+        source: firstString(r.source) ?? "",
+        ...(typeof sizeRaw === "number" && Number.isFinite(sizeRaw) ? { sizeBytes: sizeRaw } : {}),
+        status: firstString(r.status) ?? "",
+        createdAt: firstString(r.created_at, r.createdAt) ?? "",
+      };
+    });
+    const nextCursor = firstString(data.next_cursor, data.nextCursor);
+    return { items, ...(nextCursor ? { nextCursor } : {}) };
   }
 }

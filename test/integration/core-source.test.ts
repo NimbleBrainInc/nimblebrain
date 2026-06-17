@@ -56,12 +56,12 @@ async function makeRuntime(): Promise<Runtime> {
 }
 
 describe("Core Source", () => {
-	it("tools() returns 8 tools with nb__ prefix", async () => {
+	it("tools() returns 10 tools with nb__ prefix", async () => {
 		const runtime = await makeRuntime();
 		try {
 			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
 			const tools = await source.tools();
-			expect(tools).toHaveLength(8);
+			expect(tools).toHaveLength(10);
 			for (const tool of tools) {
 				expect(tool.name).toMatch(/^nb__/);
 			}
@@ -70,7 +70,9 @@ describe("Core Source", () => {
 				"nb__briefing",
 				"nb__get_config",
 				"nb__list_apps",
+				"nb__list_artifacts",
 				"nb__manage_identity",
+				"nb__read_artifact",
 				"nb__set_model_config",
 				"nb__set_preferences",
 				"nb__version",
