@@ -9,6 +9,7 @@ import type {
   PlacementEntry,
   ToolCallResult,
 } from "../types";
+import { setSentryWorkspace } from "../sentry";
 import { createFetchWithRefresh } from "./fetch-with-refresh";
 
 // ---------------------------------------------------------------------------
@@ -96,6 +97,10 @@ export function setAuthToken(token: string | null): void {
 export function setActiveWorkspaceId(id: string | null): void {
   if (activeWorkspaceId === id) return;
   activeWorkspaceId = id;
+  // Single chokepoint for the focused workspace — keep the Sentry tag in sync
+  // so crash reports are attributable to the right workspace (no-op if Sentry
+  // is disabled).
+  setSentryWorkspace(id);
 }
 
 /** Get the active workspace ID (for modules that build their own headers). */

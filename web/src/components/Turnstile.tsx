@@ -1,8 +1,14 @@
 import { useCallback, useEffect, useRef } from "react";
+import { getConfig } from "../config";
 
 const TURNSTILE_SCRIPT_URL =
   "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
-const SITE_KEY = import.meta.env.VITE_TURNSTILE_SITE_KEY;
+// Read from runtime config (window.__NB_CONFIG__) so the site key is set per
+// deployment without a build-time bake. config.js loads before this module.
+// Disabled when explicitly turned off (NB_TURNSTILE_ENABLED=false) even if a key
+// is present, mirroring the Sentry enable flag.
+const turnstileCfg = getConfig().turnstile;
+const SITE_KEY = turnstileCfg?.enabled === false ? "" : (turnstileCfg?.siteKey ?? "");
 
 /** Whether Turnstile is configured (site key is set). */
 export const isTurnstileConfigured = !!SITE_KEY;

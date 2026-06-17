@@ -66,6 +66,7 @@ import { WorkspaceMembersTab } from "./pages/settings/WorkspaceMembersTab";
 import { WorkspaceSettingsPage } from "./pages/settings/WorkspaceSettingsPage";
 import { WorkspacesTab } from "./pages/settings/WorkspacesTab";
 import { WorkspaceOverviewPage } from "./pages/WorkspaceOverviewPage";
+import { clearSentryContext, setSentryUser } from "./sentry";
 import { initTelemetry } from "./telemetry";
 import type { BootstrapResponse, PlacementEntry } from "./types";
 import "./index.css";
@@ -79,6 +80,12 @@ function AuthenticatedApp({
   onLogout: () => void;
   bootstrap: BootstrapResponse;
 }) {
+  // Tag Sentry events with the opaque user id (no email/displayName). The
+  // workspace_id tag is kept in sync separately by setActiveWorkspaceId.
+  useEffect(() => {
+    setSentryUser(bootstrap.user.id);
+  }, [bootstrap.user.id]);
+
   // Fire-and-forget telemetry init (non-blocking)
   useEffect(() => {
     callTool("nb", "workspace_info", {})
@@ -605,6 +612,7 @@ export function App() {
     setAuthToken(null);
     setBootstrap(null);
     setAuthenticated(false);
+    clearSentryContext();
   }, []);
 
   const initFromBootstrap = useCallback(

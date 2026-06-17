@@ -105,6 +105,23 @@ Vendor-neutral. Trace ids always exist for log correlation; export only happens 
 | `DO_NOT_TRACK` | No | — | Standard opt-out signal. Set to `1` to disable telemetry. Equivalent to `NB_TELEMETRY_DISABLED=1`. |
 | `POSTHOG_API_KEY` | No | — | Override the built-in PostHog key. Rarely needed. |
 
+### Web client (runtime config)
+
+The web UI is a static bundle, so it cannot read pod env from JS. Instead Caddy serves `/config.js` dynamically from these `NB_*` values (set `window.__NB_CONFIG__`), which the client reads on boot. This lets one image be configured **per tenant via Helm** with no rebuild and no writable filesystem. All values are **public client keys** — never secrets. Unset ⇒ the corresponding feature is disabled (the OSS/self-host default).
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `NB_SENTRY_DSN` | No | — | Sentry DSN (public). Unset ⇒ client crash tracking off. |
+| `NB_SENTRY_ENABLED` | No | `false` | Set `true` to enable Sentry for this deployment (also requires a DSN). |
+| `NB_SENTRY_ENV` | No | — | Sentry `environment` label (e.g. `staging`, `production`). |
+| `NB_SENTRY_TRACES_SAMPLE_RATE` | No | `0` | Performance-trace sample rate, `0`–`1`. |
+| `NB_TURNSTILE_SITE_KEY` | No | — | Cloudflare Turnstile site key (public). |
+| `NB_TURNSTILE_ENABLED` | No | `false` | Set `true` to enable the captcha (also requires a site key). |
+| `NB_POSTHOG_KEY` | No | — | PostHog write-only key for web analytics. |
+| `NB_POSTHOG_ENABLED` | No | `false` | Set `true` to enable web analytics (also requires a key). |
+
+Sentry tags every event with `tenant_id` (from `NB_TENANT_ID`), `workspace_id`, and an opaque `user.id` — never email, display name, prompts, or tool content. For local development, the same values can be supplied to `bun run dev` as `VITE_*` fallbacks (see `.env.example`).
+
 ## NB_PUBLIC_ORIGIN
 
 The canonical public origin of the deployment. Every OAuth callback URL the platform hands to a vendor is built from it:
