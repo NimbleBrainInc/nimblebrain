@@ -16,6 +16,28 @@ import { getConfig } from "./config";
  */
 
 let initialized = false;
+// One Sentry event per involuntary-logout *incident*, not per concurrent 401.
+// The app fires parallel /v1 requests; a real logout resolves the single-flighted
+// refresh as rejected for all of them, so each awaiting caller would otherwise
+// call captureLogout. This guard makes singularity explicit rather than relying
+// on Sentry's Dedupe integration. Reset on re-auth (setSentryUser).
+let loggedOutCaptured = false;
+
+/**
+ * Test seam for the once-per-incident logout guard: returns `true` the first
+ * time and `false` until {@link resetLogoutGuard} re-arms it. Exported so the
+ * singularity can be unit-tested without initializing Sentry.
+ */
+export function consumeLogoutOnce(): boolean {
+  if (loggedOutCaptured) return false;
+  loggedOutCaptured = true;
+  return true;
+}
+
+/** Re-arm the logout guard (called on re-auth). Exported for tests. */
+export function resetLogoutGuard(): void {
+  loggedOutCaptured = false;
+}
 
 export function initSentry(): void {
   if (initialized) return;
@@ -35,8 +57,11 @@ export function initSentry(): void {
     // results, file contents) — the exact content the trust rule forbids. Same
     // intent as telemetry.ts disabling PostHog session recording.
     tracesSampleRate: s.tracesSampleRate ?? 0,
-    // Extend the trace into the platform's OTel layer over W3C traceparent.
-    tracePropagationTargets: [cfg.platformUrl || /^\//],
+    // tracePropagationTargets is left at the SDK default (same-origin), which is
+    // exactly our case — all API calls are same-origin /v1/* proxied to the
+    // platform. Note browserTracingIntegration propagates Sentry's own
+    // sentry-trace + baggage headers (not W3C traceparent), so this does not
+    // auto-link into the kernel's OTLP traces; the platform ignores the headers.
     beforeSend,
     beforeBreadcrumb,
     // Strip query strings from transaction names so workspace/conversation ids
@@ -84,6 +109,8 @@ export function beforeBreadcrumb(crumb: Sentry.Breadcrumb): Sentry.Breadcrumb | 
 /** Set the per-session opaque user id (never email/displayName). */
 export function setSentryUser(userId: string | null | undefined): void {
   if (!initialized) return;
+  // A new authenticated session starts a fresh logout incident.
+  if (userId) resetLogoutGuard();
   Sentry.setUser(userId ? { id: userId } : null);
 }
 
@@ -107,11 +134,12 @@ export function addAuthBreadcrumb(message: string): void {
 }
 
 /**
- * Emit one event at the terminal involuntary logout, carrying the preceding
- * auth breadcrumb trail — turns a "random logout" into a reconstructable
- * sequence. Not called on manual user logout.
+ * Emit ONE event per involuntary-logout incident, carrying the preceding auth
+ * breadcrumb trail — turns a "random logout" into a reconstructable sequence.
+ * Idempotent across the concurrent 401s that resolve one rejected refresh; reset
+ * by setSentryUser on re-auth. Not called on manual user logout.
  */
 export function captureLogout(reason: string): void {
-  if (!initialized) return;
+  if (!initialized || !consumeLogoutOnce()) return;
   Sentry.captureMessage(`involuntary logout: ${reason}`, "warning");
 }

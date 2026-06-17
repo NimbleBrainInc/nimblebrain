@@ -10,8 +10,13 @@
 // ---------------------------------------------------------------------------
 
 import type { Breadcrumb, ErrorEvent } from "@sentry/react";
-import { describe, expect, test } from "bun:test";
-import { beforeBreadcrumb, beforeSend } from "../src/sentry";
+import { beforeEach, describe, expect, test } from "bun:test";
+import {
+  beforeBreadcrumb,
+  beforeSend,
+  consumeLogoutOnce,
+  resetLogoutGuard,
+} from "../src/sentry";
 
 describe("beforeSend", () => {
   test("strips cookies and headers from the request", () => {
@@ -62,5 +67,23 @@ describe("beforeBreadcrumb", () => {
     const crumb: Breadcrumb = { category: "xhr", data: { url: "https://app.example/v1/tools" } };
     const out = beforeBreadcrumb(crumb);
     expect(out?.data?.url).toBe("https://app.example/v1/tools");
+  });
+});
+
+describe("logout guard (one event per incident)", () => {
+  beforeEach(() => resetLogoutGuard());
+
+  test("emits once across the concurrent 401s of a single logout", () => {
+    // N concurrent 401s resolve one rejected refresh; captureLogout runs per
+    // caller but must collapse to a single emit.
+    expect(consumeLogoutOnce()).toBe(true);
+    expect(consumeLogoutOnce()).toBe(false);
+    expect(consumeLogoutOnce()).toBe(false);
+  });
+
+  test("re-auth re-arms the guard for a later logout", () => {
+    expect(consumeLogoutOnce()).toBe(true);
+    resetLogoutGuard(); // setSentryUser does this on a fresh session
+    expect(consumeLogoutOnce()).toBe(true);
   });
 });
