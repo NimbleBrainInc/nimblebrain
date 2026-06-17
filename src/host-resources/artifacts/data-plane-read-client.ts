@@ -156,8 +156,6 @@ export interface ArtifactListResult {
 export interface ArtifactListOptions {
   /** Semantic type filter — the producing capability's artifact type. */
   type?: string;
-  /** Writer/source filter. */
-  source?: string;
   /** Page size (data-plane-capped). */
   limit?: number;
   /** Keyset cursor from a prior call's `nextCursor`. */
@@ -343,7 +341,6 @@ export class ArtifactReadClient {
     const root = this.config.baseUrl.replace(/\/+$/, "");
     const params = new URLSearchParams();
     if (opts.type) params.set("type", opts.type);
-    if (opts.source) params.set("source", opts.source);
     if (typeof opts.limit === "number" && Number.isFinite(opts.limit)) {
       params.set("limit", String(Math.trunc(opts.limit)));
     }

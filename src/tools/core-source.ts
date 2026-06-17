@@ -805,9 +805,9 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
           const result = await getArtifactResolver().read(uri, wsId);
           const text = result.contents
             .map((c) =>
-              typeof c.text === "string"
+              "text" in c && typeof c.text === "string"
                 ? c.text
-                : c.blob
+                : "blob" in c
                   ? `[binary artifact, mimeType=${c.mimeType ?? "unknown"}]`
                   : "",
             )
