@@ -956,6 +956,35 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     // re-signal (the guard stays latched for the provider's lifetime).
     this.authLostNotified = false;
     await this.writeJson(this.dataDir, "tokens.json", tokens);
+
+    // Connector OAuth health — redacted (booleans + lifetime only, never token
+    // values). A token response carrying no refresh_token means the connection
+    // CANNOT refresh: it dies at access-token expiry and needs a full reconnect
+    // every time. That silently degrades scheduled automations (a daily run
+    // lands after the access token has expired → dead connector). The usual
+    // cause is a vendor that gates offline access behind a non-standard param
+    // (Dropbox's `token_access_type=offline`, Google's `access_type=offline`)
+    // that the connector entry didn't set. `refreshAuthorization` preserves a
+    // prior refresh_token, so a present field here means the connection stays
+    // refreshable across refreshes — the warn fires only for a genuinely
+    // non-refreshable connection, at connect time, by name.
+    const hasRefreshToken =
+      typeof tokens.refresh_token === "string" && tokens.refresh_token.length > 0;
+    if (hasRefreshToken) {
+      log.debug(
+        "mcp",
+        `[oauth] ${this.serverName} tokens saved: refreshable=true expires_in=${tokens.expires_in ?? "?"}`,
+      );
+    } else {
+      log.warn(
+        `[oauth] ${this.serverName} token exchange returned NO refresh_token ` +
+          `(expires_in=${tokens.expires_in ?? "?"}) — this connection cannot refresh and will ` +
+          `require a manual reconnect at access-token expiry. If the vendor gates offline ` +
+          `access behind a param (e.g. token_access_type=offline / access_type=offline), set ` +
+          `it on the connector's additionalAuthorizationParams.`,
+      );
+    }
+
     // OIDC identity capture (best-effort). When the AS returns an
     // id_token alongside the tokens — Google, Microsoft, and Zoom all
     // do; many other OAuth 2.1 servers do too — parse the JWT payload
@@ -993,6 +1022,13 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
   notifyAuthLost(): void {
     if (this.authLostNotified) return;
     this.authLostNotified = true;
+    // Operator-visible, redacted: the credential was rejected and the
+    // connection is flipping to reauth_required. The flip is otherwise only an
+    // SSE event for the UI banner — this is the Loki-queryable signal. (A
+    // Prometheus counter + alert on this is the tracked follow-up.)
+    log.warn(
+      `[oauth] ${this.serverName} authorization lost — connection flipping to reauth_required`,
+    );
     try {
       this.onAuthLost?.();
     } catch (err) {
@@ -1288,27 +1324,6 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
       throw err;
     }
 
-    // Diagnostic: capture the exact authorize-URL parameters so a later
-    // /token exchange that fails with `invalid_code` can be correlated
-    // back to the URL the user was sent to. PKCE failures are otherwise
-    // invisible — the SDK doesn't surface which challenge it computed,
-    // and the vendor's error body just says `invalid_code` without
-    // disclosing which check failed. Paired with the token-exchange
-    // fetch logger (also gated on NB_DEBUG_OAUTH_EXCHANGE): comparing
-    // the challenge here to SHA256(verifier) at exchange time pins a
-    // concurrency-race regression versus a vendor-side rejection.
-    // Logged at warn so it's visible in prod without a log-level bump;
-    // gated behind the env var so it disappears with one flip.
-    if (process.env.NB_DEBUG_OAUTH_EXCHANGE) {
-      // state is opaque CSRF protection, not a hard secret, but the env-
-      // gated log lands in operator log aggregation — truncating to 8
-      // chars (matching the existing `state.slice(0, 8)` convention on
-      // the next log line) is enough to correlate flows in a trace
-      // without exposing the full value.
-      log.warn(
-        `[oauth-debug] AUTHORIZE ${this.serverName} state=${stateParam.slice(0, 8)}… client_id=${url.searchParams.get("client_id")} code_challenge=${url.searchParams.get("code_challenge")} code_challenge_method=${url.searchParams.get("code_challenge_method")} redirect_uri=${url.searchParams.get("redirect_uri")}`,
-      );
-    }
     log.debug(
       "mcp",
       `[oauth] interactive flow: ${this.serverName} registering state=${stateParam.slice(0, 8)}… url=${url.origin}…`,
