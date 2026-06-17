@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { readFile, rename, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { recordLlmUsage } from "../api/metrics.ts";
+import { artifactResolutionsTotal, recordLlmUsage } from "../api/metrics.ts";
 import { log } from "../cli/log.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import type { ToolResult } from "../engine/types.ts";
@@ -812,9 +812,11 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
                   : "",
             )
             .join("");
+          artifactResolutionsTotal.inc({ result: "ok" });
           return { content: textContent(text || "[empty artifact]"), isError: false };
         } catch (err) {
           if (err instanceof ArtifactNotFoundError) {
+            artifactResolutionsTotal.inc({ result: "not_found" });
             return {
               content: textContent(
                 `Artifact "${uri}" not found in this workspace (it may not exist, or belong to another workspace).`,
@@ -822,6 +824,7 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
               isError: true,
             };
           }
+          artifactResolutionsTotal.inc({ result: "error" });
           return {
             content: textContent(
               `Failed to read artifact: ${err instanceof Error ? err.message : String(err)}`,
