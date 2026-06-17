@@ -964,10 +964,12 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     // lands after the access token has expired → dead connector). The usual
     // cause is a vendor that gates offline access behind a non-standard param
     // (Dropbox's `token_access_type=offline`, Google's `access_type=offline`)
-    // that the connector entry didn't set. `refreshAuthorization` preserves a
-    // prior refresh_token, so a present field here means the connection stays
-    // refreshable across refreshes — the warn fires only for a genuinely
-    // non-refreshable connection, at connect time, by name.
+    // that the connector entry didn't set. The MCP SDK's `refreshAuthorization`
+    // (not a method on this class) carries a prior refresh_token forward — it
+    // returns `{ refresh_token: <prior>, ...newTokens }` — so a present field
+    // here means the connection stays refreshable across refreshes, and the warn
+    // fires only for a genuinely non-refreshable connection, at connect time, by
+    // name.
     const hasRefreshToken =
       typeof tokens.refresh_token === "string" && tokens.refresh_token.length > 0;
     if (hasRefreshToken) {
