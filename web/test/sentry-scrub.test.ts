@@ -15,6 +15,7 @@ import {
   beforeBreadcrumb,
   beforeSend,
   consumeLogoutOnce,
+  isReportableLogout,
   resetLogoutGuard,
 } from "../src/sentry";
 
@@ -85,5 +86,17 @@ describe("logout guard (one event per incident)", () => {
     expect(consumeLogoutOnce()).toBe(true);
     resetLogoutGuard(); // setSentryUser does this on a fresh session
     expect(consumeLogoutOnce()).toBe(true);
+  });
+});
+
+describe("isReportableLogout (event vs. expected-end-of-session)", () => {
+  test("suppresses refresh_rejected — the expected session-expiry signal", () => {
+    // Fires on every returning user whose refresh token lapsed and on every
+    // routine deploy of an env left open; breadcrumb-only, never an event.
+    expect(isReportableLogout("refresh_rejected")).toBe(false);
+  });
+
+  test("reports retry_401 — a freshly minted token rejected on the very next call", () => {
+    expect(isReportableLogout("retry_401")).toBe(true);
   });
 });
