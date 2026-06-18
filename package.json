@@ -84,7 +84,6 @@
     "lint": "bunx @biomejs/biome check src/",
     "format": "bunx @biomejs/biome format --write src/ web/src/",
     "format:check": "bunx @biomejs/biome format src/ web/src/",
-    "postinstall": "bun run scripts/fetch-schema.ts",
     "sync-models": "bun run src/model/sync-models.ts"
   },
   "devDependencies": {
