@@ -37,10 +37,10 @@ export function ReleaseUpdateBanner({ collapsed = false }: { collapsed?: boolean
           title="A new version is available — reload"
           aria-label="A new version is available — reload"
           onClick={() => window.location.reload()}
-          className="relative text-sidebar-foreground"
+          className="relative text-warm hover:text-warm"
         >
           <RefreshCw />
-          <span className="absolute top-1 right-1 size-1.5 rounded-full bg-primary" />
+          <span className="absolute top-1 right-1 size-1.5 rounded-full bg-warm" />
         </Button>
       </div>
     );
@@ -49,20 +49,25 @@ export function ReleaseUpdateBanner({ collapsed = false }: { collapsed?: boolean
   return (
     <div
       role="status"
-      className="mx-2 mb-2 shrink-0 rounded-lg border border-sidebar-border bg-sidebar-accent/50 px-2.5 py-2 text-xs text-sidebar-foreground"
+      className="mx-2 mb-2 shrink-0 rounded-lg border border-warm/30 bg-warm/5 px-2.5 py-2 text-xs text-foreground"
     >
       <div className="flex items-center justify-between gap-1">
-        <span>New version available</span>
+        <span className="font-medium">New version available</span>
         <button
           type="button"
           aria-label="Dismiss update notice"
           onClick={() => setDismissed(true)}
-          className="-mr-0.5 rounded p-0.5 text-sidebar-foreground/60 transition-colors hover:text-sidebar-foreground"
+          className="-mr-0.5 rounded p-0.5 text-muted-foreground transition-colors hover:text-foreground"
         >
           <X className="size-3.5" />
         </button>
       </div>
-      <Button size="sm" className="mt-1.5 w-full" onClick={() => window.location.reload()}>
+      <Button
+        size="sm"
+        variant="warm"
+        className="mt-1.5 w-full"
+        onClick={() => window.location.reload()}
+      >
         <RefreshCw />
         Reload
       </Button>
