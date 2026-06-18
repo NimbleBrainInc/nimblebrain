@@ -342,7 +342,6 @@ Run `nb --help` or `nb <command> --help` for full usage. If you haven't run `bun
 |----------|---------|
 | `WORKOS_API_KEY` | WorkOS API key (when `auth.adapter: "workos"` in `instance.json`) |
 | `NB_INTERNAL_TOKEN` | Shared secret for service-to-service calls (never forwarded to bundles) |
-| `TURNSTILE_SECRET_KEY` | Cloudflare Turnstile secret (CAPTCHA on auth endpoints) |
 | `POSTHOG_API_KEY` | PostHog key for anonymous product telemetry |
 | `NB_TELEMETRY_DISABLED` | Set to `1` to disable telemetry (also `DO_NOT_TRACK=1`) |
 

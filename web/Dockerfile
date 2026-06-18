@@ -8,9 +8,9 @@ WORKDIR /app
 COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile
 COPY . .
-# No build-time client keys. Sentry / Turnstile / PostHog config is served at
-# runtime from NB_* env by Caddy (see /config.js in the Caddyfile) so one image
-# works across every tenant and environment. The bundle ships clean.
+# No build-time client keys. Sentry / PostHog config is served at runtime from
+# NB_* env by Caddy (see /config.js in the Caddyfile) so one image works across
+# every tenant and environment. The bundle ships clean.
 RUN bun run build
 
 FROM caddy:2-alpine

@@ -17,8 +17,8 @@
  * dev `getConfig()` falls back to Vite env when a field is absent — in a built
  * image `window.__NB_CONFIG__` always wins because CI builds with no `VITE_*`.
  *
- * This is the single source the web client reads for Sentry, Turnstile, and
- * PostHog config. All values here are public client keys — never secrets.
+ * This is the single source the web client reads for Sentry and PostHog config.
+ * All values here are public client keys — never secrets.
  */
 
 /** Resolved config the app reads, with booleans/numbers coerced. */
@@ -34,7 +34,6 @@ export interface NbRuntimeConfig {
     enabled?: boolean;
     tracesSampleRate?: number;
   };
-  turnstile?: { siteKey?: string; enabled?: boolean };
   posthog?: { key?: string; enabled?: boolean };
 }
 
@@ -48,7 +47,6 @@ interface RawConfig {
   environment?: string;
   release?: string;
   sentry?: { dsn?: string; enabled?: string | boolean; tracesSampleRate?: string | number };
-  turnstile?: { siteKey?: string; enabled?: string | boolean };
   posthog?: { key?: string; enabled?: string | boolean };
 }
 
@@ -84,10 +82,6 @@ export function getConfig(): NbRuntimeConfig {
         w.sentry?.tracesSampleRate ?? import.meta.env.VITE_SENTRY_TRACES_SAMPLE_RATE,
         0,
       ),
-    },
-    turnstile: {
-      siteKey: w.turnstile?.siteKey || import.meta.env.VITE_TURNSTILE_SITE_KEY,
-      enabled: asBool(w.turnstile?.enabled),
     },
     posthog: {
       key: w.posthog?.key || import.meta.env.VITE_POSTHOG_KEY,

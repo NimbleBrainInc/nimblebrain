@@ -39,7 +39,6 @@ describe("getConfig", () => {
     setConfig({
       tenantId: "tenant-a",
       sentry: { dsn: "https://k@o1.ingest.sentry.io/1", enabled: "true", tracesSampleRate: "0.25" },
-      turnstile: { siteKey: "0xAAA", enabled: "false" },
       posthog: { key: "phc_x", enabled: "true" },
     });
     const c = getConfig();
@@ -47,7 +46,6 @@ describe("getConfig", () => {
     expect(c.sentry?.dsn).toBe("https://k@o1.ingest.sentry.io/1");
     expect(c.sentry?.enabled).toBe(true);
     expect(c.sentry?.tracesSampleRate).toBe(0.25);
-    expect(c.turnstile?.enabled).toBe(false);
     expect(c.posthog?.enabled).toBe(true);
   });
 
@@ -68,7 +66,6 @@ describe("getConfig", () => {
     const c = getConfig();
     expect(c.sentry?.dsn).toBeUndefined();
     expect(c.sentry?.enabled).toBeUndefined();
-    expect(c.turnstile?.siteKey).toBeUndefined();
     expect(c.posthog?.key).toBeUndefined();
     expect(c.sentry?.tracesSampleRate).toBe(0);
   });

@@ -115,8 +115,6 @@ The web UI is a static bundle, so it cannot read pod env from JS. Instead Caddy 
 | `NB_SENTRY_ENABLED` | No | `false` | Set `true` to enable Sentry for this deployment (also requires a DSN). |
 | `NB_SENTRY_ENV` | No | — | Sentry `environment` label (e.g. `staging`, `production`). |
 | `NB_SENTRY_TRACES_SAMPLE_RATE` | No | `0` | Performance-trace sample rate, `0`–`1`. |
-| `NB_TURNSTILE_SITE_KEY` | No | — | Cloudflare Turnstile site key (public). |
-| `NB_TURNSTILE_ENABLED` | No | `false` | Set `true` to enable the captcha (also requires a site key). |
 | `NB_POSTHOG_KEY` | No | — | PostHog write-only key for web analytics. |
 | `NB_POSTHOG_ENABLED` | No | `false` | Set `true` to enable web analytics (also requires a key). |
 
