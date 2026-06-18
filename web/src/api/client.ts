@@ -167,8 +167,10 @@ const refreshInterceptor = createFetchWithRefresh({
   fetch: ((input, init) => globalThis.fetch(input, init)) as typeof fetch,
   refreshUrl: `${API_BASE}/v1/auth/refresh`,
   onAuthError: () => onAuthError?.(),
-  // Telemetry: breadcrumb every refresh outcome; one event per involuntary
-  // logout (captureLogout dedupes the concurrent-401 calls into one incident).
+  // Telemetry: breadcrumb every refresh outcome. captureLogout then emits a
+  // single Sentry event only for the *reportable* logout (`retry_401`);
+  // `refresh_rejected` is the expected end-of-session signal and stays
+  // breadcrumb-only (see isReportableLogout in sentry.ts).
   onRefreshOutcome: (outcome) => addAuthBreadcrumb(`refresh:${outcome}`),
   onLogout: captureLogout,
 });

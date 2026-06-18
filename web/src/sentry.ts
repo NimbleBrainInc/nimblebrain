@@ -138,12 +138,38 @@ export function addAuthBreadcrumb(message: string): void {
 }
 
 /**
- * Emit ONE event per involuntary-logout incident, carrying the preceding auth
- * breadcrumb trail — turns a "random logout" into a reconstructable sequence.
- * Idempotent across the concurrent 401s that resolve one rejected refresh; reset
- * by setSentryUser on re-auth. Not called on manual user logout.
+ * Which involuntary-logout reasons warrant a captured Sentry event.
+ *
+ * `refresh_rejected` is the EXPECTED end-of-session signal: the refresh endpoint
+ * gave a definitive 401 because the refresh token was absent, expired, or
+ * revoked — i.e. every returning user whose session lapsed, every environment
+ * reopened after a while. It is not an error condition; capturing it per
+ * incident buries the project in normal re-logins (and pages on every routine
+ * deploy of an env that was left open). It stays a breadcrumb — emitted by the
+ * refresh-outcome hook (`refresh:rejected`) — so it still decorates the trail of
+ * a *real* error that fires later.
+ *
+ * `retry_401` is the genuine anomaly worth an event: the refresh SUCCEEDED, we
+ * minted a fresh access token, and the very next request rejected it anyway —
+ * "a token we just issued is already invalid", which points at an actual bug.
+ *
+ * Exported as a test seam (cf. consumeLogoutOnce) so the policy is unit-testable
+ * without initializing the Sentry client.
+ */
+export function isReportableLogout(reason: string): boolean {
+  return reason !== "refresh_rejected";
+}
+
+/**
+ * Emit ONE event per *reportable* involuntary-logout incident (see
+ * {@link isReportableLogout}), carrying the preceding auth breadcrumb trail —
+ * turns a "random logout" into a reconstructable sequence. Idempotent across the
+ * concurrent 401s that resolve one rejected refresh; reset by setSentryUser on
+ * re-auth. Not called on manual user logout. The once-guard is consumed ONLY on
+ * the reportable path, so a suppressed `refresh_rejected` never disarms a later
+ * genuine `retry_401` in the same session.
  */
 export function captureLogout(reason: string): void {
-  if (!initialized || !consumeLogoutOnce()) return;
+  if (!initialized || !isReportableLogout(reason) || !consumeLogoutOnce()) return;
   Sentry.captureMessage(`involuntary logout: ${reason}`, "warning");
 }
