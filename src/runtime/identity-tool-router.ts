@@ -64,7 +64,10 @@ export type WorkspaceDispatchHook = (callId: string, wsId: string) => void;
  * unit tests can stub with a tiny in-memory aggregator that doesn't need
  * a workspace store or FS watcher.
  */
-export type IdentityToolRouterAggregator = Pick<ToolListAggregator, "aggregateToolList">;
+export type IdentityToolRouterAggregator = Pick<
+  ToolListAggregator,
+  "aggregateToolList" | "aggregateScopedToolList"
+>;
 
 export interface IdentityToolRouterOptions {
   /**
@@ -83,6 +86,16 @@ export interface IdentityToolRouterOptions {
   aggregator: IdentityToolRouterAggregator;
   /** Optional audit-attribution hook. See `WorkspaceDispatchHook`. */
   onWorkspaceDispatch?: WorkspaceDispatchHook;
+  /**
+   * Workspace lockdown (`features.crossWorkspaceTools === false`). When set,
+   * the router's REACHABLE set and its INVOCATION gate are both scoped to this
+   * workspace set — the session's focused workspace plus the user's personal
+   * workspace — instead of the identity's full membership union. The caller
+   * resolves it from the feature flag and the focused workspace; the router
+   * stays a pure composition. Absent (the default), the ambient cross-workspace
+   * union is preserved unchanged.
+   */
+  allowedWsIds?: readonly string[];
 }
 
 export class IdentityToolRouter implements ToolRouter {
@@ -90,6 +103,7 @@ export class IdentityToolRouter implements ToolRouter {
   private readonly runtime: OrchestratorRuntime;
   private readonly aggregator: IdentityToolRouterAggregator;
   private readonly onWorkspaceDispatch?: WorkspaceDispatchHook;
+  private readonly allowedWsIds?: readonly string[];
 
   constructor(opts: IdentityToolRouterOptions) {
     // The type system already pins the shape; we only need to catch the
@@ -103,6 +117,7 @@ export class IdentityToolRouter implements ToolRouter {
     this.runtime = opts.runtime;
     this.aggregator = opts.aggregator;
     if (opts.onWorkspaceDispatch) this.onWorkspaceDispatch = opts.onWorkspaceDispatch;
+    if (opts.allowedWsIds) this.allowedWsIds = opts.allowedWsIds;
   }
 
   /**
@@ -114,7 +129,11 @@ export class IdentityToolRouter implements ToolRouter {
    * pick up fields it has no contract for.
    */
   async availableTools(): Promise<ToolSchema[]> {
-    const aggregated = await this.aggregator.aggregateToolList(this.identityId);
+    // Under workspace lockdown the reachable set is scoped to {focused ∪
+    // personal}; otherwise it's the identity's full cross-workspace union.
+    const aggregated = this.allowedWsIds
+      ? await this.aggregator.aggregateScopedToolList(this.identityId, this.allowedWsIds)
+      : await this.aggregator.aggregateToolList(this.identityId);
     return aggregated.map((t) => ({
       name: t.name,
       description: t.description,
@@ -145,6 +164,9 @@ export class IdentityToolRouter implements ToolRouter {
         identityId: this.identityId,
         namespacedName: call.name,
         runtime: this.runtime,
+        // Focus-gate: under lockdown a member can still be denied a tool whose
+        // workspace isn't in {focused ∪ personal}. Undefined preserves ambient.
+        ...(this.allowedWsIds ? { allowedWsIds: this.allowedWsIds } : {}),
       });
     } catch (err) {
       return mapOrchestratorErrorToToolResult(err, call.name);

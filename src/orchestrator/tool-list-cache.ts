@@ -382,6 +382,53 @@ export class ToolListCache {
   }
 
   /**
+   * Compose a union over an EXPLICIT workspace set, with NO identity-level
+   * memo. Used by the focus-scoped path (workspace lockdown): the set is
+   * `{focused, personal}`, which varies per turn, so the `identityId`-keyed
+   * memo in {@link getUnionForIdentity} would serve a stale union for a
+   * different focus. The per-WORKSPACE listings this fans out over ARE cached +
+   * FS-watched (`getWorkspaceListing`), so recomposing a 2-element union per
+   * call is cheap and always fresh — no second cache to invalidate. A rejected
+   * whole-workspace listing is dropped (degrade gracefully), mirroring
+   * {@link getUnionForIdentity}. No `subscribedIdentities` tracking: there is no
+   * memoized union here to invalidate.
+   */
+  async composeUnion(
+    wsIds: readonly string[],
+    namespace: (wsId: string, toolName: string) => string,
+  ): Promise<readonly NamespacedToolDescriptor[]> {
+    this.assertOpen();
+    const settled = await Promise.allSettled(
+      wsIds.map(async (wsId) => ({ wsId, listing: await this.getWorkspaceListing(wsId) })),
+    );
+    const out: NamespacedToolDescriptor[] = [];
+    for (const result of settled) {
+      if (result.status === "rejected") {
+        log.debug(
+          "mcp",
+          `[tool-list-cache] composeUnion dropping a workspace: ${
+            result.reason instanceof Error ? result.reason.message : String(result.reason)
+          }`,
+        );
+        continue;
+      }
+      const { wsId, listing } = result.value;
+      for (const t of listing.tools) {
+        out.push({
+          name: namespace(wsId, t.name),
+          wsId,
+          toolName: t.name,
+          description: t.description,
+          inputSchema: t.inputSchema,
+          ...(t.annotations !== undefined ? { annotations: t.annotations } : {}),
+          ...(t.execution !== undefined ? { execution: t.execution } : {}),
+        });
+      }
+    }
+    return out;
+  }
+
+  /**
    * Drop the cached union for `identityId` (e.g. after a membership
    * change the FS watcher can't see). Idempotent. Also unsubscribes
    * this identity from every workspace's invalidation list so a stale

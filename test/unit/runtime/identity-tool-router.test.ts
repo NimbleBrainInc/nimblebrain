@@ -129,6 +129,11 @@ function makeStubAggregator(
     async aggregateToolList(identityId: string) {
       return byIdentity.get(identityId) ?? [];
     },
+    async aggregateScopedToolList(identityId: string, scopeWsIds: readonly string[]) {
+      const scope = new Set(scopeWsIds);
+      // Identity tools (wsId null) always included; workspace tools filtered to scope.
+      return (byIdentity.get(identityId) ?? []).filter((d) => d.wsId === null || scope.has(d.wsId));
+    },
   };
 }
 
@@ -508,5 +513,79 @@ describe("IdentityToolRouter — orchestrator errors", () => {
 
     expect(result.isError).toBe(true);
     expect(result.structuredContent).toMatchObject({ error: "orchestrator_error" });
+  });
+});
+
+describe("IdentityToolRouter — workspace lockdown (allowedWsIds)", () => {
+  const OTHER_WS = "ws_other";
+
+  test("availableTools uses the scoped path — out-of-scope workspace tools excluded, identity tools kept", async () => {
+    const aggregator = makeStubAggregator(
+      new Map([
+        [
+          USER_ID,
+          [
+            {
+              name: namespacedToolName(SHARED_WS, "crm__search"),
+              description: "d",
+              inputSchema: { type: "object", properties: {} },
+              wsId: SHARED_WS,
+              toolName: "crm__search",
+            },
+            {
+              name: namespacedToolName(OTHER_WS, "x__run"),
+              description: "d",
+              inputSchema: { type: "object", properties: {} },
+              wsId: OTHER_WS,
+              toolName: "x__run",
+            },
+            {
+              name: "conversations__list",
+              description: "d",
+              inputSchema: { type: "object", properties: {} },
+              wsId: null,
+              toolName: "conversations__list",
+            },
+          ],
+        ],
+      ]),
+    );
+    const router = new IdentityToolRouter({
+      identityId: USER_ID,
+      runtime: makeStubRuntime({
+        registries: new Map(),
+        memberships: new Map(),
+        existingWorkspaces: new Set(),
+        workDir,
+      }),
+      aggregator,
+      allowedWsIds: [SHARED_WS, PERSONAL_WS], // OTHER_WS is not focused
+    });
+
+    const names = (await router.availableTools()).map((t) => t.name);
+    expect(names).toContain(`${SHARED_WS}-crm__search`);
+    expect(names).toContain("conversations__list"); // identity tools always reachable
+    expect(names).not.toContain(`${OTHER_WS}-x__run`); // out-of-scope → excluded
+  });
+
+  test("execute denies a directly-named out-of-scope tool even when the caller is a member (focus gate)", async () => {
+    const otherSource = makeSpySource("x");
+    const runtime = makeStubRuntime({
+      registries: new Map([[OTHER_WS, [otherSource]]]),
+      // The user IS a member of OTHER_WS — only the focus gate stops the call.
+      memberships: new Map([[USER_ID, [SHARED_WS, PERSONAL_WS, OTHER_WS]]]),
+      existingWorkspaces: new Set([SHARED_WS, PERSONAL_WS, OTHER_WS]),
+      workDir,
+    });
+    const router = new IdentityToolRouter({
+      identityId: USER_ID,
+      runtime,
+      aggregator: makeStubAggregator(new Map()),
+      allowedWsIds: [SHARED_WS, PERSONAL_WS], // OTHER_WS not in scope
+    });
+
+    const res = await router.execute({ id: "c1", name: `${OTHER_WS}-x__run`, input: {} });
+    expect(res.isError).toBe(true); // WorkspaceAccessDenied → mapped to an error result
+    expect(otherSource.calls).toHaveLength(0); // the out-of-scope source never ran
   });
 });

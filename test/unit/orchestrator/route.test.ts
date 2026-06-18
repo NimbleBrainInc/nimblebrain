@@ -200,6 +200,54 @@ describe("routeToolCall — happy path", () => {
   });
 });
 
+describe("routeToolCall — focus gate (workspace lockdown)", () => {
+  // Pins: a MEMBER of a workspace is still denied a tool there when the
+  // workspace is outside the session's allowed-set (focused ∪ personal).
+  // Membership authorizes which workspaces MAY be focused; the allowed-set is
+  // which ones currently ARE. Without this gate, narrowing the tool LISTS would
+  // not stop a directly-named cross-workspace tool from being dispatched.
+  test("denies a member workspace that is outside allowedWsIds", async () => {
+    const runtime = buildHappyRuntime();
+    let thrown: unknown = null;
+    try {
+      await routeToolCall({
+        identityId: USER_ID,
+        namespacedName: `${SHARED_WS}-crm__search`,
+        runtime,
+        allowedWsIds: [PERSONAL_WS], // focused on personal; ws_helix is in scope no longer
+      });
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(WorkspaceAccessDenied);
+    // Fails closed BEFORE constructing a workspace context.
+    expect(runtime.contextCallCount()).toBe(0);
+  });
+
+  test("allows a member workspace that IS in allowedWsIds", async () => {
+    const runtime = buildHappyRuntime();
+    const routed = await routeToolCall({
+      identityId: USER_ID,
+      namespacedName: `${SHARED_WS}-crm__search`,
+      runtime,
+      allowedWsIds: [SHARED_WS, PERSONAL_WS],
+    });
+    expect(routed.context.workspaceId).toBe(SHARED_WS);
+    expect(routed.source.name).toBe("crm");
+  });
+
+  test("omitting allowedWsIds preserves ambient cross-workspace (membership-only gate)", async () => {
+    const runtime = buildHappyRuntime();
+    // No allowedWsIds → the default flag-on behavior: membership alone gates.
+    const routed = await routeToolCall({
+      identityId: USER_ID,
+      namespacedName: `${SHARED_WS}-crm__search`,
+      runtime,
+    });
+    expect(routed.context.workspaceId).toBe(SHARED_WS);
+  });
+});
+
 describe("routeToolCall — strict invariant (Stage 1 lesson 3)", () => {
   // Pins: un-namespaced names MUST throw rather than silently fall
   // back to "the user's personal workspace." A defensive default

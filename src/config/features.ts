@@ -29,6 +29,18 @@ export interface FeatureFlags {
    * `conversation/compaction.ts`.
    */
   compaction?: boolean;
+  /**
+   * Default true (the Stage-2 ambient behavior). When `false`, a session's
+   * tool composition AND invocation are locked to the FOCUSED workspace plus
+   * the user's personal workspace (and the bare identity sources) — the
+   * cross-workspace membership union is no longer surfaced (`nb__search`
+   * corpus, the engine's promotable set) or callable (`routeToolCall`'s
+   * focus-gate). Cross-workspace reach becomes a sequential focus-switch, not
+   * an ambient union. Identity authorizes which workspaces may be focused;
+   * focus composes the tools. Flip per-tenant to lock down; the default moves
+   * once validated. See the workspace-lockdown design.
+   */
+  crossWorkspaceTools?: boolean;
 }
 
 /** Resolved feature flags — all required booleans (no optionals). */
@@ -44,6 +56,7 @@ const DEFAULTS: ResolvedFeatures = {
   userManagement: true,
   workspaceManagement: true,
   compaction: false,
+  crossWorkspaceTools: true,
 };
 
 /** Resolve partial feature flags to a complete set. Missing keys default to true. */
@@ -59,6 +72,7 @@ export function resolveFeatures(config?: FeatureFlags): ResolvedFeatures {
     userManagement: config.userManagement ?? true,
     workspaceManagement: config.workspaceManagement ?? true,
     compaction: config.compaction ?? false,
+    crossWorkspaceTools: config.crossWorkspaceTools ?? true,
   };
 }
 

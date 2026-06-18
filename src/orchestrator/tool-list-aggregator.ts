@@ -104,6 +104,18 @@ export interface ToolListAggregatorOptions {
 export interface ToolListAggregator {
   aggregateToolList(identityId: string): Promise<readonly NamespacedToolDescriptor[]>;
   /**
+   * Like {@link aggregateToolList}, but composed over an EXPLICIT workspace set
+   * (the session's focused ∪ personal, under workspace lockdown) instead of the
+   * identity's full membership union. The set is intersected with membership
+   * first, so it can only ever NARROW the identity's reach, never widen it.
+   * Identity sources are still prepended. Memo-free (the focus set varies per
+   * turn) — see {@link ToolListCache.composeUnion}.
+   */
+  aggregateScopedToolList(
+    identityId: string,
+    scopeWsIds: readonly string[],
+  ): Promise<readonly NamespacedToolDescriptor[]>;
+  /**
    * Drop the cached union for `identityId`. The aggregator calls this
    * automatically when the workspace membership for the identity
    * changes (`getWorkspacesForUser` returns a different set than the
@@ -247,6 +259,28 @@ export function createToolListAggregator(options: ToolListAggregatorOptions): To
     return identityTools.length === 0 ? wsUnion : [...identityTools, ...wsUnion];
   };
 
+  const aggregateScopedToolList = async (
+    identityId: string,
+    scopeWsIds: readonly string[],
+  ): Promise<readonly NamespacedToolDescriptor[]> => {
+    if (typeof identityId !== "string" || identityId.length === 0) {
+      throw new Error("[tool-list-aggregator] aggregateScopedToolList: identityId is required");
+    }
+    // Intersect the requested scope with actual membership: the focus-scoped
+    // set can only NARROW the identity's reach, never widen it. (The focused ws
+    // is already membership-gated upstream at `resolveWorkspace`, and the
+    // personal ws is a member by construction — this is belt-and-suspenders
+    // against a stale or wrong id reaching here.)
+    const member = await options.workspaceStore.getWorkspacesForUser(identityId);
+    const memberIds = new Set(member.map((ws) => ws.id));
+    const wsIds = [...new Set(scopeWsIds)].filter((id) => memberIds.has(id));
+    const [identityTools, wsUnion] = await Promise.all([
+      getIdentityDescriptors(),
+      cache.composeUnion(wsIds, namespacedToolName),
+    ]);
+    return identityTools.length === 0 ? wsUnion : [...identityTools, ...wsUnion];
+  };
+
   const invalidateIdentity = (identityId: string): void => {
     cache.invalidateIdentity(identityId);
     identityMembershipStamp.delete(identityId);
@@ -265,6 +299,7 @@ export function createToolListAggregator(options: ToolListAggregatorOptions): To
 
   return {
     aggregateToolList,
+    aggregateScopedToolList,
     invalidateIdentity,
     invalidateWorkspace,
     activeWatcherCount,

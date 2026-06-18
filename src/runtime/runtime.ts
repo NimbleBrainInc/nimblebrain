@@ -550,10 +550,12 @@ export class Runtime {
         if (!rtHolder.rt) throw new Error("Runtime not initialized");
         const identity = getRequestContext()?.identity;
         if (!identity) return rtHolder.rt.getRegistryForCurrentWorkspace();
+        const allowedWsIds = rtHolder.rt._lockdownAllowedWsIds(identity.id);
         return new IdentityToolRouter({
           identityId: identity.id,
           runtime: rtHolder.rt,
           aggregator: rtHolder.rt.getToolListAggregator(),
+          ...(allowedWsIds ? { allowedWsIds } : {}),
         });
       },
       // Default initial active set: focused-workspace tools (namespaced
@@ -2337,11 +2339,29 @@ export class Runtime {
    * session's focused workspace — so cross-workspace dispatches attribute
    * correctly in audit logs.
    */
+  /**
+   * Workspace lockdown (`features.crossWorkspaceTools === false`): the set a
+   * session may compose tools from and invoke into — its FOCUSED workspace plus
+   * the caller's personal workspace. Returns `undefined` when lockdown is off
+   * (the ambient cross-workspace union is preserved) or no workspace is focused
+   * (CLI/dev — only identity-owned tools contribute). Read by every
+   * `IdentityToolRouter` construction and by `listDiscoverableTools`, so the
+   * reachable set, the search corpus, and the invocation gate all derive from
+   * one source.
+   */
+  _lockdownAllowedWsIds(identityId: string): readonly string[] | undefined {
+    if (this._features.crossWorkspaceTools) return undefined;
+    const focused = this._currentWorkspaceId?.() ?? null;
+    const personal = personalWorkspaceIdFor(identityId);
+    return [...new Set(focused ? [focused, personal] : [personal])];
+  }
+
   private _buildIdentityToolRouter(opts: {
     identityId: string;
     perCallWorkspaceMap: Map<string, string>;
   }): ToolRouter {
     const { identityId, perCallWorkspaceMap } = opts;
+    const allowedWsIds = this._lockdownAllowedWsIds(identityId);
     return new IdentityToolRouter({
       identityId,
       runtime: this,
@@ -2349,6 +2369,7 @@ export class Runtime {
       onWorkspaceDispatch: (callId, wsId) => {
         perCallWorkspaceMap.set(callId, wsId);
       },
+      ...(allowedWsIds ? { allowedWsIds } : {}),
     });
   }
 
@@ -2901,7 +2922,12 @@ export class Runtime {
       // NamespacedToolDescriptor carries every ToolSchema field (name,
       // description, inputSchema, annotations) plus wsId/toolName — so the
       // union is assignable to ToolSchema[] for the search/eligibility path.
-      return this._toolListAggregator.aggregateToolList(identity.id);
+      // Under workspace lockdown the search corpus is scoped to {focused ∪
+      // personal}; otherwise it's the identity's full cross-workspace union.
+      const allowedWsIds = this._lockdownAllowedWsIds(identity.id);
+      return allowedWsIds
+        ? this._toolListAggregator.aggregateScopedToolList(identity.id, allowedWsIds)
+        : this._toolListAggregator.aggregateToolList(identity.id);
     }
     return this.getRegistryForCurrentWorkspace().availableTools();
   }

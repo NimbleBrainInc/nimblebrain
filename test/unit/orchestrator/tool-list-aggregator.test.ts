@@ -233,6 +233,46 @@ describe("aggregateToolList — happy path", () => {
   });
 });
 
+// ── 1b. Scoped aggregation (workspace lockdown) ────────────────────
+
+describe("aggregateScopedToolList — focus-scoped composition", () => {
+  test("composes ONLY the requested workspaces, not the full membership union", async () => {
+    const wsA = "ws_a";
+    const wsB = "ws_b";
+    const workDir = trackDir(makeWorkDir([wsA, wsB]));
+    const { lister } = spyingLister(async (wsId) =>
+      wsId === wsA ? buildTools(["alpha", "beta", "gamma"], "src_a") : buildTools(["delta"], "src_b"),
+    );
+    const store = buildStore({ user_1: [wsA, wsB] }); // member of BOTH
+    const agg = track(
+      createToolListAggregator({ workDir, workspaceStore: store, listToolsForWorkspace: lister }),
+    );
+
+    // Scope to wsA only → wsB's tools are excluded even though the user is a member.
+    const out = await agg.aggregateScopedToolList("user_1", [wsA]);
+    const parsed = out.map((d) => parseWs(d.name));
+    expect(parsed.every((p) => p.wsId === wsA)).toBe(true);
+    expect(parsed.map((p) => p.toolName).sort()).toEqual(["alpha", "beta", "gamma"]);
+  });
+
+  test("intersects the scope with membership — a non-member id in the set is dropped, never widens", async () => {
+    const wsA = "ws_a";
+    const workDir = trackDir(makeWorkDir([wsA]));
+    const { lister } = spyingLister(async () => buildTools(["alpha"], "src_a"));
+    const store = buildStore({ user_1: [wsA] }); // member of wsA only
+    const agg = track(
+      createToolListAggregator({ workDir, workspaceStore: store, listToolsForWorkspace: lister }),
+    );
+
+    // Caller passes a workspace the user is NOT a member of — it must be dropped,
+    // not composed (the scope can only narrow, never widen past membership).
+    const out = await agg.aggregateScopedToolList("user_1", [wsA, "ws_not_a_member"]);
+    const parsed = out.map((d) => parseWs(d.name));
+    expect(parsed.every((p) => p.wsId === wsA)).toBe(true);
+    expect(parsed).toHaveLength(1);
+  });
+});
+
 // ── 2. Collision ───────────────────────────────────────────────────
 
 describe("aggregateToolList — collision across workspaces", () => {

@@ -250,6 +250,18 @@ export async function routeToolCall(opts: {
   identityId: string;
   namespacedName: string;
   runtime: OrchestratorRuntime;
+  /**
+   * Optional focus-gate (workspace lockdown). When supplied, a workspace tool
+   * is callable ONLY if its workspace is in this set — the session's focused
+   * workspace plus the user's personal workspace — even when the caller is a
+   * member of the tool's workspace. Membership authorizes which workspaces may
+   * be focused; this set is which ones currently ARE. Absent (the default,
+   * `features.crossWorkspaceTools` on), membership alone gates and the ambient
+   * cross-workspace behavior is preserved. Routing stays pure: this is an
+   * explicit caller input (the caller resolves it from the feature flag), never
+   * ambient state.
+   */
+  allowedWsIds?: readonly string[];
 }): Promise<RoutedToolCall> {
   const { identityId, namespacedName, runtime } = opts;
 
@@ -303,6 +315,17 @@ export async function routeToolCall(opts: {
   const accessible = await workspaceStore.getWorkspacesForUser(identityId);
   const isMember = accessible.some((w) => w.id === wsId);
   if (!isMember) {
+    throw new WorkspaceAccessDenied(identityId, wsId);
+  }
+
+  // Step 3b — focus gate (workspace lockdown). A member can still be denied if
+  // the tool's workspace is outside the session's allowed-set (focused ∪
+  // personal). This is what makes the workspace a real wall rather than a soft
+  // suggestion: a directly-named `ws_<other>-tool` cannot be invoked unless that
+  // workspace is currently focused, even though list-narrowing already hides it.
+  // (#474 may later distinguish this from a true non-member denial to drive the
+  // "want me to switch?" elicitation; today it collapses to the same denial.)
+  if (opts.allowedWsIds && !opts.allowedWsIds.includes(wsId)) {
     throw new WorkspaceAccessDenied(identityId, wsId);
   }
 
