@@ -90,6 +90,10 @@ export function useReleaseCheck(opts?: { intervalMs?: number }): ReleaseCheckRes
       if (document.visibilityState === "visible") void check();
     };
 
+    // No eager check on mount — deliberate: a freshly loaded tab is, by
+    // definition, running the currently-served build, so an immediate fetch
+    // could never find a mismatch. The first meaningful check is the interval
+    // tick (or an earlier focus / visibility regain).
     timer = setInterval(check, intervalMs);
     document.addEventListener("visibilitychange", onVisible);
     window.addEventListener("focus", check);
