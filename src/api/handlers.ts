@@ -42,6 +42,7 @@ import { PersonalWorkspaceInvariantError } from "../workspace/errors.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
 import type { ConversationEventManager } from "./conversation-events.ts";
 import type { SseEventManager } from "./events.ts";
+import { artifactResolutionsTotal } from "./metrics.ts";
 import { ChatRequestBody, ToolCallRequestEnvelope } from "./schemas/rest.ts";
 import { validateAgainst } from "./schemas/validate.ts";
 import { startSseHeartbeat } from "./sse-heartbeat.ts";
@@ -887,20 +888,28 @@ export async function handleReadResource(
     const resolver = getArtifactResolver();
     try {
       const result = await resolver.read(uri, ws);
+      artifactResolutionsTotal.inc({ result: "ok" });
       return json(result as Record<string, unknown>);
     } catch (err) {
       // A malformed `artifact://` id is client input, not a server fault: 400,
       // and never warn-log it — a hostile/typo'd URI must not spam the logs.
       if (err instanceof InvalidArtifactUriError) {
+        artifactResolutionsTotal.inc({ result: "malformed" });
         log.debug("host-resources", `[artifact] rejected malformed URI ${uri}: ${err.message}`);
         return apiError(400, "bad_request", "Malformed artifact:// URI", { uri });
       }
       if (err instanceof ArtifactNotFoundError) {
+        // High-signal: the host emitted this link and now can't resolve it —
+        // most often a cross-workspace reference RLS-denied at the data plane.
+        // The 404 is otherwise silent; this counter is the fleet-level signal.
+        artifactResolutionsTotal.inc({ result: "not_found" });
         return apiError(404, "resource_not_found", `Resource "${uri}" not found`, { uri });
       }
       if (err instanceof ArtifactTooLargeError) {
+        artifactResolutionsTotal.inc({ result: "too_large" });
         return apiError(413, "resource_too_large", err.message, { uri });
       }
+      artifactResolutionsTotal.inc({ result: "error" });
       log.warn(
         `[artifact] read ${uri} (ws=${ws}) failed: ${err instanceof Error ? err.message : String(err)}`,
       );

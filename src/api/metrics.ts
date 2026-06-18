@@ -114,6 +114,26 @@ export const toolPromotionsTotal = new Counter({
   registers: [metricsRegistry],
 });
 
+/**
+ * Host resolutions of `artifact://` resource links, by outcome. `result` is a
+ * closed set: `ok` | `not_found` | `too_large` | `malformed` | `error`.
+ *
+ * The `not_found` rate is the high-signal detector: the host emitted a
+ * `resource_link` and then could not resolve it — most often a cross-workspace
+ * reference whose artifact lives in a workspace the viewing read token can't
+ * reach (RLS-denied, collapsed to 404). That failure is otherwise silent (the
+ * data plane returns a deliberate 404, the host renders a benign banner), so
+ * this counter is the only fleet-level signal it happened. No tenant/workspace
+ * label — one pod per tenant, so the scrape namespace attributes it, and a
+ * workspace label would be client-unbounded.
+ */
+export const artifactResolutionsTotal = new Counter({
+  name: "nb_artifact_resolutions_total",
+  help: "Host artifact:// resolutions, by result.",
+  labelNames: ["result"] as const,
+  registers: [metricsRegistry],
+});
+
 /** Token usage subset needed for metrics — a structural slice of `TokenUsage`. */
 interface UsageForMetrics {
   inputTokens: number;

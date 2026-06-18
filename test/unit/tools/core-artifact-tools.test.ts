@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, it } from "bun:test";
+import { artifactResolutionsTotal } from "../../../src/api/metrics.ts";
 import type { ArtifactResolver } from "../../../src/host-resources/artifacts/artifact-resolver.ts";
 import {
   ArtifactNotFoundError,
+  ArtifactTooLargeError,
+  InvalidArtifactUriError,
   setArtifactResolver,
 } from "../../../src/host-resources/artifacts/index.ts";
 import type { Runtime } from "../../../src/runtime/runtime.ts";
@@ -83,6 +86,42 @@ describe("read_artifact tool handler", () => {
     const res = await handlerFor("read_artifact")({ uri: "artifact://art_x" });
     expect(res.isError).toBe(true);
     expect(firstText(res)).toMatch(/not found in this workspace/i);
+  });
+
+  // The tool path mirrors the UI read path's metric label granularity: malformed
+  // (client/model input) and too_large (over-cap body) are distinct outcomes,
+  // not `error`. Deltas, since the counter is a process-global singleton.
+  async function resolutionCount(result: string): Promise<number> {
+    const metric = await artifactResolutionsTotal.get();
+    return metric.values.find((v) => v.labels.result === result)?.value ?? 0;
+  }
+
+  it("maps a malformed uri to result=malformed (not error)", async () => {
+    const before = await resolutionCount("malformed");
+    const errBefore = await resolutionCount("error");
+    setArtifactResolver({
+      read: async (uri: string) => {
+        throw new InvalidArtifactUriError(uri, "id must match the safe-id grammar");
+      },
+    } as unknown as ArtifactResolver);
+    const res = await handlerFor("read_artifact")({ uri: "artifact://bad id" });
+    expect(res.isError).toBe(true);
+    expect(await resolutionCount("malformed")).toBe(before + 1);
+    expect(await resolutionCount("error")).toBe(errBefore); // not folded into error
+  });
+
+  it("maps an over-cap body to result=too_large (not error)", async () => {
+    const before = await resolutionCount("too_large");
+    const errBefore = await resolutionCount("error");
+    setArtifactResolver({
+      read: async () => {
+        throw new ArtifactTooLargeError(99, 8);
+      },
+    } as unknown as ArtifactResolver);
+    const res = await handlerFor("read_artifact")({ uri: "artifact://art_big" });
+    expect(res.isError).toBe(true);
+    expect(await resolutionCount("too_large")).toBe(before + 1);
+    expect(await resolutionCount("error")).toBe(errBefore);
   });
 
   it("requires a uri", async () => {

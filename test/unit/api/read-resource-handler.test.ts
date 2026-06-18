@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { handleReadResource } from "../../../src/api/handlers.ts";
+import { artifactResolutionsTotal } from "../../../src/api/metrics.ts";
 import {
   ArtifactNotFoundError,
   type ArtifactResolver,
@@ -348,6 +349,35 @@ describe("handleReadResource — artifact:// branch", () => {
     ]);
     // Read as the viewing user's verified workspace.
     expect(calls).toEqual([{ uri: "artifact://abc123", ws: "w1" }]);
+  });
+
+  // The counter is the only fleet-level signal that the host emitted a link it
+  // then couldn't resolve — assert the not_found and ok branches record it.
+  // Deltas, not absolutes: the counter is a process-global singleton other
+  // cases in this file also touch.
+  async function resolutionCount(result: string): Promise<number> {
+    const metric = await artifactResolutionsTotal.get();
+    return metric.values.find((v) => v.labels.result === result)?.value ?? 0;
+  }
+
+  it("counts a not_found resolution as result=not_found", async () => {
+    const before = await resolutionCount("not_found");
+    const runtime = makeStubRuntime();
+    stubArtifactResolver(() => {
+      throw new ArtifactNotFoundError("abc123");
+    });
+    await handleReadResource(req({ uri: "artifact://abc123" }), runtime, { workspaceId: "w1" });
+    expect(await resolutionCount("not_found")).toBe(before + 1);
+  });
+
+  it("counts a successful resolution as result=ok", async () => {
+    const before = await resolutionCount("ok");
+    const runtime = makeStubRuntime();
+    stubArtifactResolver((uri) => ({
+      contents: [{ uri, mimeType: "text/plain", text: "x" }],
+    }));
+    await handleReadResource(req({ uri: "artifact://abc123" }), runtime, { workspaceId: "w1" });
+    expect(await resolutionCount("ok")).toBe(before + 1);
   });
 });
 

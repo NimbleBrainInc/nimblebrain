@@ -1,14 +1,16 @@
 import { readFileSync } from "node:fs";
 import { readFile, rename, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { recordLlmUsage } from "../api/metrics.ts";
+import { artifactResolutionsTotal, recordLlmUsage } from "../api/metrics.ts";
 import { log } from "../cli/log.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import type { ToolResult } from "../engine/types.ts";
 import {
   type ArtifactListOptions,
   ArtifactNotFoundError,
+  ArtifactTooLargeError,
   getArtifactResolver,
+  InvalidArtifactUriError,
 } from "../host-resources/artifacts/index.ts";
 import { ORG_ADMIN_ROLES } from "../identity/types.ts";
 import { getAvailableModels, isModelAllowed } from "../model/catalog.ts";
@@ -812,9 +814,19 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
                   : "",
             )
             .join("");
+          artifactResolutionsTotal.inc({ result: "ok" });
           return { content: textContent(text || "[empty artifact]"), isError: false };
         } catch (err) {
+          // Same label granularity as the UI read path (handlers.ts) so
+          // `nb_artifact_resolutions_total{result}` means one thing across both
+          // resolution sites: a malformed id (client/model input) and an
+          // over-cap body are not server errors and must not inflate `error`.
+          if (err instanceof InvalidArtifactUriError) {
+            artifactResolutionsTotal.inc({ result: "malformed" });
+            return { content: textContent(`Malformed artifact URI "${uri}".`), isError: true };
+          }
           if (err instanceof ArtifactNotFoundError) {
+            artifactResolutionsTotal.inc({ result: "not_found" });
             return {
               content: textContent(
                 `Artifact "${uri}" not found in this workspace (it may not exist, or belong to another workspace).`,
@@ -822,6 +834,11 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
               isError: true,
             };
           }
+          if (err instanceof ArtifactTooLargeError) {
+            artifactResolutionsTotal.inc({ result: "too_large" });
+            return { content: textContent(err.message), isError: true };
+          }
+          artifactResolutionsTotal.inc({ result: "error" });
           return {
             content: textContent(
               `Failed to read artifact: ${err instanceof Error ? err.message : String(err)}`,
