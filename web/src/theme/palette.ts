@@ -65,6 +65,10 @@ export const colors = {
   "success-foreground": ["#ffffff", "#0a0a09"],
   warning: ["#f59e0b", "#fbbf24"],
   "warning-foreground": ["#ffffff", "#0a0a09"],
+  // Brand attention accent — the app's "look here" color: the chat FAB, selected
+  // states (e.g. ProfileTab), and ambient notices (e.g. the update prompt).
+  // Prefer this over `primary` (blue) for attention in the warm theme. Soft
+  // surfaces: `warm-light`, or the badge pattern `bg-warm/10 text-warm`.
   warm: ["#d4620a", "#f59542"],
   "warm-hover": ["#b8540a", "#fb923c"],
   "warm-foreground": ["#ffffff", "#0a0a09"],
@@ -82,6 +86,9 @@ export const colors = {
   "sidebar-foreground": ["#737373", "#a3a3a3"],
   "sidebar-primary": ["#0055FF", "#3b8eff"],
   "sidebar-primary-foreground": ["#ffffff", "#ffffff"],
+  // NOTE: shadcn-default BLUE (#eff6ff) — NOT the warm sidebar's accent; the name
+  // misleads. Don't use it for sidebar surfaces in the warm theme. Neutral fills:
+  // `sidebar-foreground/5`–`/10` (see NavItem); accented ones: `warm` (above).
   "sidebar-accent": ["#eff6ff", "#172554"],
   "sidebar-accent-foreground": ["#0055FF", "#3b8eff"],
   "sidebar-border": ["#e5e5e5", "#262626"],
