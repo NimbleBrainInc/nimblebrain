@@ -65,7 +65,9 @@ type WorkosRejectReason =
   | "missing_sub"
   | "org_mismatch"
   | "bad_signature"
-  | "jwks_unavailable";
+  | "jwks_unavailable"
+  | "authkit_bad_signature"
+  | "authkit_jwks_unavailable";
 
 function base64UrlDecode(input: string): Uint8Array {
   let b64 = input.replace(/-/g, "+").replace(/_/g, "/");
@@ -272,18 +274,16 @@ export class WorkosIdentityProvider implements IdentityProvider {
     let identity: UserIdentity | null = null;
 
     if (authkitIssuer && payload.iss === authkitIssuer) {
-      // AuthKit-issued JWT (from MCP OAuth flow) — verify against AuthKit JWKS
+      // AuthKit-issued JWT (from MCP OAuth flow) — verify against AuthKit JWKS.
+      // Routed through reject() so AuthKit failures carry the same reason field
+      // and severity as the User Management branch below — one reason-keyed view
+      // covers both issuers (getAuthkitJwks still logs its own stale-cache
+      // diagnostics independently).
       const keys = await this.getAuthkitJwks();
-      if (!keys) {
-        log.error("[workos] AuthKit JWKS fetch failed");
-        return null;
-      }
+      if (!keys) return this.reject("authkit_jwks_unavailable", { sub: payload.sub });
 
       const verified = await this.verifySignature(header, signatureInput, signature, keys);
-      if (!verified) {
-        log.error("[workos] AuthKit JWT signature verification failed");
-        return null;
-      }
+      if (!verified) return this.reject("authkit_bad_signature", { sub: payload.sub });
 
       identity = await this.resolveUser(payload.sub);
     } else {
@@ -367,12 +367,14 @@ export class WorkosIdentityProvider implements IdentityProvider {
         // Pin the refresh to the configured organization. Without it, WorkOS
         // mints the new access token against the user's *default* org, which
         // for a multi-org user can differ from the org this session was
-        // established under (both exchangeCode and buildAuthorizationUrl pass
-        // organizationId). The drifted token then fails verifyRequest's org_id
-        // gate on the very next request — a refresh that "succeeds" yet yields
-        // a token the session rejects, which the client surfaces to the user as
-        // an involuntary logout (Sentry `retry_401`). Pinning keeps token mint
-        // and token verify in agreement. Omitted when no org is configured.
+        // established under (buildAuthorizationUrl pins organizationId on the
+        // authorization request, so the original token is org-scoped;
+        // exchangeCode then enforces membership in it). The drifted token then
+        // fails verifyRequest's org_id gate on the very next request — a refresh
+        // that "succeeds" yet yields a token the session rejects, which the
+        // client surfaces to the user as an involuntary logout (Sentry
+        // `retry_401`). Pinning keeps token mint and token verify in agreement.
+        // Omitted when no org is configured.
         ...(this.organizationId ? { organizationId: this.organizationId } : {}),
       });
       return {
