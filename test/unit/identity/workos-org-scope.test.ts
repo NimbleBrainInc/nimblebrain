@@ -211,7 +211,10 @@ describe("WorkosIdentityProvider.verifyRequest org_id gate", () => {
       expect(orgMismatchCall).toBeDefined();
       // Token-derived ids are stamped; the raw token never is.
       const fields = orgMismatchCall![1] as Record<string, unknown> | undefined;
-      expect(fields).toMatchObject({ token_org: "org_some_other_org", expected_org: CONFIGURED_ORG });
+      expect(fields).toMatchObject({
+        claimed_org: "org_some_other_org",
+        expected_org: CONFIGURED_ORG,
+      });
     } finally {
       warnSpy.mockRestore();
     }
@@ -221,5 +224,28 @@ describe("WorkosIdentityProvider.verifyRequest org_id gate", () => {
     const { provider } = createProvider();
     const identity = await provider.verifyRequest(makeRequest(await workosToken(undefined)));
     expect(identity).toBeNull();
+  });
+
+  it("rejects a token with an invalid signature and logs bad_signature", async () => {
+    // Org matches and passes the gate, but the token is signed with a key the
+    // WorkOS JWKS doesn't serve → signature verification fails. This is the
+    // security-relevant path that must not be silent.
+    const { provider } = createProvider();
+    const wrongKey = await generateRSAKeyPair("not-in-jwks");
+    const nowSec = Math.floor(Date.now() / 1000);
+    const forged = await createJwt(
+      { sub: "user_forged", iss: "https://api.workos.com", exp: nowSec + 3600, org_id: CONFIGURED_ORG },
+      wrongKey.privateKey,
+      wrongKey.kid,
+    );
+    const warnSpy = spyOn(log, "warn");
+    try {
+      const identity = await provider.verifyRequest(makeRequest(forged));
+      expect(identity).toBeNull();
+      const badSigCall = warnSpy.mock.calls.find((c) => String(c[0]).includes("bad_signature"));
+      expect(badSigCall).toBeDefined();
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 });

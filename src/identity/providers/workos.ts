@@ -64,6 +64,7 @@ type WorkosRejectReason =
   | "token_expired"
   | "missing_sub"
   | "org_mismatch"
+  | "bad_signature"
   | "jwks_unavailable";
 
 function base64UrlDecode(input: string): Uint8Array {
@@ -292,9 +293,13 @@ export class WorkosIdentityProvider implements IdentityProvider {
       // org_id drifted from the configured org (see refreshToken) lands here
       // and was, until instrumented, indistinguishable from any other 401.
       if (this.organizationId && payload.org_id !== this.organizationId) {
+        // `claimed_org` is the org_id from the JWT payload — note this gate runs
+        // BEFORE signature verification (pre-existing order), so it is unverified
+        // input. It's safe to log (a forged value only ever lands here or fails
+        // the sig check next) but an operator must not treat it as authoritative.
         return this.reject("org_mismatch", {
           sub: payload.sub,
-          token_org: payload.org_id ?? null,
+          claimed_org: payload.org_id ?? null,
           expected_org: this.organizationId,
         });
       }
@@ -304,7 +309,11 @@ export class WorkosIdentityProvider implements IdentityProvider {
       if (!keys) return this.reject("jwks_unavailable", { sub: payload.sub });
 
       const verified = await this.verifySignature(header, signatureInput, signature, keys);
-      if (!verified) return null;
+      // A signature failure is the most security-relevant rejection (forged or
+      // tampered token, or a JWKS-rotation mismatch). Name it so a spike is
+      // visible — symmetric with the AuthKit branch's logged failure above, and
+      // covering the 0-candidate case where verifySignature itself stays silent.
+      if (!verified) return this.reject("bad_signature", { sub: payload.sub });
 
       // Resolve user from WorkOS
       identity = await this.resolveUser(payload.sub);
