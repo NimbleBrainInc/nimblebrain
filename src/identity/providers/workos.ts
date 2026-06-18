@@ -48,6 +48,27 @@ interface CachedJwks {
 
 const JWKS_CACHE_TTL_MS = 5 * 60 * 1000;
 
+/**
+ * Why a `verifyRequest` call rejected a token. Each value names one of the
+ * provider's silent `return null` exits so an operator triaging an
+ * involuntary logout sees the specific gate instead of a bare 401.
+ * `org_mismatch` is the one behind the `retry_401` incident: a refreshed
+ * token whose `org_id` no longer matches the configured org. See
+ * {@link WorkosIdentityProvider.reject}.
+ */
+type WorkosRejectReason =
+  | "no_token"
+  | "malformed_jwt"
+  | "bad_alg"
+  | "missing_exp"
+  | "token_expired"
+  | "missing_sub"
+  | "org_mismatch"
+  | "bad_signature"
+  | "jwks_unavailable"
+  | "authkit_bad_signature"
+  | "authkit_jwks_unavailable";
+
 function base64UrlDecode(input: string): Uint8Array {
   let b64 = input.replace(/-/g, "+").replace(/_/g, "/");
   const pad = b64.length % 4;
@@ -230,22 +251,22 @@ export class WorkosIdentityProvider implements IdentityProvider {
 
   async verifyRequest(req: Request): Promise<UserIdentity | null> {
     const token = extractToken(req);
-    if (!token) return null;
+    if (!token) return this.reject("no_token");
 
     const parsed = parseJwt(token);
-    if (!parsed) return null;
+    if (!parsed) return this.reject("malformed_jwt");
 
     const { header, payload, signatureInput, signature } = parsed;
 
-    if (header.alg !== "RS256") return null;
+    if (header.alg !== "RS256") return this.reject("bad_alg", { alg: header.alg });
 
     // Validate expiration
-    if (typeof payload.exp !== "number") return null;
+    if (typeof payload.exp !== "number") return this.reject("missing_exp", { sub: payload.sub });
     const nowSec = Math.floor(this.now() / 1000);
-    if (payload.exp <= nowSec) return null;
+    if (payload.exp <= nowSec) return this.reject("token_expired", { sub: payload.sub });
 
     // Must have sub (WorkOS user ID)
-    if (typeof payload.sub !== "string") return null;
+    if (typeof payload.sub !== "string") return this.reject("missing_sub");
 
     // Route verification based on issuer: AuthKit MCP OAuth vs WorkOS User Management
     const authkitIssuer = this.authkitDomain ? `https://${this.authkitDomain}.authkit.app` : null;
@@ -253,31 +274,46 @@ export class WorkosIdentityProvider implements IdentityProvider {
     let identity: UserIdentity | null = null;
 
     if (authkitIssuer && payload.iss === authkitIssuer) {
-      // AuthKit-issued JWT (from MCP OAuth flow) — verify against AuthKit JWKS
+      // AuthKit-issued JWT (from MCP OAuth flow) — verify against AuthKit JWKS.
+      // Routed through reject() so AuthKit failures carry the same reason field
+      // and severity as the User Management branch below — one reason-keyed view
+      // covers both issuers (getAuthkitJwks still logs its own stale-cache
+      // diagnostics independently).
       const keys = await this.getAuthkitJwks();
-      if (!keys) {
-        log.error("[workos] AuthKit JWKS fetch failed");
-        return null;
-      }
+      if (!keys) return this.reject("authkit_jwks_unavailable", { sub: payload.sub });
 
       const verified = await this.verifySignature(header, signatureInput, signature, keys);
-      if (!verified) {
-        log.error("[workos] AuthKit JWT signature verification failed");
-        return null;
-      }
+      if (!verified) return this.reject("authkit_bad_signature", { sub: payload.sub });
 
       identity = await this.resolveUser(payload.sub);
     } else {
       // WorkOS User Management JWT (from session cookie / existing flow)
-      // Validate org_id matches configured organization
-      if (this.organizationId && payload.org_id !== this.organizationId) return null;
+      // Validate org_id matches configured organization. This is the silent
+      // gate behind the involuntary-logout incident: a refreshed token whose
+      // org_id drifted from the configured org (see refreshToken) lands here
+      // and was, until instrumented, indistinguishable from any other 401.
+      if (this.organizationId && payload.org_id !== this.organizationId) {
+        // `claimed_org` is the org_id from the JWT payload — note this gate runs
+        // BEFORE signature verification (pre-existing order), so it is unverified
+        // input. It's safe to log (a forged value only ever lands here or fails
+        // the sig check next) but an operator must not treat it as authoritative.
+        return this.reject("org_mismatch", {
+          sub: payload.sub,
+          claimed_org: payload.org_id ?? null,
+          expected_org: this.organizationId,
+        });
+      }
 
       // Verify signature against WorkOS JWKS
       const keys = await this.getJwks();
-      if (!keys) return null;
+      if (!keys) return this.reject("jwks_unavailable", { sub: payload.sub });
 
       const verified = await this.verifySignature(header, signatureInput, signature, keys);
-      if (!verified) return null;
+      // A signature failure is the most security-relevant rejection (forged or
+      // tampered token, or a JWKS-rotation mismatch). Name it so a spike is
+      // visible — symmetric with the AuthKit branch's logged failure above, and
+      // covering the 0-candidate case where verifySignature itself stays silent.
+      if (!verified) return this.reject("bad_signature", { sub: payload.sub });
 
       // Resolve user from WorkOS
       identity = await this.resolveUser(payload.sub);
@@ -328,6 +364,18 @@ export class WorkosIdentityProvider implements IdentityProvider {
       const result = await this.workos.userManagement.authenticateWithRefreshToken({
         clientId: this.clientId,
         refreshToken,
+        // Pin the refresh to the configured organization. Without it, WorkOS
+        // mints the new access token against the user's *default* org, which
+        // for a multi-org user can differ from the org this session was
+        // established under (buildAuthorizationUrl pins organizationId on the
+        // authorization request, so the original token is org-scoped;
+        // exchangeCode then enforces membership in it). The drifted token then
+        // fails verifyRequest's org_id gate on the very next request — a refresh
+        // that "succeeds" yet yields a token the session rejects, which the
+        // client surfaces to the user as an involuntary logout (Sentry
+        // `retry_401`). Pinning keeps token mint and token verify in agreement.
+        // Omitted when no org is configured.
+        ...(this.organizationId ? { organizationId: this.organizationId } : {}),
       });
       return {
         accessToken: result.accessToken,
@@ -416,6 +464,32 @@ export class WorkosIdentityProvider implements IdentityProvider {
   }
 
   // ── Private helpers ────────────────────────────────────────────
+
+  /**
+   * Log a structured reason for a verify rejection, then return null.
+   *
+   * `verifyRequest` has several `return null` exits that were, until now,
+   * indistinguishable downstream — each surfaced only as the auth
+   * middleware's generic "[auth] authentication failed". An operator
+   * triaging an involuntary logout (a freshly *refreshed* token that the
+   * very next request rejected — the client emits Sentry `retry_401`)
+   * could not tell a routine expiry from an `org_id` mismatch without
+   * reading source. Naming the gate makes the cause greppable.
+   *
+   * Routine, self-healing reasons (`no_token`, `token_expired` — a refresh
+   * fixes both) log at debug to avoid flooding the warn stream on every
+   * pre-refresh request; every other reason is anomalous and logs at warn.
+   * Only token-derived identifiers are stamped (sub, org ids) — never the
+   * token, email, or display name (mirrors this file's trust rule).
+   */
+  private reject(reason: WorkosRejectReason, fields?: Record<string, unknown>): null {
+    if (reason === "no_token" || reason === "token_expired") {
+      log.debug("auth", `[workos] verify rejected: ${reason}`, fields);
+    } else {
+      log.warn(`[workos] verify rejected: ${reason}`, fields);
+    }
+    return null;
+  }
 
   private buildAuthorizationUrl(): string {
     const params: Parameters<typeof this.workos.userManagement.getAuthorizationUrl>[0] = {
