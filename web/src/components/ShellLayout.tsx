@@ -14,6 +14,7 @@ import { ArtifactPanel } from "./ArtifactPanel";
 import { ChatChrome } from "./ChatChrome";
 import { Logo } from "./Logo";
 import { MobileSidebarDrawer } from "./MobileSidebarDrawer";
+import { ReleaseUpdateBanner } from "./ReleaseUpdateBanner";
 import { SidebarToggle } from "./SidebarToggle";
 import { SidebarSearch } from "./shell/SidebarSearch";
 import { WorkspaceSection } from "./shell/WorkspaceSection";
@@ -144,6 +145,10 @@ export const ShellLayout = memo(function ShellLayout({
             <WorkspaceSection collapsed={isCollapsed} />
           </div>
 
+          {/* New-build-available prompt — pinned to the bottom-left rail,
+              below the scrolling nav. Renders nothing until detected. */}
+          <ReleaseUpdateBanner collapsed={isCollapsed} />
+
           {/*
             Edge collapse toggle — anchored to the sidebar's right border,
             half-overflowing. Always visible (rather than hover-only) so
@@ -236,6 +241,8 @@ export const ShellLayout = memo(function ShellLayout({
                 ))}
               </div>
             )}
+
+            <ReleaseUpdateBanner />
           </div>
         </MobileSidebarDrawer>
       )}
