@@ -351,6 +351,11 @@
           "type": "boolean",
           "description": "Enable workspace CRUD and member management via nb__manage_workspaces (admin only). Default: true.",
           "default": true
+        },
+        "compaction": {
+          "type": "boolean",
+          "description": "Enable conversation compaction at run start to bound context growth. Default: false.",
+          "default": false
         }
       },
       "additionalProperties": false
