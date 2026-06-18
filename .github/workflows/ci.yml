@@ -144,10 +144,6 @@ jobs:
           cache-scope: platform
           build-args: BUILD_SHA=${{ steps.tag.outputs.sha }}
           tags: ${{ steps.ecr.outputs.registry }}/nimblebrain/agent-platform:${{ steps.tag.outputs.sha }}
-      # NOTE: web is built without VITE_TURNSTILE_SITE_KEY (a build-time Vite
-      # var), matching release.yml. The Makefile `push` target injects a
-      # per-env key from 1Password; if a build-time Turnstile key is required
-      # in prod, this image won't carry it. See the deployments Makefile.
       - name: Build and push web image
         uses: ./.github/actions/build-push-image
         with:
