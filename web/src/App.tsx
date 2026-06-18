@@ -15,6 +15,7 @@ import { closeEventsClient } from "./api/events-client";
 import { AppWithChat } from "./components/AppWithChat";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Login } from "./components/Login";
+import { ReleaseUpdateBanner } from "./components/ReleaseUpdateBanner";
 import { CommandPalette } from "./components/palette/CommandPalette";
 import { RouteGuard } from "./components/RouteGuard";
 import { ShellLayout } from "./components/ShellLayout";
@@ -377,6 +378,10 @@ function AuthenticatedAppContent({
       {/* Command palette (⌘P) — global surface, sibling of the shell layout
           and chat chrome, so it's reachable from any route. */}
       <CommandPalette onLogout={onLogout} />
+      {/* Ambient "new web build deployed — reload" prompt. Self-contained
+          (owns its own version check + dismissed state); renders nothing
+          until a newer build is detected. */}
+      <ReleaseUpdateBanner />
       <ShellLayout forSlot={forSlot} onLogout={onLogout}>
         <ErrorBoundary resetKeys={[location.pathname]}>
           <Routes>
