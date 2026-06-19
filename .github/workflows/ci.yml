@@ -170,17 +170,20 @@ jobs:
     needs: build-and-push
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    # Authenticates with a minted App token, never GITHUB_TOKEN — needs no grants.
+    permissions: {}
     steps:
       - name: Check edge-bump config
         id: cfg
         env:
           APP_ID: ${{ vars.EDGE_BUMP_APP_ID }}
           REPO: ${{ vars.STAGING_DEPLOY_REPO }}
+          KEY: ${{ secrets.EDGE_BUMP_APP_KEY }}
         run: |
-          if [ -n "$APP_ID" ] && [ -n "$REPO" ]; then
+          if [ -n "$APP_ID" ] && [ -n "$REPO" ] && [ -n "$KEY" ]; then
             echo "enabled=true" >> "$GITHUB_OUTPUT"
           else
-            echo "edge-bump not configured (EDGE_BUMP_APP_ID / STAGING_DEPLOY_REPO unset) — skipping"
+            echo "edge-bump not fully configured (need EDGE_BUMP_APP_ID + STAGING_DEPLOY_REPO vars + EDGE_BUMP_APP_KEY secret) — skipping"
             echo "enabled=false" >> "$GITHUB_OUTPUT"
           fi
       - name: Mint deploy-repo token
@@ -197,6 +200,9 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
         run: |
+          # -f (raw string), NOT -F: -F type-coerces all-digit values to JSON
+          # numbers, which mangles all-digit SHAs (esp. leading-zero). A SHA is an
+          # opaque string.
           gh api "repos/${{ github.repository_owner }}/${{ vars.STAGING_DEPLOY_REPO }}/dispatches" \
             -f event_type=runtime-image-pushed \
-            -F "client_payload[sha]=${{ needs.build-and-push.outputs.sha }}"
+            -f "client_payload[sha]=${{ needs.build-and-push.outputs.sha }}"
