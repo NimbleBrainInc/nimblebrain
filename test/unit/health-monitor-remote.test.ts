@@ -8,6 +8,7 @@ function makeMockRemoteSource(
   name: string,
 ): McpSource & {
   alive: boolean;
+  stopped: boolean;
   startResult: boolean;
   stopCalls: number;
   startCalls: number;
@@ -16,6 +17,7 @@ function makeMockRemoteSource(
   const mock = {
     name,
     alive: true,
+    stopped: false,
     startResult: true,
     stopCalls: 0,
     startCalls: 0,
@@ -24,6 +26,9 @@ function makeMockRemoteSource(
     },
     isAlive() {
       return mock.alive;
+    },
+    isStopped() {
+      return mock.stopped;
     },
     uptime() {
       return startedAt !== null ? Date.now() - startedAt : null;
@@ -46,6 +51,7 @@ function makeMockRemoteSource(
     },
   } as unknown as McpSource & {
     alive: boolean;
+    stopped: boolean;
     startResult: boolean;
     stopCalls: number;
     startCalls: number;
@@ -56,15 +62,19 @@ function makeMockRemoteSource(
 /** Mock stdio source — no isRemote() method (or returns false). */
 function makeMockStdioSource(
   name: string,
-): McpSource & { alive: boolean; restartResult: boolean; restartCalls: number } {
+): McpSource & { alive: boolean; stopped: boolean; restartResult: boolean; restartCalls: number } {
   let startedAt: number | null = Date.now();
   const mock = {
     name,
     alive: true,
+    stopped: false,
     restartResult: true,
     restartCalls: 0,
     isAlive() {
       return mock.alive;
+    },
+    isStopped() {
+      return mock.stopped;
     },
     uptime() {
       return startedAt !== null ? Date.now() - startedAt : null;
@@ -77,7 +87,12 @@ function makeMockStdioSource(
       }
       return mock.restartResult;
     },
-  } as unknown as McpSource & { alive: boolean; restartResult: boolean; restartCalls: number };
+  } as unknown as McpSource & {
+    alive: boolean;
+    stopped: boolean;
+    restartResult: boolean;
+    restartCalls: number;
+  };
   return mock;
 }
 
@@ -289,6 +304,55 @@ describe("HealthMonitor — remote sources", () => {
     expect(remote.stopCalls).toBe(1);
     expect(remote.startCalls).toBe(1);
     expect(stdio.restartCalls).toBe(1);
+
+    monitor.stop();
+  });
+
+  it("test_deliberately_stopped_source_not_reconnected_marked_dead", async () => {
+    // A source torn down via stop() (teardown / user-initiated startAuth rebuild)
+    // lingers in the boot snapshot. The monitor must NOT reconnect this orphan —
+    // doing so runs its stale provider's refresh, which can delete shared creds
+    // and clobber a live pending_auth. It must go terminal (dead) silently.
+    const source = makeMockRemoteSource("stopped-remote");
+    const sink = makeEventCollector();
+    const monitor = new HealthMonitor([source], sink, { checkIntervalMs: 60_000, baseDelayMs: 1 });
+
+    source.alive = false;
+    source.stopped = true; // deliberate stop()
+
+    await monitor.check();
+
+    // No reconnect attempt, no crash/restart noise.
+    expect(source.stopCalls).toBe(0);
+    expect(source.startCalls).toBe(0);
+    const events = eventNames(sink);
+    expect(events).not.toContain("bundle.crashed");
+    expect(events).not.toContain("bundle.restarting");
+    expect(events).not.toContain("bundle.recovered");
+
+    // Terminal: marked dead and stays dead on subsequent checks.
+    expect(monitor.getStatus()[0]!.state).toBe("dead");
+    await monitor.check();
+    expect(source.startCalls).toBe(0);
+
+    monitor.stop();
+  });
+
+  it("test_self_dropped_source_not_stopped_still_reconnects", async () => {
+    // A transport that dropped on its own (idle close / network blip) leaves
+    // isStopped() false — it must STILL reconnect, unchanged from before.
+    const source = makeMockRemoteSource("self-dropped-remote");
+    const sink = makeEventCollector();
+    const monitor = new HealthMonitor([source], sink, { checkIntervalMs: 60_000, baseDelayMs: 1 });
+
+    source.alive = false; // dropped, but NOT via stop()
+    expect(source.stopped).toBe(false);
+
+    await monitor.check();
+
+    expect(source.stopCalls).toBe(1);
+    expect(source.startCalls).toBe(1);
+    expect(monitor.getStatus()[0]!.state).toBe("healthy");
 
     monitor.stop();
   });

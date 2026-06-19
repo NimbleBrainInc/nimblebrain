@@ -12,6 +12,7 @@ const ENV_KEYS = [
   "NB_CUSTOM_DOMAIN",
   "NB_CUSTOM_DOMAIN_CANONICAL",
   "NB_API_URL",
+  "NB_TENANT_ID",
 ] as const;
 
 let saved: Record<string, string | undefined>;
@@ -77,6 +78,20 @@ describe("publicOrigin — derivation policy", () => {
   });
 
   it("returns the dev origin when nothing is configured", () => {
+    expect(publicOrigin()).toBe("http://localhost:27247");
+  });
+
+  it("test_publicOrigin_no_facts_with_tenant_id_fails_closed", () => {
+    // A deployed pod always carries NB_TENANT_ID. If it reaches the dev fallback
+    // (host facts missing), that's a misconfigured deploy — fail closed rather
+    // than mint a localhost callback that silently breaks every OAuth flow.
+    process.env.NB_TENANT_ID = "acme";
+    expect(() => publicOrigin()).toThrow(/refusing to default to .* in a deployed context/);
+  });
+
+  it("test_publicOrigin_no_facts_no_tenant_id_returns_dev_origin", () => {
+    // Local dev (no NB_TENANT_ID) keeps working with no host facts.
+    delete process.env.NB_TENANT_ID;
     expect(publicOrigin()).toBe("http://localhost:27247");
   });
 });

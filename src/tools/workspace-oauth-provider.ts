@@ -46,13 +46,14 @@ export class InteractiveOAuthNotSupportedError extends Error {
 /**
  * Thrown by `redirectToAuthorization` when the authorization server demands an
  * INTERACTIVE (browser) round-trip but this start attempt is NOT user-initiated
- * — i.e. boot auto-start or a `HealthMonitor` liveness reconnect. No human is
+ * — i.e. a boot source's auto-start or one of its `HealthMonitor` liveness
+ * reconnects (both reuse the boot provider with the flag unarmed). No human is
  * waiting, so registering an `oauth-flow-registry` flow would only block
  * `start()` on `awaitPendingFlow()` for the full 15-minute flow TTL and then
  * fail — the headless-reconnect crash loop this fix removes. The provider
  * instead flips the connection to `reauth_required` (via `notifyAuthLost`) and
- * throws this so `start()` fails fast. The UI's Reconnect button runs
- * `startAuth`, which arms interactive auth for that one attempt.
+ * throws this so `start()` fails fast. The UI's Reconnect runs `startAuth`,
+ * which builds a fresh provider and arms interactive auth for that one attempt.
  */
 export class BackgroundReauthRequiredError extends Error {
   constructor(public readonly serverName: string) {
@@ -589,15 +590,21 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
   private authLostNotified = false;
   /**
    * Whether this provider may drive an INTERACTIVE (browser) OAuth flow on the
-   * current start attempt. The provider is long-lived — the same instance backs
-   * the initial connect AND every later `HealthMonitor` liveness reconnect — so
-   * this is a per-attempt signal, not a construction-time one. The lifecycle
-   * arms it (via {@link setInteractiveAuthAllowed}) only for a user-initiated
-   * `startAuth` and disarms it when that start settles. Background starts (boot
-   * auto-start, liveness reconnect) leave it false: if they hit an interactive
-   * requirement they flip to `reauth_required` and fail fast (see
-   * {@link BackgroundReauthRequiredError}) rather than blocking on a flow no
-   * human will complete.
+   * current start attempt — a per-attempt signal, not construction-time.
+   *
+   * Two provider lifecycles exist, and the flag's default (false) is the safe
+   * one for both:
+   *   - A BOOT source reuses one provider instance across its initial
+   *     auto-start AND every later `HealthMonitor` liveness reconnect. All of
+   *     those are background — the flag is never armed — so an interactive
+   *     requirement flips to `reauth_required` and fails fast instead of
+   *     blocking on a browser flow no one will complete.
+   *   - A USER-INITIATED `startAuth` builds a FRESH provider+source (teardown +
+   *     rebuild) and arms the flag (via {@link setInteractiveAuthAllowed}) for
+   *     that one start only, disarming when it settles.
+   *
+   * So the only path that ever drives interactive auth is an explicit user
+   * reconnect; see {@link BackgroundReauthRequiredError}.
    */
   private interactiveAuthAllowed = false;
   private readonly staticClient?: WorkspaceOAuthProviderOptions["staticClient"];
@@ -858,23 +865,25 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
       };
       return info;
     }
-    if (this.cachedClientInfo) {
-      // Reuse a structurally-valid cached client. We do NOT discard on a
-      // redirect_uri host mismatch (drift) — a registered DCR client is durable
-      // identity, and silent refresh reuses its `client_id` without sending any
-      // redirect_uri. Discarding here orphaned the refresh token and forced a
-      // headless interactive flow that timed out (the crash loop). Only a
-      // structurally-corrupt entry is dropped.
-      if (this.hasUsableRedirectUris(this.cachedClientInfo)) return this.cachedClientInfo;
-      this.cachedClientInfo = null;
-      await this.unlinkIfExists(this.dataDir, "client.json");
-    }
-    // DCR client info is workspace-shared regardless of scope — every
-    // member of the workspace authenticates as the same NimbleBrain
-    // OAuth client.
-    const data = await this.readJson<OAuthClientInformationFull>(this.dataDir, "client.json");
-    if (data && this.hasUsableRedirectUris(data)) {
-      if (this.redirectUriMatchesCurrent(data) || !this.interactiveAuthAllowed) {
+    // Candidate registration: prefer the in-memory cache, else read disk. The
+    // SAME decision applies to both — a cached client can itself be a
+    // previously-honored DRIFTED client (set on the silent/background path
+    // below), so the cached path must run the drift/interactive decision too,
+    // not blindly return it. (DCR client info is workspace-shared regardless of
+    // scope: every member authenticates as the same NimbleBrain OAuth client.)
+    const data =
+      this.cachedClientInfo ??
+      (await this.readJson<OAuthClientInformationFull>(this.dataDir, "client.json"));
+    if (data) {
+      if (!this.hasUsableRedirectUris(data)) {
+        // Structurally corrupt (missing / empty / non-array redirect_uris):
+        // unusable at /authorize. Drop it so the SDK re-registers.
+        log.warn(
+          `[oauth] ${this.serverName} stored client has no usable redirect_uris — discarding so the next flow re-registers`,
+        );
+        this.cachedClientInfo = null;
+        await this.unlinkIfExists(this.dataDir, "client.json");
+      } else if (this.redirectUriMatchesCurrent(data) || !this.interactiveAuthAllowed) {
         // The registration matches the current host, OR this is a background /
         // silent context (refresh, boot, liveness reconnect). Honor the stored
         // registration — it's immutable identity, and refresh reuses the
@@ -890,28 +899,22 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
         }
         this.cachedClientInfo = data;
         return data;
+      } else {
+        // Drift on a USER-INITIATED interactive flow: a human is reconnecting
+        // and the canonical host changed since this client was registered.
+        // Re-register against the current host so the next /authorize's
+        // redirect_uri matches the NEW registration AND the session cookie (set
+        // on the current host) travels back on the callback leg. The deliberate,
+        // consented re-registration the architecture calls for — not the silent
+        // discard-on-every-read that caused the crash loop.
+        log.warn(
+          `[oauth] ${this.serverName} redirect_uri drift on user-initiated reauth (registered=${
+            data.redirect_uris?.[0] ?? "<none>"
+          }, current=${this.callbackUrl}) — re-registering for the current host`,
+        );
+        this.cachedClientInfo = null;
+        await this.unlinkIfExists(this.dataDir, "client.json");
       }
-      // Drift on a USER-INITIATED interactive flow: a human is reconnecting and
-      // the canonical host changed since this client was registered. Re-register
-      // against the current host so the next /authorize's redirect_uri matches
-      // the NEW registration AND the session cookie (set on the current host)
-      // travels back on the callback leg. This is the deliberate, consented
-      // re-registration the architecture calls for — not the silent
-      // discard-on-every-read that caused the crash loop.
-      log.warn(
-        `[oauth] ${this.serverName} redirect_uri drift on user-initiated reauth (registered=${
-          data.redirect_uris?.[0] ?? "<none>"
-        }, current=${this.callbackUrl}) — re-registering for the current host`,
-      );
-      this.cachedClientInfo = null;
-      await this.unlinkIfExists(this.dataDir, "client.json");
-    } else if (data && !this.hasUsableRedirectUris(data)) {
-      // Structurally corrupt on-disk record (missing / empty / non-array
-      // redirect_uris): unusable at /authorize. Drop it so the SDK re-registers.
-      log.warn(
-        `[oauth] ${this.serverName} stored client.json has no usable redirect_uris — discarding so the next flow re-registers`,
-      );
-      await this.unlinkIfExists(this.dataDir, "client.json");
     }
     // No usable client info on disk → SDK will DCR. Coalesce concurrent
     // callers so only ONE DCR happens; second caller awaits the first's

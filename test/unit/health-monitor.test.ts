@@ -8,6 +8,7 @@ function makeMockSource(
   name: string,
 ): McpSource & {
   alive: boolean;
+  stopped: boolean;
   restartResult: boolean;
   restartCalls: number;
   setUptime: (ms: number) => void;
@@ -16,10 +17,14 @@ function makeMockSource(
   const mock = {
     name,
     alive: true,
+    stopped: false,
     restartResult: true,
     restartCalls: 0,
     isAlive() {
       return mock.alive;
+    },
+    isStopped() {
+      return mock.stopped;
     },
     uptime() {
       return startedAt !== null ? Date.now() - startedAt : null;
@@ -38,6 +43,7 @@ function makeMockSource(
     },
   } as unknown as McpSource & {
     alive: boolean;
+    stopped: boolean;
     restartResult: boolean;
     restartCalls: number;
     setUptime: (ms: number) => void;

@@ -107,6 +107,40 @@ describe("WorkspaceOAuthProvider.clientInformation — redirect_uri drift", () =
     const provider = makeProvider();
     expect(provider.redirectUrl).toBe(CURRENT_CALLBACK);
   });
+
+  it("test_clientInformation_cached_drift_reregisters_when_interactive_armed", async () => {
+    // Reused-provider path: a first background read HONORS the drifted client and
+    // caches it. A later read with interactive armed must NOT blindly return the
+    // cached drifted client — it must apply the same re-register decision the
+    // disk branch does (otherwise the authorize leg sends a redirect_uri the AS
+    // rejects). Guards against the cached-branch short-circuit.
+    await writeClientJson([DRIFTED_REDIRECT]);
+    const provider = makeProvider();
+
+    // 1. Background read → honor + cache the drifted client.
+    const honored = await provider.clientInformation();
+    expect(honored?.client_id).toBe("cid-stored");
+    expect(existsSync(join(dataDir, "client.json"))).toBe(true);
+
+    // 2. User-initiated interactive re-read → re-register, do NOT return cached.
+    provider.setInteractiveAuthAllowed(true);
+    const reread = await provider.clientInformation();
+    expect(reread).toBeUndefined();
+    expect(existsSync(join(dataDir, "client.json"))).toBe(false);
+  });
+
+  it("test_clientInformation_cached_drift_honored_when_background", async () => {
+    // Same reused-provider, but background (flag false) on the second read: the
+    // cached drifted client stays honored (silent refresh keeps working).
+    await writeClientJson([DRIFTED_REDIRECT]);
+    const provider = makeProvider();
+
+    await provider.clientInformation(); // cache the drifted client
+    const reread = await provider.clientInformation(); // still background
+
+    expect(reread?.client_id).toBe("cid-stored");
+    expect(existsSync(join(dataDir, "client.json"))).toBe(true);
+  });
 });
 
 describe("WorkspaceOAuthProvider.redirectToAuthorization — background gate", () => {
