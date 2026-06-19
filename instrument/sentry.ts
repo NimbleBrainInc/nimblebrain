@@ -26,15 +26,21 @@
  * (`tracesSampleRate > 0`) drives Sentry's own transactions and is off by
  * default — turning it on does not disturb the Grafana trace pipeline.
  *
- * Trust boundary (mirrors `web/src/sentry.ts`): `sendDefaultPii: false` plus
- * `beforeSend: scrubEvent` keep request headers/cookies, bodies, and query
- * strings out of the event envelope, and `beforeBreadcrumb: scrubBreadcrumb`
- * scrubs the breadcrumb trail (drops `console` crumbs, strips URL query
- * strings) — the default integrations breadcrumb `console.*` and outbound
- * LLM/MCP/OAuth requests, which can carry prompts and tokens. Only the
- * deployment-constant `tenant_id` (from `NB_TENANT_ID`, never a request header)
- * is stamped here; per-request `workspace_id` / opaque `user_id` are added by
- * the kernel where the verified identity is in scope.
+ * Trust boundary (the scrubbing mirrors `web/src/sentry.ts`):
+ * `sendDefaultPii: false` plus `beforeSend: scrubEvent` keep request
+ * headers/cookies, bodies, and query strings out of the event envelope, and
+ * `beforeBreadcrumb: scrubBreadcrumb` scrubs the breadcrumb trail (drops
+ * `console` crumbs, strips URL query strings) — the default integrations
+ * breadcrumb `console.*` and outbound LLM/MCP/OAuth requests, which can carry
+ * prompts and tokens.
+ *
+ * The only identity on backend events is the deployment-constant `tenant_id`
+ * (from `NB_TENANT_ID`, never a request header), tagged below. Unlike the web
+ * client, the runtime does NOT attach per-request `workspace_id` / `user_id`:
+ * the kernel can't import Sentry (`check-no-sentry-in-kernel`), so that
+ * verified identity stays on the OTel spans (`src/observability/identity.ts`),
+ * which Sentry doesn't ingest. A neutral kernel→Sentry scope seam could bridge
+ * it later; today it's tenant-level only.
  */
 import { resolveSentryConfig, scrubBreadcrumb, scrubEvent, sentryEnabled } from "./sentry-config.ts";
 

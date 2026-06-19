@@ -64,11 +64,14 @@ export function resolveSentryConfig(
 }
 
 /**
- * Drop PII from an event before it leaves the process. Mirrors the web client's
- * trust boundary (`web/src/sentry.ts`) and the kernel's OTel rule: we keep only
- * the opaque `user.id` and stamp `tenant_id` / `workspace_id` as tags
- * elsewhere — never request headers/cookies (auth tokens), request bodies, or
- * query strings (which can carry prompts, ids, and other content).
+ * Drop PII from an event before it leaves the process — mirrors the web
+ * client's scrub (`web/src/sentry.ts`). Keep only the opaque `user.id` if Sentry
+ * ever populates one; never request headers/cookies (auth tokens), bodies, or
+ * query strings (which can carry prompts, ids, and other content). The only
+ * identity tag on backend events is the boot-time `tenant_id`, set in the
+ * preload — per-request workspace/user identity is not attached (the kernel
+ * can't import Sentry). Mutates the event in place, per the `beforeSend`
+ * contract.
  */
 export function scrubEvent(event: ErrorEvent): ErrorEvent {
   if (event.request) {
@@ -96,6 +99,9 @@ export function scrubEvent(event: ErrorEvent): ErrorEvent {
  * - Strip query strings from any crumb URL — they can carry tokens, ids, and
  *   prompts. The path is left intact (endpoint, not content; within the same
  *   trust boundary as the tagged ids).
+ *
+ * Mutates the crumb in place when trimming the URL, per the `beforeBreadcrumb`
+ * contract.
  */
 export function scrubBreadcrumb(crumb: Breadcrumb): Breadcrumb | null {
   if (crumb.category === "console") return null;
